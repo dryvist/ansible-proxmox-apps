@@ -345,3 +345,99 @@
           Ntfy template assertions passed:
           - docker-compose.yml.j2: HTTP port 8080:80, image, config mount
           - server.yml.j2: cache-file, listen-http, cache-duration
+
+- name: Render and verify openproject_docker templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/openproject_docker/defaults/main.yml
+    openproject_docker_image: "openproject/community:15"
+    openproject_docker_container_name: openproject
+    openproject_docker_data_dir: /opt/openproject
+    openproject_docker_web_port: 80
+    openproject_docker_host_name: "openproject.test.example.com"
+    openproject_docker_https: false
+    openproject_docker_secret_key_base: "test-secret-key-base-placeholder-do-not-use-in-production"
+    openproject_docker_smtp_address: "192.168.0.110"
+    openproject_docker_smtp_port: 1025
+    openproject_docker_smtp_domain: "test.example.com"
+    openproject_docker_mail_from: "openproject@test.example.com"
+    openproject_docker_admin_email: "admin@test.example.com"
+    openproject_docker_default_language: en
+    openproject_docker_rails_env: production
+    openproject_docker_web_concurrency: 2
+    _template_dir: "../../roles/openproject_docker/templates"
+
+  tasks:
+    - name: Render openproject docker-compose.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: /tmp/test_openproject_compose.yml
+        mode: "0644"
+
+    - name: Read rendered openproject docker-compose.yml
+      ansible.builtin.slurp:
+        src: /tmp/test_openproject_compose.yml
+      register: _openproject_compose_raw
+
+    - name: Decode openproject compose content
+      ansible.builtin.set_fact:
+        _openproject_compose: "{{ _openproject_compose_raw.content | b64decode }}"
+
+    - name: Assert openproject compose references expected image
+      ansible.builtin.assert:
+        that:
+          - "'openproject/community:15' in _openproject_compose"
+        fail_msg: "openproject docker-compose.yml.j2 does not reference expected image"
+
+    - name: Assert openproject compose publishes web port 80
+      ansible.builtin.assert:
+        that:
+          - "'80:80' in _openproject_compose"
+        fail_msg: "openproject docker-compose.yml.j2 missing web port mapping 80:80"
+
+    - name: Assert openproject compose uses OPENPROJECT_-prefixed secret env var
+      ansible.builtin.assert:
+        that:
+          - "'OPENPROJECT_SECRET_KEY_BASE' in _openproject_compose"
+        fail_msg: >-
+          openproject docker-compose.yml.j2 must pass the secret as
+          OPENPROJECT_SECRET_KEY_BASE (the OpenProject image config layer
+          expects the OPENPROJECT_ prefix)
+
+    - name: Assert openproject compose configures SMTP env vars
+      ansible.builtin.assert:
+        that:
+          - "'OPENPROJECT_SMTP__ADDRESS' in _openproject_compose"
+          - "'OPENPROJECT_SMTP__PORT' in _openproject_compose"
+          - "'192.168.0.110' in _openproject_compose"
+        fail_msg: >-
+          openproject docker-compose.yml.j2 missing SMTP relay env vars
+          (OPENPROJECT_SMTP__ADDRESS / __PORT) or SMTP host substitution
+
+    - name: Assert openproject compose mounts persistent volumes
+      ansible.builtin.assert:
+        that:
+          - "'/opt/openproject/pgdata:/var/openproject/pgdata' in _openproject_compose"
+          - "'/opt/openproject/assets:/var/openproject/assets' in _openproject_compose"
+        fail_msg: >-
+          openproject docker-compose.yml.j2 missing required persistent
+          volume mounts for pgdata and assets
+
+    - name: Assert openproject compose sets OPENPROJECT_HOST__NAME
+      ansible.builtin.assert:
+        that:
+          - "'OPENPROJECT_HOST__NAME' in _openproject_compose"
+          - "'openproject.test.example.com' in _openproject_compose"
+        fail_msg: >-
+          openproject docker-compose.yml.j2 missing OPENPROJECT_HOST__NAME
+          or did not substitute the FQDN
+
+    - name: OpenProject template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          OpenProject template assertions passed:
+          - docker-compose.yml.j2: image, port 80:80, OPENPROJECT_SECRET_KEY_BASE,
+            SMTP env vars, persistent volumes, host name
