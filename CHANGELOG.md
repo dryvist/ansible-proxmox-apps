@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.6.2...v1.7.0) (2026-05-13)
+
+
+### Features
+
+* **openproject:** add OpenProject CE Docker-in-LXC role ([#244](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/244)) ([b370e76](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/b370e765ab7f47732d38a1ef338ad208e8326238))
+
 ## [1.6.2](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.6.1...v1.6.2) (2026-05-11)
 
 
