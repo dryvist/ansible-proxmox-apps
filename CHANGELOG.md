@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.7.1...v1.8.0) (2026-05-15)
+
+
+### Features
+
+* **ntp:** vendor ntp role and add client baseline ([#253](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/253)) ([27264e4](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/27264e4a742218bd5aabc4daf78316fe6dc09437)), closes [#243](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/243)
+
 ## [1.7.1](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.7.0...v1.7.1) (2026-05-15)
 
 
