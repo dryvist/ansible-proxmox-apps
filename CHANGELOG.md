@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.8.0...v1.9.0) (2026-05-16)
+
+
+### Features
+
+* **idrac_kvm_docker:** add HTML5 iDRAC KVM role with ipmitool fallback ([#256](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/256)) ([ecf2390](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/ecf23908492378c2a323dc81919fce7554a988bd))
+
 ## [1.8.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.7.1...v1.8.0) (2026-05-15)
 
 
