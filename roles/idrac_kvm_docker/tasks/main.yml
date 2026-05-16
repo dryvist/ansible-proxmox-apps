@@ -11,14 +11,11 @@
       - lookup('env', item.env_prefix ~ '_PASSWORD') | length > 0
     fail_msg: "{{ item.env_prefix }}_HOST/USER/PASSWORD must all be set (Doppler iac-conf-mgmt/prd)"
   loop: "{{ idrac_kvm_docker_targets }}"
+  no_log: true
 
 # =============================================================================
 # Docker Installation
 # =============================================================================
-
-- name: Gather OS facts
-  ansible.builtin.setup:
-    filter: ansible_distribution*,ansible_virtualization_type
 
 - name: Install Docker prerequisites
   ansible.builtin.apt:
@@ -127,6 +124,7 @@
     owner: root
     group: root
     mode: "0600"
+  no_log: true
   notify: Restart idrac-kvm
 
 # =============================================================================
@@ -150,18 +148,19 @@
     virtualenv: /opt/ansible-venv
     virtualenv_command: python3 -m venv
 
-- name: Set Python interpreter to use venv for subsequent tasks
-  ansible.builtin.set_fact:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
-
 # =============================================================================
 # Opt-in cleanup (destructive — disabled by default)
 # =============================================================================
 
-- name: Prune unused Docker state (opt-in only)
-  ansible.builtin.command: docker system prune -af --volumes
+- name: Prune unused Docker images, containers, and networks (opt-in only)
+  community.docker.docker_prune:
+    images: true
+    containers: true
+    networks: true
+    volumes: false
   when: idrac_kvm_docker_prune_unused | bool
-  changed_when: true
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
 
 # =============================================================================
 # Deploy via Docker Compose
@@ -171,6 +170,9 @@
   community.docker.docker_compose_v2:
     project_src: "{{ idrac_kvm_docker_data_dir }}"
     state: present
+  no_log: true
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
 
 # =============================================================================
 # Health check
