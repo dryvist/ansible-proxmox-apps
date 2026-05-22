@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.3](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.2...v1.9.3) (2026-05-22)
+
+
+### Bug Fixes
+
+* **tests:** roll Cribl fixture image to :latest ([#260](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/260)) ([6dbf6d7](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/6dbf6d7203530ef04b603817975278c79aa50919))
+
 ## [1.9.2](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.1...v1.9.2) (2026-05-21)
 
 
