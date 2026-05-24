@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.11.0...v1.12.0) (2026-05-24)
+
+
+### Features
+
+* **healthchecks:** self-hosted deadman receiver LXC role ([#275](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/275)) ([f506b03](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/f506b0334bd87d0750a2416164c7e9ad1a08078a))
+
 ## [1.11.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.10.0...v1.11.0) (2026-05-24)
 
 
