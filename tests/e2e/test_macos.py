@@ -60,11 +60,14 @@ class TestMacOSPipelineFreshness:
         even over a multi-hour window.
         """
         mgmt_url, user, password = splunk_creds
+        # Splunk's IN(...) operator does not support wildcards — its
+        # arguments are matched literally. Use OR'd sourcetype clauses so
+        # `macos:system:*` expands as a glob on the indexed sourcetype.
         search_str = (
             "| tstats count WHERE "
             "(index=os OR index=mac_perf) earliest=-15m "
-            "BY sourcetype | search "
-            'sourcetype IN ("macos:unified_log", "macos:system:*")'
+            "(sourcetype=macos:unified_log OR sourcetype=macos:system:*) "
+            "BY sourcetype"
         )
         result = query_splunk(
             mgmt_url, user, password, search_str, timeout=30
@@ -97,9 +100,15 @@ class TestMacOSPipelineFreshness:
         the source went silent.
         """
         mgmt_url, user, password = splunk_creds
+        # `tstats latest(...) WHERE ...` without a BY clause always emits
+        # a single row even when no events match (the aggregate is null),
+        # so the row count alone is not a freshness signal. Filter out the
+        # null case with `where isnotnull(last_seen)` so the assertion below
+        # actually detects a never-indexed pack vs. a stalled one.
         search_str = (
             "| tstats latest(_time) as last_seen WHERE "
             "(index=os OR index=mac_perf) sourcetype=macos:* "
+            "| where isnotnull(last_seen) "
             "| eval seconds_ago = now() - last_seen | head 1"
         )
         result = query_splunk(
@@ -107,11 +116,19 @@ class TestMacOSPipelineFreshness:
         )
         results = result.get("results", [])
         assert results, (
-            "tstats returned no rows for macOS pack events — index may "
-            "be empty or the pack may have never emitted data"
+            "no macOS pack events ever indexed in (index=os OR index=mac_perf): "
+            "the pack may have never emitted data, or the indexes do not "
+            "exist yet"
         )
 
-        seconds_ago = float(results[0].get("seconds_ago", "inf"))
+        # tstats can emit null/missing aggregates even after the filter when
+        # the underlying index has no data — coerce defensively.
+        raw_seconds_ago = results[0].get("seconds_ago")
+        assert raw_seconds_ago not in (None, ""), (
+            f"tstats returned a row but seconds_ago is empty "
+            f"({raw_seconds_ago!r}) — pack may have never emitted data"
+        )
+        seconds_ago = float(raw_seconds_ago)
         assert seconds_ago < 300, (
             f"newest macbook-m4 pack event is {seconds_ago:.0f}s old "
             f"(threshold: 300s). Chain appears to have backed up or "
