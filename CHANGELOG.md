@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.4...v1.10.0) (2026-05-24)
+
+
+### Features
+
+* **haproxy:** add opt-in HTTP/HTTPS reverse proxy frontends ([1cbd09b](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/1cbd09b7b83b3646ad5e0a7c997f891dbd651de7))
+
 ## [1.9.4](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.3...v1.9.4) (2026-05-24)
 
 
