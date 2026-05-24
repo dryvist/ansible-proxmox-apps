@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.4](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.3...v1.9.4) (2026-05-24)
+
+
+### Bug Fixes
+
+* **pre-commit:** exclude release-please CHANGELOG.md from markdownlint ([#266](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/266)) ([ad8b71c](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/ad8b71c5462705cbd38e2e7807da1ed401e3eb5b))
+
 ## [1.9.3](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.2...v1.9.3) (2026-05-22)
 
 
