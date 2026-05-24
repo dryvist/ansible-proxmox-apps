@@ -27,7 +27,7 @@
     mode: '0644'
   changed_when: false
 
-- name: Deploy HAProxy configuration (TCP/HTTP only)
+- name: Deploy HAProxy configuration (TCP syslog and optional HTTP/HTTPS reverse proxy)
   ansible.builtin.template:
     src: haproxy.cfg.j2
     dest: "{{ haproxy_config_file }}"
@@ -37,6 +37,7 @@
     backup: true
     validate: haproxy -f %s -c
   notify: Reload haproxy
+  no_log: true  # rendered config contains haproxy_stats_password
 
 - name: Deploy Nginx main configuration
   ansible.builtin.template:
@@ -123,6 +124,17 @@
     host: 127.0.0.1
     timeout: 10
   loop: "{{ haproxy_listen_ports }}"
+  changed_when: false
+
+- name: Verify HAProxy is listening on HTTP/HTTPS ports
+  ansible.builtin.wait_for:
+    port: "{{ item }}"
+    host: 127.0.0.1
+    timeout: 10
+  loop:
+    - "{{ haproxy_http_port }}"
+    - "{{ haproxy_https_port }}"
+  when: haproxy_http_enabled and (haproxy_http_frontends | length > 0)
   changed_when: false
 
 - name: Verify Nginx is listening on UDP ports
