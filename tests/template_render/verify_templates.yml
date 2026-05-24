@@ -446,3 +446,254 @@
           OpenProject template assertions passed:
           - docker-compose.yml.j2: image, port 80:80, OPENPROJECT_SECRET_KEY_BASE,
             SMTP env vars, persistent volumes, host name
+
+- name: Render and verify haproxy templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/haproxy/defaults/main.yml (only vars referenced by haproxy.cfg.j2)
+    haproxy_stats_enabled: true
+    haproxy_stats_port: 8404
+    haproxy_stats_user: admin
+    haproxy_stats_password: "test-stats-placeholder"
+    haproxy_stats_timeout: "30s"
+    haproxy_stats_refresh: "10s"
+    haproxy_algorithm: roundrobin
+    haproxy_mode_tcp: tcp
+    haproxy_mode_http: http
+    haproxy_log_option_tcp: tcplog
+    haproxy_log_option_http: httplog
+    haproxy_ssl_ca_base: /etc/ssl/certs
+    haproxy_ssl_crt_base: /etc/ssl/private
+    haproxy_timeout_connect: 5000
+    haproxy_timeout_client: 60000
+    haproxy_timeout_server: 60000
+    haproxy_health_check_interval: 5000
+    haproxy_health_check_timeout: 5000
+    haproxy_http_port: 80
+    haproxy_https_port: 443
+    haproxy_http_redirect_code: 301
+    haproxy_http_forwardfor: true
+    haproxy_syslog_port_mappings:
+      - { frontend: 514, backend: 1514, name: unifi }
+      - { frontend: 515, backend: 1515, name: palo_alto }
+    haproxy_syslog_backend_servers:
+      - inventory_hostname: cribl-edge-01
+        container_ip: 192.168.0.180
+      - inventory_hostname: cribl-edge-02
+        container_ip: 192.168.0.181
+    _template_dir: "../../roles/haproxy/templates"
+
+  tasks:
+    # =========================================================================
+    # Default path: haproxy_http_enabled=false (existing behavior, no opt-in)
+    # =========================================================================
+    - name: Render haproxy.cfg.j2 with HTTP disabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/haproxy.cfg.j2"
+        dest: /tmp/test_haproxy_disabled.cfg
+        mode: "0644"
+      vars:
+        haproxy_http_enabled: false
+        haproxy_http_frontends: []
+
+    - name: Read rendered haproxy.cfg (disabled)
+      ansible.builtin.slurp:
+        src: /tmp/test_haproxy_disabled.cfg
+      register: _haproxy_disabled_raw
+
+    - name: Decode haproxy.cfg disabled content
+      ansible.builtin.set_fact:
+        _haproxy_disabled: "{{ _haproxy_disabled_raw.content | b64decode }}"
+
+    - name: Assert disabled config keeps TCP/syslog frontends and backends (DRY audit no-op)
+      ansible.builtin.assert:
+        that:
+          - "'mode tcp' in _haproxy_disabled"
+          - "'option tcplog' in _haproxy_disabled"
+          - "'timeout connect 5000' in _haproxy_disabled"
+          - "'timeout client 60000' in _haproxy_disabled"
+          - "'ca-base /etc/ssl/certs' in _haproxy_disabled"
+          - "'crt-base /etc/ssl/private' in _haproxy_disabled"
+          - "'frontend syslog_unifi_514' in _haproxy_disabled"
+          - "'bind *:514' in _haproxy_disabled"
+          - "'default_backend syslog_backend_1514' in _haproxy_disabled"
+          - "'backend syslog_backend_1514' in _haproxy_disabled"
+          - "'server cribl-edge-01 192.168.0.180:1514' in _haproxy_disabled"
+        fail_msg: >-
+          DRY audit caused a behavior change with HTTP disabled — TCP/syslog
+          rendering differs from prior literal-baked config.
+
+    - name: Assert disabled config DOES NOT emit any HTTP/HTTPS frontends or backends
+      ansible.builtin.assert:
+        that:
+          - "'frontend http_in' not in _haproxy_disabled"
+          - "'frontend https_in' not in _haproxy_disabled"
+          - "'http_backend_' not in _haproxy_disabled"
+          - "'use_backend' not in _haproxy_disabled"
+          - "'X-Forwarded-Proto' not in _haproxy_disabled"
+        fail_msg: >-
+          HTTP/HTTPS section leaked into the rendered config even though
+          haproxy_http_enabled was false. The Jinja conditional gate is broken.
+
+    # =========================================================================
+    # Enabled path: single frontend entry (the Infisical case)
+    # =========================================================================
+    - name: Render haproxy.cfg.j2 with HTTP enabled and one frontend
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/haproxy.cfg.j2"
+        dest: /tmp/test_haproxy_single.cfg
+        mode: "0644"
+      vars:
+        haproxy_http_enabled: true
+        haproxy_http_frontends:
+          - name: infisical
+            server_name: infisical.test.example.com
+            backend_host: 192.168.0.108
+            backend_port: 8080
+            cert_path: /etc/ssl/private/infisical.pem
+
+    - name: Read rendered haproxy.cfg (single)
+      ansible.builtin.slurp:
+        src: /tmp/test_haproxy_single.cfg
+      register: _haproxy_single_raw
+
+    - name: Decode haproxy.cfg single content
+      ansible.builtin.set_fact:
+        _haproxy_single: "{{ _haproxy_single_raw.content | b64decode }}"
+
+    - name: Assert single-entry render has one http_in frontend with HTTPS redirect
+      ansible.builtin.assert:
+        that:
+          - "'frontend http_in' in _haproxy_single"
+          - "'bind *:80' in _haproxy_single"
+          - "'redirect scheme https code 301' in _haproxy_single"
+        fail_msg: >-
+          frontend http_in is missing or the HTTPS redirect is malformed.
+
+    - name: Assert single-entry render has https_in with SNI cert bind and per-Host routing
+      ansible.builtin.assert:
+        that:
+          - "'frontend https_in' in _haproxy_single"
+          - "'bind *:443 ssl crt /etc/ssl/private/infisical.pem' in _haproxy_single"
+          - "'use_backend http_backend_infisical if { hdr(host) -i infisical.test.example.com }' in _haproxy_single"
+          - "'http-request set-header X-Forwarded-Proto https' in _haproxy_single"
+          - "'option forwardfor' in _haproxy_single"
+        fail_msg: >-
+          frontend https_in is missing one of: SNI cert bind, use_backend ACL,
+          X-Forwarded-Proto header, or option forwardfor.
+
+    - name: Assert single-entry render has per-service backend pointed at backend_host
+      ansible.builtin.assert:
+        that:
+          - "'backend http_backend_infisical' in _haproxy_single"
+          - "'server infisical 192.168.0.108:8080 check' in _haproxy_single"
+        fail_msg: >-
+          backend http_backend_infisical missing or server line does not point
+          at backend_host:backend_port.
+
+    - name: Assert single-entry render keeps option httplog out of the backend section
+      ansible.builtin.assert:
+        that:
+          # option httplog must appear exactly twice (once per frontend) and
+          # never in any backend section. HAProxy rejects it in backends.
+          - "_haproxy_single.count('option httplog') == 2"
+        fail_msg: >-
+          option httplog occurrence count is {{ _haproxy_single.count('option httplog') }};
+          expected exactly 2 (one in http_in, one in https_in). If higher, it
+          leaked into a backend and HAProxy will reject the config.
+
+    - name: Assert single-entry render preserves TCP/syslog section alongside HTTP
+      ansible.builtin.assert:
+        that:
+          - "'frontend syslog_unifi_514' in _haproxy_single"
+          - "'backend syslog_backend_1514' in _haproxy_single"
+        fail_msg: >-
+          TCP/syslog frontends or backends disappeared when HTTP was enabled.
+
+    # =========================================================================
+    # Multi-entry render: verifies the CRITICAL bug fix (no port duplication)
+    # =========================================================================
+    - name: Render haproxy.cfg.j2 with HTTP enabled and two frontends
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/haproxy.cfg.j2"
+        dest: /tmp/test_haproxy_multi.cfg
+        mode: "0644"
+      vars:
+        haproxy_http_enabled: true
+        haproxy_http_frontends:
+          - name: infisical
+            server_name: infisical.test.example.com
+            backend_host: 192.168.0.108
+            backend_port: 8080
+            cert_path: /etc/ssl/private/infisical.pem
+          - name: gitea
+            server_name: gitea.test.example.com
+            backend_host: 192.168.0.109
+            backend_port: 3000
+            cert_path: /etc/ssl/private/gitea.pem
+
+    - name: Read rendered haproxy.cfg (multi)
+      ansible.builtin.slurp:
+        src: /tmp/test_haproxy_multi.cfg
+      register: _haproxy_multi_raw
+
+    - name: Decode haproxy.cfg multi content
+      ansible.builtin.set_fact:
+        _haproxy_multi: "{{ _haproxy_multi_raw.content | b64decode }}"
+
+    - name: Assert multi-entry render does NOT duplicate bind lines (CRITICAL fix)
+      ansible.builtin.assert:
+        that:
+          - "_haproxy_multi.count('bind *:80') == 1"
+          - "_haproxy_multi.count('bind *:443') == 1"
+          - "_haproxy_multi.count('frontend http_in') == 1"
+          - "_haproxy_multi.count('frontend https_in') == 1"
+        fail_msg: >-
+          Multi-entry render duplicated a port bind or frontend. HAProxy would
+          fail to start with "Address already in use". This is exactly the
+          original gemini-code-assist CRITICAL finding and must stay fixed.
+
+    - name: Assert multi-entry render lists both certs on the single SNI bind line
+      ansible.builtin.assert:
+        that:
+          - "'crt /etc/ssl/private/infisical.pem' in _haproxy_multi"
+          - "'crt /etc/ssl/private/gitea.pem' in _haproxy_multi"
+        fail_msg: >-
+          Multi-entry render is missing a cert keyword on the SNI bind line.
+
+    - name: Assert multi-entry render emits one use_backend ACL per service
+      ansible.builtin.assert:
+        that:
+          - "'use_backend http_backend_infisical if { hdr(host) -i infisical.test.example.com }' in _haproxy_multi"
+          - "'use_backend http_backend_gitea if { hdr(host) -i gitea.test.example.com }' in _haproxy_multi"
+        fail_msg: >-
+          Multi-entry render is missing a use_backend ACL — services would
+          collide on the catch-all and all traffic would route to the first
+          backend.
+
+    - name: Assert multi-entry render emits one per-service backend block
+      ansible.builtin.assert:
+        that:
+          - "'backend http_backend_infisical' in _haproxy_multi"
+          - "'backend http_backend_gitea' in _haproxy_multi"
+          - "'server infisical 192.168.0.108:8080 check' in _haproxy_multi"
+          - "'server gitea 192.168.0.109:3000 check' in _haproxy_multi"
+        fail_msg: >-
+          Multi-entry render is missing a per-service backend or its server line.
+
+    - name: HAProxy template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          HAProxy template assertions passed:
+          - Default path (haproxy_http_enabled: false): TCP/syslog renders;
+            HTTP/HTTPS Jinja block stays gated off; DRY audit is a true no-op
+          - Single-entry enabled: frontend http_in redirects to HTTPS,
+            frontend https_in terminates TLS via SNI cert, routes by Host
+            header to per-service backend, sets X-Forwarded-Proto;
+            option httplog appears exactly twice (frontends only)
+          - Multi-entry enabled: exactly one bind *:80 and one bind *:443
+            (CRITICAL fix), two crt entries on the SNI bind line, two
+            use_backend ACLs, two per-service backends
