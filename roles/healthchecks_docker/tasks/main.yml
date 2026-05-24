@@ -120,13 +120,21 @@
 - name: Generate Django SECRET_KEY (first run only)
   ansible.builtin.copy:
     dest: "{{ healthchecks_docker_data_dir }}/.secret_key"
-    # 50 chars of high-entropy alnum + symbols (matches Django's own
-    # get_random_secret_key default length)
-    content: "{{ lookup('password', '/dev/null length=50 chars=ascii_letters,digits') }}"
+    # 50 alphanumeric chars (matches Django get_random_secret_key length).
+    # Using community.general.random_string instead of the password lookup's
+    # 'chars=ascii_letters,digits' shortcut so the character set is
+    # specified by unambiguous boolean flags rather than relying on
+    # implicit keyword expansion in a free-form lookup argument string.
+    content: >-
+      {{ lookup('community.general.random_string',
+                length=50,
+                upper=true, lower=true, numbers=true,
+                special=false) }}
     owner: root
     group: root
     mode: "0600"
   when: not healthchecks_docker_secret_key_stat.stat.exists
+  no_log: true
 
 - name: Read Django SECRET_KEY into memory
   ansible.builtin.slurp:
@@ -177,9 +185,11 @@
     virtualenv: /opt/ansible-venv
     virtualenv_command: python3 -m venv
 
-- name: Set Python interpreter to use venv for subsequent tasks
-  ansible.builtin.set_fact:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
+# Intentionally do NOT set ansible_python_interpreter via set_fact —
+# that would leak the venv (which only has the `docker` package) to
+# subsequent tasks like uri / wait_for, breaking anything that expected
+# the system Python. Instead, scope the venv interpreter to the
+# community.docker tasks that need it via task-level vars.
 
 # =============================================================================
 # Deploy via Docker Compose
@@ -194,6 +204,9 @@
     (healthchecks_docker_compose_result.actions | default([]))
     | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
     | list | length > 0
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  no_log: true
 
 # =============================================================================
 # Health Check
