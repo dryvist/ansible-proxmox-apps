@@ -8,9 +8,15 @@ on:
 permissions:
   contents: read
 
+# One job per test file so each suite's pass/fail is independently visible
+# in the GitHub UI, logs are separate, and any data-flow suite that touches
+# the live cluster can run in parallel with the others. Smoke gates the
+# data-flow suites — no point chasing data through Splunk if Cribl/HAProxy
+# are down.
+
 jobs:
-  e2e:
-    name: Pipeline E2E Tests
+  smoke:
+    name: Smoke tests (service health)
     runs-on: [self-hosted, Linux]
     steps:
       - name: Checkout code
@@ -18,15 +24,59 @@ jobs:
 
       # Runner prerequisites: self-hosted runner is pre-baked with
       # Python 3, SOPS, age keys, and pytest. No setup steps needed.
+      - name: pytest tests/e2e/test_smoke.py
+        run: python3 -m pytest tests/e2e/test_smoke.py -v
+
+  pipeline:
+    name: Pipeline data flow
+    needs: smoke
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
       - name: Mask secrets
         uses: JacobPEvans/.github/actions/mask-secrets@main
         with:
           sops-file: secrets.enc.yaml
 
-      - name: Smoke tests (service health)
-        run: python3 -m pytest tests/e2e/test_smoke.py -v
-
-      - name: Pipeline E2E tests (data flow through HAProxy and Splunk)
+      - name: pytest tests/e2e/test_pipeline.py
         run: >-
           sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_pipeline.py tests/e2e/test_forwarding.py tests/e2e/test_macos.py -v'
+          'python3 -m pytest tests/e2e/test_pipeline.py -v'
+
+  forwarding:
+    name: Index routing and protocol forwarding
+    needs: smoke
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Mask secrets
+        uses: JacobPEvans/.github/actions/mask-secrets@main
+        with:
+          sops-file: secrets.enc.yaml
+
+      - name: pytest tests/e2e/test_forwarding.py
+        run: >-
+          sops exec-env secrets.enc.yaml
+          'python3 -m pytest tests/e2e/test_forwarding.py -v'
+
+  macos:
+    name: macOS pipeline freshness
+    needs: smoke
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Mask secrets
+        uses: JacobPEvans/.github/actions/mask-secrets@main
+        with:
+          sops-file: secrets.enc.yaml
+
+      - name: pytest tests/e2e/test_macos.py
+        run: >-
+          sops exec-env secrets.enc.yaml
+          'python3 -m pytest tests/e2e/test_macos.py -v'
