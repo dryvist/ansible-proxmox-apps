@@ -66,30 +66,33 @@ backend syslog_backend_{{ backend_port }}
 
 {% if haproxy_http_enabled and haproxy_http_frontends %}
 # =============================================================================
-# HTTP/HTTPS Reverse Proxy Frontends
-# Each entry: HTTP listener redirects to HTTPS; HTTPS terminates TLS and proxies to backend
+# HTTP/HTTPS Reverse Proxy
+# One frontend on port 80 redirects every host to HTTPS.
+# One frontend on port 443 loads all per-service certs (SNI) and routes by
+# Host header to the matching backend. One backend per service entry.
 # =============================================================================
-{% for fe in haproxy_http_frontends %}
 
-frontend http_{{ fe.name }}
+frontend http_in
   bind *:{{ haproxy_http_port }}
   mode {{ haproxy_mode_http }}
   option {{ haproxy_log_option_http }}
   redirect scheme https code {{ haproxy_http_redirect_code }}
 
-frontend https_{{ fe.name }}
-  bind *:{{ haproxy_https_port }} ssl crt {{ fe.cert_path }}
+frontend https_in
+  bind *:{{ haproxy_https_port }} ssl{% for fe in haproxy_http_frontends %} crt {{ fe.cert_path }}{% endfor %}
   mode {{ haproxy_mode_http }}
   option {{ haproxy_log_option_http }}
 {% if haproxy_http_forwardfor %}
   option forwardfor
 {% endif %}
   http-request set-header X-Forwarded-Proto https
-  default_backend http_backend_{{ fe.name }}
+{% for fe in haproxy_http_frontends %}
+  use_backend http_backend_{{ fe.name }} if { hdr(host) -i {{ fe.server_name }} }
+{% endfor %}
 
+{% for fe in haproxy_http_frontends %}
 backend http_backend_{{ fe.name }}
   mode {{ haproxy_mode_http }}
-  option {{ haproxy_log_option_http }}
   server {{ fe.name }} {{ fe.backend_host }}:{{ fe.backend_port }} check
 
 {% endfor %}
