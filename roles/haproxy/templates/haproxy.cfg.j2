@@ -3,31 +3,31 @@ global
   log stdout local1 notice
   chroot /var/lib/haproxy
   stats socket /run/haproxy/admin.sock mode 660 level admin
-  stats timeout 30s
+  stats timeout {{ haproxy_stats_timeout }}
   user haproxy
   group haproxy
   daemon
 
   # Default SSL material locations
-  ca-base /etc/ssl/certs
-  crt-base /etc/ssl/private
+  ca-base {{ haproxy_ssl_ca_base }}
+  crt-base {{ haproxy_ssl_crt_base }}
 
 defaults
   log global
-  mode tcp
-  option tcplog
-  timeout connect 5000
-  timeout client 60000
-  timeout server 60000
+  mode {{ haproxy_mode_tcp }}
+  option {{ haproxy_log_option_tcp }}
+  timeout connect {{ haproxy_timeout_connect }}
+  timeout client {{ haproxy_timeout_client }}
+  timeout server {{ haproxy_timeout_server }}
 
 {% if haproxy_stats_enabled %}
 # Statistics dashboard
 listen stats
   bind *:{{ haproxy_stats_port }}
-  mode http
+  mode {{ haproxy_mode_http }}
   stats enable
   stats uri /stats
-  stats refresh 10s
+  stats refresh {{ haproxy_stats_refresh }}
   stats admin if TRUE
   stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_password }}
 {% endif %}
@@ -41,7 +41,7 @@ listen stats
 # {{ mapping.name | upper }} - Port {{ mapping.frontend }} -> {{ mapping.backend }}
 frontend syslog_{{ mapping.name }}_{{ mapping.frontend }}
   bind *:{{ mapping.frontend }}
-  mode tcp
+  mode {{ haproxy_mode_tcp }}
   default_backend syslog_backend_{{ mapping.backend }}
 
 {% endfor %}
@@ -55,7 +55,7 @@ frontend syslog_{{ mapping.name }}_{{ mapping.frontend }}
 {% for backend_port in unique_backend_ports %}
 
 backend syslog_backend_{{ backend_port }}
-  mode tcp
+  mode {{ haproxy_mode_tcp }}
   balance {{ haproxy_algorithm }}
   option tcp-check
   timeout server {{ haproxy_health_check_timeout }}
@@ -63,3 +63,34 @@ backend syslog_backend_{{ backend_port }}
   server {{ server.inventory_hostname }} {{ server.container_ip }}:{{ backend_port }} check inter {{ haproxy_health_check_interval }}
 {% endfor %}
 {% endfor %}
+
+{% if haproxy_http_enabled and haproxy_http_frontends %}
+# =============================================================================
+# HTTP/HTTPS Reverse Proxy Frontends
+# Each entry: HTTP listener redirects to HTTPS; HTTPS terminates TLS and proxies to backend
+# =============================================================================
+{% for fe in haproxy_http_frontends %}
+
+frontend http_{{ fe.name }}
+  bind *:{{ haproxy_http_port }}
+  mode {{ haproxy_mode_http }}
+  option {{ haproxy_log_option_http }}
+  redirect scheme https code {{ haproxy_http_redirect_code }}
+
+frontend https_{{ fe.name }}
+  bind *:{{ haproxy_https_port }} ssl crt {{ fe.cert_path }}
+  mode {{ haproxy_mode_http }}
+  option {{ haproxy_log_option_http }}
+{% if haproxy_http_forwardfor %}
+  option forwardfor
+{% endif %}
+  http-request set-header X-Forwarded-Proto https
+  default_backend http_backend_{{ fe.name }}
+
+backend http_backend_{{ fe.name }}
+  mode {{ haproxy_mode_http }}
+  option {{ haproxy_log_option_http }}
+  server {{ fe.name }} {{ fe.backend_host }}:{{ fe.backend_port }} check
+
+{% endfor %}
+{% endif %}
