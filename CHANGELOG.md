@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.10.0...v1.11.0) (2026-05-24)
+
+
+### Features
+
+* **e2e:** add macOS Cribl Edge -&gt; Splunk freshness gate ([80926fb](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/80926fb2bed16c89a90e93cfaac628d1d7c2cf3a))
+
 ## [1.10.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.9.4...v1.10.0) (2026-05-24)
 
 
