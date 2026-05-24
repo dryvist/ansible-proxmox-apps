@@ -1,0 +1,55 @@
+---
+# Healthchecks (cronjob monitoring / deadman's switch) — self-hosted.
+# Receives heartbeats from Cribl Edge on macbook-m4 (the nix-darwin
+# cribl-edge-watchdog daemon) and alerts via email when a heartbeat is missed.
+# Paired with healthchecks.io SaaS at the macbook-m4 LaunchDaemon — the two
+# instances are independent so losing either does not leave us blind.
+
+# Container image — pinned. Bump via Renovate or manual review.
+healthchecks_docker_image: "healthchecks/healthchecks:v3.7"
+healthchecks_docker_container_name: healthchecks
+
+# HTTP port the container exposes. Internal Django default is 8000; we publish
+# the same so URLs are unsurprising.
+healthchecks_docker_http_port: 8000
+
+# Persistent state (SQLite database, logs).
+healthchecks_docker_data_dir: /opt/healthchecks
+
+# Path to the SQLite db inside the container (matches the data dir mount).
+healthchecks_docker_db_path: /data/hc.sqlite
+
+# Django ALLOWED_HOSTS. "*" is acceptable for an internal-only deployment;
+# tighten via inventory override if exposed beyond the LAN.
+healthchecks_docker_allowed_hosts: "*"
+
+# Base URL the UI emits in ping links — must be reachable from the Mac.
+# Override per-inventory to your internal domain. Default keeps the IP form
+# so the role works on a fresh LXC before DNS is wired.
+healthchecks_docker_site_root: >-
+  http://{{ hostvars[inventory_hostname]['container_ip'] | default('127.0.0.1') }}:{{ healthchecks_docker_http_port }}
+healthchecks_docker_site_name: "Healthchecks (homelab)"
+
+# Email delivery. Defaults wire to Mailpit LXC (already in this repo) so
+# alerts land in the developer Mailpit UI without extra config. Override
+# per-inventory to use a real SMTP server when you want alerts to leave
+# the LAN.
+healthchecks_docker_email_host: >-
+  {{ hostvars['mailpit']['container_ip'] | default('mailpit') }}
+healthchecks_docker_email_port: 1025
+healthchecks_docker_email_use_tls: false
+healthchecks_docker_email_host_user: ""
+healthchecks_docker_email_host_password: ""
+healthchecks_docker_default_from_email: "healthchecks@homelab.example.local"
+
+# Django SECRET_KEY. Generated once on the LXC and persisted to
+# {{ healthchecks_docker_data_dir }}/.secret_key (root:root 0600). Override
+# only if you need to share an explicit value across hosts.
+healthchecks_docker_secret_key: ""
+
+# Admin user. The Healthchecks image does not provision a superuser by
+# default; an empty username skips the post-deploy createsuperuser call so
+# the role stays idempotent. Override per-inventory to create one
+# automatically.
+healthchecks_docker_admin_email: ""
+healthchecks_docker_admin_password: ""

@@ -1,0 +1,253 @@
+---
+# Healthchecks Docker deployment.
+#
+# Installs Docker + Compose on the target LXC, generates (and persists) a
+# Django SECRET_KEY on first run, then deploys the healthchecks/healthchecks
+# image via Docker Compose with a SQLite-backed data directory.
+#
+# Mirrors the ntfy_docker role's structure (Docker repo + fuse-overlayfs +
+# Python venv for community.docker, then compose deploy + health check).
+
+# =============================================================================
+# Docker Installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    healthchecks_docker_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ healthchecks_docker_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ healthchecks_docker_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Configure Docker to use fuse-overlayfs storage driver
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "fuse-overlayfs"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: healthchecks_docker_daemon_config
+
+- name: Restart Docker to apply fuse-overlayfs configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: healthchecks_docker_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Healthchecks Data Directories
+# =============================================================================
+
+- name: Create healthchecks data directory
+  ansible.builtin.file:
+    path: "{{ healthchecks_docker_data_dir }}/data"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# =============================================================================
+# Django SECRET_KEY (generate-once, persist on disk)
+# =============================================================================
+# The image needs a SECRET_KEY at boot; if we randomized it per play, every
+# deployment would invalidate all active sessions. Persist it in a root-only
+# file the first time the role runs and reuse it thereafter.
+
+- name: Check for existing Django SECRET_KEY
+  ansible.builtin.stat:
+    path: "{{ healthchecks_docker_data_dir }}/.secret_key"
+  register: healthchecks_docker_secret_key_stat
+
+- name: Generate Django SECRET_KEY (first run only)
+  ansible.builtin.copy:
+    dest: "{{ healthchecks_docker_data_dir }}/.secret_key"
+    # 50 alphanumeric chars (matches Django get_random_secret_key length).
+    # Using community.general.random_string instead of the password lookup's
+    # 'chars=ascii_letters,digits' shortcut so the character set is
+    # specified by unambiguous boolean flags rather than relying on
+    # implicit keyword expansion in a free-form lookup argument string.
+    content: >-
+      {{ lookup('community.general.random_string',
+                length=50,
+                upper=true, lower=true, numbers=true,
+                special=false) }}
+    owner: root
+    group: root
+    mode: "0600"
+  when: not healthchecks_docker_secret_key_stat.stat.exists
+  no_log: true
+
+- name: Read Django SECRET_KEY into memory
+  ansible.builtin.slurp:
+    src: "{{ healthchecks_docker_data_dir }}/.secret_key"
+  register: healthchecks_docker_secret_key_file
+  no_log: true
+
+- name: Resolve effective SECRET_KEY (inventory override or persisted file)
+  ansible.builtin.set_fact:
+    healthchecks_docker_secret_key: >-
+      {{ healthchecks_docker_secret_key
+         if healthchecks_docker_secret_key | length > 0
+         else (healthchecks_docker_secret_key_file.content | b64decode | trim) }}
+  no_log: true
+
+# =============================================================================
+# Compose Deployment
+# =============================================================================
+
+- name: Deploy healthchecks docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ healthchecks_docker_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"  # contains SECRET_KEY
+  no_log: true
+  notify: Restart healthchecks
+
+# =============================================================================
+# Python venv for Ansible Docker modules
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# Intentionally do NOT set ansible_python_interpreter via set_fact —
+# that would leak the venv (which only has the `docker` package) to
+# subsequent tasks like uri / wait_for, breaking anything that expected
+# the system Python. Instead, scope the venv interpreter to the
+# community.docker tasks that need it via task-level vars.
+
+# =============================================================================
+# Deploy via Docker Compose
+# =============================================================================
+
+- name: Deploy healthchecks via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ healthchecks_docker_data_dir }}"
+    state: present
+  register: healthchecks_docker_compose_result
+  changed_when: >-
+    (healthchecks_docker_compose_result.actions | default([]))
+    | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
+    | list | length > 0
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  no_log: true
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+- name: Wait for healthchecks HTTP port to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ healthchecks_docker_http_port }}"
+    timeout: 60
+
+- name: Verify healthchecks login page renders
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ healthchecks_docker_http_port }}/accounts/login/"
+    method: GET
+    status_code: 200
+  register: healthchecks_docker_health
+  retries: 10
+  delay: 5
+  until: healthchecks_docker_health.status == 200
+  changed_when: false
+
+# =============================================================================
+# Optional admin superuser
+# =============================================================================
+
+- name: Create Healthchecks admin superuser (if configured)
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ healthchecks_docker_container_name }}
+      /opt/healthchecks/manage.py createsuperuser
+      --noinput
+      --email {{ healthchecks_docker_admin_email }}
+  environment:
+    DJANGO_SUPERUSER_PASSWORD: "{{ healthchecks_docker_admin_password }}"
+  register: healthchecks_docker_superuser
+  changed_when: "'created successfully' in (healthchecks_docker_superuser.stdout | default(''))"
+  failed_when:
+    - healthchecks_docker_superuser.rc != 0
+    - "'already exists' not in (healthchecks_docker_superuser.stderr | default(''))"
+  when:
+    - healthchecks_docker_admin_email | length > 0
+    - healthchecks_docker_admin_password | length > 0
+  no_log: true
