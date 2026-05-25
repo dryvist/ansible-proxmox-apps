@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.12.1...v1.13.0) (2026-05-25)
+
+
+### Features
+
+* **infisical:** add infisical_docker role + group_vars + tests ([#277](https://github.com/JacobPEvans/ansible-proxmox-apps/issues/277)) ([a87e579](https://github.com/JacobPEvans/ansible-proxmox-apps/commit/a87e579145d6273782ec5787ea3728bd9c8c134f))
+
 ## [1.12.1](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.12.0...v1.12.1) (2026-05-25)
 
 
