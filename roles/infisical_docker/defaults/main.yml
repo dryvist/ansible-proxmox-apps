@@ -1,0 +1,88 @@
+---
+# Infisical self-hosted secrets-management platform (Docker Compose in LXC)
+# https://infisical.com/docs/self-hosting/deployments/docker-compose
+#
+# Bundled stack: postgres + redis + infisical app.
+# All literals live here; the template references vars only (DRY).
+
+# Image tags — single source of truth.
+infisical_docker_postgres_image: "postgres:14-alpine"
+infisical_docker_redis_image: "redis:7-alpine"
+infisical_docker_app_image: "infisical/infisical:latest"
+
+infisical_docker_container_name: infisical
+infisical_docker_data_dir: /opt/infisical
+infisical_docker_postgres_data_dir: "{{ infisical_docker_data_dir }}/postgres"
+infisical_docker_redis_data_dir: "{{ infisical_docker_data_dir }}/redis"
+
+# Container-internal mount paths (image contracts — set once, referenced in template).
+infisical_docker_postgres_internal_data: /var/lib/postgresql/data
+infisical_docker_redis_internal_data: /data
+
+# Compose service names (also used as Docker DNS hostnames in env vars).
+infisical_docker_db_service: db
+infisical_docker_redis_service: redis
+infisical_docker_app_service: infisical
+
+# Database identity.
+infisical_docker_db_name: infisical
+infisical_docker_db_user: infisical
+
+# Restart policy applied to every service in the stack.
+infisical_docker_restart_policy: unless-stopped
+
+# Site URL composition. Auto-derived from inventory hostname + PROXMOX_DOMAIN.
+# Always HTTPS because the canonical access path is HAProxy → Infisical, and the
+# HAProxy frontend enforces TLS (see roles/haproxy → haproxy_http_frontends).
+infisical_docker_site_url: "https://{{ hostname }}.{{ lookup('env', 'PROXMOX_DOMAIN') }}"
+
+# Port pulled from the terraform pipeline_constants (DRY: no port literal here).
+_infisical_docker_api_port_err: >-
+  terraform_data.constants.service_ports.infisical_api missing —
+  regenerate terraform_inventory.json via
+  `terragrunt output -json ansible_inventory`.
+infisical_docker_api_port: >-
+  {{ hostvars['localhost']['terraform_data']
+     ['constants']['service_ports']['infisical_api']
+     | mandatory(_infisical_docker_api_port_err) }}
+_infisical_docker_postgres_port_err: >-
+  terraform_data.constants.service_ports.postgres_default missing —
+  regenerate terraform_inventory.json via
+  `terragrunt output -json ansible_inventory`.
+infisical_docker_postgres_port: >-
+  {{ hostvars['localhost']['terraform_data']
+     ['constants']['service_ports']['postgres_default']
+     | mandatory(_infisical_docker_postgres_port_err) }}
+_infisical_docker_redis_port_err: >-
+  terraform_data.constants.service_ports.redis_default missing —
+  regenerate terraform_inventory.json via
+  `terragrunt output -json ansible_inventory`.
+infisical_docker_redis_port: >-
+  {{ hostvars['localhost']['terraform_data']
+     ['constants']['service_ports']['redis_default']
+     | mandatory(_infisical_docker_redis_port_err) }}
+
+# URL composition — no port literals in the template, all reference vars above.
+infisical_docker_db_uri: >-
+  postgres://{{ infisical_docker_db_user }}:{{ infisical_docker_db_password }}@{{
+  infisical_docker_db_service }}:{{ infisical_docker_postgres_port }}/{{
+  infisical_docker_db_name }}
+infisical_docker_redis_url: >-
+  redis://{{ infisical_docker_redis_service }}:{{ infisical_docker_redis_port }}
+
+# Secrets (sourced from SOPS via `sops exec-env secrets.enc.yaml ...`).
+# Same precedent as roles/mssql_docker/defaults: lookup('env') + mandatory.
+# Generate locally:
+#   openssl rand -base64 32   # INFISICAL_ENCRYPTION_KEY
+#   openssl rand -base64 32   # INFISICAL_AUTH_SECRET
+#   openssl rand -base64 24   # INFISICAL_DB_PASSWORD
+# Then `sops secrets.enc.yaml` and paste.
+infisical_docker_encryption_key: >-
+  {{ lookup('env', 'INFISICAL_ENCRYPTION_KEY')
+     | mandatory('INFISICAL_ENCRYPTION_KEY must be set (openssl rand -base64 32; store in SOPS)') }}
+infisical_docker_auth_secret: >-
+  {{ lookup('env', 'INFISICAL_AUTH_SECRET')
+     | mandatory('INFISICAL_AUTH_SECRET must be set (openssl rand -base64 32; store in SOPS)') }}
+infisical_docker_db_password: >-
+  {{ lookup('env', 'INFISICAL_DB_PASSWORD')
+     | mandatory('INFISICAL_DB_PASSWORD must be set (openssl rand -base64 24; store in SOPS)') }}
