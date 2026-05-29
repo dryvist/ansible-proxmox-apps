@@ -1,0 +1,60 @@
+#!/usr/sbin/nft -f
+{#
+  Fail-closed VPN killswitch for the download-vpn LXC.
+
+  Rendered by the download_vpn role. Default OUTPUT policy is DROP for BOTH
+  IPv4 and IPv6. The ONLY permitted egress is:
+    - loopback
+    - the LAN subnet (web UIs + *arr <-> qBittorrent/Prowlarr)
+    - UDP to the Proton WireGuard endpoint IP:port (the handshake)
+    - anything leaving via the wg0 tunnel interface
+  Everything else is dropped. If wg0 goes down there is no route and no rule
+  that permits non-VPN egress, so traffic is cut off instantly.
+
+  The single `inet` table applies to v4 and v6 simultaneously. IPv6 is also
+  disabled at the kernel (sysctl) — this ip6 saddr/daddr coverage is the
+  belt to that suspenders: even if v6 were re-enabled, only loopback, LAN and
+  wg0 could egress, never the public internet.
+-#}
+{% set _endpoint_host = download_vpn_wg_endpoint.split(':')[0] %}
+{% set _endpoint_port = download_vpn_wg_endpoint.split(':')[1] %}
+table inet killswitch {
+  chain input {
+    type filter hook input priority 0; policy accept;
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    # FAIL-CLOSED: default drop. Order matters — accepts first, implicit drop.
+    type filter hook output priority 0; policy drop;
+
+    # 1. Loopback always allowed.
+    oif "lo" accept
+
+    # 2. Established/related return traffic.
+    ct state established,related accept
+
+    # 3. LAN subnet (web UIs + *arr <-> qBittorrent/Prowlarr coordination).
+    ip daddr {{ download_vpn_lan_subnet }} accept
+{% if download_vpn_endpoint_is_ipv4 %}
+    # 4. WireGuard handshake to the Proton endpoint (UDP). v4 endpoint.
+    ip daddr {{ _endpoint_host }} udp dport {{ _endpoint_port }} accept
+{% else %}
+    # 4. WireGuard handshake to the Proton endpoint (UDP). v6 endpoint.
+    ip6 daddr {{ _endpoint_host }} udp dport {{ _endpoint_port }} accept
+{% endif %}
+
+    # 5. Anything via the VPN tunnel.
+    oifname "{{ download_vpn_wg_interface }}" accept
+
+    # 6. DNS to the VPN-provided resolver only travels via wg0 (covered by #5);
+    #    no separate rule needed. Everything not matched above is dropped by
+    #    the chain policy — including ALL non-loopback IPv6 egress, which has
+    #    no accept rule here.
+    # Explicit log + drop for visibility during leak testing.
+    log prefix "killswitch-drop: " flags all counter drop
+  }
+}

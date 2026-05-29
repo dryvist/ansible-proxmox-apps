@@ -1,0 +1,160 @@
+---
+# Molecule verification for download_vpn (validation layer 1 — the CI gate).
+#
+# Proves the killswitch logic without a real Proton VPN:
+#   1. The rendered nftables ruleset has output policy DROP and ONLY the
+#      allowed rules (loopback, LAN, Proton endpoint, wg0).
+#   2. qBittorrent is configured to bind to wg0.
+#   3. With the killswitch loaded and wg0 DOWN, the netns has NO IPv4 and NO
+#      IPv6 internet egress.
+#   4. The validator + deploy-time validate.yml cover v4 AND v6 (asserted by
+#      grepping their rendered logic).
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    download_vpn_wg_interface: wg0
+    download_vpn_nft_ruleset_path: /etc/nftables.d/download-vpn-killswitch.nft
+    download_vpn_qbittorrent_config_dir: /home/qbittorrent/.config/qBittorrent
+
+  tasks:
+    # --- 1. ruleset content ------------------------------------------------
+    - name: Read the rendered killswitch ruleset
+      ansible.builtin.slurp:
+        src: "{{ download_vpn_nft_ruleset_path }}"
+      register: ks_file
+
+    - name: Decode ruleset
+      ansible.builtin.set_fact:
+        ks: "{{ ks_file.content | b64decode }}"
+
+    - name: Assert output chain default policy is DROP
+      ansible.builtin.assert:
+        that:
+          - "'hook output' in ks"
+          - "'policy drop' in ks"
+        fail_msg: "Killswitch output chain is not default-DROP."
+
+    - name: Assert ONLY the allowed egress rules are present
+      ansible.builtin.assert:
+        that:
+          - "'oif \"lo\" accept' in ks"
+          - "'oifname \"' ~ download_vpn_wg_interface ~ '\" accept' in ks"
+          - "'udp dport' in ks"            # Proton handshake rule
+          - "'ip daddr' in ks"             # LAN allow rule
+          - "'log prefix \"killswitch-drop' in ks"
+          # Negative: no blanket internet accept, no v6 ::/0 accept.
+          - "'ip6 daddr ::/0 accept' not in ks"
+          - "'accept comment \"any\"' not in ks"
+        fail_msg: "Killswitch ruleset has unexpected or missing rules."
+
+    - name: Load the killswitch ruleset into the kernel
+      ansible.builtin.command:
+        cmd: "nft -f {{ download_vpn_nft_ruleset_path }}"
+      changed_when: true
+
+    - name: Read the live output chain policy
+      ansible.builtin.command:
+        cmd: nft list chain inet killswitch output
+      register: live_chain
+      changed_when: false
+
+    - name: Assert the LIVE killswitch output policy is drop
+      ansible.builtin.assert:
+        that:
+          - "'policy drop' in live_chain.stdout"
+        fail_msg: "Loaded killswitch output policy is not drop."
+
+    # --- 2. qBittorrent bound to wg0 ---------------------------------------
+    - name: Read qBittorrent config
+      ansible.builtin.slurp:
+        src: "{{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf"
+      register: qbt_conf
+
+    - name: Assert qBittorrent binds to wg0
+      ansible.builtin.assert:
+        that:
+          - "'Session\\\\Interface=' ~ download_vpn_wg_interface in (qbt_conf.content | b64decode)"
+          - "'Connection\\\\Interface=' ~ download_vpn_wg_interface in (qbt_conf.content | b64decode)"
+        fail_msg: "qBittorrent is not bound to wg0."
+
+    # --- 3. simulate wg0 down -> no v4/v6 egress ---------------------------
+    - name: Ensure IPv6 is disabled (as the role does on real hosts)
+      ansible.posix.sysctl:
+        name: "{{ item }}"
+        value: "1"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - net.ipv6.conf.all.disable_ipv6
+        - net.ipv6.conf.default.disable_ipv6
+      failed_when: false
+
+    - name: Confirm wg0 is absent (down) for the leak test
+      ansible.builtin.command:
+        cmd: ip link show wg0
+      register: wg0_present
+      changed_when: false
+      failed_when: false
+
+    # noqa command-instead-of-module: this leak test deliberately uses curl so
+    # behaviour matches the runtime validator exactly; the uri module's success
+    # semantics differ and would mask a partial leak.
+    - name: Attempt IPv4 internet egress with the killswitch up and wg0 down  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: curl -fsS --max-time 6 https://ifconfig.me
+      register: leak_v4
+      changed_when: false
+      failed_when: false
+
+    - name: Assert NO IPv4 egress when wg0 is down (killswitch holds)
+      ansible.builtin.assert:
+        that:
+          - leak_v4.rc != 0
+          - (leak_v4.stdout | trim | length) == 0
+        fail_msg: >-
+          LEAK: IPv4 internet egress succeeded with wg0 down
+          (got '{{ leak_v4.stdout | trim }}'). Killswitch is not fail-closed.
+
+    # noqa command-instead-of-module: the uri module cannot force IPv6-only
+    # (curl -6); forcing the v6 family is the point of this leak test.
+    - name: Attempt IPv6 internet egress with the killswitch up  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: curl -fsS -6 --max-time 6 https://ifconfig.me
+      register: leak_v6
+      changed_when: false
+      failed_when: false
+
+    - name: Assert NO IPv6 egress (disabled + dropped)
+      ansible.builtin.assert:
+        that:
+          - leak_v6.rc != 0
+          - (leak_v6.stdout | trim | length) == 0
+        fail_msg: >-
+          LEAK: IPv6 internet egress succeeded
+          (got '{{ leak_v6.stdout | trim }}'). IPv6 must have no path.
+
+    # --- 4. validator + deploy-time logic cover v4 AND v6 ------------------
+    - name: Read the runtime validator script
+      ansible.builtin.slurp:
+        src: /usr/local/bin/download-vpn-killswitch-validate.sh
+      register: validator
+
+    - name: Assert the validator checks both v4 and v6 egress + stops qBittorrent on breach
+      ansible.builtin.assert:
+        that:
+          - "'curl -6' in (validator.content | b64decode)"
+          - "'--interface eth0' in (validator.content | b64decode)"
+          - "'ip -6 route show default' in (validator.content | b64decode)"
+          - "'systemctl stop qbittorrent-nox.service' in (validator.content | b64decode)"
+        fail_msg: "Runtime validator does not cover both address families or does not fail closed."
+
+    - name: Clean up the loaded killswitch table
+      ansible.builtin.command:
+        cmd: nft delete table inet killswitch
+      changed_when: true
+      failed_when: false

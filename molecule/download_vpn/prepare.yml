@@ -1,0 +1,49 @@
+---
+# Molecule preparation for the download_vpn scenario.
+
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for container to be ready
+      ansible.builtin.wait_for_connection:
+        timeout: 30
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      register: _apt_update
+      until: _apt_update is succeeded
+      retries: 3
+      delay: 10
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install base packages the role expects pre-present
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - iproute2
+          - procps
+          - systemd
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # The role consumes terraform_data.constants.media_ports and the host's
+    # container_ip (normally injected by load_terraform.yml). Provide a minimal
+    # stand-in so the role renders without the full terraform inventory.
+    - name: Inject minimal terraform_data + inventory facts for the role
+      ansible.builtin.set_fact:
+        container_ip: "192.168.0.210"
+        terraform_data:
+          constants:
+            media_ports:
+              qbittorrent_web: 8080
+              prowlarr_web: 9696
+            notification_ports:
+              ntfy_http: 8080

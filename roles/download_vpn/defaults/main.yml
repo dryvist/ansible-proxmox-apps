@@ -1,0 +1,118 @@
+---
+# download_vpn role defaults
+#
+# VPN-locked downloader: qBittorrent-nox + Prowlarr behind a Proton WireGuard
+# tunnel (wg0) with a fail-closed nftables killswitch. wg0 down => no route =>
+# zero egress. Both apps bind to wg0 so even a killswitch gap cannot leak.
+#
+# SECURITY MODEL (do not weaken without re-running all three validation layers):
+#   - nftables output policy DROP on BOTH ip (v4) and ip6 (v6) families.
+#   - IPv6 is additionally disabled at the kernel (sysctl) because Proton is a
+#     dual-stack tunnel (Interface has a v6 address, AllowedIPs = 0.0.0.0/0,::/0).
+#     Defense in depth: even if a v6 path appeared, nft ip6 DROP catches it.
+#   - Allowed egress = loopback + LAN subnet + UDP to the Proton endpoint
+#     (handshake) + anything out wg0. Nothing else.
+
+# --- Service user / install layout ------------------------------------------
+download_vpn_user: qbittorrent
+download_vpn_group: media
+# Shared group GID so *arr LXCs and this LXC agree on ownership of the
+# bind-mounted tank datasets. Override to match the host `media` group.
+download_vpn_group_gid: 13000
+
+# Bind-mounted host datasets (provisioned by terraform mount_points).
+download_vpn_downloads_dir: /mnt/downloads
+download_vpn_media_dir: /mnt/media
+
+# --- WireGuard (Proton) ------------------------------------------------------
+download_vpn_wg_interface: wg0
+download_vpn_wg_config_path: /etc/wireguard/wg0.conf
+# Proton WireGuard parameters — sourced from SOPS env (see
+# secrets.enc.yaml.example). NEVER hardcode key material or the endpoint.
+download_vpn_wg_private_key: "{{ lookup('env', 'PROTON_WG_PRIVATE_KEY') }}"
+# Tunnel interface address(es). Proton issues a dual-stack pair
+# ("10.2.0.2/32,fd00::.../128"). We keep the full value for the wg0 Address line
+# but rely on kernel IPv6 disable + nft ip6 DROP so the v6 half cannot leak.
+download_vpn_wg_address: "{{ lookup('env', 'PROTON_WG_ADDRESS') }}"
+download_vpn_wg_dns: "{{ lookup('env', 'PROTON_WG_DNS') }}"
+# Proton server public key + "host:port" endpoint.
+download_vpn_wg_peer_public_key: "{{ lookup('env', 'PROTON_WG_PEER_PUBLIC_KEY') }}"
+download_vpn_wg_endpoint: "{{ lookup('env', 'PROTON_WG_ENDPOINT') }}"
+# AllowedIPs deliberately routes ONLY IPv4 default via the tunnel. We do NOT
+# add ::/0 — IPv6 is killed at the kernel, so adding a v6 default route would
+# only create a path the killswitch then has to fight. IPv4 default through
+# wg0 is what carries torrent + indexer traffic.
+download_vpn_wg_allowed_ips: "0.0.0.0/0"
+download_vpn_wg_persistent_keepalive: 25
+
+# --- LAN reachability --------------------------------------------------------
+# LAN subnet that may reach the web UIs and that *arr/qBit/Prowlarr use to talk
+# to each other. Derived from the container's own /24 (terraform-owned IP) so
+# nothing is hardcoded. Override only if the LAN is not a /24.
+download_vpn_lan_subnet: >-
+  {{ (container_ip | default(ansible_default_ipv4.address) ~ '/24')
+     | ansible.utils.ipaddr('network/prefix') }}
+
+# --- qBittorrent -------------------------------------------------------------
+download_vpn_qbittorrent_package: qbittorrent-nox
+download_vpn_qbittorrent_user: "{{ download_vpn_user }}"
+download_vpn_qbittorrent_config_dir: "/home/{{ download_vpn_user }}/.config/qBittorrent"
+# Web UI port from terraform constants (no hardcoded port).
+download_vpn_qbittorrent_web_port: >-
+  {{ terraform_data.constants.media_ports.qbittorrent_web }}
+# Admin password for the WebUI — from SOPS env.
+download_vpn_qbittorrent_admin_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') }}"
+# CRITICAL: bind qBittorrent's traffic to wg0 (interface binding). With the
+# killswitch this is belt-and-suspenders; binding alone closed the 30% leak
+# seen in killswitch-only testing.
+download_vpn_qbittorrent_interface: "{{ download_vpn_wg_interface }}"
+
+# --- Prowlarr ----------------------------------------------------------------
+download_vpn_prowlarr_install_dir: /opt/Prowlarr
+download_vpn_prowlarr_data_dir: "/var/lib/prowlarr"
+download_vpn_prowlarr_user: "{{ download_vpn_user }}"
+download_vpn_prowlarr_web_port: >-
+  {{ terraform_data.constants.media_ports.prowlarr_web }}
+# Prowlarr release tarball (linux-x64). Rolling "master" build channel.
+download_vpn_prowlarr_tarball_url: >-
+  https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=x64
+
+# --- NAT-PMP port forwarding -------------------------------------------------
+# Proton supports NAT-PMP. A systemd service loops natpmpc to keep a forwarded
+# port alive and pushes it into qBittorrent's listen port via the WebUI API.
+download_vpn_natpmp_enabled: true
+# Proton NAT-PMP gateway is the tunnel gateway (10.2.0.1 for Proton). Derived
+# from the wg0 peer; override if Proton changes it.
+download_vpn_natpmp_gateway: "10.2.0.1"
+download_vpn_natpmp_refresh_seconds: 45
+
+# --- Continuous runtime validation ------------------------------------------
+# systemd timer cadence for the fail-closed validator. On ANY breach it stops
+# qBittorrent and alerts (ntfy + healthchecks deadman).
+download_vpn_validator_interval: "2min"
+# ntfy alert target. Reuses the repo's ntfy LXC + push topic convention.
+download_vpn_ntfy_url: >-
+  http://{{ hostvars['ntfy']['container_ip'] | default('ntfy') }}:{{
+  terraform_data.constants.notification_ports.ntfy_http }}/{{ download_vpn_ntfy_topic }}
+download_vpn_ntfy_topic: "killswitch"
+# healthchecks.io-style deadman ping URL. Empty => deadman ping skipped (the
+# ntfy alert still fires). Set to the per-check URL from the healthchecks LXC.
+download_vpn_healthcheck_url: "{{ lookup('env', 'DOWNLOAD_VPN_HEALTHCHECK_URL') | default('', true) }}"
+
+# Public-IP probe used by the live egress checks (must return the caller IP).
+download_vpn_ip_probe_url: "https://ifconfig.me"
+download_vpn_ip_probe_url_v6: "https://ifconfig.me"
+
+# --- Test / orchestration toggles -------------------------------------------
+# When false, the role still renders ALL config (killswitch ruleset, wg0.conf,
+# qBittorrent.conf, unit files) but skips the live service start / VPN
+# bring-up / WebUI calls that need a real Proton tunnel. Molecule sets this
+# false so CI can exercise the killswitch logic without a real VPN. The live
+# deploy leaves it true.
+download_vpn_manage_services: true
+
+# --- Deployed file paths (rarely overridden) --------------------------------
+download_vpn_nft_ruleset_path: /etc/nftables.d/download-vpn-killswitch.nft
+download_vpn_natpmp_script_path: /usr/local/bin/download-vpn-natpmp.sh
+download_vpn_natpmp_env_path: /etc/default/download-vpn-natpmp
+download_vpn_validator_script_path: /usr/local/bin/download-vpn-killswitch-validate.sh

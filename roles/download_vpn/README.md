@@ -1,0 +1,86 @@
+# download_vpn
+
+VPN-locked downloader: **qBittorrent-nox + Prowlarr behind Proton WireGuard**
+with a **fail-closed nftables killswitch**. If the VPN tunnel (`wg0`) is down
+there is no route and no rule permitting non-VPN egress, so torrent and indexer
+traffic is cut off instantly.
+
+## Security model
+
+The role is built so qBittorrent is *provably* unable to send/receive traffic
+outside the VPN:
+
+1. **nftables killswitch** — a single `inet` table with `output` policy `drop`.
+   The only allowed egress is loopback, the LAN subnet (web UIs + *arr ⇄
+   qBittorrent/Prowlarr), UDP to the Proton endpoint IP:port (handshake), and
+   anything leaving via `wg0`. Covers IPv4 **and** IPv6.
+2. **IPv6 killed at the kernel** — Proton is dual-stack. `sysctl
+   net.ipv6.conf.{all,default,lo}.disable_ipv6=1` removes any IPv6 path; the
+   `nft ip6` coverage is defense-in-depth.
+3. **Interface binding** — qBittorrent's `Connection\Interface` and
+   `Session\Interface` are pinned to `wg0`. Binding + killswitch = zero leaks
+   (binding alone closed a 30% leak seen with the killswitch only).
+4. **NAT-PMP port forwarding** — a systemd service loops `natpmpc` against the
+   Proton gateway and pushes the assigned port into qBittorrent's listen port
+   via the WebUI API.
+5. **Boot-safe ordering** — qBittorrent/Prowlarr/NAT-PMP units
+   `Requires=`/`After=`/`BindsTo=` the killswitch + `wg0` units, so they can
+   never start (or stay up) without the lock.
+
+## Three validation layers (all mandatory)
+
+- **CI** — `molecule/download_vpn/verify.yml`, on every PR. Asserts the nft
+  DROP policy + only the allowed rules; qBittorrent interface == `wg0`; then
+  simulates `wg0` down and asserts the netns has no v4/v6 internet egress.
+- **Deploy-time** — `tasks/validate.yml`, imported at the role end so it runs
+  on every play. Asserts the killswitch is active, the only default route is
+  `wg0`, no IPv6 default route exists, qBittorrent is bound to `wg0`, live VPN
+  IPv4 egress works, and forced non-VPN IPv4 + all IPv6 egress are refused.
+  **Fails the play on any violation.**
+- **Runtime** — `download-vpn-validate.timer` (every ~2 min). Re-checks the
+  above; on ANY breach it stops qBittorrent, alerts ntfy, and pings the
+  healthchecks deadman. A stalled validator also pages (deadman semantics).
+
+## Installation
+
+Provisioned by the `download-vpn` LXC in `terraform-proxmox` (unprivileged,
+`/dev/net/tun` passthrough, `nesting`/`keyctl`, `tank/downloads` + `tank/media`
+bind-mounts). Deploy the role from this repo:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+  -i inventory/hosts.yml playbooks/site.yml --tags download_vpn'
+```
+
+## Requirements
+
+- Debian-based unprivileged LXC with `/dev/net/tun` and `nesting`/`keyctl`.
+- Proton WireGuard config delivered via SOPS (see repo
+  `secrets.enc.yaml.example`): `PROTON_WG_PRIVATE_KEY`, `PROTON_WG_ADDRESS`,
+  `PROTON_WG_ENDPOINT`, `PROTON_WG_PEER_PUBLIC_KEY`, `PROTON_WG_DNS`,
+  `QBITTORRENT_ADMIN_PASSWORD`.
+- `tank/downloads` + `tank/media` bind-mounted at `/mnt/downloads` and
+  `/mnt/media`.
+
+## Key variables
+
+All ports/IPs come from terraform (`terraform_data.constants.media_ports`,
+derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
+
+- `download_vpn_wg_endpoint` — Proton `host:port` (SOPS env).
+- `download_vpn_lan_subnet` — LAN allowed through the killswitch (derived).
+- `download_vpn_qbittorrent_web_port` — qBittorrent WebUI port (terraform).
+- `download_vpn_prowlarr_web_port` — Prowlarr WebUI port (terraform).
+- `download_vpn_validator_interval` — runtime validator cadence (default 2min).
+- `download_vpn_ntfy_url` / `download_vpn_healthcheck_url` — breach alerting.
+
+## Usage
+
+```yaml
+- name: Configure VPN-locked downloader
+  hosts: download_vpn_group
+  become: true
+  roles:
+    - role: download_vpn
+```

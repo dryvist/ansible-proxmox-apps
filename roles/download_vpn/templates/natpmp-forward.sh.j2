@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Proton NAT-PMP port-forward keeper for qBittorrent.
+#
+# Rendered by the download_vpn Ansible role. Loops natpmpc to (a) keep the
+# Proton-forwarded port alive and (b) push the assigned port into qBittorrent's
+# listen port via the WebUI API whenever it changes. Runs as a systemd service.
+#
+# All network egress here leaves via wg0 (the NAT-PMP gateway is the tunnel
+# gateway), so it is permitted by the killswitch.
+set -euo pipefail
+
+GATEWAY="{{ download_vpn_natpmp_gateway }}"
+REFRESH="{{ download_vpn_natpmp_refresh_seconds }}"
+QBT_URL="http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}"
+COOKIE_JAR="$(mktemp)"
+trap 'rm -f "${COOKIE_JAR}"' EXIT
+
+last_port=""
+
+qbt_login() {
+  curl -fsS -c "${COOKIE_JAR}" \
+    --data-urlencode "username=admin" \
+    --data-urlencode "password=${QBITTORRENT_ADMIN_PASSWORD:-}" \
+    "${QBT_URL}/api/v2/auth/login" >/dev/null
+}
+
+qbt_set_port() {
+  local port="$1"
+  curl -fsS -b "${COOKIE_JAR}" \
+    --data-urlencode "json={\"listen_port\":${port}}" \
+    "${QBT_URL}/api/v2/app/setPreferences" >/dev/null
+}
+
+while true; do
+  # Request both TCP and UDP mappings (BitTorrent uses both). natpmpc prints
+  # the mapped public port; grab it from the UDP mapping line.
+  mapped_port="$(natpmpc -a 1 0 udp 60 -g "${GATEWAY}" \
+    | awk '/Mapped public port/ {print $4; exit}')"
+  natpmpc -a 1 0 tcp 60 -g "${GATEWAY}" >/dev/null 2>&1 || true
+
+  if [[ -n "${mapped_port}" && "${mapped_port}" != "${last_port}" ]]; then
+    if qbt_login; then
+      qbt_set_port "${mapped_port}"
+      last_port="${mapped_port}"
+      logger -t natpmp-forward "qBittorrent listen port set to ${mapped_port}"
+    else
+      logger -t natpmp-forward "qBittorrent login failed; will retry"
+    fi
+  fi
+  sleep "${REFRESH}"
+done
