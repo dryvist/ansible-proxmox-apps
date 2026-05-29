@@ -1,27 +1,30 @@
 # idrac_kvm_docker
 
-Deploys one `domistyle/idrac6` container per physical iDRAC on a dedicated
-Docker VM (`idrac-kvm`, VM 251), exposes the HTML5-rendered KVM viewer on a
-per-iDRAC host port, and installs `ipmitool` on the VM for non-Java chassis
-operations.
+Runs both `domistyle/idrac6`-based viewers (one Docker container per physical
+iDRAC) on a single dedicated Docker-in-LXC (`idrac-kvm`, LXC 251), exposes each
+HTML5-rendered KVM viewer on a per-iDRAC host port, and installs `ipmitool` for
+non-Java chassis operations.
 
 End users hit the viewer at a normal HTTP URL — no JNLP file, no local Java,
-no jar-signing dance, no Firefox MIME handler. The `domistyle/idrac6` image
-bundles the legacy Java client + AVCT viewer and transcodes the framebuffer
-to a browser-renderable HTML5 stream inside the container.
+no jar-signing dance, no Firefox MIME handler. The container transcodes the
+iDRAC framebuffer to a browser-renderable HTML5 stream. Note: the upstream
+`domistyle/idrac6` image does NOT ship Dell's AVCT KVM client; this role bakes
+it in via a local image rebuild (see "Viewer image" below).
 
 ## Installation
 
 The role is wired into `playbooks/site.yml` (Phase 7b) and runs against any
 host in `idrac_kvm_group`. The group is populated by `inventory/load_terraform.yml`
-from `docker_vms` tagged `idrac` in the Terraform inventory (see
-terraform-proxmox VM 251 `idrac-kvm`).
+from `containers` tagged `idrac` in the Terraform inventory (see terraform-proxmox
+LXC 251 `idrac-kvm`), reached over `proxmox_pct_remote`.
 
 Prerequisites:
 
-- VM 251 `idrac-kvm` exists (Terraform-managed; tags include `docker` and `idrac`).
+- LXC 251 `idrac-kvm` exists (Terraform-managed; tags include `container` and `idrac`).
 - Doppler config `iac-conf-mgmt/prd` populated with all six
   `IDRAC_R410_*` / `IDRAC_R710_*` variables (see Secrets table below).
+- The Dell AVCT client artifact staged in private storage and
+  `idrac_kvm_docker_avct_artifact_url` set (see "Viewer image" below).
 - `community.docker` Ansible collection installed (`ansible-galaxy collection
   install -r requirements.yml` from the repo root).
 
@@ -56,15 +59,33 @@ and fails fast with a Doppler pointer if any are missing.
 
 ## Access
 
-After a successful run on VM 251:
+After a successful run on LXC 251 (IP 10.0.1.251):
 
-| Server | URL                              | Container        |
-| ------ | -------------------------------- | ---------------- |
-| R410   | `http://<vm-251-ip>:5800/`       | `idrac-r410`     |
-| R710   | `http://<vm-251-ip>:5801/`       | `idrac-r710`     |
+| Server | URL                       | Container    |
+| ------ | ------------------------- | ------------ |
+| R410   | `http://10.0.1.251:5410/` | `idrac-r410` |
+| R710   | `http://10.0.1.251:5710/` | `idrac-r710` |
 
 Credentials are baked into the container via `.env` and forwarded to the
 iDRAC by the bundled viewer — no separate login screen on the HTML5 page.
+
+## Viewer image (Dell AVCT client)
+
+The stock `domistyle/idrac6` image does **not** ship Dell's proprietary AVCT KVM
+client (`avctKVM.jar`, `avctKVMIOLinux64.jar`, `avctVMLinux64.jar`,
+`libavctKVMIO.so`, `libavmlinux.so`, signed `META-INF`). Without it the HTML5
+viewer cannot connect. This role rebuilds a small local image instead:
+
+- `templates/Dockerfile.j2` → `FROM domistyle/idrac6` + `COPY app/ /app/`.
+- The `app/` payload is fetched at build time from
+  `idrac_kvm_docker_avct_artifact_url` (a tar archive whose top level is `app/`),
+  staged in private storage (MinIO/NAS) — it is **never** committed to git.
+- The image is tagged `idrac_kvm_docker_image` (default `idrac6-avct:local`) and
+  compose runs it with `pull: never` (local-only tag).
+
+The R410 and R710 clients are byte-identical, so one image serves both. To
+refresh the client, replace the artifact and remove `idrac_kvm_docker_build_dir`
+(or the image) before re-running.
 
 ## CLI Fallback (ipmitool)
 

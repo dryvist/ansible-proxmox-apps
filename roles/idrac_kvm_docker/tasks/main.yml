@@ -177,6 +177,67 @@
     ansible_python_interpreter: /opt/ansible-venv/bin/python
 
 # =============================================================================
+# Build the local viewer image (vendor base + Dell AVCT KVM client)
+# =============================================================================
+# domistyle/idrac6 ships no AVCT KVM client; the iDRAC6 HTML5 viewer needs the
+# Dell/Avocent jars + native libs in /app. Fetch that proprietary artifact from
+# private storage and bake it into a local image via a tiny Dockerfile.
+
+- name: Assert AVCT client artifact URL is set
+  ansible.builtin.assert:
+    that:
+      - idrac_kvm_docker_avct_artifact_url | length > 0
+    fail_msg: >-
+      idrac_kvm_docker_avct_artifact_url must point to the private AVCT client
+      tarball (top-level app/ dir). Stage the captured app.tar in MinIO/NAS and
+      set the variable (see role README "Viewer image").
+
+- name: Create build context directory
+  ansible.builtin.file:
+    path: "{{ idrac_kvm_docker_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Fetch AVCT client artifact into build context
+  vars:
+    _avct_sha: "{{ idrac_kvm_docker_avct_artifact_sha256 }}"
+  ansible.builtin.get_url:
+    url: "{{ idrac_kvm_docker_avct_artifact_url }}"
+    dest: "{{ idrac_kvm_docker_build_dir }}/app.tar"
+    checksum: "{{ ('sha256:' ~ _avct_sha) if _avct_sha else omit }}"
+    mode: "0644"
+
+- name: Unpack AVCT client into build context (creates app/)
+  ansible.builtin.unarchive:
+    src: "{{ idrac_kvm_docker_build_dir }}/app.tar"
+    dest: "{{ idrac_kvm_docker_build_dir }}"
+    remote_src: true
+    creates: "{{ idrac_kvm_docker_build_dir }}/app"
+
+- name: Render Dockerfile for the rebuilt viewer image
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ idrac_kvm_docker_build_dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart idrac-kvm
+
+- name: Build local viewer image (base + AVCT client baked into /app)
+  community.docker.docker_image:
+    name: "{{ idrac_kvm_docker_image }}"
+    source: build
+    build:
+      path: "{{ idrac_kvm_docker_build_dir }}"
+      pull: true
+    state: present
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  notify: Restart idrac-kvm
+
+# =============================================================================
 # Deploy via Docker Compose
 # =============================================================================
 
@@ -184,6 +245,7 @@
   community.docker.docker_compose_v2:
     project_src: "{{ idrac_kvm_docker_data_dir }}"
     state: present
+    pull: never
   no_log: true
   vars:
     ansible_python_interpreter: /opt/ansible-venv/bin/python
