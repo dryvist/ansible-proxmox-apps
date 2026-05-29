@@ -5,16 +5,14 @@
 # Any failed assertion FAILS the play — the killswitch is a merge/deploy gate,
 # not advisory. Covers IPv4 AND IPv6 egress.
 #
-# Skipped automatically under Molecule (no real VPN in the CI container); the
-# molecule verify.yml exercises the killswitch logic instead. Detect via the
-# MOLECULE_* env the driver sets.
-
-- name: Detect Molecule test context
-  ansible.builtin.set_fact:
-    download_vpn_in_molecule: "{{ lookup('env', 'MOLECULE_INSTANCE_NAME') | length > 0 }}"
+# Skipped when services are not managed (download_vpn_manage_services=false) —
+# i.e. render-only runs such as Molecule converge, where there is no live tunnel
+# or loaded killswitch to validate. In that case the molecule verify.yml
+# exercises the killswitch logic directly. On a real deploy manage_services is
+# true, so these fail-closed leak assertions run and gate the play.
 
 - name: Validate killswitch + VPN lock (deploy-time, fail-closed)
-  when: not download_vpn_in_molecule
+  when: download_vpn_manage_services | bool
   block:
     # --- A. nftables killswitch present + default drop ---------------------
     - name: Read killswitch output chain
