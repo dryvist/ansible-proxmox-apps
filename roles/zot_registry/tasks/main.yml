@@ -1,0 +1,111 @@
+---
+# Zot OCI registry installation and configuration
+#
+# The registry LXC has output_policy=ACCEPT (unrestricted egress), so the
+# binary and its checksum are fetched directly on the target — no controller
+# staging is needed (contrast with the minio role, whose hosts are egress
+# restricted).
+
+# Phase 1: System user
+- name: Create zot system group
+  ansible.builtin.group:
+    name: "{{ zot_registry_group }}"
+    system: true
+    state: present
+
+- name: Create zot system user
+  ansible.builtin.user:
+    name: "{{ zot_registry_user }}"
+    group: "{{ zot_registry_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ zot_registry_storage_dir }}"
+    create_home: false
+    state: present
+
+# Phase 2: Directories
+- name: Create zot storage directory
+  ansible.builtin.file:
+    path: "{{ zot_registry_storage_dir }}"
+    state: directory
+    owner: "{{ zot_registry_user }}"
+    group: "{{ zot_registry_group }}"
+    mode: "0750"
+
+- name: Create zot config directory
+  ansible.builtin.file:
+    path: "{{ zot_registry_config_dir }}"
+    state: directory
+    owner: "{{ zot_registry_user }}"
+    group: "{{ zot_registry_group }}"
+    mode: "0750"
+
+# Phase 3: Download binary
+# Fetch the published .md5 so get_url can verify the binary and re-download
+# only when the pinned version changes (idempotent across runs).
+- name: Fetch zot binary checksum
+  ansible.builtin.uri:
+    url: "{{ zot_registry_binary_checksum_url }}"
+    return_content: true
+  register: zot_registry_checksum_response
+  changed_when: false
+
+- name: Download zot binary
+  ansible.builtin.get_url:
+    url: "{{ zot_registry_binary_url }}"
+    dest: "{{ zot_registry_install_dir }}/zot"
+    checksum: "md5:{{ zot_registry_checksum_response.content.split() | first }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart zot
+
+# Phase 4: Configuration
+- name: Deploy zot configuration
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ zot_registry_config_dir }}/config.json"
+    owner: root
+    group: "{{ zot_registry_group }}"
+    mode: "0640"
+    # zot ships a config linter; validate the rendered file before install so a
+    # malformed config.json never reaches the running service.
+    validate: "{{ zot_registry_install_dir }}/zot verify %s"
+  notify: Restart zot
+
+- name: Deploy zot systemd unit file
+  ansible.builtin.template:
+    src: zot.service.j2
+    dest: /etc/systemd/system/zot.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart zot
+
+# Phase 5: Enable and start service
+- name: Enable and start zot service
+  ansible.builtin.systemd:
+    name: zot
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: ansible_service_mgr == 'systemd'
+
+# Phase 6: Health check
+- name: Wait for zot registry API to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ zot_registry_port }}/v2/"
+    status_code: 200
+  register: zot_registry_health
+  until: zot_registry_health.status == 200
+  retries: 10
+  delay: 3
+  changed_when: false
+  when: ansible_service_mgr == 'systemd'
+
+- name: Display zot registry access information
+  ansible.builtin.debug:
+    msg:
+      - "Zot registry is running on port {{ zot_registry_port }}"
+      - "Registry API: http://{{ container_ip | default(inventory_hostname) }}:{{ zot_registry_port }}/v2/"
+      - "Pull-through cache upstreams: {{ zot_registry_upstream_registries | map(attribute='name') | join(', ') }}"
