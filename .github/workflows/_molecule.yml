@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [default, qdrant, llamaindex]
+        scenario: [default, qdrant, llamaindex, download_vpn]
 
     steps:
       - name: Checkout code
@@ -41,11 +41,21 @@ jobs:
             'molecule-plugins[docker]>=23.0.0' \
             'ansible-core>=2.16' \
             'docker>=7.0.0' \
+            netaddr \
             ansible-lint
 
       - name: Install Ansible collections
         run: ansible-galaxy collection install -r requirements.yml --force
 
+      # Least-privilege secret handling: this action (pinned v2.0.0) has NO
+      # allowlist input — it always fetches the entire iac-conf-mgmt/prd config.
+      # With inject-env-vars it would export EVERY key into the job environment
+      # for every subsequent step. We deliberately omit inject-env-vars so no
+      # secret lands in the ambient job env, then map ONLY the three keys the
+      # molecule scenarios actually consume into the test step's own env below.
+      # Each value is still registered with the runner's mask (the action calls
+      # core.setSecret per key), so it is redacted in logs. The values remain
+      # available as masked step outputs (steps.doppler.outputs.<KEY>).
       - name: Fetch secrets from Doppler
         uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
         id: doppler
@@ -53,13 +63,22 @@ jobs:
           doppler-token: ${{ secrets.GH_ACTION_DOPPLER_IAC_CONF_MGMT }}
           doppler-project: iac-conf-mgmt
           doppler-config: prd
-          inject-env-vars: true
 
       - name: Run molecule tests
         env:
           PY_COLORS: "1"
           ANSIBLE_FORCE_COLOR: "1"
           MOLECULE_SCENARIO: ${{ matrix.scenario }}
+          # Only the secrets the scenarios reference (verified against
+          # molecule/*/molecule.yml provisioner.env and the exercised roles):
+          #   default     -> MSSQL_SA_PASSWORD
+          #   qdrant      -> QDRANT_API_KEY
+          #   llamaindex  -> QDRANT_API_KEY
+          #   download_vpn-> QBITTORRENT_ADMIN_PASSWORD (Proton WG keys use
+          #                  built-in dummy fallbacks; services not started in CI)
+          QDRANT_API_KEY: ${{ steps.doppler.outputs.QDRANT_API_KEY }}
+          MSSQL_SA_PASSWORD: ${{ steps.doppler.outputs.MSSQL_SA_PASSWORD }}
+          QBITTORRENT_ADMIN_PASSWORD: ${{ steps.doppler.outputs.QBITTORRENT_ADMIN_PASSWORD }}
         run: molecule test -s "$MOLECULE_SCENARIO"
 
   template-render:

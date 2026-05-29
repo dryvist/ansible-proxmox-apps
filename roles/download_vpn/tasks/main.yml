@@ -1,0 +1,319 @@
+---
+# download_vpn — qBittorrent + Prowlarr behind Proton WireGuard with a
+# fail-closed nftables killswitch. See defaults/main.yml for the security model.
+
+# --- Phase 0: resolve endpoint family (v4 vs v6) ----------------------------
+- name: Resolve Proton endpoint host/port
+  ansible.builtin.set_fact:
+    download_vpn_endpoint_host: "{{ download_vpn_wg_endpoint.split(':')[0] }}"
+    download_vpn_endpoint_port: "{{ download_vpn_wg_endpoint.split(':')[1] }}"
+
+- name: Classify Proton endpoint address family
+  ansible.builtin.set_fact:
+    download_vpn_endpoint_is_ipv4: "{{ download_vpn_endpoint_host is ansible.utils.ipv4 }}"
+
+- name: Derive the IPv4-only tunnel address (drop any v6 half Proton issues)
+  # Proton's Address is dual-stack ("10.2.0.2/32,fd00::.../128"); keep only the
+  # IPv4 entry on the wg0 Address line so no v6 address is configured.
+  ansible.builtin.set_fact:
+    download_vpn_wg_address_v4: >-
+      {{ download_vpn_wg_address.split(',') | map('trim')
+         | select('ansible.utils.ipv4') | list | first
+         | default(download_vpn_wg_address.split(',')[0] | trim) }}
+
+# --- Phase 1: packages -------------------------------------------------------
+- name: Install media + VPN + firewall packages
+  ansible.builtin.apt:
+    name:
+      - wireguard-tools
+      - nftables
+      - "{{ download_vpn_qbittorrent_package }}"
+      - natpmpc
+      - curl
+      - ca-certificates
+      - iproute2
+      - sqlite3
+      - libicu-dev
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- Phase 2: service user / group + storage --------------------------------
+- name: Create media group (shared GID with *arr LXCs)
+  ansible.builtin.group:
+    name: "{{ download_vpn_group }}"
+    gid: "{{ download_vpn_group_gid }}"
+    system: true
+    state: present
+
+- name: Create qbittorrent service user
+  ansible.builtin.user:
+    name: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "/home/{{ download_vpn_user }}"
+    create_home: true
+    state: present
+
+- name: Ensure download + media directories exist with group ownership
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+    mode: "2775"
+  loop:
+    - "{{ download_vpn_downloads_dir }}"
+    - "{{ download_vpn_downloads_dir }}/incomplete"
+    - "{{ download_vpn_media_dir }}"
+
+# --- Phase 3: KILL IPv6 at the kernel ---------------------------------------
+# Proton is dual-stack; we forbid IPv6 entirely so qBittorrent has no v6 path.
+# nft ip6 coverage (below) is the belt to this suspenders.
+- name: Disable IPv6 (sysctl, persistent)
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-download-vpn-no-ipv6.conf
+  loop:
+    - net.ipv6.conf.all.disable_ipv6
+    - net.ipv6.conf.default.disable_ipv6
+    - net.ipv6.conf.lo.disable_ipv6
+
+# --- Phase 4: killswitch ruleset (rendered FIRST, before anything routes) ----
+- name: Ensure nftables include directory exists
+  ansible.builtin.file:
+    path: "{{ download_vpn_nft_ruleset_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Deploy nftables killswitch ruleset
+  ansible.builtin.template:
+    src: killswitch.nft.j2
+    dest: "{{ download_vpn_nft_ruleset_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "/usr/sbin/nft -c -f %s"
+  notify: Reload killswitch
+
+- name: Deploy killswitch systemd unit
+  ansible.builtin.template:
+    src: download-vpn-killswitch.service.j2
+    dest: /etc/systemd/system/download-vpn-killswitch.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start the killswitch (must be active before the tunnel)
+  ansible.builtin.systemd:
+    name: download-vpn-killswitch.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: download_vpn_manage_services
+
+# --- Phase 5: WireGuard tunnel ----------------------------------------------
+- name: Deploy WireGuard wg0 config
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: "{{ download_vpn_wg_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart wg tunnel
+
+- name: Deploy WireGuard systemd unit
+  ansible.builtin.template:
+    src: download-vpn-wg.service.j2
+    dest: /etc/systemd/system/download-vpn-wg.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start the WireGuard tunnel
+  ansible.builtin.systemd:
+    name: download-vpn-wg.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: download_vpn_manage_services
+
+# --- Phase 6: qBittorrent ----------------------------------------------------
+- name: Ensure qBittorrent config directory exists
+  ansible.builtin.file:
+    path: "{{ download_vpn_qbittorrent_config_dir }}"
+    state: directory
+    owner: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+    mode: "0750"
+
+- name: Deploy qBittorrent configuration (bound to wg0)
+  ansible.builtin.template:
+    src: qBittorrent.conf.j2
+    dest: "{{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf"
+    owner: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+    mode: "0640"
+  notify: Restart qbittorrent
+
+- name: Deploy qBittorrent systemd unit
+  ansible.builtin.template:
+    src: qbittorrent-nox.service.j2
+    dest: /etc/systemd/system/qbittorrent-nox.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start qBittorrent
+  ansible.builtin.systemd:
+    name: qbittorrent-nox.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: download_vpn_manage_services
+
+- name: Wait for the qBittorrent WebUI to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/version"
+    status_code: [200, 403]
+  register: download_vpn_qbt_up
+  until: download_vpn_qbt_up.status in [200, 403]
+  retries: 10
+  delay: 3
+  changed_when: false
+  when: download_vpn_manage_services
+
+- name: Set the qBittorrent WebUI admin password via API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/setPreferences"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      json: '{"web_ui_password":"{{ download_vpn_qbittorrent_admin_password }}"}'
+    status_code: 200
+  no_log: true
+  changed_when: false
+  when: download_vpn_manage_services
+
+# --- Phase 7: Prowlarr -------------------------------------------------------
+- name: Check if Prowlarr is already installed
+  ansible.builtin.stat:
+    path: "{{ download_vpn_prowlarr_install_dir }}/Prowlarr"
+  register: download_vpn_prowlarr_bin
+
+- name: Create Prowlarr data directory
+  ansible.builtin.file:
+    path: "{{ download_vpn_prowlarr_data_dir }}"
+    state: directory
+    owner: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+    mode: "0750"
+
+- name: Download + extract Prowlarr
+  ansible.builtin.unarchive:
+    src: "{{ download_vpn_prowlarr_tarball_url }}"
+    dest: /opt
+    remote_src: true
+    owner: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+  when: not download_vpn_prowlarr_bin.stat.exists
+
+- name: Deploy Prowlarr systemd unit
+  ansible.builtin.template:
+    src: prowlarr.service.j2
+    dest: /etc/systemd/system/prowlarr.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start Prowlarr
+  ansible.builtin.systemd:
+    name: prowlarr.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: download_vpn_manage_services
+
+# --- Phase 8: NAT-PMP port forwarding ---------------------------------------
+- name: Deploy NAT-PMP env file (qBittorrent admin password)
+  ansible.builtin.copy:
+    dest: "{{ download_vpn_natpmp_env_path }}"
+    owner: root
+    group: "{{ download_vpn_group }}"
+    mode: "0640"
+    content: |
+      QBITTORRENT_ADMIN_PASSWORD={{ download_vpn_qbittorrent_admin_password }}
+  no_log: true
+
+- name: Deploy NAT-PMP forward script
+  ansible.builtin.template:
+    src: natpmp-forward.sh.j2
+    dest: "{{ download_vpn_natpmp_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart natpmp
+
+- name: Deploy NAT-PMP systemd unit
+  ansible.builtin.template:
+    src: download-vpn-natpmp.service.j2
+    dest: /etc/systemd/system/download-vpn-natpmp.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start NAT-PMP keeper
+  ansible.builtin.systemd:
+    name: download-vpn-natpmp.service
+    state: "{{ 'started' if download_vpn_natpmp_enabled else 'stopped' }}"
+    enabled: "{{ download_vpn_natpmp_enabled }}"
+    daemon_reload: true
+  when: download_vpn_manage_services
+
+# --- Phase 9: continuous runtime validator (systemd timer) ------------------
+- name: Deploy killswitch validator script
+  ansible.builtin.template:
+    src: killswitch-validate.sh.j2
+    dest: "{{ download_vpn_validator_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy validator systemd service + timer
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: download-vpn-validate.service.j2, dest: download-vpn-validate.service }
+    - { src: download-vpn-validate.timer.j2, dest: download-vpn-validate.timer }
+  notify: Reload systemd
+
+- name: Enable + start the validator timer
+  ansible.builtin.systemd:
+    name: download-vpn-validate.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: download_vpn_manage_services
+
+# --- Phase 10: MANDATORY deploy-time validation -----------------------------
+# Runs at the END of every play. FAILS the run on any killswitch/leak violation.
+- name: Run fail-closed deploy-time validation
+  ansible.builtin.import_tasks: validate.yml

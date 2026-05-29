@@ -1,0 +1,72 @@
+---
+# radarr — minimal LAN-only install (skeleton).
+
+- name: Install Radarr prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - sqlite3
+      - libicu-dev
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create media group
+  ansible.builtin.group:
+    name: "{{ radarr_group }}"
+    gid: "{{ radarr_group_gid }}"
+    system: true
+    state: present
+
+- name: Create radarr service user
+  ansible.builtin.user:
+    name: "{{ radarr_user }}"
+    group: "{{ radarr_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ radarr_data_dir }}"
+    create_home: false
+    state: present
+
+- name: Ensure radarr data + media directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ radarr_user }}"
+    group: "{{ radarr_group }}"
+    mode: "2775"
+  loop:
+    - "{{ radarr_data_dir }}"
+    - "{{ radarr_media_dir }}"
+
+- name: Check if Radarr is already installed
+  ansible.builtin.stat:
+    path: "{{ radarr_install_dir }}/Radarr"
+  register: radarr_bin
+
+- name: Download + extract Radarr
+  ansible.builtin.unarchive:
+    src: "{{ radarr_tarball_url }}"
+    dest: /opt
+    remote_src: true
+    owner: "{{ radarr_user }}"
+    group: "{{ radarr_group }}"
+  when: not radarr_bin.stat.exists
+
+- name: Deploy Radarr systemd unit
+  ansible.builtin.template:
+    src: radarr.service.j2
+    dest: /etc/systemd/system/radarr.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart radarr
+
+- name: Enable + start Radarr
+  ansible.builtin.systemd:
+    name: radarr.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: radarr_manage_services

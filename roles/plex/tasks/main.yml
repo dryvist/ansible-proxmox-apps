@@ -1,0 +1,63 @@
+---
+# plex — minimal LAN-only install from the official Plex apt repo (skeleton).
+
+- name: Install Plex prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create media group
+  ansible.builtin.group:
+    name: "{{ plex_group }}"
+    gid: "{{ plex_group_gid }}"
+    system: true
+    state: present
+
+- name: Add Plex apt signing key
+  ansible.builtin.get_url:
+    url: "{{ plex_apt_key_url }}"
+    dest: /etc/apt/keyrings/plex.asc
+    mode: "0644"
+
+- name: Add Plex apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ plex_apt_repo }}"
+    filename: plexmediaserver
+    state: present
+  register: plex_repo
+
+- name: Install Plex Media Server
+  ansible.builtin.apt:
+    name: "{{ plex_package }}"
+    state: present
+    update_cache: "{{ plex_repo is changed }}"
+
+- name: Ensure plex user is in the media group (read tank/media)
+  ansible.builtin.user:
+    name: "{{ plex_user }}"
+    groups: "{{ plex_group }}"
+    append: true
+  register: plex_user_group
+  failed_when: false
+
+- name: Ensure media directory exists
+  ansible.builtin.file:
+    path: "{{ plex_media_dir }}"
+    state: directory
+    owner: "{{ plex_user }}"
+    group: "{{ plex_group }}"
+    mode: "2775"
+  failed_when: false
+
+- name: Enable + start Plex Media Server
+  ansible.builtin.systemd:
+    name: plexmediaserver.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: plex_manage_services

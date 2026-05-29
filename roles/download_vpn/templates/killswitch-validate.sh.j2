@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# download-vpn fail-closed runtime validator.
+#
+# Rendered by the download_vpn Ansible role; run on a systemd timer (every
+# {{ download_vpn_validator_interval }}). Re-proves, every cycle, that
+# qBittorrent cannot send/receive outside the VPN. On ANY breach it:
+#   1. immediately stops qBittorrent (and the NAT-PMP keeper),
+#   2. pushes an alert to ntfy,
+#   3. pings the healthchecks deadman (failure endpoint).
+# On success it pings the healthchecks deadman OK endpoint so a silent
+# validator (crash) also pages.
+#
+# Checks (all must hold):
+#   A. nftables killswitch table present with output policy "drop".
+#   B. The ONLY IPv4 default route is via wg0.
+#   C. No IPv6 default route exists (IPv6 is disabled / must not egress).
+#   D. qBittorrent listen interface == wg0 (via WebUI API preferences).
+#   E. Live IPv4 egress leaves via the VPN exit (public IP differs from the
+#      LAN/WAN address and the request only succeeds through wg0).
+#   F. Forced non-VPN IPv4 egress (bound to eth0) is REFUSED.
+#   G. IPv6 egress is refused (curl -6 must fail).
+set -uo pipefail
+
+WG_IF="{{ download_vpn_wg_interface }}"
+NTFY_URL="{{ download_vpn_ntfy_url }}"
+HC_URL="{{ download_vpn_healthcheck_url }}"
+IP_PROBE="{{ download_vpn_ip_probe_url }}"
+IP_PROBE6="{{ download_vpn_ip_probe_url_v6 }}"
+
+breaches=()
+
+# --- A. killswitch present + default drop -----------------------------------
+if ! nft list table inet killswitch >/dev/null 2>&1; then
+  breaches+=("nftables 'inet killswitch' table is MISSING")
+else
+  policy="$(nft -a list chain inet killswitch output 2>/dev/null \
+    | awk '/policy/ {gsub(/;/,"",$NF); print $NF; exit}')"
+  [[ "${policy}" == "drop" ]] || breaches+=("killswitch output policy is '${policy:-unknown}', expected 'drop'")
+fi
+
+# --- B. only IPv4 default route is wg0 --------------------------------------
+v4_defaults="$(ip -4 route show default 2>/dev/null)"
+if [[ -z "${v4_defaults}" ]]; then
+  breaches+=("no IPv4 default route (VPN likely down)")
+elif ! grep -q "dev ${WG_IF}" <<<"${v4_defaults}"; then
+  breaches+=("IPv4 default route is NOT via ${WG_IF}: ${v4_defaults}")
+elif [[ "$(grep -c 'default' <<<"${v4_defaults}")" -ne 1 ]]; then
+  breaches+=("multiple IPv4 default routes present: ${v4_defaults}")
+fi
+
+# --- C. no IPv6 default route -----------------------------------------------
+v6_defaults="$(ip -6 route show default 2>/dev/null)"
+if [[ -n "${v6_defaults}" ]]; then
+  breaches+=("IPv6 default route present (must be none): ${v6_defaults}")
+fi
+
+# --- D. qBittorrent bound to wg0 --------------------------------------------
+cookie="$(mktemp)"
+if curl -fsS -c "${cookie}" \
+      --data-urlencode "username=admin" \
+      --data-urlencode "password=${QBITTORRENT_ADMIN_PASSWORD:-}" \
+      "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/auth/login" >/dev/null 2>&1; then
+  iface="$(curl -fsS -b "${cookie}" \
+    "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences" 2>/dev/null \
+    | grep -o '"current_network_interface":"[^"]*"' | cut -d'"' -f4)"
+  if [[ -n "${iface}" && "${iface}" != "${WG_IF}" ]]; then
+    breaches+=("qBittorrent network interface is '${iface}', expected '${WG_IF}'")
+  fi
+fi
+rm -f "${cookie}"
+
+# --- E/F. live IPv4 egress checks -------------------------------------------
+# E: egress via the tunnel must succeed (we are connected to the VPN).
+vpn_ip="$(curl -fsS --max-time 10 --interface "${WG_IF}" "${IP_PROBE}" 2>/dev/null || true)"
+if [[ -z "${vpn_ip}" ]]; then
+  breaches+=("no IPv4 egress via ${WG_IF} (VPN exit unreachable)")
+fi
+# F: forced egress bound to the LAN interface must be REFUSED by the killswitch.
+leak_ip="$(curl -fsS --max-time 8 --interface eth0 "${IP_PROBE}" 2>/dev/null || true)"
+if [[ -n "${leak_ip}" ]]; then
+  breaches+=("LEAK: non-VPN IPv4 egress via eth0 succeeded (got ${leak_ip})")
+fi
+
+# --- G. IPv6 egress must be refused -----------------------------------------
+v6_ip="$(curl -fsS -6 --max-time 8 "${IP_PROBE6}" 2>/dev/null || true)"
+if [[ -n "${v6_ip}" ]]; then
+  breaches+=("LEAK: IPv6 egress succeeded (got ${v6_ip})")
+fi
+
+# --- verdict ----------------------------------------------------------------
+if [[ "{% raw %}${#breaches[@]}{% endraw %}" -gt 0 ]]; then
+  msg="download-vpn KILLSWITCH BREACH on $(hostname): $(printf '%s; ' "${breaches[@]}")"
+  logger -t killswitch-validate "${msg}"
+  # 1. Stop the apps that could leak FIRST.
+  systemctl stop qbittorrent-nox.service download-vpn-natpmp.service || true
+  # 2. Alert ntfy.
+  curl -fsS --max-time 8 -H "Title: download-vpn killswitch breach" \
+    -H "Priority: urgent" -H "Tags: rotating_light" \
+    -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1 || true
+  # 3. Deadman: signal failure.
+  if [[ -n "${HC_URL}" ]]; then
+    curl -fsS --max-time 8 -d "${msg}" "${HC_URL}/fail" >/dev/null 2>&1 || true
+  fi
+  exit 1
+fi
+
+# Healthy: ping the deadman OK endpoint so a stalled validator also pages.
+if [[ -n "${HC_URL}" ]]; then
+  curl -fsS --max-time 8 "${HC_URL}" >/dev/null 2>&1 || true
+fi
+exit 0

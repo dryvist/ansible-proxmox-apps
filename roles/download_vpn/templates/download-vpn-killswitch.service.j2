@@ -1,0 +1,20 @@
+[Unit]
+Description=download-vpn nftables killswitch (fail-closed VPN egress lock)
+Documentation=https://github.com/JacobPEvans/ansible-proxmox-apps
+# The killswitch must be in force before any networking that could leak.
+After=network-pre.target
+Wants=network-pre.target
+Before=network.target wg-quick@{{ download_vpn_wg_interface }}.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Load the ruleset. Failure here must abort (no torrenting without the lock).
+ExecStart=/usr/sbin/nft -f {{ download_vpn_nft_ruleset_path }}
+# On stop we flush ONLY our table; we do not "open" egress on a crash because
+# the apps Require= this unit and will be stopped first.
+ExecStop=/usr/sbin/nft delete table inet killswitch
+ExecReload=/usr/sbin/nft -f {{ download_vpn_nft_ruleset_path }}
+
+[Install]
+WantedBy=multi-user.target

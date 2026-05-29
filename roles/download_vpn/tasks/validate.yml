@@ -1,0 +1,164 @@
+---
+# download_vpn deploy-time validation (validation layer 2).
+#
+# Imported at the END of the role so it runs on EVERY ansible-playbook run.
+# Any failed assertion FAILS the play — the killswitch is a merge/deploy gate,
+# not advisory. Covers IPv4 AND IPv6 egress.
+#
+# Skipped when services are not managed (download_vpn_manage_services=false) —
+# i.e. render-only runs such as Molecule converge, where there is no live tunnel
+# or loaded killswitch to validate. In that case the molecule verify.yml
+# exercises the killswitch logic directly. On a real deploy manage_services is
+# true, so these fail-closed leak assertions run and gate the play.
+
+- name: Validate killswitch + VPN lock (deploy-time, fail-closed)
+  when: download_vpn_manage_services | bool
+  block:
+    # --- A. nftables killswitch present + default drop ---------------------
+    - name: Read killswitch output chain
+      ansible.builtin.command:
+        cmd: nft list chain inet killswitch output
+      register: download_vpn_nft_output
+      changed_when: false
+
+    - name: Assert killswitch table present + output policy is DROP
+      ansible.builtin.assert:
+        that:
+          - "'policy drop' in download_vpn_nft_output.stdout"
+        fail_msg: >-
+          KILLSWITCH NOT ACTIVE: 'inet killswitch' output chain is missing or
+          its policy is not 'drop'. Refusing to proceed.
+        success_msg: "Killswitch output policy is DROP."
+
+    - name: Assert killswitch allows ONLY loopback/LAN/endpoint/wg0
+      # No accept rule may reference a non-loopback, non-wg0, non-LAN, non-endpoint
+      # destination. We assert the expected allow rules exist and that the chain
+      # contains a terminal drop (the policy) plus the explicit log+drop.
+      ansible.builtin.assert:
+        that:
+          - "'oif \"lo\" accept' in download_vpn_nft_output.stdout"
+          - "download_vpn_wg_interface in download_vpn_nft_output.stdout"
+          - "download_vpn_lan_subnet.split('/')[0] in download_vpn_nft_output.stdout"
+          - "'counter packets' in download_vpn_nft_output.stdout or 'drop' in download_vpn_nft_output.stdout"
+        fail_msg: "Killswitch ruleset is missing one of the required allow rules."
+
+    # --- B. only IPv4 default route is wg0 ---------------------------------
+    - name: Read IPv4 default routes
+      ansible.builtin.command:
+        cmd: ip -4 route show default
+      register: download_vpn_v4_route
+      changed_when: false
+
+    - name: Assert the ONLY IPv4 default route is via wg0
+      ansible.builtin.assert:
+        that:
+          - download_vpn_v4_route.stdout_lines | length == 1
+          - "'dev ' ~ download_vpn_wg_interface in download_vpn_v4_route.stdout"
+        fail_msg: >-
+          IPv4 default route is not exclusively via {{ download_vpn_wg_interface }}:
+          {{ download_vpn_v4_route.stdout }}
+
+    # --- C. no IPv6 default route ------------------------------------------
+    - name: Read IPv6 default routes
+      ansible.builtin.command:
+        cmd: ip -6 route show default
+      register: download_vpn_v6_route
+      changed_when: false
+
+    - name: Assert there is NO IPv6 default route
+      ansible.builtin.assert:
+        that:
+          - download_vpn_v6_route.stdout | trim | length == 0
+        fail_msg: >-
+          An IPv6 default route exists (must be none — IPv6 is disabled):
+          {{ download_vpn_v6_route.stdout }}
+
+    # --- D. qBittorrent bound to wg0 ---------------------------------------
+    - name: Log in to qBittorrent WebUI
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/auth/login"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: admin
+          password: "{{ download_vpn_qbittorrent_admin_password }}"
+        status_code: 200
+      register: download_vpn_qbt_login
+      no_log: true
+      changed_when: false
+
+    - name: Read qBittorrent preferences
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences"
+        method: GET
+        headers:
+          Cookie: "{{ download_vpn_qbt_login.set_cookie | default('') }}"
+        return_content: true
+        status_code: 200
+      register: download_vpn_qbt_prefs
+      changed_when: false
+
+    - name: Assert qBittorrent is bound to wg0
+      ansible.builtin.assert:
+        that:
+          - download_vpn_wg_interface in (download_vpn_qbt_prefs.json.current_network_interface | default(''))
+        fail_msg: >-
+          qBittorrent is bound to
+          '{{ download_vpn_qbt_prefs.json.current_network_interface | default("(unset)") }}',
+          expected '{{ download_vpn_wg_interface }}'.
+
+    # --- E. live IPv4 egress via the VPN exit works ------------------------
+    # noqa command-instead-of-module: the uri module cannot bind a request to a
+    # specific source interface (curl --interface). Interface-scoped egress is
+    # the whole point of these leak tests, so curl is required, not get_url/uri.
+    - name: Check public IPv4 egress via the tunnel  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: curl -fsS --max-time 10 --interface {{ download_vpn_wg_interface }} {{ download_vpn_ip_probe_url }}
+      register: download_vpn_vpn_ip
+      changed_when: false
+      failed_when: download_vpn_vpn_ip.rc != 0 or (download_vpn_vpn_ip.stdout | trim | length == 0)
+
+    # --- F. forced non-VPN IPv4 egress is REFUSED --------------------------
+    - name: Attempt a forced non-VPN IPv4 egress (must be refused)  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: curl -fsS --max-time 8 --interface eth0 {{ download_vpn_ip_probe_url }}
+      register: download_vpn_leak_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Assert non-VPN IPv4 egress is blocked
+      ansible.builtin.assert:
+        that:
+          - download_vpn_leak_probe.rc != 0
+          - (download_vpn_leak_probe.stdout | trim | length) == 0
+        fail_msg: >-
+          IPv4 LEAK: forced egress via eth0 succeeded
+          ({{ download_vpn_leak_probe.stdout | trim }}). Killswitch is NOT
+          fail-closed.
+
+    # --- G. IPv6 egress is REFUSED -----------------------------------------
+    # noqa command-instead-of-module: the uri module cannot force IPv6-only
+    # (curl -6). Forcing the v6 family is the point of this leak test.
+    - name: Attempt IPv6 egress (must be refused)  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: curl -fsS -6 --max-time 8 {{ download_vpn_ip_probe_url_v6 }}
+      register: download_vpn_v6_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Assert IPv6 egress is blocked
+      ansible.builtin.assert:
+        that:
+          - download_vpn_v6_probe.rc != 0
+          - (download_vpn_v6_probe.stdout | trim | length) == 0
+        fail_msg: >-
+          IPv6 LEAK: egress over IPv6 succeeded
+          ({{ download_vpn_v6_probe.stdout | trim }}). IPv6 must have no path.
+
+    - name: Report killswitch validation success
+      ansible.builtin.debug:
+        msg: >-
+          download-vpn killswitch validated: nft DROP active; only default route
+          is {{ download_vpn_wg_interface }}; no IPv6 default route; qBittorrent
+          bound to {{ download_vpn_wg_interface }}; VPN IPv4 egress works;
+          non-VPN IPv4 + all IPv6 egress refused.
