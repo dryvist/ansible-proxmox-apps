@@ -56,6 +56,64 @@
         state: absent
 
 # =============================================================================
+# Phase 0-zot: Zot OCI Registry
+# Self-hosted pull-through cache (docker.io/ghcr.io/quay.io) and private
+# registry. Deployed early — before any docker app roles — so firewalled
+# docker hosts can pull through it. Pairs with the terraform registry LXC 109.
+# =============================================================================
+
+- name: Deploy Zot registry
+  hosts: registry_group
+  become: true
+  gather_facts: true
+  tags:
+    - zot
+    - registry
+    - lxc
+  roles:
+    - role: zot_registry
+
+- name: Configure Docker registry mirror on LXC containers
+  hosts: lxc_containers:!registry_group
+  become: true
+  gather_facts: false
+  tags:
+    - registry_mirror
+    - docker
+    - lxc
+  handlers:
+    - name: Restart docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+  tasks:
+    # This play is the single owner of /etc/docker/daemon.json on docker LXCs.
+    # roles/idrac_kvm_docker no longer writes the storage-driver here (removed
+    # on a separate branch) to avoid two writers fighting over the same file.
+    - name: Configure Docker registry mirror
+      when:
+        - "'registry' in hostvars"
+        - "'docker' in (host_tags | default([]))"
+      vars:
+        _registry_ip: "{{ hostvars['registry']['container_ip'] }}"
+        _registry_port: >-
+          {{ hostvars['localhost']['terraform_data']
+             ['constants']['service_ports']['registry']
+             | default(5000) }}
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "registry-mirrors": ["http://{{ _registry_ip }}:{{ _registry_port }}"],
+            "insecure-registries": ["{{ _registry_ip }}:{{ _registry_port }}"],
+            "storage-driver": "fuse-overlayfs"
+          }
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart docker
+
+# =============================================================================
 # Phase 0a: NTP Time Synchronization Baseline
 # Runs after apt-cacher-ng is up and the apt proxy is configured, so LXC
 # containers with outbound-internal firewall (cribl_edge, cribl_stream)
