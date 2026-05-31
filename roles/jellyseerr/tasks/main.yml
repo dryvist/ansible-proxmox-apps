@@ -1,0 +1,180 @@
+---
+# =============================================================================
+# Preflight: deterministic API key must be present
+# =============================================================================
+
+- name: Assert Jellyseerr API key is set
+  ansible.builtin.assert:
+    that:
+      - jellyseerr_api_key | length > 0
+    fail_msg: >-
+      JELLYSEERR_API_KEY is not set. Generate a 32-char hex key
+      (openssl rand -hex 16), add it to SOPS (secrets.enc.yaml), and run under
+      `sops exec-env`. The key is templated into settings.json so it is known
+      to downstream tooling, not auto-generated.
+    quiet: true
+
+# =============================================================================
+# Docker installation (Docker-in-LXC pattern, mirrors idrac_kvm_docker)
+# =============================================================================
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    jellyseerr_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ jellyseerr_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ jellyseerr_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+# fuse-overlayfs is required for Docker on ZFS-backed LXC containers only;
+# VMs use the default overlay2 storage driver natively.
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+  when: ansible_virtualization_type == 'lxc'
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for Ansible Docker modules
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# =============================================================================
+# Data directories + config
+# =============================================================================
+
+- name: Create Jellyseerr data + config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ jellyseerr_data_dir }}"
+    - "{{ jellyseerr_config_dir }}"
+
+# One-time seed: set ONLY the deterministic main.apiKey. force:false so we never
+# clobber the settings.json Jellyseerr owns and rewrites at runtime.
+- name: Seed settings.json with the deterministic API key (one-time)
+  ansible.builtin.template:
+    src: settings.json.j2
+    dest: "{{ jellyseerr_config_dir }}/settings.json"
+    owner: root
+    group: root
+    mode: "0640"
+    force: false
+  no_log: true
+
+- name: Deploy docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jellyseerr_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart jellyseerr
+
+# =============================================================================
+# Deploy via Docker Compose (live only)
+# =============================================================================
+
+- name: Deploy Jellyseerr container via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ jellyseerr_data_dir }}"
+    state: present
+    pull: always
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  when: jellyseerr_manage_services | bool
+
+# =============================================================================
+# Health check + service registration (live only)
+# =============================================================================
+
+- name: Wait for Jellyseerr web port to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ jellyseerr_web_port }}"
+    timeout: 120
+  when: jellyseerr_manage_services | bool
+
+- name: Verify Jellyseerr HTTP endpoint responds
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/status"
+    method: GET
+    status_code: 200
+  register: jellyseerr_status
+  retries: 20
+  delay: 10
+  until: jellyseerr_status.status == 200
+  changed_when: false
+  when: jellyseerr_manage_services | bool
+
+- name: Register Sonarr / Radarr / Plex via the Jellyseerr settings API
+  ansible.builtin.import_tasks: register.yml
+  when:
+    - jellyseerr_manage_services | bool
+    - jellyseerr_register_services | bool

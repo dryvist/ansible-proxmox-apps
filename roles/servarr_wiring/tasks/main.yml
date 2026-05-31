@@ -1,0 +1,67 @@
+---
+# Servarr API self-wiring orchestrator.
+#
+# Runs from a single coordinator host (the download_vpn LXC — it can reach every
+# media app over the LAN). config.xml edits + service restarts are delegated to
+# each app's own host; the cross-app API wiring hits each app's LAN endpoint.
+#
+# Idempotent throughout: config.xml keys are set with community.general.xml
+# (no-op when already correct); every API object is GET-checked before POST.
+
+# =============================================================================
+# Preflight: deterministic API keys must be present
+# =============================================================================
+
+- name: Assert all Servarr API keys are set
+  ansible.builtin.assert:
+    that:
+      - servarr_wiring_sonarr_api_key | length > 0
+      - servarr_wiring_radarr_api_key | length > 0
+      - servarr_wiring_prowlarr_api_key | length > 0
+    fail_msg: >-
+      SONARR_API_KEY / RADARR_API_KEY / PROWLARR_API_KEY must all be set.
+      Generate each with `openssl rand -hex 16` (32 hex chars), add to SOPS
+      (secrets.enc.yaml), and run under `sops exec-env`. Templating them means
+      cross-app wiring keys are known before converge, not auto-generated.
+    quiet: true
+
+- name: Wire Servarr stack (live only)
+  when: servarr_wiring_manage_services | bool
+  block:
+    # -------------------------------------------------------------------------
+    # 1. Deterministic API keys into each app's config.xml (delegated per host)
+    # -------------------------------------------------------------------------
+    - name: Set deterministic API keys in config.xml
+      ansible.builtin.include_tasks: api_keys.yml
+
+    # -------------------------------------------------------------------------
+    # 2. Prowlarr -> Sonarr/Radarr Applications (full sync)
+    # -------------------------------------------------------------------------
+    - name: Wire Prowlarr applications (Sonarr + Radarr)
+      ansible.builtin.include_tasks: prowlarr_apps.yml
+
+    # -------------------------------------------------------------------------
+    # 3. Sonarr/Radarr -> qBittorrent download client + root folder + profile
+    # -------------------------------------------------------------------------
+    - name: Wire Sonarr download client + root folder
+      ansible.builtin.include_tasks: download_client.yml
+      vars:
+        _arr_name: sonarr
+        _arr_host: "{{ servarr_wiring_sonarr_host }}"
+        _arr_port: "{{ servarr_wiring_sonarr_port }}"
+        _arr_api_key: "{{ servarr_wiring_sonarr_api_key }}"
+        _arr_root_folder: "{{ servarr_wiring_sonarr_root_folder }}"
+        _arr_category: "{{ servarr_wiring_sonarr_category }}"
+        # Sonarr's qBittorrent category field is tvCategory (Radarr: movieCategory).
+        _arr_category_field: tvCategory
+
+    - name: Wire Radarr download client + root folder
+      ansible.builtin.include_tasks: download_client.yml
+      vars:
+        _arr_name: radarr
+        _arr_host: "{{ servarr_wiring_radarr_host }}"
+        _arr_port: "{{ servarr_wiring_radarr_port }}"
+        _arr_api_key: "{{ servarr_wiring_radarr_api_key }}"
+        _arr_root_folder: "{{ servarr_wiring_radarr_root_folder }}"
+        _arr_category: "{{ servarr_wiring_radarr_category }}"
+        _arr_category_field: movieCategory

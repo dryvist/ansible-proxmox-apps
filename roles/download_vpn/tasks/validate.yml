@@ -119,9 +119,12 @@
       failed_when: download_vpn_vpn_ip.rc != 0 or (download_vpn_vpn_ip.stdout | trim | length == 0)
 
     # --- F. forced non-VPN IPv4 egress is REFUSED --------------------------
+    # Bind to the derived primary LAN interface (the NIC holding the LAN IP),
+    # not a hard-coded eth0 — otherwise the test could pass for the wrong reason
+    # (a non-existent eth0 simply fails to bind) if the NIC is named differently.
     - name: Attempt a forced non-VPN IPv4 egress (must be refused)  # noqa: command-instead-of-module
       ansible.builtin.command:
-        cmd: curl -fsS --max-time 8 --interface eth0 {{ download_vpn_ip_probe_url }}
+        cmd: curl -fsS --max-time 8 --interface {{ download_vpn_lan_interface }} {{ download_vpn_ip_probe_url }}
       register: download_vpn_leak_probe
       changed_when: false
       failed_when: false
@@ -132,7 +135,7 @@
           - download_vpn_leak_probe.rc != 0
           - (download_vpn_leak_probe.stdout | trim | length) == 0
         fail_msg: >-
-          IPv4 LEAK: forced egress via eth0 succeeded
+          IPv4 LEAK: forced egress via {{ download_vpn_lan_interface }} succeeded
           ({{ download_vpn_leak_probe.stdout | trim }}). Killswitch is NOT
           fail-closed.
 

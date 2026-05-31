@@ -1,0 +1,87 @@
+---
+# Molecule verification for jellyseerr (render-only — no live container in CI).
+#
+# Proves:
+#   1. docker-compose.yml references the image, publishes 5055, mounts config.
+#   2. settings.json was seeded with the DETERMINISTIC API key (main.apiKey),
+#      so downstream tooling knows the key before the container ever runs.
+#   3. The seed is the documented minimal shape (radarr/sonarr arrays present).
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    jellyseerr_data_dir: /opt/jellyseerr
+    jellyseerr_config_dir: /opt/jellyseerr/config
+    jellyseerr_image: "fallenbagel/jellyseerr:latest"
+    jellyseerr_container_name: jellyseerr
+    # Must match molecule.yml provisioner.env JELLYSEERR_API_KEY default.
+    jellyseerr_expected_api_key: "0123456789abcdef0123456789abcdef"
+
+  tasks:
+    # --- 1. docker-compose.yml --------------------------------------------
+    - name: Check docker-compose.yml was deployed
+      ansible.builtin.stat:
+        path: "{{ jellyseerr_data_dir }}/docker-compose.yml"
+      register: jellyseerr_compose_stat
+
+    - name: Assert docker-compose.yml exists
+      ansible.builtin.assert:
+        that:
+          - jellyseerr_compose_stat.stat.exists
+        fail_msg: "docker-compose.yml not found - template was not deployed"
+
+    - name: Read docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ jellyseerr_data_dir }}/docker-compose.yml"
+      register: jellyseerr_compose
+
+    - name: Assert docker-compose.yml references image, port 5055, config mount
+      ansible.builtin.assert:
+        that:
+          - "jellyseerr_image in (jellyseerr_compose.content | b64decode)"
+          - "jellyseerr_container_name in (jellyseerr_compose.content | b64decode)"
+          - "'5055:5055' in (jellyseerr_compose.content | b64decode)"
+          - "'/app/config' in (jellyseerr_compose.content | b64decode)"
+        fail_msg: "docker-compose.yml is missing image, port 5055, or the config mount"
+
+    # --- 2. settings.json deterministic API-key seed ----------------------
+    - name: Check settings.json seed exists
+      ansible.builtin.stat:
+        path: "{{ jellyseerr_config_dir }}/settings.json"
+      register: jellyseerr_settings_stat
+
+    - name: Assert settings.json seed exists
+      ansible.builtin.assert:
+        that:
+          - jellyseerr_settings_stat.stat.exists
+        fail_msg: "settings.json seed not found - the API-key seed was not written"
+
+    - name: Read settings.json seed
+      ansible.builtin.slurp:
+        src: "{{ jellyseerr_config_dir }}/settings.json"
+      register: jellyseerr_settings
+
+    - name: Parse settings.json
+      ansible.builtin.set_fact:
+        jellyseerr_settings_json: "{{ jellyseerr_settings.content | b64decode | from_json }}"
+
+    - name: Assert the deterministic API key was seeded and shape is minimal
+      ansible.builtin.assert:
+        that:
+          - jellyseerr_settings_json.main.apiKey == jellyseerr_expected_api_key
+          - "'radarr' in jellyseerr_settings_json"
+          - "'sonarr' in jellyseerr_settings_json"
+          - jellyseerr_settings_json.radarr | length == 0
+          - jellyseerr_settings_json.sonarr | length == 0
+        fail_msg: >-
+          settings.json seed does not carry the deterministic main.apiKey or is
+          not the expected minimal shape.
+
+    - name: Assert settings.json seed permissions are restrictive
+      ansible.builtin.assert:
+        that:
+          - jellyseerr_settings_stat.stat.mode == '0640'
+        fail_msg: "settings.json should be mode 0640 (contains the API key)."
