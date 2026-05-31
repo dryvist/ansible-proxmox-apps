@@ -17,11 +17,14 @@
 #   D. qBittorrent listen interface == wg0 (via WebUI API preferences).
 #   E. Live IPv4 egress leaves via the VPN exit (public IP differs from the
 #      LAN/WAN address and the request only succeeds through wg0).
-#   F. Forced non-VPN IPv4 egress (bound to eth0) is REFUSED.
+#   F. Forced non-VPN IPv4 egress (bound to the LAN interface) is REFUSED.
 #   G. IPv6 egress is refused (curl -6 must fail).
 set -uo pipefail
 
 WG_IF="{{ download_vpn_wg_interface }}"
+# Primary LAN interface (the NIC holding the LAN IP), derived by the role — NOT
+# assumed to be eth0, so the leak test binds to the real LAN NIC.
+LAN_IF="{{ download_vpn_lan_interface }}"
 NTFY_URL="{{ download_vpn_ntfy_url }}"
 HC_URL="{{ download_vpn_healthcheck_url }}"
 IP_PROBE="{{ download_vpn_ip_probe_url }}"
@@ -76,9 +79,9 @@ if [[ -z "${vpn_ip}" ]]; then
   breaches+=("no IPv4 egress via ${WG_IF} (VPN exit unreachable)")
 fi
 # F: forced egress bound to the LAN interface must be REFUSED by the killswitch.
-leak_ip="$(curl -fsS --max-time 8 --interface eth0 "${IP_PROBE}" 2>/dev/null || true)"
+leak_ip="$(curl -fsS --max-time 8 --interface "${LAN_IF}" "${IP_PROBE}" 2>/dev/null || true)"
 if [[ -n "${leak_ip}" ]]; then
-  breaches+=("LEAK: non-VPN IPv4 egress via eth0 succeeded (got ${leak_ip})")
+  breaches+=("LEAK: non-VPN IPv4 egress via ${LAN_IF} succeeded (got ${leak_ip})")
 fi
 
 # --- G. IPv6 egress must be refused -----------------------------------------

@@ -1,0 +1,127 @@
+---
+# Per-app (Sonarr / Radarr) wiring, included once per app with _arr_* vars:
+#   - ensure the Root Folder exists (/mnt/media/tv or /mnt/media/movies)
+#   - ensure the qBittorrent download client exists (host=download-vpn,
+#     port=media_ports.qbittorrent_web, category=tv|movies)
+#   - ensure completed-download handling is enabled
+# All idempotent: GET-then-POST/PUT. Schema-driven for the download client so we
+# never hand-build the full fields array.
+
+# --- Root folder -------------------------------------------------------------
+- name: Read existing root folders for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/rootfolder"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_rootfolders
+  changed_when: false
+  no_log: true
+
+- name: Add the configured root folder for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/rootfolder"
+    method: POST
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body:
+      path: "{{ _arr_root_folder }}"
+    status_code: [200, 201]
+  register: servarr_wiring_rootfolder_add
+  changed_when: servarr_wiring_rootfolder_add.status in [200, 201]
+  no_log: true
+  when: >-
+    servarr_wiring_rootfolders.json
+    | selectattr('path', 'equalto', _arr_root_folder)
+    | list | length == 0
+
+# --- qBittorrent download client --------------------------------------------
+- name: Fetch download client schema for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/downloadclient/schema"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_dc_schema
+  changed_when: false
+  no_log: true
+
+- name: Read existing download clients for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/downloadclient"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_dc_existing
+  changed_when: false
+  no_log: true
+
+- name: Add the qBittorrent download client (idempotent) for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/downloadclient"
+    method: POST
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body: >-
+      {{ _dc_template | combine({
+           'name': 'qBittorrent',
+           'enable': true,
+           'fields': _dc_fields
+         }) }}
+    status_code: [200, 201]
+  register: servarr_wiring_dc_add
+  changed_when: servarr_wiring_dc_add.status in [200, 201]
+  no_log: true
+  when: >-
+    servarr_wiring_dc_existing.json
+    | selectattr('name', 'equalto', 'qBittorrent')
+    | list | length == 0
+  vars:
+    _dc_template: >-
+      {{ servarr_wiring_dc_schema.json
+         | selectattr('implementation', 'equalto', 'QBittorrent')
+         | first }}
+    # Override only the field values we control; keep schema defaults otherwise.
+    _dc_values:
+      host: "{{ servarr_wiring_qbittorrent_host }}"
+      port: "{{ servarr_wiring_qbittorrent_port | int }}"
+      username: "{{ servarr_wiring_qbittorrent_username }}"
+      password: "{{ servarr_wiring_qbittorrent_password }}"
+      useSsl: false
+      "{{ _arr_category_field }}": "{{ _arr_category }}"
+    _dc_fields: >-
+      {{ (_dc_template.fields | rejectattr('name', 'in', _dc_values.keys()) | list)
+         + (_dc_values | dict2items(key_name='name', value_name='value')) }}
+
+# --- Completed-download handling (global) ------------------------------------
+- name: Read download-client config for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/config/downloadclient"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_dc_config
+  changed_when: false
+  no_log: true
+
+- name: Enable completed-download handling for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: >-
+      http://{{ _arr_host }}:{{ _arr_port }}/api/v3/config/downloadclient/{{
+      servarr_wiring_dc_config.json.id }}
+    method: PUT
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body: "{{ servarr_wiring_dc_config.json | combine({'enableCompletedDownloadHandling': true}) }}"
+    status_code: [200, 202]
+  register: servarr_wiring_dc_config_put
+  changed_when: not (servarr_wiring_dc_config.json.enableCompletedDownloadHandling | default(false))
+  no_log: true
+  when: not (servarr_wiring_dc_config.json.enableCompletedDownloadHandling | default(false))

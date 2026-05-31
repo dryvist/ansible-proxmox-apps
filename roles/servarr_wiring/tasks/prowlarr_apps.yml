@@ -1,0 +1,84 @@
+---
+# Add Sonarr + Radarr as Prowlarr "Applications" so Prowlarr syncs its indexers
+# to them. Schema-driven + idempotent:
+#   1. GET /api/v1/applications/schema — the per-implementation field templates.
+#   2. GET /api/v1/applications — what already exists.
+#   3. For each app missing by name, take its schema template, overwrite only the
+#      field VALUES we care about (prowlarrUrl, baseUrl, apiKey), set syncLevel,
+#      and POST. Leaving the rest of the schema intact keeps us resilient to
+#      Prowlarr version drift (we never hand-build the full fields array).
+
+- name: Fetch Prowlarr application schema
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/applications/schema"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_app_schema
+  changed_when: false
+  no_log: true
+
+- name: Fetch existing Prowlarr applications
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/applications"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_app_existing
+  changed_when: false
+  no_log: true
+
+# Build each app's request body from its schema template, overriding only the
+# field VALUES we care about. The fields array is rebuilt in pure Jinja (no
+# custom filter plugin): for every schema field, keep it as-is unless its name
+# is one of our overrides, in which case swap in our value.
+- name: Add missing Prowlarr applications (Sonarr + Radarr)
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/applications"
+    method: POST
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    body_format: json
+    body: >-
+      {{ _app_template | combine({
+           'name': item.name,
+           'syncLevel': servarr_wiring_sync_level,
+           'fields': _app_fields
+         }) }}
+    status_code: [200, 201]
+  register: servarr_wiring_app_add
+  changed_when: servarr_wiring_app_add.status in [200, 201]
+  no_log: true
+  loop: "{{ _prowlarr_apps }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    servarr_wiring_app_existing.json
+    | selectattr('name', 'equalto', item.name)
+    | list | length == 0
+  vars:
+    _app_template: >-
+      {{ servarr_wiring_app_schema.json
+         | selectattr('implementation', 'equalto', item.implementation)
+         | first }}
+    # Rebuild fields with built-in filters only (no custom plugin): keep every
+    # schema field whose name is NOT overridden, then append our {name, value}
+    # overrides. Unsupplied fields keep the schema defaults Prowlarr provides.
+    _app_fields: >-
+      {{ (_app_template.fields | rejectattr('name', 'in', item.values.keys()) | list)
+         + (item.values | dict2items(key_name='name', value_name='value')) }}
+    _prowlarr_apps:
+      - name: Sonarr
+        implementation: Sonarr
+        values:
+          prowlarrUrl: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}"
+          baseUrl: "http://{{ servarr_wiring_sonarr_host }}:{{ servarr_wiring_sonarr_port }}"
+          apiKey: "{{ servarr_wiring_sonarr_api_key }}"
+      - name: Radarr
+        implementation: Radarr
+        values:
+          prowlarrUrl: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}"
+          baseUrl: "http://{{ servarr_wiring_radarr_host }}:{{ servarr_wiring_radarr_port }}"
+          apiKey: "{{ servarr_wiring_radarr_api_key }}"

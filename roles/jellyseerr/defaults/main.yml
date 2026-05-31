@@ -1,0 +1,63 @@
+---
+# jellyseerr role defaults — Jellyseerr request UI (Docker in LXC 214).
+#
+# Docker-in-LXC, mirrors the idrac_kvm_docker role pattern: install Docker,
+# run a single container via Compose, persist config to a host dir. Jellyseerr
+# is config-only (no /tank bind-mounts); it reaches Sonarr/Radarr/Plex over the
+# LAN. The web UI port comes from terraform constants (no hardcoded port).
+jellyseerr_image: "fallenbagel/jellyseerr:latest"
+jellyseerr_container_name: jellyseerr
+jellyseerr_data_dir: /opt/jellyseerr
+# Host dir bind-mounted to the container's /app/config (settings.json, db).
+jellyseerr_config_dir: "{{ jellyseerr_data_dir }}/config"
+jellyseerr_bind_address: "0.0.0.0"
+jellyseerr_tz: "UTC"
+jellyseerr_log_level: "info"
+# Web UI / API port from terraform constants (media_ports.jellyseerr_web = 5055).
+jellyseerr_web_port: "{{ terraform_data.constants.media_ports.jellyseerr_web }}"
+
+# --- Deterministic API key ---------------------------------------------------
+# Templated into settings.json (main.apiKey) BEFORE first start so the value is
+# known to downstream wiring, not auto-generated. Sourced from SOPS env
+# (JELLYSEERR_API_KEY) — never committed. Empty => the role asserts and fails.
+jellyseerr_api_key: "{{ lookup('env', 'JELLYSEERR_API_KEY') | default('', true) }}"
+
+# --- Service registration (Sonarr / Radarr / Plex) ---------------------------
+# Jellyseerr registers Sonarr + Radarr + Plex via its settings API after the
+# container is healthy. Hosts/keys are derived from inventory + SOPS; ports come
+# from terraform constants. These default to the media-stack LXC hostnames so
+# nothing is hardcoded — override per environment if names differ.
+jellyseerr_register_services: true
+
+# Sonarr target (LAN-only PVR LXC 211).
+jellyseerr_sonarr_hostname: >-
+  {{ hostvars['sonarr'].container_ip | default('sonarr') }}
+jellyseerr_sonarr_port: "{{ terraform_data.constants.media_ports.sonarr_web }}"
+jellyseerr_sonarr_api_key: "{{ lookup('env', 'SONARR_API_KEY') | default('', true) }}"
+jellyseerr_sonarr_use_ssl: false
+
+# Radarr target (LAN-only PVR LXC 212).
+jellyseerr_radarr_hostname: >-
+  {{ hostvars['radarr'].container_ip | default('radarr') }}
+jellyseerr_radarr_port: "{{ terraform_data.constants.media_ports.radarr_web }}"
+jellyseerr_radarr_api_key: "{{ lookup('env', 'RADARR_API_KEY') | default('', true) }}"
+jellyseerr_radarr_use_ssl: false
+
+# Root folders inside the *arr LXCs (bind-mounted /tank datasets there).
+jellyseerr_sonarr_root_folder: "/mnt/media/tv"
+jellyseerr_radarr_root_folder: "/mnt/media/movies"
+
+# Plex registration requires a Plex auth/claim token (account-scoped). Left
+# empty by default: when unset, Plex registration is SKIPPED and surfaced as a
+# documented manual step (see role README). Populate PLEX_CLAIM_TOKEN in SOPS to
+# automate it.
+jellyseerr_plex_token: "{{ lookup('env', 'PLEX_CLAIM_TOKEN') | default('', true) }}"
+jellyseerr_plex_hostname: >-
+  {{ hostvars['plex'].container_ip | default('plex') }}
+jellyseerr_plex_port: "{{ terraform_data.constants.media_ports.plex_web }}"
+
+# --- Test / orchestration toggle ---------------------------------------------
+# When false (Molecule), the role renders all config (compose, settings.json
+# seed) but skips the live Docker build/run + Jellyseerr API registration that
+# need a running container. The live deploy leaves it true.
+jellyseerr_manage_services: true

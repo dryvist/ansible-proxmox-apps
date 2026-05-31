@@ -819,3 +819,196 @@
           - Multi-entry enabled: exactly one bind *:80 and one bind *:443
             (CRITICAL fix), two crt entries on the SNI bind line, two
             use_backend ACLs, two per-service backends
+
+- name: Render and verify jellyseerr templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/jellyseerr/defaults/main.yml (test stand-ins for the
+    # SOPS-sourced API key and terraform_data ports).
+    jellyseerr_image: "fallenbagel/jellyseerr:latest"
+    jellyseerr_container_name: jellyseerr
+    jellyseerr_bind_address: "0.0.0.0"
+    jellyseerr_tz: "UTC"
+    jellyseerr_log_level: "info"
+    jellyseerr_web_port: 5055
+    jellyseerr_config_dir: /opt/jellyseerr/config
+    jellyseerr_api_key: "test-jellyseerr-apikey-placeholder"
+    _template_dir: "../../roles/jellyseerr/templates"
+
+  tasks:
+    - name: Render jellyseerr docker-compose.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: /tmp/test_jellyseerr_compose.yml
+        mode: "0644"
+
+    - name: Read rendered jellyseerr docker-compose.yml
+      ansible.builtin.slurp:
+        src: /tmp/test_jellyseerr_compose.yml
+      register: _jellyseerr_compose_raw
+
+    - name: Decode jellyseerr compose content
+      ansible.builtin.set_fact:
+        _jellyseerr_compose: "{{ _jellyseerr_compose_raw.content | b64decode }}"
+
+    - name: Assert jellyseerr compose references image, port 5055, config mount
+      ansible.builtin.assert:
+        that:
+          - "'fallenbagel/jellyseerr:latest' in _jellyseerr_compose"
+          - "'5055:5055' in _jellyseerr_compose"
+          - "'/app/config' in _jellyseerr_compose"
+        fail_msg: >-
+          jellyseerr docker-compose.yml.j2 missing image, port 5055, or the
+          /app/config mount
+
+    - name: Render jellyseerr settings.json.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/settings.json.j2"
+        dest: /tmp/test_jellyseerr_settings.json
+        mode: "0640"
+
+    - name: Read rendered jellyseerr settings.json
+      ansible.builtin.slurp:
+        src: /tmp/test_jellyseerr_settings.json
+      register: _jellyseerr_settings_raw
+
+    - name: Parse jellyseerr settings.json (must be valid JSON with the seeded key)
+      ansible.builtin.set_fact:
+        _jellyseerr_settings: "{{ _jellyseerr_settings_raw.content | b64decode | from_json }}"
+
+    - name: Assert settings.json seeds the deterministic main.apiKey and minimal shape
+      ansible.builtin.assert:
+        that:
+          - _jellyseerr_settings.main.apiKey == jellyseerr_api_key
+          - "'radarr' in _jellyseerr_settings"
+          - "'sonarr' in _jellyseerr_settings"
+          - _jellyseerr_settings.radarr | length == 0
+          - _jellyseerr_settings.sonarr | length == 0
+        fail_msg: >-
+          settings.json.j2 does not seed main.apiKey or is not valid minimal JSON
+
+    - name: Jellyseerr template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          Jellyseerr template assertions passed:
+          - docker-compose.yml.j2: image, port 5055:5055, /app/config mount
+          - settings.json.j2: valid JSON seeding the deterministic main.apiKey
+
+# =============================================================================
+# servarr_wiring API body-construction logic (mocked schema — no live apps)
+# =============================================================================
+# The wiring role builds each POST body by taking the app's API schema and
+# overriding only the field VALUES it controls (pure Jinja, no custom filter).
+# This is the load-bearing, error-prone logic. Here we feed a CANNED schema
+# (exactly the shape Prowlarr / Sonarr return from /schema) and assert the merge
+# produces the right fields array — proving correctness without any live app.
+- name: Verify servarr_wiring field-merge logic against a mocked schema
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Canned Prowlarr "Sonarr application" schema fragment (as /applications/schema
+    # returns it): default field entries the role must preserve or override.
+    _mock_prowlarr_schema_fields:
+      - name: prowlarrUrl
+        value: ""
+      - name: baseUrl
+        value: ""
+      - name: apiKey
+        value: ""
+      - name: syncCategories
+        value: [5000, 5010, 5030, 5040]
+      - name: syncRejectBlocklistedTorrentHashesWhileGrabbing
+        value: false
+    # The override values the role injects for a Sonarr application.
+    _mock_app_values:
+      prowlarrUrl: "http://192.0.2.10:9696"
+      baseUrl: "http://192.0.2.11:8989"
+      apiKey: "sonarr-key-placeholder"
+
+    # This is the EXACT expression from roles/servarr_wiring/tasks/prowlarr_apps.yml
+    # (_app_fields). Keep it identical so the test guards the real logic.
+    _merged_fields: >-
+      {{ (_mock_prowlarr_schema_fields | rejectattr('name', 'in', _mock_app_values.keys()) | list)
+         + (_mock_app_values | dict2items(key_name='name', value_name='value')) }}
+
+    # Canned qBittorrent download-client schema fragment (Sonarr /downloadclient/schema).
+    _mock_qbt_schema_fields:
+      - name: host
+        value: ""
+      - name: port
+        value: 8080
+      - name: useSsl
+        value: false
+      - name: username
+        value: ""
+      - name: password
+        value: ""
+      - name: tvCategory
+        value: ""
+      - name: recentTvPriority
+        value: 0
+    _mock_qbt_values:
+      host: "192.0.2.12"
+      port: 8080
+      username: admin
+      password: "qbt-pass-placeholder"
+      useSsl: false
+      tvCategory: "tv"
+    _merged_qbt_fields: >-
+      {{ (_mock_qbt_schema_fields | rejectattr('name', 'in', _mock_qbt_values.keys()) | list)
+         + (_mock_qbt_values | dict2items(key_name='name', value_name='value')) }}
+
+  tasks:
+    - name: Index merged Prowlarr fields by name for assertions
+      ansible.builtin.set_fact:
+        _pf: "{{ _merged_fields | items2dict(key_name='name', value_name='value') }}"
+
+    - name: Assert Prowlarr application fields override values and preserve schema defaults
+      ansible.builtin.assert:
+        that:
+          # Overrides applied verbatim.
+          - _pf.prowlarrUrl == "http://192.0.2.10:9696"
+          - _pf.baseUrl == "http://192.0.2.11:8989"
+          - _pf.apiKey == "sonarr-key-placeholder"
+          # Schema default NOT in the override set is preserved untouched.
+          - _pf.syncCategories == [5000, 5010, 5030, 5040]
+          - _pf.syncRejectBlocklistedTorrentHashesWhileGrabbing == false
+          # No duplicate field names (the override must REPLACE, not append).
+          - (_merged_fields | map(attribute='name') | list | length)
+            == (_merged_fields | map(attribute='name') | unique | list | length)
+        fail_msg: >-
+          servarr_wiring Prowlarr field-merge produced wrong fields:
+          {{ _merged_fields }}
+
+    - name: Index merged qBittorrent fields by name for assertions
+      ansible.builtin.set_fact:
+        _qf: "{{ _merged_qbt_fields | items2dict(key_name='name', value_name='value') }}"
+
+    - name: Assert qBittorrent download-client fields override values and preserve defaults
+      ansible.builtin.assert:
+        that:
+          - _qf.host == "192.0.2.12"
+          - _qf.username == "admin"
+          - _qf.tvCategory == "tv"
+          - _qf.useSsl == false
+          # Schema default not overridden is preserved.
+          - _qf.recentTvPriority == 0
+          - (_merged_qbt_fields | map(attribute='name') | list | length)
+            == (_merged_qbt_fields | map(attribute='name') | unique | list | length)
+        fail_msg: >-
+          servarr_wiring qBittorrent field-merge produced wrong fields:
+          {{ _merged_qbt_fields }}
+
+    - name: Servarr_wiring field-merge logic PASSED
+      ansible.builtin.debug:
+        msg: |
+          servarr_wiring field-merge assertions passed (mocked schema, no live apps):
+          - Prowlarr application: prowlarrUrl/baseUrl/apiKey overridden,
+            syncCategories preserved, no duplicate field names
+          - qBittorrent client: host/username/tvCategory/useSsl overridden,
+            recentTvPriority preserved, no duplicate field names

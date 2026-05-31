@@ -1,0 +1,64 @@
+---
+# servarr_wiring role defaults — idempotent cross-app API "self-wiring".
+#
+# Runs AFTER the download_vpn (Prowlarr + qBittorrent), sonarr, and radarr roles
+# have installed their apps. It:
+#   1. Sets a DETERMINISTIC API key in each app's config.xml (so cross-app
+#      wiring keys are known before converge — never auto-generated).
+#   2. Wires Prowlarr -> Sonarr/Radarr Applications (full sync).
+#   3. Wires Sonarr/Radarr -> qBittorrent download client (on download-vpn).
+#   4. Ensures root folders (/mnt/media/tv, /mnt/media/movies).
+#   5. Ensures a default quality profile exists.
+#
+# All API config is idempotent (GET-then-POST/PUT). No bespoke scripts: this is
+# ansible.builtin.uri, the same house pattern the download_vpn role uses for
+# qBittorrent.
+
+# --- Deterministic API keys (from SOPS env; never committed) -----------------
+servarr_wiring_sonarr_api_key: "{{ lookup('env', 'SONARR_API_KEY') | default('', true) }}"
+servarr_wiring_radarr_api_key: "{{ lookup('env', 'RADARR_API_KEY') | default('', true) }}"
+servarr_wiring_prowlarr_api_key: "{{ lookup('env', 'PROWLARR_API_KEY') | default('', true) }}"
+
+# --- App data dirs (config.xml lives here; match the app roles' -data dirs) ---
+servarr_wiring_sonarr_data_dir: /var/lib/sonarr
+servarr_wiring_radarr_data_dir: /var/lib/radarr
+servarr_wiring_prowlarr_data_dir: /var/lib/prowlarr
+servarr_wiring_sonarr_user: media
+servarr_wiring_radarr_user: media
+servarr_wiring_prowlarr_user: qbittorrent
+servarr_wiring_group: media
+
+# --- Endpoints (hostname:port). Hosts from inventory, ports from Terraform. ---
+# Sonarr / Radarr are LAN-only LXCs; Prowlarr + qBittorrent live in download-vpn.
+servarr_wiring_sonarr_host: >-
+  {{ hostvars['sonarr'].container_ip | default('127.0.0.1') }}
+servarr_wiring_radarr_host: >-
+  {{ hostvars['radarr'].container_ip | default('127.0.0.1') }}
+servarr_wiring_prowlarr_host: >-
+  {{ hostvars['download-vpn'].container_ip | default('127.0.0.1') }}
+servarr_wiring_qbittorrent_host: >-
+  {{ hostvars['download-vpn'].container_ip | default('127.0.0.1') }}
+
+servarr_wiring_sonarr_port: "{{ terraform_data.constants.media_ports.sonarr_web }}"
+servarr_wiring_radarr_port: "{{ terraform_data.constants.media_ports.radarr_web }}"
+servarr_wiring_prowlarr_port: "{{ terraform_data.constants.media_ports.prowlarr_web }}"
+servarr_wiring_qbittorrent_port: "{{ terraform_data.constants.media_ports.qbittorrent_web }}"
+
+# qBittorrent WebUI auth (same SOPS secret the download_vpn role uses).
+servarr_wiring_qbittorrent_username: admin
+servarr_wiring_qbittorrent_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') | default('', true) }}"
+
+# --- Wiring parameters -------------------------------------------------------
+# Root folders inside the *arr LXCs (bind-mounted /tank datasets).
+servarr_wiring_sonarr_root_folder: "/mnt/media/tv"
+servarr_wiring_radarr_root_folder: "/mnt/media/movies"
+# qBittorrent categories per app.
+servarr_wiring_sonarr_category: "tv"
+servarr_wiring_radarr_category: "movies"
+# Prowlarr Application sync level: disabled | addOnly | fullSync.
+servarr_wiring_sync_level: "fullSync"
+
+# --- Test / orchestration toggle ---------------------------------------------
+# When false (Molecule), the role only validates inputs and renders nothing
+# live — there are no running *arr apps in CI. The live deploy leaves it true.
+servarr_wiring_manage_services: true
