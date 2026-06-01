@@ -66,13 +66,21 @@ it deterministically so downstream tooling knows it before the container runs:
 
 ## Service registration (Sonarr / Radarr / Plex)
 
-`tasks/register.yml` registers the `*arr` apps idempotently via the Jellyseerr
-settings API (GET-then-POST — the repo's house pattern, no bespoke scripts):
+`tasks/register.yml` registers the `*arr` apps idempotently and self-healingly
+via the Jellyseerr settings API (GET-then-PUT-always — the repo's house pattern,
+no bespoke scripts):
 
 - `GET /api/v1/settings/{radarr,sonarr}` to read existing servers.
 - Resolve the target app's first quality-profile id from its own
   `/api/v3/qualityprofile` (Jellyseerr requires `activeProfileId`).
 - `POST` the server only when no entry with that hostname exists yet.
+- `PUT /api/v1/settings/{radarr,sonarr}/{id}` to reconcile an existing entry
+  whenever its stored `apiKey`, `port`, or `useSsl` drifts from the SOPS-sourced
+  value. A converged host PUTs nothing; a SOPS key rotation re-syncs the entry.
+
+This makes the role re-runnable at **any** point: a rotated `SONARR_API_KEY` /
+`RADARR_API_KEY` is pushed into Jellyseerr's DB on the next converge instead of
+leaving a stale key behind a 401.
 
 Hostnames default to the media-stack LXC IPs from inventory; ports come from
 Terraform constants. Sonarr/Radarr registration is skipped if its API key is

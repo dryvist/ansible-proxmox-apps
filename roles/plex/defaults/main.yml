@@ -1,13 +1,37 @@
 ---
 # plex role defaults — LAN-only Plex Media Server. No VPN.
-# Skeleton: install from Plex's official apt repo + enable the service.
-# Library setup + claim happen in the Plex web UI after deploy.
+# Install from Plex's official apt repo, enable the service, and (idempotently +
+# non-fatally) claim the server from a SOPS-sourced claim token. Library content
+# add can still be finished in the Plex web UI / API after deploy.
 plex_user: plex
 plex_group: media
 plex_group_gid: 13000
 plex_media_dir: /mnt/media
+# Media library roots scaffolded under plex_media_dir (movies + tv). The actual
+# library "add" against the Plex API can be done later; these just guarantee the
+# directories Plex (and the *arr apps) expect exist with the right ownership.
+plex_library_subdirs:
+  - movies
+  - tv
 # Web UI / server port from terraform constants (no hardcoded port).
 plex_web_port: "{{ terraform_data.constants.media_ports.plex_web }}"
+
+# --- Server claim (account linking) ------------------------------------------
+# Plex claim tokens are account-scoped and EXPIRE ~4 minutes after generation
+# (https://www.plex.tv/claim), so a stored token is usually already stale. The
+# role consumes it idempotently AND non-fatally:
+#   - already claimed (Preferences.xml has PlexOnlineToken) -> skip
+#   - token present + still valid                           -> claim, then done
+#   - token absent or expired/invalid                       -> log + continue
+# Sourced from SOPS env (PLEX_CLAIM_TOKEN); never committed. Empty => skip.
+plex_claim_token: "{{ lookup('env', 'PLEX_CLAIM_TOKEN') | default('', true) }}"
+# Local Plex API for the claim exchange (loopback — the claim is submitted from
+# the server itself). 32400 is the fixed Plex Media Server API port.
+plex_local_api_port: 32400
+# Where apt-installed Plex persists Preferences.xml (holds PlexOnlineToken once
+# the server is claimed).
+plex_preferences_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
 # Official Plex apt repo — v2 (ed25519 key, repo.plex.tv).
 # Required on Debian 13 (trixie): apt-via-Sequoia (sqv) rejects the legacy
 # RSA/SHA-1 PlexSign key as of 2026-02-01. The v2 key/repo are the official

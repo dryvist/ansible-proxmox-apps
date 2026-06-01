@@ -1,5 +1,6 @@
 ---
-# plex — minimal LAN-only install from the official Plex apt repo (skeleton).
+# plex — LAN-only install from the official Plex apt repo, then an idempotent +
+# non-fatal server claim from a SOPS-sourced PLEX_CLAIM_TOKEN.
 
 - name: Install Plex prerequisites
   ansible.builtin.apt:
@@ -79,10 +80,29 @@
     mode: "2775"
   failed_when: false
 
+# Scaffold the movies/tv library roots so Plex (and the *arr apps writing here)
+# have the expected directories. The library "add" against the Plex API can be
+# finished later via UI/API; this just guarantees the paths exist.
+- name: Scaffold Plex media library subdirectories
+  ansible.builtin.file:
+    path: "{{ plex_media_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ plex_user }}"
+    group: "{{ plex_group }}"
+    mode: "2775"
+  loop: "{{ plex_library_subdirs }}"
+  failed_when: false
+
 - name: Enable + start Plex Media Server
   ansible.builtin.systemd:
     name: plexmediaserver.service
     state: started
     enabled: true
     daemon_reload: true
+  when: plex_manage_services
+
+# Idempotent + non-fatal server claim (see tasks/claim.yml). Only attempted on a
+# live host (plex_manage_services), since it talks to the running Plex API.
+- name: Claim the Plex server (idempotent, non-fatal)
+  ansible.builtin.import_tasks: claim.yml
   when: plex_manage_services
