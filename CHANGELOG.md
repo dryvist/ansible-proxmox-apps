@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.14.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.13.0...v1.14.0) (2026-06-01)
+
+
+### Features
+
+* **download_vpn:** VPN-locked qBittorrent+Prowlarr LXC with fail-closed killswitch ([#286](https://github.com/dryvist/ansible-proxmox-apps/issues/286)) ([58cc4f3](https://github.com/dryvist/ansible-proxmox-apps/commit/58cc4f30d14cc0221621390cd37826abea1fafbe))
+* **idrac_kvm_docker:** rebuild viewer image with AVCT client; LXC wiring + ports 5410/5710 ([#284](https://github.com/dryvist/ansible-proxmox-apps/issues/284)) ([e528aa5](https://github.com/dryvist/ansible-proxmox-apps/commit/e528aa56a1e5537faa55d3b03481ac50351691fd))
+* **media:** add deterministic servarr API keys to SOPS for self-wiring ([#290](https://github.com/dryvist/ansible-proxmox-apps/issues/290)) ([963eced](https://github.com/dryvist/ansible-proxmox-apps/commit/963eced4a0e037045dde30a16d442fdc08c11344))
+* **media:** jellyseerr role + idempotent Servarr-API self-wiring ([#289](https://github.com/dryvist/ansible-proxmox-apps/issues/289)) ([af2b707](https://github.com/dryvist/ansible-proxmox-apps/commit/af2b7079cda6cd4d618a12360e0b2575f7eb2429))
+* **plex:** switch to Plex v2 apt repo (ed25519) for Debian 13 ([#297](https://github.com/dryvist/ansible-proxmox-apps/issues/297)) ([0d0f202](https://github.com/dryvist/ansible-proxmox-apps/commit/0d0f202175ee6a6707918a56134711d00b4617d3))
+* **zot_registry:** self-hosted Zot registry + docker mirror client config ([#287](https://github.com/dryvist/ansible-proxmox-apps/issues/287)) ([dffd5a5](https://github.com/dryvist/ansible-proxmox-apps/commit/dffd5a5097e9e75a3d4e58738cfa4745415e32c8))
+
+
+### Bug Fixes
+
+* **ci:** repoint release-please caller to org-native reusable workflow ([#292](https://github.com/dryvist/ansible-proxmox-apps/issues/292)) ([aecf5e4](https://github.com/dryvist/ansible-proxmox-apps/commit/aecf5e4581b04be40f85ec129602b7bae1aed30a))
+* **download_vpn:** add openresolv so wg-quick DNS= directive works on Debian 13 LXC ([#293](https://github.com/dryvist/ansible-proxmox-apps/issues/293)) ([f05532b](https://github.com/dryvist/ansible-proxmox-apps/commit/f05532b6b066ec85734b63488580618b44033755))
+
 ## [1.13.0](https://github.com/JacobPEvans/ansible-proxmox-apps/compare/v1.12.1...v1.13.0) (2026-05-25)
 
 
