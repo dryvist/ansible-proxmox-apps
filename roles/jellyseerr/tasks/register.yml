@@ -1,11 +1,18 @@
 ---
-# Idempotent Jellyseerr service registration via its settings API.
+# Idempotent, self-healing Jellyseerr service registration via its settings API.
 #
-# Pattern (matches the repo's house style — GET-then-POST, no bespoke scripts):
-#   1. GET the current Jellyseerr settings for each service type.
-#   2. Resolve the target *arr's first quality profile id (Jellyseerr requires
+# Pattern (GET-then-PUT-always — reconciles every converge, no bespoke scripts):
+#   1. GET the target *arr's first quality profile id (Jellyseerr requires
 #      activeProfileId on a Radarr/Sonarr server entry).
-#   3. POST the server only when no entry with the same hostname exists yet.
+#   2. GET the current Jellyseerr server entries for that service type.
+#   3. If no entry with the same hostname exists -> POST a new one.
+#      If an entry exists but its stored apiKey / port / useSsl drifts from the
+#      SOPS-sourced value -> PUT the update (PUT /api/v1/settings/{type}/{id}).
+#      If an entry exists and matches -> no change.
+#
+# Net effect: a SOPS key rotation (or any re-run) reconciles Jellyseerr's stored
+# credentials to the current SOPS values, so applying at ANY point re-syncs the
+# server entries instead of leaving a stale apiKey -> 401.
 #
 # All calls authenticate with the deterministic X-Api-Key. Plex registration is
 # skipped unless a Plex token is provided (documented manual step otherwise).
@@ -35,7 +42,17 @@
       changed_when: false
       no_log: true
 
-    - name: Add Radarr to Jellyseerr (idempotent)
+    - name: Resolve the existing Radarr entry for this hostname (if any)
+      ansible.builtin.set_fact:
+        jellyseerr_radarr_entry: >-
+          {{
+            (jellyseerr_radarr_existing.json
+             | selectattr('hostname', 'equalto', jellyseerr_radarr_hostname)
+             | list | first) | default({}, true)
+          }}
+      no_log: true
+
+    - name: Add Radarr to Jellyseerr (create — no entry yet)
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/radarr"
         method: POST
@@ -62,10 +79,39 @@
       no_log: true
       when:
         - jellyseerr_radarr_profiles.json | length > 0
+        - jellyseerr_radarr_entry == {}
+
+    # Self-heal: PUT only when the stored entry drifts from the SOPS-sourced
+    # credentials/connection (apiKey rotation, port or SSL change). Comparing
+    # before PUT keeps the task idempotent — no change on a converged host. The
+    # PUT body preserves the entry's existing fields (combine) and overlays only
+    # the reconciled connection values, so unrelated settings are untouched.
+    - name: Update Radarr in Jellyseerr (reconcile drifted apiKey/port/ssl)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/radarr/{{ jellyseerr_radarr_entry.id }}"
+        method: PUT
+        headers:
+          X-Api-Key: "{{ jellyseerr_api_key }}"
+        body_format: json
+        body: >-
+          {{
+            jellyseerr_radarr_entry | combine({
+              'hostname': jellyseerr_radarr_hostname,
+              'port': jellyseerr_radarr_port | int,
+              'useSsl': jellyseerr_radarr_use_ssl,
+              'apiKey': jellyseerr_radarr_api_key
+            })
+          }}
+        status_code: [200, 201]
+      register: jellyseerr_radarr_update
+      changed_when: jellyseerr_radarr_update.status in [200, 201]
+      no_log: true
+      when:
+        - jellyseerr_radarr_entry != {}
         - >-
-          jellyseerr_radarr_existing.json
-          | selectattr('hostname', 'equalto', jellyseerr_radarr_hostname)
-          | list | length == 0
+          jellyseerr_radarr_entry.apiKey | default('') != jellyseerr_radarr_api_key
+          or (jellyseerr_radarr_entry.port | default(0) | int) != (jellyseerr_radarr_port | int)
+          or (jellyseerr_radarr_entry.useSsl | default(false) | bool) != (jellyseerr_radarr_use_ssl | bool)
 
 - name: Register Sonarr in Jellyseerr
   when: jellyseerr_sonarr_api_key | length > 0
@@ -92,7 +138,17 @@
       changed_when: false
       no_log: true
 
-    - name: Add Sonarr to Jellyseerr (idempotent)
+    - name: Resolve the existing Sonarr entry for this hostname (if any)
+      ansible.builtin.set_fact:
+        jellyseerr_sonarr_entry: >-
+          {{
+            (jellyseerr_sonarr_existing.json
+             | selectattr('hostname', 'equalto', jellyseerr_sonarr_hostname)
+             | list | first) | default({}, true)
+          }}
+      no_log: true
+
+    - name: Add Sonarr to Jellyseerr (create — no entry yet)
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/sonarr"
         method: POST
@@ -118,10 +174,37 @@
       no_log: true
       when:
         - jellyseerr_sonarr_profiles.json | length > 0
+        - jellyseerr_sonarr_entry == {}
+
+    # Self-heal: PUT only when the stored entry drifts from the SOPS-sourced
+    # credentials/connection (apiKey rotation, port or SSL change). Body preserves
+    # the existing entry (combine) and overlays only the reconciled connection.
+    - name: Update Sonarr in Jellyseerr (reconcile drifted apiKey/port/ssl)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/sonarr/{{ jellyseerr_sonarr_entry.id }}"
+        method: PUT
+        headers:
+          X-Api-Key: "{{ jellyseerr_api_key }}"
+        body_format: json
+        body: >-
+          {{
+            jellyseerr_sonarr_entry | combine({
+              'hostname': jellyseerr_sonarr_hostname,
+              'port': jellyseerr_sonarr_port | int,
+              'useSsl': jellyseerr_sonarr_use_ssl,
+              'apiKey': jellyseerr_sonarr_api_key
+            })
+          }}
+        status_code: [200, 201]
+      register: jellyseerr_sonarr_update
+      changed_when: jellyseerr_sonarr_update.status in [200, 201]
+      no_log: true
+      when:
+        - jellyseerr_sonarr_entry != {}
         - >-
-          jellyseerr_sonarr_existing.json
-          | selectattr('hostname', 'equalto', jellyseerr_sonarr_hostname)
-          | list | length == 0
+          jellyseerr_sonarr_entry.apiKey | default('') != jellyseerr_sonarr_api_key
+          or (jellyseerr_sonarr_entry.port | default(0) | int) != (jellyseerr_sonarr_port | int)
+          or (jellyseerr_sonarr_entry.useSsl | default(false) | bool) != (jellyseerr_sonarr_use_ssl | bool)
 
 # Plex registration needs an account-scoped Plex token. Skipped (and surfaced as
 # a manual step in the README) unless PLEX_CLAIM_TOKEN is populated in SOPS.

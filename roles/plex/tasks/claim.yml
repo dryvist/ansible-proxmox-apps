@@ -1,0 +1,114 @@
+---
+# Idempotent + NON-FATAL Plex server claim.
+#
+# Plex claim tokens are account-scoped and expire ~4 minutes after generation
+# (https://www.plex.tv/claim), so a token stored in SOPS is usually already
+# stale by converge time. This task therefore NEVER fails the play on a missing
+# or expired token — it reconciles when it can and logs a clear next step when
+# it cannot:
+#   1. already claimed  (Preferences.xml has a non-empty PlexOnlineToken) -> skip
+#   2. token present     -> exchange it at the LOCAL Plex API for the permanent
+#                           token (the standard apt-install claim flow). A
+#                           rejected/expired token is logged, not fatal.
+#   3. token absent      -> log a reminder to provide a fresh PLEX_CLAIM_TOKEN
+#                           right before converge, or claim via the web UI.
+
+- name: Check whether Preferences.xml exists yet
+  ansible.builtin.stat:
+    path: "{{ plex_preferences_path }}"
+  register: plex_prefs_stat
+
+- name: Read Preferences.xml to detect an existing claim
+  ansible.builtin.slurp:
+    src: "{{ plex_preferences_path }}"
+  register: plex_prefs_raw
+  when: plex_prefs_stat.stat.exists
+  no_log: true
+
+# PlexOnlineToken="..." is present (and non-empty) once the server is claimed.
+- name: Determine if Plex is already claimed
+  ansible.builtin.set_fact:
+    plex_already_claimed: >-
+      {{
+        plex_prefs_stat.stat.exists
+        and (plex_prefs_raw.content | b64decode)
+            is search('PlexOnlineToken="[^"]+"')
+      }}
+  no_log: true
+
+- name: Report that Plex is already claimed (nothing to do)
+  ansible.builtin.debug:
+    msg: "Plex is already claimed (Preferences.xml has PlexOnlineToken) — skipping claim."
+  when: plex_already_claimed
+
+# A stable per-host client identifier keeps the claim attempt idempotent across
+# re-runs (Plex ties the claim to this id).
+- name: Build a stable X-Plex-Client-Identifier for this host
+  ansible.builtin.set_fact:
+    plex_client_identifier: "ansible-plex-{{ ansible_machine_id | default(inventory_hostname) }}"
+  when:
+    - not plex_already_claimed
+    - plex_claim_token | length > 0
+
+- name: Claim block (token present, not yet claimed)
+  when:
+    - not plex_already_claimed
+    - plex_claim_token | length > 0
+  block:
+    # Plex must be up to accept the claim. Short wait — non-fatal so a slow or
+    # down server still falls through to the reminder instead of aborting.
+    - name: Wait briefly for the local Plex API
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ plex_local_api_port }}"
+        timeout: 60
+      register: plex_api_wait
+      failed_when: false
+
+    # Exchange the claim token for the permanent account token. Submitted FROM
+    # the server to its own loopback API (the standard headless claim flow).
+    # NON-FATAL: an expired/invalid token returns 4xx — we record it and move on.
+    - name: Exchange the claim token at the local Plex API
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_local_api_port }}/myplex/claim?token={{ plex_claim_token }}"
+        method: POST
+        headers:
+          X-Plex-Client-Identifier: "{{ plex_client_identifier }}"
+          Accept: application/json
+        status_code: [200, 201]
+      register: plex_claim_result
+      failed_when: false
+      changed_when: plex_claim_result.status in [200, 201]
+      no_log: true
+      when: plex_api_wait.state is defined and plex_api_wait.state == 'started'
+
+    - name: Report successful Plex claim
+      ansible.builtin.debug:
+        msg: "Plex server claimed successfully via PLEX_CLAIM_TOKEN."
+      when:
+        - plex_claim_result is defined
+        - plex_claim_result.status is defined
+        - plex_claim_result.status in [200, 201]
+
+    # The most common real-world outcome: the stored token had already expired.
+    - name: Report a non-fatal claim failure (token likely expired)
+      ansible.builtin.debug:
+        msg: >-
+          Plex NOT claimed: the local API rejected PLEX_CLAIM_TOKEN
+          (claim tokens expire ~4 min after generation). Provide a FRESH
+          PLEX_CLAIM_TOKEN in SOPS immediately before converge, or claim via the
+          Plex web UI at
+          http://{{ ansible_default_ipv4.address | default(inventory_hostname) }}:{{ plex_web_port }}/web.
+      when:
+        - plex_claim_result is defined
+        - not (plex_claim_result.status is defined and plex_claim_result.status in [200, 201])
+
+- name: Report that no claim token was provided (manual claim still pending)
+  ansible.builtin.debug:
+    msg: >-
+      Plex not claimed: no PLEX_CLAIM_TOKEN provided. Add a fresh token to SOPS
+      (secrets.enc.yaml) right before converge, or claim via the Plex web UI at
+      http://{{ ansible_default_ipv4.address | default(inventory_hostname) }}:{{ plex_web_port }}/web.
+  when:
+    - not plex_already_claimed
+    - plex_claim_token | length == 0
