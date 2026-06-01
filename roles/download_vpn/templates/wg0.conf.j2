@@ -6,6 +6,14 @@
   on the Address line and set AllowedIPs to the IPv4 default route. IPv6 is
   disabled at the kernel + dropped by nftables, so we deliberately do NOT add
   ::/0 here — that would build a v6 default route the killswitch must fight.
+
+  Routing note: `Table = auto` is wg-quick's default. When AllowedIPs covers
+  0.0.0.0/0 it installs the v4 default route via wg0 *and* sets up an fwmark +
+  policy-routing table so wg's own encapsulated UDP to the Proton endpoint is
+  resolved against the original LAN default (not back through wg0). Setting
+  `Table = off` here breaks that — encapsulated UDP recursively routes into
+  wg0 and the handshake never completes. The killswitch (nftables) is what
+  enforces fail-closed, not the routing table choice.
 -#}
 [Interface]
 PrivateKey = {{ download_vpn_wg_private_key }}
@@ -13,10 +21,11 @@ Address = {{ download_vpn_wg_address_v4 }}
 {% if download_vpn_wg_dns | trim | length > 0 %}
 DNS = {{ download_vpn_wg_dns }}
 {% endif %}
-# Table = off keeps wg-quick from installing routes for us; the killswitch +
-# the explicit wg0 default route (added by the role) own routing so no v6
-# default route can sneak in.
-Table = off
+# Let wg-quick manage routing: it installs the v4 default via wg0 AND the
+# fwmark policy-routing table that keeps encapsulated UDP escaping via the
+# LAN gateway. The killswitch (nftables, default-drop) provides fail-closed
+# guarantees independently of routing.
+Table = auto
 
 [Peer]
 PublicKey = {{ download_vpn_wg_peer_public_key }}
