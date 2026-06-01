@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.14.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.14.0...v1.14.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **download_vpn:** use wg-quick auto routing — drop recursive Table=off design ([#298](https://github.com/dryvist/ansible-proxmox-apps/issues/298)) ([a069b77](https://github.com/dryvist/ansible-proxmox-apps/commit/a069b778fd4c5f848bec9247596a18ea408293d8))
+* **media:** self-healing Jellyseerr wiring + idempotent non-fatal Plex claim ([#301](https://github.com/dryvist/ansible-proxmox-apps/issues/301)) ([120bae7](https://github.com/dryvist/ansible-proxmox-apps/commit/120bae74641c94492701f03409af2ec7ef4b6b4f))
+
 ## [1.14.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.13.0...v1.14.0) (2026-06-01)
 
 
