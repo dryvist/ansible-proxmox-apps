@@ -56,10 +56,13 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
 ## Requirements
 
 - Debian-based unprivileged LXC with `/dev/net/tun` and `nesting`/`keyctl`.
-- Proton WireGuard config delivered via SOPS (see repo
-  `secrets.enc.yaml.example`): `PROTON_WG_PRIVATE_KEY`, `PROTON_WG_ADDRESS`,
-  `PROTON_WG_ENDPOINT`, `PROTON_WG_PEER_PUBLIC_KEY`, `PROTON_WG_DNS`,
-  `QBITTORRENT_ADMIN_PASSWORD`.
+- Proton WireGuard config delivered via Doppler runtime env (variable names
+  mirror the `.conf` `[Interface]`/`[Peer]` sections so a fresh Proton
+  download maps 1:1): `PROTON_WG_IFACE_PRIVATE_KEY`,
+  `PROTON_WG_IFACE_ADDRESS`, `PROTON_WG_PEER_PUBLIC_KEY`,
+  `PROTON_WG_PEER_ENDPOINT`. Proton's tunnel DNS resolver `10.2.0.1` is a
+  stable constant and is hardcoded in `defaults/main.yml` (not a secret).
+  `QBITTORRENT_ADMIN_PASSWORD` is delivered via SOPS.
 - `tank/downloads` + `tank/media` bind-mounted at `/mnt/downloads` and
   `/mnt/media`.
 
