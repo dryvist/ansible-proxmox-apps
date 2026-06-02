@@ -116,8 +116,18 @@
     - "{{ jellyseerr_data_dir }}"
     - "{{ jellyseerr_config_dir }}"
 
-# One-time seed: set ONLY the deterministic main.apiKey. force:false so we never
-# clobber the settings.json Jellyseerr owns and rewrites at runtime.
+# One-time seed: set ONLY the deterministic main.apiKey, then leave the file to
+# Jellyseerr (it rewrites settings.json at runtime). Guard on the file not yet
+# existing instead of `template force: false`: some ansible-core versions, with
+# force:false, both skip applying `mode` on creation (leaving the API-key file
+# world-readable at 0644) AND re-touch the mode on every converge (breaking
+# idempotence). A normal templated create under a not-exists guard applies 0640
+# correctly and runs exactly once.
+- name: Check whether the Jellyseerr settings seed already exists
+  ansible.builtin.stat:
+    path: "{{ jellyseerr_config_dir }}/settings.json"
+  register: jellyseerr_settings_seed_stat
+
 - name: Seed settings.json with the deterministic API key (one-time)
   ansible.builtin.template:
     src: settings.json.j2
@@ -125,7 +135,7 @@
     owner: root
     group: root
     mode: "0640"
-    force: false
+  when: not jellyseerr_settings_seed_stat.stat.exists
   no_log: true
 
 - name: Deploy docker-compose.yml
