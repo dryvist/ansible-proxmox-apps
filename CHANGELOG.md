@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.14.1...v1.14.2) (2026-06-02)
+
+
+### Bug Fixes
+
+* **media:** unblock downloads and complete last-mile media wiring ([#302](https://github.com/dryvist/ansible-proxmox-apps/issues/302)) ([b8da36a](https://github.com/dryvist/ansible-proxmox-apps/commit/b8da36a54168a04ffa6d70fdb7187f0b606603aa))
+
 ## [1.14.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.14.0...v1.14.1) (2026-06-01)
 
 
