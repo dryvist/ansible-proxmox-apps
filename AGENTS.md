@@ -159,8 +159,8 @@ Port constants come from `terraform_data.constants`
 | `RADARR_API_KEY` | Deterministic Radarr API key (servarr_wiring/jellyseerr) | SOPS |
 | `PROWLARR_API_KEY` | Deterministic Prowlarr API key (servarr_wiring) | SOPS |
 | `JELLYSEERR_API_KEY` | Deterministic Jellyseerr API key (jellyseerr role) | SOPS |
-| `PLEX_CLAIM_TOKEN` | Optional Plex CLAIM token (~4-min) to link the server to your account on deploy | SOPS |
-| `PLEX_TOKEN` | Optional Plex ACCOUNT token (X-Plex-Token) — auto-creates Plex libraries + links Jellyseerr→Plex | SOPS / Doppler |
+| `PLEX_CLAIM_TOKEN` | Optional fresh Plex claim token (~4-min); passed ad-hoc to a converge or done via the web UI, never stored | ad-hoc / web UI |
+| `PLEX_TOKEN` | Optional Plex account-token override; normally auto-discovered from the claimed server | env (optional) |
 
 ## Secrets Management
 

@@ -16,6 +16,23 @@
 # after claiming Plex completes it. This wiring is also OFF the path to watching
 # on Roku — Plex serves Roku directly.
 
+# --- Live API key -----------------------------------------------------------
+# Jellyseerr 2.7.x generates its OWN apiKey on first init and ignores the seeded
+# main.apiKey, so the deterministic key never authenticates. Read the live key
+# straight from the running settings.json and use it for every Jellyseerr API
+# call below (the *arr GETs still use their own deterministic keys).
+
+- name: Read the live Jellyseerr API key (the app regenerates it on init)
+  ansible.builtin.slurp:
+    src: "{{ jellyseerr_config_dir }}/settings.json"
+  register: jellyseerr_live_settings
+  no_log: true
+
+- name: Use the live API key for all Jellyseerr API calls
+  ansible.builtin.set_fact:
+    jellyseerr_api_key: "{{ (jellyseerr_live_settings.content | b64decode | from_json).main.apiKey }}"
+  no_log: true
+
 # --- Owner bootstrap ---------------------------------------------------------
 
 - name: Discover the Plex server token from Preferences.xml (on the plex host)
@@ -229,7 +246,24 @@
           }}
       no_log: true
 
+    # Jellyseerr's Sonarr server entry requires a language profile id (Sonarr-only;
+    # Radarr has none) and enableSeasonFolders, or the POST 400s.
+    - name: Get Sonarr language profiles (for activeLanguageProfileId)
+      ansible.builtin.uri:
+        url: "http://{{ jellyseerr_sonarr_hostname }}:{{ jellyseerr_sonarr_port }}/api/v3/languageprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ jellyseerr_sonarr_api_key }}"
+        status_code: [200, 404]
+      register: jellyseerr_sonarr_langprofiles
+      changed_when: false
+      no_log: true
+
     - name: Add Sonarr to Jellyseerr (create — no entry yet)
+      vars:
+        _sonarr_langprofile_id: >-
+          {{ (jellyseerr_sonarr_langprofiles.json | default([{'id': 1}])
+              | first).id | default(1) }}
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/sonarr"
         method: POST
@@ -244,7 +278,9 @@
           apiKey: "{{ jellyseerr_sonarr_api_key }}"
           activeProfileId: "{{ (jellyseerr_sonarr_profiles.json | first).id }}"
           activeProfileName: "{{ (jellyseerr_sonarr_profiles.json | first).name }}"
+          activeLanguageProfileId: "{{ _sonarr_langprofile_id }}"
           activeDirectory: "{{ jellyseerr_sonarr_root_folder }}"
+          enableSeasonFolders: true
           is4k: false
           isDefault: true
           syncEnabled: true

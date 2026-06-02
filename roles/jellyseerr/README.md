@@ -86,20 +86,25 @@ Hostnames default to the media-stack LXC IPs from inventory; ports come from
 Terraform constants. Sonarr/Radarr registration is skipped if its API key is
 unset.
 
-### Plex (optional, best-effort)
+### Plex + owner sign-in
 
-Plex registration needs an **account-scoped Plex token** (`X-Plex-Token`), which
-cannot be derived from infrastructure. It reads `PLEX_TOKEN` (the same account
-token the `plex` role uses for libraries) via `jellyseerr_plex_token`.
+Jellyseerr's settings endpoints require the **owner** user, which only exists
+after a Plex sign-in. `register.yml` discovers the Plex account token
+(`PlexOnlineToken`) from the **claimed** server's `Preferences.xml` (no token has
+to be supplied; `PLEX_TOKEN` is an optional override), signs the owner in via
+`POST /api/v1/auth/plex`, then registers Sonarr/Radarr and links Plex
+(`/api/v1/settings/plex` + library sync).
 
-- **Token unset (default)**: the role **skips** Plex and logs a reminder — link
-  Plex in the Jellyseerr UI → Settings → Plex after deploy.
-- **Token set**: `register.yml` drives the same HTTP flow the UI uses
-  (`POST /api/v1/auth/plex` → `POST /api/v1/settings/plex` → library sync). This
-  is **best-effort and non-fatal**: Jellyseerr's Plex link is normally completed
-  by an interactive OAuth sign-in, so if any step returns non-2xx the role logs
-  it and the one-click UI sign-in remains the fallback. This link is **off the
-  path to watching on Roku** — Plex serves Roku directly.
+- **Plex claimed**: the owner is created and Sonarr/Radarr/Plex are wired
+  automatically.
+- **Plex not claimed**: there is no token to discover, so registration is
+  **skipped non-fatally** with a reminder — claim Plex, then re-run (or finish in
+  the Jellyseerr UI). This is **off the path to watching on Roku** — Plex serves
+  Roku directly.
+
+> Jellyseerr 2.7.x regenerates its own API key on first init, so `register.yml`
+> reads the **live** key from `settings.json` for its API calls rather than the
+> seeded `JELLYSEERR_API_KEY` (which only seeds the file before first start).
 
 ## How it's built
 

@@ -48,34 +48,33 @@ the standard headless apt-install claim flow:
    never fails on a missing/stale token).
 
 > **Plex claim tokens expire ~4 minutes after generation**
-> ([plex.tv/claim](https://www.plex.tv/claim)). A token stored in SOPS is almost
-> always already stale by converge time. To automate the claim, generate a fresh
-> token and drop it into `PLEX_CLAIM_TOKEN` in `secrets.enc.yaml`
-> *immediately before* running the converge. Otherwise, claim once via the web
-> UI at `http://<lxc-ip>:<plex_web_port>/web`.
+> ([plex.tv/claim](https://www.plex.tv/claim)), so they are **never stored** in
+> SOPS/secrets. Two ways to claim:
+>
+> - **Web UI** — sign in once at `http://<lxc-ip>:<plex_web_port>/web`.
+> - **Ad-hoc converge** — generate a fresh token and pass it straight to the run:
+>   `… ansible-playbook … --tags plex -e plex_claim_token=claim-XXXX`.
 
 ## Library creation (idempotent + non-fatal)
 
 `tasks/libraries.yml` turns the scaffolded dirs into real Plex library sections —
-without a section, imported media never appears (incl. on Roku). It needs an
-account-scoped `X-Plex-Token` (the ~4-min claim token is not enough):
+without a section, imported media never appears (incl. on Roku). No token has to
+be supplied: it works in whichever state the server is in.
 
-1. **Token unset** — log the manual step and skip (never fatal).
-2. **Token set** — `GET /library/sections`, then `POST` only the missing sections
-   (`Movies` → `/mnt/media/movies`, `TV` → `/mnt/media/tv`).
-3. **Server not yet claimed / stale token** — the `POST` returns 4xx; logged,
-   not fatal. Claim the server, then re-run.
+1. **Claimed server** — discovers the account token (`PlexOnlineToken`) from
+   `Preferences.xml`, then `GET /library/sections` and `POST` only the missing
+   sections (`Movies` → `/mnt/media/movies`, `TV` → `/mnt/media/tv`).
+2. **Unclaimed server** — the local API accepts unauthenticated localhost
+   requests, so the sections are created **token-free**; they persist after you
+   later claim it.
+
+`PLEX_TOKEN` is honoured as an optional override but is rarely needed.
 
 ## Secrets
 
-| Variable           | Purpose                                      | Source                  |
-| ------------------ | -------------------------------------------- | ----------------------- |
-| `PLEX_CLAIM_TOKEN` | Fresh Plex claim token to auto-claim the PMS | SOPS `secrets.enc.yaml` |
-| `PLEX_TOKEN`       | Account X-Plex-Token to create libraries     | SOPS / Doppler          |
-
-Neither is committed. When `PLEX_CLAIM_TOKEN` is unset/expired the claim is
-skipped non-fatally (claim via the web UI). When `PLEX_TOKEN` is unset, library
-creation is skipped (add libraries via the web UI).
+No Plex token is stored. Claiming is a one-time account action (web UI, or an
+ad-hoc `-e plex_claim_token=…` as above); the account token is then
+auto-discovered from the server. `PLEX_TOKEN` (env) is an optional override only.
 
 ## Usage
 
