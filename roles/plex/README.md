@@ -63,7 +63,7 @@ be supplied: it works in whichever state the server is in.
 
 1. **Claimed server** — discovers the account token (`PlexOnlineToken`) from
    `Preferences.xml`, then `GET /library/sections` and `POST` only the missing
-   sections (`Movies` → `/mnt/media/movies`, `TV` → `/mnt/media/tv`).
+   sections (`Movies` → `/mnt/media/movies`, `Shows` → `/mnt/media/shows`).
 2. **Unclaimed server** — the local API accepts unauthenticated localhost
    requests, so the sections are created **token-free**; they persist after you
    later claim it.
