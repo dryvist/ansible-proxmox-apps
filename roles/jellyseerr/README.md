@@ -86,18 +86,20 @@ Hostnames default to the media-stack LXC IPs from inventory; ports come from
 Terraform constants. Sonarr/Radarr registration is skipped if its API key is
 unset.
 
-### Plex (manual / optional)
+### Plex (optional, best-effort)
 
-Plex registration needs an **account-scoped Plex token** (`plex.tv` auth /
-claim token), which cannot be derived from infrastructure. By default
-(`PLEX_CLAIM_TOKEN` unset) the role **skips** Plex and logs a reminder. Two
-options:
+Plex registration needs an **account-scoped Plex token** (`X-Plex-Token`), which
+cannot be derived from infrastructure. It reads `PLEX_TOKEN` (the same account
+token the `plex` role uses for libraries) via `jellyseerr_plex_token`.
 
-1. **Manual (default)**: link Plex in the Jellyseerr UI → Settings → Plex
-   after deploy.
-2. **Automated**: populate `PLEX_CLAIM_TOKEN` in SOPS and extend
-   `register.yml` to `POST /api/v1/settings/plex`. The variable
-   `jellyseerr_plex_token` already reads it.
+- **Token unset (default)**: the role **skips** Plex and logs a reminder — link
+  Plex in the Jellyseerr UI → Settings → Plex after deploy.
+- **Token set**: `register.yml` drives the same HTTP flow the UI uses
+  (`POST /api/v1/auth/plex` → `POST /api/v1/settings/plex` → library sync). This
+  is **best-effort and non-fatal**: Jellyseerr's Plex link is normally completed
+  by an interactive OAuth sign-in, so if any step returns non-2xx the role logs
+  it and the one-click UI sign-in remains the fallback. This link is **off the
+  path to watching on Roku** — Plex serves Roku directly.
 
 ## How it's built
 
@@ -120,7 +122,7 @@ options:
 | `JELLYSEERR_API_KEY` | Deterministic Jellyseerr API key (32 hex)          | SOPS `secrets.enc.yaml` |
 | `SONARR_API_KEY`     | Sonarr API key (to register Sonarr in Jellyseerr)  | SOPS `secrets.enc.yaml` |
 | `RADARR_API_KEY`     | Radarr API key (to register Radarr in Jellyseerr)  | SOPS `secrets.enc.yaml` |
-| `PLEX_CLAIM_TOKEN`   | Optional Plex token to automate Plex registration  | SOPS `secrets.enc.yaml` |
+| `PLEX_TOKEN`         | Optional account X-Plex-Token to link Plex         | SOPS `secrets.enc.yaml` |
 
 None are ever committed to git. The role's first task asserts
 `JELLYSEERR_API_KEY` is set and fails fast with a pointer to SOPS.

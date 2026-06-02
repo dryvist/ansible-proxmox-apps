@@ -42,21 +42,28 @@
           - "'counter packets' in download_vpn_nft_output.stdout or 'drop' in download_vpn_nft_output.stdout"
         fail_msg: "Killswitch ruleset is missing one of the required allow rules."
 
-    # --- B. only IPv4 default route is wg0 ---------------------------------
-    - name: Read IPv4 default routes
+    # --- B. internet-bound IPv4 traffic egresses via wg0 (Table=auto) ------
+    # wg-quick `Table = auto` installs the tunnel default in a SEPARATE fwmark
+    # routing table (51820), not the main table — so the main-table default stays
+    # on the LAN NIC by design, and the WireGuard-encrypted packets (fwmark-tagged)
+    # intentionally use it to reach the Proton endpoint. The correct invariant is
+    # therefore behavioural: an unmarked, internet-bound packet must resolve out
+    # wg0 via the policy rule. `ip route get` performs that lookup without sending
+    # anything.
+    - name: Resolve the egress route for internet-bound IPv4 traffic
       ansible.builtin.command:
-        cmd: ip -4 route show default
-      register: download_vpn_v4_route
+        cmd: ip -4 route get {{ download_vpn_route_probe_ip }}
+      register: download_vpn_route_get
       changed_when: false
 
-    - name: Assert the ONLY IPv4 default route is via wg0
+    - name: Assert internet-bound IPv4 traffic egresses via wg0
       ansible.builtin.assert:
         that:
-          - download_vpn_v4_route.stdout_lines | length == 1
-          - "'dev ' ~ download_vpn_wg_interface in download_vpn_v4_route.stdout"
+          - "'dev ' ~ download_vpn_wg_interface in download_vpn_route_get.stdout"
         fail_msg: >-
-          IPv4 default route is not exclusively via {{ download_vpn_wg_interface }}:
-          {{ download_vpn_v4_route.stdout }}
+          Internet-bound IPv4 traffic does not route via {{ download_vpn_wg_interface }}
+          (Table=auto policy routing missing/broken): {{ download_vpn_route_get.stdout }}
+        success_msg: "Internet-bound IPv4 traffic egresses via {{ download_vpn_wg_interface }}."
 
     # --- C. no IPv6 default route ------------------------------------------
     - name: Read IPv6 default routes
@@ -161,7 +168,7 @@
     - name: Report killswitch validation success
       ansible.builtin.debug:
         msg: >-
-          download-vpn killswitch validated: nft DROP active; only default route
-          is {{ download_vpn_wg_interface }}; no IPv6 default route; qBittorrent
-          bound to {{ download_vpn_wg_interface }}; VPN IPv4 egress works;
-          non-VPN IPv4 + all IPv6 egress refused.
+          download-vpn killswitch validated: nft DROP active; internet-bound IPv4
+          routes via {{ download_vpn_wg_interface }} (Table=auto); no IPv6 default
+          route; qBittorrent bound to {{ download_vpn_wg_interface }}; VPN IPv4
+          egress works; non-VPN IPv4 + all IPv6 egress refused.

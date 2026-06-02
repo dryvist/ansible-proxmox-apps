@@ -1,0 +1,110 @@
+---
+# Idempotent + NON-FATAL Plex library creation.
+#
+# The role scaffolds the on-disk library roots (/mnt/media/{movies,tv}), but Plex
+# still needs a LIBRARY SECTION pointing at each path or imported media never
+# appears — including on Roku, which only shows what Plex has catalogued.
+#
+# Auth is handled in whichever state the server is in, so libraries get created
+# without any manual token:
+#   * CLAIMED server  -> use an account-scoped X-Plex-Token. We DISCOVER it from
+#     Preferences.xml (`PlexOnlineToken`, present once claimed —
+#     https://www.plexopedia.com/plex-media-server/general/plex-token/); PLEX_TOKEN
+#     is only an optional override.
+#   * UNCLAIMED server -> the local API accepts unauthenticated localhost requests,
+#     so we create the sections token-free; they persist after you later claim it.
+# Always NON-FATAL: a rejected/again-locked server returns 4xx, logged not fatal.
+
+- name: Read Preferences.xml to discover the server's Plex token
+  ansible.builtin.slurp:
+    src: "{{ plex_preferences_path }}"
+  register: plex_prefs_for_token
+  failed_when: false
+  no_log: true
+
+- name: Resolve the effective Plex token (PLEX_TOKEN override, else on-server PlexOnlineToken)
+  ansible.builtin.set_fact:
+    plex_effective_token: >-
+      {{ plex_account_token if (plex_account_token | length > 0)
+         else (plex_prefs_for_token.content | default('') | b64decode
+               | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
+  no_log: true
+
+- name: Ensure Plex libraries exist (token if claimed, else token-free)
+  vars:
+    # X-Plex-Token only when we have one; omitted entirely on an unclaimed server
+    # (which accepts unauthenticated localhost requests).
+    _plex_api_headers: >-
+      {{ {'Accept': 'application/json'}
+         | combine({'X-Plex-Token': plex_effective_token}
+                   if (plex_effective_token | length > 0) else {}) }}
+  block:
+    # Plex must be up to accept the API call. Short wait — non-fatal so a slow or
+    # down server falls through to a logged skip instead of aborting the play.
+    - name: Wait briefly for the local Plex API
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ plex_local_api_port }}"
+        timeout: 60
+      register: plex_lib_api_wait
+      failed_when: false
+
+    - name: Read existing Plex library sections
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_local_api_port }}/library/sections"
+        method: GET
+        headers: "{{ _plex_api_headers }}"
+        status_code: [200, 401]
+      register: plex_sections
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: plex_lib_api_wait.state is defined and plex_lib_api_wait.state == 'started'
+
+    # Create only the sections that do not already exist (match by title). Params
+    # go on the query string — Plex's section-create endpoint reads them there;
+    # the dict is urlencoded in one step (handles the space in scanner names).
+    - name: Create missing Plex libraries
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_local_api_port }}/library/sections?{{ _plex_section_query }}"
+        method: POST
+        headers: "{{ _plex_api_headers }}"
+        status_code: [200, 201]
+      vars:
+        _plex_section_query: >-
+          {{ {
+            'name': item.name,
+            'type': item.type,
+            'agent': item.agent,
+            'scanner': item.scanner,
+            'language': item.language,
+            'location': item.location
+          } | urlencode }}
+      register: plex_lib_add
+      changed_when: plex_lib_add.status in [200, 201]
+      failed_when: false
+      no_log: true
+      loop: "{{ plex_libraries }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.location }})"
+      when:
+        - plex_lib_api_wait.state is defined and plex_lib_api_wait.state == 'started'
+        - plex_sections.status | default(0) == 200
+        - >-
+          (plex_sections.json.MediaContainer.Directory | default([]))
+          | selectattr('title', 'equalto', item.name) | list | length == 0
+
+    - name: Report Plex libraries that could not be created (non-fatal)
+      ansible.builtin.debug:
+        msg: >-
+          Plex library "{{ item.item.name }}" was not created (HTTP
+          {{ item.status | default('n/a') }}). On a CLAIMED server this means no
+          valid token was found (claim wrote no PlexOnlineToken yet, or it is
+          stale) — re-run after confirming the claim, or add it in the Plex web UI.
+      loop: "{{ plex_lib_add.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name | default('?') }}"
+      when:
+        - item.skipped is not defined or not item.skipped
+        - item.status is defined
+        - item.status not in [200, 201]

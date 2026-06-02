@@ -12,7 +12,7 @@
 #
 # Checks (all must hold):
 #   A. nftables killswitch table present with output policy "drop".
-#   B. The ONLY IPv4 default route is via wg0.
+#   B. Internet-bound IPv4 traffic routes via wg0 (Table=auto fwmark policy).
 #   C. No IPv6 default route exists (IPv6 is disabled / must not egress).
 #   D. qBittorrent listen interface == wg0 (via WebUI API preferences).
 #   E. Live IPv4 egress leaves via the VPN exit (public IP differs from the
@@ -25,6 +25,9 @@ WG_IF="{{ download_vpn_wg_interface }}"
 # Primary LAN interface (the NIC holding the LAN IP), derived by the role — NOT
 # assumed to be eth0, so the leak test binds to the real LAN NIC.
 LAN_IF="{{ download_vpn_lan_interface }}"
+# Public IP used only as an `ip route get` probe (no packet sent) to confirm
+# internet-bound traffic egresses via wg0 under wg-quick Table=auto.
+ROUTE_PROBE_IP="{{ download_vpn_route_probe_ip }}"
 NTFY_URL="{{ download_vpn_ntfy_url }}"
 HC_URL="{{ download_vpn_healthcheck_url }}"
 IP_PROBE="{{ download_vpn_ip_probe_url }}"
@@ -41,14 +44,16 @@ else
   [[ "${policy}" == "drop" ]] || breaches+=("killswitch output policy is '${policy:-unknown}', expected 'drop'")
 fi
 
-# --- B. only IPv4 default route is wg0 --------------------------------------
-v4_defaults="$(ip -4 route show default 2>/dev/null)"
-if [[ -z "${v4_defaults}" ]]; then
-  breaches+=("no IPv4 default route (VPN likely down)")
-elif ! grep -q "dev ${WG_IF}" <<<"${v4_defaults}"; then
-  breaches+=("IPv4 default route is NOT via ${WG_IF}: ${v4_defaults}")
-elif [[ "$(grep -c 'default' <<<"${v4_defaults}")" -ne 1 ]]; then
-  breaches+=("multiple IPv4 default routes present: ${v4_defaults}")
+# --- B. internet-bound IPv4 traffic routes via wg0 (Table=auto) -------------
+# wg-quick Table=auto puts the tunnel default in a separate fwmark table, so the
+# MAIN default stays on the LAN NIC by design (the encrypted packets use it to
+# reach the Proton endpoint). Assert that an unmarked, internet-bound packet
+# resolves out wg0 via the policy rule instead of reading the main default.
+route_egress="$(ip -4 route get "${ROUTE_PROBE_IP}" 2>/dev/null)"
+if [[ -z "${route_egress}" ]]; then
+  breaches+=("could not resolve an IPv4 route to ${ROUTE_PROBE_IP} (routing broken / VPN down)")
+elif ! grep -q "dev ${WG_IF}" <<<"${route_egress}"; then
+  breaches+=("internet-bound IPv4 traffic does NOT route via ${WG_IF}: ${route_egress}")
 fi
 
 # --- C. no IPv6 default route -----------------------------------------------

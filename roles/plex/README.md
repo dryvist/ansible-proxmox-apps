@@ -2,9 +2,9 @@
 
 Plex Media Server, LAN-only (no VPN). Installs from Plex's official apt repo,
 enables the bundled systemd service, scaffolds the `movies`/`tv` library roots,
-and claims the server idempotently and non-fatally from a SOPS-sourced claim
-token. Finishing the library "add" can still be done in the Plex web UI / API
-after deploy.
+claims the server idempotently and non-fatally from a SOPS-sourced claim token,
+and (given an account token) creates the `Movies` + `TV` library sections so
+imported media is visible — including on Roku.
 
 ## Installation
 
@@ -30,6 +30,9 @@ See `defaults/main.yml`.
 - `plex_apt_repo` — Plex apt repository line.
 - `plex_web_port` — server/web UI port (terraform-derived).
 - `plex_claim_token` — Plex claim token, read from `PLEX_CLAIM_TOKEN` (SOPS env).
+- `plex_account_token` — Plex account X-Plex-Token, read from `PLEX_TOKEN` (SOPS
+  env); required to auto-create library sections.
+- `plex_libraries` — library sections to ensure exist (name/type/location/agent).
 - `plex_preferences_path` — `Preferences.xml` location (holds `PlexOnlineToken`).
 
 ## Server claim (idempotent + non-fatal)
@@ -51,14 +54,28 @@ the standard headless apt-install claim flow:
 > *immediately before* running the converge. Otherwise, claim once via the web
 > UI at `http://<lxc-ip>:<plex_web_port>/web`.
 
+## Library creation (idempotent + non-fatal)
+
+`tasks/libraries.yml` turns the scaffolded dirs into real Plex library sections —
+without a section, imported media never appears (incl. on Roku). It needs an
+account-scoped `X-Plex-Token` (the ~4-min claim token is not enough):
+
+1. **Token unset** — log the manual step and skip (never fatal).
+2. **Token set** — `GET /library/sections`, then `POST` only the missing sections
+   (`Movies` → `/mnt/media/movies`, `TV` → `/mnt/media/tv`).
+3. **Server not yet claimed / stale token** — the `POST` returns 4xx; logged,
+   not fatal. Claim the server, then re-run.
+
 ## Secrets
 
 | Variable           | Purpose                                      | Source                  |
 | ------------------ | -------------------------------------------- | ----------------------- |
 | `PLEX_CLAIM_TOKEN` | Fresh Plex claim token to auto-claim the PMS | SOPS `secrets.enc.yaml` |
+| `PLEX_TOKEN`       | Account X-Plex-Token to create libraries     | SOPS / Doppler          |
 
-`PLEX_CLAIM_TOKEN` is never committed. When unset or expired, the claim is
-skipped non-fatally and the server can be claimed in the Plex web UI instead.
+Neither is committed. When `PLEX_CLAIM_TOKEN` is unset/expired the claim is
+skipped non-fatally (claim via the web UI). When `PLEX_TOKEN` is unset, library
+creation is skipped (add libraries via the web UI).
 
 ## Usage
 
