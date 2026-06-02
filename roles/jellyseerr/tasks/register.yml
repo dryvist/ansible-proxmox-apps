@@ -1,24 +1,120 @@
 ---
 # Idempotent, self-healing Jellyseerr service registration via its settings API.
 #
-# Pattern (GET-then-PUT-always — reconciles every converge, no bespoke scripts):
-#   1. GET the target *arr's first quality profile id (Jellyseerr requires
-#      activeProfileId on a Radarr/Sonarr server entry).
-#   2. GET the current Jellyseerr server entries for that service type.
-#   3. If no entry with the same hostname exists -> POST a new one.
-#      If an entry exists but its stored apiKey / port / useSsl drifts from the
-#      SOPS-sourced value -> PUT the update (PUT /api/v1/settings/{type}/{id}).
-#      If an entry exists and matches -> no change.
+# Jellyseerr's /api/v1/settings/* endpoints require the OWNER user (id 1), which
+# only exists after a Plex sign-in. On a fresh install there is no owner, so those
+# endpoints return 403 even with a valid X-Api-Key. So we:
+#   1. Discover the Plex account token (PlexOnlineToken from the claimed server, or
+#      the PLEX_TOKEN override).
+#   2. Sign the owner in via /api/v1/auth/plex (the same call the UI's "Sign in
+#      with Plex" makes) — this creates the owner on first call.
+#   3. Only once an owner exists, register Sonarr/Radarr (GET-then-PUT-always, so a
+#      SOPS key rotation reconciles), then point Plex + sync libraries.
 #
-# Net effect: a SOPS key rotation (or any re-run) reconciles Jellyseerr's stored
-# credentials to the current SOPS values, so applying at ANY point re-syncs the
-# server entries instead of leaving a stale apiKey -> 401.
-#
-# All calls authenticate with the deterministic X-Api-Key. Plex registration is
-# skipped unless a Plex token is provided (documented manual step otherwise).
+# Everything is NON-FATAL: with no token / unclaimed Plex there is no owner and we
+# skip registration with a clear note instead of failing the play. Re-running
+# after claiming Plex completes it. This wiring is also OFF the path to watching
+# on Roku — Plex serves Roku directly.
+
+# --- Live API key -----------------------------------------------------------
+# Jellyseerr 2.7.x generates its OWN apiKey on first init and ignores the seeded
+# main.apiKey, so the deterministic key never authenticates. Read the live key
+# straight from the running settings.json and use it for every Jellyseerr API
+# call below (the *arr GETs still use their own deterministic keys).
+
+- name: Read the live Jellyseerr API key (the app regenerates it on init)
+  ansible.builtin.slurp:
+    src: "{{ jellyseerr_config_dir }}/settings.json"
+  register: jellyseerr_live_settings
+  no_log: true
+
+- name: Use the live API key for all Jellyseerr API calls
+  ansible.builtin.set_fact:
+    jellyseerr_api_key: "{{ (jellyseerr_live_settings.content | b64decode | from_json).main.apiKey }}"
+  no_log: true
+
+# --- Owner bootstrap ---------------------------------------------------------
+
+- name: Discover the Plex server token from Preferences.xml (on the plex host)
+  ansible.builtin.slurp:
+    src: "{{ jellyseerr_plex_preferences_path }}"
+  delegate_to: "{{ jellyseerr_plex_inventory_host }}"
+  register: jellyseerr_plex_prefs
+  failed_when: false
+  no_log: true
+
+- name: Resolve the effective Plex token (PLEX_TOKEN override, else PlexOnlineToken)
+  ansible.builtin.set_fact:
+    jellyseerr_plex_effective_token: >-
+      {{ jellyseerr_plex_token if (jellyseerr_plex_token | length > 0)
+         else (jellyseerr_plex_prefs.content | default('') | b64decode
+               | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
+  no_log: true
+
+- name: Check whether Jellyseerr has an admin owner yet
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/main"
+    method: GET
+    headers:
+      X-Api-Key: "{{ jellyseerr_api_key }}"
+    status_code: [200, 401, 403]
+  register: jellyseerr_owner_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Sign the owner in with the Plex token (creates owner on first call)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/auth/plex"
+    method: POST
+    headers:
+      X-Api-Key: "{{ jellyseerr_api_key }}"
+    body_format: json
+    body:
+      authToken: "{{ jellyseerr_plex_effective_token }}"
+    status_code: [200, 201, 403, 500]
+  register: jellyseerr_owner_signin
+  changed_when: jellyseerr_owner_signin.status in [200, 201]
+  failed_when: false
+  no_log: true
+  when:
+    - jellyseerr_owner_probe.status != 200
+    - jellyseerr_plex_effective_token | length > 0
+
+- name: Re-check whether Jellyseerr has an admin owner
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/main"
+    method: GET
+    headers:
+      X-Api-Key: "{{ jellyseerr_api_key }}"
+    status_code: [200, 401, 403]
+  register: jellyseerr_owner_probe2
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: jellyseerr_owner_probe.status != 200
+
+- name: Decide whether registration can proceed (owner present)
+  ansible.builtin.set_fact:
+    jellyseerr_registration_ready: >-
+      {{ (jellyseerr_owner_probe.status == 200)
+         or (jellyseerr_owner_probe2.status | default(0) == 200) }}
+
+- name: Note that Jellyseerr registration is skipped (no owner — claim Plex first)
+  ansible.builtin.debug:
+    msg: >-
+      Jellyseerr service registration SKIPPED — the app has no admin owner yet and
+      no Plex token was available to create one. Claim Plex so Preferences.xml has
+      a PlexOnlineToken (or set PLEX_TOKEN), then re-run; or finish setup in the
+      Jellyseerr UI (Sign in with Plex). Non-fatal.
+  when: not (jellyseerr_registration_ready | bool)
+
+# --- Service registration (only once an owner exists) ------------------------
 
 - name: Register Radarr in Jellyseerr
-  when: jellyseerr_radarr_api_key | length > 0
+  when:
+    - jellyseerr_registration_ready | bool
+    - jellyseerr_radarr_api_key | length > 0
   block:
     - name: Get Radarr quality profiles (for activeProfileId)
       ansible.builtin.uri:
@@ -114,7 +210,9 @@
           or (jellyseerr_radarr_entry.useSsl | default(false) | bool) != (jellyseerr_radarr_use_ssl | bool)
 
 - name: Register Sonarr in Jellyseerr
-  when: jellyseerr_sonarr_api_key | length > 0
+  when:
+    - jellyseerr_registration_ready | bool
+    - jellyseerr_sonarr_api_key | length > 0
   block:
     - name: Get Sonarr quality profiles (for activeProfileId)
       ansible.builtin.uri:
@@ -148,7 +246,24 @@
           }}
       no_log: true
 
+    # Jellyseerr's Sonarr server entry requires a language profile id (Sonarr-only;
+    # Radarr has none) and enableSeasonFolders, or the POST 400s.
+    - name: Get Sonarr language profiles (for activeLanguageProfileId)
+      ansible.builtin.uri:
+        url: "http://{{ jellyseerr_sonarr_hostname }}:{{ jellyseerr_sonarr_port }}/api/v3/languageprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ jellyseerr_sonarr_api_key }}"
+        status_code: [200, 404]
+      register: jellyseerr_sonarr_langprofiles
+      changed_when: false
+      no_log: true
+
     - name: Add Sonarr to Jellyseerr (create — no entry yet)
+      vars:
+        _sonarr_langprofile_id: >-
+          {{ (jellyseerr_sonarr_langprofiles.json | default([{'id': 1}])
+              | first).id | default(1) }}
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/sonarr"
         method: POST
@@ -163,7 +278,9 @@
           apiKey: "{{ jellyseerr_sonarr_api_key }}"
           activeProfileId: "{{ (jellyseerr_sonarr_profiles.json | first).id }}"
           activeProfileName: "{{ (jellyseerr_sonarr_profiles.json | first).name }}"
+          activeLanguageProfileId: "{{ _sonarr_langprofile_id }}"
           activeDirectory: "{{ jellyseerr_sonarr_root_folder }}"
+          enableSeasonFolders: true
           is4k: false
           isDefault: true
           syncEnabled: true
@@ -206,12 +323,45 @@
           or (jellyseerr_sonarr_entry.port | default(0) | int) != (jellyseerr_sonarr_port | int)
           or (jellyseerr_sonarr_entry.useSsl | default(false) | bool) != (jellyseerr_sonarr_use_ssl | bool)
 
-# Plex registration needs an account-scoped Plex token. Skipped (and surfaced as
-# a manual step in the README) unless PLEX_CLAIM_TOKEN is populated in SOPS.
-- name: Note that Plex registration is a manual step (no token provided)
-  ansible.builtin.debug:
-    msg: >-
-      Jellyseerr Plex registration SKIPPED — PLEX_CLAIM_TOKEN is unset. Link Plex
-      in the Jellyseerr UI (Settings -> Plex) or populate PLEX_CLAIM_TOKEN in SOPS
-      to automate it. See roles/jellyseerr/README.md.
-  when: jellyseerr_plex_token | length == 0
+# --- Plex server settings + library sync (owner already signed in above) -----
+
+- name: Link Plex in Jellyseerr (owner present + token available)
+  when:
+    - jellyseerr_registration_ready | bool
+    - jellyseerr_plex_effective_token | length > 0
+  block:
+    - name: Point Jellyseerr's Plex server settings at the LAN Plex
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/plex"
+        method: POST
+        headers:
+          X-Api-Key: "{{ jellyseerr_api_key }}"
+        body_format: json
+        body:
+          ip: "{{ jellyseerr_plex_hostname }}"
+          port: "{{ jellyseerr_plex_port | int }}"
+          useSsl: "{{ jellyseerr_plex_use_ssl }}"
+        status_code: [200, 201, 400, 500]
+      register: jellyseerr_plex_settings
+      changed_when: jellyseerr_plex_settings.status in [200, 201]
+      failed_when: false
+      no_log: true
+
+    - name: Sync Plex libraries into Jellyseerr
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/plex/library?sync=true"
+        method: GET
+        headers:
+          X-Api-Key: "{{ jellyseerr_api_key }}"
+        status_code: [200, 500]
+      register: jellyseerr_plex_libsync
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report Jellyseerr Plex link outcome (non-fatal)
+      ansible.builtin.debug:
+        msg: >-
+          Jellyseerr Plex link: server-settings HTTP
+          {{ jellyseerr_plex_settings.status | default('n/a') }}. If not 200/201,
+          finish the link once in the Jellyseerr UI (Settings -> Plex).

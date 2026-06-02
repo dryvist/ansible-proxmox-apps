@@ -16,16 +16,22 @@ together over the LAN.
    the app and waits for its API only when the key actually changed. Templating
    the key means every cross-app reference is known **before** converge instead
    of being auto-generated.
-2. **Prowlarr → Sonarr/Radarr Applications** — adds each as a Prowlarr
+2. **Public Prowlarr indexers** — adds the indexers in
+   `servarr_wiring_prowlarr_indexers` (default: public, non-Cloudflare trackers)
+   so Prowlarr has something to search. Without an indexer the Application sync
+   below pushes nothing and the PVRs can never find a release. Schema-driven:
+   GET `/api/v1/indexer/schema`, overlay `enable` + `appProfileId`, POST if
+   absent. Cloudflare-gated indexers (needing FlareSolverr) are out of scope.
+3. **Prowlarr → Sonarr/Radarr Applications** — adds each as a Prowlarr
    Application with sync level `fullSync`, so Prowlarr pushes its indexers to
    both. Schema-driven: the role GETs `/api/v1/applications/schema`, overrides
    only `prowlarrUrl` / `baseUrl` / `apiKey`, and POSTs if absent.
-3. **Sonarr/Radarr → qBittorrent download client** — adds qBittorrent (host =
+4. **Sonarr/Radarr → qBittorrent download client** — adds qBittorrent (host =
    `download-vpn`, port = `media_ports.qbittorrent_web`, category `tv` /
    `movies`) to each PVR, again schema-driven.
-4. **Root folders** — ensures `/mnt/media/tv` (Sonarr) and `/mnt/media/movies`
+5. **Root folders** — ensures `/mnt/media/tv` (Sonarr) and `/mnt/media/movies`
    (Radarr).
-5. **Completed-download handling** — enables it globally on each PVR.
+6. **Completed-download handling** — enables it globally on each PVR.
 
 ## Why `ansible.builtin.uri` and not a community role / Buildarr
 

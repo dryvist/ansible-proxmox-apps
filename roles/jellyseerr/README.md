@@ -86,18 +86,25 @@ Hostnames default to the media-stack LXC IPs from inventory; ports come from
 Terraform constants. Sonarr/Radarr registration is skipped if its API key is
 unset.
 
-### Plex (manual / optional)
+### Plex + owner sign-in
 
-Plex registration needs an **account-scoped Plex token** (`plex.tv` auth /
-claim token), which cannot be derived from infrastructure. By default
-(`PLEX_CLAIM_TOKEN` unset) the role **skips** Plex and logs a reminder. Two
-options:
+Jellyseerr's settings endpoints require the **owner** user, which only exists
+after a Plex sign-in. `register.yml` discovers the Plex account token
+(`PlexOnlineToken`) from the **claimed** server's `Preferences.xml` (no token has
+to be supplied; `PLEX_TOKEN` is an optional override), signs the owner in via
+`POST /api/v1/auth/plex`, then registers Sonarr/Radarr and links Plex
+(`/api/v1/settings/plex` + library sync).
 
-1. **Manual (default)**: link Plex in the Jellyseerr UI → Settings → Plex
-   after deploy.
-2. **Automated**: populate `PLEX_CLAIM_TOKEN` in SOPS and extend
-   `register.yml` to `POST /api/v1/settings/plex`. The variable
-   `jellyseerr_plex_token` already reads it.
+- **Plex claimed**: the owner is created and Sonarr/Radarr/Plex are wired
+  automatically.
+- **Plex not claimed**: there is no token to discover, so registration is
+  **skipped non-fatally** with a reminder — claim Plex, then re-run (or finish in
+  the Jellyseerr UI). This is **off the path to watching on Roku** — Plex serves
+  Roku directly.
+
+> Jellyseerr 2.7.x regenerates its own API key on first init, so `register.yml`
+> reads the **live** key from `settings.json` for its API calls rather than the
+> seeded `JELLYSEERR_API_KEY` (which only seeds the file before first start).
 
 ## How it's built
 
@@ -120,7 +127,7 @@ options:
 | `JELLYSEERR_API_KEY` | Deterministic Jellyseerr API key (32 hex)          | SOPS `secrets.enc.yaml` |
 | `SONARR_API_KEY`     | Sonarr API key (to register Sonarr in Jellyseerr)  | SOPS `secrets.enc.yaml` |
 | `RADARR_API_KEY`     | Radarr API key (to register Radarr in Jellyseerr)  | SOPS `secrets.enc.yaml` |
-| `PLEX_CLAIM_TOKEN`   | Optional Plex token to automate Plex registration  | SOPS `secrets.enc.yaml` |
+| `PLEX_TOKEN`         | Optional account X-Plex-Token to link Plex         | SOPS `secrets.enc.yaml` |
 
 None are ever committed to git. The role's first task asserts
 `JELLYSEERR_API_KEY` is set and fails fast with a pointer to SOPS.

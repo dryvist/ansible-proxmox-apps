@@ -1,0 +1,112 @@
+---
+# Add PUBLIC indexers to Prowlarr so Sonarr/Radarr actually have something to
+# search. Prowlarr syncs its indexers to the *arr apps (see prowlarr_apps.yml),
+# but with zero indexers that sync is empty and nothing can ever be found or
+# grabbed — the single biggest reason a fresh stack downloads nothing.
+#
+# Schema-driven + idempotent, the same house pattern as prowlarr_apps.yml:
+#   1. GET /api/v1/indexer/schema — the per-definition field templates.
+#   2. GET /api/v1/indexer        — what already exists (match by name).
+#   3. For each wanted indexer missing by name, take its schema template, set
+#      enable + appProfileId, and POST. We never hand-build the fields array, so
+#      we stay resilient to Prowlarr / Cardigann definition drift.
+#
+# The default set (servarr_wiring_prowlarr_indexers) is PUBLIC, non-Cloudflare
+# trackers — no FlareSolverr required. Cloudflare-gated indexers need
+# FlareSolverr (out of scope) and are intentionally excluded.
+
+- name: Fetch Prowlarr indexer schema
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer/schema"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_indexer_schema
+  changed_when: false
+  no_log: true
+
+- name: Fetch existing Prowlarr indexers
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_indexer_existing
+  changed_when: false
+  no_log: true
+
+# A requested name that is not in the schema is almost always a typo or a
+# renamed definition — surface it instead of silently doing nothing.
+- name: Warn when a requested indexer is not in the Prowlarr schema
+  ansible.builtin.debug:
+    msg: >-
+      Prowlarr has no indexer definition named "{{ item }}" — skipping. Check the
+      exact definition name in Prowlarr (Indexers -> Add Indexer). Cloudflare-gated
+      indexers also need FlareSolverr, which is out of scope here.
+  loop: "{{ servarr_wiring_prowlarr_indexers }}"
+  loop_control:
+    label: "{{ item }}"
+  when: >-
+    servarr_wiring_indexer_schema.json
+    | selectattr('name', 'equalto', item)
+    | list | length == 0
+
+# Build each indexer body from its schema template and overlay only enable +
+# appProfileId. Public trackers carry no required credentials, so the schema
+# defaults are complete; leaving the fields array untouched keeps us resilient
+# to definition drift (we never hand-build it).
+#
+# NON-FATAL: Prowlarr validates connectivity on add and returns 400 for a
+# Cloudflare-gated tracker ("blocked by CloudFlare Protection"). A single bad
+# indexer must NOT abort the rest of the Servarr wiring (download clients, root
+# folders) that runs after this, so 400 is accepted here and surfaced as a
+# warning below rather than failing the play.
+- name: Add missing public Prowlarr indexers (best-effort)
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer"
+    method: POST
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    body_format: json
+    body: >-
+      {{ _indexer_template | combine({
+           'enable': true,
+           'appProfileId': servarr_wiring_indexer_app_profile_id
+         }) }}
+    status_code: [200, 201, 400]
+    return_content: true
+  register: servarr_wiring_indexer_add
+  changed_when: servarr_wiring_indexer_add.status in [200, 201]
+  failed_when: false
+  no_log: true
+  loop: "{{ servarr_wiring_prowlarr_indexers }}"
+  loop_control:
+    label: "{{ item }}"
+  vars:
+    _indexer_template: >-
+      {{ servarr_wiring_indexer_schema.json
+         | selectattr('name', 'equalto', item)
+         | first }}
+  when:
+    - servarr_wiring_indexer_schema.json | selectattr('name', 'equalto', item) | list | length > 0
+    - servarr_wiring_indexer_existing.json | selectattr('name', 'equalto', item) | list | length == 0
+
+# Surface any indexer Prowlarr refused (almost always Cloudflare → needs
+# FlareSolverr, out of scope). Non-fatal: the rest of the wiring proceeds.
+- name: Warn about indexers Prowlarr could not add
+  ansible.builtin.debug:
+    msg: >-
+      Prowlarr did not add indexer "{{ item.item }}" (HTTP
+      {{ item.status | default('n/a') }}) — usually a Cloudflare-gated tracker
+      that needs FlareSolverr (out of scope). Pick a non-Cloudflare public
+      indexer in servarr_wiring_prowlarr_indexers, or add this one in the
+      Prowlarr UI with FlareSolverr configured.
+  loop: "{{ servarr_wiring_indexer_add.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('?') }}"
+  when:
+    - not (item.skipped | default(false))
+    - item.status is defined
+    - item.status not in [200, 201]

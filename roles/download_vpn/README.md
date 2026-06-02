@@ -33,10 +33,12 @@ outside the VPN:
   DROP policy + only the allowed rules; qBittorrent interface == `wg0`; then
   simulates `wg0` down and asserts the netns has no v4/v6 internet egress.
 - **Deploy-time** — `tasks/validate.yml`, imported at the role end so it runs
-  on every play. Asserts the killswitch is active, the only default route is
-  `wg0`, no IPv6 default route exists, qBittorrent is bound to `wg0`, live VPN
-  IPv4 egress works, and forced non-VPN IPv4 + all IPv6 egress are refused.
-  **Fails the play on any violation.**
+  on every play. Asserts the killswitch is active, internet-bound IPv4 traffic
+  routes via `wg0` (wg-quick `Table = auto` keeps the main-table default on the
+  LAN NIC and routes the tunnel through a separate fwmark table), no IPv6 default
+  route exists, qBittorrent is bound to `wg0`, live VPN IPv4 egress works, and
+  forced non-VPN IPv4 + all IPv6 egress are refused. **Fails the play on any
+  violation.**
 - **Runtime** — `download-vpn-validate.timer` (every ~2 min). Re-checks the
   above; on ANY breach it stops qBittorrent, alerts ntfy, and pings the
   healthchecks deadman. A stalled validator also pages (deadman semantics).
