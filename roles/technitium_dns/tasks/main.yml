@@ -39,6 +39,43 @@
   loop_control:
     label: "{{ item }}"
 
+# --- Derive HA topology (primary = lowest-vmid technitium_dns_group member) ---
+# Build a {vmid, ip} list for the group so the primary is the lowest vmid
+# (terraform pins technitium-1 lowest). vmid is int-cast so it sorts numerically.
+# A single-node group yields one member, so that host becomes its own primary
+# and the prior single-node behavior is preserved.
+- name: Build Technitium group member list
+  ansible.builtin.set_fact:
+    technitium_dns_members: >-
+      {{
+        technitium_dns_members | default([]) +
+        [{
+          'vmid': hostvars[item].proxmox_vmid | default(0) | int,
+          'ip': hostvars[item].container_ip | default(hostvars[item].ansible_host)
+        }]
+      }}
+  loop: "{{ groups['technitium_dns_group'] | default([]) | reject('equalto', 'localhost') | list }}"
+  when: (hostvars[item].container_ip is defined) or (hostvars[item].ansible_host is defined)
+  loop_control:
+    label: "{{ item }}"
+
+- name: Resolve Technitium primary IP (lowest vmid)
+  ansible.builtin.set_fact:
+    technitium_dns_primary_ip: >-
+      {{ technitium_dns_primary_ip if (technitium_dns_primary_ip | length > 0)
+         else ((technitium_dns_members | default([]) | sort(attribute='vmid')
+                | map(attribute='ip') | list | first) | default(technitium_dns_host)) }}
+
+- name: Resolve Technitium role and secondary IPs
+  ansible.builtin.set_fact:
+    technitium_dns_role: >-
+      {{ technitium_dns_role if (technitium_dns_role | length > 0)
+         else ('primary' if technitium_dns_host == technitium_dns_primary_ip else 'secondary') }}
+    technitium_dns_secondary_ips: >-
+      {{ technitium_dns_secondary_ips if (technitium_dns_secondary_ips | length > 0)
+         else (technitium_dns_members | default([]) | map(attribute='ip')
+               | reject('equalto', technitium_dns_primary_ip) | list) }}
+
 # Technitium authenticates API calls via `?token=...` query parameter,
 # NOT via an X-Api-Token header. The header is silently ignored and
 # the server responds with "Parameter 'token' missing."
@@ -50,14 +87,16 @@
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_zones_response
   changed_when: false
+  when: technitium_dns_apply | bool
   no_log: true
 
 - name: Parse existing zones
   ansible.builtin.set_fact:
     technitium_dns_existing_zones: >-
       {{ technitium_dns_zones_response.json.response.zones | default([]) | map(attribute='name') | list }}
+  when: technitium_dns_apply | bool
 
-- name: Create internal DNS zone
+- name: Create internal DNS zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
     method: POST
@@ -70,7 +109,34 @@
     status_code: [200, 400]
   register: technitium_dns_zone_create
   changed_when: technitium_dns_zone_create.json.status == "ok"
-  when: technitium_dns_internal_domain not in technitium_dns_existing_zones
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_internal_domain not in technitium_dns_existing_zones
+  no_log: true
+
+# Secondaries replicate the zone from the primary via native AXFR/IXFR zone
+# transfer; they create a Secondary zone (master = primary) and skip all record
+# writes below. Only functions once the primary + secondary LXCs exist.
+- name: Create Secondary DNS zone (secondary)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_internal_domain }}"
+      type: "Secondary"
+      primaryNameServerAddresses: "{{ technitium_dns_primary_ip }}"
+      zoneTransferProtocol: "{{ technitium_dns_zone_transfer_protocol }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+    status_code: [200, 400]
+  register: technitium_dns_secondary_zone_create
+  changed_when: technitium_dns_secondary_zone_create.json.status == "ok"
+  when:
+    - technitium_dns_role == 'secondary'
+    - technitium_dns_apply | bool
+    - technitium_dns_internal_domain not in technitium_dns_existing_zones
   no_log: true
 
 - name: Get existing A records for zone
@@ -85,6 +151,9 @@
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_existing_records
   changed_when: false
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
   no_log: true
 
 - name: Create A records for infrastructure hosts
@@ -109,6 +178,9 @@
   failed_when:
     - technitium_dns_a_record_result.json.status | default('') != "ok"
     - "'already exists' not in (technitium_dns_a_record_result.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
   no_log: true
 
 - name: Create CNAME records for service aliases
@@ -133,6 +205,9 @@
   failed_when:
     - technitium_dns_cname_result.json.status | default('') != "ok"
     - "'already exists' not in (technitium_dns_cname_result.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
   no_log: true
 
 # Point each Traefik-fronted service name at the Traefik LXC so clients reach it
@@ -163,8 +238,32 @@
     - "'already exists' not in (technitium_dns_ingress_result.json.errorMessage | default(''))"
   no_log: true
   when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
     - technitium_dns_ingress_host in hostvars
     - hostvars[technitium_dns_ingress_host].container_ip is defined
+
+# Authorize the secondaries to pull the zone via AXFR. UseSpecifiedNetworkACL
+# restricts transfer to exactly the secondary IPs (default-deny otherwise).
+# No-op for a single-node group (no secondaries).
+- name: Allow AXFR zone transfer to secondaries (primary)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/options/set?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_internal_domain }}"
+      zoneTransfer: "UseSpecifiedNetworkACL"
+      zoneTransferNetworkACL: "{{ technitium_dns_secondary_ips | join(',') }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_axfr_result
+  changed_when: technitium_dns_axfr_result.json.status == "ok"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_secondary_ips | length > 0
+  no_log: true
 
 - name: Verify DNS zone is active
   ansible.builtin.uri:
@@ -177,4 +276,5 @@
   failed_when: >-
     technitium_dns_internal_domain not in
     (technitium_dns_final_zones.json.response.zones | default([]) | map(attribute='name') | list)
+  when: technitium_dns_apply | bool
   no_log: true

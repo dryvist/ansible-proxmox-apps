@@ -1,0 +1,86 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/requirements.yml
+
+driver:
+  name: docker
+
+# Two instances exercise BOTH HA modes without a live DNS server: technitium-1
+# (lowest vmid) resolves to the primary, technitium-2 to a secondary.
+platforms:
+  - name: technitium-1-test
+    # No stable version tags available; geerlingguy only publishes :latest
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - technitium_dns_group
+      - lxc_containers
+  - name: technitium-2-test
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - technitium_dns_group
+      - lxc_containers
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  # Per-host facts normally injected by load_tofu.yml. vmids 10/11 make
+  # technitium-1 the lowest-vmid (primary). IPs are RFC1918 placeholders.
+  inventory:
+    host_vars:
+      technitium-1-test:
+        proxmox_vmid: 10
+        container_ip: "192.168.5.10"
+        hostname: technitium-1
+      technitium-2-test:
+        proxmox_vmid: 11
+        container_ip: "192.168.5.11"
+        hostname: technitium-2
+  env:
+    # Non-correlated placeholder values only — never the real domain/subdomain.
+    # apply=false (converge/verify) means no live API call is ever made.
+    PROXMOX_DOMAIN: "${PROXMOX_DOMAIN:-example.net}"
+    PROXMOX_SUBDOMAIN: "${PROXMOX_SUBDOMAIN:-svc.example.net}"
+    TECHNITIUM_DNS_API_TOKEN: "${TECHNITIUM_DNS_API_TOKEN:-moleculetesttoken}"
+
+verifier:
+  name: ansible
+
+scenario:
+  name: technitium_dns
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy
