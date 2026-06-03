@@ -1,0 +1,58 @@
+---
+# Molecule verification for technitium_dns (no live DNS server).
+#
+# Re-runs the role with technitium_dns_apply=false to populate the derived facts,
+# then asserts the HA topology resolved correctly across the two-node group:
+#   - the primary is the lowest-vmid member (technitium-1 / .10);
+#   - each host's role matches its identity (primary vs secondary);
+#   - the secondary-IP list excludes the primary and includes the peer;
+#   - inventory A-records were built for both hosts.
+
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  vars:
+    technitium_dns_apply: false
+    technitium_dns_host: "{{ container_ip | default(ansible_host) }}"
+    tofu_data:
+      ingress: []
+
+  tasks:
+    - name: Re-run technitium_dns role to populate derived facts (no live API)
+      ansible.builtin.include_role:
+        name: technitium_dns
+
+    - name: Assert the primary is the lowest-vmid node (technitium-1 / .10)
+      ansible.builtin.assert:
+        that:
+          - technitium_dns_primary_ip == '192.168.5.10'
+        fail_msg: >-
+          Expected primary 192.168.5.10, got '{{ technitium_dns_primary_ip }}'.
+
+    - name: Assert this host's role matches its identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            technitium_dns_role ==
+            ('primary' if container_ip == '192.168.5.10' else 'secondary')
+        fail_msg: >-
+          Role mismatch on {{ inventory_hostname }} ({{ container_ip }}):
+          got '{{ technitium_dns_role }}'.
+
+    - name: Assert the secondary-IP list excludes the primary and includes the peer
+      ansible.builtin.assert:
+        that:
+          - "'192.168.5.10' not in technitium_dns_secondary_ips"
+          - "'192.168.5.11' in technitium_dns_secondary_ips"
+        fail_msg: >-
+          Unexpected secondary IPs: {{ technitium_dns_secondary_ips }}.
+
+    - name: Assert inventory A-records were built for both hosts
+      ansible.builtin.assert:
+        that:
+          - technitium_dns_a_records | length >= 2
+          - "'technitium-1' in (technitium_dns_a_records | map(attribute='name') | list)"
+          - "'technitium-2' in (technitium_dns_a_records | map(attribute='name') | list)"
+        fail_msg: >-
+          A-records not built as expected: {{ technitium_dns_a_records }}.
