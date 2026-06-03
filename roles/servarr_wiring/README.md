@@ -97,7 +97,7 @@ all set and fails fast with a pointer to SOPS if any are missing.
 ## How it's built
 
 - `defaults/main.yml` — API keys (SOPS env), per-app data dirs / hosts / ports
-  (ports from Terraform constants), wiring parameters, `servarr_wiring_manage_services`
+  (ports from OpenTofu constants), wiring parameters, `servarr_wiring_manage_services`
   toggle (false in Molecule).
 - `tasks/main.yml` — assertion → `api_keys.yml` → `prowlarr_apps.yml` →
   `download_client.yml` (once per PVR).

@@ -1,6 +1,6 @@
 ---
 name: ip-addressing
-description: No hardcoded values - terraform is authority
+description: No hardcoded values - OpenTofu is authority
 ---
 
 # IP Addressing Rule
@@ -29,18 +29,18 @@ syslog_ports:
 
 ## Required Patterns
 
-`load_terraform.yml` delegates `terraform_data` to all inventory hosts, so
+`load_tofu.yml` delegates `tofu_data` to all inventory hosts, so
 roles can reference it directly:
 
 ```yaml
 # GOOD - IP from inventory (no fallback)
 splunk_ip: "{{ hostvars['splunk']['ansible_host'] }}"
 
-# GOOD - port from terraform constants
-splunk_hec_port: "{{ terraform_data.constants.service_ports.splunk_hec }}"
+# GOOD - port from tofu constants
+splunk_hec_port: "{{ tofu_data.constants.service_ports.splunk_hec }}"
 
-# GOOD - port list from terraform constants
-syslog_ports: "{{ terraform_data.constants.syslog_ports.values() | list }}"
+# GOOD - port list from tofu constants
+syslog_ports: "{{ tofu_data.constants.syslog_ports.values() | list }}"
 ```
 
 ## Updating Values
@@ -52,7 +52,7 @@ To change any port or IP:
 3. Regenerate inventory:
 
    ```bash
-   ./scripts/sync-terraform-inventory.sh
+   ./scripts/sync-tofu-inventory.sh
    ```
 
 ## Documentation

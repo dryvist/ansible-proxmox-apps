@@ -22,12 +22,12 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags radarr
 
 ## Key variables
 
-Web UI port comes from terraform (`terraform_data.constants.media_ports.radarr_web`).
+Web UI port comes from OpenTofu (`tofu_data.constants.media_ports.radarr_web`).
 See `defaults/main.yml`.
 
 - `radarr_install_dir` — install location (default `/opt/Radarr`).
 - `radarr_data_dir` — app data (default `/var/lib/radarr`).
-- `radarr_web_port` — web UI port (terraform-derived).
+- `radarr_web_port` — web UI port (tofu-derived).
 
 ## Usage
 

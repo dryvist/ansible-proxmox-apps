@@ -1,20 +1,20 @@
 ---
 name: inventory-patterns
-description: Terraform-driven inventory consumption
+description: OpenTofu-driven inventory consumption
 ---
 
 # Inventory Patterns
 
 ## Principle
 
-Inventory is loaded dynamically from terraform state via
-`inventory/terraform_inventory.json`. The `load_terraform.yml` playbook
-must run before all other playbooks. It also delegates `terraform_data`
+Inventory is loaded dynamically from OpenTofu state via
+`inventory/tofu_inventory.json`. The `load_tofu.yml` playbook
+must run before all other playbooks. It also delegates `tofu_data`
 to all inventory hosts so roles can access it without indirection.
 
 ## Data Structure
 
-The terraform_inventory.json contains:
+The tofu_inventory.json contains:
 
 ```json
 {
@@ -59,27 +59,27 @@ hostname: "{{ hostvars['splunk']['hostname'] }}"
 
 ### Port Constants
 
-`terraform_data` is delegated to all hosts by `load_terraform.yml`,
+`tofu_data` is delegated to all hosts by `load_tofu.yml`,
 so roles access it directly:
 
 ```yaml
 # Service port
-port: "{{ terraform_data.constants.service_ports.splunk_hec }}"
+port: "{{ tofu_data.constants.service_ports.splunk_hec }}"
 
 # Syslog ports as a list
-ports: "{{ terraform_data.constants.syslog_ports.values() | list }}"
+ports: "{{ tofu_data.constants.syslog_ports.values() | list }}"
 
 # Syslog ports as key/value pairs
 ports: >-
-  {{ terraform_data.constants.syslog_ports
+  {{ tofu_data.constants.syslog_ports
      | dict2items(key_name='name', value_name='port') }}
 ```
 
 ## Validation
 
-The `load_terraform.yml` playbook validates that:
+The `load_tofu.yml` playbook validates that:
 
-1. `terraform_inventory.json` exists
+1. `tofu_inventory.json` exists
 2. The `constants` section is present
 
 If validation fails, regenerate the inventory from terraform-proxmox.
@@ -87,5 +87,5 @@ If validation fails, regenerate the inventory from terraform-proxmox.
 ## Regenerating Inventory
 
 ```bash
-./scripts/sync-terraform-inventory.sh
+./scripts/sync-tofu-inventory.sh
 ```

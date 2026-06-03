@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate terraform_inventory.json against the JSON Schema contract.
+"""Validate tofu_inventory.json against the JSON Schema contract.
 
 Run from the repo root:
     python3 tests/inventory_load/validate_schema.py
@@ -16,8 +16,8 @@ from pathlib import Path
 
 def main() -> int:
     repo_root = Path(__file__).parent.parent.parent
-    inventory_path = repo_root / "tests" / "inventory_load" / "terraform_inventory.json"
-    schema_path = repo_root / "tests" / "inventory_load" / "terraform_inventory.schema.json"
+    inventory_path = repo_root / "tests" / "inventory_load" / "tofu_inventory.json"
+    schema_path = repo_root / "tests" / "inventory_load" / "tofu_inventory.schema.json"
 
     # Load files
     try:
@@ -51,13 +51,13 @@ def main() -> int:
     errors = sorted(validator.iter_errors(inventory), key=lambda e: list(e.absolute_path))
 
     if errors:
-        print(f"FAILED: terraform_inventory.json does not conform to schema ({len(errors)} error(s)):")
+        print(f"FAILED: tofu_inventory.json does not conform to schema ({len(errors)} error(s)):")
         for error in errors:
             path = " -> ".join(str(p) for p in error.absolute_path) if error.absolute_path else "(root)"
             print(f"  [{path}] {error.message}")
         return 1
 
-    print("OK: terraform_inventory.json is valid against terraform_inventory.schema.json")
+    print("OK: tofu_inventory.json is valid against tofu_inventory.schema.json")
     return 0
 
 

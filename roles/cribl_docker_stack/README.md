@@ -52,4 +52,4 @@ HAProxy LXC → Cribl Edge LXCs (syslog) → Splunk HEC
 ## Role Variables
 
 See `defaults/main.yml` for configurable variables. Port assignments come
-from `terraform_data.constants` (see `inventory/pipeline_constants.json`).
+from `tofu_data.constants` (see `inventory/pipeline_constants.json`).

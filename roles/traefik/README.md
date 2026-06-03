@@ -18,7 +18,7 @@ so hostnames are e.g. `plex.pve.<apex>`, and the cert covers `*.pve.<apex>`.
   file provider watching `dynamic/`, secured API (`insecure: false`), TLS ≥1.2 +
   `sniStrict`.
 - **Dynamic config** (`templates/dynamic.yml.j2`) — one router + service per entry
-  in the tofu-owned ingress table `terraform_data.ingress` (`{name, ip, port}`).
+  in the tofu-owned ingress table `tofu_data.ingress` (`{name, ip, port}`).
   Every router requests the wildcard via `tls.domains`, so Traefik issues it once
   and serves it for all hosts.
 - **Credentials** — the dedicated `acme` AWS user's keys are written to a
@@ -81,7 +81,7 @@ The dashboard password is **generated on the host** (not a Doppler secret) — s
 
 The route list is **not** maintained in this role. It is the single tofu-owned
 ingress table — `terraform-proxmox` `locals.tf` `ingress_services`, surfaced as
-`ansible_inventory.ingress` and consumed here as `terraform_data.ingress`. The
+`ansible_inventory.ingress` and consumed here as `tofu_data.ingress`. The
 `technitium_dns` role derives its DNS aliases from the **same** source, so a
 fronted service is added/removed in exactly one place. Add it in terraform-proxmox.
 
@@ -99,7 +99,7 @@ fronted service is added/removed in exactly one place. Add it in terraform-proxm
 ## Installation
 
 Wired into `playbooks/site.yml` (`hosts: traefik_group`, tag `traefik`). The LXC
-joins `traefik_group` automatically via its Terraform `traefik` tag. Collections
+joins `traefik_group` automatically via its OpenTofu `traefik` tag. Collections
 are installed once with `ansible-galaxy collection install -r requirements.yml`.
 
 ## Usage

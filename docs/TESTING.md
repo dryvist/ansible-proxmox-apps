@@ -21,11 +21,11 @@ NetFlow Sources -> HAProxy LXC --> Cribl Stream LXCs --> Splunk HEC
 
 Application playbooks and roles never hardcode IPs or ports. They read
 them from inventory-managed variables loaded by
-`inventory/load_terraform.yml`.
+`inventory/load_tofu.yml`.
 
 ### IP Addresses
 
-IPs are derived from terraform inventory and accessed via `hostvars`:
+IPs are derived from OpenTofu inventory and accessed via `hostvars`:
 
 ```yaml
 # In playbooks and roles
@@ -35,24 +35,24 @@ splunk_host: "{{ hostvars['splunk']['ansible_host'] }}"
 **Note**: For LXC containers using `proxmox_pct_remote` connection
 (including `haproxy`), `ansible_host` contains the Proxmox VE hostname
 for the connection plugin, not the container's IP. To get the actual
-container IP for service testing, use `terraform_data.containers` from
-`terraform_inventory.json`.
+container IP for service testing, use `tofu_data.containers` from
+`tofu_inventory.json`.
 
 ### Port Constants
 
 Ports are defined once in `inventory/pipeline_constants.json` and merged
-into `terraform_data.constants` by `inventory/load_terraform.yml`:
+into `tofu_data.constants` by `inventory/load_tofu.yml`:
 
 ```yaml
 # Service ports
-splunk_hec_port: "{{ terraform_data.constants.service_ports.splunk_hec }}"
-splunk_web_port: "{{ terraform_data.constants.service_ports.splunk_web }}"
+splunk_hec_port: "{{ tofu_data.constants.service_ports.splunk_hec }}"
+splunk_web_port: "{{ tofu_data.constants.service_ports.splunk_web }}"
 
 # Syslog ports (all assigned ports as a list)
-syslog_ports: "{{ terraform_data.constants.syslog_ports.values() | list }}"
+syslog_ports: "{{ tofu_data.constants.syslog_ports.values() | list }}"
 
 # Syslog ports (by source name)
-unifi_port: "{{ terraform_data.constants.syslog_ports.unifi }}"
+unifi_port: "{{ tofu_data.constants.syslog_ports.unifi }}"
 ```
 
 ### Source of Truth
@@ -60,10 +60,10 @@ unifi_port: "{{ terraform_data.constants.syslog_ports.unifi }}"
 Port assignments are defined in `inventory/pipeline_constants.json`
 (committed to git). IP derivation logic lives in the `terraform-proxmox`
 repository. To change port values, edit `pipeline_constants.json`
-directly. To regenerate the terraform inventory:
+directly. To regenerate the OpenTofu inventory:
 
 ```bash
-./scripts/sync-terraform-inventory.sh
+./scripts/sync-tofu-inventory.sh
 ```
 
 ## Automated Testing
@@ -122,39 +122,39 @@ environment or your local shell).
 
 The following variables are required by `validate-pipeline.yml` and any
 playbook that uses `inventory/hosts.yml` together with
-`inventory/load_terraform.yml`:
+`inventory/load_tofu.yml`:
 
 | Variable | Purpose |
 | --- | --- |
 | `PROXMOX_VE_HOSTNAME` | Hostname or IP of the Proxmox VE endpoint |
 | `PROXMOX_SSH_KEY_PATH` | Path to SSH private key for Proxmox VMs |
 
-In addition, these playbooks expect a Terraform-generated inventory file:
+In addition, these playbooks expect an OpenTofu-generated inventory file:
 
-- `inventory/terraform_inventory.json` must exist and be up to date before
+- `inventory/tofu_inventory.json` must exist and be up to date before
   running `validate-pipeline.yml` or any playbook that relies on
-  `inventory/load_terraform.yml`.
+  `inventory/load_tofu.yml`.
 
 ## Manual Quick Tests
 
 For ad-hoc verification, use variable-based commands. Retrieve actual
-values from terraform inventory or Doppler before running.
+values from OpenTofu inventory or Doppler before running.
 
 ### Resolve IPs and Ports from Inventory
 
 ```bash
-# IPs come from terraform_inventory.json (gitignored, contains real IPs)
+# IPs come from tofu_inventory.json (gitignored, contains real IPs)
 HAPROXY_IP=$(jq -r '.containers.haproxy.ip' \
-  inventory/terraform_inventory.json)
+  inventory/tofu_inventory.json)
 
 CRIBL_EDGE_IP=$(jq -r '.containers | to_entries[] | select(.value.tags // [] | contains(["edge"])) | .value.ip' \
-  inventory/terraform_inventory.json | head -1)
+  inventory/tofu_inventory.json | head -1)
 
 CRIBL_STREAM_IP=$(jq -r '.containers | to_entries[] | select(.value.tags // [] | contains(["stream"])) | .value.ip' \
-  inventory/terraform_inventory.json | head -1)
+  inventory/tofu_inventory.json | head -1)
 
 SPLUNK_IP=$(jq -r '.splunk_vm.splunk.ip' \
-  inventory/terraform_inventory.json)
+  inventory/tofu_inventory.json)
 
 # Ports come from pipeline_constants.json (committed)
 HAPROXY_STATS_PORT=$(jq -r '.service_ports.haproxy_stats' \

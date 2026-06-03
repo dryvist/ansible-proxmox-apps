@@ -37,7 +37,7 @@ See `defaults/main.yml` for all variables.
 
 ## Installation
 
-Add the host to the `registry_group` (via the `registry` Terraform tag) and run
+Add the host to the `registry_group` (via the `registry` OpenTofu tag) and run
 the deploy play in `playbooks/site.yml`, or apply the role directly:
 
 ```yaml

@@ -68,7 +68,7 @@ Docker's virtualized networking stack.
 These workload classes are isolated by Docker network and Compose project.
 CI runners MUST NOT share Docker networks with dev/test services.
 
-### Syslog Port Assignments (from terraform pipeline_constants)
+### Syslog Port Assignments (from tofu pipeline_constants)
 
 | Port | Source | Splunk Index |
 | --- | --- | --- |
@@ -78,13 +78,13 @@ CI runners MUST NOT share Docker networks with dev/test services.
 | 1517 | Linux | os |
 | 1518 | Windows | os |
 
-### NetFlow Port (from terraform pipeline_constants)
+### NetFlow Port (from tofu pipeline_constants)
 
 | Port | Source | Splunk Index |
 | --- | --- | --- |
 | 2055 | UniFi IPFIX (UDP) | network |
 
-### Service Ports (from terraform pipeline_constants)
+### Service Ports (from tofu pipeline_constants)
 
 | Port | Service |
 | --- | --- |
@@ -99,22 +99,22 @@ CI runners MUST NOT share Docker networks with dev/test services.
 | 1025 | Mailpit SMTP |
 | 8025 | Mailpit Web UI |
 | 8080 | ntfy HTTP |
-| 6333 | Qdrant HTTP (from terraform `vector_db_ports`) |
-| 6334 | Qdrant gRPC (from terraform `vector_db_ports`) |
+| 6333 | Qdrant HTTP (from tofu `vector_db_ports`) |
+| 6334 | Qdrant gRPC (from tofu `vector_db_ports`) |
 
 Values are sourced from `terraform-proxmox/locals.tf`
 `pipeline_constants.{service_ports, netflow_ports, vector_db_ports}`.
 Do not hand-edit — fix the constant and refresh
-`inventory/terraform_inventory.json`.
+`inventory/tofu_inventory.json`.
 
 ## Inventory
 
 Inventory is loaded dynamically from
-`terraform_inventory.json` via `load_terraform.yml`.
-Port constants come from `terraform_data.constants`
+`tofu_inventory.json` via `load_tofu.yml`.
+Port constants come from `tofu_data.constants`
 (defined in terraform-proxmox `locals.tf`).
 
-### Groups (from terraform inventory)
+### Groups (from tofu inventory)
 
 - `lxc_containers`: All LXC containers (`proxmox_pct_remote` connection)
 - `cribl_edge`: Cribl Edge LXC containers (syslog processing)
@@ -216,7 +216,7 @@ ansible-lint
 **Inventory validation locally:**
 
 ```bash
-cp tests/inventory_load/terraform_inventory.json inventory/terraform_inventory.json
+cp tests/inventory_load/tofu_inventory.json inventory/tofu_inventory.json
 ansible-playbook tests/inventory_load/verify_inventory.yml \
   -i inventory/hosts.yml -c local
 ```
