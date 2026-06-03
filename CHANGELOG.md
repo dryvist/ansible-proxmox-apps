@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.15.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.14.2...v1.15.0) (2026-06-03)
+
+
+### Features
+
+* **media:** migrate request app from deprecated Jellyseerr to Seerr ([#307](https://github.com/dryvist/ansible-proxmox-apps/issues/307)) ([4e03af1](https://github.com/dryvist/ansible-proxmox-apps/commit/4e03af1ddd4fdda959927a2fb8ec4209c5f72b41))
+* **media:** split movies and shows into separate ZFS datasets ([#306](https://github.com/dryvist/ansible-proxmox-apps/issues/306)) ([8601008](https://github.com/dryvist/ansible-proxmox-apps/commit/86010086a37e079cd2e83504e939eba4e8eafc1b))
+
+
+### Bug Fixes
+
+* **jellyseerr:** complete owner + service registration automatically ([#304](https://github.com/dryvist/ansible-proxmox-apps/issues/304)) ([ea4aa53](https://github.com/dryvist/ansible-proxmox-apps/commit/ea4aa536daa24dc9c12b4a58fa84852a107bd299))
+* **media:** reconcile Seerr Sonarr/Radarr root folder on drift ([#310](https://github.com/dryvist/ansible-proxmox-apps/issues/310)) ([3cc3b59](https://github.com/dryvist/ansible-proxmox-apps/commit/3cc3b59e2d5a181bb37e18e6c9504fdceae919fa))
+* **servarr:** set a valid auth method so the UI isn't walled off ([#305](https://github.com/dryvist/ansible-proxmox-apps/issues/305)) ([5798012](https://github.com/dryvist/ansible-proxmox-apps/commit/57980120b694ba69b68435a14336750c553c5cae))
+
 ## [1.14.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.14.1...v1.14.2) (2026-06-02)
 
 
