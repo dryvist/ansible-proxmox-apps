@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.17.1...v1.18.0) (2026-06-03)
+
+
+### Features
+
+* **technitium_dns:** native primary/secondary HA mode ([#319](https://github.com/dryvist/ansible-proxmox-apps/issues/319)) ([d38bd65](https://github.com/dryvist/ansible-proxmox-apps/commit/d38bd651035f7f44a683edc8c86761bce96beb26))
+
 ## [1.17.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.17.0...v1.17.1) (2026-06-03)
 
 
