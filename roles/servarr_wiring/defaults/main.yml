@@ -7,7 +7,7 @@
 #      wiring keys are known before converge — never auto-generated).
 #   2. Wires Prowlarr -> Sonarr/Radarr Applications (full sync).
 #   3. Wires Sonarr/Radarr -> qBittorrent download client (on download-vpn).
-#   4. Ensures root folders (/mnt/media/tv, /mnt/media/movies).
+#   4. Ensures root folders (/mnt/media/shows, /mnt/media/movies).
 #   5. Ensures a default quality profile exists.
 #
 # All API config is idempotent (GET-then-POST/PUT). No bespoke scripts: this is
@@ -49,8 +49,10 @@ servarr_wiring_qbittorrent_username: admin
 servarr_wiring_qbittorrent_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') | default('', true) }}"
 
 # --- Wiring parameters -------------------------------------------------------
-# Root folders inside the *arr LXCs (bind-mounted /tank datasets).
-servarr_wiring_sonarr_root_folder: "/mnt/media/tv"
+# Root folders inside the *arr LXCs. movies + shows are SEPARATE ZFS datasets
+# mounted under /mnt/media (so each has its own quota/snapshots); Sonarr imports
+# TV to shows, Radarr imports movies to movies.
+servarr_wiring_sonarr_root_folder: "/mnt/media/shows"
 servarr_wiring_radarr_root_folder: "/mnt/media/movies"
 # qBittorrent categories per app.
 servarr_wiring_sonarr_category: "tv"
@@ -72,6 +74,16 @@ servarr_wiring_prowlarr_indexers:
   - "YTS"
 # Prowlarr app/sync profile applied to each indexer (1 = the default profile).
 servarr_wiring_indexer_app_profile_id: 1
+
+# --- Authentication (Sonarr/Radarr/Prowlarr v4 require a valid auth method) ---
+# v4 refuses to serve the UI with AuthenticationMethod=None (it walls off the UI
+# until a method is chosen). "External" delegates auth to the reverse proxy, and
+# "DisabledForLocalAddresses" lets LAN requests through with no login prompt —
+# satisfying the requirement while keeping local access friction-free, and
+# forward-compatible with the planned Traefik ingress. Set to Forms/Basic for a
+# built-in login instead.
+servarr_wiring_auth_method: External
+servarr_wiring_auth_required: DisabledForLocalAddresses
 
 # --- Test / orchestration toggle ---------------------------------------------
 # When false (Molecule), the role only validates inputs and renders nothing
