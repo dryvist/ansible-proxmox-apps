@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.15.0...v1.16.0) (2026-06-03)
+
+
+### Features
+
+* **media:** add validate-media playbook for indexer health and sync ([#311](https://github.com/dryvist/ansible-proxmox-apps/issues/311)) ([7b1809e](https://github.com/dryvist/ansible-proxmox-apps/commit/7b1809e7e0cd2e405e75f37a916d47bceb060639))
+
 ## [1.15.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.14.2...v1.15.0) (2026-06-03)
 
 
