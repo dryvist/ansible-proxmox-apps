@@ -100,14 +100,30 @@
       {{ (jellyseerr_owner_probe.status == 200)
          or (jellyseerr_owner_probe2.status | default(0) == 200) }}
 
-- name: Note that Jellyseerr registration is skipped (no owner — claim Plex first)
+# A token WAS available but the owner still does not exist => registration truly
+# failed (invalid/expired token, sign-in error). Fail loudly instead of silently
+# leaving Jellyseerr at its setup wizard. Gated by jellyseerr_require_registration.
+- name: Fail when a Plex token was available but the owner could not be created
+  ansible.builtin.fail:
+    msg: >-
+      Jellyseerr owner sign-in FAILED despite a Plex token being available
+      (sign-in HTTP {{ jellyseerr_owner_signin.status | default('n/a') }}). The
+      Plex token (PLEX_TOKEN / PlexOnlineToken) is likely invalid or expired —
+      fix it and re-run. Leaving Jellyseerr at its setup wizard is not acceptable.
+  when:
+    - not (jellyseerr_registration_ready | bool)
+    - jellyseerr_plex_effective_token | length > 0
+    - jellyseerr_require_registration | bool
+
+- name: Note that Jellyseerr registration is skipped (no Plex token to create an owner)
   ansible.builtin.debug:
     msg: >-
-      Jellyseerr service registration SKIPPED — the app has no admin owner yet and
-      no Plex token was available to create one. Claim Plex so Preferences.xml has
-      a PlexOnlineToken (or set PLEX_TOKEN), then re-run; or finish setup in the
-      Jellyseerr UI (Sign in with Plex). Non-fatal.
-  when: not (jellyseerr_registration_ready | bool)
+      Jellyseerr service registration SKIPPED — the app has no admin owner and no
+      Plex token was available to create one. Set PLEX_TOKEN in SOPS (or claim Plex
+      so Preferences.xml has a PlexOnlineToken), then re-run. Non-fatal.
+  when:
+    - not (jellyseerr_registration_ready | bool)
+    - jellyseerr_plex_effective_token | length == 0
 
 # --- Service registration (only once an owner exists) ------------------------
 
@@ -365,3 +381,34 @@
           Jellyseerr Plex link: server-settings HTTP
           {{ jellyseerr_plex_settings.status | default('n/a') }}. If not 200/201,
           finish the link once in the Jellyseerr UI (Settings -> Plex).
+
+# --- Finalize setup (flip `initialized` → no setup wizard) -------------------
+# The owner + servers can all be configured while settings.main.initialized is
+# still unset, so the UI keeps showing the first-run wizard. The wizard's final
+# "Finish Setup" button POSTs /api/v1/settings/initialize; do the same so the app
+# comes up fully set up. Idempotent — re-calling just returns the settings.
+- name: Finalize Jellyseerr setup (mark initialized, skip the wizard)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/initialize"
+    method: POST
+    headers:
+      X-Api-Key: "{{ jellyseerr_api_key }}"
+    status_code: [200, 201]
+  register: jellyseerr_initialize
+  changed_when: jellyseerr_initialize.status in [200, 201]
+  failed_when: false
+  no_log: true
+  when: jellyseerr_registration_ready | bool
+
+- name: Assert Jellyseerr finished initialization (no wizard left)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/public"
+    method: GET
+    status_code: 200
+  register: jellyseerr_public
+  changed_when: false
+  failed_when: >-
+    jellyseerr_require_registration | bool
+    and jellyseerr_registration_ready | bool
+    and not (jellyseerr_public.json.initialized | default(false) | bool)
+  when: jellyseerr_registration_ready | bool
