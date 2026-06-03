@@ -1,25 +1,16 @@
 ---
-# Set a deterministic <ApiKey> in each app's config.xml, delegated to the host
-# that actually holds the file. community.general.xml is idempotent: it only
-# rewrites when the element value differs, and reports changed accordingly. When
-# changed, restart the app (delegated) and wait for its API to answer with the
-# new key, so subsequent wiring tasks authenticate cleanly.
+# Set a deterministic <ApiKey> and a valid <Authentication*> method in each app's
+# config.xml, delegated to the host that holds the file. Sonarr/Radarr/Prowlarr
+# v4 refuse to serve the UI with AuthenticationMethod=None, so we also pin a valid
+# method here. community.general.xml is idempotent: it only rewrites when a value
+# differs and reports changed accordingly. When any element changed, restart the
+# app (delegated) and wait for its API to answer, so later wiring authenticates.
 #
-# This loops over a compact per-app spec so the three apps share one code path.
+# One compact per-app spec drives all three apps through a single code path.
 
-- name: Ensure <ApiKey> is set in each app's config.xml
-  community.general.xml:
-    path: "{{ item.data_dir }}/config.xml"
-    xpath: /Config/ApiKey
-    value: "{{ item.api_key }}"
-  delegate_to: "{{ item.host_inventory }}"
-  loop: "{{ _servarr_apps }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: servarr_wiring_apikey_set
-  no_log: true
-  vars:
-    _servarr_apps:
+- name: Build the per-app servarr spec
+  ansible.builtin.set_fact:
+    servarr_wiring_apps:
       - name: sonarr
         host_inventory: sonarr
         data_dir: "{{ servarr_wiring_sonarr_data_dir }}"
@@ -45,28 +36,72 @@
         port: "{{ servarr_wiring_prowlarr_port }}"
         endpoint_host: "{{ servarr_wiring_prowlarr_host }}"
         api_version: v1
+  no_log: true
 
-# noqa no-handler: this is not a generic "notify" restart. It loops over the
-# config.xml-edit results and restarts ONLY the apps whose key changed, each
-# delegated to its own host. A handler cannot carry the per-item delegate_to +
-# per-item changed state from this loop register, so an inline conditional task
-# is the correct construct here.
-- name: Restart apps whose API key changed (delegated to each app host)  # noqa: no-handler
-  ansible.builtin.systemd:
-    name: "{{ item.item.service }}"
-    state: restarted
-  delegate_to: "{{ item.item.host_inventory }}"
-  loop: "{{ servarr_wiring_apikey_set.results }}"
+- name: Ensure <ApiKey> is set in each app's config.xml
+  community.general.xml:
+    path: "{{ item.data_dir }}/config.xml"
+    xpath: /Config/ApiKey
+    value: "{{ item.api_key }}"
+  delegate_to: "{{ item.host_inventory }}"
+  loop: "{{ servarr_wiring_apps }}"
   loop_control:
-    label: "{{ item.item.name }}"
-  when: item is changed
+    label: "{{ item.name }}"
+  register: servarr_wiring_apikey_set
+  no_log: true
+
+# Pin a valid authentication method (v4 walls the UI off when it is None) and let
+# LAN requests through without a login prompt. Both elements already exist in the
+# *arr config.xml, so this only updates their values.
+- name: Ensure <AuthenticationMethod> is set in each app's config.xml
+  community.general.xml:
+    path: "{{ item.data_dir }}/config.xml"
+    xpath: /Config/AuthenticationMethod
+    value: "{{ servarr_wiring_auth_method }}"
+  delegate_to: "{{ item.host_inventory }}"
+  loop: "{{ servarr_wiring_apps }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: servarr_wiring_authmethod_set
+
+- name: Ensure <AuthenticationRequired> is set in each app's config.xml
+  community.general.xml:
+    path: "{{ item.data_dir }}/config.xml"
+    xpath: /Config/AuthenticationRequired
+    value: "{{ servarr_wiring_auth_required }}"
+  delegate_to: "{{ item.host_inventory }}"
+  loop: "{{ servarr_wiring_apps }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: servarr_wiring_authreq_set
+
+- name: Collect apps whose config.xml changed (api key or authentication)
+  ansible.builtin.set_fact:
+    servarr_wiring_changed_apps: >-
+      {{ (servarr_wiring_apikey_set.results
+          + servarr_wiring_authmethod_set.results
+          + servarr_wiring_authreq_set.results)
+         | selectattr('changed') | map(attribute='item.name') | unique | list }}
+
+# noqa no-handler: per-item delegate_to with per-host restart of only the changed
+# apps. A handler cannot carry per-item delegate_to from a loop register, so an
+# inline conditional task is the correct construct here.
+- name: Restart apps whose config.xml changed (delegated to each app host)  # noqa: no-handler
+  ansible.builtin.systemd:
+    name: "{{ item.service }}"
+    state: restarted
+  delegate_to: "{{ item.host_inventory }}"
+  loop: "{{ servarr_wiring_apps }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name in servarr_wiring_changed_apps
 
 - name: Wait for each app API to answer with the deterministic key
   ansible.builtin.uri:
-    url: "http://{{ item.item.endpoint_host }}:{{ item.item.port }}/api/{{ item.item.api_version }}/system/status"
+    url: "http://{{ item.endpoint_host }}:{{ item.port }}/api/{{ item.api_version }}/system/status"
     method: GET
     headers:
-      X-Api-Key: "{{ item.item.api_key }}"
+      X-Api-Key: "{{ item.api_key }}"
     status_code: 200
   register: servarr_wiring_apikey_ready
   retries: 30
@@ -74,6 +109,6 @@
   until: servarr_wiring_apikey_ready.status == 200
   changed_when: false
   no_log: true
-  loop: "{{ servarr_wiring_apikey_set.results }}"
+  loop: "{{ servarr_wiring_apps }}"
   loop_control:
-    label: "{{ item.item.name }}"
+    label: "{{ item.name }}"
