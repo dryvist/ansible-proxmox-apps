@@ -1,0 +1,445 @@
+---
+# Idempotent, self-healing Seerr service registration via its settings API.
+#
+# Seerr's /api/v1/settings/* endpoints require the OWNER user (id 1), which
+# only exists after a Plex sign-in. On a fresh install there is no owner, so those
+# endpoints return 403 even with a valid X-Api-Key. So we:
+#   1. Discover the Plex account token (PlexOnlineToken from the claimed server, or
+#      the PLEX_TOKEN override).
+#   2. Sign the owner in via /api/v1/auth/plex (the same call the UI's "Sign in
+#      with Plex" makes) — this creates the owner on first call.
+#   3. Only once an owner exists, register Sonarr/Radarr (GET-then-PUT-always, so a
+#      SOPS key rotation reconciles), then point Plex + sync libraries.
+#
+# Everything is NON-FATAL: with no token / unclaimed Plex there is no owner and we
+# skip registration with a clear note instead of failing the play. Re-running
+# after claiming Plex completes it. This wiring is also OFF the path to watching
+# on Roku — Plex serves Roku directly.
+
+# --- Live API key -----------------------------------------------------------
+# Jellyseerr 2.7.x generates its OWN apiKey on first init and ignores the seeded
+# main.apiKey, so the deterministic key never authenticates. Read the live key
+# straight from the running settings.json and use it for every Seerr API
+# call below (the *arr GETs still use their own deterministic keys).
+
+- name: Read the live Seerr API key (the app regenerates it on init)
+  ansible.builtin.slurp:
+    src: "{{ seerr_config_dir }}/settings.json"
+  register: seerr_live_settings
+  no_log: true
+
+- name: Use the live API key for all Seerr API calls
+  ansible.builtin.set_fact:
+    seerr_api_key: "{{ (seerr_live_settings.content | b64decode | from_json).main.apiKey }}"
+  no_log: true
+
+# --- Owner bootstrap ---------------------------------------------------------
+
+- name: Discover the Plex server token from Preferences.xml (on the plex host)
+  ansible.builtin.slurp:
+    src: "{{ seerr_plex_preferences_path }}"
+  delegate_to: "{{ seerr_plex_inventory_host }}"
+  register: seerr_plex_prefs
+  failed_when: false
+  no_log: true
+
+- name: Resolve the effective Plex token (PLEX_TOKEN override, else PlexOnlineToken)
+  ansible.builtin.set_fact:
+    seerr_plex_effective_token: >-
+      {{ seerr_plex_token if (seerr_plex_token | length > 0)
+         else (seerr_plex_prefs.content | default('') | b64decode
+               | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
+  no_log: true
+
+- name: Check whether Seerr has an admin owner yet
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/main"
+    method: GET
+    headers:
+      X-Api-Key: "{{ seerr_api_key }}"
+    status_code: [200, 401, 403]
+  register: seerr_owner_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Sign the owner in with the Plex token (creates owner on first call)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/auth/plex"
+    method: POST
+    headers:
+      X-Api-Key: "{{ seerr_api_key }}"
+    body_format: json
+    body:
+      authToken: "{{ seerr_plex_effective_token }}"
+    status_code: [200, 201, 403, 500]
+  register: seerr_owner_signin
+  changed_when: seerr_owner_signin.status in [200, 201]
+  failed_when: false
+  no_log: true
+  when:
+    - seerr_owner_probe.status != 200
+    - seerr_plex_effective_token | length > 0
+
+- name: Re-check whether Seerr has an admin owner
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/main"
+    method: GET
+    headers:
+      X-Api-Key: "{{ seerr_api_key }}"
+    status_code: [200, 401, 403]
+  register: seerr_owner_probe2
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: seerr_owner_probe.status != 200
+
+- name: Decide whether registration can proceed (owner present)
+  ansible.builtin.set_fact:
+    seerr_registration_ready: >-
+      {{ (seerr_owner_probe.status == 200)
+         or (seerr_owner_probe2.status | default(0) == 200) }}
+
+# A token WAS available but the owner still does not exist => registration truly
+# failed (invalid/expired token, sign-in error). Fail loudly instead of silently
+# leaving Seerr at its setup wizard. Gated by seerr_require_registration.
+- name: Fail when a Plex token was available but the owner could not be created
+  ansible.builtin.fail:
+    msg: >-
+      Seerr owner sign-in FAILED despite a Plex token being available
+      (sign-in HTTP {{ seerr_owner_signin.status | default('n/a') }}). The
+      Plex token (PLEX_TOKEN / PlexOnlineToken) is likely invalid or expired —
+      fix it and re-run. Leaving Seerr at its setup wizard is not acceptable.
+  when:
+    - not (seerr_registration_ready | bool)
+    - seerr_plex_effective_token | length > 0
+    - seerr_require_registration | bool
+
+- name: Note that Seerr registration is skipped (no Plex token to create an owner)
+  ansible.builtin.debug:
+    msg: >-
+      Seerr service registration SKIPPED — the app has no admin owner and no
+      Plex token was available to create one. Set PLEX_TOKEN in SOPS (or claim Plex
+      so Preferences.xml has a PlexOnlineToken), then re-run. Non-fatal.
+  when:
+    - not (seerr_registration_ready | bool)
+    - seerr_plex_effective_token | length == 0
+
+# --- Service registration (only once an owner exists) ------------------------
+
+- name: Register Radarr in Seerr
+  when:
+    - seerr_registration_ready | bool
+    - seerr_radarr_api_key | length > 0
+  block:
+    - name: Get Radarr quality profiles (for activeProfileId)
+      ansible.builtin.uri:
+        url: "http://{{ seerr_radarr_hostname }}:{{ seerr_radarr_port }}/api/v3/qualityprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ seerr_radarr_api_key }}"
+        status_code: 200
+      register: seerr_radarr_profiles
+      changed_when: false
+      no_log: true
+
+    - name: Read existing Seerr Radarr servers
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/radarr"
+        method: GET
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        status_code: 200
+      register: seerr_radarr_existing
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the existing Radarr entry for this hostname (if any)
+      ansible.builtin.set_fact:
+        seerr_radarr_entry: >-
+          {{
+            (seerr_radarr_existing.json
+             | selectattr('hostname', 'equalto', seerr_radarr_hostname)
+             | list | first) | default({}, true)
+          }}
+      no_log: true
+
+    - name: Add Radarr to Seerr (create — no entry yet)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/radarr"
+        method: POST
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        body_format: json
+        body:
+          name: radarr
+          hostname: "{{ seerr_radarr_hostname }}"
+          port: "{{ seerr_radarr_port | int }}"
+          useSsl: "{{ seerr_radarr_use_ssl }}"
+          apiKey: "{{ seerr_radarr_api_key }}"
+          activeProfileId: "{{ (seerr_radarr_profiles.json | first).id }}"
+          activeProfileName: "{{ (seerr_radarr_profiles.json | first).name }}"
+          activeDirectory: "{{ seerr_radarr_root_folder }}"
+          is4k: false
+          isDefault: true
+          syncEnabled: true
+          preventSearch: false
+          minimumAvailability: released
+        status_code: [200, 201]
+      register: seerr_radarr_add
+      changed_when: seerr_radarr_add.status in [200, 201]
+      no_log: true
+      when:
+        - seerr_radarr_profiles.json | length > 0
+        - seerr_radarr_entry == {}
+
+    # Self-heal: PUT only when the stored entry drifts from the desired
+    # connection or library root (apiKey rotation, port/SSL change, or a root
+    # folder that moved — e.g. a ZFS dataset split). Comparing before PUT keeps
+    # the task idempotent — no change on a converged host. The PUT body preserves
+    # the entry's existing fields (combine) and overlays only the reconciled
+    # values, so unrelated settings are untouched.
+    - name: Update Radarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/radarr/{{ seerr_radarr_entry.id }}"
+        method: PUT
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        body_format: json
+        # Drop the server 'id' — Seerr's OpenAPI rejects it in the PUT
+        # body ("request/body/id is read-only"); it is addressed via the URL.
+        body: >-
+          {{
+            (seerr_radarr_entry | combine({
+              'hostname': seerr_radarr_hostname,
+              'port': seerr_radarr_port | int,
+              'useSsl': seerr_radarr_use_ssl,
+              'apiKey': seerr_radarr_api_key,
+              'activeDirectory': seerr_radarr_root_folder
+            })) | dict2items | rejectattr('key', 'equalto', 'id') | items2dict
+          }}
+        status_code: [200, 201]
+      register: seerr_radarr_update
+      changed_when: seerr_radarr_update.status in [200, 201]
+      no_log: true
+      when:
+        - seerr_radarr_entry != {}
+        - >-
+          seerr_radarr_entry.apiKey | default('') != seerr_radarr_api_key
+          or (seerr_radarr_entry.port | default(0) | int) != (seerr_radarr_port | int)
+          or (seerr_radarr_entry.useSsl | default(false) | bool) != (seerr_radarr_use_ssl | bool)
+          or seerr_radarr_entry.activeDirectory | default('') != seerr_radarr_root_folder
+
+- name: Register Sonarr in Seerr
+  when:
+    - seerr_registration_ready | bool
+    - seerr_sonarr_api_key | length > 0
+  block:
+    - name: Get Sonarr quality profiles (for activeProfileId)
+      ansible.builtin.uri:
+        url: "http://{{ seerr_sonarr_hostname }}:{{ seerr_sonarr_port }}/api/v3/qualityprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ seerr_sonarr_api_key }}"
+        status_code: 200
+      register: seerr_sonarr_profiles
+      changed_when: false
+      no_log: true
+
+    - name: Read existing Seerr Sonarr servers
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/sonarr"
+        method: GET
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        status_code: 200
+      register: seerr_sonarr_existing
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the existing Sonarr entry for this hostname (if any)
+      ansible.builtin.set_fact:
+        seerr_sonarr_entry: >-
+          {{
+            (seerr_sonarr_existing.json
+             | selectattr('hostname', 'equalto', seerr_sonarr_hostname)
+             | list | first) | default({}, true)
+          }}
+      no_log: true
+
+    # Seerr's Sonarr server entry requires a language profile id (Sonarr-only;
+    # Radarr has none) and enableSeasonFolders, or the POST 400s.
+    - name: Get Sonarr language profiles (for activeLanguageProfileId)
+      ansible.builtin.uri:
+        url: "http://{{ seerr_sonarr_hostname }}:{{ seerr_sonarr_port }}/api/v3/languageprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ seerr_sonarr_api_key }}"
+        status_code: [200, 404]
+      register: seerr_sonarr_langprofiles
+      changed_when: false
+      no_log: true
+
+    - name: Add Sonarr to Seerr (create — no entry yet)
+      vars:
+        _sonarr_langprofile_id: >-
+          {{ (seerr_sonarr_langprofiles.json | default([{'id': 1}])
+              | first).id | default(1) }}
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/sonarr"
+        method: POST
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        body_format: json
+        body:
+          name: sonarr
+          hostname: "{{ seerr_sonarr_hostname }}"
+          port: "{{ seerr_sonarr_port | int }}"
+          useSsl: "{{ seerr_sonarr_use_ssl }}"
+          apiKey: "{{ seerr_sonarr_api_key }}"
+          activeProfileId: "{{ (seerr_sonarr_profiles.json | first).id }}"
+          activeProfileName: "{{ (seerr_sonarr_profiles.json | first).name }}"
+          activeLanguageProfileId: "{{ _sonarr_langprofile_id }}"
+          activeDirectory: "{{ seerr_sonarr_root_folder }}"
+          enableSeasonFolders: true
+          is4k: false
+          isDefault: true
+          syncEnabled: true
+          preventSearch: false
+        status_code: [200, 201]
+      register: seerr_sonarr_add
+      changed_when: seerr_sonarr_add.status in [200, 201]
+      no_log: true
+      when:
+        - seerr_sonarr_profiles.json | length > 0
+        - seerr_sonarr_entry == {}
+
+    # Self-heal: PUT only when the stored entry drifts from the desired
+    # connection or library root (apiKey rotation, port/SSL change, or a root
+    # folder that moved — e.g. a ZFS dataset split). Body preserves the existing
+    # entry (combine) and overlays only the reconciled values.
+    - name: Update Sonarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/sonarr/{{ seerr_sonarr_entry.id }}"
+        method: PUT
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        body_format: json
+        # Drop the server 'id' — Seerr's OpenAPI rejects it in the PUT
+        # body ("request/body/id is read-only"); it is addressed via the URL.
+        body: >-
+          {{
+            (seerr_sonarr_entry | combine({
+              'hostname': seerr_sonarr_hostname,
+              'port': seerr_sonarr_port | int,
+              'useSsl': seerr_sonarr_use_ssl,
+              'apiKey': seerr_sonarr_api_key,
+              'activeDirectory': seerr_sonarr_root_folder
+            })) | dict2items | rejectattr('key', 'equalto', 'id') | items2dict
+          }}
+        status_code: [200, 201]
+      register: seerr_sonarr_update
+      changed_when: seerr_sonarr_update.status in [200, 201]
+      no_log: true
+      when:
+        - seerr_sonarr_entry != {}
+        - >-
+          seerr_sonarr_entry.apiKey | default('') != seerr_sonarr_api_key
+          or (seerr_sonarr_entry.port | default(0) | int) != (seerr_sonarr_port | int)
+          or (seerr_sonarr_entry.useSsl | default(false) | bool) != (seerr_sonarr_use_ssl | bool)
+          or seerr_sonarr_entry.activeDirectory | default('') != seerr_sonarr_root_folder
+
+# --- Plex server settings + library sync (owner already signed in above) -----
+
+- name: Link Plex in Seerr (owner present + token available)
+  when:
+    - seerr_registration_ready | bool
+    - seerr_plex_effective_token | length > 0
+  block:
+    - name: Point Seerr's Plex server settings at the LAN Plex
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/plex"
+        method: POST
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        body_format: json
+        body:
+          ip: "{{ seerr_plex_hostname }}"
+          port: "{{ seerr_plex_port | int }}"
+          useSsl: "{{ seerr_plex_use_ssl }}"
+        status_code: [200, 201, 400, 500]
+      register: seerr_plex_settings
+      changed_when: seerr_plex_settings.status in [200, 201]
+      failed_when: false
+      no_log: true
+
+    - name: Sync Plex libraries into Seerr
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/plex/library?sync=true"
+        method: GET
+        headers:
+          X-Api-Key: "{{ seerr_api_key }}"
+        status_code: [200, 500]
+      register: seerr_plex_libsync
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Report Seerr Plex link outcome (non-fatal)
+      ansible.builtin.debug:
+        msg: >-
+          Seerr Plex link: server-settings HTTP
+          {{ seerr_plex_settings.status | default('n/a') }}. If not 200/201,
+          finish the link once in the Seerr UI (Settings -> Plex).
+
+# --- Public URL (Traefik hostname) -------------------------------------------
+# Tell Seerr its public URL so emitted links/notifications point at the proxy
+# (https://seerr.<domain>) instead of a raw IP. Partial POST merges the field.
+- name: Set Seerr application URL to the Traefik hostname (idempotent, non-fatal)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/main"
+    method: POST
+    headers:
+      X-Api-Key: "{{ seerr_api_key }}"
+    body_format: json
+    body:
+      applicationUrl: "{{ seerr_application_url }}"
+    status_code: [200, 201, 400, 500]
+  register: seerr_appurl
+  changed_when: seerr_appurl.status in [200, 201]
+  failed_when: false
+  no_log: true
+  when:
+    - seerr_registration_ready | bool
+    - seerr_application_url | length > 0
+
+# --- Finalize setup (flip `initialized` → no setup wizard) -------------------
+# The owner + servers can all be configured while settings.main.initialized is
+# still unset, so the UI keeps showing the first-run wizard. The wizard's final
+# "Finish Setup" button POSTs /api/v1/settings/initialize; do the same so the app
+# comes up fully set up. Idempotent — re-calling just returns the settings.
+- name: Finalize Seerr setup (mark initialized, skip the wizard)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/initialize"
+    method: POST
+    headers:
+      X-Api-Key: "{{ seerr_api_key }}"
+    status_code: [200, 201]
+  register: seerr_initialize
+  changed_when: seerr_initialize.status in [200, 201]
+  failed_when: false
+  no_log: true
+  when: seerr_registration_ready | bool
+
+- name: Assert Seerr finished initialization (no wizard left)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/public"
+    method: GET
+    status_code: 200
+  register: seerr_public
+  changed_when: false
+  failed_when: >-
+    seerr_require_registration | bool
+    and seerr_registration_ready | bool
+    and not (seerr_public.json.initialized | default(false) | bool)
+  when: seerr_registration_ready | bool

@@ -24,7 +24,7 @@ this repo handles app config only.
   Proton WireGuard with a fail-closed dual-stack nftables killswitch, NAT-PMP
   port forwarding, and three layers of continuous killswitch validation), plus
   LAN-only `sonarr`, `radarr`, `plex` (install + idempotent non-fatal claim +
-  library-section creation), `jellyseerr` (request UI, Docker-in-LXC 214), and
+  library-section creation), `seerr` (request UI, Docker-in-LXC 214), and
   `servarr_wiring` (idempotent API self-wiring: public Prowlarr indexers,
   Prowlarr apps sync, qBittorrent download clients, root folders).
 
@@ -155,10 +155,10 @@ Port constants come from `terraform_data.constants`
 | `IDRAC_R710_HOST` | R710 iDRAC IP/hostname | Doppler |
 | `IDRAC_R710_USER` | R710 iDRAC username | Doppler |
 | `IDRAC_R710_PASSWORD` | R710 iDRAC password | Doppler |
-| `SONARR_API_KEY` | Deterministic Sonarr API key (servarr_wiring/jellyseerr) | SOPS |
-| `RADARR_API_KEY` | Deterministic Radarr API key (servarr_wiring/jellyseerr) | SOPS |
+| `SONARR_API_KEY` | Deterministic Sonarr API key (servarr_wiring/seerr) | SOPS |
+| `RADARR_API_KEY` | Deterministic Radarr API key (servarr_wiring/seerr) | SOPS |
 | `PROWLARR_API_KEY` | Deterministic Prowlarr API key (servarr_wiring) | SOPS |
-| `JELLYSEERR_API_KEY` | Deterministic Jellyseerr API key (jellyseerr role) | SOPS |
+| `SEERR_API_KEY` | Deterministic Seerr API key (seerr role) | SOPS |
 | `PLEX_CLAIM_TOKEN` | Optional fresh Plex claim token (~4-min); passed ad-hoc to a converge or done via the web UI, never stored | ad-hoc / web UI |
 | `PLEX_TOKEN` | Optional Plex account-token override; normally auto-discovered from the claimed server | env (optional) |
 

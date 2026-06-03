@@ -86,7 +86,7 @@ ingress table — `terraform-proxmox` `locals.tf` `ingress_services`, surfaced a
 fronted service is added/removed in exactly one place. Add it in terraform-proxmox.
 
 - **Tier 1 — media stack** (same `media_svc` VLAN as Traefik): `plex`, `seerr`
-  (→ `jellyseerr` backend), `sonarr`, `radarr`, `qbittorrent`, `prowlarr`. Reachable
+  (→ `seerr` backend), `sonarr`, `radarr`, `qbittorrent`, `prowlarr`. Reachable
   at layer 2 — no UniFi rule, and **no killswitch change** (the qBittorrent/Prowlarr
   WebUIs are LAN-reachable; the killswitch governs egress only).
 - **Tier 2 — infra UIs on other VLANs** (`technitium`, `pihole`, `phpipam`, `minio`,

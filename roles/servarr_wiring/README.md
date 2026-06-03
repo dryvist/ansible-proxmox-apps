@@ -50,7 +50,7 @@ drift-correction becomes desirable (see the PR's open-questions).
 
 Sonarr and Radarr **ship default quality profiles** (Any, SD, HD-720p,
 HD-1080p, Ultra-HD, …) seeded on first run. This role does not POST a redundant
-profile — that would fight the app's own defaults. The `jellyseerr` role
+profile — that would fight the app's own defaults. The `seerr` role
 resolves a valid `activeProfileId` from each PVR's existing
 `/api/v3/qualityprofile` when it registers the server. Override the chosen
 profile in the UI or extend this role if a custom profile is required.

@@ -1,14 +1,33 @@
 ---
 # =============================================================================
+# One-time rename migration (jellyseerr -> seerr)
+# =============================================================================
+# Runs before the new /opt/seerr path is created so the live settings.json + db
+# survive the rename. seerr_config_dir is nested under seerr_data_dir, so moving
+# the parent dir carries the config along with it. Idempotent: the mv `creates`
+# guard plus the `when` stat make this a no-op once the new path exists.
+
+- name: Check whether the pre-rename data dir exists
+  ansible.builtin.stat:
+    path: /opt/jellyseerr
+  register: seerr_old_data_dir
+
+- name: Migrate the pre-rename data dir to {{ seerr_data_dir }}
+  ansible.builtin.command:
+    cmd: "mv /opt/jellyseerr {{ seerr_data_dir }}"
+    creates: "{{ seerr_data_dir }}"
+  when: seerr_old_data_dir.stat.exists
+
+# =============================================================================
 # Preflight: deterministic API key must be present
 # =============================================================================
 
-- name: Assert Jellyseerr API key is set
+- name: Assert Seerr API key is set
   ansible.builtin.assert:
     that:
-      - jellyseerr_api_key | length > 0
+      - seerr_api_key | length > 0
     fail_msg: >-
-      JELLYSEERR_API_KEY is not set. Generate a 32-char hex key
+      SEERR_API_KEY is not set. Generate a 32-char hex key
       (openssl rand -hex 16), add it to SOPS (secrets.enc.yaml), and run under
       `sops exec-env`. The key is templated into settings.json so it is known
       to downstream tooling, not auto-generated.
@@ -37,11 +56,11 @@
 
 - name: Set Docker repository distribution
   ansible.builtin.set_fact:
-    jellyseerr_distro: "{{ ansible_distribution | lower }}"
+    seerr_distro: "{{ ansible_distribution | lower }}"
 
 - name: Add Docker GPG key
   ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ jellyseerr_distro }}/gpg"
+    url: "https://download.docker.com/linux/{{ seerr_distro }}/gpg"
     dest: /etc/apt/keyrings/docker.asc
     mode: "0644"
     force: false
@@ -50,7 +69,7 @@
   ansible.builtin.apt_repository:
     repo: >-
       deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/{{ jellyseerr_distro }}
+      https://download.docker.com/linux/{{ seerr_distro }}
       {{ ansible_distribution_release }} stable
     state: present
     filename: docker
@@ -107,7 +126,7 @@
 
 # Seerr runs as the node user (UID 1000), so the config dir it reads/writes must
 # be owned by 1000 (Jellyseerr ran as root; the live migration chowned it).
-- name: Create Jellyseerr data + config directories
+- name: Create Seerr data + config directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -115,78 +134,78 @@
     group: "1000"
     mode: "0755"
   loop:
-    - "{{ jellyseerr_data_dir }}"
-    - "{{ jellyseerr_config_dir }}"
+    - "{{ seerr_data_dir }}"
+    - "{{ seerr_config_dir }}"
 
 # One-time seed: set ONLY the deterministic main.apiKey, then leave the file to
-# Jellyseerr (it rewrites settings.json at runtime). Guard on the file not yet
+# Seerr (it rewrites settings.json at runtime). Guard on the file not yet
 # existing instead of `template force: false`: some ansible-core versions, with
 # force:false, both skip applying `mode` on creation (leaving the API-key file
 # world-readable at 0644) AND re-touch the mode on every converge (breaking
 # idempotence). A normal templated create under a not-exists guard applies 0640
 # correctly and runs exactly once.
-- name: Check whether the Jellyseerr settings seed already exists
+- name: Check whether the Seerr settings seed already exists
   ansible.builtin.stat:
-    path: "{{ jellyseerr_config_dir }}/settings.json"
-  register: jellyseerr_settings_seed_stat
+    path: "{{ seerr_config_dir }}/settings.json"
+  register: seerr_settings_seed_stat
 
 - name: Seed settings.json with the deterministic API key (one-time)
   ansible.builtin.template:
     src: settings.json.j2
-    dest: "{{ jellyseerr_config_dir }}/settings.json"
+    dest: "{{ seerr_config_dir }}/settings.json"
     owner: "1000"
     group: "1000"
     mode: "0640"
-  when: not jellyseerr_settings_seed_stat.stat.exists
+  when: not seerr_settings_seed_stat.stat.exists
   no_log: true
 
 - name: Deploy docker-compose.yml
   ansible.builtin.template:
     src: docker-compose.yml.j2
-    dest: "{{ jellyseerr_data_dir }}/docker-compose.yml"
+    dest: "{{ seerr_data_dir }}/docker-compose.yml"
     owner: root
     group: root
     mode: "0644"
-  notify: Restart jellyseerr
+  notify: Restart seerr
 
 # =============================================================================
 # Deploy via Docker Compose (live only)
 # =============================================================================
 
-- name: Deploy Jellyseerr container via docker compose
+- name: Deploy Seerr container via docker compose
   community.docker.docker_compose_v2:
-    project_src: "{{ jellyseerr_data_dir }}"
+    project_src: "{{ seerr_data_dir }}"
     state: present
     pull: always
   vars:
     ansible_python_interpreter: /opt/ansible-venv/bin/python
-  when: jellyseerr_manage_services | bool
+  when: seerr_manage_services | bool
 
 # =============================================================================
 # Health check + service registration (live only)
 # =============================================================================
 
-- name: Wait for Jellyseerr web port to be ready
+- name: Wait for Seerr web port to be ready
   ansible.builtin.wait_for:
     host: 127.0.0.1
-    port: "{{ jellyseerr_web_port }}"
+    port: "{{ seerr_web_port }}"
     timeout: 120
-  when: jellyseerr_manage_services | bool
+  when: seerr_manage_services | bool
 
-- name: Verify Jellyseerr HTTP endpoint responds
+- name: Verify Seerr HTTP endpoint responds
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/status"
+    url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/status"
     method: GET
     status_code: 200
-  register: jellyseerr_status
+  register: seerr_status
   retries: 20
   delay: 10
-  until: jellyseerr_status.status == 200
+  until: seerr_status.status == 200
   changed_when: false
-  when: jellyseerr_manage_services | bool
+  when: seerr_manage_services | bool
 
-- name: Register Sonarr / Radarr / Plex via the Jellyseerr settings API
+- name: Register Sonarr / Radarr / Plex via the Seerr settings API
   ansible.builtin.import_tasks: register.yml
   when:
-    - jellyseerr_manage_services | bool
-    - jellyseerr_register_services | bool
+    - seerr_manage_services | bool
+    - seerr_register_services | bool
