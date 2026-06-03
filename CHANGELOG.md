@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.17.0...v1.17.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **traefik:** unprivileged-LXC systemd + HTTPS redirect + PROXMOX_SUBDOMAIN ingress base ([#316](https://github.com/dryvist/ansible-proxmox-apps/issues/316)) ([f33c73b](https://github.com/dryvist/ansible-proxmox-apps/commit/f33c73b29ced8cf50d7a10bd36e8e81050fd57be))
+
 ## [1.17.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.16.0...v1.17.0) (2026-06-03)
 
 
