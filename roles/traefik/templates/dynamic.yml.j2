@@ -1,0 +1,51 @@
+{# Dynamic Traefik config — routers + services generated from the Terraform
+   inventory (traefik_routes, built in tasks/main.yml). Each router requests the
+   single wildcard *.{{ traefik_base_domain }} cert so Traefik issues it once and
+   serves it for every host. Managed by Ansible (traefik role). Do not edit. #}
+http:
+  routers:
+{% for route in traefik_routes %}
+    {{ route.name }}:
+      rule: "Host(`{{ route.fqdn }}`)"
+      service: {{ route.name }}
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ traefik_base_domain }}"
+            sans:
+              - "*.{{ traefik_base_domain }}"
+{% endfor %}
+{% if traefik_dashboard_enabled and (traefik_dashboard_basicauth | length > 0) %}
+    dashboard:
+      rule: "Host(`traefik.{{ traefik_base_domain }}`)"
+      service: api@internal
+      entryPoints:
+        - websecure
+      middlewares:
+        - dashboard-auth
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ traefik_base_domain }}"
+            sans:
+              - "*.{{ traefik_base_domain }}"
+{% endif %}
+
+  services:
+{% for route in traefik_routes %}
+    {{ route.name }}:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "{{ route.backend }}"
+{% endfor %}
+{% if traefik_dashboard_enabled and (traefik_dashboard_basicauth | length > 0) %}
+
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "{{ traefik_dashboard_basicauth }}"
+{% endif %}
