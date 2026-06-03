@@ -193,26 +193,30 @@
         - jellyseerr_radarr_profiles.json | length > 0
         - jellyseerr_radarr_entry == {}
 
-    # Self-heal: PUT only when the stored entry drifts from the SOPS-sourced
-    # credentials/connection (apiKey rotation, port or SSL change). Comparing
-    # before PUT keeps the task idempotent — no change on a converged host. The
-    # PUT body preserves the entry's existing fields (combine) and overlays only
-    # the reconciled connection values, so unrelated settings are untouched.
-    - name: Update Radarr in Jellyseerr (reconcile drifted apiKey/port/ssl)
+    # Self-heal: PUT only when the stored entry drifts from the desired
+    # connection or library root (apiKey rotation, port/SSL change, or a root
+    # folder that moved — e.g. a ZFS dataset split). Comparing before PUT keeps
+    # the task idempotent — no change on a converged host. The PUT body preserves
+    # the entry's existing fields (combine) and overlays only the reconciled
+    # values, so unrelated settings are untouched.
+    - name: Update Radarr in Jellyseerr (reconcile drifted apiKey/port/ssl/root-folder)
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/radarr/{{ jellyseerr_radarr_entry.id }}"
         method: PUT
         headers:
           X-Api-Key: "{{ jellyseerr_api_key }}"
         body_format: json
+        # Drop the server 'id' — Jellyseerr's OpenAPI rejects it in the PUT
+        # body ("request/body/id is read-only"); it is addressed via the URL.
         body: >-
           {{
-            jellyseerr_radarr_entry | combine({
+            (jellyseerr_radarr_entry | combine({
               'hostname': jellyseerr_radarr_hostname,
               'port': jellyseerr_radarr_port | int,
               'useSsl': jellyseerr_radarr_use_ssl,
-              'apiKey': jellyseerr_radarr_api_key
-            })
+              'apiKey': jellyseerr_radarr_api_key,
+              'activeDirectory': jellyseerr_radarr_root_folder
+            })) | dict2items | rejectattr('key', 'equalto', 'id') | items2dict
           }}
         status_code: [200, 201]
       register: jellyseerr_radarr_update
@@ -224,6 +228,7 @@
           jellyseerr_radarr_entry.apiKey | default('') != jellyseerr_radarr_api_key
           or (jellyseerr_radarr_entry.port | default(0) | int) != (jellyseerr_radarr_port | int)
           or (jellyseerr_radarr_entry.useSsl | default(false) | bool) != (jellyseerr_radarr_use_ssl | bool)
+          or jellyseerr_radarr_entry.activeDirectory | default('') != jellyseerr_radarr_root_folder
 
 - name: Register Sonarr in Jellyseerr
   when:
@@ -309,24 +314,28 @@
         - jellyseerr_sonarr_profiles.json | length > 0
         - jellyseerr_sonarr_entry == {}
 
-    # Self-heal: PUT only when the stored entry drifts from the SOPS-sourced
-    # credentials/connection (apiKey rotation, port or SSL change). Body preserves
-    # the existing entry (combine) and overlays only the reconciled connection.
-    - name: Update Sonarr in Jellyseerr (reconcile drifted apiKey/port/ssl)
+    # Self-heal: PUT only when the stored entry drifts from the desired
+    # connection or library root (apiKey rotation, port/SSL change, or a root
+    # folder that moved — e.g. a ZFS dataset split). Body preserves the existing
+    # entry (combine) and overlays only the reconciled values.
+    - name: Update Sonarr in Jellyseerr (reconcile drifted apiKey/port/ssl/root-folder)
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/sonarr/{{ jellyseerr_sonarr_entry.id }}"
         method: PUT
         headers:
           X-Api-Key: "{{ jellyseerr_api_key }}"
         body_format: json
+        # Drop the server 'id' — Jellyseerr's OpenAPI rejects it in the PUT
+        # body ("request/body/id is read-only"); it is addressed via the URL.
         body: >-
           {{
-            jellyseerr_sonarr_entry | combine({
+            (jellyseerr_sonarr_entry | combine({
               'hostname': jellyseerr_sonarr_hostname,
               'port': jellyseerr_sonarr_port | int,
               'useSsl': jellyseerr_sonarr_use_ssl,
-              'apiKey': jellyseerr_sonarr_api_key
-            })
+              'apiKey': jellyseerr_sonarr_api_key,
+              'activeDirectory': jellyseerr_sonarr_root_folder
+            })) | dict2items | rejectattr('key', 'equalto', 'id') | items2dict
           }}
         status_code: [200, 201]
       register: jellyseerr_sonarr_update
@@ -338,6 +347,7 @@
           jellyseerr_sonarr_entry.apiKey | default('') != jellyseerr_sonarr_api_key
           or (jellyseerr_sonarr_entry.port | default(0) | int) != (jellyseerr_sonarr_port | int)
           or (jellyseerr_sonarr_entry.useSsl | default(false) | bool) != (jellyseerr_sonarr_use_ssl | bool)
+          or jellyseerr_sonarr_entry.activeDirectory | default('') != jellyseerr_sonarr_root_folder
 
 # --- Plex server settings + library sync (owner already signed in above) -----
 
