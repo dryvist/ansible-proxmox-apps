@@ -193,6 +193,11 @@ sops secrets.enc.yaml
 # Validate pipeline
 doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/validate-pipeline.yml
 
+# Validate media stack (Prowlarr indexer health + Prowlarr->Radarr/Sonarr sync)
+sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+  -i inventory/hosts.yml playbooks/validate-media.yml'
+# Add --tags deep to actively test each indexer against its tracker (slow, live)
+
 # Lint
 ansible-lint
 ```
