@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.16.0...v1.17.0) (2026-06-03)
+
+
+### Features
+
+* **traefik:** HTTPS ingress for all service UIs via wildcard ACME ([58064c9](https://github.com/dryvist/ansible-proxmox-apps/commit/58064c9db1dba2cd4915fc42b6d09ef50e344182)), closes [#247](https://github.com/dryvist/ansible-proxmox-apps/issues/247)
+
 ## [1.16.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.15.0...v1.16.0) (2026-06-03)
 
 
