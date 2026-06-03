@@ -22,12 +22,12 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags sonarr
 
 ## Key variables
 
-Web UI port comes from terraform (`terraform_data.constants.media_ports.sonarr_web`).
+Web UI port comes from OpenTofu (`tofu_data.constants.media_ports.sonarr_web`).
 See `defaults/main.yml`.
 
 - `sonarr_install_dir` — install location (default `/opt/Sonarr`).
 - `sonarr_data_dir` — app data (default `/var/lib/sonarr`).
-- `sonarr_web_port` — web UI port (terraform-derived).
+- `sonarr_web_port` — web UI port (tofu-derived).
 
 ## Usage
 

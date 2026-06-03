@@ -9,8 +9,8 @@ readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly NC='\033[0m' # No Color
 
-# Derive IPs from terraform inventory (override with env vars if needed)
-INVENTORY_FILE="${INVENTORY_FILE:-inventory/terraform_inventory.json}"
+# Derive IPs from OpenTofu inventory (override with env vars if needed)
+INVENTORY_FILE="${INVENTORY_FILE:-inventory/tofu_inventory.json}"
 
 if [ ! -f "$INVENTORY_FILE" ]; then
     echo -e "${RED}ERROR: $INVENTORY_FILE not found${NC}"

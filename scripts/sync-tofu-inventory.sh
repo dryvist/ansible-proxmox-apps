@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Sync Terraform inventory to Ansible
+# Sync OpenTofu inventory to Ansible
 #
-# This script exports the Terraform-defined infrastructure (VMs, containers, IPs)
-# to a JSON file that Ansible can dynamically load via load_terraform.yml
+# This script exports the OpenTofu-defined infrastructure (VMs, containers, IPs)
+# to a JSON file that Ansible can dynamically load via load_tofu.yml
 #
 # Required environment variables (used by Ansible playbooks consuming this inventory):
 #   PROXMOX_VE_HOSTNAME  - Proxmox VE host that Ansible will connect to
 #   PROXMOX_SSH_KEY_PATH - Path to the SSH private key used for Proxmox access
 #
 # Usage:
-#   ./scripts/sync-terraform-inventory.sh
-#   TERRAFORM_DIR=/custom/path ./scripts/sync-terraform-inventory.sh
+#   ./scripts/sync-tofu-inventory.sh
+#   TERRAFORM_DIR=/custom/path ./scripts/sync-tofu-inventory.sh
 #
 # This should be run after 'terragrunt apply' in terraform-proxmox to ensure
 # Ansible has the latest infrastructure configuration.
@@ -29,15 +29,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Navigate to project root (parent of scripts directory)
 PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
-# Path to Terraform infrastructure (configurable via environment variable)
+# Path to OpenTofu infrastructure (configurable via environment variable)
 TERRAFORM_DIR="${TERRAFORM_DIR:-${HOME}/git/terraform-proxmox/main}"
 
 # Path to Ansible inventory file
-INVENTORY_FILE="${PROJECT_ROOT}/inventory/terraform_inventory.json"
+INVENTORY_FILE="${PROJECT_ROOT}/inventory/tofu_inventory.json"
 
-# Ensure terraform directory exists
+# Ensure OpenTofu directory exists
 if [[ ! -d "${TERRAFORM_DIR}" ]]; then
-  echo -e "${RED}ERROR: Terraform directory not found at ${TERRAFORM_DIR}${NC}" >&2
+  echo -e "${RED}ERROR: OpenTofu directory not found at ${TERRAFORM_DIR}${NC}" >&2
   exit 1
 fi
 
@@ -47,11 +47,11 @@ if [[ ! -d "${PROJECT_ROOT}" ]]; then
   exit 1
 fi
 
-echo -e "${YELLOW}Exporting Terraform inventory...${NC}"
-echo "  Terraform dir: ${TERRAFORM_DIR}"
+echo -e "${YELLOW}Exporting OpenTofu inventory...${NC}"
+echo "  OpenTofu dir: ${TERRAFORM_DIR}"
 echo "  Output file:   ${INVENTORY_FILE}"
 
-# Change to Terraform directory and export inventory
+# Change to OpenTofu directory and export inventory
 if cd "${TERRAFORM_DIR}" && terragrunt output -json ansible_inventory > "${INVENTORY_FILE}"; then
   echo -e "${GREEN}✓ Inventory exported successfully${NC}"
 
@@ -91,8 +91,8 @@ except Exception as e:
     print(f"  (Could not parse inventory: {e})", file=sys.stderr)
 PYTHON_EOF
 
-  echo -e "\n${GREEN}Ansible can now use this inventory via 'load_terraform.yml'${NC}"
+  echo -e "\n${GREEN}Ansible can now use this inventory via 'load_tofu.yml'${NC}"
 else
-  echo -e "${RED}ERROR: Failed to export Terraform inventory${NC}" >&2
+  echo -e "${RED}ERROR: Failed to export OpenTofu inventory${NC}" >&2
   exit 1
 fi

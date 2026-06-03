@@ -22,13 +22,13 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags plex
 
 ## Key variables
 
-Server port comes from terraform (`terraform_data.constants.media_ports.plex_web`).
+Server port comes from OpenTofu (`tofu_data.constants.media_ports.plex_web`).
 See `defaults/main.yml`.
 
 - `plex_media_dir` — media library root (default `/mnt/media`).
 - `plex_library_subdirs` — library subdirs scaffolded under it (`movies`, `tv`).
 - `plex_apt_repo` — Plex apt repository line.
-- `plex_web_port` — server/web UI port (terraform-derived).
+- `plex_web_port` — server/web UI port (tofu-derived).
 - `plex_claim_token` — Plex claim token, read from `PLEX_CLAIM_TOKEN` (SOPS env).
 - `plex_account_token` — Plex account X-Plex-Token, read from `PLEX_TOKEN` (SOPS
   env); required to auto-create library sections.

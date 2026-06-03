@@ -14,13 +14,13 @@ it in via a local image rebuild (see "Viewer image" below).
 ## Installation
 
 The role is wired into `playbooks/site.yml` (Phase 7b) and runs against any
-host in `idrac_kvm_group`. The group is populated by `inventory/load_terraform.yml`
-from `containers` tagged `idrac` in the Terraform inventory (see terraform-proxmox
+host in `idrac_kvm_group`. The group is populated by `inventory/load_tofu.yml`
+from `containers` tagged `idrac` in the OpenTofu inventory (see terraform-proxmox
 LXC 251 `idrac-kvm`), reached over `proxmox_pct_remote`.
 
 Prerequisites:
 
-- LXC 251 `idrac-kvm` exists (Terraform-managed; tags include `container` and `idrac`).
+- LXC 251 `idrac-kvm` exists (OpenTofu-managed; tags include `container` and `idrac`).
 - Doppler config `iac-conf-mgmt/prd` populated with all six
   `IDRAC_R410_*` / `IDRAC_R710_*` variables (see Secrets table below).
 - The Dell AVCT client artifact staged in private storage and
