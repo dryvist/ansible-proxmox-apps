@@ -1012,3 +1012,142 @@
             syncCategories preserved, no duplicate field names
           - qBittorrent client: host/username/tvCategory/useSsl overridden,
             recentTvPriority preserved, no duplicate field names
+
+# =============================================================================
+# traefik — static config, dynamic routers, and the ACME EnvironmentFile
+# =============================================================================
+# Render-only: proves the Route53 DNS-01 resolver, the wildcard cert request on
+# each router, the inventory-derived backends, and that the creds land in the
+# EnvironmentFile (not the dynamic config). No live ACME / Traefik in CI.
+- name: Render and verify traefik templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/traefik/defaults/main.yml (scrubbed domain + test creds).
+    traefik_base_domain: "pve.example.com"
+    # ACME email is optional; empty here to prove it is OMITTED from the rendered
+    # config (no email literal ever lives in a committed file).
+    traefik_acme_email: ""
+    traefik_acme_ca_server: "https://acme-v02.api.letsencrypt.org/directory"
+    traefik_acme_storage: /etc/traefik/acme/acme.json
+    traefik_dynamic_dir: /etc/traefik/dynamic
+    traefik_acme_dns_resolvers: ["1.1.1.1:53", "8.8.8.8:53"]
+    traefik_dashboard_enabled: true
+    # basicAuth reads a usersFile the role generates on the host at build time;
+    # only the path is in the config — never a credential.
+    traefik_dashboard_users_file: /etc/traefik/dashboard.htpasswd
+    traefik_tls_min_version: VersionTLS12
+    # Test creds (placeholders) for the EnvironmentFile.
+    traefik_acme_aws_access_key_id: "AKIATESTACCESSKEYID00"
+    traefik_acme_aws_secret_access_key: "testsecretplaceholderplaceholderplaceholde"
+    traefik_acme_aws_region: "us-east-1"
+    traefik_acme_route53_zone_id: "Z0123456789ABCDEFGHIJ"
+    # Routes as tasks/main.yml builds them from terraform_data.ingress
+    # ({name, ip, port}) -> {name, fqdn, backend}.
+    traefik_routes:
+      - { name: plex, fqdn: "plex.pve.example.com", backend: "http://192.0.2.10:32400" }
+      - { name: seerr, fqdn: "seerr.pve.example.com", backend: "http://192.0.2.11:5055" }
+    _template_dir: "../../roles/traefik/templates"
+
+  tasks:
+    - name: Render traefik static config to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/traefik.yml.j2"
+        dest: /tmp/test_traefik.yml
+        mode: "0640"
+
+    - name: Read rendered traefik static config
+      ansible.builtin.slurp:
+        src: /tmp/test_traefik.yml
+      register: _traefik_static_raw
+
+    - name: Decode traefik static config
+      ansible.builtin.set_fact:
+        _traefik_static: "{{ _traefik_static_raw.content | b64decode }}"
+
+    - name: Assert static config uses Route53 DNS-01 + secured API + TLS hardening
+      ansible.builtin.assert:
+        that:
+          - "'provider: route53' in _traefik_static"
+          - "'acme-v02.api.letsencrypt.org' in _traefik_static"
+          - "'/etc/traefik/acme/acme.json' in _traefik_static"
+          - "'insecure: false' in _traefik_static"
+          - "'minVersion: VersionTLS12' in _traefik_static"
+          # Empty ACME email -> the email line is omitted entirely.
+          - "'email:' not in _traefik_static"
+          # Credentials must NOT appear in the (group-readable) static config.
+          - "'AKIATESTACCESSKEYID00' not in _traefik_static"
+        fail_msg: >-
+          traefik.yml.j2 missing the route53 resolver / secured API / TLS floor,
+          emitted an email when none was set, or leaked AWS creds into the config.
+
+    - name: Render traefik dynamic config to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/dynamic.yml.j2"
+        dest: /tmp/test_traefik_dynamic.yml
+        mode: "0640"
+
+    - name: Read rendered traefik dynamic config
+      ansible.builtin.slurp:
+        src: /tmp/test_traefik_dynamic.yml
+      register: _traefik_dynamic_raw
+
+    - name: Decode + parse traefik dynamic config (must be valid YAML)
+      ansible.builtin.set_fact:
+        _traefik_dynamic: "{{ _traefik_dynamic_raw.content | b64decode }}"
+        _traefik_dynamic_yaml: "{{ _traefik_dynamic_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert routers front each service with the wildcard cert + backend
+      ansible.builtin.assert:
+        that:
+          - "'Host(`plex.pve.example.com`)' in _traefik_dynamic"
+          - "'Host(`seerr.pve.example.com`)' in _traefik_dynamic"
+          - "'http://192.0.2.10:32400' in _traefik_dynamic"
+          - "'http://192.0.2.11:5055' in _traefik_dynamic"
+          - "'*.pve.example.com' in _traefik_dynamic"
+          # Wildcard requested via the resolver; dashboard secured by a usersFile
+          # (no credential inline — the role generates the file on the host).
+          - _traefik_dynamic_yaml.http.routers.plex.tls.certResolver == "letsencrypt"
+          - "'dashboard-auth' in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+          - >-
+            _traefik_dynamic_yaml.http.middlewares['dashboard-auth'].basicAuth.usersFile
+            == "/etc/traefik/dashboard.htpasswd"
+          - _traefik_dynamic_yaml.http.services.plex.loadBalancer.servers[0].url == "http://192.0.2.10:32400"
+        fail_msg: >-
+          dynamic.yml.j2 missing a router/service, the wildcard SAN, or the
+          usersFile-secured dashboard.
+
+    - name: Render traefik ACME EnvironmentFile to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/acme.env.j2"
+        dest: /tmp/test_traefik_acme.env
+        mode: "0600"
+
+    - name: Read rendered ACME EnvironmentFile
+      ansible.builtin.slurp:
+        src: /tmp/test_traefik_acme.env
+      register: _traefik_env_raw
+
+    - name: Decode ACME EnvironmentFile
+      ansible.builtin.set_fact:
+        _traefik_env: "{{ _traefik_env_raw.content | b64decode }}"
+
+    - name: Assert EnvironmentFile carries the Route53 creds + zone id
+      ansible.builtin.assert:
+        that:
+          - "'AWS_ACCESS_KEY_ID=AKIATESTACCESSKEYID00' in _traefik_env"
+          - "'AWS_SECRET_ACCESS_KEY=' in _traefik_env"
+          - "'AWS_REGION=us-east-1' in _traefik_env"
+          # AWS_HOSTED_ZONE_ID set -> lego can skip ListHostedZonesByName.
+          - "'AWS_HOSTED_ZONE_ID=Z0123456789ABCDEFGHIJ' in _traefik_env"
+        fail_msg: "acme.env.j2 missing one of the Route53 DNS-01 env vars"
+
+    - name: Traefik template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          Traefik template assertions passed:
+          - traefik.yml.j2: route53 DNS-01 resolver, secured API, TLS >= 1.2, no leaked creds
+          - dynamic.yml.j2: per-service routers + backends, wildcard SAN, secured dashboard
+          - acme.env.j2: AWS creds + AWS_HOSTED_ZONE_ID in the root-only EnvironmentFile

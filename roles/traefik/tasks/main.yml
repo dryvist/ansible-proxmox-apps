@@ -1,0 +1,140 @@
+---
+# traefik — install the static binary under systemd, render the static + dynamic
+# config, and let Traefik fetch/renew a wildcard cert via Route53 DNS-01 itself.
+# Render is always done; the binary download + systemd start are gated on
+# traefik_manage_services (false in CI/template-render — no live ACME).
+
+# --- Fail fast on a real run with missing ACME creds -------------------------
+- name: Assert Route53 DNS-01 credentials are present (live run)
+  ansible.builtin.assert:
+    that:
+      - traefik_acme_aws_access_key_id | length > 0
+      - traefik_acme_aws_secret_access_key | length > 0
+      - traefik_acme_route53_zone_id | length > 0
+    fail_msg: >-
+      Traefik needs the dedicated `acme` AWS user's Route53 DNS-01 credentials.
+      Set AWS_ACME_ACCESS_KEY_ID / AWS_ACME_SECRET_ACCESS_KEY in Doppler
+      (iac-conf-mgmt/prd) and ensure ROUTE53_ZONE_ID is set (already used by
+      aws-infra). Attach the least-privilege IAM policy from roles/traefik/README.md
+      to that user. Values are never committed.
+    quiet: true
+  when: traefik_manage_services | bool
+
+# --- Service account + filesystem layout -------------------------------------
+- name: Create traefik group
+  ansible.builtin.group:
+    name: "{{ traefik_group }}"
+    system: true
+    state: present
+
+- name: Create traefik system user
+  ansible.builtin.user:
+    name: "{{ traefik_user }}"
+    group: "{{ traefik_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ traefik_config_dir }}"
+    create_home: false
+    state: present
+
+- name: Create Traefik config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ traefik_user }}"
+    group: "{{ traefik_group }}"
+    mode: "0750"
+  loop:
+    - "{{ traefik_config_dir }}"
+    - "{{ traefik_dynamic_dir }}"
+    - "{{ traefik_acme_dir }}"
+
+# acme.json must be 0600 or Traefik refuses to use it.
+- name: Ensure acme.json storage exists with strict perms
+  ansible.builtin.file:
+    path: "{{ traefik_acme_storage }}"
+    state: touch
+    owner: "{{ traefik_user }}"
+    group: "{{ traefik_group }}"
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+
+# --- Credentials (root-only EnvironmentFile) ---------------------------------
+- name: Render the Route53 DNS-01 credentials EnvironmentFile
+  ansible.builtin.template:
+    src: acme.env.j2
+    dest: "{{ traefik_acme_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart traefik
+
+# --- Static + dynamic config -------------------------------------------------
+- name: Render the static Traefik config
+  ansible.builtin.template:
+    src: traefik.yml.j2
+    dest: "{{ traefik_config_dir }}/traefik.yml"
+    owner: "{{ traefik_user }}"
+    group: "{{ traefik_group }}"
+    mode: "0640"
+  notify: Restart traefik
+
+# Build the routers from the single tofu-owned ingress table
+# (terraform_data.ingress via traefik_ingress_routes): a list of {name, ip, port}
+# with the backend IP already resolved by tofu (cidrhost). The template just
+# needs name/fqdn/backend, so it stays dumb (and fixture-testable).
+- name: Build Traefik routers from the inventory ingress table
+  ansible.builtin.set_fact:
+    traefik_routes: >-
+      {{
+        traefik_routes | default([]) + [{
+          'name': item.name,
+          'fqdn': item.name ~ '.' ~ traefik_base_domain,
+          'backend': 'http://' ~ item.ip ~ ':' ~ item.port
+        }]
+      }}
+  loop: "{{ traefik_ingress_routes }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.ip }}:{{ item.port }}"
+
+- name: Render the dynamic Traefik config (routers + services)
+  ansible.builtin.template:
+    src: dynamic.yml.j2
+    dest: "{{ traefik_dynamic_dir }}/dynamic.yml"
+    owner: "{{ traefik_user }}"
+    group: "{{ traefik_group }}"
+    mode: "0640"
+  notify: Restart traefik
+
+# --- Dashboard credentials + binary + service (live runs only) ---------------
+# Generate the dashboard basicAuth htpasswd on the host (build-time, persisted,
+# idempotent) so no credential is ever committed or in the rendered config.
+- name: Generate the dashboard basicAuth credentials
+  ansible.builtin.import_tasks: dashboard_auth.yml
+  when:
+    - traefik_manage_services | bool
+    - traefik_dashboard_enabled | bool
+
+- name: Install the Traefik binary
+  ansible.builtin.import_tasks: install.yml
+  when: traefik_manage_services | bool
+
+- name: Render the Traefik systemd unit
+  ansible.builtin.template:
+    src: traefik.service.j2
+    dest: /etc/systemd/system/traefik.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+  when: traefik_manage_services | bool
+
+- name: Enable + start Traefik
+  ansible.builtin.systemd:
+    name: traefik.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: traefik_manage_services | bool

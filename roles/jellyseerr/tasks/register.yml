@@ -392,6 +392,27 @@
           {{ jellyseerr_plex_settings.status | default('n/a') }}. If not 200/201,
           finish the link once in the Jellyseerr UI (Settings -> Plex).
 
+# --- Public URL (Traefik hostname) -------------------------------------------
+# Tell Seerr its public URL so emitted links/notifications point at the proxy
+# (https://seerr.<domain>) instead of a raw IP. Partial POST merges the field.
+- name: Set Seerr application URL to the Traefik hostname (idempotent, non-fatal)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyseerr_web_port }}/api/v1/settings/main"
+    method: POST
+    headers:
+      X-Api-Key: "{{ jellyseerr_api_key }}"
+    body_format: json
+    body:
+      applicationUrl: "{{ jellyseerr_application_url }}"
+    status_code: [200, 201, 400, 500]
+  register: jellyseerr_appurl
+  changed_when: jellyseerr_appurl.status in [200, 201]
+  failed_when: false
+  no_log: true
+  when:
+    - jellyseerr_registration_ready | bool
+    - jellyseerr_application_url | length > 0
+
 # --- Finalize setup (flip `initialized` → no setup wizard) -------------------
 # The owner + servers can all be configured while settings.main.initialized is
 # still unset, so the UI keeps showing the first-run wizard. The wizard's final

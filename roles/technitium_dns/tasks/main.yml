@@ -33,6 +33,9 @@
   when:
     - hostvars[item].hostname is defined
     - (hostvars[item].container_ip is defined) or (hostvars[item].ansible_host is defined)
+    # Fronted-service names are owned by the Traefik ingress A-records below
+    # (they resolve to Traefik, not the backend host), so skip them here.
+    - hostvars[item].hostname not in (technitium_dns_ingress_aliases | default([]))
   loop_control:
     label: "{{ item }}"
 
@@ -131,6 +134,37 @@
     - technitium_dns_cname_result.json.status | default('') != "ok"
     - "'already exists' not in (technitium_dns_cname_result.json.errorMessage | default(''))"
   no_log: true
+
+# Point each Traefik-fronted service name at the Traefik LXC so clients reach it
+# over TLS at https://<name>.{domain}. A-records (not CNAMEs) to avoid A/CNAME
+# coexistence issues and to cleanly overwrite any prior host record. Skipped
+# entirely until the Traefik LXC exists in the inventory.
+- name: Create Traefik ingress alias A records
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item }}.{{ technitium_dns_internal_domain }}"
+      zone: "{{ technitium_dns_internal_domain }}"
+      type: A
+      ipAddress: "{{ hostvars[technitium_dns_ingress_host].container_ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_ingress_aliases | default([]) }}"
+  loop_control:
+    label: "{{ item }} -> {{ technitium_dns_ingress_host }}"
+  register: technitium_dns_ingress_result
+  changed_when: technitium_dns_ingress_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_ingress_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_ingress_result.json.errorMessage | default(''))"
+  no_log: true
+  when:
+    - technitium_dns_ingress_host in hostvars
+    - hostvars[technitium_dns_ingress_host].container_ip is defined
 
 - name: Verify DNS zone is active
   ansible.builtin.uri:

@@ -1,0 +1,52 @@
+---
+# Generate + persist the Traefik dashboard basicAuth credentials ONCE, at build
+# time, on the host. Idempotent: only generates when the htpasswd file is absent,
+# so the config + handlers stay stable across converges. No credential is ever
+# committed or placed in the rendered config — Traefik reads the usersFile, and
+# the plaintext is written to a root-only file the operator can retrieve.
+
+- name: Check for an existing dashboard htpasswd
+  ansible.builtin.stat:
+    path: "{{ traefik_dashboard_users_file }}"
+  register: traefik_htpasswd_stat
+
+- name: Generate the dashboard credentials (first run only)
+  when: not traefik_htpasswd_stat.stat.exists
+  block:
+    - name: Install htpasswd (apache2-utils)
+      ansible.builtin.apt:
+        name: apache2-utils
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Generate a random dashboard password
+      ansible.builtin.set_fact:
+        traefik_dashboard_password: "{{ lookup('community.general.random_string', length=24, special=false) }}"
+      no_log: true
+
+    - name: Persist the plaintext password for retrieval (root-only)
+      ansible.builtin.copy:
+        content: "{{ traefik_dashboard_user }}:{{ traefik_dashboard_password }}\n"
+        dest: "{{ traefik_dashboard_password_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Compute the bcrypt htpasswd line
+      ansible.builtin.command:
+        cmd: "htpasswd -nbB {{ traefik_dashboard_user }} {{ traefik_dashboard_password }}"
+      register: traefik_htpasswd_line
+      changed_when: true
+      no_log: true
+
+    - name: Install the htpasswd file (basicAuth usersFile)
+      ansible.builtin.copy:
+        content: "{{ traefik_htpasswd_line.stdout }}\n"
+        dest: "{{ traefik_dashboard_users_file }}"
+        owner: "{{ traefik_user }}"
+        group: "{{ traefik_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart traefik

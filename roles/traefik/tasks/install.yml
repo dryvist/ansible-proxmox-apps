@@ -1,0 +1,47 @@
+---
+# Install the pinned Traefik static binary from the official GitHub release
+# (HTTPS/TLS-authenticated). Idempotent: only (re)downloads when the installed
+# version differs from traefik_version.
+
+- name: Check installed Traefik version
+  ansible.builtin.command: "{{ traefik_bin_path }} version"
+  register: traefik_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned Traefik binary
+  when: >-
+    traefik_installed.rc != 0
+    or traefik_version not in (traefik_installed.stdout | default(''))
+  block:
+    - name: Download the Traefik release tarball
+      ansible.builtin.get_url:
+        url: "{{ traefik_release_url }}"
+        dest: "/tmp/traefik_v{{ traefik_version }}.tar.gz"
+        mode: "0644"
+
+    - name: Extract the Traefik binary
+      ansible.builtin.unarchive:
+        src: "/tmp/traefik_v{{ traefik_version }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+        include:
+          - traefik
+
+    - name: Install the Traefik binary to {{ traefik_bin_path }}
+      ansible.builtin.copy:
+        src: /tmp/traefik
+        dest: "{{ traefik_bin_path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart traefik
+
+    - name: Remove the downloaded tarball + extracted binary
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/traefik_v{{ traefik_version }}.tar.gz"
+        - /tmp/traefik
