@@ -70,13 +70,13 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
 
 ## Key variables
 
-All ports/IPs come from terraform (`terraform_data.constants.media_ports`,
+All ports/IPs come from OpenTofu (`tofu_data.constants.media_ports`,
 derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
 
 - `download_vpn_wg_endpoint` — Proton `host:port` (SOPS env).
 - `download_vpn_lan_subnet` — LAN allowed through the killswitch (derived).
-- `download_vpn_qbittorrent_web_port` — qBittorrent WebUI port (terraform).
-- `download_vpn_prowlarr_web_port` — Prowlarr WebUI port (terraform).
+- `download_vpn_qbittorrent_web_port` — qBittorrent WebUI port (tofu).
+- `download_vpn_prowlarr_web_port` — Prowlarr WebUI port (tofu).
 - `download_vpn_validator_interval` — runtime validator cadence (default 2min).
 - `download_vpn_ntfy_url` / `download_vpn_healthcheck_url` — breach alerting.
 

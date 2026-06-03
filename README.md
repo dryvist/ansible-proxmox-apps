@@ -74,21 +74,21 @@ doppler run -- ansible-playbook \
 
 ## Inventory
 
-Inventory is loaded dynamically from `terraform_inventory.json` via
-`inventory/load_terraform.yml`. IPs are derived from terraform state and
+Inventory is loaded dynamically from `tofu_inventory.json` via
+`inventory/load_tofu.yml`. IPs are derived from OpenTofu state and
 accessed via `hostvars`. Port constants come from
-`terraform_data.constants` (defined in `terraform-proxmox`).
+`tofu_data.constants` (defined in `terraform-proxmox`).
 
-To regenerate the inventory from terraform:
+To regenerate the inventory from OpenTofu:
 
 ```bash
-./scripts/sync-terraform-inventory.sh
+./scripts/sync-tofu-inventory.sh
 ```
 
 ## Port Assignments
 
 All port assignments are defined in `inventory/pipeline_constants.json`
-and merged into `terraform_data.constants`. See that file for current
+and merged into `tofu_data.constants`. See that file for current
 values. Do not hardcode ports in playbooks or roles.
 
 ## Roles
@@ -121,7 +121,7 @@ Production load balancer on a dedicated LXC container.
 - Installs HAProxy and Nginx Stream on the HAProxy LXC container
 - Forwards syslog traffic (TCP/UDP) to Cribl Edge LXC containers
 - Forwards netflow/IPFIX traffic (TCP/UDP) to Cribl Stream LXC containers
-- HAProxy stats dashboard available (port from `terraform_data.constants`)
+- HAProxy stats dashboard available (port from `tofu_data.constants`)
 
 See `roles/haproxy/README.md` for details.
 

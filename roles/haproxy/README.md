@@ -24,7 +24,7 @@ TCP NetFlow  → HAProxy      → Cribl Stream LXCs (IPFIX processing)
 ```
 
 Both services run on the same HAProxy LXC container. The container IP is
-derived from terraform inventory (see `hostvars` in playbooks).
+derived from OpenTofu inventory (see `hostvars` in playbooks).
 
 ## Requirements
 
@@ -64,8 +64,8 @@ All variables in `defaults/main.yml` are user-configurable.
 
 HAProxy statistics dashboard:
 
-- URL: `http://<haproxy-ip>:<stats-port>/stats` (IP from terraform
-  inventory, port from `terraform_data.constants.service_ports.haproxy_stats`)
+- URL: `http://<haproxy-ip>:<stats-port>/stats` (IP from OpenTofu
+  inventory, port from `tofu_data.constants.service_ports.haproxy_stats`)
 - Username: admin
 - Password: (set via `HAPROXY_STATS_PASSWORD` environment variable)
 

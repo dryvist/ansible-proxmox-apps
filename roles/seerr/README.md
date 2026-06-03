@@ -3,7 +3,7 @@
 Runs [Seerr](https://github.com/seerr-team/seerr) (the self-hosted
 movie/TV request UI) as a single Docker container on a dedicated
 Docker-in-LXC (`seerr`, LXC 214), publishes the web UI on the
-Terraform-derived port (`media_ports.seerr_web` = 5055), persists its
+OpenTofu-derived port (`media_ports.seerr_web` = 5055), persists its
 config to a host directory, and registers Sonarr + Radarr (and optionally
 Plex) via the Seerr settings API.
 
@@ -17,13 +17,13 @@ Seerr is **config-only** — it has no `/tank` bind-mounts and reaches the
 ## Installation
 
 Wired into `playbooks/site.yml` (Phase 8c, media stack) against any host in
-`seerr_group`. The group is populated by `inventory/load_terraform.yml`
-from `containers` tagged `seerr` in the Terraform inventory (terraform-proxmox
+`seerr_group`. The group is populated by `inventory/load_tofu.yml`
+from `containers` tagged `seerr` in the OpenTofu inventory (terraform-proxmox
 LXC 214 `seerr`), reached over `proxmox_pct_remote`.
 
 Prerequisites:
 
-- LXC 214 `seerr` exists (Terraform-managed; tags include `container`,
+- LXC 214 `seerr` exists (OpenTofu-managed; tags include `container`,
   `media`, `seerr`; `nesting=true` for Docker).
 - SOPS `secrets.enc.yaml` populated with `SEERR_API_KEY` (and, to register
   the `*arr` apps, `SONARR_API_KEY` / `RADARR_API_KEY`). Generate each with
@@ -83,7 +83,7 @@ This makes the role re-runnable at **any** point: a rotated `SONARR_API_KEY` /
 leaving a stale key behind a 401.
 
 Hostnames default to the media-stack LXC IPs from inventory; ports come from
-Terraform constants. Sonarr/Radarr registration is skipped if its API key is
+OpenTofu constants. Sonarr/Radarr registration is skipped if its API key is
 unset.
 
 ### Plex + owner sign-in
@@ -108,7 +108,7 @@ to be supplied; `PLEX_TOKEN` is an optional override), signs the owner in via
 
 ## How it's built
 
-- `defaults/main.yml` — image, ports (from Terraform constants), config dir,
+- `defaults/main.yml` — image, ports (from OpenTofu constants), config dir,
   API key + service-registration variables, `seerr_manage_services`
   toggle (false in Molecule).
 - `templates/docker-compose.yml.j2` — one `seerr` service, binds
