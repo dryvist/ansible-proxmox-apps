@@ -1,0 +1,242 @@
+---
+# Media Stack Validation Playbook
+# Answers one question: "is the *arr pipeline wired, or is it just bad inputs?"
+#
+# Probes the indexer + sync layer that determines whether Radarr/Sonarr can ever
+# find releases:
+#   - Prowlarr (download_vpn_group): each configured indexer present + enabled,
+#     plus Prowlarr's own health report.
+#   - Radarr / Sonarr: at least one Prowlarr-synced indexer landed (proves the
+#     Prowlarr -> *arr Application fullSync actually pushed).
+#
+# It reuses roles/servarr_wiring/defaults/main.yml (vars_files) so the expected
+# indexer list, API keys, and ports stay in ONE place — same DRY pattern the
+# minio play in validate-pipeline.yml uses for its role defaults.
+#
+# Usage (API keys come from SOPS/Doppler env, same as servarr_wiring):
+#   sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+#     -i inventory/hosts.yml playbooks/validate-media.yml'
+#
+# Add --tags deep to actively test every Prowlarr indexer against its tracker
+# (live calls through the VPN; slow). Without it, only presence/enabled is checked.
+
+- name: Import Terraform infrastructure inventory
+  import_playbook: ../inventory/load_terraform.yml
+
+- name: Validate Prowlarr Indexers (download-vpn LXC)
+  hosts: download_vpn_group
+  become: false
+  gather_facts: false
+  tags:
+    - prowlarr
+    - validation
+
+  # Pull the expected indexer list, deterministic API key, and ports from the
+  # wiring role's defaults instead of redefining them here.
+  vars_files:
+    - ../roles/servarr_wiring/defaults/main.yml
+
+  tasks:
+    - name: Verify PROWLARR_API_KEY is set
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_prowlarr_api_key | length > 0
+        fail_msg: >-
+          PROWLARR_API_KEY is not set. Run with sops exec-env + doppler run
+          so servarr_wiring's deterministic key is in the environment.
+        quiet: true
+
+    - name: Fetch Prowlarr indexers
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+        status_code: 200
+      register: validate_media_prowlarr_indexers
+      changed_when: false
+
+    - name: Assert each configured indexer is present and enabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            (validate_media_prowlarr_indexers.json
+             | selectattr('name', 'equalto', item)
+             | list | length) > 0
+          - >-
+            (validate_media_prowlarr_indexers.json
+             | selectattr('name', 'equalto', item)
+             | selectattr('enable')
+             | list | length) > 0
+        fail_msg: >-
+          Indexer '{{ item }}' is missing or disabled in Prowlarr. It never
+          synced to Radarr/Sonarr, so searches for real titles return nothing.
+        quiet: true
+      loop: "{{ servarr_wiring_prowlarr_indexers }}"
+
+    - name: Fetch Prowlarr health report
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_prowlarr_port }}/api/v1/health
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+        status_code: 200
+      register: validate_media_prowlarr_health
+      changed_when: false
+
+    # Active test: ask Prowlarr to hit every indexer's tracker live. Off by
+    # default (the 'never' tag); opt in with --tags deep. This is the automated
+    # equivalent of curling apibay through the tunnel — a failing test here on a
+    # healthy indexer points at the VPN exit IP being throttled by the tracker.
+    - name: Actively test every Prowlarr indexer against its tracker
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer/testall
+        method: POST
+        headers:
+          X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+        status_code: [200, 201]
+      register: validate_media_prowlarr_testall
+      changed_when: false
+      tags:
+        - never
+        - deep
+
+    - name: Display Prowlarr validation results
+      ansible.builtin.debug:
+        msg: |
+          Prowlarr validation on {{ inventory_hostname }}:
+          - Configured indexers present + enabled: {{ servarr_wiring_prowlarr_indexers | join(', ') }}
+          - Total indexers in Prowlarr: {{ validate_media_prowlarr_indexers.json | length }}
+          - Health issues: {{ (validate_media_prowlarr_health.json | length) }}
+            {{ validate_media_prowlarr_health.json
+               | map(attribute='message') | list | default([]) }}
+          - Active tracker test (deep only): {{
+              (validate_media_prowlarr_testall.json
+               | selectattr('isValid') | list | length
+               | string) + ' / '
+              + (validate_media_prowlarr_testall.json | length | string) + ' valid'
+              if validate_media_prowlarr_testall is defined
+              else 'skipped (add --tags deep)' }}
+
+- name: Validate Radarr Synced Indexers
+  hosts: radarr_group
+  become: false
+  gather_facts: false
+  tags:
+    - radarr
+    - validation
+
+  vars_files:
+    - ../roles/servarr_wiring/defaults/main.yml
+
+  tasks:
+    - name: Verify RADARR_API_KEY is set
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_radarr_api_key | length > 0
+        fail_msg: >-
+          RADARR_API_KEY is not set. Run with sops exec-env + doppler run.
+        quiet: true
+
+    - name: Fetch Radarr indexers (synced from Prowlarr)
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_radarr_port }}/api/v3/indexer
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_radarr_api_key }}"
+        status_code: 200
+      register: validate_media_radarr_indexers
+      changed_when: false
+
+    - name: Assert at least one indexer is present in Radarr
+      ansible.builtin.assert:
+        that:
+          - (validate_media_radarr_indexers.json | length) > 0
+        fail_msg: >-
+          Radarr has zero indexers. The Prowlarr -> Radarr Application sync did
+          not push any — Radarr cannot search for any movie regardless of title.
+        quiet: true
+
+    - name: Display Radarr validation results
+      ansible.builtin.debug:
+        msg: |
+          Radarr validation on {{ inventory_hostname }}:
+          - Synced indexers: {{ validate_media_radarr_indexers.json | length }}
+            ({{ validate_media_radarr_indexers.json | map(attribute='name') | list }})
+
+- name: Validate Sonarr Synced Indexers
+  hosts: sonarr_group
+  become: false
+  gather_facts: false
+  tags:
+    - sonarr
+    - validation
+
+  vars_files:
+    - ../roles/servarr_wiring/defaults/main.yml
+
+  tasks:
+    - name: Verify SONARR_API_KEY is set
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_api_key | length > 0
+        fail_msg: >-
+          SONARR_API_KEY is not set. Run with sops exec-env + doppler run.
+        quiet: true
+
+    - name: Fetch Sonarr indexers (synced from Prowlarr)
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_sonarr_port }}/api/v3/indexer
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_sonarr_api_key }}"
+        status_code: 200
+      register: validate_media_sonarr_indexers
+      changed_when: false
+
+    - name: Assert at least one indexer is present in Sonarr
+      ansible.builtin.assert:
+        that:
+          - (validate_media_sonarr_indexers.json | length) > 0
+        fail_msg: >-
+          Sonarr has zero indexers. The Prowlarr -> Sonarr Application sync did
+          not push any — Sonarr cannot search for any show regardless of title.
+        quiet: true
+
+    - name: Display Sonarr validation results
+      ansible.builtin.debug:
+        msg: |
+          Sonarr validation on {{ inventory_hostname }}:
+          - Synced indexers: {{ validate_media_sonarr_indexers.json | length }}
+            ({{ validate_media_sonarr_indexers.json | map(attribute='name') | list }})
+
+- name: Media Stack Validation Summary
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags:
+    - summary
+
+  tasks:
+    - name: Display media validation summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================
+          MEDIA STACK VALIDATION COMPLETE
+          ============================================
+          Prowlarr: configured indexers present + enabled, health reported
+          Radarr:   >=1 Prowlarr-synced indexer present
+          Sonarr:   >=1 Prowlarr-synced indexer present
+          --------------------------------------------
+          If all green, the pipeline is wired. A title stuck at Missing/0B is
+          then a CONTENT problem (no release exists on the configured trackers),
+          not a wiring problem. Confirm with a known blockbuster:
+            Radarr -> Add New -> Dune (2021) -> Search All.
+          Run with --tags deep to actively test indexers against trackers
+          (a failing live test on a healthy indexer points at the VPN exit IP).
+          ============================================
