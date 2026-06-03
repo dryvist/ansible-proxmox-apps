@@ -18,13 +18,17 @@ so hostnames are e.g. `plex.pve.<apex>`, and the cert covers `*.pve.<apex>`.
   file provider watching `dynamic/`, secured API (`insecure: false`), TLS ≥1.2 +
   `sniStrict`.
 - **Dynamic config** (`templates/dynamic.yml.j2`) — one router + service per entry
-  in `traefik_services`, backend IPs resolved from the Terraform inventory. Every
-  router requests the wildcard via `tls.domains`, so Traefik issues it once and
-  serves it for all hosts.
+  in the tofu-owned ingress table `terraform_data.ingress` (`{name, ip, port}`).
+  Every router requests the wildcard via `tls.domains`, so Traefik issues it once
+  and serves it for all hosts.
 - **Credentials** — the dedicated `acme` AWS user's keys are written to a
   **root-only `EnvironmentFile`** (`/etc/traefik/acme.env`, `0600`) consumed by the
   systemd unit; never in the world-readable config or on the process args. Setting
   `AWS_HOSTED_ZONE_ID` lets lego skip `ListHostedZonesByName` (tighter IAM).
+- **Dashboard** — basicAuth reads an htpasswd `usersFile` the role **generates +
+  persists on the host at build time** (`tasks/dashboard_auth.yml`). No credential
+  is committed or placed in the rendered config; retrieve the generated password
+  from `/etc/traefik/.dashboard_password` (root-only) on the ingress LXC.
 
 ## Prerequisites (Workstream 0 — one-time AWS + Doppler setup)
 
@@ -64,17 +68,22 @@ if you stop providing the zone id.
 
 | Secret | Purpose |
 | --- | --- |
-| `ACME_AWS_ACCESS_KEY_ID` | Dedicated `acme` user access key (DNS-01 only) |
-| `ACME_AWS_SECRET_ACCESS_KEY` | Dedicated `acme` user secret |
+| `AWS_ACME_ACCESS_KEY_ID` | Dedicated `acme` user access key (DNS-01 only) |
+| `AWS_ACME_SECRET_ACCESS_KEY` | Dedicated `acme` user secret |
 | `ROUTE53_ZONE_ID` | **Reused** — the `pve.<apex>` zone id (already set by aws-infra) |
-| `ACME_EMAIL` | (optional) mailbox for LE expiry notices; non-personal fallback otherwise |
-| `TRAEFIK_DASHBOARD_HTPASSWD` | (optional) bcrypt entry (`htpasswd -nbB admin '<pw>'`); the dashboard is only routed when set |
+| `ACME_EMAIL` | (optional) mailbox for LE expiry notices; omitted from the config when unset |
 
 Long-lived → Doppler (not SOPS), matching the repo convention for runtime creds.
+The dashboard password is **generated on the host** (not a Doppler secret) — see
+"Dashboard" above.
 
 ## Fronted services
 
-`traefik_services` (in `defaults/main.yml`) lists every UI. Adding one = one entry.
+The route list is **not** maintained in this role. It is the single tofu-owned
+ingress table — `terraform-proxmox` `locals.tf` `ingress_services`, surfaced as
+`ansible_inventory.ingress` and consumed here as `terraform_data.ingress`. The
+`technitium_dns` role derives its DNS aliases from the **same** source, so a
+fronted service is added/removed in exactly one place. Add it in terraform-proxmox.
 
 - **Tier 1 — media stack** (same `media_svc` VLAN as Traefik): `plex`, `seerr`
   (→ `jellyseerr` backend), `sonarr`, `radarr`, `qbittorrent`, `prowlarr`. Reachable
@@ -82,10 +91,10 @@ Long-lived → Doppler (not SOPS), matching the repo convention for runtime cred
   WebUIs are LAN-reachable; the killswitch governs egress only).
 - **Tier 2 — infra UIs on other VLANs** (`technitium`, `pihole`, `phpipam`, `minio`,
   `infisical`, `mailpit`, `ntfy`, `homeassistant`, `openproject`, `prometheus`,
-  `qdrant`, `haproxy`): each needs a **UniFi inter-VLAN allow** (Traefik `media_svc`
-  → target VLAN), enforced in `terraform-unifi`. Some apps also need their own
-  reverse-proxy trust setting (e.g. **Home Assistant** `http.trusted_proxies` /
-  `use_x_forwarded_for`) — that lives in the app's own config, not this role.
+  `qdrant`, `haproxy-stats`): each needs a **UniFi inter-VLAN allow** (Traefik
+  `media_svc` → target VLAN), enforced in `terraform-unifi`. Some apps also need
+  their own reverse-proxy trust setting (e.g. **Home Assistant**
+  `http.trusted_proxies` / `use_x_forwarded_for`) — in the app's config, not here.
 
 ## Installation
 

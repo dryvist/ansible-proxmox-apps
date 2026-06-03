@@ -1027,20 +1027,25 @@
   vars:
     # Mirror roles/traefik/defaults/main.yml (scrubbed domain + test creds).
     traefik_base_domain: "pve.example.com"
-    traefik_acme_email: "acme@pve.example.com"
+    # ACME email is optional; empty here to prove it is OMITTED from the rendered
+    # config (no email literal ever lives in a committed file).
+    traefik_acme_email: ""
     traefik_acme_ca_server: "https://acme-v02.api.letsencrypt.org/directory"
     traefik_acme_storage: /etc/traefik/acme/acme.json
     traefik_dynamic_dir: /etc/traefik/dynamic
     traefik_acme_dns_resolvers: ["1.1.1.1:53", "8.8.8.8:53"]
     traefik_dashboard_enabled: true
-    traefik_dashboard_basicauth: "admin:$2y$05$placeholderplaceholderplaceholderplaceholde"
+    # basicAuth reads a usersFile the role generates on the host at build time;
+    # only the path is in the config — never a credential.
+    traefik_dashboard_users_file: /etc/traefik/dashboard.htpasswd
     traefik_tls_min_version: VersionTLS12
     # Test creds (placeholders) for the EnvironmentFile.
     traefik_acme_aws_access_key_id: "AKIATESTACCESSKEYID00"
     traefik_acme_aws_secret_access_key: "testsecretplaceholderplaceholderplaceholde"
     traefik_acme_aws_region: "us-east-1"
     traefik_acme_route53_zone_id: "Z0123456789ABCDEFGHIJ"
-    # Pre-resolved routes (as tasks/main.yml builds them from inventory).
+    # Routes as tasks/main.yml builds them from terraform_data.ingress
+    # ({name, ip, port}) -> {name, fqdn, backend}.
     traefik_routes:
       - { name: plex, fqdn: "plex.pve.example.com", backend: "http://192.0.2.10:32400" }
       - { name: seerr, fqdn: "seerr.pve.example.com", backend: "http://192.0.2.11:5055" }
@@ -1070,11 +1075,13 @@
           - "'/etc/traefik/acme/acme.json' in _traefik_static"
           - "'insecure: false' in _traefik_static"
           - "'minVersion: VersionTLS12' in _traefik_static"
+          # Empty ACME email -> the email line is omitted entirely.
+          - "'email:' not in _traefik_static"
           # Credentials must NOT appear in the (group-readable) static config.
           - "'AKIATESTACCESSKEYID00' not in _traefik_static"
         fail_msg: >-
           traefik.yml.j2 missing the route53 resolver / secured API / TLS floor,
-          or it leaked AWS creds into the config.
+          emitted an email when none was set, or leaked AWS creds into the config.
 
     - name: Render traefik dynamic config to /tmp
       ansible.builtin.template:
@@ -1100,13 +1107,15 @@
           - "'http://192.0.2.10:32400' in _traefik_dynamic"
           - "'http://192.0.2.11:5055' in _traefik_dynamic"
           - "'*.pve.example.com' in _traefik_dynamic"
-          # Wildcard requested via the resolver, dashboard gated behind basicAuth.
+          # Wildcard requested via the resolver; dashboard secured by a usersFile
+          # (no credential inline — the role generates the file on the host).
           - _traefik_dynamic_yaml.http.routers.plex.tls.certResolver == "letsencrypt"
           - "'dashboard-auth' in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+          - _traefik_dynamic_yaml.http.middlewares['dashboard-auth'].basicAuth.usersFile == "/etc/traefik/dashboard.htpasswd"
           - _traefik_dynamic_yaml.http.services.plex.loadBalancer.servers[0].url == "http://192.0.2.10:32400"
         fail_msg: >-
           dynamic.yml.j2 missing a router/service, the wildcard SAN, or the
-          secured dashboard.
+          usersFile-secured dashboard.
 
     - name: Render traefik ACME EnvironmentFile to /tmp
       ansible.builtin.template:

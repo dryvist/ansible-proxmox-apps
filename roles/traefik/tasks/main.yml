@@ -13,7 +13,7 @@
       - traefik_acme_route53_zone_id | length > 0
     fail_msg: >-
       Traefik needs the dedicated `acme` AWS user's Route53 DNS-01 credentials.
-      Set ACME_AWS_ACCESS_KEY_ID / ACME_AWS_SECRET_ACCESS_KEY in Doppler
+      Set AWS_ACME_ACCESS_KEY_ID / AWS_ACME_SECRET_ACCESS_KEY in Doppler
       (iac-conf-mgmt/prd) and ensure ROUTE53_ZONE_ID is set (already used by
       aws-infra). Attach the least-privilege IAM policy from roles/traefik/README.md
       to that user. Values are never committed.
@@ -81,24 +81,23 @@
     mode: "0640"
   notify: Restart traefik
 
-# Resolve each fronted service's backend IP from the Terraform inventory so the
-# dynamic-config template stays dumb (and unit-testable with a fixture). An
-# explicit `backend_ip` on a service entry overrides the inventory lookup.
-- name: Resolve fronted-service backends from inventory
+# Build the routers from the single tofu-owned ingress table
+# (terraform_data.ingress via traefik_ingress_routes): a list of {name, ip, port}
+# with the backend IP already resolved by tofu (cidrhost). The template just
+# needs name/fqdn/backend, so it stays dumb (and fixture-testable).
+- name: Build Traefik routers from the inventory ingress table
   ansible.builtin.set_fact:
     traefik_routes: >-
       {{
         traefik_routes | default([]) + [{
           'name': item.name,
           'fqdn': item.name ~ '.' ~ traefik_base_domain,
-          'backend': 'http://'
-            ~ (item.backend_ip | default(hostvars[item.backend_host].container_ip))
-            ~ ':' ~ item.backend_port
+          'backend': 'http://' ~ item.ip ~ ':' ~ item.port
         }]
       }}
-  loop: "{{ traefik_services }}"
+  loop: "{{ traefik_ingress_routes }}"
   loop_control:
-    label: "{{ item.name }} -> {{ item.backend_host }}:{{ item.backend_port }}"
+    label: "{{ item.name }} -> {{ item.ip }}:{{ item.port }}"
 
 - name: Render the dynamic Traefik config (routers + services)
   ansible.builtin.template:
@@ -109,7 +108,15 @@
     mode: "0640"
   notify: Restart traefik
 
-# --- Binary + service (live runs only) ---------------------------------------
+# --- Dashboard credentials + binary + service (live runs only) ---------------
+# Generate the dashboard basicAuth htpasswd on the host (build-time, persisted,
+# idempotent) so no credential is ever committed or in the rendered config.
+- name: Generate the dashboard basicAuth credentials
+  ansible.builtin.import_tasks: dashboard_auth.yml
+  when:
+    - traefik_manage_services | bool
+    - traefik_dashboard_enabled | bool
+
 - name: Install the Traefik binary
   ansible.builtin.import_tasks: install.yml
   when: traefik_manage_services | bool
