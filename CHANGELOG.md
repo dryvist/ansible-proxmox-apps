@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.22.0...v1.22.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **technitium_dns:** authenticate per node for HA secondaries ([#346](https://github.com/dryvist/ansible-proxmox-apps/issues/346)) ([d5fcbd2](https://github.com/dryvist/ansible-proxmox-apps/commit/d5fcbd26f14fbb70ac3627ccd905213043d2e808))
+
 ## [1.22.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.21.0...v1.22.0) (2026-06-04)
 
 
