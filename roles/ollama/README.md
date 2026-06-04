@@ -21,8 +21,9 @@ Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough
   the install pipe + ROCm tarball overlay both require them).
 - Installs Ollama via the official script (creates the `ollama` user + systemd unit).
 - Overlays the **ROCm runtime** tarball (the installer ships CPU/NVIDIA libs only).
-- Creates `render`/`video` groups at the host GIDs and adds `ollama` to them so the
-  service can open `/dev/kfd` + `/dev/dri`.
+- Adds `ollama` to whatever groups own the passed-in GPU device nodes (resolved at
+  runtime via `stat`), so the service can open `/dev/kfd` + `/dev/dri` regardless of
+  how the host GIDs map to container group names.
 - Writes a systemd env drop-in (`OLLAMA_HOST`, `OLLAMA_MODELS`,
   `HSA_OVERRIDE_GFX_VERSION=10.3.0` for gfx1030, flash-attention, keep-alive).
 - Stages the **Hermes 4 14B** Q4_K_M GGUF as a local file (downloads from

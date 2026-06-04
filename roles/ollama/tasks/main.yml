@@ -31,19 +31,31 @@
     executable: /bin/bash
   notify: Restart ollama
 
-- name: Ensure GPU device groups exist with the host GIDs
-  ansible.builtin.group:
-    name: "{{ item.name }}"
-    gid: "{{ item.gid }}"
-    state: present
-  loop: "{{ ollama_gpu_groups }}"
-  loop_control:
-    label: "{{ item.name }} ({{ item.gid }})"
+# ansible-proxmox (lxc_gpu_features) binds the device nodes in with the HOST's
+# group GIDs (e.g. render=104, video=44). Those rarely match the container's own
+# render/video groups (here render=992), and the host GID may already be owned by
+# an unrelated container group (here 104=postdrop). So instead of forcing group
+# GIDs — which collides — add the ollama user to whatever groups actually own the
+# device nodes, resolved at runtime from the files themselves.
+- name: Stat the GPU device nodes to learn their owning groups
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ ollama_gpu_device_nodes }}"
+  register: ollama_gpu_dev_stat
 
-- name: Add the ollama user to the GPU device groups
+- name: Assert the GPU device nodes are present (passed in by lxc_gpu_features)
+  ansible.builtin.assert:
+    that:
+      - ollama_gpu_dev_stat.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      One or more GPU device nodes are missing in this container
+      ({{ ollama_gpu_device_nodes | join(', ') }}). Run ansible-proxmox
+      lxc_gpu_features against this CT first.
+
+- name: Add the ollama user to the GPU device-owning groups
   ansible.builtin.user:
     name: "{{ ollama_user }}"
-    groups: "{{ ollama_gpu_groups | map(attribute='name') | list }}"
+    groups: "{{ ollama_gpu_dev_stat.results | map(attribute='stat.gr_name') | list | unique }}"
     append: true
   notify: Restart ollama
 
