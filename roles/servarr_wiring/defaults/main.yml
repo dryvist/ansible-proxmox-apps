@@ -49,9 +49,16 @@ servarr_wiring_qbittorrent_username: admin
 servarr_wiring_qbittorrent_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') | default('', true) }}"
 
 # --- Wiring parameters -------------------------------------------------------
-# Root folders inside the *arr LXCs. movies + shows are SEPARATE ZFS datasets
-# mounted under /mnt/media (so each has its own quota/snapshots); Sonarr imports
-# TV to shows, Radarr imports movies to movies.
+# Root folders inside the *arr LXCs.
+# CURRENT (functional, but cross-filesystem imports copy instead of hardlink):
+# shows + movies land in separate ZFS datasets so *arr cannot hardlink a torrent
+# file into the library — every import is a full byte copy (2× disk).
+# TO ENABLE HARDLINK IMPORTS: consolidate datasets in terraform-proxmox to one
+# /data dataset bind-mounted into download-vpn, sonarr, and radarr, then flip:
+#   servarr_wiring_sonarr_root_folder: "/data/media/tv"
+#   servarr_wiring_radarr_root_folder: "/data/media/movies"
+# Full organization is preserved — Sonarr builds Series (Year)/Season NN/ trees
+# and Radarr builds Title (Year)/ trees inside the root folder automatically.
 servarr_wiring_sonarr_root_folder: "/mnt/media/shows"
 servarr_wiring_radarr_root_folder: "/mnt/media/movies"
 # qBittorrent categories per app.
@@ -59,6 +66,16 @@ servarr_wiring_sonarr_category: "tv"
 servarr_wiring_radarr_category: "movies"
 # Prowlarr Application sync level: disabled | addOnly | fullSync.
 servarr_wiring_sync_level: "fullSync"
+
+# --- Seed criteria (Prowlarr → *arr → qBittorrent per-torrent share limits) --
+# Pushed to each Prowlarr indexer's advanced fields. On grab, *arr translates
+# them into per-torrent qBittorrent share limits, overriding the global floor
+# for that torrent. Private indexers can be stricter than these defaults (set
+# manually in the Prowlarr UI per private indexer, or add indexer-specific vars
+# here). Caveat: Sonarr #5759 — API-pushed seed criteria may not always
+# propagate; verify in *arr > Indexers > Edit > Advanced after converge.
+servarr_wiring_seed_ratio: 2.0
+servarr_wiring_seed_time_minutes: 4320
 
 # --- Public Prowlarr indexers ------------------------------------------------
 # Without at least one indexer, Prowlarr has nothing to sync and Sonarr/Radarr
@@ -84,6 +101,25 @@ servarr_wiring_indexer_app_profile_id: 1
 # built-in login instead.
 servarr_wiring_auth_method: External
 servarr_wiring_auth_required: DisabledForLocalAddresses
+
+# --- Recycler bin (prevents immediate deletion on unmonitor/delete) -----------
+# Path on the *arr LXC filesystem. Must be on the same volume as the root folder
+# so moves are atomic (no cross-filesystem copy). After the /data dataset
+# consolidation the natural path is /data/media/.recycle.
+servarr_wiring_recycler_bin_path: "/mnt/media/.recycle"
+# Days to keep items in the bin before auto-purge. 0 = keep forever.
+servarr_wiring_recycler_bin_days: 14
+
+# --- Quality profile ----------------------------------------------------------
+# Created once per app (POST if not present; existing profile left untouched on
+# re-converge so manual UI tweaks survive). Delete in the *arr UI + re-run to reset.
+servarr_wiring_quality_profile_name: "High Quality"
+# Minimum resolution accepted (1080 = 1080p and above; 2160 = 4K only).
+servarr_wiring_min_quality_resolution: 1080
+# Quality at which *arr stops seeking upgrades. "Bluray-2160p" means: keep
+# upgrading until a 4K BluRay is found, then stop. Override to "Bluray-1080p"
+# to stop at 1080p BluRay and never auto-upgrade to 4K.
+servarr_wiring_quality_cutoff_name: "Bluray-2160p"
 
 # --- Test / orchestration toggle ---------------------------------------------
 # When false (Molecule), the role only validates inputs and renders nothing
