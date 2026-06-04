@@ -1,0 +1,39 @@
+---
+# ollama role defaults — Ollama LLM inference with AMD ROCm, in an LXC (CT 167).
+#
+# GPU device nodes (/dev/kfd, /dev/dri) are passed into the container UPSTREAM by
+# ansible-proxmox (role lxc_gpu_features); this role assumes they already exist
+# and makes the `ollama` service user able to open them. Install uses the
+# official script (which creates the `ollama` user + systemd unit), then overlays
+# the ROCm runtime for AMD GPUs. Restart-on-failure is applied DRY by the
+# shared systemd_restart_policy role via group_vars (Phase 9), not here.
+
+ollama_install_url: "https://ollama.com/install.sh"
+# AMD ROCm runtime overlay (the installer ships CPU/NVIDIA libs only).
+ollama_rocm_tarball_url: "https://ollama.com/download/ollama-linux-amd64-rocm.tar.zst"
+
+ollama_user: ollama
+# Active-model store — backed by the 120 GB local-zfs mount on CT 167.
+ollama_models_dir: /var/lib/ollama
+
+# Bind all interfaces so hermes-chat (Open WebUI) + Traefik reach it on the ai VLAN.
+# Port comes from the tofu ports registry (no hardcoded ports — see ip-addressing rule).
+ollama_api_port: "{{ tofu_data.constants.service_ports.ollama_api }}"
+ollama_listen: "0.0.0.0:{{ ollama_api_port }}"
+
+# AMD RX 6800 = Navi 21 / gfx1030; ROCm needs the gfx-version override for this card.
+ollama_hsa_override_gfx_version: "10.3.0"
+ollama_flash_attention: "1"
+ollama_keep_alive: "30m"
+ollama_num_parallel: "1"
+
+# GPU device groups the ollama user must join to open /dev/kfd + /dev/dri.
+# GIDs match the host (privileged CT): render=104, video=44 (verified live).
+ollama_gpu_groups:
+  - { name: render, gid: 104 }
+  - { name: video, gid: 44 }
+
+# Model: Hermes 4 14B (Qwen3 base) Q4_K_M GGUF, pulled directly from HF and
+# aliased to `hermes4`. Ollama pulls GGUF from HuggingFace via the hf.co/ ref.
+ollama_model_name: hermes4
+ollama_model_source: "hf.co/bartowski/NousResearch_Hermes-4-14B-GGUF:Q4_K_M"
