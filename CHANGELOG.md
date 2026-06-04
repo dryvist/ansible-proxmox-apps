@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.3...v1.19.4) (2026-06-04)
+
+
+### Bug Fixes
+
+* **ollama:** create systemd drop-in dir before env override ([5f2e453](https://github.com/dryvist/ansible-proxmox-apps/commit/5f2e4530634adbb8867335418eddef0008f9c029))
+
 ## [1.19.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.2...v1.19.3) (2026-06-04)
 
 
