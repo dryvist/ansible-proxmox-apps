@@ -110,7 +110,7 @@
   changed_when: false
   no_log: true
 
-- name: Enable completed-download handling for {{ _arr_name }}
+- name: Enable completed-download handling and remove-on-completion for {{ _arr_name }}
   ansible.builtin.uri:
     url: >-
       http://{{ _arr_host }}:{{ _arr_port }}/api/v3/config/downloadclient/{{
@@ -119,9 +119,21 @@
     headers:
       X-Api-Key: "{{ _arr_api_key }}"
     body_format: json
-    body: "{{ servarr_wiring_dc_config.json | combine({'enableCompletedDownloadHandling': true}) }}"
+    body: >-
+      {{ servarr_wiring_dc_config.json | combine({
+           'enableCompletedDownloadHandling': true,
+           'removeCompletedDownloads': true
+         }) }}
     status_code: [200, 202]
   register: servarr_wiring_dc_config_put
-  changed_when: not (servarr_wiring_dc_config.json.enableCompletedDownloadHandling | default(false))
+  # removeCompletedDownloads: *arr removes the torrent from qBittorrent only after
+  # import AND seed-goal completion (paused), never mid-seed. This is the safe
+  # handoff — qBittorrent owns seeding, *arr owns post-seed cleanup.
+  # removeFailedDownloads is Usenet-only and is intentionally not set here.
+  changed_when: >-
+    not (servarr_wiring_dc_config.json.enableCompletedDownloadHandling | default(false))
+    or not (servarr_wiring_dc_config.json.removeCompletedDownloads | default(false))
   no_log: true
-  when: not (servarr_wiring_dc_config.json.enableCompletedDownloadHandling | default(false))
+  when: >-
+    not (servarr_wiring_dc_config.json.enableCompletedDownloadHandling | default(false))
+    or not (servarr_wiring_dc_config.json.removeCompletedDownloads | default(false))
