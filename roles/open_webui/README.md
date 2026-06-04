@@ -16,7 +16,8 @@ Requires `OPEN_WEBUI_SECRET_KEY` in Doppler/SOPS (generate once: `openssl rand -
 
 ## What it does
 
-- Creates an `open-webui` system user and installs **uv**.
+- Creates an `open-webui` system user, installs `curl`/`ca-certificates` (a
+  minimal LXC template lacks them and the uv installer needs curl), then **uv**.
 - Installs Open WebUI into a venv (`/opt/open-webui/venv`) and runs it via a
   dedicated systemd unit (`open-webui serve`), data in `DATA_DIR=/var/lib/open-webui`.
 - Renders `/etc/open-webui.env` with the **reverse-proxy-correct** settings Open
