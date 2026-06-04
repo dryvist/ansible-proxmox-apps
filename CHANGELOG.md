@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.18.0...v1.19.0) (2026-06-04)
+
+
+### Features
+
+* local Hermes LLM — ollama + open_webui roles ([7c90dc3](https://github.com/dryvist/ansible-proxmox-apps/commit/7c90dc3c4ac06dfb1026b9cd04d3c50ed22198e0))
+
 ## [1.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.17.1...v1.18.0) (2026-06-03)
 
 
