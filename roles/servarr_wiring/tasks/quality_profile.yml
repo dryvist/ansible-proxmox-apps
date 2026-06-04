@@ -1,0 +1,88 @@
+---
+# Create a minimum-resolution quality profile if it does not already exist.
+#
+# Items are built dynamically from the quality definitions endpoint so no quality
+# IDs are hardcoded — they differ between Sonarr and Radarr and can change across
+# versions. The set_fact+loop pattern is the only clean Ansible-native way to
+# construct {quality: <nested_dict>, items: [], allowed: <bool>} per definition
+# entry without scripting.
+#
+# Idempotent: the profile is only POSTed when no profile with the configured name
+# exists. Re-running after manual UI tweaks leaves those tweaks intact. To reset
+# to role defaults, delete the profile in the *arr UI and re-converge.
+
+- name: Fetch quality definitions for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/qualitydefinition"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_quality_defs
+  changed_when: false
+  no_log: true
+
+- name: Fetch existing quality profiles for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/qualityprofile"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_quality_profiles_list
+  changed_when: false
+  no_log: true
+
+- name: Reset quality items accumulator for {{ _arr_name }}
+  ansible.builtin.set_fact:
+    servarr_wiring_quality_items: []
+
+- name: Build quality profile items for {{ _arr_name }}
+  ansible.builtin.set_fact:
+    servarr_wiring_quality_items: >-
+      {{ servarr_wiring_quality_items + [{
+           'quality': item.quality,
+           'items': [],
+           'allowed': (item.quality.resolution | int) >= (servarr_wiring_min_quality_resolution | int)
+         }] }}
+  loop: "{{ servarr_wiring_quality_defs.json }}"
+  loop_control:
+    label: "{{ item.quality.name }}"
+
+- name: Set quality cutoff ID for {{ _arr_name }}
+  ansible.builtin.set_fact:
+    servarr_wiring_quality_cutoff_id: >-
+      {{ (servarr_wiring_quality_defs.json
+          | selectattr('quality.name', 'equalto', servarr_wiring_quality_cutoff_name)
+          | list | first | default({})).quality.id
+         | default(
+             servarr_wiring_quality_defs.json
+             | selectattr('quality.resolution', 'ge', servarr_wiring_min_quality_resolution | int)
+             | map(attribute='quality.id') | list | first | default(7)
+           ) }}
+
+- name: Create quality profile for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/qualityprofile"
+    method: POST
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body: >-
+      {{ {
+           'name': servarr_wiring_quality_profile_name,
+           'upgradeAllowed': true,
+           'cutoff': servarr_wiring_quality_cutoff_id | int,
+           'items': servarr_wiring_quality_items,
+           'minFormatScore': 0,
+           'cutoffFormatScore': 0,
+           'formatItems': []
+         } }}
+    status_code: [200, 201]
+  register: servarr_wiring_quality_profile_add
+  changed_when: servarr_wiring_quality_profile_add.status in [200, 201]
+  no_log: true
+  when: >-
+    servarr_wiring_quality_profiles_list.json
+    | selectattr('name', 'equalto', servarr_wiring_quality_profile_name)
+    | list | length == 0

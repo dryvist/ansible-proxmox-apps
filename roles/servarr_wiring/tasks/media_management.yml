@@ -1,0 +1,48 @@
+---
+# Media management settings applied to each *arr app:
+#   copyUsingHardlinks — import moves the file via hardlink (zero extra disk) instead
+#     of copy, provided the torrent download dir and the *arr root folder share the
+#     same filesystem. Requires the terraform-proxmox /data dataset consolidation.
+#   recyclerBin — soft-delete: unmonitored/deleted items land here first so an
+#     accidental removal can be recovered without a re-download.
+# All idempotent: GET-then-conditional-PUT (no-op when already correct).
+
+- name: Read media management config for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/config/mediamanagement"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_mm_config
+  changed_when: false
+  no_log: true
+
+- name: Apply media management settings for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: >-
+      http://{{ _arr_host }}:{{ _arr_port }}/api/v3/config/mediamanagement/{{
+      servarr_wiring_mm_config.json.id }}
+    method: PUT
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body: >-
+      {{ servarr_wiring_mm_config.json | combine({
+           'copyUsingHardlinks': true,
+           'recyclerBin': servarr_wiring_recycler_bin_path,
+           'recyclerBinCleanupDays': servarr_wiring_recycler_bin_days | int
+         }) }}
+    status_code: [200, 202]
+  register: servarr_wiring_mm_put
+  changed_when: >-
+    not (servarr_wiring_mm_config.json.copyUsingHardlinks | default(false))
+    or (servarr_wiring_mm_config.json.recyclerBin | default('')) != servarr_wiring_recycler_bin_path
+    or (servarr_wiring_mm_config.json.recyclerBinCleanupDays | default(0) | int)
+       != (servarr_wiring_recycler_bin_days | int)
+  no_log: true
+  when: >-
+    not (servarr_wiring_mm_config.json.copyUsingHardlinks | default(false))
+    or (servarr_wiring_mm_config.json.recyclerBin | default('')) != servarr_wiring_recycler_bin_path
+    or (servarr_wiring_mm_config.json.recyclerBinCleanupDays | default(0) | int)
+       != (servarr_wiring_recycler_bin_days | int)
