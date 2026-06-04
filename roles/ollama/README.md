@@ -17,6 +17,8 @@ Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough
 
 ## What it does
 
+- Installs `curl`, `ca-certificates`, `zstd` (a minimal LXC template lacks them;
+  the install pipe + ROCm tarball overlay both require them).
 - Installs Ollama via the official script (creates the `ollama` user + systemd unit).
 - Overlays the **ROCm runtime** tarball (the installer ships CPU/NVIDIA libs only).
 - Creates `render`/`video` groups at the host GIDs and adds `ollama` to them so the
