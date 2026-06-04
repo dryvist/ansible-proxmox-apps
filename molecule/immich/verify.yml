@@ -1,0 +1,35 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    immich_data_dir: /opt/immich
+
+  tasks:
+    - name: Read the rendered docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ immich_data_dir }}/docker-compose.yml"
+      register: immich_compose
+
+    - name: Assert all four Immich services render
+      ansible.builtin.assert:
+        that:
+          - "'immich-server' in (immich_compose.content | b64decode)"
+          - "'immich-machine-learning' in (immich_compose.content | b64decode)"
+          - "'valkey/valkey' in (immich_compose.content | b64decode)"
+          - "'immich-app/postgres' in (immich_compose.content | b64decode)"
+        fail_msg: "docker-compose.yml is missing expected Immich services"
+
+    - name: Read the rendered .env
+      ansible.builtin.slurp:
+        src: "{{ immich_data_dir }}/.env"
+      register: immich_env
+
+    - name: Assert .env carries the library + DB settings
+      ansible.builtin.assert:
+        that:
+          - "'UPLOAD_LOCATION=/mnt/photos' in (immich_env.content | b64decode)"
+          - "'DB_PASSWORD=molecule-test-password' in (immich_env.content | b64decode)"
+        fail_msg: ".env did not render the expected Immich configuration"

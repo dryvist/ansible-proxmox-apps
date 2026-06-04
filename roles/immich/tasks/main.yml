@@ -1,0 +1,177 @@
+---
+# immich role tasks — Docker-in-LXC (mirrors the seerr pattern): install Docker,
+# render the Immich compose stack + .env, deploy via docker_compose_v2, health
+# check. The compose up + health check run only when immich_manage_services is
+# true (false under molecule, which still renders all config).
+
+# =============================================================================
+# Preflight
+# =============================================================================
+
+- name: Assert the Immich database password is set
+  ansible.builtin.assert:
+    that:
+      - immich_db_password | length > 0
+    fail_msg: >-
+      IMMICH_DB_PASSWORD is not set. Generate one (openssl rand -base64 24), add
+      it to SOPS (secrets.enc.yaml) / Doppler, and run under sops exec-env.
+    quiet: true
+
+# =============================================================================
+# Docker installation (Docker-in-LXC pattern, mirrors seerr)
+# =============================================================================
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    immich_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ immich_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ immich_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+# fuse-overlayfs is required for Docker on ZFS-backed LXC containers only;
+# VMs use the default overlay2 storage driver natively.
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+  when: ansible_virtualization_type == 'lxc'
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for Ansible Docker modules
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# =============================================================================
+# Data directories + config
+# =============================================================================
+
+# immich_library_dir (the photo/video library) is a host ZFS dataset bind-mounted
+# into the LXC by Proxmox and is intentionally NOT created here.
+- name: Create Immich data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ immich_data_dir }}"
+    - "{{ immich_postgres_data_dir }}"
+
+- name: Deploy Immich environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ immich_data_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart immich
+
+- name: Deploy docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ immich_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart immich
+
+# =============================================================================
+# Deploy via Docker Compose (live only)
+# =============================================================================
+
+- name: Deploy the Immich stack via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ immich_data_dir }}"
+    state: present
+    pull: always
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  when: immich_manage_services | bool
+
+# =============================================================================
+# Health check (live only)
+# =============================================================================
+
+- name: Wait for the Immich web port to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ immich_web_port }}"
+    timeout: 180
+  when: immich_manage_services | bool
+
+- name: Verify the Immich server responds
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ immich_web_port }}/api/server/ping"
+    method: GET
+    status_code: 200
+  register: immich_ping
+  retries: 20
+  delay: 10
+  until: immich_ping.status == 200
+  changed_when: false
+  when: immich_manage_services | bool

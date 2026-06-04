@@ -1,0 +1,41 @@
+---
+# immich role defaults — Immich photo/video backup (Docker-in-LXC).
+#
+# Mirrors the seerr Docker-in-LXC pattern: install Docker, run the official
+# Immich compose stack (server + machine-learning + valkey + postgres) via
+# community.docker.docker_compose_v2, persist data to host dirs. The photo
+# library lives on a host ZFS dataset bind-mounted into the LXC at
+# immich_library_dir. Image pins come from Immich's upstream compose.
+
+# Immich server + ML version. Immich publishes a rolling `release` tag; pin to a
+# vX.Y.Z tag in production so upgrades are deliberate and Renovate-bumpable.
+immich_version: "release"
+# Support images pinned from Immich's upstream docker-compose.
+immich_redis_image: "docker.io/valkey/valkey:9"
+immich_postgres_image: "ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0"
+
+immich_container_name: immich_server
+immich_ml_container_name: immich_machine_learning
+immich_redis_container_name: immich_redis
+immich_postgres_container_name: immich_postgres
+
+immich_data_dir: /opt/immich
+immich_postgres_data_dir: "{{ immich_data_dir }}/postgres"
+# Photo/video library — a host ZFS dataset bind-mounted into the LXC by Proxmox
+# (e.g. <pool>/photos -> /mnt/photos). The role does NOT create this mount; it
+# must exist before the stack starts (same model as the media stack /mnt/media).
+immich_library_dir: /mnt/photos
+
+immich_bind_address: "0.0.0.0"
+immich_web_port: 2283
+immich_tz: "UTC"
+
+# Database identity. Password MUST come from env (SOPS/Doppler) — never
+# committed. Empty => the role asserts and fails with guidance.
+immich_db_user: immich
+immich_db_name: immich
+immich_db_password: "{{ lookup('env', 'IMMICH_DB_PASSWORD') | default('', true) }}"
+
+# Test/orchestration toggle. When false (molecule) the role renders all config
+# (compose + .env) but skips the live `docker compose up` + health check.
+immich_manage_services: true
