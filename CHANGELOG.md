@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.2...v1.19.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* **ollama:** join GPU device-owning groups by runtime stat, not fixed GIDs ([94da2cf](https://github.com/dryvist/ansible-proxmox-apps/commit/94da2cfe6ee4e737c5d36b900d3749e743f9182c))
+
 ## [1.19.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.1...v1.19.2) (2026-06-04)
 
 
