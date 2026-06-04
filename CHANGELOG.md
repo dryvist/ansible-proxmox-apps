@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.21.0...v1.22.0) (2026-06-04)
+
+
+### Features
+
+* **immich:** self-hosted photo/video backup (Docker-in-LXC) ([#344](https://github.com/dryvist/ansible-proxmox-apps/issues/344)) ([9ea5216](https://github.com/dryvist/ansible-proxmox-apps/commit/9ea5216e31ebb9887d211bf04ecfcaedc1b59db8))
+
 ## [1.21.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.20.2...v1.21.0) (2026-06-04)
 
 
