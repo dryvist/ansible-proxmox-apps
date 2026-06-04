@@ -84,8 +84,10 @@
 
 # Build the routers from the single tofu-owned ingress table
 # (tofu_data.ingress via traefik_ingress_routes): a list of {name, ip, port}
-# with the backend IP already resolved by tofu (cidrhost). The template just
-# needs name/fqdn/backend, so it stays dumb (and fixture-testable).
+# with the backend IP already resolved by tofu (cidrhost). Items may carry an
+# optional scheme (default http) and insecure_tls (default false) for backends
+# that serve HTTPS with a self-signed cert (e.g. Splunk Web). The template just
+# needs name/fqdn/backend/insecure_tls, so it stays dumb (and fixture-testable).
 - name: Build Traefik routers from the inventory ingress table
   ansible.builtin.set_fact:
     traefik_routes: >-
@@ -93,7 +95,8 @@
         traefik_routes | default([]) + [{
           'name': item.name,
           'fqdn': item.name ~ '.' ~ traefik_base_domain,
-          'backend': 'http://' ~ item.ip ~ ':' ~ item.port
+          'backend': (item.scheme | default('http')) ~ '://' ~ item.ip ~ ':' ~ item.port,
+          'insecure_tls': item.insecure_tls | default(false)
         }]
       }}
   loop: "{{ traefik_ingress_routes }}"

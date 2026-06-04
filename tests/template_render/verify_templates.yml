@@ -1049,6 +1049,8 @@
     traefik_routes:
       - { name: plex, fqdn: "plex.pve.example.com", backend: "http://192.0.2.10:32400" }
       - { name: seerr, fqdn: "seerr.pve.example.com", backend: "http://192.0.2.11:5055" }
+      # HTTPS backend with a self-signed cert (e.g. Splunk Web) -> insecure_tls.
+      - { name: splunk, fqdn: "splunk.pve.example.com", backend: "https://192.0.2.12:8000", insecure_tls: true }
     _template_dir: "../../roles/traefik/templates"
 
   tasks:
@@ -1118,6 +1120,21 @@
         fail_msg: >-
           dynamic.yml.j2 missing a router/service, the wildcard SAN, or the
           usersFile-secured dashboard.
+
+    - name: Assert HTTPS backend gets an https URL + insecure-backend serversTransport
+      ansible.builtin.assert:
+        that:
+          # The https backend keeps its scheme through to the service URL.
+          - _traefik_dynamic_yaml.http.services.splunk.loadBalancer.servers[0].url == "https://192.0.2.12:8000"
+          # Only the insecure_tls route references the shared transport...
+          - _traefik_dynamic_yaml.http.services.splunk.loadBalancer.serversTransport == "insecure-backend"
+          - "'serversTransport' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+          # ...and that transport skips verification of the self-signed cert.
+          - _traefik_dynamic_yaml.http.serversTransports['insecure-backend'].insecureSkipVerify | bool
+        fail_msg: >-
+          dynamic.yml.j2 did not honor scheme/insecure_tls: the https backend
+          lost its scheme, the serversTransport was missing or leaked onto an
+          http service, or insecureSkipVerify was not set.
 
     - name: Render traefik ACME EnvironmentFile to /tmp
       ansible.builtin.template:
