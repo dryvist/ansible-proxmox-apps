@@ -1,0 +1,108 @@
+---
+# Ollama LLM inference (AMD ROCm) in an LXC. Idempotent; safe to re-run.
+# Prereqs (upstream): ansible-proxmox lxc_gpu_features has bound /dev/kfd +
+# /dev/dri into this CT. We only need the ollama user to be able to use them.
+
+- name: Install Ollama (creates the ollama user + systemd unit)
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && curl -fsSL {{ ollama_install_url }} | sh"
+    creates: /usr/local/bin/ollama
+  args:
+    executable: /bin/bash
+
+# The installer ships CPU/NVIDIA libs; overlay the ROCm runtime for the RX 6800.
+- name: Install the ROCm runtime overlay (AMD GPU)
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && curl -fsSL {{ ollama_rocm_tarball_url }} | tar -x --use-compress-program=unzstd -C /usr"
+    creates: /usr/lib/ollama/rocm
+  args:
+    executable: /bin/bash
+  notify: Restart ollama
+
+- name: Ensure GPU device groups exist with the host GIDs
+  ansible.builtin.group:
+    name: "{{ item.name }}"
+    gid: "{{ item.gid }}"
+    state: present
+  loop: "{{ ollama_gpu_groups }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.gid }})"
+
+- name: Add the ollama user to the GPU device groups
+  ansible.builtin.user:
+    name: "{{ ollama_user }}"
+    groups: "{{ ollama_gpu_groups | map(attribute='name') | list }}"
+    append: true
+  notify: Restart ollama
+
+- name: Create the models directory
+  ansible.builtin.file:
+    path: "{{ ollama_models_dir }}"
+    state: directory
+    owner: "{{ ollama_user }}"
+    group: "{{ ollama_user }}"
+    mode: "0750"
+
+- name: Deploy Ollama systemd environment drop-in
+  ansible.builtin.template:
+    src: ollama-env.conf.j2
+    dest: /etc/systemd/system/ollama.service.d/10-environment.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ollama
+
+- name: Enable and start Ollama
+  ansible.builtin.systemd:
+    name: ollama
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Flush handlers so the environment + GPU groups apply before model pull
+  ansible.builtin.meta: flush_handlers
+
+# --- model provisioning (Hermes 4 14B) ---
+
+- name: List installed Ollama models
+  ansible.builtin.command: ollama list
+  register: ollama_model_list
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: ollama_model_list.rc == 0
+
+- name: Pull + alias Hermes 4 14B  # ~9 GB; only when absent
+  when: ollama_model_name not in ollama_model_list.stdout
+  block:
+    - name: Pull the Hermes 4 14B GGUF from HuggingFace
+      ansible.builtin.command:
+        cmd: "ollama pull {{ ollama_model_source }}"
+      changed_when: true
+
+    - name: Render the Modelfile (alias + params)
+      ansible.builtin.template:
+        src: Modelfile.j2
+        dest: "{{ ollama_models_dir }}/Modelfile.{{ ollama_model_name }}"
+        owner: "{{ ollama_user }}"
+        group: "{{ ollama_user }}"
+        mode: "0640"
+
+    - name: "Create the Ollama model {{ ollama_model_name }}"
+      ansible.builtin.command:
+        cmd: "ollama create {{ ollama_model_name }} -f {{ ollama_models_dir }}/Modelfile.{{ ollama_model_name }}"
+      changed_when: true
+
+# --- verify ---
+
+- name: Verify Ollama service is active
+  ansible.builtin.systemd:
+    name: ollama
+  register: ollama_service_state
+  failed_when: ollama_service_state.status.ActiveState != 'active'
+
+- name: Verify the model is registered
+  ansible.builtin.command: ollama list
+  register: ollama_verify_list
+  changed_when: false
+  failed_when: ollama_model_name not in ollama_verify_list.stdout
