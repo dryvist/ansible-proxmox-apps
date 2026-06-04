@@ -23,7 +23,8 @@ Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough
   service can open `/dev/kfd` + `/dev/dri`.
 - Writes a systemd env drop-in (`OLLAMA_HOST`, `OLLAMA_MODELS`,
   `HSA_OVERRIDE_GFX_VERSION=10.3.0` for gfx1030, flash-attention, keep-alive).
-- Pulls **Hermes 4 14B** Q4_K_M GGUF from HuggingFace and aliases it to `hermes4`.
+- Stages the **Hermes 4 14B** Q4_K_M GGUF as a local file (downloads from
+  HuggingFace only when absent) and registers it as `hermes4` via `ollama create`.
 - Restart-on-failure is applied by the shared `systemd_restart_policy` role via
   `group_vars/ollama_group.yml`.
 
@@ -35,7 +36,9 @@ Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough
 | `ollama_models_dir` | `/var/lib/ollama` | Model store (120 GB local-zfs vol) |
 | `ollama_hsa_override_gfx_version` | `10.3.0` | RX 6800 / Navi 21 / gfx1030 |
 | `ollama_model_name` | `hermes4` | Local alias |
-| `ollama_model_source` | `hf.co/bartowski/NousResearch_Hermes-4-14B-GGUF:Q4_K_M` | GGUF source |
+| `ollama_gguf_filename` | `NousResearch_Hermes-4-14B-Q4_K_M.gguf` | Staged GGUF blob |
+| `ollama_import_dir` | `{{ ollama_models_dir }}/import` | GGUF staging dir (persistent vol) |
+| `ollama_gguf_url` | bartowski HF `resolve/main/<file>` | Download source (only if absent) |
 
 ## Usage
 

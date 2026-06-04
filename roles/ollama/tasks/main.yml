@@ -35,13 +35,16 @@
     append: true
   notify: Restart ollama
 
-- name: Create the models directory
+- name: Create the models + GGUF import directories
   ansible.builtin.file:
-    path: "{{ ollama_models_dir }}"
+    path: "{{ item }}"
     state: directory
     owner: "{{ ollama_user }}"
     group: "{{ ollama_user }}"
     mode: "0750"
+  loop:
+    - "{{ ollama_models_dir }}"
+    - "{{ ollama_import_dir }}"
 
 - name: Deploy Ollama systemd environment drop-in
   ansible.builtin.template:
@@ -72,13 +75,20 @@
   delay: 3
   until: ollama_model_list.rc == 0
 
-- name: Pull + alias Hermes 4 14B  # ~9 GB; only when absent
+- name: Register Hermes 4 14B from the local GGUF  # ~8.4 GB; only when absent
   when: ollama_model_name not in ollama_model_list.stdout
   block:
-    - name: Pull the Hermes 4 14B GGUF from HuggingFace
-      ansible.builtin.command:
-        cmd: "ollama pull {{ ollama_model_source }}"
-      changed_when: true
+    - name: Stage the Hermes 4 14B GGUF (download only if absent)
+      ansible.builtin.get_url:
+        url: "{{ ollama_gguf_url }}"
+        dest: "{{ ollama_gguf_path }}"
+        owner: "{{ ollama_user }}"
+        group: "{{ ollama_user }}"
+        mode: "0640"
+      register: ollama_gguf_download
+      until: ollama_gguf_download is succeeded
+      retries: 3
+      delay: 10
 
     - name: Render the Modelfile (alias + params)
       ansible.builtin.template:
@@ -88,7 +98,7 @@
         group: "{{ ollama_user }}"
         mode: "0640"
 
-    - name: "Create the Ollama model {{ ollama_model_name }}"
+    - name: "Create the local-GGUF Ollama model {{ ollama_model_name }}"
       ansible.builtin.command:
         cmd: "ollama create {{ ollama_model_name }} -f {{ ollama_models_dir }}/Modelfile.{{ ollama_model_name }}"
       changed_when: true
