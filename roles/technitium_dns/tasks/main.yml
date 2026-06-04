@@ -5,15 +5,42 @@
 - name: Validate required variables
   ansible.builtin.assert:
     that:
-      - technitium_dns_api_token | length > 0
+      - technitium_dns_admin_password | length > 0
       - technitium_dns_zone | length > 0
       - technitium_dns_host is defined
     fail_msg: >-
-      Required variables not set. Check: (1) TECHNITIUM_DNS_API_TOKEN must be in Doppler
-      (add via: doppler secrets set TECHNITIUM_DNS_API_TOKEN='your-token-here' -p iac-conf-mgmt -c prd);
+      Required variables not set. Check: (1) TECHNITIUM_DNS_ADMIN_PASSWORD must be in Doppler
+      (add via: doppler secrets set TECHNITIUM_DNS_ADMIN_PASSWORD='<password>' -p iac-conf-mgmt -c prd);
       (2) PROXMOX_SUBDOMAIN is available via Doppler; (3) technitium_dns_host must be set in
       the play vars.
     quiet: true
+
+# Technitium API tokens are PER-INSTANCE — one shared token only authenticates the
+# node that minted it, so the HA secondaries could not be configured. Log into THIS
+# node's API with the shared admin password (technitium_install sets it identically
+# on every member) to obtain this node's OWN session token, and use it for every
+# API call below. Skipped under technitium_dns_apply=false (molecule/CI, no live API).
+- name: Authenticate to this node's Technitium API (per-host session token)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      user: "{{ technitium_dns_admin_user }}"
+      pass: "{{ technitium_dns_admin_password }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_login
+  changed_when: false
+  failed_when: technitium_dns_login.json.status | default('') != "ok"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Use this node's session token for subsequent API calls
+  ansible.builtin.set_fact:
+    technitium_dns_api_token: "{{ technitium_dns_login.json.token }}"
+  when: technitium_dns_apply | bool
+  no_log: true
 
 - name: Build A records from inventory
   # Iterate over groups['all'] explicitly. Iterating `hostvars | dict2items`
