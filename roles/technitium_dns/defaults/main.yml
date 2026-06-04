@@ -7,8 +7,14 @@ technitium_dns_api_url: "http://{{ technitium_dns_host }}:5380"
 # API token from SOPS secrets (not in Doppler)
 technitium_dns_api_token: "{{ lookup('env', 'TECHNITIUM_DNS_API_TOKEN') }}"
 
-# Internal domain for A records (from Doppler)
-technitium_dns_internal_domain: "{{ lookup('env', 'PROXMOX_DOMAIN') }}"
+# Authoritative zone = the homelab SUBDOMAIN only (a child zone). Technitium is
+# authoritative for this and forwards everything else (the apex + public) to the
+# gateway. All internal A-records and service CNAMEs live under this subdomain.
+technitium_dns_zone: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+# Apex domain — referenced ONLY to remove a stale apex Primary zone if a
+# pre-existing server still owns one (so non-subdomain names forward, not
+# NXDOMAIN). Never created/served here.
+technitium_dns_apex_domain: "{{ lookup('env', 'PROXMOX_DOMAIN') }}"
 
 # DNS zone configuration
 technitium_dns_zone_type: "Primary"
@@ -26,8 +32,8 @@ technitium_dns_cname_records:
     target: docker
   - name: cribl-stream
     target: docker
-  # Stable syslog entry point - always points to HAProxy load balancer
-  # Clients should send syslog to: syslog.{domain}:514 (or 515-518 for specific sources)
+  # Stable syslog entry point - always points to HAProxy load balancer.
+  # Clients send syslog to: syslog.<PROXMOX_SUBDOMAIN>:514 (or 515-518 per source).
   - name: syslog
     target: haproxy
 
@@ -43,14 +49,16 @@ technitium_dns_ingress_host: traefik
 technitium_dns_ingress_aliases: >-
   {{ tofu_data.ingress | default([]) | map(attribute='name') | list }}
 # Ingress lives under PROXMOX_SUBDOMAIN (matches the traefik role's
-# traefik_base_domain): aliases resolve as <name>.<PROXMOX_SUBDOMAIN>, with the
-# records created in the parent internal zone. Keeps ingress off the apex.
+# traefik_base_domain): aliases resolve as <name>.<PROXMOX_SUBDOMAIN>. This is the
+# SAME value as the authoritative technitium_dns_zone, so the records land in the
+# subdomain zone directly.
 technitium_dns_ingress_domain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
 
-# Upstream DNS servers (for forwarding non-local queries)
+# Upstream forwarder for every non-authoritative query. Points at the gateway
+# (which owns the apex + public DNS), sourced from Doppler — never a committed
+# literal. This is what makes non-subdomain names resolve instead of NXDOMAIN.
 technitium_dns_forwarders:
-  - "8.8.8.8"
-  - "8.8.4.4"
+  - "{{ lookup('env', 'PROXMOX_VE_GATEWAY') }}"
 
 # DNS server settings
 technitium_dns_recursion: true

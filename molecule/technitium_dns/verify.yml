@@ -6,7 +6,8 @@
 #   - the primary is the lowest-vmid member (technitium-1 / .10);
 #   - each host's role matches its identity (primary vs secondary);
 #   - the secondary-IP list excludes the primary and includes the peer;
-#   - inventory A-records were built for both hosts.
+#   - inventory A-records were built for both hosts;
+#   - the authoritative zone is the subdomain and forwarders point at the gateway.
 
 - name: Verify
   hosts: all
@@ -19,8 +20,11 @@
       ingress: []
 
   tasks:
+    # import_role (not include_role) so the role's defaults (zone, apex_domain,
+    # forwarders) are exposed to the assertions below, alongside the set_fact
+    # outputs (primary_ip, role, secondary_ips, a_records).
     - name: Re-run technitium_dns role to populate derived facts (no live API)
-      ansible.builtin.include_role:
+      ansible.builtin.import_role:
         name: technitium_dns
 
     - name: Assert the primary is the lowest-vmid node (technitium-1 / .10)
@@ -56,3 +60,14 @@
           - "'technitium-2' in (technitium_dns_a_records | map(attribute='name') | list)"
         fail_msg: >-
           A-records not built as expected: {{ technitium_dns_a_records }}.
+
+    - name: Assert authoritative zone is the subdomain and forwarders -> gateway
+      ansible.builtin.assert:
+        that:
+          - technitium_dns_zone == 'svc.example.net'
+          - technitium_dns_apex_domain == 'example.net'
+          - technitium_dns_forwarders == ['192.168.5.1']
+        fail_msg: >-
+          Zone/forwarder mismatch: zone='{{ technitium_dns_zone }}'
+          apex='{{ technitium_dns_apex_domain }}'
+          forwarders={{ technitium_dns_forwarders }}.

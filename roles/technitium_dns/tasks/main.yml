@@ -6,12 +6,12 @@
   ansible.builtin.assert:
     that:
       - technitium_dns_api_token | length > 0
-      - technitium_dns_internal_domain | length > 0
+      - technitium_dns_zone | length > 0
       - technitium_dns_host is defined
     fail_msg: >-
       Required variables not set. Check: (1) TECHNITIUM_DNS_API_TOKEN must be in Doppler
       (add via: doppler secrets set TECHNITIUM_DNS_API_TOKEN='your-token-here' -p iac-conf-mgmt -c prd);
-      (2) PROXMOX_DOMAIN is available via Doppler; (3) technitium_dns_host must be set in
+      (2) PROXMOX_SUBDOMAIN is available via Doppler; (3) technitium_dns_host must be set in
       the play vars.
     quiet: true
 
@@ -96,13 +96,30 @@
       {{ technitium_dns_zones_response.json.response.zones | default([]) | map(attribute='name') | list }}
   when: technitium_dns_apply | bool
 
-- name: Create internal DNS zone (primary)
+# Forward every non-authoritative query (the apex + public names) to the gateway.
+# This is a server-level setting, so it runs on EVERY node: each instance is a
+# full resolver — authoritative/secondary for the subdomain, forward the rest.
+- name: Configure upstream forwarders (to the gateway)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/settings/set?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      forwarders: "{{ technitium_dns_forwarders | join(',') }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_forwarders_result
+  changed_when: technitium_dns_forwarders_result.json.status == "ok"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Create authoritative subdomain DNS zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
     method: POST
     body_format: form-urlencoded
     body:
-      zone: "{{ technitium_dns_internal_domain }}"
+      zone: "{{ technitium_dns_zone }}"
       type: "{{ technitium_dns_zone_type }}"
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
@@ -112,7 +129,29 @@
   when:
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
-    - technitium_dns_internal_domain not in technitium_dns_existing_zones
+    - technitium_dns_zone not in technitium_dns_existing_zones
+  no_log: true
+
+# Remove a stale apex Primary zone so non-subdomain names FORWARD to the gateway
+# instead of resolving NXDOMAIN here. Destructive but guarded: only fires if a
+# pre-existing server still owns the apex zone (a no-op on a freshly built node,
+# which never had it). Idempotent via the existing-zones membership check.
+- name: Remove stale apex Primary zone (primary)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/delete?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_apex_domain }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+    status_code: [200, 400]
+  register: technitium_dns_apex_delete
+  changed_when: technitium_dns_apex_delete.json.status == "ok"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_apex_domain in technitium_dns_existing_zones
   no_log: true
 
 # Secondaries replicate the zone from the primary via native AXFR/IXFR zone
@@ -124,7 +163,7 @@
     method: POST
     body_format: form-urlencoded
     body:
-      zone: "{{ technitium_dns_internal_domain }}"
+      zone: "{{ technitium_dns_zone }}"
       type: "Secondary"
       primaryNameServerAddresses: "{{ technitium_dns_primary_ip }}"
       zoneTransferProtocol: "{{ technitium_dns_zone_transfer_protocol }}"
@@ -136,7 +175,7 @@
   when:
     - technitium_dns_role == 'secondary'
     - technitium_dns_apply | bool
-    - technitium_dns_internal_domain not in technitium_dns_existing_zones
+    - technitium_dns_zone not in technitium_dns_existing_zones
   no_log: true
 
 - name: Get existing A records for zone
@@ -144,8 +183,8 @@
     url: >-
       {{ technitium_dns_api_url }}/api/zones/records/get?token={{
       technitium_dns_api_token }}&domain={{
-      technitium_dns_internal_domain | urlencode }}&zone={{
-      technitium_dns_internal_domain | urlencode }}
+      technitium_dns_zone | urlencode }}&zone={{
+      technitium_dns_zone | urlencode }}
     method: GET
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
@@ -162,8 +201,8 @@
     method: POST
     body_format: form-urlencoded
     body:
-      domain: "{{ item.name }}.{{ technitium_dns_internal_domain }}"
-      zone: "{{ technitium_dns_internal_domain }}"
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
       type: A
       ipAddress: "{{ item.ip }}"
       ttl: "{{ technitium_dns_zone_ttl }}"
@@ -189,10 +228,10 @@
     method: POST
     body_format: form-urlencoded
     body:
-      domain: "{{ item.name }}.{{ technitium_dns_internal_domain }}"
-      zone: "{{ technitium_dns_internal_domain }}"
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
       type: CNAME
-      cname: "{{ item.target }}.{{ technitium_dns_internal_domain }}"
+      cname: "{{ item.target }}.{{ technitium_dns_zone }}"
       ttl: "{{ technitium_dns_zone_ttl }}"
       overwrite: "true"
     return_content: true
@@ -221,7 +260,7 @@
     body_format: form-urlencoded
     body:
       domain: "{{ item }}.{{ technitium_dns_ingress_domain }}"
-      zone: "{{ technitium_dns_internal_domain }}"
+      zone: "{{ technitium_dns_zone }}"
       type: A
       ipAddress: "{{ hostvars[technitium_dns_ingress_host].container_ip }}"
       ttl: "{{ technitium_dns_zone_ttl }}"
@@ -252,7 +291,7 @@
     method: POST
     body_format: form-urlencoded
     body:
-      zone: "{{ technitium_dns_internal_domain }}"
+      zone: "{{ technitium_dns_zone }}"
       zoneTransfer: "UseSpecifiedNetworkACL"
       zoneTransferNetworkACL: "{{ technitium_dns_secondary_ips | join(',') }}"
     return_content: true
@@ -274,7 +313,7 @@
   register: technitium_dns_final_zones
   changed_when: false
   failed_when: >-
-    technitium_dns_internal_domain not in
+    technitium_dns_zone not in
     (technitium_dns_final_zones.json.response.zones | default([]) | map(attribute='name') | list)
   when: technitium_dns_apply | bool
   no_log: true
