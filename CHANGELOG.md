@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.20.0...v1.20.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **open_webui:** install curl/ca-certificates before uv installer ([61d7cc1](https://github.com/dryvist/ansible-proxmox-apps/commit/61d7cc131b5771ff036341526f066ffb889c1241))
+
 ## [1.20.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.4...v1.20.0) (2026-06-04)
 
 
