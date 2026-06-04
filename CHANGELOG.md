@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.0...v1.19.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **inventory-schema:** make port registries extensible ([#326](https://github.com/dryvist/ansible-proxmox-apps/issues/326)) ([8bf0b39](https://github.com/dryvist/ansible-proxmox-apps/commit/8bf0b39bbd3a7f10d1fc8053f08d94f0f576d189))
+
 ## [1.19.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.18.0...v1.19.0) (2026-06-04)
 
 
