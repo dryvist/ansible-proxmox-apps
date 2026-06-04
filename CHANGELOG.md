@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.20.1...v1.20.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **open_webui:** install sudo for become_user privilege drop ([b245e5a](https://github.com/dryvist/ansible-proxmox-apps/commit/b245e5a0f1614bcb6c592ee23e215d48931f2716))
+
 ## [1.20.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.20.0...v1.20.1) (2026-06-04)
 
 
