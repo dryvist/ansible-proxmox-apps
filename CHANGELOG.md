@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.4...v1.20.0) (2026-06-04)
+
+
+### Features
+
+* **traefik:** support HTTPS backends with self-signed certs ([#337](https://github.com/dryvist/ansible-proxmox-apps/issues/337)) ([57fa095](https://github.com/dryvist/ansible-proxmox-apps/commit/57fa095937e26fe17f30682ae321b0cf2176f3c5))
+
 ## [1.19.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.3...v1.19.4) (2026-06-04)
 
 
