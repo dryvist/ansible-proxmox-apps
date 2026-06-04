@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.1...v1.19.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **ollama:** install curl/ca-certificates/zstd before Ollama install ([ecb4602](https://github.com/dryvist/ansible-proxmox-apps/commit/ecb46029ed79221d379176e39e45c1939cf80acd))
+
 ## [1.19.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.19.0...v1.19.1) (2026-06-04)
 
 
