@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.20.2...v1.21.0) (2026-06-04)
+
+
+### Features
+
+* **media:** bake torrent etiquette defaults — ratio/seed/anon-off/removeCompleted ([#327](https://github.com/dryvist/ansible-proxmox-apps/issues/327)) ([edd63f5](https://github.com/dryvist/ansible-proxmox-apps/commit/edd63f5a66aea2c7f1e7883a0904f297fa0fb77b))
+
 ## [1.20.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.20.1...v1.20.2) (2026-06-04)
 
 
