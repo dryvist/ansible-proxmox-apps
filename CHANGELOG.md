@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.22.1...v1.23.0) (2026-06-05)
+
+
+### Features
+
+* **openbao:** add OpenBao secrets-manager role (Raft node 1) ([f92ab0a](https://github.com/dryvist/ansible-proxmox-apps/commit/f92ab0a29272d548e517ae64d570682570ba8d54))
+
 ## [1.22.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.22.0...v1.22.1) (2026-06-04)
 
 
