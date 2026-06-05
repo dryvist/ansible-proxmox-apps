@@ -1,0 +1,38 @@
+[Unit]
+Description=download-vpn LAN-reply policy routing (cross-subnet web UI reachability)
+Documentation=https://github.com/JacobPEvans/ansible-proxmox-apps
+# Order after wg0 so wg-quick's own fwmark policy rules already exist and we
+# layer a higher-priority rule above them; network-online ensures the LAN NIC is
+# configured. Deliberately NOT Requires=download-vpn-wg.service: this reply
+# routing is independent of the tunnel, so the web UIs stay reachable for
+# debugging even during a VPN outage. The killswitch (not this unit) is the
+# egress security boundary, so keeping it up never enables a leak.
+After=network-online.target download-vpn-wg.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# 1. (Re)load the connmark mangle table from a clean slate. Delete first (ignore
+#    if absent) so a restart never hits "chain already exists". This must succeed
+#    on load — without the marking the policy route below is inert.
+ExecStartPre=-/usr/sbin/nft delete table inet vpn_lanroute
+ExecStartPre=/usr/sbin/nft -f {{ download_vpn_mangle_ruleset_path }}
+
+# 2. Policy route: reply packets carrying our fwmark resolve out the LAN NIC via
+#    a dedicated table; everything unmarked keeps using wg0 (or is dropped by the
+#    killswitch). Delete-then-add the rule for idempotency; `route replace` is
+#    inherently idempotent. `env ip` avoids hardcoding the iproute2 path.
+ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+ExecStart=/usr/bin/env ip route replace default via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} table {{ download_vpn_lanroute_table }}
+
+# Teardown: remove the rule, flush the table, drop the mangle marking — leaving
+# no standing non-VPN routing state.
+ExecStop=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+ExecStop=-/usr/bin/env ip route flush table {{ download_vpn_lanroute_table }}
+ExecStop=-/usr/sbin/nft delete table inet vpn_lanroute
+
+[Install]
+WantedBy=multi-user.target

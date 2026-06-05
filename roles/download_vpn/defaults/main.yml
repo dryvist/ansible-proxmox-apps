@@ -66,6 +66,22 @@ download_vpn_lan_subnet: >-
 # only to pin a specific NIC.
 download_vpn_lan_interface: ""
 
+# LAN gateway (.1 of the container subnet) — the next hop the policy-routed web
+# UI replies use to reach cross-subnet clients (e.g. the Traefik VLAN). Derived
+# from the LAN subnet; override only for a non-.1 gateway.
+download_vpn_lan_gateway: >-
+  {{ download_vpn_lan_subnet | ansible.utils.ipaddr('1') | ansible.utils.ipaddr('address') }}
+
+# --- LAN-reply policy routing (cross-subnet web UI reachability) -------------
+# A connmark + dedicated routing table let cross-subnet clients (e.g. Traefik on
+# the management VLAN) reach the qBittorrent/Prowlarr web UIs: inbound web-UI
+# connections are marked, the mark is restored on their replies, and ONLY those
+# replies are routed out the LAN NIC. App-initiated egress is never marked, so it
+# still leaves via wg0 (or is dropped by the killswitch). Reply-only — opens no
+# new egress path. See templates/mangle.nft.j2 + download-vpn-lanroute.service.j2.
+download_vpn_lanroute_table: 100
+download_vpn_lanroute_mark: "0x1"
+
 # --- qBittorrent -------------------------------------------------------------
 download_vpn_qbittorrent_package: qbittorrent-nox
 download_vpn_qbittorrent_user: "{{ download_vpn_user }}"
@@ -173,6 +189,7 @@ download_vpn_manage_services: true
 
 # --- Deployed file paths (rarely overridden) --------------------------------
 download_vpn_nft_ruleset_path: /etc/nftables.d/download-vpn-killswitch.nft
+download_vpn_mangle_ruleset_path: /etc/nftables.d/download-vpn-lanroute.nft
 download_vpn_natpmp_script_path: /usr/local/bin/download-vpn-natpmp.sh
 download_vpn_natpmp_env_path: /etc/default/download-vpn-natpmp
 download_vpn_validator_script_path: /usr/local/bin/download-vpn-killswitch-validate.sh
