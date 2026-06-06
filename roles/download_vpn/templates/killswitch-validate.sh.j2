@@ -95,6 +95,16 @@ if [[ -n "${v6_ip}" ]]; then
   breaches+=("LEAK: IPv6 egress succeeded (got ${v6_ip})")
 fi
 
+# --- H. marked-path leak surface --------------------------------------------
+# A packet carrying the lanroute fwmark but destined for the public internet
+# must NEVER egress the LAN NIC. The lanroute table routes only RFC1918 + an
+# `unreachable default`, so this resolves to unreachable (empty) or wg0 — never
+# dev ${LAN_IF}. Catches a regression that re-introduces a clearnet LAN default.
+marked_route="$(ip -4 route get "${ROUTE_PROBE_IP}" mark {{ download_vpn_lanroute_mark }} 2>/dev/null || true)"
+if grep -q "dev ${LAN_IF}" <<<"${marked_route}"; then
+  breaches+=("LEAK SURFACE: marked packet to ${ROUTE_PROBE_IP} egresses ${LAN_IF}: ${marked_route}")
+fi
+
 # --- verdict ----------------------------------------------------------------
 if [[ "{% raw %}${#breaches[@]}{% endraw %}" -gt 0 ]]; then
   msg="download-vpn KILLSWITCH BREACH on $(hostname): $(printf '%s; ' "${breaches[@]}")"

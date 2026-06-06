@@ -24,9 +24,18 @@ ExecStartPre=/usr/sbin/nft -f {{ download_vpn_mangle_ruleset_path }}
 #    a dedicated table; everything unmarked keeps using wg0 (or is dropped by the
 #    killswitch). Delete-then-add the rule for idempotency; `route replace` is
 #    inherently idempotent. `env ip` avoids hardcoding the iproute2 path.
+#
+#    The table routes ONLY RFC1918 ranges (legitimate marked replies only ever
+#    target LAN clients, never public IPs) and ends in `unreachable default`. So a
+#    packet that somehow carries the mark but is destined for the public internet
+#    finds no route here and fails CLOSED — clearnet egress via the LAN table is
+#    structurally impossible, not merely policy-gated by the killswitch.
 ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
 ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
-ExecStart=/usr/bin/env ip route replace default via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} table {{ download_vpn_lanroute_table }}
+{% for net in download_vpn_lanroute_reply_networks %}
+ExecStart=/usr/bin/env ip route replace {{ net }} via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} table {{ download_vpn_lanroute_table }}
+{% endfor %}
+ExecStart=/usr/bin/env ip route replace unreachable default table {{ download_vpn_lanroute_table }}
 
 # Teardown: remove the rule, flush the table, drop the mangle marking — leaving
 # no standing non-VPN routing state.

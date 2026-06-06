@@ -81,6 +81,15 @@ download_vpn_lan_gateway: >-
 # new egress path. See templates/mangle.nft.j2 + download-vpn-lanroute.service.j2.
 download_vpn_lanroute_table: 100
 download_vpn_lanroute_mark: "0x1"
+# Reply-routing scope. Legitimate marked replies only ever target RFC1918 LAN
+# clients (e.g. the Traefik mgmt VLAN), NEVER public IPs. The lanroute table
+# therefore routes ONLY these ranges out the LAN NIC and installs an `unreachable`
+# default — so a packet that somehow carries the mark but targets a public dest
+# finds no route and fails CLOSED instead of egressing clearnet via the LAN.
+download_vpn_lanroute_reply_networks:
+  - "10.0.0.0/8"
+  - "172.16.0.0/12"
+  - "192.168.0.0/16"
 
 # --- qBittorrent -------------------------------------------------------------
 download_vpn_qbittorrent_package: qbittorrent-nox
@@ -121,20 +130,38 @@ download_vpn_qbittorrent_lsd: true
 download_vpn_qbittorrent_max_uploads: -1
 download_vpn_qbittorrent_max_uploads_per_torrent: -1
 
-# --- Upload throttle + work-hours scheduler -----------------------------------
-# The scheduler switches qBittorrent into alt (lower) speed from start→end on
-# the specified days, then back to normal outside those hours.
-# All limits in KiB/s; 0 = unlimited. 1250 KiB/s ≈ 10 Mbps.
-# normal: unlimited overnight / weekends — doesn't interfere with video calls.
-download_vpn_qbittorrent_upload_limit: 0
-# alt: ~10 Mbps cap during work hours. Override to tune without touching the template.
-download_vpn_qbittorrent_alt_upload_limit: 1250
+# --- Bandwidth limits + work-hours scheduler (QoS) ----------------------------
+# Applied via the WebUI API (setPreferences), NOT the flat qBittorrent.conf:
+# qBittorrent's .conf speed/scheduler keys are undocumented + version-fragile
+# (scheduler times are Qt-binary @Variant(QTime)) and the daemon overwrites the
+# file on save, so file-based limits silently never took effect. The API is the
+# stable, documented contract — same pattern the role uses for the admin password.
+#
+# Units: KiB/s (1 Mbps ≈ 122 KiB/s). -1 = unlimited.
+# WAN is ~1 Gbps down / 35 Mbps up (~4272 KiB/s) — UPLOAD is the scarce resource:
+# unthrottled seeding saturates the 35 Mbps uplink, starves ACKs, and collapses
+# every other device's download (bufferbloat). So upload is always capped, hard
+# during work hours. The scheduler applies the ALT (heavy) limits DURING the
+# window and the normal limits outside it.
+download_vpn_qbittorrent_up_limit: 3000        # off-peak ~24 Mbps (keeps ACK headroom)
+download_vpn_qbittorrent_dl_limit: -1           # off-peak unlimited (1 Gbps downlink)
+download_vpn_qbittorrent_alt_up_limit: 500      # work-hours ~4 Mbps (laptops keep ~31)
+download_vpn_qbittorrent_alt_dl_limit: 12000    # work-hours ~100 Mbps
 download_vpn_qbittorrent_scheduler_enabled: true
-# 1 = Mon–Fri every week. 0 = every day, 2 = Sat–Sun only.
+# scheduler_days: 0=every day, 1=weekdays (Mon–Fri), 2=weekends, 3–9=Mon..Sun.
 download_vpn_qbittorrent_scheduler_days: 1
-# 360 = 06:00, 1200 = 20:00 (minutes from midnight).
-download_vpn_qbittorrent_scheduler_start: 360
-download_vpn_qbittorrent_scheduler_end: 1200
+# Throttle window in the container's LOCAL time, which is forced to UTC (see
+# download_vpn_timezone). 13:00 UTC = 09:00 EDT; 23:00 UTC = 19:00 EDT / 18:00 EST
+# (a fixed-UTC cutover, no DST tracking). Tune start/end without touching tasks.
+download_vpn_qbittorrent_schedule_from_hour: 13
+download_vpn_qbittorrent_schedule_from_min: 0
+download_vpn_qbittorrent_schedule_to_hour: 23
+download_vpn_qbittorrent_schedule_to_min: 0
+
+# Container timezone. The qBittorrent scheduler evaluates SYSTEM LOCAL time, so
+# we pin the container to UTC and express the window above in UTC. Override to an
+# IANA zone (e.g. America/New_York) only to make the schedule track DST instead.
+download_vpn_timezone: "UTC"
 
 # --- Prowlarr ----------------------------------------------------------------
 download_vpn_prowlarr_install_dir: /opt/Prowlarr

@@ -188,15 +188,40 @@
           - "'vpn_lanroute' in download_vpn_lanroute_state.results[0].stdout"
           - "'fwmark ' ~ download_vpn_lanroute_mark in download_vpn_lanroute_state.results[1].stdout"
           - "'lookup ' ~ download_vpn_lanroute_table in download_vpn_lanroute_state.results[1].stdout"
-          - "'default ' in download_vpn_lanroute_state.results[2].stdout"
           - "'dev ' ~ download_vpn_lan_interface in download_vpn_lanroute_state.results[2].stdout"
+          - "'unreachable default' in download_vpn_lanroute_state.results[2].stdout"
+          - "'default via' not in download_vpn_lanroute_state.results[2].stdout"
         fail_msg: >-
-          LAN-reply policy routing is incomplete — cross-subnet clients (e.g.
-          Traefik) cannot reach the qBittorrent/Prowlarr web UIs. Expected the
-          inet vpn_lanroute table, an `ip rule` for fwmark
-          {{ download_vpn_lanroute_mark }} -> table {{ download_vpn_lanroute_table }},
-          and a default route via {{ download_vpn_lan_interface }} in that table.
-        success_msg: "LAN-reply policy routing present (web UIs reachable cross-subnet)."
+          LAN-reply policy routing is incomplete or unsafe — expected the inet
+          vpn_lanroute table, an `ip rule` for fwmark {{ download_vpn_lanroute_mark }}
+          -> table {{ download_vpn_lanroute_table }}, RFC1918 reply routes via
+          {{ download_vpn_lan_interface }}, and an `unreachable default` (NOT a
+          `default via` clearnet route) in that table.
+        success_msg: "LAN-reply policy routing present + fail-closed (no clearnet default)."
+
+    # --- I. marked-path leak check (closes the validator blind spot) --------
+    # Checks A-G probe only UNMARKED traffic, so they never exercise the table
+    # that the lanroute fwmark rule selects. Prove that a packet carrying the
+    # lanroute mark but destined for the public internet can NEVER egress the LAN
+    # NIC: with the RFC1918-only + `unreachable default` table it resolves to
+    # unreachable (rc != 0, empty) or wg0 — but never `dev <lan_interface>`.
+    - name: Resolve the marked-reply route for an internet-bound IPv4 packet
+      ansible.builtin.command:
+        cmd: ip -4 route get {{ download_vpn_route_probe_ip }} mark {{ download_vpn_lanroute_mark }}
+      register: download_vpn_marked_route
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a marked packet to the internet cannot egress the LAN NIC
+      ansible.builtin.assert:
+        that:
+          - "'dev ' ~ download_vpn_lan_interface not in download_vpn_marked_route.stdout"
+        fail_msg: >-
+          LEAK SURFACE: a packet carrying the lanroute mark
+          ({{ download_vpn_lanroute_mark }}) to a public dest resolves out
+          {{ download_vpn_lan_interface }} ({{ download_vpn_marked_route.stdout | trim }}).
+          The lanroute table must route only RFC1918 + unreachable default.
+        success_msg: "Marked internet-bound packets cannot egress the LAN NIC (fail-closed)."
 
     - name: Report killswitch validation success
       ansible.builtin.debug:

@@ -69,6 +69,15 @@
     update_cache: true
     cache_valid_time: 3600
 
+# --- Phase 1b: timezone -----------------------------------------------------
+# The qBittorrent scheduler evaluates SYSTEM LOCAL time, so pin the container to
+# UTC (default) and express the throttle window in UTC. glibc reads the zone at
+# process start, so a change restarts qBittorrent via the handler.
+- name: Set container timezone (qBittorrent scheduler uses local time)
+  community.general.timezone:
+    name: "{{ download_vpn_timezone }}"
+  notify: Restart qbittorrent
+
 # --- Phase 2: service user / group + storage --------------------------------
 - name: Create media group (shared GID with *arr LXCs)
   ansible.builtin.group:
@@ -267,6 +276,33 @@
       json: '{"web_ui_password":"{{ download_vpn_qbittorrent_admin_password }}"}'
     status_code: 200
   no_log: true
+  changed_when: false
+  when: download_vpn_manage_services
+
+# QoS: bandwidth limits + work-hours scheduler via the API (the .conf keys are
+# version-fragile and the daemon overwrites them — see qBittorrent.conf.j2).
+# Limits in KiB/s, -1 = unlimited. The scheduler applies the alt_* (heavy) limits
+# during the window and the normal limits outside it, evaluated in the container's
+# local time (pinned to UTC in Phase 1b). LocalHostAuth=false lets 127.0.0.1 POST
+# without a login cookie, same as the password task above.
+- name: Apply qBittorrent bandwidth limits + work-hours scheduler via API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/setPreferences"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      json: >-
+        {"up_limit":{{ download_vpn_qbittorrent_up_limit | int }},
+         "dl_limit":{{ download_vpn_qbittorrent_dl_limit | int }},
+         "alt_up_limit":{{ download_vpn_qbittorrent_alt_up_limit | int }},
+         "alt_dl_limit":{{ download_vpn_qbittorrent_alt_dl_limit | int }},
+         "scheduler_enabled":{{ download_vpn_qbittorrent_scheduler_enabled | bool | lower }},
+         "schedule_from_hour":{{ download_vpn_qbittorrent_schedule_from_hour | int }},
+         "schedule_from_min":{{ download_vpn_qbittorrent_schedule_from_min | int }},
+         "schedule_to_hour":{{ download_vpn_qbittorrent_schedule_to_hour | int }},
+         "schedule_to_min":{{ download_vpn_qbittorrent_schedule_to_min | int }},
+         "scheduler_days":{{ download_vpn_qbittorrent_scheduler_days | int }}}
+    status_code: 200
   changed_when: false
   when: download_vpn_manage_services
 
