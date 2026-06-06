@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.23.0...v1.24.0) (2026-06-06)
+
+
+### Features
+
+* **download_vpn:** policy-route LAN web-UI replies for cross-subnet access ([#350](https://github.com/dryvist/ansible-proxmox-apps/issues/350)) ([4413289](https://github.com/dryvist/ansible-proxmox-apps/commit/4413289169daa0e39ac3dde79843838b3b14d47e))
+
 ## [1.23.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.22.1...v1.23.0) (2026-06-05)
 
 
