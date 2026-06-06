@@ -26,6 +26,15 @@ outside the VPN:
 5. **Boot-safe ordering** — qBittorrent/Prowlarr/NAT-PMP units
    `Requires=`/`After=`/`BindsTo=` the killswitch + `wg0` units, so they can
    never start (or stay up) without the lock.
+6. **LAN web-UI reachability (reply-only)** — a connmark + dedicated routing
+   table (`download-vpn-lanroute.service` + `templates/mangle.nft.j2`) let
+   cross-subnet clients (e.g. the Traefik reverse proxy on the management VLAN)
+   reach the qBittorrent/Prowlarr web UIs. Inbound UI connections are marked and
+   only their **replies** are policy-routed back out the LAN NIC; app-initiated
+   flows are never marked, so they still egress via `wg0` (or are dropped). This
+   opens **no new egress path** — the killswitch guarantees above are unchanged,
+   and the `ct mark` guard keeps WireGuard's own fwmark on encapsulated UDP
+   intact so the tunnel is never recursively routed.
 
 ## Three validation layers (all mandatory)
 
@@ -36,8 +45,9 @@ outside the VPN:
   on every play. Asserts the killswitch is active, internet-bound IPv4 traffic
   routes via `wg0` (wg-quick `Table = auto` keeps the main-table default on the
   LAN NIC and routes the tunnel through a separate fwmark table), no IPv6 default
-  route exists, qBittorrent is bound to `wg0`, live VPN IPv4 egress works, and
-  forced non-VPN IPv4 + all IPv6 egress are refused. **Fails the play on any
+  route exists, qBittorrent is bound to `wg0`, live VPN IPv4 egress works,
+  forced non-VPN IPv4 + all IPv6 egress are refused, and the LAN-reply policy
+  routing is present (web UIs reachable cross-subnet). **Fails the play on any
   violation.**
 - **Runtime** — `download-vpn-validate.timer` (every ~2 min). Re-checks the
   above; on ANY breach it stops qBittorrent, alerts ntfy, and pings the

@@ -1,0 +1,49 @@
+#!/usr/sbin/nft -f
+{#
+  LAN-reply policy-routing connmark table for the download-vpn LXC.
+
+  Rendered by the download_vpn role; loaded + torn down by
+  download-vpn-lanroute.service alongside the matching `ip rule` / table.
+
+  PROBLEM this solves: cross-subnet clients (e.g. the Traefik reverse proxy on
+  the management VLAN) can OPEN a TCP connection to the qBittorrent/Prowlarr web
+  UIs — the inbound SYN arrives on the LAN NIC fine — but the reply follows the
+  container's default route, which wg-quick `Table = auto` points at wg0. The
+  reply is encapsulated toward Proton, which has no route back to an RFC1918 LAN
+  subnet, so it is black-holed and the client times out. Same-subnet replies
+  work only because that /24 is a connected route on the LAN NIC.
+
+  FIX: tag the *inbound* connections we want reachable with a connmark, restore
+  that mark onto their *reply* packets, and (via the companion `ip rule fwmark`)
+  route only those replies out the LAN NIC. See download-vpn-lanroute.service.
+
+  SECURITY INVARIANT (unchanged): this never lets the apps INITIATE non-VPN
+  egress. Only packets belonging to an already-marked inbound connection get the
+  mark; app-initiated flows (torrents, indexer fetches, DNS) are never marked, so
+  they still resolve via wg0 — or are dropped by the killswitch if wg0 is down.
+  The `ct mark {{ download_vpn_lanroute_mark }}` guard on the output chain is
+  load-bearing: an unconditional `meta mark set ct mark` would also clobber
+  WireGuard's own fwmark on its encapsulated UDP (ct mark 0), recursively routing
+  the handshake into the tunnel and breaking the VPN.
+-#}
+table inet vpn_lanroute {
+  chain prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+
+    # Mark NEW inbound connections that arrive on the LAN NIC, originate OUTSIDE
+    # the local /24 (same-subnet replies already work via the connected route),
+    # and target a web-UI port. The mark rides the conntrack entry, so replies
+    # inherit it below. Ports come from OpenTofu constants — nothing hard-coded.
+    iifname "{{ download_vpn_lan_interface }}" ip saddr != {{ download_vpn_lan_subnet }} tcp dport { {{ download_vpn_qbittorrent_web_port | int }}, {{ download_vpn_prowlarr_web_port | int }} } ct state new ct mark set {{ download_vpn_lanroute_mark }}
+  }
+
+  chain output {
+    type route hook output priority mangle;
+
+    # Restore ONLY our mark onto reply packets so the `ip rule fwmark` sends
+    # them out the LAN NIC. `type route` makes the kernel re-evaluate routing
+    # when the mark changes. The `ct mark` guard means WireGuard's encapsulated
+    # UDP (ct mark 0) and every app-initiated flow are left untouched.
+    ct mark {{ download_vpn_lanroute_mark }} meta mark set {{ download_vpn_lanroute_mark }}
+  }
+}

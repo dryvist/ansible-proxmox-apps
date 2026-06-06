@@ -165,10 +165,44 @@
           IPv6 LEAK: egress over IPv6 succeeded
           ({{ download_vpn_v6_probe.stdout | trim }}). IPv6 must have no path.
 
+    # --- H. LAN-reply policy routing present (functional gate, not a leak) --
+    # Cross-subnet clients (e.g. Traefik) reach the web UIs only if the connmark
+    # mangle table + fwmark rule + table-default route are all in place. A missing
+    # route is a FUNCTIONAL failure (UIs unreachable), NOT a leak — checks A-G
+    # above already prove no egress escapes the VPN — but we still gate the deploy
+    # so a half-applied role is caught here rather than as a silent timeout.
+    - name: Read the LAN-reply policy-routing state
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - nft list table inet vpn_lanroute
+        - ip rule show
+        - ip route show table {{ download_vpn_lanroute_table }}
+      register: download_vpn_lanroute_state
+      changed_when: false
+      failed_when: false
+
+    - name: Assert LAN-reply policy routing is in place
+      ansible.builtin.assert:
+        that:
+          - "'vpn_lanroute' in download_vpn_lanroute_state.results[0].stdout"
+          - "'fwmark ' ~ download_vpn_lanroute_mark in download_vpn_lanroute_state.results[1].stdout"
+          - "'lookup ' ~ download_vpn_lanroute_table in download_vpn_lanroute_state.results[1].stdout"
+          - "'default ' in download_vpn_lanroute_state.results[2].stdout"
+          - "'dev ' ~ download_vpn_lan_interface in download_vpn_lanroute_state.results[2].stdout"
+        fail_msg: >-
+          LAN-reply policy routing is incomplete — cross-subnet clients (e.g.
+          Traefik) cannot reach the qBittorrent/Prowlarr web UIs. Expected the
+          inet vpn_lanroute table, an `ip rule` for fwmark
+          {{ download_vpn_lanroute_mark }} -> table {{ download_vpn_lanroute_table }},
+          and a default route via {{ download_vpn_lan_interface }} in that table.
+        success_msg: "LAN-reply policy routing present (web UIs reachable cross-subnet)."
+
     - name: Report killswitch validation success
       ansible.builtin.debug:
         msg: >-
           download-vpn killswitch validated: nft DROP active; internet-bound IPv4
           routes via {{ download_vpn_wg_interface }} (Table=auto); no IPv6 default
           route; qBittorrent bound to {{ download_vpn_wg_interface }}; VPN IPv4
-          egress works; non-VPN IPv4 + all IPv6 egress refused.
+          egress works; non-VPN IPv4 + all IPv6 egress refused; LAN-reply routing
+          present (web UIs reachable cross-subnet).

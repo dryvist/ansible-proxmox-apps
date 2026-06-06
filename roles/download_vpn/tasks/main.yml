@@ -179,6 +179,39 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
+# --- Phase 5b: LAN-reply policy routing (cross-subnet web UI reachability) ---
+# Lets cross-subnet clients (Traefik on the management VLAN) reach the
+# qBittorrent/Prowlarr web UIs without opening any non-VPN egress: a connmark
+# marks inbound UI connections, the mark is restored on their replies, and only
+# those replies are policy-routed out the LAN NIC. App-initiated egress is never
+# marked, so it still leaves via wg0 (or is dropped by the killswitch).
+- name: Deploy LAN-reply connmark mangle ruleset
+  ansible.builtin.template:
+    src: mangle.nft.j2
+    dest: "{{ download_vpn_mangle_ruleset_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "/usr/sbin/nft -c -f %s"
+  notify: Restart download-vpn lanroute
+
+- name: Deploy LAN-reply policy-routing systemd unit
+  ansible.builtin.template:
+    src: download-vpn-lanroute.service.j2
+    dest: /etc/systemd/system/download-vpn-lanroute.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start LAN-reply policy routing
+  ansible.builtin.systemd:
+    name: download-vpn-lanroute.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: download_vpn_manage_services
+
 # --- Phase 6: qBittorrent ----------------------------------------------------
 - name: Ensure qBittorrent config directory exists
   ansible.builtin.file:
