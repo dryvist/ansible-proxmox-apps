@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.1...v1.26.2) (2026-06-07)
+
+
+### Bug Fixes
+
+* **download_vpn:** set qBittorrent auth whitelist via API, not template ([#361](https://github.com/dryvist/ansible-proxmox-apps/issues/361)) ([e6122d8](https://github.com/dryvist/ansible-proxmox-apps/commit/e6122d8e8babdb4096bba2f9190eb7b604e717c4)), closes [#355](https://github.com/dryvist/ansible-proxmox-apps/issues/355)
+
 ## [1.26.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.0...v1.26.1) (2026-06-07)
 
 
