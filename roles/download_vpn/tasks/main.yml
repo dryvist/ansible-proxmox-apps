@@ -51,6 +51,16 @@
       eth0).
 
 # --- Phase 1: packages -------------------------------------------------------
+- name: Check whether the apt proxy is reachable
+  ansible.builtin.wait_for:
+    host: "{{ download_vpn_apt_cacher_host }}"
+    port: "{{ download_vpn_apt_cacher_port }}"
+    timeout: 5
+  register: download_vpn_apt_proxy
+  ignore_errors: true
+  changed_when: false
+  when: download_vpn_apt_cacher_host | length > 0
+
 - name: Install media + VPN + firewall packages
   ansible.builtin.apt:
     name:
@@ -66,7 +76,11 @@
       - libicu-dev
       - gnupg
     state: present
-    update_cache: true
+    # Only refresh the cache when the proxy is reachable. A locked-down box can't
+    # reach it and already has its packages, so it must not block on a fetch.
+    update_cache: >-
+      {{ (download_vpn_apt_cacher_host | length == 0)
+         or (not (download_vpn_apt_proxy.failed | default(false))) }}
     cache_valid_time: 3600
 
 # --- Phase 1b: timezone -----------------------------------------------------
