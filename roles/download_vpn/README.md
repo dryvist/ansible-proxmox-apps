@@ -36,6 +36,41 @@ outside the VPN:
    and the `ct mark` guard keeps WireGuard's own fwmark on encapsulated UDP
    intact so the tunnel is never recursively routed.
 
+## Bandwidth / QoS (self-throttle)
+
+qBittorrent is the WAN's heaviest user; on an asymmetric link (e.g. 1 Gbps down /
+35 Mbps up) unthrottled seeding saturates the **upload**, starves ACKs, and
+collapses every other device's download (bufferbloat). The role caps qBittorrent
+itself via the **WebUI API** (`setPreferences`), not the flat `qBittorrent.conf`
+(its speed/scheduler keys are undocumented + version-fragile and the daemon
+overwrites the file on save — file-based limits silently never apply). A scheduler
+applies heavier **alt** limits during a work-hours window and lighter normal
+limits outside it. Limits are KiB/s (`-1` = unlimited); the schedule is evaluated
+in the container's local time, pinned to **UTC** via `download_vpn_timezone`.
+
+This only shapes the torrent box. **Whole-network QoS** (guaranteeing laptops
+bandwidth regardless of IP, shaping *other* high users) is a gateway function —
+e.g. a scheduled UniFi Traffic Rule on the torrent VLAN + DSCP priority for
+laptop/video-call traffic — and lives in the gateway repo, not here.
+
+## Enabling IPv6 later (currently disabled — read before flipping it)
+
+IPv6 is intentionally killed today (kernel sysctl + `nft ip6` drop + no `::/0` in
+`AllowedIPs` + v4-only `wg0` address). The killswitch already drops all public v6.
+If/when IPv6 is enabled, do **all** of these or it can leak:
+
+1. **Tunnel v6**: add the Proton v6 address to `wg0`'s `Address` and `::/0` to
+   `download_vpn_wg_allowed_ips`, so torrent v6 egresses the tunnel — otherwise
+   the LAN's SLAAC default (which appears the moment `disable_ipv6=0`) is clearnet.
+2. **Validator**: `tasks/validate.yml` check C currently asserts **no** v6 default
+   route at all; change it to permit a v6 default **only via `wg0`**.
+3. **LAN-reply (mangle)**: the connmark output rule restores the mark family-
+   agnostically, but inbound marking uses `ip saddr` (v4-only), so no v6 is marked
+   today. For cross-subnet v6 web UI, add an `ip6 saddr`-scoped prerouting rule,
+   an `ip -6 rule fwmark`, and a v6 lanroute table routing only ULA/link-local +
+   the mgmt v6 prefix with an **`unreachable default`** — never a v6 `default`.
+4. Re-run all three validation layers before trusting it.
+
 ## Three validation layers (all mandatory)
 
 - **CI** — `molecule/download_vpn/verify.yml`, on every PR. Asserts the nft
@@ -93,6 +128,13 @@ derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
 - `download_vpn_prowlarr_web_port` — Prowlarr WebUI port (tofu).
 - `download_vpn_validator_interval` — runtime validator cadence (default 2min).
 - `download_vpn_ntfy_url` / `download_vpn_healthcheck_url` — breach alerting.
+- `download_vpn_qbittorrent_{up,dl,alt_up,alt_dl}_limit` — KiB/s, `-1` =
+  unlimited. `alt_*` apply during the scheduler window.
+- `download_vpn_qbittorrent_schedule_{from,to}_{hour,min}` +
+  `download_vpn_qbittorrent_scheduler_days` — throttle window (UTC).
+- `download_vpn_timezone` — container TZ (default `UTC`; the scheduler reads it).
+- `download_vpn_lanroute_reply_networks` — RFC1918 ranges the LAN-reply table
+  routes; everything else hits its `unreachable default` (fail-closed).
 
 ## Usage
 
