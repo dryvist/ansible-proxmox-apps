@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.3...v1.26.4) (2026-06-07)
+
+
+### Bug Fixes
+
+* **ntp:** skip chrony service start in LXC; exclude download_vpn from apt proxy ([#366](https://github.com/dryvist/ansible-proxmox-apps/issues/366)) ([ddb411f](https://github.com/dryvist/ansible-proxmox-apps/commit/ddb411f2b30fc8f2823e845b465e4d01ae38755c))
+
 ## [1.26.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.2...v1.26.3) (2026-06-07)
 
 
