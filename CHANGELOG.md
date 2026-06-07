@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.4...v1.26.5) (2026-06-07)
+
+
+### Bug Fixes
+
+* **ntp+servarr_wiring:** reliable LXC detection and Sonarr v4 quality profile ([a12173e](https://github.com/dryvist/ansible-proxmox-apps/commit/a12173e97bc4bd52ed15a4119cbce7d6a244795f))
+
 ## [1.26.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.3...v1.26.4) (2026-06-07)
 
 
