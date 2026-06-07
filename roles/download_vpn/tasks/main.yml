@@ -267,13 +267,33 @@
   changed_when: false
   when: download_vpn_manage_services
 
-- name: Set the qBittorrent WebUI admin password via API
+- name: Assert the qBittorrent admin password is available
+  # A missing SOPS env makes the lookup return "", which would silently set an
+  # empty WebUI password. Fail loudly instead — this is the most likely cause of
+  # the live password drifting from SOPS. Run the play via `sops exec-env`.
+  ansible.builtin.assert:
+    that:
+      - download_vpn_qbittorrent_admin_password | length > 0
+    fail_msg: >-
+      QBITTORRENT_ADMIN_PASSWORD is empty — SOPS env not injected. Run the play
+      via `sops exec-env secrets.enc.yaml '...'` so the WebUI password is set.
+    quiet: true
+  when: download_vpn_manage_services
+
+- name: Set the qBittorrent WebUI admin password + auth whitelist via API
+  # The auth subnet whitelist is set HERE (not in qBittorrent.conf.j2): qBittorrent
+  # rewrites its conf from in-memory prefs on every setPreferences call, so a
+  # template-written whitelist is clobbered by the QoS write below. Setting it via
+  # the API lands it in memory, where it survives subsequent writes and the flush.
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/setPreferences"
     method: POST
     body_format: form-urlencoded
     body:
-      json: '{"web_ui_password":"{{ download_vpn_qbittorrent_admin_password }}"}'
+      json: >-
+        {"web_ui_password":"{{ download_vpn_qbittorrent_admin_password }}",
+         "bypass_auth_subnet_whitelist_enabled":true,
+         "bypass_auth_subnet_whitelist":"{{ download_vpn_qbittorrent_auth_whitelist }}"}
     status_code: 200
   no_log: true
   changed_when: false
