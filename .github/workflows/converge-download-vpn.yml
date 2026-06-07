@@ -1,0 +1,45 @@
+# Converge download_vpn — final hop of the download-vpn rebuild chain (#368).
+#
+# After ansible-proxmox re-applies the media LXC features (/dev/net/tun + mounts)
+# on the freshly recreated shell, it fires a repository_dispatch
+# (event_type: rebuild-download-vpn) at this repo. The download_vpn role reinstalls
+# packages (apt succeeds pre-killswitch on the fresh shell) and reconfigures
+# qBittorrent/Prowlarr; the role imports validate.yml and FAILS on any
+# killswitch/leak violation.
+#
+# Requires a self-hosted runner ([self-hosted, Linux]) pre-baked with the SOPS age
+# key and the Doppler token (project iac-conf-mgmt, config prd), plus the synced
+# inventory. See dryvist/terraform-proxmox docs/REBUILD.md for full prerequisites.
+name: Converge download_vpn
+
+"on":
+  repository_dispatch:
+    types: [rebuild-download-vpn]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: converge-download-vpn
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    name: Converge the download_vpn role
+    runs-on: [self-hosted, Linux]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Secrets are injected as env vars by `sops exec-env`; the download_vpn role
+      # marks secret-bearing tasks no_log, and ansible-playbook never echoes the
+      # environment, so no secrets reach the run log.
+      - name: Converge download_vpn (reinstall + reconfigure the fresh shell)
+        run: >-
+          nix develop "github:JacobPEvans/nix-devenv#ansible-apps" --command
+          sops exec-env secrets.enc.yaml
+          'doppler run -p iac-conf-mgmt -c prd --
+          ansible-playbook -i inventory/hosts.yml playbooks/site.yml
+          --limit download_vpn_group --tags download_vpn'
