@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.0...v1.26.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **download_vpn:** correct qBittorrent uTP/overhead rate-limit API field names ([#359](https://github.com/dryvist/ansible-proxmox-apps/issues/359)) ([1a56300](https://github.com/dryvist/ansible-proxmox-apps/commit/1a563004d6b34a91b214e5706e45a66702706869))
+
 ## [1.26.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.25.1...v1.26.0) (2026-06-07)
 
 
