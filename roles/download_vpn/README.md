@@ -127,6 +127,8 @@ derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
   narrow to `download_vpn_lan_subnet` for a tighter boundary. Applied via the
   `setPreferences` API (not the conf template — qBittorrent rewrites that file).
 - `download_vpn_prowlarr_web_port` — Prowlarr WebUI port (tofu).
+- `download_vpn_apt_cacher_host` / `download_vpn_apt_cacher_port` — apt proxy,
+  probed before refreshing the cache so a locked-down (offline) box doesn't block.
 - `download_vpn_validator_interval` — runtime validator cadence (default 2min).
 - `download_vpn_ntfy_url` / `download_vpn_healthcheck_url` — breach alerting.
 - `download_vpn_qbittorrent_{up,dl,alt_up,alt_dl}_limit` — KiB/s, `-1` =
