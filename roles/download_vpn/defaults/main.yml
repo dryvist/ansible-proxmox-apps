@@ -98,8 +98,20 @@ download_vpn_qbittorrent_config_dir: "/home/{{ download_vpn_user }}/.config/qBit
 # Web UI port from tofu constants (no hardcoded port).
 download_vpn_qbittorrent_web_port: >-
   {{ tofu_data.constants.media_ports.qbittorrent_web }}
-# Admin password for the WebUI — from SOPS env.
+# Admin password for the WebUI — from SOPS env. Still required for any client
+# OUTSIDE the auth whitelist below (defence in depth); whitelisted clients skip it.
 download_vpn_qbittorrent_admin_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') }}"
+# WebUI auth bypass for trusted in-network clients — the qBittorrent analogue of
+# the *arr apps' AuthenticationRequired=DisabledForLocalAddresses. Clients whose
+# source IP is in this comma-separated CIDR list skip the login form (and so can
+# never trip qBittorrent's failed-auth IP ban). Defaults to the /16 supernet of
+# the container's own IP — i.e. every VLAN in the homelab (3rd octet = VLAN id),
+# so cross-VLAN clients and Traefik-proxied requests are trusted too. Derived
+# from container_ip, so no CIDR is hardcoded. Narrow to download_vpn_lan_subnet
+# (the container's own /24) for a tighter boundary.
+download_vpn_qbittorrent_auth_whitelist: >-
+  {{ ((container_ip | default(ansible_default_ipv4.address)) ~ '/16')
+     | ansible.utils.ipaddr('network/prefix') }}
 # CRITICAL: bind qBittorrent's traffic to wg0 (interface binding). With the
 # killswitch this is belt-and-suspenders; binding alone closed the 30% leak
 # seen in killswitch-only testing.
@@ -111,9 +123,10 @@ download_vpn_qbittorrent_interface: "{{ download_vpn_wg_interface }}"
 download_vpn_qbittorrent_anonymous_mode: false
 # Global ratio + seed-time goals. Per-torrent limits (set by Prowlarr fullSync)
 # take priority — set permissively so private tracker indexers can be stricter.
-download_vpn_qbittorrent_max_ratio: 2.0
-# 4320 minutes = 72h, a common private tracker minimum seed time.
-download_vpn_qbittorrent_max_seeding_minutes: 4320
+download_vpn_qbittorrent_max_ratio: 5
+# -1 = disabled ("When total seeding time reaches" checkbox left unchecked).
+# If ever enabled, set to 15000 minutes (~10 days).
+download_vpn_qbittorrent_max_seeding_minutes: -1
 # 0=Pause when goal is reached. NEVER 1=Delete — *arr handles removal after
 # import and seed completion. Auto-delete races the importer and can nuke a hardlink.
 download_vpn_qbittorrent_max_ratio_action: 0
@@ -137,24 +150,19 @@ download_vpn_qbittorrent_max_uploads_per_torrent: -1
 # file on save, so file-based limits silently never took effect. The API is the
 # stable, documented contract — same pattern the role uses for the admin password.
 #
-# Units: KiB/s (1 Mbps ≈ 122 KiB/s). -1 = unlimited.
-# WAN is ~1 Gbps down / 35 Mbps up (~4272 KiB/s) — UPLOAD is the scarce resource:
-# unthrottled seeding saturates the 35 Mbps uplink, starves ACKs, and collapses
-# every other device's download (bufferbloat). So upload is always capped, hard
-# during work hours. The scheduler applies the ALT (heavy) limits DURING the
-# window and the normal limits outside it.
-download_vpn_qbittorrent_up_limit: 3000        # off-peak ~24 Mbps (keeps ACK headroom)
-download_vpn_qbittorrent_dl_limit: -1           # off-peak unlimited (1 Gbps downlink)
-download_vpn_qbittorrent_alt_up_limit: 500      # work-hours ~4 Mbps (laptops keep ~31)
-download_vpn_qbittorrent_alt_dl_limit: 12000    # work-hours ~100 Mbps
+# Units: KiB/s (1 Mbps ≈ 122 KiB/s). 0 = unlimited.
+download_vpn_qbittorrent_up_limit: 3125        # 25 Mbps — 24/7 global upload cap
+download_vpn_qbittorrent_dl_limit: 9766         # ~75 Mbps — 24/7 global download cap
+download_vpn_qbittorrent_alt_up_limit: 1250     # work-hours 10 Mbps upload
+download_vpn_qbittorrent_alt_dl_limit: 1250     # work-hours 10 Mbps download
 download_vpn_qbittorrent_scheduler_enabled: true
 # scheduler_days: 0=every day, 1=weekdays (Mon–Fri), 2=weekends, 3–9=Mon..Sun.
 download_vpn_qbittorrent_scheduler_days: 1
 # Throttle window in the container's LOCAL time, which is forced to UTC (see
-# download_vpn_timezone): 12:00–23:00 UTC. Tune start/end without touching tasks.
+# download_vpn_timezone): 12:00–22:00 UTC. Tune start/end without touching tasks.
 download_vpn_qbittorrent_schedule_from_hour: 12
 download_vpn_qbittorrent_schedule_from_min: 0
-download_vpn_qbittorrent_schedule_to_hour: 23
+download_vpn_qbittorrent_schedule_to_hour: 22
 download_vpn_qbittorrent_schedule_to_min: 0
 
 # Container timezone. The qBittorrent scheduler evaluates SYSTEM LOCAL time, so

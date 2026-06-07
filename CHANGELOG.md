@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.25.0...v1.25.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **download_vpn:** tighten qBittorrent rate limits, schedule, and seeding ([#354](https://github.com/dryvist/ansible-proxmox-apps/issues/354)) ([4e28939](https://github.com/dryvist/ansible-proxmox-apps/commit/4e289395ef2b04be313b5d920e0dff2a11d1975b))
+
+## [1.25.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.24.0...v1.25.0) (2026-06-06)
+
+
+### Features
+
+* **download_vpn:** skip qBittorrent WebUI auth for trusted subnets ([#352](https://github.com/dryvist/ansible-proxmox-apps/issues/352)) ([70b50d9](https://github.com/dryvist/ansible-proxmox-apps/commit/70b50d9ef98a68199ac15ce41358cd153bb10826))
+
 ## [1.24.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.23.0...v1.24.0) (2026-06-06)
 
 

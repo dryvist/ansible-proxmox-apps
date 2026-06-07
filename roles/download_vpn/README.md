@@ -121,6 +121,10 @@ derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
 - `download_vpn_wg_endpoint` — Proton `host:port` (SOPS env).
 - `download_vpn_lan_subnet` — LAN allowed through the killswitch (derived).
 - `download_vpn_qbittorrent_web_port` — qBittorrent WebUI port (tofu).
+- `download_vpn_qbittorrent_auth_whitelist` — CIDRs that skip WebUI auth
+  (qBittorrent's `DisabledForLocalAddresses` analogue). Defaults to the `/16`
+  supernet of `container_ip` (every homelab VLAN, derived — no hardcoded CIDR);
+  narrow to `download_vpn_lan_subnet` for a tighter boundary.
 - `download_vpn_prowlarr_web_port` — Prowlarr WebUI port (tofu).
 - `download_vpn_validator_interval` — runtime validator cadence (default 2min).
 - `download_vpn_ntfy_url` / `download_vpn_healthcheck_url` — breach alerting.
