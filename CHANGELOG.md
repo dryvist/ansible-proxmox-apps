@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.2...v1.26.3) (2026-06-07)
+
+
+### Bug Fixes
+
+* **download_vpn:** skip apt cache refresh when the proxy is unreachable ([#364](https://github.com/dryvist/ansible-proxmox-apps/issues/364)) ([1909b3e](https://github.com/dryvist/ansible-proxmox-apps/commit/1909b3e50610c3b3a3967f237acc7a1dacfe0100)), closes [#363](https://github.com/dryvist/ansible-proxmox-apps/issues/363)
+
 ## [1.26.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.1...v1.26.2) (2026-06-07)
 
 
