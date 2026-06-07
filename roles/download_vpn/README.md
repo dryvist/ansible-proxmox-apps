@@ -34,7 +34,9 @@ outside the VPN:
    flows are never marked, so they still egress via `wg0` (or are dropped). This
    opens **no new egress path** — the killswitch guarantees above are unchanged,
    and the `ct mark` guard keeps WireGuard's own fwmark on encapsulated UDP
-   intact so the tunnel is never recursively routed.
+   intact so the tunnel is never recursively routed. The role re-asserts this
+   table immediately before the deploy-time gate, atomically rebuilding it only
+   when it has drifted to a clearnet `default via`, so every converge is clean.
 
 ## Bandwidth / QoS (self-throttle)
 
