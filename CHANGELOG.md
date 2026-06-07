@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.25.1...v1.26.0) (2026-06-07)
+
+
+### Features
+
+* **download_vpn:** API-driven bandwidth QoS + fail-closed LAN-reply routing ([#356](https://github.com/dryvist/ansible-proxmox-apps/issues/356)) ([3eabbc0](https://github.com/dryvist/ansible-proxmox-apps/commit/3eabbc00c043a12c36c3cbb2946b49a81e421a64))
+
 ## [1.25.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.25.0...v1.25.1) (2026-06-07)
 
 
