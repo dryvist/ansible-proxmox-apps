@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.27.0...v1.28.0) (2026-06-09)
+
+
+### Features
+
+* **syslog_forwarder:** forward infra LXC logs to the Cribl pipeline ([#377](https://github.com/dryvist/ansible-proxmox-apps/issues/377)) ([5ba4e7c](https://github.com/dryvist/ansible-proxmox-apps/commit/5ba4e7c97750db63c4356b0cf08b5ce9d4097056))
+
 ## [1.27.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.6...v1.27.0) (2026-06-09)
 
 
