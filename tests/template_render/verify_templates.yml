@@ -1246,3 +1246,60 @@
           - traefik.yml.j2: route53 DNS-01 resolver, secured API, TLS >= 1.2, no leaked creds
           - dynamic.yml.j2: per-service routers + backends, wildcard SAN, secured dashboard
           - acme.env.j2: AWS creds + AWS_HOSTED_ZONE_ID in the root-only EnvironmentFile
+
+# =============================================================================
+# syslog_forwarder — the rsyslog drop-in that forwards every log to the central
+# syslog VIP (-> HAProxy -> Cribl Edge -> Splunk). Render + assert the omfwd rule.
+# =============================================================================
+- name: Render and verify syslog_forwarder template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/syslog_forwarder/defaults/main.yml with scrubbed values.
+    syslog_forwarder_target_host: "syslog.pve.example.com"
+    syslog_forwarder_target_port: 1517
+    syslog_forwarder_protocol: tcp
+    syslog_forwarder_queue_max_disk_space: 256m
+    _sf_template_dir: "../../roles/syslog_forwarder/templates"
+
+  tasks:
+    - name: Render the syslog forward rule to /tmp
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/10-forward-cribl.conf.j2"
+        dest: /tmp/test_syslog_forward.conf
+        mode: "0644"
+
+    - name: Read rendered syslog forward rule
+      ansible.builtin.slurp:
+        src: /tmp/test_syslog_forward.conf
+      register: _sf_raw
+
+    - name: Decode rendered syslog forward rule
+      ansible.builtin.set_fact:
+        _sf: "{{ _sf_raw.content | b64decode }}"
+
+    - name: Assert all logs forward to the VIP over TCP with a disk-assisted queue
+      ansible.builtin.assert:
+        that:
+          # All facilities/severities, via the omfwd output module.
+          - "'*.*' in _sf"
+          - "'action(type=' in _sf"
+          - "'omfwd' in _sf"
+          # To the stable syslog CNAME on the Linux port, over TCP.
+          - "'syslog.pve.example.com' in _sf"
+          - "'1517' in _sf"
+          - "'protocol' in _sf"
+          - "'tcp' in _sf"
+          # Disk-assisted queue so a receiver outage buffers instead of dropping.
+          - "'queue.filename' in _sf"
+          - "'cribl_fwd' in _sf"
+          - "'256m' in _sf"
+        fail_msg: >-
+          10-forward-cribl.conf.j2 did not render the expected omfwd rule
+          (selector/target/port/protocol/queue).
+
+    - name: Syslog forwarder template rendering PASSED
+      ansible.builtin.debug:
+        msg: "syslog_forwarder: omfwd rule -> syslog.pve.example.com:1517/tcp with disk queue"

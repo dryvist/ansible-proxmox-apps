@@ -1,0 +1,39 @@
+---
+# Install rsyslog and add a single forward rule so this host's logs (systemd
+# journal + everything rsyslog sees) flow to the central syslog VIP -> Cribl
+# Edge -> Splunk. The pipeline + load-balancer LXCs are excluded by the site.yml
+# play's host pattern, so this never forwards into the receiver it feeds.
+
+- name: Assert the syslog VIP target + port resolved from inventory
+  ansible.builtin.assert:
+    that:
+      - syslog_forwarder_target_host | length > 0
+      - syslog_forwarder_target_port | string | length > 0
+    fail_msg: >-
+      syslog_forwarder needs PROXMOX_SUBDOMAIN (for the syslog CNAME target) and
+      tofu_data.constants.syslog_ports.linux. Ensure the inventory is synced and
+      PROXMOX_SUBDOMAIN is set.
+    quiet: true
+
+- name: Install rsyslog
+  ansible.builtin.apt:
+    name: rsyslog
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Deploy the Cribl syslog-forward rule
+  ansible.builtin.template:
+    src: 10-forward-cribl.conf.j2
+    dest: "{{ syslog_forwarder_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: rsyslogd -N1 -f %s
+  notify: Restart rsyslog
+
+- name: Enable and start rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: started
+    enabled: true

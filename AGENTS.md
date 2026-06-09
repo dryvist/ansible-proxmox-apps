@@ -9,6 +9,10 @@ this repo handles app config only.
 - **Cribl Edge** (`cribl_edge` role — native install on LXC containers)
 - **Cribl Stream** (`cribl_stream` role — native install on LXC containers)
 - **HAProxy** (LXC container, syslog/netflow VIP forwarding to Cribl LXCs)
+- **Syslog forwarding** (`syslog_forwarder` role — rsyslog on every infra LXC
+  ships host + native-service logs to the HAProxy syslog VIP on the Linux port
+  -> Cribl Edge -> Splunk `os` index; the pipeline (Cribl) and LB (HAProxy) LXCs
+  are excluded to avoid feedback loops)
 - **Technitium DNS** (LXC container)
 - **apt-cacher-ng** (LXC container)
 - **Mailpit** (LXC container, SMTP relay with web UI)
@@ -33,7 +37,9 @@ this repo handles app config only.
 ## Pipeline Data Flow
 
 ```text
-Source -> HAProxy LXC (175, TCP+UDP 514-518, 1514-1518, 2055)
+Sources: external (network gear, OS hosts) + infra LXCs self-logging
+         (syslog_forwarder role, Linux port 1517)
+         -> HAProxy LXC (175, TCP+UDP 514-518, 1514-1518, 2055)
            |
        Cribl Edge LXCs (180, 181) [syslog ports 1514-1518]
          - Pipeline: sets index + sourcetype by port
