@@ -34,13 +34,12 @@ class TestMacOSPipelineFreshness:
         """
         mgmt_url, user, password = splunk_creds
         search_str = (
-            "search (index=os OR index=mac_perf) sourcetype=macos:* "
-            "earliest=-5m | head 5"
+            "(index=os OR index=mac_perf) sourcetype=macos:* "
+            "| head 5"
         )
-        result = query_splunk(
-            mgmt_url, user, password, search_str, timeout=30
+        results = query_splunk(
+            mgmt_url, user, password, search_str, earliest="-5m", timeout=30
         )
-        results = result.get("results", [])
         assert results, (
             "macbook-m4 Cribl Edge -> Cloud -> Splunk chain appears broken: "
             "no events with sourcetype=macos:* in (os OR mac_perf) within "
@@ -69,10 +68,9 @@ class TestMacOSPipelineFreshness:
             "(sourcetype=macos:unified_log OR sourcetype=macos:system:*) "
             "BY sourcetype"
         )
-        result = query_splunk(
+        results = query_splunk(
             mgmt_url, user, password, search_str, timeout=30
         )
-        results = result.get("results", [])
         sourcetypes_seen = {row.get("sourcetype") for row in results}
 
         assert any(
@@ -111,10 +109,9 @@ class TestMacOSPipelineFreshness:
             "| where isnotnull(last_seen) "
             "| eval seconds_ago = now() - last_seen | head 1"
         )
-        result = query_splunk(
+        results = query_splunk(
             mgmt_url, user, password, search_str, timeout=30
         )
-        results = result.get("results", [])
         assert results, (
             "no macOS pack events ever indexed in (index=os OR index=mac_perf): "
             "the pack may have never emitted data, or the indexes do not "

@@ -1,11 +1,47 @@
 """Pytest fixtures for E2E pipeline tests."""
 
+from dataclasses import dataclass
 import json
 import os
-import socket
 from pathlib import Path
 
 import pytest
+
+
+class SecretValue:
+    """String-like secret value with a redacted repr for pytest tracebacks."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def __str__(self):
+        return self._value
+
+    def __repr__(self):
+        return "<redacted>"
+
+    def __format__(self, spec):
+        return format(self._value, spec)
+
+
+@dataclass(frozen=True)
+class SplunkCredentials:
+    """Splunk credentials with redacted secret representation."""
+
+    mgmt_url: str
+    user: str
+    password: SecretValue
+
+    def __iter__(self):
+        yield self.mgmt_url
+        yield self.user
+        yield self.password
+
+    def __repr__(self):
+        return (
+            "SplunkCredentials("
+            f"mgmt_url={self.mgmt_url!r}, user={self.user!r}, password=<redacted>)"
+        )
 
 
 @pytest.fixture(scope="session")
@@ -104,41 +140,36 @@ def splunk_creds(tofu_inventory, constants):
     """
     splunk_ip = tofu_inventory["splunk_vm"]["splunk"]["ip"]
     mgmt_port = constants["service_ports"]["splunk_mgmt"]
-    password = os.environ.get("SPLUNK_PASSWORD")
-    if not password:
+    raw_password = os.environ.get("SPLUNK_PASSWORD")
+    if not raw_password:
         pytest.skip("SPLUNK_PASSWORD environment variable not set")
-    mgmt_url = f"https://{splunk_ip}:{mgmt_port}"
-    return (mgmt_url, "admin", password)
+    mgmt_url = os.environ.get("SPLUNK_MGMT_URL", f"https://{splunk_ip}:{mgmt_port}")
+    return SplunkCredentials(mgmt_url, "admin", SecretValue(raw_password))
 
 
-@pytest.fixture(scope="session", autouse=True)
-def infrastructure_reachable(
-    cribl_edge_ips, cribl_stream_ips, haproxy_host, constants
-):
-    """Skip all tests if pipeline infrastructure is unreachable.
+@pytest.fixture(scope="session")
+def splunk_hec_url(splunk_host, constants):
+    """Return the Splunk HEC base URL."""
+    port = constants["service_ports"]["splunk_hec"]
+    return os.environ.get("SPLUNK_HEC_URL", f"https://{splunk_host}:{port}")
 
-    Attempts a TCP connection to the Cribl Edge API port on the first
-    Edge LXC, the Cribl Stream API port on the first Stream LXC, and
-    port 22 (SSH) on HAProxy with a 5-second timeout each. Ports are
-    read from tofu constants. If any host is unreachable, all E2E
-    tests are skipped.
-    """
-    edge_api_port = constants["service_ports"]["cribl_edge_api"]
-    stream_api_port = constants["service_ports"]["cribl_stream_api"]
-    hosts = [
-        (cribl_edge_ips[0], edge_api_port, "cribl-edge"),
-        (cribl_stream_ips[0], stream_api_port, "cribl-stream"),
-        (haproxy_host, 22, "haproxy"),
-    ]
-    for host_ip, port, label in hosts:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)
-        try:
-            sock.connect((host_ip, port))
-        except (socket.timeout, ConnectionRefusedError, OSError):
-            pytest.skip(
-                f"Infrastructure unreachable: cannot connect to "
-                f"{host_ip}:{port} ({label})"
-            )
-        finally:
-            sock.close()
+
+@pytest.fixture(scope="session")
+def splunk_hec_token():
+    """Return the Splunk HEC token from the environment."""
+    raw_token = os.environ.get("SPLUNK_HEC_TOKEN")
+    if not raw_token:
+        pytest.skip("SPLUNK_HEC_TOKEN environment variable not set")
+    return SecretValue(raw_token)
+
+
+@pytest.fixture(scope="session")
+def pipeline_poll_timeout():
+    """Return the live-pipeline poll timeout in seconds."""
+    return int(os.environ.get("PIPELINE_POLL_TIMEOUT_SECONDS", "120"))
+
+
+@pytest.fixture(scope="session")
+def pipeline_poll_interval():
+    """Return the live-pipeline poll interval in seconds."""
+    return int(os.environ.get("PIPELINE_POLL_INTERVAL_SECONDS", "10"))

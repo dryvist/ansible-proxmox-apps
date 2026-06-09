@@ -1,128 +1,120 @@
-"""Tier 2: Full-path data flow pipeline tests.
-
-Sends syslog data through the pipeline and verifies it arrives in
-the correct Splunk index. Tests both the HAProxy-fronted path and
-the direct-to-LXC path.
-"""
+"""Full syslog source-family pipeline tests."""
 
 import time
 import uuid
 
 import pytest
 
-from .helpers import send_udp_syslog, wait_for_event
-
-
-# Map syslog port names to their expected Splunk index
-SYSLOG_PORT_INDEX_MAP = {
-    "unifi": "unifi",
-    "palo_alto": "firewall",
-    "cisco_asa": "firewall",
-    "linux": "os",
-    "windows": "os",
-}
+from .fixtures import SYSLOG_SOURCES, SYSLOG_SOURCE_IDS
+from .helpers import (
+    make_syslog_message,
+    send_tcp_syslog,
+    send_udp_syslog,
+    wait_for_event,
+)
 
 
 class TestSyslogViaHAProxy:
-    """Tests that send syslog through HAProxy to Splunk."""
+    """Validate every app-facing syslog source path through HAProxy."""
 
-    def test_syslog_via_haproxy(self, haproxy_host, constants, splunk_creds):
-        """Send a UDP syslog message via HAProxy and verify it reaches Splunk.
-
-        Sends a uniquely identifiable syslog message to HAProxy on the
-        UniFi syslog port (1514) and waits up to 120 seconds for it to
-        appear in the unifi index in Splunk.
-        """
-        mgmt_url, user, password = splunk_creds
-        port = constants["syslog_ports"]["unifi"]
-        sentinel = f"e2e-haproxy-{uuid.uuid4().hex[:8]}-{int(time.time())}"
-        message = (
-            f"<14>1 {time.strftime('%Y-%m-%dT%H:%M:%SZ')} testhost "
-            f"e2e-test - - - {sentinel}"
-        )
-
-        send_udp_syslog(haproxy_host, port, message)
-
-        results = wait_for_event(
-            mgmt_url, user, password, sentinel, index="unifi", timeout=120
-        )
-        assert len(results) > 0, (
-            f"Syslog via HAProxy: sentinel '{sentinel}' not found in "
-            f"index=unifi after 120s"
-        )
-
-
-class TestSyslogDirectToLXC:
-    """Tests that send syslog directly to Cribl Edge LXC containers."""
-
-    def test_syslog_direct_to_lxc(
-        self, cribl_edge_ips, constants, splunk_creds
-    ):
-        """Send a UDP syslog message directly to a Cribl Edge LXC and verify.
-
-        Bypasses HAProxy and sends directly to the first Cribl Edge LXC
-        on the UniFi syslog port, then verifies the event arrives in Splunk.
-        """
-        mgmt_url, user, password = splunk_creds
-        port = constants["syslog_ports"]["unifi"]
-        edge_ip = cribl_edge_ips[0]
-        sentinel = f"e2e-direct-{uuid.uuid4().hex[:8]}-{int(time.time())}"
-        message = (
-            f"<14>1 {time.strftime('%Y-%m-%dT%H:%M:%SZ')} testhost "
-            f"e2e-test - - - {sentinel}"
-        )
-
-        send_udp_syslog(edge_ip, port, message)
-
-        results = wait_for_event(
-            mgmt_url, user, password, sentinel, index="unifi", timeout=120
-        )
-        assert len(results) > 0, (
-            f"Syslog direct to LXC: sentinel '{sentinel}' not found in "
-            f"index=unifi after 120s"
-        )
-
-    @pytest.mark.parametrize(
-        "port_name,expected_index",
-        list(SYSLOG_PORT_INDEX_MAP.items()),
-        ids=list(SYSLOG_PORT_INDEX_MAP.keys()),
-    )
-    def test_syslog_port_routing(
+    @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
+    def test_udp_syslog_via_haproxy_standard_port(
         self,
-        cribl_edge_ips,
+        haproxy_host,
+        splunk_creds,
+        source,
+        pipeline_poll_timeout,
+        pipeline_poll_interval,
+    ):
+        """Send UDP syslog via HAProxy and verify Splunk routing."""
+        mgmt_url, user, password = splunk_creds
+        sentinel = f"e2e-haproxy-udp-{source.key}-{uuid.uuid4().hex[:10]}-{int(time.time())}"
+
+        send_udp_syslog(
+            haproxy_host,
+            source.standard_port,
+            make_syslog_message(sentinel, f"e2e-{source.key}-udp"),
+        )
+        results = wait_for_event(
+            mgmt_url,
+            user,
+            password,
+            sentinel,
+            index=source.expected_index,
+            sourcetype=source.expected_sourcetype,
+            timeout=pipeline_poll_timeout,
+            poll_interval=pipeline_poll_interval,
+        )
+        assert results, (
+            f"UDP {source.label} sentinel {sentinel} did not reach Splunk "
+            f"with index={source.expected_index} sourcetype={source.expected_sourcetype}"
+        )
+
+    @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
+    def test_tcp_syslog_via_haproxy_standard_port(
+        self,
+        haproxy_host,
+        splunk_creds,
+        source,
+        pipeline_poll_timeout,
+        pipeline_poll_interval,
+    ):
+        """Send TCP syslog via HAProxy and verify Splunk routing."""
+        mgmt_url, user, password = splunk_creds
+        sentinel = f"e2e-haproxy-tcp-{source.key}-{uuid.uuid4().hex[:10]}-{int(time.time())}"
+
+        send_tcp_syslog(
+            haproxy_host,
+            source.standard_port,
+            make_syslog_message(sentinel, f"e2e-{source.key}-tcp"),
+        )
+        results = wait_for_event(
+            mgmt_url,
+            user,
+            password,
+            sentinel,
+            index=source.expected_index,
+            sourcetype=source.expected_sourcetype,
+            timeout=pipeline_poll_timeout,
+            poll_interval=pipeline_poll_interval,
+        )
+        assert results, (
+            f"TCP {source.label} sentinel {sentinel} did not reach Splunk "
+            f"with index={source.expected_index} sourcetype={source.expected_sourcetype}"
+        )
+
+    @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
+    def test_udp_syslog_via_haproxy_high_port(
+        self,
+        haproxy_host,
         constants,
         splunk_creds,
-        port_name,
-        expected_index,
+        source,
+        pipeline_poll_timeout,
+        pipeline_poll_interval,
     ):
-        """Verify each syslog port routes to the correct Splunk index.
-
-        Sends a uniquely identifiable syslog message to each port on
-        the first Cribl Edge LXC and confirms it lands in the expected
-        Splunk index based on the port-to-index routing configuration.
-        """
+        """Verify backward-compatible high UDP ports still route correctly."""
         mgmt_url, user, password = splunk_creds
-        port = constants["syslog_ports"][port_name]
-        edge_ip = cribl_edge_ips[0]
-        sentinel = (
-            f"e2e-route-{port_name}-{uuid.uuid4().hex[:8]}-{int(time.time())}"
-        )
-        message = (
-            f"<14>1 {time.strftime('%Y-%m-%dT%H:%M:%SZ')} testhost "
-            f"e2e-test - - - {sentinel}"
-        )
+        port = constants["syslog_ports"][source.key]
+        sentinel = f"e2e-haproxy-high-{source.key}-{uuid.uuid4().hex[:10]}-{int(time.time())}"
 
-        send_udp_syslog(edge_ip, port, message)
+        send_udp_syslog(
+            haproxy_host,
+            port,
+            make_syslog_message(sentinel, f"e2e-{source.key}-high"),
+        )
 
         results = wait_for_event(
             mgmt_url,
             user,
             password,
             sentinel,
-            index=expected_index,
-            timeout=120,
+            index=source.expected_index,
+            sourcetype=source.expected_sourcetype,
+            timeout=pipeline_poll_timeout,
+            poll_interval=pipeline_poll_interval,
         )
-        assert len(results) > 0, (
-            f"Port routing: sentinel '{sentinel}' sent to port {port} "
-            f"({port_name}) not found in index={expected_index} after 120s"
+        assert results, (
+            f"High-port UDP {source.label} sentinel {sentinel} did not reach Splunk "
+            f"with index={source.expected_index} sourcetype={source.expected_sourcetype}"
         )
