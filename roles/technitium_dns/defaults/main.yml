@@ -52,8 +52,19 @@ technitium_dns_cname_records:
 # own name points at Traefik, not the host — safe because all internal
 # service-to-service traffic uses container IPs, not these DNS names).
 technitium_dns_ingress_host: traefik
+# Apex ingress rows (the Proxmox cluster UI fronted at the bare subdomain) are
+# EXCLUDED here — they resolve at the zone root, not as <name>.<subdomain> — and
+# are handled by technitium_dns_ingress_apex below instead.
 technitium_dns_ingress_aliases: >-
-  {{ tofu_data.ingress | default([]) | map(attribute='name') | list }}
+  {{ tofu_data.ingress | default([]) | rejectattr('apex', 'defined')
+     | map(attribute='name') | list }}
+# Apex ingress rows: a fronted service that lives at the subdomain zone root
+# itself, e.g. the Proxmox cluster UI load-balanced across the nodes.
+# Selected from the SAME tofu ingress table; gets an A record AT the zone apex
+# (-> Traefik), never a <name>.<subdomain> alias.
+technitium_dns_ingress_apex: >-
+  {{ tofu_data.ingress | default([]) | selectattr('apex', 'defined')
+     | selectattr('apex') | list }}
 # Ingress lives under PROXMOX_SUBDOMAIN (matches the traefik role's
 # traefik_base_domain): aliases resolve as <name>.<PROXMOX_SUBDOMAIN>. This is the
 # SAME value as the authoritative technitium_dns_zone, so the records land in the

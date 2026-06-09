@@ -83,25 +83,38 @@
   notify: Restart traefik
 
 # Build the routers from the single tofu-owned ingress table
-# (tofu_data.ingress via traefik_ingress_routes): a list of {name, ip, port}
-# with the backend IP already resolved by tofu (cidrhost). Items may carry an
-# optional scheme (default http) and insecure_tls (default false) for backends
-# that serve HTTPS with a self-signed cert (e.g. Splunk Web). The template just
-# needs name/fqdn/backend/insecure_tls, so it stays dumb (and fixture-testable).
+# (tofu_data.ingress via traefik_ingress_routes). Single-backend rows are
+# {name, ip, port}; the Proxmox cluster-UI apex row is {name, apex, backends[],
+# port} — a load-balanced pool over the node FQDNs. Optional per row: scheme
+# (default http), insecure_tls (self-signed backend, e.g. Splunk / Proxmox),
+# sticky + health_check (pool session affinity + per-node health checks). Every
+# row is normalised here to {name, fqdn, servers[], scheme, insecure_tls,
+# sticky, health_check} so the template stays dumb (and fixture-testable):
+#   - fqdn    = base domain itself when apex, else <name>.<base domain>
+#   - servers = one <scheme>://<host-or-ip>:<port> url per backend (or the
+#               single ip), so single and multi-backend rows render uniformly.
 - name: Build Traefik routers from the inventory ingress table
   ansible.builtin.set_fact:
     traefik_routes: >-
       {{
         traefik_routes | default([]) + [{
           'name': item.name,
-          'fqdn': item.name ~ '.' ~ traefik_base_domain,
-          'backend': (item.scheme | default('http')) ~ '://' ~ item.ip ~ ':' ~ item.port,
-          'insecure_tls': item.insecure_tls | default(false)
+          'fqdn': (item.apex | default(false)) | ternary(
+                    traefik_base_domain,
+                    item.name ~ '.' ~ traefik_base_domain),
+          'servers': (item.backends | default([item.ip | default('')]))
+                     | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
+                     | map('regex_replace', '$', ':' ~ (item.port | string))
+                     | list,
+          'scheme': item.scheme | default('http'),
+          'insecure_tls': item.insecure_tls | default(false),
+          'sticky': item.sticky | default(false),
+          'health_check': item.health_check | default(false)
         }]
       }}
   loop: "{{ traefik_ingress_routes }}"
   loop_control:
-    label: "{{ item.name }} -> {{ item.ip }}:{{ item.port }}"
+    label: "{{ item.name }} -> {{ (item.backends | default([item.ip | default('?')])) | join(', ') }}:{{ item.port }}"
 
 - name: Render the dynamic Traefik config (routers + services)
   ansible.builtin.template:
