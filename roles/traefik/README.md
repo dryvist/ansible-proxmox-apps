@@ -95,6 +95,14 @@ fronted service is added/removed in exactly one place. Add it in terraform-proxm
   `media_svc` → target VLAN), enforced in `terraform-unifi`. Some apps also need
   their own reverse-proxy trust setting (e.g. **Home Assistant**
   `http.trusted_proxies` / `use_x_forwarded_for`) — in the app's config, not here.
+- **Apex — Proxmox cluster UI** (the base domain itself, e.g.
+  `pve.<domain>`, with no `<name>.` prefix): an `apex` + multi-backend ingress
+  row that **load-balances across every commissioned node's web UI**
+  (`https://<role>.<domain>:8006`) with a sticky session cookie + per-node health
+  checks. Backends are node **FQDNs** (hostnames, not IPs) that already resolve
+  internally; Traefik re-encrypts over HTTPS and skips verification via the
+  shared `insecure-backend` transport (self-signed node certs). The apex is
+  already a SAN on the wildcard cert, so no extra certificate work.
 
 ## Installation
 
