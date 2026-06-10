@@ -162,13 +162,19 @@
   delay: 5
   until: netmon_telegraf_running.stdout != ''
 
-# Surface WHY telegraf is not up (state + last logs) instead of a bare timeout,
-# so a failed converge is diagnosable from the CI log.
+# Surface WHY telegraf is not up (state + logs + a one-shot run) instead of a
+# bare timeout. Telegraf logs to stderr, so merge 2>&1 — the previous diagnostic
+# captured stdout only and came back empty. The --once run does a single
+# gather+flush cycle and exits, surfacing any output/serializer init error.
 - name: Capture Telegraf diagnostics when it is not running
-  ansible.builtin.command: "{{ item }}"
+  ansible.builtin.shell: "{{ item }} 2>&1"
   loop:
     - "docker ps -a --filter name={{ netmon_telegraf_container_name }}"
-    - "docker logs --tail 50 {{ netmon_telegraf_container_name }}"
+    - "docker logs {{ netmon_telegraf_container_name }}"
+    - >-
+      docker run --rm
+      -v {{ netmon_data_dir }}/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      {{ netmon_telegraf_image }} --once
   register: netmon_telegraf_diag
   changed_when: false
   failed_when: false
