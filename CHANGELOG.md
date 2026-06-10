@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.28.0...v1.29.0) (2026-06-10)
+
+
+### Features
+
+* **netmon:** per-WAN Telegraf collection into the Splunk netmon index ([#383](https://github.com/dryvist/ansible-proxmox-apps/issues/383)) ([d4ec0f6](https://github.com/dryvist/ansible-proxmox-apps/commit/d4ec0f61a339f755088ab59831ade370c3815f51))
+
 ## [1.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.27.0...v1.28.0) (2026-06-09)
 
 
