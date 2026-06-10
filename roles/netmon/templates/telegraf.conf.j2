@@ -1,0 +1,93 @@
+# Managed by Ansible (netmon role) — do not edit by hand.
+# Uplink kind: {{ netmon_uplink_kind }}
+[agent]
+  interval = "{{ netmon_telegraf_interval }}"
+  round_interval = true
+  metric_batch_size = 1000
+  metric_buffer_limit = 10000
+  collection_jitter = "2s"
+  flush_interval = "{{ netmon_telegraf_interval }}"
+  hostname = "{{ inventory_hostname }}"
+  omit_hostname = false
+
+# Global tags so every metric carries which prober/uplink produced it — the
+# pivot for per-WAN analysis in the Splunk netmon index.
+[global_tags]
+  prober = "{{ inventory_hostname }}"
+  uplink = "{{ netmon_uplink_kind }}"
+
+# ---------------------------------------------------------------------------
+# Active probes — run on every uplink kind.
+# ---------------------------------------------------------------------------
+[[inputs.ping]]
+  urls = {{ netmon_ping_targets | to_json }}
+  method = "native"
+  count = 5
+  ping_interval = 1.0
+  timeout = 5.0
+
+[[inputs.dns_query]]
+  servers = {{ netmon_dns_servers | to_json }}
+  domains = {{ netmon_dns_domains | to_json }}
+  record_type = "A"
+  timeout = "5s"
+
+[[inputs.http_response]]
+  urls = {{ netmon_http_targets | to_json }}
+  method = "GET"
+  follow_redirects = true
+  response_timeout = "10s"
+{% if netmon_uplink_kind == 'cable' %}
+
+# ---------------------------------------------------------------------------
+# DOCSIS cable modem SNMP (DOCS-IF-MIB, RFC 4546). Tabular per-channel data;
+# tune the table/field set in defaults to match your modem.
+# ---------------------------------------------------------------------------
+[[inputs.snmp]]
+  agents = ["udp://{{ netmon_docsis_modem_host }}:161"]
+  version = {{ netmon_docsis_snmp_version }}
+  community = "{{ netmon_docsis_snmp_community }}"
+  timeout = "10s"
+  retries = 1
+{% for table in netmon_docsis_snmp_tables %}
+
+  [[inputs.snmp.table]]
+    name = "{{ table.name }}"
+    index_as_tag = true
+{% for field in table.fields %}
+    [[inputs.snmp.table.field]]
+      name = "{{ field.name }}"
+      oid = "{{ field.oid }}"
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% if netmon_uplink_kind == 'satellite' %}
+
+# ---------------------------------------------------------------------------
+# Starlink dish telemetry via the gRPC exporter sidecar (obstruction, outages,
+# latency). Exporter listens on the satellite_exporter tofu constant.
+# ---------------------------------------------------------------------------
+[[inputs.prometheus]]
+  urls = ["http://127.0.0.1:{{ netmon_starlink_exporter_port }}/metrics"]
+{% endif %}
+{% if netmon_speedtest_exporter_url | default('') | length > 0 %}
+
+# Optional: fold the decoupled speedtest-exporter into this prober's stream.
+[[inputs.prometheus]]
+  urls = ["{{ netmon_speedtest_exporter_url }}"]
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Output: Splunk-HEC format -> Cribl Edge -> Splunk netmon index.
+# Cribl's netmon pipeline stamps index=netmon; this agent only ships the data.
+# ---------------------------------------------------------------------------
+[[outputs.http]]
+  url = "{{ netmon_hec_url }}"
+  method = "POST"
+  data_format = "splunkmetric"
+  splunkmetric_hec_routing = true
+  [outputs.http.headers]
+    Content-Type = "application/json"
+{% if netmon_hec_token | default('') | length > 0 %}
+    Authorization = "Splunk {{ netmon_hec_token }}"
+{% endif %}

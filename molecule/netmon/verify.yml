@@ -1,0 +1,66 @@
+---
+# Molecule verification playbook
+# Validates that the netmon role rendered its config and started Telegraf.
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    netmon_data_dir: /opt/netmon
+    netmon_telegraf_container_name: telegraf
+
+  tasks:
+    - name: Stat the rendered Telegraf config
+      ansible.builtin.stat:
+        path: "{{ netmon_data_dir }}/telegraf.conf"
+      register: netmon_telegraf_conf
+
+    - name: Assert Telegraf config exists
+      ansible.builtin.assert:
+        that:
+          - netmon_telegraf_conf.stat.exists
+        fail_msg: "telegraf.conf was not rendered"
+
+    - name: Read the rendered Telegraf config
+      ansible.builtin.slurp:
+        src: "{{ netmon_data_dir }}/telegraf.conf"
+      register: netmon_telegraf_conf_content
+
+    - name: Assert the config carries the probes, SNMP, and HEC output
+      ansible.builtin.assert:
+        that:
+          - "'[[inputs.ping]]' in _conf"
+          - "'[[inputs.dns_query]]' in _conf"
+          - "'[[inputs.http_response]]' in _conf"
+          - "'[[inputs.snmp]]' in _conf"
+          - "'[[outputs.http]]' in _conf"
+          - "'splunkmetric_hec_routing = true' in _conf"
+        fail_msg: "telegraf.conf is missing expected probe/SNMP/output blocks"
+      vars:
+        _conf: "{{ netmon_telegraf_conf_content.content | b64decode }}"
+
+    - name: Stat the rendered compose file
+      ansible.builtin.stat:
+        path: "{{ netmon_data_dir }}/docker-compose.yml"
+      register: netmon_compose
+
+    - name: Assert compose file exists
+      ansible.builtin.assert:
+        that:
+          - netmon_compose.stat.exists
+        fail_msg: "docker-compose.yml was not rendered"
+
+    - name: Check the Telegraf container is running
+      ansible.builtin.command: >-
+        docker ps -q --filter name={{ netmon_telegraf_container_name }}
+        --filter status=running
+      register: netmon_container_ps
+      changed_when: false
+
+    - name: Assert the Telegraf container is running
+      ansible.builtin.assert:
+        that:
+          - netmon_container_ps.stdout != ''
+        fail_msg: "Telegraf container is not running"
