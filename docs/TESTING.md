@@ -40,8 +40,10 @@ container IP for service testing, use `tofu_data.containers` from
 
 ### Port Constants
 
-Ports are defined once in `inventory/pipeline_constants.json` and merged
-into `tofu_data.constants` by `inventory/load_tofu.yml`:
+Ports are defined once in terraform-proxmox `locals.tf`
+(`pipeline_constants`), exported through the `ansible_inventory` output
+into `inventory/tofu_inventory.json`, and loaded as `tofu_data.constants`
+by `inventory/load_tofu.yml`:
 
 ```yaml
 # Service ports
@@ -57,10 +59,11 @@ unifi_port: "{{ tofu_data.constants.syslog_ports.unifi }}"
 
 ### Source of Truth
 
-Port assignments are defined in `inventory/pipeline_constants.json`
-(committed to git). IP derivation logic lives in the `terraform-proxmox`
-repository. To change port values, edit `pipeline_constants.json`
-directly. To regenerate the OpenTofu inventory:
+Port assignments and IP derivation both live in the `terraform-proxmox`
+repository (`locals.tf` `pipeline_constants`). To change port values,
+edit them there and apply; the inventory sync hook rewrites
+`inventory/tofu_inventory.json` here. To regenerate the OpenTofu
+inventory manually:
 
 ```bash
 ./scripts/sync-tofu-inventory.sh
@@ -200,18 +203,18 @@ CRIBL_STREAM_IP=$(jq -r '.containers | to_entries[] | select(.value.tags // [] |
 SPLUNK_IP=$(jq -r '.splunk_vm.splunk.ip' \
   inventory/tofu_inventory.json)
 
-# Ports come from pipeline_constants.json (committed)
-HAPROXY_STATS_PORT=$(jq -r '.service_ports.haproxy_stats' \
-  inventory/pipeline_constants.json)
+# Ports come from the constants section of tofu_inventory.json
+HAPROXY_STATS_PORT=$(jq -r '.constants.service_ports.haproxy_stats' \
+  inventory/tofu_inventory.json)
 
-SPLUNK_HEC_PORT=$(jq -r '.service_ports.splunk_hec' \
-  inventory/pipeline_constants.json)
+SPLUNK_HEC_PORT=$(jq -r '.constants.service_ports.splunk_hec' \
+  inventory/tofu_inventory.json)
 
-CRIBL_EDGE_API_PORT=$(jq -r '.service_ports.cribl_edge_api' \
-  inventory/pipeline_constants.json)
+CRIBL_EDGE_API_PORT=$(jq -r '.constants.service_ports.cribl_edge_api' \
+  inventory/tofu_inventory.json)
 
-CRIBL_STREAM_API_PORT=$(jq -r '.service_ports.cribl_stream_api' \
-  inventory/pipeline_constants.json)
+CRIBL_STREAM_API_PORT=$(jq -r '.constants.service_ports.cribl_stream_api' \
+  inventory/tofu_inventory.json)
 ```
 
 ### HAProxy
@@ -247,12 +250,12 @@ curl -sk https://$SPLUNK_IP:$SPLUNK_HEC_PORT/services/collector/event \
 ## Configuring Syslog Sources
 
 Point syslog sources at the HAProxy IP. Each source type uses a dedicated
-port defined in `inventory/pipeline_constants.json`.
+port defined in the `constants` section of `inventory/tofu_inventory.json`.
 
 To view port assignments:
 
 ```bash
-jq '.syslog_ports' inventory/pipeline_constants.json
+jq '.constants.syslog_ports' inventory/tofu_inventory.json
 ```
 
 HAProxy routes each port to the Cribl Edge backend using round-robin with
@@ -260,7 +263,7 @@ health checks.
 
 General configuration pattern for any syslog source:
 
-1. Look up the assigned port in `inventory/pipeline_constants.json`
+1. Look up the assigned port in `inventory/tofu_inventory.json` (`.constants.syslog_ports`)
 2. Configure the source to send syslog (UDP or TCP) to `$HAPROXY_IP:$ASSIGNED_PORT`
 3. Verify events arrive using `tests/e2e/test_pipeline.py`
 

@@ -7,8 +7,10 @@
 #   - manual workflow_dispatch
 #
 # Gated by repo variable `E2E_RUNNERS_ENABLED == 'true'` (same gate the
-# PR-driven path uses in `ci-gate.yml`). When the gate is off, the job
-# no-ops cleanly with a status notice instead of failing.
+# PR-driven path uses in `ci-gate.yml`). When the gate is off, the run
+# FAILS loudly: a silently-skipped schedule reported "success" for months
+# while live pipeline regressions went unnoticed. Disable this schedule
+# intentionally if E2E coverage is meant to be off.
 #
 # Closes terraform-proxmox#202 (Splunk cluster validation tests).
 
@@ -30,24 +32,19 @@ jobs:
   gate-check:
     name: Check E2E gate
     runs-on: ubuntu-latest
-    outputs:
-      enabled: ${{ steps.gate.outputs.enabled }}
     steps:
-      - id: gate
-        name: Evaluate E2E_RUNNERS_ENABLED
+      - name: Fail when E2E_RUNNERS_ENABLED is not true
+        if: vars.E2E_RUNNERS_ENABLED != 'true'
         env:
-          E2E_RUNNERS_ENABLED: ${{ vars.E2E_RUNNERS_ENABLED }}
+          GATE_MESSAGE: >-
+            E2E_RUNNERS_ENABLED is not 'true' -- scheduled E2E coverage is
+            OFF and live regressions are invisible. Set the repo variable to
+            re-enable, or disable this schedule intentionally.
         run: |
-          if [ "${E2E_RUNNERS_ENABLED}" = "true" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::E2E_RUNNERS_ENABLED is true -- proceeding"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::E2E_RUNNERS_ENABLED is not true -- skipping E2E run"
-          fi
+          echo "::error::${GATE_MESSAGE}"
+          exit 1
 
   e2e:
     name: Run pipeline E2E tests
     needs: gate-check
-    if: needs.gate-check.outputs.enabled == 'true'
     uses: ./.github/workflows/_e2e-tests.yml

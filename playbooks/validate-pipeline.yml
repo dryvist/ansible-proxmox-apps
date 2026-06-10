@@ -11,6 +11,10 @@
 # Usage:
 #   doppler run -- uv run ansible-playbook \
 #     -i inventory/hosts.yml playbooks/validate-pipeline.yml
+#
+# Check mode (--check): validation plays are read-only and always run for
+# real (check_mode: false). E2E plays inject test data, so they end early
+# under --check instead of reporting misleading results.
 
 - name: Import OpenTofu infrastructure inventory
   import_playbook: ../inventory/load_tofu.yml
@@ -19,12 +23,23 @@
   hosts: haproxy_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - haproxy
     - validation
 
   vars:
     constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    # Standard app-facing frontends (constants.syslog_port_map.*.standard,
+    # exported by terraform-proxmox) plus high backend ports
+    # (constants.syslog_ports). The default({}) keeps this working against
+    # inventories generated before syslog_port_map existed.
+    haproxy_syslog_check_ports: >-
+      {{ ((constants.syslog_ports.values() | list)
+          + (constants.syslog_port_map | default({}) | dict2items
+             | map(attribute='value.standard') | list))
+         | map('int') | unique | sort }}
 
   tasks:
     - name: Gather service facts for HAProxy validation
@@ -48,21 +63,35 @@
       changed_when: false
       failed_when: haproxy_config_check.rc != 0
 
-    - name: Verify syslog ports are listening
+    - name: Verify syslog TCP ports are listening
       ansible.builtin.wait_for:
         port: "{{ item }}"
         timeout: 5
-      loop: "{{ constants.syslog_ports.values() | list | sort }}"
+      loop: "{{ haproxy_syslog_check_ports }}"
+
+    - name: Capture UDP listeners
+      ansible.builtin.command:
+        cmd: ss -ulnp
+      register: haproxy_udp_listeners
+      changed_when: false
+
+    - name: Verify syslog UDP ports are listening
+      ansible.builtin.assert:
+        that:
+          - "(':' ~ item ~ ' ') in haproxy_udp_listeners.stdout"
+        fail_msg: >-
+          UDP syslog port {{ item }} is not listening on HAProxy
+        quiet: true
+      loop: "{{ haproxy_syslog_check_ports }}"
 
     - name: Verify netflow UDP port is listening
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          ss -ulnp | grep ':{{ constants.netflow_ports.unifi }}'
-        executable: /bin/bash
-      register: haproxy_netflow_udp
-      changed_when: false
-      failed_when: haproxy_netflow_udp.rc != 0
+      ansible.builtin.assert:
+        that:
+          - "(':' ~ constants.netflow_ports.unifi ~ ' ') in haproxy_udp_listeners.stdout"
+        fail_msg: >-
+          NetFlow UDP port {{ constants.netflow_ports.unifi }} is not
+          listening on HAProxy
+        quiet: true
 
     - name: Verify stats page is accessible
       ansible.builtin.wait_for:
@@ -89,6 +118,8 @@
   hosts: cribl_edge
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - cribl_edge
     - validation
@@ -131,14 +162,16 @@
       loop: "{{ constants.syslog_ports.values() | list | sort }}"
 
     - name: Check Cribl Edge config directory exists
+      # Edge mode (`cribl mode-edge`) loads config from local/edge/, not
+      # local/cribl/ — must match where roles/cribl_edge deploys.
       ansible.builtin.stat:
-        path: /opt/cribl/local/cribl
+        path: /opt/cribl/local/edge
       register: cribl_edge_config_dir
 
     - name: Fail if Cribl Edge config directory is missing
       ansible.builtin.fail:
         msg: >-
-          Cribl Edge config directory /opt/cribl/local/cribl not found
+          Cribl Edge config directory /opt/cribl/local/edge not found
           on {{ inventory_hostname }}
       when: not cribl_edge_config_dir.stat.exists
 
@@ -155,6 +188,8 @@
   hosts: cribl_stream_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - cribl_stream
     - validation
@@ -198,6 +233,8 @@
       failed_when: stream_netflow_udp.rc != 0
 
     - name: Check Cribl Stream config directory exists
+      # Stream runs in single-instance mode and reads local/cribl/ —
+      # unlike Edge, which reads local/edge/.
       ansible.builtin.stat:
         path: /opt/cribl/local/cribl
       register: cribl_stream_config_dir
@@ -222,6 +259,8 @@
   hosts: cribl_edge
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - cribl_edge_metrics
     - validation
@@ -275,6 +314,10 @@
     splunk_password: "{{ lookup('env', 'SPLUNK_PASSWORD') }}"
 
   tasks:
+    - name: Skip E2E data injection in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
     - name: Verify SPLUNK_PASSWORD is set
       ansible.builtin.assert:
         that:
@@ -390,6 +433,10 @@
     splunk_password: "{{ lookup('env', 'SPLUNK_PASSWORD') }}"
 
   tasks:
+    - name: Skip E2E data injection in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
     - name: Verify SPLUNK_PASSWORD is set
       ansible.builtin.assert:
         that:
@@ -477,6 +524,10 @@
     splunk_password: "{{ lookup('env', 'SPLUNK_PASSWORD') }}"
 
   tasks:
+    - name: Skip E2E data injection in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
     - name: Verify SPLUNK_PASSWORD is set
       ansible.builtin.assert:
         that:
@@ -602,6 +653,8 @@
   hosts: qdrant_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - qdrant
     - validation
@@ -672,6 +725,8 @@
   hosts: llamaindex_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - llamaindex
     - validation
@@ -746,6 +801,8 @@
   hosts: mailpit_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - mailpit
     - validation
@@ -816,6 +873,8 @@
   hosts: ntfy_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - ntfy
     - validation
@@ -877,6 +936,8 @@
   hosts: mssql_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - mssql_docker
     - validation
@@ -923,6 +984,8 @@
   hosts: minio_group
   become: true
   gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
   tags:
     - minio
     - validation
@@ -1028,7 +1091,6 @@
           HAProxy:      Config valid, ports listening
           Cribl Edge:   LXC services healthy, APIs responding
           Cribl Stream: LXC services healthy, APIs responding
-          NetFlow:      Port listening + event in Splunk
           Cribl Edge:   Metrics API responding
           Qdrant:       Docker running, HTTP+gRPC healthy
           LlamaIndex:   Ollama running, model loaded, Qdrant reachable
@@ -1036,9 +1098,14 @@
           ntfy:         Docker running, health endpoint healthy
           MSSQL:        Docker running, port 1433 listening
           MinIO:        Service, bucket, versioning, policy, lifecycle
+          {% if ansible_check_mode -%}
+          E2E:          SKIPPED (check mode — no data injected)
+          {% else -%}
           E2E:          Data flowing through pipeline
           E2E (unifi):  Event landed in index=unifi
           E2E (HAProxy): Event via HAProxy in index=unifi
+          NetFlow:      Port listening + event in Splunk
           Latency:      Events appeared within 120s
+          {% endif -%}
           ============================================
           Pipeline is ready for log ingestion!
