@@ -1,16 +1,20 @@
-"""Pure utility functions for E2E pipeline tests.
+"""Pure utility functions for E2E pipeline tests."""
 
-Uses Python stdlib only: socket, urllib, struct, json, time.
-No third-party dependencies.
-"""
-
+import base64
 import json
 import socket
 import ssl
 import struct
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+
+
+def make_syslog_message(sentinel, app_name="ansible-e2e-test"):
+    """Build a syslog message with a unique sentinel."""
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return f"<14>1 {timestamp} ansible-e2e-host {app_name} - - - {sentinel}"
 
 
 def send_udp_syslog(host, port, message):
@@ -28,45 +32,98 @@ def send_udp_syslog(host, port, message):
         sock.close()
 
 
-def query_splunk(mgmt_url, user, password, search_str, timeout=120):
-    """Execute a oneshot search against Splunk REST API.
+def send_tcp_syslog(host, port, message, timeout=5):
+    """Send a syslog message over TCP."""
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock.sendall((message + "\n").encode("utf-8"))
+
+
+def _splunk_search_text(search_str):
+    """Return a search string accepted by Splunk's search/export endpoint."""
+    stripped = search_str.strip()
+    if stripped.startswith("|") or stripped.startswith("search "):
+        return stripped
+    return f"search {stripped}"
+
+
+def query_splunk(
+    mgmt_url,
+    user,
+    password,
+    search_str,
+    earliest="-15m",
+    timeout=30,
+    verify_tls=False,
+    raise_errors=False,
+):
+    """Execute a Splunk search/export query and return result rows.
 
     Args:
         mgmt_url: Splunk management URL (e.g., https://192.168.0.200:8089).
         user: Splunk username.
         password: Splunk password.
-        search_str: SPL search string (must start with 'search').
+        search_str: SPL search string with or without leading 'search'.
+        earliest: Optional earliest_time value for Splunk.
         timeout: HTTP request timeout in seconds.
+        verify_tls: Whether to validate the Splunk management certificate.
+        raise_errors: Raise urllib errors instead of returning [].
 
     Returns:
-        Parsed JSON response dict from Splunk.
+        List of result dicts parsed from JSON-lines export output.
     """
-    url = f"{mgmt_url}/services/search/jobs"
-    data = (
-        f"search={urllib.parse.quote(search_str)}"
-        f"&output_mode=json"
-        f"&exec_mode=oneshot"
-    ).encode("utf-8")
+    params = {
+        "search": _splunk_search_text(search_str),
+        "output_mode": "json",
+    }
+    if earliest is not None and "earliest=" not in search_str:
+        params["earliest_time"] = earliest
+    data = urllib.parse.urlencode(params).encode("utf-8")
 
-    # Set up basic auth
-    password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-    password_mgr.add_password(None, url, user, password)
-    auth_handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+    credentials = f"{user}:{password}"
+    encoded = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
 
-    # Disable SSL cert verification for self-signed certs
     ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-    https_handler = urllib.request.HTTPSHandler(context=ssl_ctx)
+    if not verify_tls:
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
 
-    opener = urllib.request.build_opener(auth_handler, https_handler)
+    req = urllib.request.Request(
+        f"{mgmt_url}/services/search/jobs/export",
+        data=data,
+        method="POST",
+        headers={"Authorization": f"Basic {encoded}"},
+    )
 
-    req = urllib.request.Request(url, data=data, method="POST")
-    with opener.open(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    results = []
+    try:
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=timeout) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except ValueError:
+                    continue
+                if "result" in payload:
+                    results.append(payload["result"])
+    except (urllib.error.URLError, OSError):
+        if raise_errors:
+            raise
+        return []
+    return results
 
 
-def wait_for_event(mgmt_url, user, password, sentinel, index, timeout=120):
+def wait_for_event(
+    mgmt_url,
+    user,
+    password,
+    sentinel,
+    index,
+    sourcetype=None,
+    timeout=120,
+    poll_interval=10,
+):
     """Poll Splunk until an event containing the sentinel string appears.
 
     Args:
@@ -75,7 +132,9 @@ def wait_for_event(mgmt_url, user, password, sentinel, index, timeout=120):
         password: Splunk password.
         sentinel: Unique string to search for in events.
         index: Splunk index to search in.
+        sourcetype: Optional expected sourcetype.
         timeout: Maximum time in seconds to wait for the event.
+        poll_interval: Seconds between search attempts.
 
     Returns:
         List of matching result dicts from Splunk.
@@ -83,15 +142,22 @@ def wait_for_event(mgmt_url, user, password, sentinel, index, timeout=120):
     Raises:
         TimeoutError: If the event is not found within the timeout period.
     """
-    search_str = f'search index={index} "{sentinel}" | head 5'
+    sourcetype_clause = f' sourcetype="{sourcetype}"' if sourcetype else ""
+    search_str = f'index={index}{sourcetype_clause} "{sentinel}" | head 5'
     deadline = time.time() + timeout
 
     while time.time() < deadline:
-        result = query_splunk(mgmt_url, user, password, search_str, timeout=30)
-        results = result.get("results", [])
+        results = query_splunk(
+            mgmt_url,
+            user,
+            password,
+            search_str,
+            earliest="-5m",
+            timeout=30,
+        )
         if results:
             return results
-        time.sleep(10)
+        time.sleep(poll_interval)
 
     raise TimeoutError(
         f"Event with sentinel '{sentinel}' not found in index={index} "
@@ -166,6 +232,47 @@ def send_netflow_v5(host, port, src_port=12345, dst_port=80):
         sock.sendto(packet, (host, port))
     finally:
         sock.close()
+
+
+def post_splunk_hec(hec_url, token, event, index="main", sourcetype="e2e:hec:test"):
+    """Post a single event to Splunk HEC and return (status, body)."""
+    payload = json.dumps(
+        {
+            "event": event,
+            "index": index,
+            "sourcetype": sourcetype,
+        }
+    ).encode("utf-8")
+
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(
+        f"{hec_url}/services/collector/event",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Splunk {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as response:
+        return response.status, response.read().decode("utf-8")
+
+
+def splunk_hec_health(hec_url):
+    """Return (status, body) from the Splunk HEC health endpoint."""
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(
+        f"{hec_url}/services/collector/health/1.0",
+        method="GET",
+    )
+    with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as response:
+        return response.status, response.read().decode("utf-8")
 
 
 def check_port_tcp(host, port, timeout=2):
