@@ -157,6 +157,26 @@
     docker ps -q --filter name={{ netmon_telegraf_container_name }} --filter status=running
   register: netmon_telegraf_running
   changed_when: false
+  failed_when: false
   retries: 6
   delay: 5
   until: netmon_telegraf_running.stdout != ''
+
+# Surface WHY telegraf is not up (state + last logs) instead of a bare timeout,
+# so a failed converge is diagnosable from the CI log.
+- name: Capture Telegraf diagnostics when it is not running
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - "docker ps -a --filter name={{ netmon_telegraf_container_name }}"
+    - "docker logs --tail 50 {{ netmon_telegraf_container_name }}"
+  register: netmon_telegraf_diag
+  changed_when: false
+  failed_when: false
+  when: netmon_telegraf_running.stdout == ''
+
+- name: Fail with Telegraf diagnostics when the container is not running
+  ansible.builtin.fail:
+    msg: |-
+      Telegraf container '{{ netmon_telegraf_container_name }}' is not running after deploy.
+      {{ netmon_telegraf_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
+  when: netmon_telegraf_running.stdout == ''
