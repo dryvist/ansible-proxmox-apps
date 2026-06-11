@@ -26,8 +26,10 @@ class TestNetFlow:
         sentinel_port = 40000 + (int(time.time()) % 25000)
         send_netflow_v5(haproxy_host, port, src_port=sentinel_port)
 
-        # Filter by the sentinel src_port to avoid matching pre-existing traffic
-        search_str = f'index=network src_port={sentinel_port} | head 5'
+        # Filter by the sentinel port to avoid matching pre-existing traffic.
+        # Cribl's netflow input emits camelCase field names (srcPort), which
+        # Splunk's JSON auto-extraction preserves — src_port never matches.
+        search_str = f'index=network srcPort={sentinel_port} | head 5'
         deadline = time.time() + 120
 
         results = []
@@ -40,6 +42,6 @@ class TestNetFlow:
             time.sleep(10)
 
         assert len(results) > 0, (
-            f"NetFlow routing: no events with src_port={sentinel_port} "
+            f"NetFlow routing: no events with srcPort={sentinel_port} "
             f"found in index=network after 120s"
         )
