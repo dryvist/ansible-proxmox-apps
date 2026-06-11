@@ -1,17 +1,26 @@
 ---
 # Managed by Ansible (netmon role) — do not edit by hand.
-# host networking: the prober's probes must egress the LXC host's uplink so the
-# per-WAN source-IP policy route (tofu-unifi) governs which WAN they traverse,
-# and so inputs.ping's native method can open raw sockets.
+# host networking (netmon_telegraf_network_mode, default "host"): the prober's
+# probes must egress the LXC host's uplink so the per-WAN source-IP policy route
+# (tofu-unifi) governs which WAN they traverse, and so inputs.ping's native
+# method can open raw sockets. Molecule/DinD overrides this to "bridge", where
+# nested host networking cannot start the container.
 services:
   telegraf:
     image: {{ netmon_telegraf_image }}
     container_name: {{ netmon_telegraf_container_name }}
     restart: unless-stopped
-    network_mode: host
+    # The image entrypoint starts as root, setcaps cap_net_raw on the telegraf
+    # binary (so inputs.ping's native method works), then drops to the non-root
+    # `telegraf` user. So telegraf reads its config as that user — the rendered
+    # telegraf.conf must be world-readable (0644), see the role tasks.
+    network_mode: {{ netmon_telegraf_network_mode }}
+{% if netmon_telegraf_cap_add | length > 0 %}
     cap_add:
-      - NET_RAW
-      - NET_ADMIN
+{% for cap in netmon_telegraf_cap_add %}
+      - {{ cap }}
+{% endfor %}
+{% endif %}
     volumes:
       - {{ netmon_data_dir }}/telegraf.conf:/etc/telegraf/telegraf.conf:ro
 {% if netmon_uplink_kind == 'satellite' %}
@@ -20,7 +29,7 @@ services:
     image: {{ netmon_starlink_exporter_image }}
     container_name: {{ netmon_starlink_exporter_container_name }}
     restart: unless-stopped
-    network_mode: host
+    network_mode: {{ netmon_telegraf_network_mode }}
     command:
 {% for arg in netmon_starlink_exporter_args %}
       - "{{ arg }}"

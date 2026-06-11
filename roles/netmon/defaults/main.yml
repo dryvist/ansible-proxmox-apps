@@ -13,8 +13,10 @@
 netmon_telegraf_image: "telegraf:1.33-alpine"
 netmon_telegraf_container_name: telegraf
 # Off-the-shelf Starlink dish exporter (deployed only on satellite probers).
-# Confirm the image's CLI flags match netmon_starlink_exporter_args below.
-netmon_starlink_exporter_image: "ghcr.io/danopstech/starlink_exporter:0.0.14"
+# danopstech is the canonical exporter but is stale (last tag v0.0.5); confirm
+# it still speaks your dish's gRPC API, and that the -address/-port flags in
+# netmon_starlink_exporter_args still match, before relying on the satellite path.
+netmon_starlink_exporter_image: "ghcr.io/danopstech/starlink_exporter:v0.0.5"
 netmon_starlink_exporter_container_name: starlink-exporter
 
 netmon_data_dir: /opt/netmon
@@ -23,6 +25,16 @@ netmon_telegraf_interval: "10s"
 # Docker storage driver. fuse-overlayfs is required for Docker on a ZFS-backed
 # LXC; molecule's Docker-in-Docker overrides this to vfs.
 netmon_docker_storage_driver: "fuse-overlayfs"
+
+# Telegraf container networking. "host" is required in production so the prober's
+# probes egress the LXC's uplink (and native ping can open raw sockets); molecule
+# overrides to "bridge" because nested host networking cannot start the container
+# in Docker-in-Docker. cap_add grants NET_RAW for native ping — keep it non-empty
+# unless you switch the ping input to the exec method.
+netmon_telegraf_network_mode: "host"
+netmon_telegraf_cap_add:
+  - "NET_RAW"
+  - "NET_ADMIN"
 
 # Uplink kind for this prober: cable | satellite | lte | generic. Defaults from
 # the hostname (netmon-cable -> cable, netmon-sat -> satellite); override in
@@ -84,8 +96,8 @@ netmon_starlink_exporter_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['satellite_exporter']
      | default(9817) }}
 netmon_starlink_exporter_args:
-  - "--port={{ netmon_starlink_exporter_port }}"
-  - "--dish-address={{ netmon_starlink_dish_address }}"
+  - "-port={{ netmon_starlink_exporter_port }}"
+  - "-address={{ netmon_starlink_dish_address }}"
 
 # Optional: scrape the decoupled speedtest-exporter (set to its metrics URL to
 # fold throughput into the netmon stream). Empty = skip.
