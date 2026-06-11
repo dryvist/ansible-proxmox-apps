@@ -130,7 +130,12 @@
     dest: "{{ netmon_data_dir }}/telegraf.conf"
     owner: root
     group: root
-    mode: "0640"
+    # World-readable: the telegraf image drops to the non-root telegraf user, so
+    # the container must be able to read this file. It lives only on the
+    # single-purpose prober LXC (never committed); the SNMP community defaults to
+    # "public" and the HEC token is optional. Move secrets to the compose
+    # `environment:` (telegraf expands ${VARS}) if you need them out of the file.
+    mode: "0644"
   no_log: true
   notify: Restart netmon stack
 
@@ -157,6 +162,32 @@
     docker ps -q --filter name={{ netmon_telegraf_container_name }} --filter status=running
   register: netmon_telegraf_running
   changed_when: false
+  failed_when: false
   retries: 6
   delay: 5
   until: netmon_telegraf_running.stdout != ''
+
+# Surface WHY telegraf is not up (state + logs + a one-shot run) instead of a
+# bare timeout. Telegraf logs to stderr, so merge 2>&1 — the previous diagnostic
+# captured stdout only and came back empty. The --once run does a single
+# gather+flush cycle and exits, surfacing any output/serializer init error.
+- name: Capture Telegraf diagnostics when it is not running
+  ansible.builtin.shell: "{{ item }} 2>&1"
+  loop:
+    - "docker ps -a --filter name={{ netmon_telegraf_container_name }}"
+    - "docker logs {{ netmon_telegraf_container_name }}"
+    - >-
+      docker run --rm
+      -v {{ netmon_data_dir }}/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      {{ netmon_telegraf_image }} --once
+  register: netmon_telegraf_diag
+  changed_when: false
+  failed_when: false
+  when: netmon_telegraf_running.stdout == ''
+
+- name: Fail with Telegraf diagnostics when the container is not running
+  ansible.builtin.fail:
+    msg: |-
+      Telegraf container '{{ netmon_telegraf_container_name }}' is not running after deploy.
+      {{ netmon_telegraf_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
+  when: netmon_telegraf_running.stdout == ''
