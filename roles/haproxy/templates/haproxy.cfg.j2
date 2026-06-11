@@ -49,6 +49,24 @@ frontend syslog_{{ mapping.name }}_{{ mapping.frontend }}
 # NetFlow traffic is handled via Nginx (UDP stream); no TCP NetFlow frontend is defined in HAProxy.
 
 # =============================================================================
+# Cribl S2S (remote Edge -> Stream) TCP Load Balancing
+# =============================================================================
+
+frontend cribl_s2s_{{ haproxy_cribl_s2s_port }}
+  bind *:{{ haproxy_cribl_s2s_port }}
+  mode {{ haproxy_mode_tcp }}
+  default_backend cribl_s2s_backend
+
+backend cribl_s2s_backend
+  mode {{ haproxy_mode_tcp }}
+  balance {{ haproxy_algorithm }}
+  option tcp-check
+  timeout server {{ haproxy_health_check_timeout }}
+{% for server in haproxy_ipfix_backend_servers %}
+  server {{ server.inventory_hostname }} {{ server.container_ip }}:{{ haproxy_cribl_s2s_port }} check inter {{ haproxy_health_check_interval }}
+{% endfor %}
+
+# =============================================================================
 # TCP Backends for Cribl Edge nodes (one per destination port)
 # =============================================================================
 {% set unique_backend_ports = (haproxy_syslog_port_mappings | map(attribute='backend') | list) | unique %}
