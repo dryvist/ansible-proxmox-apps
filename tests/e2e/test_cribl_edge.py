@@ -16,53 +16,55 @@ from .helpers import (
 
 
 class TestCriblEdgeComponent:
-    """Validate Cribl Edge listeners and direct routing."""
+    """Validate Cribl Edge listeners and direct routing.
 
-    def test_api_port_is_open(self, cribl_edge_ips, constants):
-        """Verify every Cribl Edge API port is open."""
+    Tests taking ``edge_ip`` are parametrized per Edge LXC (see
+    conftest.pytest_generate_tests) so each Edge passes or fails
+    independently.
+    """
+
+    def test_api_port_is_open(self, edge_ip, constants):
+        """Verify the Cribl Edge API port is open on this Edge."""
         port = constants["service_ports"]["cribl_edge_api"]
-        for edge_ip in cribl_edge_ips:
-            assert check_port_tcp(edge_ip, port), (
-                f"Cribl Edge API port {port} is not open on {edge_ip}"
-            )
+        assert check_port_tcp(edge_ip, port), (
+            f"Cribl Edge API port {port} is not open on {edge_ip}"
+        )
 
     @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
-    def test_syslog_listener_is_reachable(self, cribl_edge_ips, constants, source):
-        """Verify every Cribl Edge listens on each syslog source-family port."""
+    def test_syslog_listener_is_reachable(self, edge_ip, constants, source):
+        """Verify this Cribl Edge listens on each syslog source-family port."""
         port = constants["syslog_ports"][source.key]
-        for edge_ip in cribl_edge_ips:
-            assert check_port_udp(edge_ip, port), (
-                f"Cribl Edge UDP syslog port {port} for {source.label} "
-                f"is not reachable on {edge_ip}"
-            )
+        assert check_port_udp(edge_ip, port), (
+            f"Cribl Edge UDP syslog port {port} for {source.label} "
+            f"is not reachable on {edge_ip}"
+        )
 
     def test_each_edge_can_forward_direct_syslog(
         self,
-        cribl_edge_ips,
+        edge_ip,
         constants,
         splunk_creds,
         pipeline_poll_timeout,
         pipeline_poll_interval,
     ):
-        """Send directly to each Edge LXC and verify Splunk receives it."""
+        """Send directly to this Edge LXC and verify Splunk receives it."""
         mgmt_url, user, password = splunk_creds
         source = SYSLOG_SOURCES[0]
         port = constants["syslog_ports"][source.key]
 
-        for edge_ip in cribl_edge_ips:
-            sentinel = f"e2e-edge-{edge_ip.replace('.', '-')}-{uuid.uuid4().hex[:10]}-{int(time.time())}"
-            send_udp_syslog(edge_ip, port, make_syslog_message(sentinel, "e2e-edge-direct"))
-            results = wait_for_event(
-                mgmt_url,
-                user,
-                password,
-                sentinel,
-                index=source.expected_index,
-                sourcetype=source.expected_sourcetype,
-                timeout=pipeline_poll_timeout,
-                poll_interval=pipeline_poll_interval,
-            )
-            assert results, f"Direct Cribl Edge sentinel {sentinel} from {edge_ip} was not searchable"
+        sentinel = f"e2e-edge-{edge_ip.replace('.', '-')}-{uuid.uuid4().hex[:10]}-{int(time.time())}"
+        send_udp_syslog(edge_ip, port, make_syslog_message(sentinel, "e2e-edge-direct"))
+        results = wait_for_event(
+            mgmt_url,
+            user,
+            password,
+            sentinel,
+            index=source.expected_index,
+            sourcetype=source.expected_sourcetype,
+            timeout=pipeline_poll_timeout,
+            poll_interval=pipeline_poll_interval,
+        )
+        assert results, f"Direct Cribl Edge sentinel {sentinel} from {edge_ip} was not searchable"
 
     @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
     def test_first_edge_routes_each_source_family(
