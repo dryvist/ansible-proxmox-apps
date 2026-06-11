@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.29.1...v1.29.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* **netmon:** make molecule pass + fix Starlink exporter image/flags ([#386](https://github.com/dryvist/ansible-proxmox-apps/issues/386)) ([a91086f](https://github.com/dryvist/ansible-proxmox-apps/commit/a91086fc2d4c71600b33c2b113cda26e2bf8a366))
+
 ## [1.29.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.29.0...v1.29.1) (2026-06-10)
 
 
