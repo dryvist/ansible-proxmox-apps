@@ -16,41 +16,22 @@ haproxy_nginx_service_name: nginx
 haproxy_nginx_service_state: started
 haproxy_nginx_service_enabled: true
 
-# Syslog port mappings: frontend (HAProxy/Nginx) -> backend (Cribl Edge)
-# Standard ports (514-518) map to high ports (1514-1518) on backends
-# This allows clients to use standard syslog ports while keeping backends on non-privileged ports
-haproxy_syslog_port_mappings:
-  - frontend: 514
-    backend: 1514
-    name: unifi
-  - frontend: 515
-    backend: 1515
-    name: palo_alto
-  - frontend: 516
-    backend: 1516
-    name: cisco_asa
-  - frontend: 517
-    backend: 1517
-    name: linux
-  - frontend: 518
-    backend: 1518
-    name: windows
-  # Also keep high ports for backwards compatibility
-  - frontend: 1514
-    backend: 1514
-    name: unifi_high
-  - frontend: 1515
-    backend: 1515
-    name: palo_alto_high
-  - frontend: 1516
-    backend: 1516
-    name: cisco_asa_high
-  - frontend: 1517
-    backend: 1517
-    name: linux_high
-  - frontend: 1518
-    backend: 1518
-    name: windows_high
+# Syslog port mappings: frontend (HAProxy/Nginx) -> backend (Cribl Edge),
+# derived from tofu constants syslog_port_map (single source of truth in
+# terraform-proxmox locals — no hardcoded ports here). Standard frontends
+# (514-518) forward to high backend ports (1514-1518); high-port frontends
+# are kept as passthrough for backwards compatibility.
+haproxy_syslog_routing: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['syslog_port_map'] }}
+haproxy_syslog_port_mappings: >-
+  {%- set out = [] -%}
+  {%- for family, entry in haproxy_syslog_routing | dictsort -%}
+  {%- set _ = out.append({'frontend': entry.standard, 'backend': entry.high, 'name': family}) -%}
+  {%- endfor -%}
+  {%- for family, entry in haproxy_syslog_routing | dictsort -%}
+  {%- set _ = out.append({'frontend': entry.high, 'backend': entry.high, 'name': family ~ '_high'}) -%}
+  {%- endfor -%}
+  {{ out }}
 
 # NetFlow port (unchanged - no standard port equivalent)
 haproxy_netflow_port:

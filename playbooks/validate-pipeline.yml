@@ -306,8 +306,9 @@
     constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
     # Generate unique test event ID using epoch timestamp
     e2e_test_event_id: "E2E_VALIDATION_{{ ansible_date_time.epoch }}"
-    # Splunk connection details (no hardcoded fallback)
-    splunk_host: "{{ hostvars['splunk']['ansible_host'] }}"
+    # Splunk connection details — FQDN, never an IP (resolves from the
+    # pipeline VLAN; the uri tasks execute on the Edge LXC)
+    splunk_host: "splunk.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
     splunk_port: "{{ constants.service_ports.splunk_mgmt }}"
     splunk_user: admin
     # SPLUNK_PASSWORD must be set via Doppler
@@ -333,25 +334,29 @@
         state: present
         update_cache: true
 
-    - name: Send test syslog message through pipeline
+    - name: Send per-family test syslog messages through pipeline
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
           echo "<14>{{ ansible_date_time.iso8601 }} ansible-e2e-test: \
-          {{ e2e_test_event_id }}" | \
-          nc -u -w1 localhost {{ constants.syslog_ports.unifi }}
+          {{ e2e_test_event_id }}-{{ item.key }}" | \
+          nc -u -w1 localhost {{ item.value.high }}
         executable: /bin/bash
       changed_when: false
+      loop: "{{ constants.syslog_port_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
 
-    - name: Wait for event to propagate through pipeline
+    - name: Wait for events to propagate through pipeline
       ansible.builtin.pause:
         seconds: 10
         prompt: >-
-          Waiting for test event to propagate through Cribl Edge to Splunk...
+          Waiting for test events to propagate through Cribl Edge to Splunk...
 
-    # Pipeline latency assertion: poll up to 120 seconds (retries: 12, delay: 10)
-    # The loop fails the play if the event does not appear within 120 seconds.
-    - name: Query Splunk for test event (pipeline latency assertion, 120s timeout)
+    # Pipeline latency assertion: poll up to 120 seconds per family
+    # (retries: 12, delay: 10). Each family must land in ITS index with ITS
+    # sourcetype — the routing contract from constants.syslog_port_map.
+    - name: Query Splunk for each family event in its index (120s timeout each)
       ansible.builtin.uri:
         url: >-
           https://{{ splunk_host }}:{{ splunk_port
@@ -363,54 +368,34 @@
         validate_certs: false
         body_format: form-urlencoded
         body:
-          search: 'search index=* "{{ e2e_test_event_id }}" | head 1'
+          search: >-
+            search index={{ item.value.index }}
+            sourcetype="{{ item.value.sourcetype }}"
+            "{{ e2e_test_event_id }}-{{ item.key }}" | head 1
           output_mode: json
           exec_mode: oneshot
-      register: splunk_search_result
+      register: splunk_family_result
       retries: 12
       delay: 10
       until: >-
-        splunk_search_result.status == 200 and
-        (splunk_search_result.json.results | default([]) | length > 0)
+        splunk_family_result.status == 200 and
+        (splunk_family_result.json.results | default([]) | length > 0)
       failed_when: >-
-        splunk_search_result.status != 200 or
-        (splunk_search_result.json.results | default([]) | length == 0)
-
-    - name: Query Splunk for test event in unifi index
-      ansible.builtin.uri:
-        url: >-
-          https://{{ splunk_host }}:{{ splunk_port
-          }}/services/search/jobs
-        method: POST
-        user: "{{ splunk_user }}"
-        password: "{{ splunk_password }}"
-        force_basic_auth: true
-        validate_certs: false
-        body_format: form-urlencoded
-        body:
-          search: 'search index=unifi "{{ e2e_test_event_id }}" | head 1'
-          output_mode: json
-          exec_mode: oneshot
-      register: splunk_unifi_index_result
-      retries: 6
-      delay: 10
-      until: >-
-        splunk_unifi_index_result.status == 200 and
-        (splunk_unifi_index_result.json.results | default([]) | length > 0)
-      failed_when: >-
-        splunk_unifi_index_result.status != 200 or
-        (splunk_unifi_index_result.json.results | default([]) | length == 0)
+        splunk_family_result.status != 200 or
+        (splunk_family_result.json.results | default([]) | length == 0)
+      loop: "{{ constants.syslog_port_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> index={{ item.value.index }}"
 
     - name: E2E Data Pipeline PASSED
       ansible.builtin.debug:
         msg: |
           === E2E DATA PIPELINE VALIDATION PASSED ===
-          Test event sent via syslog port {{ constants.syslog_ports.unifi }}
-          Event ID: {{ e2e_test_event_id }}
+          One event per source family sent to its Cribl Edge backend port
+          Event ID prefix: {{ e2e_test_event_id }}
           Splunk host: {{ splunk_host }}
-          Search results (index=*): {{ splunk_search_result.json.results | length }} event(s) found
-          Search results (index=unifi): {{ splunk_unifi_index_result.json.results | length }} event(s) found
-          Full pipeline verified: Source -> Cribl Edge LXC -> Splunk HEC -> Splunk Index (unifi)
+          Families verified: {{ constants.syslog_port_map.keys() | list | join(', ') }}
+          Full pipeline verified: Source -> Cribl Edge LXC -> Splunk HEC -> per-family index
 
 - name: E2E Validation via HAProxy (full path)
   hosts: cribl_edge[0]
@@ -426,7 +411,11 @@
     # Generate unique test event ID using epoch timestamp
     e2e_test_event_id: "E2E_HAPROXY_{{ ansible_date_time.epoch }}"
     # Splunk connection details (no hardcoded fallback)
-    splunk_host: "{{ hostvars['splunk']['ansible_host'] }}"
+    # FQDN, never an IP — both names resolve from the pipeline VLAN where
+    # these tasks execute. syslog.<subdomain> is the stable client-facing
+    # entry point for the HAProxy syslog frontends.
+    splunk_host: "splunk.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+    syslog_entrypoint: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
     splunk_port: "{{ constants.service_ports.splunk_mgmt }}"
     splunk_user: admin
     # SPLUNK_PASSWORD must be set via Doppler
@@ -452,25 +441,28 @@
         state: present
         update_cache: true
 
-    - name: Send test syslog message through HAProxy
+    - name: Send per-family test syslog messages through HAProxy standard frontends
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
           echo "<14>{{ ansible_date_time.iso8601 }} ansible-e2e-haproxy-test: \
-          {{ e2e_test_event_id }}" | \
-          nc -u -w1 {{ hostvars['haproxy']['container_ip'] }} {{ constants.syslog_ports.unifi }}
+          {{ e2e_test_event_id }}-{{ item.key }}" | \
+          nc -u -w1 {{ syslog_entrypoint }} {{ item.value.standard }}
         executable: /bin/bash
       changed_when: false
+      loop: "{{ constants.syslog_port_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> :{{ item.value.standard }}"
 
-    - name: Wait for event to propagate through pipeline
+    - name: Wait for events to propagate through pipeline
       ansible.builtin.pause:
         seconds: 10
         prompt: >-
-          Waiting for test event to propagate through HAProxy -> Cribl Edge -> Splunk...
+          Waiting for test events to propagate through HAProxy -> Cribl Edge -> Splunk...
 
-    # Pipeline latency assertion: poll up to 120 seconds (retries: 12, delay: 10)
-    # The loop fails the play if the event does not appear within 120 seconds.
-    - name: Query Splunk for HAProxy test event in unifi index (pipeline latency assertion, 120s timeout)
+    # Pipeline latency assertion: poll up to 120 seconds per family
+    # (retries: 12, delay: 10) — each family in ITS index with ITS sourcetype.
+    - name: Query Splunk for each HAProxy family event in its index (120s timeout each)
       ansible.builtin.uri:
         url: >-
           https://{{ splunk_host }}:{{ splunk_port
@@ -482,7 +474,10 @@
         validate_certs: false
         body_format: form-urlencoded
         body:
-          search: 'search index=unifi "{{ e2e_test_event_id }}" | head 1'
+          search: >-
+            search index={{ item.value.index }}
+            sourcetype="{{ item.value.sourcetype }}"
+            "{{ e2e_test_event_id }}-{{ item.key }}" | head 1
           output_mode: json
           exec_mode: oneshot
       register: splunk_haproxy_result
@@ -494,17 +489,19 @@
       failed_when: >-
         splunk_haproxy_result.status != 200 or
         (splunk_haproxy_result.json.results | default([]) | length == 0)
+      loop: "{{ constants.syslog_port_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> index={{ item.value.index }}"
 
     - name: E2E HAProxy Data Pipeline PASSED
       ansible.builtin.debug:
         msg: |
           === E2E HAPROXY PIPELINE VALIDATION PASSED ===
-          Test event sent via HAProxy VIP {{ hostvars['haproxy']['container_ip'] }}
-          Syslog port: {{ constants.syslog_ports.unifi }}
-          Event ID: {{ e2e_test_event_id }}
+          One event per source family sent to {{ syslog_entrypoint }} standard frontends
+          Event ID prefix: {{ e2e_test_event_id }}
           Splunk host: {{ splunk_host }}
-          Search results (index=unifi): {{ splunk_haproxy_result.json.results | length }} event(s) found
-          Full path verified: Source -> HAProxy -> Cribl Edge LXC -> Splunk HEC -> Splunk Index (unifi)
+          Families verified: {{ constants.syslog_port_map.keys() | list | join(', ') }}
+          Full path verified: Source -> HAProxy -> Cribl Edge LXC -> Splunk HEC -> per-family index
 
 - name: Validate NetFlow Port
   hosts: cribl_stream_group[0]
@@ -516,8 +513,8 @@
 
   vars:
     constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
-    # Splunk connection details (no hardcoded fallback)
-    splunk_host: "{{ hostvars['splunk']['ansible_host'] }}"
+    # Splunk connection — FQDN, never an IP (resolves from the pipeline VLAN)
+    splunk_host: "splunk.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
     splunk_port: "{{ constants.service_ports.splunk_mgmt }}"
     splunk_user: admin
     # SPLUNK_PASSWORD must be set via Doppler
@@ -1102,8 +1099,8 @@
           E2E:          SKIPPED (check mode — no data injected)
           {% else -%}
           E2E:          Data flowing through pipeline
-          E2E (unifi):  Event landed in index=unifi
-          E2E (HAProxy): Event via HAProxy in index=unifi
+          E2E (direct): Every source family landed in its index via Cribl Edge
+          E2E (HAProxy): Every source family landed via the standard frontends
           NetFlow:      Port listening + event in Splunk
           Latency:      Events appeared within 120s
           {% endif -%}
