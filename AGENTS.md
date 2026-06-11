@@ -8,6 +8,9 @@ this repo handles app config only.
 
 - **Cribl Edge** (`cribl_edge` role — native install on LXC containers)
 - **Cribl Stream** (`cribl_stream` role — native install on LXC containers)
+  - Fleet policy: Cribl Cloud fleets are reserved for Linux machines
+    (the LXC/VM nodes this repo deploys). macOS hosts run standalone,
+    GitOps-managed Edge nodes (see nix-darwin docs/CRIBL-GITOPS.md).
 - **HAProxy** (LXC container, syslog/netflow VIP forwarding to Cribl LXCs)
 - **Syslog forwarding** (`syslog_forwarder` role — rsyslog on every infra LXC
   ships host + native-service logs to the HAProxy syslog VIP on the Linux port
