@@ -261,6 +261,49 @@
           tofu_data.constants.media_ports missing or incorrect —
           expected qbittorrent_web: 8080, prowlarr_web: 9696, seerr_web: 5055
 
+    # DHCP-first guest contract (terraform-proxmox): `ip` carries the FQDN
+    # (DNS-first addressing), `reserved_ip` the DHCP-reservation address.
+    # load_tofu.yml must surface reserved_ip as the container_reserved_ip
+    # hostvar so the technitium_dns role points the A record at it.
+    - name: Verify dhcp-first guest hostvars carry container_reserved_ip
+      ansible.builtin.assert:
+        that:
+          - "'immich' in groups['lxc_containers']"
+          - "'immich' in (groups['immich_group'] | default([]))"
+          - hostvars['immich'].container_ip == 'immich.example.net'
+          - hostvars['immich'].container_reserved_ip == '192.168.0.220'
+        fail_msg: >-
+          dhcp-first guest hostvars wrong —
+          container_ip={{ hostvars['immich'].container_ip | default('(undefined)') }},
+          container_reserved_ip={{ hostvars['immich'].container_reserved_ip | default('(undefined)') }}
+
+    - name: Verify static guest carries an empty container_reserved_ip
+      ansible.builtin.assert:
+        that:
+          - hostvars['haproxy'].container_reserved_ip | default('', true) | length == 0
+        fail_msg: >-
+          static guest haproxy should have no reserved_ip;
+          got {{ hostvars['haproxy'].container_reserved_ip | default('(undefined)') }}
+
+    # add_host swallows a `hostname:` arg (alias of `name`), so load_tofu.yml
+    # must set it as a real per-host fact — the technitium_dns A-record builder
+    # and the *_docker site-URL defaults depend on it. Without it the builder
+    # silently skips EVERY host and creates zero records.
+    - name: Verify the hostname fact is set on every guest type
+      ansible.builtin.assert:
+        that:
+          - hostvars['haproxy'].hostname is defined
+          - hostvars['haproxy'].hostname == 'haproxy'
+          - hostvars['immich'].hostname == 'immich'
+          - hostvars['splunk'].hostname is defined
+          - hostvars['docker-host'].hostname is defined
+        fail_msg: >-
+          hostname fact missing from dynamically-added hosts —
+          haproxy={{ hostvars['haproxy'].hostname | default('(undefined)') }},
+          immich={{ hostvars['immich'].hostname | default('(undefined)') }},
+          splunk={{ hostvars['splunk'].hostname | default('(undefined)') }},
+          docker-host={{ hostvars['docker-host'].hostname | default('(undefined)') }}
+
     - name: Display group membership summary
       ansible.builtin.debug:
         msg: |
