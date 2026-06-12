@@ -68,13 +68,24 @@
     recurse: true
     state: directory
 
+- name: Check current Cribl mode
+  ansible.builtin.slurp:
+    src: "{{ cribl_edge_install_dir }}/local/_system/instance.yml"
+  register: cribl_edge_instance
+  failed_when: false
+
+# `cribl mode-edge` rewrites local config to defaults on every invocation
+# (including the API bind deployed below) — only run it when the recorded
+# mode in local/_system/instance.yml differs.
 - name: Set Cribl to Edge mode
   ansible.builtin.command:
     cmd: "{{ cribl_edge_install_dir }}/bin/cribl mode-edge"
   become: true
   become_user: "{{ cribl_edge_user }}"
-  register: cribl_edge_mode_result
-  changed_when: "'already' not in cribl_edge_mode_result.stdout"
+  changed_when: true
+  when: >-
+    ((cribl_edge_instance.content | default('') | b64decode | from_yaml)
+     | default({}, true)).get('distributed', {}).get('mode', '') != 'edge'
 
 - name: Ensure Edge config directories exist
   # Cribl Edge worker (LEADER process) loads ALL config (inputs, outputs,
