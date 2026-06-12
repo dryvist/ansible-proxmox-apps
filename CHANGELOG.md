@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.2...v1.33.3) (2026-06-12)
+
+
+### Bug Fixes
+
+* **cribl_stream:** S2S input must be tcpjson — cribl_tcp is distributed-only ([#408](https://github.com/dryvist/ansible-proxmox-apps/issues/408)) ([3443160](https://github.com/dryvist/ansible-proxmox-apps/commit/34431602589a8d9ddf3002bc89ab97090eceb917))
+
 ## [1.33.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.1...v1.33.2) (2026-06-12)
 
 
