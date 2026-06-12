@@ -20,9 +20,14 @@ download_vpn_group: media
 # bind-mounted tank datasets. Override to match the host `media` group.
 download_vpn_group_gid: 13000
 
-# Bind-mounted host datasets (provisioned by tofu mount_points).
-download_vpn_downloads_dir: /mnt/downloads
-download_vpn_media_dir: /mnt/media
+# Single bind-mounted host dataset (provisioned by tofu mount_points).
+# TRaSH single-filesystem layout: ONE /data mount holds torrents AND media so
+# *arr imports HARDLINK (zero-copy) and incomplete->complete moves stay atomic.
+# The torrents tree is owned here; the media tree (/data/media/{movies,tv}) is
+# owned by the sonarr/radarr/plex roles. NEVER point the temp/incomplete path
+# at a different dataset — that re-breaks hardlinks and atomic moves.
+download_vpn_data_dir: /data
+download_vpn_downloads_dir: "{{ download_vpn_data_dir }}/torrents"
 
 # --- WireGuard (Proton) ------------------------------------------------------
 download_vpn_wg_interface: wg0
@@ -150,6 +155,15 @@ download_vpn_qbittorrent_lsd: true
 # available bandwidth across as many peers as needed.
 download_vpn_qbittorrent_max_uploads: -1
 download_vpn_qbittorrent_max_uploads_per_torrent: -1
+
+# Per-category save paths (TRaSH layout). Each *arr category lands its
+# torrents under /data/torrents/<category>, on the SAME filesystem as the
+# /data/media library roots, so completed-download imports hardlink. Applied
+# via the WebUI API (createCategory/editCategory) in tasks/main.yml — the
+# categories store (categories.json) is daemon-owned, not template-safe.
+download_vpn_qbittorrent_categories:
+  tv: "{{ download_vpn_downloads_dir }}/tv"
+  movies: "{{ download_vpn_downloads_dir }}/movies"
 
 # --- Bandwidth limits + work-hours scheduler (QoS) ----------------------------
 # Applied via the WebUI API (setPreferences), NOT the flat qBittorrent.conf:

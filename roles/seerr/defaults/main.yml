@@ -33,24 +33,31 @@ seerr_api_key: "{{ lookup('env', 'SEERR_API_KEY') | default('', true) }}"
 # nothing is hardcoded — override per environment if names differ.
 seerr_register_services: true
 
-# Sonarr target (LAN-only PVR LXC 211).
+# Sonarr target (LAN-only PVR LXC). Address resolution: prefer the per-guest
+# `ip` field from the tofu inventory (the FQDN under the dhcp-first
+# rebuild), fall back to the static container_ip hostvar — never a hardcoded IP.
 seerr_sonarr_hostname: >-
-  {{ hostvars['sonarr'].container_ip | default('sonarr') }}
+  {{ tofu_data.containers['sonarr'].ip
+     | default(hostvars['sonarr'].container_ip)
+     | default('sonarr') }}
 seerr_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
 seerr_sonarr_api_key: "{{ lookup('env', 'SONARR_API_KEY') | default('', true) }}"
 seerr_sonarr_use_ssl: false
 
-# Radarr target (LAN-only PVR LXC 212).
+# Radarr target (LAN-only PVR LXC). Same ip-first resolution as Sonarr.
 seerr_radarr_hostname: >-
-  {{ hostvars['radarr'].container_ip | default('radarr') }}
+  {{ tofu_data.containers['radarr'].ip
+     | default(hostvars['radarr'].container_ip)
+     | default('radarr') }}
 seerr_radarr_port: "{{ tofu_data.constants.media_ports.radarr_web }}"
 seerr_radarr_api_key: "{{ lookup('env', 'RADARR_API_KEY') | default('', true) }}"
 seerr_radarr_use_ssl: false
 
-# Root folders inside the *arr LXCs. movies + shows are separate ZFS datasets
-# mounted under /mnt/media (Sonarr -> shows, Radarr -> movies).
-seerr_sonarr_root_folder: "/mnt/media/shows"
-seerr_radarr_root_folder: "/mnt/media/movies"
+# Root folders inside the *arr LXCs — the TRaSH single-filesystem /data layout
+# (Sonarr -> /data/media/tv, Radarr -> /data/media/movies). Must match
+# servarr_wiring_{sonarr,radarr}_root_folder.
+seerr_sonarr_root_folder: "/data/media/tv"
+seerr_radarr_root_folder: "/data/media/movies"
 
 # Plex registration needs an ACCOUNT-scoped Plex token (X-Plex-Token). Rather than
 # requiring it by hand, the role DISCOVERS it from the Plex server's
@@ -64,7 +71,9 @@ seerr_plex_inventory_host: plex
 seerr_plex_preferences_path: >-
   /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
 seerr_plex_hostname: >-
-  {{ hostvars['plex'].container_ip | default('plex') }}
+  {{ tofu_data.containers['plex'].ip
+     | default(hostvars['plex'].container_ip)
+     | default('plex') }}
 seerr_plex_port: "{{ tofu_data.constants.media_ports.plex_web }}"
 seerr_plex_use_ssl: false
 

@@ -29,8 +29,9 @@ together over the LAN.
 4. **Sonarr/Radarr → qBittorrent download client** — adds qBittorrent (host =
    `download-vpn`, port = `media_ports.qbittorrent_web`, category `tv` /
    `movies`) to each PVR, again schema-driven.
-5. **Root folders** — ensures `/mnt/media/shows` (Sonarr) and `/mnt/media/movies`
-   (Radarr).
+5. **Root folders** — ensures `/data/media/tv` (Sonarr) and `/data/media/movies`
+   (Radarr) on the single `/data` filesystem (hardlink imports from
+   `/data/torrents`).
 6. **Completed-download handling** — enables it globally on each PVR.
 
 ## Why `ansible.builtin.uri` and not a community role / Buildarr

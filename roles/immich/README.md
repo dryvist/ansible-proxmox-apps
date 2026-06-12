@@ -22,7 +22,7 @@ ansible-galaxy collection install -r requirements.yml
 
 - An LXC tagged `immich` in terraform-proxmox (nesting enabled for Docker), with
   the photo-library ZFS dataset bind-mounted at `immich_library_dir`
-  (`/mnt/photos`) — same model as the media stack's `/mnt/media`.
+  (`/mnt/photos`) — same model as the media stack's `/data`.
 - `IMMICH_DB_PASSWORD` provided via SOPS/Doppler (never committed):
 
   ```bash
