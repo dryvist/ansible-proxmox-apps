@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.4...v1.33.5) (2026-06-12)
+
+
+### Bug Fixes
+
+* **media:** unprivileged-LXC /data access, DHCP-first addressing, Plex apt, servarr wiring ([#413](https://github.com/dryvist/ansible-proxmox-apps/issues/413)) ([6b64c8b](https://github.com/dryvist/ansible-proxmox-apps/commit/6b64c8ba46de7ccb0f0bbd114f7b08b9cc7ca4dd))
+
 ## [1.33.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.3...v1.33.4) (2026-06-12)
 
 
