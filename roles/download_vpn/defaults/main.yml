@@ -59,8 +59,19 @@ download_vpn_wg_persistent_keepalive: 25
 # LAN subnet that may reach the web UIs and that *arr/qBit/Prowlarr use to talk
 # to each other. Derived from the container's own /24 (tofu-owned IP) so
 # nothing is hardcoded. Override only if the LAN is not a /24.
+# DHCP-first inventory contract: container_ip carries the guest's FQDN (DNS-first
+# addressing) and container_reserved_ip the actual DHCP-reservation address.
+# Static guests put the IP in container_ip and leave reserved_ip empty. All LAN
+# IP math below uses this resolved address so it works under both layouts — an
+# FQDN fed to ipaddr() yields `False`, which renders an invalid nftables rule
+# (`ip daddr False accept`) and fails the killswitch deploy.
+download_vpn_lan_ip: >-
+  {{ container_reserved_ip
+     if (container_reserved_ip | default('', true) | length > 0)
+     else (container_ip | default(ansible_default_ipv4.address)) }}
+
 download_vpn_lan_subnet: >-
-  {{ (container_ip | default(ansible_default_ipv4.address) ~ '/24')
+  {{ (download_vpn_lan_ip ~ '/24')
      | ansible.utils.ipaddr('network/prefix') }}
 
 # Primary LAN interface — the NIC that actually holds the container's LAN IP.
@@ -123,7 +134,7 @@ download_vpn_qbittorrent_admin_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PA
 # (the container's own /24) for a tighter boundary. Applied via the setPreferences
 # API in tasks/main.yml (not the conf template — qBittorrent would clobber it).
 download_vpn_qbittorrent_auth_whitelist: >-
-  {{ ((container_ip | default(ansible_default_ipv4.address)) ~ '/16')
+  {{ (download_vpn_lan_ip ~ '/16')
      | ansible.utils.ipaddr('network/prefix') }}
 # CRITICAL: bind qBittorrent's traffic to wg0 (interface binding). With the
 # killswitch this is belt-and-suspenders; binding alone closed the 30% leak
