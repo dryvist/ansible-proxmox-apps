@@ -29,15 +29,30 @@
     create_home: false
     state: present
 
-- name: Ensure sonarr data + media directories exist
+# Container-local app dir — owned by the service user (chownable: it lives on
+# the container rootfs, not the shared mount).
+- name: Ensure sonarr data directory exists
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ sonarr_data_dir }}"
     state: directory
     owner: "{{ sonarr_user }}"
     group: "{{ sonarr_group }}"
     mode: "2775"
+
+# Shared /data library roots are created host-side by the media_lxc_features
+# role (owner root, group media/gid 13000, setgid + group-writable) and exposed
+# via the unprivileged-LXC idmap. Sonarr reaches them through media-group
+# membership, so only ensure they EXIST here — never chown/chmod the shared
+# bind-mount (its host-root owner is unmapped inside the container -> EPERM).
+- name: Ensure the shared /data library roots exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    # Declares the host-side contract (media_lxc_features sets 2775 + setgid);
+    # a match means no chmod is attempted, so the unmapped-owner mount is never
+    # touched. Owner/group are deliberately NOT enforced here.
+    mode: "2775"
   loop:
-    - "{{ sonarr_data_dir }}"
     - "{{ sonarr_media_dir }}"
     - "{{ sonarr_tv_dir }}"
 

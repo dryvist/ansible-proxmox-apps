@@ -29,15 +29,30 @@
     create_home: false
     state: present
 
-- name: Ensure radarr data + media directories exist
+# Container-local app dir — owned by the service user (chownable: it lives on
+# the container rootfs, not the shared mount).
+- name: Ensure radarr data directory exists
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ radarr_data_dir }}"
     state: directory
     owner: "{{ radarr_user }}"
     group: "{{ radarr_group }}"
     mode: "2775"
+
+# Shared /data library roots are created host-side by the media_lxc_features
+# role (owner root, group media/gid 13000, setgid + group-writable) and exposed
+# via the unprivileged-LXC idmap. Radarr reaches them through media-group
+# membership, so only ensure they EXIST here — never chown/chmod the shared
+# bind-mount (its host-root owner is unmapped inside the container -> EPERM).
+- name: Ensure the shared /data library roots exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    # Declares the host-side contract (media_lxc_features sets 2775 + setgid);
+    # a match means no chmod is attempted, so the unmapped-owner mount is never
+    # touched. Owner/group are deliberately NOT enforced here.
+    mode: "2775"
   loop:
-    - "{{ radarr_data_dir }}"
     - "{{ radarr_media_dir }}"
     - "{{ radarr_movies_dir }}"
 
