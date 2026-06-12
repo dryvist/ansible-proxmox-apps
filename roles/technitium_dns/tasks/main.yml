@@ -47,13 +47,22 @@
   # in Ansible 2.19 returns HostVarsVars proxy objects whose attribute
   # `is defined` checks behave differently from plain dicts and silently
   # skip every host. Using groups + hostvars[host] is the supported pattern.
+  #
+  # DHCP-first guests (tofu contract): `container_ip` carries the guest's FQDN
+  # (DNS-first addressing), so it is NOT a valid A-record target — the record
+  # would point a name at a name. For those guests `container_reserved_ip`
+  # holds the DHCP-reservation address (the same address tofu-unifi pins the
+  # deterministic MAC to), so it wins whenever set. Static guests carry an
+  # empty reserved_ip and keep using container_ip / ansible_host unchanged.
   ansible.builtin.set_fact:
     technitium_dns_a_records: >-
       {{
         technitium_dns_a_records | default([]) +
         [{
           'name': hostvars[item].hostname,
-          'ip': hostvars[item].container_ip | default(hostvars[item].ansible_host)
+          'ip': (hostvars[item].container_reserved_ip | default('', true))
+                if (hostvars[item].container_reserved_ip | default('', true) | length > 0)
+                else (hostvars[item].container_ip | default(hostvars[item].ansible_host))
         }]
       }}
   loop: "{{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}"
@@ -65,6 +74,39 @@
     - hostvars[item].hostname not in (technitium_dns_ingress_aliases | default([]))
   loop_control:
     label: "{{ item }}"
+
+# Fail loud, not silent: a builder that skips every host (e.g. the hostname
+# fact missing from the dynamic inventory) yields an empty list and the role
+# would "succeed" while creating nothing. There is always at least one guest
+# (this DNS host itself), so zero records is always a bug.
+- name: Assert the A-record builder produced records
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_a_records | default([]) | length > 0
+    fail_msg: >-
+      The A-record builder produced ZERO records — every inventory host was
+      skipped. Check that inventory/load_tofu.yml set the `hostname` fact and
+      `container_ip`/`ansible_host` on the dynamically-added guests.
+    quiet: true
+
+# Fail loud, not silent: a dhcp guest with no reserved_ip would land here with
+# its FQDN as the record target and Technitium would store a broken A record.
+# Reject any non-IPv4 target before a single API call is made.
+- name: Assert every A-record target is an IPv4 address
+  ansible.builtin.assert:
+    that:
+      - >-
+        technitium_dns_a_records | default([])
+        | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+        | list | length == 0
+    fail_msg: >-
+      dhcp guest(s) [{{ technitium_dns_a_records | default([])
+      | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+      | map(attribute='name') | join(', ') }}] have no reserved_ip —
+      an A record must point at an IPv4 address, not a hostname.
+      Add reserved_host to each guest in terraform-proxmox deployment.json
+      and re-apply so the inventory exports reserved_ip.
+    quiet: true
 
 # --- Derive HA topology (primary = lowest-vmid technitium_dns_group member) ---
 # Build a {vmid, ip} list for the group so the primary is the lowest vmid

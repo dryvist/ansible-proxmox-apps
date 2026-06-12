@@ -327,8 +327,15 @@
         ansible_connection: "{{ item.value.ansible_connection }}"
         ansible_user: root
         ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
-        hostname: "{{ item.value.hostname }}"
+        # NOTE: no `hostname:` here — add_host treats it as an alias of `name`
+        # and silently consumes it (it never becomes a hostvar). The hostname
+        # fact is set for every guest by the propagate task at the bottom.
         container_ip: "{{ item.value.ip }}"
+        # DHCP-first guests (tofu contract): `ip` carries the FQDN (DNS-first),
+        # `reserved_ip` the DHCP-reservation address an A record must point at.
+        # Static guests carry reserved_ip = null (or pre-contract inventories
+        # omit it entirely) — both normalize to '' here.
+        container_reserved_ip: "{{ item.value.reserved_ip | default('', true) }}"
         host_tags: "{{ item.value.tags | default([]) }}"
       loop: "{{ tofu_data.containers | dict2items }}"
       changed_when: false
@@ -346,7 +353,6 @@
         ansible_connection: "{{ item.value.ansible_connection }}"
         ansible_user: debian
         ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
-        hostname: "{{ item.value.hostname }}"
         host_tags: "{{ item.value.tags | default([]) }}"
       loop: "{{ tofu_data.vms | dict2items }}"
       changed_when: false
@@ -365,7 +371,6 @@
         ansible_connection: "{{ tofu_data.splunk_vm.splunk.ansible_connection }}"
         ansible_user: debian
         ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
-        hostname: "{{ tofu_data.splunk_vm.splunk.hostname }}"
         vmid: "{{ tofu_data.splunk_vm.splunk.vmid }}"
       changed_when: false
       when: tofu_data.splunk_vm.splunk is defined
@@ -385,7 +390,6 @@
         ansible_connection: "{{ item.value.ansible_connection }}"
         ansible_user: debian
         ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_DKR_SSH_KEY_PATH') }}"
-        hostname: "{{ item.value.hostname }}"
         vmid: "{{ item.value.vmid }}"
         host_tags: "{{ item.value.tags | default([]) }}"
       loop: "{{ tofu_data.docker_vms | dict2items }}"
@@ -403,3 +407,22 @@
       delegate_facts: true
       loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
       when: tofu_data is defined
+
+    # add_host CANNOT set a host var literally named `hostname`: it is an alias
+    # of add_host's `name` option (aliases: host, hostname) and gets silently
+    # consumed instead of becoming a hostvar. Consumers of `hostname`
+    # (technitium_dns A-record builder, *_docker site-URL defaults) therefore
+    # never saw it — set it as a real per-host fact here instead.
+    - name: Set the guest hostname fact on all inventory hosts
+      vars:
+        tofu_guests: >-
+          {{ (tofu_data.containers | default({}))
+             | combine(tofu_data.vms | default({}))
+             | combine(tofu_data.docker_vms | default({}))
+             | combine(tofu_data.splunk_vm | default({})) }}
+      ansible.builtin.set_fact:
+        hostname: "{{ tofu_guests[item].hostname }}"
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+      when: item in tofu_guests
