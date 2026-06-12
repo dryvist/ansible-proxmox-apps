@@ -91,6 +91,23 @@
     mode: "0644"
   notify: Restart cribl stream
 
+# Cribl Stream rewrites local/cribl/outputs.yml at startup (strips comments,
+# materializes defaults), so an unconditional template re-diffs and bounces
+# the service on every converge. Deploy only when a managed field drifts.
+- name: Read live Cribl Stream outputs configuration
+  ansible.builtin.slurp:
+    src: "{{ cribl_stream_install_dir }}/local/cribl/outputs.yml"
+  register: cribl_stream_outputs_live
+  failed_when: false
+  no_log: true  # file contains the HEC token
+
+- name: Extract live Splunk HEC output settings
+  ansible.builtin.set_fact:
+    cribl_stream_hec_live: >-
+      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+          | default({}, true)).get('outputs', {}).get('splunk_hec', {}) }}
+  no_log: true
+
 - name: Deploy Cribl Stream outputs configuration
   ansible.builtin.template:
     src: outputs.yml.j2
@@ -100,7 +117,15 @@
     mode: "0600"
   no_log: true
   notify: Restart cribl stream
-  when: cribl_stream_splunk_hec_token != ''
+  when:
+    - cribl_stream_splunk_hec_token != ''
+    - >-
+      cribl_stream_hec_live.get('url', '') != cribl_stream_splunk_hec_url
+      or cribl_stream_hec_live.get('token', '') != cribl_stream_splunk_hec_token
+      or cribl_stream_hec_live.get('rejectUnauthorized', none) | bool
+         != cribl_stream_splunk_hec_tls_verify | bool
+      or cribl_stream_hec_live.get('pqEnabled', none) | bool
+         != cribl_stream_pq_enabled | bool
 
 - name: Deploy IPFIX pipeline configuration
   ansible.builtin.template:
