@@ -7,8 +7,8 @@ Radarr UI after deploy — it reaches Prowlarr + qBittorrent on the
 
 ## Installation
 
-Provisioned by the `radarr` LXC in `terraform-proxmox` (pve2, `tank/media` +
-`tank/downloads` bind-mounts). Deploy via this repo:
+Provisioned by the `radarr` LXC in `terraform-proxmox` (single
+`bulk/data` bind-mount at `/data`). Deploy via this repo:
 
 ```bash
 ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags radarr
@@ -17,8 +17,9 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags radarr
 ## Requirements
 
 - Debian-based LXC.
-- `tank/media` + `tank/downloads` bind-mounted at `/mnt/media` and
-  `/mnt/downloads`.
+- The single `bulk/data` dataset bind-mounted at `/data` (TRaSH
+  single-filesystem layout): library root `/data/media/movies`, torrents under
+  `/data/torrents` — same filesystem, so imports hardlink instead of copy.
 
 ## Key variables
 

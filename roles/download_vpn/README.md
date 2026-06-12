@@ -112,8 +112,10 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   `PROTON_WG_PEER_ENDPOINT`. Proton's tunnel DNS resolver `10.2.0.1` is a
   stable constant and is hardcoded in `defaults/main.yml` (not a secret).
   `QBITTORRENT_ADMIN_PASSWORD` is delivered via SOPS.
-- `tank/downloads` + `tank/media` bind-mounted at `/mnt/downloads` and
-  `/mnt/media`.
+- The single `bulk/data` dataset bind-mounted at `/data` (TRaSH
+  single-filesystem layout). qBittorrent saves to `/data/torrents` (per-category
+  `tv`/`movies` subdirs, incomplete in `/data/torrents/incomplete`) on the SAME
+  filesystem as the `/data/media` library roots, so *arr imports hardlink.
 
 ## Key variables
 

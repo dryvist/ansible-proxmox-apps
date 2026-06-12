@@ -7,7 +7,7 @@
 #      wiring keys are known before converge — never auto-generated).
 #   2. Wires Prowlarr -> Sonarr/Radarr Applications (full sync).
 #   3. Wires Sonarr/Radarr -> qBittorrent download client (on download-vpn).
-#   4. Ensures root folders (/mnt/media/shows, /mnt/media/movies).
+#   4. Ensures root folders (/data/media/tv, /data/media/movies).
 #   5. Ensures a default quality profile exists.
 #
 # All API config is idempotent (GET-then-POST/PUT). No bespoke scripts: this is
@@ -30,14 +30,26 @@ servarr_wiring_group: media
 
 # --- Endpoints (hostname:port). Hosts from inventory, ports from OpenTofu. ---
 # Sonarr / Radarr are LAN-only LXCs; Prowlarr + qBittorrent live in download-vpn.
+# Address resolution: prefer the per-guest `ip` field from the tofu
+# inventory — under the dhcp-first rebuild that field IS the FQDN — and fall
+# back to the static container_ip hostvar. NEVER a hardcoded IP and never a
+# vmid-derived literal.
 servarr_wiring_sonarr_host: >-
-  {{ hostvars['sonarr'].container_ip | default('127.0.0.1') }}
+  {{ tofu_data.containers['sonarr'].ip
+     | default(hostvars['sonarr'].container_ip)
+     | default('127.0.0.1') }}
 servarr_wiring_radarr_host: >-
-  {{ hostvars['radarr'].container_ip | default('127.0.0.1') }}
+  {{ tofu_data.containers['radarr'].ip
+     | default(hostvars['radarr'].container_ip)
+     | default('127.0.0.1') }}
 servarr_wiring_prowlarr_host: >-
-  {{ hostvars['download-vpn'].container_ip | default('127.0.0.1') }}
+  {{ tofu_data.containers['download-vpn'].ip
+     | default(hostvars['download-vpn'].container_ip)
+     | default('127.0.0.1') }}
 servarr_wiring_qbittorrent_host: >-
-  {{ hostvars['download-vpn'].container_ip | default('127.0.0.1') }}
+  {{ tofu_data.containers['download-vpn'].ip
+     | default(hostvars['download-vpn'].container_ip)
+     | default('127.0.0.1') }}
 
 servarr_wiring_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
 servarr_wiring_radarr_port: "{{ tofu_data.constants.media_ports.radarr_web }}"
@@ -49,18 +61,14 @@ servarr_wiring_qbittorrent_username: admin
 servarr_wiring_qbittorrent_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') | default('', true) }}"
 
 # --- Wiring parameters -------------------------------------------------------
-# Root folders inside the *arr LXCs.
-# CURRENT (functional, but cross-filesystem imports copy instead of hardlink):
-# shows + movies land in separate ZFS datasets so *arr cannot hardlink a torrent
-# file into the library — every import is a full byte copy (2× disk).
-# TO ENABLE HARDLINK IMPORTS: consolidate datasets in terraform-proxmox to one
-# /data dataset bind-mounted into download-vpn, sonarr, and radarr, then flip:
-#   servarr_wiring_sonarr_root_folder: "/data/media/tv"
-#   servarr_wiring_radarr_root_folder: "/data/media/movies"
+# Root folders inside the *arr LXCs — the TRaSH single-filesystem layout: one
+# /data dataset bind-mounted into download-vpn, sonarr, radarr, and plex, so
+# imports HARDLINK from /data/torrents/<category> into /data/media/<library>
+# (zero-copy, atomic). The unified layout renames the old "shows" tree to "tv".
 # Full organization is preserved — Sonarr builds Series (Year)/Season NN/ trees
 # and Radarr builds Title (Year)/ trees inside the root folder automatically.
-servarr_wiring_sonarr_root_folder: "/mnt/media/shows"
-servarr_wiring_radarr_root_folder: "/mnt/media/movies"
+servarr_wiring_sonarr_root_folder: "/data/media/tv"
+servarr_wiring_radarr_root_folder: "/data/media/movies"
 # qBittorrent categories per app.
 servarr_wiring_sonarr_category: "tv"
 servarr_wiring_radarr_category: "movies"
@@ -104,11 +112,17 @@ servarr_wiring_auth_required: DisabledForLocalAddresses
 
 # --- Recycler bin (prevents immediate deletion on unmonitor/delete) -----------
 # Path on the *arr LXC filesystem. Must be on the same volume as the root folder
-# so moves are atomic (no cross-filesystem copy). After the /data dataset
-# consolidation the natural path is /data/media/.recycle.
-servarr_wiring_recycler_bin_path: "/mnt/media/.recycle"
+# so moves are atomic (no cross-filesystem copy).
+servarr_wiring_recycler_bin_path: "/data/media/.recycle"
 # Days to keep items in the bin before auto-purge. 0 = keep forever.
 servarr_wiring_recycler_bin_days: 14
+
+# --- Minimum free space when importing (MB) -----------------------------------
+# *arr's native min-free-space knob (qBittorrent has none): each PVR refuses to
+# import when the destination volume has less than this free, so a runaway
+# download burst pauses imports instead of filling /data to 0 bytes (which
+# previously killed qBittorrent for days). 25600 MB = 25 GiB headroom.
+servarr_wiring_min_free_space_mb: 25600
 
 # --- Quality profile ----------------------------------------------------------
 # Created once per app (POST if not present; existing profile left untouched on
