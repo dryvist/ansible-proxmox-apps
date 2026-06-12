@@ -7,7 +7,7 @@ Radarr UI after deploy — it reaches Prowlarr + qBittorrent on the
 
 ## Installation
 
-Provisioned by the `radarr` LXC in `terraform-proxmox` (pve2, single
+Provisioned by the `radarr` LXC in `terraform-proxmox` (single
 `bulk/data` bind-mount at `/data`). Deploy via this repo:
 
 ```bash

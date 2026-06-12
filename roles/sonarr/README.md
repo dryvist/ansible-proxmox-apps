@@ -7,7 +7,7 @@ Sonarr UI after deploy — it reaches Prowlarr + qBittorrent on the
 
 ## Installation
 
-Provisioned by the `sonarr` LXC in `terraform-proxmox` (pve2, single
+Provisioned by the `sonarr` LXC in `terraform-proxmox` (single
 `bulk/data` bind-mount at `/data`). Deploy via this repo:
 
 ```bash
