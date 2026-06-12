@@ -520,22 +520,20 @@
 
 # =============================================================================
 # Phase 8c: Media stack (pve2)
-# VPN-locked downloader (qBittorrent + Prowlarr behind Proton WireGuard with a
-# fail-closed nftables killswitch) plus LAN-only Sonarr/Radarr/Plex. The
-# download_vpn role imports its own validate.yml at the end and FAILS the run
-# on any killswitch/leak violation.
+# LAN-only Sonarr/Radarr/Plex/Seerr first, then the VPN-locked downloader
+# (qBittorrent + Prowlarr behind Proton WireGuard with a fail-closed nftables
+# killswitch) LAST.
+#
+# ORDERING IS DELIBERATE — RESILIENCE: download_vpn imports its own validate.yml
+# at the end and FAILS its play on any killswitch/leak violation (correct: the
+# tunnel must never leak). These are independent plays per host-group with no
+# any_errors_fatal, so a download_vpn failure does NOT abort the others — and by
+# running it LAST, Sonarr/Radarr/Plex/Seerr are already converged and serving
+# before the fragile, security-gated downloader is even attempted. qBittorrent is
+# not required for Plex. Do NOT move download_vpn earlier and do NOT weaken its
+# validate.yml; resilience comes from play isolation + ordering, not from making
+# the killswitch check non-fatal.
 # =============================================================================
-
-- name: Configure VPN-locked downloader (qBittorrent + Prowlarr)
-  hosts: download_vpn_group
-  become: true
-  gather_facts: true
-  tags:
-    - download_vpn
-    - media
-    - vpn
-  roles:
-    - role: download_vpn
 
 - name: Configure Sonarr (LAN-only TV PVR)
   hosts: sonarr_group
@@ -567,22 +565,10 @@
   roles:
     - role: plex
 
-# Self-wiring: a single converge auto-configures the Prowlarr <-> Sonarr/Radarr
-# <-> qBittorrent pipeline via each app's API (deterministic SOPS keys). Runs
-# AFTER the *arr roles, from the download_vpn coordinator (it reaches every
-# media app over the LAN; config.xml edits are delegated to each app's host).
-- name: Wire the Servarr stack via API (Prowlarr/Sonarr/Radarr/qBittorrent)
-  hosts: download_vpn_group
-  become: true
-  gather_facts: true
-  tags:
-    - servarr_wiring
-    - media
-  roles:
-    - role: servarr_wiring
-
-# Seerr request UI (Docker in LXC 214). Registers Sonarr/Radarr/Plex via
-# its settings API; runs after the *arr wiring so the PVRs are configured first.
+# Seerr request UI (Docker in LXC). Registers Sonarr/Radarr/Plex via its settings
+# API — depends only on those apps being up (from the plays above), not on the
+# Prowlarr/qBittorrent wiring, so it runs before download_vpn/servarr_wiring and
+# stays up even if the VPN downloader fails.
 - name: Configure Seerr request UI
   hosts: seerr_group
   become: true
@@ -592,6 +578,36 @@
     - media
   roles:
     - role: seerr
+
+# VPN-locked downloader runs LAST (see Phase 8c header). any_errors_fatal is
+# explicitly false so a killswitch/leak failure here can never abort the media
+# stack converged above.
+- name: Configure VPN-locked downloader (qBittorrent + Prowlarr)
+  hosts: download_vpn_group
+  become: true
+  gather_facts: true
+  any_errors_fatal: false
+  tags:
+    - download_vpn
+    - media
+    - vpn
+  roles:
+    - role: download_vpn
+
+# Self-wiring: auto-configures the Prowlarr <-> Sonarr/Radarr <-> qBittorrent
+# pipeline via each app's API (deterministic SOPS keys). Runs from the
+# download_vpn coordinator, so it must come AFTER download_vpn; if that play
+# failed, this is skipped for the failed host — the *arr/Plex/Seerr stack above
+# is unaffected.
+- name: Wire the Servarr stack via API (Prowlarr/Sonarr/Radarr/qBittorrent)
+  hosts: download_vpn_group
+  become: true
+  gather_facts: true
+  tags:
+    - servarr_wiring
+    - media
+  roles:
+    - role: servarr_wiring
 
 # Immich photo/video backup (Docker-in-LXC). Standalone — no cross-app API
 # wiring; phone/Mac clients point straight at it. Inert until an LXC is tagged
