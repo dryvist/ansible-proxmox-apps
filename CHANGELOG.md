@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.1...v1.33.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* **technitium_dns:** point dhcp-first guest A records at reserved_ip ([#401](https://github.com/dryvist/ansible-proxmox-apps/issues/401)) ([f840552](https://github.com/dryvist/ansible-proxmox-apps/commit/f840552f551ba23ea5cc5f355baad1b554b2aefd))
+
 ## [1.33.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.0...v1.33.1) (2026-06-12)
 
 
