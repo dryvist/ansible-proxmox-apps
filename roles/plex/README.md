@@ -8,8 +8,8 @@ imported media is visible — including on Roku.
 
 ## Installation
 
-Provisioned by the `plex` LXC in `terraform-proxmox` (pve2, `tank/media`
-bind-mount). Deploy via this repo:
+Provisioned by the `plex` LXC in `terraform-proxmox` (pve2, single
+`bulk/data` bind-mount at `/data`). Deploy via this repo:
 
 ```bash
 ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags plex
@@ -18,14 +18,15 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags plex
 ## Requirements
 
 - Debian-based LXC.
-- `tank/media` bind-mounted at `/mnt/media`.
+- The single `bulk/data` dataset bind-mounted at `/data` (TRaSH
+  single-filesystem layout); libraries read `/data/media/{movies,tv}`.
 
 ## Key variables
 
 Server port comes from OpenTofu (`tofu_data.constants.media_ports.plex_web`).
 See `defaults/main.yml`.
 
-- `plex_media_dir` — media library root (default `/mnt/media`).
+- `plex_media_dir` — media library root (default `/data/media`).
 - `plex_library_subdirs` — library subdirs scaffolded under it (`movies`, `tv`).
 - `plex_apt_repo` — Plex apt repository line.
 - `plex_web_port` — server/web UI port (tofu-derived).
@@ -63,7 +64,7 @@ be supplied: it works in whichever state the server is in.
 
 1. **Claimed server** — discovers the account token (`PlexOnlineToken`) from
    `Preferences.xml`, then `GET /library/sections` and `POST` only the missing
-   sections (`Movies` → `/mnt/media/movies`, `Shows` → `/mnt/media/shows`).
+   sections (`Movies` → `/data/media/movies`, `Shows` → `/data/media/tv`).
 2. **Unclaimed server** — the local API accepts unauthenticated localhost
    requests, so the sections are created **token-free**; they persist after you
    later claim it.

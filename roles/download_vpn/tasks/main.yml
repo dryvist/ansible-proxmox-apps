@@ -110,7 +110,10 @@
     create_home: true
     state: present
 
-- name: Ensure download + media directories exist with group ownership
+# The /data/media library tree is owned by the sonarr/radarr/plex roles (same
+# shared dataset, different LXCs) — managing it here too would flip ownership
+# between service users on every converge.
+- name: Ensure the torrents tree exists with group ownership
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -120,7 +123,8 @@
   loop:
     - "{{ download_vpn_downloads_dir }}"
     - "{{ download_vpn_downloads_dir }}/incomplete"
-    - "{{ download_vpn_media_dir }}"
+    - "{{ download_vpn_downloads_dir }}/tv"
+    - "{{ download_vpn_downloads_dir }}/movies"
 
 # --- Phase 3: KILL IPv6 at the kernel ---------------------------------------
 # Proton is dual-stack; we forbid IPv6 entirely so qBittorrent has no v6 path.
@@ -342,6 +346,51 @@
     status_code: 200
   changed_when: false
   when: download_vpn_manage_services
+
+# Categories with explicit save paths (TRaSH layout): tv -> /data/torrents/tv,
+# movies -> /data/torrents/movies. Same WebUI-API mechanism as the prefs above
+# (the categories store is daemon-owned; a template write would be clobbered).
+# Idempotent: GET the category map, create only the missing ones, edit only on
+# save-path drift.
+- name: Read existing qBittorrent categories
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/torrents/categories"
+    method: GET
+    status_code: 200
+  register: download_vpn_qbt_categories
+  changed_when: false
+  when: download_vpn_manage_services
+
+- name: Create qBittorrent categories with per-category save paths
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/torrents/createCategory"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      category: "{{ item.key }}"
+      savePath: "{{ item.value }}"
+    status_code: 200
+  loop: "{{ download_vpn_qbittorrent_categories | dict2items }}"
+  when:
+    - download_vpn_manage_services
+    - item.key not in download_vpn_qbt_categories.json
+  changed_when: true
+
+- name: Align save paths of existing qBittorrent categories
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/torrents/editCategory"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      category: "{{ item.key }}"
+      savePath: "{{ item.value }}"
+    status_code: 200
+  loop: "{{ download_vpn_qbittorrent_categories | dict2items }}"
+  when:
+    - download_vpn_manage_services
+    - item.key in download_vpn_qbt_categories.json
+    - (download_vpn_qbt_categories.json[item.key].savePath | default('')) != item.value
+  changed_when: true
 
 # --- Phase 7: Prowlarr -------------------------------------------------------
 - name: Check if Prowlarr is already installed
