@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.0...v1.33.1) (2026-06-12)
+
+
+### Bug Fixes
+
+* **tests:** add cribl_s2s to the template-render fixture service_ports ([#406](https://github.com/dryvist/ansible-proxmox-apps/issues/406)) ([1054499](https://github.com/dryvist/ansible-proxmox-apps/commit/1054499c4aba583c8e720d115ff0aa6f8e6f9206))
+
 ## [1.33.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.32.1...v1.33.0) (2026-06-12)
 
 
