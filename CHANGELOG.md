@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.32.0...v1.32.1) (2026-06-12)
+
+
+### Bug Fixes
+
+* **cribl:** idempotent converge — guard mode-edge, drift-check stream outputs ([#402](https://github.com/dryvist/ansible-proxmox-apps/issues/402)) ([91df14f](https://github.com/dryvist/ansible-proxmox-apps/commit/91df14fe32238d42548a255ce84ec0974d84efce))
+
 ## [1.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.31.0...v1.32.0) (2026-06-12)
 
 
