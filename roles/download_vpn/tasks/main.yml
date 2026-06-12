@@ -38,7 +38,7 @@
            | selectattr('ipv4', 'defined')
            | selectattr('ipv4.address', 'defined')
            | selectattr('ipv4.address', 'equalto',
-                        (container_ip | default(ansible_default_ipv4.address | default(''))))
+                        (download_vpn_lan_ip | default(ansible_default_ipv4.address | default(''))))
            | map(attribute='device') | list | first
            | default('eth0', true)
          ) }}
@@ -75,6 +75,9 @@
       - sqlite3
       - libicu-dev
       - gnupg
+      # Required by community.general.xml (servarr_wiring sets Prowlarr's
+      # <ApiKey> in config.xml on this host); without it the wiring fails on lxml.
+      - python3-lxml
     state: present
     # Only refresh the cache when the proxy is reachable. A locked-down box can't
     # reach it and already has its packages, so it must not block on a fetch.
@@ -110,15 +113,20 @@
     create_home: true
     state: present
 
-# The /data/media library tree is owned by the sonarr/radarr/plex roles (same
-# shared dataset, different LXCs) — managing it here too would flip ownership
-# between service users on every converge.
-- name: Ensure the torrents tree exists with group ownership
+# The whole shared /data tree — the /data/media library AND /data/torrents
+# (incomplete/tv/movies) — is created host-side by the media_lxc_features role
+# (owner root, group media/gid 13000, setgid + group-writable) and exposed via
+# the unprivileged-LXC idmap. qBittorrent runs as the media user and writes via
+# group membership, so only ensure the torrents roots EXIST here — never
+# chown/chmod the shared bind-mount (its host-root owner is unmapped inside the
+# container -> EPERM).
+- name: Ensure the shared /data torrents roots exist
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
+    # Declares the host-side contract (media_lxc_features sets 2775 + setgid);
+    # a match means no chmod is attempted, so the unmapped-owner mount is never
+    # touched. Owner/group are deliberately NOT enforced here.
     mode: "2775"
   loop:
     - "{{ download_vpn_downloads_dir }}"

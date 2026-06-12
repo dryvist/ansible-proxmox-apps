@@ -71,26 +71,21 @@
   register: plex_user_group
   failed_when: false
 
-- name: Ensure media directory exists
+# The /data library roots (and their movies/tv subdirs) are created host-side by
+# the media_lxc_features role (owner root, group media/gid 13000, setgid +
+# group-writable) and exposed via the unprivileged-LXC idmap. Plex is added to
+# the media group above and reads them via group/other perms, so only ensure
+# they EXIST here — never chown/chmod the shared bind-mount (its host-root owner
+# is unmapped inside the container -> EPERM).
+- name: Ensure the shared /data library roots exist
   ansible.builtin.file:
-    path: "{{ plex_media_dir }}"
+    path: "{{ item }}"
     state: directory
-    owner: "{{ plex_user }}"
-    group: "{{ plex_group }}"
+    # Declares the host-side contract (media_lxc_features sets 2775 + setgid);
+    # a match means no chmod is attempted, so the unmapped-owner mount is never
+    # touched. Owner/group are deliberately NOT enforced here.
     mode: "2775"
-  failed_when: false
-
-# Scaffold the movies/tv library roots so Plex (and the *arr apps writing here)
-# have the expected directories. The library "add" against the Plex API can be
-# finished later via UI/API; this just guarantees the paths exist.
-- name: Scaffold Plex media library subdirectories
-  ansible.builtin.file:
-    path: "{{ plex_media_dir }}/{{ item }}"
-    state: directory
-    owner: "{{ plex_user }}"
-    group: "{{ plex_group }}"
-    mode: "2775"
-  loop: "{{ plex_library_subdirs }}"
+  loop: "{{ [plex_media_dir] + (plex_library_subdirs | map('regex_replace', '^', plex_media_dir ~ '/') | list) }}"
   failed_when: false
 
 - name: Enable + start Plex Media Server
