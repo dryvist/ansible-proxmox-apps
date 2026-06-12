@@ -14,7 +14,7 @@ INVENTORY_FILE="${INVENTORY_FILE:-inventory/tofu_inventory.json}"
 
 if [ ! -f "$INVENTORY_FILE" ]; then
     echo -e "${RED}ERROR: $INVENTORY_FILE not found${NC}"
-    echo "Generate it with: terragrunt output -json ansible_inventory > $INVENTORY_FILE"
+    echo "Refresh it by running terraform-proxmox 'terragrunt apply' (after-hook writes it), or set INVENTORY_FILE to a copy."
     exit 1
 fi
 
