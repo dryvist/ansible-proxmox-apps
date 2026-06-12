@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.3...v1.33.4) (2026-06-12)
+
+
+### Bug Fixes
+
+* **media:** run VPN downloader last so it can't block the stack ([7ba5f0b](https://github.com/dryvist/ansible-proxmox-apps/commit/7ba5f0b209788e50d97b693370230a4047456fcd))
+
 ## [1.33.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.2...v1.33.3) (2026-06-12)
 
 
