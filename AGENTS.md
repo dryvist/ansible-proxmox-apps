@@ -118,8 +118,12 @@ Do not hand-edit — fix the constant and refresh
 
 ## Inventory
 
-Inventory is loaded dynamically from
-`tofu_inventory.json` via `load_tofu.yml`.
+Inventory is loaded dynamically via `load_tofu.yml`, which resolves its
+source in priority order: `TOFU_INVENTORY_PATH` (explicit pin) → the
+**S3 published artifact** (written natively by every terraform-proxmox
+`terragrunt apply`; fetched with `amazon.aws` modules — no checkout, no
+toolchain, only AWS read creds) → the local gitignored
+`inventory/tofu_inventory.json` cache the apply's after-hook writes.
 Port constants come from `tofu_data.constants`
 (defined in terraform-proxmox `locals.tf`).
 
@@ -139,6 +143,9 @@ Port constants come from `tofu_data.constants`
 
 | Variable | Purpose | Source |
 | --- | --- | --- |
+| `TOFU_INVENTORY_PATH` | Explicit inventory file pin (tests/overrides) | env (optional) |
+| `TOFU_INVENTORY_S3_URI` | Override the published-inventory S3 location | env (optional) |
+| `TOFU_INVENTORY_S3_REGION` | Region of the inventory bucket (default `us-east-2`) | env (optional) |
 | `PROXMOX_VE_HOSTNAME` | Proxmox VE hostname | Doppler / SOPS |
 | `PROXMOX_VE_NODE` | Proxmox node name | SOPS |
 | `PROXMOX_VE_GATEWAY` | Network gateway (for IP derivation) | Doppler / SOPS |

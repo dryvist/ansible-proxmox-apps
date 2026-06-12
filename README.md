@@ -74,16 +74,24 @@ doppler run -- ansible-playbook \
 
 ## Inventory
 
-Inventory is loaded dynamically from `tofu_inventory.json` via
-`inventory/load_tofu.yml`. IPs are derived from OpenTofu state and
-accessed via `hostvars`. Port constants come from
-`tofu_data.constants` (defined in `terraform-proxmox`).
+Inventory is loaded dynamically via `inventory/load_tofu.yml`. IPs are
+derived from OpenTofu state and accessed via `hostvars`. Port constants
+come from `tofu_data.constants` (defined in `terraform-proxmox`).
 
-To regenerate the inventory from OpenTofu:
+`load_tofu.yml` resolves the inventory at run time, in priority order
+(first that resolves wins):
 
-```bash
-./scripts/sync-tofu-inventory.sh
-```
+1. `TOFU_INVENTORY_PATH` — an explicit local file (pin / override, e.g. tests).
+2. **S3 published artifact** — `terragrunt apply` publishes the raw
+   `ansible_inventory` output to the terraform-proxmox state bucket. Any runner
+   with scoped AWS read creds fetches it natively
+   (`amazon.aws.aws_caller_info` + `amazon.aws.s3_object`; boto3 comes from
+   the dev shell) — **no checkout, no terraform toolchain, no `aws` CLI**.
+   Override the location with `TOFU_INVENTORY_S3_URI` (else it is derived
+   from the account); region via `TOFU_INVENTORY_S3_REGION` (default
+   `us-east-2`).
+3. `inventory/tofu_inventory.json` — the local gitignored cache the
+   terraform-proxmox after-hook writes on every apply.
 
 ## Port Assignments
 

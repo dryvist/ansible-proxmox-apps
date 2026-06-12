@@ -61,13 +61,10 @@ unifi_port: "{{ tofu_data.constants.syslog_ports.unifi }}"
 
 Port assignments and IP derivation both live in the `terraform-proxmox`
 repository (`locals.tf` `pipeline_constants`). To change port values,
-edit them there and apply; the inventory sync hook rewrites
-`inventory/tofu_inventory.json` here. To regenerate the OpenTofu
-inventory manually:
-
-```bash
-./scripts/sync-tofu-inventory.sh
-```
+edit them there and apply; the apply publishes the inventory to S3
+(fetched directly by `load_tofu.yml` when AWS read creds are present)
+and its after-hook rewrites the local `inventory/tofu_inventory.json`
+cache here.
 
 ## Automated Testing
 
