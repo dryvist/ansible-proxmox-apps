@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.31.0...v1.32.0) (2026-06-12)
+
+
+### Features
+
+* **inventory:** accept DHCP-first container fields (mac, reserved_ip, FQDN ip) ([#399](https://github.com/dryvist/ansible-proxmox-apps/issues/399)) ([1b0ef9f](https://github.com/dryvist/ansible-proxmox-apps/commit/1b0ef9f06c48421fe70d56e101441ddbeac893f7))
+
 ## [1.31.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.30.0...v1.31.0) (2026-06-12)
 
 
