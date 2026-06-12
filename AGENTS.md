@@ -8,7 +8,14 @@ this repo handles app config only.
 
 - **Cribl Edge** (`cribl_edge` role — native install on LXC containers)
 - **Cribl Stream** (`cribl_stream` role — native install on LXC containers)
+  - Fleet policy: Cribl Cloud fleets are reserved for Linux machines
+    (the LXC/VM nodes this repo deploys). macOS hosts run standalone,
+    GitOps-managed Edge nodes (see nix-darwin docs/CRIBL-GITOPS.md).
 - **HAProxy** (LXC container, syslog/netflow VIP forwarding to Cribl LXCs)
+- **Syslog forwarding** (`syslog_forwarder` role — rsyslog on every infra LXC
+  ships host + native-service logs to the HAProxy syslog VIP on the Linux port
+  -> Cribl Edge -> Splunk `os` index; the pipeline (Cribl) and LB (HAProxy) LXCs
+  are excluded to avoid feedback loops)
 - **Technitium DNS** (LXC container)
 - **apt-cacher-ng** (LXC container)
 - **Mailpit** (LXC container, SMTP relay with web UI)
@@ -33,7 +40,9 @@ this repo handles app config only.
 ## Pipeline Data Flow
 
 ```text
-Source -> HAProxy LXC (175, TCP+UDP 514-518, 1514-1518, 2055)
+Sources: external (network gear, OS hosts) + infra LXCs self-logging
+         (syslog_forwarder role, Linux port 1517)
+         -> HAProxy LXC (175, TCP+UDP 514-518, 1514-1518, 2055)
            |
        Cribl Edge LXCs (180, 181) [syslog ports 1514-1518]
          - Pipeline: sets index + sourcetype by port
@@ -109,8 +118,12 @@ Do not hand-edit — fix the constant and refresh
 
 ## Inventory
 
-Inventory is loaded dynamically from
-`tofu_inventory.json` via `load_tofu.yml`.
+Inventory is loaded dynamically via `load_tofu.yml`, which resolves its
+source in priority order: `TOFU_INVENTORY_PATH` (explicit pin) → the
+**S3 published artifact** (written natively by every terraform-proxmox
+`terragrunt apply`; fetched with `amazon.aws` modules — no checkout, no
+toolchain, only AWS read creds) → the local gitignored
+`inventory/tofu_inventory.json` cache the apply's after-hook writes.
 Port constants come from `tofu_data.constants`
 (defined in terraform-proxmox `locals.tf`).
 
@@ -130,6 +143,9 @@ Port constants come from `tofu_data.constants`
 
 | Variable | Purpose | Source |
 | --- | --- | --- |
+| `TOFU_INVENTORY_PATH` | Explicit inventory file pin (tests/overrides) | env (optional) |
+| `TOFU_INVENTORY_S3_URI` | Override the published-inventory S3 location | env (optional) |
+| `TOFU_INVENTORY_S3_REGION` | Region of the inventory bucket (default `us-east-2`) | env (optional) |
 | `PROXMOX_VE_HOSTNAME` | Proxmox VE hostname | Doppler / SOPS |
 | `PROXMOX_VE_NODE` | Proxmox node name | SOPS |
 | `PROXMOX_VE_GATEWAY` | Network gateway (for IP derivation) | Doppler / SOPS |

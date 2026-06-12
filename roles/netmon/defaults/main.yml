@@ -1,0 +1,116 @@
+---
+# netmon — per-WAN network-diagnosis prober (Telegraf, Docker-in-LXC).
+#
+# One Telegraf agent per prober runs native active probes (ping/dns/http) on
+# EVERY uplink, plus per-uplink device telemetry selected by netmon_uplink_kind:
+#   cable     -> DOCSIS modem SNMP
+#   satellite -> Starlink dish gRPC exporter (sidecar) scraped via Prometheus
+#   generic   -> active probes only
+# Output is Splunk-HEC format to Cribl Edge, which stamps index=netmon.
+# See docs/NETWORK_DIAGNOSIS.md in terraform-proxmox for the design.
+
+# --- container images (pinned; bump via Renovate or manual review) ---
+netmon_telegraf_image: "telegraf:1.33-alpine"
+netmon_telegraf_container_name: telegraf
+# Off-the-shelf Starlink dish exporter (deployed only on satellite probers).
+# danopstech is the canonical exporter but is stale (last tag v0.0.5); confirm
+# it still speaks your dish's gRPC API, and that the -address/-port flags in
+# netmon_starlink_exporter_args still match, before relying on the satellite path.
+netmon_starlink_exporter_image: "ghcr.io/danopstech/starlink_exporter:v0.0.5"
+netmon_starlink_exporter_container_name: starlink-exporter
+
+netmon_data_dir: /opt/netmon
+netmon_telegraf_interval: "10s"
+
+# Docker storage driver. fuse-overlayfs is required for Docker on a ZFS-backed
+# LXC; molecule's Docker-in-Docker overrides this to vfs.
+netmon_docker_storage_driver: "fuse-overlayfs"
+
+# Telegraf container networking. "host" is required in production so the prober's
+# probes egress the LXC's uplink (and native ping can open raw sockets); molecule
+# overrides to "bridge" because nested host networking cannot start the container
+# in Docker-in-Docker. cap_add grants NET_RAW for native ping — keep it non-empty
+# unless you switch the ping input to the exec method.
+netmon_telegraf_network_mode: "host"
+netmon_telegraf_cap_add:
+  - "NET_RAW"
+  - "NET_ADMIN"
+
+# Uplink kind for this prober: cable | satellite | lte | generic. Defaults from
+# the hostname (netmon-cable -> cable, netmon-sat -> satellite); override in
+# host_vars for a prober whose name does not encode its uplink.
+netmon_uplink_kind: >-
+  {{ 'cable' if 'cable' in inventory_hostname
+     else 'satellite' if ('sat' in inventory_hostname or 'starlink' in inventory_hostname)
+     else 'lte' if 'lte' in inventory_hostname
+     else 'generic' }}
+
+# --- active probes (native Telegraf inputs — no custom scripts) ---
+# Public anycast resolvers are intentional probe TARGETS (not internal topology).
+netmon_ping_targets:
+  - "1.1.1.1"
+  - "8.8.8.8"
+  - "9.9.9.9"
+netmon_dns_servers:
+  - "1.1.1.1"
+  - "8.8.8.8"
+netmon_dns_domains:
+  - "example.com"
+netmon_http_targets:
+  - "https://1.1.1.1"
+  - "https://www.google.com"
+
+# --- DOCSIS cable modem SNMP (netmon_uplink_kind == "cable") ---
+# 192.168.100.1 is the conventional cable-modem diagnostic IP. A prober only
+# reaches ITS modem when its traffic egresses the cable uplink (the per-WAN
+# source-IP policy route owned by tofu-unifi); until then SNMP may time out.
+netmon_docsis_modem_host: "192.168.100.1"
+netmon_docsis_snmp_version: 2
+netmon_docsis_snmp_community: >-
+  {{ lookup('env', 'NETMON_DOCSIS_SNMP_COMMUNITY') | default('public', true) }}
+# Standard DOCS-IF-MIB (RFC 4546) channel/status tables. These OIDs are
+# vendor-neutral; tune the set per your modem's supported MIB.
+netmon_docsis_snmp_tables:
+  - name: "docsis_downstream"
+    oid: "1.3.6.1.2.1.10.127.1.1.1"  # docsIfDownstreamChannelTable
+    fields:
+      - { name: "power_tenthdbmv", oid: "1.3.6.1.2.1.10.127.1.1.1.1.6" }
+  - name: "docsis_signal_quality"
+    oid: "1.3.6.1.2.1.10.127.1.1.4"  # docsIfSignalQualityTable
+    fields:
+      - { name: "snr_tenthdb", oid: "1.3.6.1.2.1.10.127.1.1.4.1.5" }
+      - { name: "unerroreds", oid: "1.3.6.1.2.1.10.127.1.1.4.1.6" }
+      - { name: "correcteds", oid: "1.3.6.1.2.1.10.127.1.1.4.1.7" }
+      - { name: "uncorrectables", oid: "1.3.6.1.2.1.10.127.1.1.4.1.8" }
+  - name: "docsis_cm_status"
+    oid: "1.3.6.1.2.1.10.127.1.2.4"  # docsIfCmStatusTable
+    fields:
+      - { name: "t3_timeouts", oid: "1.3.6.1.2.1.10.127.1.2.4.1.10" }
+      - { name: "t4_timeouts", oid: "1.3.6.1.2.1.10.127.1.2.4.1.11" }
+
+# --- Starlink dish gRPC exporter (netmon_uplink_kind == "satellite") ---
+# 192.168.100.1:9200 is the standard Starlink dish gRPC endpoint. The exporter
+# listens on satellite_exporter (a tofu constant) and Telegraf scrapes it.
+netmon_starlink_dish_address: "192.168.100.1:9200"
+netmon_starlink_exporter_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['satellite_exporter']
+     | default(9817) }}
+netmon_starlink_exporter_args:
+  - "-port={{ netmon_starlink_exporter_port }}"
+  - "-address={{ netmon_starlink_dish_address }}"
+
+# Optional: scrape the decoupled speedtest-exporter (set to its metrics URL to
+# fold throughput into the netmon stream). Empty = skip.
+netmon_speedtest_exporter_url: ""
+
+# --- output: Splunk-HEC -> Cribl Edge (which stamps index=netmon) ---
+# Targets the first cribl_edge prober by inventory; override netmon_cribl_host
+# to pin a specific Edge. cribl_hec_input_port is shared in group_vars/all.yml.
+netmon_cribl_host: >-
+  {{ hostvars[groups['cribl_edge'][0]]['container_ip']
+     if (groups['cribl_edge'] | default([]) | length) > 0 else '' }}
+netmon_hec_url: >-
+  http://{{ netmon_cribl_host }}:{{ cribl_hec_input_port | default(8088) }}/services/collector/event
+# Optional HEC token; if empty the Cribl HEC input accepts unauthenticated
+# pushes (acceptable on the mgmt VLAN). Add NETMON_HEC_TOKEN to SOPS to enable.
+netmon_hec_token: "{{ lookup('env', 'NETMON_HEC_TOKEN') | default('', true) }}"

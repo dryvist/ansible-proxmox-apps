@@ -449,6 +449,32 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
+# --- Phase 9b: re-assert LAN-reply policy routing before the fail-closed gate -
+# The lanroute unit is Type=oneshot + RemainAfterExit=yes, so the Phase 5b
+# `state: started` is a no-op once active and never reconciles a drifted table
+# 100; the "Restart download-vpn lanroute" handler fires only on a mangle change
+# AND only at end-of-play (after validate.yml). So a table 100 drifted to a
+# clearnet `default via` (the leak-surface state) is never healed before the gate
+# inspects it. Read the table and force the atomic ExecStop(flush)->ExecStart
+# (rebuild) only when it has drifted — deterministic, idempotent, ordered before
+# validation. Refs #367.
+- name: Read the LAN-reply policy-routing table before validation
+  ansible.builtin.command:
+    cmd: ip route show table {{ download_vpn_lanroute_table }}
+  register: download_vpn_lanroute_pre
+  changed_when: false
+  when: download_vpn_manage_services
+
+- name: Re-assert LAN-reply policy routing if table 100 has drifted
+  ansible.builtin.systemd:
+    name: download-vpn-lanroute.service
+    state: restarted
+  when:
+    - download_vpn_manage_services
+    - >-
+      'default via' in (download_vpn_lanroute_pre.stdout | default(''))
+      or 'unreachable default' not in (download_vpn_lanroute_pre.stdout | default(''))
+
 # --- Phase 10: MANDATORY deploy-time validation -----------------------------
 # Runs at the END of every play. FAILS the run on any killswitch/leak violation.
 - name: Run fail-closed deploy-time validation

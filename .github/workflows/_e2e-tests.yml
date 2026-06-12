@@ -8,11 +8,9 @@ on:
 permissions:
   contents: read
 
-# One job per test file so each suite's pass/fail is independently visible
-# in the GitHub UI, logs are separate, and any data-flow suite that touches
-# the live cluster can run in parallel with the others. Smoke gates the
-# data-flow suites — no point chasing data through Splunk if Cribl/HAProxy
-# are down.
+# One job per component so each layer's pass/fail is independently visible.
+# Smoke gates the data-flow suites -- no point chasing data through Splunk
+# if the live endpoints are down.
 
 jobs:
   smoke:
@@ -28,7 +26,7 @@ jobs:
         run: python3 -m pytest tests/e2e/test_smoke.py -v
 
   pipeline:
-    name: Pipeline data flow
+    name: Syslog pipeline data flow
     needs: smoke
     runs-on: [self-hosted, Linux]
     steps:
@@ -45,8 +43,55 @@ jobs:
           sops exec-env secrets.enc.yaml
           'python3 -m pytest tests/e2e/test_pipeline.py -v'
 
+  splunk:
+    name: Splunk component
+    needs: smoke
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Mask secrets
+        uses: JacobPEvans/.github/actions/mask-secrets@main
+        with:
+          sops-file: secrets.enc.yaml
+
+      - name: pytest tests/e2e/test_splunk.py
+        run: >-
+          sops exec-env secrets.enc.yaml
+          'python3 -m pytest tests/e2e/test_splunk.py -v'
+
+  cribl-edge:
+    name: Cribl Edge component
+    needs: smoke
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Mask secrets
+        uses: JacobPEvans/.github/actions/mask-secrets@main
+        with:
+          sops-file: secrets.enc.yaml
+
+      - name: pytest tests/e2e/test_cribl_edge.py
+        run: >-
+          sops exec-env secrets.enc.yaml
+          'python3 -m pytest tests/e2e/test_cribl_edge.py -v'
+
+  haproxy:
+    name: HAProxy component
+    needs: smoke
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: pytest tests/e2e/test_haproxy.py
+        run: python3 -m pytest tests/e2e/test_haproxy.py -v
+
   forwarding:
-    name: Index routing and protocol forwarding
+    name: NetFlow forwarding
     needs: smoke
     runs-on: [self-hosted, Linux]
     steps:

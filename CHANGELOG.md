@@ -1,5 +1,82 @@
 # Changelog
 
+## [1.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.31.0...v1.32.0) (2026-06-12)
+
+
+### Features
+
+* **inventory:** accept DHCP-first container fields (mac, reserved_ip, FQDN ip) ([#399](https://github.com/dryvist/ansible-proxmox-apps/issues/399)) ([1b0ef9f](https://github.com/dryvist/ansible-proxmox-apps/commit/1b0ef9f06c48421fe70d56e101441ddbeac893f7))
+
+## [1.31.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.30.0...v1.31.0) (2026-06-12)
+
+
+### Features
+
+* **cribl:** S2S path — HAProxy :10300 frontend + Stream cribl_tcp input ([#393](https://github.com/dryvist/ansible-proxmox-apps/issues/393)) ([2607e2e](https://github.com/dryvist/ansible-proxmox-apps/commit/2607e2e0b9984360ea5b9c39df019994bb7eec0f))
+* **inventory:** resolve inventory S3-first via amazon.aws (drop sync script) ([#397](https://github.com/dryvist/ansible-proxmox-apps/issues/397)) ([6e2688f](https://github.com/dryvist/ansible-proxmox-apps/commit/6e2688fa1e1c6e3b8b1186de946aaa188267b2f4))
+
+
+### Bug Fixes
+
+* **e2e:** search srcPort (Cribl netflow field name); unshadow inventory_path ([#395](https://github.com/dryvist/ansible-proxmox-apps/issues/395)) ([5150cf9](https://github.com/dryvist/ansible-proxmox-apps/commit/5150cf900a379503bb27a3c891c2f96f308ca89d))
+* **inventory:** scrub manual terragrunt-output instructions from fail messages ([#398](https://github.com/dryvist/ansible-proxmox-apps/issues/398)) ([227dafa](https://github.com/dryvist/ansible-proxmox-apps/commit/227dafae6fc9c707b2b507bac0d6840b63f1a9fa))
+
+## [1.30.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.29.3...v1.30.0) (2026-06-11)
+
+
+### Features
+
+* **pipeline:** consume syslog_port_map as single source of truth + FQDN Splunk host ([#390](https://github.com/dryvist/ansible-proxmox-apps/issues/390)) ([ec835af](https://github.com/dryvist/ansible-proxmox-apps/commit/ec835af6e7f73a54e3bccc97996c37959acb1be7))
+
+## [1.29.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.29.2...v1.29.3) (2026-06-11)
+
+
+### Bug Fixes
+
+* **e2e:** repair validation harness — check mode, Edge paths, per-edge tests, loud gate ([#388](https://github.com/dryvist/ansible-proxmox-apps/issues/388)) ([673d20d](https://github.com/dryvist/ansible-proxmox-apps/commit/673d20dc4b5c09c8b8a2ed6ae9d064b4706b37c7))
+
+## [1.29.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.29.1...v1.29.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* **netmon:** make molecule pass + fix Starlink exporter image/flags ([#386](https://github.com/dryvist/ansible-proxmox-apps/issues/386)) ([a91086f](https://github.com/dryvist/ansible-proxmox-apps/commit/a91086fc2d4c71600b33c2b113cda26e2bf8a366))
+
+## [1.29.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.29.0...v1.29.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **ci:** accept apex ingress entries in schema + wrap long test lines ([#385](https://github.com/dryvist/ansible-proxmox-apps/issues/385)) ([9e7bb38](https://github.com/dryvist/ansible-proxmox-apps/commit/9e7bb3896190675d87a82d4200f72256e36965a1))
+
+## [1.29.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.28.0...v1.29.0) (2026-06-10)
+
+
+### Features
+
+* **netmon:** per-WAN Telegraf collection into the Splunk netmon index ([#383](https://github.com/dryvist/ansible-proxmox-apps/issues/383)) ([d4ec0f6](https://github.com/dryvist/ansible-proxmox-apps/commit/d4ec0f61a339f755088ab59831ade370c3815f51))
+
+## [1.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.27.0...v1.28.0) (2026-06-09)
+
+
+### Features
+
+* **syslog_forwarder:** forward infra LXC logs to the Cribl pipeline ([#377](https://github.com/dryvist/ansible-proxmox-apps/issues/377)) ([5ba4e7c](https://github.com/dryvist/ansible-proxmox-apps/commit/5ba4e7c97750db63c4356b0cf08b5ce9d4097056))
+
+## [1.27.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.6...v1.27.0) (2026-06-09)
+
+
+### Features
+
+* **traefik+technitium:** front Proxmox cluster UI at the subdomain apex ([#376](https://github.com/dryvist/ansible-proxmox-apps/issues/376)) ([ee2d23b](https://github.com/dryvist/ansible-proxmox-apps/commit/ee2d23b95cef7117857612ea6f03787ca0e6fe33))
+
+## [1.26.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.5...v1.26.6) (2026-06-07)
+
+
+### Bug Fixes
+
+* **download_vpn:** re-assert lanroute table before deploy-time gate ([#371](https://github.com/dryvist/ansible-proxmox-apps/issues/371)) ([93d4981](https://github.com/dryvist/ansible-proxmox-apps/commit/93d498154819845ede340e92105247c7cfc40b48)), closes [#367](https://github.com/dryvist/ansible-proxmox-apps/issues/367)
+
 ## [1.26.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.26.4...v1.26.5) (2026-06-07)
 
 

@@ -1044,16 +1044,72 @@
     traefik_acme_aws_secret_access_key: "testsecretplaceholderplaceholderplaceholde"
     traefik_acme_aws_region: "us-east-1"
     traefik_acme_route53_zone_id: "Z0123456789ABCDEFGHIJ"
-    # Routes as tasks/main.yml builds them from tofu_data.ingress
-    # ({name, ip, port}) -> {name, fqdn, backend}.
-    traefik_routes:
-      - { name: plex, fqdn: "plex.pve.example.com", backend: "http://192.0.2.10:32400" }
-      - { name: seerr, fqdn: "seerr.pve.example.com", backend: "http://192.0.2.11:5055" }
+    # The tofu-owned ingress table (tofu_data.ingress) the builder consumes:
+    # single-backend {name, ip, port} rows plus the Proxmox apex {name, apex,
+    # backends[], port} pool. Scrubbed/documentation values only. The real
+    # builder (mirrored in the first task below) turns these into traefik_routes.
+    traefik_ingress_routes:
+      - { name: plex, ip: "192.0.2.10", port: 32400 }
       # HTTPS backend with a self-signed cert (e.g. Splunk Web) -> insecure_tls.
-      - { name: splunk, fqdn: "splunk.pve.example.com", backend: "https://192.0.2.12:8000", insecure_tls: true }
+      - { name: splunk, ip: "192.0.2.12", port: 8000, scheme: https, insecure_tls: true }
+      # Proxmox cluster-UI apex: load-balanced pool over the node FQDNs, sticky
+      # + health-checked, https to self-signed node backends.
+      - name: proxmox
+        apex: true
+        backends: ["proxmox1.example.com", "proxmox2.example.com", "proxmox3.example.com"]
+        port: 8006
+        scheme: https
+        insecure_tls: true
+        sticky: true
+        health_check: true
     _template_dir: "../../roles/traefik/templates"
 
   tasks:
+    # Build traefik_routes from the ingress table exactly as
+    # roles/traefik/tasks/main.yml does, so this exercises the real route-builder
+    # transform (apex fqdn, multi-backend servers list, scheme/sticky/health
+    # flags) end-to-end into the template — not a hand-maintained output mirror.
+    - name: Build traefik_routes from the fixture ingress table
+      ansible.builtin.set_fact:
+        traefik_routes: >-
+          {{
+            traefik_routes | default([]) + [{
+              'name': item.name,
+              'fqdn': (item.apex | default(false)) | ternary(
+                        traefik_base_domain,
+                        item.name ~ '.' ~ traefik_base_domain),
+              'servers': (item.backends | default([item.ip | default('')]))
+                         | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
+                         | map('regex_replace', '$', ':' ~ (item.port | string))
+                         | list,
+              'scheme': item.scheme | default('http'),
+              'insecure_tls': item.insecure_tls | default(false),
+              'sticky': item.sticky | default(false),
+              'health_check': item.health_check | default(false)
+            }]
+          }}
+      loop: "{{ traefik_ingress_routes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Assert the builder normalised apex + multi-backend rows correctly
+      ansible.builtin.assert:
+        that:
+          # Single http backend -> one url; fqdn keeps the <name>. prefix.
+          - (traefik_routes | selectattr('name', 'equalto', 'plex') | first).servers == ["http://192.0.2.10:32400"]
+          - (traefik_routes | selectattr('name', 'equalto', 'plex') | first).fqdn == "plex.pve.example.com"
+          # Apex row -> fqdn is the base domain itself + a 3-server pool.
+          - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).fqdn == "pve.example.com"
+          - >-
+            (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).servers
+            == ["https://proxmox1.example.com:8006",
+            "https://proxmox2.example.com:8006", "https://proxmox3.example.com:8006"]
+          - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).sticky | bool
+          - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).health_check | bool
+        fail_msg: >-
+          The route-builder did not normalise the ingress table correctly: apex
+          fqdn, the multi-backend servers list, or the sticky/health flags wrong.
+
     - name: Render traefik static config to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/traefik.yml.j2"
@@ -1101,14 +1157,14 @@
         _traefik_dynamic: "{{ _traefik_dynamic_raw.content | b64decode }}"
         _traefik_dynamic_yaml: "{{ _traefik_dynamic_raw.content | b64decode | from_yaml }}"
 
-    - name: Assert routers front each service with the wildcard cert + backend
+    - name: Assert routers front each service with the wildcard cert + apex
       ansible.builtin.assert:
         that:
           - "'Host(`plex.pve.example.com`)' in _traefik_dynamic"
-          - "'Host(`seerr.pve.example.com`)' in _traefik_dynamic"
           - "'http://192.0.2.10:32400' in _traefik_dynamic"
-          - "'http://192.0.2.11:5055' in _traefik_dynamic"
           - "'*.pve.example.com' in _traefik_dynamic"
+          # The apex router's Host rule is the base domain ITSELF (no <name>. prefix).
+          - _traefik_dynamic_yaml.http.routers.proxmox.rule == "Host(`pve.example.com`)"
           # Wildcard requested via the resolver; dashboard secured by a usersFile
           # (no credential inline — the role generates the file on the host).
           - _traefik_dynamic_yaml.http.routers.plex.tls.certResolver == "letsencrypt"
@@ -1118,15 +1174,39 @@
             == "/etc/traefik/dashboard.htpasswd"
           - _traefik_dynamic_yaml.http.services.plex.loadBalancer.servers[0].url == "http://192.0.2.10:32400"
         fail_msg: >-
-          dynamic.yml.j2 missing a router/service, the wildcard SAN, or the
-          usersFile-secured dashboard.
+          dynamic.yml.j2 missing a router/service, the apex Host rule, the
+          wildcard SAN, or the usersFile-secured dashboard.
+
+    - name: Assert the apex service is a sticky, health-checked, 3-node pool
+      ansible.builtin.assert:
+        that:
+          # Load-balanced across all three node UIs, in order.
+          - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.servers | length == 3
+          - >-
+            (_traefik_dynamic_yaml.http.services.proxmox.loadBalancer.servers | map(attribute='url') | list)
+            == ["https://proxmox1.example.com:8006",
+            "https://proxmox2.example.com:8006", "https://proxmox3.example.com:8006"]
+          # Sticky session cookie pins a browser to one node.
+          - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.sticky.cookie.name == "proxmox_lb"
+          - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.sticky.cookie.secure | bool
+          # Health check (https, path /) drops a down node; insecure-backend
+          # transport re-encrypts to the self-signed node certs.
+          - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck.path == "/"
+          - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck.scheme == "https"
+          - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.serversTransport == "insecure-backend"
+          # A single-backend http service gets neither sticky nor healthCheck.
+          - "'sticky' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+          - "'healthCheck' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+        fail_msg: >-
+          dynamic.yml.j2 apex service wrong: pool size/urls, sticky cookie,
+          healthCheck, or serversTransport not rendered as expected.
 
     - name: Assert HTTPS backend gets an https URL + insecure-backend serversTransport
       ansible.builtin.assert:
         that:
           # The https backend keeps its scheme through to the service URL.
           - _traefik_dynamic_yaml.http.services.splunk.loadBalancer.servers[0].url == "https://192.0.2.12:8000"
-          # Only the insecure_tls route references the shared transport...
+          # Only the insecure_tls routes reference the shared transport...
           - _traefik_dynamic_yaml.http.services.splunk.loadBalancer.serversTransport == "insecure-backend"
           - "'serversTransport' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
           # ...and that transport skips verification of the self-signed cert.
@@ -1168,3 +1248,60 @@
           - traefik.yml.j2: route53 DNS-01 resolver, secured API, TLS >= 1.2, no leaked creds
           - dynamic.yml.j2: per-service routers + backends, wildcard SAN, secured dashboard
           - acme.env.j2: AWS creds + AWS_HOSTED_ZONE_ID in the root-only EnvironmentFile
+
+# =============================================================================
+# syslog_forwarder — the rsyslog drop-in that forwards every log to the central
+# syslog VIP (-> HAProxy -> Cribl Edge -> Splunk). Render + assert the omfwd rule.
+# =============================================================================
+- name: Render and verify syslog_forwarder template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/syslog_forwarder/defaults/main.yml with scrubbed values.
+    syslog_forwarder_target_host: "syslog.pve.example.com"
+    syslog_forwarder_target_port: 1517
+    syslog_forwarder_protocol: tcp
+    syslog_forwarder_queue_max_disk_space: 256m
+    _sf_template_dir: "../../roles/syslog_forwarder/templates"
+
+  tasks:
+    - name: Render the syslog forward rule to /tmp
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/10-forward-cribl.conf.j2"
+        dest: /tmp/test_syslog_forward.conf
+        mode: "0644"
+
+    - name: Read rendered syslog forward rule
+      ansible.builtin.slurp:
+        src: /tmp/test_syslog_forward.conf
+      register: _sf_raw
+
+    - name: Decode rendered syslog forward rule
+      ansible.builtin.set_fact:
+        _sf: "{{ _sf_raw.content | b64decode }}"
+
+    - name: Assert all logs forward to the VIP over TCP with a disk-assisted queue
+      ansible.builtin.assert:
+        that:
+          # All facilities/severities, via the omfwd output module.
+          - "'*.*' in _sf"
+          - "'action(type=' in _sf"
+          - "'omfwd' in _sf"
+          # To the stable syslog CNAME on the Linux port, over TCP.
+          - "'syslog.pve.example.com' in _sf"
+          - "'1517' in _sf"
+          - "'protocol' in _sf"
+          - "'tcp' in _sf"
+          # Disk-assisted queue so a receiver outage buffers instead of dropping.
+          - "'queue.filename' in _sf"
+          - "'cribl_fwd' in _sf"
+          - "'256m' in _sf"
+        fail_msg: >-
+          10-forward-cribl.conf.j2 did not render the expected omfwd rule
+          (selector/target/port/protocol/queue).
+
+    - name: Syslog forwarder template rendering PASSED
+      ansible.builtin.debug:
+        msg: "syslog_forwarder: omfwd rule -> syslog.pve.example.com:1517/tcp with disk queue"

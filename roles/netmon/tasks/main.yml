@@ -1,0 +1,193 @@
+---
+# netmon — deploy a Telegraf prober (+ Starlink exporter on satellite hosts)
+# as a Docker-in-LXC stack.
+
+# =============================================================================
+# Docker installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    netmon_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ netmon_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ netmon_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Configure Docker storage driver (fuse-overlayfs on ZFS-backed LXC; vfs under molecule)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "{{ netmon_docker_storage_driver }}"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: netmon_daemon_config
+
+- name: Restart Docker to apply fuse-overlayfs configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: netmon_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for the Ansible docker_compose_v2 module
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+- name: Set Python interpreter to use venv for subsequent tasks
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+
+# =============================================================================
+# Config + compose
+# =============================================================================
+
+- name: Create netmon data directory
+  ansible.builtin.file:
+    path: "{{ netmon_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render Telegraf configuration
+  ansible.builtin.template:
+    src: telegraf.conf.j2
+    dest: "{{ netmon_data_dir }}/telegraf.conf"
+    owner: root
+    group: root
+    # World-readable: the telegraf image drops to the non-root telegraf user, so
+    # the container must be able to read this file. It lives only on the
+    # single-purpose prober LXC (never committed); the SNMP community defaults to
+    # "public" and the HEC token is optional. Move secrets to the compose
+    # `environment:` (telegraf expands ${VARS}) if you need them out of the file.
+    mode: "0644"
+  no_log: true
+  notify: Restart netmon stack
+
+- name: Deploy netmon docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ netmon_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart netmon stack
+
+- name: Deploy netmon stack via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ netmon_data_dir }}"
+    state: present
+
+# =============================================================================
+# Health check
+# =============================================================================
+
+- name: Verify the Telegraf container is running
+  ansible.builtin.command: >-
+    docker ps -q --filter name={{ netmon_telegraf_container_name }} --filter status=running
+  register: netmon_telegraf_running
+  changed_when: false
+  failed_when: false
+  retries: 6
+  delay: 5
+  until: netmon_telegraf_running.stdout != ''
+
+# Surface WHY telegraf is not up (state + logs + a one-shot run) instead of a
+# bare timeout. Telegraf logs to stderr, so merge 2>&1 — the previous diagnostic
+# captured stdout only and came back empty. The --once run does a single
+# gather+flush cycle and exits, surfacing any output/serializer init error.
+- name: Capture Telegraf diagnostics when it is not running
+  ansible.builtin.shell: "{{ item }} 2>&1"
+  loop:
+    - "docker ps -a --filter name={{ netmon_telegraf_container_name }}"
+    - "docker logs {{ netmon_telegraf_container_name }}"
+    - >-
+      docker run --rm
+      -v {{ netmon_data_dir }}/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      {{ netmon_telegraf_image }} --once
+  register: netmon_telegraf_diag
+  changed_when: false
+  failed_when: false
+  when: netmon_telegraf_running.stdout == ''
+
+- name: Fail with Telegraf diagnostics when the container is not running
+  ansible.builtin.fail:
+    msg: |-
+      Telegraf container '{{ netmon_telegraf_container_name }}' is not running after deploy.
+      {{ netmon_telegraf_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
+  when: netmon_telegraf_running.stdout == ''

@@ -24,15 +24,40 @@ cribl_edge_group: cribl
 # `cribl mode-edge`, the unit is installed as `cribl-edge.service`.
 cribl_edge_service_name: cribl-edge
 
-# Syslog ports from tofu constants (no hardcoded values)
-cribl_edge_syslog_ports: >-
-  {{ hostvars['localhost']['tofu_data']['constants']['syslog_ports'].values() | list }}
+# Syslog routing from tofu constants (no hardcoded values): per source
+# family — standard frontend, high backend (this Edge's listener), and the
+# Splunk index/sourcetype the syslog pipeline stamps.
+cribl_edge_syslog_routing: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['syslog_port_map'] }}
 
-# Syslog port mappings with names (for input/pipeline config)
+# Edge listeners: high backend ports only. HAProxy owns the standard
+# frontends (514-518) and forwards here.
 cribl_edge_syslog_port_mappings: >-
-  {{ hostvars['localhost']['tofu_data']['constants']['syslog_ports'] }}
+  {%- set out = {} -%}
+  {%- for family, entry in cribl_edge_syslog_routing | dictsort -%}
+  {%- set _ = out.update({family: entry.high}) -%}
+  {%- endfor -%}
+  {{ out }}
+cribl_edge_syslog_ports: "{{ cribl_edge_syslog_port_mappings.values() | list }}"
 
-# Splunk HEC configuration - derived from inventory
-cribl_edge_splunk_host: "{{ hostvars['splunk']['ansible_host'] }}"
+# Edge API bind port from tofu constants (no hardcoded values).
+# Templated into local/edge/cribl.yml with host 0.0.0.0 so the API is
+# reachable from the internal network, not just 127.0.0.1.
+cribl_edge_api_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['cribl_edge_api'] }}
+
+# Splunk HEC configuration — FQDN, never an IP. The siem VLAN address
+# changes when the host moves; the DNS record is the single source of
+# truth and resolves correctly from the pipeline VLAN (verified).
+cribl_edge_splunk_host: >-
+  splunk.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | mandatory('PROXMOX_SUBDOMAIN environment variable is required (Doppler)') }}
 cribl_edge_hec_url: "https://{{ cribl_edge_splunk_host }}:8088"
 cribl_edge_hec_token: "{{ lookup('env', 'SPLUNK_HEC_TOKEN') }}"
+
+# netmon Telegraf HEC ingestion. The per-WAN probers (roles/netmon) push
+# Splunk-HEC to this Edge on cribl_hec_input_port (group_vars/all.yml); the
+# netmon pipeline stamps index=netmon and reuses the splunk_hec output above.
+# Token is optional — empty accepts unauthenticated pushes from the mgmt VLAN.
+cribl_edge_hec_input_port: "{{ cribl_hec_input_port | default(8088) }}"
+cribl_edge_hec_input_token: "{{ lookup('env', 'NETMON_HEC_TOKEN') | default('', true) }}"

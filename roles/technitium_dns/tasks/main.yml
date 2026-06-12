@@ -309,6 +309,38 @@
     - technitium_dns_ingress_host in hostvars
     - hostvars[technitium_dns_ingress_host].container_ip is defined
 
+# The Proxmox cluster-UI apex (the subdomain zone root itself) resolves to the
+# Traefik LXC, same target as the per-service aliases above, so the bare apex
+# https://<subdomain> reaches Traefik's load-balanced node pool over TLS.
+# domain == the zone name writes the A record AT the zone apex. Created only when
+# the tofu ingress table carries an apex row (otherwise a no-op).
+- name: Create Traefik apex A record (zone root -> Traefik)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: A
+      ipAddress: "{{ hostvars[technitium_dns_ingress_host].container_ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_apex_result
+  changed_when: technitium_dns_apex_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_apex_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_apex_result.json.errorMessage | default(''))"
+  no_log: true
+  when:
+    - technitium_dns_ingress_apex | default([]) | length > 0
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_ingress_host in hostvars
+    - hostvars[technitium_dns_ingress_host].container_ip is defined
+
 # Authorize the secondaries to pull the zone via AXFR. UseSpecifiedNetworkACL
 # restricts transfer to exactly the secondary IPs (default-deny otherwise).
 # No-op for a single-node group (no secondaries).
