@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.32.1...v1.33.0) (2026-06-12)
+
+
+### Features
+
+* **media:** cut media stack over to unified /data hardlink layout + resilience ([#400](https://github.com/dryvist/ansible-proxmox-apps/issues/400)) ([4f4cf3b](https://github.com/dryvist/ansible-proxmox-apps/commit/4f4cf3bb1d005dedc31c3db53e6509fb7ff4598c))
+
 ## [1.32.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.32.0...v1.32.1) (2026-06-12)
 
 
