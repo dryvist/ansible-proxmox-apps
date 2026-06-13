@@ -6,6 +6,7 @@
 ### Bug Fixes
 
 * **cribl_stream:** conditionally stamp Splunk metadata on the S2S input ([#417](https://github.com/dryvist/ansible-proxmox-apps/issues/417)) ([795d983](https://github.com/dryvist/ansible-proxmox-apps/commit/795d983614325048b3ef17ac0f34ffdc31c078d0))
+* **inventory:** fail loud instead of silently using a stale cache ([#418](https://github.com/dryvist/ansible-proxmox-apps/issues/418)) ([b628045](https://github.com/dryvist/ansible-proxmox-apps/commit/b628045bde6d4de224b15fdcd5550c59b46cd3d2))
 
 ## [1.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.5...v1.34.0) (2026-06-13)
 
