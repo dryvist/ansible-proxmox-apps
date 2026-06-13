@@ -1,0 +1,90 @@
+---
+# Self-own Radarr's deterministic <ApiKey> + a valid <Authentication*> method in
+# its own config.xml, right after the app is installed and started. This makes
+# Radarr answer on the deterministic RADARR_API_KEY independently of
+# download_vpn / servarr_wiring (which run from behind the Proton VPN), so
+# consumers like Seerr can authenticate against Radarr regardless of ordering.
+#
+# community.general.xml is idempotent: it only rewrites when a value differs and
+# reports changed accordingly. On any change we restart Radarr (so the new key
+# loads) and wait for its API to answer with that key. Mirrors the house pattern
+# in roles/servarr_wiring/tasks/api_keys.yml (which no longer touches this key).
+#
+# Gated on radarr_manage_services: render-only runs (Molecule / CI) have no
+# running Radarr and no config.xml to edit.
+
+# Fail loud BEFORE writing a blank key into config.xml — a blank RADARR_API_KEY
+# almost always means the converge ran under the wrong Doppler project.
+- name: Assert RADARR_API_KEY is set (decoupled self-own)
+  ansible.builtin.assert:
+    that:
+      - radarr_api_key | length > 0
+    fail_msg: >-
+      RADARR_API_KEY is empty. Radarr cannot self-own its deterministic API key
+      and consumers (Seerr) will 401 against it. This almost always means the
+      converge ran under the wrong Doppler project — run under
+      `doppler run -p iac-conf-mgmt -c prd` (and ensure RADARR_API_KEY exists in
+      SOPS secrets.enc.yaml).
+    quiet: true
+  when: radarr_manage_services | bool
+
+- name: Self-own Radarr's deterministic API key + auth (live only)
+  when: radarr_manage_services | bool
+  block:
+    # Radarr writes config.xml on first start; wait for it before editing.
+    - name: Wait for Radarr config.xml to exist
+      ansible.builtin.wait_for:
+        path: "{{ radarr_data_dir }}/config.xml"
+        timeout: 120
+
+    - name: Ensure <ApiKey> is set in Radarr's config.xml
+      community.general.xml:
+        path: "{{ radarr_data_dir }}/config.xml"
+        xpath: /Config/ApiKey
+        value: "{{ radarr_api_key }}"
+      register: radarr_apikey_set
+      no_log: true
+
+    # Pin a valid authentication method (v4 walls the UI off when it is None) and
+    # let LAN requests through without a login prompt. Both elements already exist
+    # in the config.xml, so this only updates their values.
+    - name: Ensure <AuthenticationMethod> is set in Radarr's config.xml
+      community.general.xml:
+        path: "{{ radarr_data_dir }}/config.xml"
+        xpath: /Config/AuthenticationMethod
+        value: "{{ radarr_auth_method }}"
+      register: radarr_authmethod_set
+
+    - name: Ensure <AuthenticationRequired> is set in Radarr's config.xml
+      community.general.xml:
+        path: "{{ radarr_data_dir }}/config.xml"
+        xpath: /Config/AuthenticationRequired
+        value: "{{ radarr_auth_required }}"
+      register: radarr_authreq_set
+
+    # noqa no-handler: restart only when config.xml actually changed, then wait
+    # inline for the API to answer with the new key. A handler would defer the
+    # restart to the end of the play, but later same-run consumers must reach
+    # Radarr on the deterministic key immediately, so the restart is inline.
+    - name: Restart Radarr when its config.xml changed  # noqa: no-handler
+      ansible.builtin.systemd:
+        name: radarr.service
+        state: restarted
+      when: >-
+        radarr_apikey_set.changed
+        or radarr_authmethod_set.changed
+        or radarr_authreq_set.changed
+
+    - name: Wait for the Radarr API to answer with the deterministic key
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ radarr_web_port }}/api/v3/system/status"
+        method: GET
+        headers:
+          X-Api-Key: "{{ radarr_api_key }}"
+        status_code: 200
+      register: radarr_apikey_ready
+      retries: 30
+      delay: 5
+      until: radarr_apikey_ready.status == 200
+      changed_when: false
+      no_log: true
