@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.2...v1.34.3) (2026-06-13)
+
+
+### Bug Fixes
+
+* **media:** self-own *arr keys, non-fatal seerr reg, secret preflights ([#422](https://github.com/dryvist/ansible-proxmox-apps/issues/422)) ([30802f0](https://github.com/dryvist/ansible-proxmox-apps/commit/30802f0e9da90ee719eb56630d352f4846efe46f))
+
 ## [1.34.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.1...v1.34.2) (2026-06-13)
 
 
