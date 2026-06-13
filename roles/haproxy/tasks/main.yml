@@ -82,6 +82,30 @@
   when: "'lxc_containers' in group_names"
   notify: Reload haproxy
 
+- name: Create Nginx systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nginx.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy Nginx restart-on-failure systemd override
+  # The Debian nginx.service unit ships no Restart= directive, so a crash of
+  # the syslog/NetFlow UDP load balancer leaves it down until a manual
+  # converge. A drop-in adds crash recovery without forking the vendor unit.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/restart-on-failure.conf
+    content: |
+      # Managed by Ansible (haproxy role) — crash recovery for the Nginx LB.
+      [Service]
+      Restart=on-failure
+      RestartSec={{ haproxy_nginx_restart_sec }}
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload nginx
+
 - name: Ensure HAProxy socket directory exists
   ansible.builtin.file:
     path: /run/haproxy
