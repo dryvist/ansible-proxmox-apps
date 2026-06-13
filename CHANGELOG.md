@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.0...v1.34.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **cribl_stream:** conditionally stamp Splunk metadata on the S2S input ([#417](https://github.com/dryvist/ansible-proxmox-apps/issues/417)) ([795d983](https://github.com/dryvist/ansible-proxmox-apps/commit/795d983614325048b3ef17ac0f34ffdc31c078d0))
+
 ## [1.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.5...v1.34.0) (2026-06-13)
 
 
