@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.1...v1.34.2) (2026-06-13)
+
+
+### Bug Fixes
+
+* **infra:** add restart-on-failure backoff to keystone LB services ([#421](https://github.com/dryvist/ansible-proxmox-apps/issues/421)) ([84c613c](https://github.com/dryvist/ansible-proxmox-apps/commit/84c613ca023118b474166261c4a428678e303d66))
+
 ## [1.34.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.0...v1.34.1) (2026-06-13)
 
 
