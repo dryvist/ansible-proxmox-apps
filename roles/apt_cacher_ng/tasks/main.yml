@@ -72,11 +72,36 @@
     mode: '0644'
   notify: Restart apt-cacher-ng
 
+- name: Create apt-cacher-ng systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-cacher-ng.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy apt-cacher-ng restart backoff systemd override
+  # The Debian unit already restarts on failure but sets no RestartSec, so a
+  # crash-loop hammers restarts. A drop-in adds a backoff without forking the
+  # vendor unit.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/apt-cacher-ng.service.d/restart-backoff.conf
+    content: |
+      # Managed by Ansible (apt_cacher_ng role) — crash-recovery backoff.
+      [Service]
+      Restart=on-failure
+      RestartSec={{ apt_cacher_ng_restart_sec }}
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart apt-cacher-ng
+
 - name: Enable apt-cacher-ng service
   ansible.builtin.systemd:
     name: apt-cacher-ng
     state: started
     enabled: true
+    daemon_reload: true
 
 - name: Configure UFW firewall rule for apt-cacher-ng
   community.general.ufw:
