@@ -1,33 +1,26 @@
 ---
-# Set a deterministic <ApiKey> and a valid <Authentication*> method in each app's
-# config.xml, delegated to the host that holds the file. Sonarr/Radarr/Prowlarr
-# v4 refuse to serve the UI with AuthenticationMethod=None, so we also pin a valid
+# Set a deterministic <ApiKey> and a valid <Authentication*> method in
+# Prowlarr's config.xml, delegated to the host that holds the file. Prowlarr v1
+# refuses to serve the UI with AuthenticationMethod=None, so we also pin a valid
 # method here. community.general.xml is idempotent: it only rewrites when a value
 # differs and reports changed accordingly. When any element changed, restart the
 # app (delegated) and wait for its API to answer, so later wiring authenticates.
 #
-# One compact per-app spec drives all three apps through a single code path.
+# Sonarr and Radarr now SELF-OWN their own deterministic keys in their own roles
+# (roles/{sonarr,radarr}/tasks/api_key.yml), so they answer on the deterministic
+# key right after their role runs — independent of download_vpn / servarr_wiring,
+# which run from behind the Proton VPN. That decoupling is why consumers like
+# Seerr no longer transitively depend on the VPN for *arr authentication. Only
+# Prowlarr's key is set here (Prowlarr lives in the download-vpn LXC alongside
+# qBittorrent, so this role is its natural owner). All cross-app wiring below
+# still consumes the Sonarr/Radarr keys via servarr_wiring_*_api_key.
+#
+# The one-element spec keeps the changed-then-restart-then-wait code path intact.
 
 - name: Build the per-app servarr spec
   ansible.builtin.set_fact:
     servarr_wiring_apps:
-      - name: sonarr
-        host_inventory: sonarr
-        data_dir: "{{ servarr_wiring_sonarr_data_dir }}"
-        api_key: "{{ servarr_wiring_sonarr_api_key }}"
-        service: sonarr
-        port: "{{ servarr_wiring_sonarr_port }}"
-        endpoint_host: "{{ servarr_wiring_sonarr_host }}"
-        api_version: v3
-      - name: radarr
-        host_inventory: radarr
-        data_dir: "{{ servarr_wiring_radarr_data_dir }}"
-        api_key: "{{ servarr_wiring_radarr_api_key }}"
-        service: radarr
-        port: "{{ servarr_wiring_radarr_port }}"
-        endpoint_host: "{{ servarr_wiring_radarr_host }}"
-        api_version: v3
-      # Prowlarr is a v1 API (Sonarr/Radarr are v3).
+      # Prowlarr is a v1 API (Sonarr/Radarr are v3, and self-own their keys).
       - name: prowlarr
         host_inventory: download-vpn
         data_dir: "{{ servarr_wiring_prowlarr_data_dir }}"

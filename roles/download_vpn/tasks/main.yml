@@ -2,6 +2,31 @@
 # download_vpn — qBittorrent + Prowlarr behind Proton WireGuard with a
 # fail-closed nftables killswitch. See defaults/main.yml for the security model.
 
+# --- Phase -1: secret pre-flight (fail loud before a blank wg0.conf) ----------
+# The four PROTON_WG_* values come from Doppler at runtime. If the converge runs
+# under the WRONG Doppler project they resolve to empty strings and the role
+# silently renders a blank/broken wg0.conf (the tunnel never comes up). Assert
+# they are non-empty FIRST — before the endpoint split below uses them — and name
+# the most likely cause. Gated on download_vpn_manage_services so render-only
+# runs (Molecule) are unaffected; Molecule injects test PROTON_WG_* values
+# regardless.
+- name: Assert the Proton WireGuard secrets are present (fail loud, live only)
+  ansible.builtin.assert:
+    that:
+      - download_vpn_wg_private_key | length > 0
+      - download_vpn_wg_address | length > 0
+      - download_vpn_wg_peer_public_key | length > 0
+      - download_vpn_wg_endpoint | length > 0
+    fail_msg: >-
+      One or more PROTON_WG_* secrets are empty
+      (PROTON_WG_IFACE_PRIVATE_KEY / PROTON_WG_IFACE_ADDRESS /
+      PROTON_WG_PEER_PUBLIC_KEY / PROTON_WG_PEER_ENDPOINT). Rendering wg0.conf now
+      would produce a blank, non-functional tunnel. This almost always means the
+      converge ran under the wrong Doppler project — run under
+      `doppler run -p iac-conf-mgmt -c prd`.
+    quiet: true
+  when: download_vpn_manage_services | bool
+
 # --- Phase 0: resolve endpoint family (v4 vs v6) ----------------------------
 - name: Resolve Proton endpoint host/port
   ansible.builtin.set_fact:

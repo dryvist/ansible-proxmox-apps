@@ -1,0 +1,90 @@
+---
+# Self-own Sonarr's deterministic <ApiKey> + a valid <Authentication*> method in
+# its own config.xml, right after the app is installed and started. This makes
+# Sonarr answer on the deterministic SONARR_API_KEY independently of
+# download_vpn / servarr_wiring (which run from behind the Proton VPN), so
+# consumers like Seerr can authenticate against Sonarr regardless of ordering.
+#
+# community.general.xml is idempotent: it only rewrites when a value differs and
+# reports changed accordingly. On any change we restart Sonarr (so the new key
+# loads) and wait for its API to answer with that key. Mirrors the house pattern
+# in roles/servarr_wiring/tasks/api_keys.yml (which no longer touches this key).
+#
+# Gated on sonarr_manage_services: render-only runs (Molecule / CI) have no
+# running Sonarr and no config.xml to edit.
+
+# Fail loud BEFORE writing a blank key into config.xml — a blank SONARR_API_KEY
+# almost always means the converge ran under the wrong Doppler project.
+- name: Assert SONARR_API_KEY is set (decoupled self-own)
+  ansible.builtin.assert:
+    that:
+      - sonarr_api_key | length > 0
+    fail_msg: >-
+      SONARR_API_KEY is empty. Sonarr cannot self-own its deterministic API key
+      and consumers (Seerr) will 401 against it. This almost always means the
+      converge ran under the wrong Doppler project — run under
+      `doppler run -p iac-conf-mgmt -c prd` (and ensure SONARR_API_KEY exists in
+      SOPS secrets.enc.yaml).
+    quiet: true
+  when: sonarr_manage_services | bool
+
+- name: Self-own Sonarr's deterministic API key + auth (live only)
+  when: sonarr_manage_services | bool
+  block:
+    # Sonarr writes config.xml on first start; wait for it before editing.
+    - name: Wait for Sonarr config.xml to exist
+      ansible.builtin.wait_for:
+        path: "{{ sonarr_data_dir }}/config.xml"
+        timeout: 120
+
+    - name: Ensure <ApiKey> is set in Sonarr's config.xml
+      community.general.xml:
+        path: "{{ sonarr_data_dir }}/config.xml"
+        xpath: /Config/ApiKey
+        value: "{{ sonarr_api_key }}"
+      register: sonarr_apikey_set
+      no_log: true
+
+    # Pin a valid authentication method (v4 walls the UI off when it is None) and
+    # let LAN requests through without a login prompt. Both elements already exist
+    # in the config.xml, so this only updates their values.
+    - name: Ensure <AuthenticationMethod> is set in Sonarr's config.xml
+      community.general.xml:
+        path: "{{ sonarr_data_dir }}/config.xml"
+        xpath: /Config/AuthenticationMethod
+        value: "{{ sonarr_auth_method }}"
+      register: sonarr_authmethod_set
+
+    - name: Ensure <AuthenticationRequired> is set in Sonarr's config.xml
+      community.general.xml:
+        path: "{{ sonarr_data_dir }}/config.xml"
+        xpath: /Config/AuthenticationRequired
+        value: "{{ sonarr_auth_required }}"
+      register: sonarr_authreq_set
+
+    # noqa no-handler: restart only when config.xml actually changed, then wait
+    # inline for the API to answer with the new key. A handler would defer the
+    # restart to the end of the play, but later same-run consumers must reach
+    # Sonarr on the deterministic key immediately, so the restart is inline.
+    - name: Restart Sonarr when its config.xml changed  # noqa: no-handler
+      ansible.builtin.systemd:
+        name: sonarr.service
+        state: restarted
+      when: >-
+        sonarr_apikey_set.changed
+        or sonarr_authmethod_set.changed
+        or sonarr_authreq_set.changed
+
+    - name: Wait for the Sonarr API to answer with the deterministic key
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ sonarr_web_port }}/api/v3/system/status"
+        method: GET
+        headers:
+          X-Api-Key: "{{ sonarr_api_key }}"
+        status_code: 200
+      register: sonarr_apikey_ready
+      retries: 30
+      delay: 5
+      until: sonarr_apikey_ready.status == 200
+      changed_when: false
+      no_log: true
