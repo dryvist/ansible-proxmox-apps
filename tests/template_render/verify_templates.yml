@@ -1314,3 +1314,81 @@
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:
         msg: "syslog_forwarder: omfwd rule -> syslog.pve.example.com:1517/tcp with disk queue"
+
+- name: Render and verify cribl_stream templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/cribl_stream/defaults/main.yml (only vars inputs.yml.j2 uses;
+    # the real defaults derive these from tofu_data constants).
+    cribl_stream_netflow_port: 2055
+    cribl_stream_s2s_port: 10300
+    cribl_stream_pq_enabled: true
+    _template_dir: "../../roles/cribl_stream/templates"
+
+  tasks:
+    - name: Render cribl_stream inputs.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/inputs.yml.j2"
+        dest: /tmp/test_cribl_stream_inputs.yml
+        mode: "0644"
+
+    - name: Render force_splunk_meta conf.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/force_splunk_meta/conf.yml.j2"
+        dest: /tmp/test_cribl_stream_force_splunk_meta.yml
+        mode: "0644"
+
+    - name: Read rendered cribl_stream templates
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _cribl_stream_rendered
+      loop:
+        - /tmp/test_cribl_stream_inputs.yml
+        - /tmp/test_cribl_stream_force_splunk_meta.yml
+
+    - name: Decode cribl_stream rendered content
+      ansible.builtin.set_fact:
+        _cribl_stream_inputs: "{{ _cribl_stream_rendered.results[0].content | b64decode }}"
+        _cribl_stream_meta_pipeline: "{{ _cribl_stream_rendered.results[1].content | b64decode }}"
+
+    - name: Assert S2S input attaches the force_splunk_meta connection pipeline
+      ansible.builtin.assert:
+        that:
+          - "'type: tcpjson' in _cribl_stream_inputs"
+          - "'port: 10300' in _cribl_stream_inputs"
+          - "'pipeline: force_splunk_meta' in _cribl_stream_inputs"
+        fail_msg: >-
+          inputs.yml.j2 must attach force_splunk_meta to the in_cribl_s2s
+          connection — Cribl Edge skips its destination post-processing for
+          pack-routed events, so unstamped events would fall into Splunk's
+          HEC token defaults (index=main, sourcetype=httpevent)
+
+    - name: Assert force_splunk_meta evals are conditional and mask schema is valid
+      ansible.builtin.assert:
+        that:
+          - "'index ||' in _cribl_stream_meta_pipeline"
+          - "'sourcetype ||' in _cribl_stream_meta_pipeline"
+          - "'matchRegex' in _cribl_stream_meta_pipeline"
+          - "'replaceExpr' in _cribl_stream_meta_pipeline"
+          - "'regex:' not in _cribl_stream_meta_pipeline"
+        fail_msg: >-
+          force_splunk_meta must keep conditional evals (index || ...) so
+          Edge-stamped events pass through, and the mask rules must use
+          matchRegex/replaceExpr — regex/replacement keys fail function init
+          and silently disable the whole pipeline
+
+    - name: Assert force_splunk_meta renders as parseable YAML
+      ansible.builtin.assert:
+        that:
+          - "(_cribl_stream_meta_pipeline | from_yaml).functions | length == 2"
+        fail_msg: "force_splunk_meta conf.yml must parse as YAML with eval + mask functions"
+
+    - name: Cribl Stream template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          cribl_stream template assertions passed:
+          - inputs.yml.j2: tcpjson S2S input on 10300 with force_splunk_meta connection pipeline
+          - force_splunk_meta: conditional evals + valid mask schema (matchRegex/replaceExpr)
