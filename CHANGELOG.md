@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.5...v1.34.0) (2026-06-13)
+
+
+### Features
+
+* **cribl:** route UniFi IPFIX/NetFlow to the netflow index ([#415](https://github.com/dryvist/ansible-proxmox-apps/issues/415)) ([b50f5e9](https://github.com/dryvist/ansible-proxmox-apps/commit/b50f5e9cce5253cb511ed9f3fae372aeac253268))
+
 ## [1.33.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.33.4...v1.33.5) (2026-06-12)
 
 
