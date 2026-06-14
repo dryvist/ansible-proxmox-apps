@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.38.0...v1.39.0) (2026-06-14)
+
+
+### Features
+
+* **inventory:** derive each LXC ansible_host from its node, drop global PROXMOX_VE_HOSTNAME ([#443](https://github.com/dryvist/ansible-proxmox-apps/issues/443)) ([107ee3b](https://github.com/dryvist/ansible-proxmox-apps/commit/107ee3bca68b0de9e36e9ffa125a0e08c85af9b3))
+
 ## [1.38.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.37.0...v1.38.0) (2026-06-14)
 
 
