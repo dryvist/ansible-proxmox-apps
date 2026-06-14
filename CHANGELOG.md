@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.36.1...v1.37.0) (2026-06-14)
+
+
+### Features
+
+* **service_deadman:** deadman watchdog for keystone SPOFs ([8815426](https://github.com/dryvist/ansible-proxmox-apps/commit/88154268f5893bdc5cbf1f7d94ccc44fce797b6d))
+
 ## [1.36.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.36.0...v1.36.1) (2026-06-14)
 
 
