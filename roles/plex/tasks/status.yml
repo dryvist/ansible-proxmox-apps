@@ -1,0 +1,49 @@
+---
+# Loud, end-of-role onboarding status. Claim, library, customConnections, and
+# publish are all NON-FATAL by design (a stale ~4-min claim token must not break
+# routine converges), which previously let a freshly-migrated server run
+# UNCLAIMED and UNPUBLISHED — invisible to the Plex app on Roku — while the
+# failure scrolled past as ordinary debug output. This surfaces the final state
+# unmissably so the gap cannot hide again, and offers an opt-in strict failure.
+
+- name: Re-read Preferences.xml for the final onboarding state
+  ansible.builtin.slurp:
+    src: "{{ plex_preferences_path }}"
+  register: plex_prefs_final
+  failed_when: false
+  no_log: true
+
+- name: Compute onboarding state (claimed / published)
+  ansible.builtin.set_fact:
+    plex_is_claimed: >-
+      {{ (plex_prefs_final.content | default('') | b64decode)
+         is search('PlexOnlineToken="[^"]+"') }}
+    plex_is_published: >-
+      {{ (plex_prefs_final.content | default('') | b64decode)
+         is search('PublishServerOnPlexOnlineKey="1"') }}
+  no_log: true
+
+- name: Confirm the server is fully onboarded
+  ansible.builtin.debug:
+    msg: "Plex onboarding OK — server is claimed and published to plex.tv (discoverable on Roku)."
+  when: plex_is_claimed and plex_is_published
+
+- name: WARN when the server is not discoverable on Roku
+  ansible.builtin.debug:
+    msg: >-
+      PLEX ONBOARDING INCOMPLETE — server is
+      {{ 'NOT CLAIMED' if not plex_is_claimed else 'claimed' }} and
+      {{ 'NOT PUBLISHED to plex.tv' if not plex_is_published else 'published' }}.
+      Until BOTH are true the Plex app on Roku cannot discover it. Re-run with a
+      FRESH claim token (-e plex_claim_token=claim-XXXX from
+      https://www.plex.tv/claim) or claim via the web UI, then converge again.
+  when: not (plex_is_claimed and plex_is_published)
+
+- name: Fail when onboarding is incomplete (opt-in strict mode)
+  ansible.builtin.assert:
+    that: plex_is_claimed and plex_is_published
+    fail_msg: >-
+      Plex is not discoverable on Roku (claimed={{ plex_is_claimed }},
+      published={{ plex_is_published }}) and plex_require_onboarded is true.
+    quiet: true
+  when: plex_require_onboarded | default(false)
