@@ -107,12 +107,12 @@
 - name: Assert the rustfs binary was found in the archive
   ansible.builtin.assert:
     that: object_storage_binary_find.matched | int > 0
-    fail_msg: "No 'rustfs' binary found in {{ object_storage_binary_url }} — the release asset layout may have changed."
+    fail_msg: "No 'rustfs' binary found in the downloaded release archive — the asset layout may have changed."
   run_once: true
 
 - name: Copy rustfs binary to target
   ansible.builtin.copy:
-    src: "{{ object_storage_binary_find.files[0].path }}"
+    src: "{{ hostvars[ansible_play_hosts[0]].object_storage_binary_find.files[0].path }}"
     dest: "{{ object_storage_install_dir }}/rustfs"
     owner: root
     group: root
@@ -181,16 +181,29 @@
   changed_when: true
   no_log: true
 
-- name: Enable versioning on versioned buckets
+- name: Read current versioning status
   ansible.builtin.command:
-    cmd: >-
-      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-versioning
-      --bucket {{ item.name }} --versioning-configuration Status=Enabled
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api get-bucket-versioning --bucket {{ item.name }}"
   loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
   loop_control:
     label: "{{ item.name }}"
   environment: "{{ object_storage_aws_env }}"
+  register: object_storage_versioning_current
   changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Enable versioning where not already enabled
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-versioning
+      --bucket {{ item.item.name }} --versioning-configuration Status=Enabled
+  loop: "{{ object_storage_versioning_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: "'Enabled' not in (item.stdout | default(''))"
+  changed_when: true
   no_log: true
 
 # Anonymous (public-read) download policy — Splunk and other internal consumers
@@ -305,7 +318,11 @@
   environment: "{{ object_storage_aws_env }}"
   register: object_storage_infra_stat
   changed_when: false
-  failed_when: false
+  failed_when: >-
+    object_storage_infra_stat.rc is defined and
+    object_storage_infra_stat.rc != 0 and
+    '404' not in (object_storage_infra_stat.stderr | default('')) and
+    'Not Found' not in (object_storage_infra_stat.stderr | default(''))
   no_log: true
 
 - name: Stage missing infra artifacts on controller
