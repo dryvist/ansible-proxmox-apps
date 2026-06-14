@@ -43,10 +43,13 @@ write would clobber the mirror.
 
 ## Targets / privacy
 
-Probe targets default to **generic** values only (the cable-modem diagnostic IP
-`192.168.100.1` and public anycast `1.1.1.1` / `8.8.8.8`). Real ISP hop IPs and
-ISP-specific targets are home-specific — supply them via a **private** inventory
-override of `prometheus_stack_blackbox_jobs`; never commit them to this public repo.
+Probe targets default to **generic** values only and are defined **once** as
+`prometheus_stack_modem_ip` (cable-modem diagnostic IP, `192.168.100.1`) and
+`prometheus_stack_anycast_targets` (public resolvers, `1.1.1.1` / `8.8.8.8`); the
+per-module scrape jobs and the smoke-test target derive from them. Real ISP hop
+IPs and ISP-specific targets are home-specific — override those two vars (or the
+whole `prometheus_stack_blackbox_jobs` list) via a **private** inventory; never
+commit them to this public repo.
 
 ## Variables
 

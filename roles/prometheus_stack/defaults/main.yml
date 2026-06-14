@@ -42,32 +42,39 @@ prometheus_stack_blackbox_network_mode: "host"
 prometheus_stack_blackbox_cap_add:
   - "NET_RAW"
 
-# Probe target used by the post-deploy smoke test (must be reliably ICMP-reachable
-# so a green deploy means the probe pipeline works, not that the modem is up).
-prometheus_stack_smoke_target: "1.1.1.1"
+# --- probe TARGETS (defined once; the jobs below derive from these) ------------
+# GENERIC defaults only. Real ISP hop IPs / ISP-specific targets are home-specific;
+# override prometheus_stack_modem_ip / prometheus_stack_anycast_targets (or the
+# whole prometheus_stack_blackbox_jobs) via a PRIVATE inventory — never commit
+# home-specific targets to this public repo.
+prometheus_stack_modem_ip: "192.168.100.1"     # cable-modem diagnostic IP (ICMP-only)
+prometheus_stack_anycast_targets:              # public resolvers used as probe targets
+  - "1.1.1.1"
+  - "8.8.8.8"
+
+# Default IP family + per-probe timeout, applied to every module below.
+prometheus_stack_ip_protocol: "ip4"
+prometheus_stack_probe_timeout: "5s"
+prometheus_stack_dns_query_name: "example.com"
+
+# Probe target for the post-deploy smoke test (must be reliably ICMP-reachable so a
+# green deploy means the probe pipeline works, not that the modem is up).
+prometheus_stack_smoke_target: "{{ prometheus_stack_anycast_targets[0] }}"
 
 # One-time migration: the previous design ran blackbox_exporter as its own compose
 # project here. The role tears it down so the merged project can own the container.
 prometheus_stack_legacy_blackbox_dir: /opt/blackbox-exporter
 
-# Probe targets — GENERIC defaults only: the cable-modem diagnostic IP and public
-# anycast. Real ISP hop IPs / ISP-specific targets are home-specific; supply them
-# via a PRIVATE inventory override of prometheus_stack_blackbox_jobs — never commit
-# them to this public repo.
+# Scrape jobs — one per module — built from the target vars above so an IP is
+# written exactly once. Override this whole list in a private inventory for
+# bespoke per-module target sets.
 prometheus_stack_blackbox_jobs:
   - module: icmp
-    targets:
-      - "192.168.100.1"   # cable-modem diagnostic IP (generic; ICMP-only)
-      - "1.1.1.1"
-      - "8.8.8.8"
+    targets: "{{ [prometheus_stack_modem_ip] + prometheus_stack_anycast_targets }}"
   - module: http_2xx_tls
-    targets:
-      - "https://1.1.1.1"
-      - "https://8.8.8.8"
+    targets: "{{ prometheus_stack_anycast_targets | map('regex_replace', '^', 'https://') | list }}"
   - module: dns_udp
-    targets:
-      - "1.1.1.1"
-      - "8.8.8.8"
+    targets: "{{ prometheus_stack_anycast_targets }}"
 
 # Raw YAML appended to scrape_configs for exporters that land later
 # (smokeping_prober, irtt, snmp_exporter). Empty until those roles ship.
@@ -82,32 +89,32 @@ prometheus_stack_extra_scrape_configs: ""
 prometheus_stack_blackbox_modules:
   icmp:
     prober: icmp
-    timeout: 5s
+    timeout: "{{ prometheus_stack_probe_timeout }}"
     icmp:
-      preferred_ip_protocol: ip4
+      preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
   tcp_connect:
     prober: tcp
-    timeout: 5s
+    timeout: "{{ prometheus_stack_probe_timeout }}"
     tcp:
-      preferred_ip_protocol: ip4
+      preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
   http_2xx:
     prober: http
-    timeout: 5s
+    timeout: "{{ prometheus_stack_probe_timeout }}"
     http:
-      preferred_ip_protocol: ip4
+      preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
       valid_status_codes: []
       fail_if_not_ssl: false
   http_2xx_tls:
     prober: http
-    timeout: 5s
+    timeout: "{{ prometheus_stack_probe_timeout }}"
     http:
-      preferred_ip_protocol: ip4
+      preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
       fail_if_not_ssl: true
   dns_udp:
     prober: dns
-    timeout: 5s
+    timeout: "{{ prometheus_stack_probe_timeout }}"
     dns:
       transport_protocol: udp
-      preferred_ip_protocol: ip4
-      query_name: "example.com"
+      preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
+      query_name: "{{ prometheus_stack_dns_query_name }}"
       query_type: "A"
