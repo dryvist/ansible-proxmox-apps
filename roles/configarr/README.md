@@ -14,10 +14,11 @@ current; this role just points Configarr at the live apps.
 
 ## How it runs
 
-A one-shot container on **docker-host** (`hosts: docker_vms`, `run_once: true`),
-where it can reach the *arr LAN and the internet (for templates) directly —
-no VPN dependency. Configarr is idempotent: it writes only what differs, so a
-re-run on an in-sync stack is a no-op, making it safe on every converge.
+A one-shot container on **docker-host** (`hosts: docker_vms[0]` — the first
+docker host is enough), where it can reach the *arr LAN and the internet (for
+templates) directly — no VPN dependency. Configarr is idempotent: it writes only
+what differs, so a re-run on an in-sync stack is a no-op, making it safe on every
+converge.
 
 Endpoints resolve from the OpenTofu inventory (`reserved_ip` → `ip` →
 discovered `container_ip`), never a hardcoded IP. API keys come from SOPS
@@ -55,8 +56,8 @@ one). `SONARR_API_KEY` / `RADARR_API_KEY` must be present in the SOPS env.
 
 ## Usage
 
-Runs automatically in its `site.yml` play (`hosts: docker_vms`,
-`run_once: true`). To apply just this role against the live stack:
+Runs automatically in its `site.yml` play (`hosts: docker_vms[0]`). To apply
+just this role against the live stack:
 
 ```bash
 sops exec-env secrets.enc.yaml \
