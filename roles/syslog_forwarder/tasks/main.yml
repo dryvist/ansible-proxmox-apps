@@ -22,6 +22,28 @@
     update_cache: true
     cache_valid_time: 3600
 
+# rsyslog's Debian unit enables systemd sandboxing (PrivateDevices,
+# ProtectKernelTunables, ProtectControlGroups, ...) that an unprivileged LXC
+# cannot satisfy, so systemd fails the unit with status=226/NAMESPACE before
+# rsyslogd starts. Drop in an override that neutralizes those directives so the
+# forwarder runs in a container. Harmless on hosts that could honor them.
+- name: Ensure rsyslog systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/rsyslog.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy rsyslog unprivileged-LXC systemd override
+  ansible.builtin.template:
+    src: rsyslog-lxc-override.conf.j2
+    dest: /etc/systemd/system/rsyslog.service.d/zz-lxc-unpriv.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rsyslog
+
 - name: Deploy the Cribl syslog-forward rule
   ansible.builtin.template:
     src: 10-forward-cribl.conf.j2
@@ -37,3 +59,4 @@
     name: rsyslog
     state: started
     enabled: true
+    daemon_reload: true

@@ -21,6 +21,14 @@ rule uses `omfwd` with a disk-assisted action queue, so a HAProxy/Cribl outage
 buffers (up to `syslog_forwarder_queue_max_disk_space`) instead of dropping
 logs.
 
+Debian's `rsyslog.service` ships systemd sandboxing (`PrivateDevices`,
+`ProtectKernelTunables`, `ProtectControlGroups`, …) that an unprivileged LXC
+cannot satisfy — systemd fails the unit with `status=226/NAMESPACE` before
+`rsyslogd` runs. The role drops in
+`/etc/systemd/system/rsyslog.service.d/zz-lxc-unpriv.conf` to neutralize those
+directives so the forwarder starts in a container. It disables only the
+host-privilege sandboxing, not any rsyslog functionality.
+
 ## What it captures
 
 - All host/system logs and **every native systemd service** (Traefik,
