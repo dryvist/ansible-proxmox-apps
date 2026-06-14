@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.5...v1.35.0) (2026-06-14)
+
+
+### Features
+
+* **unifi_metrics:** ship full UniFi controller telemetry to Splunk ([#425](https://github.com/dryvist/ansible-proxmox-apps/issues/425)) ([a180746](https://github.com/dryvist/ansible-proxmox-apps/commit/a1807469aef07f497752ebc3501a0377e5980369))
+
 ## [1.34.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.4...v1.34.5) (2026-06-14)
 
 
