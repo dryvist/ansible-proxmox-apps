@@ -1,0 +1,66 @@
+---
+# service_deadman — timer-driven liveness watchdog for keystone SPOF services.
+#
+# The cluster concentrates shared-infra keystones (DNS, the Traefik ingress, the
+# syslog/netflow load balancer) on a single node. #421 added Restart= drop-ins so
+# those services self-heal, but a service that exhausts its restart budget — or
+# hangs while still "active" — fails silently. This role adds the missing
+# VISIBILITY layer: a systemd timer runs a validator that probes each keystone
+# every cycle and pings a healthchecks deadman (OK when healthy, /fail on breach)
+# plus an ntfy alert, mirroring the proven download_vpn killswitch-validator
+# pattern. A crash, a restart-loop that gives up, or a stalled validator all page
+# instead of going unnoticed.
+
+# systemd timer cadence (OnUnitActiveSec). Deadman semantics rely on regular runs.
+service_deadman_interval: "60s"
+
+# ntfy alert target. Reuses the repo's ntfy LXC + notification-port convention.
+service_deadman_ntfy_url: >-
+  http://{{ hostvars['ntfy']['container_ip'] | default('ntfy') }}:{{
+  tofu_data.constants.notification_ports.ntfy_http }}/{{ service_deadman_ntfy_topic }}
+service_deadman_ntfy_topic: "keystone"
+
+# Per-group keystone checks. The role selects every check whose group this host
+# belongs to (group_names), so one site.yml play covers all keystones and each
+# host watches only its own services. Each check:
+#   name            - label used in alerts and the healthchecks slug
+#   probe_command   - shell returning 0 when healthy (functional, not just
+#                     "systemd thinks it's up"); unit names verified live
+#   healthcheck_url  - per-check deadman ping URL; EMPTY => ping skipped
+#                     (ntfy + journal alert still fire), set from the
+#                     healthchecks LXC per check via the env var shown.
+service_deadman_group_checks:
+  technitium_dns_group:
+    - name: technitium-dns
+      # dns.service is Technitium; rc 0 from dig proves the resolver answered
+      # (NOERROR or NXDOMAIN both count) independent of any upstream forwarder.
+      probe_command: >-
+        systemctl is-active --quiet dns.service &&
+        dig +tries=1 +time=3 @127.0.0.1 . NS >/dev/null 2>&1
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_DNS') | default('', true) }}"
+  traefik_group:
+    - name: traefik
+      probe_command: >-
+        systemctl is-active --quiet traefik.service &&
+        timeout 5 bash -c '</dev/tcp/127.0.0.1/443'
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_TRAEFIK') | default('', true) }}"
+  haproxy_group:
+    # The LB host runs BOTH the HAProxy TCP VIP and the nginx UDP syslog/netflow
+    # balancer; nginx is the one #421 found shipping no Restart=. nginx listens
+    # UDP-only, so a port probe is unreliable — assert the unit instead.
+    - name: haproxy-vip
+      probe_command: "systemctl is-active --quiet haproxy.service"
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_HAPROXY') | default('', true) }}"
+    - name: nginx-syslog-lb
+      probe_command: "systemctl is-active --quiet nginx.service"
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_NGINX') | default('', true) }}"
+
+# Resolved set of checks for THIS host — every group's checks the host is in.
+service_deadman_checks: >-
+  {{ service_deadman_group_checks | dict2items
+     | selectattr('key', 'in', group_names)
+     | map(attribute='value') | flatten | list }}
+
+# Deployed paths (rarely overridden).
+service_deadman_script_path: /usr/local/bin/service-deadman-validate.sh
+service_deadman_service_name: service-deadman-validate

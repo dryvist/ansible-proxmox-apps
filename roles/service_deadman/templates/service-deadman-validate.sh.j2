@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Keystone SPOF liveness watchdog. Rendered by the service_deadman role and run
+# on a systemd timer (every {{ service_deadman_interval }}). For each keystone
+# service on this host it runs a functional probe and:
+#   - healthy  -> pings the per-check healthchecks deadman OK endpoint
+#   - breached -> logs, pushes an ntfy alert, and pings the deadman /fail endpoint
+#
+# A missed run (validator crash / host down) also pages, because healthchecks
+# expects a ping every cycle. Empty healthcheck URLs skip only the deadman ping;
+# the journal + ntfy alert still fire.
+set -uo pipefail
+
+NTFY_URL="{{ service_deadman_ntfy_url }}"
+HOST="$(hostname)"
+rc=0
+
+# Ping a healthchecks endpoint if a URL is configured; no-op otherwise.
+hc_ping() {
+  local url="$1"
+  [[ -n "${url}" ]] || return 0
+  curl -fsS --max-time 8 "${url}" >/dev/null 2>&1 || true
+}
+
+# Healthy: signal the deadman OK so a stalled validator is also caught.
+mark_ok() {
+  local name="$1" url="$2"
+  logger -t service-deadman "OK: ${name} healthy on ${HOST}"
+  hc_ping "${url}"
+}
+
+# Breached: log, alert ntfy, signal the deadman failure endpoint.
+mark_fail() {
+  local name="$1" url="$2"
+  local msg="KEYSTONE DOWN: ${name} failed its liveness probe on ${HOST}"
+  rc=1
+  logger -t service-deadman "${msg}"
+  if [[ -n "${NTFY_URL}" ]]; then
+    curl -fsS --max-time 8 -H "Title: keystone deadman: ${name}" \
+      -H "Priority: urgent" -H "Tags: rotating_light" \
+      -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1 || true
+  fi
+  [[ -n "${url}" ]] && curl -fsS --max-time 8 -d "${msg}" "${url}/fail" >/dev/null 2>&1 || true
+}
+
+{% for check in service_deadman_checks %}
+# --- {{ check.name }} ---
+if {{ check.probe_command }}; then
+  mark_ok "{{ check.name }}" "{{ check.healthcheck_url }}"
+else
+  mark_fail "{{ check.name }}" "{{ check.healthcheck_url }}"
+fi
+{% endfor %}
+
+exit "${rc}"
