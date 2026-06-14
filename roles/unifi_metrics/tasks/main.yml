@@ -1,0 +1,206 @@
+---
+# unifi_metrics — deploy unpoller (UniFi controller poller) + Telegraf as a
+# Docker-in-LXC stack that ships UniFi telemetry Splunk-HEC -> Cribl Edge.
+
+# =============================================================================
+# Docker installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    unifi_metrics_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ unifi_metrics_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ unifi_metrics_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Configure Docker storage driver (fuse-overlayfs on ZFS-backed LXC; vfs under molecule)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "{{ unifi_metrics_docker_storage_driver }}"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: unifi_metrics_daemon_config
+
+- name: Restart Docker to apply fuse-overlayfs configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: unifi_metrics_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for the Ansible docker_compose_v2 module
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+- name: Set Python interpreter to use venv for subsequent tasks
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+
+# =============================================================================
+# Preflight: the controller connection must be configured
+# =============================================================================
+
+- name: Assert UniFi controller connection is configured
+  ansible.builtin.assert:
+    that:
+      - unifi_metrics_controller_url | length > 0
+      - unifi_metrics_controller_user | length > 0
+      - unifi_metrics_controller_pass | length > 0
+    fail_msg: >-
+      unifi_metrics requires UNIFI_API / UNIFI_USERNAME / UNIFI_PASSWORD in the
+      environment of the Ansible run (the network keychain items). Run under a
+      session that exports them, or set unifi_metrics_controller_* in host_vars.
+  no_log: true
+
+# =============================================================================
+# Config + compose
+# =============================================================================
+
+- name: Create unifi_metrics data directory
+  ansible.builtin.file:
+    path: "{{ unifi_metrics_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render Telegraf configuration
+  ansible.builtin.template:
+    src: telegraf.conf.j2
+    dest: "{{ unifi_metrics_data_dir }}/telegraf.conf"
+    owner: root
+    group: root
+    # World-readable: the telegraf image drops to the non-root telegraf user and
+    # must read this file. It lives only on the single-purpose LXC (never
+    # committed) and contains no secrets (the HEC token is optional and the
+    # controller creds live in the compose environment, not here).
+    mode: "0644"
+  notify: Restart unifi_metrics stack
+
+- name: Deploy unifi_metrics docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ unifi_metrics_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    # Contains the controller credentials in the unpoller environment; restrict.
+    mode: "0600"
+  no_log: true
+  notify: Restart unifi_metrics stack
+
+- name: Deploy unifi_metrics stack via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ unifi_metrics_data_dir }}"
+    state: present
+
+# =============================================================================
+# Health check
+# =============================================================================
+
+- name: Verify the unpoller and telegraf containers are running
+  ansible.builtin.command: >-
+    docker ps -q --filter name={{ item }} --filter status=running
+  loop:
+    - "{{ unifi_metrics_unpoller_container_name }}"
+    - "{{ unifi_metrics_telegraf_container_name }}"
+  register: unifi_metrics_running
+  changed_when: false
+  failed_when: false
+  retries: 6
+  delay: 5
+  until: unifi_metrics_running.stdout != ''
+
+- name: Capture diagnostics when a container is not running
+  ansible.builtin.shell: "{{ item }} 2>&1"
+  loop:
+    - "docker ps -a --filter name={{ unifi_metrics_unpoller_container_name }}"
+    - "docker logs --tail 50 {{ unifi_metrics_unpoller_container_name }}"
+    - "docker ps -a --filter name={{ unifi_metrics_telegraf_container_name }}"
+    - "docker logs --tail 50 {{ unifi_metrics_telegraf_container_name }}"
+  register: unifi_metrics_diag
+  changed_when: false
+  failed_when: false
+  when: unifi_metrics_running.results | selectattr('stdout', 'equalto', '') | list | length > 0
+
+- name: Fail with diagnostics when a container is not running
+  ansible.builtin.fail:
+    msg: |-
+      unifi_metrics containers are not all running after deploy.
+      {{ unifi_metrics_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
+  when: unifi_metrics_running.results | selectattr('stdout', 'equalto', '') | list | length > 0

@@ -1392,3 +1392,94 @@
           cribl_stream template assertions passed:
           - inputs.yml.j2: tcpjson S2S input on 10300 with force_splunk_meta connection pipeline
           - force_splunk_meta: conditional evals + valid mask schema (matchRegex/replaceExpr)
+
+- name: Render and verify unifi_metrics templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/unifi_metrics/defaults/main.yml (only vars the templates use).
+    unifi_metrics_telegraf_interval: "30s"
+    unifi_metrics_unpoller_port: 9130
+    unifi_metrics_unpoller_image: "ghcr.io/unpoller/unpoller:v2.15.3"
+    unifi_metrics_unpoller_container_name: unpoller
+    unifi_metrics_telegraf_image: "telegraf:1.33-alpine"
+    unifi_metrics_telegraf_container_name: telegraf
+    unifi_metrics_telegraf_network_mode: host
+    unifi_metrics_data_dir: /opt/unifi-metrics
+    unifi_metrics_controller_url: "https://unifi.test.example"
+    unifi_metrics_controller_user: "tester"
+    unifi_metrics_controller_pass: "test-placeholder"
+    unifi_metrics_controller_verify_ssl: false
+    unifi_metrics_hec_url: "http://192.168.0.180:8088/services/collector/event"
+    unifi_metrics_hec_token: ""
+    _um_role_dir: "../../roles/unifi_metrics/templates"
+    _um_cribl_dir: "../../roles/cribl_edge/templates"
+
+  tasks:
+    - name: Render unifi_metrics templates to /tmp
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: "{{ _um_role_dir }}/telegraf.conf.j2", dest: /tmp/test_um_telegraf.conf }
+        - { src: "{{ _um_role_dir }}/docker-compose.yml.j2", dest: /tmp/test_um_compose.yml }
+        - { src: "{{ _um_cribl_dir }}/pipelines/netmon/conf.yml.j2", dest: /tmp/test_um_pipeline.yml }
+
+    - name: Read rendered unifi_metrics templates
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _um
+      loop:
+        - /tmp/test_um_telegraf.conf
+        - /tmp/test_um_compose.yml
+        - /tmp/test_um_pipeline.yml
+
+    - name: Decode rendered unifi_metrics content
+      ansible.builtin.set_fact:
+        _um_telegraf: "{{ _um.results[0].content | b64decode }}"
+        _um_compose: "{{ _um.results[1].content | b64decode }}"
+        _um_pipeline: "{{ _um.results[2].content | b64decode }}"
+
+    - name: Assert telegraf scrapes unpoller and tags the stream
+      ansible.builtin.assert:
+        that:
+          - "'stream = ' in _um_telegraf"
+          - "'unifi_metrics' in _um_telegraf"
+          - "'127.0.0.1:9130/metrics' in _um_telegraf"
+          - "'splunkmetric' in _um_telegraf"
+        fail_msg: >-
+          telegraf.conf.j2 must scrape the unpoller exporter on :9130, ship
+          splunkmetric, and tag stream=unifi_metrics (so Cribl branches the index)
+
+    - name: Assert compose runs unpoller (Prometheus enabled) + telegraf
+      ansible.builtin.assert:
+        that:
+          - "'unpoller' in _um_compose"
+          - "'UP_PROMETHEUS_DISABLE' in _um_compose"
+          - "'UP_UNIFI_DEFAULT_URL' in _um_compose"
+          - "'telegraf.conf:/etc/telegraf/telegraf.conf' in _um_compose"
+        fail_msg: >-
+          docker-compose.yml.j2 must run unpoller with Prometheus enabled and a
+          telegraf that mounts the rendered config
+
+    - name: Assert cribl pipeline branches index on the stream tag
+      ansible.builtin.assert:
+        that:
+          - "'unifi_metrics' in _um_pipeline"
+          - "'netmon' in _um_pipeline"
+          - "'stream' in _um_pipeline"
+        fail_msg: >-
+          the shared cribl netmon pipeline must branch index/sourcetype on the
+          stream tag so unifi_metrics events land in index=unifi_metrics while
+          netmon (no stream tag) stays index=netmon
+
+    - name: UniFi metrics template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          unifi_metrics template assertions passed:
+          - telegraf.conf.j2: inputs.prometheus scrape of unpoller :9130 + stream tag + splunkmetric HEC
+          - docker-compose.yml.j2: unpoller (Prometheus) + telegraf
+          - cribl netmon pipeline: index branches on stream=unifi_metrics

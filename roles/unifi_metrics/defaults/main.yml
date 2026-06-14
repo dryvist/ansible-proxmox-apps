@@ -1,0 +1,63 @@
+---
+# unifi_metrics — full UniFi controller telemetry into Splunk (Docker-in-LXC).
+#
+# Telegraf has NO native UniFi input (SNMP is the only built-in path and it
+# misses device CPU/mem, client satisfaction, and WAN quality). The canonical
+# full-fidelity collector is unpoller, which polls the same controller API the
+# UniFi dashboard uses. unpoller exports Prometheus (not Splunk HEC), so this
+# role mirrors the netmon SATELLITE path: an exporter (unpoller) scraped by a
+# Telegraf inputs.prometheus, shipped Splunk-HEC -> Cribl Edge -> Splunk.
+#
+#   unpoller  -> :{{ unifi_metrics_unpoller_port }}/metrics (Prometheus)
+#   telegraf  -> inputs.prometheus scrape -> outputs.http (splunkmetric HEC)
+#             -> Cribl Edge in_netmon_hec -> stream=unifi_metrics branch
+#             -> Splunk index=unifi_metrics
+#
+# All collection is off-the-shelf exporter + native Telegraf inputs — no scripts.
+
+# --- container images (pinned; bump via Renovate or manual review) ---
+unifi_metrics_unpoller_image: "ghcr.io/unpoller/unpoller:v2.15.3"
+unifi_metrics_unpoller_container_name: unpoller
+unifi_metrics_telegraf_image: "telegraf:1.33-alpine"
+unifi_metrics_telegraf_container_name: telegraf
+
+unifi_metrics_data_dir: /opt/unifi-metrics
+unifi_metrics_telegraf_interval: "30s"
+unifi_metrics_unpoller_port: 9130
+
+# Docker storage driver. fuse-overlayfs is required for Docker on a ZFS-backed
+# LXC; molecule's Docker-in-Docker overrides this to vfs.
+unifi_metrics_docker_storage_driver: "fuse-overlayfs"
+
+# --- UniFi controller connection (secrets via env; never committed) ---
+# Sourced from the environment of the Ansible run (the UNIFI_* keychain items,
+# same ones the tofu-unifi provider uses). They land in the unpoller container's
+# `environment:` on the single-purpose LXC (gitignored), not in a committed file.
+# UP_UNIFI_DEFAULT_URL must be the controller URL; prefer an FQDN over an IP.
+unifi_metrics_controller_url: "{{ lookup('env', 'UNIFI_API') | default('', true) }}"
+unifi_metrics_controller_user: "{{ lookup('env', 'UNIFI_USERNAME') | default('', true) }}"
+unifi_metrics_controller_pass: "{{ lookup('env', 'UNIFI_PASSWORD') | default('', true) }}"
+# Verify the controller's TLS cert? UDW ships a self-signed cert, so default to
+# skipping verification (set false only if you install a trusted cert chain).
+unifi_metrics_controller_verify_ssl: false
+# Sites to poll. "all" covers every site on the controller.
+unifi_metrics_sites:
+  - "all"
+
+# --- output: Splunk-HEC -> Cribl Edge (shared in_netmon_hec input) ---
+# Reuses the netmon Cribl Edge HEC input. The stream=unifi_metrics global tag
+# (see telegraf.conf.j2) tells the Cribl pipeline to stamp index=unifi_metrics
+# instead of netmon. Targets the first cribl_edge host by inventory; override
+# unifi_metrics_cribl_host to pin a specific Edge.
+unifi_metrics_cribl_host: >-
+  {{ hostvars[groups['cribl_edge'][0]]['container_ip']
+     if (groups['cribl_edge'] | default([]) | length) > 0 else '' }}
+unifi_metrics_hec_url: >-
+  http://{{ unifi_metrics_cribl_host }}:{{ cribl_hec_input_port | default(8088) }}/services/collector/event
+# Optional HEC token (matches the Cribl Edge in_netmon_hec authToken). Unset =
+# unauthenticated push (acceptable on the mgmt VLAN, same as netmon).
+unifi_metrics_hec_token: "{{ lookup('env', 'NETMON_HEC_TOKEN') | default('', true) }}"
+
+# Telegraf container networking. "host" in production so the scrape + HEC push
+# use the LXC's stack; molecule overrides to "bridge" for Docker-in-Docker.
+unifi_metrics_telegraf_network_mode: "host"
