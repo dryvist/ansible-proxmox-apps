@@ -1,0 +1,113 @@
+---
+# prometheus_stack — Prometheus + blackbox_exporter as a single Docker-in-LXC
+# compose stack (one project, two services). System of record for the
+# Prometheus-native network-quality stack (see terraform-proxmox
+# docs/SMOKEPING.md). Prometheus scrapes the co-located blackbox_exporter via the
+# multi-target /probe pattern; smokeping_prober / irtt / snmp_exporter jobs append
+# as those roles land.
+#
+# NOTE: all role vars carry the prometheus_stack_ prefix (ansible-lint
+# var-naming[no-role-prefix]). A PRIVATE inventory override of the probe targets
+# must therefore set prometheus_stack_blackbox_jobs (formerly
+# prometheus_blackbox_jobs before the prometheus + blackbox_exporter roles merged).
+
+# --- container images (pinned; bump via Renovate or manual review) ---
+prometheus_stack_image: "prom/prometheus:v3.1.0"
+prometheus_stack_container_name: prometheus
+prometheus_stack_data_dir: /opt/prometheus
+prometheus_stack_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['prometheus_web']
+     | default(9090) }}
+
+prometheus_stack_scrape_interval: "15s"
+prometheus_stack_retention: "30d"
+
+prometheus_stack_blackbox_image: "quay.io/prometheus/blackbox-exporter:v0.25.0"
+prometheus_stack_blackbox_container_name: blackbox-exporter
+
+# Listen port — from the tofu constant when available, else the upstream default.
+prometheus_stack_blackbox_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['blackbox_exporter']
+     | default(9115) }}
+
+# Where Prometheus reaches the blackbox_exporter (host:port). Co-located on the
+# same LXC, host networking, so 127.0.0.1. Override per inventory only if blackbox
+# is moved to a separate vantage host.
+prometheus_stack_blackbox_address: "127.0.0.1:{{ prometheus_stack_blackbox_port }}"
+
+# Host networking so ICMP probes egress the LXC's uplink (and the per-WAN
+# source-IP policy route governs which WAN they traverse); NET_RAW lets the icmp
+# prober open raw sockets. Molecule/DinD would override network_mode to bridge.
+prometheus_stack_blackbox_network_mode: "host"
+prometheus_stack_blackbox_cap_add:
+  - "NET_RAW"
+
+# Probe target used by the post-deploy smoke test (must be reliably ICMP-reachable
+# so a green deploy means the probe pipeline works, not that the modem is up).
+prometheus_stack_smoke_target: "1.1.1.1"
+
+# One-time migration: the previous design ran blackbox_exporter as its own compose
+# project here. The role tears it down so the merged project can own the container.
+prometheus_stack_legacy_blackbox_dir: /opt/blackbox-exporter
+
+# Probe targets — GENERIC defaults only: the cable-modem diagnostic IP and public
+# anycast. Real ISP hop IPs / ISP-specific targets are home-specific; supply them
+# via a PRIVATE inventory override of prometheus_stack_blackbox_jobs — never commit
+# them to this public repo.
+prometheus_stack_blackbox_jobs:
+  - module: icmp
+    targets:
+      - "192.168.100.1"   # cable-modem diagnostic IP (generic; ICMP-only)
+      - "1.1.1.1"
+      - "8.8.8.8"
+  - module: http_2xx_tls
+    targets:
+      - "https://1.1.1.1"
+      - "https://8.8.8.8"
+  - module: dns_udp
+    targets:
+      - "1.1.1.1"
+      - "8.8.8.8"
+
+# Raw YAML appended to scrape_configs for exporters that land later
+# (smokeping_prober, irtt, snmp_exporter). Empty until those roles ship.
+prometheus_stack_extra_scrape_configs: ""
+
+# --- probe modules (HOW to probe; targets come from prometheus_stack_blackbox_jobs) ---
+# icmp        — latency/loss to the modem + ISP hops + public anycast
+# tcp_connect — bare TCP reachability + connect latency
+# http_2xx    — HTTP response + latency (any 2xx)
+# http_2xx_tls— HTTPS response + TLS handshake/cert-expiry
+# dns_udp     — DNS RTT + resolution success
+prometheus_stack_blackbox_modules:
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: ip4
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: []
+      fail_if_not_ssl: false
+  http_2xx_tls:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true
+  dns_udp:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: udp
+      preferred_ip_protocol: ip4
+      query_name: "example.com"
+      query_type: "A"
