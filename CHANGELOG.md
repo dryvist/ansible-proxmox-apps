@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.40.0...v1.40.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **inventory:** assign unifi_metrics_group from unifi_metrics tag ([#445](https://github.com/dryvist/ansible-proxmox-apps/issues/445)) ([1fe7b7f](https://github.com/dryvist/ansible-proxmox-apps/commit/1fe7b7f842b848d7631b1a197e5a7dc115e6c18e))
+
 ## [1.40.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.39.0...v1.40.0) (2026-06-14)
 
 
