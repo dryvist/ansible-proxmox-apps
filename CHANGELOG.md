@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.35.0...v1.36.0) (2026-06-14)
+
+
+### Features
+
+* **blackbox_exporter:** add WAN active-probe exporter role ([#430](https://github.com/dryvist/ansible-proxmox-apps/issues/430)) ([46cc2f7](https://github.com/dryvist/ansible-proxmox-apps/commit/46cc2f7d3c6a2955a9745d143dd7841e22b3a790))
+
 ## [1.35.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.5...v1.35.0) (2026-06-14)
 
 
