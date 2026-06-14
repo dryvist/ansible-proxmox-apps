@@ -1,0 +1,65 @@
+---
+# configarr role defaults — declarative TRaSH-Guides quality profiles + custom
+# formats for Sonarr/Radarr, applied by the official Configarr container
+# (https://configarr.de). Configarr OWNS quality profiles + custom formats;
+# the devopsarr `servarr-config` tofu module owns root folders + download
+# clients — no overlap. Configarr is idempotent (re-running = no changes once
+# applied), so it runs safely as a one-shot on every converge.
+#
+# Configarr ships as a Docker-only image, so per the workspace container
+# decision tree it runs on docker-host (reaches the *arr LAN and the internet
+# for TRaSH/Recyclarr templates directly — no VPN dependency, unlike the
+# servarr_wiring coordinator).
+
+configarr_manage: true
+
+# --- Container ---------------------------------------------------------------
+# Tag left at the moving `latest` per the repo's "don't hardcode versions"
+# rule; pin in inventory if a frozen version is wanted.
+configarr_image: "ghcr.io/raydak-labs/configarr"
+configarr_image_tag: "latest"
+configarr_container_name: "configarr"
+# Host dir holding the rendered config.yml + secrets.yml + the template cache.
+configarr_config_dir: "/opt/configarr"
+
+# --- Deterministic API keys (from SOPS env; never committed) -----------------
+# Same keys servarr_wiring uses — set in secrets.enc.yaml, run under sops
+# exec-env. Templating them means the keys are known before converge.
+configarr_sonarr_api_key: "{{ lookup('env', 'SONARR_API_KEY') | default('', true) }}"
+configarr_radarr_api_key: "{{ lookup('env', 'RADARR_API_KEY') | default('', true) }}"
+
+# --- Endpoints (host:port). Hosts from inventory, ports from OpenTofu. --------
+# Mirrors servarr_wiring's resolution: prefer the per-guest reserved_ip (the
+# actual LAN address), fall back to the `ip` field / discovered container_ip.
+# NEVER a hardcoded IP and never a vmid-derived literal.
+configarr_sonarr_host: >-
+  {{ tofu_data.containers['sonarr'].reserved_ip
+     if (tofu_data.containers['sonarr'].reserved_ip | default('', true) | length > 0)
+     else (tofu_data.containers['sonarr'].ip
+           | default(hostvars['sonarr'].container_ip, true) | default('127.0.0.1', true)) }}
+configarr_radarr_host: >-
+  {{ tofu_data.containers['radarr'].reserved_ip
+     if (tofu_data.containers['radarr'].reserved_ip | default('', true) | length > 0)
+     else (tofu_data.containers['radarr'].ip
+           | default(hostvars['radarr'].container_ip, true) | default('127.0.0.1', true)) }}
+configarr_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
+configarr_radarr_port: "{{ tofu_data.constants.media_ports.radarr_web }}"
+
+configarr_sonarr_base_url: "http://{{ configarr_sonarr_host }}:{{ configarr_sonarr_port }}"
+configarr_radarr_base_url: "http://{{ configarr_radarr_host }}:{{ configarr_radarr_port }}"
+
+# --- Quality target ----------------------------------------------------------
+# Intent: 720p minimum, 1080p maximum (Bluray + WEB), with per-item overrides
+# left to Sonarr/Radarr's native per-series / per-movie profile selection.
+# These are Recyclarr/TRaSH template include names (tunable here, no role edit).
+# Radarr's "HD Bluray + WEB" profile is exactly 720p/1080p Bluray+WEB. Sonarr's
+# official TRaSH profiles are WEB-tier-oriented (WEB-1080p is the 1080p cap);
+# tune the allowed qualities in review if you want 720p Bluray on the TV side.
+configarr_sonarr_templates:
+  - sonarr-quality-definition-series
+  - sonarr-v4-quality-profile-web-1080p
+  - sonarr-v4-custom-formats-web-1080p
+configarr_radarr_templates:
+  - radarr-quality-definition-movie
+  - radarr-quality-profile-hd-bluray-web
+  - radarr-custom-formats-hd-bluray-web
