@@ -1,0 +1,141 @@
+---
+# Idempotent + NON-FATAL declarative Plex sharing.
+#
+# Re-shares this server's library sections to your Plex Home members (and any
+# explicit friend emails) so a rebuilt server with a fresh machineIdentifier
+# re-grants access FROM CODE. Fixes the "second profile on the same Roku shows
+# unavailable" symptom: library shares are bound to the old machineIdentifier and
+# do not carry over on a rebuild.
+#
+# Requires an account token (reuses plex_effective_token resolved in libraries.yml);
+# skips cleanly without one. POST .../shared_servers returns 422 when the share
+# already exists, so a re-run is a no-op. Sharing only ADDS access — it never
+# removes an existing grant — so it cannot reduce who can watch.
+
+- name: Manage Plex sharing
+  when:
+    - plex_manage_sharing | bool
+    - plex_effective_token | default('') | length > 0
+  block:
+    - name: Discover the server machineIdentifier
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_local_api_port }}/identity"
+        method: GET
+        headers:
+          Accept: application/json
+        status_code: [200]
+      register: plex_identity
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Resolve the current server machineIdentifier (never the stale duplicate)
+      ansible.builtin.set_fact:
+        _plex_mid: "{{ plex_identity.json.MediaContainer.machineIdentifier | default('') }}"
+      no_log: true
+
+    - name: Read existing library sections (ids to share)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_local_api_port }}/library/sections"
+        method: GET
+        headers:
+          Accept: application/json
+          X-Plex-Token: "{{ plex_effective_token }}"
+        status_code: [200, 401]
+      register: plex_sharing_sections
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Discover Plex Home users
+      ansible.builtin.uri:
+        url: https://plex.tv/api/v2/home/users
+        method: GET
+        headers:
+          Accept: application/json
+          X-Plex-Token: "{{ plex_effective_token }}"
+          X-Plex-Client-Identifier: "{{ _plex_mid | default('ansible-plex', true) }}"
+        status_code: [200, 401, 404]
+      register: plex_home_users
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: plex_share_with_home | bool
+
+    - name: Resolve section ids and Home share targets
+      ansible.builtin.set_fact:
+        _plex_section_ids: >-
+          {{ (plex_sharing_sections.json.MediaContainer.Directory | default([]))
+             | map(attribute='key') | map('int') | list }}
+        # Every NON-owner Home member (admin == false). Self-healing: no emails to
+        # hardcode, and new Home members are picked up automatically.
+        _plex_home_invited_ids: >-
+          {{ ((plex_home_users.json.users | default([]))
+              | selectattr('admin', 'equalto', false)
+              | map(attribute='id') | list) if (plex_share_with_home | bool) else [] }}
+      no_log: true
+
+    - name: Share all libraries with each Plex Home member (422 = already shared)
+      ansible.builtin.uri:
+        url: https://plex.tv/api/v2/shared_servers
+        method: POST
+        headers:
+          Accept: application/json
+          X-Plex-Token: "{{ plex_effective_token }}"
+          X-Plex-Client-Identifier: "{{ _plex_mid | default('ansible-plex', true) }}"
+        body_format: json
+        body:
+          machineIdentifier: "{{ _plex_mid }}"
+          librarySectionIds: "{{ _plex_section_ids }}"
+          invitedId: "{{ item }}"
+          settings:
+            allowTuners: "{{ plex_share_allow_tuners | bool }}"
+            allowSync: "{{ plex_share_allow_sync | bool }}"
+        status_code: [200, 201, 422]
+      loop: "{{ _plex_home_invited_ids }}"
+      register: plex_share_home
+      # The share is enforcement; 200/201 = newly shared, 422 = already shared.
+      # Don't flag "changed" per run; the summary below is the observable signal.
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - _plex_mid | length > 0
+        - _plex_section_ids | length > 0
+
+    - name: Invite explicit friends by email (422 = already shared)
+      ansible.builtin.uri:
+        url: https://plex.tv/api/v2/shared_servers
+        method: POST
+        headers:
+          Accept: application/json
+          X-Plex-Token: "{{ plex_effective_token }}"
+          X-Plex-Client-Identifier: "{{ _plex_mid | default('ansible-plex', true) }}"
+        body_format: json
+        body:
+          machineIdentifier: "{{ _plex_mid }}"
+          librarySectionIds: "{{ _plex_section_ids }}"
+          invitedEmail: "{{ item }}"
+          settings:
+            allowTuners: "{{ plex_share_allow_tuners | bool }}"
+            allowSync: "{{ plex_share_allow_sync | bool }}"
+        status_code: [200, 201, 422]
+      loop: "{{ plex_shared_friend_emails }}"
+      register: plex_share_friends
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - _plex_mid | length > 0
+        - _plex_section_ids | length > 0
+        - plex_shared_friend_emails | length > 0
+
+    - name: Summarize sharing (loud — the non-fatal tasks otherwise hide outcomes)
+      ansible.builtin.debug:
+        msg: >-
+          Plex sharing: {{ _plex_section_ids | length }} libraries to
+          {{ _plex_home_invited_ids | length }} Home member(s) +
+          {{ plex_shared_friend_emails | length }} friend(s). Home share HTTP codes
+          {{ plex_share_home.results | default([]) | map(attribute='status') | list }}
+          (200/201 = newly shared, 422 = already shared). If empty and shares were
+          expected, confirm the server is claimed and PLEX_TOKEN is the account token.
