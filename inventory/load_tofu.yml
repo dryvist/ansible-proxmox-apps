@@ -201,6 +201,22 @@
           terraform-proxmox `terragrunt apply` so the inventory is republished
           to S3 and the local cache is refreshed by the after-hook.
 
+    - name: Validate tofu_data carries the node-FQDN derivation inputs
+      ansible.builtin.assert:
+        that:
+          - tofu_data.nodes is defined
+          - tofu_data.domain is defined
+          - tofu_data.domain | length > 0
+        fail_msg: |
+          tofu_data.nodes and/or tofu_data.domain are missing from
+          tofu_inventory.json. Every LXC container's ansible_host is DERIVED as
+          {node-role}.{domain} (the per-node management FQDN) — a missing or
+          empty domain would silently produce a broken host (a bare
+          "{node-role}." with no domain suffix).
+
+          Re-run terraform-proxmox `terragrunt apply` so the inventory is
+          republished with `nodes` and `domain` populated.
+
     - name: Validate Docker VM SSH key path is set when Docker VMs are present
       ansible.builtin.assert:
         that:
@@ -373,7 +389,17 @@
             )
           }}
         proxmox_vmid: "{{ item.value.vmid }}"
-        ansible_host: "{{ lookup('env', 'PROXMOX_VE_HOSTNAME') }}"
+        # Per-node management FQDN, DERIVED — never a hand-pinned global host.
+        # A guest reaches its own node at {node-role}.{domain}, the same pattern
+        # terraform-proxmox ingress.tf uses for the Proxmox-UI apex pool; those
+        # names resolve internally while the bare cluster member name does not.
+        # The container's `node` field already carries the role form; the
+        # nodes-map lookup additionally corrects a legacy bare node key to its
+        # role, and falls back to the node value itself when the map omits the
+        # key (e.g. the generic test-fixture node key).
+        ansible_host: >-
+          {{ (tofu_data.nodes[item.value.node] | default({})).role
+             | default(item.value.node, true) }}.{{ tofu_data.domain }}
         ansible_connection: "{{ item.value.ansible_connection }}"
         ansible_user: root
         ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"

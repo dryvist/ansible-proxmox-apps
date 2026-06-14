@@ -170,8 +170,10 @@ playbook that uses `inventory/hosts.yml` together with
 
 | Variable | Purpose |
 | --- | --- |
-| `PROXMOX_VE_HOSTNAME` | Hostname or IP of the Proxmox VE endpoint |
 | `PROXMOX_SSH_KEY_PATH` | Path to SSH private key for Proxmox VMs |
+
+Each LXC container's Proxmox node host is derived from the inventory as
+`{node-role}.{domain}`; there is no global Proxmox endpoint variable to set.
 
 In addition, these playbooks expect an OpenTofu-generated inventory file:
 
