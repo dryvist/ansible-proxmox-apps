@@ -1,0 +1,67 @@
+---
+# Apply TRaSH-Guides quality profiles + custom formats to Sonarr/Radarr via the
+# official Configarr container. Idempotent: Configarr only writes what differs,
+# so a re-run on an in-sync stack is a no-op.
+
+- name: Manage Configarr
+  when: configarr_manage | bool
+  block:
+    - name: Assert Sonarr/Radarr API keys are set
+      ansible.builtin.assert:
+        that:
+          - configarr_sonarr_api_key | length > 0
+          - configarr_radarr_api_key | length > 0
+        fail_msg: >-
+          SONARR_API_KEY / RADARR_API_KEY must be set. Add them to SOPS
+          (secrets.enc.yaml) and run under `sops exec-env` — the same
+          deterministic keys servarr_wiring templates into config.xml.
+        quiet: true
+
+    - name: Ensure Configarr config directory exists
+      ansible.builtin.file:
+        path: "{{ configarr_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Render Configarr config.yml
+      ansible.builtin.template:
+        src: config.yml.j2
+        dest: "{{ configarr_config_dir }}/config.yml"
+        owner: root
+        group: root
+        mode: "0640"
+
+    - name: Render Configarr secrets.yml
+      ansible.builtin.template:
+        src: secrets.yml.j2
+        dest: "{{ configarr_config_dir }}/secrets.yml"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Run Configarr (one-shot — enforces TRaSH quality config)
+      community.docker.docker_container:
+        name: "{{ configarr_container_name }}"
+        image: "{{ configarr_image }}:{{ configarr_image_tag }}"
+        pull: true
+        detach: false
+        cleanup: true
+        container_default_behavior: no_defaults
+        volumes:
+          - "{{ configarr_config_dir }}:/app/config"
+      register: configarr_run
+      # The container running is the enforcement action, not a config change in
+      # itself; Configarr writes only diffs. The devopsarr `servarr-config`
+      # drift plan is the authoritative change signal for the *arr structural
+      # config, so this is not flagged "changed" every converge.
+      changed_when: false
+      tags: [molecule-notest]
+
+    - name: Show Configarr output
+      ansible.builtin.debug:
+        var: configarr_run.container.Output | default(configarr_run.ansible_facts | default(''))
+      when: configarr_run is defined
+      tags: [molecule-notest]
