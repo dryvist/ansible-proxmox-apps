@@ -23,5 +23,29 @@ technitium_install_token_name: "ansible-automation"
 # Timeout for API calls
 technitium_install_api_timeout: 30
 
-# Install script URL
-technitium_install_script_url: "https://download.technitium.com/dns/install.sh"
+# --- Bare-metal install from our own mirror (replaces the dead vendor host) ---
+# Previously this role fetched download.technitium.com/dns/install.sh and ran it,
+# coupling every install to that single vendor host (which went down and blocked
+# the DNS-secondary bring-up entirely). Instead: the .NET runtime comes from
+# Microsoft's apt repo, and the Technitium app distribution is mirrored in our
+# own MinIO `artifacts` bucket (public-read, non-secret binaries), seeded from
+# the same 14.3 / .NET 9 build the primary already runs. Same bare-metal layout
+# as the primary; no single-vendor-host SPOF.
+
+# ASP.NET Core runtime package (installed from the Microsoft apt repo).
+technitium_install_dotnet_pkg: "aspnetcore-runtime-9.0"
+
+# Mirror endpoint for the Technitium app tarball. The host resolves from the
+# published inventory (the minio container) — never a committed IP literal.
+# Override technitium_install_app_url wholesale to point at a different mirror.
+technitium_install_mirror_endpoint: "http://{{ tofu_data.containers.minio.ip }}:9000/artifacts"
+technitium_install_app_version: "14.3"
+technitium_install_app_filename: "technitium-dns-app-{{ technitium_install_app_version }}-net9.tgz"
+technitium_install_app_url: "{{ technitium_install_mirror_endpoint }}/technitium/{{ technitium_install_app_filename }}"
+# Pins the exact build the mirror serves (the vendor installer offered no such
+# guarantee). Refresh alongside technitium_install_app_filename on upgrades.
+technitium_install_app_sha256: "655ebf0742ccb3efe8d529d0eee305f3150226e420d1fd21320ff193b620e2b6"
+
+# Install + data dirs (match the existing primary's bare-metal layout).
+technitium_install_app_dir: "/opt/technitium"
+technitium_install_data_dir: "/etc/dns"
