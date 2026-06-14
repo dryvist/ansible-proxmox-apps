@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.4...v1.34.5) (2026-06-14)
+
+
+### Bug Fixes
+
+* **schema:** accept FQDN in ingress ip field for DHCP-first guests ([#431](https://github.com/dryvist/ansible-proxmox-apps/issues/431)) ([44a31af](https://github.com/dryvist/ansible-proxmox-apps/commit/44a31af8d944692ce030694e57c57bb30dce4fd5))
+
 ## [1.34.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.3...v1.34.4) (2026-06-14)
 
 
