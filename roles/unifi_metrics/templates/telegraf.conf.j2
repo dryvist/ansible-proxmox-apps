@@ -1,0 +1,43 @@
+# Managed by Ansible (unifi_metrics role) — do not edit by hand.
+# Scrapes the unpoller Prometheus exporter and ships Splunk-HEC to Cribl Edge.
+[agent]
+  interval = "{{ unifi_metrics_telegraf_interval }}"
+  round_interval = true
+  metric_batch_size = 1000
+  metric_buffer_limit = 10000
+  collection_jitter = "2s"
+  flush_interval = "{{ unifi_metrics_telegraf_interval }}"
+  hostname = "{{ inventory_hostname }}"
+  omit_hostname = false
+
+# stream=unifi_metrics rides on every event so the shared Cribl Edge HEC input
+# (in_netmon_hec) branches the Splunk index to unifi_metrics instead of netmon.
+[global_tags]
+  stream = "unifi_metrics"
+  collector = "{{ inventory_hostname }}"
+
+# ---------------------------------------------------------------------------
+# Scrape the unpoller exporter (UniFi controller telemetry: device cpu/mem/temp,
+# per-port bytes/errors/drops/PoE, per-client signal/rate/satisfaction, WAN
+# quality, controller health). unpoller polls the controller; Telegraf only
+# scrapes + ships.
+# ---------------------------------------------------------------------------
+[[inputs.prometheus]]
+  urls = ["http://127.0.0.1:{{ unifi_metrics_unpoller_port }}/metrics"]
+  metric_version = 2
+
+# ---------------------------------------------------------------------------
+# Output: Splunk-HEC format -> Cribl Edge -> Splunk unifi_metrics index.
+# The Cribl pipeline stamps index=unifi_metrics from the stream tag; this agent
+# only ships the data.
+# ---------------------------------------------------------------------------
+[[outputs.http]]
+  url = "{{ unifi_metrics_hec_url }}"
+  method = "POST"
+  data_format = "splunkmetric"
+  splunkmetric_hec_routing = true
+  [outputs.http.headers]
+    Content-Type = "application/json"
+{% if unifi_metrics_hec_token | default('') | length > 0 %}
+    Authorization = "Splunk {{ unifi_metrics_hec_token }}"
+{% endif %}

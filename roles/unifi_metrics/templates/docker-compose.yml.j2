@@ -1,0 +1,33 @@
+---
+# Managed by Ansible (unifi_metrics role) — do not edit by hand.
+# Two containers: unpoller polls the UniFi controller and exposes Prometheus;
+# telegraf scrapes it and ships Splunk-HEC to Cribl Edge. host networking
+# (default) so the HEC push uses the LXC's stack; molecule overrides to bridge.
+services:
+  unpoller:
+    image: {{ unifi_metrics_unpoller_image }}
+    container_name: {{ unifi_metrics_unpoller_container_name }}
+    restart: unless-stopped
+    network_mode: {{ unifi_metrics_telegraf_network_mode }}
+    environment:
+      # unpoller reads UP_* env vars; secrets stay out of any committed file.
+      UP_POLLER_DEBUG: "false"
+      UP_INFLUXDB_DISABLE: "true"
+      UP_PROMETHEUS_DISABLE: "false"
+      UP_PROMETHEUS_HTTP_LISTEN: "0.0.0.0:{{ unifi_metrics_unpoller_port }}"
+      UP_UNIFI_DEFAULT_URL: "{{ unifi_metrics_controller_url }}"
+      UP_UNIFI_DEFAULT_USER: "{{ unifi_metrics_controller_user }}"
+      UP_UNIFI_DEFAULT_PASS: "{{ unifi_metrics_controller_pass }}"
+      UP_UNIFI_DEFAULT_VERIFY_SSL: "{{ unifi_metrics_controller_verify_ssl | lower }}"
+      UP_UNIFI_DEFAULT_SAVE_SITES: "true"
+      UP_UNIFI_DEFAULT_SAVE_DPI: "true"
+
+  telegraf:
+    image: {{ unifi_metrics_telegraf_image }}
+    container_name: {{ unifi_metrics_telegraf_container_name }}
+    restart: unless-stopped
+    network_mode: {{ unifi_metrics_telegraf_network_mode }}
+    depends_on:
+      - unpoller
+    volumes:
+      - {{ unifi_metrics_data_dir }}/telegraf.conf:/etc/telegraf/telegraf.conf:ro
