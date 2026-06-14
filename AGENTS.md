@@ -218,6 +218,12 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
 ansible-lint
 ```
 
+> **`--limit` must include `localhost`.** The inventory loader
+> (`inventory/load_tofu.yml`) runs on `hosts: localhost` and populates the
+> dynamic inventory via `add_host`. Running with `--limit <group>` but **not**
+> `localhost` silently skips the loader, so no hosts are added and every play
+> reports "no hosts matched". Always use `--limit <group>,localhost`.
+
 ## Testing
 
 ### Fast (CI + pre-commit — runs automatically)
