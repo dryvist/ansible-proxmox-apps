@@ -45,12 +45,14 @@ doppler configure set project ansible-proxmox-apps
 doppler configure set config prd
 ```
 
-Set the required environment variables for Proxmox LXC connection:
+Set the required environment variable for the Proxmox LXC SSH connection:
 
 ```bash
-export PROXMOX_VE_HOSTNAME="<proxmox-host>"
 export PROXMOX_SSH_KEY_PATH="<path-to-ssh-key>"
 ```
+
+Each container's Proxmox node host is derived automatically from the inventory
+(`{node-role}.{domain}`) — there is no global Proxmox host to set.
 
 ## Usage
 

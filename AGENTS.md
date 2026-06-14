@@ -146,7 +146,6 @@ Port constants come from `tofu_data.constants`
 | `TOFU_INVENTORY_PATH` | Explicit inventory file pin (tests/overrides) | env (optional) |
 | `TOFU_INVENTORY_S3_URI` | Override the published-inventory S3 location | env (optional) |
 | `TOFU_INVENTORY_S3_REGION` | Region of the inventory bucket (default `us-east-2`) | env (optional) |
-| `PROXMOX_VE_HOSTNAME` | Proxmox VE hostname | Doppler / SOPS |
 | `PROXMOX_VE_NODE` | Proxmox node name | SOPS |
 | `PROXMOX_VE_GATEWAY` | Network gateway (for IP derivation) | Doppler / SOPS |
 | `PROXMOX_DOMAIN` | Internal DNS domain | Doppler / SOPS |
