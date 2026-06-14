@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.37.0...v1.38.0) (2026-06-14)
+
+
+### Features
+
+* **plex:** self-claim by minting a claim token from PLEX_TOKEN ([#441](https://github.com/dryvist/ansible-proxmox-apps/issues/441)) ([6bbd392](https://github.com/dryvist/ansible-proxmox-apps/commit/6bbd3925888e0e540a84a0d8d80bc6af0879aff8))
+
 ## [1.37.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.36.1...v1.37.0) (2026-06-14)
 
 
