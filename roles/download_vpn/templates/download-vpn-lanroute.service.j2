@@ -14,6 +14,15 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 
+# 0. Wait for the LAN gateway to become routable before adding policy routes. In
+#    an unprivileged LXC, network-online.target can fire BEFORE the DHCP lease
+#    installs eth0's on-link route, so the route adds below would fail with
+#    "Nexthop has invalid gateway" — and since this is a oneshot, it would stay
+#    failed (table left empty, the web UIs unreachable cross-subnet until a manual
+#    restart). Bounded to ~30s so a genuine network outage fails the unit cleanly
+#    instead of hanging boot. Pure readiness gate — opens no egress path.
+ExecStartPre=/usr/bin/env sh -c 'n=0; until ip route get {{ download_vpn_lan_gateway }} >/dev/null 2>&1; do n=$((n+1)); [ "$n" -ge 30 ] && exit 1; sleep 1; done'
+
 # 1. (Re)load the connmark mangle table from a clean slate. Delete first (ignore
 #    if absent) so a restart never hits "chain already exists". This must succeed
 #    on load — without the marking the policy route below is inert.
