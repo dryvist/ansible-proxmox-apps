@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.3...v1.34.4) (2026-06-14)
+
+
+### Bug Fixes
+
+* **plex:** publish claimed server to plex.tv so clients can discover it ([#427](https://github.com/dryvist/ansible-proxmox-apps/issues/427)) ([307805a](https://github.com/dryvist/ansible-proxmox-apps/commit/307805a13329e781cbb1e07a9e753ecbd6767a5f))
+
 ## [1.34.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.34.2...v1.34.3) (2026-06-13)
 
 
