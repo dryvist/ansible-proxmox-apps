@@ -23,32 +23,75 @@
   failed_when: false
   changed_when: false
 
-- name: Install Technitium DNS server
+- name: Install Technitium DNS server (bare-metal from mirror)
   when: technitium_install_check.status == -1
   block:
-    - name: Install dependencies
+    - name: Gather minimal facts (Debian version for the Microsoft apt repo)
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "min"
+
+    - name: Install base dependencies
       ansible.builtin.apt:
         name:
           - curl
+          - ca-certificates
           - libicu-dev
         state: present
         update_cache: true
 
-    - name: Download install script
-      ansible.builtin.get_url:
-        url: "{{ technitium_install_script_url }}"
-        dest: /tmp/technitium-install.sh
+    - name: Register the Microsoft package repository (.NET runtime source)
+      # The config .deb installs the apt source list + signing key; this
+      # replaces the dead vendor host as the runtime source.
+      ansible.builtin.apt:
+        deb: >-
+          https://packages.microsoft.com/config/debian/{{
+          ansible_facts.distribution_major_version }}/packages-microsoft-prod.deb
+
+    - name: Install the ASP.NET Core runtime
+      ansible.builtin.apt:
+        name: "{{ technitium_install_dotnet_pkg }}"
+        state: present
+        update_cache: true
+
+    - name: Ensure the Technitium app directory exists
+      ansible.builtin.file:
+        path: "{{ technitium_install_app_dir }}"
+        state: directory
         mode: "0755"
 
-    - name: Run install script
-      ansible.builtin.command:
-        cmd: bash /tmp/technitium-install.sh
-      changed_when: true
+    - name: Download the Technitium app from the mirror (checksum-pinned)
+      ansible.builtin.get_url:
+        url: "{{ technitium_install_app_url }}"
+        dest: /tmp/technitium-app.tgz
+        checksum: "sha256:{{ technitium_install_app_sha256 }}"
+        mode: "0644"
 
-    - name: Remove install script
+    - name: Extract the Technitium app distribution
+      ansible.builtin.unarchive:
+        src: /tmp/technitium-app.tgz
+        dest: "{{ technitium_install_app_dir }}"
+        remote_src: true
+        creates: "{{ technitium_install_app_dir }}/dns/DnsServerApp.dll"
+
+    - name: Remove the downloaded tarball
       ansible.builtin.file:
-        path: /tmp/technitium-install.sh
+        path: /tmp/technitium-app.tgz
         state: absent
+
+    - name: Install the dns.service systemd unit
+      ansible.builtin.template:
+        src: dns.service.j2
+        dest: /etc/systemd/system/dns.service
+        mode: "0644"
+
+    - name: Enable and start Technitium DNS
+      ansible.builtin.systemd_service:
+        name: dns.service
+        enabled: true
+        state: started
+        daemon_reload: true
 
     - name: Wait for Technitium to start
       ansible.builtin.uri:
