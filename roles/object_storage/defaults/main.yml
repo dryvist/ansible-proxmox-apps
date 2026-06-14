@@ -1,0 +1,61 @@
+---
+# Object storage (RustFS) role defaults — S3-compatible store replacing MinIO.
+# RustFS is beta: the version + checksum below are pinned deliberately. Never
+# switch to the rolling "-latest" release asset.
+
+object_storage_rustfs_version: "1.0.0-beta.8"
+object_storage_binary_base: "https://github.com/rustfs/rustfs/releases/download"
+object_storage_binary_asset: "rustfs-linux-x86_64-gnu-v{{ object_storage_rustfs_version }}.zip"
+# SHA256 of the pinned linux-x86_64-gnu asset (from the release SHA256SUMS).
+object_storage_binary_sha256: "f6dbe05430743820db5c38efda403bfa7c1b30967013f792735ab37cee1dc137"
+
+# Installation paths
+object_storage_install_dir: /usr/local/bin
+object_storage_data_dir: /srv/object-storage/data
+object_storage_env_file: /etc/default/object-storage
+object_storage_config_dir: /etc/object-storage
+
+# Service configuration
+object_storage_s3_port: 9000
+object_storage_console_port: 9001
+object_storage_region: us-east-1
+
+# System user
+object_storage_user: rustfs
+object_storage_group: rustfs
+
+# Credentials (from Doppler — new keys mirroring MINIO_ROOT_* semantics).
+object_storage_root_user: "{{ lookup('env', 'OBJECT_STORAGE_ROOT_USER') }}"
+object_storage_root_password: "{{ lookup('env', 'OBJECT_STORAGE_ROOT_PASSWORD') }}"
+
+# Loopback S3 endpoint for local bucket administration via the aws CLI.
+object_storage_endpoint: "http://127.0.0.1:{{ object_storage_s3_port }}"
+
+# Environment applied to every `aws` admin command (loopback, root creds).
+object_storage_aws_env:
+  AWS_ACCESS_KEY_ID: "{{ object_storage_root_user }}"
+  AWS_SECRET_ACCESS_KEY: "{{ object_storage_root_password }}"
+  AWS_DEFAULT_REGION: "{{ object_storage_region }}"
+
+# Default buckets (same contract as the MinIO role: anonymous read on the
+# internal network, versioned, lifecycle-bounded).
+object_storage_default_buckets:
+  - name: splunk-addons
+    policy: download
+    versioning: true
+
+# Lifecycle: expire noncurrent object versions after this many days, bounding
+# data-volume growth when artifacts are repeatedly re-uploaded. 10 years =
+# effectively "keep forever" with a safety ceiling. Lower per-host as needed.
+object_storage_noncurrent_expiration_days: 3650
+
+# Infrastructure artifact mirrors. Roles on egress-restricted LXCs cannot reach
+# public CDNs, so the controller (unrestricted egress) stages each artifact and
+# uploads it into the anonymous-read bucket for local pulls. Existing objects
+# are left alone so manual retention decisions are not clobbered on re-runs.
+object_storage_infra_mirrors:
+  - name: cribl
+    description: Cribl Edge/Stream tarball (rolling latest)
+    url: https://cdn.cribl.io/dl/latest/cribl-linux-x64.tgz
+    bucket: splunk-addons
+    key: infra/cribl-linux-x64.tgz

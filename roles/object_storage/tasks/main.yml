@@ -1,0 +1,372 @@
+---
+# RustFS object storage installation and configuration.
+# S3-compatible store replacing MinIO. Bucket administration uses the `aws`
+# CLI (s3api) against the loopback endpoint — RustFS speaks standard S3, so no
+# vendor client is needed.
+
+# Phase 1: Install prerequisites
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - unzip
+      - awscli
+    state: present
+    update_cache: true
+
+# Phase 2: Create system user
+- name: Create object-storage system group
+  ansible.builtin.group:
+    name: "{{ object_storage_group }}"
+    system: true
+    state: present
+
+- name: Create object-storage system user
+  ansible.builtin.user:
+    name: "{{ object_storage_user }}"
+    group: "{{ object_storage_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /srv/object-storage
+    create_home: true
+    state: present
+
+# Phase 3: Create directories
+- name: Create object-storage data directory
+  ansible.builtin.file:
+    path: "{{ object_storage_data_dir }}"
+    state: directory
+    owner: "{{ object_storage_user }}"
+    group: "{{ object_storage_group }}"
+    mode: "0750"
+
+- name: Create object-storage config directory
+  ansible.builtin.file:
+    path: "{{ object_storage_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Phase 4: Download + verify + install the RustFS binary.
+# Staged on the controller (unrestricted egress) then copied to the target,
+# which may sit in the outbound-internal firewall group and cannot reach
+# github.com. The pinned URL + SHA256 guarantee a fixed beta build.
+- name: Stage RustFS release archive on controller
+  ansible.builtin.get_url:
+    url: "{{ object_storage_binary_base }}/{{ object_storage_rustfs_version }}/{{ object_storage_binary_asset }}"
+    dest: "/tmp/rustfs-{{ object_storage_rustfs_version }}.zip"
+    checksum: "sha256:{{ object_storage_binary_sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Ensure controller extraction directory exists
+  ansible.builtin.file:
+    path: "/tmp/rustfs-{{ object_storage_rustfs_version }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Extract RustFS binary on controller
+  ansible.builtin.unarchive:
+    src: "/tmp/rustfs-{{ object_storage_rustfs_version }}.zip"
+    dest: "/tmp/rustfs-{{ object_storage_rustfs_version }}"
+    remote_src: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Locate extracted rustfs binary on controller
+  ansible.builtin.find:
+    paths: "/tmp/rustfs-{{ object_storage_rustfs_version }}"
+    patterns: rustfs
+    file_type: file
+    recurse: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  register: object_storage_binary_find
+
+- name: Assert the rustfs binary was found in the archive
+  ansible.builtin.assert:
+    that: object_storage_binary_find.matched | int > 0
+    fail_msg: "No 'rustfs' binary found in {{ object_storage_binary_url }} — the release asset layout may have changed."
+  run_once: true
+
+- name: Copy rustfs binary to target
+  ansible.builtin.copy:
+    src: "{{ object_storage_binary_find.files[0].path }}"
+    dest: "{{ object_storage_install_dir }}/rustfs"
+    owner: root
+    group: root
+    mode: "0755"
+
+# Phase 5: Deploy configuration
+- name: Deploy object-storage environment file
+  ansible.builtin.template:
+    src: object-storage.env.j2
+    dest: "{{ object_storage_env_file }}"
+    owner: root
+    group: "{{ object_storage_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart object-storage
+
+- name: Deploy object-storage systemd unit file
+  ansible.builtin.template:
+    src: object-storage.service.j2
+    dest: /etc/systemd/system/object-storage.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart object-storage
+
+# Phase 6: Enable and start service
+- name: Enable and start object-storage service
+  ansible.builtin.systemd:
+    name: object-storage
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Flush handlers so the service restarts before bucket setup
+  ansible.builtin.meta: flush_handlers
+
+# Phase 7: Health check — RustFS S3 API answers on its port once ready
+# (an unauthenticated request returns 403, which still proves it is listening).
+- name: Wait for object-storage S3 API to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ object_storage_s3_port }}"
+    timeout: 60
+
+# Phase 8: Create + configure buckets via the aws CLI (loopback, root creds).
+- name: Check which default buckets already exist
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api head-bucket --bucket {{ item.name }}"
+  loop: "{{ object_storage_default_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_bucket_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Create missing default buckets
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api create-bucket --bucket {{ item.item.name }}"
+  loop: "{{ object_storage_bucket_check.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: item.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Enable versioning on versioned buckets
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-versioning
+      --bucket {{ item.name }} --versioning-configuration Status=Enabled
+  loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  changed_when: false
+  no_log: true
+
+# Anonymous (public-read) download policy — Splunk and other internal consumers
+# pull artifacts with no credentials on the internal network. Read the current
+# policy first so re-runs only report changed when the document actually differs.
+- name: Read current bucket policy
+  ansible.builtin.command:
+    cmd: "aws --endpoint-url {{ object_storage_endpoint }} s3api get-bucket-policy --bucket {{ item.name }}"
+  loop: >-
+    {{ object_storage_default_buckets
+       | selectattr('policy', 'defined')
+       | selectattr('policy', 'equalto', 'download')
+       | list }}
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_policy_current
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Render anonymous download policy documents
+  ansible.builtin.template:
+    src: bucket-policy.json.j2
+    dest: "{{ object_storage_config_dir }}/policy-{{ item.name }}.json"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: >-
+    {{ object_storage_default_buckets
+       | selectattr('policy', 'defined')
+       | selectattr('policy', 'equalto', 'download')
+       | list }}
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    bucket: "{{ item.name }}"
+
+- name: Set anonymous download policy where missing
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-policy
+      --bucket {{ item.item.name }}
+      --policy file://{{ object_storage_config_dir }}/policy-{{ item.item.name }}.json
+  loop: "{{ object_storage_policy_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: >-
+    item.rc != 0 or
+    's3:GetObject' not in (item.stdout | default(''))
+  changed_when: true
+  no_log: true
+
+# Phase 9: Lifecycle — expire noncurrent versions to bound the data volume.
+# Add-if-missing only, mirroring the MinIO role: if a noncurrent-expiration
+# rule already exists the role leaves it alone so operators can tighten
+# retention by hand without Ansible reverting it.
+- name: Read current lifecycle configuration on versioned buckets
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api
+      get-bucket-lifecycle-configuration --bucket {{ item.name }}
+  loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_lifecycle_current
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Render lifecycle configuration documents
+  ansible.builtin.template:
+    src: lifecycle.json.j2
+    dest: "{{ object_storage_config_dir }}/lifecycle-{{ item.name }}.json"
+    owner: root
+    group: root
+    mode: "0640"
+  loop: "{{ object_storage_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Add noncurrent-version expiration rule when none exists
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-lifecycle-configuration
+      --bucket {{ item.item.name }}
+      --lifecycle-configuration file://{{ object_storage_config_dir }}/lifecycle-{{ item.item.name }}.json
+  loop: "{{ object_storage_lifecycle_current.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: >-
+    item.rc != 0 or
+    (item.stdout | default('')) is not search('NoncurrentVersionExpiration')
+  changed_when: true
+  no_log: true
+
+# Phase 10: Mirror external infrastructure artifacts into the local bucket so
+# egress-restricted roles can pull them over the internal network. The
+# controller stages the download; the target uploads via the aws CLI. Existing
+# objects are left alone (manual retention is not clobbered on re-runs).
+- name: Check which infra artifacts are already mirrored
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api head-object
+      --bucket {{ item.bucket }} --key {{ item.key }}
+  loop: "{{ object_storage_infra_mirrors }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_infra_stat
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Stage missing infra artifacts on controller
+  ansible.builtin.get_url:
+    url: "{{ item.item.url }}"
+    dest: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
+    mode: "0644"
+    force: true
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0
+
+- name: Push missing infra artifacts to target
+  ansible.builtin.copy:
+    src: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
+    dest: "/tmp/object-storage-mirror-{{ item.item.name }}"
+    mode: "0644"
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+
+- name: Upload missing infra artifacts to object storage
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3 cp
+      /tmp/object-storage-mirror-{{ item.item.name }}
+      s3://{{ item.item.bucket }}/{{ item.item.key }}
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }} -> {{ item.item.bucket }}/{{ item.item.key }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: item.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Remove staging files from target
+  ansible.builtin.file:
+    path: "/tmp/object-storage-mirror-{{ item.item.name }}"
+    state: absent
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+
+- name: Remove staging files from controller
+  ansible.builtin.file:
+    path: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
+    state: absent
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0
