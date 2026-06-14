@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.36.0...v1.36.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **syslog_forwarder:** start rsyslog in unprivileged LXC ([#433](https://github.com/dryvist/ansible-proxmox-apps/issues/433)) ([45b09e9](https://github.com/dryvist/ansible-proxmox-apps/commit/45b09e9c709bdcf46f340f796a830b0ecdac974a))
+
 ## [1.36.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.35.0...v1.36.0) (2026-06-14)
 
 
