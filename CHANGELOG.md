@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.40.1...v1.41.0) (2026-06-14)
+
+
+### Features
+
+* **technitium:** install bare-metal from our MinIO mirror, drop the dead vendor host ([a1e48a9](https://github.com/dryvist/ansible-proxmox-apps/commit/a1e48a9a2d097fde10242b3ba1b29a7bf5f0753c))
+
 ## [1.40.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.40.0...v1.40.1) (2026-06-14)
 
 

@@ -1,0 +1,250 @@
+---
+# prometheus_stack — Prometheus + blackbox_exporter as ONE Docker-in-LXC compose
+# stack. One Docker bootstrap, one compose project, two services. Both run on host
+# networking: blackbox needs it for ICMP source-routing + NET_RAW, Prometheus to
+# reach exporters across VLANs and scrape blackbox on 127.0.0.1.
+#
+# daemon.json is intentionally NOT written here. The registry-mirror play in
+# site.yml is the single owner of /etc/docker/daemon.json on docker LXCs (it sets
+# storage-driver + registry mirror together). A per-role write would clobber the
+# mirror — see the "single owner" note in site.yml.
+
+# =============================================================================
+# Docker installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    prometheus_stack_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ prometheus_stack_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ prometheus_stack_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for the Ansible docker_compose_v2 module
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+      - packaging  # docker_compose_v2 imports packaging for version comparison
+      - requests
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# =============================================================================
+# Config + compose (single project, two services)
+# =============================================================================
+
+- name: Create prometheus stack data directory
+  ansible.builtin.file:
+    path: "{{ prometheus_stack_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render prometheus.yml scrape configuration
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_stack_data_dir }}/prometheus.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload prometheus config
+
+- name: Render blackbox exporter configuration
+  ansible.builtin.template:
+    src: blackbox.yml.j2
+    dest: "{{ prometheus_stack_data_dir }}/blackbox.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus stack
+
+- name: Deploy prometheus stack docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ prometheus_stack_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus stack
+
+# The venv interpreter is scoped to this block only — it does NOT leak into later
+# plays the way a play-wide set_fact would.
+- name: Deploy and verify the prometheus stack
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  block:
+    # One-time migration: the previous design ran blackbox-exporter as its own
+    # compose project. Tear it down so its fixed container_name is free for the
+    # merged project to recreate.
+    - name: Check for the legacy standalone blackbox compose project
+      ansible.builtin.stat:
+        path: "{{ prometheus_stack_legacy_blackbox_dir }}/docker-compose.yml"
+      register: prometheus_stack_legacy_blackbox
+
+    - name: Tear down the legacy standalone blackbox compose project
+      community.docker.docker_compose_v2:
+        project_src: "{{ prometheus_stack_legacy_blackbox_dir }}"
+        state: absent
+      when: prometheus_stack_legacy_blackbox.stat.exists
+
+    - name: Remove the legacy standalone blackbox project directory
+      ansible.builtin.file:
+        path: "{{ prometheus_stack_legacy_blackbox_dir }}"
+        state: absent
+      when: prometheus_stack_legacy_blackbox.stat.exists
+
+    - name: Deploy the prometheus stack via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ prometheus_stack_data_dir }}"
+        state: present
+
+    # =========================================================================
+    # Health checks — prove BOTH containers run, both serve, the exporter
+    # actually completes a probe, AND Prometheus has scraped probe_success into
+    # the TSDB (the full pipeline, not just "containers up").
+    # =========================================================================
+    - name: Verify both stack containers are running
+      ansible.builtin.command: >-
+        docker ps -q --filter name={{ item }} --filter status=running
+      register: prometheus_stack_running
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: prometheus_stack_running.stdout != ''
+      loop:
+        - "{{ prometheus_stack_container_name }}"
+        - "{{ prometheus_stack_blackbox_container_name }}"
+
+    - name: Verify prometheus is healthy and ready
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ prometheus_stack_port }}/-/ready"
+        status_code: 200
+      register: prometheus_stack_ready
+      retries: 12
+      delay: 5
+      until: prometheus_stack_ready.status | default(0) == 200
+      changed_when: false
+
+    - name: Verify the blackbox exporter answers /-/healthy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ prometheus_stack_blackbox_port }}/-/healthy"
+        status_code: 200
+      register: prometheus_stack_bb_healthy
+      retries: 6
+      delay: 5
+      until: prometheus_stack_bb_healthy.status | default(0) == 200
+      changed_when: false
+
+    # Real probe: the exporter must run a module and emit metrics, not just answer
+    # its own health endpoint. A broken module config or missing NET_RAW fails here.
+    - name: Verify the blackbox exporter completes an ICMP probe
+      ansible.builtin.uri:
+        url: >-
+          http://{{ prometheus_stack_blackbox_address }}/probe?target={{ prometheus_stack_smoke_target }}&module=icmp
+        return_content: true
+        status_code: 200
+      register: prometheus_stack_probe
+      retries: 6
+      delay: 5
+      until: "'probe_success' in (prometheus_stack_probe.content | default(''))"
+      changed_when: false
+
+    # End-to-end: Prometheus must have scraped the exporter and stored
+    # probe_success. Exercises scrape + relabel + TSDB, not just service liveness.
+    - name: Verify Prometheus has scraped probe_success into the TSDB
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ prometheus_stack_port }}/api/v1/query?query=probe_success"
+        status_code: 200
+      register: prometheus_stack_query
+      retries: 12
+      delay: 5
+      until: (prometheus_stack_query.json.data.result | default([]) | length) > 0
+      changed_when: false
+
+  rescue:
+    - name: Capture stack diagnostics on failure
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "docker ps -a"
+        - "docker logs --tail 50 {{ prometheus_stack_container_name }}"
+        - "docker logs --tail 50 {{ prometheus_stack_blackbox_container_name }}"
+      register: prometheus_stack_diag
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with stack diagnostics
+      ansible.builtin.fail:
+        msg: |-
+          prometheus stack failed to deploy/verify on {{ inventory_hostname }}.
+          {{ prometheus_stack_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
