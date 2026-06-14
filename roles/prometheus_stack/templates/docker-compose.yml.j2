@@ -1,0 +1,43 @@
+## Managed by Ansible (prometheus_stack role) — do not edit by hand.
+## Single compose project, two services, both on host networking:
+##   - prometheus: reaches scrape targets across VLANs; scrapes the co-located
+##     blackbox exporter on 127.0.0.1. TSDB persists in a named volume across
+##     container recreates.
+##   - blackbox-exporter: ICMP probes must egress the LXC's uplink so the per-WAN
+##     source-IP policy route governs the path; NET_RAW lets the icmp prober open
+##     raw sockets. Molecule/DinD would override network_mode to bridge.
+services:
+  prometheus:
+    image: {{ prometheus_stack_image }}
+    container_name: {{ prometheus_stack_container_name }}
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time={{ prometheus_stack_retention }}"
+      - "--web.listen-address=:{{ prometheus_stack_port }}"
+      - "--web.enable-lifecycle"
+    volumes:
+      - {{ prometheus_stack_data_dir }}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  blackbox-exporter:
+    image: {{ prometheus_stack_blackbox_image }}
+    container_name: {{ prometheus_stack_blackbox_container_name }}
+    restart: unless-stopped
+    network_mode: {{ prometheus_stack_blackbox_network_mode }}
+{% if prometheus_stack_blackbox_cap_add | length > 0 %}
+    cap_add:
+{% for cap in prometheus_stack_blackbox_cap_add %}
+      - {{ cap }}
+{% endfor %}
+{% endif %}
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+      - "--web.listen-address=:{{ prometheus_stack_blackbox_port }}"
+    volumes:
+      - {{ prometheus_stack_data_dir }}/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+
+volumes:
+  prometheus-data:
