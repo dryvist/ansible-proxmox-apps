@@ -1,0 +1,20 @@
+---
+# Publish the server to plex.tv so account-based clients (the Plex app on Roku,
+# app.plex.tv, etc.) can DISCOVER it. Plex hides any server whose
+# PublishServerOnPlexOnlineKey pref is 0 from the account's server list, so a
+# CLAIMED server with libraries is still invisible on Roku until this is 1.
+# Idempotent (PUT sets the pref) + NON-FATAL. Reuses plex_effective_token from
+# libraries.yml; a server that is not yet signed in has no token and skips here.
+
+- name: Ensure the server is published to plex.tv (idempotent, non-fatal)
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ plex_local_api_port }}/:/prefs?PublishServerOnPlexOnlineKey={{
+      1 if plex_publish_to_plextv else 0 }}&X-Plex-Token={{ plex_effective_token }}
+    method: PUT
+    status_code: [200, 201, 204]
+  register: plex_publish
+  changed_when: plex_publish.status in [200, 201, 204]
+  failed_when: false
+  no_log: true
+  when: plex_effective_token | default('') | length > 0
