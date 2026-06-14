@@ -1,0 +1,70 @@
+---
+# blackbox_exporter — Prometheus blackbox exporter (Docker-in-LXC).
+#
+# Active black-box probing of WAN/ISP reachability and response time: ICMP to the
+# cable modem + public anycast targets, TCP/HTTP(S)/TLS reachability + latency,
+# and DNS RTT. Prometheus scrapes this exporter with the multi-target pattern
+# (/probe?target=<addr>&module=<module>); the TARGETS live in the Prometheus
+# scrape config (prometheus role), never here. See terraform-proxmox
+# docs/SMOKEPING.md for the measurement design.
+
+# --- container image (pinned; bump via Renovate or manual review) ---
+blackbox_exporter_image: "quay.io/prometheus/blackbox-exporter:v0.25.0"
+blackbox_exporter_container_name: blackbox-exporter
+blackbox_exporter_data_dir: /opt/blackbox-exporter
+
+# Listen port — from the tofu constant when available, else the upstream default.
+# Prometheus scrapes http://<this-host>:<port>/probe.
+blackbox_exporter_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['blackbox_exporter']
+     | default(9115) }}
+
+# Docker storage driver. fuse-overlayfs is required for Docker on a ZFS-backed
+# LXC; molecule's Docker-in-Docker overrides this to vfs.
+blackbox_exporter_docker_storage_driver: "fuse-overlayfs"
+
+# Host networking so ICMP probes egress the LXC's uplink (and the per-WAN
+# source-IP policy route governs which WAN they traverse); NET_RAW lets the icmp
+# prober open raw sockets. Molecule/DinD overrides network_mode to bridge.
+blackbox_exporter_network_mode: "host"
+blackbox_exporter_cap_add:
+  - "NET_RAW"
+
+# --- probe modules (HOW to probe; the targets come from Prometheus, not here) ---
+# icmp        — latency/loss to the modem + Comcast hops + public anycast
+# tcp_connect — bare TCP reachability + connect latency
+# http_2xx    — HTTP response + latency (any 2xx)
+# http_2xx_tls— HTTPS response + TLS handshake/cert-expiry
+# dns_udp     — DNS RTT + resolution success
+blackbox_exporter_modules:
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: ip4
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: []
+      fail_if_not_ssl: false
+  http_2xx_tls:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true
+  dns_udp:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: udp
+      preferred_ip_protocol: ip4
+      query_name: "example.com"
+      query_type: "A"
