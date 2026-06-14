@@ -1,0 +1,118 @@
+---
+# Prometheus-native network-quality monitoring, deployed via the maintained
+# prometheus.prometheus collection (no custom roles). EVERYTHING here is a named
+# variable — no magic numbers/strings inline. Generic defaults only; real ISP hop
+# IPs / ISP-specific targets are home-specific and go in a PRIVATE inventory
+# override of the monitoring_* target vars, never in this public repo.
+#
+# See terraform-proxmox docs/SMOKEPING.md for the measurement design. The cable
+# modem exposes no DOCSIS/SNMP data (ICMP-only), so the ISP-fault evidence comes
+# from these active probes.
+
+# === tunables (single source of truth — referenced everywhere below) ===
+monitoring_localhost: "127.0.0.1"
+monitoring_bind_all: "0.0.0.0"
+monitoring_scrape_interval: "15s"
+monitoring_retention: "30d"
+monitoring_probe_timeout: "5s"
+monitoring_ip_protocol: "ip4"
+monitoring_dns_query_name: "example.com"
+monitoring_dns_query_type: "A"
+
+# Ports come from the terraform constants (single source of truth), with the
+# upstream defaults as fallback.
+monitoring_prometheus_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['prometheus_web']
+     | default(9090) }}
+monitoring_blackbox_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['blackbox_exporter']
+     | default(9115) }}
+monitoring_blackbox_address: "{{ monitoring_localhost }}:{{ monitoring_blackbox_port }}"
+
+# Pinned versions (bump via Renovate / manual review).
+monitoring_prometheus_version: "3.1.0"
+monitoring_blackbox_version: "0.25.0"
+
+# === probe targets (GENERIC defaults only — override privately for real ISP) ===
+monitoring_modem_ip: "192.168.100.1"            # cable-modem diagnostic IP (ICMP-only)
+monitoring_anycast_v4:                           # public anycast resolvers (probe targets)
+  - "1.1.1.1"
+  - "8.8.8.8"
+monitoring_icmp_targets: "{{ [monitoring_modem_ip] + monitoring_anycast_v4 }}"
+monitoring_https_targets:
+  - "https://1.1.1.1"
+  - "https://8.8.8.8"
+monitoring_dns_targets: "{{ monitoring_anycast_v4 }}"
+
+# Shared blackbox multi-target relabel: pass the static target to the exporter,
+# keep it as the instance label, point the scrape at the local blackbox exporter.
+monitoring_blackbox_relabel:
+  - source_labels: [__address__]
+    target_label: __param_target
+  - source_labels: [__param_target]
+    target_label: instance
+  - target_label: __address__
+    replacement: "{{ monitoring_blackbox_address }}"
+
+# Raw scrape jobs appended for exporters added later (smokeping_prober, irtt,
+# snmp_exporter). Empty until those land.
+monitoring_extra_scrape_configs: []
+
+# === prometheus.prometheus.prometheus role variables ===
+prometheus_version: "{{ monitoring_prometheus_version }}"
+prometheus_web_listen_address: "{{ monitoring_bind_all }}:{{ monitoring_prometheus_port }}"
+prometheus_storage_retention: "{{ monitoring_retention }}"
+prometheus_global:
+  scrape_interval: "{{ monitoring_scrape_interval }}"
+  evaluation_interval: "{{ monitoring_scrape_interval }}"
+prometheus_scrape_configs: "{{ monitoring_base_scrape_configs + monitoring_extra_scrape_configs }}"
+
+monitoring_base_scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["{{ monitoring_localhost }}:{{ monitoring_prometheus_port }}"]
+  - job_name: blackbox_icmp
+    metrics_path: /probe
+    params:
+      module: ["icmp"]
+    static_configs:
+      - targets: "{{ monitoring_icmp_targets }}"
+    relabel_configs: "{{ monitoring_blackbox_relabel }}"
+  - job_name: blackbox_http_2xx_tls
+    metrics_path: /probe
+    params:
+      module: ["http_2xx_tls"]
+    static_configs:
+      - targets: "{{ monitoring_https_targets }}"
+    relabel_configs: "{{ monitoring_blackbox_relabel }}"
+  - job_name: blackbox_dns_udp
+    metrics_path: /probe
+    params:
+      module: ["dns_udp"]
+    static_configs:
+      - targets: "{{ monitoring_dns_targets }}"
+    relabel_configs: "{{ monitoring_blackbox_relabel }}"
+
+# === prometheus.prometheus.blackbox_exporter role variables ===
+blackbox_exporter_version: "{{ monitoring_blackbox_version }}"
+blackbox_exporter_web_listen_address: "{{ monitoring_bind_all }}:{{ monitoring_blackbox_port }}"
+blackbox_exporter_configuration_modules:
+  icmp:
+    prober: icmp
+    timeout: "{{ monitoring_probe_timeout }}"
+    icmp:
+      preferred_ip_protocol: "{{ monitoring_ip_protocol }}"
+  http_2xx_tls:
+    prober: http
+    timeout: "{{ monitoring_probe_timeout }}"
+    http:
+      preferred_ip_protocol: "{{ monitoring_ip_protocol }}"
+      fail_if_not_ssl: true
+  dns_udp:
+    prober: dns
+    timeout: "{{ monitoring_probe_timeout }}"
+    dns:
+      transport_protocol: udp
+      preferred_ip_protocol: "{{ monitoring_ip_protocol }}"
+      query_name: "{{ monitoring_dns_query_name }}"
+      query_type: "{{ monitoring_dns_query_type }}"
