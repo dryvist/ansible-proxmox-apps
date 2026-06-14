@@ -1,0 +1,180 @@
+---
+# network_quality — smokeping_prober + irtt as ONE Docker-in-LXC compose stack,
+# co-located on the monitoring (prometheus) LXC. Mirrors the prometheus_stack
+# Docker bootstrap (a shared docker_base role is tracked separately as #449).
+#
+# daemon.json is intentionally NOT written here — the registry-mirror play in
+# site.yml owns it (same rationale as prometheus_stack).
+
+# =============================================================================
+# Docker installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    network_quality_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ network_quality_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ network_quality_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for the Ansible docker_compose_v2 module
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+      - packaging  # docker_compose_v2 imports packaging for version comparison
+      - requests
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# =============================================================================
+# Config + compose (single project, two services)
+# =============================================================================
+
+- name: Create network_quality data directory
+  ansible.builtin.file:
+    path: "{{ network_quality_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render smokeping_prober configuration
+  ansible.builtin.template:
+    src: smokeping.yml.j2
+    dest: "{{ network_quality_data_dir }}/smokeping.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart network_quality stack
+
+- name: Deploy network_quality docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ network_quality_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart network_quality stack
+
+# The venv interpreter is scoped to this block only — it does NOT leak into later
+# plays the way a play-wide set_fact would.
+- name: Deploy and verify the network_quality stack
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  block:
+    - name: Deploy the network_quality stack via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ network_quality_data_dir }}"
+        state: present
+
+    # =========================================================================
+    # Health checks — the container runs AND smokeping_prober is actually
+    # producing metrics (not just "container up").
+    # =========================================================================
+    - name: Verify the smokeping_prober container is running
+      ansible.builtin.command: >-
+        docker ps -q --filter name={{ network_quality_smokeping_container_name }} --filter status=running
+      register: network_quality_running
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: network_quality_running.stdout != ''
+
+    # Real check: the exporter must serve its own metrics with smokeping_* series
+    # (proves the config parsed and the prober is running).
+    - name: Verify smokeping_prober is serving metrics
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ network_quality_smokeping_port }}/metrics"
+        return_content: true
+        status_code: 200
+      register: network_quality_smokeping_metrics
+      retries: 12
+      delay: 5
+      until: "'smokeping_' in (network_quality_smokeping_metrics.content | default(''))"
+      changed_when: false
+
+  rescue:
+    - name: Capture stack diagnostics on failure
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "docker ps -a"
+        - "docker logs --tail 50 {{ network_quality_smokeping_container_name }}"
+      register: network_quality_diag
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with stack diagnostics
+      ansible.builtin.fail:
+        msg: |-
+          network_quality stack failed to deploy/verify on {{ inventory_hostname }}.
+          {{ network_quality_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}

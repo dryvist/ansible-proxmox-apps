@@ -1,0 +1,55 @@
+---
+# network_quality — smokeping_prober as a Docker-in-LXC compose stack, co-located
+# on the monitoring (prometheus) LXC. Adds the loss/latency-DISTRIBUTION leg
+# (smokeping_prober, ICMP histograms) alongside blackbox's binary probe_success.
+# See terraform-proxmox docs/SMOKEPING.md.
+#
+# Prometheus scrapes smokeping_prober (:9374) via a static job wired through
+# prometheus_stack_extra_scrape_configs — see inventory/group_vars/prometheus_group.yml.
+#
+# irtt (jitter/MOS) is intentionally DEFERRED: there is no official/maintained irtt
+# container image (the repo ships no Dockerfile; only low-signal community forks
+# exist), and real jitter/MOS needs an irtt CLIENT against a remote server anyway.
+# Revisit by building irtt from source or vetting an image — tracked as a follow-up.
+#
+# daemon.json is intentionally NOT written here — the registry-mirror play in
+# site.yml is the single owner of /etc/docker/daemon.json on docker LXCs.
+
+# --- container image (pinned; tracked by the dryvist/.github Renovate manager) ---
+# Canonical image is quay.io/superq/smokeping-prober (hyphen). v0.11.0 is the latest
+# GitHub release but is not on quay yet; v0.10.0 is the newest published tag.
+network_quality_smokeping_image: "quay.io/superq/smokeping-prober:v0.10.0"
+network_quality_smokeping_container_name: smokeping-prober
+
+network_quality_data_dir: /opt/network-quality
+
+# Port from the tofu constant when available, else the upstream default.
+network_quality_smokeping_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['smokeping_prober']
+     | default(9374) }}
+
+# Host networking so ICMP egresses the LXC uplink (per-WAN source routing governs
+# the path) and NET_RAW lets smokeping_prober open raw sockets. Molecule/DinD would
+# override network_mode to bridge.
+network_quality_network_mode: "host"
+network_quality_smokeping_cap_add:
+  - "NET_RAW"
+
+# --- probe targets (GENERIC defaults; real ISP hops via PRIVATE inventory) ---
+# Same shape/vars as prometheus_stack so a private override sets both consistently.
+network_quality_modem_ip: "192.168.100.1"     # cable-modem diagnostic IP (ICMP-only)
+network_quality_anycast_targets:              # public resolvers used as probe targets
+  - "1.1.1.1"
+  - "8.8.8.8"
+
+# The full host list smokeping_prober pings — modem + anycast by default; a private
+# inventory can override this whole list to add real ISP hop IPs.
+network_quality_smokeping_targets: "{{ [network_quality_modem_ip] + network_quality_anycast_targets }}"
+
+network_quality_smokeping_interval: "1s"   # ~1 packet/s stream (matches SmokePing cadence)
+network_quality_ip_protocol: "ip4"
+
+# NOTE: the Prometheus scrape job for smokeping_prober is wired into Prometheus via
+# prometheus_stack_extra_scrape_configs in inventory/group_vars/prometheus_group.yml,
+# NOT here — the prometheus_stack play does not load this role's defaults, so the
+# scrape job must live where both plays can see it (group_vars).
