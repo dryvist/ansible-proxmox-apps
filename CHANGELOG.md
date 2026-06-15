@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.42.0...v1.43.0) (2026-06-15)
+
+
+### Features
+
+* **monitoring:** network_quality role (smokeping_prober) on the prometheus LXC ([#456](https://github.com/dryvist/ansible-proxmox-apps/issues/456)) ([036e9f2](https://github.com/dryvist/ansible-proxmox-apps/commit/036e9f21548e9409afd504c3dcc17bee7b2e3761))
+
 ## [1.42.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.41.1...v1.42.0) (2026-06-15)
 
 
