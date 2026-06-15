@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.43.0...v1.44.0) (2026-06-15)
+
+
+### Features
+
+* **wan_hop_discovery:** echo-validated dynamic ISP-hop discovery ([#463](https://github.com/dryvist/ansible-proxmox-apps/issues/463)) ([9968909](https://github.com/dryvist/ansible-proxmox-apps/commit/9968909db63526c565e091372d25012479d3b97f))
+
 ## [1.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.42.0...v1.43.0) (2026-06-15)
 
 
