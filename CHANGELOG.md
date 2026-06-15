@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.41.1...v1.42.0) (2026-06-15)
+
+
+### Features
+
+* **object-storage:** add RustFS object_storage role replacing MinIO ([#455](https://github.com/dryvist/ansible-proxmox-apps/issues/455)) ([0831def](https://github.com/dryvist/ansible-proxmox-apps/commit/0831def422287dc6ec84206b6084ac465135b210))
+
 ## [1.41.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.41.0...v1.41.1) (2026-06-15)
 
 
