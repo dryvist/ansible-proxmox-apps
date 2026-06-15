@@ -126,6 +126,13 @@
     mode: "0644"
   notify: Restart network_quality stack
 
+# Apply any pending config-change handlers (Restart network_quality stack) BEFORE
+# the verification block, so the health checks validate the freshly-deployed config
+# rather than a container still running the old smokeping.yml (a config-only change
+# is picked up by the recreate handler, which would otherwise flush at play end).
+- name: Flush handlers so config changes apply before verification
+  ansible.builtin.meta: flush_handlers
+
 # The venv interpreter is scoped to this block only — it does NOT leak into later
 # plays the way a play-wide set_fact would.
 - name: Deploy and verify the network_quality stack
@@ -142,13 +149,15 @@
     # producing metrics (not just "container up").
     # =========================================================================
     - name: Verify the smokeping_prober container is running
-      ansible.builtin.command: >-
-        docker ps -q --filter name={{ network_quality_smokeping_container_name }} --filter status=running
-      register: network_quality_running
-      changed_when: false
+      community.docker.docker_container_info:
+        name: "{{ network_quality_smokeping_container_name }}"
+      register: network_quality_container_info
       retries: 6
       delay: 5
-      until: network_quality_running.stdout != ''
+      until: >-
+        network_quality_container_info.exists
+        and (network_quality_container_info.container.State.Running | default(false))
+      changed_when: false
 
     # Real check: the exporter must serve its own metrics with smokeping_* series
     # (proves the config parsed and the prober is running).
@@ -164,11 +173,14 @@
       changed_when: false
 
   rescue:
+    # Use docker compose (not a hardcoded container name) so diagnostics cover every
+    # service in the stack as it grows, and capture stderr too — that is where
+    # container startup failures usually surface.
     - name: Capture stack diagnostics on failure
       ansible.builtin.command: "{{ item }}"
       loop:
-        - "docker ps -a"
-        - "docker logs --tail 50 {{ network_quality_smokeping_container_name }}"
+        - "docker compose -f {{ network_quality_data_dir }}/docker-compose.yml ps -a"
+        - "docker compose -f {{ network_quality_data_dir }}/docker-compose.yml logs --tail 50"
       register: network_quality_diag
       changed_when: false
       failed_when: false
@@ -177,4 +189,9 @@
       ansible.builtin.fail:
         msg: |-
           network_quality stack failed to deploy/verify on {{ inventory_hostname }}.
-          {{ network_quality_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
+          {% for result in network_quality_diag.results | default([]) %}
+          $ {{ result.item }}
+          {{ result.stdout | default('') }}
+          {{ result.stderr | default('') }}
+          ---
+          {% endfor %}
