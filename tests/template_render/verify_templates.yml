@@ -1498,21 +1498,22 @@
 
   vars:
     # Mirror roles/wan_hop_discovery/defaults/main.yml.
-    wan_hop_discovery_private_regex: '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)'
+    wan_hop_discovery_private_regex: '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)'
     wan_hop_discovery_probe_target: "1.1.1.1"
     wan_hop_discovery_max_hops: 3
     # CGNAT 100.64/10 echo-validation stand-in (single-quoted -> literal `^100\.`).
     _cgnat_regex: '^100\.'
-    # Canned `mtr -n -r -j 1.1.1.1` report: LAN gw (10.x, drop), CGNAT edge
-    # (100.64/10, kept as candidate then dropped by echo-validation), two public
-    # Comcast hops (96.x, kept), an unresponsive hop (???, drop).
+    # Canned `mtr -n -r -j 1.1.1.1` report: LAN gw (10.x, drop), link-local
+    # (169.254, drop), CGNAT edge (100.64/10, kept as candidate then dropped by
+    # echo-validation), two public Comcast hops (96.x, kept), unresponsive (???, drop).
     _sample_mtr: >-
       {"report":{"mtr":{"dst":"1.1.1.1"},"hubs":[
         {"count":"1","host":"10.0.1.1"},
-        {"count":"2","host":"100.93.238.67"},
-        {"count":"3","host":"96.110.170.225"},
-        {"count":"4","host":"96.108.122.13"},
-        {"count":"5","host":"???"}
+        {"count":"2","host":"169.254.0.1"},
+        {"count":"3","host":"100.93.238.67"},
+        {"count":"4","host":"96.110.170.225"},
+        {"count":"5","host":"96.108.122.13"},
+        {"count":"6","host":"???"}
       ]}}
     # Mirror the generic modem + anycast defaults shared by both consumer roles.
     network_quality_modem_ip: "192.168.100.1"
@@ -1611,12 +1612,37 @@
             == ['192.168.100.1', '1.1.1.1', '8.8.8.8']
         fail_msg: "empty-discovery fallback wrong"
 
+    - name: Simulate a failed mtr run (rc=1, empty stdout)
+      ansible.builtin.set_fact:
+        wan_hop_discovery_mtr: {rc: 1, stdout: ""}
+
+    - name: Build candidates with the role's guarded ternary (exact expression)
+      ansible.builtin.set_fact:
+        _failed_candidates: >-
+          {{ ((wan_hop_discovery_mtr.stdout | from_json).report.hubs
+              | map(attribute='host') | list
+              | reject('match', wan_hop_discovery_private_regex)
+              | reject('equalto', '???')
+              | reject('equalto', wan_hop_discovery_probe_target)
+              | unique | list)
+             if (wan_hop_discovery_mtr.rc | default(1) == 0
+                 and (wan_hop_discovery_mtr.stdout | default('') | length) > 0)
+             else [] }}
+
+    - name: Assert a failed mtr degrades to empty candidates (no from_json crash)
+      ansible.builtin.assert:
+        that:
+          - _failed_candidates == []
+        fail_msg: >-
+          guarded mtr parse did not degrade to [] on failure: {{ _failed_candidates }}
+
     - name: WAN-hop discovery logic + render PASSED
       ansible.builtin.debug:
         msg: |
           wan_hop_discovery assertions passed (canned mtr -j, no live network):
-          - parse: RFC1918 + ??? dropped, CGNAT + public kept as candidates
+          - parse: RFC1918 + link-local + ??? dropped, CGNAT + public kept
           - echo-validate: non-echo CGNAT 100.64/10 dropped, public hops kept
           - fold: smokeping + blackbox icmp = modem + ISP hops + anycast (in order)
           - smokeping.yml.j2 renders valid YAML with the folded ping set
           - empty discovery degrades to modem + anycast
+          - failed mtr (rc!=0) degrades to [] candidates without a from_json crash

@@ -13,7 +13,7 @@
   ansible.builtin.apt:
     name: "{{ wan_hop_discovery_packages }}"
     state: present
-    update_cache: true
+    cache_valid_time: 3600
 
 - name: Ensure discovery state directory exists
   ansible.builtin.file:
@@ -51,17 +51,24 @@
       -j {{ wan_hop_discovery_probe_target }}
   register: wan_hop_discovery_mtr
   changed_when: false
+  failed_when: false
   when: not wan_hop_discovery_reuse
 
+# Parse only when mtr actually succeeded with output; otherwise yield [] so the
+# play degrades safely to modem + anycast instead of crashing on from_json. The
+# Jinja ternary is lazy — from_json is never evaluated on the failure branch.
 - name: Extract public hop candidates from the mtr report
   ansible.builtin.set_fact:
     wan_hop_discovery_candidates: >-
-      {{ (wan_hop_discovery_mtr.stdout | from_json).report.hubs
-         | map(attribute='host') | list
-         | reject('match', wan_hop_discovery_private_regex)
-         | reject('equalto', '???')
-         | reject('equalto', wan_hop_discovery_probe_target)
-         | unique | list }}
+      {{ ((wan_hop_discovery_mtr.stdout | from_json).report.hubs
+          | map(attribute='host') | list
+          | reject('match', wan_hop_discovery_private_regex)
+          | reject('equalto', '???')
+          | reject('equalto', wan_hop_discovery_probe_target)
+          | unique | list)
+         if (wan_hop_discovery_mtr.rc | default(1) == 0
+             and (wan_hop_discovery_mtr.stdout | default('') | length) > 0)
+         else [] }}
   when: not wan_hop_discovery_reuse
 
 - name: Echo-validate the discovered candidates
@@ -81,6 +88,9 @@
     content: "{{ wan_hop_discovery_isp_hops | to_nice_json }}\n"
     dest: "{{ wan_hop_discovery_state_file }}"
     mode: "0644"
+  # Never clobber a previously-good state file with [] when mtr failed: only write
+  # when reusing the prior set or when this run's fresh discovery actually succeeded.
+  when: wan_hop_discovery_reuse or (wan_hop_discovery_mtr.rc | default(1) == 0)
 
 - name: Report the effective ISP hops
   ansible.builtin.debug:
