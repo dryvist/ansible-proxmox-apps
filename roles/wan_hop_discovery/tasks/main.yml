@@ -1,0 +1,89 @@
+---
+# wan_hop_discovery — see defaults/main.yml for the full rationale. Sets the host
+# fact wan_hop_discovery_isp_hops (the echo-reachable public ISP-path hops),
+# consumed by the prometheus_stack (blackbox icmp) and network_quality (smokeping)
+# target lists. No real WAN IP is ever written to git — only to a host-local
+# state file and the running container configs.
+#
+# Idempotency: the prior hop set is reused while every member still answers echo,
+# so a redeploy does not churn the prober; mtr re-discovery runs only when the
+# path has actually renumbered (auto-heal).
+
+- name: Install discovery tooling (mtr + ping)
+  ansible.builtin.apt:
+    name: "{{ wan_hop_discovery_packages }}"
+    state: present
+    update_cache: true
+
+- name: Ensure discovery state directory exists
+  ansible.builtin.file:
+    path: "{{ wan_hop_discovery_state_file | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Read previously discovered ISP hops (if any)
+  ansible.builtin.slurp:
+    src: "{{ wan_hop_discovery_state_file }}"
+  register: wan_hop_discovery_prior_slurp
+  failed_when: false
+
+- name: Parse prior ISP hops
+  ansible.builtin.set_fact:
+    wan_hop_discovery_prior: >-
+      {{ (wan_hop_discovery_prior_slurp.content | b64decode | from_json)
+         if (wan_hop_discovery_prior_slurp.content is defined) else [] }}
+
+- name: Echo-validate the prior hop set
+  ansible.builtin.include_tasks: echo_filter.yml
+  vars:
+    wan_hop_discovery_to_check: "{{ wan_hop_discovery_prior }}"
+
+- name: Decide whether the prior set is still fully reachable (reuse it if so)
+  ansible.builtin.set_fact:
+    wan_hop_discovery_reuse: >-
+      {{ wan_hop_discovery_prior | length > 0
+         and wan_hop_discovery_reachable | length == wan_hop_discovery_prior | length }}
+
+- name: Discover the WAN path (mtr JSON) — only when the prior set is missing/stale
+  ansible.builtin.command:
+    cmd: >-
+      mtr -n -r -c {{ wan_hop_discovery_cycles }}
+      -j {{ wan_hop_discovery_probe_target }}
+  register: wan_hop_discovery_mtr
+  changed_when: false
+  when: not wan_hop_discovery_reuse
+
+- name: Extract public hop candidates from the mtr report
+  ansible.builtin.set_fact:
+    wan_hop_discovery_candidates: >-
+      {{ (wan_hop_discovery_mtr.stdout | from_json).report.hubs
+         | map(attribute='host') | list
+         | reject('match', wan_hop_discovery_private_regex)
+         | reject('equalto', '???')
+         | reject('equalto', wan_hop_discovery_probe_target)
+         | unique | list }}
+  when: not wan_hop_discovery_reuse
+
+- name: Echo-validate the discovered candidates
+  ansible.builtin.include_tasks: echo_filter.yml
+  vars:
+    wan_hop_discovery_to_check: "{{ wan_hop_discovery_candidates }}"
+  when: not wan_hop_discovery_reuse
+
+- name: Select the effective ISP hops (reuse prior, else first N reachable fresh)
+  ansible.builtin.set_fact:
+    wan_hop_discovery_isp_hops: >-
+      {{ wan_hop_discovery_prior if wan_hop_discovery_reuse
+         else wan_hop_discovery_reachable[0:wan_hop_discovery_max_hops] }}
+
+- name: Persist the discovered ISP hops (idempotent — rewrites only on change)
+  ansible.builtin.copy:
+    content: "{{ wan_hop_discovery_isp_hops | to_nice_json }}\n"
+    dest: "{{ wan_hop_discovery_state_file }}"
+    mode: "0644"
+
+- name: Report the effective ISP hops
+  ansible.builtin.debug:
+    msg: >-
+      wan_hop_discovery_isp_hops={{ wan_hop_discovery_isp_hops }}
+      (reused={{ wan_hop_discovery_reuse }})

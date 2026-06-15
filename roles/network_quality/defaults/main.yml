@@ -35,16 +35,20 @@ network_quality_network_mode: "host"
 network_quality_smokeping_cap_add:
   - "NET_RAW"
 
-# --- probe targets (GENERIC defaults; real ISP hops via PRIVATE inventory) ---
-# Same shape/vars as prometheus_stack so a private override sets both consistently.
+# --- probe targets (GENERIC defaults; live ISP hops via wan_hop_discovery) ---
+# Same shape/vars as prometheus_stack so both stay consistent.
 network_quality_modem_ip: "192.168.100.1"     # cable-modem diagnostic IP (ICMP-only)
 network_quality_anycast_targets:              # public resolvers used as probe targets
   - "1.1.1.1"
   - "8.8.8.8"
 
-# The full host list smokeping_prober pings — modem + anycast by default; a private
-# inventory can override this whole list to add real ISP hop IPs.
-network_quality_smokeping_targets: "{{ [network_quality_modem_ip] + network_quality_anycast_targets }}"
+# The full host list smokeping_prober pings — modem + the live ISP-path hops folded
+# in from the wan_hop_discovery play (host fact wan_hop_discovery_isp_hops; empty when
+# discovery did not run, degrading safely to modem + anycast) + public anycast.
+network_quality_smokeping_targets: >-
+  {{ [network_quality_modem_ip]
+     + (wan_hop_discovery_isp_hops | default([]))
+     + network_quality_anycast_targets }}
 
 network_quality_smokeping_interval: "1s"   # ~1 packet/s stream (matches SmokePing cadence)
 network_quality_ip_protocol: "ip4"

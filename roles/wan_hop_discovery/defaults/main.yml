@@ -1,0 +1,38 @@
+---
+# wan_hop_discovery — resolve the current first-N echo-reachable public WAN hops
+# (the ISP path) dynamically at deploy time. Feeds the smokeping_prober + blackbox
+# ICMP target lists so they probe the LIVE ISP edge without any real WAN IP ever
+# being committed to this public repo. The discovered hops exist only as the host
+# fact `wan_hop_discovery_isp_hops` and a host-local state file.
+#
+# WHY dynamic: Comcast renumbers the WAN side (CGNAT lease, CMTS re-home, ECMP
+# path change) with no hardware change, so a hard-coded hop rots silently.
+# WHY echo-validate: smokeping pings with ICMP echo, but many routers answer only
+# traceroute TTL-expiry and drop direct echo (the Comcast CGNAT edge does exactly
+# this) — probing such a hop reads as 100% loss and fires false ISP-down alerts.
+
+# Stable anycast destination used purely to trace the path (never changes).
+wan_hop_discovery_probe_target: "1.1.1.1"
+
+# mtr report cycles — more cycles = steadier hop identification under ECMP.
+wan_hop_discovery_cycles: 5
+
+# How many echo-reachable public hops to keep as ISP-path targets (the CGNAT edge
+# is typically dropped by echo-validation, leaving the first Comcast routers).
+wan_hop_discovery_max_hops: 3
+
+# RFC1918 LAN space to drop. CGNAT 100.64/10 is deliberately NOT matched here — it
+# is a valid candidate; echo-validation removes it if it does not answer echo.
+wan_hop_discovery_private_regex: '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)'
+
+# Package providing mtr (Debian/Ubuntu: mtr-tiny). ping comes from iputils-ping.
+wan_hop_discovery_packages:
+  - mtr-tiny
+  - iputils-ping
+
+# Host-local persisted hop set — enables idempotent reuse (no churn) and auto-heal.
+wan_hop_discovery_state_file: /var/lib/wan-hop-discovery/isp_hops.json
+
+# Per-hop echo-validation knobs.
+wan_hop_discovery_ping_count: 2
+wan_hop_discovery_ping_timeout: 1
