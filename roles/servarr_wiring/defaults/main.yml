@@ -5,10 +5,14 @@
 # have installed their apps. It:
 #   1. Sets a DETERMINISTIC API key in each app's config.xml (so cross-app
 #      wiring keys are known before converge — never auto-generated).
-#   2. Wires Prowlarr -> Sonarr/Radarr Applications (full sync).
-#   3. Wires Sonarr/Radarr -> qBittorrent download client (on download-vpn).
-#   4. Ensures root folders (/data/media/tv, /data/media/movies).
-#   5. Ensures a default quality profile exists.
+#   2. Adds public indexers to Prowlarr + wires Prowlarr -> Sonarr/Radarr
+#      Applications (full sync).
+#   3. Applies *arr media-management settings (hardlinks, recycle bin, min
+#      free space).
+#
+# Root folders + qBittorrent download clients are owned by the devopsarr
+# `servarr-config` tofu module; quality profiles + custom formats by the
+# `configarr` role (TRaSH). This role no longer touches those.
 #
 # All API config is idempotent (GET-then-POST/PUT). No bespoke scripts: this is
 # ansible.builtin.uri, the same house pattern the download_vpn role uses for
@@ -51,34 +55,12 @@ servarr_wiring_prowlarr_host: >-
      if (tofu_data.containers['download-vpn'].reserved_ip | default('', true) | length > 0)
      else (tofu_data.containers['download-vpn'].ip
            | default(hostvars['download-vpn'].container_ip, true) | default('127.0.0.1', true)) }}
-servarr_wiring_qbittorrent_host: >-
-  {{ tofu_data.containers['download-vpn'].reserved_ip
-     if (tofu_data.containers['download-vpn'].reserved_ip | default('', true) | length > 0)
-     else (tofu_data.containers['download-vpn'].ip
-           | default(hostvars['download-vpn'].container_ip, true) | default('127.0.0.1', true)) }}
 
 servarr_wiring_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
 servarr_wiring_radarr_port: "{{ tofu_data.constants.media_ports.radarr_web }}"
 servarr_wiring_prowlarr_port: "{{ tofu_data.constants.media_ports.prowlarr_web }}"
-servarr_wiring_qbittorrent_port: "{{ tofu_data.constants.media_ports.qbittorrent_web }}"
 
-# qBittorrent WebUI auth (same SOPS secret the download_vpn role uses).
-servarr_wiring_qbittorrent_username: admin
-servarr_wiring_qbittorrent_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PASSWORD') | default('', true) }}"
-
-# --- Wiring parameters -------------------------------------------------------
-# Root folders inside the *arr LXCs — the TRaSH single-filesystem layout: one
-# /data dataset bind-mounted into download-vpn, sonarr, radarr, and plex, so
-# imports HARDLINK from /data/torrents/<category> into /data/media/<library>
-# (zero-copy, atomic). The unified layout renames the old "shows" tree to "tv".
-# Full organization is preserved — Sonarr builds Series (Year)/Season NN/ trees
-# and Radarr builds Title (Year)/ trees inside the root folder automatically.
-servarr_wiring_sonarr_root_folder: "/data/media/tv"
-servarr_wiring_radarr_root_folder: "/data/media/movies"
-# qBittorrent categories per app.
-servarr_wiring_sonarr_category: "tv"
-servarr_wiring_radarr_category: "movies"
-# Prowlarr Application sync level: disabled | addOnly | fullSync.
+# --- Prowlarr Application sync level: disabled | addOnly | fullSync. ----------
 servarr_wiring_sync_level: "fullSync"
 
 # --- Seed criteria (Prowlarr → *arr → qBittorrent per-torrent share limits) --
@@ -129,17 +111,6 @@ servarr_wiring_recycler_bin_days: 14
 # download burst pauses imports instead of filling /data to 0 bytes (which
 # previously killed qBittorrent for days). 25600 MB = 25 GiB headroom.
 servarr_wiring_min_free_space_mb: 25600
-
-# --- Quality profile ----------------------------------------------------------
-# Created once per app (POST if not present; existing profile left untouched on
-# re-converge so manual UI tweaks survive). Delete in the *arr UI + re-run to reset.
-servarr_wiring_quality_profile_name: "High Quality"
-# Minimum resolution accepted (1080 = 1080p and above; 2160 = 4K only).
-servarr_wiring_min_quality_resolution: 1080
-# Quality at which *arr stops seeking upgrades. "Bluray-2160p" means: keep
-# upgrading until a 4K BluRay is found, then stop. Override to "Bluray-1080p"
-# to stop at 1080p BluRay and never auto-upgrade to 4K.
-servarr_wiring_quality_cutoff_name: "Bluray-2160p"
 
 # --- Test / orchestration toggle ---------------------------------------------
 # When false (Molecule), the role only validates inputs and renders nothing

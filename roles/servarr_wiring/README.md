@@ -1,12 +1,28 @@
 # servarr_wiring
 
 Idempotent **Servarr API self-wiring**: a single converge auto-configures the
-Prowlarr ↔ Sonarr/Radarr ↔ qBittorrent pipeline so the media stack is
-"hands-off" after deploy. No clicking through web UIs.
+Prowlarr ↔ Sonarr/Radarr pipeline so the media stack is "hands-off" after
+deploy. No clicking through web UIs.
 
 This role runs **after** the apps are installed (`download_vpn` provides
 Prowlarr + qBittorrent; `sonarr` / `radarr` provide the PVRs) and wires them
 together over the LAN.
+
+## Scope (what this role owns)
+
+This role owns the **VPN-reachable cross-app API wiring** — the parts that must
+run from inside the `download_vpn` coordinator (it sits behind the Proton VPN
+and can still reach the other media LXCs on the LAN). Two slices of *arr config
+that are reachable from anywhere on the LAN have moved to dedicated
+config-as-code tools:
+
+| Config | Owner |
+| --- | --- |
+| Root folders + qBittorrent download clients | devopsarr **`servarr-config`** tofu module (`terraform-proxmox`) |
+| Quality profiles + custom formats + quality definitions | **`configarr`** role (TRaSH-Guides) |
+
+This role no longer POSTs root folders, download clients, or quality profiles —
+removing the overlap keeps each piece of config single-owned.
 
 ## What it does (all idempotent — GET-then-POST/PUT)
 
@@ -26,49 +42,29 @@ together over the LAN.
    Application with sync level `fullSync`, so Prowlarr pushes its indexers to
    both. Schema-driven: the role GETs `/api/v1/applications/schema`, overrides
    only `prowlarrUrl` / `baseUrl` / `apiKey`, and POSTs if absent.
-4. **Sonarr/Radarr → qBittorrent download client** — adds qBittorrent (host =
-   `download-vpn`, port = `media_ports.qbittorrent_web`, category `tv` /
-   `movies`) to each PVR, again schema-driven.
-5. **Root folders** — ensures `/data/media/tv` (Sonarr) and `/data/media/movies`
-   (Radarr) on the single `/data` filesystem (hardlink imports from
-   `/data/torrents`).
-6. **Completed-download handling** — enables it globally on each PVR.
+4. **Media management** — sets `copyUsingHardlinks` (zero-copy imports off the
+   single `/data` dataset), a recycle bin (soft-delete) and a minimum
+   free-space floor on each PVR, via GET-then-conditional-PUT.
 
 ## Why `ansible.builtin.uri` and not a community role / Buildarr
 
 A search-first pass (logged in the PR) found the community Servarr Ansible
 roles (`tinyoverflow`, `coaxial`, `Amixp`, `sleepy_nols`) are **install-only**
-— none do cross-app API wiring. Declarative tools (Buildarr, Recyclarr,
-Configarr) **do** wire apps, but each is an **external daemon / cron job**
-(Docker or Python) that lives outside the Ansible converge model and would add
-a new always-running config layer to an LXC-native homelab. The repo already
-has a vetted house pattern for idempotent API config — `ansible.builtin.uri`
-GET-then-POST, used by the merged `download_vpn` role for qBittorrent — so this
-role follows it. Buildarr remains the documented future option if declarative
-drift-correction becomes desirable (see the PR's open-questions).
+— none do cross-app API wiring. For the LAN-reachable structural config (root
+folders, download clients, quality profiles) the stack now uses declarative
+tools — the `servarr-config` tofu module and the `configarr` role — but the
+**VPN-locked** Prowlarr wiring this role still owns has to run from inside the
+`download_vpn` coordinator, where those LAN/CI-reachable tools cannot reach. So
+this role keeps the repo's vetted house pattern — `ansible.builtin.uri`
+GET-then-POST, the same one the `download_vpn` role uses for qBittorrent.
 
-## Quality profiles
+## Indexers (public seeded here; private = manual / SOPS step)
 
-Sonarr and Radarr **ship default quality profiles** (Any, SD, HD-720p,
-HD-1080p, Ultra-HD, …) seeded on first run. This role does not POST a redundant
-profile — that would fight the app's own defaults. The `seerr` role
-resolves a valid `activeProfileId` from each PVR's existing
-`/api/v3/qualityprofile` when it registers the server. Override the chosen
-profile in the UI or extend this role if a custom profile is required.
-
-## Indexers (manual / SOPS step — NOT automated here)
-
-The role scaffolds the Prowlarr **Application sync** but deliberately does
-**not** add indexer *definitions*. Private trackers need per-user credentials
-(cookies, passkeys, API tokens) that are account-scoped and cannot be derived
-from infrastructure. Add indexers one of two ways:
-
-1. **Manual**: Prowlarr UI → Indexers → add your trackers. Prowlarr's
-   `fullSync` Application then pushes them to Sonarr/Radarr automatically.
-2. **SOPS-driven (future)**: store each tracker's credentials in
-   `secrets.enc.yaml` and extend this role with a `prowlarr_indexers.yml`
-   schema-driven task (same GET-then-POST pattern). Left out of this PR because
-   it requires real tracker accounts to test end-to-end.
+Step 2 seeds the **public** trackers in `servarr_wiring_prowlarr_indexers`.
+Private trackers need per-user credentials (cookies, passkeys, API tokens) that
+are account-scoped and cannot be derived from infrastructure — add those in the
+Prowlarr UI (Indexers → Add Indexer); Prowlarr's `fullSync` Application then
+pushes them to Sonarr/Radarr automatically.
 
 ## Installation
 
@@ -100,21 +96,20 @@ all set and fails fast with a pointer to SOPS if any are missing.
 - `defaults/main.yml` — API keys (SOPS env), per-app data dirs / hosts / ports
   (ports from OpenTofu constants), wiring parameters, `servarr_wiring_manage_services`
   toggle (false in Molecule).
-- `tasks/main.yml` — assertion → `api_keys.yml` → `prowlarr_apps.yml` →
-  `download_client.yml` (once per PVR).
+- `tasks/main.yml` — assertion → `api_keys.yml` → `prowlarr_indexers.yml` →
+  `prowlarr_apps.yml` → `media_management.yml`.
 - `tasks/api_keys.yml` — `community.general.xml` sets `<ApiKey>` per app
   (delegated), restart-on-change, wait-for-API.
+- `tasks/prowlarr_indexers.yml` — schema-driven public-indexer add.
 - `tasks/prowlarr_apps.yml` — schema-driven Prowlarr Application add.
-- `tasks/download_client.yml` — per PVR: root folder, schema-driven qBittorrent
-  client, and completed-download handling.
+- `tasks/media_management.yml` — per PVR: hardlinks, recycle bin, min free space.
 
 ## Secrets
 
-| Variable                     | Purpose                                             | Source                  |
-| ---------------------------- | --------------------------------------------------- | ----------------------- |
-| `SONARR_API_KEY`             | Deterministic Sonarr API key (32 hex)               | SOPS `secrets.enc.yaml` |
-| `RADARR_API_KEY`             | Deterministic Radarr API key (32 hex)               | SOPS `secrets.enc.yaml` |
-| `PROWLARR_API_KEY`           | Deterministic Prowlarr API key (32 hex)             | SOPS `secrets.enc.yaml` |
-| `QBITTORRENT_ADMIN_PASSWORD` | qBittorrent WebUI auth (shared with `download_vpn`) | SOPS `secrets.enc.yaml` |
+| Variable           | Purpose                                 | Source                  |
+| ------------------ | --------------------------------------- | ----------------------- |
+| `SONARR_API_KEY`   | Deterministic Sonarr API key (32 hex)   | SOPS `secrets.enc.yaml` |
+| `RADARR_API_KEY`   | Deterministic Radarr API key (32 hex)   | SOPS `secrets.enc.yaml` |
+| `PROWLARR_API_KEY` | Deterministic Prowlarr API key (32 hex) | SOPS `secrets.enc.yaml` |
 
 None are ever committed to git.
