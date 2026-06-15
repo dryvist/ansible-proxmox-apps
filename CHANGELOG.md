@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.41.0...v1.41.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **download_vpn:** wait for the LAN gateway before lanroute adds routes ([9975090](https://github.com/dryvist/ansible-proxmox-apps/commit/997509029b787ab62bfeb405201fef0f0b578d48))
+
 ## [1.41.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.40.1...v1.41.0) (2026-06-14)
 
 
