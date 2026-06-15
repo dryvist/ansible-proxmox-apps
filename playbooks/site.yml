@@ -334,6 +334,29 @@
     - role: netmon
 
 # =============================================================================
+# Phase 3b1: WAN ISP-hop discovery (runs before the monitoring plays)
+# Resolve the live first-N echo-reachable public WAN hops via mtr + ICMP-echo
+# validation and set the host fact wan_hop_discovery_isp_hops, which the
+# prometheus_stack (blackbox icmp) and network_quality (smokeping) target lists
+# fold in. Keeps real WAN IPs out of git: Comcast renumbers the WAN side with no
+# hardware change, and the CGNAT edge answers traceroute but not echo, so the
+# usable ISP-edge hop must be discovered + validated, not hard-coded. Tagged for
+# every monitoring leg so scoped deploys still refresh the fact.
+# =============================================================================
+
+- name: Discover the live WAN ISP path
+  hosts: prometheus_group
+  become: true
+  gather_facts: false
+  tags:
+    - prometheus
+    - blackbox
+    - smokeping
+    - monitoring
+  roles:
+    - role: wan_hop_discovery
+
+# =============================================================================
 # Phase 3b2: Prometheus-native network-quality monitoring
 # Prometheus + blackbox_exporter (active WAN/ISP probing: ICMP/HTTP/TLS/DNS) as a
 # single Docker-in-LXC compose stack (official prom/prometheus + prom/blackbox-
@@ -342,8 +365,8 @@
 # The prometheus.prometheus collection was dropped: its hardened native-systemd
 # unit fails in non-nested LXCs (226/NAMESPACE). This is the ISP-evidence path now
 # that the Comcast modem is confirmed to expose no DOCSIS data (ICMP-only). Config
-# is variable-driven in the role defaults; real ISP hop targets come from a
-# private inventory override.
+# is variable-driven in the role defaults; the live ISP hop targets are folded in
+# from the wan_hop_discovery play (Phase 3b1) — no WAN IPs in git.
 # =============================================================================
 
 - name: Configure Prometheus-native network monitoring
