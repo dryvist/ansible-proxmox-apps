@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.44.0...v1.45.0) (2026-06-16)
+
+
+### Features
+
+* **prometheus:** remote_write → Cribl Stream → Splunk netmon ([#469](https://github.com/dryvist/ansible-proxmox-apps/issues/469)) ([a7aef9f](https://github.com/dryvist/ansible-proxmox-apps/commit/a7aef9f37add48842e914ca310d7aa45160f0b8e))
+
 ## [1.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.43.0...v1.44.0) (2026-06-15)
 
 
