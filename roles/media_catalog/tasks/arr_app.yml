@@ -1,0 +1,70 @@
+---
+- name: Fetch quality profiles for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_arr_host }}:{{ media_catalog_arr_port }}/api/v3/qualityprofile"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_arr_api_key }}"
+    status_code: 200
+  register: media_catalog_arr_profiles
+  changed_when: false
+
+- name: Fetch tags for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_arr_host }}:{{ media_catalog_arr_port }}/api/v3/tag"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_arr_api_key }}"
+    status_code: 200
+  register: media_catalog_arr_tags
+  changed_when: false
+
+- name: Build desired tag list for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.set_fact:
+    media_catalog_arr_tag_names: >-
+      {{ media_catalog_arr_items | map(attribute='tags') | flatten | unique | list }}
+
+- name: Create missing tags for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_arr_host }}:{{ media_catalog_arr_port }}/api/v3/tag"
+    method: POST
+    headers:
+      X-Api-Key: "{{ media_catalog_arr_api_key }}"
+    body_format: json
+    body:
+      label: "{{ item }}"
+    status_code: [200, 201]
+  loop: "{{ media_catalog_arr_tag_names }}"
+  when: item not in (media_catalog_arr_tags.json | map(attribute='label') | list)
+  changed_when: true
+
+- name: Re-read tags after reconciliation for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_arr_host }}:{{ media_catalog_arr_port }}/api/v3/tag"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_arr_api_key }}"
+    status_code: 200
+  register: media_catalog_arr_tags
+  changed_when: false
+
+- name: Fetch catalog for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_arr_host }}:{{ media_catalog_arr_port }}/api/v3/{{ media_catalog_arr_type }}"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_arr_api_key }}"
+    status_code: 200
+  register: media_catalog_arr_items_list
+  changed_when: false
+
+- name: Reconcile each item for {{ media_catalog_arr_app_name | title }}
+  ansible.builtin.include_tasks: arr_entry.yml
+  loop: "{{ media_catalog_arr_items }}"
+  loop_control:
+    loop_var: media_catalog_arr_item
+    label: >-
+      {{ media_catalog_arr_item.tvdb_id
+         | default(media_catalog_arr_item.tmdb_id
+         | default(media_catalog_arr_item.imdb_id | default('?'))) }}
+      {{ media_catalog_arr_item.title }}
