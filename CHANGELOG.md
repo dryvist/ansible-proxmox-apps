@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.1...v1.45.2) (2026-06-16)
+
+
+### Bug Fixes
+
+* **prometheus_stack:** unsafe_writes on prometheus.yml for Docker bind-mount inode stability ([#474](https://github.com/dryvist/ansible-proxmox-apps/issues/474)) ([a39e9b1](https://github.com/dryvist/ansible-proxmox-apps/commit/a39e9b19dc59deaa673ae76171976c023c3c80e9))
+
 ## [1.45.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.0...v1.45.1) (2026-06-16)
 
 
