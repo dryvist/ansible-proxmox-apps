@@ -1,0 +1,188 @@
+---
+# phpIPAM Docker Deployment Tasks
+# Deploys phpIPAM (IP address management) via Docker Compose in LXC.
+# Stack: phpipam-www + phpipam-cron + MariaDB
+
+# =============================================================================
+# Docker Installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    phpipam_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ phpipam_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ phpipam_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+  when: phpipam_storage_driver == 'fuse-overlayfs'
+
+- name: Configure Docker storage driver
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "{{ phpipam_storage_driver }}"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: phpipam_daemon_config
+
+- name: Restart Docker to apply storage driver configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: phpipam_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Data Directories
+# MariaDB writes to a bind-mounted volume under {{ phpipam_data_dir }}.
+# The mariadb image runs as UID 999 (mysql); in an unprivileged LXC the
+# host UID maps via subuids, so leave ownership defaults — chown happens
+# inside the container on first start.
+# =============================================================================
+
+- name: Create phpipam data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ phpipam_data_dir }}"
+    - "{{ phpipam_mariadb_data_dir }}"
+
+# =============================================================================
+# Compose File
+# =============================================================================
+
+- name: Render phpIPAM docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ phpipam_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart phpipam
+
+# =============================================================================
+# Deploy via Docker Compose
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+- name: Check if phpipam container is running
+  ansible.builtin.command: >-
+    docker ps -q --filter name={{ phpipam_container_name }}
+    --filter status=running
+  register: phpipam_running_check
+  changed_when: false
+  failed_when: false
+
+- name: Clean stale Docker state before fresh deployment
+  ansible.builtin.command: docker system prune -af --volumes
+  when: phpipam_running_check.stdout == ''
+  changed_when: true
+
+- name: Deploy phpipam via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ phpipam_data_dir }}"
+    state: present
+  no_log: true
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+
+# =============================================================================
+# Health Check
+# First boot can take 30-60 seconds: MariaDB init + phpIPAM schema creation.
+# =============================================================================
+
+- name: Wait for phpIPAM web port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ phpipam_port }}"
+    timeout: 180
+
+- name: Verify phpIPAM is responding
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ phpipam_port }}/"
+    method: GET
+    status_code: [200, 302]
+    follow_redirects: none
+  register: phpipam_health
+  retries: 18
+  delay: 10
+  until: phpipam_health.status in [200, 302]
+  changed_when: false
