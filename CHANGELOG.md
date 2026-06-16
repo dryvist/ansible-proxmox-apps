@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.0...v1.45.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **prometheus:** remote_write URL path + Splunk host from instance ([#471](https://github.com/dryvist/ansible-proxmox-apps/issues/471)) ([38bdf42](https://github.com/dryvist/ansible-proxmox-apps/commit/38bdf42f391735f5451b32ad382a9244fcd8ba49))
+
 ## [1.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.44.0...v1.45.0) (2026-06-16)
 
 
