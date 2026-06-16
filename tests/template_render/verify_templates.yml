@@ -1326,6 +1326,7 @@
     cribl_stream_netflow_port: 2055
     cribl_stream_s2s_port: 10300
     cribl_stream_pq_enabled: true
+    cribl_stream_prometheus_rw_port: 9201
     _template_dir: "../../roles/cribl_stream/templates"
 
   tasks:
@@ -1341,6 +1342,12 @@
         dest: /tmp/test_cribl_stream_force_splunk_meta.yml
         mode: "0644"
 
+    - name: Render prometheus_to_netmon conf.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/prometheus_to_netmon/conf.yml.j2"
+        dest: /tmp/test_cribl_stream_prometheus_to_netmon.yml
+        mode: "0644"
+
     - name: Read rendered cribl_stream templates
       ansible.builtin.slurp:
         src: "{{ item }}"
@@ -1348,11 +1355,13 @@
       loop:
         - /tmp/test_cribl_stream_inputs.yml
         - /tmp/test_cribl_stream_force_splunk_meta.yml
+        - /tmp/test_cribl_stream_prometheus_to_netmon.yml
 
     - name: Decode cribl_stream rendered content
       ansible.builtin.set_fact:
         _cribl_stream_inputs: "{{ _cribl_stream_rendered.results[0].content | b64decode }}"
         _cribl_stream_meta_pipeline: "{{ _cribl_stream_rendered.results[1].content | b64decode }}"
+        _cribl_stream_prom_pipeline: "{{ _cribl_stream_rendered.results[2].content | b64decode }}"
 
     - name: Assert S2S input attaches the force_splunk_meta connection pipeline
       ansible.builtin.assert:
@@ -1365,6 +1374,16 @@
           connection — Cribl Edge skips its destination post-processing for
           pack-routed events, so unstamped events would fall into Splunk's
           HEC token defaults (index=main, sourcetype=httpevent)
+
+    - name: Assert prometheus_rw input is present on port 9201 with prometheus_to_netmon pipeline
+      ansible.builtin.assert:
+        that:
+          - "'type: prometheus_rw' in _cribl_stream_inputs"
+          - "'port: 9201' in _cribl_stream_inputs"
+          - "'pipeline: prometheus_to_netmon' in _cribl_stream_inputs"
+        fail_msg: >-
+          inputs.yml.j2 must include a prometheus_rw input on port 9201
+          connected to the prometheus_to_netmon pipeline
 
     - name: Assert force_splunk_meta evals are conditional and mask schema is valid
       ansible.builtin.assert:
@@ -1386,12 +1405,23 @@
           - "(_cribl_stream_meta_pipeline | from_yaml).functions | length == 2"
         fail_msg: "force_splunk_meta conf.yml must parse as YAML with eval + mask functions"
 
+    - name: Assert prometheus_to_netmon stamps index=netmon and sourcetype=prometheus:metrics
+      ansible.builtin.assert:
+        that:
+          - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 1"
+          - "'netmon' in _cribl_stream_prom_pipeline"
+          - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
+        fail_msg: >-
+          prometheus_to_netmon pipeline must have exactly one eval function
+          that stamps index=netmon and sourcetype=prometheus:metrics
+
     - name: Cribl Stream template rendering PASSED
       ansible.builtin.debug:
         msg: |
           cribl_stream template assertions passed:
-          - inputs.yml.j2: tcpjson S2S input on 10300 with force_splunk_meta connection pipeline
+          - inputs.yml.j2: tcpjson S2S (10300/force_splunk_meta) + prometheus_rw (9201/prometheus_to_netmon)
           - force_splunk_meta: conditional evals + valid mask schema (matchRegex/replaceExpr)
+          - prometheus_to_netmon: eval stamps index=netmon + sourcetype=prometheus:metrics
 
 - name: Render and verify unifi_metrics templates
   hosts: localhost
