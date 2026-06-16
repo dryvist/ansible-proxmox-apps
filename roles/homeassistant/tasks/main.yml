@@ -1,0 +1,165 @@
+---
+# Home Assistant Docker Deployment Tasks
+# Deploys Home Assistant as a Docker container with host networking.
+# Host networking is required for mDNS/Zeroconf device discovery.
+
+# =============================================================================
+# Docker Installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    homeassistant_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ homeassistant_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ homeassistant_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+  when: homeassistant_storage_driver == 'fuse-overlayfs'
+
+- name: Configure Docker storage driver
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "{{ homeassistant_storage_driver }}"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: homeassistant_daemon_config
+
+- name: Restart Docker to apply storage driver configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: homeassistant_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Home Assistant Data Directory
+# =============================================================================
+
+- name: Create Home Assistant config directory
+  ansible.builtin.file:
+    path: "{{ homeassistant_data_dir }}/config"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# =============================================================================
+# Compose File
+# =============================================================================
+
+- name: Render Home Assistant docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ homeassistant_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart homeassistant
+
+# =============================================================================
+# Deploy via Docker Compose
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+- name: Deploy Home Assistant via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ homeassistant_data_dir }}"
+    state: present
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+- name: Wait for Home Assistant port to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ homeassistant_port }}"
+    timeout: 120
+
+- name: Verify Home Assistant is responding
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ homeassistant_port }}/"
+    method: GET
+    status_code: [200, 302]
+    follow_redirects: none
+  register: homeassistant_health
+  retries: 12
+  delay: 10
+  until: homeassistant_health.status in [200, 302]
+  changed_when: false
