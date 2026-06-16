@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.2...v1.45.3) (2026-06-16)
+
+
+### Bug Fixes
+
+* **cribl_stream:** add required prometheusAPI field to prometheus_rw input ([#476](https://github.com/dryvist/ansible-proxmox-apps/issues/476)) ([2826463](https://github.com/dryvist/ansible-proxmox-apps/commit/2826463ad0f2370d4186ce51811e1baf4123bc6a))
+
 ## [1.45.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.1...v1.45.2) (2026-06-16)
 
 
