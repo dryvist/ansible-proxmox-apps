@@ -10,8 +10,15 @@ inputs:
     disabled: false
     sendToRoutes: false
     connections:
+{% if (cribl_edge_hec_namespace | default('')) | length > 0 %}
+      # One index per HEC: this syslog family maps to a single Splunk index, so
+      # send directly to that index's dedicated HEC output (no router needed).
+      - output: splunk_hec_{{ cribl_edge_syslog_routing[name].index }}
+        pipeline: syslog
+{% else %}
       - output: splunk_hec
         pipeline: syslog
+{% endif %}
     host: "0.0.0.0"
     tcpPort: {{ port }}
     udpPort: {{ port }}
@@ -32,8 +39,21 @@ inputs:
     splunkHecAPI: /services/collector
     sendToRoutes: false
     connections:
+{% if (cribl_edge_hec_namespace | default('')) | length > 0 %}
+      # Per-index HEC: this input currently carries ONLY unifi_metrics (the
+      # netmon per-WAN probers are not deployed), so it pins directly to the
+      # dedicated unifi_metrics HEC output. The netmon pipeline still stamps the
+      # index. NOTE: if/when the netmon probers are deployed, they push to this
+      # same HEC port and would land on the unifi_metrics token — at that point
+      # give the probers a DEDICATED Cribl HEC input (separate port) → its own
+      # splunk_hec_netmon output. Cribl 4.8.0-alpha cannot split one input across
+      # outputs (both the Output Router and a Routes table dead-end events here).
+      - output: splunk_hec_unifi_metrics
+        pipeline: netmon
+{% else %}
       - output: splunk_hec
         pipeline: netmon
+{% endif %}
     pqEnabled: true
     tls:
       disabled: true
