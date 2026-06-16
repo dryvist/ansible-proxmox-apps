@@ -1,0 +1,142 @@
+---
+- name: Resolve existing Radarr movie by stable ID
+  ansible.builtin.set_fact:
+    media_catalog_radarr_existing_matches: >-
+      {{
+        (media_catalog_radarr_movies.json
+         | selectattr('tmdbId', 'equalto', media_catalog_radarr_item.tmdb_id | default(0) | int)
+         | list)
+        if media_catalog_radarr_item.tmdb_id is defined
+        else
+        (media_catalog_radarr_movies.json
+         | selectattr('imdbId', 'equalto', media_catalog_radarr_item.imdb_id)
+         | list)
+      }}
+    media_catalog_radarr_profile_id: >-
+      {{
+        (media_catalog_radarr_profiles.json
+         | selectattr('name', 'equalto', media_catalog_radarr_item.quality_profile)
+         | map(attribute='id') | list + [0]) | first
+      }}
+    media_catalog_radarr_tag_ids: >-
+      {{
+        media_catalog_radarr_tags.json
+        | selectattr('label', 'in', media_catalog_radarr_item.tags)
+        | map(attribute='id') | list
+      }}
+
+- name: Select existing Radarr movie match
+  ansible.builtin.set_fact:
+    media_catalog_radarr_existing: "{{ (media_catalog_radarr_existing_matches + [{}]) | first }}"
+
+- name: Assert Radarr quality profile exists
+  ansible.builtin.assert:
+    that:
+      - media_catalog_radarr_profile_id | int > 0
+    fail_msg: >-
+      Radarr quality profile '{{ media_catalog_radarr_item.quality_profile }}'
+      was not found. Configarr must run before media_catalog.
+    quiet: true
+
+- name: Look up Radarr movie by stable ID
+  ansible.builtin.uri:
+    url: >-
+      http://{{ media_catalog_radarr_host }}:{{ media_catalog_radarr_port
+      }}/api/v3/movie/lookup?term={{
+        'tmdb:' ~ media_catalog_radarr_item.tmdb_id
+        if media_catalog_radarr_item.tmdb_id is defined
+        else 'imdb:' ~ media_catalog_radarr_item.imdb_id
+      }}
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_radarr_api_key }}"
+    status_code: 200
+  register: media_catalog_radarr_lookup
+  changed_when: false
+  when: media_catalog_radarr_existing == {}
+
+- name: Assert Radarr lookup found the stable ID
+  ansible.builtin.assert:
+    that:
+      - media_catalog_radarr_lookup.json | length > 0
+    fail_msg: >-
+      Radarr lookup found no movie for
+      {{ media_catalog_radarr_item.tmdb_id | default(media_catalog_radarr_item.imdb_id) }}.
+    quiet: true
+  when: media_catalog_radarr_existing == {}
+
+- name: Add missing Radarr catalog movie
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_radarr_host }}:{{ media_catalog_radarr_port }}/api/v3/movie"
+    method: POST
+    headers:
+      X-Api-Key: "{{ media_catalog_radarr_api_key }}"
+    body_format: json
+    body: >-
+      {{
+        (media_catalog_radarr_lookup.json | first)
+        | combine({
+          'qualityProfileId': media_catalog_radarr_profile_id | int,
+          'rootFolderPath': media_catalog_radarr_item.root_folder,
+          'monitored': media_catalog_radarr_item.monitored | bool,
+          'tags': media_catalog_radarr_tag_ids,
+          'minimumAvailability': media_catalog_radarr_item.minimum_availability | default('released'),
+          'addOptions': {
+            'searchForMovie': media_catalog_radarr_item.search_missing_after_add | bool
+          }
+        }, recursive=True)
+      }}
+    status_code: [200, 201]
+  register: media_catalog_radarr_add
+  changed_when: media_catalog_radarr_add.status in [200, 201]
+  when: media_catalog_radarr_existing == {}
+
+- name: Reconcile existing Radarr catalog movie
+  ansible.builtin.uri:
+    url: >-
+      http://{{ media_catalog_radarr_host }}:{{ media_catalog_radarr_port
+      }}/api/v3/movie/{{ media_catalog_radarr_existing.id }}
+    method: PUT
+    headers:
+      X-Api-Key: "{{ media_catalog_radarr_api_key }}"
+    body_format: json
+    body: >-
+      {{
+        media_catalog_radarr_existing
+        | combine({
+          'qualityProfileId': media_catalog_radarr_profile_id | int,
+          'rootFolderPath': media_catalog_radarr_item.root_folder,
+          'monitored': media_catalog_radarr_item.monitored | bool,
+          'tags': media_catalog_radarr_tag_ids,
+          'minimumAvailability': (
+            media_catalog_radarr_item.minimum_availability
+            | default(media_catalog_radarr_existing.minimumAvailability | default('released'))
+          )
+        }, recursive=True)
+      }}
+    status_code: [200, 202]
+  register: media_catalog_radarr_update
+  changed_when: false
+  when: media_catalog_radarr_existing != {}
+
+- name: Resolve reconciled Radarr movie ID
+  ansible.builtin.set_fact:
+    media_catalog_radarr_reconciled_id: >-
+      {{
+        media_catalog_radarr_add.json.id
+        | default(media_catalog_radarr_existing.id)
+      }}
+
+- name: Trigger Radarr rescan for the reconciled movie
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_radarr_host }}:{{ media_catalog_radarr_port }}/api/v3/command"
+    method: POST
+    headers:
+      X-Api-Key: "{{ media_catalog_radarr_api_key }}"
+    body_format: json
+    body:
+      name: RescanMovie
+      movieId: "{{ media_catalog_radarr_reconciled_id | int }}"
+    status_code: [200, 201]
+  changed_when: true
+  when: media_catalog_rescan_after_reconcile | bool

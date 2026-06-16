@@ -138,6 +138,12 @@
     create_home: true
     state: present
 
+- name: Ensure qbittorrent home is traversable in unprivileged LXC
+  ansible.builtin.file:
+    path: "/home/{{ download_vpn_user }}"
+    state: directory
+    mode: "0711"
+
 # The whole shared /data tree — the /data/media library AND /data/torrents
 # (incomplete/tv/movies) — is created host-side by the media_lxc_features role
 # (owner root, group media/gid 13000, setgid + group-writable) and exposed via
@@ -274,21 +280,54 @@
 
 # --- Phase 6: qBittorrent ----------------------------------------------------
 - name: Ensure qBittorrent config directory exists
-  ansible.builtin.file:
-    path: "{{ download_vpn_qbittorrent_config_dir }}"
-    state: directory
-    owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
-    mode: "0750"
+  # noqa: command-instead-of-module
+  # In unprivileged LXCs root cannot traverse/write qbittorrent-owned private
+  # dirs, and sudo is not installed for become_user. Create the profile path as
+  # the service user directly.
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ download_vpn_user }} --
+      mkdir -p {{ download_vpn_qbittorrent_config_dir }}
+  changed_when: false
 
-- name: Deploy qBittorrent configuration (bound to wg0)
+- name: Ensure qBittorrent config directory permissions
+  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ download_vpn_user }} --
+      chmod 0750 {{ download_vpn_qbittorrent_config_dir | dirname }}
+      {{ download_vpn_qbittorrent_config_dir }}
+  changed_when: false
+
+- name: Render qBittorrent configuration to a temporary file
   ansible.builtin.template:
     src: qBittorrent.conf.j2
-    dest: "{{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf"
-    owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
-    mode: "0640"
-  notify: Restart qbittorrent
+    dest: /tmp/qBittorrent.conf.ansible
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Compare rendered qBittorrent configuration with the live profile
+  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ download_vpn_user }} --
+      cmp -s /tmp/qBittorrent.conf.ansible
+      {{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf
+  register: download_vpn_qbt_conf_cmp
+  failed_when: false
+  changed_when: false
+
+- name: Deploy qBittorrent configuration (bound to wg0)
+  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ download_vpn_user }} --
+      install -m 0640 /tmp/qBittorrent.conf.ansible
+      {{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf
+  register: download_vpn_qbt_conf_deploy
+  when: download_vpn_qbt_conf_cmp.rc != 0
+  changed_when: true
 
 - name: Deploy qBittorrent systemd unit
   ansible.builtin.template:
@@ -297,7 +336,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: Reload systemd
+  register: download_vpn_qbt_unit_deploy
 
 - name: Enable + start qBittorrent
   ansible.builtin.systemd:
@@ -306,6 +345,17 @@
     enabled: true
     daemon_reload: true
   when: download_vpn_manage_services
+
+- name: Restart qBittorrent after file-backed config changes
+  ansible.builtin.systemd:
+    name: qbittorrent-nox.service
+    state: restarted
+    daemon_reload: true
+  when:
+    - download_vpn_manage_services
+    - >-
+      (download_vpn_qbt_conf_deploy is changed)
+      or (download_vpn_qbt_unit_deploy is changed)
 
 - name: Wait for the qBittorrent WebUI to answer
   ansible.builtin.uri:
@@ -352,10 +402,10 @@
 
 # QoS: bandwidth limits + work-hours scheduler via the API (the .conf keys are
 # version-fragile and the daemon overwrites them — see qBittorrent.conf.j2).
-# Limits in KiB/s, -1 = unlimited. The scheduler applies the alt_* (heavy) limits
+# Limits in bytes/sec, 0 = unlimited. The scheduler applies the alt_* limits
 # during the window and the normal limits outside it, evaluated in the container's
-# local time (pinned to UTC in Phase 1b). LocalHostAuth=false lets 127.0.0.1 POST
-# without a login cookie, same as the password task above.
+# local time. LocalHostAuth=false lets 127.0.0.1 POST without a login cookie,
+# same as the password task above.
 - name: Apply qBittorrent bandwidth limits + work-hours scheduler via API
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/setPreferences"
@@ -380,9 +430,9 @@
   changed_when: false
   when: download_vpn_manage_services
 
-# Categories with explicit save paths (TRaSH layout): tv -> /data/torrents/tv,
-# movies -> /data/torrents/movies. Same WebUI-API mechanism as the prefs above
-# (the categories store is daemon-owned; a template write would be clobbered).
+# Categories with explicit save paths (TRaSH layout). Same WebUI-API mechanism
+# as the prefs above (the categories store is daemon-owned; a template write
+# would be clobbered).
 # Idempotent: GET the category map, create only the missing ones, edit only on
 # save-path drift.
 - name: Read existing qBittorrent categories
@@ -436,7 +486,6 @@
     path: "{{ download_vpn_prowlarr_data_dir }}"
     state: directory
     owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
     mode: "0750"
 
 - name: Download + extract Prowlarr
@@ -470,8 +519,8 @@
   ansible.builtin.copy:
     dest: "{{ download_vpn_natpmp_env_path }}"
     owner: root
-    group: "{{ download_vpn_group }}"
-    mode: "0640"
+    group: root
+    mode: "0600"
     content: |
       QBITTORRENT_ADMIN_PASSWORD={{ download_vpn_qbittorrent_admin_password }}
   no_log: true

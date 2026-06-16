@@ -1,0 +1,168 @@
+---
+# One-time export of the live Sonarr/Radarr catalog into media_catalog.enc.yaml.
+#
+# Run before a destructive media container rebuild:
+#   sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+#     -i inventory/hosts.yml playbooks/export-media-catalog.yml'
+#
+# The file is written locally and immediately encrypted with SOPS. Commit only
+# media_catalog.enc.yaml, never a decrypted catalog.
+
+- name: Import OpenTofu infrastructure inventory
+  import_playbook: ../inventory/load_tofu.yml
+
+- name: Export live Sonarr/Radarr catalog to SOPS
+  hosts: download_vpn_group
+  become: false
+  gather_facts: false
+
+  vars_files:
+    - ../roles/servarr_wiring/defaults/main.yml
+    - ../roles/media_catalog/defaults/main.yml
+
+  tasks:
+    - name: Assert Servarr API keys are available
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_api_key | length > 0
+          - servarr_wiring_radarr_api_key | length > 0
+        fail_msg: >-
+          SONARR_API_KEY and RADARR_API_KEY must be available through
+          SOPS/Doppler before exporting the live media catalog.
+        quiet: true
+
+    - name: Fetch Sonarr series
+      ansible.builtin.uri:
+        url: "http://{{ servarr_wiring_sonarr_host }}:{{ servarr_wiring_sonarr_port }}/api/v3/series"
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_sonarr_api_key }}"
+        status_code: 200
+      register: export_media_sonarr_series
+      changed_when: false
+
+    - name: Fetch Sonarr quality profiles
+      ansible.builtin.uri:
+        url: "http://{{ servarr_wiring_sonarr_host }}:{{ servarr_wiring_sonarr_port }}/api/v3/qualityprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_sonarr_api_key }}"
+        status_code: 200
+      register: export_media_sonarr_profiles
+      changed_when: false
+
+    - name: Fetch Sonarr tags
+      ansible.builtin.uri:
+        url: "http://{{ servarr_wiring_sonarr_host }}:{{ servarr_wiring_sonarr_port }}/api/v3/tag"
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_sonarr_api_key }}"
+        status_code: 200
+      register: export_media_sonarr_tags
+      changed_when: false
+
+    - name: Fetch Radarr movies
+      ansible.builtin.uri:
+        url: "http://{{ servarr_wiring_radarr_host }}:{{ servarr_wiring_radarr_port }}/api/v3/movie"
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_radarr_api_key }}"
+        status_code: 200
+      register: export_media_radarr_movies
+      changed_when: false
+
+    - name: Fetch Radarr quality profiles
+      ansible.builtin.uri:
+        url: "http://{{ servarr_wiring_radarr_host }}:{{ servarr_wiring_radarr_port }}/api/v3/qualityprofile"
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_radarr_api_key }}"
+        status_code: 200
+      register: export_media_radarr_profiles
+      changed_when: false
+
+    - name: Fetch Radarr tags
+      ansible.builtin.uri:
+        url: "http://{{ servarr_wiring_radarr_host }}:{{ servarr_wiring_radarr_port }}/api/v3/tag"
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_radarr_api_key }}"
+        status_code: 200
+      register: export_media_radarr_tags
+      changed_when: false
+
+    - name: Build export lookup maps
+      ansible.builtin.set_fact:
+        export_media_sonarr_profile_map: >-
+          {{ dict(export_media_sonarr_profiles.json | map(attribute='id') | map('string')
+                  | zip(export_media_sonarr_profiles.json | map(attribute='name'))) }}
+        export_media_sonarr_tag_map: >-
+          {{ dict(export_media_sonarr_tags.json | map(attribute='id') | map('string')
+                  | zip(export_media_sonarr_tags.json | map(attribute='label'))) }}
+        export_media_radarr_profile_map: >-
+          {{ dict(export_media_radarr_profiles.json | map(attribute='id') | map('string')
+                  | zip(export_media_radarr_profiles.json | map(attribute='name'))) }}
+        export_media_radarr_tag_map: >-
+          {{ dict(export_media_radarr_tags.json | map(attribute='id') | map('string')
+                  | zip(export_media_radarr_tags.json | map(attribute='label'))) }}
+
+    - name: Write plaintext catalog locally before SOPS encryption
+      ansible.builtin.copy:
+        dest: "{{ media_catalog_file }}"
+        owner: "{{ lookup('env', 'USER') | default(omit) }}"
+        mode: "0600"
+        content: |
+          ---
+          media_catalog:
+            sonarr:
+          {% for series in export_media_sonarr_series.json | sort(attribute='sortTitle') %}
+          {% set ns = namespace(tags=[]) %}
+          {% for tag_id in series.tags | default([]) %}
+          {% if export_media_sonarr_tag_map[tag_id | string] is defined %}
+          {% set _ = ns.tags.append(export_media_sonarr_tag_map[tag_id | string]) %}
+          {% endif %}
+          {% endfor %}
+              - tvdb_id: {{ series.tvdbId }}
+                title: {{ series.title | to_json }}
+                root_folder: {{ series.rootFolderPath | to_json }}
+                quality_profile: {{ export_media_sonarr_profile_map[series.qualityProfileId | string] | to_json }}
+                monitored: {{ series.monitored | bool | lower }}
+                season_policy: all
+                season_folder: {{ series.seasonFolder | default(true) | bool | lower }}
+                tags: {{ ns.tags | to_json }}
+                search_missing_after_add: false
+          {% endfor %}
+            radarr:
+          {% for movie in export_media_radarr_movies.json | sort(attribute='sortTitle') %}
+          {% set ns = namespace(tags=[]) %}
+          {% for tag_id in movie.tags | default([]) %}
+          {% if export_media_radarr_tag_map[tag_id | string] is defined %}
+          {% set _ = ns.tags.append(export_media_radarr_tag_map[tag_id | string]) %}
+          {% endif %}
+          {% endfor %}
+              - tmdb_id: {{ movie.tmdbId }}
+          {% if movie.imdbId | default('') | length > 0 %}
+                imdb_id: {{ movie.imdbId | to_json }}
+          {% endif %}
+                title: {{ movie.title | to_json }}
+                year: {{ movie.year }}
+                root_folder: {{ movie.rootFolderPath | to_json }}
+                quality_profile: {{ export_media_radarr_profile_map[movie.qualityProfileId | string] | to_json }}
+                monitored: {{ movie.monitored | bool | lower }}
+                minimum_availability: {{ movie.minimumAvailability | default('released') | to_json }}
+                tags: {{ ns.tags | to_json }}
+                search_missing_after_add: false
+          {% endfor %}
+      delegate_to: localhost
+      vars:
+        ansible_become: false
+      no_log: true
+
+    - name: Encrypt media catalog with SOPS
+      ansible.builtin.command:
+        cmd: "sops --encrypt --in-place {{ media_catalog_file }}"
+      delegate_to: localhost
+      vars:
+        ansible_become: false
+      changed_when: true
+      no_log: true

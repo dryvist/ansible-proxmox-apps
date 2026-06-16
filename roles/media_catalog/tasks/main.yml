@@ -1,0 +1,79 @@
+---
+# Rebuild Sonarr/Radarr wanted catalog membership from encrypted SOPS state.
+
+- name: Load encrypted media catalog
+  community.sops.load_vars:
+    file: "{{ media_catalog_file }}"
+    name: media_catalog_loaded
+    expressions: ignore
+  no_log: true
+
+- name: Normalize media catalog lists
+  ansible.builtin.set_fact:
+    media_catalog_sonarr: "{{ media_catalog_loaded.media_catalog.sonarr | default([]) }}"
+    media_catalog_radarr: "{{ media_catalog_loaded.media_catalog.radarr | default([]) }}"
+
+- name: Assert media catalog schema is stable-ID based
+  ansible.builtin.assert:
+    that:
+      - item.tvdb_id is defined
+      - item.tvdb_id | int > 0
+      - item.title is defined
+      - item.root_folder is defined
+      - item.quality_profile is defined
+      - item.monitored is defined
+      - item.season_policy is defined
+      - item.season_policy in ['all', 'future', 'missing', 'existing', 'firstSeason', 'latestSeason', 'pilot', 'none']
+      - item.tags is defined
+      - item.search_missing_after_add is defined
+    fail_msg: >-
+      Sonarr catalog entries must define tvdb_id, title, root_folder,
+      quality_profile, monitored, season_policy, tags, and
+      search_missing_after_add. Titles are comments only; tvdb_id is the key.
+    quiet: true
+  loop: "{{ media_catalog_sonarr }}"
+  loop_control:
+    label: "{{ item.tvdb_id | default('?') }} {{ item.title | default('') }}"
+
+- name: Assert Radarr catalog schema is stable-ID based
+  ansible.builtin.assert:
+    that:
+      - item.tmdb_id is defined or item.imdb_id is defined
+      - item.title is defined
+      - item.year is defined
+      - item.root_folder is defined
+      - item.quality_profile is defined
+      - item.monitored is defined
+      - item.tags is defined
+      - item.search_missing_after_add is defined
+    fail_msg: >-
+      Radarr catalog entries must define tmdb_id or imdb_id plus title, year,
+      root_folder, quality_profile, monitored, tags, and
+      search_missing_after_add. Titles are comments only; stable IDs are the key.
+    quiet: true
+  loop: "{{ media_catalog_radarr }}"
+  loop_control:
+    label: >-
+      {{ item.tmdb_id | default(item.imdb_id | default('?')) }}
+      {{ item.title | default('') }}
+
+- name: Assert media catalog API keys are available
+  ansible.builtin.assert:
+    that:
+      - media_catalog_sonarr_api_key | length > 0
+      - media_catalog_radarr_api_key | length > 0
+    fail_msg: >-
+      SONARR_API_KEY and RADARR_API_KEY must be available through SOPS/Doppler
+      before reconciling the encrypted media catalog.
+    quiet: true
+
+- name: Reconcile media catalog (live only)
+  when: media_catalog_manage_services | bool
+  block:
+    - name: Reconcile Sonarr catalog entries
+      ansible.builtin.include_tasks: sonarr.yml
+      when: media_catalog_sonarr | length > 0
+
+    - name: Reconcile Radarr catalog entries
+      ansible.builtin.include_tasks: radarr.yml
+      when: media_catalog_radarr | length > 0

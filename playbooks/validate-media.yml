@@ -4,10 +4,14 @@
 #
 # Probes the indexer + sync layer that determines whether Radarr/Sonarr can ever
 # find releases:
+#   - qBittorrent: byte/sec limits, work-hours scheduler, categories/save paths,
+#     and readable torrent state endpoint.
 #   - Prowlarr (download_vpn_group): each configured indexer present + enabled,
 #     plus Prowlarr's own health report.
-#   - Radarr / Sonarr: at least one Prowlarr-synced indexer landed (proves the
-#     Prowlarr -> *arr Application fullSync actually pushed).
+#   - Radarr / Sonarr: at least one Prowlarr-synced indexer landed, encrypted
+#     catalog entries exist by stable ID, and unmanaged disk folders fail loudly.
+#   - Plex: expected libraries exist and can be scanned from media.
+#   - Seerr: persisted settings expose integrations for Plex/Sonarr/Radarr.
 #
 # It reuses roles/servarr_wiring/defaults/main.yml (vars_files) so the expected
 # indexer list, API keys, and ports stay in ONE place — same DRY pattern the
@@ -23,6 +27,102 @@
 - name: Import OpenTofu infrastructure inventory
   import_playbook: ../inventory/load_tofu.yml
 
+- name: Validate qBittorrent Policy (download-vpn LXC)
+  hosts: download_vpn_group
+  become: false
+  gather_facts: false
+  tags:
+    - qbittorrent
+    - validation
+
+  vars_files:
+    - ../roles/download_vpn/defaults/main.yml
+
+  vars:
+    # qBittorrent accepts WebUI API limits in bytes/sec but persists them as
+    # whole KiB values. Compare against the daemon's persisted byte value.
+    validate_media_qbt_expected_up_limit: >-
+      {{ ((download_vpn_qbittorrent_up_limit | int) // 1024) * 1024 }}
+    validate_media_qbt_expected_alt_up_limit: >-
+      {{ ((download_vpn_qbittorrent_alt_up_limit | int) // 1024) * 1024 }}
+
+  tasks:
+    - name: Fetch qBittorrent preferences
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences"
+        method: GET
+        status_code: 200
+      register: validate_media_qbt_prefs
+      changed_when: false
+
+    - name: Fetch qBittorrent categories
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/torrents/categories"
+        method: GET
+        status_code: 200
+      register: validate_media_qbt_categories
+      changed_when: false
+
+    - name: Fetch qBittorrent torrent state
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/torrents/info"
+        method: GET
+        status_code: 200
+      register: validate_media_qbt_torrents
+      changed_when: false
+
+    - name: Assert qBittorrent limits and scheduler match the declarative policy
+      ansible.builtin.assert:
+        that:
+          - validate_media_qbt_prefs.json.up_limit | int == validate_media_qbt_expected_up_limit | int
+          - validate_media_qbt_prefs.json.dl_limit | int == download_vpn_qbittorrent_dl_limit | int
+          - validate_media_qbt_prefs.json.alt_up_limit | int == validate_media_qbt_expected_alt_up_limit | int
+          - validate_media_qbt_prefs.json.alt_dl_limit | int == download_vpn_qbittorrent_alt_dl_limit | int
+          - validate_media_qbt_prefs.json.scheduler_enabled | bool == download_vpn_qbittorrent_scheduler_enabled | bool
+          - validate_media_qbt_prefs.json.scheduler_days | int == download_vpn_qbittorrent_scheduler_days | int
+          - validate_media_qbt_prefs.json.schedule_from_hour | int == download_vpn_qbittorrent_schedule_from_hour | int
+          - validate_media_qbt_prefs.json.schedule_from_min | int == download_vpn_qbittorrent_schedule_from_min | int
+          - validate_media_qbt_prefs.json.schedule_to_hour | int == download_vpn_qbittorrent_schedule_to_hour | int
+          - validate_media_qbt_prefs.json.schedule_to_min | int == download_vpn_qbittorrent_schedule_to_min | int
+        fail_msg: >-
+          qBittorrent bandwidth/scheduler policy drifted from Ansible. Limits
+          must be byte/sec values: normal upload 2500000, work-hours upload
+          1250000, download unlimited, weekdays 08:00-18:00 Eastern. qBittorrent
+          persists byte/sec caps as whole KiB values. Expected persisted
+          up={{ validate_media_qbt_expected_up_limit }},
+          alt_up={{ validate_media_qbt_expected_alt_up_limit }}. Observed
+          up={{ validate_media_qbt_prefs.json.up_limit | default('missing') }},
+          dl={{ validate_media_qbt_prefs.json.dl_limit | default('missing') }},
+          alt_up={{ validate_media_qbt_prefs.json.alt_up_limit | default('missing') }},
+          alt_dl={{ validate_media_qbt_prefs.json.alt_dl_limit | default('missing') }},
+          scheduler={{ validate_media_qbt_prefs.json.scheduler_enabled | default('missing') }},
+          days={{ validate_media_qbt_prefs.json.scheduler_days | default('missing') }},
+          from_hour={{ validate_media_qbt_prefs.json.schedule_from_hour | default('missing') }},
+          from_min={{ validate_media_qbt_prefs.json.schedule_from_min | default('missing') }},
+          to_hour={{ validate_media_qbt_prefs.json.schedule_to_hour | default('missing') }},
+          to_min={{ validate_media_qbt_prefs.json.schedule_to_min | default('missing') }}.
+        quiet: true
+
+    - name: Assert qBittorrent categories and save paths match the declarative policy
+      ansible.builtin.assert:
+        that:
+          - item.key in validate_media_qbt_categories.json
+          - validate_media_qbt_categories.json[item.key].savePath == item.value
+        fail_msg: >-
+          qBittorrent category '{{ item.key }}' is missing or points at the
+          wrong save path. Expected {{ item.value }}.
+        quiet: true
+      loop: "{{ download_vpn_qbittorrent_categories | dict2items }}"
+
+    - name: Display qBittorrent validation results
+      ansible.builtin.debug:
+        msg: |
+          qBittorrent validation on {{ inventory_hostname }}:
+          - Upload cap: {{ validate_media_qbt_prefs.json.up_limit }} B/s
+          - Work-hours upload cap: {{ validate_media_qbt_prefs.json.alt_up_limit }} B/s
+          - Categories: {{ download_vpn_qbittorrent_categories }}
+          - Torrent state endpoint readable: {{ validate_media_qbt_torrents.json | length }} torrents
+
 - name: Validate Prowlarr Indexers (download-vpn LXC)
   hosts: download_vpn_group
   become: false
@@ -35,6 +135,7 @@
   # wiring role's defaults instead of redefining them here.
   vars_files:
     - ../roles/servarr_wiring/defaults/main.yml
+    - ../roles/media_catalog/defaults/main.yml
 
   tasks:
     - name: Verify PROWLARR_API_KEY is set
@@ -131,6 +232,7 @@
 
   vars_files:
     - ../roles/servarr_wiring/defaults/main.yml
+    - ../roles/media_catalog/defaults/main.yml
 
   tasks:
     - name: Verify RADARR_API_KEY is set
@@ -152,6 +254,92 @@
       register: validate_media_radarr_indexers
       changed_when: false
 
+    - name: Fetch Radarr movies
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_radarr_port }}/api/v3/movie
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_radarr_api_key }}"
+        status_code: 200
+      register: validate_media_radarr_movies
+      changed_when: false
+
+    - name: Load encrypted media catalog
+      community.sops.load_vars:
+        file: "{{ media_catalog_file }}"
+        name: validate_media_catalog_loaded
+        expressions: ignore
+      no_log: true
+
+    - name: Find top-level Radarr media folders on disk
+      ansible.builtin.find:
+        paths: /data/media/movies
+        file_type: directory
+        recurse: false
+      register: validate_media_radarr_disk
+
+    - name: Resolve Radarr catalog stable IDs
+      ansible.builtin.set_fact:
+        validate_media_radarr_catalog_tmdb_ids: >-
+          {{ validate_media_catalog_loaded.media_catalog.radarr | default([])
+             | selectattr('tmdb_id', 'defined') | map(attribute='tmdb_id')
+             | map('int') | list }}
+        validate_media_radarr_catalog_imdb_ids: >-
+          {{ validate_media_catalog_loaded.media_catalog.radarr | default([])
+             | selectattr('imdb_id', 'defined') | map(attribute='imdb_id')
+             | list }}
+
+    - name: Resolve catalog-backed Radarr paths
+      ansible.builtin.set_fact:
+        validate_media_radarr_catalog_paths: >-
+          {{
+            validate_media_radarr_movies.json
+            | selectattr('tmdbId', 'defined')
+            | selectattr('tmdbId', 'in', validate_media_radarr_catalog_tmdb_ids)
+            | map(attribute='path') | list
+            | union(
+                validate_media_radarr_movies.json
+                | selectattr('imdbId', 'defined')
+                | selectattr('imdbId', 'in', validate_media_radarr_catalog_imdb_ids)
+                | map(attribute='path') | list
+              )
+          }}
+
+    - name: Assert each Radarr catalog movie exists by stable ID
+      ansible.builtin.assert:
+        that:
+          - >-
+            (validate_media_radarr_movies.json
+             | selectattr('tmdbId', 'equalto', item.tmdb_id | default(0) | int)
+             | list | length) > 0
+            or
+            (item.imdb_id is defined and
+             (validate_media_radarr_movies.json
+              | selectattr('imdbId', 'equalto', item.imdb_id)
+              | list | length) > 0)
+        fail_msg: >-
+          Radarr catalog item '{{ item.title }}' is missing from Radarr. The
+          encrypted catalog must be reconciled before rebuild validation passes.
+        quiet: true
+      loop: "{{ validate_media_catalog_loaded.media_catalog.radarr | default([]) }}"
+      loop_control:
+        label: "{{ item.tmdb_id | default(item.imdb_id | default('?')) }} {{ item.title }}"
+
+    - name: Assert every Radarr disk folder is represented by the encrypted catalog
+      vars:
+        validate_media_radarr_unmanaged: >-
+          {{ validate_media_radarr_disk.files | map(attribute='path') | list
+             | difference(validate_media_radarr_catalog_paths) }}
+      ansible.builtin.assert:
+        that:
+          - validate_media_radarr_unmanaged | length == 0
+        fail_msg: >-
+          Radarr media folders exist on disk but are not represented in
+          media_catalog.enc.yaml: {{ validate_media_radarr_unmanaged }}.
+          Do not fuzzy-import them; add stable IDs to the catalog.
+        quiet: true
+
     - name: Assert at least one indexer is present in Radarr
       ansible.builtin.assert:
         that:
@@ -167,6 +355,8 @@
           Radarr validation on {{ inventory_hostname }}:
           - Synced indexers: {{ validate_media_radarr_indexers.json | length }}
             ({{ validate_media_radarr_indexers.json | map(attribute='name') | list }})
+          - Catalog movies: {{ validate_media_catalog_loaded.media_catalog.radarr | default([]) | length }}
+          - Disk folders represented: {{ validate_media_radarr_catalog_paths | length }}
 
 - name: Validate Sonarr Synced Indexers
   hosts: sonarr_group
@@ -178,6 +368,7 @@
 
   vars_files:
     - ../roles/servarr_wiring/defaults/main.yml
+    - ../roles/media_catalog/defaults/main.yml
 
   tasks:
     - name: Verify SONARR_API_KEY is set
@@ -199,6 +390,73 @@
       register: validate_media_sonarr_indexers
       changed_when: false
 
+    - name: Fetch Sonarr series
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_sonarr_port }}/api/v3/series
+        method: GET
+        headers:
+          X-Api-Key: "{{ servarr_wiring_sonarr_api_key }}"
+        status_code: 200
+      register: validate_media_sonarr_series
+      changed_when: false
+
+    - name: Load encrypted media catalog
+      community.sops.load_vars:
+        file: "{{ media_catalog_file }}"
+        name: validate_media_catalog_loaded
+        expressions: ignore
+      no_log: true
+
+    - name: Find top-level Sonarr media folders on disk
+      ansible.builtin.find:
+        paths: /data/media/tv
+        file_type: directory
+        recurse: false
+      register: validate_media_sonarr_disk
+
+    - name: Resolve Sonarr catalog stable IDs
+      ansible.builtin.set_fact:
+        validate_media_sonarr_catalog_ids: >-
+          {{ validate_media_catalog_loaded.media_catalog.sonarr | default([])
+             | map(attribute='tvdb_id') | map('int') | list }}
+
+    - name: Resolve catalog-backed Sonarr paths
+      ansible.builtin.set_fact:
+        validate_media_sonarr_catalog_paths: >-
+          {{ validate_media_sonarr_series.json
+             | selectattr('tvdbId', 'in', validate_media_sonarr_catalog_ids)
+             | map(attribute='path') | list }}
+
+    - name: Assert each Sonarr catalog series exists by TVDB ID
+      ansible.builtin.assert:
+        that:
+          - >-
+            (validate_media_sonarr_series.json
+             | selectattr('tvdbId', 'equalto', item.tvdb_id | int)
+             | list | length) > 0
+        fail_msg: >-
+          Sonarr catalog item '{{ item.title }}' is missing from Sonarr. The
+          encrypted catalog must be reconciled before rebuild validation passes.
+        quiet: true
+      loop: "{{ validate_media_catalog_loaded.media_catalog.sonarr | default([]) }}"
+      loop_control:
+        label: "{{ item.tvdb_id }} {{ item.title }}"
+
+    - name: Assert every Sonarr disk folder is represented by the encrypted catalog
+      vars:
+        validate_media_sonarr_unmanaged: >-
+          {{ validate_media_sonarr_disk.files | map(attribute='path') | list
+             | difference(validate_media_sonarr_catalog_paths) }}
+      ansible.builtin.assert:
+        that:
+          - validate_media_sonarr_unmanaged | length == 0
+        fail_msg: >-
+          Sonarr media folders exist on disk but are not represented in
+          media_catalog.enc.yaml: {{ validate_media_sonarr_unmanaged }}.
+          Do not fuzzy-import them; add TVDB IDs to the catalog.
+        quiet: true
+
     - name: Assert at least one indexer is present in Sonarr
       ansible.builtin.assert:
         that:
@@ -214,6 +472,126 @@
           Sonarr validation on {{ inventory_hostname }}:
           - Synced indexers: {{ validate_media_sonarr_indexers.json | length }}
             ({{ validate_media_sonarr_indexers.json | map(attribute='name') | list }})
+          - Catalog series: {{ validate_media_catalog_loaded.media_catalog.sonarr | default([]) | length }}
+          - Disk folders represented: {{ validate_media_sonarr_catalog_paths | length }}
+
+- name: Validate Plex Libraries
+  hosts: plex_group
+  become: false
+  gather_facts: false
+  tags:
+    - plex
+    - validation
+
+  vars_files:
+    - ../roles/plex/defaults/main.yml
+
+  tasks:
+    - name: Read Preferences.xml to discover the Plex token
+      ansible.builtin.slurp:
+        src: "{{ plex_preferences_path }}"
+      register: validate_media_plex_prefs
+      failed_when: false
+      no_log: true
+
+    - name: Resolve Plex validation token
+      ansible.builtin.set_fact:
+        validate_media_plex_token: >-
+          {{ plex_account_token if (plex_account_token | length > 0)
+             else (validate_media_plex_prefs.content | default('') | b64decode
+                   | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
+      no_log: true
+
+    - name: Fetch Plex library sections
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plex_local_api_port }}/library/sections"
+        method: GET
+        headers: >-
+          {{ {'Accept': 'application/json'}
+             | combine({'X-Plex-Token': validate_media_plex_token}
+                       if (validate_media_plex_token | length > 0) else {}) }}
+        status_code: 200
+      register: validate_media_plex_sections
+      changed_when: false
+      no_log: true
+
+    - name: Assert expected Plex libraries exist
+      ansible.builtin.assert:
+        that:
+          - >-
+            (validate_media_plex_sections.json.MediaContainer.Directory | default([])
+             | selectattr('title', 'equalto', item.name)
+             | list | length) > 0
+        fail_msg: >-
+          Plex library '{{ item.name }}' is missing. The role must recreate
+          libraries and Plex must rescan from /data/media after restore.
+        quiet: true
+      loop: "{{ plex_libraries }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+- name: Validate Seerr Integrations
+  hosts: seerr_group
+  become: false
+  gather_facts: false
+  tags:
+    - seerr
+    - validation
+
+  vars_files:
+    - ../roles/seerr/defaults/main.yml
+
+  tasks:
+    - name: Read live Seerr settings
+      ansible.builtin.slurp:
+        src: "{{ seerr_config_dir }}/settings.json"
+      register: validate_media_seerr_settings_file
+      no_log: true
+
+    - name: Resolve live Seerr API key
+      ansible.builtin.set_fact:
+        validate_media_seerr_api_key: >-
+          {{ (validate_media_seerr_settings_file.content | b64decode | from_json).main.apiKey }}
+      no_log: true
+
+    - name: Fetch Seerr Sonarr integrations
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/sonarr"
+        method: GET
+        headers:
+          X-Api-Key: "{{ validate_media_seerr_api_key }}"
+        status_code: 200
+      register: validate_media_seerr_sonarr
+      changed_when: false
+      no_log: true
+
+    - name: Fetch Seerr Radarr integrations
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/radarr"
+        method: GET
+        headers:
+          X-Api-Key: "{{ validate_media_seerr_api_key }}"
+        status_code: 200
+      register: validate_media_seerr_radarr
+      changed_when: false
+      no_log: true
+
+    - name: Assert Seerr integrations point to Sonarr and Radarr
+      ansible.builtin.assert:
+        that:
+          - >-
+            (validate_media_seerr_sonarr.json
+             | selectattr('hostname', 'equalto', seerr_sonarr_hostname)
+             | list | length) > 0
+          - >-
+            (validate_media_seerr_radarr.json
+             | selectattr('hostname', 'equalto', seerr_radarr_hostname)
+             | list | length) > 0
+        fail_msg: >-
+          Seerr does not have Sonarr/Radarr integrations matching the
+          declarative hostnames. Requests/settings state must survive restore
+          while service registration remains Ansible-owned.
+        quiet: true
 
 - name: Media Stack Validation Summary
   hosts: localhost
@@ -229,9 +607,12 @@
           ============================================
           MEDIA STACK VALIDATION COMPLETE
           ============================================
+          qBittorrent: byte/sec caps, scheduler, categories, torrent API checked
           Prowlarr: configured indexers present + enabled, health reported
-          Radarr:   >=1 Prowlarr-synced indexer present
-          Sonarr:   >=1 Prowlarr-synced indexer present
+          Radarr:   indexers + encrypted catalog + unmanaged disk paths checked
+          Sonarr:   indexers + encrypted catalog + unmanaged disk paths checked
+          Plex:     expected libraries exist
+          Seerr:    Sonarr/Radarr integrations persist
           --------------------------------------------
           If all green, the pipeline is wired. A title stuck at Missing/0B is
           then a CONTENT problem (no release exists on the configured trackers),

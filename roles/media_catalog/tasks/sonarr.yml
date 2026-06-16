@@ -1,0 +1,65 @@
+---
+- name: Fetch Sonarr quality profiles
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_sonarr_host }}:{{ media_catalog_sonarr_port }}/api/v3/qualityprofile"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_sonarr_api_key }}"
+    status_code: 200
+  register: media_catalog_sonarr_profiles
+  changed_when: false
+
+- name: Fetch Sonarr tags
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_sonarr_host }}:{{ media_catalog_sonarr_port }}/api/v3/tag"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_sonarr_api_key }}"
+    status_code: 200
+  register: media_catalog_sonarr_tags
+  changed_when: false
+
+- name: Build desired Sonarr tag list
+  ansible.builtin.set_fact:
+    media_catalog_sonarr_tag_names: "{{ media_catalog_sonarr | map(attribute='tags') | flatten | unique | list }}"
+
+- name: Create missing Sonarr tags
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_sonarr_host }}:{{ media_catalog_sonarr_port }}/api/v3/tag"
+    method: POST
+    headers:
+      X-Api-Key: "{{ media_catalog_sonarr_api_key }}"
+    body_format: json
+    body:
+      label: "{{ item }}"
+    status_code: [200, 201]
+  loop: "{{ media_catalog_sonarr_tag_names }}"
+  when: item not in (media_catalog_sonarr_tags.json | map(attribute='label') | list)
+  changed_when: true
+
+- name: Re-read Sonarr tags after reconciliation
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_sonarr_host }}:{{ media_catalog_sonarr_port }}/api/v3/tag"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_sonarr_api_key }}"
+    status_code: 200
+  register: media_catalog_sonarr_tags
+  changed_when: false
+
+- name: Fetch Sonarr series catalog
+  ansible.builtin.uri:
+    url: "http://{{ media_catalog_sonarr_host }}:{{ media_catalog_sonarr_port }}/api/v3/series"
+    method: GET
+    headers:
+      X-Api-Key: "{{ media_catalog_sonarr_api_key }}"
+    status_code: 200
+  register: media_catalog_sonarr_series
+  changed_when: false
+
+- name: Reconcile each Sonarr series
+  ansible.builtin.include_tasks: sonarr_entry.yml
+  loop: "{{ media_catalog_sonarr }}"
+  loop_control:
+    loop_var: media_catalog_sonarr_item
+    label: "{{ media_catalog_sonarr_item.tvdb_id }} {{ media_catalog_sonarr_item.title }}"
