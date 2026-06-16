@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.3...v1.46.0) (2026-06-16)
+
+
+### Features
+
+* **cribl:** per-index HEC outputs (one index = one token) ([#465](https://github.com/dryvist/ansible-proxmox-apps/issues/465)) ([719dea0](https://github.com/dryvist/ansible-proxmox-apps/commit/719dea02f0621a317357293c1b4ac216ae144fe0))
+
 ## [1.45.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.2...v1.45.3) (2026-06-16)
 
 
