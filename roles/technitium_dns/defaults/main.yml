@@ -15,7 +15,8 @@ technitium_dns_api_token: "{{ lookup('env', 'TECHNITIUM_DNS_API_TOKEN') }}"
 
 # Authoritative zone = the homelab SUBDOMAIN only (a child zone). Technitium is
 # authoritative for this and forwards everything else (the apex + public) to the
-# gateway. All internal A-records and service CNAMEs live under this subdomain.
+# encrypted upstreams below. All internal A-records and service CNAMEs live under
+# this subdomain.
 technitium_dns_zone: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
 # Apex domain — referenced ONLY to remove a stale apex Primary zone if a
 # pre-existing server still owns one (so non-subdomain names forward, not
@@ -71,11 +72,19 @@ technitium_dns_ingress_apex: >-
 # subdomain zone directly.
 technitium_dns_ingress_domain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
 
-# Upstream forwarder for every non-authoritative query. Points at the gateway
-# (which owns the apex + public DNS), sourced from Doppler — never a committed
-# literal. This is what makes non-subdomain names resolve instead of NXDOMAIN.
+# Upstream forwarders for every non-authoritative query (the apex + public
+# names). Encrypted DNS-over-HTTPS (DoH) to Cloudflare + Google so the
+# resolver->upstream hop is never sent in plaintext. The IP in parentheses is
+# the bootstrap endpoint: Technitium dials that address directly instead of
+# resolving the DoH hostname through itself (avoids a chicken-and-egg lookup),
+# while still validating the TLS certificate against the hostname. These DoH
+# URLs and resolver IPs are public constants, not secrets.
+technitium_dns_forwarder_protocol: "Https" # Udp | Tcp | Tls | Https | Quic
 technitium_dns_forwarders:
-  - "{{ lookup('env', 'PROXMOX_VE_GATEWAY') }}"
+  - "https://cloudflare-dns.com/dns-query (1.1.1.1)"
+  - "https://dns.google/dns-query (8.8.8.8)"
+# Do not volunteer the client subnet (EDNS Client Subnet) to upstream resolvers.
+technitium_dns_edns_client_subnet: false
 
 # DNS server settings
 technitium_dns_recursion: true

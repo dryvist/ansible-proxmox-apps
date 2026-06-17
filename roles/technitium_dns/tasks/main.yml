@@ -165,16 +165,21 @@
       {{ technitium_dns_zones_response.json.response.zones | default([]) | map(attribute='name') | list }}
   when: technitium_dns_apply | bool
 
-# Forward every non-authoritative query (the apex + public names) to the gateway.
+# Forward every non-authoritative query (the apex + public names) over encrypted
+# DoH to the configured upstreams, with EDNS Client Subnet disabled so the
+# client subnet is never sent to upstream resolvers. DNSSEC validation stays on.
 # This is a server-level setting, so it runs on EVERY node: each instance is a
 # full resolver — authoritative/secondary for the subdomain, forward the rest.
-- name: Configure upstream forwarders (to the gateway)
+- name: Configure upstream forwarders (encrypted DoH)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/settings/set?token={{ technitium_dns_api_token }}"
     method: POST
     body_format: form-urlencoded
     body:
       forwarders: "{{ technitium_dns_forwarders | join(',') }}"
+      forwarderProtocol: "{{ technitium_dns_forwarder_protocol }}"
+      eDnsClientSubnet: "{{ technitium_dns_edns_client_subnet | lower }}"
+      dnssecValidation: "true"
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_forwarders_result
@@ -201,7 +206,7 @@
     - technitium_dns_zone not in technitium_dns_existing_zones
   no_log: true
 
-# Remove a stale apex Primary zone so non-subdomain names FORWARD to the gateway
+# Remove a stale apex Primary zone so non-subdomain names FORWARD upstream
 # instead of resolving NXDOMAIN here. Destructive but guarded: only fires if a
 # pre-existing server still owns the apex zone (a no-op on a freshly built node,
 # which never had it). Idempotent via the existing-zones membership check.
