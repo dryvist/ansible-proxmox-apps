@@ -122,6 +122,21 @@ if [[ "{% raw %}${#breaches[@]}{% endraw %}" -gt 0 ]]; then
   exit 1
 fi
 
+# Self-heal: on a clean (no-breach) cycle the VPN/killswitch is intact, so it is
+# safe to (re)start the services if a prior transient breach stopped them and the
+# VPN has since recovered (the validator otherwise only ever stops, never starts).
+# The breach checks are VPN-integrity only and never trip on a stopped service, so
+# reviving it here cannot mask a leak. Mask/disable the unit to suppress during
+# maintenance.
+for svc in qbittorrent-nox.service download-vpn-natpmp.service; do
+  if [[ "$(systemctl is-enabled "${svc}" 2>/dev/null)" == "enabled" \
+     && "$(systemctl is-active "${svc}" 2>/dev/null)" != "active" ]]; then
+    logger -t killswitch-validate \
+      "download-vpn: VPN healthy, ${svc} down — auto-starting (post-breach recovery)"
+    systemctl start "${svc}" || true
+  fi
+done
+
 # Healthy: ping the deadman OK endpoint so a stalled validator also pages.
 if [[ -n "${HC_URL}" ]]; then
   curl -fsS --max-time 8 "${HC_URL}" >/dev/null 2>&1 || true
