@@ -213,6 +213,11 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/validate-media.yml'
 # Add --tags deep to actively test each indexer against its tracker (slow, live)
 
+# Re-trigger searches for pending monitored items (Sonarr + Radarr). Standalone,
+# on-demand; never part of site.yml. Scope with --tags sonarr (or --tags radarr).
+sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+  -i inventory/hosts.yml playbooks/search-missing.yml'
+
 # Lint
 ansible-lint
 ```
