@@ -307,6 +307,17 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
+- name: Apply the pending qBittorrent restart before the setPreferences API writes
+  # On re-runs the daemon is already running with the OLD in-memory config; the
+  # setPreferences calls below would make it flush that stale config back over the
+  # freshly templated qBittorrent.conf, silently reverting template-managed
+  # settings (port, interface binding, encryption). Flushing the queued Restart
+  # handler here reloads the new conf first; the WebUI readiness wait below covers
+  # the restart. meta: flush_handlers ignores `when`, but the Restart is only
+  # queued when the config template above reported changed, so this is a no-op on
+  # unchanged runs.
+  ansible.builtin.meta: flush_handlers
+
 - name: Wait for the qBittorrent WebUI to answer
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/version"
