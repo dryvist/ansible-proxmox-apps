@@ -5,7 +5,7 @@
 # The prometheus_rw source emits one event per sample with fields:
 #   metric_name, value, _time, and one field per label (job, instance, etc.)
 # We stamp index/sourcetype and derive host from the job label so SPL
-# queries read: index=netmon sourcetype="prometheus:metrics" metric_name=probe_success
+# queries read: index=netmon_metrics sourcetype="prometheus:metrics" metric_name=probe_success
 output: splunk_hec
 streamtags: []
 groups: {}
@@ -16,8 +16,14 @@ functions:
     disabled: false
     conf:
       add:
+        # ponytail: coerce null/NaN/string metric values to -1 so the Splunk
+        # metric index never rejects them (blackbox emits NaN series, e.g.
+        # probe_ssl_earliest_cert_expiry on a failed/non-TLS probe, which arrive
+        # as null). -1 = "no valid measurement". Also upgrades numeric strings.
+        - name: value
+          value: "Number.isFinite(Number(value)) ? Number(value) : -1"
         - name: index
-          value: "'netmon'"
+          value: "'netmon_metrics'"
         - name: sourcetype
           value: "'prometheus:metrics'"
         - name: host
