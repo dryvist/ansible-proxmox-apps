@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.46.0...v1.46.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **cribl:** coerce non-finite netmon metric values; rename index to netmon_metrics ([#485](https://github.com/dryvist/ansible-proxmox-apps/issues/485)) ([a8a8db4](https://github.com/dryvist/ansible-proxmox-apps/commit/a8a8db4cc7504061bd4612bd548ca3483ef2ef8e))
+
 ## [1.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.3...v1.46.0) (2026-06-16)
 
 
