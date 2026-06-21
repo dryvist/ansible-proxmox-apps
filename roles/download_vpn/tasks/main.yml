@@ -307,6 +307,17 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
+- name: Apply the pending qBittorrent restart before the setPreferences API writes
+  # On re-runs the daemon is already running with the OLD in-memory config; the
+  # setPreferences calls below would make it flush that stale config back over the
+  # freshly templated qBittorrent.conf, silently reverting template-managed
+  # settings (port, interface binding, encryption). Flushing the queued Restart
+  # handler here reloads the new conf first; the WebUI readiness wait below covers
+  # the restart. meta: flush_handlers ignores `when`, but the Restart is only
+  # queued when the config template above reported changed, so this is a no-op on
+  # unchanged runs.
+  ansible.builtin.meta: flush_handlers
+
 - name: Wait for the qBittorrent WebUI to answer
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/version"
@@ -350,13 +361,16 @@
   changed_when: false
   when: download_vpn_manage_services
 
-# QoS: bandwidth limits + work-hours scheduler via the API (the .conf keys are
-# version-fragile and the daemon overwrites them — see qBittorrent.conf.j2).
-# Limits in KiB/s, -1 = unlimited. The scheduler applies the alt_* (heavy) limits
-# during the window and the normal limits outside it, evaluated in the container's
-# local time (pinned to UTC in Phase 1b). LocalHostAuth=false lets 127.0.0.1 POST
-# without a login cookie, same as the password task above.
-- name: Apply qBittorrent bandwidth limits + work-hours scheduler via API
+# QoS: bandwidth + concurrency limits + work-hours scheduler via the API (the
+# .conf keys are version-fragile and the daemon overwrites them — see
+# qBittorrent.conf.j2). Speed limits are BYTES/s (the WebUI API contract — the
+# daemon stores KiB/s); concurrency + connection caps are plain counts. The
+# scheduler applies the alt_* limits during the window and the normal limits
+# outside it, in the container's local time (pinned to UTC in Phase 1b).
+# LocalHostAuth=false lets 127.0.0.1 POST without a login cookie. limit_lan_peers
+# is required for the caps to apply over the VPN interface (see the docs-starlight
+# media-download runbook for the rationale).
+- name: Apply qBittorrent bandwidth + concurrency limits + scheduler via API
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/setPreferences"
     method: POST
@@ -373,6 +387,13 @@
          "schedule_to_hour":{{ download_vpn_qbittorrent_schedule_to_hour | int }},
          "schedule_to_min":{{ download_vpn_qbittorrent_schedule_to_min | int }},
          "scheduler_days":{{ download_vpn_qbittorrent_scheduler_days | int }},
+         "queueing_enabled":true,
+         "max_active_downloads":{{ download_vpn_qbittorrent_max_active_downloads | int }},
+         "max_active_uploads":{{ download_vpn_qbittorrent_max_active_uploads | int }},
+         "max_active_torrents":{{ download_vpn_qbittorrent_max_active_torrents | int }},
+         "dont_count_slow_torrents":{{ download_vpn_qbittorrent_dont_count_slow_torrents | bool | lower }},
+         "max_connec":{{ download_vpn_qbittorrent_max_connec | int }},
+         "max_connec_per_torrent":{{ download_vpn_qbittorrent_max_connec_per_torrent | int }},
          "limit_utp_rate":true,
          "limit_tcp_overhead":true,
          "limit_lan_peers":true}

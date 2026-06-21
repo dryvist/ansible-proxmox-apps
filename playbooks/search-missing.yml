@@ -1,0 +1,95 @@
+---
+# Re-trigger searches for monitored items that are not yet present.
+#
+# The media managers (Sonarr, Radarr) only act on an item once they have searched
+# for and located it; items that are monitored but not yet found stay pending
+# until a search runs. This standalone, on-demand playbook asks each manager to
+# search for all currently-pending monitored items. It is never part of site.yml.
+#
+# Usage (API keys come from SOPS/Doppler env, same as servarr_wiring):
+#   sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+#     -i inventory/hosts.yml playbooks/search-missing.yml'
+#
+# Scope to one manager with --tags sonarr (or --tags radarr).
+
+- name: Import OpenTofu infrastructure inventory
+  import_playbook: ../inventory/load_tofu.yml
+
+- name: Search for pending Sonarr items
+  hosts: sonarr_group
+  become: false
+  gather_facts: false
+  tags:
+    - sonarr
+  # Reuse servarr_wiring defaults for the deterministic API key + port (one source).
+  vars_files:
+    - ../roles/servarr_wiring/defaults/main.yml
+  tasks:
+    - name: Verify SONARR_API_KEY is set
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_api_key | length > 0
+        fail_msg: >-
+          SONARR_API_KEY is not set. Run with sops exec-env + doppler run so
+          servarr_wiring's deterministic key is in the environment.
+        quiet: true
+
+    - name: Trigger Sonarr search for pending monitored items
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_sonarr_port }}/api/v3/command
+        method: POST
+        headers:
+          X-Api-Key: "{{ servarr_wiring_sonarr_api_key }}"
+        body_format: json
+        body:
+          name: MissingEpisodeSearch
+        status_code: [200, 201]
+      register: search_missing_sonarr
+      changed_when: true
+      no_log: true
+
+    - name: Show Sonarr command result
+      ansible.builtin.debug:
+        msg: >-
+          Sonarr search queued (command id
+          {{ search_missing_sonarr.json.id | default('?') }}).
+
+- name: Search for pending Radarr items
+  hosts: radarr_group
+  become: false
+  gather_facts: false
+  tags:
+    - radarr
+  vars_files:
+    - ../roles/servarr_wiring/defaults/main.yml
+  tasks:
+    - name: Verify RADARR_API_KEY is set
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_radarr_api_key | length > 0
+        fail_msg: >-
+          RADARR_API_KEY is not set. Run with sops exec-env + doppler run so
+          servarr_wiring's deterministic key is in the environment.
+        quiet: true
+
+    - name: Trigger Radarr search for pending monitored items
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ servarr_wiring_radarr_port }}/api/v3/command
+        method: POST
+        headers:
+          X-Api-Key: "{{ servarr_wiring_radarr_api_key }}"
+        body_format: json
+        body:
+          name: MissingMoviesSearch
+        status_code: [200, 201]
+      register: search_missing_radarr
+      changed_when: true
+      no_log: true
+
+    - name: Show Radarr command result
+      ansible.builtin.debug:
+        msg: >-
+          Radarr search queued (command id
+          {{ search_missing_radarr.json.id | default('?') }}).
