@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.46.1...v1.47.0) (2026-06-21)
+
+
+### Features
+
+* **ci:** re-validate inventory data contract on upstream release ([#487](https://github.com/dryvist/ansible-proxmox-apps/issues/487)) ([e7bed6e](https://github.com/dryvist/ansible-proxmox-apps/commit/e7bed6e804616a4b71912e08865dc68b2315fbac))
+
 ## [1.46.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.46.0...v1.46.1) (2026-06-20)
 
 
