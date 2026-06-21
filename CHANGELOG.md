@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.47.0...v1.47.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **download_vpn:** qBittorrent bandwidth/queue config + service auto-recovery ([#481](https://github.com/dryvist/ansible-proxmox-apps/issues/481)) ([f59c7cd](https://github.com/dryvist/ansible-proxmox-apps/commit/f59c7cd5604cd275ca89e84432cc4cd4fb2fa04d))
+
 ## [1.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.46.1...v1.47.0) (2026-06-21)
 
 
