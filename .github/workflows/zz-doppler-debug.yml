@@ -1,0 +1,28 @@
+name: zz-doppler-debug
+"on":
+  push:
+    branches: [fix/doppler-generic-secret]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe DOPPLER_TOKEN (no value leaked)
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          set +e
+          echo "len=${#DOPPLER_TOKEN}"
+          case "$DOPPLER_TOKEN" in
+            dp.st.*) echo "prefix=dp.st (service token) OK" ;;
+            dp.sa.*) echo "prefix=dp.sa (SERVICE ACCOUNT - needs project/config!)" ;;
+            *) echo "prefix=UNEXPECTED (not dp.st./dp.sa.)" ;;
+          esac
+          if printf '%s' "$DOPPLER_TOKEN" | grep -qP '\s$'; then echo "trailing_whitespace=YES"; else echo "trailing_whitespace=no"; fi
+          raw=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $DOPPLER_TOKEN" https://api.doppler.com/v3/configs/config/secrets)
+          echo "doppler_api_http_RAW=$raw"
+          TRIM=$(printf '%s' "$DOPPLER_TOKEN" | tr -d '[:space:]')
+          echo "trimmed_len=${#TRIM}"
+          trim=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TRIM" https://api.doppler.com/v3/configs/config/secrets)
+          echo "doppler_api_http_TRIMMED=$trim"
