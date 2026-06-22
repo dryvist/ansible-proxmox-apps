@@ -21,7 +21,7 @@ LXC 251 `idrac-kvm`), reached over `proxmox_pct_remote`.
 Prerequisites:
 
 - LXC 251 `idrac-kvm` exists (OpenTofu-managed; tags include `container` and `idrac`).
-- Doppler config `iac-conf-mgmt/prd` populated with all six
+- Your Doppler config populated with all six
   `IDRAC_R410_*` / `IDRAC_R710_*` variables (see Secrets table below).
 - The Dell AVCT client artifact staged in private storage and
   `idrac_kvm_docker_avct_artifact_url` set (see "Viewer image" below).
@@ -38,7 +38,7 @@ Deploy or update both iDRAC containers:
 
 ```sh
 # From the ansible-proxmox-apps repo root, with Doppler env loaded:
-doppler run -p iac-conf-mgmt -c prd -- \
+doppler run -- \
   ansible-playbook playbooks/site.yml --tags idrac_kvm_docker
 ```
 
@@ -46,11 +46,11 @@ Other useful tag invocations (all defined in `site.yml` Phase 7b):
 
 ```sh
 # Same effect via the broader tag — also runs anything else tagged 'idrac':
-doppler run -p iac-conf-mgmt -c prd -- \
+doppler run -- \
   ansible-playbook playbooks/site.yml --tags idrac
 
 # Out-of-band management slice (idrac + future iLO/IPMI roles):
-doppler run -p iac-conf-mgmt -c prd -- \
+doppler run -- \
   ansible-playbook playbooks/site.yml --tags oob,management
 ```
 
@@ -155,12 +155,12 @@ orbstack-kubernetes variant is retained as an exploratory record only.
 
 | Variable                | Source                          |
 | ----------------------- | ------------------------------- |
-| `IDRAC_R410_HOST`       | Doppler `iac-conf-mgmt/prd`     |
-| `IDRAC_R410_USER`       | Doppler `iac-conf-mgmt/prd`     |
-| `IDRAC_R410_PASSWORD`   | Doppler `iac-conf-mgmt/prd`     |
-| `IDRAC_R710_HOST`       | Doppler `iac-conf-mgmt/prd`     |
-| `IDRAC_R710_USER`       | Doppler `iac-conf-mgmt/prd`     |
-| `IDRAC_R710_PASSWORD`   | Doppler `iac-conf-mgmt/prd`     |
+| `IDRAC_R410_HOST`       | Doppler                         |
+| `IDRAC_R410_USER`       | Doppler                         |
+| `IDRAC_R410_PASSWORD`   | Doppler                         |
+| `IDRAC_R710_HOST`       | Doppler                         |
+| `IDRAC_R710_USER`       | Doppler                         |
+| `IDRAC_R710_PASSWORD`   | Doppler                         |
 
 None of these are ever committed to git. The role's first task asserts they
 are all set and fails fast with a pointer to Doppler.
