@@ -1,0 +1,110 @@
+---
+# NousResearch Hermes Agent — native install + headless gateway daemon. Idempotent.
+#
+# The agent runs arbitrary terminal + web tools, so it runs as a NON-root dedicated
+# user; the LXC is the blast-radius boundary. Ansible owns the PLATFORM (user,
+# install, config, systemd); the Hermes daemon owns its own app lifecycle
+# (`hermes update`) — install once behind a `creates` guard and never pin a moving
+# 'latest' (Agy: avoids the self-update vs idempotency conflict).
+#
+# NOT YET LIVE-VALIDATED (verify on first converge): (a) install.sh running clean
+# non-interactively as root on a minimal Debian LXC; (b) `hermes gateway start`
+# staying up headless with no messaging platform; (c) Hindsight provider init from
+# config.yaml alone (it may need its client package on first run).
+
+- name: Install role prerequisites (installer + clone)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - git
+      - sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Run as root (play become: true) -> system-wide install: binary /usr/local/bin/hermes,
+# code /usr/local/lib/hermes-agent. The installer handles its own Python/Node/
+# ripgrep/ffmpeg deps. `creates` guard installs once; the daemon self-updates after.
+- name: Install Hermes Agent system-wide (once; daemon self-updates thereafter)
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && curl -fsSL {{ hermes_agent_install_url }} | bash"
+    creates: "{{ hermes_agent_bin }}"
+  args:
+    executable: /bin/bash
+
+- name: Create the hermes runtime user (HERMES_HOME on the data volume)
+  ansible.builtin.user:
+    name: "{{ hermes_agent_user }}"
+    home: "{{ hermes_agent_home }}"
+    system: true
+    shell: /bin/bash # the agent's terminal tool needs a real shell
+    create_home: true
+
+- name: Ensure HERMES_HOME exists
+  ansible.builtin.file:
+    path: "{{ hermes_agent_hermes_home }}"
+    state: directory
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_user }}"
+    mode: "0750"
+
+- name: Deploy the Hermes secrets file (.env)
+  ansible.builtin.template:
+    src: hermes-env.j2
+    dest: "{{ hermes_agent_hermes_home }}/.env"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_user }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart hermes-gateway
+
+- name: Deploy the Hermes config.yaml (brain -> Ollama, memory -> Hindsight, budget)
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ hermes_agent_hermes_home }}/config.yaml"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_user }}"
+    mode: "0640"
+  notify: Restart hermes-gateway
+
+- name: Deploy the hermes-gateway systemd unit
+  ansible.builtin.template:
+    src: hermes-gateway.service.j2
+    dest: /etc/systemd/system/hermes-gateway.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart hermes-gateway
+
+- name: Enable and start the Hermes gateway
+  ansible.builtin.systemd:
+    name: hermes-gateway
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Flush handlers so config/unit changes apply before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the Hermes gateway is active
+  ansible.builtin.systemd:
+    name: hermes-gateway
+  register: hermes_agent_gateway_state
+  failed_when: hermes_agent_gateway_state.status.ActiveState != 'active'
+
+# Best-effort: surface the active memory provider. Non-fatal so a Hindsight
+# first-run hiccup doesn't fail the whole converge (verify/fix live).
+- name: Check the active memory provider (non-fatal)
+  ansible.builtin.command: "{{ hermes_agent_bin }} memory status"
+  environment:
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_memory_status
+  changed_when: false
+  failed_when: false
+
+- name: Report the active memory provider
+  ansible.builtin.debug:
+    var: hermes_agent_memory_status.stdout_lines
