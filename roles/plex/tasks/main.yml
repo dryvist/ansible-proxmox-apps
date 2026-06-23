@@ -96,6 +96,34 @@
     daemon_reload: true
   when: plex_manage_services
 
+# ---------------------------------------------------------------------------
+# Persistence guard — surface a config dir on the disposable rootfs LOUDLY
+# ---------------------------------------------------------------------------
+# Plex identity (Preferences.xml machineIdentifier + claim + publish flag) and
+# the watch-history DB live under /var/lib/plexmediaserver. The media_lxc_features
+# role bind-mounts the persistent bulk/appdata/plex dataset there so they survive
+# a container REBUILD. If that mount is missing, a rebuild silently resets Plex to
+# a brand-new server (lost history, re-claim prompt) — so make the missing mount a
+# VISIBLE warning on every converge instead of a silent time bomb. Non-fatal.
+- name: Check whether the Plex config dir is on a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q /var/lib/plexmediaserver
+  register: plex_config_mountpoint
+  changed_when: false
+  failed_when: false
+  when: plex_manage_services
+
+- name: Warn loudly when the Plex config dir is NOT persistent
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: /var/lib/plexmediaserver is NOT a persistent mount. Plex identity
+      and watch history are on the disposable LXC rootfs and will be LOST on the
+      next container rebuild (server resets to a fresh install). Apply the
+      media_lxc_features role to bind-mount bulk/appdata/plex.
+  when:
+    - plex_manage_services
+    - plex_config_mountpoint.rc | default(0) != 0
+
 # Idempotent + non-fatal server claim (see tasks/claim.yml). Only attempted on a
 # live host (plex_manage_services), since it talks to the running Plex API.
 - name: Claim the Plex server (idempotent, non-fatal)
