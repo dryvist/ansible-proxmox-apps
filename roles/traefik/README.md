@@ -64,7 +64,7 @@ records — it cannot touch A records or any other zone.
 `{"Effect":"Allow","Action":"route53:ListHostedZonesByName","Resource":"*"}` only
 if you stop providing the zone id.
 
-### 2. Doppler secrets (`iac-conf-mgmt` / `prd`)
+### 2. Doppler secrets
 
 | Secret | Purpose |
 | --- | --- |

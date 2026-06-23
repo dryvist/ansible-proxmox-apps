@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.48.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.48.0...v1.48.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **technitium_dns:** forward over encrypted DoH, disable EDNS Client Subnet ([#480](https://github.com/dryvist/ansible-proxmox-apps/issues/480)) ([71af1c2](https://github.com/dryvist/ansible-proxmox-apps/commit/71af1c2cf0ea1bab8b6d53bf6f87e4fb9380374f))
+
+## [1.48.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.47.1...v1.48.0) (2026-06-23)
+
+
+### Features
+
+* **plex:** warn loudly when the config dir is not on a persistent mount ([#461](https://github.com/dryvist/ansible-proxmox-apps/issues/461)) ([a2e8cb6](https://github.com/dryvist/ansible-proxmox-apps/commit/a2e8cb6e355a45f6962a8138b5c55c54321a0a33))
+
 ## [1.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.47.0...v1.47.1) (2026-06-21)
 
 
