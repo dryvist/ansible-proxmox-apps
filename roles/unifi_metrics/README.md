@@ -29,7 +29,7 @@ scripts.
 The Telegraf agent tags every metric `stream=unifi_metrics`. It reuses the
 shared Cribl Edge HEC input (`in_netmon_hec`); the Cribl `netmon` pipeline
 branches on the `stream` tag so these events land in `index=unifi_metrics`
-while the per-WAN probers (no `stream` tag) continue to `index=netmon`.
+while the per-WAN probers (no `stream` tag) continue to `index=netmon_metrics`.
 
 ## Installation
 

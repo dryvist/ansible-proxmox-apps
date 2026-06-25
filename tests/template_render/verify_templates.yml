@@ -1326,6 +1326,8 @@
     cribl_stream_netflow_port: 2055
     cribl_stream_s2s_port: 10300
     cribl_stream_pq_enabled: true
+    cribl_stream_prometheus_rw_port: 9201
+    cribl_stream_prometheus_rw_api_path: /api/v1/write
     _template_dir: "../../roles/cribl_stream/templates"
 
   tasks:
@@ -1341,6 +1343,12 @@
         dest: /tmp/test_cribl_stream_force_splunk_meta.yml
         mode: "0644"
 
+    - name: Render prometheus_to_netmon conf.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/prometheus_to_netmon/conf.yml.j2"
+        dest: /tmp/test_cribl_stream_prometheus_to_netmon.yml
+        mode: "0644"
+
     - name: Read rendered cribl_stream templates
       ansible.builtin.slurp:
         src: "{{ item }}"
@@ -1348,11 +1356,13 @@
       loop:
         - /tmp/test_cribl_stream_inputs.yml
         - /tmp/test_cribl_stream_force_splunk_meta.yml
+        - /tmp/test_cribl_stream_prometheus_to_netmon.yml
 
     - name: Decode cribl_stream rendered content
       ansible.builtin.set_fact:
         _cribl_stream_inputs: "{{ _cribl_stream_rendered.results[0].content | b64decode }}"
         _cribl_stream_meta_pipeline: "{{ _cribl_stream_rendered.results[1].content | b64decode }}"
+        _cribl_stream_prom_pipeline: "{{ _cribl_stream_rendered.results[2].content | b64decode }}"
 
     - name: Assert S2S input attaches the force_splunk_meta connection pipeline
       ansible.builtin.assert:
@@ -1365,6 +1375,18 @@
           connection — Cribl Edge skips its destination post-processing for
           pack-routed events, so unstamped events would fall into Splunk's
           HEC token defaults (index=main, sourcetype=httpevent)
+
+    - name: Assert prometheus_rw input is present on port 9201 with prometheusAPI and prometheus_to_netmon pipeline
+      ansible.builtin.assert:
+        that:
+          - "'type: prometheus_rw' in _cribl_stream_inputs"
+          - "'port: 9201' in _cribl_stream_inputs"
+          - "'prometheusAPI: /api/v1/write' in _cribl_stream_inputs"
+          - "'pipeline: prometheus_to_netmon' in _cribl_stream_inputs"
+        fail_msg: >-
+          inputs.yml.j2 must include a prometheus_rw input on port 9201 with
+          prometheusAPI: /api/v1/write (required by Cribl schema) connected
+          to the prometheus_to_netmon pipeline
 
     - name: Assert force_splunk_meta evals are conditional and mask schema is valid
       ansible.builtin.assert:
@@ -1386,12 +1408,25 @@
           - "(_cribl_stream_meta_pipeline | from_yaml).functions | length == 2"
         fail_msg: "force_splunk_meta conf.yml must parse as YAML with eval + mask functions"
 
+    - name: Assert prometheus_to_netmon stamps index=netmon_metrics and sourcetype=prometheus:metrics
+      ansible.builtin.assert:
+        that:
+          - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 1"
+          - "'netmon_metrics' in _cribl_stream_prom_pipeline"
+          - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
+          - "'Number.isFinite' in _cribl_stream_prom_pipeline"
+        fail_msg: >-
+          prometheus_to_netmon pipeline must have exactly one eval function
+          that coerces non-finite metric values and stamps index=netmon_metrics
+          and sourcetype=prometheus:metrics
+
     - name: Cribl Stream template rendering PASSED
       ansible.builtin.debug:
         msg: |
           cribl_stream template assertions passed:
-          - inputs.yml.j2: tcpjson S2S input on 10300 with force_splunk_meta connection pipeline
+          - inputs.yml.j2: tcpjson S2S (10300/force_splunk_meta) + prometheus_rw (9201/prometheus_to_netmon)
           - force_splunk_meta: conditional evals + valid mask schema (matchRegex/replaceExpr)
+          - prometheus_to_netmon: eval coerces non-finite values + stamps index=netmon_metrics
 
 - name: Render and verify unifi_metrics templates
   hosts: localhost
@@ -1469,12 +1504,12 @@
       ansible.builtin.assert:
         that:
           - "'unifi_metrics' in _um_pipeline"
-          - "'netmon' in _um_pipeline"
+          - "'netmon_metrics' in _um_pipeline"
           - "'stream' in _um_pipeline"
         fail_msg: >-
           the shared cribl netmon pipeline must branch index/sourcetype on the
           stream tag so unifi_metrics events land in index=unifi_metrics while
-          netmon (no stream tag) stays index=netmon
+          netmon (no stream tag) stays index=netmon_metrics
 
     - name: UniFi metrics template rendering PASSED
       ansible.builtin.debug:
@@ -1483,3 +1518,166 @@
           - telegraf.conf.j2: inputs.prometheus scrape of unpoller :9130 + stream tag + splunkmetric HEC
           - docker-compose.yml.j2: unpoller (Prometheus) + telegraf
           - cribl netmon pipeline: index branches on stream=unifi_metrics
+
+# =============================================================================
+# wan_hop_discovery — the mtr-JSON parse -> RFC1918/??? reject -> echo-validate ->
+# first-N fold logic, plus the network_quality smokeping target render. No live
+# mtr/network: a canned `mtr -j` payload (shaped like the real Comcast trace)
+# drives the EXACT filter chain from roles/wan_hop_discovery/tasks/main.yml, so
+# this guards the real parsing/fold expressions, not a hand-maintained mirror.
+# =============================================================================
+- name: Verify wan_hop_discovery parse/fold logic + smokeping target render
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/wan_hop_discovery/defaults/main.yml.
+    wan_hop_discovery_private_regex: '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)'
+    wan_hop_discovery_probe_target: "1.1.1.1"
+    wan_hop_discovery_max_hops: 3
+    # CGNAT 100.64/10 echo-validation stand-in (single-quoted -> literal `^100\.`).
+    _cgnat_regex: '^100\.'
+    # Canned `mtr -n -r -j 1.1.1.1` report: LAN gw (10.x, drop), link-local
+    # (169.254, drop), CGNAT edge (100.64/10, kept as candidate then dropped by
+    # echo-validation), two public Comcast hops (96.x, kept), unresponsive (???, drop).
+    _sample_mtr: >-
+      {"report":{"mtr":{"dst":"1.1.1.1"},"hubs":[
+        {"count":"1","host":"10.0.1.1"},
+        {"count":"2","host":"169.254.0.1"},
+        {"count":"3","host":"100.93.238.67"},
+        {"count":"4","host":"96.110.170.225"},
+        {"count":"5","host":"96.108.122.13"},
+        {"count":"6","host":"???"}
+      ]}}
+    # Mirror the generic modem + anycast defaults shared by both consumer roles.
+    network_quality_modem_ip: "192.168.100.1"
+    network_quality_anycast_targets: ["1.1.1.1", "8.8.8.8"]
+    prometheus_stack_modem_ip: "192.168.100.1"
+    prometheus_stack_anycast_targets: ["1.1.1.1", "8.8.8.8"]
+    # network_quality smokeping.yml.j2 inputs.
+    network_quality_smokeping_interval: "1s"
+    network_quality_ip_protocol: "ip4"
+    _template_dir: "../../roles/network_quality/templates"
+
+  tasks:
+    - name: Extract public hop candidates (exact chain from tasks/main.yml)
+      ansible.builtin.set_fact:
+        _candidates: >-
+          {{ (_sample_mtr | from_json).report.hubs
+             | map(attribute='host') | list
+             | reject('match', wan_hop_discovery_private_regex)
+             | reject('equalto', '???')
+             | reject('equalto', wan_hop_discovery_probe_target)
+             | unique | list }}
+
+    - name: Assert RFC1918 + unresponsive dropped; CGNAT + public kept as candidates
+      ansible.builtin.assert:
+        that:
+          - _candidates == ['100.93.238.67', '96.110.170.225', '96.108.122.13']
+        fail_msg: "candidate extraction wrong: {{ _candidates }}"
+
+    - name: Simulate echo-validation (CGNAT 100.64/10 answers traceroute, not echo)
+      ansible.builtin.set_fact:
+        _reachable: "{{ _candidates | reject('match', _cgnat_regex) | list }}"
+
+    - name: Select effective ISP hops (first N echo-reachable)
+      ansible.builtin.set_fact:
+        wan_hop_discovery_isp_hops: "{{ _reachable[0:wan_hop_discovery_max_hops] }}"
+
+    - name: Assert only echo-reachable public hops survive (CGNAT dropped)
+      ansible.builtin.assert:
+        that:
+          - wan_hop_discovery_isp_hops == ['96.110.170.225', '96.108.122.13']
+        fail_msg: "ISP-hop selection wrong: {{ wan_hop_discovery_isp_hops }}"
+
+    - name: Build the consumer target lists (exact expressions from role defaults)
+      ansible.builtin.set_fact:
+        network_quality_smokeping_targets: >-
+          {{ [network_quality_modem_ip]
+             + (wan_hop_discovery_isp_hops | default([]))
+             + (network_quality_anycast_targets | default([])) }}
+        _icmp_targets: >-
+          {{ [prometheus_stack_modem_ip]
+             + (wan_hop_discovery_isp_hops | default([]))
+             + (prometheus_stack_anycast_targets | default([])) }}
+
+    - name: Assert the blackbox icmp job folds modem + ISP hops + anycast in order
+      ansible.builtin.assert:
+        that:
+          - >-
+            _icmp_targets ==
+            ['192.168.100.1', '96.110.170.225', '96.108.122.13', '1.1.1.1', '8.8.8.8']
+        fail_msg: "blackbox icmp target fold wrong: {{ _icmp_targets }}"
+
+    - name: Render network_quality smokeping.yml.j2 with the folded targets
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/smokeping.yml.j2"
+        dest: /tmp/test_smokeping.yml
+        mode: "0644"
+
+    - name: Read rendered smokeping.yml
+      ansible.builtin.slurp:
+        src: /tmp/test_smokeping.yml
+      register: _smokeping_raw
+
+    - name: Parse rendered smokeping.yml (must be valid YAML)
+      ansible.builtin.set_fact:
+        _smokeping_yaml: "{{ _smokeping_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert smokeping pings modem + ISP hops + anycast, never the CGNAT edge
+      ansible.builtin.assert:
+        that:
+          - >-
+            _smokeping_yaml.targets[0].hosts ==
+            ['192.168.100.1', '96.110.170.225', '96.108.122.13', '1.1.1.1', '8.8.8.8']
+          - "'100.93.238.67' not in _smokeping_yaml.targets[0].hosts"
+          - _smokeping_yaml.targets[0].interval == "1s"
+          - _smokeping_yaml.targets[0].protocol == "icmp"
+        fail_msg: >-
+          smokeping.yml.j2 did not render the folded target list, or the non-echo
+          CGNAT hop leaked into the ping set: {{ _smokeping_yaml }}
+
+    - name: Assert empty-discovery degrades safely to modem + anycast only
+      ansible.builtin.assert:
+        that:
+          - >-
+            ([network_quality_modem_ip] + ([] | default([]))
+             + (network_quality_anycast_targets | default([])))
+            == ['192.168.100.1', '1.1.1.1', '8.8.8.8']
+        fail_msg: "empty-discovery fallback wrong"
+
+    - name: Simulate a failed mtr run (rc=1, empty stdout)
+      ansible.builtin.set_fact:
+        wan_hop_discovery_mtr: {rc: 1, stdout: ""}
+
+    - name: Build candidates with the role's guarded ternary (exact expression)
+      ansible.builtin.set_fact:
+        _failed_candidates: >-
+          {{ ((wan_hop_discovery_mtr.stdout | from_json).report.hubs
+              | map(attribute='host') | list
+              | reject('match', wan_hop_discovery_private_regex)
+              | reject('equalto', '???')
+              | reject('equalto', wan_hop_discovery_probe_target)
+              | unique | list)
+             if (wan_hop_discovery_mtr.rc | default(1) == 0
+                 and (wan_hop_discovery_mtr.stdout | default('') | length) > 0)
+             else [] }}
+
+    - name: Assert a failed mtr degrades to empty candidates (no from_json crash)
+      ansible.builtin.assert:
+        that:
+          - _failed_candidates == []
+        fail_msg: >-
+          guarded mtr parse did not degrade to [] on failure: {{ _failed_candidates }}
+
+    - name: WAN-hop discovery logic + render PASSED
+      ansible.builtin.debug:
+        msg: |
+          wan_hop_discovery assertions passed (canned mtr -j, no live network):
+          - parse: RFC1918 + link-local + ??? dropped, CGNAT + public kept
+          - echo-validate: non-echo CGNAT 100.64/10 dropped, public hops kept
+          - fold: smokeping + blackbox icmp = modem + ISP hops + anycast (in order)
+          - smokeping.yml.j2 renders valid YAML with the folded ping set
+          - empty discovery degrades to modem + anycast
+          - failed mtr (rc!=0) degrades to [] candidates without a from_json crash

@@ -1,5 +1,82 @@
 # Changelog
 
+## [1.48.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.48.0...v1.48.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **technitium_dns:** forward over encrypted DoH, disable EDNS Client Subnet ([#480](https://github.com/dryvist/ansible-proxmox-apps/issues/480)) ([71af1c2](https://github.com/dryvist/ansible-proxmox-apps/commit/71af1c2cf0ea1bab8b6d53bf6f87e4fb9380374f))
+
+## [1.48.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.47.1...v1.48.0) (2026-06-23)
+
+
+### Features
+
+* **plex:** warn loudly when the config dir is not on a persistent mount ([#461](https://github.com/dryvist/ansible-proxmox-apps/issues/461)) ([a2e8cb6](https://github.com/dryvist/ansible-proxmox-apps/commit/a2e8cb6e355a45f6962a8138b5c55c54321a0a33))
+
+## [1.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.47.0...v1.47.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **download_vpn:** qBittorrent bandwidth/queue config + service auto-recovery ([#481](https://github.com/dryvist/ansible-proxmox-apps/issues/481)) ([f59c7cd](https://github.com/dryvist/ansible-proxmox-apps/commit/f59c7cd5604cd275ca89e84432cc4cd4fb2fa04d))
+
+## [1.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.46.1...v1.47.0) (2026-06-21)
+
+
+### Features
+
+* **ci:** re-validate inventory data contract on upstream release ([#487](https://github.com/dryvist/ansible-proxmox-apps/issues/487)) ([e7bed6e](https://github.com/dryvist/ansible-proxmox-apps/commit/e7bed6e804616a4b71912e08865dc68b2315fbac))
+
+## [1.46.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.46.0...v1.46.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **cribl:** coerce non-finite netmon metric values; rename index to netmon_metrics ([#485](https://github.com/dryvist/ansible-proxmox-apps/issues/485)) ([a8a8db4](https://github.com/dryvist/ansible-proxmox-apps/commit/a8a8db4cc7504061bd4612bd548ca3483ef2ef8e))
+
+## [1.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.3...v1.46.0) (2026-06-16)
+
+
+### Features
+
+* **cribl:** per-index HEC outputs (one index = one token) ([#465](https://github.com/dryvist/ansible-proxmox-apps/issues/465)) ([719dea0](https://github.com/dryvist/ansible-proxmox-apps/commit/719dea02f0621a317357293c1b4ac216ae144fe0))
+
+## [1.45.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.2...v1.45.3) (2026-06-16)
+
+
+### Bug Fixes
+
+* **cribl_stream:** add required prometheusAPI field to prometheus_rw input ([#476](https://github.com/dryvist/ansible-proxmox-apps/issues/476)) ([2826463](https://github.com/dryvist/ansible-proxmox-apps/commit/2826463ad0f2370d4186ce51811e1baf4123bc6a))
+
+## [1.45.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.1...v1.45.2) (2026-06-16)
+
+
+### Bug Fixes
+
+* **prometheus_stack:** unsafe_writes on prometheus.yml for Docker bind-mount inode stability ([#474](https://github.com/dryvist/ansible-proxmox-apps/issues/474)) ([a39e9b1](https://github.com/dryvist/ansible-proxmox-apps/commit/a39e9b19dc59deaa673ae76171976c023c3c80e9))
+
+## [1.45.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.45.0...v1.45.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **prometheus:** remote_write URL path + Splunk host from instance ([#471](https://github.com/dryvist/ansible-proxmox-apps/issues/471)) ([38bdf42](https://github.com/dryvist/ansible-proxmox-apps/commit/38bdf42f391735f5451b32ad382a9244fcd8ba49))
+
+## [1.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.44.0...v1.45.0) (2026-06-16)
+
+
+### Features
+
+* **prometheus:** remote_write → Cribl Stream → Splunk netmon ([#469](https://github.com/dryvist/ansible-proxmox-apps/issues/469)) ([a7aef9f](https://github.com/dryvist/ansible-proxmox-apps/commit/a7aef9f37add48842e914ca310d7aa45160f0b8e))
+
+## [1.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.43.0...v1.44.0) (2026-06-15)
+
+
+### Features
+
+* **wan_hop_discovery:** echo-validated dynamic ISP-hop discovery ([#463](https://github.com/dryvist/ansible-proxmox-apps/issues/463)) ([9968909](https://github.com/dryvist/ansible-proxmox-apps/commit/9968909db63526c565e091372d25012479d3b97f))
+
 ## [1.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.42.0...v1.43.0) (2026-06-15)
 
 

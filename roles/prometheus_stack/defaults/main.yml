@@ -66,11 +66,15 @@ prometheus_stack_smoke_target: "{{ prometheus_stack_anycast_targets[0] }}"
 prometheus_stack_legacy_blackbox_dir: /opt/blackbox-exporter
 
 # Scrape jobs — one per module — built from the target vars above so an IP is
-# written exactly once. Override this whole list in a private inventory for
-# bespoke per-module target sets.
+# written exactly once. The icmp job also folds in the live ISP-path hops
+# discovered by the wan_hop_discovery play (host fact wan_hop_discovery_isp_hops;
+# empty when discovery did not run, degrading safely to modem + anycast).
 prometheus_stack_blackbox_jobs:
   - module: icmp
-    targets: "{{ [prometheus_stack_modem_ip] + prometheus_stack_anycast_targets }}"
+    targets: >-
+      {{ [prometheus_stack_modem_ip]
+         + (wan_hop_discovery_isp_hops | default([]))
+         + prometheus_stack_anycast_targets }}
   - module: http_2xx_tls
     targets: "{{ prometheus_stack_anycast_targets | map('regex_replace', '^', 'https://') | list }}"
   - module: dns_udp
@@ -79,6 +83,10 @@ prometheus_stack_blackbox_jobs:
 # Raw YAML appended to scrape_configs for exporters that land later
 # (smokeping_prober, irtt, snmp_exporter). Empty until those roles ship.
 prometheus_stack_extra_scrape_configs: ""
+
+# Cribl Stream remote_write endpoint. Empty = remote_write block omitted entirely.
+# Set in a private inventory; never commit a real Cribl IP to this public role default.
+prometheus_stack_remote_write_url: ""
 
 # --- probe modules (HOW to probe; targets come from prometheus_stack_blackbox_jobs) ---
 # icmp        — latency/loss to the modem + ISP hops + public anycast
