@@ -41,6 +41,18 @@
     shell: /bin/bash # the agent's terminal tool needs a real shell
     create_home: true
 
+# The home is a pre-existing ZFS data-volume mount (deployment.json mount_point),
+# so `create_home` above is a no-op for it — the dir already exists, owned by
+# root:root from the mount. Claim it for the hermes user explicitly, or the agent
+# can't write its own $HOME (shell sessions, tool scratch, hermes self-update).
+- name: Ensure the hermes home directory is owned by the runtime user
+  ansible.builtin.file:
+    path: "{{ hermes_agent_home }}"
+    state: directory
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_user }}"
+    mode: "0750"
+
 - name: Ensure HERMES_HOME exists
   ansible.builtin.file:
     path: "{{ hermes_agent_hermes_home }}"
@@ -87,11 +99,16 @@
 - name: Flush handlers so config/unit changes apply before verification
   ansible.builtin.meta: flush_handlers
 
+# Type=simple reports 'active' the instant the daemon forks, so a single check
+# can pass a service that crashes a moment later. Poll until ActiveState settles
+# on 'active' to confirm the gateway actually stays up.
 - name: Verify the Hermes gateway is active
   ansible.builtin.systemd:
     name: hermes-gateway
   register: hermes_agent_gateway_state
-  failed_when: hermes_agent_gateway_state.status.ActiveState != 'active'
+  until: hermes_agent_gateway_state.status.ActiveState | default('') == 'active'
+  retries: 5
+  delay: 2
 
 # Best-effort: surface the active memory provider. Non-fatal so a Hindsight
 # first-run hiccup doesn't fail the whole converge (verify/fix live).
