@@ -1,10 +1,12 @@
 # Ansible Proxmox Apps
 
-Configure applications running on Proxmox VMs and containers.
+Configure applications running on Proxmox VMs and LXC containers.
 
-This repository manages application deployment and configuration on virtual
-machines and containers provisioned by Proxmox VE. For Proxmox infrastructure
-provisioning, see `terraform-proxmox`.
+This repository manages application deployment and configuration only. It assumes
+the target VMs and containers — and their persistent storage — already exist and
+are reachable over SSH. It does not provision infrastructure; it consumes a
+published inventory describing the hosts it should configure (see
+[Inventory contract](#inventory-contract)).
 
 ## Purpose and Scope
 
@@ -12,49 +14,83 @@ Deploy and configure the following application stacks:
 
 - **Cribl Edge**: Syslog ingestion and log processing with persistent queue
 - **Cribl Stream**: Central processing node for log pipeline
-- **HAProxy**: Syslog load balancer distributing logs to Cribl Edge nodes
+- **HAProxy**: Syslog/netflow load balancer distributing traffic to Cribl nodes
 
-Cribl Edge, Cribl Stream, and HAProxy run natively on Proxmox LXC
-containers. Splunk runs on a Proxmox VM. All infrastructure is provisioned
-by `terraform-proxmox`. This repository handles application configuration
-only.
+Cribl Edge, Cribl Stream, and HAProxy run natively on LXC containers. Splunk runs
+on a VM. This repository handles application configuration on those hosts; it does
+not create them.
 
-## Dependencies
+## Inventory contract
 
-- **terraform-proxmox**: Provisions VMs and persistent storage
-- **Doppler**: Secrets management (API keys, passwords)
-- Ansible 2.12+
-- Python 3.12+
+This repository is configuration-only. It expects the hosts, their IPs, and the
+pipeline's port constants to be supplied at run time as a published inventory
+artifact — a single JSON document — rather than hardcoded here. Any system that
+emits a document matching the shape below can drive these playbooks.
+
+The inventory loader (`inventory/load_tofu.yml`) resolves the artifact at run
+time, in priority order (first that resolves wins):
+
+1. `TOFU_INVENTORY_PATH` — an explicit local file (pin / override, e.g. tests).
+2. **Published S3 artifact** — the raw inventory JSON fetched natively from S3
+   (`amazon.aws.aws_caller_info` + `amazon.aws.s3_object`; boto3 comes from the
+   dev shell — no checkout, no provisioning toolchain, no `aws` CLI). Point at it
+   with `TOFU_INVENTORY_S3_URI` (else the URI is derived from the active AWS
+   account); set the region with `TOFU_INVENTORY_S3_REGION` (default `us-east-2`).
+3. `inventory/tofu_inventory.json` — a local gitignored cache.
+
+The resolved document is loaded as `tofu_data` and validated before any play
+runs. It MUST contain at least:
+
+- `tofu_data.domain` — the DNS domain used to derive each container's Proxmox
+  node host as `{node-role}.{domain}` (so there is no global Proxmox host to set).
+- `tofu_data.nodes` — node-name to role mapping, used in the FQDN derivation above.
+- `tofu_data.containers`, `tofu_data.vms`, `tofu_data.docker_vms`,
+  `tofu_data.splunk_vm` — the hosts to configure, each carrying its IP and
+  connection settings; surfaced to roles via `hostvars`.
+- `tofu_data.constants` — the pipeline's port assignments. `service_ports` and
+  `syslog_ports` are required; roles also read `syslog_port_map`, `netflow_ports`,
+  `notification_ports`, and `media_ports`. Ports are never hardcoded in playbooks
+  or roles — they are always read from `tofu_data.constants`.
+
+If `tofu_data` is missing required keys, the loader fails loudly before
+configuring anything.
 
 ## Installation
 
+This repository owns its toolchain via a Nix flake + direnv (`ansible`,
+`ansible-lint`, `molecule`, `sops`, `age`, `python3` with paramiko/pyyaml/jinja2,
+`jq`, `yq`, `pre-commit`). Run everything inside that dev shell.
+
 ```bash
-# Clone repository
-cd ~/git
 git clone <repo-url> ansible-proxmox-apps
 cd ansible-proxmox-apps
+direnv allow    # one-time per worktree — auto-activates the dev shell on cd
 
-# Activate Nix dev shell (provides ansible, ansible-lint, molecule, etc.)
-direnv allow    # one-time per worktree — auto-activates on cd
-
-# Install required collections
+# Install required Ansible Galaxy collections
 ansible-galaxy collection install -r requirements.yml
 
-# Configure Doppler
+# Configure Doppler for secrets (API keys, passwords)
 doppler configure set project ansible-proxmox-apps
 doppler configure set config prd
 ```
 
-Set the required environment variable for the Proxmox LXC SSH connection:
+Set the SSH key used to reach the LXC containers. The Docker-VM roles
+(testing/dev only) reach their hosts over a separate key, which the inventory
+loader requires whenever the inventory contains Docker VMs:
 
 ```bash
+# SSH key for the LXC containers (production stacks)
 export PROXMOX_SSH_KEY_PATH="<path-to-ssh-key>"
+
+# SSH key for the Docker VMs — required when the inventory has docker_vms
+export PROXMOX_DKR_SSH_KEY_PATH="<path-to-docker-vm-ssh-key>"
 ```
 
-Each container's Proxmox node host is derived automatically from the inventory
-(`{node-role}.{domain}`) — there is no global Proxmox host to set.
-
 ## Usage
+
+Run playbooks inside the dev shell, with secrets injected by Doppler. Hosts and
+ports come from the published inventory (see
+[Inventory contract](#inventory-contract)).
 
 ```bash
 # Deploy Cribl Edge (syslog processing on LXC containers)
@@ -73,33 +109,6 @@ doppler run -- ansible-playbook \
 doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/site.yml
 ```
-
-## Inventory
-
-Inventory is loaded dynamically via `inventory/load_tofu.yml`. IPs are
-derived from OpenTofu state and accessed via `hostvars`. Port constants
-come from `tofu_data.constants` (defined in `terraform-proxmox`).
-
-`load_tofu.yml` resolves the inventory at run time, in priority order
-(first that resolves wins):
-
-1. `TOFU_INVENTORY_PATH` — an explicit local file (pin / override, e.g. tests).
-2. **S3 published artifact** — `terragrunt apply` publishes the raw
-   `ansible_inventory` output to the terraform-proxmox state bucket. Any runner
-   with scoped AWS read creds fetches it natively
-   (`amazon.aws.aws_caller_info` + `amazon.aws.s3_object`; boto3 comes from
-   the dev shell) — **no checkout, no terraform toolchain, no `aws` CLI**.
-   Override the location with `TOFU_INVENTORY_S3_URI` (else it is derived
-   from the account); region via `TOFU_INVENTORY_S3_REGION` (default
-   `us-east-2`).
-3. `inventory/tofu_inventory.json` — the local gitignored cache the
-   terraform-proxmox after-hook writes on every apply.
-
-## Port Assignments
-
-All port assignments are defined in `inventory/pipeline_constants.json`
-and merged into `tofu_data.constants`. See that file for current
-values. Do not hardcode ports in playbooks or roles.
 
 ## Roles
 
@@ -143,9 +152,9 @@ See `roles/apt_cacher_ng/README.md` for configuration.
 
 ### cribl_docker_stack (testing/dev only)
 
-Deploy Cribl Stream and Cribl Edge as Docker containers on the docker-host
-VM. This role is for testing and development only. Production pipelines use
-the `cribl_edge` and `cribl_stream` roles on native LXC containers.
+Deploy Cribl Stream and Cribl Edge as Docker containers on the docker-host VM.
+This role is for testing and development only. Production pipelines use the
+`cribl_edge` and `cribl_stream` roles on native LXC containers.
 
 ### mailpit_docker
 
@@ -166,7 +175,7 @@ Deploy Technitium DNS server container for local DNS resolution and blocking.
 ## Architecture
 
 All production components run on LXC containers (Cribl Edge, Cribl Stream,
-HAProxy) or VMs (Splunk), provisioned by `terraform-proxmox`.
+HAProxy) or VMs (Splunk).
 
 ```text
 ┌──────────────────┐    ┌──────────────────┐
@@ -214,7 +223,8 @@ ansible-proxmox-apps/
 ├── .gitignore                   Git ignore rules
 ├── .pre-commit-config.yaml      Pre-commit hooks
 ├── inventory/
-│   ├── hosts.yml                Dynamic inventory from env vars
+│   ├── hosts.yml                Static shared vars (hosts added dynamically)
+│   ├── load_tofu.yml            Resolves & validates the inventory artifact
 │   └── group_vars/
 │       └── all.yml              Global variables
 ├── playbooks/
@@ -241,16 +251,6 @@ ansible-proxmox-apps/
             └── haproxy.cfg.j2
 ```
 
-## Requirements
-
-See `requirements.yml` for Ansible Galaxy collection dependencies.
-
-Run the following to install:
-
-```bash
-ansible-galaxy collection install -r requirements.yml
-```
-
 ## Linting
 
 Validate code quality with ansible-lint:
@@ -265,32 +265,9 @@ Fix common issues automatically:
 ansible-lint --fix
 ```
 
-## Development Environment
-
-This project uses [Nix flakes](https://wiki.nixos.org/wiki/Flakes) + [direnv](https://direnv.net/) for a reproducible dev environment.
-
-### Prerequisites
-
-- [Nix](https://nixos.org/download/) with flakes enabled
-- [direnv](https://direnv.net/docs/installation.html) with [nix-direnv](https://github.com/nix-community/nix-direnv)
-
-### Setup
-
-```sh
-cd ansible-proxmox-apps/main    # or any worktree
-direnv allow                    # one-time per worktree
-```
-
-### Tools provided
-
-- `ansible`, `ansible-lint`, `molecule` — configuration management
-- `sops`, `age` — secrets management
-- `python3` with paramiko, pyyaml, jinja2 — Ansible dependencies
-- `jq`, `yq`, `pre-commit` — utilities
-
 ## Contributing
 
-1. Update inventories in `inventory/`
+1. Update inventory handling in `inventory/`
 2. Modify roles in `roles/*/`
 3. Test with `--check --diff` mode
 4. Validate with `ansible-lint`
@@ -299,3 +276,7 @@ direnv allow                    # one-time per worktree
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) for details.
+
+---
+
+> Part of a [larger ecosystem of ~40 repos](https://docs.jacobpevans.com) — see how it all fits together.
