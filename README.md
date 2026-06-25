@@ -62,6 +62,7 @@ This repository owns its toolchain via a Nix flake + direnv (`ansible`,
 `jq`, `yq`, `pre-commit`). Run everything inside that dev shell.
 
 ```bash
+git clone <repo-url> ansible-proxmox-apps
 cd ansible-proxmox-apps
 direnv allow    # one-time per worktree — auto-activates the dev shell on cd
 
@@ -73,10 +74,16 @@ doppler configure set project ansible-proxmox-apps
 doppler configure set config prd
 ```
 
-Set the SSH key used to reach the LXC containers:
+Set the SSH key used to reach the LXC containers. The Docker-VM roles
+(testing/dev only) reach their hosts over a separate key, which the inventory
+loader requires whenever the inventory contains Docker VMs:
 
 ```bash
+# SSH key for the LXC containers (production stacks)
 export PROXMOX_SSH_KEY_PATH="<path-to-ssh-key>"
+
+# SSH key for the Docker VMs — required when the inventory has docker_vms
+export PROXMOX_DKR_SSH_KEY_PATH="<path-to-docker-vm-ssh-key>"
 ```
 
 ## Usage
