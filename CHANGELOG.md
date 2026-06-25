@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.48.1...v1.49.0) (2026-06-25)
+
+
+### Features
+
+* **hermes-agent:** deploy the NousResearch autonomous agent (headless LXC role) ([#492](https://github.com/dryvist/ansible-proxmox-apps/issues/492)) ([4797065](https://github.com/dryvist/ansible-proxmox-apps/commit/4797065fa95d190eb630422853e4d32189151646))
+
 ## [1.48.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.48.0...v1.48.1) (2026-06-23)
 
 
