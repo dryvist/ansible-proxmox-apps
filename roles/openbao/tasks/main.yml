@@ -132,7 +132,7 @@
     mode: "0640"
   notify: Restart openbao
 
-- name: Render OpenBao AWS unseal EnvironmentFile
+- name: Render OpenBao static-seal EnvironmentFile
   ansible.builtin.template:
     src: openbao.env.j2
     dest: "{{ openbao_env_file }}"
@@ -168,9 +168,10 @@
 
 # --- Phase 8: wait for the API ----------------------------------------------
 # A sealed-but-up OpenBao still answers /v1/sys/health with 200/429/501/503.
-# With KMS auto-unseal it should reach 200 (initialized+unsealed) on re-runs,
-# or 501 (not initialized) on the very first run. Any of those means the
-# listener is accepting connections, which is all we need before init.yml.
+# With static-key auto-unseal a joined node reaches 200 (initialized+unsealed)
+# or 429 (standby); a fresh node returns 501 (not initialized). Any of those
+# means the listener is accepting connections, which is all we need before
+# init.yml runs (on the bootstrap host only).
 - name: Wait for the OpenBao listener to accept connections
   ansible.builtin.uri:
     url: "{{ openbao_api_addr }}/v1/sys/health"
@@ -183,7 +184,12 @@
   changed_when: false
   when: ansible_virtualization_type | default('') != 'docker'
 
-# --- Phase 9: bootstrap (idempotent) ----------------------------------------
-- name: Bootstrap OpenBao (init, KV, policy, AppRole)
+# --- Phase 9: bootstrap (idempotent, bootstrap host only) -------------------
+# Only the bootstrap host runs init/provisioning. The other Raft peers join the
+# leader automatically (retry_join) and self-unseal via the static seal, so they
+# need nothing here.
+- name: Bootstrap OpenBao (init, KV, policies, AppRoles)
   ansible.builtin.include_tasks: init.yml
-  when: ansible_virtualization_type | default('') != 'docker'
+  when:
+    - ansible_virtualization_type | default('') != 'docker'
+    - inventory_hostname == openbao_bootstrap_host
