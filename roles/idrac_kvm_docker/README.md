@@ -79,7 +79,8 @@ viewer cannot connect. This role rebuilds a small local image instead:
 - `templates/Dockerfile.j2` → `FROM domistyle/idrac6` + `COPY app/ /app/`.
 - The `app/` payload is fetched at build time from
   `idrac_kvm_docker_avct_artifact_url` (a tar archive whose top level is `app/`),
-  staged in private storage (MinIO/NAS) — it is **never** committed to git.
+  staged in private storage (the object-storage `idrac` bucket / NAS) — it is
+  **never** committed to git.
 - The image is tagged `idrac_kvm_docker_image` (default `idrac6-avct:local`) and
   compose runs it with `pull: never` (local-only tag).
 
