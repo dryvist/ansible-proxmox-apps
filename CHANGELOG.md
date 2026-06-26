@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.49.1...v1.50.0) (2026-06-26)
+
+
+### Features
+
+* **object-storage:** add artifacts + idrac buckets, repoint technitium off minio ([#497](https://github.com/dryvist/ansible-proxmox-apps/issues/497)) ([e213cf0](https://github.com/dryvist/ansible-proxmox-apps/commit/e213cf04edff131a59dfd26a588451e1b3b4ad64))
+
 ## [1.49.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.49.0...v1.49.1) (2026-06-26)
 
 
