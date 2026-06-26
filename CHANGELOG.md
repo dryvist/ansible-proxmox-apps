@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.49.0...v1.49.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* **cribl:** serve tarball from object-storage (RustFS), not minio ([#496](https://github.com/dryvist/ansible-proxmox-apps/issues/496)) ([b560a5c](https://github.com/dryvist/ansible-proxmox-apps/commit/b560a5c3af423faa3a7b7464c22831d07bfa144b))
+
 ## [1.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.48.1...v1.49.0) (2026-06-25)
 
 
