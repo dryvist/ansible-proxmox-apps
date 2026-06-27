@@ -143,6 +143,18 @@
       changed_when: false
       no_log: true
 
+    - name: Resolve the desired Radarr quality profile (by name; fall back to first)
+      ansible.builtin.set_fact:
+        seerr_radarr_profile: >-
+          {{
+            (seerr_radarr_profiles.json
+             | selectattr('name', 'equalto', seerr_radarr_quality_profile)
+             | list | first)
+            | default((seerr_radarr_profiles.json | first), true)
+            | default({'id': 0, 'name': ''}, true)
+          }}
+      no_log: true
+
     - name: Read existing Seerr Radarr servers
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/radarr"
@@ -177,8 +189,8 @@
           port: "{{ seerr_radarr_port | int }}"
           useSsl: "{{ seerr_radarr_use_ssl }}"
           apiKey: "{{ seerr_radarr_api_key }}"
-          activeProfileId: "{{ (seerr_radarr_profiles.json | first).id }}"
-          activeProfileName: "{{ (seerr_radarr_profiles.json | first).name }}"
+          activeProfileId: "{{ seerr_radarr_profile.id }}"
+          activeProfileName: "{{ seerr_radarr_profile.name }}"
           activeDirectory: "{{ seerr_radarr_root_folder }}"
           is4k: false
           isDefault: true
@@ -194,12 +206,13 @@
         - seerr_radarr_entry == {}
 
     # Self-heal: PUT only when the stored entry drifts from the desired
-    # connection or library root (apiKey rotation, port/SSL change, or a root
-    # folder that moved — e.g. a ZFS dataset split). Comparing before PUT keeps
+    # connection, library root, or default quality profile (apiKey rotation,
+    # port/SSL change, a moved root folder, or a configarr profile change).
+    # Comparing before PUT keeps
     # the task idempotent — no change on a converged host. The PUT body preserves
     # the entry's existing fields (combine) and overlays only the reconciled
     # values, so unrelated settings are untouched.
-    - name: Update Radarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder)
+    - name: Update Radarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder/profile)
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/radarr/{{ seerr_radarr_entry.id }}"
         method: PUT
@@ -215,7 +228,9 @@
               'port': seerr_radarr_port | int,
               'useSsl': seerr_radarr_use_ssl,
               'apiKey': seerr_radarr_api_key,
-              'activeDirectory': seerr_radarr_root_folder
+              'activeDirectory': seerr_radarr_root_folder,
+              'activeProfileId': seerr_radarr_profile.id | int,
+              'activeProfileName': seerr_radarr_profile.name
             })) | dict2items | rejectattr('key', 'equalto', 'id') | items2dict
           }}
         status_code: [200, 201]
@@ -229,6 +244,7 @@
           or (seerr_radarr_entry.port | default(0) | int) != (seerr_radarr_port | int)
           or (seerr_radarr_entry.useSsl | default(false) | bool) != (seerr_radarr_use_ssl | bool)
           or seerr_radarr_entry.activeDirectory | default('') != seerr_radarr_root_folder
+          or (seerr_radarr_entry.activeProfileId | default(0) | int) != (seerr_radarr_profile.id | int)
 
   # Non-fatal: a Radarr that is down/unreachable (e.g. its role has not converged
   # yet, or it is mid-restart) must NOT abort the play. The seerr container still
@@ -257,6 +273,18 @@
         status_code: 200
       register: seerr_sonarr_profiles
       changed_when: false
+      no_log: true
+
+    - name: Resolve the desired Sonarr quality profile (by name; fall back to first)
+      ansible.builtin.set_fact:
+        seerr_sonarr_profile: >-
+          {{
+            (seerr_sonarr_profiles.json
+             | selectattr('name', 'equalto', seerr_sonarr_quality_profile)
+             | list | first)
+            | default((seerr_sonarr_profiles.json | first), true)
+            | default({'id': 0, 'name': ''}, true)
+          }}
       no_log: true
 
     - name: Read existing Seerr Sonarr servers
@@ -310,8 +338,8 @@
           port: "{{ seerr_sonarr_port | int }}"
           useSsl: "{{ seerr_sonarr_use_ssl }}"
           apiKey: "{{ seerr_sonarr_api_key }}"
-          activeProfileId: "{{ (seerr_sonarr_profiles.json | first).id }}"
-          activeProfileName: "{{ (seerr_sonarr_profiles.json | first).name }}"
+          activeProfileId: "{{ seerr_sonarr_profile.id }}"
+          activeProfileName: "{{ seerr_sonarr_profile.name }}"
           activeLanguageProfileId: "{{ _sonarr_langprofile_id }}"
           activeDirectory: "{{ seerr_sonarr_root_folder }}"
           enableSeasonFolders: true
@@ -328,10 +356,11 @@
         - seerr_sonarr_entry == {}
 
     # Self-heal: PUT only when the stored entry drifts from the desired
-    # connection or library root (apiKey rotation, port/SSL change, or a root
-    # folder that moved — e.g. a ZFS dataset split). Body preserves the existing
+    # connection, library root, or default quality profile (apiKey rotation,
+    # port/SSL change, a moved root folder, or a configarr profile change).
+    # Body preserves the existing
     # entry (combine) and overlays only the reconciled values.
-    - name: Update Sonarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder)
+    - name: Update Sonarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder/profile)
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ seerr_web_port }}/api/v1/settings/sonarr/{{ seerr_sonarr_entry.id }}"
         method: PUT
@@ -347,7 +376,9 @@
               'port': seerr_sonarr_port | int,
               'useSsl': seerr_sonarr_use_ssl,
               'apiKey': seerr_sonarr_api_key,
-              'activeDirectory': seerr_sonarr_root_folder
+              'activeDirectory': seerr_sonarr_root_folder,
+              'activeProfileId': seerr_sonarr_profile.id | int,
+              'activeProfileName': seerr_sonarr_profile.name
             })) | dict2items | rejectattr('key', 'equalto', 'id') | items2dict
           }}
         status_code: [200, 201]
@@ -361,6 +392,7 @@
           or (seerr_sonarr_entry.port | default(0) | int) != (seerr_sonarr_port | int)
           or (seerr_sonarr_entry.useSsl | default(false) | bool) != (seerr_sonarr_use_ssl | bool)
           or seerr_sonarr_entry.activeDirectory | default('') != seerr_sonarr_root_folder
+          or (seerr_sonarr_entry.activeProfileId | default(0) | int) != (seerr_sonarr_profile.id | int)
 
   # Non-fatal: a Sonarr that is down/unreachable (e.g. its role has not converged
   # yet, or it is mid-restart) must NOT abort the play. The seerr container still
