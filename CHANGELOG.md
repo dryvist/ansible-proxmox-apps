@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.0...v1.51.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **idrac:** anon-read bucket + default build URL to RustFS mirror ([#504](https://github.com/dryvist/ansible-proxmox-apps/issues/504)) ([3a4e08f](https://github.com/dryvist/ansible-proxmox-apps/commit/3a4e08f5b38a9a5bc866b9fbe61cd93c08f00b89))
+
 ## [1.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.50.0...v1.51.0) (2026-06-27)
 
 
