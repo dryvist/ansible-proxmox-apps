@@ -2,7 +2,7 @@
 
 Runs [Seerr](https://github.com/seerr-team/seerr) (the self-hosted
 movie/TV request UI) as a single Docker container on a dedicated
-Docker-in-LXC (`seerr`, LXC 214), publishes the web UI on the
+Docker-in-LXC (`seerr`), publishes the web UI on the
 OpenTofu-derived port (`media_ports.seerr_web` = 5055), persists its
 config to a host directory, and registers Sonarr + Radarr (and optionally
 Plex) via the Seerr settings API.
@@ -18,12 +18,12 @@ Seerr is **config-only** — it has no `/tank` bind-mounts and reaches the
 
 Wired into `playbooks/site.yml` (Phase 8c, media stack) against any host in
 `seerr_group`. The group is populated by `inventory/load_tofu.yml`
-from `containers` tagged `seerr` in the OpenTofu inventory (terraform-proxmox
-LXC 214 `seerr`), reached over `proxmox_pct_remote`.
+from `containers` tagged `seerr` in the OpenTofu inventory
+(terraform-proxmox `seerr` LXC), reached over `proxmox_pct_remote`.
 
 Prerequisites:
 
-- LXC 214 `seerr` exists (OpenTofu-managed; tags include `container`,
+- The `seerr` LXC exists (OpenTofu-managed; tags include `container`,
   `media`, `seerr`; `nesting=true` for Docker).
 - SOPS `secrets.enc.yaml` populated with `SEERR_API_KEY` (and, to register
   the `*arr` apps, `SONARR_API_KEY` / `RADARR_API_KEY`). Generate each with
@@ -48,11 +48,11 @@ fast with a pointer to SOPS if it is missing.
 
 ## Access
 
-After a successful run on LXC 214:
+After a successful run on the `seerr` LXC:
 
 | Service | URL                          | Container |
 | ------- | ---------------------------- | --------- |
-| Seerr   | `http://<lxc-214-ip>:5055/`  | `seerr`   |
+| Seerr   | `http://<seerr-host>:5055/`  | `seerr`   |
 
 ## Deterministic API key
 
