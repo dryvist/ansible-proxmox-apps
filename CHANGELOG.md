@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.50.0...v1.51.0) (2026-06-27)
+
+
+### Features
+
+* **openbao:** 3-node Raft HA + on-prem static-key unseal + AI RBAC ([#500](https://github.com/dryvist/ansible-proxmox-apps/issues/500)) ([e03bcfe](https://github.com/dryvist/ansible-proxmox-apps/commit/e03bcfe8a77f8494151224c334e1870ee9259fae))
+
 ## [1.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.49.1...v1.50.0) (2026-06-26)
 
 
