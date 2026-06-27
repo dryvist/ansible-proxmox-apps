@@ -1,0 +1,244 @@
+---
+# Langfuse v3 Docker deployment.
+#
+# Installs Docker + Compose on the target LXC, generates (and persists) the
+# three application secrets on first run, then deploys langfuse-web +
+# langfuse-worker + postgres + clickhouse + redis via Docker Compose with
+# bind-mounted data under /opt/langfuse. Blob storage points at the homelab
+# RustFS S3 (the bundled MinIO is dropped).
+#
+# Mirrors the healthchecks_docker role's structure (Docker repo +
+# fuse-overlayfs + Python venv for community.docker, then compose deploy +
+# health check).
+
+# =============================================================================
+# Docker Installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    langfuse_docker_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ langfuse_docker_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ langfuse_docker_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Configure Docker to use fuse-overlayfs storage driver
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "fuse-overlayfs"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: langfuse_docker_daemon_config
+
+- name: Restart Docker to apply fuse-overlayfs configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: langfuse_docker_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Langfuse Data Directories
+# =============================================================================
+# ClickHouse dirs are pre-owned by uid 101 because the service pins user 101:101
+# (bypassing the image's root-entrypoint chown). Postgres and Redis dirs stay
+# root-owned — those images chown their bind mount via the root entrypoint.
+
+- name: Create Langfuse data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "0755"
+  loop: "{{ langfuse_docker_directories }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# =============================================================================
+# Application secrets (generate-once, persist on disk)
+# =============================================================================
+# NEXTAUTH_SECRET, SALT and ENCRYPTION_KEY must be stable across runs; persist
+# each in a root-only file the first time the role runs and reuse it thereafter.
+# ENCRYPTION_KEY must be 64 hex chars — SHA-256 of a random string yields exactly
+# that; SALT / NEXTAUTH_SECRET accept any high-entropy string.
+
+- name: Check for existing generated Langfuse secrets
+  ansible.builtin.stat:
+    path: "{{ langfuse_docker_data_dir }}/{{ item.file }}"
+  loop: "{{ langfuse_docker_generated_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: langfuse_docker_secret_stats
+
+- name: Generate Langfuse secrets (first run only)
+  ansible.builtin.copy:
+    dest: "{{ langfuse_docker_data_dir }}/{{ item.item.file }}"
+    content: >-
+      {{ (lookup('community.general.random_string', length=item.item.length,
+                 upper=true, lower=true, numbers=true, special=false) | hash('sha256'))
+         if item.item.hex
+         else lookup('community.general.random_string', length=item.item.length,
+                     upper=true, lower=true, numbers=true, special=false) }}
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ langfuse_docker_secret_stats.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not item.stat.exists
+  no_log: true
+
+- name: Read generated Langfuse secrets into memory
+  ansible.builtin.slurp:
+    src: "{{ langfuse_docker_data_dir }}/{{ item.file }}"
+  loop: "{{ langfuse_docker_generated_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: langfuse_docker_secret_slurps
+  no_log: true
+
+- name: Resolve generated Langfuse secrets into a fact
+  ansible.builtin.set_fact:
+    langfuse_docker_secrets: "{{ dict(_langfuse_docker_secret_names | zip(_langfuse_docker_secret_values)) }}"
+  vars:
+    _langfuse_docker_secret_names: "{{ langfuse_docker_generated_secrets | map(attribute='name') | list }}"
+    _langfuse_docker_secret_values: >-
+      {{ langfuse_docker_secret_slurps.results
+         | map(attribute='content') | map('b64decode') | map('trim') | list }}
+  no_log: true
+
+# =============================================================================
+# Compose Deployment
+# =============================================================================
+
+- name: Deploy Langfuse docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ langfuse_docker_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"  # contains datastore passwords + app secrets
+  no_log: true
+  notify: Restart langfuse
+
+# =============================================================================
+# Python venv for Ansible Docker modules
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# Intentionally do NOT set ansible_python_interpreter via set_fact — that would
+# leak the venv (which only has the `docker` package) to subsequent tasks like
+# uri / wait_for. Scope the venv interpreter to the community.docker tasks via
+# task-level vars instead.
+
+- name: Deploy Langfuse via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ langfuse_docker_data_dir }}"
+    state: present
+  register: langfuse_docker_compose_result
+  changed_when: >-
+    (langfuse_docker_compose_result.actions | default([]))
+    | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
+    | list | length > 0
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  no_log: true
+
+# =============================================================================
+# Health Check
+# =============================================================================
+# First boot runs postgres + clickhouse migrations before the web server listens,
+# so the port wait and the health poll are both generous.
+
+- name: Wait for Langfuse web port to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ langfuse_docker_web_port }}"
+    timeout: 180
+
+- name: Verify Langfuse health endpoint responds
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ langfuse_docker_web_port }}/api/public/health"
+    method: GET
+    status_code: 200
+  register: langfuse_docker_health
+  retries: 30
+  delay: 10
+  until: langfuse_docker_health.status == 200
+  changed_when: false
