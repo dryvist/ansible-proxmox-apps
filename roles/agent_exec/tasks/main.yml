@@ -80,3 +80,15 @@
 
 - name: Flush handlers so unit / bootstrap changes apply now
   ansible.builtin.meta: flush_handlers
+
+# Type=simple reports 'active' the instant the process forks, so a single check
+# can pass a service that crashes a moment later. Poll until ActiveState settles
+# (mirrors roles/hermes_agent). The placeholder entrypoint idles, so a healthy
+# converge stays active; real agent code that crashes on boot fails loud here.
+- name: Verify the agent-exec service is active
+  ansible.builtin.systemd:
+    name: "{{ agent_exec_service }}"
+  register: agent_exec_service_state
+  until: agent_exec_service_state.status.ActiveState | default('') == 'active'
+  retries: 5
+  delay: 2
