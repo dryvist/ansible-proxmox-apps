@@ -5,9 +5,10 @@ Plain-LXC **Python runtime** for running [CrewAI](https://docs.crewai.com/) +
 [OpenLLMetry](https://github.com/traceloop/openllmetry) (OTLP/HTTP) tracing. No
 Docker — just a venv and a systemd service.
 
-This role ships the **platform** (runtime user, venv, instrumentation, unit); the
-**agent code is user-supplied**. A placeholder `main.py` is deployed once and
-idles so the first converge comes up green — replace it with your own agent.
+This role ships the **platform** (runtime user, venv, instrumentation, unit) plus
+a working **autonomy seed** in `main.py` (deployed once, `force: false`). The seed
+runs a tiny traced crew against both model tiers each interval; extend or replace
+it with your own agents — your edits survive re-converges.
 
 ## What it does
 
@@ -18,14 +19,18 @@ idles so the first converge comes up green — replace it with your own agent.
   instrumentors.
 - Deploys `otel_bootstrap.py` (Ansible-managed) — import it first from your
   entrypoint to wire spans to the OTLP/HTTP collector.
-- Runs `main.py` under systemd (`Restart=on-failure`) with the `OTEL_*` env
-  preset.
+- Runs `main.py` under systemd (`Restart=on-failure`) with the `OTEL_*` and
+  two-tier model-endpoint env preset. The seeded `main.py` loops every
+  `agent_exec_interval_seconds`, running a small traced crew against the large
+  tier (real work) and the light tier (hermes-infer soak path); a failed run is
+  logged and the loop continues.
 
 ## Your agent code
 
-Replace `/var/lib/agent-exec/main.py` (deployed `force: false`, never clobbered)
-with your CrewAI/LangChain script. Keep `import otel_bootstrap` first so runs are
-traced, then `sudo systemctl restart agent-exec`.
+`/var/lib/agent-exec/main.py` (deployed `force: false`, never clobbered) ships a
+working seed. Extend or replace it with your CrewAI/LangChain agents, keeping
+`import otel_bootstrap` first so runs are traced, then
+`sudo systemctl restart agent-exec`.
 
 ## Installation
 
@@ -60,6 +65,11 @@ Or include the role directly against the group:
 | `agent_exec_home` | `/var/lib/agent-exec` | runtime user home + working dir |
 | `agent_exec_venv` | `/opt/agent-exec-venv` | Python venv |
 | `agent_exec_pip_packages` | runtime + instrumentation | venv package set |
+| `agent_exec_interval_seconds` | `900` | seconds between autonomy-seed cycles |
+| `agent_exec_model_large` | `openai/default` | large-tier model name (LiteLLM form) |
+| `agent_exec_model_light` | `openai/hermes4` | light-tier (hermes-infer) model name |
+| `agent_exec_api_key` | `sk-noauth` | OpenAI-compatible key (runners ignore it) |
 
-`ai_orchestration_otel_endpoint` (the OTLP collector base URL) is a group var
-defined at the inventory level — this role consumes it, never defaults it.
+`ai_orchestration_otel_endpoint` (OTLP collector) and the two model base URLs
+(`ai_orchestration_model_large_base_url`, `ai_orchestration_ollama_base_url`) are
+group vars defined at the inventory level — this role consumes them.

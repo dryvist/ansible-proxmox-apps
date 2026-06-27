@@ -323,6 +323,33 @@
     - technitium_dns_apply | bool
   no_log: true
 
+- name: Create extra CNAME records (verbatim FQDN target)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: CNAME
+      cname: "{{ item.target }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_extra_cname_records | selectattr('target', 'truthy') | list }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.target }}"
+  register: technitium_dns_extra_cname_result
+  changed_when: technitium_dns_extra_cname_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_extra_cname_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_extra_cname_result.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
 # Point each Traefik-fronted service name at the Traefik LXC so clients reach it
 # over TLS at https://<name>.{domain}. A-records (not CNAMEs) to avoid A/CNAME
 # coexistence issues and to cleanly overwrite any prior host record. Skipped
