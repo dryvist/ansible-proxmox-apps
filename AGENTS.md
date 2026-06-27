@@ -31,9 +31,13 @@ this repo handles app config only.
   Proton WireGuard with a fail-closed dual-stack nftables killswitch, NAT-PMP
   port forwarding, and three layers of continuous killswitch validation), plus
   LAN-only `sonarr`, `radarr`, `plex` (install + idempotent non-fatal claim +
-  library-section creation), `seerr` (request UI, Docker-in-LXC 214), and
-  `servarr_wiring` (idempotent API self-wiring: public Prowlarr indexers,
-  Prowlarr apps sync, qBittorrent download clients, root folders).
+  library-section creation), `seerr` (request UI, Docker-in-LXC), and
+  `servarr_wiring` (idempotent API self-wiring: deterministic API keys, public
+  Prowlarr indexers, Prowlarr -> Sonarr/Radarr app sync, and media-management
+  settings — hardlinks + recycler bin). Root folders + qBittorrent download
+  clients are owned by the devopsarr `servarr-config` tofu module
+  (`terraform-proxmox`); quality profiles + custom formats by the `configarr`
+  role (TRaSH-Guides). `servarr_wiring` no longer touches those.
 
 **This repo does NOT own Splunk.** Splunk is managed by `ansible-splunk`.
 
