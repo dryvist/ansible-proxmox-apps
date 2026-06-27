@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.1...v1.51.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* **seerr:** default new requests to a named quality profile, not "Any" ([#506](https://github.com/dryvist/ansible-proxmox-apps/issues/506)) ([8c79e44](https://github.com/dryvist/ansible-proxmox-apps/commit/8c79e4468df2e57d3e11914c9c62b900b17c587b))
+
 ## [1.51.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.0...v1.51.1) (2026-06-27)
 
 
