@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.2...v1.52.0) (2026-06-27)
+
+
+### Features
+
+* **download_vpn:** seed-then-clean qBittorrent policy (ratio 10 / 45d / 14d inactive) ([#510](https://github.com/dryvist/ansible-proxmox-apps/issues/510)) ([dcb6e37](https://github.com/dryvist/ansible-proxmox-apps/commit/dcb6e371a8476de101811b191b5970a84571ad48))
+
+
+### Bug Fixes
+
+* **servarr_wiring:** correct recycleBin API field (was recyclerBin, never applied) ([#511](https://github.com/dryvist/ansible-proxmox-apps/issues/511)) ([f1423b3](https://github.com/dryvist/ansible-proxmox-apps/commit/f1423b3ba2a1d9b985e511349dbf278793ccb533))
+
 ## [1.51.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.1...v1.51.2) (2026-06-27)
 
 
