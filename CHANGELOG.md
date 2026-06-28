@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.52.0...v1.52.1) (2026-06-28)
+
+
+### Bug Fixes
+
+* pin all timezones to UTC, disallow custom zones ([#515](https://github.com/dryvist/ansible-proxmox-apps/issues/515)) ([390cd2b](https://github.com/dryvist/ansible-proxmox-apps/commit/390cd2be8147b2a42fe0d863f6204a72eaa00dc2))
+
 ## [1.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.2...v1.52.0) (2026-06-27)
 
 
