@@ -131,6 +131,12 @@ toolchain, only AWS read creds) → the local gitignored
 Port constants come from `tofu_data.constants`
 (defined in terraform-proxmox `locals.tf`).
 
+This repo is a **read-only consumer** — it never reads `deployment.json`; the
+published inventory is the source of truth, fetched fresh with no authoritative
+local copy. The upstream desired-state's ACID single-writer contract is
+documented once at
+[Deployment state contract](https://docs.jacobpevans.com/infrastructure/deployment-state-contract).
+
 ### Groups (from tofu inventory)
 
 - `lxc_containers`: All LXC containers (`proxmox_pct_remote` connection)
