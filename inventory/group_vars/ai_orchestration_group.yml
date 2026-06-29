@@ -1,0 +1,33 @@
+---
+# Shared config for the AI-orchestration emitters (Dify, LangFlow, agent-exec).
+# These guests carry the `ai-orchestration` tag → ai_orchestration_group (load_tofu.yml).
+# Langfuse is NOT here — it receives telemetry, it does not emit.
+
+# Internal subdomain + Cribl Edge OTLP/HTTP port, split out so the composed
+# endpoint stays under the 120-char yaml line limit (a folded scalar can't wrap a
+# URL without injecting a space). Port is DRY from the tofu_data constants.
+ai_subdomain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') | mandatory('PROXMOX_SUBDOMAIN required') }}"
+ai_otel_http_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['otel_traces_http'] }}
+
+# Cribl Edge OTLP/HTTP receiver for OpenTelemetry emission. The native OTEL source
+# on Cribl Edge and the Langfuse trace fan-out are configured LIVE (this Cribl
+# version cannot split one input across multiple outputs, so the fork is built and
+# verified against the running Cribl + Langfuse). Apps emit here regardless; the
+# OTLP exporter tolerates an unreachable endpoint (retry/drop), so converge is safe
+# before the source exists.
+ai_orchestration_otel_endpoint: "http://cribl-edge.{{ ai_subdomain }}:{{ ai_otel_http_port }}"
+
+# OpenAI-compatible model endpoints — two active tiers; each tool/flow selects per
+# its own config (never forced):
+#   light tier — hermes-infer (Ollama): lower-requirement workloads + long-term
+#     soak testing; fronted by Traefik at the `ollama` ingress.
+#   large tier — reached at the neutral `llm-large` name (Technitium auto-creates a
+#     CNAME from it to the runner's FQDN, sourced from LLM_LARGE_RUNNER_HOST), so
+#     the host behind it is swappable with no app change and no IP is stored.
+ai_orchestration_ollama_base_url: "https://ollama.{{ ai_subdomain }}/v1"
+ai_orchestration_model_large_base_url: "http://llm-large.{{ ai_subdomain }}:11434/v1"
+
+# Restart the Docker stack on failure (Phase 9 systemd restart policy).
+systemd_restart_policy_services:
+  - docker

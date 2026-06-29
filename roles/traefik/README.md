@@ -1,7 +1,7 @@
 # traefik
 
 HTTPS reverse-proxy / TLS ingress for **every** service web UI. Traefik runs as a
-pinned static binary under systemd on the ingress LXC (`media_svc` VLAN, vmid 215)
+pinned static binary under systemd on the ingress LXC (`media_svc` VLAN)
 and fronts each service at `https://<name>.{{ proxmox_domain }}` — no ports. It
 fetches and **auto-renews a single wildcard `*.{{ proxmox_domain }}`** Let's
 Encrypt certificate **itself** via the **Route53 DNS-01 challenge** (lego, built
