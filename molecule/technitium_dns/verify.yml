@@ -90,3 +90,23 @@
           Zone/forwarder mismatch: zone='{{ technitium_dns_zone }}'
           apex='{{ technitium_dns_apex_domain }}'
           forwarders={{ technitium_dns_forwarders }}.
+
+    # Extra CNAME records (verbatim FQDN target): an entry with an empty target
+    # (e.g. an unset LLM_LARGE_RUNNER_HOST) must be dropped so converge never
+    # POSTs a blank alias.
+    - name: Assert extra-CNAME filtering drops empty-target entries
+      vars:
+        technitium_dns_extra_cname_records:
+          - { name: llm-large, target: 'host.example.net' }
+          - { name: unset-runner, target: '' }
+      ansible.builtin.assert:
+        that:
+          - >-
+            (technitium_dns_extra_cname_records | selectattr('target', 'truthy')
+             | list | length) == 1
+          - >-
+            (technitium_dns_extra_cname_records | selectattr('target', 'truthy')
+             | map(attribute='name') | list) == ['llm-large']
+        fail_msg: >-
+          Extra-CNAME truthy filter did not drop the empty-target entry:
+          {{ technitium_dns_extra_cname_records }}.
