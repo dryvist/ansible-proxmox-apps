@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.52.1...v1.53.0) (2026-06-29)
+
+
+### Features
+
+* **ai:** AI orchestration roles (Dify/LangFlow/CrewAI) + Langfuse ([#509](https://github.com/dryvist/ansible-proxmox-apps/issues/509)) ([470f839](https://github.com/dryvist/ansible-proxmox-apps/commit/470f8396baf86673ed61f04a011ebf7080172e45))
+
 ## [1.52.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.52.0...v1.52.1) (2026-06-28)
 
 
