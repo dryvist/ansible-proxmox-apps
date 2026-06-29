@@ -140,7 +140,7 @@ derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
   unlimited. `alt_*` apply during the scheduler window.
 - `download_vpn_qbittorrent_schedule_{from,to}_{hour,min}` +
   `download_vpn_qbittorrent_scheduler_days` — throttle window in container local time.
-- `download_vpn_timezone` — container TZ (default `America/New_York`; the scheduler reads it).
+- `download_vpn_timezone` — container TZ (pinned to `UTC`; the scheduler reads it). Workspace policy: UTC everywhere — do not set a non-UTC zone.
 - `download_vpn_lanroute_reply_networks` — RFC1918 ranges the LAN-reply table
   routes; everything else hits its `unreachable default` (fail-closed).
 

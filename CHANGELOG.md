@@ -1,5 +1,59 @@
 # Changelog
 
+## [1.52.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.52.0...v1.52.1) (2026-06-28)
+
+
+### Bug Fixes
+
+* pin all timezones to UTC, disallow custom zones ([#515](https://github.com/dryvist/ansible-proxmox-apps/issues/515)) ([390cd2b](https://github.com/dryvist/ansible-proxmox-apps/commit/390cd2be8147b2a42fe0d863f6204a72eaa00dc2))
+
+## [1.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.2...v1.52.0) (2026-06-27)
+
+
+### Features
+
+* **download_vpn:** seed-then-clean qBittorrent policy (ratio 10 / 45d / 14d inactive) ([#510](https://github.com/dryvist/ansible-proxmox-apps/issues/510)) ([dcb6e37](https://github.com/dryvist/ansible-proxmox-apps/commit/dcb6e371a8476de101811b191b5970a84571ad48))
+
+
+### Bug Fixes
+
+* **servarr_wiring:** correct recycleBin API field (was recyclerBin, never applied) ([#511](https://github.com/dryvist/ansible-proxmox-apps/issues/511)) ([f1423b3](https://github.com/dryvist/ansible-proxmox-apps/commit/f1423b3ba2a1d9b985e511349dbf278793ccb533))
+
+## [1.51.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.1...v1.51.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* **seerr:** default new requests to a named quality profile, not "Any" ([#506](https://github.com/dryvist/ansible-proxmox-apps/issues/506)) ([8c79e44](https://github.com/dryvist/ansible-proxmox-apps/commit/8c79e4468df2e57d3e11914c9c62b900b17c587b))
+
+## [1.51.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.51.0...v1.51.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **idrac:** anon-read bucket + default build URL to RustFS mirror ([#504](https://github.com/dryvist/ansible-proxmox-apps/issues/504)) ([3a4e08f](https://github.com/dryvist/ansible-proxmox-apps/commit/3a4e08f5b38a9a5bc866b9fbe61cd93c08f00b89))
+
+## [1.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.50.0...v1.51.0) (2026-06-27)
+
+
+### Features
+
+* **openbao:** 3-node Raft HA + on-prem static-key unseal + AI RBAC ([#500](https://github.com/dryvist/ansible-proxmox-apps/issues/500)) ([e03bcfe](https://github.com/dryvist/ansible-proxmox-apps/commit/e03bcfe8a77f8494151224c334e1870ee9259fae))
+
+## [1.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.49.1...v1.50.0) (2026-06-26)
+
+
+### Features
+
+* **object-storage:** add artifacts + idrac buckets, repoint technitium off minio ([#497](https://github.com/dryvist/ansible-proxmox-apps/issues/497)) ([e213cf0](https://github.com/dryvist/ansible-proxmox-apps/commit/e213cf04edff131a59dfd26a588451e1b3b4ad64))
+
+## [1.49.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.49.0...v1.49.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* **cribl:** serve tarball from object-storage (RustFS), not minio ([#496](https://github.com/dryvist/ansible-proxmox-apps/issues/496)) ([b560a5c](https://github.com/dryvist/ansible-proxmox-apps/commit/b560a5c3af423faa3a7b7464c22831d07bfa144b))
+
 ## [1.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.48.1...v1.49.0) (2026-06-25)
 
 
