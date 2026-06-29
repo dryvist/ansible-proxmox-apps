@@ -114,9 +114,8 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   `QBITTORRENT_ADMIN_PASSWORD` is delivered via SOPS.
 - The single `bulk/data` dataset bind-mounted at `/data` (TRaSH
   single-filesystem layout). qBittorrent saves to `/data/torrents` (per-category
-  `tv-sonarr` -> `/data/torrents/tv` and `radarr` -> `/data/torrents/movies`,
-  incomplete in `/data/torrents/incomplete`) on the SAME filesystem as the
-  `/data/media` library roots, so *arr imports hardlink.
+  `tv`/`movies` subdirs, incomplete in `/data/torrents/incomplete`) on the SAME
+  filesystem as the `/data/media` library roots, so *arr imports hardlink.
 
 ## Key variables
 

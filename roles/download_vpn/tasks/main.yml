@@ -280,54 +280,21 @@
 
 # --- Phase 6: qBittorrent ----------------------------------------------------
 - name: Ensure qBittorrent config directory exists
-  # noqa: command-instead-of-module
-  # In unprivileged LXCs root cannot traverse/write qbittorrent-owned private
-  # dirs, and sudo is not installed for become_user. Create the profile path as
-  # the service user directly.
-  ansible.builtin.command:
-    cmd: >-
-      runuser -u {{ download_vpn_user }} --
-      mkdir -p {{ download_vpn_qbittorrent_config_dir }}
-  changed_when: false
-
-- name: Ensure qBittorrent config directory permissions
-  # noqa: command-instead-of-module
-  ansible.builtin.command:
-    cmd: >-
-      runuser -u {{ download_vpn_user }} --
-      chmod 0750 {{ download_vpn_qbittorrent_config_dir | dirname }}
-      {{ download_vpn_qbittorrent_config_dir }}
-  changed_when: false
-
-- name: Render qBittorrent configuration to a temporary file
-  ansible.builtin.template:
-    src: qBittorrent.conf.j2
-    dest: /tmp/qBittorrent.conf.ansible
-    owner: root
+  ansible.builtin.file:
+    path: "{{ download_vpn_qbittorrent_config_dir }}"
+    state: directory
+    owner: "{{ download_vpn_user }}"
     group: "{{ download_vpn_group }}"
-    mode: "0640"
-
-- name: Compare rendered qBittorrent configuration with the live profile
-  # noqa: command-instead-of-module
-  ansible.builtin.command:
-    cmd: >-
-      runuser -u {{ download_vpn_user }} --
-      cmp -s /tmp/qBittorrent.conf.ansible
-      {{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf
-  register: download_vpn_qbt_conf_cmp
-  failed_when: false
-  changed_when: false
+    mode: "0750"
 
 - name: Deploy qBittorrent configuration (bound to wg0)
-  # noqa: command-instead-of-module
-  ansible.builtin.command:
-    cmd: >-
-      runuser -u {{ download_vpn_user }} --
-      install -m 0640 /tmp/qBittorrent.conf.ansible
-      {{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf
-  register: download_vpn_qbt_conf_deploy
-  when: download_vpn_qbt_conf_cmp.rc != 0
-  changed_when: true
+  ansible.builtin.template:
+    src: qBittorrent.conf.j2
+    dest: "{{ download_vpn_qbittorrent_config_dir }}/qBittorrent.conf"
+    owner: "{{ download_vpn_user }}"
+    group: "{{ download_vpn_group }}"
+    mode: "0640"
+  notify: Restart qbittorrent
 
 - name: Deploy qBittorrent systemd unit
   ansible.builtin.template:
@@ -336,7 +303,9 @@
     owner: root
     group: root
     mode: "0644"
-  register: download_vpn_qbt_unit_deploy
+  notify:
+    - Reload systemd
+    - Restart qbittorrent
 
 - name: Enable + start qBittorrent
   ansible.builtin.systemd:
@@ -346,22 +315,15 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
-- name: Restart qBittorrent after file-backed config changes
+- name: Apply the pending qBittorrent restart before the setPreferences API writes
   # On re-runs the daemon is already running with the OLD in-memory config; the
   # setPreferences calls below would make it flush that stale config back over the
-  # freshly installed qBittorrent.conf, silently reverting file-managed settings
-  # (port, interface binding, encryption). Restarting here reloads the new conf
-  # first; the WebUI readiness wait below covers the restart. Gated on the
-  # register vars so it is a no-op when neither the conf nor the unit changed.
-  ansible.builtin.systemd:
-    name: qbittorrent-nox.service
-    state: restarted
-    daemon_reload: true
-  when:
-    - download_vpn_manage_services
-    - >-
-      (download_vpn_qbt_conf_deploy is changed)
-      or (download_vpn_qbt_unit_deploy is changed)
+  # freshly templated qBittorrent.conf, silently reverting template-managed
+  # settings (port, interface binding, encryption). Flushing the queued handlers
+  # here reloads the new conf first; the WebUI readiness wait below covers the
+  # restart. flush_handlers ignores `when`, but Restart is only queued when the
+  # conf or unit template reported changed, so this is a no-op on unchanged runs.
+  ansible.builtin.meta: flush_handlers
 
 - name: Wait for the qBittorrent WebUI to answer
   ansible.builtin.uri:
