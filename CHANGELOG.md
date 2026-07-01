@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.53.0...v1.54.0) (2026-07-01)
+
+
+### Features
+
+* **download_vpn:** unprivileged-LXC qBittorrent config via runuser + gated restart ([#501](https://github.com/dryvist/ansible-proxmox-apps/issues/501)) ([cbad3d6](https://github.com/dryvist/ansible-proxmox-apps/commit/cbad3d69a406cfffd6c25e579e9be21998b3ecda))
+
 ## [1.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.52.1...v1.53.0) (2026-06-29)
 
 
