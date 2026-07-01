@@ -135,11 +135,11 @@ derived LAN subnet) — nothing is hardcoded. See `defaults/main.yml`.
   probed before refreshing the cache so a locked-down (offline) box doesn't block.
 - `download_vpn_validator_interval` — runtime validator cadence (default 2min).
 - `download_vpn_ntfy_url` / `download_vpn_healthcheck_url` — breach alerting.
-- `download_vpn_qbittorrent_{up,dl,alt_up,alt_dl}_limit` — KiB/s, `-1` =
+- `download_vpn_qbittorrent_{up,dl,alt_up,alt_dl}_limit` — bytes/sec, `0` =
   unlimited. `alt_*` apply during the scheduler window.
 - `download_vpn_qbittorrent_schedule_{from,to}_{hour,min}` +
-  `download_vpn_qbittorrent_scheduler_days` — throttle window (UTC).
-- `download_vpn_timezone` — container TZ (default `UTC`; the scheduler reads it).
+  `download_vpn_qbittorrent_scheduler_days` — throttle window in container local time.
+- `download_vpn_timezone` — container TZ (pinned to `UTC`; the scheduler reads it). Workspace policy: UTC everywhere — do not set a non-UTC zone.
 - `download_vpn_lanroute_reply_networks` — RFC1918 ranges the LAN-reply table
   routes; everything else hits its `unreachable default` (fail-closed).
 

@@ -138,6 +138,12 @@
     create_home: true
     state: present
 
+- name: Ensure qbittorrent home is traversable in unprivileged LXC
+  ansible.builtin.file:
+    path: "/home/{{ download_vpn_user }}"
+    state: directory
+    mode: "0711"
+
 # The whole shared /data tree — the /data/media library AND /data/torrents
 # (incomplete/tv/movies) — is created host-side by the media_lxc_features role
 # (owner root, group media/gid 13000, setgid + group-writable) and exposed via
@@ -297,7 +303,9 @@
     owner: root
     group: root
     mode: "0644"
-  notify: Reload systemd
+  notify:
+    - Reload systemd
+    - Restart qbittorrent
 
 - name: Enable + start qBittorrent
   ansible.builtin.systemd:
@@ -311,11 +319,10 @@
   # On re-runs the daemon is already running with the OLD in-memory config; the
   # setPreferences calls below would make it flush that stale config back over the
   # freshly templated qBittorrent.conf, silently reverting template-managed
-  # settings (port, interface binding, encryption). Flushing the queued Restart
-  # handler here reloads the new conf first; the WebUI readiness wait below covers
-  # the restart. meta: flush_handlers ignores `when`, but the Restart is only
-  # queued when the config template above reported changed, so this is a no-op on
-  # unchanged runs.
+  # settings (port, interface binding, encryption). Flushing the queued handlers
+  # here reloads the new conf first; the WebUI readiness wait below covers the
+  # restart. flush_handlers ignores `when`, but Restart is only queued when the
+  # conf or unit template reported changed, so this is a no-op on unchanged runs.
   ansible.builtin.meta: flush_handlers
 
 - name: Wait for the qBittorrent WebUI to answer
@@ -401,9 +408,9 @@
   changed_when: false
   when: download_vpn_manage_services
 
-# Categories with explicit save paths (TRaSH layout): tv -> /data/torrents/tv,
-# movies -> /data/torrents/movies. Same WebUI-API mechanism as the prefs above
-# (the categories store is daemon-owned; a template write would be clobbered).
+# Categories with explicit save paths (TRaSH layout). Same WebUI-API mechanism
+# as the prefs above (the categories store is daemon-owned; a template write
+# would be clobbered).
 # Idempotent: GET the category map, create only the missing ones, edit only on
 # save-path drift.
 - name: Read existing qBittorrent categories
@@ -457,7 +464,6 @@
     path: "{{ download_vpn_prowlarr_data_dir }}"
     state: directory
     owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
     mode: "0750"
 
 - name: Download + extract Prowlarr
@@ -491,8 +497,8 @@
   ansible.builtin.copy:
     dest: "{{ download_vpn_natpmp_env_path }}"
     owner: root
-    group: "{{ download_vpn_group }}"
-    mode: "0640"
+    group: root
+    mode: "0600"
     content: |
       QBITTORRENT_ADMIN_PASSWORD={{ download_vpn_qbittorrent_admin_password }}
   no_log: true
