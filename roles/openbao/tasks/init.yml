@@ -123,11 +123,13 @@
 # Rendered on the TARGET: `bao policy write` below executes there and reads
 # the file from its local filesystem (a controller-side render is unreachable
 # from the target). Policy HCL is non-secret — it comes from the committed
-# templates.
+# templates. Rendered into openbao_config_dir (/etc/openbao, 0750 root:openbao)
+# rather than world-writable /tmp, so the write is not exposed to symlink races
+# or other local users on the host.
 - name: Render the RBAC policies to the target
   ansible.builtin.template:
     src: "{{ item.template }}"
-    dest: "/tmp/openbao-policy-{{ item.name }}-{{ inventory_hostname }}.hcl"
+    dest: "{{ openbao_config_dir }}/.policy-{{ item.name }}.hcl"
     mode: "0600"
   loop: "{{ openbao_policies }}"
   loop_control:
@@ -150,7 +152,7 @@
   ansible.builtin.command:
     cmd: >-
       bao policy write {{ item.name }}
-      /tmp/openbao-policy-{{ item.name }}-{{ inventory_hostname }}.hcl
+      {{ openbao_config_dir }}/.policy-{{ item.name }}.hcl
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
     BAO_TOKEN: "{{ openbao_bootstrap_token }}"
@@ -165,7 +167,7 @@
 
 - name: Remove the rendered policies from the target
   ansible.builtin.file:
-    path: "/tmp/openbao-policy-{{ item.name }}-{{ inventory_hostname }}.hcl"
+    path: "{{ openbao_config_dir }}/.policy-{{ item.name }}.hcl"
     state: absent
   loop: "{{ openbao_policies }}"
   loop_control:
