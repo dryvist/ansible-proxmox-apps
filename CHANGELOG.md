@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.54.0...v1.54.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **inventory:** localhost loader discovers a boto3-capable interpreter ([#521](https://github.com/dryvist/ansible-proxmox-apps/issues/521)) ([1e70003](https://github.com/dryvist/ansible-proxmox-apps/commit/1e70003bb2224ac9d003335b12d9e306cdc48b75))
+
 ## [1.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.53.0...v1.54.0) (2026-07-01)
 
 
