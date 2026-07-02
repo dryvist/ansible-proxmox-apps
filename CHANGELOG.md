@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.54.1...v1.54.2) (2026-07-02)
+
+
+### Bug Fixes
+
+* **openbao:** remove mlock config, render policies on target, drop WAN apt dependency ([#523](https://github.com/dryvist/ansible-proxmox-apps/issues/523)) ([e379315](https://github.com/dryvist/ansible-proxmox-apps/commit/e379315a2f9adfdf1cd8b6c8acb80460667b34a5))
+
 ## [1.54.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.54.0...v1.54.1) (2026-07-02)
 
 
