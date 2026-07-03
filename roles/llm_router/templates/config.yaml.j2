@@ -1,0 +1,58 @@
+{{ ansible_managed | comment }}
+# LiteLLM proxy config (managed by the llm_router role). One OpenAI-compatible front
+# door for the whole fabric; consumers pick a tier by model alias. Secrets come from
+# the systemd EnvironmentFile via os.environ/ — no credential literal lives here.
+
+model_list:
+  # --- large tier: one deployment each, bearer-authed to llm-large ---
+{% for m in llm_router_large_models %}
+  - model_name: {{ m }}
+    litellm_params:
+      model: openai/{{ m }}
+      api_base: {{ llm_router_llm_large_base_url }}
+      api_key: os.environ/LLM_LARGE_BEARER_TOKEN
+{% endfor %}
+  # --- light tier: two deployments per alias (GPU llm-fast + CPU llm-light) ---
+  # Same model_name => LiteLLM load-balances the pair and cools a failed deployment
+  # down, so a GPU outage drains to the CPU standby automatically.
+{% for m in llm_router_light_models %}
+  - model_name: {{ m.alias }}
+    litellm_params:
+      model: openai/{{ m.backend }}
+      api_base: {{ llm_router_llm_fast_base_url }}
+      api_key: {{ llm_router_light_api_key }}
+{% if m.embedding | default(false) %}
+    model_info:
+      mode: embedding
+{% endif %}
+  - model_name: {{ m.alias }}
+    litellm_params:
+      model: openai/{{ m.backend }}
+      api_base: {{ llm_router_llm_light_base_url }}
+      api_key: {{ llm_router_light_api_key }}
+{% if m.embedding | default(false) %}
+    model_info:
+      mode: embedding
+{% endif %}
+{% endfor %}
+
+router_settings:
+  routing_strategy: {{ llm_router_routing_strategy }}
+  allowed_fails: {{ llm_router_allowed_fails }}
+  cooldown_time: {{ llm_router_cooldown_time }}
+  # Pre-call context-window checks so an over-long request is not routed to a model
+  # that cannot serve it (no cross-tier fallback masks the error).
+  enable_pre_call_checks: true
+
+general_settings:
+  master_key: os.environ/LLM_ROUTER_MASTER_KEY
+  # Probe drained deployments back in on their own; health_check_interval is a
+  # general_settings field (LiteLLM rejects it under router_settings).
+  background_health_checks: true
+  health_check_interval: {{ llm_router_health_check_interval }}
+
+litellm_settings:
+  # Langfuse success logging + OTLP traces to the Cribl Edge collector. Both read
+  # their endpoints/keys from the environment (the EnvironmentFile).
+  callbacks: ["langfuse", "otel"]
+  drop_params: true
