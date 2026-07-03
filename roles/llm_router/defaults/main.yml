@@ -1,0 +1,99 @@
+---
+# llm_router role defaults — a LiteLLM proxy (the fabric's single OpenAI-compatible
+# front door) on each guest tagged `llm-router`. Native install: a Python venv +
+# systemd, config at /etc/litellm/config.yaml. Fronted by Traefik at
+# https://llm.<subdomain>; consumers select a tier purely by model alias.
+#
+# Two tiers, both reached through this one proxy:
+#   large — gpt-oss-120b / qwen3-coder on the neutral `llm-large` runner (bearer
+#           auth). One deployment each; no cross-tier fallback.
+#   light — hermes-4-14b / hermes4 / qwen3-4b / embeddings. TWO deployments per
+#           alias: the GPU `llm-fast` box AND the CPU `llm-light` standby, same
+#           model_name. LiteLLM load-balances the pair and cools a failed
+#           deployment down, so a GPU outage drains to CPU automatically.
+#
+# Restart-on-failure is applied DRY by the shared systemd_restart_policy role via
+# group_vars, not here.
+
+llm_router_user: litellm
+llm_router_group: litellm
+llm_router_home: /var/lib/litellm
+llm_router_venv: /opt/litellm-venv
+llm_router_service: litellm
+llm_router_config_dir: /etc/litellm
+llm_router_config_file: "{{ llm_router_config_dir }}/config.yaml"
+llm_router_env_file: "{{ llm_router_config_dir }}/litellm.env"
+
+# Installed into the venv (state: present — pinned by the ecosystem, never here).
+# langfuse + the opentelemetry exporter back the two logging callbacks below.
+llm_router_pip_packages:
+  - "litellm[proxy]"
+  - langfuse
+  - opentelemetry-api
+  - opentelemetry-sdk
+  - opentelemetry-exporter-otlp
+
+# Internal subdomain (pve.<apex>), never hardcoded — the derived model endpoints
+# and the Langfuse host are built from it.
+llm_router_subdomain: >-
+  {{ lookup('env', 'PROXMOX_SUBDOMAIN') | mandatory('PROXMOX_SUBDOMAIN required') }}
+
+# --- Ports (DRY from the tofu ports registry; no hardcodes) ------------------
+# The proxy's own listen port + the two backend tiers' ports. Hard-required like
+# every other role's port so a missing constant fails loud rather than guessing.
+# NOTE: service_ports.llm_router_api and service_ports.llm_fast_api are added by
+# the parallel terraform-proxmox constants PR — this role depends on both.
+llm_router_api_port: "{{ tofu_data.constants.service_ports.llm_router_api }}"
+llm_router_light_port: "{{ tofu_data.constants.service_ports.llm_fast_api }}"
+# llm-large speaks the Ollama-compatible API on the standard Ollama port.
+llm_router_large_port: "{{ tofu_data.constants.service_ports.ollama_api }}"
+
+# --- Backend base URLs (derived; never a hardcoded IP) -----------------------
+llm_router_llm_fast_base_url: "http://llm-fast.{{ llm_router_subdomain }}:{{ llm_router_light_port }}/v1"
+llm_router_llm_light_base_url: "http://llm-light.{{ llm_router_subdomain }}:{{ llm_router_light_port }}/v1"
+llm_router_llm_large_base_url: "https://llm-large.{{ llm_router_subdomain }}:{{ llm_router_large_port }}/v1"
+
+# --- Model groups ------------------------------------------------------------
+# large: one deployment each, bearer-authed to llm-large.
+llm_router_large_models:
+  - gpt-oss-120b
+  - qwen3-coder
+# light: exposed aliases -> the llama-swap model_name they map to. Each becomes two
+# same-name deployments (llm-fast GPU + llm-light CPU) in the rendered config.
+# `embedding: true` marks the entry as an embeddings model_group.
+llm_router_light_models:
+  - { alias: hermes-4-14b, backend: hermes-4-14b }
+  - { alias: hermes4, backend: hermes-4-14b }
+  - { alias: qwen3-4b, backend: qwen3-4b }
+  - { alias: embeddings, backend: embeddings, embedding: true }
+
+# --- Routing behaviour -------------------------------------------------------
+# Load-balance across same-name deployments; cool a failed one down so traffic
+# drains to its sibling (GPU -> CPU). No cross-tier fallbacks.
+llm_router_routing_strategy: simple-shuffle
+llm_router_allowed_fails: 2
+llm_router_cooldown_time: 30
+# Background health checks so a drained deployment is probed back in on its own.
+llm_router_health_check_interval: 300
+
+# --- Secrets (env-sourced; OpenBao migration is a later phase) ----------------
+# Mandatory, fail-loud (mirrors the ai_orchestration group_vars pattern).
+llm_router_master_key: >-
+  {{ lookup('env', 'LLM_ROUTER_MASTER_KEY')
+     | mandatory('LLM_ROUTER_MASTER_KEY must be set (SOPS/Doppler; the LiteLLM master key)') }}
+llm_router_llm_large_bearer: >-
+  {{ lookup('env', 'LLM_LARGE_BEARER_TOKEN')
+     | mandatory('LLM_LARGE_BEARER_TOKEN must be set (SOPS/Doppler; bearer for the llm-large runner)') }}
+# The GPU/CPU light backends need no auth; a placeholder keeps the OpenAI client happy.
+llm_router_light_api_key: "sk-noauth"
+
+# --- Observability -----------------------------------------------------------
+# Langfuse success logging + OTLP traces. Keys are optional (empty -> callbacks
+# no-op) so a converge before Langfuse is provisioned still comes up.
+llm_router_langfuse_public_key: "{{ lookup('env', 'LANGFUSE_PUBLIC_KEY') | default('', true) }}"
+llm_router_langfuse_secret_key: "{{ lookup('env', 'LANGFUSE_SECRET_KEY') | default('', true) }}"
+llm_router_langfuse_host: "https://langfuse.{{ llm_router_subdomain }}"
+# Cribl Edge OTLP/HTTP receiver (base URL; the exporter appends the signal path).
+llm_router_otel_http_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['otel_traces_http'] }}
+llm_router_otel_endpoint: "http://cribl-edge.{{ llm_router_subdomain }}:{{ llm_router_otel_http_port }}"

@@ -22,7 +22,7 @@ it with your own agents — your edits survive re-converges.
 - Runs `main.py` under systemd (`Restart=on-failure`) with the `OTEL_*` and
   two-tier model-endpoint env preset. The seeded `main.py` loops every
   `agent_exec_interval_seconds`, running a small traced crew against the large
-  tier (real work) and the light tier (hermes-infer soak path); a failed run is
+  tier (real work) and the light tier (soak path); a failed run is
   logged and the loop continues.
 
 ## Your agent code
@@ -67,7 +67,7 @@ Or include the role directly against the group:
 | `agent_exec_pip_packages` | runtime + instrumentation | venv package set |
 | `agent_exec_interval_seconds` | `900` | seconds between autonomy-seed cycles |
 | `agent_exec_model_large` | `openai/default` | large-tier model name (LiteLLM form) |
-| `agent_exec_model_light` | `openai/hermes4` | light-tier (hermes-infer) model name |
+| `agent_exec_model_light` | `openai/hermes4` | light-tier model alias (via the router) |
 | `agent_exec_api_key` | `sk-noauth` | OpenAI-compatible key (runners ignore it) |
 
 `ai_orchestration_otel_endpoint` (OTLP collector) and the two model base URLs

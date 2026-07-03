@@ -22,7 +22,8 @@ Requires `OPEN_WEBUI_SECRET_KEY` in Doppler/SOPS (generate once: `openssl rand -
 - Installs Open WebUI into a venv (`/opt/open-webui/venv`) and runs it via a
   dedicated systemd unit (`open-webui serve`), data in `DATA_DIR=/var/lib/open-webui`.
 - Renders `/etc/open-webui.env` with the **reverse-proxy-correct** settings Open
-  WebUI requires behind HTTPS: `OLLAMA_BASE_URL` (→ CT 167, from inventory),
+  WebUI requires behind HTTPS: `OPENAI_API_BASE_URL` (→ the LiteLLM router at
+  `llm.<subdomain>/v1`) + `OPENAI_API_KEY` + `DEFAULT_MODELS`,
   `WEBUI_URL`/`CORS_ALLOW_ORIGIN` (= the Traefik URL, from `PROXMOX_SUBDOMAIN`),
   secure cookies, `ENABLE_WEBSOCKET_SUPPORT`, stable `WEBUI_SECRET_KEY`.
 - Restart-on-failure via the shared `systemd_restart_policy` role (`group_vars`).
@@ -32,7 +33,9 @@ Requires `OPEN_WEBUI_SECRET_KEY` in Doppler/SOPS (generate once: `openssl rand -
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `open_webui_port` | `tofu_data.constants.service_ports.open_webui_web` | Listen port (no hardcode) |
-| `open_webui_ollama_base_url` | `http://<hermes-infer ip>:<ollama_api>` | Backend (from inventory) |
+| `open_webui_openai_api_base_url` | `https://llm.{{ PROXMOX_SUBDOMAIN }}/v1` | Backend (the LiteLLM router) |
+| `open_webui_openai_api_key` | `OPEN_WEBUI_OPENAI_API_KEY` (Doppler/SOPS) | Router API key |
+| `open_webui_default_model` | `gpt-oss-120b` | Default chat model (large tier) |
 | `open_webui_hostname` | `llm.{{ PROXMOX_SUBDOMAIN }}` | Public FQDN via Traefik |
 | `open_webui_data_dir` | `/var/lib/open-webui` | Persistent data |
 | `open_webui_secret_key` | `OPEN_WEBUI_SECRET_KEY` (Doppler/SOPS) | Stable JWT/encryption key |
