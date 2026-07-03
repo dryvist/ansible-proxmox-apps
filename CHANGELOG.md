@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.57.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.56.0...v1.57.0) (2026-07-03)
+
+
+### Features
+
+* **github-runner:** add dryvist/tofu-github runner for Terrakube CI ([#529](https://github.com/dryvist/ansible-proxmox-apps/issues/529)) ([5ceeed1](https://github.com/dryvist/ansible-proxmox-apps/commit/5ceeed1f7a1e5a1a4eed2880934e6c5d1820807c))
+* **openbao:** add openbao_secrets role, migrate AI secrets bao-first ([#533](https://github.com/dryvist/ansible-proxmox-apps/issues/533)) ([8421a3d](https://github.com/dryvist/ansible-proxmox-apps/commit/8421a3d470873676e5b49d3af5d5c515b6518aa7))
+
+
+### Bug Fixes
+
+* **ci:** add YAML document start to ai-pr-care workflow ([#531](https://github.com/dryvist/ansible-proxmox-apps/issues/531)) ([7d2c366](https://github.com/dryvist/ansible-proxmox-apps/commit/7d2c366a46c8ebe13f45a09c29fa3b08465a1fc0))
+
 ## [1.56.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.55.0...v1.56.0) (2026-07-03)
 
 
