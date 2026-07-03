@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.56.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.55.0...v1.56.0) (2026-07-03)
+
+
+### Features
+
+* **llm:** llama.cpp light tier + LiteLLM router; repoint consumers ([#530](https://github.com/dryvist/ansible-proxmox-apps/issues/530)) ([216d2b9](https://github.com/dryvist/ansible-proxmox-apps/commit/216d2b9d7af693a961d36bd9496b9df26418e18a))
+
 ## [1.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.54.2...v1.55.0) (2026-07-03)
 
 
