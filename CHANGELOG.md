@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.54.2...v1.55.0) (2026-07-03)
+
+
+### Features
+
+* add AI PR care caller (dep review + release highlights) ([#527](https://github.com/dryvist/ansible-proxmox-apps/issues/527)) ([b40b49f](https://github.com/dryvist/ansible-proxmox-apps/commit/b40b49f509f537ab8c9557105fa65204bf4f09b5))
+
 ## [1.54.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.54.1...v1.54.2) (2026-07-02)
 
 
