@@ -8,6 +8,34 @@
 # Configure application stacks based on OpenTofu infrastructure
 
 # =============================================================================
+# Phase 0-secrets: OpenBao AI secrets pre-fetch
+# Reads the AI KV subtree (ai-readonly AppRole) into the `bao_ai_secrets` fact so
+# every AI/vectordb role can resolve its secrets bao-first with an env fallback.
+# Runs once on the controller and publishes to the consuming groups; SKIPS CLEANLY
+# when VAULT_ADDR is unset. Placed before Phase 6 (qdrant) so it precedes every
+# consumer.
+# =============================================================================
+
+- name: Pre-fetch AI secrets from OpenBao
+  hosts: qdrant_group:open_webui_group:hermes_agent_group:llm_router_group:ai_orchestration_group
+  gather_facts: false
+  tags:
+    - openbao_secrets
+    - ai
+  tasks:
+    - name: Fetch the AI KV subtree via the ai-readonly AppRole
+      ansible.builtin.include_role:
+        name: openbao_secrets
+
+    # Publish the shared, un-prefixed fact at the playbook layer (like tofu_data in
+    # load_tofu.yml). openbao_secrets_merged was computed once on the delegated
+    # controller; hosts where the fetch was skipped fall back to the {} default.
+    - name: Publish the merged AI secrets to the AI hosts
+      ansible.builtin.set_fact:
+        bao_ai_secrets: "{{ hostvars['localhost'].openbao_secrets_merged | default({}) }}"
+      no_log: true
+
+# =============================================================================
 # Phase 0: APT Cache Infrastructure
 # apt-cacher-ng must be deployed BEFORE any roles that install apt packages
 # =============================================================================
