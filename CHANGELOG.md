@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.59.0...v1.59.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* correct stale reusable refs, normalize resolver, add backlog sweep ([#554](https://github.com/dryvist/ansible-proxmox-apps/issues/554)) ([25c062d](https://github.com/dryvist/ansible-proxmox-apps/commit/25c062d610bc6fe48576ff78b1115c5ae3c10591))
+
 ## [1.59.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.6...v1.59.0) (2026-07-04)
 
 
