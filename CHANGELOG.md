@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.4...v1.58.5) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llama_cpp:** tolerate asset-less latest release; CPU standby host_vars ([#547](https://github.com/dryvist/ansible-proxmox-apps/issues/547)) ([30c635a](https://github.com/dryvist/ansible-proxmox-apps/commit/30c635aaba39a475704bbd1c99bbf128411d30f7))
+
 ## [1.58.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.3...v1.58.4) (2026-07-04)
 
 
