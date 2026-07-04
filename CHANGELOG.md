@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.62.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.61.1...v1.62.0) (2026-07-04)
+
+
+### Features
+
+* **dns:** llm-large CNAME to the Studio gate host ([#573](https://github.com/dryvist/ansible-proxmox-apps/issues/573)) ([956a381](https://github.com/dryvist/ansible-proxmox-apps/commit/956a381fab37da736b0f3b094ee3922e9c160da9))
+
 ## [1.61.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.61.0...v1.61.1) (2026-07-04)
 
 
