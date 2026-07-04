@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.1...v1.58.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llamaindex:** embeddings via the fabric router, retire local Ollama ([#541](https://github.com/dryvist/ansible-proxmox-apps/issues/541)) ([0223b61](https://github.com/dryvist/ansible-proxmox-apps/commit/0223b611cab83af0f7b7337bffb7f7909fa39410))
+
 ## [1.58.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.0...v1.58.1) (2026-07-04)
 
 
