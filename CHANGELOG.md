@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.2...v1.58.3) (2026-07-04)
+
+
+### Bug Fixes
+
+* **openbao:** upgrade to 2.5.5 (security fixes) ([#539](https://github.com/dryvist/ansible-proxmox-apps/issues/539)) ([de1ac1d](https://github.com/dryvist/ansible-proxmox-apps/commit/de1ac1d4921e7a38b534b6d31d0cbb27099be05d))
+
 ## [1.58.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.1...v1.58.2) (2026-07-04)
 
 
