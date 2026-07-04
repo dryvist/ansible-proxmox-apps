@@ -361,13 +361,21 @@
 # Pre-create every level of the --profile tree (see defaults/main.yml) with the
 # correct owner BEFORE the daemon starts, so it never has to mkdir its own tree
 # the first time it runs as the unprivileged qbittorrent user.
-- name: Ensure the qBittorrent profile tree exists on persistent storage
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
-    mode: "0750"
+- name: Ensure the qBittorrent profile tree exists on persistent storage  # noqa: command-instead-of-module
+  # /data is a bind-mount owned by the host's root (uid 0), which is UNMAPPED
+  # inside this unprivileged LXC — so container-root's CAP_DAC_OVERRIDE does not
+  # reach it (the kernel grants file capabilities only when the file's uid AND
+  # gid both map into the namespace; the idmap maps gid 13000 but not host uid 0).
+  # Creating a new entry directly under /data writes the /data inode, and
+  # container-root is neither its (unmapped) owner nor in gid 13000, leaving only
+  # the mode-2775 "other" bits (r-x, no write) -> EPERM. The service user IS in
+  # gid 13000 (media), which has group-write via the idmap, so create the tree AS
+  # that user. runuser (not become_user: sudo is absent in this container, and
+  # the service user's shell is nologin, which runuser -u bypasses). Ordered
+  # parent-first so each dir's parent exists before mkdir -m sets its mode.
+  ansible.builtin.command:
+    cmd: "runuser -u {{ download_vpn_user }} -- mkdir -p -m 0750 {{ item }}"
+    creates: "{{ item }}"
   loop:
     - "{{ download_vpn_qbittorrent_profile_dir }}"
     - "{{ download_vpn_qbittorrent_profile_base_dir }}"

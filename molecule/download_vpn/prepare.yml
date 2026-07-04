@@ -34,6 +34,27 @@
         state: present
       when: ansible_facts['os_family'] == 'Debian'
 
+    # Live, /data is a bind-mount created host-side (media_lxc_features) as
+    # root:media 2775; the role creates the qBittorrent profile tree there AS the
+    # media-group service user via group-write, because container-root cannot
+    # write the host-root-owned (idmap-unmapped) /data inode. This plain Docker
+    # container has no idmap, so /data would default to root:root and the
+    # service-user mkdir would EPERM. Stage /data to the same ownership/mode
+    # contract so the group-write path the role relies on is actually exercised.
+    - name: Stage the shared media group (mirrors the host-side idmap contract)
+      ansible.builtin.group:
+        name: media
+        gid: 13000
+        state: present
+
+    - name: Stage /data as the host-side bind-mount contract (root:media, setgid)
+      ansible.builtin.file:
+        path: /data
+        state: directory
+        owner: root
+        group: media
+        mode: "2775"
+
     # The role consumes tofu_data.constants.media_ports and the host's
     # container_ip (normally injected by load_tofu.yml). Provide a minimal
     # stand-in so the role renders without the full tofu inventory.
