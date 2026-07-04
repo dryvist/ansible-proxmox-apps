@@ -13,17 +13,26 @@ macros:
     {{ llama_cpp_server_bin }}
     --host 127.0.0.1 --port ${PORT}
     -ngl {{ llama_cpp_ngl }}
-    --no-mmap
 
 groups:
-  # Keep every member loaded together: 16 GB fits Hermes-4-14B Q4 + a small general
-  # model + embeddings. swap:false = do not unload a member when another is
-  # requested; exclusive:false = this group is always resident.
-  "resident":
+  # VRAM discipline (learned the hard way: full co-residency of Hermes-4-14B Q4
+  # + qwen3-4b + embeddings + their KV caches exceeds the 16 GB card and the
+  # amdgpu eviction path hard-hangs the HOST — twice). Only the tiny embeddings
+  # model stays permanently resident; the chat models swap against each other,
+  # so peak pressure is one chat model + embeddings + KV. --no-mmap was also
+  # dropped from the shared invocation: mmap streaming halves the load spike.
+  "embeddings":
     swap: false
     exclusive: false
     members:
-{% for m in llama_cpp_models %}
+{% for m in llama_cpp_models if m.embeddings %}
+      - "{{ m.name }}"
+{% endfor %}
+  "chat":
+    swap: true
+    exclusive: false
+    members:
+{% for m in llama_cpp_models if not m.embeddings %}
       - "{{ m.name }}"
 {% endfor %}
 

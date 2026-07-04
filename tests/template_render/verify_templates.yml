@@ -1726,18 +1726,21 @@
       ansible.builtin.set_fact:
         _llama_swap: "{{ (lookup('file', '/tmp/test_llama_swap.yaml')) | from_yaml }}"
 
-    - name: Assert llama-swap keeps all three models co-resident (group swap:false)
+    - name: Assert llama-swap renders VRAM-disciplined groups (embeddings resident, chat swaps)
       ansible.builtin.assert:
         that:
           - "'hermes-4-14b' in _llama_swap.models"
           - "'qwen3-4b' in _llama_swap.models"
           - "'embeddings' in _llama_swap.models"
-          - _llama_swap.groups.resident.swap == false
-          - _llama_swap.groups.resident.exclusive == false
-          - (_llama_swap.groups.resident.members | sort) == ['embeddings', 'hermes-4-14b', 'qwen3-4b']
+          # Full co-residency exceeded the 16 GB card and hard-hung the host;
+          # only the embeddings model stays resident, chat models swap.
+          - _llama_swap.groups.embeddings.swap == false
+          - _llama_swap.groups.embeddings.members == ['embeddings']
+          - _llama_swap.groups.chat.swap == true
+          - (_llama_swap.groups.chat.members | sort) == ['hermes-4-14b', 'qwen3-4b']
           - "'hermes4' in _llama_swap.models['hermes-4-14b'].aliases"
         fail_msg: >-
-          llama-swap.yaml.j2 did not render the co-resident model group or the
+          llama-swap.yaml.j2 did not render the VRAM-disciplined groups or the
           hermes4 alias: {{ _llama_swap }}
 
     - name: Assert the shared macro offloads to GPU and per-model cmd flags differ
