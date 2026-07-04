@@ -59,6 +59,49 @@
     - "{{ radarr_media_dir }}"
     - "{{ radarr_movies_dir }}"
 
+# ---------------------------------------------------------------------------
+# Persistence guard — refuse to start Radarr on a non-persistent data dir
+# ---------------------------------------------------------------------------
+# radarr_data_dir holds Radarr's own database and config.xml (deterministic
+# API key, auth method). Without a persistent mount there, a container rebuild
+# silently resets Radarr to a fresh install (lost history, re-provisioning
+# needed) — so fail the converge instead of starting fresh silently.
+- name: Check whether the Radarr data dir is on a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ radarr_data_dir }}
+  register: radarr_data_mountpoint
+  changed_when: false
+  failed_when: false
+  when: radarr_manage_services
+
+- name: Alert ntfy when the Radarr data dir is NOT persistent
+  ansible.builtin.uri:
+    url: "{{ radarr_ntfy_url }}"
+    method: POST
+    headers:
+      Title: "radarr persistence guard"
+      Priority: urgent
+      Tags: rotating_light
+    body_format: raw
+    body: >-
+      {{ radarr_data_dir }} on {{ inventory_hostname }} is NOT a persistent
+      mount. Refusing to start Radarr before the mount is fixed.
+  failed_when: false
+  when:
+    - radarr_manage_services
+    - radarr_data_mountpoint.rc | default(0) != 0
+
+- name: Fail when the Radarr data dir is NOT persistent
+  ansible.builtin.fail:
+    msg: >-
+      {{ radarr_data_dir }} is NOT a persistent mount. Radarr's database and
+      config are on the disposable LXC rootfs and would be LOST on the next
+      container rebuild. Bind-mount a persistent dataset onto
+      {{ radarr_data_dir }}, then re-run this converge.
+  when:
+    - radarr_manage_services
+    - radarr_data_mountpoint.rc | default(0) != 0
+
 - name: Check if Radarr is already installed
   ansible.builtin.stat:
     path: "{{ radarr_install_dir }}/Radarr"
