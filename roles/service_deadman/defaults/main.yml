@@ -54,6 +54,18 @@ service_deadman_group_checks:
     - name: nginx-syslog-lb
       probe_command: "systemctl is-active --quiet nginx.service"
       healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_NGINX') | default('', true) }}"
+  openbao_group:
+    # `bao status` exits 0 only when THIS node is unsealed (2 = sealed, 1 =
+    # error/unreachable) — a direct seal+liveness probe. Hit the node's own VLAN
+    # IP: OpenBao has no loopback listener. standby-unsealed still exits 0, so
+    # every peer reports its own seal state independently, and a node that seals
+    # (e.g. lost its static seal key) or dies pages instead of failing silently.
+    - name: openbao
+      probe_command: >-
+        systemctl is-active --quiet openbao &&
+        BAO_ADDR="http://{{ container_ip | default(ansible_host) }}:8200"
+        bao status >/dev/null 2>&1
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_OPENBAO') | default('', true) }}"
 
 # Resolved set of checks for THIS host — every group's checks the host is in.
 service_deadman_checks: >-
