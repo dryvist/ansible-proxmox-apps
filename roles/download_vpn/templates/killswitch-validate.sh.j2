@@ -32,16 +32,32 @@ NTFY_URL="{{ download_vpn_ntfy_url }}"
 HC_URL="{{ download_vpn_healthcheck_url }}"
 IP_PROBE="{{ download_vpn_ip_probe_url }}"
 IP_PROBE6="{{ download_vpn_ip_probe_url_v6 }}"
+{% if download_vpn_wg_failover_enabled | bool %}
+# --- sticky failover config (rendered only when a backup Proton peer is set) --
+FAILOVER_CYCLES={{ download_vpn_failover_cycles }}
+FAILOVER_STATE_FILE="{{ download_vpn_failover_state_file }}"
+FAILOVER_COUNTER_FILE="{{ download_vpn_failover_counter_file }}"
+PRIMARY_PEER="{{ download_vpn_wg_peer_public_key }}"
+BACKUP_PEER="{{ download_vpn_wg_backup_peer_public_key }}"
+BACKUP_ENDPOINT="{{ download_vpn_wg_backup_endpoint }}"
+BACKUP_KEY_FILE="{{ download_vpn_wg_backup_key_path }}"
+WG_ALLOWED_IPS="{{ download_vpn_wg_allowed_ips }}"
+WG_KEEPALIVE="{{ download_vpn_wg_persistent_keepalive }}"
+{% endif %}
 
 breaches=()
+# Failure classification: a DOWN tunnel (recoverable by failover) vs a LEAK — a
+# security breach that must hard-stop and NEVER trigger a peer switch.
+tunnel_down=0
+leak=0
 
 # --- A. killswitch present + default drop -----------------------------------
 if ! nft list table inet killswitch >/dev/null 2>&1; then
-  breaches+=("nftables 'inet killswitch' table is MISSING")
+  breaches+=("nftables 'inet killswitch' table is MISSING"); leak=1
 else
   policy="$(nft -a list chain inet killswitch output 2>/dev/null \
     | awk '/policy/ {gsub(/;/,"",$NF); print $NF; exit}')"
-  [[ "${policy}" == "drop" ]] || breaches+=("killswitch output policy is '${policy:-unknown}', expected 'drop'")
+  [[ "${policy}" == "drop" ]] || { breaches+=("killswitch output policy is '${policy:-unknown}', expected 'drop'"); leak=1; }
 fi
 
 # --- B. internet-bound IPv4 traffic routes via wg0 (Table=auto) -------------
@@ -51,15 +67,15 @@ fi
 # resolves out wg0 via the policy rule instead of reading the main default.
 route_egress="$(ip -4 route get "${ROUTE_PROBE_IP}" 2>/dev/null)"
 if [[ -z "${route_egress}" ]]; then
-  breaches+=("could not resolve an IPv4 route to ${ROUTE_PROBE_IP} (routing broken / VPN down)")
+  breaches+=("could not resolve an IPv4 route to ${ROUTE_PROBE_IP} (routing broken / VPN down)"); tunnel_down=1
 elif ! grep -q "dev ${WG_IF}" <<<"${route_egress}"; then
-  breaches+=("internet-bound IPv4 traffic does NOT route via ${WG_IF}: ${route_egress}")
+  breaches+=("internet-bound IPv4 traffic does NOT route via ${WG_IF}: ${route_egress}"); tunnel_down=1
 fi
 
 # --- C. no IPv6 default route -----------------------------------------------
 v6_defaults="$(ip -6 route show default 2>/dev/null)"
 if [[ -n "${v6_defaults}" ]]; then
-  breaches+=("IPv6 default route present (must be none): ${v6_defaults}")
+  breaches+=("IPv6 default route present (must be none): ${v6_defaults}"); leak=1
 fi
 
 # --- D. qBittorrent bound to wg0 --------------------------------------------
@@ -72,7 +88,7 @@ if curl -fsS -c "${cookie}" \
     "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences" 2>/dev/null \
     | grep -o '"current_network_interface":"[^"]*"' | cut -d'"' -f4)"
   if [[ -n "${iface}" && "${iface}" != "${WG_IF}" ]]; then
-    breaches+=("qBittorrent network interface is '${iface}', expected '${WG_IF}'")
+    breaches+=("qBittorrent network interface is '${iface}', expected '${WG_IF}'"); leak=1
   fi
 fi
 rm -f "${cookie}"
@@ -81,18 +97,18 @@ rm -f "${cookie}"
 # E: egress via the tunnel must succeed (we are connected to the VPN).
 vpn_ip="$(curl -fsS --max-time 10 --interface "${WG_IF}" "${IP_PROBE}" 2>/dev/null || true)"
 if [[ -z "${vpn_ip}" ]]; then
-  breaches+=("no IPv4 egress via ${WG_IF} (VPN exit unreachable)")
+  breaches+=("no IPv4 egress via ${WG_IF} (VPN exit unreachable)"); tunnel_down=1
 fi
 # F: forced egress bound to the LAN interface must be REFUSED by the killswitch.
 leak_ip="$(curl -fsS --max-time 8 --interface "${LAN_IF}" "${IP_PROBE}" 2>/dev/null || true)"
 if [[ -n "${leak_ip}" ]]; then
-  breaches+=("LEAK: non-VPN IPv4 egress via ${LAN_IF} succeeded (got ${leak_ip})")
+  breaches+=("LEAK: non-VPN IPv4 egress via ${LAN_IF} succeeded (got ${leak_ip})"); leak=1
 fi
 
 # --- G. IPv6 egress must be refused -----------------------------------------
 v6_ip="$(curl -fsS -6 --max-time 8 "${IP_PROBE6}" 2>/dev/null || true)"
 if [[ -n "${v6_ip}" ]]; then
-  breaches+=("LEAK: IPv6 egress succeeded (got ${v6_ip})")
+  breaches+=("LEAK: IPv6 egress succeeded (got ${v6_ip})"); leak=1
 fi
 
 # --- H. marked-path leak surface --------------------------------------------
@@ -102,7 +118,7 @@ fi
 # dev ${LAN_IF}. Catches a regression that re-introduces a clearnet LAN default.
 marked_route="$(ip -4 route get "${ROUTE_PROBE_IP}" mark {{ download_vpn_lanroute_mark }} 2>/dev/null || true)"
 if grep -q "dev ${LAN_IF}" <<<"${marked_route}"; then
-  breaches+=("LEAK SURFACE: marked packet to ${ROUTE_PROBE_IP} egresses ${LAN_IF}: ${marked_route}")
+  breaches+=("LEAK SURFACE: marked packet to ${ROUTE_PROBE_IP} egresses ${LAN_IF}: ${marked_route}"); leak=1
 fi
 
 # --- verdict ----------------------------------------------------------------
@@ -111,6 +127,35 @@ if [[ "{% raw %}${#breaches[@]}{% endraw %}" -gt 0 ]]; then
   logger -t killswitch-validate "${msg}"
   # 1. Stop the apps that could leak FIRST.
   systemctl stop qbittorrent-nox.service download-vpn-natpmp.service || true
+{% if download_vpn_wg_failover_enabled | bool %}
+  # 1b. Sticky failover. If the ONLY problem is a DOWN tunnel (no leak), count
+  # consecutive down-cycles and switch wg0 to the backup Proton peer after
+  # FAILOVER_CYCLES. A leak-type breach NEVER triggers a switch (hard stop only).
+  # Once on the backup we STAY there; the next converge resets to the primary.
+  if [[ "${leak}" -eq 0 && "${tunnel_down}" -eq 1 ]]; then
+    active="$(cat "${FAILOVER_STATE_FILE}" 2>/dev/null || echo primary)"
+    if [[ "${active}" == "primary" ]]; then
+      count="$(cat "${FAILOVER_COUNTER_FILE}" 2>/dev/null || echo 0)"
+      count=$(( count + 1 )); echo "${count}" > "${FAILOVER_COUNTER_FILE}"
+      if [[ "${count}" -ge "${FAILOVER_CYCLES}" ]]; then
+        logger -t killswitch-validate "download-vpn: primary down ${count} cycles — switching wg0 to BACKUP Proton peer"
+        # The nftables default-drop killswitch stays in force throughout the
+        # swap (both endpoints are pre-permitted), so there is no leak window.
+        if wg set "${WG_IF}" private-key "${BACKUP_KEY_FILE}" \
+           && wg set "${WG_IF}" peer "${BACKUP_PEER}" endpoint "${BACKUP_ENDPOINT}" allowed-ips "${WG_ALLOWED_IPS}" persistent-keepalive "${WG_KEEPALIVE}" \
+           && wg set "${WG_IF}" peer "${PRIMARY_PEER}" remove; then
+          echo backup > "${FAILOVER_STATE_FILE}"; echo 0 > "${FAILOVER_COUNTER_FILE}"
+          curl -fsS --max-time 8 -H "Title: download-vpn VPN failover" \
+            -H "Priority: high" -H "Tags: arrows_counterclockwise" \
+            -d "download-vpn: primary Proton endpoint down ${count} cycles — switched wg0 to BACKUP peer (sticky; a converge resets to primary)." \
+            "${NTFY_URL}" >/dev/null 2>&1 || true
+        else
+          logger -t killswitch-validate "download-vpn: FAILOVER 'wg set' FAILED — staying fail-closed (dropped)"
+        fi
+      fi
+    fi
+  fi
+{% endif %}
   # 2. Alert ntfy.
   curl -fsS --max-time 8 -H "Title: download-vpn killswitch breach" \
     -H "Priority: urgent" -H "Tags: rotating_light" \
@@ -122,6 +167,12 @@ if [[ "{% raw %}${#breaches[@]}{% endraw %}" -gt 0 ]]; then
   exit 1
 fi
 
+{% if download_vpn_wg_failover_enabled | bool %}
+# Clean cycle → reset the consecutive-down counter (failover triggers on
+# CONSECUTIVE down-cycles only). Sticky: we do NOT flip back to the primary here
+# — that happens on the next converge.
+echo 0 > "{{ download_vpn_failover_counter_file }}" 2>/dev/null || true
+{% endif %}
 # Self-heal: on a clean (no-breach) cycle the VPN/killswitch is intact, so it is
 # safe to (re)start the services if a prior transient breach stopped them and the
 # VPN has since recovered (the validator otherwise only ever stops, never starts).

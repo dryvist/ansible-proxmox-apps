@@ -27,6 +27,25 @@
     quiet: true
   when: download_vpn_manage_services | bool
 
+# The backup peer is optional, but a PARTIAL config (some backup secrets set,
+# others empty) would silently disable failover while looking configured. Fail
+# loud: all three backup values, or none.
+- name: Assert the backup Proton secrets are all-or-nothing (fail loud on partial)
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((download_vpn_wg_backup_private_key | length > 0)
+         == (download_vpn_wg_backup_peer_public_key | length > 0))
+        and ((download_vpn_wg_backup_private_key | length > 0)
+             == (download_vpn_wg_backup_endpoint | length > 0))
+    fail_msg: >-
+      Partial backup Proton config. Set ALL of
+      PROTON_WG_BACKUP_IFACE_PRIVATE_KEY / PROTON_WG_BACKUP_PEER_PUBLIC_KEY /
+      PROTON_WG_BACKUP_PEER_ENDPOINT to enable sticky failover, or none to
+      disable it.
+    quiet: true
+  when: download_vpn_manage_services | bool
+
 # --- Phase 0: resolve endpoint family (v4 vs v6) ----------------------------
 - name: Resolve Proton endpoint host/port
   ansible.builtin.set_fact:
@@ -36,6 +55,23 @@
 - name: Classify Proton endpoint address family
   ansible.builtin.set_fact:
     download_vpn_endpoint_is_ipv4: "{{ download_vpn_endpoint_host is ansible.utils.ipv4 }}"
+
+# Every Proton endpoint the killswitch must PERMIT — primary plus the backup when
+# failover is configured. The fail-closed ruleset has to allow the backup
+# handshake too, or a failover would be blocked by its own killswitch. Built from
+# the endpoint vars — NO hardcoded IPs. host/port split mirrors the primary above.
+- name: Resolve every Proton endpoint (primary + backup) for the killswitch
+  ansible.builtin.set_fact:
+    download_vpn_endpoints_resolved: "{{ download_vpn_endpoints_resolved | default([]) + [_ep] }}"
+  vars:
+    _ep:
+      host: "{{ item.split(':')[0] }}"
+      port: "{{ item.split(':')[1] }}"
+      is_ipv4: "{{ item.split(':')[0] is ansible.utils.ipv4 }}"
+  loop: >-
+    {{ [download_vpn_wg_endpoint]
+       + ([download_vpn_wg_backup_endpoint]
+          if (download_vpn_wg_failover_enabled | bool) else []) }}
 
 - name: Derive the IPv4-only tunnel address (drop any v6 half Proton issues)
   # Proton's Address is dual-stack ("10.2.0.2/32,fd00::.../128"); keep only the
@@ -307,6 +343,25 @@
   no_log: true
   notify: Restart wg tunnel
 
+- name: Deploy the backup WireGuard private key (root-only, for validator failover)
+  # Written to a root-only file (NOT wg0.conf, which stays PRIMARY) so the
+  # validator can `wg set wg0 private-key <file>` on failover. Absent when no
+  # backup is configured, so a disabled-failover container carries no stray key.
+  ansible.builtin.copy:
+    content: "{{ download_vpn_wg_backup_private_key }}\n"
+    dest: "{{ download_vpn_wg_backup_key_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: download_vpn_wg_failover_enabled | bool
+
+- name: Remove the backup WireGuard key when failover is disabled
+  ansible.builtin.file:
+    path: "{{ download_vpn_wg_backup_key_path }}"
+    state: absent
+  when: not (download_vpn_wg_failover_enabled | bool)
+
 - name: Deploy WireGuard systemd unit
   ansible.builtin.template:
     src: download-vpn-wg.service.j2
@@ -323,6 +378,38 @@
     enabled: true
     daemon_reload: true
   when: download_vpn_manage_services
+
+# Sticky-failover failback. The validator may have switched wg0 to the BACKUP
+# peer at runtime (recorded in the state marker). wg0.conf on disk is always the
+# PRIMARY, so a converge is the deliberate reset point: if we are currently on the
+# backup, restart the tunnel (reloads the primary from wg0.conf) and clear the
+# runtime markers. No-op on a container that never failed over.
+- name: Read the current failover state marker
+  ansible.builtin.slurp:
+    src: "{{ download_vpn_failover_state_file }}"
+  register: download_vpn_failover_state
+  failed_when: false
+  when: download_vpn_manage_services
+
+- name: Fail back to the primary Proton peer if currently on the backup
+  ansible.builtin.systemd:
+    name: download-vpn-wg.service
+    state: restarted
+    daemon_reload: true
+  when:
+    - download_vpn_manage_services
+    - "'backup' in (download_vpn_failover_state.content | default('') | b64decode)"
+
+- name: Clear the runtime failover markers after failback
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ download_vpn_failover_state_file }}"
+    - "{{ download_vpn_failover_counter_file }}"
+  when:
+    - download_vpn_manage_services
+    - "'backup' in (download_vpn_failover_state.content | default('') | b64decode)"
 
 # --- Phase 5b: LAN-reply policy routing (cross-subnet web UI reachability) ---
 # Lets cross-subnet clients (Traefik on the management VLAN) reach the
