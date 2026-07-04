@@ -97,7 +97,7 @@
 - name: Install the llama.cpp release binary
   when: not llama_cpp_server_stat.stat.exists
   block:
-    - name: Resolve the latest llama.cpp release metadata
+    - name: Resolve recent llama.cpp release metadata
       ansible.builtin.uri:
         url: "{{ llama_cpp_llamacpp_releases_api }}"
         return_content: true
@@ -105,17 +105,22 @@
           Accept: application/vnd.github+json
       register: llama_cpp_llamacpp_release
 
+    # llama.cpp cuts a release every few hours and CI uploads assets minutes
+    # later, so the newest release is routinely asset-less. Scan newest-first
+    # across the last few releases and take the first matching asset.
     - name: Select the llama.cpp release asset by name pattern
       ansible.builtin.set_fact:
         llama_cpp_llamacpp_asset_url: >-
-          {{ llama_cpp_llamacpp_release.json.assets
+          {{ llama_cpp_llamacpp_release.json
+             | map(attribute='assets') | flatten
              | selectattr('name', 'match', llama_cpp_llamacpp_asset_regex)
-             | map(attribute='browser_download_url') | list | first }}
+             | map(attribute='browser_download_url') | list
+             | first | default('') }}
 
     - name: Assert a matching llama.cpp asset was found
       ansible.builtin.assert:
         that:
-          - llama_cpp_llamacpp_asset_url | default('') | length > 0
+          - llama_cpp_llamacpp_asset_url | length > 0
         fail_msg: >-
           No llama.cpp release asset matched {{ llama_cpp_llamacpp_asset_regex }}
           in {{ llama_cpp_llamacpp_releases_api }} — the asset naming may have changed.
@@ -185,12 +190,13 @@
         llama_cpp_swap_asset_url: >-
           {{ llama_cpp_swap_release.json.assets
              | selectattr('name', 'match', llama_cpp_swap_asset_regex)
-             | map(attribute='browser_download_url') | list | first }}
+             | map(attribute='browser_download_url') | list
+             | first | default('') }}
 
     - name: Assert a matching llama-swap asset was found
       ansible.builtin.assert:
         that:
-          - llama_cpp_swap_asset_url | default('') | length > 0
+          - llama_cpp_swap_asset_url | length > 0
         fail_msg: >-
           No llama-swap release asset matched {{ llama_cpp_swap_asset_regex }}
           in {{ llama_cpp_swap_releases_api }} — the asset naming may have changed.
