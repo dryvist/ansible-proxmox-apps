@@ -277,6 +277,25 @@
           container_ip={{ hostvars['immich'].container_ip | default('(undefined)') }},
           container_reserved_ip={{ hostvars['immich'].container_reserved_ip | default('(undefined)') }}
 
+    # DHCP-first VMs are DNS-first too: a regular VM's `ip` carries the FQDN and
+    # `reserved_ip` the reservation, same as containers. The VM add_host block
+    # predates DHCP-first VMs, so container_reserved_ip is surfaced by the
+    # generic hostname/reserved_ip propagation, not the add_host block. Lock that
+    # the fact lands for VM guests — the technitium_dns A-record builder asserts
+    # a resolvable reserved_ip and fails loud ("have no reserved_ip") without it.
+    - name: Verify dhcp-first VM guest hostvars carry container_reserved_ip
+      ansible.builtin.assert:
+        that:
+          - "'iac-platform' in groups['vms']"
+          - hostvars['iac-platform'].ansible_host == 'iac.example.net'
+          - hostvars['iac-platform'].container_reserved_ip == '192.168.0.30'
+          - hostvars['iac-platform'].hostname == 'iac-platform'
+        fail_msg: >-
+          dhcp-first VM hostvars wrong —
+          ansible_host={{ hostvars['iac-platform'].ansible_host | default('(undefined)') }},
+          container_reserved_ip={{ hostvars['iac-platform'].container_reserved_ip | default('(undefined)') }},
+          hostname={{ hostvars['iac-platform'].hostname | default('(undefined)') }}
+
     - name: Verify static guest carries an empty container_reserved_ip
       ansible.builtin.assert:
         that:
