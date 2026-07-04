@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.60.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.3...v1.60.4) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llama_cpp:** flash-attn flag requires a value in current llama.cpp ([#566](https://github.com/dryvist/ansible-proxmox-apps/issues/566)) ([a95dfef](https://github.com/dryvist/ansible-proxmox-apps/commit/a95dfef76b6fe6f0f8b1349c0d6e102b671a2159))
+
 ## [1.60.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.2...v1.60.3) (2026-07-04)
 
 
