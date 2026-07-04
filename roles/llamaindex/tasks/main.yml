@@ -1,6 +1,6 @@
 ---
 # LlamaIndex RAG Engine Deployment Tasks
-# Deploys Ollama (CPU-only embeddings) + LlamaIndex orchestration
+# Python venv + config pointing embeddings at the fabric router (llm-fast).
 
 # =============================================================================
 # System Dependencies
@@ -17,39 +17,24 @@
     update_cache: true
 
 # =============================================================================
-# Ollama Installation
+# Retire the legacy local-Ollama embeddings sidecar (no-op on fresh guests;
+# cleans up pre-fabric installs on converge)
 # =============================================================================
 
-- name: Download Ollama install script
-  ansible.builtin.get_url:
-    url: https://ollama.com/install.sh
-    dest: /tmp/ollama-install.sh
-    mode: "0755"
-
-- name: Install Ollama
-  ansible.builtin.command:
-    cmd: /tmp/ollama-install.sh
-    creates: /usr/local/bin/ollama
-
-- name: Enable and start Ollama systemd service
+- name: Remove legacy Ollama systemd service
   ansible.builtin.systemd:
     name: ollama
-    state: started
-    enabled: true
-    daemon_reload: true
+    state: stopped
+    enabled: false
+  failed_when: false
 
-- name: Check if embedding model is already present
-  ansible.builtin.command:
-    cmd: "ollama list"
-  register: llamaindex_ollama_list
-  changed_when: false
-
-- name: Pull embedding model
-  ansible.builtin.command:
-    cmd: "ollama pull {{ llamaindex_ollama_model }}"
-  register: llamaindex_ollama_pull
-  changed_when: true
-  when: llamaindex_ollama_model not in llamaindex_ollama_list.stdout
+- name: Remove legacy Ollama binary and install script
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/ollama
+    - /tmp/ollama-install.sh
 
 # =============================================================================
 # LlamaIndex Application Directory
@@ -73,7 +58,7 @@
     name:
       - llama-index-core
       - llama-index-vector-stores-qdrant
-      - llama-index-embeddings-ollama
+      - llama-index-embeddings-openai
     state: present
     virtualenv: "{{ llamaindex_data_dir }}/venv"
 
@@ -93,15 +78,16 @@
 # Health Checks
 # =============================================================================
 
-- name: Verify Ollama service is running
-  ansible.builtin.systemd:
-    name: ollama
-  register: llamaindex_ollama_service
-  failed_when: llamaindex_ollama_service.status.ActiveState != 'active'
-
-- name: Verify embedding model is loaded
-  ansible.builtin.command:
-    cmd: "ollama list"
-  register: llamaindex_model_check
-  changed_when: false
-  failed_when: "llamaindex_ollama_model not in llamaindex_model_check.stdout"
+- name: Verify the router serves the embeddings model
+  ansible.builtin.uri:
+    url: "{{ llamaindex_router_base_url }}/models"
+    headers:
+      Authorization: "Bearer {{ llamaindex_router_api_key }}"
+    return_content: true
+  register: llamaindex_router_models
+  # The router pool may still be converging on a first full-site run.
+  retries: 3
+  delay: 10
+  until: llamaindex_router_models is not failed
+  failed_when: "llamaindex_embed_model not in llamaindex_router_models.content"
+  no_log: true
