@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.61.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.4...v1.61.0) (2026-07-04)
+
+
+### Features
+
+* **openbao:** generalize openbao_secrets to per-domain fetch ([#542](https://github.com/dryvist/ansible-proxmox-apps/issues/542)) ([200d767](https://github.com/dryvist/ansible-proxmox-apps/commit/200d76732cbf67f3131566887a94551481fa6509))
+
 ## [1.60.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.3...v1.60.4) (2026-07-04)
 
 
