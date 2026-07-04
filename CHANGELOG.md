@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.64.0...v1.64.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llama_cpp:** swap chat models instead of full co-residency; drop no-mmap ([#577](https://github.com/dryvist/ansible-proxmox-apps/issues/577)) ([7522448](https://github.com/dryvist/ansible-proxmox-apps/commit/752244804adc5ce860cf03c93174d91bd24508c9))
+
 ## [1.64.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.63.0...v1.64.0) (2026-07-04)
 
 
