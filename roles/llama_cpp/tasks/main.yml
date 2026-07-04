@@ -89,13 +89,17 @@
 # Presence-guarded: the build tag moves every release, so we install once behind
 # the binary's existence and let operators refresh by removing it. The GitHub API
 # call only runs on first install, so re-converge does not spend rate limit.
-- name: Check whether the llama-server binary is already installed
-  ansible.builtin.stat:
-    path: "{{ llama_cpp_server_bin }}"
-  register: llama_cpp_server_stat
+# A binary that exists but cannot resolve its bundled libs (broken/missing
+# SONAME symlinks) counts as not installed, so a converge self-heals it.
+- name: Check whether the installed llama-server runs
+  ansible.builtin.command:
+    cmd: "{{ llama_cpp_server_bin }} --version"
+  register: llama_cpp_server_check
+  changed_when: false
+  failed_when: false
 
 - name: Install the llama.cpp release binary
-  when: not llama_cpp_server_stat.stat.exists
+  when: llama_cpp_server_check.rc != 0
   block:
     - name: Resolve recent llama.cpp release metadata
       ansible.builtin.uri:
@@ -153,14 +157,15 @@
 
     # Flatten the release's bin dir into the install dir so the binary and its
     # bundled .so files share one directory (also LD_LIBRARY_PATH in the unit).
+    # cp -a, not ansible.builtin.copy: the release ships SONAME symlinks
+    # (libllama-common.so.0 -> libllama-common.so.0.0.NNNN) that copy with
+    # remote_src drops, leaving the binary unable to resolve its own libs.
     - name: Install the llama.cpp bin directory contents
-      ansible.builtin.copy:
-        src: "{{ llama_cpp_server_find.files[0].path | dirname }}/"
-        dest: "{{ llama_cpp_install_dir }}/"
-        remote_src: true
-        owner: root
-        group: root
-        mode: preserve
+      ansible.builtin.command:
+        cmd: >-
+          cp -a {{ llama_cpp_server_find.files[0].path | dirname }}/.
+          {{ llama_cpp_install_dir }}/
+      changed_when: true
       notify: Restart llama-swap
 
     - name: Remove the temporary extraction directory
