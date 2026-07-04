@@ -1931,3 +1931,70 @@
             callbacks, embedding mode on the embeddings group
           - litellm.env.j2: secrets + full OTLP /v1/traces endpoint
           - litellm.service.j2: EnvironmentFile, config, listen port
+
+# =============================================================================
+# plex / sonarr / radarr persistence guards (unit-style — no molecule scenario
+# exists for these roles, so their tasks/main.yml is asserted directly here,
+# the same way the servarr_wiring field-merge and traefik route-builder logic
+# above are verified without a live app)
+# =============================================================================
+# Each guard checks its own config/data dir is a real persistent mountpoint,
+# alerts ntfy, then FAILS the converge if not — never just a warning. Asserted
+# by reading the role's own (un-rendered) task source and confirming the
+# mountpoint check, the ntfy alert, and the fail all exist together.
+- name: Verify the plex/sonarr/radarr persistence guards are fail-loud (unit-style)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Read each role's tasks/main.yml
+      ansible.builtin.slurp:
+        src: "../../roles/{{ item }}/tasks/main.yml"
+      loop:
+        - plex
+        - sonarr
+        - radarr
+      register: _persistence_guard_tasks_raw
+
+    - name: Decode each role's tasks/main.yml, keyed by role name
+      ansible.builtin.set_fact:
+        _persistence_guard_tasks: >-
+          {{ _persistence_guard_tasks | default({})
+             | combine({item.item: (item.content | b64decode)}) }}
+      loop: "{{ _persistence_guard_tasks_raw.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # The role's tasks are un-rendered Jinja on disk (the {{ }} placeholders are
+    # literal text here, not resolved values) — {% raw %} keeps THIS assert's
+    # own templating pass from consuming them so the search strings match
+    # verbatim.
+    - name: Compute the literal, un-rendered mountpoint snippet per role
+      ansible.builtin.set_fact:
+        _persistence_guard_snippets:
+          plex: "mountpoint -q /var/lib/plexmediaserver"
+          sonarr: "mountpoint -q {% raw %}{{ sonarr_data_dir }}{% endraw %}"
+          radarr: "mountpoint -q {% raw %}{{ radarr_data_dir }}{% endraw %}"
+
+    - name: Assert each role's persistence guard checks, alerts, then fails
+      ansible.builtin.assert:
+        that:
+          - _persistence_guard_snippets[item] in _persistence_guard_tasks[item]
+          - "'ansible.builtin.fail' in _persistence_guard_tasks[item]"
+          - (_persistence_guard_tasks[item].count(item ~ '_ntfy_url')) >= 1
+        fail_msg: >-
+          The {{ item }} role no longer has a fatal mountpoint guard (with an
+          ntfy alert) for its config/data dir.
+      loop:
+        - plex
+        - sonarr
+        - radarr
+
+    - name: Plex/Sonarr/Radarr persistence guard verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          Persistence guard assertions passed for plex, sonarr, radarr:
+          - each checks its config/data dir is a real persistent mountpoint
+          - each alerts ntfy (<role>_ntfy_url) before failing
+          - each FAILS the converge (not just a warning) when not persistent

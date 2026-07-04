@@ -165,6 +165,85 @@
     - "{{ download_vpn_downloads_dir }}/tv"
     - "{{ download_vpn_downloads_dir }}/movies"
 
+# --- Phase 2b: persistent-storage guards (fail loud, before any app starts) -
+# qBittorrent's session/queue state and Prowlarr's indexer database are only
+# safe from a container rebuild if their directories are REAL persistent
+# mounts, not the disposable container rootfs. This does not block destroying
+# the container — it only refuses to let the app START in a state that would
+# silently look fine while quietly losing its data path.
+- name: Check whether the shared /data volume is a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ download_vpn_data_dir }}
+  register: download_vpn_data_mountpoint
+  changed_when: false
+  failed_when: false
+  when: download_vpn_manage_services
+
+- name: Alert ntfy when /data is NOT persistent
+  ansible.builtin.uri:
+    url: "{{ download_vpn_ntfy_url }}"
+    method: POST
+    headers:
+      Title: "download-vpn persistence guard"
+      Priority: urgent
+      Tags: rotating_light
+    body_format: raw
+    body: >-
+      {{ download_vpn_data_dir }} on {{ inventory_hostname }} is NOT a
+      persistent mount. Refusing to start qBittorrent before the mount is fixed.
+  failed_when: false
+  when:
+    - download_vpn_manage_services
+    - download_vpn_data_mountpoint.rc | default(0) != 0
+
+- name: Fail when /data is NOT persistent
+  ansible.builtin.fail:
+    msg: >-
+      {{ download_vpn_data_dir }} is NOT a persistent mount. qBittorrent's
+      session/queue state (rooted under {{ download_vpn_qbittorrent_profile_dir }})
+      and the shared media library are on the disposable LXC rootfs and would
+      be LOST on the next container rebuild. Bind-mount the persistent dataset
+      onto {{ download_vpn_data_dir }}, then re-run this converge.
+  when:
+    - download_vpn_manage_services
+    - download_vpn_data_mountpoint.rc | default(0) != 0
+
+- name: Check whether the Prowlarr data dir is a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ download_vpn_prowlarr_data_dir }}
+  register: download_vpn_prowlarr_mountpoint
+  changed_when: false
+  failed_when: false
+  when: download_vpn_manage_services
+
+- name: Alert ntfy when the Prowlarr data dir is NOT persistent
+  ansible.builtin.uri:
+    url: "{{ download_vpn_ntfy_url }}"
+    method: POST
+    headers:
+      Title: "download-vpn persistence guard"
+      Priority: urgent
+      Tags: rotating_light
+    body_format: raw
+    body: >-
+      {{ download_vpn_prowlarr_data_dir }} on {{ inventory_hostname }} is NOT a
+      persistent mount. Refusing to start Prowlarr before the mount is fixed.
+  failed_when: false
+  when:
+    - download_vpn_manage_services
+    - download_vpn_prowlarr_mountpoint.rc | default(0) != 0
+
+- name: Fail when the Prowlarr data dir is NOT persistent
+  ansible.builtin.fail:
+    msg: >-
+      {{ download_vpn_prowlarr_data_dir }} is NOT a persistent mount.
+      Prowlarr's indexer database is on the disposable LXC rootfs and would be
+      LOST on the next container rebuild. Bind-mount the persistent dataset
+      onto {{ download_vpn_prowlarr_data_dir }}, then re-run this converge.
+  when:
+    - download_vpn_manage_services
+    - download_vpn_prowlarr_mountpoint.rc | default(0) != 0
+
 # --- Phase 3: KILL IPv6 at the kernel ---------------------------------------
 # Proton is dual-stack; we forbid IPv6 entirely so qBittorrent has no v6 path.
 # nft ip6 coverage (below) is the belt to this suspenders.
@@ -279,13 +358,30 @@
   when: download_vpn_manage_services
 
 # --- Phase 6: qBittorrent ----------------------------------------------------
-- name: Ensure qBittorrent config directory exists
-  ansible.builtin.file:
-    path: "{{ download_vpn_qbittorrent_config_dir }}"
-    state: directory
-    owner: "{{ download_vpn_user }}"
-    group: "{{ download_vpn_group }}"
-    mode: "0750"
+# Pre-create every level of the --profile tree (see defaults/main.yml) with the
+# correct owner BEFORE the daemon starts, so it never has to mkdir its own tree
+# the first time it runs as the unprivileged qbittorrent user.
+- name: Ensure the qBittorrent profile tree exists on persistent storage  # noqa: command-instead-of-module
+  # /data is a bind-mount owned by the host's root (uid 0), which is UNMAPPED
+  # inside this unprivileged LXC — so container-root's CAP_DAC_OVERRIDE does not
+  # reach it (the kernel grants file capabilities only when the file's uid AND
+  # gid both map into the namespace; the idmap maps gid 13000 but not host uid 0).
+  # Creating a new entry directly under /data writes the /data inode, and
+  # container-root is neither its (unmapped) owner nor in gid 13000, leaving only
+  # the mode-2775 "other" bits (r-x, no write) -> EPERM. The service user IS in
+  # gid 13000 (media), which has group-write via the idmap, so create the tree AS
+  # that user. runuser (not become_user: sudo is absent in this container, and
+  # the service user's shell is nologin, which runuser -u bypasses). Ordered
+  # parent-first so each dir's parent exists before mkdir -m sets its mode.
+  ansible.builtin.command:
+    cmd: "runuser -u {{ download_vpn_user }} -- mkdir -p -m 0750 {{ item }}"
+    creates: "{{ item }}"
+  loop:
+    - "{{ download_vpn_qbittorrent_profile_dir }}"
+    - "{{ download_vpn_qbittorrent_profile_base_dir }}"
+    - "{{ download_vpn_qbittorrent_config_dir }}"
+    - "{{ download_vpn_qbittorrent_profile_data_dir }}"
+    - "{{ download_vpn_qbittorrent_export_dir }}"
 
 - name: Deploy qBittorrent configuration (bound to wg0)
   ansible.builtin.template:

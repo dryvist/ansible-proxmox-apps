@@ -87,3 +87,44 @@
     # mode, which tests the container's filesystem, not the role. The seed's
     # restrictive permissions are a deployment guarantee verified out-of-band, not
     # an assertion we can make meaningfully in this ephemeral container.
+
+# --- 3. persistence guard (unit-style — gated on seerr_manage_services, -----
+# never live in this scenario since there is no running container in CI) -----
+# seerr_manage_services is false here (see converge.yml), so the guard task
+# never executes against the container. Assert its shape directly against the
+# role source instead: a mountpoint check, an ntfy alert, and a hard fail —
+# not just a render.
+- name: Verify the Seerr persistence guard is fail-loud (unit-style)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    _role_tasks_path: "{{ playbook_dir }}/../../roles/seerr/tasks/main.yml"
+
+  tasks:
+    - name: Read the seerr role's tasks/main.yml
+      ansible.builtin.slurp:
+        src: "{{ _role_tasks_path }}"
+      register: _seerr_tasks_raw
+
+    - name: Decode tasks/main.yml
+      ansible.builtin.set_fact:
+        _seerr_tasks: "{{ _seerr_tasks_raw.content | b64decode }}"
+
+    # The role's tasks are un-rendered Jinja on disk (the {{ }} placeholder is
+    # literal text here, not a resolved value) — {% raw %} keeps THIS assert's
+    # own templating pass from consuming it so the search string matches verbatim.
+    - name: Compute the literal, un-rendered guard snippet to search for
+      ansible.builtin.set_fact:
+        _config_mountpoint_snippet: "mountpoint -q {% raw %}{{ seerr_config_dir }}{% endraw %}"
+
+    - name: Assert the persistence guard checks, alerts, then fails
+      ansible.builtin.assert:
+        that:
+          - _config_mountpoint_snippet in _seerr_tasks
+          - "'ansible.builtin.fail' in _seerr_tasks"
+          - (_seerr_tasks.count('seerr_ntfy_url')) >= 1
+        fail_msg: >-
+          The seerr role no longer has a fatal mountpoint guard (with an ntfy
+          alert) for seerr_config_dir.

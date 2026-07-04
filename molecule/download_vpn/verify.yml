@@ -18,7 +18,12 @@
   vars:
     download_vpn_wg_interface: wg0
     download_vpn_nft_ruleset_path: /etc/nftables.d/download-vpn-killswitch.nft
-    download_vpn_qbittorrent_config_dir: /home/qbittorrent/.config/qBittorrent
+    # Matches the role default: download_vpn_data_dir (/data) is not overridden
+    # by converge.yml, so the --profile tree lands at this fixed, deterministic
+    # path (see defaults/main.yml: download_vpn_qbittorrent_{profile,config}_dir).
+    download_vpn_qbittorrent_profile_dir: /data/.qbittorrent-profile
+    download_vpn_qbittorrent_config_dir: /data/.qbittorrent-profile/qBittorrent/config
+    download_vpn_qbittorrent_export_dir: /data/.qbittorrent-profile/exported-torrents
 
   tasks:
     # --- 1. ruleset content ------------------------------------------------
@@ -80,6 +85,31 @@
           - "'Session\\\\Interface=' ~ download_vpn_wg_interface in (qbt_conf.content | b64decode)"
           - "'Connection\\\\Interface=' ~ download_vpn_wg_interface in (qbt_conf.content | b64decode)"
         fail_msg: "qBittorrent is not bound to wg0."
+
+    # --- 2b. qBittorrent session/queue state persists on /data -------------
+    - name: Assert qBittorrent.conf exports a persistent, plain-file torrent backup
+      ansible.builtin.assert:
+        that:
+          - >-
+            'Session\\TorrentExportDirectory=' ~ download_vpn_qbittorrent_export_dir
+            in (qbt_conf.content | b64decode)
+        fail_msg: >-
+          qBittorrent.conf does not set Session\TorrentExportDirectory under
+          the persistent /data profile tree.
+
+    - name: Read the deployed qBittorrent systemd unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/qbittorrent-nox.service
+      register: qbt_unit
+
+    - name: Assert the systemd unit passes --profile under the persistent /data tree
+      ansible.builtin.assert:
+        that:
+          - "'--profile=' ~ download_vpn_qbittorrent_profile_dir in (qbt_unit.content | b64decode)"
+        fail_msg: >-
+          qbittorrent-nox.service does not start with --profile pointing under
+          the persistent /data tree — the session/queue state would land back
+          on the disposable container rootfs.
 
     # --- 3. simulate wg0 down -> no v4/v6 egress ---------------------------
     - name: Ensure IPv6 is disabled (as the role does on real hosts)
@@ -163,3 +193,47 @@
         cmd: nft delete table inet killswitch
       changed_when: true
       failed_when: false
+
+# --- 5. persistent-storage guards (unit-style — gated on manage_services, ----
+# never live in this scenario since there is no real Proton tunnel in CI) -----
+# download_vpn_manage_services is false here (see converge.yml), so the guard
+# tasks never execute against the container. Assert their shape directly
+# against the role source instead: a mountpoint check for each critical
+# directory, an ntfy alert, and a hard fail — not just a warning.
+- name: Verify the persistent-storage guards are fail-loud (unit-style)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    _role_tasks_path: "{{ playbook_dir }}/../../roles/download_vpn/tasks/main.yml"
+
+  tasks:
+    - name: Read the download_vpn role's tasks/main.yml
+      ansible.builtin.slurp:
+        src: "{{ _role_tasks_path }}"
+      register: _download_vpn_tasks_raw
+
+    - name: Decode tasks/main.yml
+      ansible.builtin.set_fact:
+        _download_vpn_tasks: "{{ _download_vpn_tasks_raw.content | b64decode }}"
+
+    # The role's tasks are un-rendered Jinja on disk (the {{ }} placeholders are
+    # literal text here, not resolved values) — {% raw %} keeps THIS assert's own
+    # templating pass from consuming them so the search strings match verbatim.
+    - name: Compute the literal, un-rendered guard snippets to search for
+      ansible.builtin.set_fact:
+        _data_mountpoint_snippet: "mountpoint -q {% raw %}{{ download_vpn_data_dir }}{% endraw %}"
+        _prowlarr_mountpoint_snippet: "mountpoint -q {% raw %}{{ download_vpn_prowlarr_data_dir }}{% endraw %}"
+
+    - name: Assert both persistent-storage guards check, alert, then fail
+      ansible.builtin.assert:
+        that:
+          - _data_mountpoint_snippet in _download_vpn_tasks
+          - _prowlarr_mountpoint_snippet in _download_vpn_tasks
+          - "'ansible.builtin.fail' in _download_vpn_tasks"
+          - (_download_vpn_tasks.count('ansible.builtin.fail')) >= 2
+          - (_download_vpn_tasks.count('download_vpn_ntfy_url')) >= 2
+        fail_msg: >-
+          The download_vpn role no longer has a fatal mountpoint guard (with an
+          ntfy alert) for both /data and the Prowlarr data dir.

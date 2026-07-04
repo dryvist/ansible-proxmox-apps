@@ -137,6 +137,50 @@
     - "{{ seerr_data_dir }}"
     - "{{ seerr_config_dir }}"
 
+# ---------------------------------------------------------------------------
+# Persistence guard — refuse to start Seerr on a non-persistent config dir
+# ---------------------------------------------------------------------------
+# seerr_config_dir is bind-mounted to the container's /app/config and holds
+# settings.json (the deterministic API key + all request/registration state).
+# Without a persistent mount there, a container rebuild silently resets Seerr
+# to a fresh install (lost requests, re-registration needed) — so fail the
+# converge instead of starting fresh silently.
+- name: Check whether the Seerr config dir is on a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ seerr_config_dir }}
+  register: seerr_config_mountpoint
+  changed_when: false
+  failed_when: false
+  when: seerr_manage_services | bool
+
+- name: Alert ntfy when the Seerr config dir is NOT persistent
+  ansible.builtin.uri:
+    url: "{{ seerr_ntfy_url }}"
+    method: POST
+    headers:
+      Title: "seerr persistence guard"
+      Priority: urgent
+      Tags: rotating_light
+    body_format: raw
+    body: >-
+      {{ seerr_config_dir }} on {{ inventory_hostname }} is NOT a persistent
+      mount. Refusing to start Seerr before the mount is fixed.
+  failed_when: false
+  when:
+    - seerr_manage_services | bool
+    - seerr_config_mountpoint.rc | default(0) != 0
+
+- name: Fail when the Seerr config dir is NOT persistent
+  ansible.builtin.fail:
+    msg: >-
+      {{ seerr_config_dir }} is NOT a persistent mount. Seerr's settings and
+      request history are on the disposable LXC rootfs and would be LOST on
+      the next container rebuild. Bind-mount a persistent dataset onto
+      {{ seerr_config_dir }}, then re-run this converge.
+  when:
+    - seerr_manage_services | bool
+    - seerr_config_mountpoint.rc | default(0) != 0
+
 # One-time seed: set ONLY the deterministic main.apiKey, then leave the file to
 # Seerr (it rewrites settings.json at runtime). Guard on the file not yet
 # existing instead of `template force: false`: some ansible-core versions, with

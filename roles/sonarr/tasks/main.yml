@@ -59,6 +59,49 @@
     - "{{ sonarr_media_dir }}"
     - "{{ sonarr_tv_dir }}"
 
+# ---------------------------------------------------------------------------
+# Persistence guard — refuse to start Sonarr on a non-persistent data dir
+# ---------------------------------------------------------------------------
+# sonarr_data_dir holds Sonarr's own database and config.xml (deterministic API
+# key, auth method). Without a persistent mount there, a container rebuild
+# silently resets Sonarr to a fresh install (lost history, re-provisioning
+# needed) — so fail the converge instead of starting fresh silently.
+- name: Check whether the Sonarr data dir is on a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ sonarr_data_dir }}
+  register: sonarr_data_mountpoint
+  changed_when: false
+  failed_when: false
+  when: sonarr_manage_services
+
+- name: Alert ntfy when the Sonarr data dir is NOT persistent
+  ansible.builtin.uri:
+    url: "{{ sonarr_ntfy_url }}"
+    method: POST
+    headers:
+      Title: "sonarr persistence guard"
+      Priority: urgent
+      Tags: rotating_light
+    body_format: raw
+    body: >-
+      {{ sonarr_data_dir }} on {{ inventory_hostname }} is NOT a persistent
+      mount. Refusing to start Sonarr before the mount is fixed.
+  failed_when: false
+  when:
+    - sonarr_manage_services
+    - sonarr_data_mountpoint.rc | default(0) != 0
+
+- name: Fail when the Sonarr data dir is NOT persistent
+  ansible.builtin.fail:
+    msg: >-
+      {{ sonarr_data_dir }} is NOT a persistent mount. Sonarr's database and
+      config are on the disposable LXC rootfs and would be LOST on the next
+      container rebuild. Bind-mount a persistent dataset onto
+      {{ sonarr_data_dir }}, then re-run this converge.
+  when:
+    - sonarr_manage_services
+    - sonarr_data_mountpoint.rc | default(0) != 0
+
 - name: Check if Sonarr is already installed
   ansible.builtin.stat:
     path: "{{ sonarr_install_dir }}/Sonarr"

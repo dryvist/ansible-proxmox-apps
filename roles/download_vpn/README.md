@@ -38,6 +38,21 @@ outside the VPN:
    table immediately before the deploy-time gate, atomically rebuilding it only
    when it has drifted to a clearnet `default via`, so every converge is clean.
 
+## Persistent state
+
+qBittorrent's session/queue state (the resume/session database and per-torrent
+descriptors) and its WebUI config live under a `qbittorrent-nox --profile=`
+tree rooted at `download_vpn_qbittorrent_profile_dir`, under the shared,
+always-persistent `/data` volume — never the disposable container rootfs.
+`Session\TorrentExportDirectory` additionally keeps a plain-file, always-
+populated copy of every added torrent's descriptor, independent of the session
+database, so the queue can be rebuilt from files alone. Before qBittorrent or
+Prowlarr start, the role asserts `download_vpn_data_dir` and
+`download_vpn_prowlarr_data_dir` are real persistent mounts — not the
+disposable container rootfs — alerting ntfy and **failing the converge** if
+not, rather than silently starting either app in a state that would lose its
+data on the next container rebuild.
+
 ## Bandwidth / QoS (self-throttle)
 
 qBittorrent is the WAN's heaviest user; on an asymmetric link (e.g. 1 Gbps down /

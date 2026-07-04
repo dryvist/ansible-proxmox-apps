@@ -117,7 +117,22 @@ download_vpn_apt_cacher_port: "{{ tofu_data.constants.service_ports.apt_cacher_n
 # --- qBittorrent -------------------------------------------------------------
 download_vpn_qbittorrent_package: qbittorrent-nox
 download_vpn_qbittorrent_user: "{{ download_vpn_user }}"
-download_vpn_qbittorrent_config_dir: "/home/{{ download_vpn_user }}/.config/qBittorrent"
+# qbittorrent-nox --profile=<root> lays out <root>/qBittorrent/{config,data,cache}
+# (config/ = qBittorrent.conf + categories.json; data/ = BT_backup + torrents.db,
+# the session/queue state). Rooted under download_vpn_data_dir (/data, the
+# ALWAYS-persistent shared volume, never the disposable container rootfs) so the
+# whole tree — including the session/queue state nothing else can reconstruct —
+# survives a container rebuild. Every other setting is re-applied by this role on
+# the next converge regardless.
+download_vpn_qbittorrent_profile_dir: "{{ download_vpn_data_dir }}/.qbittorrent-profile"
+download_vpn_qbittorrent_profile_base_dir: "{{ download_vpn_qbittorrent_profile_dir }}/qBittorrent"
+download_vpn_qbittorrent_config_dir: "{{ download_vpn_qbittorrent_profile_base_dir }}/config"
+download_vpn_qbittorrent_profile_data_dir: "{{ download_vpn_qbittorrent_profile_base_dir }}/data"
+# Plain-file, always-populated copy of every added torrent's descriptor —
+# independent of the session DB above, so the queue can be rebuilt from files
+# alone even if that DB is ever lost or corrupted. Set via Session\TorrentExportDirectory
+# in qBittorrent.conf.j2 (a template-safe key, unlike the API-only prefs below).
+download_vpn_qbittorrent_export_dir: "{{ download_vpn_qbittorrent_profile_dir }}/exported-torrents"
 # Web UI port from tofu constants (no hardcoded port).
 download_vpn_qbittorrent_web_port: >-
   {{ tofu_data.constants.media_ports.qbittorrent_web }}
@@ -247,7 +262,9 @@ download_vpn_natpmp_refresh_seconds: 45
 # systemd timer cadence for the fail-closed validator. On ANY breach it stops
 # qBittorrent and alerts (ntfy + healthchecks deadman).
 download_vpn_validator_interval: "2min"
-# ntfy alert target. Reuses the repo's ntfy LXC + push topic convention.
+# ntfy alert target. Reuses the repo's ntfy LXC + push topic convention. Shared
+# by the runtime killswitch validator above AND the persistent-storage guards
+# in tasks/main.yml (Phase 2b) — both are fail-loud, alert-then-refuse gates.
 download_vpn_ntfy_url: >-
   http://{{ hostvars['ntfy']['container_ip'] | default('ntfy') }}:{{
   tofu_data.constants.notification_ports.ntfy_http }}/{{ download_vpn_ntfy_topic }}
