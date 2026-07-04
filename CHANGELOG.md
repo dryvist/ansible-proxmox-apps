@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.57.0...v1.58.0) (2026-07-04)
+
+
+### Features
+
+* **technitium_dns:** prune retired guest A records ([#535](https://github.com/dryvist/ansible-proxmox-apps/issues/535)) ([a281c92](https://github.com/dryvist/ansible-proxmox-apps/commit/a281c927c4327d0be256409ac4c5555663baf92f))
+
 ## [1.57.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.56.0...v1.57.0) (2026-07-03)
 
 
