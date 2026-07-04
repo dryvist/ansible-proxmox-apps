@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.64.1...v1.65.0) (2026-07-04)
+
+
+### Features
+
+* **cribl_edge:** OTLP source + Langfuse destination for LLM fabric traces ([#581](https://github.com/dryvist/ansible-proxmox-apps/issues/581)) ([851e8bf](https://github.com/dryvist/ansible-proxmox-apps/commit/851e8bf2e53d60e1e2e6d7ad1780c8cb3806d5ab))
+
 ## [1.64.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.64.0...v1.64.1) (2026-07-04)
 
 
