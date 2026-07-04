@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.60.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.0...v1.60.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **inventory-schema:** accept non-apex multi-backend ingress pools ([#560](https://github.com/dryvist/ansible-proxmox-apps/issues/560)) ([a2c4e14](https://github.com/dryvist/ansible-proxmox-apps/commit/a2c4e14a7540c9707a7847775a3e8e83fc4f2ec3))
+
 ## [1.60.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.59.2...v1.60.0) (2026-07-04)
 
 
