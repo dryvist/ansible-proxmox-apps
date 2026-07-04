@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.63.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.62.0...v1.63.0) (2026-07-04)
+
+
+### Features
+
+* **media:** sticky failover to a backup VPN tunnel endpoint ([43fd7f0](https://github.com/dryvist/ansible-proxmox-apps/commit/43fd7f0188be7229f5166e526c19ea2836c56765))
+
 ## [1.62.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.61.1...v1.62.0) (2026-07-04)
 
 
