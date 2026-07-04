@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.0...v1.58.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **inventory-contract:** vm_entry ip accepts FQDN like container_entry ([#537](https://github.com/dryvist/ansible-proxmox-apps/issues/537)) ([cd89001](https://github.com/dryvist/ansible-proxmox-apps/commit/cd89001071c7e811d2180a076b2891c9095aa837))
+
 ## [1.58.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.57.0...v1.58.0) (2026-07-04)
 
 
