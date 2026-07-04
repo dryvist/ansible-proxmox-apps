@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.60.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.59.2...v1.60.0) (2026-07-04)
+
+
+### Features
+
+* **openbao:** automated raft snapshot timer + seal/liveness alerting ([#553](https://github.com/dryvist/ansible-proxmox-apps/issues/553)) ([493eeb0](https://github.com/dryvist/ansible-proxmox-apps/commit/493eeb0150998fbf948f3706b9ac7d1027a0b363))
+
 ## [1.59.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.59.1...v1.59.2) (2026-07-04)
 
 
