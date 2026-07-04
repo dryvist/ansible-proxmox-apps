@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.6...v1.59.0) (2026-07-04)
+
+
+### Features
+
+* **media:** persist download-queue state on the shared data volume ([6de9808](https://github.com/dryvist/ansible-proxmox-apps/commit/6de9808727ee1151b1ea027ac6a6342a3216c592))
+
 ## [1.58.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.5...v1.58.6) (2026-07-04)
 
 
