@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.63.0...v1.64.0) (2026-07-04)
+
+
+### Features
+
+* **langfuse:** headless first-run provisioning via LANGFUSE_INIT_* ([#578](https://github.com/dryvist/ansible-proxmox-apps/issues/578)) ([0672c03](https://github.com/dryvist/ansible-proxmox-apps/commit/0672c03954c584655ee028448533e23f5a490da7))
+
 ## [1.63.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.62.0...v1.63.0) (2026-07-04)
 
 
