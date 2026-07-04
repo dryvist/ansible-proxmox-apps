@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.3...v1.58.4) (2026-07-04)
+
+
+### Bug Fixes
+
+* **site:** converge llamaindex after the LiteLLM router ([#545](https://github.com/dryvist/ansible-proxmox-apps/issues/545)) ([c588211](https://github.com/dryvist/ansible-proxmox-apps/commit/c5882112381c0491e3412e909b7e9f8657fe6fa5))
+
 ## [1.58.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.2...v1.58.3) (2026-07-04)
 
 
