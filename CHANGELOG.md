@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.59.1...v1.59.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llama_cpp:** preserve SONAME symlinks; self-healing install gate ([#556](https://github.com/dryvist/ansible-proxmox-apps/issues/556)) ([f21934e](https://github.com/dryvist/ansible-proxmox-apps/commit/f21934e2951d17c8d8a9fb74f01722fe80883fdb))
+
 ## [1.59.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.59.0...v1.59.1) (2026-07-04)
 
 
