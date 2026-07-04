@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.60.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.2...v1.60.3) (2026-07-04)
+
+
+### Bug Fixes
+
+* **ci:** add YAML document-start to two issue-automation workflows ([#564](https://github.com/dryvist/ansible-proxmox-apps/issues/564)) ([de2d4f4](https://github.com/dryvist/ansible-proxmox-apps/commit/de2d4f4592d95b733b18df9a7733d101e0b36f11))
+
 ## [1.60.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.1...v1.60.2) (2026-07-04)
 
 
