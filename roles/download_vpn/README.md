@@ -126,6 +126,11 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   `PROTON_WG_IFACE_ADDRESS`, `PROTON_WG_PEER_PUBLIC_KEY`,
   `PROTON_WG_PEER_ENDPOINT`. Proton's tunnel DNS resolver `10.2.0.1` is a
   stable constant and is hardcoded in `defaults/main.yml` (not a secret).
+  Optionally set `PROTON_WG_BACKUP_IFACE_PRIVATE_KEY`,
+  `PROTON_WG_BACKUP_PEER_PUBLIC_KEY`, and `PROTON_WG_BACKUP_PEER_ENDPOINT`
+  (a second Proton server) to arm sticky auto-failover: after a sustained
+  primary outage the runtime validator switches `wg0` to the backup peer and
+  stays there until the next converge re-lays the primary. All three or none.
   `QBITTORRENT_ADMIN_PASSWORD` is delivered via SOPS.
 - The single `bulk/data` dataset bind-mounted at `/data` (TRaSH
   single-filesystem layout). qBittorrent saves to `/data/torrents` (per-category

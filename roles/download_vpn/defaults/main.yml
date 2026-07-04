@@ -55,6 +55,36 @@ download_vpn_wg_endpoint: "{{ lookup('env', 'PROTON_WG_PEER_ENDPOINT') }}"
 download_vpn_wg_allowed_ips: "0.0.0.0/0"
 download_vpn_wg_persistent_keepalive: 25
 
+# --- WireGuard failover (backup Proton peer) --------------------------------
+# Optional second Proton server for sticky auto-failover. Proton issues a full
+# per-server keypair, but the tunnel Address (10.2.0.2, point-to-point) is shared
+# with the primary, so failover swaps only the client private key + peer key +
+# endpoint on the SAME wg0 — no interface/address reconfig. All three come from
+# Doppler runtime env; leave them unset to disable failover (single-endpoint
+# behaviour is preserved unchanged). NEVER hardcode key material or the endpoint.
+download_vpn_wg_backup_private_key: "{{ lookup('env', 'PROTON_WG_BACKUP_IFACE_PRIVATE_KEY') | default('', true) }}"
+download_vpn_wg_backup_peer_public_key: "{{ lookup('env', 'PROTON_WG_BACKUP_PEER_PUBLIC_KEY') | default('', true) }}"
+download_vpn_wg_backup_endpoint: "{{ lookup('env', 'PROTON_WG_BACKUP_PEER_ENDPOINT') | default('', true) }}"
+# True only when a COMPLETE backup peer is configured (all three values present).
+# The killswitch permits the backup endpoint and the validator arms failover only
+# when this is true; a partial config fails loud in tasks/main.yml Phase -1.
+download_vpn_wg_failover_enabled: >-
+  {{ (download_vpn_wg_backup_private_key | length > 0)
+     and (download_vpn_wg_backup_peer_public_key | length > 0)
+     and (download_vpn_wg_backup_endpoint | length > 0) }}
+# Consecutive tunnel-down validator cycles before switching to the backup peer.
+# At the 2min validator cadence, 3 => ~6min of a dead primary before failover.
+download_vpn_failover_cycles: 3
+# Sticky failover: once switched to the backup the validator STAYS there (no auto
+# flip-back — avoids flapping between two unhealthy servers). Failback happens on
+# the next converge, which re-lays wg0 on the primary and clears these markers.
+# Both live on tmpfs (/run) so a reboot also resets to the primary.
+download_vpn_failover_state_file: /run/download-vpn-active-endpoint
+download_vpn_failover_counter_file: /run/download-vpn-down-count
+# Root-only on-disk copy of the backup private key, read by the validator's
+# `wg set private-key` on failover. Rendered only when failover is enabled.
+download_vpn_wg_backup_key_path: /etc/wireguard/wg0-backup.key
+
 # --- LAN reachability --------------------------------------------------------
 # LAN subnet that may reach the web UIs and that *arr/qBit/Prowlarr use to talk
 # to each other. Derived from the container's own /24 (tofu-owned IP) so

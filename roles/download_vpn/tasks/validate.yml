@@ -42,6 +42,20 @@
           - "'counter packets' in download_vpn_nft_output.stdout or 'drop' in download_vpn_nft_output.stdout"
         fail_msg: "Killswitch ruleset is missing one of the required allow rules."
 
+    - name: Assert every configured Proton endpoint is permitted (failover-ready)
+      # Each primary+backup endpoint must have an accept rule; otherwise a
+      # failover to that endpoint would be blocked fail-closed by the killswitch.
+      ansible.builtin.assert:
+        that:
+          - item.host in download_vpn_nft_output.stdout
+        fail_msg: >-
+          Killswitch does not permit Proton endpoint {{ item.host }} — a failover
+          to it would be blocked fail-closed.
+        quiet: true
+      loop: "{{ download_vpn_endpoints_resolved }}"
+      loop_control:
+        label: "{{ item.host }}"
+
     # --- B. internet-bound IPv4 traffic egresses via wg0 (Table=auto) ------
     # wg-quick `Table = auto` installs the tunnel default in a SEPARATE fwmark
     # routing table (51820), not the main table — so the main-table default stays

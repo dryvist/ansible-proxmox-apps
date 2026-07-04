@@ -18,6 +18,15 @@
   vars:
     download_vpn_wg_interface: wg0
     download_vpn_nft_ruleset_path: /etc/nftables.d/download-vpn-killswitch.nft
+    download_vpn_wg_backup_key_path: /etc/wireguard/wg0-backup.key
+    # Endpoint hosts to expect in the killswitch — from the (placeholder) env the
+    # molecule scenario injects; 192.168.* fallbacks keep this committed-safe.
+    _primary_ep_host: >-
+      {{ (lookup('env', 'PROTON_WG_PEER_ENDPOINT')
+          | default('192.168.0.7:51820', true)).split(':')[0] }}
+    _backup_ep_host: >-
+      {{ (lookup('env', 'PROTON_WG_BACKUP_PEER_ENDPOINT')
+          | default('192.168.0.8:51820', true)).split(':')[0] }}
     # Matches the role default: download_vpn_data_dir (/data) is not overridden
     # by converge.yml, so the --profile tree lands at this fixed, deterministic
     # path (see defaults/main.yml: download_vpn_qbittorrent_{profile,config}_dir).
@@ -55,6 +64,31 @@
           - "'ip6 daddr ::/0 accept' not in ks"
           - "'accept comment \"any\"' not in ks"
         fail_msg: "Killswitch ruleset has unexpected or missing rules."
+
+    - name: Assert BOTH Proton endpoints (primary + backup) are permitted
+      # Failover to the backup would be blocked fail-closed unless the killswitch
+      # pre-permits its endpoint too.
+      ansible.builtin.assert:
+        that:
+          - _primary_ep_host in ks
+          - _backup_ep_host in ks
+        fail_msg: >-
+          Killswitch does not permit both Proton endpoints (primary
+          {{ _primary_ep_host }} + backup {{ _backup_ep_host }}).
+
+    - name: Stat the backup WireGuard key
+      ansible.builtin.stat:
+        path: "{{ download_vpn_wg_backup_key_path }}"
+      register: _backup_key
+
+    - name: Assert the backup WireGuard key is deployed root-only (0600)
+      ansible.builtin.assert:
+        that:
+          - _backup_key.stat.exists
+          - _backup_key.stat.mode == '0600'
+        fail_msg: >-
+          Backup WireGuard key {{ download_vpn_wg_backup_key_path }} is missing
+          or not root-only (0600).
 
     - name: Load the killswitch ruleset into the kernel
       ansible.builtin.command:
@@ -186,7 +220,12 @@
           - "'--interface eth0' not in (validator.content | b64decode)"
           - "'ip -6 route show default' in (validator.content | b64decode)"
           - "'systemctl stop qbittorrent-nox.service' in (validator.content | b64decode)"
-        fail_msg: "Runtime validator does not cover both address families or does not fail closed."
+          # Sticky failover: on sustained tunnel-down the validator switches wg0
+          # to the backup peer (and never on a leak-type breach).
+          - "'FAILOVER_STATE_FILE=' in (validator.content | b64decode)"
+          - "'peer \"${BACKUP_PEER}\" endpoint' in (validator.content | b64decode)"
+          - "'peer \"${PRIMARY_PEER}\" remove' in (validator.content | b64decode)"
+        fail_msg: "Runtime validator does not cover both address families, fail closed, or sticky failover."
 
     - name: Clean up the loaded killswitch table
       ansible.builtin.command:
