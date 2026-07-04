@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.61.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.61.0...v1.61.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **dify:** web SSR needs absolute API URLs ([#571](https://github.com/dryvist/ansible-proxmox-apps/issues/571)) ([cfa832e](https://github.com/dryvist/ansible-proxmox-apps/commit/cfa832e64ec054c552307f9e9461f4e394738288))
+
 ## [1.61.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.4...v1.61.0) (2026-07-04)
 
 
