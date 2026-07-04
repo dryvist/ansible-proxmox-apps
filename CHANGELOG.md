@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.60.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.1...v1.60.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llama_cpp:** install libgomp1 runtime dependency ([#563](https://github.com/dryvist/ansible-proxmox-apps/issues/563)) ([6d33403](https://github.com/dryvist/ansible-proxmox-apps/commit/6d33403f5b8d096b6a7a40823a258b21f2f4b6b4))
+
 ## [1.60.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.60.0...v1.60.1) (2026-07-04)
 
 
