@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.5...v1.58.6) (2026-07-04)
+
+
+### Bug Fixes
+
+* **llama_cpp:** escape-proof asset regexes ([#550](https://github.com/dryvist/ansible-proxmox-apps/issues/550)) ([07eca1e](https://github.com/dryvist/ansible-proxmox-apps/commit/07eca1e2bba6f48514ddd3f4a762af37f8d759b1))
+
 ## [1.58.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.58.4...v1.58.5) (2026-07-04)
 
 
