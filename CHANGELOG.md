@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.66.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.5...v1.66.0) (2026-07-05)
+
+
+### Features
+
+* **ui:** headless admin provisioning for Open WebUI and Dify + dify data-dir ownership fixes ([#591](https://github.com/dryvist/ansible-proxmox-apps/issues/591)) ([13eab19](https://github.com/dryvist/ansible-proxmox-apps/commit/13eab1906e453a1f2775cd08aaeb51d734238347))
+
 ## [1.65.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.4...v1.65.5) (2026-07-05)
 
 
