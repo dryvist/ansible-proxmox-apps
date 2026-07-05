@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.67.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.67.0...v1.67.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **llm_router:** map large-tier aliases to the gate's real model ids ([#606](https://github.com/dryvist/ansible-proxmox-apps/issues/606)) ([c09bb88](https://github.com/dryvist/ansible-proxmox-apps/commit/c09bb8857534e96f32ca393bc09bf5e3ab09555c))
+
 ## [1.67.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.66.2...v1.67.0) (2026-07-05)
 
 
