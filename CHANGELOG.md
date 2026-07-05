@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.66.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.66.1...v1.66.2) (2026-07-05)
+
+
+### Bug Fixes
+
+* **llm_router:** dial the llm-large gate at its apex-level alias ([#603](https://github.com/dryvist/ansible-proxmox-apps/issues/603)) ([ae2811a](https://github.com/dryvist/ansible-proxmox-apps/commit/ae2811aa53e24b5e9c15b028a3957d0cd38b2e99))
+
 ## [1.66.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.66.0...v1.66.1) (2026-07-05)
 
 
