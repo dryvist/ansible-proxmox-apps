@@ -89,6 +89,51 @@ This role brings OpenBao live **before** anything that reads secrets from it.
 5. `terraform-proxmox` `vault-secrets` — now able to authenticate as
    `terraform-apply` (read/write proof).
 
+## Rolling expansion / migration (preserve a live cluster's data)
+
+`bao operator init` creates a **brand-new empty cluster**. To grow or renumber a
+cluster that already holds secrets **without losing them**, the new nodes must
+JOIN the live cluster (retry_join), not init. The role enforces this:
+`openbao_allow_fresh_init` defaults `false`, and before any init the bootstrap
+host probes every peer — if one is already initialized it refuses to init and
+fails loudly. Fresh init happens only on a genuine first bootstrap
+(`-e openbao_allow_fresh_init=true`).
+
+To expand the current 2-node cluster (`openbao-01`, `openbao-02`) into the
+5-voter topology (`openbao-10/-20/-21/-30/-31` — one/two/two across the three
+Proxmox hosts, each node's IP last octet matching its `NN` suffix), do it in two
+phases so the data replicates to the new voters before the old ones leave:
+
+**Phase 1 — add (interim 7-node cluster, zero downtime):**
+
+1. In `deployment.json`, KEEP `openbao-01` + `openbao-02` AND add the five new
+   nodes, so `openbao_group` has all seven. Every node's `retry_join` is the
+   union, so the new nodes find the live leader and replicate the full store.
+2. Pin the bootstrap/provisioning host to a **live, initialized** node for the
+   migration: `-e openbao_bootstrap_host=openbao-02` (never a new node; and not a
+   node whose host is currently unstable). `openbao_allow_fresh_init` stays
+   `false`.
+3. `terraform-proxmox` apply creates the five new LXCs; then run this role with
+   `--limit openbao_group,localhost`.
+4. **Verify before Phase 2:** `bao operator raft list-peers` shows all 7;
+   `bao operator raft autopilot state` shows 7 healthy voters; a read of a known
+   secret succeeds from a NEW node. Do not proceed until healthy.
+
+**Phase 2 — remove the old nodes (shrink to the clean 5):**
+
+1. `bao operator raft remove-peer openbao-01` then `... openbao-02`.
+2. Drop `openbao-01`/`openbao-02` from `deployment.json`; `terraform-proxmox`
+   apply destroys the two old LXCs. Final state: 5 voters, quorum 3 — survives
+   any single node, and any single Proxmox host, going down.
+
+**Leader preference** (first host > second > third): Raft does not natively pin a
+leader — whichever voter wins the election leads; autopilot only handles
+stabilization and dead-server cleanup. If keeping leadership off a specific host
+matters, the real lever is making that host's nodes **non-voters** (they never
+lead and never count toward quorum) — weigh that against the HA math (5 voters
+tolerate 2 down; 3 voters + 2 non-voters tolerate 1). Do not claim hard
+leader-pinning the engine can't do.
+
 ## Installation
 
 The role lives in this repository under `roles/openbao/`. Reference it from a
