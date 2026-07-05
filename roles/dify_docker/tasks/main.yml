@@ -310,3 +310,301 @@
   when: (dify_docker_setup_state.json | default({})).step | default('') == 'not_started'
   changed_when: true
   no_log: true
+
+# --- Model-provider provisioning ---------------------------------------------
+# Dify 1.x stores model providers as plugins plus per-model credentials in the
+# console DB. The legacy OPENAI_API_BASE env var is kept as an SDK fallback, but
+# this block makes the local LiteLLM router usable in the UI after converge.
+- name: Log in to Dify console for model-provider provisioning
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dify_docker_web_port }}/console/api/login"
+    method: POST
+    body_format: json
+    body:
+      email: "{{ dify_docker_admin_email }}"
+      password: "{{ dify_docker_admin_password }}"
+    status_code: 200
+  register: dify_docker_console_login
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
+
+- name: Store Dify console session tokens
+  ansible.builtin.set_fact:
+    dify_docker_console_api_base: "http://127.0.0.1:{{ dify_docker_web_port }}/console/api"
+    dify_docker_console_cookies: "{{ dify_docker_console_login.cookies_string }}"
+    dify_docker_model_provider_api_base: >-
+      {{ dify_docker_console_api_base }}/workspaces/current/model-providers/{{
+      dify_docker_model_provider_id | urlencode }}
+    dify_docker_plugin_tasks_api_base: "{{ dify_docker_console_api_base }}/workspaces/current/plugin/tasks"
+    dify_docker_console_csrf_token: >-
+      {{ dify_docker_console_login.cookies.csrf_token
+         | default(dify_docker_console_login.cookies['__Host-csrf_token'] | default('')) }}
+  when: dify_docker_provision_model_provider | bool
+  no_log: true
+
+- name: Check OpenAI-compatible model plugin installation
+  ansible.builtin.uri:
+    url: "{{ dify_docker_console_api_base }}/workspaces/current/plugin/list/installations/ids"
+    method: POST
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      plugin_ids:
+        - "{{ dify_docker_model_provider_plugin_id }}"
+    status_code: 200
+    return_content: true
+  register: dify_docker_model_plugin_installation
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
+
+- name: Install OpenAI-compatible model plugin from Dify Marketplace
+  ansible.builtin.uri:
+    url: "{{ dify_docker_console_api_base }}/workspaces/current/plugin/install/marketplace"
+    method: POST
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      plugin_unique_identifiers:
+        - "{{ dify_docker_model_provider_plugin_unique_identifier }}"
+    status_code: 200
+    return_content: true
+  register: dify_docker_model_plugin_install
+  when:
+    - dify_docker_provision_model_provider | bool
+    - (dify_docker_model_plugin_installation.json.plugins | default([]) | length) == 0
+  changed_when: not (dify_docker_model_plugin_install.json.all_installed | default(false))
+  no_log: true
+
+- name: Wait for OpenAI-compatible model plugin installation
+  ansible.builtin.uri:
+    url: "{{ dify_docker_plugin_tasks_api_base }}/{{ dify_docker_model_plugin_install.json.task_id }}"
+    method: GET
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    status_code: 200
+    return_content: true
+  register: dify_docker_model_plugin_task
+  when:
+    - dify_docker_provision_model_provider | bool
+    - dify_docker_model_plugin_install is not skipped
+    - not (dify_docker_model_plugin_install.json.all_installed | default(false))
+  retries: 60
+  delay: 2
+  until: dify_docker_model_plugin_task.json.task.status in ['success', 'failed']
+  failed_when: dify_docker_model_plugin_task.json.task.status == 'failed'
+  changed_when: false
+  no_log: true
+
+- name: Wait for Dify model provider to be visible
+  ansible.builtin.uri:
+    url: "{{ dify_docker_console_api_base }}/workspaces/current/model-providers?model_type=llm"
+    method: GET
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    status_code: 200
+    return_content: true
+  register: dify_docker_model_providers
+  when: dify_docker_provision_model_provider | bool
+  retries: 30
+  delay: 2
+  until: >-
+    (dify_docker_model_providers.json.data | default([])
+     | selectattr('provider', 'equalto', dify_docker_model_provider_id)
+     | list | length) > 0
+  changed_when: false
+  no_log: true
+
+- name: Read current Dify LLM model credentials
+  ansible.builtin.uri:
+    url: "{{ dify_docker_model_credentials_url }}"
+    method: GET
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    status_code: 200
+    return_content: true
+  loop: "{{ dify_docker_llm_models }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: dify_docker_model_credentials_current
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
+  vars:
+    dify_docker_model_credentials_url: >-
+      {{ dify_docker_model_provider_api_base }}/models/credentials?model={{
+      item.name | urlencode }}&model_type=llm&config_from=custom-model
+
+- name: Create missing Dify LLM model credentials
+  ansible.builtin.uri:
+    url: "{{ dify_docker_model_provider_api_base }}/models/credentials"
+    method: POST
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      model: "{{ item.name }}"
+      model_type: llm
+      name: "{{ item.display_name | default(item.name) }}"
+      credentials:
+        display_name: "{{ item.display_name | default(item.name) }}"
+        api_key: "{{ dify_docker_model_api_key }}"
+        endpoint_url: "{{ dify_docker_model_endpoint_url }}"
+        endpoint_model_name: "{{ item.endpoint_model_name | default(item.name) }}"
+        mode: "{{ item.mode | default('chat') }}"
+        context_size: "{{ item.context_size }}"
+    status_code: [200, 201]
+  loop: "{{ dify_docker_llm_models }}"
+  loop_control:
+    index_var: dify_docker_model_index
+    label: "{{ item.name }}"
+  when:
+    - dify_docker_provision_model_provider | bool
+    - >-
+      (dify_docker_model_credentials_current.results[dify_docker_model_index].json.current_credential_id
+       | default('')) == ''
+  no_log: true
+
+- name: Update existing Dify LLM model credentials
+  ansible.builtin.uri:
+    url: "{{ dify_docker_model_provider_api_base }}/models/credentials"
+    method: PUT
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      credential_id: "{{ dify_docker_current_credential_id }}"
+      model: "{{ item.name }}"
+      model_type: llm
+      name: "{{ item.display_name | default(item.name) }}"
+      credentials:
+        display_name: "{{ item.display_name | default(item.name) }}"
+        api_key: "{{ dify_docker_model_api_key }}"
+        endpoint_url: "{{ dify_docker_model_endpoint_url }}"
+        endpoint_model_name: "{{ item.endpoint_model_name | default(item.name) }}"
+        mode: "{{ item.mode | default('chat') }}"
+        context_size: "{{ item.context_size }}"
+    status_code: 200
+  loop: "{{ dify_docker_llm_models }}"
+  loop_control:
+    index_var: dify_docker_model_index
+    label: "{{ item.name }}"
+  when:
+    - dify_docker_provision_model_provider | bool
+    - >-
+      (dify_docker_model_credentials_current.results[dify_docker_model_index].json.current_credential_id
+       | default('')) != ''
+    - >-
+      (dify_docker_model_credentials_current.results[dify_docker_model_index].json.credentials.endpoint_url
+       | default('')) != dify_docker_model_endpoint_url
+      or
+      (dify_docker_model_credentials_current.results[dify_docker_model_index].json.credentials.mode
+       | default('chat')) != (item.mode | default('chat'))
+      or
+      (dify_docker_model_credentials_current.results[dify_docker_model_index].json.credentials.context_size
+       | default('')) != item.context_size
+  no_log: true
+  vars:
+    dify_docker_current_credential_id: >-
+      {{ dify_docker_model_credentials_current.results[dify_docker_model_index]
+         .json.current_credential_id }}
+
+- name: Read provisioned Dify LLM model credentials
+  ansible.builtin.uri:
+    url: "{{ dify_docker_model_credentials_url }}"
+    method: GET
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    status_code: 200
+    return_content: true
+  loop: "{{ dify_docker_llm_models }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: dify_docker_model_credentials_provisioned
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
+  vars:
+    dify_docker_model_credentials_url: >-
+      {{ dify_docker_model_provider_api_base }}/models/credentials?model={{
+      item.name | urlencode }}&model_type=llm&config_from=custom-model
+
+- name: Add Dify LLM credentials to the model list
+  ansible.builtin.uri:
+    url: "{{ dify_docker_model_provider_api_base }}/models/credentials/switch"
+    method: POST
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      model: "{{ item.name }}"
+      model_type: llm
+      credential_id: "{{ dify_docker_provisioned_credential_id }}"
+    status_code: 200
+  loop: "{{ dify_docker_llm_models }}"
+  loop_control:
+    index_var: dify_docker_model_index
+    label: "{{ item.name }}"
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
+  vars:
+    dify_docker_provisioned_credential_id: >-
+      {{ dify_docker_model_credentials_provisioned.results[dify_docker_model_index]
+         .json.current_credential_id }}
+
+- name: Select active Dify LLM model credentials
+  ansible.builtin.uri:
+    url: "{{ dify_docker_model_provider_api_base }}/models"
+    method: POST
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      model: "{{ item.name }}"
+      model_type: llm
+      config_from: custom-model
+      credential_id: "{{ dify_docker_provisioned_credential_id }}"
+    status_code: 200
+  loop: "{{ dify_docker_llm_models }}"
+  loop_control:
+    index_var: dify_docker_model_index
+    label: "{{ item.name }}"
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
+  vars:
+    dify_docker_provisioned_credential_id: >-
+      {{ dify_docker_model_credentials_provisioned.results[dify_docker_model_index]
+         .json.current_credential_id }}
+
+- name: Set Dify default LLM model
+  ansible.builtin.uri:
+    url: "{{ dify_docker_console_api_base }}/workspaces/current/default-model"
+    method: POST
+    headers:
+      Cookie: "{{ dify_docker_console_cookies }}"
+      X-CSRF-Token: "{{ dify_docker_console_csrf_token }}"
+    body_format: json
+    body:
+      model_settings:
+        - model_type: llm
+          provider: "{{ dify_docker_model_provider_id }}"
+          model: "{{ dify_docker_default_llm_model }}"
+    status_code: 200
+  when: dify_docker_provision_model_provider | bool
+  changed_when: false
+  no_log: true
