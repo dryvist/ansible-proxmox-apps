@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.1...v1.65.2) (2026-07-05)
+
+
+### Bug Fixes
+
+* freeze llm-fast GPU serving + drop its router deployments until the host fault is resolved ([#586](https://github.com/dryvist/ansible-proxmox-apps/issues/586)) ([6177bc5](https://github.com/dryvist/ansible-proxmox-apps/commit/6177bc53779651060d11cc8308c1e3bea9f9fa20))
+
 ## [1.65.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.0...v1.65.1) (2026-07-05)
 
 
