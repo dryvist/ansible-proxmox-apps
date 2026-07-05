@@ -108,6 +108,31 @@
       and re-apply so the inventory exports reserved_ip.
     quiet: true
 
+- name: Build Proxmox endpoint apex A records
+  ansible.builtin.set_fact:
+    technitium_dns_proxmox_endpoint_a_records: >-
+      {{
+        technitium_dns_proxmox_endpoint_a_records | default([]) +
+        [{ 'domain': technitium_dns_zone, 'ip': item }]
+      }}
+  loop: "{{ technitium_dns_proxmox_endpoint_ips | default([]) }}"
+  loop_control:
+    label: "{{ technitium_dns_zone }} -> {{ item }}"
+
+- name: Assert every Proxmox endpoint A-record target is an IPv4 address
+  ansible.builtin.assert:
+    that:
+      - >-
+        technitium_dns_proxmox_endpoint_a_records | default([])
+        | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+        | list | length == 0
+    fail_msg: >-
+      PROXMOX_IP_ADDRESSES contains non-IPv4 target(s): {{
+      technitium_dns_proxmox_endpoint_a_records | default([])
+      | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+      | map(attribute='ip') | join(', ') }}.
+    quiet: true
+
 # --- Derive HA topology (primary = lowest-vmid technitium_dns_group member) ---
 # Build a {vmid, ip} list for the group so the primary is the lowest vmid
 # (terraform pins technitium-1 lowest). vmid is int-cast so it sorts numerically.
@@ -449,11 +474,68 @@
     - technitium_dns_ingress_host in hostvars
     - hostvars[technitium_dns_ingress_host].container_ip is defined
 
-# The Proxmox cluster-UI apex (the subdomain zone root itself) resolves to the
-# Traefik LXC, same target as the per-service aliases above, so the bare apex
-# https://<subdomain> reaches Traefik's load-balanced node pool over TLS.
-# domain == the zone name writes the A record AT the zone apex. Created only when
-# the tofu ingress table carries an apex row (otherwise a no-op).
+# The Proxmox API/UI apex (the subdomain zone root itself) resolves directly to
+# the Proxmox node endpoint IPs when PROXMOX_IP_ADDRESSES is set. Delete the old
+# apex A set first so the authoritative answer exactly matches the desired node
+# list, then add one A record per endpoint.
+- name: Delete existing Proxmox endpoint apex A records
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/delete?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: A
+      ipAddress: "{{ item.rData.ipAddress }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: >-
+    {{ technitium_dns_existing_records.json.response.records | default([])
+       | selectattr('type', 'equalto', 'A')
+       | selectattr('name', 'equalto', technitium_dns_zone)
+       | list }}
+  loop_control:
+    label: "{{ item.name }} -> {{ item.rData.ipAddress }}"
+  register: technitium_dns_proxmox_endpoint_delete_result
+  changed_when: technitium_dns_proxmox_endpoint_delete_result.json.status == "ok"
+  failed_when: technitium_dns_proxmox_endpoint_delete_result.json.status | default('') != "ok"
+  no_log: true
+  when:
+    - technitium_dns_proxmox_endpoint_a_records | default([]) | length > 0
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+
+- name: Create Proxmox endpoint apex A records
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.domain }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: A
+      ipAddress: "{{ item.ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_proxmox_endpoint_a_records | default([]) }}"
+  loop_control:
+    label: "{{ item.domain }} -> {{ item.ip }}"
+  register: technitium_dns_proxmox_endpoint_result
+  changed_when: technitium_dns_proxmox_endpoint_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_proxmox_endpoint_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_proxmox_endpoint_result.json.errorMessage | default(''))"
+  no_log: true
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+
+# Fallback: if no direct Proxmox endpoint IP list is configured, the Proxmox
+# cluster-UI apex resolves to the Traefik LXC, same target as the per-service
+# aliases above, so the bare apex https://<subdomain> reaches Traefik's backend
+# pool over TLS. domain == the zone name writes the A record AT the zone apex.
 - name: Create Traefik apex A record (zone root -> Traefik)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
@@ -476,6 +558,7 @@
   no_log: true
   when:
     - technitium_dns_ingress_apex | default([]) | length > 0
+    - technitium_dns_proxmox_endpoint_a_records | default([]) | length == 0
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
     - technitium_dns_ingress_host in hostvars
