@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.69.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.68.1...v1.69.0) (2026-07-05)
+
+
+### Features
+
+* **langflow:** source secrets from OpenBao, not Doppler ([#613](https://github.com/dryvist/ansible-proxmox-apps/issues/613)) ([563d14a](https://github.com/dryvist/ansible-proxmox-apps/commit/563d14a3d98a0f6e3b258a57860db17d95688da5))
+
 ## [1.68.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.68.0...v1.68.1) (2026-07-05)
 
 
