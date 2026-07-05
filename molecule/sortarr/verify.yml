@@ -5,6 +5,11 @@
 #   1. docker-compose.yml references the image, publishes 8787, mounts /data.
 #   2. The rendered compose carries the Sonarr/Radarr API keys and the basic-
 #      auth password (secrets flow through, but the file mode stays 0640).
+#   3. SORTARR_CONFIG_PATH points at the bind-mounted /data dir — upstream
+#      defaults ENV_FILE_PATH to a file next to app.py INSIDE the image when
+#      this is unset, which would silently write Sortarr's persisted config +
+#      secret key to the disposable container rootfs instead of the dataset
+#      the persistence guard below expects to be durable.
 
 - name: Verify
   hosts: all
@@ -52,6 +57,15 @@
           - sortarr_expected_radarr_key in (sortarr_compose.content | b64decode)
           - "'BASIC_AUTH_PASS' in (sortarr_compose.content | b64decode)"
         fail_msg: "docker-compose.yml did not receive the Sonarr/Radarr API keys or basic-auth password"
+
+    - name: Assert SORTARR_CONFIG_PATH points at the bind-mounted /data dir
+      ansible.builtin.assert:
+        that:
+          - "'SORTARR_CONFIG_PATH: \"/data/Sortarr.env\"' in (sortarr_compose.content | b64decode)"
+        fail_msg: >-
+          SORTARR_CONFIG_PATH is missing or not pointed at /data - Sortarr
+          would persist its config/secret-key to the container's ephemeral
+          rootfs instead of the bind-mounted host dataset.
 
 # --- persistence guard (unit-style — gated on sortarr_manage_services, --------
 # never live in this scenario since there is no running container in CI) -----
