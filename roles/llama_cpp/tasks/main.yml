@@ -288,12 +288,13 @@
 - name: Enable and start llama-swap
   ansible.builtin.systemd:
     name: llama-swap
-    state: started
-    enabled: true
+    state: "{{ llama_cpp_service_enabled | ternary('started', 'stopped') }}"
+    enabled: "{{ llama_cpp_service_enabled }}"
     daemon_reload: true
 
 - name: Flush handlers so config / unit changes apply before verification
   ansible.builtin.meta: flush_handlers
+  when: llama_cpp_service_enabled
 
 # --- Verify ------------------------------------------------------------------
 # Type=simple reports 'active' the instant the process forks; poll until it settles
@@ -305,9 +306,11 @@
   until: llama_cpp_service_state.status.ActiveState | default('') == 'active'
   retries: 5
   delay: 3
+  when: llama_cpp_service_enabled
 
 - name: Verify the llama-swap API is listening
   ansible.builtin.wait_for:
     host: 127.0.0.1
     port: "{{ llama_cpp_api_port }}"
     timeout: 60
+  when: llama_cpp_service_enabled
