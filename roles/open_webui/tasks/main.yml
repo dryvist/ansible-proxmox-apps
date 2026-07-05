@@ -96,3 +96,29 @@
   retries: 30
   delay: 5
   until: open_webui_health.status == 200
+
+# --- Headless first-run provisioning ------------------------------------------
+# Open WebUI reports onboarding=true until a first user exists; the first
+# signup becomes the admin. Provision it here so the UI never shows the
+# wizard. Skipped on every converge after the first.
+- name: Check whether Open WebUI is onboarded
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ open_webui_port }}/api/config"
+    return_content: true
+  register: open_webui_cfg
+
+- name: Create the admin account (first signup)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ open_webui_port }}/api/v1/auths/signup"
+    method: POST
+    body_format: json
+    body:
+      name: admin
+      email: "{{ open_webui_admin_email }}"
+      password: "{{ open_webui_admin_password }}"
+    status_code: 200
+  # json is absent when the endpoint returns non-JSON (proxy error page);
+  # guard it so the check degrades to "skip" instead of a templating error.
+  when: (open_webui_cfg.json | default({})).onboarding | default(false)
+  changed_when: true
+  no_log: true
