@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.69.0...v1.70.0) (2026-07-05)
+
+
+### Features
+
+* provision Dify local LLM models ([#617](https://github.com/dryvist/ansible-proxmox-apps/issues/617)) ([678d350](https://github.com/dryvist/ansible-proxmox-apps/commit/678d3502e1fc9c3659f1af4cd69eb496b6fb8ace))
+
 ## [1.69.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.68.1...v1.69.0) (2026-07-05)
 
 
