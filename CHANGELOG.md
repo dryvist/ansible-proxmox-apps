@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.2...v1.65.3) (2026-07-05)
+
+
+### Bug Fixes
+
+* **telemetry:** make the router -&gt; Cribl -&gt; Langfuse trace path work end to end ([#590](https://github.com/dryvist/ansible-proxmox-apps/issues/590)) ([8cec408](https://github.com/dryvist/ansible-proxmox-apps/commit/8cec408f2dba4a7c6ce96747d113c45d373d9e3c))
+
 ## [1.65.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.1...v1.65.2) (2026-07-05)
 
 
