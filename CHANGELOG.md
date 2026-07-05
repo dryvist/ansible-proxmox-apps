@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.68.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.68.0...v1.68.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **llm_router,open_webui:** return 401 not 500 on auth failure; make env API key authoritative ([#614](https://github.com/dryvist/ansible-proxmox-apps/issues/614)) ([d36bd21](https://github.com/dryvist/ansible-proxmox-apps/commit/d36bd216ab52761d8b8c9670c3bc30e0908aa72a))
+
 ## [1.68.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.67.2...v1.68.0) (2026-07-05)
 
 
