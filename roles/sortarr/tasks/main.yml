@@ -1,0 +1,210 @@
+---
+# =============================================================================
+# Preflight: required secrets must be present
+# =============================================================================
+# Sortarr is a read-only insights dashboard — it needs Sonarr + Radarr API
+# keys to read those libraries, and its own basic-auth password (the chosen
+# auth mode is basic_local_bypass: required from outside Traefik, bypassed on
+# the media VLAN). Plex is optional (Arr-only still works).
+
+- name: Assert Sortarr required secrets are set
+  ansible.builtin.assert:
+    that:
+      - sortarr_sonarr_api_key | length > 0
+      - sortarr_radarr_api_key | length > 0
+      - sortarr_basic_auth_pass | length > 0
+    fail_msg: >-
+      SONARR_API_KEY / RADARR_API_KEY / SORTARR_BASIC_AUTH_PASS must all be
+      set (env vars, sourced from the secret store) before Sortarr can start.
+    quiet: true
+
+# =============================================================================
+# Docker installation (Docker-in-LXC pattern, mirrors seerr/idrac_kvm_docker)
+# =============================================================================
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    sortarr_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ sortarr_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ sortarr_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+# fuse-overlayfs is required for Docker on ZFS-backed LXC containers only;
+# VMs use the default overlay2 storage driver natively.
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+  when: ansible_virtualization_type == 'lxc'
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Python venv for Ansible Docker modules
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# =============================================================================
+# Data directories
+# =============================================================================
+
+- name: Create Sortarr data + config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ sortarr_data_dir }}"
+    - "{{ sortarr_config_dir }}"
+
+# ---------------------------------------------------------------------------
+# Persistence guard — refuse to start Sortarr on a non-persistent config dir
+# ---------------------------------------------------------------------------
+# sortarr_config_dir is bind-mounted to the container's /data and holds
+# Sortarr's own config/cache. Without a persistent mount there, a container
+# rebuild silently resets Sortarr to a fresh install — so fail the converge
+# instead of starting fresh silently. Mirrors the seerr role's guard.
+- name: Check whether the Sortarr config dir is on a persistent mount
+  ansible.builtin.command:
+    cmd: mountpoint -q {{ sortarr_config_dir }}
+  register: sortarr_config_mountpoint
+  changed_when: false
+  failed_when: false
+  when: sortarr_manage_services | bool
+
+- name: Alert ntfy when the Sortarr config dir is NOT persistent
+  ansible.builtin.uri:
+    url: "{{ sortarr_ntfy_url }}"
+    method: POST
+    headers:
+      Title: "sortarr persistence guard"
+      Priority: urgent
+      Tags: rotating_light
+    body_format: raw
+    body: >-
+      {{ sortarr_config_dir }} on {{ inventory_hostname }} is NOT a persistent
+      mount. Refusing to start Sortarr before the mount is fixed.
+  failed_when: false
+  when:
+    - sortarr_manage_services | bool
+    - sortarr_config_mountpoint.rc | default(0) != 0
+
+- name: Fail when the Sortarr config dir is NOT persistent
+  ansible.builtin.fail:
+    msg: >-
+      {{ sortarr_config_dir }} is NOT a persistent mount. Sortarr's config and
+      cache are on the disposable LXC rootfs and would be LOST on the next
+      container rebuild. Bind-mount a persistent dataset onto
+      {{ sortarr_config_dir }}, then re-run this converge.
+  when:
+    - sortarr_manage_services | bool
+    - sortarr_config_mountpoint.rc | default(0) != 0
+
+- name: Deploy docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ sortarr_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart sortarr
+
+# =============================================================================
+# Deploy via Docker Compose (live only)
+# =============================================================================
+
+- name: Deploy Sortarr container via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ sortarr_data_dir }}"
+    state: present
+    pull: always
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  when: sortarr_manage_services | bool
+
+# =============================================================================
+# Health check (live only)
+# =============================================================================
+
+- name: Wait for Sortarr web port to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ sortarr_web_port }}"
+    timeout: 120
+  when: sortarr_manage_services | bool
+
+- name: Verify Sortarr HTTP endpoint responds
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ sortarr_web_port }}/"
+    method: GET
+    status_code: [200, 302, 401]
+  register: sortarr_status
+  retries: 20
+  delay: 10
+  until: sortarr_status.status in [200, 302, 401]
+  changed_when: false
+  when: sortarr_manage_services | bool

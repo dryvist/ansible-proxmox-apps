@@ -1,0 +1,72 @@
+---
+# sortarr role defaults — Sortarr media-library insights dashboard (Docker in LXC).
+#
+# Docker-in-LXC, mirrors the seerr role pattern: install Docker, run a single
+# container via Compose, persist config to a host dir. Sortarr is READ-ONLY —
+# it never moves, renames, or deletes media. It reaches Sonarr/Radarr/Plex over
+# the LAN using their existing API keys; no new *arr-side wiring is required.
+# Pinned to a tag so it's reproducible AND Renovate can bump it.
+sortarr_image: "ghcr.io/jaredharper1/sortarr:latest"
+sortarr_container_name: sortarr
+sortarr_data_dir: /opt/sortarr
+# Host dir bind-mounted to the container's /data (Sortarr's persistent config +
+# cache, incl. its own Sortarr.env).
+sortarr_config_dir: "{{ sortarr_data_dir }}/data"
+sortarr_bind_address: "0.0.0.0"
+# Web UI port from tofu constants (media_ports.sortarr_web = 8787).
+sortarr_web_port: "{{ tofu_data.constants.media_ports.sortarr_web }}"
+
+# --- Sonarr / Radarr / Plex sources -----------------------------------------
+# Address resolution: prefer the per-guest `ip` field from the tofu inventory
+# (the FQDN under the dhcp-first rebuild), fall back to the static
+# container_ip hostvar — never a hardcoded IP. Same pattern as seerr.
+sortarr_sonarr_hostname: >-
+  {{ tofu_data.containers['sonarr'].ip
+     | default(hostvars['sonarr'].container_ip)
+     | default('sonarr') }}
+sortarr_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
+sortarr_sonarr_url: "http://{{ sortarr_sonarr_hostname }}:{{ sortarr_sonarr_port }}"
+sortarr_sonarr_api_key: "{{ lookup('env', 'SONARR_API_KEY') | default('', true) }}"
+
+sortarr_radarr_hostname: >-
+  {{ tofu_data.containers['radarr'].ip
+     | default(hostvars['radarr'].container_ip)
+     | default('radarr') }}
+sortarr_radarr_port: "{{ tofu_data.constants.media_ports.radarr_web }}"
+sortarr_radarr_url: "http://{{ sortarr_radarr_hostname }}:{{ sortarr_radarr_port }}"
+sortarr_radarr_api_key: "{{ lookup('env', 'RADARR_API_KEY') | default('', true) }}"
+
+sortarr_plex_hostname: >-
+  {{ tofu_data.containers['plex'].ip
+     | default(hostvars['plex'].container_ip)
+     | default('plex') }}
+sortarr_plex_port: "{{ tofu_data.constants.media_ports.plex_web }}"
+sortarr_plex_url: "http://{{ sortarr_plex_hostname }}:{{ sortarr_plex_port }}"
+# Optional: Sortarr works Arr-only with this empty (Plex overlay is additive).
+sortarr_plex_token: "{{ lookup('env', 'PLEX_TOKEN') | default('', true) }}"
+
+# --- Auth (basic_local_bypass): password required from outside Traefik, -----
+# bypassed for LAN/proxy clients. See docs/Sortarr.minimal.env.example upstream.
+sortarr_basic_auth_user: "admin"
+sortarr_basic_auth_pass: "{{ lookup('env', 'SORTARR_BASIC_AUTH_PASS') | default('', true) }}"
+sortarr_local_auth_bypass: true
+# CIDRs allowed to bypass basic auth — the media VLAN only, never 0.0.0.0/0.
+sortarr_local_auth_bypass_cidrs: "192.168.55.0/24"
+
+# --- Reverse proxy -----------------------------------------------------------
+# Sortarr sits behind Traefik on the standard TLS entrypoint (single proxy hop).
+sortarr_proxy_mode: "single"
+sortarr_waitress_trusted_proxy: "traefik"
+
+# --- Test / orchestration toggle ---------------------------------------------
+# When false (Molecule), the role renders all config (compose) but skips the
+# live Docker build/run that needs a running container. The live deploy
+# leaves it true.
+sortarr_manage_services: true
+
+# ntfy alert target for the persistent-mount guard (tasks/main.yml). Mirrors
+# the seerr/download_vpn/service_deadman convention.
+sortarr_ntfy_url: >-
+  http://{{ hostvars['ntfy']['container_ip'] | default('ntfy') }}:{{
+  tofu_data.constants.notification_ports.ntfy_http }}/{{ sortarr_ntfy_topic }}
+sortarr_ntfy_topic: "persistence"

@@ -1,0 +1,91 @@
+---
+# Molecule verification for sortarr (render-only — no live container in CI).
+#
+# Proves:
+#   1. docker-compose.yml references the image, publishes 8787, mounts /data.
+#   2. The rendered compose carries the Sonarr/Radarr API keys and the basic-
+#      auth password (secrets flow through, but the file mode stays 0640).
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    sortarr_data_dir: /opt/sortarr
+    sortarr_image: "ghcr.io/jaredharper1/sortarr:latest"
+    sortarr_container_name: sortarr
+    # Must match molecule.yml provisioner.env defaults.
+    sortarr_expected_sonarr_key: "0123456789abcdef0123456789abcdef"
+    sortarr_expected_radarr_key: "fedcba9876543210fedcba9876543210"
+
+  tasks:
+    - name: Check docker-compose.yml was deployed
+      ansible.builtin.stat:
+        path: "{{ sortarr_data_dir }}/docker-compose.yml"
+      register: sortarr_compose_stat
+
+    - name: Assert docker-compose.yml exists
+      ansible.builtin.assert:
+        that:
+          - sortarr_compose_stat.stat.exists
+        fail_msg: "docker-compose.yml not found - template was not deployed"
+
+    - name: Read docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ sortarr_data_dir }}/docker-compose.yml"
+      register: sortarr_compose
+
+    - name: Assert docker-compose.yml references image, port 8787, /data mount
+      ansible.builtin.assert:
+        that:
+          - "sortarr_image in (sortarr_compose.content | b64decode)"
+          - "sortarr_container_name in (sortarr_compose.content | b64decode)"
+          - "'8787:8787' in (sortarr_compose.content | b64decode)"
+          - "'/data' in (sortarr_compose.content | b64decode)"
+        fail_msg: "docker-compose.yml is missing image, port 8787, or the /data mount"
+
+    - name: Assert docker-compose.yml carries the injected secrets
+      ansible.builtin.assert:
+        that:
+          - sortarr_expected_sonarr_key in (sortarr_compose.content | b64decode)
+          - sortarr_expected_radarr_key in (sortarr_compose.content | b64decode)
+          - "'BASIC_AUTH_PASS' in (sortarr_compose.content | b64decode)"
+        fail_msg: "docker-compose.yml did not receive the Sonarr/Radarr API keys or basic-auth password"
+
+# --- persistence guard (unit-style — gated on sortarr_manage_services, --------
+# never live in this scenario since there is no running container in CI) -----
+- name: Verify the Sortarr persistence guard is fail-loud (unit-style)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    _role_tasks_path: "{{ playbook_dir }}/../../roles/sortarr/tasks/main.yml"
+
+  tasks:
+    - name: Read the sortarr role's tasks/main.yml
+      ansible.builtin.slurp:
+        src: "{{ _role_tasks_path }}"
+      register: _sortarr_tasks_raw
+
+    - name: Decode tasks/main.yml
+      ansible.builtin.set_fact:
+        _sortarr_tasks: "{{ _sortarr_tasks_raw.content | b64decode }}"
+
+    # The role's tasks are un-rendered Jinja on disk (the {{ }} placeholder is
+    # literal text here, not a resolved value) — {% raw %} keeps THIS assert's
+    # own templating pass from consuming it so the search string matches verbatim.
+    - name: Compute the literal, un-rendered guard snippet to search for
+      ansible.builtin.set_fact:
+        _config_mountpoint_snippet: "mountpoint -q {% raw %}{{ sortarr_config_dir }}{% endraw %}"
+
+    - name: Assert the persistence guard checks, alerts, then fails
+      ansible.builtin.assert:
+        that:
+          - _config_mountpoint_snippet in _sortarr_tasks
+          - "'ansible.builtin.fail' in _sortarr_tasks"
+          - (_sortarr_tasks.count('sortarr_ntfy_url')) >= 1
+        fail_msg: >-
+          The sortarr role no longer has a fatal mountpoint guard (with an ntfy
+          alert) for sortarr_config_dir.
