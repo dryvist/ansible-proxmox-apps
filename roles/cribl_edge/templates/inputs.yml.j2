@@ -79,11 +79,23 @@ inputs:
     host: "0.0.0.0"
     port: {{ cribl_edge_otel_port }}
     protocol: http
-    extractSpans: false
+    # Must match the destination's OTLP version: the input's default (0.10.0)
+    # decodes into instrumentation_library_* field names that a 1.3.1
+    # destination cannot re-serialize ("Event had no scope_spans"), silently
+    # dropping every span.
+    otlpVersion: "1.3.1"
+    # Spans must be extracted into first-class span events: with extraction off
+    # the OTel destination cannot re-serialize the wrapped payload and drops
+    # every event ("Event had no scope_metrics or __criblMetrics").
+    extractSpans: true
     extractMetrics: false
     sendToRoutes: false
     connections:
+      # otel_traces drops non-trace signals (dify metrics/logs) before they
+      # reach the traces-only Langfuse destination and back up its queue —
+      # pipeline on the connection, matching in_netmon_hec above.
       - output: langfuse_otlp
+        pipeline: otel_traces
     pqEnabled: true
     fields:
       - name: type
