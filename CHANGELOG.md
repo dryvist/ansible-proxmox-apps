@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.67.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.67.1...v1.67.2) (2026-07-05)
+
+
+### Bug Fixes
+
+* **sortarr:** persist Sortarr's config/secret-key under the bind-mounted data dir ([#608](https://github.com/dryvist/ansible-proxmox-apps/issues/608)) ([4acef57](https://github.com/dryvist/ansible-proxmox-apps/commit/4acef57862cb6acac4febb54ee7a26b569c979bc))
+
 ## [1.67.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.67.0...v1.67.1) (2026-07-05)
 
 
