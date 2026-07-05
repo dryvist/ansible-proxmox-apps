@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.67.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.66.2...v1.67.0) (2026-07-05)
+
+
+### Features
+
+* **media:** add sortarr role for the Sortarr insights dashboard ([e53ecc1](https://github.com/dryvist/ansible-proxmox-apps/commit/e53ecc11041440506f8585a38f384aede93c7785))
+
 ## [1.66.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.66.1...v1.66.2) (2026-07-05)
 
 
