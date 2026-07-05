@@ -212,29 +212,13 @@
   when: technitium_dns_apply | bool
   no_log: true
 
-- name: Create authoritative subdomain DNS zone (primary)
-  ansible.builtin.uri:
-    url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      zone: "{{ technitium_dns_zone }}"
-      type: "{{ technitium_dns_zone_type }}"
-    return_content: true
-    timeout: "{{ technitium_dns_api_timeout }}"
-    status_code: [200, 400]
-  register: technitium_dns_zone_create
-  changed_when: technitium_dns_zone_create.json.status == "ok"
-  when:
-    - technitium_dns_role == 'primary'
-    - technitium_dns_apply | bool
-    - technitium_dns_zone not in technitium_dns_existing_zones
-  no_log: true
-
 # Remove a stale apex Primary zone so non-subdomain names FORWARD upstream
 # instead of resolving NXDOMAIN here. Destructive but guarded: only fires if a
 # pre-existing server still owns the apex zone (a no-op on a freshly built node,
 # which never had it). Idempotent via the existing-zones membership check.
+# MUST run BEFORE the subdomain zone create: while the apex zone exists, the
+# subzone create 400s (conflict), and a swallowed 400 here once left the server
+# with the apex deleted and NO replacement zone — a live outage.
 - name: Remove stale apex Primary zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/delete?token={{ technitium_dns_api_token }}"
@@ -251,6 +235,28 @@
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
     - technitium_dns_apex_domain in technitium_dns_existing_zones
+  no_log: true
+
+- name: Create authoritative subdomain DNS zone (primary)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_zone }}"
+      type: "{{ technitium_dns_zone_type }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+    status_code: [200, 400]
+  register: technitium_dns_zone_create
+  changed_when: technitium_dns_zone_create.json.status == "ok"
+  failed_when:
+    - technitium_dns_zone_create.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_zone_create.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_zone not in technitium_dns_existing_zones
   no_log: true
 
 # Secondaries replicate the zone from the primary via native AXFR/IXFR zone
