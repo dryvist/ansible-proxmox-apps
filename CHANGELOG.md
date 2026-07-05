@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.66.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.66.0...v1.66.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **technitium_dns:** stop the zone self-destruct and repoint the cribl-edge alias ([#592](https://github.com/dryvist/ansible-proxmox-apps/issues/592)) ([7490f79](https://github.com/dryvist/ansible-proxmox-apps/commit/7490f79d8de96247a9683019fc1e81931cfa76ea))
+
 ## [1.66.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.5...v1.66.0) (2026-07-05)
 
 
