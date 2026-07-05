@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.4...v1.65.5) (2026-07-05)
+
+
+### Bug Fixes
+
+* **cribl:** send Splunk HEC through the dedicated splunk-hec ingress ([#595](https://github.com/dryvist/ansible-proxmox-apps/issues/595)) ([821d723](https://github.com/dryvist/ansible-proxmox-apps/commit/821d723bc7c0ef73756fb9d484e80b08a65a0e41))
+
 ## [1.65.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.3...v1.65.4) (2026-07-05)
 
 
