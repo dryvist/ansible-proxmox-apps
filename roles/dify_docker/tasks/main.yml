@@ -266,3 +266,27 @@
   delay: 10
   until: dify_docker_health.status == 200
   changed_when: false
+
+# --- Headless first-run provisioning ------------------------------------------
+# GET /console/api/setup reports {"step":"not_started"} until installation is
+# finished; the POST creates the admin workspace and completes setup so the UI
+# never shows /install. Skipped on every converge after the first.
+- name: Check whether Dify setup is finished
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dify_docker_web_port }}/console/api/setup"
+    return_content: true
+  register: dify_docker_setup_state
+
+- name: Complete Dify setup (create admin)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dify_docker_web_port }}/console/api/setup"
+    method: POST
+    body_format: json
+    body:
+      email: "{{ dify_docker_admin_email }}"
+      name: "admin"
+      password: "{{ dify_docker_admin_password }}"
+    status_code: [200, 201]
+  when: dify_docker_setup_state.json.step | default('') == 'not_started'
+  changed_when: true
+  no_log: true
