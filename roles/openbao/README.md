@@ -1,17 +1,18 @@
 # openbao
 
 Installs and bootstraps [OpenBao](https://openbao.org/) — a native single Go
-binary on Debian (no Docker) — as a **3-node Raft HA cluster** with **on-prem
+binary on Debian (no Docker) — as a **5-voter Raft HA cluster** with **on-prem
 static-key auto-unseal** (no cloud KMS). After the cluster is live the role
 provisions a KV v2 mount, the secret hierarchy, the RBAC policies, and one
 AppRole per resource-domain identity (see [Secret hierarchy & RBAC](#secret-hierarchy--rbac)).
 
 ## Architecture
 
-- **3-node Raft HA** (quorum 2): every node carries a `retry_join` for each peer
+- **5-voter Raft HA** (quorum 3): every node carries a `retry_join` for each peer
   (built from `openbao_group` hostvars' `container_ip`), so a node that is not
-  yet part of a cluster finds the leader and joins automatically. The cluster
-  survives one node loss with no downtime.
+  yet part of a cluster finds the leader and joins automatically. The target
+  placement is pve1:1, pve2:2, pve3:2, so a whole Proxmox server outage still
+  leaves quorum.
 - **On-prem static-key auto-unseal**: a single 32-byte AES-256 key (base64),
   shared by all nodes, unwraps the root key on every start — each node
   self-unseals on reboot with no operator key entry and **no cloud dependency**.
@@ -28,7 +29,7 @@ AppRole per resource-domain identity (see [Secret hierarchy & RBAC](#secret-hier
 
 The durability guarantee holds from this role alone:
 
-- **3 live Raft copies** (one per node).
+- **5 live Raft copies** spread across three Proxmox servers.
 - **Recovery shares** transcribed to paper, split across custodians.
 - **The seal key** in Doppler tier-0 (kept OUT of OpenBao so a cold cluster
   can't brick).
@@ -79,7 +80,7 @@ This role brings OpenBao live **before** anything that reads secrets from it.
 
 1. Generate the seal key once (`openssl rand -base64 32`) and load it into
    Doppler tier-0 as `OPENBAO_STATIC_SEAL_KEY` (+ `OPENBAO_STATIC_SEAL_KEY_ID`).
-2. `terraform-proxmox` — provision the 3 OpenBao LXCs (VMID/IP/firewall).
+2. `terraform-proxmox` — provision the 5 OpenBao LXCs (VMID/IP/firewall).
 3. **this role** — install + init the cluster, mint the AppRoles.
 4. Operator — transcribe recovery shares to paper (+ Bitwarden); load each
    AppRole's `role_id`/`secret_id` into its own item in the dedicated
