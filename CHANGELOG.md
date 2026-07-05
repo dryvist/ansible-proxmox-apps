@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.3...v1.65.4) (2026-07-05)
+
+
+### Bug Fixes
+
+* **llama_cpp:** stat-gate GGUF staging so existing models are never re-downloaded ([#593](https://github.com/dryvist/ansible-proxmox-apps/issues/593)) ([35ae8ef](https://github.com/dryvist/ansible-proxmox-apps/commit/35ae8eff7aecab89f52134821cff640ff02a3f8c))
+
 ## [1.65.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.2...v1.65.3) (2026-07-05)
 
 
