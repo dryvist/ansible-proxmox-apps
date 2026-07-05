@@ -251,16 +251,29 @@
         state: absent
 
 # --- Model staging -----------------------------------------------------------
-- name: Stage the model GGUFs (download only if absent)
-  ansible.builtin.get_url:
-    url: "{{ llama_cpp_hf_base }}/{{ item.hf_repo }}/resolve/main/{{ item.gguf }}"
-    dest: "{{ llama_cpp_models_dir }}/{{ item.gguf }}"
-    owner: "{{ llama_cpp_user }}"
-    group: "{{ llama_cpp_group }}"
-    mode: "0640"
+# get_url alone is not "only if absent": with dest present it still issues the
+# request, and the HF CDN ignores If-Modified-Since — every converge re-pulled
+# the full multi-GB files. A stat gate makes presence the skip condition.
+- name: Check which model GGUFs are already staged
+  ansible.builtin.stat:
+    path: "{{ llama_cpp_models_dir }}/{{ item.gguf }}"
+    get_checksum: false
   loop: "{{ llama_cpp_models }}"
   loop_control:
     label: "{{ item.name }} ({{ item.gguf }})"
+  register: llama_cpp_gguf_stat
+
+- name: Stage the model GGUFs (download only if absent)
+  ansible.builtin.get_url:
+    url: "{{ llama_cpp_hf_base }}/{{ item.item.hf_repo }}/resolve/main/{{ item.item.gguf }}"
+    dest: "{{ llama_cpp_models_dir }}/{{ item.item.gguf }}"
+    owner: "{{ llama_cpp_user }}"
+    group: "{{ llama_cpp_group }}"
+    mode: "0640"
+  loop: "{{ llama_cpp_gguf_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }} ({{ item.item.gguf }})"
+  when: not item.stat.exists
   register: llama_cpp_gguf_download
   until: llama_cpp_gguf_download is succeeded
   retries: 3
