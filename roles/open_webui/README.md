@@ -26,6 +26,9 @@ Requires `OPEN_WEBUI_SECRET_KEY` in Doppler/SOPS (generate once: `openssl rand -
   `llm.<subdomain>/v1`) + `OPENAI_API_KEY` + `DEFAULT_MODELS`,
   `WEBUI_URL`/`CORS_ALLOW_ORIGIN` (= the Traefik URL, from `PROXMOX_SUBDOMAIN`),
   secure cookies, `ENABLE_WEBSOCKET_SUPPORT`, stable `WEBUI_SECRET_KEY`.
+- Sets `ENABLE_PERSISTENT_CONFIG=false` so env is authoritative: `OPENAI_API_KEY`
+  and the other PersistentConfig values are re-read from `/etc/open-webui.env` on
+  every start rather than being pinned to their first-boot values in the DB.
 - Restart-on-failure via the shared `systemd_restart_policy` role (`group_vars`).
 
 ## Key variables (`defaults/main.yml`)

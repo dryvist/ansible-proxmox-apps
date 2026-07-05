@@ -55,6 +55,10 @@ Traefik health checks need no credential.
   hard-required — a missing constant fails loud.
 - Secrets `LLM_ROUTER_MASTER_KEY` + `LLM_LARGE_BEARER_TOKEN` are env-sourced
   (SOPS/Doppler) today; the OpenBao migration is a separate phase.
+- `prisma` is installed into the venv even though the proxy is DB-less:
+  litellm[proxy] no longer pulls it, and LiteLLM's auth-error handler
+  unconditionally imports it to classify DB outages — without it, a rejected or
+  absent API key raised `ModuleNotFoundError` and returned 500 instead of 401.
 
 ## Usage
 
