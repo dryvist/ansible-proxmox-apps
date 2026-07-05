@@ -113,8 +113,10 @@ bind-mounts). Deploy the role from this repo:
 
 ```bash
 ansible-galaxy collection install -r requirements.yml
-sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
-  -i inventory/hosts.yml playbooks/site.yml --tags download_vpn'
+# Whatever sets QBITTORRENT_ADMIN_PASSWORD etc. as env vars wraps the command —
+# this repo's own chain happens to be:
+sops exec-env secrets.enc.yaml 'doppler run -- ./scripts/fetch-openbao-secrets.sh media -- \
+  ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags download_vpn'
 ```
 
 ## Requirements
@@ -131,7 +133,8 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   (a second Proton server) to arm sticky auto-failover: after a sustained
   primary outage the runtime validator switches `wg0` to the backup peer and
   stays there until the next converge re-lays the primary. All three or none.
-  `QBITTORRENT_ADMIN_PASSWORD` is delivered via SOPS.
+  `QBITTORRENT_ADMIN_PASSWORD` is a plain environment variable — however you
+  manage that (a local `.env`, your own secrets manager, CI secrets, ...).
 - The single `bulk/data` dataset bind-mounted at `/data` (TRaSH
   single-filesystem layout). qBittorrent saves to `/data/torrents` (per-category
   `tv`/`movies` subdirs, incomplete in `/data/torrents/incomplete`) on the SAME

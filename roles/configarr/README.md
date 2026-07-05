@@ -21,9 +21,10 @@ what differs, so a re-run on an in-sync stack is a no-op, making it safe on ever
 converge.
 
 Endpoints resolve from the OpenTofu inventory (`reserved_ip` → `ip` →
-discovered `container_ip`), never a hardcoded IP. API keys come from SOPS
-(`SONARR_API_KEY` / `RADARR_API_KEY`) under `sops exec-env` — the same
-deterministic keys `servarr_wiring` uses. The rendered `config.yml` is
+discovered `container_ip`), never a hardcoded IP. API keys
+(`SONARR_API_KEY` / `RADARR_API_KEY`) come in as plain environment
+variables — the same deterministic keys `servarr_wiring` uses. The rendered
+`config.yml` is
 secret-free (URLs + keys live in `secrets.yml`, mode 0600, via Configarr's
 `!secret` tag).
 
@@ -52,7 +53,7 @@ on the TV side.
 No standalone install — the role is part of `playbooks/site.yml` and ships with
 the repo. It needs the `community.docker` collection (already pinned in
 `requirements.yml`) and a Docker engine on the target (docker-host already has
-one). `SONARR_API_KEY` / `RADARR_API_KEY` must be present in the SOPS env.
+one). `SONARR_API_KEY` / `RADARR_API_KEY` must be present in the environment.
 
 ## Usage
 
@@ -61,7 +62,7 @@ just this role against the live stack:
 
 ```bash
 sops exec-env secrets.enc.yaml \
-  'ansible-playbook playbooks/site.yml --tags configarr --limit docker_vms'
+  './scripts/fetch-openbao-secrets.sh media -- ansible-playbook playbooks/site.yml --tags configarr --limit docker_vms'
 ```
 
 Disable it without removing the play by setting `configarr_manage: false`. Tune

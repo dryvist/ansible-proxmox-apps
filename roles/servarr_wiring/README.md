@@ -28,7 +28,7 @@ removing the overlap keeps each piece of config single-owned.
 
 1. **Deterministic API keys** — sets `<ApiKey>` in each app's `config.xml`
    (Sonarr `/var/lib/sonarr`, Radarr `/var/lib/radarr`, Prowlarr
-   `/var/lib/prowlarr`) from SOPS env, delegated to each app's host. Restarts
+   `/var/lib/prowlarr`) from the environment, delegated to each app's host. Restarts
    the app and waits for its API only when the key actually changed. Templating
    the key means every cross-app reference is known **before** converge instead
    of being auto-generated.
@@ -78,22 +78,22 @@ ansible-galaxy collection install -r requirements.yml
 ```
 
 Prerequisites: the `download_vpn`, `sonarr`, and `radarr` roles have run (apps
-installed), and SOPS holds `SONARR_API_KEY` / `RADARR_API_KEY` /
-`PROWLARR_API_KEY` (generate each with `openssl rand -hex 16`).
+installed), and `SONARR_API_KEY` / `RADARR_API_KEY` / `PROWLARR_API_KEY` are
+set in the environment (generate each with `openssl rand -hex 16`).
 
 ## Usage
 
 ```sh
-sops exec-env secrets.enc.yaml 'doppler run -- \
+sops exec-env secrets.enc.yaml 'doppler run -- ./scripts/fetch-openbao-secrets.sh media -- \
   ansible-playbook playbooks/site.yml --tags servarr_wiring'
 ```
 
 The role asserts `SONARR_API_KEY` / `RADARR_API_KEY` / `PROWLARR_API_KEY` are
-all set and fails fast with a pointer to SOPS if any are missing.
+all set and fails fast if any are missing.
 
 ## How it's built
 
-- `defaults/main.yml` — API keys (SOPS env), per-app data dirs / hosts / ports
+- `defaults/main.yml` — API keys (environment), per-app data dirs / hosts / ports
   (ports from OpenTofu constants), wiring parameters, `servarr_wiring_manage_services`
   toggle (false in Molecule).
 - `tasks/main.yml` — assertion → `api_keys.yml` → `prowlarr_indexers.yml` →
@@ -106,10 +106,12 @@ all set and fails fast with a pointer to SOPS if any are missing.
 
 ## Secrets
 
-| Variable           | Purpose                                 | Source                  |
-| ------------------ | --------------------------------------- | ----------------------- |
-| `SONARR_API_KEY`   | Deterministic Sonarr API key (32 hex)   | SOPS `secrets.enc.yaml` |
-| `RADARR_API_KEY`   | Deterministic Radarr API key (32 hex)   | SOPS `secrets.enc.yaml` |
-| `PROWLARR_API_KEY` | Deterministic Prowlarr API key (32 hex) | SOPS `secrets.enc.yaml` |
+| Variable           | Purpose                                 |
+| ------------------ | --------------------------------------- |
+| `SONARR_API_KEY`   | Deterministic Sonarr API key (32 hex)   |
+| `RADARR_API_KEY`   | Deterministic Radarr API key (32 hex)   |
+| `PROWLARR_API_KEY` | Deterministic Prowlarr API key (32 hex) |
 
-None are ever committed to git.
+Supplied as plain environment variables — however you manage that (a local
+`.env` you source, your own secrets manager, CI secrets, ...). None are ever
+committed to git.

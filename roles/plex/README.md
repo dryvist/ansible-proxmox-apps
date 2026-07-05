@@ -31,8 +31,8 @@ See `defaults/main.yml`.
 - `plex_apt_repo` — Plex apt repository line.
 - `plex_web_port` — server/web UI port (tofu-derived).
 - `plex_claim_token` — Plex claim token, read from `PLEX_CLAIM_TOKEN` (SOPS env).
-- `plex_account_token` — Plex account X-Plex-Token, read from `PLEX_TOKEN` (SOPS
-  env); required to auto-create library sections.
+- `plex_account_token` — Plex account X-Plex-Token, read from `PLEX_TOKEN`
+  (environment); required to auto-create library sections.
 - `plex_libraries` — library sections to ensure exist (name/type/location/agent).
 - `plex_preferences_path` — `Preferences.xml` location (holds `PlexOnlineToken`).
 
@@ -87,9 +87,10 @@ auto-discovered from the server. `PLEX_TOKEN` (env) is an optional override only
     - role: plex
 ```
 
-With the SOPS env loaded so `PLEX_CLAIM_TOKEN` reaches the role:
+With the secrets env loaded so `PLEX_TOKEN` (and, for a fresh claim,
+`PLEX_CLAIM_TOKEN` passed via `-e`) reach the role:
 
 ```sh
-sops exec-env secrets.enc.yaml 'doppler run -- \
+sops exec-env secrets.enc.yaml 'doppler run -- ./scripts/fetch-openbao-secrets.sh media -- \
   ansible-playbook playbooks/site.yml --tags plex'
 ```
