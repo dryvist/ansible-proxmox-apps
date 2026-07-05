@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.65.0...v1.65.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **llm_router:** passive health recovery by default ([#583](https://github.com/dryvist/ansible-proxmox-apps/issues/583)) ([701b884](https://github.com/dryvist/ansible-proxmox-apps/commit/701b884362942c60a32ec9a6bd607a404f0983af))
+
 ## [1.65.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.64.1...v1.65.0) (2026-07-04)
 
 
