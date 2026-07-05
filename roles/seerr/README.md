@@ -25,8 +25,8 @@ Prerequisites:
 
 - The `seerr` LXC exists (OpenTofu-managed; tags include `container`,
   `media`, `seerr`; `nesting=true` for Docker).
-- SOPS `secrets.enc.yaml` populated with `SEERR_API_KEY` (and, to register
-  the `*arr` apps, `SONARR_API_KEY` / `RADARR_API_KEY`). Generate each with
+- `SEERR_API_KEY` set in the environment (and, to register the `*arr` apps,
+  `SONARR_API_KEY` / `RADARR_API_KEY`). Generate each with
   `openssl rand -hex 16` (32 hex chars).
 
 Install the collection dependencies once:
@@ -38,13 +38,13 @@ ansible-galaxy collection install -r requirements.yml
 ## Usage
 
 ```sh
-# From the repo root, with SOPS env + Doppler loaded:
-sops exec-env secrets.enc.yaml 'doppler run -- \
+# From the repo root, with secrets loaded into the environment:
+sops exec-env secrets.enc.yaml 'doppler run -- ./scripts/fetch-openbao-secrets.sh media -- \
   ansible-playbook playbooks/site.yml --tags seerr'
 ```
 
 The role asserts `SEERR_API_KEY` is set before doing any work and fails
-fast with a pointer to SOPS if it is missing.
+fast if it is missing.
 
 ## Access
 
@@ -75,8 +75,8 @@ no bespoke scripts):
   `/api/v3/qualityprofile` (Seerr requires `activeProfileId`).
 - `POST` the server only when no entry with that hostname exists yet.
 - `PUT /api/v1/settings/{radarr,sonarr}/{id}` to reconcile an existing entry
-  whenever its stored `apiKey`, `port`, or `useSsl` drifts from the SOPS-sourced
-  value. A converged host PUTs nothing; a SOPS key rotation re-syncs the entry.
+  whenever its stored `apiKey`, `port`, or `useSsl` drifts from the current
+  value. A converged host PUTs nothing; a key rotation re-syncs the entry.
 
 This makes the role re-runnable at **any** point: a rotated `SONARR_API_KEY` /
 `RADARR_API_KEY` is pushed into Seerr's DB on the next converge instead of
@@ -122,12 +122,14 @@ to be supplied; `PLEX_TOKEN` is an optional override), signs the owner in via
 
 ## Secrets
 
-| Variable         | Purpose                                        | Source                  |
-| ---------------- | ---------------------------------------------- | ----------------------- |
-| `SEERR_API_KEY`  | Deterministic Seerr API key (32 hex)           | SOPS `secrets.enc.yaml` |
-| `SONARR_API_KEY` | Sonarr API key (to register Sonarr in Seerr)   | SOPS `secrets.enc.yaml` |
-| `RADARR_API_KEY` | Radarr API key (to register Radarr in Seerr)   | SOPS `secrets.enc.yaml` |
-| `PLEX_TOKEN`     | Optional account X-Plex-Token to link Plex     | SOPS `secrets.enc.yaml` |
+| Variable         | Purpose                                      |
+| ---------------- | -------------------------------------------- |
+| `SEERR_API_KEY`  | Deterministic Seerr API key (32 hex)         |
+| `SONARR_API_KEY` | Sonarr API key (to register Sonarr in Seerr) |
+| `RADARR_API_KEY` | Radarr API key (to register Radarr in Seerr) |
+| `PLEX_TOKEN`     | Optional account X-Plex-Token to link Plex   |
 
-None are ever committed to git. The role's first task asserts
-`SEERR_API_KEY` is set and fails fast with a pointer to SOPS.
+Supplied as plain environment variables — however you manage that (a local
+`.env` you source, your own secrets manager, CI secrets, ...). None are ever
+committed to git. The role's first task asserts `SEERR_API_KEY` is set and
+fails fast if it's missing.
