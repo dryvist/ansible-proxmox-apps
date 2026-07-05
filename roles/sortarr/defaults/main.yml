@@ -50,8 +50,26 @@ sortarr_plex_token: "{{ lookup('env', 'PLEX_TOKEN') | default('', true) }}"
 sortarr_basic_auth_user: "admin"
 sortarr_basic_auth_pass: "{{ lookup('env', 'SORTARR_BASIC_AUTH_PASS') | default('', true) }}"
 sortarr_local_auth_bypass: true
-# CIDRs allowed to bypass basic auth — the media VLAN only, never 0.0.0.0/0.
-sortarr_local_auth_bypass_cidrs: "192.168.55.0/24"
+
+# DHCP-first inventory contract (same as download_vpn/seerr): container_ip
+# carries the guest's FQDN under DNS-first addressing, container_reserved_ip
+# the actual DHCP-reservation address; static guests put the IP in
+# container_ip. All LAN IP math below uses this resolved address.
+sortarr_lan_ip: >-
+  {{ container_reserved_ip
+     if (container_reserved_ip | default('', true) | length > 0)
+     else (container_ip | default(ansible_default_ipv4.address)) }}
+
+# CIDRs allowed to bypass basic auth. Derived from the container's own IP —
+# never a hardcoded literal (see feedback_no_committed_ips). The /16 supernet
+# (not just the media VLAN's own /24) mirrors download_vpn's
+# qbittorrent_auth_whitelist: Sortarr is reached via Traefik, whose proxied
+# requests originate from a DIFFERENT VLAN (3rd octet = VLAN id), so a /24-only
+# whitelist would wrongly force the login prompt on every Traefik-proxied
+# request. Narrow to "{{ sortarr_lan_ip }}/24" for a tighter, media-VLAN-only
+# boundary if Traefik is ever bypassed.
+sortarr_local_auth_bypass_cidrs: >-
+  {{ (sortarr_lan_ip ~ '/16') | ansible.utils.ipaddr('network/prefix') }}
 
 # --- Reverse proxy -----------------------------------------------------------
 # Sortarr sits behind Traefik on the standard TLS entrypoint (single proxy hop).
