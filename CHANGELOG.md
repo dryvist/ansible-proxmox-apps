@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.68.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.67.2...v1.68.0) (2026-07-05)
+
+
+### Features
+
+* **langfuse:** source secrets from OpenBao, not Doppler ([#611](https://github.com/dryvist/ansible-proxmox-apps/issues/611)) ([5e94cc0](https://github.com/dryvist/ansible-proxmox-apps/commit/5e94cc0e3fab1bc7e6b3fe0452b2b255c53d3c53))
+
 ## [1.67.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.67.1...v1.67.2) (2026-07-05)
 
 
