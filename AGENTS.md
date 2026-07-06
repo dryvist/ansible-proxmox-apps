@@ -38,6 +38,14 @@ this repo handles app config only.
   clients are owned by the devopsarr `servarr-config` tofu module
   (`terraform-proxmox`); quality profiles + custom formats by the `configarr`
   role (TRaSH-Guides). `servarr_wiring` no longer touches those.
+- **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
+  Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
+  API keys, no new *arr-side wiring).
+- **Hermes agent** (`hermes_agent` role — the autonomous NousResearch agent
+  gateway, native install; not the LLM serving stack).
+- **LLM fabric** (`llm_router` role — LiteLLM proxy, the single OpenAI-compatible
+  front door for the large/light tiers; `open_webui`, `llama_cpp`, `ollama`
+  roles for the backends).
 
 **This repo does NOT own Splunk.** Splunk is managed by `ansible-splunk`.
 
@@ -196,6 +204,27 @@ See the [SOPS integration rule](agentsmd/rules/infra/sops-integration.md)
 in ai-assistant-instructions for full patterns.
 
 Template: `secrets.enc.yaml.example` — copy, fill in real values, then encrypt.
+
+**OpenBao is repointing in.** The `openbao_secrets` role is a `site.yml`
+prefetch play (`localhost`, `run_once`) that logs in to OpenBao once per
+resource domain (its own least-privilege AppRole) and publishes each domain's
+KV subtree as `bao_<domain>_secrets`. Consumer roles read bao-first with an
+env fallback:
+
+```yaml
+SOME_SECRET: >-
+  {{ bao_<domain>_secrets.SOME_SECRET
+     | default(lookup('env', 'SOME_SECRET'), true)
+     | mandatory('SOME_SECRET must be set (OpenBao secret/<domain>/<path> or SOPS/Doppler env)') }}
+```
+
+To repoint a role: seed the domain's KV path in OpenBao, add the path to
+`roles/openbao_secrets/defaults/main.yml`, then change the role default to
+the pattern above. Leave the old Doppler/SOPS value in place (annotated
+superseded) until the converge is proven against the new path — delete it in
+a separate follow-up PR, not the same one. `local-llm` is fully repointed;
+`media`/`local-cloud`/`monitoring` are seeded but still Doppler-read;
+`mssql`/`idrac` have no domain yet.
 
 ## Commands
 
