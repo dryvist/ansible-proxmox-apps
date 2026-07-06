@@ -61,7 +61,7 @@ Run via `site.yml` (`--tags hermes_agent`).
 ## Not yet live-validated
 
 Verify on the first converge: (a) `install.sh` runs clean non-interactively as root
-on a minimal Debian LXC; (b) `hermes gateway start` stays up headless with no
+on a minimal Debian LXC; (b) `hermes gateway run --replace` stays up headless with no
 messaging platform; (c) Hindsight initialises from `config.yaml` alone (it may need
 its client package on first run — `memory status` check is non-fatal so it surfaces
 without failing the converge). Single-profile first; profiles + Kanban teams + a
