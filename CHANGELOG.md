@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.2...v1.74.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **haproxy:** flush pending config reloads before verifying listeners ([#649](https://github.com/dryvist/ansible-proxmox-apps/issues/649)) ([1d077a8](https://github.com/dryvist/ansible-proxmox-apps/commit/1d077a85cf700670d65125607d0a63143e718630))
+
 ## [1.74.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.1...v1.74.2) (2026-07-06)
 
 
