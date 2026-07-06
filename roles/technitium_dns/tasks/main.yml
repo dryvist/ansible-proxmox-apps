@@ -212,35 +212,17 @@
   when: technitium_dns_apply | bool
   no_log: true
 
-# Remove a stale apex Primary zone so non-subdomain names FORWARD upstream
-# instead of resolving NXDOMAIN here. Destructive but guarded: only fires if a
-# pre-existing server still owns the apex zone (a no-op on a freshly built node,
-# which never had it). Idempotent via the existing-zones membership check.
-# MUST run BEFORE the subdomain zone create: while the apex zone exists, the
-# subzone create 400s (conflict), and a swallowed 400 here once left the server
-# with the apex deleted and NO replacement zone — a live outage.
-- name: Remove stale apex Primary zone (primary)
-  ansible.builtin.uri:
-    url: "{{ technitium_dns_api_url }}/api/zones/delete?token={{ technitium_dns_api_token }}"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      zone: "{{ technitium_dns_apex_domain }}"
-    return_content: true
-    timeout: "{{ technitium_dns_api_timeout }}"
-    status_code: [200, 400]
-  register: technitium_dns_apex_delete
-  changed_when: technitium_dns_apex_delete.json.status == "ok"
-  when:
-    - technitium_dns_role == 'primary'
-    - technitium_dns_apply | bool
-    - technitium_dns_apex_domain in technitium_dns_existing_zones
-    # Hard guard: never delete the zone this role manages, even if the apex
-    # derivation ever degenerates to the zone itself (e.g. a single-label
-    # PROXMOX_SUBDOMAIN) — deleting it here once caused a live outage.
-    - technitium_dns_apex_domain != technitium_dns_zone
-  no_log: true
-
+# NOTE: this role deliberately does NOT delete the apex zone (jacobpevans.com).
+# A prior "remove stale apex Primary zone" task deleted the WHOLE apex zone
+# whenever it existed, on the false premise that (a) a pre-existing apex zone
+# was leftover cruft and (b) the subdomain-zone create would 400 while it
+# existed. Both are wrong: the apex Route53-mirrored zone can hold live records
+# (the pve node A records), and a parent Primary + child Primary coexist fine
+# (this server runs both jacobpevans.com and pve.jacobpevans.com simultaneously
+# today). Deleting the apex was purely destructive and once caused a live
+# outage. Non-authoritative apex names already FORWARD to the upstream
+# resolvers (configured above) whether or not any apex zone exists locally, so
+# there is nothing to "clean up" here.
 - name: Create authoritative subdomain DNS zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
