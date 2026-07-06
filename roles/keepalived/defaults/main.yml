@@ -1,0 +1,60 @@
+---
+# keepalived role — floats the ingress VRRP virtual IP across every Traefik
+# instance so the reverse proxy survives a node loss with NO manual switch. DNS
+# points every fronted service at this VIP (see the technitium_dns role), and
+# keepalived migrates it automatically when a node or its Traefik dies.
+#
+# Unicast VRRP (no multicast) so it works inside the LXC bridge. A track_script
+# watches the local Traefik: losing it drops this node's priority, so the VIP
+# leaves even when the host itself stays up (a wedged proxy is still a failure).
+#
+# EVERYTHING topology-related is DERIVED from the tofu inventory (tofu_data) — no
+# hardcoded IPs, ports, or vrid. The role NO-OPS cleanly below 2 ingress
+# instances or without a published VIP (single-ingress / pre-HA deployments).
+
+# Render always; manage the live service only on a real run. Mirrors
+# traefik_manage_services (CI / template-render sets this false).
+keepalived_manage_services: true
+
+# --- Topology (all derived from the tofu inventory) --------------------------
+keepalived_vip: "{{ tofu_data.ingress_vip | default('', true) }}"
+keepalived_peers_all: "{{ tofu_data.ingress_hosts | default([]) }}"
+# This node's own ingress address (load_tofu publishes it as container_ip).
+keepalived_this_addr: "{{ container_ip | default('') }}"
+# Unicast peers = every ingress instance except this one.
+keepalived_unicast_peers: "{{ keepalived_peers_all | difference([keepalived_this_addr]) }}"
+# VRRP virtual_router_id — DRY from tofu constants, never hardcoded downstream.
+keepalived_vrid: "{{ tofu_data.constants.ingress_ports.keepalived_vrid | default(51) }}"
+
+# Deterministic master election with NO per-node manual flag: priority decreases
+# with this node's position in the sorted ingress_hosts list, so the first
+# instance is MASTER and the rest are ordered BACKUPs. keepalived preempts on
+# priority; the track_script weight below lets a Traefik failure hand off the VIP
+# without the host going down.
+keepalived_priority_base: 200
+keepalived_priority: >-
+  {{ (keepalived_priority_base - (keepalived_peers_all | sort).index(keepalived_this_addr))
+     if keepalived_this_addr in keepalived_peers_all else 100 }}
+
+# LXC guest NIC that carries the ingress VLAN address + the floating VIP.
+keepalived_interface: eth0
+
+# VRRP unicast auth. Optional and sourced from the environment (never committed).
+# When empty the auth block is omitted — all peers omit it, so they stay
+# consistent. keepalived truncates a PASS to 8 chars.
+keepalived_auth_pass: "{{ lookup('env', 'KEEPALIVED_AUTH_PASS') | default('', true) }}"
+
+# Local Traefik liveness probe for the track_script. pidof returns non-zero when
+# Traefik is not running -> keepalived drops this node's priority -> the VIP
+# migrates. ponytail: liveness only; swap for an HTTP /ping probe if a
+# wedged-but-alive Traefik ever becomes a real failure mode.
+keepalived_track_command: "pidof traefik"
+keepalived_track_interval: 2
+keepalived_track_fall: 2
+keepalived_track_rise: 2
+keepalived_track_weight: -40
+
+# Convenience gate: the live config is only meaningful with a VIP AND >=2 peers.
+keepalived_ha_ready: "{{ (keepalived_vip | length > 0) and (keepalived_peers_all | length >= 2) }}"
+
+keepalived_config_file: /etc/keepalived/keepalived.conf

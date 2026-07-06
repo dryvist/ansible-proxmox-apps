@@ -1,0 +1,62 @@
+---
+# Install + configure keepalived so the ingress VRRP virtual IP fails over
+# automatically across the Traefik instances. Skips cleanly when the deployment
+# is not HA-ready (no VIP or a single ingress instance) so a partial / pre-HA
+# converge stays green.
+
+- name: Report ingress HA not ready — skipping keepalived
+  ansible.builtin.debug:
+    msg: >-
+      keepalived skipped on {{ inventory_hostname }}: ingress HA needs a published
+      VIP (tofu_data.ingress_vip) AND >= 2 ingress instances
+      (tofu_data.ingress_hosts). Have vip='{{ keepalived_vip }}',
+      peers={{ keepalived_peers_all }}. Add a second ingress-tagged Traefik LXC
+      in deployment.json to enable the floating VIP.
+  when: not (keepalived_ha_ready | bool)
+
+- name: Configure ingress VRRP failover
+  when: keepalived_ha_ready | bool
+  block:
+    - name: Assert this node is enrolled in the ingress peer set
+      ansible.builtin.assert:
+        that:
+          - keepalived_this_addr | length > 0
+          - keepalived_this_addr in keepalived_peers_all
+        fail_msg: >-
+          {{ inventory_hostname }} runs Traefik but its address
+          '{{ keepalived_this_addr }}' is not in the tofu ingress_hosts set
+          {{ keepalived_peers_all }} — the inventory (container_ip vs ingress_hosts)
+          is inconsistent; keepalived cannot pick a deterministic priority.
+        quiet: true
+
+    - name: Install keepalived
+      ansible.builtin.apt:
+        name: keepalived
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: keepalived_manage_services | bool
+
+    - name: Ensure keepalived config directory exists
+      ansible.builtin.file:
+        path: "{{ keepalived_config_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render keepalived configuration
+      ansible.builtin.template:
+        src: keepalived.conf.j2
+        dest: "{{ keepalived_config_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart keepalived
+
+    - name: Enable + start keepalived
+      ansible.builtin.systemd:
+        name: keepalived
+        enabled: true
+        state: started
+      when: keepalived_manage_services | bool

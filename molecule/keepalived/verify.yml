@@ -1,0 +1,80 @@
+---
+# Molecule verification for keepalived (no live daemon).
+#
+# Re-runs the role with keepalived_manage_services=false to populate the derived
+# vars, then asserts the VRRP topology resolved correctly across the two-node
+# group and that the rendered config matches it:
+#   - VIP + vrid come from the tofu inventory (not hardcoded);
+#   - keepalived-1 (.101, first in sorted ingress_hosts) is MASTER (higher prio),
+#     keepalived-2 (.107) is BACKUP;
+#   - each node's unicast_peer is the OTHER instance (never itself);
+#   - the rendered keepalived.conf contains the VIP, the vrid, and the peer.
+
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  vars:
+    keepalived_manage_services: false
+    tofu_data:
+      ingress_vip: "192.168.5.2"
+      ingress_hosts:
+        - "192.168.5.101"
+        - "192.168.5.107"
+      constants:
+        ingress_ports:
+          keepalived_vrid: 51
+
+  tasks:
+    # import_role exposes the role's defaults (derived vars) to the assertions.
+    - name: Re-run keepalived role to populate derived vars
+      ansible.builtin.import_role:
+        name: keepalived
+
+    - name: Assert VIP + vrid derive from the tofu inventory
+      ansible.builtin.assert:
+        that:
+          - keepalived_vip == '192.168.5.2'
+          - keepalived_vrid | int == 51
+          - keepalived_ha_ready | bool
+        fail_msg: "VIP/vrid/HA-ready did not derive correctly on {{ inventory_hostname }}"
+
+    - name: Assert deterministic master election by position
+      ansible.builtin.assert:
+        that:
+          - >-
+            (keepalived_priority | int > keepalived_priority_base | int - 1)
+            if container_ip == '192.168.5.101'
+            else (keepalived_priority | int < keepalived_priority_base | int)
+        fail_msg: >-
+          Priority wrong on {{ inventory_hostname }} ({{ container_ip }}):
+          got {{ keepalived_priority }} (base {{ keepalived_priority_base }}).
+
+    - name: Assert unicast_peer is the OTHER instance only
+      ansible.builtin.assert:
+        that:
+          - keepalived_this_addr not in keepalived_unicast_peers
+          - keepalived_unicast_peers | length == 1
+          - >-
+            keepalived_unicast_peers[0] ==
+            ('192.168.5.107' if container_ip == '192.168.5.101' else '192.168.5.101')
+        fail_msg: >-
+          unicast_peer wrong on {{ inventory_hostname }}:
+          {{ keepalived_unicast_peers }}.
+
+    - name: Read the rendered keepalived config
+      ansible.builtin.slurp:
+        src: "{{ keepalived_config_file }}"
+      register: keepalived_rendered
+
+    - name: Assert the rendered config carries the VIP, vrid, and peer
+      ansible.builtin.assert:
+        that:
+          - "'192.168.5.2' in rendered"
+          - "'virtual_router_id 51' in rendered"
+          - >-
+            (('192.168.5.107' in rendered) if container_ip == '192.168.5.101'
+             else ('192.168.5.101' in rendered))
+        fail_msg: "rendered keepalived.conf missing VIP/vrid/peer on {{ inventory_hostname }}"
+      vars:
+        rendered: "{{ keepalived_rendered.content | b64decode }}"
