@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.2...v1.71.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **llama_cpp:** remove hermes-4-14b and guardrail against &gt;=14B on llm-fast ([#629](https://github.com/dryvist/ansible-proxmox-apps/issues/629)) ([035defd](https://github.com/dryvist/ansible-proxmox-apps/commit/035defd7fbd950123f09b2e4f541f0284b69ff6a))
+
 ## [1.71.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.1...v1.71.2) (2026-07-06)
 
 
