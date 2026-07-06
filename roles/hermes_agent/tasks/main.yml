@@ -23,21 +23,36 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Run as root (play become: true) -> system-wide install: binary /usr/local/bin/hermes,
-# code /usr/local/lib/hermes-agent. The installer handles its own Python/Node/
-# ripgrep/ffmpeg deps. `creates` guard installs once; the daemon self-updates after.
+# Fetch the installer from the pinned release tag's immutable raw URL and verify
+# its sha256 BEFORE running it — no `curl <url> | bash` of a moving remote script.
+# A checksum mismatch (upstream changed the tag, MITM, rug-pull) fails here, loud.
+- name: Fetch the pinned Hermes installer (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ hermes_agent_installer_url }}"
+    dest: "{{ hermes_agent_installer_path }}"
+    checksum: "sha256:{{ hermes_agent_installer_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# Run the VERIFIED local installer (root + play become: true) -> system-wide FHS
+# layout: binary /usr/local/bin/hermes, code /usr/local/lib/hermes-agent. Do NOT
+# pass --dir: an explicit dir disables the root-FHS auto-layout and drops the
+# launcher in /root/.local/bin instead of /usr/local/bin (breaks hermes_agent_bin).
+# --branch {{ version }}: the installer git-clones the app at this release TAG
+# (`git clone --depth 1 --branch <tag>`), pinning the app checkout too. The
+# installer handles its own Python/uv/venv/Node/ripgrep/ffmpeg deps.
+# `creates` guard installs once; the Hermes daemon self-updates the app after.
 # --skip-setup: the installer's final step is an INTERACTIVE `hermes setup` wizard
 # that reads /dev/tty and hangs forever under Ansible (no controlling TTY). We skip
 # it and configure declaratively via the config.yaml/.env templates below;
 # --non-interactive defaults any remaining prompt instead of blocking.
 - name: Install Hermes Agent system-wide (once; daemon self-updates thereafter)
-  ansible.builtin.shell:
+  ansible.builtin.command:
     cmd: >-
-      set -o pipefail && curl -fsSL {{ hermes_agent_install_url }}
-      | bash -s -- --skip-setup --non-interactive
+      bash {{ hermes_agent_installer_path }}
+      --branch {{ hermes_agent_version }} --skip-setup --non-interactive
     creates: "{{ hermes_agent_bin }}"
-  args:
-    executable: /bin/bash
 
 - name: Create the hermes runtime user (HERMES_HOME on the data volume)
   ansible.builtin.user:
