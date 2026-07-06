@@ -205,26 +205,15 @@ in ai-assistant-instructions for full patterns.
 
 Template: `secrets.enc.yaml.example` — copy, fill in real values, then encrypt.
 
-**OpenBao is repointing in.** The `openbao_secrets` role is a `site.yml`
-prefetch play (`localhost`, `run_once`) that logs in to OpenBao once per
-resource domain (its own least-privilege AppRole) and publishes each domain's
-KV subtree as `bao_<domain>_secrets`. Consumer roles read bao-first with an
-env fallback:
-
-```yaml
-SOME_SECRET: >-
-  {{ bao_<domain>_secrets.SOME_SECRET
-     | default(lookup('env', 'SOME_SECRET'), true)
-     | mandatory('SOME_SECRET must be set (OpenBao secret/<domain>/<path> or SOPS/Doppler env)') }}
-```
-
-To repoint a role: seed the domain's KV path in OpenBao, add the path to
-`roles/openbao_secrets/defaults/main.yml`, then change the role default to
-the pattern above. Leave the old Doppler/SOPS value in place (annotated
-superseded) until the converge is proven against the new path — delete it in
-a separate follow-up PR, not the same one. `local-llm` is fully repointed;
-`media`/`local-cloud`/`monitoring` are seeded but still Doppler-read;
-`mssql`/`idrac` have no domain yet.
+**Roles are injection-agnostic.** Every role reads a secret as plain
+`lookup('env', 'KEY')` and doesn't know or care where the value came from —
+never bake a specific backend (OpenBao, Doppler, SOPS) into a role default.
+Our deployment currently populates those env vars via `doppler run --`; the
+target is an ambient injection step (an `openbao-keychain` LaunchAgent +
+`from_bao`-style wrapper) that exports the same env vars from OpenBao before
+the converge runs — zero role changes either way. OpenBao's per-domain
+AppRole RBAC is documented in `docs-starlight` as *our infra*, not a
+requirement of this repo.
 
 ## Commands
 
