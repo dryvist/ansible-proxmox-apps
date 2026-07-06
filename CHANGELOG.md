@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.5...v1.74.6) (2026-07-06)
+
+
+### Bug Fixes
+
+* **hermes-agent:** cap model.max_tokens to stop context-overflow death loop ([#656](https://github.com/dryvist/ansible-proxmox-apps/issues/656)) ([31d1cdf](https://github.com/dryvist/ansible-proxmox-apps/commit/31d1cdf03a96f395449ce8a70afe6538b24ff26d))
+
 ## [1.74.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.4...v1.74.5) (2026-07-06)
 
 
