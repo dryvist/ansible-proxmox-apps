@@ -55,6 +55,20 @@ hermes_agent_installer_path: "/usr/local/lib/hermes-agent-installer-{{ hermes_ag
 hermes_agent_model: Qwen3-Coder-30B-A3B
 hermes_agent_model_base_url: "https://llm.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/v1"
 hermes_agent_model_api_mode: chat_completions
+# Qwen3-Coder-30B-A3B's native context window (256K = 262144 tokens). Custom
+# providers carry no context catalog Hermes can probe, so this is declared
+# explicitly (model.context_length in config.yaml.j2).
+hermes_agent_model_context_length: 262144
+# ROOT-CAUSE fix for the "Context length exceeded (18/19 tokens). Cannot
+# compress further." death loop confirmed in ~/.hermes/logs/agent.log: the
+# router/backend hard-caps a single completion at 8192 output tokens
+# ("max_tokens exceeds server limit (8192)"), but the `custom` provider
+# profile's built-in default_max_tokens is 65536. Hermes' error_classifier
+# misclassifies that 400 as a context overflow (it matches the bare
+# substring "max_tokens" in any error text) and dies trying to compress an
+# already-minimal conversation instead of lowering the output request.
+# Capping max_tokens here means the oversized request is never sent.
+hermes_agent_model_max_tokens: 8192
 # The api key IS the LiteLLM router master key; source it from the canonical
 # LLM_ROUTER_MASTER_KEY env (same as the llm_router role) so no per-run mapping
 # is needed. HERMES_AGENT_MODEL_API_KEY still overrides if explicitly set.
