@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.1...v1.71.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ntp+hermes:** chrony container guard, router key, native pinned Hermes install ([#626](https://github.com/dryvist/ansible-proxmox-apps/issues/626)) ([7fc551a](https://github.com/dryvist/ansible-proxmox-apps/commit/7fc551a27a543b6dc7e1e43003bbbea98fe161c2))
+
 ## [1.71.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.0...v1.71.1) (2026-07-06)
 
 
