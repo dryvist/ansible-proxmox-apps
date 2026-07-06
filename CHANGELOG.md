@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.70.0...v1.71.0) (2026-07-06)
+
+
+### Features
+
+* **llm_router,llama_cpp:** expose Qwen 3.6 models and map Claude Code aliases ([#624](https://github.com/dryvist/ansible-proxmox-apps/issues/624)) ([33afac8](https://github.com/dryvist/ansible-proxmox-apps/commit/33afac884bcac86ab20b6d2292bede50b77ff52c))
+
 ## [1.70.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.69.0...v1.70.0) (2026-07-05)
 
 
