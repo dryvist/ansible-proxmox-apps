@@ -85,11 +85,12 @@ if [[ -n "${probe_host:-}" ]]; then
     die "HTTPS via VIP failed for ${probe_host} after failover"
   fi
 else
-  # No service name given: at least confirm the VIP accepts TCP :443.
-  if on "$new_holder" "curl -fsS -o /dev/null -k https://127.0.0.1:443/ || true; timeout 3 bash -c '</dev/tcp/${VIP}/443'"; then
-    ok "VIP $VIP accepts TCP :443 from the surviving node"
+  # No service name given: confirm the VIP terminates TLS + answers HTTP from the
+  # surviving node (no -f: a Traefik 404 on / is still a served response).
+  if on "$new_holder" "curl -sS -o /dev/null -k https://${VIP}/"; then
+    ok "VIP $VIP accepts HTTPS connections on the surviving node"
   else
-    die "VIP $VIP not serving :443 after failover"
+    die "VIP $VIP not serving HTTPS after failover"
   fi
 fi
 
