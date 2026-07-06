@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.4...v1.72.0) (2026-07-06)
+
+
+### Features
+
+* **hermes_agent:** repoint brain to Qwen3-Coder-30B-A3B on Mac Studio ([#634](https://github.com/dryvist/ansible-proxmox-apps/issues/634)) ([52be4fa](https://github.com/dryvist/ansible-proxmox-apps/commit/52be4fa2867bec4e57cb31a9096d005b5844fd09))
+
 ## [1.71.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.3...v1.71.4) (2026-07-06)
 
 
