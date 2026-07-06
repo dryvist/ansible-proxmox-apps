@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.73.0...v1.74.0) (2026-07-06)
+
+
+### Features
+
+* **hermes_agent:** wire Slack gateway (Socket Mode) ([#641](https://github.com/dryvist/ansible-proxmox-apps/issues/641)) ([3b5916c](https://github.com/dryvist/ansible-proxmox-apps/commit/3b5916c5d43f78a743e7d05a7a320c690eccf508))
+
 ## [1.73.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.2...v1.73.0) (2026-07-06)
 
 
