@@ -1812,7 +1812,7 @@
     llm_router_llm_large_base_url: "https://llm-large.example.net:11434/v1"
     llm_router_large_models:
       - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8 }
-      - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit }
+      - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit, context_window: 262144 }
       - { alias: Qwen3.6-35B-A3B-4bit, backend: mlx-community/Qwen3.6-35B-A3B-4bit }
       - { alias: Qwen3.6-27B-4bit, backend: mlx-community/Qwen3.6-27B-4bit }
       - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit }
@@ -1865,6 +1865,17 @@
           - "'test-master-key-placeholder' not in (lookup('file', '/tmp/test_litellm_config.yaml'))"
           - _litellm.general_settings.master_key == 'os.environ/LLM_ROUTER_MASTER_KEY'
         fail_msg: "config.yaml.j2 model_list / auth wrong: {{ _litellm.model_list }}"
+
+    - name: Assert explicit context_window models get a real max_input_tokens
+      ansible.builtin.assert:
+        that:
+          # Without an explicit context_window, this mlx-community backend id is
+          # unknown to LiteLLM's cost map and max_input_tokens silently resolves to
+          # null, which is the actual root cause of the Hermes context-collapse bug
+          # this fixes — assert the rendered config carries the real value through.
+          - (_litellm.model_list | selectattr('model_name', 'equalto', 'Qwen3-Coder-30B-A3B') | first).model_info.max_input_tokens == 262144
+          - (_litellm.model_list | selectattr('model_name', 'equalto', 'Qwen3-Coder-30B-A3B') | first).model_info.max_tokens == 262144
+        fail_msg: "config.yaml.j2 did not render model_info.max_input_tokens for Qwen3-Coder-30B-A3B: {{ _litellm.model_list }}"
 
     - name: Assert routing, health checks, and observability callbacks
       ansible.builtin.assert:
