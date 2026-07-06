@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.1...v1.72.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **sortarr:** persist session secret via file seeding ([#638](https://github.com/dryvist/ansible-proxmox-apps/issues/638)) ([cd79e0e](https://github.com/dryvist/ansible-proxmox-apps/commit/cd79e0ece8773ab0a451b5a602a7c9005b8a2c13))
+
 ## [1.72.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.0...v1.72.1) (2026-07-06)
 
 
