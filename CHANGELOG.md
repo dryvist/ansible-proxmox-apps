@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.4...v1.74.5) (2026-07-06)
+
+
+### Bug Fixes
+
+* **technitium_dns:** remove apex-zone-delete time bomb ([#654](https://github.com/dryvist/ansible-proxmox-apps/issues/654)) ([6a18cfb](https://github.com/dryvist/ansible-proxmox-apps/commit/6a18cfb1c664b0b066c66762a91dced6a541cff1))
+
 ## [1.74.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.3...v1.74.4) (2026-07-06)
 
 
