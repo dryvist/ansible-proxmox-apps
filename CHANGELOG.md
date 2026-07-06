@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.72.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.0...v1.72.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **agent_exec:** correct LangChain instrumentor import casing ([6becd87](https://github.com/dryvist/ansible-proxmox-apps/commit/6becd8729609f25db7669c705a078f2e326d93a5))
+
+## [1.72.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.4...v1.72.0) (2026-07-06)
+
+
+### Features
+
+* **hermes_agent:** repoint brain to Qwen3-Coder-30B-A3B on Mac Studio ([#634](https://github.com/dryvist/ansible-proxmox-apps/issues/634)) ([52be4fa](https://github.com/dryvist/ansible-proxmox-apps/commit/52be4fa2867bec4e57cb31a9096d005b5844fd09))
+
+## [1.71.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.3...v1.71.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **hermes_agent:** use gateway run --replace instead of gateway start ([#632](https://github.com/dryvist/ansible-proxmox-apps/issues/632)) ([56abf5f](https://github.com/dryvist/ansible-proxmox-apps/commit/56abf5f22f2c65852d03ceb6899ee3a5b3e9c1fe))
+
+## [1.71.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.2...v1.71.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **llama_cpp:** remove hermes-4-14b and guardrail against &gt;=14B on llm-fast ([#629](https://github.com/dryvist/ansible-proxmox-apps/issues/629)) ([035defd](https://github.com/dryvist/ansible-proxmox-apps/commit/035defd7fbd950123f09b2e4f541f0284b69ff6a))
+
+## [1.71.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.1...v1.71.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ntp+hermes:** chrony container guard, router key, native pinned Hermes install ([#626](https://github.com/dryvist/ansible-proxmox-apps/issues/626)) ([7fc551a](https://github.com/dryvist/ansible-proxmox-apps/commit/7fc551a27a543b6dc7e1e43003bbbea98fe161c2))
+
+## [1.71.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.0...v1.71.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **sortarr:** inject keys at runtime and support PVE subdomains ([#625](https://github.com/dryvist/ansible-proxmox-apps/issues/625)) ([4423a85](https://github.com/dryvist/ansible-proxmox-apps/commit/4423a85346b72a0d3b2230adb16bc10d65c12a6b))
+
+## [1.71.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.70.0...v1.71.0) (2026-07-06)
+
+
+### Features
+
+* **llm_router,llama_cpp:** expose Qwen 3.6 models and map Claude Code aliases ([#624](https://github.com/dryvist/ansible-proxmox-apps/issues/624)) ([33afac8](https://github.com/dryvist/ansible-proxmox-apps/commit/33afac884bcac86ab20b6d2292bede50b77ff52c))
+
 ## [1.70.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.69.0...v1.70.0) (2026-07-05)
 
 

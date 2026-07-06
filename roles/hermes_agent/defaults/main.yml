@@ -13,17 +13,43 @@ hermes_agent_user: hermes
 hermes_agent_home: /var/lib/hermes
 hermes_agent_hermes_home: "{{ hermes_agent_home }}/.hermes" # $HERMES_HOME
 hermes_agent_bin: /usr/local/bin/hermes                     # system-wide install
-hermes_agent_install_url: "https://hermes-agent.nousresearch.com/install.sh"
+
+# --- Pinned, checksum-verified installer (NO curl|bash of a moving remote script) ---
+# Hermes ships as a Python app built from a git checkout (uv venv + editable pip),
+# not a released binary — so there is no binary artifact to checksum. What we CAN
+# pin is (a) the installer script, fetched from the tag's immutable raw URL and
+# sha256-verified, and (b) the app checkout, via the installer's --branch <tag>.
+#
+# Ansible pins the PLATFORM version for the ONE-TIME install (creates guard on the
+# binary); the Hermes daemon self-updates the app thereafter (`hermes update`).
+# To move the pinned floor: bump hermes_agent_version AND refresh the sha256
+# (curl the URL below, `sha256sum`). A stale checksum fails the converge loudly —
+# by design, that is the tamper/rug-pull guard.
+hermes_agent_version: "v2026.7.1"
+hermes_agent_installer_url: >-
+  https://raw.githubusercontent.com/NousResearch/hermes-agent/{{
+  hermes_agent_version }}/scripts/install.sh
+hermes_agent_installer_sha256: "a93c65b01ea392e179cf872e182bd01a2b65c0c15f17833e9f9569033ef10e07"
+# Version-stamped so a version bump downloads (and re-verifies) a fresh copy
+# instead of reusing a stale cached file.
+hermes_agent_installer_path: "/usr/local/lib/hermes-agent-installer-{{ hermes_agent_version }}.sh"
 
 # --- Brain: the LiteLLM router (the fabric front door, OpenAI-compatible /v1) ---
 # Reached by its neutral Traefik FQDN — never a hardcoded IP. The router routes by
-# model alias, so the agent just names the model it wants (the light Hermes-4-14B
-# here). The api key is the router master key, env-sourced (SOPS/Doppler).
-hermes_agent_model: hermes-4-14b
+# model alias, so the agent just names the model it wants: Qwen3-Coder-30B-A3B
+# on the Mac Studio large tier (non-hybrid MoE, proven stable — avoids the
+# qwen3_5_moe batching crash that rules out Qwen3.6). Replaces the interim
+# hermes-4-14b light-tier brain. The api key is the router master key,
+# env-sourced (SOPS/Doppler).
+hermes_agent_model: qwen3-coder
 hermes_agent_model_base_url: "https://llm.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/v1"
 hermes_agent_model_api_mode: chat_completions
+# The api key IS the LiteLLM router master key; source it from the canonical
+# LLM_ROUTER_MASTER_KEY env (same as the llm_router role) so no per-run mapping
+# is needed. HERMES_AGENT_MODEL_API_KEY still overrides if explicitly set.
 hermes_agent_model_api_key: >-
-  {{ bao_local_llm_secrets.HERMES_AGENT_MODEL_API_KEY | default(lookup('env', 'HERMES_AGENT_MODEL_API_KEY'), true) }}
+  {{ lookup('env', 'HERMES_AGENT_MODEL_API_KEY')
+     | default(lookup('env', 'LLM_ROUTER_MASTER_KEY'), true) }}
 
 # --- Memory: best self-hostable as of June 2026 (Agy-validated) ---
 # Hindsight: local knowledge-graph + multi-strategy retrieval. Runs alongside the
@@ -39,4 +65,9 @@ hermes_agent_timezone: "UTC"
 
 # systemd ExecStart: the long-running gateway daemon. It drives the built-in cron
 # scheduler + the Kanban dispatcher even with no messaging platform configured.
-hermes_agent_gateway_cmd: "{{ hermes_agent_bin }} gateway start"
+# `gateway start` is for interactive/manual use — it shells out to manage its
+# own systemd/launchd service and requires root when no user session is
+# present ("System gateway start requires root"). `gateway run --replace` is
+# the foreground-supervised form the CLI's own --help calls out as "useful for
+# systemd" — it runs in-process under our unit instead of trying to manage one.
+hermes_agent_gateway_cmd: "{{ hermes_agent_bin }} gateway run --replace"
