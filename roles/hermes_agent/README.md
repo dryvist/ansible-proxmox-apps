@@ -26,6 +26,10 @@ VLAN.
   `llm.<subdomain>/v1`, OpenAI-compatible); sets memory provider to **Hindsight** (best self-hostable
   June 2026) alongside the always-on `MEMORY.md`/`USER.md`; caps `agent.max_turns`
   so a runaway loop can't pin the GPU overnight.
+- Wires the Slack gateway (Socket Mode) via five env vars in `.env`, read
+  directly by Hermes' own Slack adapter — no `config.yaml` changes needed.
+  All five default to empty, so the gateway simply runs Slack-free until they
+  are set.
 
 ## Installation
 
@@ -52,6 +56,11 @@ doppler run -- uv run ansible-playbook \
 | `hermes_agent_model` | `hermes-4-14b` | model id |
 | `hermes_agent_memory_provider` | `hindsight` | external memory provider |
 | `hermes_agent_max_turns` | `90` | agentic-loop budget |
+| `hermes_agent_slack_bot_token` | `""` | Slack bot OAuth token (`xoxb-…`) |
+| `hermes_agent_slack_app_token` | `""` | Slack app-level token for Socket Mode (`xapp-…`) |
+| `hermes_agent_slack_allowed_users` | `""` | comma-sep Slack member IDs allowed to DM the bot |
+| `hermes_agent_slack_home_channel` | `""` | Slack channel ID for proactive posts |
+| `hermes_agent_slack_home_channel_name` | `""` | Slack channel display name |
 
 ## Group / invocation
 
