@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.1...v1.74.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ntp:** stage/validate/promote chrony config to fix permission-denied ([#647](https://github.com/dryvist/ansible-proxmox-apps/issues/647)) ([1e25354](https://github.com/dryvist/ansible-proxmox-apps/commit/1e25354a79f4cdd5ced86fb4d2781e8d2b58c361))
+
 ## [1.74.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.0...v1.74.1) (2026-07-06)
 
 
