@@ -1,0 +1,55 @@
+{{ ansible_managed | comment }}
+# keepalived — ingress VRRP virtual IP ({{ keepalived_vip }}) failover.
+# Rendered by the keepalived role from the tofu inventory. Unicast VRRP between
+# the Traefik instances; master election by priority; a Traefik outage on this
+# node drops its priority (track_script) so the VIP migrates automatically.
+
+global_defs {
+    enable_script_security
+    script_user root
+}
+
+# Local Traefik liveness — a non-zero exit drops this node's effective priority
+# by {{ keepalived_track_weight }}, handing the VIP to a healthy peer.
+vrrp_script chk_traefik {
+    script "{{ keepalived_track_command }}"
+    interval {{ keepalived_track_interval }}
+    fall {{ keepalived_track_fall }}
+    rise {{ keepalived_track_rise }}
+    weight {{ keepalived_track_weight }}
+}
+
+vrrp_instance ingress {
+    # Highest-priority reachable instance owns the VIP; preemption lets a
+    # recovered higher-priority node reclaim it.
+    state {{ 'MASTER' if keepalived_priority | int >= keepalived_priority_base else 'BACKUP' }}
+    interface {{ keepalived_interface }}
+    virtual_router_id {{ keepalived_vrid }}
+    priority {{ keepalived_priority }}
+    advert_int 1
+
+    # Unicast VRRP (no multicast — works across the LXC bridge).
+    unicast_src_ip {{ keepalived_this_addr }}
+    unicast_peer {
+{% for peer in keepalived_unicast_peers %}
+        {{ peer }}
+{% endfor %}
+    }
+{% if keepalived_auth_pass | length > 0 %}
+
+    authentication {
+        auth_type PASS
+        # keepalived truncates auth_pass to 8 chars internally; do it explicitly
+        # so every peer renders the SAME value (a mismatch drops VRRP adverts).
+        auth_pass {{ keepalived_auth_pass[:8] }}
+    }
+{% endif %}
+
+    virtual_ipaddress {
+        {{ keepalived_vip }}
+    }
+
+    track_script {
+        chk_traefik
+    }
+}
