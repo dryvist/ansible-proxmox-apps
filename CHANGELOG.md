@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.3...v1.71.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **hermes_agent:** use gateway run --replace instead of gateway start ([#632](https://github.com/dryvist/ansible-proxmox-apps/issues/632)) ([56abf5f](https://github.com/dryvist/ansible-proxmox-apps/commit/56abf5f22f2c65852d03ceb6899ee3a5b3e9c1fe))
+
 ## [1.71.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.2...v1.71.3) (2026-07-06)
 
 
