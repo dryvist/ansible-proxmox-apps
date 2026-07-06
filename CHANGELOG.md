@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.0...v1.71.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **sortarr:** inject keys at runtime and support PVE subdomains ([#625](https://github.com/dryvist/ansible-proxmox-apps/issues/625)) ([4423a85](https://github.com/dryvist/ansible-proxmox-apps/commit/4423a85346b72a0d3b2230adb16bc10d65c12a6b))
+
 ## [1.71.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.70.0...v1.71.0) (2026-07-06)
 
 
