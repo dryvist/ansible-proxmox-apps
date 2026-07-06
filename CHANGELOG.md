@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.2...v1.73.0) (2026-07-06)
+
+
+### Features
+
+* **dr:** keepalived ingress VIP + OpenBao client failover ([#640](https://github.com/dryvist/ansible-proxmox-apps/issues/640)) ([7427386](https://github.com/dryvist/ansible-proxmox-apps/commit/74273865f37ebd38364cd329a7c0a4565d5e57e3))
+
 ## [1.72.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.1...v1.72.2) (2026-07-06)
 
 
