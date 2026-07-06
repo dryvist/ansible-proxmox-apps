@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.0...v1.74.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **openbao_secrets:** disable become on localhost-delegated probe tasks ([#644](https://github.com/dryvist/ansible-proxmox-apps/issues/644)) ([30d0f14](https://github.com/dryvist/ansible-proxmox-apps/commit/30d0f14fff8aaa2f491ffbaa443fef66549cfe76))
+
 ## [1.74.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.73.0...v1.74.0) (2026-07-06)
 
 
