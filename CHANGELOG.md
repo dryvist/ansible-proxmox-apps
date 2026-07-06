@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.3...v1.74.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **llm_router,hermes_agent:** advertise Qwen3-Coder context window; fix Hermes alias ([#646](https://github.com/dryvist/ansible-proxmox-apps/issues/646)) ([4271393](https://github.com/dryvist/ansible-proxmox-apps/commit/427139383c2df5ae127df811068e4dc598309a24))
+
 ## [1.74.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.2...v1.74.3) (2026-07-06)
 
 
