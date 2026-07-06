@@ -2,9 +2,16 @@
 # llama_cpp role defaults — the light serving tier: llama.cpp (llama-server) behind
 # llama-swap, on an AMD ROCm GPU inside a privileged LXC (guest `llm-fast`, RX 6800
 # = gfx1030). llama-swap presents ONE OpenAI-compatible endpoint and keeps the
-# configured models co-resident (a group with swap:false), so hermes-4-14b + a
-# small general model + an embeddings model all fit in 16 GB at Q4 and answer
-# without reload churn.
+# configured models co-resident (a group with swap:false), so a small general
+# model + an embeddings model fit in 16 GB at Q4 and answer without reload churn.
+#
+# ABSOLUTE RULE: never serve a model with param_billions >= 14 on this GPU
+# (llm-fast, RX 6800, 16 GB VRAM). A single Hermes-4-14B (Q4, ~8.4 GB) load
+# hard-locked the pve1 HOST twice even alone, on top of two earlier co-resident
+# load hard-locks (see llama_cpp_service_enabled below). The `param_billions`
+# field on every llama_cpp_models entry + the converge-time assert in
+# tasks/main.yml enforce this; never add a model here without a param_billions
+# value.
 #
 # GPU device nodes (/dev/kfd, /dev/dri) are passed into the container UPSTREAM by
 # ansible-proxmox (role lxc_gpu_features); this role assumes they already exist and
@@ -43,7 +50,7 @@ llama_cpp_gpu: true
 llama_cpp_hsa_override_gfx_version: "10.3.0"
 
 # GPU-layer offload + context: full offload + full context on GPU; none + a smaller
-# context on CPU (a 14B at Q4 is slow on CPU, so keep the working set small).
+# context on CPU (a large model at Q4 is slow on CPU, so keep the working set small).
 llama_cpp_ngl: "{{ 99 if llama_cpp_gpu | bool else 0 }}"
 llama_cpp_ctx_size: "{{ 8192 if llama_cpp_gpu | bool else 2048 }}"
 
@@ -84,37 +91,41 @@ llama_cpp_api_port: "{{ tofu_data.constants.service_ports.llm_fast_api }}"
 llama_cpp_start_port: 9200
 
 # How long llama-swap waits for a model to become healthy before declaring it
-# unhealthy (a 14B cold-loads from disk into VRAM; give it headroom).
+# unhealthy (a cold model load from disk into VRAM needs headroom).
 llama_cpp_health_check_timeout: 300
 
 # --- Models (co-resident) ----------------------------------------------------
-# All three stay loaded together (see the group in the template): Hermes-4-14B Q4
-# (~8.4 GB) + a small general model + a tiny embeddings model fit in 16 GB at Q4.
-# Each entry: the served model_name, extra OpenAI aliases, the HuggingFace repo +
-# GGUF filename (the URL is composed in the task), and whether it is an embeddings
-# server. Repo/quant are role vars so a change needs no task edit.
+# Both stay loaded together (see the group in the template): a small general
+# model + a tiny embeddings model fit in 16 GB at Q4. Each entry: the served
+# model_name, extra OpenAI aliases, the HuggingFace repo + GGUF filename (the
+# URL is composed in the task), the model's approximate parameter count in
+# billions (param_billions — REQUIRED, drives the >=14B converge-time assert
+# below; extend the assert's denylist too if a model ever ships without a
+# reliable size in its name), and whether it is an embeddings server. Repo/quant
+# are role vars so a change needs no task edit.
+#
+# hermes-4-14b (NousResearch Hermes-4-14B) was removed from this list — it is a
+# 14B model and violates the ABSOLUTE >=14B rule above. Do not re-add it here.
 llama_cpp_hf_base: "https://huggingface.co"
 llama_cpp_models:
-  - name: hermes-4-14b
-    aliases: []
-    hf_repo: "bartowski/NousResearch_Hermes-4-14B-GGUF"
-    gguf: "NousResearch_Hermes-4-14B-Q4_K_M.gguf"
-    embeddings: false
   - name: qwen3-4b
     aliases: []
     hf_repo: "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF"
     gguf: "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+    param_billions: 4
     embeddings: false
   - name: embeddings
     aliases: [nomic-embed-text-v1.5]
     hf_repo: "nomic-ai/nomic-embed-text-v1.5-GGUF"
     gguf: "nomic-embed-text-v1.5.Q4_K_M.gguf"
+    param_billions: 0.137
     embeddings: true
 
 # Whether llama-swap actually serves. llm-fast is FROZEN (false in host_vars):
-# four host hard-locks — two from co-resident triple loads, two from a SINGLE
-# Hermes-4-14B (8.4 GB) load with every software fix applied — put the fault at
-# the host/hardware level under large GPU allocations (qwen3-4b at 2.5 GB is
-# fine). Do NOT re-enable on llm-fast until the hardware question is settled
-# (BIOS/PSU/memtest); the light tier serves from llm-light (CPU) meanwhile.
+# four host hard-locks — two from co-resident triple loads (which included the
+# now-removed hermes-4-14b), two from a SINGLE Hermes-4-14B (8.4 GB) load with
+# every software fix applied — put the fault at the host/hardware level under
+# large GPU allocations (qwen3-4b at 2.5 GB is fine). Do NOT re-enable on
+# llm-fast until the hardware question is settled (BIOS/PSU/memtest); the light
+# tier serves from llm-light (CPU) meanwhile.
 llama_cpp_service_enabled: true

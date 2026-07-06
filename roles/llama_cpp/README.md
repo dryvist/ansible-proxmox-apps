@@ -4,8 +4,13 @@ Deploys the **light serving tier**: [llama.cpp](https://github.com/ggml-org/llam
 (`llama-server`) behind [llama-swap](https://github.com/mostlygeek/llama-swap) on an
 AMD **ROCm** GPU, inside a privileged LXC (guest `llm-fast`, RX 6800 = gfx1030).
 llama-swap presents **one** OpenAI-compatible endpoint and keeps the configured
-models co-resident, so Hermes-4-14B + a small general model + an embeddings model
-all fit in 16 GB at Q4 and answer without reload churn.
+models co-resident, so a small general model + an embeddings model fit in
+16 GB at Q4 and answer without reload churn.
+
+**Absolute rule:** never serve a model with `param_billions >= 14` on this GPU.
+pve1 has hard-locked repeatedly under large-model GPU loads (VRAM eviction
+hard-hangs the host); a converge-time assert in `tasks/main.yml` enforces this,
+scoped to `llm_fast_group` only.
 
 ## Installation
 
@@ -39,12 +44,12 @@ Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough
 
 | model_name | aliases | kind |
 | --- | --- | --- |
-| `hermes-4-14b` | `hermes4` | chat (`--jinja`) |
 | `qwen3-4b` | — | chat (`--jinja`) |
 | `embeddings` | `nomic-embed-text-v1.5` | `--embeddings` |
 
-All three are members of the `resident` llama-swap group (`swap: false`), so they
-stay loaded together.
+Both are members of the `chat` / `embeddings` llama-swap groups (`swap: false`
+for `embeddings`), so they stay loaded together. `hermes-4-14b` (14B) was
+removed — see "Absolute rule" above.
 
 ## GPU toggle
 
@@ -59,7 +64,7 @@ with a smaller context, and drops the GPU env from the unit.
 | --- | --- | --- |
 | `llama_cpp_api_port` | `tofu_data.constants.service_ports.llm_fast_api` | llama-swap listen port (no hardcode) |
 | `llama_cpp_gpu` | `true` | ROCm GPU vs CPU-only standby |
-| `llama_cpp_models` | 3-model list | served models + GGUF sources |
+| `llama_cpp_models` | 2-model list | served models + GGUF sources (each needs `param_billions`) |
 | `llama_cpp_install_dir` | `/opt/llama-cpp` | binary + bundled ROCm `.so` files (also `LD_LIBRARY_PATH`) |
 | `llama_cpp_models_dir` | `/var/lib/llama-cpp/models` | staged GGUFs (persistent volume) |
 | `llama_cpp_rocm_packages` | `[]` | best-effort container ROCm runtime packages |
