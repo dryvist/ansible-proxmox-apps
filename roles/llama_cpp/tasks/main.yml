@@ -38,13 +38,25 @@
 # guard even though playbooks/site.yml only ever wires this role to
 # llm_fast_group today; the guard is what keeps a future re-use of this role
 # safe.
+- name: Assert every llm-fast model declares param_billions
+  ansible.builtin.assert:
+    that:
+      - (llama_cpp_models | rejectattr('param_billions', 'defined') | list | length) == 0
+    fail_msg: >-
+      One or more llama_cpp_models entries is missing param_billions
+      ({{ llama_cpp_models | rejectattr('param_billions', 'defined')
+          | map(attribute='name') | list }}) — required so the >=14B GPU
+      guardrail below can evaluate it. Add a param_billions value.
+  when: "'llm_fast_group' in group_names"
+
 - name: Assert no llm-fast model is >= 14B params (ABSOLUTE pve1 GPU rule)
   ansible.builtin.assert:
     that:
-      - (llama_cpp_models | selectattr('param_billions', 'ge', 14) | list | length) == 0
+      - (llama_cpp_models | map(attribute='param_billions', default=0) | select('ge', 14) | list | length) == 0
     fail_msg: >-
       One or more llama_cpp_models entries has param_billions >= 14
-      ({{ llama_cpp_models | selectattr('param_billions', 'ge', 14)
+      ({{ llama_cpp_models | selectattr('param_billions', 'defined')
+          | selectattr('param_billions', 'ge', 14)
           | map(attribute='name') | list }}). pve1 (llm-fast) has hard-locked
       repeatedly serving models this large — see defaults/main.yml. Do not add
       a >=14B model to this GPU; serve it elsewhere.
