@@ -55,6 +55,24 @@
       --branch {{ hermes_agent_version }} --skip-setup --non-interactive
     creates: "{{ hermes_agent_bin }}"
 
+# The base install skips optional messaging-platform extras (they pull in
+# platform SDKs like slack-bolt that most converges never need). Without this,
+# the gateway logs "Platform 'Slack' requirements not met" and refuses to
+# create the Slack adapter even with valid tokens configured. `uv pip install`
+# is a no-op re-run when already satisfied; changed_when keys off its own
+# "Installed"/"Uninstalled" summary line so idempotency reporting stays honest.
+- name: Install the Slack platform extra into the Hermes venv
+  ansible.builtin.command:
+    cmd: >-
+      {{ hermes_agent_uv_bin }} pip install
+      --python {{ hermes_agent_venv_python }}
+      "hermes-agent[slack] @ {{ hermes_agent_install_dir }}"
+  register: hermes_agent_slack_extra_install
+  changed_when: >-
+    'Installed' in hermes_agent_slack_extra_install.stdout
+    or 'Uninstalled' in hermes_agent_slack_extra_install.stdout
+  when: hermes_agent_slack_bot_token | length > 0 and hermes_agent_slack_app_token | length > 0
+
 - name: Create the hermes runtime user (HERMES_HOME on the data volume)
   ansible.builtin.user:
     name: "{{ hermes_agent_user }}"
