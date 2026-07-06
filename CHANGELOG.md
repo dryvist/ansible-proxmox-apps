@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.0...v1.72.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **agent_exec:** correct LangChain instrumentor import casing ([6becd87](https://github.com/dryvist/ansible-proxmox-apps/commit/6becd8729609f25db7669c705a078f2e326d93a5))
+
 ## [1.72.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.4...v1.72.0) (2026-07-06)
 
 
