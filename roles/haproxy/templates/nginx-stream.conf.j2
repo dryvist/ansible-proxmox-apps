@@ -60,4 +60,24 @@ stream {
     proxy_timeout 1s;
     proxy_responses 0;
   }
+{% if haproxy_macos_udp_relay_enabled | bool %}
+
+  # macOS UDP syslog relay - Port {{ haproxy_macos_syslog_port.frontend }} -> {{ haproxy_macos_syslog_port.backend }}
+  # RFC3164 datagrams from the Macs, load-balanced to the Cribl Edge nodes.
+  # Modeled on the NetFlow block above. Self-disables (see
+  # haproxy_macos_udp_relay_enabled) once the macos family lands in the tofu
+  # syslog_port_map and the generic per-family loop takes over this listener.
+  upstream cribl_edge_macos_udp_{{ haproxy_macos_syslog_port.backend }} {
+{% for server in haproxy_syslog_backend_servers %}
+    server {{ server.container_ip }}:{{ haproxy_macos_syslog_port.backend }};
+{% endfor %}
+  }
+
+  server {
+    listen {{ haproxy_macos_syslog_port.frontend }} udp;
+    proxy_pass cribl_edge_macos_udp_{{ haproxy_macos_syslog_port.backend }};
+    proxy_timeout 1s;
+    proxy_responses 0;
+  }
+{% endif %}
 }
