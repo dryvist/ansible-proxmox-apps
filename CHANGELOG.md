@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.75.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.7...v1.75.0) (2026-07-07)
+
+
+### Features
+
+* **ai:** n8n + LangGraph roles for the AI orchestration tier ([#660](https://github.com/dryvist/ansible-proxmox-apps/issues/660)) ([6ad0e3d](https://github.com/dryvist/ansible-proxmox-apps/commit/6ad0e3dc974ff154195d0e4bb6fbc4930e2e3813))
+
 ## [1.74.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.6...v1.74.7) (2026-07-07)
 
 
