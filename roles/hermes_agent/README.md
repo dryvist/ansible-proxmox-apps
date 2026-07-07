@@ -144,3 +144,16 @@ cleanly before the creds exist.
 | `hermes_agent_splunk_mcp_enabled` | `true` | Register the Splunk MCP server |
 | `hermes_agent_splunk_mcp_url` | `""` | Splunk MCP Server endpoint (bao/env) |
 | `hermes_agent_splunk_mcp_token` | `""` | Bearer token (bao/env) |
+
+## Live docs (Context7)
+
+Registers Context7's hosted HTTP MCP server (`mcp_servers.context7`) so Hermes
+can pull **current, version-specific library/framework docs** on demand instead
+of relying on stale training data. The API key is referenced as
+`${CONTEXT7_API_KEY}` (resolved from `.env`), bao-first (`secret/ai/hermes`) with
+env fallback; the entry is omitted until the key is set.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_context7_mcp_enabled` | `true` | Register the Context7 MCP server |
+| `hermes_agent_context7_api_key` | `""` | Context7 API key (bao/env) |
