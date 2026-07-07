@@ -123,3 +123,24 @@ with an env fallback; the PEM is written to `{{ hermes_agent_hermes_home }}/gith
 
 Helper unit tests: `roles/hermes_agent/files/skills/dryvist/docs-pr/tests/` — run
 `python -m pytest` from that skill dir (all guardrail logic, no network).
+
+## Splunk search access
+
+Registers the **Splunk MCP Server** (Splunkbase 7931, deployed by `ansible-splunk`)
+as an HTTP MCP server in `~/.hermes/config.yaml` (`mcp_servers.splunk`), so Hermes
+can query the environment — `run_splunk_query`, `get_indexes`, `get_sourcetypes` —
+with its own scoped identity. The URL and Bearer token are referenced as
+`${SPLUNK_MCP_URL}` / `${SPLUNK_MCP_TOKEN}` and resolved from `.env` at connect
+time, so neither the endpoint nor the token ever lands in `config.yaml`.
+
+Creds come from OpenBao `secret/ai/hermes` (`bao_local_llm_secrets`) with an env
+fallback. `ansible-splunk` mints the per-user token (a Splunk token is bound to a
+user and inherits its roles) and publishes it as `SPLUNK_MCP_TOKEN`. The
+`mcp_servers.splunk` entry is omitted until the URL is set, so the agent starts
+cleanly before the creds exist.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_splunk_mcp_enabled` | `true` | Register the Splunk MCP server |
+| `hermes_agent_splunk_mcp_url` | `""` | Splunk MCP Server endpoint (bao/env) |
+| `hermes_agent_splunk_mcp_token` | `""` | Bearer token (bao/env) |
