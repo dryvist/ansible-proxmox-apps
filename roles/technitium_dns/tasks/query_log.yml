@@ -1,0 +1,133 @@
+---
+# DNS query-log export via the Technitium "Log Exporter" DNS app.
+#
+# Every node exports its OWN query log (DNS apps are per-instance, exactly like
+# API tokens), so this file runs on primary AND secondaries — no role gate.
+# Flow: list installed apps -> install from the DNS App Store only when absent
+# -> read the app's live config -> write the desired config only on drift.
+# Everything is skipped under technitium_dns_apply=false (molecule/CI).
+#
+# VERIFY LOCALLY before first apply (best-effort against current Technitium
+# docs; the HTTP API surface for DNS apps is version-sensitive):
+#   1. the store app's exact `name` in /api/apps/listStoreApps (expected
+#      "Log Exporter" — technitium_dns_query_log_app_name);
+#   2. the config JSON shape in /api/apps/config/get?name=<app> for the
+#      installed app version (technitium_dns_query_log_config mirrors the
+#      documented file/http/syslog exporter blocks);
+#   3. that the app version matches the running server version (the store
+#      list carries per-version download URLs).
+
+- name: List installed DNS apps
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/apps/list?token={{ technitium_dns_api_token }}"
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_apps_installed
+  changed_when: false
+  failed_when: technitium_dns_apps_installed.json.status | default('') != "ok"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Determine whether the Log Exporter app is already installed
+  ansible.builtin.set_fact:
+    technitium_dns_query_log_app_installed: >-
+      {{ technitium_dns_query_log_app_name in
+         (technitium_dns_apps_installed.json.response.apps | default([])
+          | map(attribute='name') | list) }}
+  when: technitium_dns_apply | bool
+
+- name: Look up the Log Exporter app in the DNS App Store
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/apps/listStoreApps?token={{ technitium_dns_api_token }}"
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_store_apps
+  changed_when: false
+  failed_when: technitium_dns_store_apps.json.status | default('') != "ok"
+  when:
+    - technitium_dns_apply | bool
+    - not technitium_dns_query_log_app_installed
+  no_log: true
+
+- name: Resolve the Log Exporter store download URL
+  ansible.builtin.set_fact:
+    technitium_dns_query_log_app_url: >-
+      {{ technitium_dns_store_apps.json.response.storeApps | default([])
+         | selectattr('name', 'equalto', technitium_dns_query_log_app_name)
+         | map(attribute='url') | first | default('') }}
+  when:
+    - technitium_dns_apply | bool
+    - not technitium_dns_query_log_app_installed
+
+- name: Assert the Log Exporter app exists in the DNS App Store
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_query_log_app_url | length > 0
+    fail_msg: >-
+      '{{ technitium_dns_query_log_app_name }}' was not found in this
+      Technitium server's DNS App Store listing. Verify the app name against
+      /api/apps/listStoreApps for the running server version and update
+      technitium_dns_query_log_app_name.
+    quiet: true
+  when:
+    - technitium_dns_apply | bool
+    - not technitium_dns_query_log_app_installed
+
+- name: Install the Log Exporter app from the DNS App Store
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/apps/downloadAndInstall?token={{
+      technitium_dns_api_token }}&name={{
+      technitium_dns_query_log_app_name | urlencode }}&url={{
+      technitium_dns_query_log_app_url | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_query_log_install
+  changed_when: technitium_dns_query_log_install.json.status == "ok"
+  failed_when: technitium_dns_query_log_install.json.status | default('') != "ok"
+  when:
+    - technitium_dns_apply | bool
+    - not technitium_dns_query_log_app_installed
+  no_log: true
+
+- name: Read the live Log Exporter app config
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/apps/config/get?token={{
+      technitium_dns_api_token }}&name={{
+      technitium_dns_query_log_app_name | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_query_log_live
+  changed_when: false
+  failed_when: technitium_dns_query_log_live.json.status | default('') != "ok"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+# config/set is an unconditional overwrite on the Technitium side — the drift
+# compare (parsed live JSON vs desired dict) is what keeps re-runs change-free.
+- name: Configure Log Exporter syslog export (drift-gated)
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/apps/config/set?token={{
+      technitium_dns_api_token }}
+    method: POST
+    body_format: form-urlencoded
+    body:
+      name: "{{ technitium_dns_query_log_app_name }}"
+      config: "{{ technitium_dns_query_log_config | to_json }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_query_log_set
+  changed_when: technitium_dns_query_log_set.json.status == "ok"
+  failed_when: technitium_dns_query_log_set.json.status | default('') != "ok"
+  when:
+    - technitium_dns_apply | bool
+    - >-
+      (technitium_dns_query_log_live.json.response.config | default('{}', true)
+       | from_json) != technitium_dns_query_log_config
+  no_log: true
