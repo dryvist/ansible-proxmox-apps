@@ -67,6 +67,29 @@ backend cribl_s2s_backend
 {% endfor %}
 
 # =============================================================================
+# AI/LLM log ingest (agent CLIs, serving hosts, OpenBao audit) TCP LB
+# One frontend+backend per ai_log_routing entry -> the Cribl Stream pair
+# (same server list as the Cribl S2S backend above). Cribl Stream stamps
+# index/sourcetype per input in the ai_stamp pipeline.
+# =============================================================================
+{% for name, entry in haproxy_ai_log_mappings | dictsort %}
+
+frontend ai_{{ name }}_{{ entry.port }}
+  bind *:{{ entry.port }}
+  mode {{ haproxy_mode_tcp }}
+  default_backend ai_backend_{{ entry.port }}
+
+backend ai_backend_{{ entry.port }}
+  mode {{ haproxy_mode_tcp }}
+  balance {{ haproxy_algorithm }}
+  option tcp-check
+  timeout server {{ haproxy_health_check_timeout }}
+{% for server in haproxy_ipfix_backend_servers %}
+  server {{ server.inventory_hostname }} {{ server.container_ip }}:{{ entry.port }} check inter {{ haproxy_health_check_interval }}
+{% endfor %}
+{% endfor %}
+
+# =============================================================================
 # TCP Backends for Cribl Edge nodes (one per destination port)
 # =============================================================================
 {% set unique_backend_ports = (haproxy_syslog_port_mappings | map(attribute='backend') | list) | unique %}

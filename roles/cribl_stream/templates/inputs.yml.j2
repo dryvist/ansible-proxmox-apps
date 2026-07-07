@@ -43,6 +43,36 @@ inputs:
       - output: splunk_hec
         pipeline: force_splunk_meta
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+{% for name, entry in cribl_stream_ai_log_routing | default({}) | dictsort %}
+{% set ai_type = cribl_stream_ai_input_types.get(name, 'tcpjson') %}
+  # AI/LLM ingest '{{ name }}' (HAProxy-fronted). The ai_stamp connection
+  # pipeline stamps index={{ entry.index }} / sourcetype={{ entry.sourcetype }}
+  # by __inputId (conditional evals — pre-stamped events pass untouched).
+  {{ ai_type }}:in_ai_{{ name }}:
+    id: in_ai_{{ name }}
+    type: {{ ai_type }}
+    disabled: false
+    host: "0.0.0.0"
+{% if ai_type == 'syslog' %}
+    # rsyslog sender (omfwd): RFC3164/5424 over TCP; no udpPort => no UDP
+    # listener (omfwd is configured protocol=tcp on every sender).
+    tcpPort: {{ entry.port }}
+{% else %}
+    port: {{ entry.port }}
+{% endif %}
+    sendToRoutes: false
+    connections:
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      # One index per HEC: this AI source maps to a single Splunk index, so
+      # send directly to that index's dedicated HEC output.
+      - output: splunk_hec_{{ entry.index }}
+        pipeline: ai_stamp
+{% else %}
+      - output: splunk_hec
+        pipeline: ai_stamp
+{% endif %}
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+{% endfor %}
   prometheus_rw:in_prometheus_rw:
     id: in_prometheus_rw
     type: prometheus_rw

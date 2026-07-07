@@ -29,12 +29,27 @@ class SyslogSource:
     expected_sourcetype: str
 
 
-def _load_syslog_port_map():
+@dataclass(frozen=True)
+class AiSource:
+    """Expected routing contract for one AI/LLM log ingest source."""
+
+    key: str
+    label: str
+    port: int
+    expected_index: str
+    expected_sourcetype: str
+
+
+def _load_constants_map(key):
     if not inventory_path().exists():
         return {}
     with open(inventory_path()) as f:
         constants = json.load(f).get("constants", {})
-    return constants.get("syslog_port_map", {})
+    return constants.get(key, {})
+
+
+def _load_syslog_port_map():
+    return _load_constants_map("syslog_port_map")
 
 
 SYSLOG_SOURCES = [
@@ -50,3 +65,21 @@ SYSLOG_SOURCES = [
 ]
 
 SYSLOG_SOURCE_IDS = [source.key for source in SYSLOG_SOURCES]
+
+AI_SOURCES = [
+    AiSource(
+        key=key,
+        label=key.replace("_", " ").title(),
+        port=entry["port"],
+        expected_index=entry["index"],
+        expected_sourcetype=entry["sourcetype"],
+    )
+    for key, entry in sorted(_load_constants_map("ai_log_routing").items())
+]
+
+AI_SOURCE_IDS = [source.key for source in AI_SOURCES]
+
+# rsyslog (omfwd) senders speak RFC3164/5424, so their Cribl Stream inputs are
+# syslog-type instead of tcpjson. Mirrors the cribl_stream role's
+# cribl_stream_ai_input_types override map — keep the two in sync.
+AI_SYSLOG_SOURCE_KEYS = {"homelab_llm", "openbao_audit"}
