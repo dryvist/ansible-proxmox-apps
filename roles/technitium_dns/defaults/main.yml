@@ -136,6 +136,44 @@ technitium_dns_edns_client_subnet: false
 technitium_dns_recursion: true
 technitium_dns_cache_enabled: true
 
+# --- Query-log export to the central syslog pipeline --------------------------
+# Ship every DNS query log to the dns_query syslog family (syslog CNAME ->
+# HAProxy -> Cribl Edge -> Splunk index=dns). Implemented via Technitium's
+# "Log Exporter" DNS app (installed per node from the DNS App Store — apps are
+# per-instance, like API tokens). The app hooks the query-log pipeline and
+# forwards each entry to the syslog target below; no separate "enable query
+# logging" server setting is required once the app is installed and configured.
+technitium_dns_query_log_enabled: true
+# VERIFY LOCALLY (see tasks/query_log.yml): the store app name and its config
+# JSON shape must be confirmed against the running Technitium version's
+# /api/apps/listStoreApps output before first apply.
+technitium_dns_query_log_app_name: "Log Exporter"
+# Same stable syslog entry point the syslog_forwarder role uses (the `syslog`
+# CNAME this very role creates -> HAProxy). Never a committed literal.
+technitium_dns_query_log_syslog_host: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+# dns_query standard frontend port from tofu constants; guarded so inventories
+# predating the dns_query family still render (522 is that family's standard).
+technitium_dns_query_log_syslog_port: >-
+  {{ tofu_data.constants.syslog_port_map.dns_query.standard | default(522) }}
+technitium_dns_query_log_syslog_protocol: "TCP"
+# Desired Log Exporter app config. BEST-EFFORT shape from current Technitium
+# docs (file/http exporters off, syslog exporter on) — the exact key set must
+# be verified locally against the installed app version's config/get output.
+technitium_dns_query_log_config:
+  maxQueueSize: 1000000
+  file:
+    path: "./query-logs.json"
+    enable: false
+  http:
+    endpoint: ""
+    headers: {}
+    enable: false
+  syslog:
+    address: "{{ technitium_dns_query_log_syslog_host }}"
+    port: "{{ technitium_dns_query_log_syslog_port | int }}"
+    protocol: "{{ technitium_dns_query_log_syslog_protocol }}"
+    enable: true
+
 # --- HA: primary / secondary roles (native AXFR/IXFR zone transfer) -----------
 # The role runs across the whole technitium_dns_group. The PRIMARY authors the
 # zone + records and allows zone transfer (AXFR) to the secondaries; each
