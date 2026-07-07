@@ -14,16 +14,25 @@ functions:
       add:
         # index/sourcetype conditionals are generated from the tofu
         # syslog_port_map (cribl_edge_syslog_routing) — routing truth lives
-        # in terraform-proxmox constants, not here.
+        # in terraform-proxmox constants, not here. The unifi family gets a
+        # firewall/IPS split first: raw lines matching
+        # cribl_edge_unifi_fw_match re-route to index=firewall
+        # sourcetype=ubiquiti:firewall before the plain unifi branch.
         - name: index
           value: >-
 {% for family, entry in cribl_edge_syslog_routing | dictsort %}
+{% if family == 'unifi' %}
+            __inputId.includes('{{ entry.high }}') && /{{ cribl_edge_unifi_fw_match }}/.test(_raw) ? 'firewall' :
+{% endif %}
             __inputId.includes('{{ entry.high }}') ? '{{ entry.index }}' :
 {% endfor %}
             'main'
         - name: sourcetype
           value: >-
 {% for family, entry in cribl_edge_syslog_routing | dictsort %}
+{% if family == 'unifi' %}
+            __inputId.includes('{{ entry.high }}') && /{{ cribl_edge_unifi_fw_match }}/.test(_raw) ? 'ubiquiti:firewall' :
+{% endif %}
             __inputId.includes('{{ entry.high }}') ? '{{ entry.sourcetype }}' :
 {% endfor %}
             'syslog'
