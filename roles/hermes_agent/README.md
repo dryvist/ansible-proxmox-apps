@@ -22,8 +22,8 @@ VLAN.
 - `HERMES_HOME` (`/var/lib/hermes/.hermes`) lives on a dedicated ZFS data volume —
   memory, skills, profiles, the Kanban DB, sessions and logs — so it is snapshotted
   and replicated pve→pve3 (the agent's accumulated knowledge is irreplaceable).
-- Points the model backend at the LiteLLM router (`hermes-4-14b` via
-  `llm.<subdomain>/v1`, OpenAI-compatible); sets memory provider to **Hindsight** (best self-hostable
+- Points the model backend at the LiteLLM router (`Qwen3-Coder-30B-A3B` via
+  `llm.<subdomain>/v1`, OpenAI-compatible, 262144 context); sets memory provider to **Hindsight** (best self-hostable
   June 2026) alongside the always-on `MEMORY.md`/`USER.md`; caps `agent.max_turns`
   so a runaway loop can't pin the GPU overnight.
 - Wires the Slack gateway (Socket Mode) via five env vars in `.env`, read
@@ -55,7 +55,7 @@ doppler run -- uv run ansible-playbook \
 | --- | --- | --- |
 | `hermes_agent_home` | `/var/lib/hermes` | data-volume mount = the user home |
 | `hermes_agent_model_base_url` | `https://llm.{{ PROXMOX_SUBDOMAIN }}/v1` (router) | the brain endpoint |
-| `hermes_agent_model` | `hermes-4-14b` | model id |
+| `hermes_agent_model` | `Qwen3-Coder-30B-A3B` | model id (LiteLLM router alias) |
 | `hermes_agent_memory_provider` | `hindsight` | external memory provider |
 | `hermes_agent_max_turns` | `90` | agentic-loop budget |
 | `hermes_agent_slack_bot_token` | `""` | Slack bot OAuth token (`xoxb-…`) |
