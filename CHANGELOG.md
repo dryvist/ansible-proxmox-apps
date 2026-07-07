@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.84.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.83.0...v1.84.0) (2026-07-07)
+
+
+### Features
+
+* **llm:** route llama-swap + litellm logs to the homelab_llm AI listener ([#691](https://github.com/dryvist/ansible-proxmox-apps/issues/691)) ([aa1504f](https://github.com/dryvist/ansible-proxmox-apps/commit/aa1504f952fb1257132f0f96037bb1b29e85b14b))
+
 ## [1.83.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.82.0...v1.83.0) (2026-07-07)
 
 
