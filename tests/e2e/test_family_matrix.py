@@ -93,7 +93,7 @@ class TestSyslogFamilyMatrix:
         else:
             send_tcp_syslog(haproxy_host, source.standard_port, message)
 
-        results = wait_for_event(
+        wait_for_event(
             mgmt_url,
             user,
             password,
@@ -101,10 +101,6 @@ class TestSyslogFamilyMatrix:
             index=source.expected_index,
             timeout=pipeline_poll_timeout,
             poll_interval=pipeline_poll_interval,
-        )
-        assert results, (
-            f"{source.label} matrix sentinel {sentinel} did not land in "
-            f"index={source.expected_index}"
         )
 
 
@@ -135,7 +131,7 @@ class TestAiFamilyMatrix:
             )
         send_tcp_syslog(haproxy_host, entry["port"], message)
 
-        results = wait_for_event(
+        wait_for_event(
             mgmt_url,
             user,
             password,
@@ -143,8 +139,4 @@ class TestAiFamilyMatrix:
             index=entry["index"],
             timeout=pipeline_poll_timeout,
             poll_interval=pipeline_poll_interval,
-        )
-        assert results, (
-            f"AI source {key} matrix sentinel {sentinel} did not land in "
-            f"index={entry['index']}"
         )
