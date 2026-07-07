@@ -39,6 +39,23 @@ functions:
       overwrite: false
       regex: /^<\d+>(?:\d+ )?(?:(?<timestamp>\w{3}\s+\d+\s+[\d:]+)|(?<timestamp_iso>\d{4}-\d{2}-\d{2}T[\d:.Z+-]+))\s+(?<log_host>\S+)\s+(?<process>[^\[:\s]+)(?:\[(?<pid>\d+)\])?[:\s]+(?<message>.*)/
 
+{% if 'proxy' in cribl_edge_syslog_routing %}
+  # The proxy family carries BOTH traefik and haproxy program routes on one
+  # port ({{ cribl_edge_syslog_routing.proxy.high }}); refine the sourcetype
+  # from the syslog-header program name (`process`, extracted above) AFTER
+  # regex_extract has run. Unknown programs keep the family sourcetype.
+  - id: eval
+    filter: "__inputId.includes('{{ cribl_edge_syslog_routing.proxy.high }}') && process != null"
+    disabled: false
+    conf:
+      add:
+        - name: sourcetype
+          value: >-
+            process === 'traefik' ? 'traefik:syslog'
+            : process === 'haproxy' ? 'haproxy:syslog'
+            : sourcetype
+
+{% endif %}
   - id: eval
     filter: log_host != null
     disabled: false

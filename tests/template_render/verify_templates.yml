@@ -1273,6 +1273,11 @@
     syslog_forwarder_target_port: 1517
     syslog_forwarder_protocol: tcp
     syslog_forwarder_queue_max_disk_space: 256m
+    # Mirror the group_vars wiring: program-specific routes rendered above
+    # the catch-all (traefik -> the proxy family standard frontend).
+    syslog_forwarder_program_routes:
+      - program: traefik
+        port: 523
     _sf_template_dir: "../../roles/syslog_forwarder/templates"
 
   tasks:
@@ -1310,6 +1315,20 @@
         fail_msg: >-
           10-forward-cribl.conf.j2 did not render the expected omfwd rule
           (selector/target/port/protocol/queue).
+
+    - name: Assert program routes render above the catch-all and stop
+      ansible.builtin.assert:
+        that:
+          - "\"if $programname == 'traefik' then {\" in _sf"
+          - "'port=\"523\"' in _sf"
+          - "'queue.filename=\"cribl_fwd_traefik\"' in _sf"
+          - "'stop' in _sf"
+          # Order is load-bearing: the program route must precede the
+          # catch-all *.* rule, or the catch-all consumes the line first.
+          - "_sf.index(\"$programname == 'traefik'\") < _sf.index('*.*')"
+        fail_msg: >-
+          10-forward-cribl.conf.j2 did not render the program route above the
+          catch-all with its own disk queue and a stop.
 
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:
