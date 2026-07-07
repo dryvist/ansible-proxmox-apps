@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.74.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.6...v1.74.7) (2026-07-07)
+
+
+### Bug Fixes
+
+* **llm:** stop Hermes brain 400s and router 500s ([#658](https://github.com/dryvist/ansible-proxmox-apps/issues/658)) ([224434e](https://github.com/dryvist/ansible-proxmox-apps/commit/224434ee62f235f951f1082cc47e96597d8d4881))
+
 ## [1.74.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.5...v1.74.6) (2026-07-06)
 
 
