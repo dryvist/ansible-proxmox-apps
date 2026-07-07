@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.79.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.78.1...v1.79.0) (2026-07-07)
+
+
+### Features
+
+* **hermes:** raise the output-token envelope to the serving cap (32768) ([#683](https://github.com/dryvist/ansible-proxmox-apps/issues/683)) ([b579ae9](https://github.com/dryvist/ansible-proxmox-apps/commit/b579ae9053ab4546b5750e0344bc4750009560a6))
+
 ## [1.78.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.78.0...v1.78.1) (2026-07-07)
 
 
