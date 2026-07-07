@@ -30,6 +30,8 @@ VLAN.
   directly by Hermes' own Slack adapter — no `config.yaml` changes needed.
   All five default to empty, so the gateway simply runs Slack-free until they
   are set.
+- Seeds a daily cron job that summarizes the homelab AI fabric status and posts
+  it to the Slack home channel; activation happens on the next converge.
 
 ## Installation
 
