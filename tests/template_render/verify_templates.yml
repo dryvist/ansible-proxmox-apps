@@ -616,6 +616,15 @@
     haproxy_ai_log_mappings:
       claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
       openbao_audit: { port: 10331, index: openbao_audit, sourcetype: "openbao:audit" }
+    # nginx-stream.conf.j2 inputs (mirror role defaults; macos relay enabled =
+    # the family is absent from the fixture's syslog mappings above).
+    haproxy_netflow_port:
+      frontend: 2055
+      backend: 2055
+    haproxy_macos_syslog_port:
+      frontend: 521
+      backend: 1521
+    haproxy_macos_udp_relay_enabled: true
     _template_dir: "../../roles/haproxy/templates"
 
   tasks:
@@ -833,6 +842,63 @@
           - "'server gitea 192.168.0.109:3000 check' in _haproxy_multi"
         fail_msg: >-
           Multi-entry render is missing a per-service backend or its server line.
+
+    # =========================================================================
+    # nginx-stream.conf.j2 — UDP LB incl. the dedicated macOS syslog relay
+    # =========================================================================
+    - name: Render nginx-stream.conf.j2 (macos relay enabled)
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/nginx-stream.conf.j2"
+        dest: /tmp/test_nginx_stream_macos.conf
+        mode: "0644"
+
+    - name: Render nginx-stream.conf.j2 (macos relay self-disabled)
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/nginx-stream.conf.j2"
+        dest: /tmp/test_nginx_stream_no_macos.conf
+        mode: "0644"
+      vars:
+        haproxy_macos_udp_relay_enabled: false
+
+    - name: Read rendered nginx-stream configs
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _nginx_stream_raw
+      loop:
+        - /tmp/test_nginx_stream_macos.conf
+        - /tmp/test_nginx_stream_no_macos.conf
+
+    - name: Decode rendered nginx-stream configs
+      ansible.builtin.set_fact:
+        _nginx_stream: "{{ _nginx_stream_raw.results[0].content | b64decode }}"
+        _nginx_stream_off: "{{ _nginx_stream_raw.results[1].content | b64decode }}"
+
+    - name: Assert the macOS UDP relay renders toward the Edge nodes on 1521
+      ansible.builtin.assert:
+        that:
+          - "'listen 521 udp' in _nginx_stream"
+          - "'upstream cribl_edge_macos_udp_1521' in _nginx_stream"
+          - "'proxy_pass cribl_edge_macos_udp_1521' in _nginx_stream"
+          - "'server 192.168.0.180:1521;' in _nginx_stream"
+          - "'server 192.168.0.181:1521;' in _nginx_stream"
+          # NetFlow block untouched alongside it.
+          - "'listen 2055 udp' in _nginx_stream"
+          # Exactly one 521 listener — no duplicate with the family loop.
+          - "_nginx_stream.count('listen 521 udp') == 1"
+        fail_msg: >-
+          nginx-stream.conf.j2 did not render the macOS UDP relay
+          (521 -> Cribl Edge :1521) modeled on the NetFlow block.
+
+    - name: Assert the macOS relay self-disables when the family joins the map
+      ansible.builtin.assert:
+        that:
+          - "'listen 521 udp' not in _nginx_stream_off"
+          - "'cribl_edge_macos_udp_1521' not in _nginx_stream_off"
+          - "'listen 2055 udp' in _nginx_stream_off"
+        fail_msg: >-
+          The dedicated macOS relay must self-disable when
+          haproxy_macos_udp_relay_enabled is false (macos family present in
+          syslog_port_map) or nginx would fail on a duplicate 521 listener.
 
     - name: HAProxy template rendering PASSED
       ansible.builtin.debug:
