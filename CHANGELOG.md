@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.79.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.79.1...v1.79.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* **llm_router:** drop aliases whose backends are no longer served ([#699](https://github.com/dryvist/ansible-proxmox-apps/issues/699)) ([c23936a](https://github.com/dryvist/ansible-proxmox-apps/commit/c23936a21ef2d6980f6b1411ab06995604742492))
+
 ## [1.79.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.79.0...v1.79.1) (2026-07-07)
 
 
