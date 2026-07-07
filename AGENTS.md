@@ -256,6 +256,18 @@ ansible-lint
 > `localhost` silently skips the loader, so no hosts are added and every play
 > reports "no hosts matched". Always use `--limit <group>,localhost`.
 
+### Execution Performance & Optimization
+
+Since site playbook runs or dry-runs evaluate 55+ hosts, checks can take a long time even when 99% of the tasks are no-ops (due to SSH/LXC connection overhead and fact-gathering serialization).
+
+To increase execution speed, you can leverage several options:
+1. **Parallel Execution (`--forks` or `ANSIBLE_FORKS`)**: Increase the concurrency from the default 5 hosts at once. Using `25` forks (e.g. `doppler run -- ansible-playbook ... --forks 25`) runs significantly faster across large fleets.
+2. **Targeted Runs (`--limit`)**: Keep play scope narrow by limiting execution to the specific role host and localhost (e.g., `--limit sortarr,localhost`).
+3. **Scoping via Tags (`--tags`)**: Use `--tags <tag-name>` to run only a subset of roles (e.g., `--tags github_runner`).
+4. **SSH Pipelining & Multiplexing**: Already enabled for SSH (`pipelining = True` and `ControlPersist=60s` in `ansible.cfg`).
+5. **Disable Fact Gathering**: For ad-hoc plays where host facts are not needed, set `gather_facts: false` to skip the costly gathering step.
+
+
 ## Testing
 
 ### Fast (CI + pre-commit — runs automatically)
