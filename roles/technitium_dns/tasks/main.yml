@@ -435,15 +435,19 @@
 
 # Static host A records that live outside the Proxmox inventory use the same
 # add/overwrite path. This keeps the Mac Studio's canonical hostname in DNS even
-# though it is not a guest managed by load_tofu.yml.
+# though it is not a guest managed by load_tofu.yml. Records may optionally
+# target a different zone (for parent-apex names that already exist here).
 - name: Create extra A records (verbatim IPv4 target)
+  vars:
+    technitium_dns_extra_a_record_zone: "{{ item.zone | default(technitium_dns_zone) }}"
+    technitium_dns_extra_a_record_domain: "{{ item.name }}.{{ technitium_dns_extra_a_record_zone }}"
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
     method: POST
     body_format: form-urlencoded
     body:
-      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
-      zone: "{{ technitium_dns_zone }}"
+      domain: "{{ technitium_dns_extra_a_record_domain }}"
+      zone: "{{ technitium_dns_extra_a_record_zone }}"
       type: A
       ipAddress: "{{ item.ip }}"
       ttl: "{{ technitium_dns_zone_ttl }}"
@@ -452,7 +456,7 @@
     timeout: "{{ technitium_dns_api_timeout }}"
   loop: "{{ technitium_dns_extra_a_records | selectattr('ip', 'truthy') | list }}"
   loop_control:
-    label: "{{ item.name }} -> {{ item.ip }}"
+    label: "{{ technitium_dns_extra_a_record_domain }} -> {{ item.ip }}"
   register: technitium_dns_extra_a_result
   changed_when: technitium_dns_extra_a_result.json.status == "ok"
   failed_when:
