@@ -64,6 +64,42 @@
     mode: "0640"
   notify: Restart litellm
 
+- name: Resolve the Mac Studio apex IP for LiteLLM host pinning
+  # Reuse the same single-source Studio reservation the DNS role publishes;
+  # fall back to controller-side DNS only when the env leaves the IP empty.
+  ansible.builtin.set_fact:
+    llm_router_llm_large_ip: >-
+      {{
+        llm_large_serving_ip
+        | default(lookup('pipe', 'dig +short ' ~ llm_router_llm_large_fqdn ~ ' | head -n1'), true)
+        | trim
+      }}
+
+- name: Assert the Mac Studio apex resolved for LiteLLM host pinning
+  ansible.builtin.assert:
+    that:
+      - llm_router_llm_large_ip | length > 0
+    fail_msg: >-
+      Could not resolve {{ llm_router_llm_large_fqdn }} to an IPv4 address for
+      the LiteLLM /etc/hosts pin.
+
+- name: Pin the Mac Studio apex in /etc/hosts for LiteLLM
+  # Keep a local resolver pin here so the router hosts do not depend on their
+  # own DNS path before they can reach the gate.
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    owner: root
+    group: root
+    mode: "0644"
+    regexp: >-
+      ^{{ llm_router_llm_large_ip | regex_escape }}\s+.*\b{{ llm_router_llm_large_fqdn | regex_escape }}\b
+    line: >-
+      {{ llm_router_llm_large_ip }}
+      {{ llm_router_llm_large_fqdn }}
+    create: true
+    state: present
+  notify: Restart litellm
+
 - name: Deploy the litellm systemd unit
   ansible.builtin.template:
     src: litellm.service.j2
