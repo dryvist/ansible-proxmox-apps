@@ -126,6 +126,16 @@
 
   vars:
     constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    # Edge receives backend/high syslog ports from HAProxy. The app-facing
+    # standard ports live on HAProxy, not on Cribl Edge.
+    cribl_edge_syslog_check_ports: >-
+      {{ ((constants.syslog_port_map | default({}) | dict2items
+           | map(attribute='value.high') | list)
+          if ((constants.syslog_port_map | default({})) | length > 0)
+          else (constants.syslog_ports | default({}) | dict2items
+                | rejectattr('key', 'equalto', 'default')
+                | map(attribute='value') | list))
+         | map('int') | unique | sort }}
 
   tasks:
     - name: Gather service facts for Cribl Edge validation
@@ -159,7 +169,7 @@
       ansible.builtin.wait_for:
         port: "{{ item }}"
         timeout: 5
-      loop: "{{ constants.syslog_ports.values() | list | sort }}"
+      loop: "{{ cribl_edge_syslog_check_ports }}"
 
     - name: Check Cribl Edge config directory exists
       # Edge mode (`cribl mode-edge`) loads config from local/edge/, not
@@ -181,7 +191,7 @@
           Cribl Edge validation passed on {{ inventory_hostname }}:
           - Service: running
           - Health API: {{ edge_health.status }}
-          - Syslog ports: all listening
+          - Syslog backend ports: {{ cribl_edge_syslog_check_ports | join(', ') }}
           - Config dir: present
 
 - name: Validate Cribl Stream LXC Containers
@@ -267,18 +277,19 @@
 
   vars:
     constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    cribl_edge_metrics_api_token: >-
+      {{ lookup('env', 'CRIBL_EDGE_API_TOKEN') | default('', true) }}
 
   tasks:
-    - name: Check Cribl Edge has active inputs
+    - name: Check Cribl Edge metrics API with configured token
       ansible.builtin.uri:
         url: >-
           http://127.0.0.1:{{ constants.service_ports.cribl_edge_api
           }}/api/v1/system/metrics
         method: GET
         headers: "{{
-          {'Authorization': 'Bearer ' + cribl_edge_api_token}
-          if cribl_edge_api_token is defined
-          and cribl_edge_api_token | length > 0
+          {'Authorization': 'Bearer ' + cribl_edge_metrics_api_token}
+          if cribl_edge_metrics_api_token | length > 0
           else omit
           }}"
         status_code:
@@ -286,13 +297,23 @@
       register: cribl_metrics
       failed_when: cribl_metrics.status != 200
       changed_when: false
+      when: cribl_edge_metrics_api_token | length > 0
 
     - name: Display Cribl Edge metrics validation result
       ansible.builtin.debug:
         msg: |
           Cribl Edge metrics check passed on {{ inventory_hostname }}: API responded with 200
-          (auth token used: {{ (cribl_edge_api_token is defined and cribl_edge_api_token | length > 0) | string }})
+          (auth token used: true)
           status: {{ cribl_metrics.status }}
+      when: cribl_edge_metrics_api_token | length > 0
+
+    - name: Display Cribl Edge metrics skip reason
+      ansible.builtin.debug:
+        msg: |
+          Cribl Edge private metrics check skipped on {{ inventory_hostname }}:
+          CRIBL_EDGE_API_TOKEN is not set. Service health, API reachability,
+          syslog listeners, and data-flow tests still validate this Edge node.
+      when: cribl_edge_metrics_api_token | length == 0
 
 - name: E2E Data Pipeline Validation (Syslog via Cribl Edge)
   hosts: cribl_edge[0]

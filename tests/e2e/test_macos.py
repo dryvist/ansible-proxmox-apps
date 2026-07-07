@@ -18,7 +18,80 @@ HEC endpoint on the Mac — both add deployment complexity without
 materially improving the failure detection signal.
 """
 
+from datetime import datetime, timezone
+
 from .helpers import query_splunk
+
+
+MACOS_INDEX_FILTER = "(index=os OR index=mac_perf)"
+MACOS_SOURCETYPE_FILTER = "sourcetype=macos:*"
+MACOS_NATIVE_FILTER = (
+    "(sourcetype=macos:unified_log OR sourcetype=macos:system:*)"
+)
+
+
+def _format_epoch(epoch):
+    """Return an ISO-8601 UTC timestamp for a Splunk epoch value."""
+    if epoch in (None, ""):
+        return "unknown"
+    try:
+        return (
+            datetime.fromtimestamp(float(epoch), tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except (TypeError, ValueError):
+        return str(epoch)
+
+
+def _format_sourcetype_rows(rows):
+    """Format compact sourcetype freshness diagnostics."""
+    if not rows:
+        return "none"
+
+    formatted = []
+    for row in rows[:8]:
+        sourcetype = row.get("sourcetype") or "(missing sourcetype)"
+        index = row.get("index")
+        label = f"{index}/{sourcetype}" if index else sourcetype
+        last_seen = _format_epoch(row.get("last_seen"))
+        seconds_ago = row.get("seconds_ago")
+        count = row.get("count")
+        parts = [f"{label}: last_seen={last_seen}"]
+        if seconds_ago not in (None, ""):
+            parts.append(f"seconds_ago={seconds_ago}")
+        if count not in (None, ""):
+            parts.append(f"count={count}")
+        formatted.append(" ".join(parts))
+    return "; ".join(formatted)
+
+
+def _macos_history_context(mgmt_url, user, password):
+    """Return recent historical macOS sourcetype activity for failure messages."""
+    search_str = (
+        "| tstats latest(_time) as last_seen count WHERE earliest=-30d "
+        f"{MACOS_INDEX_FILTER} {MACOS_SOURCETYPE_FILTER} BY sourcetype "
+        "| eval seconds_ago=round(now() - last_seen, 0) "
+        "| sort 0 -last_seen"
+    )
+    rows = query_splunk(
+        mgmt_url, user, password, search_str, earliest=None, timeout=30
+    )
+    return _format_sourcetype_rows(rows)
+
+
+def _macos_any_index_context(mgmt_url, user, password):
+    """Return recent macOS sourcetype activity across all indexes."""
+    search_str = (
+        "| tstats latest(_time) as last_seen count WHERE earliest=-30d "
+        f"index=* {MACOS_SOURCETYPE_FILTER} BY index sourcetype "
+        "| eval seconds_ago=round(now() - last_seen, 0) "
+        "| sort 0 -last_seen"
+    )
+    rows = query_splunk(
+        mgmt_url, user, password, search_str, earliest=None, timeout=30
+    )
+    return _format_sourcetype_rows(rows)
 
 
 class TestMacOSPipelineFreshness:
@@ -34,8 +107,7 @@ class TestMacOSPipelineFreshness:
         """
         mgmt_url, user, password = splunk_creds
         search_str = (
-            "(index=os OR index=mac_perf) sourcetype=macos:* "
-            "| head 5"
+            f"{MACOS_INDEX_FILTER} {MACOS_SOURCETYPE_FILTER} | head 5"
         )
         results = query_splunk(
             mgmt_url, user, password, search_str, earliest="-5m", timeout=30
@@ -45,7 +117,10 @@ class TestMacOSPipelineFreshness:
             "no events with sourcetype=macos:* in (os OR mac_perf) within "
             "the last 5 minutes. Investigate: Cribl Edge daemon on macbook-m4, "
             "Cribl Cloud enrollment status, Cribl Stream pipelines, and "
-            "Splunk HEC ingestion."
+            "Splunk HEC ingestion. Latest macOS history in last 30d: "
+            f"{_macos_history_context(mgmt_url, user, password)}. "
+            "Any-index macOS history in last 30d: "
+            f"{_macos_any_index_context(mgmt_url, user, password)}"
         )
 
     def test_macos_native_sources_emitting(self, splunk_creds):
@@ -64,14 +139,15 @@ class TestMacOSPipelineFreshness:
         # `macos:system:*` expands as a glob on the indexed sourcetype.
         search_str = (
             "| tstats count WHERE "
-            "(index=os OR index=mac_perf) earliest=-15m "
-            "(sourcetype=macos:unified_log OR sourcetype=macos:system:*) "
+            f"{MACOS_INDEX_FILTER} earliest=-15m "
+            f"{MACOS_NATIVE_FILTER} "
             "BY sourcetype"
         )
         results = query_splunk(
             mgmt_url, user, password, search_str, timeout=30
         )
         sourcetypes_seen = {row.get("sourcetype") for row in results}
+        seen_context = ", ".join(sorted(filter(None, sourcetypes_seen))) or "none"
 
         assert any(
             st == "macos:unified_log" for st in sourcetypes_seen
@@ -79,14 +155,24 @@ class TestMacOSPipelineFreshness:
             "apple_unified_logs source not emitting: no events with "
             "sourcetype=macos:unified_log in last 15m. The native Cribl 4.18 "
             "apple_unified_logs Source on macbook-m4 may be misconfigured "
-            "or the daemon predicate is filtering everything out."
+            "or the daemon predicate is filtering everything out. Native "
+            f"sourcetypes seen in last 15m: {seen_context}. Latest macOS "
+            "history in last 30d: "
+            f"{_macos_history_context(mgmt_url, user, password)}. "
+            "Any-index macOS history in last 30d: "
+            f"{_macos_any_index_context(mgmt_url, user, password)}"
         )
         assert any(
-            st.startswith("macos:system:") for st in sourcetypes_seen
+            (st or "").startswith("macos:system:") for st in sourcetypes_seen
         ), (
             "system_metrics source not emitting: no events with "
             "sourcetype=macos:system:* in last 15m. The native Cribl 4.18 "
-            "system_metrics Source on macbook-m4 may be misconfigured."
+            "system_metrics Source on macbook-m4 may be misconfigured. Native "
+            f"sourcetypes seen in last 15m: {seen_context}. Latest macOS "
+            "history in last 30d: "
+            f"{_macos_history_context(mgmt_url, user, password)}. "
+            "Any-index macOS history in last 30d: "
+            f"{_macos_any_index_context(mgmt_url, user, password)}"
         )
 
     def test_macos_pack_recently_active(self, splunk_creds):
@@ -105,7 +191,7 @@ class TestMacOSPipelineFreshness:
         # actually detects a never-indexed pack vs. a stalled one.
         search_str = (
             "| tstats latest(_time) as last_seen WHERE "
-            "(index=os OR index=mac_perf) sourcetype=macos:* "
+            f"{MACOS_INDEX_FILTER} {MACOS_SOURCETYPE_FILTER} "
             "| where isnotnull(last_seen) "
             "| eval seconds_ago = now() - last_seen | head 1"
         )
@@ -115,7 +201,10 @@ class TestMacOSPipelineFreshness:
         assert results, (
             "no macOS pack events ever indexed in (index=os OR index=mac_perf): "
             "the pack may have never emitted data, or the indexes do not "
-            "exist yet"
+            "exist yet. Latest macOS history in last 30d: "
+            f"{_macos_history_context(mgmt_url, user, password)}. "
+            "Any-index macOS history in last 30d: "
+            f"{_macos_any_index_context(mgmt_url, user, password)}"
         )
 
         # tstats can emit null/missing aggregates even after the filter when
