@@ -20,16 +20,26 @@ from .helpers import send_tcp_syslog, wait_for_event
 
 UNIFI_SOURCES = [s for s in SYSLOG_SOURCES if s.key == "unifi"]
 
+pytestmark = pytest.mark.skipif(
+    not UNIFI_SOURCES,
+    reason="No unifi family in constants.syslog_port_map"
+)
+
 
 def _unifi_source():
-    if not UNIFI_SOURCES:
-        pytest.skip("No unifi family in constants.syslog_port_map")
     return UNIFI_SOURCES[0]
+
+
+def _get_syslog_timestamp():
+    """Generate an RFC 3164 compliant English syslog timestamp."""
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    t = time.gmtime()
+    return f"{months[t.tm_mon - 1]} {t.tm_mday:2d} {time.strftime('%H:%M:%S', t)}"
 
 
 def _make_fw_message(sentinel):
     """A UniFi kernel iptables rule-hit line (matches the fw split regex)."""
-    timestamp = time.strftime("%b %d %H:%M:%S", time.gmtime())
+    timestamp = _get_syslog_timestamp()
     return (
         f"<4>{timestamp} usg kernel: [WAN_LOCAL-4001-D] "
         f"IN=eth8 OUT= MAC=aa:bb:cc:dd:ee:ff SRC=203.0.113.9 DST=192.0.2.1 "
@@ -39,7 +49,7 @@ def _make_fw_message(sentinel):
 
 def _make_admin_message(sentinel):
     """A UniFi management-plane line (must NOT match the fw split regex)."""
-    timestamp = time.strftime("%b %d %H:%M:%S", time.gmtime())
+    timestamp = _get_syslog_timestamp()
     return (
         f"<14>{timestamp} usg mcad: mgmt.admin login accepted "
         f"for administrator {sentinel}"
