@@ -107,6 +107,7 @@
     - "{{ cribl_edge_install_dir }}/local/edge/pipelines/syslog"
     - "{{ cribl_edge_install_dir }}/local/edge/pipelines/netmon"
     - "{{ cribl_edge_install_dir }}/local/edge/pipelines/otel_traces"
+    - "{{ cribl_edge_install_dir }}/local/edge/pipelines/otel_splunk"
 
 - name: Deploy Cribl Edge outputs configuration
   ansible.builtin.template:
@@ -154,17 +155,34 @@
     mode: "0644"
   notify: Restart cribl edge
 
-# Remove stale routes-table / passthru artifacts. Per-index routing uses direct
-# input→output connections (Cribl 4.8.0-alpha cannot split one input across
-# outputs — both the Output Router and a Routes table dead-end events), so no
-# routes.yml or passthru pipeline is used. Clean up any left by an earlier deploy.
-- name: Remove stale Cribl Edge routes table and passthru pipeline
+- name: Deploy otel Splunk-leg pipeline configuration
+  ansible.builtin.template:
+    src: pipelines/otel_splunk/conf.yml.j2
+    dest: "{{ cribl_edge_install_dir }}/local/edge/pipelines/otel_splunk/conf.yml"
+    owner: "{{ cribl_edge_user }}"
+    group: "{{ cribl_edge_group }}"
+    mode: "0644"
+  notify: Restart cribl edge
+
+# Routes table (4.12+): the otel input sends to routes, which CAN split one
+# input across outputs now — otel_langfuse (non-final -> Langfuse) then
+# otel_splunk (final -> Splunk, index=otel). Every other input still pins a
+# direct connection and never reaches the table. This REPLACES the old
+# "remove stale routes.yml" cleanup that the 4.8.0-alpha limitation forced;
+# only the passthru pipeline removal remains.
+- name: Deploy Cribl Edge routes table (otel fan-out)
+  ansible.builtin.template:
+    src: routes.yml.j2
+    dest: "{{ cribl_edge_install_dir }}/local/edge/routes.yml"
+    owner: "{{ cribl_edge_user }}"
+    group: "{{ cribl_edge_group }}"
+    mode: "0644"
+  notify: Restart cribl edge
+
+- name: Remove stale Cribl Edge passthru pipeline
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ cribl_edge_install_dir }}/local/edge/pipelines/passthru"
     state: absent
-  loop:
-    - "{{ cribl_edge_install_dir }}/local/edge/routes.yml"
-    - "{{ cribl_edge_install_dir }}/local/edge/pipelines/passthru"
   notify: Restart cribl edge
 
 - name: Deploy Cribl Edge instance settings (API bind)

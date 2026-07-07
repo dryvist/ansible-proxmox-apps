@@ -44,10 +44,8 @@ inputs:
       # netmon per-WAN probers are not deployed), so it pins directly to the
       # dedicated unifi_metrics HEC output. The netmon pipeline still stamps the
       # index. NOTE: if/when the netmon probers are deployed, they push to this
-      # same HEC port and would land on the unifi_metrics token — at that point
-      # give the probers a DEDICATED Cribl HEC input (separate port) → its own
-      # splunk_hec_netmon output. Cribl 4.8.0-alpha cannot split one input across
-      # outputs (both the Output Router and a Routes table dead-end events here).
+      # same HEC port — split them off via the 4.12 routes table (routes.yml
+      # already fans the otel input out this way) or a dedicated HEC input.
       - output: splunk_hec_unifi_metrics
         pipeline: netmon
 {% else %}
@@ -70,8 +68,10 @@ inputs:
 {% if cribl_edge_langfuse_public_key | length > 0 %}
 
   # OTLP/HTTP source for the LLM fabric (routers, dify/langflow/agent-exec).
-  # Single connection to the Langfuse OTLP destination — no fan-out, this
-  # Cribl version cannot split one input across outputs (see in_netmon_hec).
+  # Fanned out via the routes table (routes.yml, 4.12+): otel_langfuse
+  # (non-final, trace-only -> Langfuse) then otel_splunk (final, stamps
+  # index=otel -> Splunk HEC). sendToRoutes replaces the old single pinned
+  # connection — routes CAN split one input across outputs since 4.12.
   in_otel:
     id: in_otel
     type: open_telemetry
@@ -89,13 +89,10 @@ inputs:
     # every event ("Event had no scope_metrics or __criblMetrics").
     extractSpans: true
     extractMetrics: false
-    sendToRoutes: false
-    connections:
-      # otel_traces drops non-trace signals (dify metrics/logs) before they
-      # reach the traces-only Langfuse destination and back up its queue —
-      # pipeline on the connection, matching in_netmon_hec above.
-      - output: langfuse_otlp
-        pipeline: otel_traces
+    # Routes-table fan-out (4.12+): otel_langfuse applies the otel_traces
+    # trace-only filter pipeline before the Langfuse destination; otel_splunk
+    # stamps index=otel for the Splunk leg. See routes.yml.j2.
+    sendToRoutes: true
     pqEnabled: true
     fields:
       - name: type

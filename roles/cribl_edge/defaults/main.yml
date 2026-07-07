@@ -2,7 +2,13 @@
 # Cribl Edge native installation defaults
 
 # Installation
-cribl_edge_version: "latest"
+# Pinned to 4.12.2 for the OTel routes fan-out (routes CAN split one input
+# across outputs from 4.12; the 4.8.0-alpha "cannot split" limitation is
+# gone). GATED on the L19 single-node 4.12.2 spike — do not roll out before.
+# NOTE: the cribl_edge group_vars override the tarball URL with the MinIO
+# mirror; the mirrored infra/cribl-linux-x64.tgz object must be re-staged
+# with the 4.12.2 build as part of the same rollout.
+cribl_edge_version: "4.12.2"
 # Upstream release URL. Cribl's CDN uses two different filename patterns:
 #   - versioned release: https://cdn.cribl.io/dl/4.12.2/cribl-4.12.2-linux-x64.tgz
 #   - rolling "latest":  https://cdn.cribl.io/dl/latest/cribl-linux-x64.tgz    (no version in filename)
@@ -92,6 +98,8 @@ cribl_edge_per_index_indexes:
   - dns
   - proxy
   - honeypot
+  # otel: Splunk leg of the 4.12 OTel routes fan-out (routes.yml).
+  - otel
 
 # netmon Telegraf HEC ingestion. The per-WAN probers (roles/netmon) push
 # Splunk-HEC to this Edge on cribl_hec_input_port (group_vars/all.yml); the
@@ -105,9 +113,10 @@ cribl_edge_hec_input_token: "{{ lookup('env', 'NETMON_HEC_TOKEN') | default('', 
 # emit OTel to this Edge) and its Langfuse destination. Port from tofu
 # constants; project keys from Doppler env (pre-provisioned via the langfuse
 # role's LANGFUSE_INIT_*). Rendering is gated on the keys being present, so a
-# host without them keeps its existing pipeline untouched. Splunk fan-out of
-# the same stream is deferred: this Cribl version cannot split one input
-# across outputs (see the in_netmon_hec note in inputs.yml.j2).
+# host without them keeps its existing pipeline untouched. Since 4.12 the
+# otel input is fanned out via the routes table (routes.yml.j2): a non-final
+# otel_langfuse route feeds Langfuse and a final otel_splunk route stamps
+# index=otel for Splunk — routes CAN split one input across outputs now.
 # =============================================================================
 cribl_edge_otel_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['otel_traces_http'] }}
