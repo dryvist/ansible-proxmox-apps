@@ -1,0 +1,319 @@
+---
+# n8n Docker deployment.
+#
+# Installs Docker + Compose on the target LXC, generates (and persists) an
+# N8N_ENCRYPTION_KEY on first run, then deploys the n8nio/n8n image plus a
+# PostgreSQL backend via Docker Compose. Sets up the instance owner and seeds a
+# minimal "hello" workflow via the LiteLLM router.
+#
+# Mirrors the langflow_docker / healthchecks_docker roles (Docker repo +
+# fuse-overlayfs + Python venv for community.docker, then compose deploy +
+# health check).
+
+# =============================================================================
+# Docker Installation
+# =============================================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter: ansible_distribution*
+
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Set Docker repository distribution
+  ansible.builtin.set_fact:
+    n8n_docker_distro: "{{ ansible_distribution | lower }}"
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ n8n_docker_distro }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: false
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ n8n_docker_distro }}
+      {{ ansible_distribution_release }} stable
+    state: present
+    filename: docker
+
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
+  ansible.builtin.apt:
+    name: fuse-overlayfs
+    state: present
+
+- name: Configure Docker to use fuse-overlayfs storage driver (required for ZFS-backed LXC)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "storage-driver": "fuse-overlayfs"
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  register: n8n_docker_daemon_config
+
+- name: Restart Docker to apply fuse-overlayfs configuration
+  ansible.builtin.systemd:  # noqa: no-handler
+    name: docker
+    state: restarted
+  when: n8n_docker_daemon_config.changed
+
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Data Directories
+# Postgres writes to a bind-mounted volume; its image entrypoint self-chowns as
+# root. n8n runs as `node` (uid 1000) and CANNOT chown its own home, so the .n8n
+# mount is chowned to 1000:1000 up front.
+# =============================================================================
+
+- name: Create n8n data subdirectories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ n8n_docker_data_dir }}"
+    - "{{ n8n_docker_postgres_data_dir }}"
+
+- name: Create n8n app home (.n8n) + seed subdir owned by the container's node uid
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ n8n_docker_app_uid }}"
+    group: "{{ n8n_docker_app_gid }}"
+    mode: "0755"
+  loop:
+    - "{{ n8n_docker_app_data_dir }}"
+    - "{{ n8n_docker_seed_dir }}"
+
+# =============================================================================
+# N8N_ENCRYPTION_KEY (generate-once, persist on disk)
+# =============================================================================
+# n8n needs a stable encryption key to encrypt stored credentials; if we
+# randomized it per play, every deployment would make previously-stored
+# credentials undecryptable. Persist it in a root-only file the first time the
+# role runs and reuse it thereafter.
+
+- name: Check for existing n8n encryption key
+  ansible.builtin.stat:
+    path: "{{ n8n_docker_data_dir }}/.encryption_key"
+  register: n8n_docker_encryption_key_stat
+
+- name: Generate n8n encryption key (first run only)
+  ansible.builtin.copy:
+    dest: "{{ n8n_docker_data_dir }}/.encryption_key"
+    # 48 alphanumeric chars. Character set specified by unambiguous boolean flags
+    # rather than the password lookup's implicit keyword expansion.
+    content: >-
+      {{ lookup('community.general.random_string',
+                length=48,
+                upper=true, lower=true, numbers=true,
+                special=false) }}
+    owner: root
+    group: root
+    mode: "0600"
+  when: not n8n_docker_encryption_key_stat.stat.exists
+  no_log: true
+
+- name: Read n8n encryption key into memory
+  ansible.builtin.slurp:
+    src: "{{ n8n_docker_data_dir }}/.encryption_key"
+  register: n8n_docker_encryption_key_file
+  no_log: true
+
+- name: Resolve effective encryption key (inventory override or persisted file)
+  ansible.builtin.set_fact:
+    n8n_docker_encryption_key: >-
+      {{ n8n_docker_encryption_key
+         if n8n_docker_encryption_key | length > 0
+         else (n8n_docker_encryption_key_file.content | b64decode | trim) }}
+  no_log: true
+
+# =============================================================================
+# Compose File + seed workflow
+# =============================================================================
+
+- name: Render n8n docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ n8n_docker_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"  # contains encryption key + DB password
+  no_log: true
+  notify: Restart n8n
+
+- name: Install seed workflow
+  # Static JSON — every value resolves from n8n {{ '$env' }} at runtime, so there
+  # are no Ansible vars to template (and no Jinja/{{ '{{ }}' }} conflict to escape).
+  ansible.builtin.copy:
+    src: seed-hello-workflow.json
+    dest: "{{ n8n_docker_seed_dir }}/hello.json"
+    owner: "{{ n8n_docker_app_uid }}"
+    group: "{{ n8n_docker_app_gid }}"
+    mode: "0644"
+  when: n8n_docker_seed_workflow
+
+# =============================================================================
+# Python venv for Ansible Docker modules
+# =============================================================================
+
+- name: Install Python venv and pip for dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-pip
+      - python3-venv
+      - python3-full
+    state: present
+    update_cache: true
+
+- name: Create virtualenv for Ansible Python dependencies
+  ansible.builtin.pip:
+    name:
+      - docker
+    state: present
+    virtualenv: /opt/ansible-venv
+    virtualenv_command: python3 -m venv
+
+# Intentionally do NOT set ansible_python_interpreter via set_fact — that would
+# leak the venv (which only has the `docker` package) to subsequent tasks like
+# uri / wait_for. Scope the venv interpreter to the community.docker tasks only.
+
+# =============================================================================
+# Deploy via Docker Compose
+# =============================================================================
+
+- name: Deploy n8n via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ n8n_docker_data_dir }}"
+    state: present
+  register: n8n_docker_compose_result
+  changed_when: >-
+    (n8n_docker_compose_result.actions | default([]))
+    | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
+    | list | length > 0
+  vars:
+    ansible_python_interpreter: /opt/ansible-venv/bin/python
+  no_log: true
+
+# =============================================================================
+# Health Check
+# First boot can take a couple of minutes: postgres initdb, then n8n running its
+# database migrations against the fresh DB before /healthz answers 200.
+# =============================================================================
+
+- name: Wait for n8n web port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ n8n_docker_web_port }}"
+    timeout: 300
+
+- name: Verify n8n /healthz endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ n8n_docker_web_port }}/healthz"
+    method: GET
+    status_code: 200
+  register: n8n_docker_health
+  retries: 30
+  delay: 10
+  until: n8n_docker_health.status == 200
+  changed_when: false
+
+# =============================================================================
+# Instance owner (idempotent — only when the setup wizard is still pending)
+# =============================================================================
+
+- name: Read n8n frontend settings (owner-setup state)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ n8n_docker_web_port }}/rest/settings"
+    method: GET
+    status_code: 200
+  register: n8n_docker_settings
+  changed_when: false
+
+- name: Create the n8n instance owner (first run only)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ n8n_docker_web_port }}/rest/owner/setup"
+    method: POST
+    body_format: json
+    body:
+      email: "{{ n8n_docker_owner_email }}"
+      firstName: "{{ n8n_docker_owner_firstname }}"
+      lastName: "{{ n8n_docker_owner_lastname }}"
+      password: "{{ n8n_docker_owner_password }}"
+    status_code: [200, 201]
+  when: >-
+    n8n_docker_settings.json.data.userManagement.showSetupOnFirstLoad | default(false)
+  no_log: true
+
+# =============================================================================
+# Seed workflow (idempotent via a marker file; import is best-effort/non-fatal)
+# =============================================================================
+
+- name: Check for the seed-import marker
+  ansible.builtin.stat:
+    path: "{{ n8n_docker_data_dir }}/.seed_imported"
+  register: n8n_docker_seed_marker
+  when: n8n_docker_seed_workflow
+
+- name: Import the seed workflow (first run only)
+  ansible.builtin.command:
+    cmd: >-
+      docker exec {{ n8n_docker_container_name }}
+      n8n import:workflow --input={{ n8n_docker_app_internal_data }}/seed/hello.json
+  register: n8n_docker_seed_import
+  changed_when: n8n_docker_seed_import.rc == 0
+  failed_when: false
+  when:
+    - n8n_docker_seed_workflow
+    - not n8n_docker_seed_marker.stat.exists
+
+- name: Record the seed-import marker
+  ansible.builtin.copy:
+    dest: "{{ n8n_docker_data_dir }}/.seed_imported"
+    content: "imported {{ ansible_date_time.iso8601 | default('unknown') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - n8n_docker_seed_workflow
+    - not n8n_docker_seed_marker.stat.exists
+    - n8n_docker_seed_import.rc | default(1) == 0

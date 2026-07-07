@@ -1,0 +1,51 @@
+---
+# Self-hosted n8n (postgres + app) via Docker Compose.
+# Rendered by ansible-proxmox-apps/roles/n8n_docker.
+services:
+  {{ n8n_docker_db_service }}:
+    image: {{ n8n_docker_postgres_image }}
+    environment:
+      POSTGRES_USER: {{ n8n_docker_db_user }}
+      POSTGRES_PASSWORD: "{{ n8n_docker_db_password }}"
+      POSTGRES_DB: {{ n8n_docker_db_name }}
+    volumes:
+      - {{ n8n_docker_postgres_data_dir }}:{{ n8n_docker_postgres_internal_data }}
+    restart: {{ n8n_docker_restart_policy }}
+
+  {{ n8n_docker_app_service }}:
+    image: {{ n8n_docker_app_image }}
+    container_name: "{{ n8n_docker_container_name }}"
+    depends_on:
+      - {{ n8n_docker_db_service }}
+    environment:
+      # Persist workflows/credentials in postgres, not sqlite.
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: {{ n8n_docker_db_service }}
+      DB_POSTGRESDB_PORT: "{{ n8n_docker_postgres_port }}"
+      DB_POSTGRESDB_DATABASE: {{ n8n_docker_db_name }}
+      DB_POSTGRESDB_USER: {{ n8n_docker_db_user }}
+      DB_POSTGRESDB_PASSWORD: "{{ n8n_docker_db_password }}"
+      # Stable key so stored credentials survive redeploys (generate-once on host).
+      N8N_ENCRYPTION_KEY: "{{ n8n_docker_encryption_key }}"
+      # Public identity — Traefik terminates TLS and proxies to this port.
+      N8N_HOST: "{{ n8n_docker_fqdn }}"
+      N8N_PORT: "{{ n8n_docker_web_port }}"
+      N8N_PROTOCOL: https
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      WEBHOOK_URL: "https://{{ n8n_docker_fqdn }}/"
+      N8N_EDITOR_BASE_URL: "https://{{ n8n_docker_fqdn }}/"
+      # One proxy hop (Traefik) — trust X-Forwarded-* for correct URLs/rate-limits.
+      N8N_PROXY_HOPS: "1"
+      # Allow {{ '{{ $env.* }}' }} in node expressions so the seed workflow can read
+      # the router endpoint/key from env instead of baking the key into the JSON.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # LiteLLM router (fabric front door) for the seed workflow. The seed HTTP
+      # Request node references these via {{ '{{ $env.LITELLM_ROUTER_* }}' }}.
+      LITELLM_ROUTER_BASE_URL: "{{ n8n_docker_llm_base_url }}"
+      LITELLM_ROUTER_KEY: "{{ n8n_docker_llm_api_key }}"
+      LITELLM_ROUTER_MODEL: "{{ n8n_docker_seed_model }}"
+    ports:
+      - "{{ n8n_docker_web_port }}:{{ n8n_docker_web_port }}"
+    volumes:
+      - {{ n8n_docker_app_data_dir }}:{{ n8n_docker_app_internal_data }}
+    restart: {{ n8n_docker_restart_policy }}
