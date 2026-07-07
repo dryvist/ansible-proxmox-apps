@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.1...v1.76.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* **inventory:** scope the shared OTEL endpoint to all hosts, not just ai_orchestration_group ([#673](https://github.com/dryvist/ansible-proxmox-apps/issues/673)) ([585def5](https://github.com/dryvist/ansible-proxmox-apps/commit/585def5c254766b511dbc39314ad6d31042f8692))
+* **langgraph:** render pyproject.toml with valid TOML comments ([#670](https://github.com/dryvist/ansible-proxmox-apps/issues/670)) ([39fbec8](https://github.com/dryvist/ansible-proxmox-apps/commit/39fbec8a2ad541755e0ad25fe8efc3a736c0d32a))
+
 ## [1.76.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.0...v1.76.1) (2026-07-07)
 
 
