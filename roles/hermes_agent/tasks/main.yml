@@ -8,9 +8,10 @@
 # 'latest' (Agy: avoids the self-update vs idempotency conflict).
 #
 # NOT YET LIVE-VALIDATED (verify on first converge): (a) install.sh running clean
-# non-interactively as root on a minimal Debian LXC; (b) `hermes gateway start`
-# staying up headless with no messaging platform; (c) Hindsight provider init from
-# config.yaml alone (it may need its client package on first run).
+# non-interactively as root on a minimal Debian LXC; (b) `hermes gateway run
+# --replace` staying up headless with no messaging platform; (c) Hindsight
+# provider init from config.yaml alone (it may need its client package on
+# first run).
 
 - name: Install role prerequisites (installer + clone)
   ansible.builtin.apt:
@@ -23,16 +24,94 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Run as root (play become: true) -> system-wide install: binary /usr/local/bin/hermes,
-# code /usr/local/lib/hermes-agent. The installer handles its own Python/Node/
-# ripgrep/ffmpeg deps. `creates` guard installs once; the daemon self-updates after.
-- name: Install Hermes Agent system-wide (once; daemon self-updates thereafter)
-  ansible.builtin.shell:
-    cmd: "set -o pipefail && curl -fsSL {{ hermes_agent_install_url }} | bash"
-    creates: "{{ hermes_agent_bin }}"
-  args:
-    executable: /bin/bash
+# Fetch the installer from the pinned release tag's immutable raw URL and verify
+# its sha256 BEFORE running it — no `curl <url> | bash` of a moving remote script.
+# A checksum mismatch (upstream changed the tag, MITM, rug-pull) fails here, loud.
+- name: Fetch the pinned Hermes installer (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ hermes_agent_installer_url }}"
+    dest: "{{ hermes_agent_installer_path }}"
+    checksum: "sha256:{{ hermes_agent_installer_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
 
+# Run the VERIFIED local installer (root + play become: true) -> system-wide FHS
+# layout: binary /usr/local/bin/hermes, code /usr/local/lib/hermes-agent. Do NOT
+# pass --dir: an explicit dir disables the root-FHS auto-layout and drops the
+# launcher in /root/.local/bin instead of /usr/local/bin (breaks hermes_agent_bin).
+# --branch {{ version }}: the installer git-clones the app at this release TAG
+# (`git clone --depth 1 --branch <tag>`), pinning the app checkout too. The
+# installer handles its own Python/uv/venv/Node/ripgrep/ffmpeg deps.
+# `creates` guard installs once; the Hermes daemon self-updates the app after.
+# --skip-setup: the installer's final step is an INTERACTIVE `hermes setup` wizard
+# that reads /dev/tty and hangs forever under Ansible (no controlling TTY). We skip
+# it and configure declaratively via the config.yaml/.env templates below;
+# --non-interactive defaults any remaining prompt instead of blocking.
+- name: Install Hermes Agent system-wide (once; daemon self-updates thereafter)
+  ansible.builtin.command:
+    cmd: >-
+      bash {{ hermes_agent_installer_path }}
+      --branch {{ hermes_agent_version }} --skip-setup --non-interactive
+    creates: "{{ hermes_agent_bin }}"
+
+# Upstream bug (NousResearch/hermes-agent, agent/conversation_loop.py):
+# the length-continuation and truncated-tool-call retry paths boost
+# max_tokens on each retry, but floor the boost ceiling at
+# `max(32768, requested_cap)` — so when the provider enforces a real hard
+# cap below 32768 (our config.yaml `model.max_tokens: 8192`, matching
+# vllm-mlx's `--max-request-tokens 8192` on the Mac Studio brain), the very
+# first truncation retry re-sends a request the server is guaranteed to
+# 400 identically ("max_tokens exceeds server limit"), burning all retries
+# and surfacing the error to the user instead of completing the response.
+# `agent.max_tokens` is already the user's explicit config-level ceiling;
+# treat it as absolute instead of a floor for the boost. Runs every
+# converge (idempotent regexp match) because `hermes update` self-updates
+# the app out from under this checkout and would silently drop the patch
+# otherwise.
+- name: Patch hermes-agent retry boost to respect the configured max_tokens ceiling
+  ansible.builtin.replace:
+    path: "{{ hermes_agent_install_dir }}/agent/conversation_loop.py"
+    regexp: '^(\s*)_tc_boost_cap = max\(32768, _tc_requested_cap or 0\)$'
+    replace: '\1_tc_boost_cap = agent.max_tokens if agent.max_tokens else max(32768, _tc_requested_cap or 0)'
+  notify: Restart hermes-gateway
+
+- name: Patch hermes-agent length-continuation boost to respect the configured max_tokens ceiling
+  ansible.builtin.replace:
+    path: "{{ hermes_agent_install_dir }}/agent/conversation_loop.py"
+    regexp: '^(\s*)_boost_cap = max\(32768, _requested_cap or 0\)$'
+    replace: '\1_boost_cap = agent.max_tokens if agent.max_tokens else max(32768, _requested_cap or 0)'
+  notify: Restart hermes-gateway
+
+- name: Patch Hermes OTEL spans to carry the configured service name
+  ansible.builtin.replace:
+    path: "{{ hermes_agent_install_dir }}/plugins/observability/otel/__init__.py"
+    regexp: '^(\s*)attrs = \[_attr\(_GEN_AI_SESSION, session_id\), _attr\(_GEN_AI_EXECUTION, exec_id\)\]$'
+    replace: >-
+      \1attrs = [_attr(_GEN_AI_SESSION, session_id),
+      _attr(_GEN_AI_EXECUTION, exec_id),
+      _attr("service.name", os.environ.get("OTEL_SERVICE_NAME", "hermes-agent"))]
+  notify: Restart hermes-gateway
+
+# The base install skips optional messaging-platform extras (they pull in
+# platform SDKs like slack-bolt that most converges never need). Without this,
+# the gateway logs "Platform 'Slack' requirements not met" and refuses to
+# create the Slack adapter even with valid tokens configured. `uv pip install`
+# is a no-op re-run when already satisfied; changed_when keys off its own
+# "Installed"/"Uninstalled" summary line so idempotency reporting stays honest.
+# uv writes that summary to STDERR, not stdout — check stderr (an empty-repo
+# reinstall of nothing leaves both blank, correctly reporting ok/unchanged).
+- name: Install the Slack platform extra into the Hermes venv
+  ansible.builtin.command:
+    cmd: >-
+      {{ hermes_agent_uv_bin }} pip install
+      --python {{ hermes_agent_venv_python }}
+      "hermes-agent[slack] @ {{ hermes_agent_install_dir }}"
+  register: hermes_agent_slack_extra_install
+  changed_when: >-
+    'Installed' in hermes_agent_slack_extra_install.stderr
+    or 'Uninstalled' in hermes_agent_slack_extra_install.stderr
+  when: hermes_agent_slack_bot_token | length > 0 and hermes_agent_slack_app_token | length > 0
 - name: Create the hermes runtime user (HERMES_HOME on the data volume)
   ansible.builtin.user:
     name: "{{ hermes_agent_user }}"
@@ -71,7 +150,7 @@
   no_log: true
   notify: Restart hermes-gateway
 
-- name: Deploy the Hermes config.yaml (brain -> Ollama, memory -> Hindsight, budget)
+- name: Deploy the Hermes config.yaml (brain -> LiteLLM router, memory -> Hindsight, budget)
   ansible.builtin.template:
     src: config.yaml.j2
     dest: "{{ hermes_agent_hermes_home }}/config.yaml"
@@ -79,6 +158,41 @@
     group: "{{ hermes_agent_user }}"
     mode: "0640"
   notify: Restart hermes-gateway
+
+# Hermes ships its own cron scheduler. Seed the daily Slack status report here so
+# the next gateway run picks it up without any manual post-install step.
+- name: Check whether the daily Slack status cron job already exists
+  ansible.builtin.command: "{{ hermes_agent_bin }} cron list --all"
+  environment:
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_daily_status_cron_list
+  changed_when: false
+  failed_when: false
+  when:
+    - hermes_agent_slack_bot_token | length > 0
+    - hermes_agent_slack_app_token | length > 0
+    - hermes_agent_slack_home_channel | length > 0
+
+- name: Seed the daily Slack status cron job
+  ansible.builtin.command:
+    cmd: >-
+      {{ hermes_agent_bin }} cron create "{{ hermes_agent_daily_status_cron_schedule }}"
+      "{{ hermes_agent_daily_status_cron_prompt }}"
+      --name "{{ hermes_agent_daily_status_cron_name }}"
+      --deliver slack
+  environment:
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  register: hermes_agent_daily_status_cron_create
+  changed_when: true
+  when:
+    - hermes_agent_slack_bot_token | length > 0
+    - hermes_agent_slack_app_token | length > 0
+    - hermes_agent_slack_home_channel | length > 0
+    - hermes_agent_daily_status_cron_name not in (hermes_agent_daily_status_cron_list.stdout | default(''))
 
 - name: Deploy the hermes-gateway systemd unit
   ansible.builtin.template:

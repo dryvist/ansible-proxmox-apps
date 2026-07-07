@@ -1,0 +1,80 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/requirements.yml
+
+driver:
+  name: docker
+
+# Two instances exercise BOTH VRRP roles without a live cluster: keepalived-1
+# (first in the sorted ingress_hosts list) resolves to MASTER, keepalived-2 to
+# BACKUP. keepalived_manage_services=false (converge) renders the config without
+# installing/starting the daemon, so no privileged VRRP socket is needed in CI.
+platforms:
+  - name: keepalived-1-test
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - traefik_group
+      - lxc_containers
+  - name: keepalived-2-test
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - traefik_group
+      - lxc_containers
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  # Per-host facts normally injected by load_tofu.yml. RFC1918 placeholders only.
+  # container_ip is this instance's own ingress address; the ingress_hosts list
+  # in tofu_data (converge.yml) enrolls both, so the role derives priority/state.
+  inventory:
+    host_vars:
+      keepalived-1-test:
+        container_ip: "192.168.5.101"
+        hostname: traefik
+      keepalived-2-test:
+        container_ip: "192.168.5.107"
+        hostname: traefik-2
+
+verifier:
+  name: ansible
+
+scenario:
+  name: keepalived
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

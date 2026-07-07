@@ -11,6 +11,17 @@ model_list:
       model: openai/{{ m.backend }}
       api_base: {{ llm_router_llm_large_base_url }}
       api_key: os.environ/LLM_LARGE_BEARER_TOKEN
+{% if m.context_window is defined %}
+    model_info:
+      # These mlx-community backend ids are unknown to LiteLLM's built-in
+      # model cost/context map, so without an explicit value here
+      # max_input_tokens resolves to null — enable_pre_call_checks then has
+      # nothing to check against and callers seeing that null (e.g. Hermes)
+      # fall back to a near-zero context guess and compress a request to
+      # death. Value = the model's real served context length.
+      max_input_tokens: {{ m.context_window }}
+      max_tokens: {{ m.context_window }}
+{% endif %}
 {% endfor %}
   # --- light tier: two deployments per alias (GPU llm-fast + CPU llm-light) ---
   # Same model_name => LiteLLM load-balances the pair and cools a failed deployment
@@ -45,6 +56,11 @@ router_settings:
   # Pre-call context-window checks so an over-long request is not routed to a model
   # that cannot serve it (no cross-tier fallback masks the error).
   enable_pre_call_checks: true
+  # Retry the same deployment on a transient failure (single-deployment large
+  # tier has no sibling to fail over to — see llm_router_num_retries) and bound
+  # how long one attempt waits before LiteLLM calls it a connection failure.
+  num_retries: {{ llm_router_num_retries }}
+  timeout: {{ llm_router_request_timeout_seconds }}
 
 general_settings:
   master_key: os.environ/LLM_ROUTER_MASTER_KEY

@@ -212,35 +212,17 @@
   when: technitium_dns_apply | bool
   no_log: true
 
-# Remove a stale apex Primary zone so non-subdomain names FORWARD upstream
-# instead of resolving NXDOMAIN here. Destructive but guarded: only fires if a
-# pre-existing server still owns the apex zone (a no-op on a freshly built node,
-# which never had it). Idempotent via the existing-zones membership check.
-# MUST run BEFORE the subdomain zone create: while the apex zone exists, the
-# subzone create 400s (conflict), and a swallowed 400 here once left the server
-# with the apex deleted and NO replacement zone — a live outage.
-- name: Remove stale apex Primary zone (primary)
-  ansible.builtin.uri:
-    url: "{{ technitium_dns_api_url }}/api/zones/delete?token={{ technitium_dns_api_token }}"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      zone: "{{ technitium_dns_apex_domain }}"
-    return_content: true
-    timeout: "{{ technitium_dns_api_timeout }}"
-    status_code: [200, 400]
-  register: technitium_dns_apex_delete
-  changed_when: technitium_dns_apex_delete.json.status == "ok"
-  when:
-    - technitium_dns_role == 'primary'
-    - technitium_dns_apply | bool
-    - technitium_dns_apex_domain in technitium_dns_existing_zones
-    # Hard guard: never delete the zone this role manages, even if the apex
-    # derivation ever degenerates to the zone itself (e.g. a single-label
-    # PROXMOX_SUBDOMAIN) — deleting it here once caused a live outage.
-    - technitium_dns_apex_domain != technitium_dns_zone
-  no_log: true
-
+# NOTE: this role deliberately does NOT delete the apex zone (jacobpevans.com).
+# A prior "remove stale apex Primary zone" task deleted the WHOLE apex zone
+# whenever it existed, on the false premise that (a) a pre-existing apex zone
+# was leftover cruft and (b) the subdomain-zone create would 400 while it
+# existed. Both are wrong: the apex Route53-mirrored zone can hold live records
+# (the pve node A records), and a parent Primary + child Primary coexist fine
+# (this server runs both jacobpevans.com and pve.jacobpevans.com simultaneously
+# today). Deleting the apex was purely destructive and once caused a live
+# outage. Non-authoritative apex names already FORWARD to the upstream
+# resolvers (configured above) whether or not any apex zone exists locally, so
+# there is nothing to "clean up" here.
 - name: Create authoritative subdomain DNS zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
@@ -451,6 +433,36 @@
     - technitium_dns_apply | bool
   no_log: true
 
+# Static host A records that live outside the Proxmox inventory use the same
+# add/overwrite path. This keeps the Mac Studio's canonical hostname in DNS even
+# though it is not a guest managed by load_tofu.yml.
+- name: Create extra A records (verbatim IPv4 target)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: A
+      ipAddress: "{{ item.ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_extra_a_records | selectattr('ip', 'truthy') | list }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.ip }}"
+  register: technitium_dns_extra_a_result
+  changed_when: technitium_dns_extra_a_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_extra_a_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_extra_a_result.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
 # Point each Traefik-fronted service name at the Traefik LXC so clients reach it
 # over TLS at https://<name>.{domain}. A-records (not CNAMEs) to avoid A/CNAME
 # coexistence issues and to cleanly overwrite any prior host record. Skipped
@@ -464,14 +476,14 @@
       domain: "{{ item }}.{{ technitium_dns_ingress_domain }}"
       zone: "{{ technitium_dns_zone }}"
       type: A
-      ipAddress: "{{ hostvars[technitium_dns_ingress_host].container_ip }}"
+      ipAddress: "{{ technitium_dns_ingress_target_ip }}"
       ttl: "{{ technitium_dns_zone_ttl }}"
       overwrite: "true"
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
   loop: "{{ technitium_dns_ingress_aliases | default([]) }}"
   loop_control:
-    label: "{{ item }} -> {{ technitium_dns_ingress_host }}"
+    label: "{{ item }} -> {{ technitium_dns_ingress_target_ip }}"
   register: technitium_dns_ingress_result
   changed_when: technitium_dns_ingress_result.json.status == "ok"
   failed_when:
@@ -481,8 +493,8 @@
   when:
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
-    - technitium_dns_ingress_host in hostvars
-    - hostvars[technitium_dns_ingress_host].container_ip is defined
+    # Points at the ingress VIP when published, else the single Traefik LXC's IP.
+    - technitium_dns_ingress_target_ip | length > 0
 
 # The Proxmox API/UI apex (the subdomain zone root itself) resolves directly to
 # the Proxmox node endpoint IPs when PROXMOX_IP_ADDRESSES is set. Delete the old
@@ -555,7 +567,7 @@
       domain: "{{ technitium_dns_zone }}"
       zone: "{{ technitium_dns_zone }}"
       type: A
-      ipAddress: "{{ hostvars[technitium_dns_ingress_host].container_ip }}"
+      ipAddress: "{{ technitium_dns_ingress_target_ip }}"
       ttl: "{{ technitium_dns_zone_ttl }}"
       overwrite: "true"
     return_content: true
@@ -571,8 +583,8 @@
     - technitium_dns_proxmox_endpoint_a_records | default([]) | length == 0
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
-    - technitium_dns_ingress_host in hostvars
-    - hostvars[technitium_dns_ingress_host].container_ip is defined
+    # Points at the ingress VIP when published, else the single Traefik LXC's IP.
+    - technitium_dns_ingress_target_ip | length > 0
 
 # Authorize the secondaries to pull the zone via AXFR. UseSpecifiedNetworkACL
 # restricts transfer to exactly the secondary IPs (default-deny otherwise).

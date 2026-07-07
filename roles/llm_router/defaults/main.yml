@@ -5,9 +5,10 @@
 # https://llm.<subdomain>; consumers select a tier purely by model alias.
 #
 # Two tiers, both reached through this one proxy:
-#   large — gpt-oss-120b / qwen3-coder on the neutral `llm-large` runner (bearer
-#           auth). One deployment each; no cross-tier fallback.
-#   light — hermes-4-14b / hermes4 / qwen3-4b / embeddings. TWO deployments per
+#   large — gpt-oss-120b / Qwen3-Coder-30B-A3B / Qwen3.6-35B-A3B-4bit /
+#           Qwen3.6-27B-4bit / claude-sonnet-5 on the neutral `llm-large`
+#           runner (bearer auth). One deployment each; no cross-tier fallback.
+#   light — hermes-4-14b / qwen3-4b / embeddings / claude-haiku-4-5. TWO deployments per
 #           alias: the GPU `llm-fast` box AND the CPU `llm-light` standby, same
 #           model_name. LiteLLM load-balances the pair and cools a failed
 #           deployment down, so a GPU outage drains to CPU automatically.
@@ -60,27 +61,55 @@ llm_router_large_port: "{{ tofu_data.constants.service_ports.ollama_api }}"
 # --- Backend base URLs (derived; never a hardcoded IP) -----------------------
 llm_router_llm_fast_base_url: "http://llm-fast.{{ llm_router_subdomain }}:{{ llm_router_light_port }}/v1"
 llm_router_llm_light_base_url: "http://llm-light.{{ llm_router_subdomain }}:{{ llm_router_light_port }}/v1"
-# llm-large lives one label under the APEX (the subdomain's parent), not under
-# the internal subdomain: the serving gate's ACME DNS-01 client locates the
-# hosted zone by stripping a single label, so only an apex-level alias gets a
-# cert — an llm-large.<subdomain> name fails the TLS handshake (no SNI cert).
+# The large-tier gate (a caddy TLS front on the Mac Studio, apex-level cert via
+# Route53 DNS-01) reverse-proxies to the host's llama-swap. It has always been
+# addressed apex-level (one label under the subdomain's parent), because the
+# ACME client locates the hosted zone by stripping a single label — an
+# <alias>.<subdomain> name fails the TLS handshake (no SNI cert).
+#
+# The host is reached by its OWN permanent name, not a floating `llm-large`
+# service alias. The alias needed a *second* DNS record published + maintained
+# by something outside this fabric; on 2026-07-06 that record silently vanished
+# (resolved fine at 21:51, NXDOMAIN by 22:42) and every brain request 500'd with
+# ClientConnectorDNSError — a single point of failure with no benefit while there
+# is exactly one serving host. `jevans-ms.<apex>` is that host's canonical record
+# (stable, also its SSH name) and is on the very same caddy cert, so it satisfies
+# the apex-cert constraint identically with no extra record to keep alive.
+# (Restoring/decoupling behind an alias again is a DNS follow-up, not a router
+# concern — see PR notes.)
 llm_router_apex_domain: "{{ llm_router_subdomain | split('.', 1) | last }}"
-llm_router_llm_large_base_url: "https://llm-large.{{ llm_router_apex_domain }}:{{ llm_router_large_port }}/v1"
+# Host comes from the `llm_large_serving_host` single source (all.yml,
+# env-overridable) so the Studio's name is not a literal repeated across roles —
+# still its own permanent per-host record, NOT the floating alias (see above).
+llm_router_llm_large_host: "{{ llm_large_serving_host }}"
+llm_router_llm_large_fqdn: "{{ llm_router_llm_large_host }}.{{ llm_router_apex_domain }}"
+llm_router_llm_large_base_url: "https://{{ llm_router_llm_large_fqdn }}:{{ llm_router_large_port }}/v1"
 
 # --- Model groups ------------------------------------------------------------
 # large: exposed alias -> the backend's own model id (the serving gate lists
 # models under their full MLX repo ids). One deployment each, bearer-authed.
+# context_window on EVERY entry = the backend's real native context
+# (max_position_embeddings from each mlx-community repo's config.json).
+# LiteLLM has no built-in entry for these mlx-community backend ids, so an
+# unset context_window resolves max_input_tokens to null — clients that read
+# that (e.g. Hermes, OpenWebUI) fall back to a near-zero context guess and
+# compress every request to death (see config.yaml.j2 for the failure mode).
 llm_router_large_models:
-  - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8 }
-  - { alias: qwen3-coder, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit }
+  - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8, context_window: 131072 }
+  - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit, context_window: 262144 }
+  - { alias: Qwen3.6-35B-A3B-4bit, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
+  - { alias: Qwen3.6-27B-4bit, backend: mlx-community/Qwen3.6-27B-4bit, context_window: 262144 }
+  # claude-sonnet-5 is a Claude Code alias deliberately mapped to a local Qwen3.6
+  # backend (PR #624) — not a mis-map; it inherits that backend's 262144 context.
+  - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
 # light: exposed aliases -> the llama-swap model_name they map to. Each becomes two
 # same-name deployments (llm-fast GPU + llm-light CPU) in the rendered config.
 # `embedding: true` marks the entry as an embeddings model_group.
 llm_router_light_models:
   - { alias: hermes-4-14b, backend: hermes-4-14b }
-  - { alias: hermes4, backend: hermes-4-14b }
   - { alias: qwen3-4b, backend: qwen3-4b }
   - { alias: embeddings, backend: embeddings, embedding: true }
+  - { alias: claude-haiku-4-5, backend: hermes-4-14b }
 
 # --- Routing behaviour -------------------------------------------------------
 # Load-balance across same-name deployments; cool a failed one down so traffic
@@ -88,6 +117,16 @@ llm_router_light_models:
 llm_router_routing_strategy: simple-shuffle
 llm_router_allowed_fails: 2
 llm_router_cooldown_time: 30
+# The large tier has ONE deployment per alias (no sibling to fail over to), so
+# a bare TCP hiccup between this router and the mac-studio gate surfaces
+# straight to the caller as a 500. num_retries makes LiteLLM retry the SAME
+# deployment a couple of times before giving up — cheap insurance against a
+# transient connection blip, distinct from Hermes's own client-side retries
+# (which retry the identical request and hit the identical transient error).
+# request_timeout_seconds bounds a single attempt; large-tier generations can
+# legitimately run for minutes, so this is generous, not a tight SLA.
+llm_router_num_retries: 2
+llm_router_request_timeout_seconds: 300
 # Background health checks send REAL test requests to every deployment — on the
 # llama-swap fast tier each probe spawns the target model, and with 3 routers
 # probing every model this both churns VRAM constantly and (pre swap-groups)
@@ -97,14 +136,14 @@ llm_router_cooldown_time: 30
 llm_router_background_health_checks: false
 llm_router_health_check_interval: 300
 
-# --- Secrets (env-sourced; OpenBao migration is a later phase) ----------------
+# --- Secrets (from runtime env) -----------------------------------------------
 # Mandatory, fail-loud (mirrors the ai_orchestration group_vars pattern).
 llm_router_master_key: >-
-  {{ bao_local_llm_secrets.LLM_ROUTER_MASTER_KEY | default(lookup('env', 'LLM_ROUTER_MASTER_KEY'), true)
-     | mandatory('LLM_ROUTER_MASTER_KEY must be set (OpenBao secret/ai/router or SOPS/Doppler env)') }}
+  {{ lookup('env', 'LLM_ROUTER_MASTER_KEY')
+     | mandatory('LLM_ROUTER_MASTER_KEY must be set') }}
 llm_router_llm_large_bearer: >-
-  {{ bao_local_llm_secrets.LLM_LARGE_BEARER_TOKEN | default(lookup('env', 'LLM_LARGE_BEARER_TOKEN'), true)
-     | mandatory('LLM_LARGE_BEARER_TOKEN must be set (OpenBao secret/ai/llm-large or SOPS/Doppler env)') }}
+  {{ lookup('env', 'LLM_LARGE_BEARER_TOKEN')
+     | mandatory('LLM_LARGE_BEARER_TOKEN must be set') }}
 # The GPU/CPU light backends need no auth; a placeholder keeps the OpenAI client happy.
 llm_router_light_api_key: "sk-noauth"
 

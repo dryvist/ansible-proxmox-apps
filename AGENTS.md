@@ -38,6 +38,14 @@ this repo handles app config only.
   clients are owned by the devopsarr `servarr-config` tofu module
   (`terraform-proxmox`); quality profiles + custom formats by the `configarr`
   role (TRaSH-Guides). `servarr_wiring` no longer touches those.
+- **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
+  Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
+  API keys, no new *arr-side wiring).
+- **Hermes agent** (`hermes_agent` role — the autonomous NousResearch agent
+  gateway, native install; not the LLM serving stack).
+- **LLM fabric** (`llm_router` role — LiteLLM proxy, the single OpenAI-compatible
+  front door for the large/light tiers; `open_webui`, `llama_cpp`, `ollama`
+  roles for the backends).
 
 **This repo does NOT own Splunk.** Splunk is managed by `ansible-splunk`.
 
@@ -197,6 +205,16 @@ in ai-assistant-instructions for full patterns.
 
 Template: `secrets.enc.yaml.example` — copy, fill in real values, then encrypt.
 
+**Roles are injection-agnostic.** Every role reads a secret as plain
+`lookup('env', 'KEY')` and doesn't know or care where the value came from —
+never bake a specific backend (OpenBao, Doppler, SOPS) into a role default.
+Our deployment currently populates those env vars via `doppler run --`; the
+target is an ambient injection step (an `openbao-keychain` LaunchAgent +
+`from_bao`-style wrapper) that exports the same env vars from OpenBao before
+the converge runs — zero role changes either way. OpenBao's per-domain
+AppRole RBAC is documented in `docs-starlight` as *our infra*, not a
+requirement of this repo.
+
 ## Commands
 
 ```bash
@@ -237,6 +255,18 @@ ansible-lint
 > dynamic inventory via `add_host`. Running with `--limit <group>` but **not**
 > `localhost` silently skips the loader, so no hosts are added and every play
 > reports "no hosts matched". Always use `--limit <group>,localhost`.
+
+### Execution Performance & Optimization
+
+Since site playbook runs or dry-runs evaluate 55+ hosts, checks can take a long time even when 99% of the tasks are no-ops (due to SSH/LXC connection overhead and fact-gathering serialization).
+
+To increase execution speed, you can leverage several options:
+1. **Parallel Execution (`--forks` or `ANSIBLE_FORKS`)**: Increase the concurrency from the default 5 hosts at once. Using `25` forks (e.g. `doppler run -- ansible-playbook ... --forks 25`) runs significantly faster across large fleets.
+2. **Targeted Runs (`--limit`)**: Keep play scope narrow by limiting execution to the specific role host and localhost (e.g., `--limit sortarr,localhost`).
+3. **Scoping via Tags (`--tags`)**: Use `--tags <tag-name>` to run only a subset of roles (e.g., `--tags github_runner`).
+4. **SSH Pipelining & Multiplexing**: Already enabled for SSH (`pipelining = True` and `ControlPersist=60s` in `ansible.cfg`).
+5. **Disable Fact Gathering**: For ad-hoc plays where host facts are not needed, set `gather_facts: false` to skip the costly gathering step.
+
 
 ## Testing
 

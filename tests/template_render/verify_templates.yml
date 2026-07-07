@@ -1710,7 +1710,7 @@
     llama_cpp_health_check_timeout: 300
     # Only the fields the templates consume (name/aliases/gguf/embeddings).
     llama_cpp_models:
-      - { name: hermes-4-14b, aliases: [hermes4], gguf: "hermes.gguf", embeddings: false }
+      - { name: hermes-4-14b, aliases: [], gguf: "hermes.gguf", embeddings: false }
       - { name: qwen3-4b, aliases: [], gguf: "qwen.gguf", embeddings: false }
       - { name: embeddings, aliases: [nomic-embed-text-v1.5], gguf: "nomic.gguf", embeddings: true }
     _template_dir: "../../roles/llama_cpp/templates"
@@ -1738,10 +1738,8 @@
           - _llama_swap.groups.embeddings.members == ['embeddings']
           - _llama_swap.groups.chat.swap == true
           - (_llama_swap.groups.chat.members | sort) == ['hermes-4-14b', 'qwen3-4b']
-          - "'hermes4' in _llama_swap.models['hermes-4-14b'].aliases"
         fail_msg: >-
-          llama-swap.yaml.j2 did not render the VRAM-disciplined groups or the
-          hermes4 alias: {{ _llama_swap }}
+          llama-swap.yaml.j2 did not render the VRAM-disciplined groups: {{ _llama_swap }}
 
     - name: Assert the shared macro offloads to GPU and per-model cmd flags differ
       ansible.builtin.assert:
@@ -1813,16 +1811,21 @@
     llm_router_llm_light_base_url: "http://llm-light.pve.example.net:10434/v1"
     llm_router_llm_large_base_url: "https://llm-large.example.net:11434/v1"
     llm_router_large_models:
-      - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8 }
-      - { alias: qwen3-coder, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit }
+      - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8, context_window: 131072 }
+      - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit, context_window: 262144 }
+      - { alias: Qwen3.6-35B-A3B-4bit, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
+      - { alias: Qwen3.6-27B-4bit, backend: mlx-community/Qwen3.6-27B-4bit, context_window: 262144 }
+      - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
     llm_router_light_models:
       - { alias: hermes-4-14b, backend: hermes-4-14b }
-      - { alias: hermes4, backend: hermes-4-14b }
       - { alias: qwen3-4b, backend: qwen3-4b }
       - { alias: embeddings, backend: embeddings, embedding: true }
+      - { alias: claude-haiku-4-5, backend: hermes-4-14b }
     llm_router_routing_strategy: simple-shuffle
     llm_router_allowed_fails: 2
     llm_router_cooldown_time: 30
+    llm_router_num_retries: 2
+    llm_router_request_timeout_seconds: 300
     llm_router_health_check_interval: 300
     llm_router_background_health_checks: false
     llm_router_light_api_key: "sk-noauth"
@@ -1851,16 +1854,41 @@
         that:
           # Large tier: one deployment each, bearer via env.
           - _model_names | select('equalto', 'gpt-oss-120b') | list | length == 1
-          - _model_names | select('equalto', 'qwen3-coder') | list | length == 1
+          - _model_names | select('equalto', 'Qwen3-Coder-30B-A3B') | list | length == 1
+          - _model_names | select('equalto', 'Qwen3.6-35B-A3B-4bit') | list | length == 1
+          - _model_names | select('equalto', 'Qwen3.6-27B-4bit') | list | length == 1
+          - _model_names | select('equalto', 'claude-sonnet-5') | list | length == 1
           # Light tier: two deployments per alias (GPU llm-fast + CPU llm-light).
           - _model_names | select('equalto', 'hermes-4-14b') | list | length == 2
-          - _model_names | select('equalto', 'hermes4') | list | length == 2
           - _model_names | select('equalto', 'qwen3-4b') | list | length == 2
           - _model_names | select('equalto', 'embeddings') | list | length == 2
+          - _model_names | select('equalto', 'claude-haiku-4-5') | list | length == 2
           # Secrets referenced via os.environ, never a literal in the config.
           - "'test-master-key-placeholder' not in (lookup('file', '/tmp/test_litellm_config.yaml'))"
           - _litellm.general_settings.master_key == 'os.environ/LLM_ROUTER_MASTER_KEY'
         fail_msg: "config.yaml.j2 model_list / auth wrong: {{ _litellm.model_list }}"
+
+    - name: Index each model's rendered max_input_tokens by name
+      vars:
+        _ctxd: "{{ _litellm.model_list | selectattr('model_info.max_input_tokens', 'defined') }}"
+      ansible.builtin.set_fact:
+        _ctx: >-
+          {{ dict(_ctxd | map(attribute='model_name') | zip(
+             _ctxd | map(attribute='model_info.max_input_tokens'))) }}
+
+    - name: Assert every large model gets a real max_input_tokens
+      ansible.builtin.assert:
+        that:
+          # Without an explicit context_window, these mlx-community backend ids are
+          # unknown to LiteLLM's cost map and max_input_tokens silently resolves to
+          # null — the root cause of the Hermes/OpenWebUI context-collapse bug this
+          # fixes. Assert every large deployment carries its real native context.
+          - _ctx['gpt-oss-120b'] == 131072
+          - _ctx['Qwen3-Coder-30B-A3B'] == 262144
+          - _ctx['Qwen3.6-35B-A3B-4bit'] == 262144
+          - _ctx['Qwen3.6-27B-4bit'] == 262144
+          - _ctx['claude-sonnet-5'] == 262144
+        fail_msg: "config.yaml.j2 did not render max_input_tokens for all large models: {{ _litellm.model_list }}"
 
     - name: Assert routing, health checks, and observability callbacks
       ansible.builtin.assert:

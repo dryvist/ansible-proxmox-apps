@@ -11,18 +11,43 @@ VLAN.
 ## What it does
 
 - Installs Hermes Agent system-wide via the official installer (bundles Python/uv +
-  Node), once, behind a `creates` guard. The Hermes daemon owns subsequent updates
+  Node), once, behind a `creates` guard. The installer is fetched from the pinned
+  release tag's raw URL and **sha256-verified before it runs** — never
+  `curl <url> | bash` of a moving remote script — and `--branch <tag>` pins the
+  app checkout to the same release. The Hermes daemon owns subsequent updates
   (`hermes update`) — Ansible owns only the platform, so converge stays idempotent.
 - Runs the `hermes gateway` daemon under a dedicated non-root `hermes` user via
   systemd. The gateway drives the built-in **cron** scheduler and the **Kanban**
   dispatcher (autonomy) even with no messaging platform configured.
 - `HERMES_HOME` (`/var/lib/hermes/.hermes`) lives on a dedicated ZFS data volume —
   memory, skills, profiles, the Kanban DB, sessions and logs — so it is snapshotted
-  + replicated pve→pve3 (the agent's accumulated knowledge is irreplaceable).
+  and replicated pve→pve3 (the agent's accumulated knowledge is irreplaceable).
 - Points the model backend at the LiteLLM router (`hermes-4-14b` via
   `llm.<subdomain>/v1`, OpenAI-compatible); sets memory provider to **Hindsight** (best self-hostable
   June 2026) alongside the always-on `MEMORY.md`/`USER.md`; caps `agent.max_turns`
   so a runaway loop can't pin the GPU overnight.
+- Wires the Slack gateway (Socket Mode) via five env vars in `.env`, read
+  directly by Hermes' own Slack adapter — no `config.yaml` changes needed.
+  All five default to empty, so the gateway simply runs Slack-free until they
+  are set.
+- Seeds a daily cron job that summarizes the homelab AI fabric status and posts
+  it to the Slack home channel; activation happens on the next converge.
+
+## Installation
+
+This role ships in the `ansible-proxmox-apps` repository — no separate
+installation. The role itself fetches and sha256-verifies the pinned Hermes
+installer on the target, so the LXC only needs base connectivity and apt.
+
+## Usage
+
+Run the role against its inventory group:
+
+```bash
+doppler run -- uv run ansible-playbook \
+  -i inventory/hosts.yml playbooks/site.yml \
+  --tags hermes_agent
+```
 
 ## Key variables
 
@@ -33,6 +58,11 @@ VLAN.
 | `hermes_agent_model` | `hermes-4-14b` | model id |
 | `hermes_agent_memory_provider` | `hindsight` | external memory provider |
 | `hermes_agent_max_turns` | `90` | agentic-loop budget |
+| `hermes_agent_slack_bot_token` | `""` | Slack bot OAuth token (`xoxb-…`) |
+| `hermes_agent_slack_app_token` | `""` | Slack app-level token for Socket Mode (`xapp-…`) |
+| `hermes_agent_slack_allowed_users` | `""` | comma-sep Slack member IDs allowed to DM the bot |
+| `hermes_agent_slack_home_channel` | `""` | Slack channel ID for proactive posts |
+| `hermes_agent_slack_home_channel_name` | `""` | Slack channel display name |
 
 ## Group / invocation
 
@@ -42,7 +72,7 @@ Run via `site.yml` (`--tags hermes_agent`).
 ## Not yet live-validated
 
 Verify on the first converge: (a) `install.sh` runs clean non-interactively as root
-on a minimal Debian LXC; (b) `hermes gateway start` stays up headless with no
+on a minimal Debian LXC; (b) `hermes gateway run --replace` stays up headless with no
 messaging platform; (c) Hindsight initialises from `config.yaml` alone (it may need
 its client package on first run — `memory status` check is non-fatal so it surfaces
 without failing the converge). Single-profile first; profiles + Kanban teams + a

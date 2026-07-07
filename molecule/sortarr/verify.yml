@@ -23,6 +23,7 @@
     # Must match molecule.yml provisioner.env defaults.
     sortarr_expected_sonarr_key: "0123456789abcdef0123456789abcdef"
     sortarr_expected_radarr_key: "fedcba9876543210fedcba9876543210"
+    sortarr_expected_secret_key: "default-molecule-secret-key-32-chars"
 
   tasks:
     - name: Check docker-compose.yml was deployed
@@ -50,13 +51,55 @@
           - "'/data' in (sortarr_compose.content | b64decode)"
         fail_msg: "docker-compose.yml is missing image, port 8787, or the /data mount"
 
-    - name: Assert docker-compose.yml carries the injected secrets
+    - name: Check Sortarr.env was deployed
+      ansible.builtin.stat:
+        path: "{{ sortarr_data_dir }}/data/Sortarr.env"
+      register: sortarr_env_stat
+
+    - name: Assert Sortarr.env exists and is secure (0600)
       ansible.builtin.assert:
         that:
-          - sortarr_expected_sonarr_key in (sortarr_compose.content | b64decode)
-          - sortarr_expected_radarr_key in (sortarr_compose.content | b64decode)
-          - "'BASIC_AUTH_PASS' in (sortarr_compose.content | b64decode)"
-        fail_msg: "docker-compose.yml did not receive the Sonarr/Radarr API keys or basic-auth password"
+          - sortarr_env_stat.stat.exists
+          - sortarr_env_stat.stat.mode == '0600'
+        fail_msg: "Sortarr.env not found or does not have secure permissions (0600)"
+
+    - name: Read Sortarr.env
+      ansible.builtin.slurp:
+        src: "{{ sortarr_data_dir }}/data/Sortarr.env"
+      register: sortarr_env
+
+    - name: Assert Sortarr.env carries the configurations and secret-file paths
+      ansible.builtin.assert:
+        that:
+          - "'SONARR_URL=' in (sortarr_env.content | b64decode)"
+          - "'SONARR_API_KEY=\"' ~ sortarr_expected_sonarr_key ~ '\"' in (sortarr_env.content | b64decode)"
+          - "'RADARR_API_KEY=\"' ~ sortarr_expected_radarr_key ~ '\"' in (sortarr_env.content | b64decode)"
+          - "'SECRET_KEY_FILE=\"/data/secrets/sortarr_secret_key.secret\"' in (sortarr_env.content | b64decode)"
+          - "'SORTARR_SECRET_KEY_FILE=\"/data/secrets/sortarr_secret_key.secret\"' in (sortarr_env.content | b64decode)"
+        fail_msg: "Sortarr.env is missing configuration or secret file paths"
+
+    - name: Check Sortarr secret key file was deployed
+      ansible.builtin.stat:
+        path: "{{ sortarr_data_dir }}/data/secrets/sortarr_secret_key.secret"
+      register: sortarr_secret_stat
+
+    - name: Assert Sortarr secret key file exists and is secure (0600)
+      ansible.builtin.assert:
+        that:
+          - sortarr_secret_stat.stat.exists
+          - sortarr_secret_stat.stat.mode == '0600'
+        fail_msg: "sortarr_secret_key.secret not found or does not have secure permissions (0600)"
+
+    - name: Read Sortarr secret key file
+      ansible.builtin.slurp:
+        src: "{{ sortarr_data_dir }}/data/secrets/sortarr_secret_key.secret"
+      register: sortarr_secret_key_file
+
+    - name: Assert Sortarr secret key file carries the expected secret key
+      ansible.builtin.assert:
+        that:
+          - "(sortarr_secret_key_file.content | b64decode) | trim == 'default-molecule-secret-key-32-chars'"
+        fail_msg: "sortarr_secret_key.secret does not contain the expected secret key value"
 
     - name: Assert SORTARR_CONFIG_PATH points at the bind-mounted /data dir
       ansible.builtin.assert:

@@ -1,6 +1,7 @@
 {{ ansible_managed | comment }}
 # Hermes Agent runtime config (managed by Ansible; the daemon owns app updates).
-# Brain = the always-on homelab GPU Ollama (OpenAI-compatible). Memory = Hindsight
+# Brain = the LiteLLM router (OpenAI-compatible front door at https://llm.<sub>/v1;
+# it routes the model alias to whichever backend serves it). Memory = Hindsight
 # (best self-hostable, June 2026) alongside the always-on MEMORY.md/USER.md.
 
 model:
@@ -8,6 +9,26 @@ model:
   default: {{ hermes_agent_model }}
   base_url: '{{ hermes_agent_model_base_url }}'
   api_mode: {{ hermes_agent_model_api_mode }}
+  # Custom/vLLM-style providers have no context-window catalog Hermes can
+  # probe. Without this, Hermes' own auto-detect logs "Could not detect
+  # context length ... defaulting to 256,000 (probe-down)" before falling
+  # back to a hardcoded catalog guess — this makes the real window explicit.
+  # model.context_length is read at agent_init.py as the highest-precedence
+  # override in get_model_context_length (verified against the installed
+  # Hermes 0.18.0 source, not just --help/docs).
+  context_length: {{ hermes_agent_model_context_length }}
+  # ROOT CAUSE of the "Context length exceeded (18/19 tokens). Cannot
+  # compress further." death loop: the router/backend hard-caps a single
+  # response to 8192 output tokens ("max_tokens exceeds server limit
+  # (8192)" — confirmed in ~/.hermes/logs/agent.log), but the `custom`
+  # provider profile's built-in default_max_tokens is 65536. Hermes'
+  # error_classifier misclassifies that 400 as a context overflow (its
+  # pattern list matches the literal substring "max_tokens" in ANY error),
+  # so it tries to compress a 1-message conversation with nothing left to
+  # compress instead of just lowering the output request. Capping
+  # model.max_tokens at the server's real limit means the oversized
+  # request is never sent, so the misclassification never triggers.
+  max_tokens: {{ hermes_agent_model_max_tokens }}
   # Resolved from .env at runtime (the LiteLLM router master key).
   api_key: '${HERMES_AGENT_MODEL_API_KEY}'
 
@@ -35,5 +56,9 @@ display:
 security:
   redact_secrets: true
   tirith_enabled: true
+
+plugins:
+  enabled:
+    - observability/otel
 
 timezone: '{{ hermes_agent_timezone }}'

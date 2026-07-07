@@ -1,5 +1,174 @@
 # Changelog
 
+## [1.77.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.77.0...v1.77.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **technitium_dns:** add Mac Studio A record from fixed IPs ([#675](https://github.com/dryvist/ansible-proxmox-apps/issues/675)) ([39b0fd5](https://github.com/dryvist/ansible-proxmox-apps/commit/39b0fd5ff836b0862434fc6e22d270830ccd59eb))
+
+## [1.77.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.3...v1.77.0) (2026-07-07)
+
+
+### Features
+
+* **hermes_agent:** seed daily Slack status cron ([fd4a36d](https://github.com/dryvist/ansible-proxmox-apps/commit/fd4a36df48575b42a6984c9e123a166949426f1b))
+
+## [1.76.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.2...v1.76.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* **llm_router:** propagate model context windows ([#664](https://github.com/dryvist/ansible-proxmox-apps/issues/664)) ([547e2cd](https://github.com/dryvist/ansible-proxmox-apps/commit/547e2cd5b67545729bf1297253ca24f98459689d))
+
+## [1.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.1...v1.76.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* **inventory:** scope the shared OTEL endpoint to all hosts, not just ai_orchestration_group ([#673](https://github.com/dryvist/ansible-proxmox-apps/issues/673)) ([585def5](https://github.com/dryvist/ansible-proxmox-apps/commit/585def5c254766b511dbc39314ad6d31042f8692))
+* **langgraph:** render pyproject.toml with valid TOML comments ([#670](https://github.com/dryvist/ansible-proxmox-apps/issues/670)) ([39fbec8](https://github.com/dryvist/ansible-proxmox-apps/commit/39fbec8a2ad541755e0ad25fe8efc3a736c0d32a))
+
+## [1.76.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.0...v1.76.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **n8n_docker:** retry the owner-setup settings read on startup ([#669](https://github.com/dryvist/ansible-proxmox-apps/issues/669)) ([a4e5056](https://github.com/dryvist/ansible-proxmox-apps/commit/a4e5056ee116d00fe5d320a404c85145f2cdcfa7))
+
+## [1.76.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.75.0...v1.76.0) (2026-07-07)
+
+
+### Features
+
+* **telemetry:** instrument hermes_agent + open_webui via Cribl OTLP ([#665](https://github.com/dryvist/ansible-proxmox-apps/issues/665)) ([353cf77](https://github.com/dryvist/ansible-proxmox-apps/commit/353cf77849a21244fe6cfd1139407da63690b3e9))
+
+## [1.75.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.7...v1.75.0) (2026-07-07)
+
+
+### Features
+
+* **ai:** n8n + LangGraph roles for the AI orchestration tier ([#660](https://github.com/dryvist/ansible-proxmox-apps/issues/660)) ([6ad0e3d](https://github.com/dryvist/ansible-proxmox-apps/commit/6ad0e3dc974ff154195d0e4bb6fbc4930e2e3813))
+
+## [1.74.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.6...v1.74.7) (2026-07-07)
+
+
+### Bug Fixes
+
+* **llm:** stop Hermes brain 400s and router 500s ([#658](https://github.com/dryvist/ansible-proxmox-apps/issues/658)) ([224434e](https://github.com/dryvist/ansible-proxmox-apps/commit/224434ee62f235f951f1082cc47e96597d8d4881))
+
+## [1.74.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.5...v1.74.6) (2026-07-06)
+
+
+### Bug Fixes
+
+* **hermes-agent:** cap model.max_tokens to stop context-overflow death loop ([#656](https://github.com/dryvist/ansible-proxmox-apps/issues/656)) ([31d1cdf](https://github.com/dryvist/ansible-proxmox-apps/commit/31d1cdf03a96f395449ce8a70afe6538b24ff26d))
+
+## [1.74.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.4...v1.74.5) (2026-07-06)
+
+
+### Bug Fixes
+
+* **technitium_dns:** remove apex-zone-delete time bomb ([#654](https://github.com/dryvist/ansible-proxmox-apps/issues/654)) ([6a18cfb](https://github.com/dryvist/ansible-proxmox-apps/commit/6a18cfb1c664b0b066c66762a91dced6a541cff1))
+
+## [1.74.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.3...v1.74.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **llm_router,hermes_agent:** advertise Qwen3-Coder context window; fix Hermes alias ([#646](https://github.com/dryvist/ansible-proxmox-apps/issues/646)) ([4271393](https://github.com/dryvist/ansible-proxmox-apps/commit/427139383c2df5ae127df811068e4dc598309a24))
+
+## [1.74.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.2...v1.74.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **haproxy:** flush pending config reloads before verifying listeners ([#649](https://github.com/dryvist/ansible-proxmox-apps/issues/649)) ([1d077a8](https://github.com/dryvist/ansible-proxmox-apps/commit/1d077a85cf700670d65125607d0a63143e718630))
+
+## [1.74.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.1...v1.74.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ntp:** stage/validate/promote chrony config to fix permission-denied ([#647](https://github.com/dryvist/ansible-proxmox-apps/issues/647)) ([1e25354](https://github.com/dryvist/ansible-proxmox-apps/commit/1e25354a79f4cdd5ced86fb4d2781e8d2b58c361))
+
+## [1.74.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.0...v1.74.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **openbao_secrets:** disable become on localhost-delegated probe tasks ([#644](https://github.com/dryvist/ansible-proxmox-apps/issues/644)) ([30d0f14](https://github.com/dryvist/ansible-proxmox-apps/commit/30d0f14fff8aaa2f491ffbaa443fef66549cfe76))
+
+## [1.74.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.73.0...v1.74.0) (2026-07-06)
+
+
+### Features
+
+* **hermes_agent:** wire Slack gateway (Socket Mode) ([#641](https://github.com/dryvist/ansible-proxmox-apps/issues/641)) ([3b5916c](https://github.com/dryvist/ansible-proxmox-apps/commit/3b5916c5d43f78a743e7d05a7a320c690eccf508))
+
+## [1.73.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.2...v1.73.0) (2026-07-06)
+
+
+### Features
+
+* **dr:** keepalived ingress VIP + OpenBao client failover ([#640](https://github.com/dryvist/ansible-proxmox-apps/issues/640)) ([7427386](https://github.com/dryvist/ansible-proxmox-apps/commit/74273865f37ebd38364cd329a7c0a4565d5e57e3))
+
+## [1.72.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.1...v1.72.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **sortarr:** persist session secret via file seeding ([#638](https://github.com/dryvist/ansible-proxmox-apps/issues/638)) ([cd79e0e](https://github.com/dryvist/ansible-proxmox-apps/commit/cd79e0ece8773ab0a451b5a602a7c9005b8a2c13))
+
+## [1.72.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.72.0...v1.72.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **agent_exec:** correct LangChain instrumentor import casing ([6becd87](https://github.com/dryvist/ansible-proxmox-apps/commit/6becd8729609f25db7669c705a078f2e326d93a5))
+
+## [1.72.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.4...v1.72.0) (2026-07-06)
+
+
+### Features
+
+* **hermes_agent:** repoint brain to Qwen3-Coder-30B-A3B on Mac Studio ([#634](https://github.com/dryvist/ansible-proxmox-apps/issues/634)) ([52be4fa](https://github.com/dryvist/ansible-proxmox-apps/commit/52be4fa2867bec4e57cb31a9096d005b5844fd09))
+
+## [1.71.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.3...v1.71.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **hermes_agent:** use gateway run --replace instead of gateway start ([#632](https://github.com/dryvist/ansible-proxmox-apps/issues/632)) ([56abf5f](https://github.com/dryvist/ansible-proxmox-apps/commit/56abf5f22f2c65852d03ceb6899ee3a5b3e9c1fe))
+
+## [1.71.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.2...v1.71.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **llama_cpp:** remove hermes-4-14b and guardrail against &gt;=14B on llm-fast ([#629](https://github.com/dryvist/ansible-proxmox-apps/issues/629)) ([035defd](https://github.com/dryvist/ansible-proxmox-apps/commit/035defd7fbd950123f09b2e4f541f0284b69ff6a))
+
+## [1.71.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.1...v1.71.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ntp+hermes:** chrony container guard, router key, native pinned Hermes install ([#626](https://github.com/dryvist/ansible-proxmox-apps/issues/626)) ([7fc551a](https://github.com/dryvist/ansible-proxmox-apps/commit/7fc551a27a543b6dc7e1e43003bbbea98fe161c2))
+
+## [1.71.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.71.0...v1.71.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **sortarr:** inject keys at runtime and support PVE subdomains ([#625](https://github.com/dryvist/ansible-proxmox-apps/issues/625)) ([4423a85](https://github.com/dryvist/ansible-proxmox-apps/commit/4423a85346b72a0d3b2230adb16bc10d65c12a6b))
+
+## [1.71.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.70.0...v1.71.0) (2026-07-06)
+
+
+### Features
+
+* **llm_router,llama_cpp:** expose Qwen 3.6 models and map Claude Code aliases ([#624](https://github.com/dryvist/ansible-proxmox-apps/issues/624)) ([33afac8](https://github.com/dryvist/ansible-proxmox-apps/commit/33afac884bcac86ab20b6d2292bede50b77ff52c))
+
 ## [1.70.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.69.0...v1.70.0) (2026-07-05)
 
 

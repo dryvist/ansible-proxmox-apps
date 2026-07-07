@@ -27,10 +27,8 @@ request that fails surfaces the error rather than silently degrading to a small 
 
 ## Observability
 
-`litellm_settings.callbacks: ["langfuse", "otel"]`:
+`litellm_settings.callbacks: ["otel"]`:
 
-- **Langfuse** success logging (`LANGFUSE_*` env; empty keys → the callback no-ops,
-  so a converge before Langfuse exists still comes up).
 - **OTLP/HTTP** traces to the Cribl Edge collector
   (`http://cribl-edge.<subdomain>:<otel_traces_http>/v1/traces`).
 

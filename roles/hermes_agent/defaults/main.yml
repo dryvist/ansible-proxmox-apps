@@ -13,17 +13,91 @@ hermes_agent_user: hermes
 hermes_agent_home: /var/lib/hermes
 hermes_agent_hermes_home: "{{ hermes_agent_home }}/.hermes" # $HERMES_HOME
 hermes_agent_bin: /usr/local/bin/hermes                     # system-wide install
-hermes_agent_install_url: "https://hermes-agent.nousresearch.com/install.sh"
+# install.sh's root-FHS layout: the app checkout (editable install target) and
+# its uv-managed venv. uv itself lands only at this root-owned path — the
+# installer never symlinks it onto the system PATH.
+hermes_agent_install_dir: /usr/local/lib/hermes-agent
+hermes_agent_venv_python: "{{ hermes_agent_install_dir }}/venv/bin/python"
+hermes_agent_uv_bin: /root/.hermes/bin/uv
+
+# --- Pinned, checksum-verified installer (NO curl|bash of a moving remote script) ---
+# Hermes ships as a Python app built from a git checkout (uv venv + editable pip),
+# not a released binary — so there is no binary artifact to checksum. What we CAN
+# pin is (a) the installer script, fetched from the tag's immutable raw URL and
+# sha256-verified, and (b) the app checkout, via the installer's --branch <tag>.
+#
+# Ansible pins the PLATFORM version for the ONE-TIME install (creates guard on the
+# binary); the Hermes daemon self-updates the app thereafter (`hermes update`).
+# To move the pinned floor: bump hermes_agent_version AND refresh the sha256
+# (curl the URL below, `sha256sum`). A stale checksum fails the converge loudly —
+# by design, that is the tamper/rug-pull guard.
+hermes_agent_version: "v2026.7.1"
+hermes_agent_installer_url: >-
+  https://raw.githubusercontent.com/NousResearch/hermes-agent/{{
+  hermes_agent_version }}/scripts/install.sh
+hermes_agent_installer_sha256: "a93c65b01ea392e179cf872e182bd01a2b65c0c15f17833e9f9569033ef10e07"
+# Version-stamped so a version bump downloads (and re-verifies) a fresh copy
+# instead of reusing a stale cached file.
+hermes_agent_installer_path: "/usr/local/lib/hermes-agent-installer-{{ hermes_agent_version }}.sh"
 
 # --- Brain: the LiteLLM router (the fabric front door, OpenAI-compatible /v1) ---
 # Reached by its neutral Traefik FQDN — never a hardcoded IP. The router routes by
-# model alias, so the agent just names the model it wants (the light Hermes-4-14B
-# here). The api key is the router master key, env-sourced (SOPS/Doppler).
-hermes_agent_model: hermes-4-14b
+# model alias, so the agent just names the model it wants: Qwen3-Coder-30B-A3B
+# on the Mac Studio large tier (non-hybrid MoE, proven stable — avoids the
+# qwen3_5_moe batching crash that rules out Qwen3.6). Replaces the interim
+# hermes-4-14b light-tier brain. The api key is the router master key,
+# env-sourced (SOPS/Doppler).
+# Must match llm_router_large_models' alias exactly (llm_router role,
+# roles/llm_router/defaults/main.yml) — PR #624 renamed the router's alias
+# from the lowercase `qwen3-coder` to the model-id-cased `Qwen3-Coder-30B-A3B`
+# without updating this consumer; the live router hadn't been reconverged
+# since, so both sides still matched by accident until this fix.
+hermes_agent_model: Qwen3-Coder-30B-A3B
 hermes_agent_model_base_url: "https://llm.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/v1"
 hermes_agent_model_api_mode: chat_completions
+# Qwen3-Coder-30B-A3B's native context window (256K = 262144 tokens). Custom
+# providers carry no context catalog Hermes can probe, so this is declared
+# explicitly (model.context_length in config.yaml.j2).
+hermes_agent_model_context_length: 262144
+# ROOT-CAUSE fix for the "Context length exceeded (18/19 tokens). Cannot
+# compress further." death loop confirmed in ~/.hermes/logs/agent.log: the
+# router/backend hard-caps a single completion at 8192 output tokens
+# ("max_tokens exceeds server limit (8192)"), but the `custom` provider
+# profile's built-in default_max_tokens is 65536. Hermes' error_classifier
+# misclassifies that 400 as a context overflow (it matches the bare
+# substring "max_tokens" in any error text) and dies trying to compress an
+# already-minimal conversation instead of lowering the output request.
+# Keep this at 8192 until the parked nix-darwin rebuild lands and is activated
+# (nix-darwin#1539 / nix-darwin#1545). After that rebuild is live, the next
+# bump is 32768.
+# Capping max_tokens here means the oversized request is never sent.
+hermes_agent_model_max_tokens: 8192
+# The api key IS the LiteLLM router master key; source it from the canonical
+# LLM_ROUTER_MASTER_KEY env (same as the llm_router role) so no per-run mapping
+# is needed. HERMES_AGENT_MODEL_API_KEY still overrides if explicitly set.
 hermes_agent_model_api_key: >-
-  {{ bao_local_llm_secrets.HERMES_AGENT_MODEL_API_KEY | default(lookup('env', 'HERMES_AGENT_MODEL_API_KEY'), true) }}
+  {{ lookup('env', 'HERMES_AGENT_MODEL_API_KEY')
+     | default(lookup('env', 'LLM_ROUTER_MASTER_KEY'), true) }}
+
+# --- Slack gateway (Socket Mode) ---
+# Sourced the same way as the model key: plain env lookup, fed by Doppler at
+# converge time (iac-conf-mgmt/prd, where these were added alongside
+# LLM_ROUTER_MASTER_KEY). Empty-string defaults keep the role inert — and the
+# gateway Slack-free — until all five are actually set.
+hermes_agent_slack_bot_token: "{{ lookup('env', 'SLACK_HERMES_BOT_TOKEN') | default('', true) }}"
+hermes_agent_slack_app_token: "{{ lookup('env', 'SLACK_HERMES_APP_TOKEN') | default('', true) }}"
+hermes_agent_slack_allowed_users: "{{ lookup('env', 'SLACK_MEMBER_ID') | default('', true) }}"
+hermes_agent_slack_home_channel: "{{ lookup('env', 'SLACK_HOME_CHANNEL') | default('', true) }}"
+hermes_agent_slack_home_channel_name: "{{ lookup('env', 'SLACK_HOME_CHANNEL_NAME') | default('', true) }}"
+
+# Daily Slack status report seeded into Hermes' built-in cron scheduler. The
+# role creates the job on converge; the gateway starts executing it on the next
+# daemon run once the Slack gateway is configured.
+hermes_agent_daily_status_cron_name: homelab-ai-fabric-status
+hermes_agent_daily_status_cron_schedule: "0 9 * * *"
+hermes_agent_daily_status_cron_prompt: >-
+  Summarize the homelab AI fabric status, including router health, Hermes
+  gateway health, DNS readiness, and any merge-ready PRs. Keep it concise.
 
 # --- Memory: best self-hostable as of June 2026 (Agy-validated) ---
 # Hindsight: local knowledge-graph + multi-strategy retrieval. Runs alongside the
@@ -37,6 +111,16 @@ hermes_agent_max_turns: 90
 # target host's configured zone.
 hermes_agent_timezone: "UTC"
 
+# --- Observability: bundled OTLP/HTTP plugin (Cribl Edge fan-out) -----------
+hermes_agent_otel_endpoint: "{{ ai_orchestration_otel_endpoint }}"
+hermes_agent_otel_service_name: hermes-agent
+hermes_agent_otel_timeout: 5
+
 # systemd ExecStart: the long-running gateway daemon. It drives the built-in cron
 # scheduler + the Kanban dispatcher even with no messaging platform configured.
-hermes_agent_gateway_cmd: "{{ hermes_agent_bin }} gateway start"
+# `gateway start` is for interactive/manual use — it shells out to manage its
+# own systemd/launchd service and requires root when no user session is
+# present ("System gateway start requires root"). `gateway run --replace` is
+# the foreground-supervised form the CLI's own --help calls out as "useful for
+# systemd" — it runs in-process under our unit instead of trying to manage one.
+hermes_agent_gateway_cmd: "{{ hermes_agent_bin }} gateway run --replace"

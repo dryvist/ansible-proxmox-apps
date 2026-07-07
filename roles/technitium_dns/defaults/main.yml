@@ -18,13 +18,6 @@ technitium_dns_api_token: "{{ lookup('env', 'TECHNITIUM_DNS_API_TOKEN') }}"
 # encrypted upstreams below. All internal A-records and service CNAMEs live under
 # this subdomain.
 technitium_dns_zone: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
-# Apex domain — referenced ONLY to remove a stale apex Primary zone if a
-# pre-existing server still owns one (so non-subdomain names forward, not
-# NXDOMAIN). Never created/served here. Derived as the PARENT of the managed
-# zone, never from env: PROXMOX_DOMAIN's meaning varies by repo (elsewhere it
-# holds the guest zone itself), and an apex equal to the zone made this task
-# delete the zone the role had just created — a live outage.
-technitium_dns_apex_domain: "{{ technitium_dns_zone.split('.', 1) | last }}"
 
 # DNS zone configuration
 technitium_dns_zone_type: "Primary"
@@ -65,6 +58,11 @@ technitium_dns_cname_records:
 # never IPs; an entry with an empty target is skipped. Empty by default.
 technitium_dns_extra_cname_records: []
 
+# Extra A records for static hosts that are not part of the Proxmox inventory
+# (e.g. the Mac Studio serving host). Format: [{name, ip}]. The IP comes from
+# existing reservation config, not from ad-hoc guessing; blank IPs are skipped.
+technitium_dns_extra_a_records: []
+
 # Traefik HTTPS ingress aliases. Each fronted service name resolves to the
 # Traefik LXC (A record -> traefik's IP), so clients reach the service over TLS
 # at https://<name>.{domain}. The name list is NOT hand-maintained here — it is
@@ -74,6 +72,15 @@ technitium_dns_extra_cname_records: []
 # own name points at Traefik, not the host — safe because all internal
 # service-to-service traffic uses container IPs, not these DNS names).
 technitium_dns_ingress_host: traefik
+# Ingress HA: fronted-service aliases resolve to the keepalived VRRP virtual IP
+# (tofu_data.ingress_vip) so a Traefik node loss never breaks name resolution —
+# the VIP floats to a surviving instance. Falls back to the single Traefik LXC's
+# own IP when no VIP is published (single-ingress / pre-HA deployments),
+# preserving the prior behavior exactly.
+technitium_dns_ingress_target_ip: >-
+  {{ (tofu_data['ingress_vip'] | default('', true))
+     if (tofu_data['ingress_vip'] | default('', true)) | length > 0
+     else (hostvars[technitium_dns_ingress_host].container_ip | default('')) }}
 # Apex ingress rows (the Proxmox cluster UI fronted at the bare subdomain) are
 # EXCLUDED here — they resolve at the zone root, not as <name>.<subdomain> — and
 # are handled by technitium_dns_ingress_apex below instead.

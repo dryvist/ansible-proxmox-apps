@@ -81,14 +81,12 @@
       ansible.builtin.assert:
         that:
           - technitium_dns_zone == 'svc.example.net'
-          - technitium_dns_apex_domain == 'example.net'
           - >-
             technitium_dns_forwarders ==
             ["https://cloudflare-dns.com/dns-query (1.1.1.1)",
             "https://dns.google/dns-query (8.8.8.8)"]
         fail_msg: >-
           Zone/forwarder mismatch: zone='{{ technitium_dns_zone }}'
-          apex='{{ technitium_dns_apex_domain }}'
           forwarders={{ technitium_dns_forwarders }}.
 
     - name: Assert Proxmox endpoint apex A records are built from env
@@ -125,3 +123,22 @@
         fail_msg: >-
           Extra-CNAME truthy filter did not drop the empty-target entry:
           {{ technitium_dns_extra_cname_records }}.
+
+    # Extra A records (verbatim IPv4 target): blank IPs are skipped the same way
+    # so a reserved-address hook can be wired in without risking a broken record.
+    - name: Assert extra-A filtering drops empty-ip entries
+      vars:
+        technitium_dns_extra_a_records:
+          - { name: jevans-ms, ip: '10.0.50.10' }
+          - { name: unset-runner, ip: '' }
+      ansible.builtin.assert:
+        that:
+          - >-
+            (technitium_dns_extra_a_records | selectattr('ip', 'truthy')
+             | list | length) == 1
+          - >-
+            (technitium_dns_extra_a_records | selectattr('ip', 'truthy')
+             | map(attribute='name') | list) == ['jevans-ms']
+        fail_msg: >-
+          Extra-A truthy filter did not drop the empty-ip entry:
+          {{ technitium_dns_extra_a_records }}.
