@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.78.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.77.1...v1.78.0) (2026-07-07)
+
+
+### Features
+
+* **langfuse_docker:** provision local LLM provider ([#663](https://github.com/dryvist/ansible-proxmox-apps/issues/663)) ([0904a33](https://github.com/dryvist/ansible-proxmox-apps/commit/0904a33f62ecbec4e800e6454d871b93d5feacba))
+
+
+### Bug Fixes
+
+* **e2e:** improve Cribl and macOS diagnostics ([#666](https://github.com/dryvist/ansible-proxmox-apps/issues/666)) ([33f0be8](https://github.com/dryvist/ansible-proxmox-apps/commit/33f0be8633e54021d425b1aad182de1e1f133ac0))
+
 ## [1.77.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.77.0...v1.77.1) (2026-07-07)
 
 
