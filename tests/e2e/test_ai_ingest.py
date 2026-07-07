@@ -40,7 +40,7 @@ def _make_ai_json_line(sentinel, source_key):
             "_raw": f"e2e ai ingest sentinel {sentinel}",
             "datatype": f"e2e-{source_key}",
         }
-    )
+    ) + "\n"
 
 
 class TestAiIngestViaHAProxy:
