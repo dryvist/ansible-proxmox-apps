@@ -16,8 +16,8 @@ tofu inventory). Tools come from the repo's Nix dev shell (`direnv allow`).
 
 | Alias(es) | Backend | Auth |
 | --- | --- | --- |
-| `gpt-oss-120b`, `qwen3-coder` | `llm-large` runner (`/v1`, bearer) | `LLM_LARGE_BEARER_TOKEN` |
-| `hermes-4-14b`, `hermes4`, `qwen3-4b`, `embeddings` | `llm-fast` (GPU) **and** `llm-light` (CPU) | none |
+| `gpt-oss-120b`, `Qwen3-Coder-30B-A3B`, `Qwen3.6-35B-A3B-4bit`, `claude-sonnet-5` | `llm-large` runner (`/v1`, bearer) | `LLM_LARGE_BEARER_TOKEN` |
+| `qwen3-4b`, `embeddings`, `claude-haiku-4-5` | `llm-fast` (GPU) **and** `llm-light` (CPU) | none |
 
 Each light alias is registered as **two deployments** with the same `model_name`
 (the GPU `llm-fast` box and the CPU `llm-light` standby). LiteLLM load-balances the
