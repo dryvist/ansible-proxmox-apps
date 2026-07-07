@@ -44,14 +44,18 @@ ai_orchestration_otel_endpoint: "http://cribl-edge.{{ ai_subdomain }}:{{ ai_otel
 # defaults are the current live values, so with the env unset the rendered output
 # is byte-identical to before.
 llm_large_serving_host: "{{ (lookup('env', 'LLM_LARGE_RUNNER_HOST') or 'jevans-ms') | split('.') | first }}"
-llm_large_serving_ip: "{{ lookup('env', 'LLM_LARGE_RUNNER_IP') | default('10.0.50.10', true) }}"
+# IP default is the local Studio reservation ONLY when no external runner host is
+# configured. If LLM_LARGE_RUNNER_HOST points at an external host without an
+# explicit LLM_LARGE_RUNNER_IP, resolve to empty so the A-record truthy filter
+# skips it (never point an external name at the local IP).
+llm_large_serving_ip: >-
+  {{ lookup('env', 'LLM_LARGE_RUNNER_IP')
+     or ('' if lookup('env', 'LLM_LARGE_RUNNER_HOST') else '10.0.50.10') }}
 
-# Auto-managed Technitium CNAME aliases for hosts that resolve outside this zone
-# (e.g. the large-tier model runner). The target is an FQDN from the environment —
-# never an IP — and the record is skipped when the env var is unset.
-technitium_dns_extra_cname_records:
-  - name: llm-large
-    target: "{{ lookup('env', 'LLM_LARGE_RUNNER_HOST') }}"
+# NOTE: the `llm-large` CNAME record lives in group_vars/technitium_dns_group.yml,
+# NOT here — an `extra_cname_records` list defined in the more-specific group file
+# REPLACES (not merges) any list here, so a definition here would be silently
+# ignored for the technitium hosts. Keep the single authoritative definition there.
 
 # Resource-domain secrets fetched from OpenBao by the openbao_secrets pre-play,
 # one dict per domain. Defaults to an empty dict for each so every consumer's
