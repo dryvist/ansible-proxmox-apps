@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.78.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.78.0...v1.78.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* stabilize OTEL boot and add apex A record ([#679](https://github.com/dryvist/ansible-proxmox-apps/issues/679)) ([be4aa90](https://github.com/dryvist/ansible-proxmox-apps/commit/be4aa908ea4a51fc32b97fe627435318c864483d))
+
 ## [1.78.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.77.1...v1.78.0) (2026-07-07)
 
 
