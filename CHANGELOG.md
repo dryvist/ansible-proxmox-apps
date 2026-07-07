@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.82.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.81.0...v1.82.0) (2026-07-07)
+
+
+### Features
+
+* **syslog:** per-program rsyslog routes + proxy family sourcetype split ([#690](https://github.com/dryvist/ansible-proxmox-apps/issues/690)) ([80b2538](https://github.com/dryvist/ansible-proxmox-apps/commit/80b2538fdf61ed12e5aefe094b85dc89e6e9339f))
+
 ## [1.81.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.80.0...v1.81.0) (2026-07-07)
 
 
