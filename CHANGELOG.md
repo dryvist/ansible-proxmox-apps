@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.79.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.79.0...v1.79.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **ai:** correct Hermes brain docs and OpenBao ai/llm KV path ([#696](https://github.com/dryvist/ansible-proxmox-apps/issues/696)) ([a059664](https://github.com/dryvist/ansible-proxmox-apps/commit/a059664d790e56642b72bf45d2b68ff7a3259ad3))
+
 ## [1.79.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.78.1...v1.79.0) (2026-07-07)
 
 
