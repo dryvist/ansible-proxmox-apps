@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.83.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.82.0...v1.83.0) (2026-07-07)
+
+
+### Features
+
+* **dns:** export Technitium query logs to the dns syslog family ([#689](https://github.com/dryvist/ansible-proxmox-apps/issues/689)) ([9372bcf](https://github.com/dryvist/ansible-proxmox-apps/commit/9372bcff212db392c6fdfabeae9e13234e3faa92))
+* **openbao:** enable the file audit device and ship it to openbao_audit ([#693](https://github.com/dryvist/ansible-proxmox-apps/issues/693)) ([1c9a8a2](https://github.com/dryvist/ansible-proxmox-apps/commit/1c9a8a233f4180d363628946359c049c58c6657e))
+
 ## [1.82.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.81.0...v1.82.0) (2026-07-07)
 
 
