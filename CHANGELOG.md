@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.81.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.80.0...v1.81.0) (2026-07-07)
+
+
+### Features
+
+* **cribl-edge:** split UniFi firewall/IPS traffic out of the unifi index ([#688](https://github.com/dryvist/ansible-proxmox-apps/issues/688)) ([ec2ad9a](https://github.com/dryvist/ansible-proxmox-apps/commit/ec2ad9a6a07071e2aaa659a93af8e5c9d4b7f4d6))
+
 ## [1.80.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.79.2...v1.80.0) (2026-07-07)
 
 
