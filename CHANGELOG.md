@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.77.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.77.0...v1.77.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **technitium_dns:** add Mac Studio A record from fixed IPs ([#675](https://github.com/dryvist/ansible-proxmox-apps/issues/675)) ([39b0fd5](https://github.com/dryvist/ansible-proxmox-apps/commit/39b0fd5ff836b0862434fc6e22d270830ccd59eb))
+
 ## [1.77.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.3...v1.77.0) (2026-07-07)
 
 
