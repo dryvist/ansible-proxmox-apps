@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.76.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.75.0...v1.76.0) (2026-07-07)
+
+
+### Features
+
+* **telemetry:** instrument hermes_agent + open_webui via Cribl OTLP ([#665](https://github.com/dryvist/ansible-proxmox-apps/issues/665)) ([353cf77](https://github.com/dryvist/ansible-proxmox-apps/commit/353cf77849a21244fe6cfd1139407da63690b3e9))
+
 ## [1.75.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.74.7...v1.75.0) (2026-07-07)
 
 
