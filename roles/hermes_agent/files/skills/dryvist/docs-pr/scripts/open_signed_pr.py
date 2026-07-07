@@ -26,7 +26,10 @@ PRIVATE_REPO = "docs-starlight"
 DAILY_CAP = 1
 
 _EMOJI = re.compile(
-    "[\U0001f000-\U0001faff\U00002600-\U000027bf\U0001f1e6-\U0001f1ff"
+    # \U0001f1e6-\U0001f1ff (regional indicators) is already inside the
+    # \U0001f000-\U0001faff block, so it is intentionally not repeated \u2014
+    # a nested range trips CodeQL py/overly-large-range (overlapping ranges).
+    "[\U0001f000-\U0001faff\U00002600-\U000027bf"
     "\u2190-\u21ff\u2300-\u23ff]"  # + arrows + miscellaneous-technical
 )
 # Obvious secret shapes to scrub from anything leaving the machine.
