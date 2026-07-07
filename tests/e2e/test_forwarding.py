@@ -14,10 +14,10 @@ class TestNetFlow:
     def test_netflow_routing(
         self, haproxy_host, constants, splunk_creds
     ):
-        """Verify NetFlow v5 UDP traffic routes to index=network.
+        """Verify NetFlow v5 UDP traffic routes to index=netflow.
 
         Sends a minimal NetFlow v5 packet to the NetFlow port on the
-        HAProxy host and verifies data appears in the network index.
+        HAProxy host and verifies data appears in the netflow index.
         """
         mgmt_url, user, password = splunk_creds
         port = constants["netflow_ports"]["unifi"]
@@ -26,10 +26,13 @@ class TestNetFlow:
         sentinel_port = 40000 + (int(time.time()) % 25000)
         send_netflow_v5(haproxy_host, port, src_port=sentinel_port)
 
+        # The ipfix pipeline stamps index=netflow (D8; verified locally at
+        # L21) — the old index=network assertion predated the per-index HEC
+        # split and matched nothing.
         # Filter by the sentinel port to avoid matching pre-existing traffic.
         # Cribl's netflow input emits camelCase field names (srcPort), which
         # Splunk's JSON auto-extraction preserves — src_port never matches.
-        search_str = f'index=network srcPort={sentinel_port} | head 5'
+        search_str = f'index=netflow srcPort={sentinel_port} | head 5'
         deadline = time.time() + 120
 
         results = []
@@ -43,5 +46,5 @@ class TestNetFlow:
 
         assert len(results) > 0, (
             f"NetFlow routing: no events with srcPort={sentinel_port} "
-            f"found in index=network after 120s"
+            f"found in index=netflow after 120s"
         )
