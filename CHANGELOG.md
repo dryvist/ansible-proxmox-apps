@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.80.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.79.2...v1.80.0) (2026-07-07)
+
+
+### Features
+
+* **ai-ingest:** HAProxy + Cribl Stream fan-in for AI/LLM log sources ([#687](https://github.com/dryvist/ansible-proxmox-apps/issues/687)) ([23ac78d](https://github.com/dryvist/ansible-proxmox-apps/commit/23ac78d71fc18ef79f8144674aa53f7af9de3cba))
+
 ## [1.79.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.79.1...v1.79.2) (2026-07-07)
 
 
