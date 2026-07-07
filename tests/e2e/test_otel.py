@@ -10,7 +10,6 @@ Skips when the inventory predates the otel_traces_http service port.
 """
 
 import json
-import ssl
 import time
 import urllib.error
 import urllib.request
@@ -65,17 +64,17 @@ def _make_otlp_trace_payload(sentinel):
 
 
 def _post_otlp_traces(host, port, payload):
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(
         f"http://{host}:{port}/v1/traces",
         data=payload,
         method="POST",
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=10) as response:
-        return response.status
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return response.status
+    except urllib.error.HTTPError as e:
+        return e.code
 
 
 class TestOtelSplunkFanout:
