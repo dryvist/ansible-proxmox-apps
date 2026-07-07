@@ -21,7 +21,7 @@ VLAN.
   dispatcher (autonomy) even with no messaging platform configured.
 - `HERMES_HOME` (`/var/lib/hermes/.hermes`) lives on a dedicated ZFS data volume —
   memory, skills, profiles, the Kanban DB, sessions and logs — so it is snapshotted
-  and replicated pve→pve3 (the agent's accumulated knowledge is irreplaceable).
+  and replicated to the DR node (the agent's accumulated knowledge is irreplaceable).
 - Points the model backend at the LiteLLM router (`Qwen3-Coder-30B-A3B` via
   `llm.<subdomain>/v1`, OpenAI-compatible, 262144 context); sets memory provider to **Hindsight** (best self-hostable
   June 2026) alongside the always-on `MEMORY.md`/`USER.md`; caps `agent.max_turns`
