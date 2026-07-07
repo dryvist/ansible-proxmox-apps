@@ -55,6 +55,34 @@
       --branch {{ hermes_agent_version }} --skip-setup --non-interactive
     creates: "{{ hermes_agent_bin }}"
 
+# Upstream bug (NousResearch/hermes-agent, agent/conversation_loop.py):
+# the length-continuation and truncated-tool-call retry paths boost
+# max_tokens on each retry, but floor the boost ceiling at
+# `max(32768, requested_cap)` — so when the provider enforces a real hard
+# cap below 32768 (our config.yaml `model.max_tokens: 8192`, matching
+# vllm-mlx's `--max-request-tokens 8192` on the Mac Studio brain), the very
+# first truncation retry re-sends a request the server is guaranteed to
+# 400 identically ("max_tokens exceeds server limit"), burning all retries
+# and surfacing the error to the user instead of completing the response.
+# `agent.max_tokens` is already the user's explicit config-level ceiling;
+# treat it as absolute instead of a floor for the boost. Runs every
+# converge (idempotent regexp match) because `hermes update` self-updates
+# the app out from under this checkout and would silently drop the patch
+# otherwise.
+- name: Patch hermes-agent retry boost to respect the configured max_tokens ceiling
+  ansible.builtin.replace:
+    path: "{{ hermes_agent_install_dir }}/agent/conversation_loop.py"
+    regexp: '^(\s*)_tc_boost_cap = max\(32768, _tc_requested_cap or 0\)$'
+    replace: '\1_tc_boost_cap = agent.max_tokens if agent.max_tokens else max(32768, _tc_requested_cap or 0)'
+  notify: Restart hermes-gateway
+
+- name: Patch hermes-agent length-continuation boost to respect the configured max_tokens ceiling
+  ansible.builtin.replace:
+    path: "{{ hermes_agent_install_dir }}/agent/conversation_loop.py"
+    regexp: '^(\s*)_boost_cap = max\(32768, _requested_cap or 0\)$'
+    replace: '\1_boost_cap = agent.max_tokens if agent.max_tokens else max(32768, _requested_cap or 0)'
+  notify: Restart hermes-gateway
+
 # The base install skips optional messaging-platform extras (they pull in
 # platform SDKs like slack-bolt that most converges never need). Without this,
 # the gateway logs "Platform 'Slack' requirements not met" and refuses to
