@@ -78,3 +78,48 @@ its client package on first run — `memory status` check is non-fatal so it sur
 without failing the converge). Single-profile first; profiles + Kanban teams + a
 messaging gateway are a documented follow-up (the whole `HERMES_HOME` is already
 persisted for them).
+
+## LLM knowledge base (llm-wiki)
+
+Enables the bundled `research/llm-wiki` skill so Hermes builds and maintains an
+interlinked Markdown "second brain" from raw sources (build / query / lint /
+maintain, with SHA256 source-drift detection). The wiki lives at `WIKI_PATH` =
+`{{ hermes_agent_wiki_path }}` (`/var/lib/hermes/wiki`) — under the persistent
+ZFS volume, so it is snapshotted and replicated. A nightly cron seeds a
+lint/health-check. Context compression is enabled (`summary_model` pointed at the
+router, since the upstream Google default is unreachable here) so long autonomous
+sessions don't overflow.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_wiki_enabled` | `true` | enable llm-wiki + create the wiki dir |
+| `hermes_agent_wiki_path` | `{{ hermes_agent_home }}/wiki` | persistent wiki root (`WIKI_PATH`) |
+| `hermes_agent_context_compression_enabled` | `true` | auto-shrink long sessions |
+| `hermes_agent_context_compression_threshold` | `0.85` | compress at 85% of context |
+| `hermes_agent_nightly_wiki_cron_*` | — | nightly lint/health-check cron |
+
+## Autonomous GitHub docs-contributor
+
+Gives Hermes a **read public dryvist repos + open signed, draft, no-merge doc PRs**
+capability against `dryvist/docs` and `dryvist/docs-starlight`, via a dedicated
+GitHub App (`hermes-docs-bot`). Commits are authored through the
+`createCommitOnBranch` GraphQL mutation so GitHub marks them **Verified/signed**
+(a plain `git push` is rejected by the org's required-signatures ruleset). The
+bundled `dryvist/docs-pr` skill enforces the guardrails: draft-only, attribution
+triad, dated branches, `docs:` Conventional-Commit titles, per-repo/day caps +
+de-dup, secret redaction, and absolute privacy routing (sensitive → docs-starlight
+only). **No-merge** is guaranteed by the org ruleset (human review + signatures,
+the App is not a bypass actor), not by the token scope.
+
+App creds are delivered from OpenBao `secret/ai/hermes` (`bao_local_llm_secrets`)
+with an env fallback; the PEM is written to `{{ hermes_agent_hermes_home }}/github-app.pem`
+(`0600`, `no_log`). The role stays inert until the creds are set.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_github_app_id` | `""` | GitHub App ID (bao/env) |
+| `hermes_agent_github_app_installation_id` | `""` | App installation ID (bao/env) |
+| `hermes_agent_github_app_private_key` | `""` | App PEM (bao/env; written to a 0600 file) |
+
+Helper unit tests: `roles/hermes_agent/files/skills/dryvist/docs-pr/tests/` — run
+`python -m pytest` from that skill dir (all guardrail logic, no network).
