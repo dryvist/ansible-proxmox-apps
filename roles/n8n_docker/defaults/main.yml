@@ -1,0 +1,100 @@
+---
+# n8n workflow automation (Community Edition) — self-hosted via Docker Compose in
+# an LXC. Bundled stack: postgres + n8n app. https://docs.n8n.io/hosting/
+#
+# All literals live here; the template references vars only (DRY).
+#
+# Observability note: n8n emits no native OpenTelemetry to the homelab pipeline.
+# It is a workflow builder, not a traced service; individual workflows call the
+# LiteLLM router directly. Do not add OTEL_* env expecting traces.
+
+# Image tags — single source of truth. Bump via Renovate or manual review.
+n8n_docker_app_image: "n8nio/n8n:2.28.7"
+n8n_docker_postgres_image: "postgres:16-alpine"
+
+n8n_docker_container_name: n8n
+n8n_docker_data_dir: /opt/n8n
+n8n_docker_postgres_data_dir: "{{ n8n_docker_data_dir }}/postgres"
+# n8n's home (.n8n): logs, binary-data, and the config file. Workflow + credential
+# state lives in postgres; this holds runtime files only.
+n8n_docker_app_data_dir: "{{ n8n_docker_data_dir }}/data"
+# Seed lives INSIDE the mounted .n8n home so it is visible in the container at
+# {{ n8n_docker_app_internal_data }}/seed for the `n8n import:workflow` exec.
+n8n_docker_seed_dir: "{{ n8n_docker_app_data_dir }}/seed"
+
+# Container-internal mount paths (image contracts — set once, referenced in template).
+n8n_docker_postgres_internal_data: /var/lib/postgresql/data
+n8n_docker_app_internal_data: /home/node/.n8n
+# The n8n image runs as user `node` (uid 1000). In an unprivileged LXC that uid
+# maps straight through, so the bind-mounted home must be owned by 1000 or n8n
+# cannot write its config/logs (postgres self-chowns as root, n8n cannot).
+n8n_docker_app_uid: 1000
+n8n_docker_app_gid: 1000
+
+# Compose service names (also the Docker DNS hostnames used in the DB URL).
+n8n_docker_db_service: postgres
+n8n_docker_app_service: n8n
+
+# Database identity.
+n8n_docker_db_name: n8n
+n8n_docker_db_user: n8n
+
+# Restart policy applied to every service. Also absorbs the first-boot race where
+# n8n starts before postgres finishes initdb — n8n restarts until the DB answers.
+n8n_docker_restart_policy: unless-stopped
+
+# Public FQDN (Traefik fronts https://n8n.<subdomain> with the wildcard cert).
+n8n_docker_subdomain: >-
+  {{ lookup('env', 'PROXMOX_SUBDOMAIN') | mandatory('PROXMOX_SUBDOMAIN required') }}
+n8n_docker_fqdn: "n8n.{{ n8n_docker_subdomain }}"
+
+# Ports pulled from the OpenTofu pipeline_constants (DRY: no port literal here).
+_n8n_docker_web_port_err: >-
+  tofu_data.constants.service_ports.n8n_web missing —
+  regenerate tofu_inventory.json via
+  `terragrunt output -json ansible_inventory`.
+n8n_docker_web_port: >-
+  {{ hostvars['localhost']['tofu_data']
+     ['constants']['service_ports']['n8n_web']
+     | mandatory(_n8n_docker_web_port_err) }}
+_n8n_docker_postgres_port_err: >-
+  tofu_data.constants.service_ports.postgres_default missing —
+  regenerate tofu_inventory.json via
+  `terragrunt output -json ansible_inventory`.
+n8n_docker_postgres_port: >-
+  {{ hostvars['localhost']['tofu_data']
+     ['constants']['service_ports']['postgres_default']
+     | mandatory(_n8n_docker_postgres_port_err) }}
+
+# Model backend for the seed workflow — the LiteLLM router (fabric front door) at
+# https://llm.<subdomain>/v1, inherited from ai_orchestration_group group_vars.
+# Passed into the n8n container env so the seed workflow references it via
+# {{ $env.* }} expressions rather than baking the key into the workflow JSON.
+n8n_docker_llm_base_url: "{{ ai_orchestration_ollama_base_url }}"
+n8n_docker_llm_api_key: "{{ ai_orchestration_model_api_key }}"
+n8n_docker_seed_model: "gpt-oss-120b"
+
+# Secrets — from runtime env; never committed. Whatever injects the env
+# (OpenBao, SOPS, Doppler) is a deployment-time concern, not this role's.
+n8n_docker_db_password: >-
+  {{ lookup('env', 'N8N_DB_PASSWORD')
+     | mandatory('N8N_DB_PASSWORD unset (openssl rand -base64 24; store in OpenBao/SOPS)') }}
+# Owner login email — not a secret; defaults are fine (change it in the UI later).
+n8n_docker_owner_email: >-
+  {{ lookup('env', 'N8N_OWNER_EMAIL') | default('admin@n8n.local', true) }}
+n8n_docker_owner_password: >-
+  {{ lookup('env', 'N8N_OWNER_PASSWORD')
+     | mandatory('N8N_OWNER_PASSWORD unset (>=8 chars, 1 number, 1 capital)') }}
+n8n_docker_owner_firstname: "Homelab"
+n8n_docker_owner_lastname: "Admin"
+
+# N8N_ENCRYPTION_KEY (encrypts stored credentials) — generated once on the LXC and
+# persisted to {{ n8n_docker_data_dir }}/.encryption_key (root:root 0600), then
+# reused so a redeploy does not invalidate stored credentials. Override only to
+# share an explicit value across hosts.
+n8n_docker_encryption_key: ""
+
+# Seed a minimal "hello" workflow (Manual Trigger -> HTTP Request to the LiteLLM
+# router) on first run so there is something to run immediately. Idempotent via a
+# marker file; import failure is non-fatal.
+n8n_docker_seed_workflow: true
