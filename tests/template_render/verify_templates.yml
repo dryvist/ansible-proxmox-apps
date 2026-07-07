@@ -1428,6 +1428,71 @@
           - force_splunk_meta: conditional evals + valid mask schema (matchRegex/replaceExpr)
           - prometheus_to_netmon: eval coerces non-finite values + stamps index=netmon_metrics
 
+- name: Render and verify the cribl_edge syslog pipeline (unifi fw split)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Mirror roles/cribl_edge/defaults/main.yml: a representative subset of the
+    # tofu syslog_port_map plus the firewall-split match pattern.
+    cribl_edge_syslog_routing:
+      unifi: { standard: 514, high: 1514, index: unifi, sourcetype: "ubiquiti:unifi" }
+      linux: { standard: 517, high: 1517, index: os, sourcetype: syslog }
+    cribl_edge_unifi_fw_match: >-
+      \[[A-Z][A-Z0-9_-]*-[AD]\]|\bIN=\S* OUT=\S* MAC=|suricata
+    _template_dir: "../../roles/cribl_edge/templates"
+
+  tasks:
+    - name: Render the edge syslog pipeline to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/syslog/conf.yml.j2"
+        dest: /tmp/test_cribl_edge_syslog_pipeline.yml
+        mode: "0644"
+
+    - name: Read the rendered edge syslog pipeline
+      ansible.builtin.slurp:
+        src: /tmp/test_cribl_edge_syslog_pipeline.yml
+      register: _edge_syslog_raw
+
+    - name: Decode and parse the rendered edge syslog pipeline
+      ansible.builtin.set_fact:
+        _edge_syslog: "{{ _edge_syslog_raw.content | b64decode }}"
+        _edge_syslog_yaml: "{{ _edge_syslog_raw.content | b64decode | from_yaml }}"
+
+    - name: Extract the rendered index/sourcetype expressions
+      ansible.builtin.set_fact:
+        _edge_index_expr: >-
+          {{ (_edge_syslog_yaml.functions | first).conf.add
+             | selectattr('name', 'equalto', 'index') | map(attribute='value') | first }}
+        _edge_sourcetype_expr: >-
+          {{ (_edge_syslog_yaml.functions | first).conf.add
+             | selectattr('name', 'equalto', 'sourcetype') | map(attribute='value') | first }}
+
+    - name: Assert the unifi firewall/IPS split branch precedes the plain unifi branch
+      ansible.builtin.assert:
+        that:
+          # The fw branch tests _raw against the match pattern on the unifi port.
+          - "\".test(_raw) ? 'firewall' :\" in _edge_index_expr"
+          - "\".test(_raw) ? 'ubiquiti:firewall' :\" in _edge_sourcetype_expr"
+          # Ternary chains evaluate in order — the fw branch MUST come first,
+          # otherwise the plain unifi branch swallows every gateway line.
+          - "_edge_index_expr.index(\".test(_raw) ? 'firewall'\") < _edge_index_expr.index(\"? 'unifi'\")"
+          # Non-unifi families are untouched (single plain branch each).
+          - "\"__inputId.includes('1517') ? 'os' :\" in _edge_index_expr"
+          - "_edge_index_expr.count('.test(_raw)') == 1"
+        fail_msg: >-
+          The unifi firewall/IPS split did not render before the plain unifi
+          branch (or leaked into other families): {{ _edge_index_expr }}
+
+    - name: Cribl Edge syslog pipeline rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          cribl_edge syslog pipeline assertions passed:
+          - unifi fw/IPS split branch (regex on _raw) renders BEFORE the plain
+            unifi branch, stamping index=firewall sourcetype=ubiquiti:firewall
+          - other families keep their single plain branch
+
 - name: Render and verify unifi_metrics templates
   hosts: localhost
   connection: local
