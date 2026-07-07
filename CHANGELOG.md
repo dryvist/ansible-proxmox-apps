@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.76.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.2...v1.76.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* **llm_router:** propagate model context windows ([#664](https://github.com/dryvist/ansible-proxmox-apps/issues/664)) ([547e2cd](https://github.com/dryvist/ansible-proxmox-apps/commit/547e2cd5b67545729bf1297253ca24f98459689d))
+
 ## [1.76.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.1...v1.76.2) (2026-07-07)
 
 
