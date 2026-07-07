@@ -7,6 +7,11 @@
 
 * **hermes:** raise the output-token envelope to the serving cap (32768) ([#683](https://github.com/dryvist/ansible-proxmox-apps/issues/683)) ([b579ae9](https://github.com/dryvist/ansible-proxmox-apps/commit/b579ae9053ab4546b5750e0344bc4750009560a6))
 
+
+### Bug Fixes
+
+* **technitium:** stop printing the freshly-minted API token in converge output ([#684](https://github.com/dryvist/ansible-proxmox-apps/issues/684)) ([e41ea7b](https://github.com/dryvist/ansible-proxmox-apps/commit/e41ea7bb654b435a4f6f9a86b6d5964df2936638))
+
 ## [1.78.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.78.0...v1.78.1) (2026-07-07)
 
 
