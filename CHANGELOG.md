@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.77.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.3...v1.77.0) (2026-07-07)
+
+
+### Features
+
+* **hermes_agent:** seed daily Slack status cron ([fd4a36d](https://github.com/dryvist/ansible-proxmox-apps/commit/fd4a36df48575b42a6984c9e123a166949426f1b))
+
 ## [1.76.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.2...v1.76.3) (2026-07-07)
 
 
