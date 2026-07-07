@@ -6,6 +6,22 @@
 # host logs + every systemd service (and Docker containers whose compose
 # log-driver is journald). The disk-assisted queue survives a receiver outage
 # instead of dropping logs.
+{% for route in syslog_forwarder_program_routes %}
+# Program route: {{ route.program }} -> {{ syslog_forwarder_target_host }}:{{ route.port }}
+# Rendered ABOVE the catch-all; `stop` keeps these lines off the catch-all port.
+if $programname == '{{ route.program }}' then {
+  action(type="omfwd"
+         target="{{ syslog_forwarder_target_host }}"
+         port="{{ route.port }}"
+         protocol="{{ syslog_forwarder_protocol }}"
+         queue.type="LinkedList"
+         queue.filename="cribl_fwd_{{ route.program }}"
+         queue.maxDiskSpace="{{ syslog_forwarder_queue_max_disk_space }}"
+         queue.saveOnShutdown="on"
+         action.resumeRetryCount="-1")
+  stop
+}
+{% endfor %}
 *.* action(type="omfwd"
            target="{{ syslog_forwarder_target_host }}"
            port="{{ syslog_forwarder_target_port }}"
