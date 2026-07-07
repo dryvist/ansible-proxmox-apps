@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.76.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.76.0...v1.76.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **n8n_docker:** retry the owner-setup settings read on startup ([#669](https://github.com/dryvist/ansible-proxmox-apps/issues/669)) ([a4e5056](https://github.com/dryvist/ansible-proxmox-apps/commit/a4e5056ee116d00fe5d320a404c85145f2cdcfa7))
+
 ## [1.76.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.75.0...v1.76.0) (2026-07-07)
 
 
