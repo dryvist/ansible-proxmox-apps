@@ -49,8 +49,29 @@ cribl_stream_splunk_hec_token: "{{ lookup('env', 'SPLUNK_HEC_TOKEN') }}"
 # (in_cribl_s2s) fans one TCP stream into many indexes by datatype and stays on
 # the shared legacy output (Cribl 4.8.0-alpha can't split one input by index).
 cribl_stream_hec_namespace: "{{ lookup('env', 'HEC_NAMESPACE') | default('', true) }}"
-cribl_stream_per_index_indexes:
-  - netflow
+
+# AI/LLM log routing from tofu constants (single source of truth): per source
+# name — HAProxy-fronted TCP port plus the Splunk index/sourcetype the ai_stamp
+# pipeline stamps. Guarded with default({}) so an inventory that predates
+# ai_log_routing renders no AI inputs instead of failing.
+cribl_stream_ai_log_routing: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['ai_log_routing']
+     | default({}) }}
+
+# Input type per AI source. Default is tcpjson (agent CLIs / serving hosts ship
+# newline-delimited JSON over TCP). rsyslog senders (omfwd) speak RFC3164/5424,
+# so their inputs must be syslog-type instead — override per name here.
+cribl_stream_ai_input_types:
+  homelab_llm: syslog
+  openbao_audit: syslog
+
+# Per-index HEC outputs to render: netflow (in_ipfix) plus every unique index
+# named in ai_log_routing (claude/codex/gemini/openai/vscode/llm/openbao_audit
+# with the current tofu constants) — derived, never hand-maintained.
+cribl_stream_per_index_indexes: >-
+  {{ (['netflow']
+      + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
+     | unique | list }}
 cribl_stream_splunk_hec_tls: true
 cribl_stream_splunk_hec_tls_verify: false  # Self-signed cert in lab
 # Single definition shared by the template and the drift check in tasks.

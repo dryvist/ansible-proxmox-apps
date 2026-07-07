@@ -612,6 +612,10 @@
         container_ip: 192.168.0.182
       - inventory_hostname: cribl-stream-02
         container_ip: 192.168.0.183
+    # Mirror the ai_log_routing-derived default (two representative entries).
+    haproxy_ai_log_mappings:
+      claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
+      openbao_audit: { port: 10331, index: openbao_audit, sourcetype: "openbao:audit" }
     _template_dir: "../../roles/haproxy/templates"
 
   tasks:
@@ -656,6 +660,21 @@
         fail_msg: >-
           DRY audit caused a behavior change with HTTP disabled — TCP/syslog
           rendering differs from prior literal-baked config.
+
+    - name: Assert AI ingest frontends and backends render toward the Stream pair
+      ansible.builtin.assert:
+        that:
+          - "'frontend ai_claude_code_10311' in _haproxy_disabled"
+          - "'bind *:10311' in _haproxy_disabled"
+          - "'default_backend ai_backend_10311' in _haproxy_disabled"
+          - "'backend ai_backend_10311' in _haproxy_disabled"
+          - "'server cribl-stream-01 192.168.0.182:10311' in _haproxy_disabled"
+          - "'server cribl-stream-02 192.168.0.183:10311' in _haproxy_disabled"
+          - "'frontend ai_openbao_audit_10331' in _haproxy_disabled"
+          - "'server cribl-stream-01 192.168.0.182:10331' in _haproxy_disabled"
+        fail_msg: >-
+          haproxy.cfg.j2 did not render an AI ingest frontend/backend pair per
+          ai_log_routing entry pointing at the Cribl Stream servers.
 
     - name: Assert disabled config DOES NOT emit any HTTP/HTTPS frontends or backends
       ansible.builtin.assert:
@@ -1328,6 +1347,23 @@
     cribl_stream_pq_enabled: true
     cribl_stream_prometheus_rw_port: 9201
     cribl_stream_prometheus_rw_api_path: /api/v1/write
+    # Mirror the ai_log_routing-derived defaults (representative subset:
+    # one tcpjson CLI source + one rsyslog-fed syslog-type source).
+    cribl_stream_ai_log_routing:
+      claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
+      homelab_llm: { port: 10323, index: llm, sourcetype: llamaswap }
+    cribl_stream_ai_input_types:
+      homelab_llm: syslog
+      openbao_audit: syslog
+    cribl_stream_hec_namespace: ""
+    cribl_stream_per_index_indexes: >-
+      {{ (['netflow']
+          + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
+         | unique | list }}
+    # outputs.yml.j2 stand-ins (per-index render below).
+    cribl_stream_splunk_hec_url: "https://splunk-hec.pve.example.com/services/collector/event"
+    cribl_stream_splunk_hec_token: "test-hec-token-placeholder"
+    cribl_stream_splunk_hec_tls_verify: false
     _template_dir: "../../roles/cribl_stream/templates"
 
   tasks:
@@ -1349,6 +1385,21 @@
         dest: /tmp/test_cribl_stream_prometheus_to_netmon.yml
         mode: "0644"
 
+    - name: Render ai_stamp conf.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/ai_stamp/conf.yml.j2"
+        dest: /tmp/test_cribl_stream_ai_stamp.yml
+        mode: "0644"
+
+    - name: Render outputs.yml.j2 with per-index HEC enabled to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/outputs.yml.j2"
+        dest: /tmp/test_cribl_stream_outputs_per_index.yml
+        mode: "0644"
+      vars:
+        # Documentation-only namespace UUID (RFC 4122 test value).
+        cribl_stream_hec_namespace: "11111111-2222-4333-8444-555555555555"
+
     - name: Read rendered cribl_stream templates
       ansible.builtin.slurp:
         src: "{{ item }}"
@@ -1357,12 +1408,16 @@
         - /tmp/test_cribl_stream_inputs.yml
         - /tmp/test_cribl_stream_force_splunk_meta.yml
         - /tmp/test_cribl_stream_prometheus_to_netmon.yml
+        - /tmp/test_cribl_stream_ai_stamp.yml
+        - /tmp/test_cribl_stream_outputs_per_index.yml
 
     - name: Decode cribl_stream rendered content
       ansible.builtin.set_fact:
         _cribl_stream_inputs: "{{ _cribl_stream_rendered.results[0].content | b64decode }}"
         _cribl_stream_meta_pipeline: "{{ _cribl_stream_rendered.results[1].content | b64decode }}"
         _cribl_stream_prom_pipeline: "{{ _cribl_stream_rendered.results[2].content | b64decode }}"
+        _cribl_stream_ai_pipeline: "{{ _cribl_stream_rendered.results[3].content | b64decode }}"
+        _cribl_stream_outputs_pi: "{{ _cribl_stream_rendered.results[4].content | b64decode }}"
 
     - name: Assert S2S input attaches the force_splunk_meta connection pipeline
       ansible.builtin.assert:
@@ -1388,6 +1443,53 @@
           prometheusAPI: /api/v1/write (required by Cribl schema) connected
           to the prometheus_to_netmon pipeline
 
+    - name: Assert AI ingest inputs render per routing entry with the right type
+      ansible.builtin.assert:
+        that:
+          # tcpjson CLI source.
+          - "'in_ai_claude_code' in _cribl_stream_inputs"
+          - "'type: tcpjson' in _cribl_stream_inputs"
+          - "'port: 10311' in _cribl_stream_inputs"
+          # rsyslog-fed source renders a syslog-type, TCP-only input.
+          - "'in_ai_homelab_llm' in _cribl_stream_inputs"
+          - "'type: syslog' in _cribl_stream_inputs"
+          - "'tcpPort: 10323' in _cribl_stream_inputs"
+          # Both connect through the ai_stamp pipeline.
+          - "'pipeline: ai_stamp' in _cribl_stream_inputs"
+        fail_msg: >-
+          inputs.yml.j2 must render one in_ai_<name> input per ai_log_routing
+          entry (tcpjson by default, syslog-type for rsyslog senders), each
+          connected via the ai_stamp pipeline
+
+    - name: Assert ai_stamp pipeline stamps conditionally and parses as YAML
+      ansible.builtin.assert:
+        that:
+          - "(_cribl_stream_ai_pipeline | from_yaml).functions | length == 2"
+          - "'index ||' in _cribl_stream_ai_pipeline"
+          - "'sourcetype ||' in _cribl_stream_ai_pipeline"
+          - "\"__inputId.includes('in_ai_claude_code') ? 'claude'\" in _cribl_stream_ai_pipeline"
+          - "\"__inputId.includes('in_ai_homelab_llm') ? 'llamaswap'\" in _cribl_stream_ai_pipeline"
+          - "'matchRegex' in _cribl_stream_ai_pipeline"
+          - "'replaceExpr' in _cribl_stream_ai_pipeline"
+          - "'regex:' not in _cribl_stream_ai_pipeline"
+        fail_msg: >-
+          ai_stamp conf.yml must keep conditional evals (index || ...) driven by
+          __inputId and the same matchRegex/replaceExpr mask schema as
+          force_splunk_meta
+
+    - name: Assert per-index HEC outputs render for netflow + every AI index
+      ansible.builtin.assert:
+        that:
+          - "'splunk_hec_netflow' in _cribl_stream_outputs_pi"
+          - "'splunk_hec_claude' in _cribl_stream_outputs_pi"
+          - "'splunk_hec_llm' in _cribl_stream_outputs_pi"
+          # Derived list is unique — no duplicated output ids.
+          - "_cribl_stream_outputs_pi.count('id: splunk_hec_llm') == 1"
+        fail_msg: >-
+          outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
+          splunk_hec_<index> output for netflow plus each unique
+          ai_log_routing index
+
     - name: Assert force_splunk_meta evals are conditional and mask schema is valid
       ansible.builtin.assert:
         that:
@@ -1396,6 +1498,10 @@
           - "'matchRegex' in _cribl_stream_meta_pipeline"
           - "'replaceExpr' in _cribl_stream_meta_pipeline"
           - "'regex:' not in _cribl_stream_meta_pipeline"
+          # Copilot datatypes stamp index=openai — there is no 'copilot' index;
+          # openai is the designated Copilot/OpenAI CLI index (ai_log_routing).
+          - "\"? 'openai'\" in _cribl_stream_meta_pipeline"
+          - "\"? 'copilot'\" not in _cribl_stream_meta_pipeline"
         fail_msg: >-
           force_splunk_meta must keep conditional evals (index || ...) so
           Edge-stamped events pass through, and the mask rules must use
