@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.97.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.3...v1.97.0) (2026-07-08)
+
+
+### Features
+
+* **download_vpn,servarr_wiring:** FlareSolverr for CloudFlare-gated indexers ([#765](https://github.com/dryvist/ansible-proxmox-apps/issues/765)) ([994a1e7](https://github.com/dryvist/ansible-proxmox-apps/commit/994a1e7f3a39cc381b1850d690ca7a495ef66a22))
+
 ## [1.96.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.2...v1.96.3) (2026-07-08)
 
 
