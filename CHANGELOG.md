@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.100.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.3...v1.100.0) (2026-07-08)
+
+
+### Features
+
+* **codex_runner:** bootstrap auth.json from OpenBao (create-only) ([#779](https://github.com/dryvist/ansible-proxmox-apps/issues/779)) ([8ca78cb](https://github.com/dryvist/ansible-proxmox-apps/commit/8ca78cb6ab2ac20c206fdc3ec5e2b0a83081d09e))
+* **hermes_agent:** repoint brain to OptiQ-4bit 35B per agentic bench ([#778](https://github.com/dryvist/ansible-proxmox-apps/issues/778)) ([d30c73c](https://github.com/dryvist/ansible-proxmox-apps/commit/d30c73c3a6a6d96cca20dea4daecba888b5224d5))
+
 ## [1.99.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.2...v1.99.3) (2026-07-08)
 
 
