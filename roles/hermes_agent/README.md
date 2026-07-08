@@ -198,7 +198,7 @@ rendered only when Slack is configured.
 | `splunk-security` | `9,39 * * * *` | DM, silent-unless-anomaly | security lens |
 | `splunk-parsing` | `24 * * * *` | DM, silent-unless-anomaly | data-quality / parsing lens |
 | `splunk-deepdive` | `44 */6 * * *` | local (quiet) | characterize one index → wiki + memory |
-| `splunk-digest` | `50 8,20 * * *` | home channel (always) | "what I'm seeing + current normal" |
+| `splunk-digest` | `50 * * * *` | home channel (always) | hourly "what I'm seeing + current normal" heartbeat |
 
 Cron seeding is idempotent (create-if-absent) and gated on Hermes being able to
 **both** query Splunk (`hermes_agent_splunk_mcp_url` set) **and** deliver to Slack
