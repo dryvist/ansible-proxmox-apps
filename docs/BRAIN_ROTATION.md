@@ -75,9 +75,9 @@ router guests — a fast uvicorn bounce, acceptable as a scheduled 00:00/12:00 b
 `inventory/group_vars/all.yml` (one place, no scattered duplicates):
 
 ```yaml
-ai_rotation_enabled: false                              # master switch
-ai_default_model_optimized: Qwen3.6-35B-A3B-OptiQ-4bit  # 12:00 UTC brain
-ai_default_model_large: gpt-oss-120b                    # 00:00 UTC brain (interim; see capacity)
+ai_rotation_enabled: false                                 # master switch
+ai_default_model_optimized: Qwen3.6-35B-A3B-OptiQ-4bit     # 12:00 UTC brain
+ai_default_model_large: Qwen3-Next-80B-A3B-Thinking-4bit   # 00:00 UTC brain
 # Derived pointer every consumer already reads. When rotation is off it equals
 # the optimized id (byte-identical to the old literal); when on it is the alias.
 ai_default_model: "{{ 'ai-default' if ai_rotation_enabled | bool else ai_default_model_optimized }}"
@@ -106,67 +106,62 @@ rotation; a phase id not in the table fails the converge loud.
 With `ai_rotation_enabled: false` none of this renders; the base
 `config.yaml` is the real file it is today.
 
-## Capacity math (the real blocker for the future large model)
+## Capacity math
 
-Serving host: the Mac Studio, 128 GB, ~118 GB wired ceiling.
+Serving host: the Mac Studio, 128 GB, ~118 GB wired ceiling, ~109 GB cache-clear
+trip (`gpuMemoryUtilization 0.80`).
 
-**Current `nix-darwin` main residents** (`lib/hosts.nix`):
+**Current `nix-darwin` main residents** (`lib/hosts.nix`, release 1.73.0 / #1589):
 
 | Resident | Weights | KV cache |
 | --- | --- | --- |
-| `gpt-oss-120b-MXFP4-Q8` (default) | 63.3 GB | 6.0 GB |
 | `Qwen3-Coder-30B-A3B-4bit` (coding) | 17.1 GB | 6.0 GB |
-| **Resident total** | **80.4 GB** | **12.0 GB → 92.4 GB** |
+| `Qwen3.6-35B-A3B-OptiQ-4bit` (tool-calling) | 19.5 GB | 16.0 GB |
+| **Resident total** | **36.6 GB** | **22.0 GB → 58.6 GB** |
 
-Swap headroom under the 118 GB ceiling ≈ **25.6 GB**. The swap-tier
-`Qwen3.6-35B-A3B-4bit` (20.4 GB + 3 GB cache) fits; OptiQ-4bit (~19.5 GB + cache)
-fits and is served today via nix-ai auto-discovery.
+`gpt-oss-120b` is **no longer preloaded** (it failed the agentic gate at 0%): it
+drops to on-demand and idle-unloads. Auto-discovery is force-disabled fleet-wide
+(`hosts/common/mlx-no-autodiscover.nix`), so every swap model is registered
+explicitly.
 
-Which large candidate fits alongside the 92.4 GB resident pair:
+**The large phase (`Qwen3-Next-80B-A3B-Thinking-4bit`) fits the swap tier:**
+58.6 GB residents + ~42 GB weights + 4 GB cache **≈ 104.6 GB**, under the ~109 GB
+trip. The cache is deliberately kept small (4 GB) to hold that margin; the model
+idle-unloads at 900 s back to the 58.6 GB baseline. It is registered in
+`lib/hosts.nix:mlx.models` (see the companion nix-darwin PR), **not** auto-
+discovered — a discovered model would inherit the default model's serve flags
+(wrong parser for a Qwen brain).
 
-- **`gpt-oss-120b` (interim)** — already a resident, so **0 extra bytes**; it is
-  the large phase at no memory cost.
-- **`Qwen3-Next-80B-A3B-Thinking-4bit`** — 42 GB on disk. Does **not** fit:
-  92.4 + 42 + cache ≈ 137 GB, well over the 118 GB ceiling. The auto-discover
-  preflight (`disk × 1.3 = 54.6 GB > available`) even refuses to register it.
+**Why not `gpt-oss-120b` as the large brain?** It is the biggest local model, but
+it scored **0% valid agentic tool calls** in the 2026-07-08 grid, so serving it as
+Hermes's brain 12h/day would lobotomize tool-calling — the exact regression the
+A/B is meant to surface, not cause. Next-80B benched 100% valid (single run,
+provisional), degrades ~round 17, ~12 tok/s. Both rotation phases carry a 262144
+context, so the `ai-default` alias's `max_input_tokens` is identical across the
+flip.
 
-**This is the correction to the campaign brief.** The brief assumed residents of
-`coder-30B + OptiQ ≈ 58.6 GB`, under which Next-80B (42 GB) fits. That is **not**
-the deployed `nix-darwin` main config, which keeps `gpt-oss-120b` resident
-(80.4 GB pair). Under the deployed config, **Next-80B cannot be served at all
-without evicting a resident** — it is not a "swap-tier registration + llama-swap
-handles it" job, because it does not fit the swap headroom.
+## Flagship-generation upgrade path (the 50–90 GB tier)
 
-So the interim large model is **`gpt-oss-120b`**, which is already resident, needs
-**no `nix-darwin` change**, and is a genuinely different, larger brain than the
-35B OptiQ — a real A/B at zero memory cost. Note the per-phase context differs and
-is handled automatically: gpt-oss-120b = 131072, OptiQ = 262144 (both already in
-the router alias table).
+A future large brain (a Qwopus-class 50–90 GB flagship) that does **not** co-reside
+with the 58.6 GB resident pair under the ~109 GB trip needs a **serving-side**
+change first — this rotation cannot conjure memory. In priority order:
 
-## Flagship-generation upgrade path (Next-80B and the 50–90 GB tier)
-
-A large model that does not co-reside with the resident pair (Next-80B today, a
-Qwopus-class 50–90 GB flagship later) needs a **serving-side** change first — this
-rotation cannot conjure memory. In priority order:
-
-1. **Reconcile the resident set in `nix-darwin` `lib/hosts.nix`.** Either drop
-   `gpt-oss-120b` as resident (the brief's assumed `coder-30B + OptiQ` pair frees
-   ~34 GB) so Next-80B fits as swap, **or** move to an llama-swap **group-swap**
-   where the large brain and a resident are mutually exclusive (`groupSwap = true`
-   is already a supported knob; it is off today precisely to keep both warm).
-2. **Register the large model explicitly** in `lib/hosts.nix:mlx.models` with its
-   own tool-call/reasoning parser args (Next-80B is `qwen3_next` — the early
-   "batches crash" reputation is **retired** per `mlx-benchmarks` model-notes, but
-   automatic prefix caching stays unsupported and MTP/spec-decode must stay off).
-   Auto-discovery is not sufficient: discovered models inherit the **default**
-   model's serve flags (gpt-oss's harmony parser), which is wrong for a Qwen brain.
+1. **Reconcile the resident set / swap policy in `nix-darwin` `lib/hosts.nix`.**
+   Either trim a resident (or its cache) to free room for the flagship as swap, or
+   move to an llama-swap **group-swap** where the flagship and a resident are
+   mutually exclusive (`groupSwap = true` is already a supported knob; it is off
+   today to keep both brains warm).
+2. **Register the flagship explicitly** in `lib/hosts.nix:mlx.models` with its own
+   tool-call/reasoning parser args (the Next-80B entry is the worked example: the
+   `qwen3_next` "batches crash" reputation is **retired** per `mlx-benchmarks`
+   model-notes, but automatic prefix caching stays unsupported and MTP/spec-decode
+   must stay off). Auto-discovery is force-disabled, so registration is mandatory.
 3. **Add the first-class router alias** (one line in `llm_router_large_models`,
    `context_window: 262144`) so `ai-default` can resolve its backend + context.
 4. Flip `ai_default_model_large` to the new id and converge.
 
-The flagship generation therefore works as **night-model-resident / day-model-swap
-via group-swap**, decided in `nix-darwin`; this repo's rotation is unchanged (it
-only ever swaps which alias `ai-default` maps to).
+The flagship generation is decided in `nix-darwin` (resident/swap policy); this
+repo's rotation is unchanged — it only ever swaps which alias `ai-default` maps to.
 
 ## Failure modes and guards
 
@@ -196,13 +191,15 @@ only ever swaps which alias `ai-default` maps to).
 
 ## Open questions for the gate
 
-1. **Interim large = `gpt-oss-120b`?** It is the only zero-serving-change option.
-   Confirm it is an acceptable agentic brain for the large phase, or accept that
-   the A/B will expose its agentic tool-calling quality (OptiQ won the 2026-07-08
-   bench; gpt-oss-120b was not in that field).
-2. **Enable now or after serving reconcile?** Shipping disabled is safe and
-   byte-identical. Flipping `ai_rotation_enabled: true` with the `gpt-oss-120b`
-   interim works today; Next-80B needs the `nix-darwin` resident reconcile first.
+1. **Enable sequencing.** Shipping disabled is safe and byte-identical. Enabling
+   the rotation requires, in order: merge the companion `nix-darwin` PR (Next-80B
+   swap registration) → rebuild jevans-ms → a live load test of the `ai-default`
+   alias flip (confirm Next-80B swaps in under the trip and serves tool calls) →
+   flip `ai_rotation_enabled: true` and converge.
+2. **Bench maturity.** Next-80B's 100%-valid agentic result is a single,
+   provisional run. If the maturity policy (≥4 runs, both environment classes)
+   later demotes it, the large-phase id is a one-line change here + a swap entry
+   in `nix-darwin`.
 3. **Per-guest rotation (3 routers, 3 timers) vs a single owner?** This design
    rotates per router guest (idempotent, resilient, no elected owner). All three
    bounce `litellm` within `AccuracySec` at the mark.
