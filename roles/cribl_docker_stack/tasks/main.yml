@@ -2,67 +2,9 @@
 # Cribl Docker Stack Deployment Tasks
 # Deploys Cribl Edge and Stream on Docker Swarm
 
-# =============================================================================
-# Docker Installation
-# =============================================================================
-
-- name: Gather OS facts
-  ansible.builtin.setup:
-    filter: ansible_distribution*
-
-- name: Install Docker prerequisites
-  ansible.builtin.apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: true
-
-- name: Create keyrings directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: Set Docker repository distribution
-  ansible.builtin.set_fact:
-    cribl_docker_stack_docker_distro: "{{ ansible_facts['distribution'] | lower }}"
-
-- name: Add Docker GPG key
-  ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ cribl_docker_stack_docker_distro }}/gpg"
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
-    force: false
-
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/{{ cribl_docker_stack_docker_distro }}
-      {{ ansible_facts['distribution_release'] }} stable
-    state: present
-    filename: docker
-
-- name: Install Docker packages
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
-- name: Ensure Docker service is running
-  ansible.builtin.systemd:
-    name: docker
-    state: started
-    enabled: true
+# Docker itself (docker-ce + compose plugin) is installed by the docker_engine
+# meta dependency (meta/main.yml), which also creates the SDK venv and sets it as
+# the global interpreter for the tasks below (docker_swarm / docker_stack).
 
 # =============================================================================
 # Docker Swarm Configuration
@@ -203,28 +145,6 @@
     group: root
     mode: "0644"
   register: cribl_docker_stack_template
-
-- name: Install Python venv and pip for dependencies
-  ansible.builtin.apt:
-    name:
-      - python3-pip
-      - python3-venv
-      - python3-full
-    state: present
-    update_cache: true
-
-- name: Create virtualenv for Ansible Python dependencies
-  ansible.builtin.pip:
-    name:
-      - jsondiff
-      - docker
-    state: present
-    virtualenv: /opt/ansible-venv
-    virtualenv_command: python3 -m venv
-
-- name: Set Python interpreter to use venv for subsequent tasks
-  ansible.builtin.set_fact:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
 
 - name: Deploy Cribl stack to Docker Swarm
   community.docker.docker_stack:

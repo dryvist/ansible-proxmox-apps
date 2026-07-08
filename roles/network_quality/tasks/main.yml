@@ -1,100 +1,12 @@
 ---
 # network_quality — smokeping_prober + irtt as ONE Docker-in-LXC compose stack,
-# co-located on the monitoring (prometheus) LXC. Mirrors the prometheus_stack
-# Docker bootstrap (a shared docker_base role is tracked separately as #449).
+# co-located on the monitoring (prometheus) LXC.
 #
-# daemon.json is intentionally NOT written here — the registry-mirror play in
-# site.yml owns it (same rationale as prometheus_stack).
-
-# =============================================================================
-# Docker installation
-# =============================================================================
-
-- name: Gather OS facts
-  ansible.builtin.setup:
-    filter: ansible_distribution*
-
-- name: Install Docker prerequisites
-  ansible.builtin.apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: true
-
-- name: Create keyrings directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: Set Docker repository distribution
-  ansible.builtin.set_fact:
-    network_quality_distro: "{{ ansible_distribution | lower }}"
-
-- name: Add Docker GPG key
-  ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ network_quality_distro }}/gpg"
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
-    force: false
-
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/{{ network_quality_distro }}
-      {{ ansible_distribution_release }} stable
-    state: present
-    filename: docker
-
-- name: Install Docker packages
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
-- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
-  ansible.builtin.apt:
-    name: fuse-overlayfs
-    state: present
-
-- name: Ensure Docker service is running
-  ansible.builtin.systemd:
-    name: docker
-    state: started
-    enabled: true
-
-# =============================================================================
-# Python venv for the Ansible docker_compose_v2 module
-# =============================================================================
-
-- name: Install Python venv and pip for dependencies
-  ansible.builtin.apt:
-    name:
-      - python3-pip
-      - python3-venv
-      - python3-full
-    state: present
-    update_cache: true
-
-- name: Create virtualenv for Ansible Python dependencies
-  ansible.builtin.pip:
-    name:
-      - docker
-      - packaging  # docker_compose_v2 imports packaging for version comparison
-      - requests
-    state: present
-    virtualenv: /opt/ansible-venv
-    virtualenv_command: python3 -m venv
+# Docker itself (docker-ce + compose plugin, LXC-conditional fuse-overlayfs) and
+# the SDK venv (with packaging + requests) are installed by the docker_engine
+# meta dependency (meta/main.yml). daemon.json is intentionally NOT written — the
+# registry-mirror play in site.yml owns it (same rationale as prometheus_stack).
+# The venv interpreter is scoped per-block below, never as a play-wide set_fact.
 
 # =============================================================================
 # Config + compose (single project, two services)
