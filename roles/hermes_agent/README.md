@@ -204,4 +204,4 @@ active MCP/delegation target this round.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `hermes_agent_escalation_enabled` | `true` | Register the Codex MCP server |
+| `hermes_agent_codex_mcp_enabled` | `true` | Register the Codex MCP server |

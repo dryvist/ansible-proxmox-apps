@@ -52,16 +52,37 @@
       npm install -g --prefix {{ codex_runner_npm_prefix }}
       {{ codex_runner_npm_package }}
     creates: "{{ codex_runner_codex_bin }}"
+  register: codex_runner_install
 
-- name: Confirm the Codex CLI meets the pinned version floor
-  ansible.builtin.command:
-    cmd: "{{ codex_runner_codex_bin }} --version"
-  register: codex_runner_version_check
-  changed_when: false
+# Only runs the converge that actually installed/upgraded Codex — the
+# version can't drift once the `creates` guard above is satisfied, so
+# re-verifying it every run would fork a Node process for nothing. Inline
+# rather than a handler (noqa: no-handler): this must fail the converge
+# immediately, before the sudoers grant below is installed for a binary that
+# might be older than the pinned floor — a handler would defer the check to
+# end-of-play, after that already happened. Mirrors roles/radarr/tasks/api_key.yml's
+# same-justification inline restart.
+- name: Confirm the installed Codex CLI meets the pinned version floor  # noqa: no-handler
+  when: codex_runner_install.changed
+  block:
+    - name: Read the installed Codex CLI version
+      ansible.builtin.command:
+        cmd: "{{ codex_runner_codex_bin }} --version"
+      register: codex_runner_version_check
+      changed_when: false
 
-- name: Report installed Codex CLI version
-  ansible.builtin.debug:
-    msg: "{{ codex_runner_version_check.stdout }}"
+    - name: Assert the installed version meets the pinned floor
+      ansible.builtin.assert:
+        that:
+          - codex_runner_version_check.stdout is search('\d+\.\d+\.\d+')
+          - (codex_runner_version_check.stdout | regex_search('\d+\.\d+\.\d+'))
+            is version(codex_runner_codex_version, '>=')
+        fail_msg: >-
+          Installed Codex CLI ({{ codex_runner_version_check.stdout }}) is older
+          than the pinned floor {{ codex_runner_codex_version }} — bump
+          codex_runner_codex_version or investigate why npm resolved an older
+          release.
+        quiet: true
 
 # Single-command, no-password grant: `hermes` may run exactly
 # `{{ codex_runner_mcp_command }}` as codex-runner — nothing broader. Validated
@@ -87,13 +108,16 @@
     path: "{{ codex_runner_home }}/.codex/auth.json"
   register: codex_runner_auth_file
 
-- name: Report Codex auth bootstrap status
+- name: Report Codex auth is bootstrapped
   ansible.builtin.debug:
     msg: >-
-      {{ codex_runner_auth_file.stat.exists
-         | ternary(
-             'Codex auth already present for ' ~ codex_runner_user ~ ' — escalation is live.',
-             codex_runner_home ~ '/.codex/auth.json does not exist yet — Hermes escalation via'
-             ~ ' Codex will error until an operator completes the one-time login (see'
-             ~ ' roles/codex_runner/README.md).'
-           ) }}
+      Codex auth already present for {{ codex_runner_user }} — escalation is live.
+  when: codex_runner_auth_file.stat.exists
+
+- name: Report Codex auth is NOT yet bootstrapped
+  ansible.builtin.debug:
+    msg: >-
+      {{ codex_runner_home }}/.codex/auth.json does not exist yet — Hermes
+      escalation via Codex will error until an operator completes the
+      one-time login (see roles/codex_runner/README.md).
+  when: not codex_runner_auth_file.stat.exists
