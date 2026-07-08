@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.88.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.87.0...v1.88.0) (2026-07-08)
+
+
+### Features
+
+* **openbao:** reconcile ai-orchestrator write AppRole into IaC ([#716](https://github.com/dryvist/ansible-proxmox-apps/issues/716)) ([c4d059c](https://github.com/dryvist/ansible-proxmox-apps/commit/c4d059cf26e5f9ecfef8fd5a1ddf96407a2b66d7))
+
 ## [1.87.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.86.1...v1.87.0) (2026-07-08)
 
 
