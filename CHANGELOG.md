@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.86.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.86.0...v1.86.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **haproxy:** restart nginx with daemon-reload so the UDP LB binds on rebuild ([#715](https://github.com/dryvist/ansible-proxmox-apps/issues/715)) ([e70d5a6](https://github.com/dryvist/ansible-proxmox-apps/commit/e70d5a6343e8c58cc83a0803724315077bf75db8))
+
 ## [1.86.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.85.0...v1.86.0) (2026-07-08)
 
 
