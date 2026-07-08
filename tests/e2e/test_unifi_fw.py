@@ -47,6 +47,16 @@ def _make_fw_message(sentinel):
     )
 
 
+def _make_fw_message_udw(sentinel):
+    """A live UDW-format rule-hit line (action + numeric rule index)."""
+    timestamp = _get_syslog_timestamp()
+    return (
+        f"<13>{timestamp} UDW UDW [LAN_CUSTOM1-A-10000] DESCR=\"Allow All\" "
+        f"IN=br0 OUT=br5 MAC=aa:bb:cc:dd:ee:ff SRC=192.0.2.10 DST=192.0.2.20 "
+        f"LEN=64 {sentinel}"
+    )
+
+
 def _make_admin_message(sentinel):
     """A UniFi management-plane line (must NOT match the fw split regex)."""
     timestamp = _get_syslog_timestamp()
@@ -84,6 +94,36 @@ class TestUnifiFirewallSplit:
         )
         assert results, (
             f"UniFi firewall sentinel {sentinel} did not reach Splunk with "
+            f"index=firewall sourcetype=ubiquiti:firewall"
+        )
+
+    def test_udw_firewall_line_routes_to_firewall_index(
+        self,
+        haproxy_host,
+        splunk_creds,
+        pipeline_poll_timeout,
+        pipeline_poll_interval,
+    ):
+        """A live UDW-format rule-hit line (numeric rule index) also splits."""
+        source = _unifi_source()
+        mgmt_url, user, password = splunk_creds
+        sentinel = f"e2e-unifi-fw-udw-{uuid.uuid4().hex[:10]}-{int(time.time())}"
+
+        send_tcp_syslog(
+            haproxy_host, source.standard_port, _make_fw_message_udw(sentinel)
+        )
+        results = wait_for_event(
+            mgmt_url,
+            user,
+            password,
+            sentinel,
+            index="firewall",
+            sourcetype="ubiquiti:firewall",
+            timeout=pipeline_poll_timeout,
+            poll_interval=pipeline_poll_interval,
+        )
+        assert results, (
+            f"UDW-format firewall sentinel {sentinel} did not reach Splunk with "
             f"index=firewall sourcetype=ubiquiti:firewall"
         )
 
