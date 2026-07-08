@@ -92,6 +92,27 @@ cribl_edge_per_index_indexes:
   - dns
   - proxy
   - honeypot
+  # PVE host metrics (in_prometheus_pve scrape below) — metric index.
+  - host_metrics
+
+# PVE host metrics (B9): scrape each commissioned node's pinned node_exporter
+# (:9100 on the management VLAN; the siem-Edge -> PVE :9100/tcp firewall rule
+# ships in terraform-proxmox) every 60s. Targets derive from the inventory
+# `nodes` map — node role + domain, never a literal hostname — and only
+# commissioned nodes are scraped, so a node mid-join doesn't log a failing
+# target every cycle.
+cribl_edge_node_exporter_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['node_exporter'] | default(9100) }}
+cribl_edge_pve_metrics_targets: >-
+  {%- set out = [] -%}
+  {%- for name, node in (hostvars['localhost']['tofu_data']['nodes'] | default({})) | dictsort -%}
+  {%- if node.commissioned | default(false) -%}
+  {%- set _ = out.append('http://' ~ (node.role | default(name)) ~ '.'
+      ~ hostvars['localhost']['tofu_data']['domain'] ~ ':'
+      ~ cribl_edge_node_exporter_port ~ '/metrics') -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
 
 # netmon Telegraf HEC ingestion. The per-WAN probers (roles/netmon) push
 # Splunk-HEC to this Edge on cribl_hec_input_port (group_vars/all.yml); the
