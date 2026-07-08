@@ -6,94 +6,10 @@
 # worker_beat/web/db/redis/weaviate/sandbox/ssrf_proxy/nginx) plus the nginx and
 # squid configs, then deploys via Docker Compose and waits for the web UI.
 #
-# Mirrors the infisical_docker / healthchecks_docker roles (Docker repo +
-# fuse-overlayfs + Python venv for community.docker, then compose deploy +
-# health check).
-
-# =============================================================================
-# Docker Installation
-# =============================================================================
-
-- name: Gather OS facts
-  ansible.builtin.setup:
-    filter: ansible_distribution*
-
-- name: Install Docker prerequisites
-  ansible.builtin.apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: true
-
-- name: Create keyrings directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: Set Docker repository distribution
-  ansible.builtin.set_fact:
-    dify_docker_distro: "{{ ansible_distribution | lower }}"
-
-- name: Add Docker GPG key
-  ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ dify_docker_distro }}/gpg"
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
-    force: false
-
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/{{ dify_docker_distro }}
-      {{ ansible_distribution_release }} stable
-    state: present
-    filename: docker
-
-- name: Install Docker packages
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
-- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
-  ansible.builtin.apt:
-    name: fuse-overlayfs
-    state: present
-
-- name: Configure Docker to use fuse-overlayfs storage driver (required for ZFS-backed LXC)
-  ansible.builtin.copy:
-    dest: /etc/docker/daemon.json
-    content: |
-      {
-        "storage-driver": "fuse-overlayfs"
-      }
-    owner: root
-    group: root
-    mode: "0644"
-  register: dify_docker_daemon_config
-
-- name: Restart Docker to apply fuse-overlayfs configuration
-  ansible.builtin.systemd:  # noqa: no-handler
-    name: docker
-    state: restarted
-  when: dify_docker_daemon_config.changed
-
-- name: Ensure Docker service is running
-  ansible.builtin.systemd:
-    name: docker
-    state: started
-    enabled: true
+# Docker itself (docker-ce + compose plugin, fuse-overlayfs, the fuse-overlayfs
+# daemon.json) is installed by the docker_engine meta dependency (meta/main.yml).
+# No venv: Dify deploys via docker_compose_v2, which uses the docker compose CLI
+# (not the docker SDK), so compose runs under the system interpreter.
 
 # =============================================================================
 # Data Directories
@@ -222,30 +138,6 @@
   notify: Restart dify
 
 # =============================================================================
-# Python venv for Ansible Docker modules
-# Scope the venv interpreter to the community.docker tasks via task-level vars —
-# setting it via set_fact would leak the venv (which only has `docker`) to later
-# plays that need system Python.
-# =============================================================================
-
-- name: Install Python venv and pip for dependencies
-  ansible.builtin.apt:
-    name:
-      - python3-pip
-      - python3-venv
-      - python3-full
-    state: present
-    update_cache: true
-
-- name: Create virtualenv for Ansible Python dependencies
-  ansible.builtin.pip:
-    name:
-      - docker
-    state: present
-    virtualenv: /opt/ansible-venv
-    virtualenv_command: python3 -m venv
-
-# =============================================================================
 # Deploy via Docker Compose
 # =============================================================================
 
@@ -258,8 +150,6 @@
     (dify_docker_compose_result.actions | default([]))
     | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
     | list | length > 0
-  vars:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
   no_log: true
 
 # =============================================================================

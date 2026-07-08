@@ -13,91 +13,11 @@
     fail_msg: "QDRANT_API_KEY environment variable is not set. Add it to Doppler before deploying."
     quiet: true
 
-# =============================================================================
-# Docker Installation
-# =============================================================================
-
-- name: Gather OS facts
-  ansible.builtin.setup:
-    filter: ansible_distribution*
-
-- name: Install Docker prerequisites
-  ansible.builtin.apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: true
-
-- name: Create keyrings directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: Set Docker repository distribution
-  ansible.builtin.set_fact:
-    qdrant_docker_distro: "{{ ansible_distribution | lower }}"
-
-- name: Add Docker GPG key
-  ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ qdrant_docker_distro }}/gpg"
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
-    force: false
-
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/{{ qdrant_docker_distro }}
-      {{ ansible_distribution_release }} stable
-    state: present
-    filename: docker
-
-- name: Install Docker packages
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
-- name: Install fuse-overlayfs for Docker on ZFS-backed LXC containers
-  ansible.builtin.apt:
-    name: fuse-overlayfs
-    state: present
-  when: qdrant_docker_storage_driver == 'fuse-overlayfs'
-
-- name: Configure Docker storage driver
-  ansible.builtin.copy:
-    dest: /etc/docker/daemon.json
-    content: |
-      {
-        "storage-driver": "{{ qdrant_docker_storage_driver }}"
-      }
-    owner: root
-    group: root
-    mode: "0644"
-  register: qdrant_docker_daemon_config
-
-- name: Restart Docker to apply storage driver configuration
-  ansible.builtin.systemd:  # noqa: no-handler
-    name: docker
-    state: restarted
-  when: qdrant_docker_daemon_config.changed
-
-- name: Ensure Docker service is running
-  ansible.builtin.systemd:
-    name: docker
-    state: started
-    enabled: true
+# Docker itself (docker-ce + compose plugin, LXC-conditional fuse-overlayfs, the
+# daemon.json pinning qdrant_docker_storage_driver) is installed by the
+# docker_engine meta dependency (meta/main.yml). No venv: Qdrant deploys via
+# docker_compose_v2, which uses the docker compose CLI (not the docker SDK), so
+# compose runs under the system interpreter.
 
 # =============================================================================
 # Qdrant Data Directories
@@ -149,31 +69,6 @@
     mode: "0600"
   no_log: true
   notify: Restart qdrant
-
-# =============================================================================
-# Python venv for Ansible Docker modules
-# =============================================================================
-
-- name: Install Python venv and pip for dependencies
-  ansible.builtin.apt:
-    name:
-      - python3-pip
-      - python3-venv
-      - python3-full
-    state: present
-    update_cache: true
-
-- name: Create virtualenv for Ansible Python dependencies
-  ansible.builtin.pip:
-    name:
-      - docker
-    state: present
-    virtualenv: /opt/ansible-venv
-    virtualenv_command: python3 -m venv
-
-- name: Set Python interpreter to use venv for subsequent tasks
-  ansible.builtin.set_fact:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
 
 # =============================================================================
 # Deploy via Docker Compose
