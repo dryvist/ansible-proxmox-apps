@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.93.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.93.0...v1.93.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **cribl:** post HEC to the generic /services/collector endpoint ([#742](https://github.com/dryvist/ansible-proxmox-apps/issues/742)) ([9dc8096](https://github.com/dryvist/ansible-proxmox-apps/commit/9dc8096de9418e5954f50116aa7783ab202a61c6))
+
 ## [1.93.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.92.0...v1.93.0) (2026-07-08)
 
 
