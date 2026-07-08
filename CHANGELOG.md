@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.93.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.92.0...v1.93.0) (2026-07-08)
+
+
+### Features
+
+* **hermes:** self-directed 24/7 Splunk monitoring (skill + cron fleet) ([4e4d454](https://github.com/dryvist/ansible-proxmox-apps/commit/4e4d454af9e5bb3ff10a42e60c2cc0eb49c8e60b))
+
 ## [1.92.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.91.2...v1.92.0) (2026-07-08)
 
 
