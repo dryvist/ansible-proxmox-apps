@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.93.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.93.1...v1.93.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **hermes:** post Splunk cron output as fresh top-level Slack messages ([#744](https://github.com/dryvist/ansible-proxmox-apps/issues/744)) ([593f245](https://github.com/dryvist/ansible-proxmox-apps/commit/593f2459d608f436028804c9ef2beb3c3d952db9))
+
 ## [1.93.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.93.0...v1.93.1) (2026-07-08)
 
 
