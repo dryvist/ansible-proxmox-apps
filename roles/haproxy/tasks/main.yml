@@ -48,7 +48,7 @@
     mode: '0644'
     backup: true
     validate: nginx -t -c %s
-  notify: Reload nginx
+  notify: Restart nginx
 
 - name: Deploy Nginx stream configuration (UDP load balancing)
   ansible.builtin.template:
@@ -57,7 +57,7 @@
     owner: root
     group: root
     mode: '0644'
-  notify: Reload nginx
+  notify: Restart nginx
 
 - name: Create HAProxy systemd override directory
   ansible.builtin.file:
@@ -104,7 +104,7 @@
     owner: root
     group: root
     mode: '0644'
-  notify: Reload nginx
+  notify: Restart nginx
 
 - name: Ensure HAProxy socket directory exists
   ansible.builtin.file:
@@ -172,10 +172,35 @@
   when: haproxy_http_enabled and (haproxy_http_frontends | length > 0)
   changed_when: false
 
+# Self-heal the reload-inheritance trap: `nginx -s reload` re-execs the master
+# with only the sockets in the inherited NGINX env (the HTTP fds), so newly
+# added stream `listen … udp` directives are NEVER bound — nginx stays active
+# with valid config and zero UDP listeners (observed live on a fresh guest:
+# "using inherited sockets from 5;6;"). A full systemd restart starts a clean
+# master with no inherited fd set and binds every listen socket. Detect the gap
+# and restart only when it exists, so this stays idempotent once bound.
+- name: Detect Nginx UDP listeners that failed to bind
+  ansible.builtin.shell: |
+    set -o pipefail
+    missing=0
+    for p in {{ haproxy_nginx_udp_ports | join(' ') }}; do
+      ss -ulnH "sport = :$p" | grep -q . || missing=$((missing + 1))
+    done
+    echo "$missing"
+  register: haproxy_nginx_udp_missing
+  changed_when: false
+
+- name: Restart Nginx to bind UDP listeners when any are missing
+  ansible.builtin.systemd:
+    name: "{{ haproxy_nginx_service_name }}"
+    state: restarted
+    daemon_reload: true
+  when: (haproxy_nginx_udp_missing.stdout | trim | int) > 0
+
 - name: Verify Nginx is listening on UDP ports
   ansible.builtin.shell: |
     set -o pipefail
-    ss -tulpn | grep -E "^udp.*:{{ item }}\s" || exit 1
+    ss -ulnH "sport = :{{ item }}" | grep -q . || exit 1
   loop: "{{ haproxy_nginx_udp_ports }}"
   changed_when: false
   retries: 3

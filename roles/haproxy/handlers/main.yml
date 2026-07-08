@@ -4,7 +4,14 @@
     name: "{{ haproxy_service_name }}"
     state: reloaded
 
-- name: Reload nginx
+# Nginx fronts the UDP syslog/NetFlow listeners. A plain `reload` cannot apply
+# a changed systemd unit (the restart-on-failure drop-in) and does not reliably
+# re-bind stream listen sockets when the stream config was written after the
+# running master last loaded — the exact failure a freshly-rebuilt guest hits,
+# where nginx is active but binds zero UDP ports. daemon_reload + restart makes
+# the running process match on-disk config and unit every converge.
+- name: Restart nginx
   ansible.builtin.systemd:
     name: "{{ haproxy_nginx_service_name }}"
-    state: reloaded
+    state: restarted
+    daemon_reload: true
