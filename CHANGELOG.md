@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.91.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.91.0...v1.91.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **prometheus_stack:** variable-driven remote_write keep-list; pass pve_node_exporter ([#735](https://github.com/dryvist/ansible-proxmox-apps/issues/735)) ([5008cb6](https://github.com/dryvist/ansible-proxmox-apps/commit/5008cb63cddf1ee0e5793e115335e880e05421b0))
+
 ## [1.91.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.90.1...v1.91.0) (2026-07-08)
 
 
