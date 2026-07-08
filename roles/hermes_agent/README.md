@@ -185,6 +185,13 @@ dedup), and durable knowledge is captured as `llm-wiki` pages (RAG).
 digest posts to the Slack home channel. The quiet deep-dive research run saves
 locally only (`--deliver local`).
 
+**Fresh posts, not one thread.** Each cron run is an isolated session, so its Slack
+output is delivered **flat/top-level** (a new message each time) rather than threaded
+under a single ever-growing root. This is set in `config.yaml`'s `platforms.slack`
+block via `reply_in_thread: false` + `cron_continuable_surface: in_channel`
+(`hermes_agent_slack_reply_in_thread` / `hermes_agent_slack_cron_continuable_surface`),
+rendered only when Slack is configured.
+
 | Job | Schedule (staggered) | Delivery | Posture |
 | --- | --- | --- | --- |
 | `splunk-triage` | `3,18,33,48 * * * *` | DM, silent-unless-anomaly | broad anomaly hunt |
