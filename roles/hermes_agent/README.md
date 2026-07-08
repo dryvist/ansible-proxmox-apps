@@ -172,3 +172,36 @@ env fallback; the entry is omitted until the key is set.
 | --- | --- | --- |
 | `hermes_agent_context7_mcp_enabled` | `true` | Register the Context7 MCP server |
 | `hermes_agent_context7_api_key` | `""` | Context7 API key (bao/env) |
+
+## Escalation (Codex via MCP)
+
+Registers `codex mcp-server` (OpenAI's Codex CLI) as an MCP tool
+(`mcp_servers.codex`) — a deliberate escalation path for problems worth a
+stronger model, or a session that's stuck/looping. This is **not** automatic
+on-error fallback (Hermes' own `fallback_providers` feature is intentionally
+unused here); tool use is inherently a per-call, model-chosen decision, so
+the agent reaches for Codex only when it judges the problem warrants it, the
+same way it decides whether to call any other tool.
+
+Codex runs under a completely separate, low-privilege OS user —
+`codex-runner`, provisioned by the sibling `codex_runner` role on the same
+host — never as `hermes`. The MCP entry invokes it through a single-command
+`sudo` grant (`hermes` → `codex-runner`, exactly `codex mcp-server`, nothing
+else); Hermes never gains filesystem access to that user's ChatGPT-OAuth
+credential, so the token itself is not directly readable by the agent even
+though the agent can fully use the tool.
+
+Codex's OAuth login is a manual, one-time, interactive step that cannot be
+automated by Ansible — see `roles/codex_runner/README.md` for both bootstrap
+options (fresh `codex login`, or copying an already-authenticated
+`~/.codex/auth.json`). Until that's done, the MCP entry is present but every
+call to it errors; the daemon itself starts and runs normally regardless.
+
+`OPENROUTER_API_KEY` is already seeded in OpenBao `secret/ai/hermes` (from an
+earlier pass at this problem) but is **not consumed** by anything in this
+role — parked for a possible future escalation option, not wired to an
+active MCP/delegation target this round.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_escalation_enabled` | `true` | Register the Codex MCP server |
