@@ -124,6 +124,21 @@ with an env fallback; the PEM is written to `{{ hermes_agent_hermes_home }}/gith
 Helper unit tests: `roles/hermes_agent/files/skills/dryvist/docs-pr/tests/` — run
 `python -m pytest` from that skill dir (all guardrail logic, no network).
 
+## GitHub issues & projects
+
+Delivers a fine-grained PAT (`GH_PAT_WRITE_PROJECT_ISSUES`) into `.env` giving
+Hermes **read/write Issues across all repos** and **read/write Projects (v2) in
+the `dryvist` org** — for triaging, creating and updating issues and managing
+project boards. It is deliberately least-privilege: **not** for code commits (that
+is the signed `docs-pr` / GitHub App path) and **not** for merges. Bao-first
+(`secret/ai/hermes`, `bao_local_llm_secrets`) with an env fallback; empty until the
+token is set. The bundled `dryvist/github-issues` skill documents the REST (issues)
+and GraphQL (Projects v2) calls and the usage guardrails.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_github_issues_pat` | `""` | issues + org-projects PAT (bao/env) |
+
 ## Splunk search access
 
 Registers the **Splunk MCP Server** (Splunkbase 7931, deployed by `ansible-splunk`)
