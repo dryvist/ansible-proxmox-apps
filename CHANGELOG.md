@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.94.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.94.0...v1.94.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **deps,systemd:** version ceiling + handler-driven daemon reload ([#749](https://github.com/dryvist/ansible-proxmox-apps/issues/749)) ([8ee6b8d](https://github.com/dryvist/ansible-proxmox-apps/commit/8ee6b8d3e55d8b4a4653c0dfd55751990e5c6b88))
+
 ## [1.94.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.93.2...v1.94.0) (2026-07-08)
 
 
