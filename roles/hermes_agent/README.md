@@ -78,3 +78,82 @@ its client package on first run — `memory status` check is non-fatal so it sur
 without failing the converge). Single-profile first; profiles + Kanban teams + a
 messaging gateway are a documented follow-up (the whole `HERMES_HOME` is already
 persisted for them).
+
+## LLM knowledge base (llm-wiki)
+
+Enables the bundled `research/llm-wiki` skill so Hermes builds and maintains an
+interlinked Markdown "second brain" from raw sources (build / query / lint /
+maintain, with SHA256 source-drift detection). The wiki lives at `WIKI_PATH` =
+`{{ hermes_agent_wiki_path }}` (`/var/lib/hermes/wiki`) — under the persistent
+ZFS volume, so it is snapshotted and replicated. A nightly cron seeds a
+lint/health-check. Context compression is enabled (`summary_model` pointed at the
+router, since the upstream Google default is unreachable here) so long autonomous
+sessions don't overflow.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_wiki_enabled` | `true` | enable llm-wiki + create the wiki dir |
+| `hermes_agent_wiki_path` | `{{ hermes_agent_home }}/wiki` | persistent wiki root (`WIKI_PATH`) |
+| `hermes_agent_context_compression_enabled` | `true` | auto-shrink long sessions |
+| `hermes_agent_context_compression_threshold` | `0.85` | compress at 85% of context |
+| `hermes_agent_nightly_wiki_cron_*` | — | nightly lint/health-check cron |
+
+## Autonomous GitHub docs-contributor
+
+Gives Hermes a **read public dryvist repos + open signed, draft, no-merge doc PRs**
+capability against `dryvist/docs` and `dryvist/docs-starlight`, via a dedicated
+GitHub App (`hermes-docs-bot`). Commits are authored through the
+`createCommitOnBranch` GraphQL mutation so GitHub marks them **Verified/signed**
+(a plain `git push` is rejected by the org's required-signatures ruleset). The
+bundled `dryvist/docs-pr` skill enforces the guardrails: draft-only, attribution
+triad, dated branches, `docs:` Conventional-Commit titles, per-repo/day caps +
+de-dup, secret redaction, and absolute privacy routing (sensitive → docs-starlight
+only). **No-merge** is guaranteed by the org ruleset (human review + signatures,
+the App is not a bypass actor), not by the token scope.
+
+App creds are delivered from OpenBao `secret/ai/hermes` (`bao_local_llm_secrets`)
+with an env fallback; the PEM is written to `{{ hermes_agent_hermes_home }}/github-app.pem`
+(`0600`, `no_log`). The role stays inert until the creds are set.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_github_app_id` | `""` | GitHub App ID (bao/env) |
+| `hermes_agent_github_app_installation_id` | `""` | App installation ID (bao/env) |
+| `hermes_agent_github_app_private_key` | `""` | App PEM (bao/env; written to a 0600 file) |
+
+Helper unit tests: `roles/hermes_agent/files/skills/dryvist/docs-pr/tests/` — run
+`python -m pytest` from that skill dir (all guardrail logic, no network).
+
+## Splunk search access
+
+Registers the **Splunk MCP Server** (Splunkbase 7931, deployed by `ansible-splunk`)
+as an HTTP MCP server in `~/.hermes/config.yaml` (`mcp_servers.splunk`), so Hermes
+can query the environment — `run_splunk_query`, `get_indexes`, `get_sourcetypes` —
+with its own scoped identity. The URL and Bearer token are referenced as
+`${SPLUNK_MCP_URL}` / `${SPLUNK_MCP_TOKEN}` and resolved from `.env` at connect
+time, so neither the endpoint nor the token ever lands in `config.yaml`.
+
+Creds come from OpenBao `secret/ai/hermes` (`bao_local_llm_secrets`) with an env
+fallback. `ansible-splunk` mints the per-user token (a Splunk token is bound to a
+user and inherits its roles) and publishes it as `SPLUNK_MCP_TOKEN`. The
+`mcp_servers.splunk` entry is omitted until the URL is set, so the agent starts
+cleanly before the creds exist.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_splunk_mcp_enabled` | `true` | Register the Splunk MCP server |
+| `hermes_agent_splunk_mcp_url` | `""` | Splunk MCP Server endpoint (bao/env) |
+| `hermes_agent_splunk_mcp_token` | `""` | Bearer token (bao/env) |
+
+## Live docs (Context7)
+
+Registers Context7's hosted HTTP MCP server (`mcp_servers.context7`) so Hermes
+can pull **current, version-specific library/framework docs** on demand instead
+of relying on stale training data. The API key is referenced as
+`${CONTEXT7_API_KEY}` (resolved from `.env`), bao-first (`secret/ai/hermes`) with
+env fallback; the entry is omitted until the key is set.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_context7_mcp_enabled` | `true` | Register the Context7 MCP server |
+| `hermes_agent_context7_api_key` | `""` | Context7 API key (bao/env) |
