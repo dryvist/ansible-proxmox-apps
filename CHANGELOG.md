@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.90.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.89.0...v1.90.0) (2026-07-08)
+
+
+### Features
+
+* **cribl_edge:** scrape PVE node_exporter into the host_metrics index ([#724](https://github.com/dryvist/ansible-proxmox-apps/issues/724)) ([54c130d](https://github.com/dryvist/ansible-proxmox-apps/commit/54c130ded46766900f4f97541769787d5083392d))
+
 ## [1.89.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.88.0...v1.89.0) (2026-07-08)
 
 
