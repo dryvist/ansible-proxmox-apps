@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.0...v1.96.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **technitium_dns:** install query-log exporter from the internal https mirror + fix config schema ([#759](https://github.com/dryvist/ansible-proxmox-apps/issues/759)) ([0a95e87](https://github.com/dryvist/ansible-proxmox-apps/commit/0a95e8725703afef082f6c8e62b4f4a4e5b2d4d2))
+
 ## [1.96.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.95.0...v1.96.0) (2026-07-08)
 
 
