@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.101.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.100.2...v1.101.0) (2026-07-08)
+
+
+### Features
+
+* **llm_router:** daily brain rotation via a stable ai-default alias ([#791](https://github.com/dryvist/ansible-proxmox-apps/issues/791)) ([0467f43](https://github.com/dryvist/ansible-proxmox-apps/commit/0467f43ecae40f24ce31466c33803df8fa781d24))
+
 ## [1.100.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.100.1...v1.100.2) (2026-07-08)
 
 
