@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.91.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.90.1...v1.91.0) (2026-07-08)
+
+
+### Features
+
+* **metrics:** route PVE host metrics through the prometheus remote_write leg ([#728](https://github.com/dryvist/ansible-proxmox-apps/issues/728)) ([e2ae96c](https://github.com/dryvist/ansible-proxmox-apps/commit/e2ae96c3a119c62c56f0d1c2895bbdd707779e64))
+
 ## [1.90.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.90.0...v1.90.1) (2026-07-08)
 
 
