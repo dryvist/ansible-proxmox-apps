@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.84.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.84.0...v1.84.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **cribl-edge:** finalize the unifi_fw split regex from live gateway samples ([#709](https://github.com/dryvist/ansible-proxmox-apps/issues/709)) ([510c759](https://github.com/dryvist/ansible-proxmox-apps/commit/510c75933f515ecfb45874f7d89986d64a50d72b))
+
 ## [1.84.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.83.0...v1.84.0) (2026-07-07)
 
 
