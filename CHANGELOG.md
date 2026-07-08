@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.87.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.86.1...v1.87.0) (2026-07-08)
+
+
+### Features
+
+* **openbao:** add dedicated least-privilege hermes reader AppRole ([#707](https://github.com/dryvist/ansible-proxmox-apps/issues/707)) ([57e15a4](https://github.com/dryvist/ansible-proxmox-apps/commit/57e15a4f5ba8b7974d95b12021ffae1dda688f74))
+
 ## [1.86.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.86.0...v1.86.1) (2026-07-08)
 
 
