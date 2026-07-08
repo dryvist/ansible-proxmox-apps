@@ -58,12 +58,15 @@
 # Upstream bug (NousResearch/hermes-agent, agent/conversation_loop.py):
 # the length-continuation and truncated-tool-call retry paths boost
 # max_tokens on each retry, but floor the boost ceiling at
-# `max(32768, requested_cap)` — so when the provider enforces a real hard
-# cap below 32768 (our config.yaml `model.max_tokens: 8192`, matching
-# vllm-mlx's `--max-request-tokens 8192` on the Mac Studio brain), the very
-# first truncation retry re-sends a request the server is guaranteed to
-# 400 identically ("max_tokens exceeds server limit"), burning all retries
-# and surfacing the error to the user instead of completing the response.
+# `max(32768, requested_cap)` — so when the configured output cap is set
+# below that hardcoded 32768 floor (as `model.max_tokens` was at 8192
+# historically), the first truncation retry re-sends a request above the
+# ceiling, which a server enforcing a lower per-request limit 400s
+# identically ("max_tokens exceeds server limit"), burning all retries and
+# surfacing the error instead of completing. Today `model.max_tokens` is
+# 32768 and the OptiQ brain serves `--max-request-tokens 65536`, so the patch
+# now holds the boost at the configured 32768 rather than a coincidental
+# floor — keeping it correct if the output cap is ever lowered again.
 # `agent.max_tokens` is already the user's explicit config-level ceiling;
 # treat it as absolute instead of a floor for the boost. Runs every
 # converge (idempotent regexp match) because `hermes update` self-updates
