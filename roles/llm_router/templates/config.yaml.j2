@@ -23,6 +23,20 @@ model_list:
       max_tokens: {{ m.context_window }}
 {% endif %}
 {% endfor %}
+{% if llm_router_large_passthrough_enabled | bool %}
+  # --- large tier passthrough: every model the serving gate advertises ---
+  # Exposure is blocklist-shaped, enforced at the source: the serving host
+  # auto-registers every downloaded, memory-fitting MLX model MINUS its
+  # declarative blocklist (nix-ai programs.mlx.discover.blocklist), and this
+  # wildcard forwards any model id not explicitly aliased above to that gate.
+  # No per-model router edit is ever needed; the aliases above remain as
+  # stable consumer-facing names and win over the wildcard on exact match.
+  - model_name: "*"
+    litellm_params:
+      model: openai/*
+      api_base: {{ llm_router_llm_large_base_url }}
+      api_key: os.environ/LLM_LARGE_BEARER_TOKEN
+{% endif %}
   # --- light tier: two deployments per alias (GPU llm-fast + CPU llm-light) ---
   # Same model_name => LiteLLM load-balances the pair and cools a failed deployment
   # down, so a GPU outage drains to the CPU standby automatically.
@@ -78,3 +92,9 @@ litellm_settings:
   # requires the v2 SDK and errors on init with the v3 pip resolves.
   callbacks: ["otel"]
   drop_params: true
+{% if llm_router_large_passthrough_enabled | bool %}
+  # Resolve the wildcard against the gate's live /v1/models so this proxy's
+  # own /v1/models lists every passthrough model (not just the aliases) —
+  # Open WebUI's picker and Hermes both read that listing.
+  check_provider_endpoint: true
+{% endif %}
