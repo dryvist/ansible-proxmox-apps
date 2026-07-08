@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.99.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.0...v1.99.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **technitium_dns:** pin Log Exporter to the running server's app version + manage only the syslog block ([#774](https://github.com/dryvist/ansible-proxmox-apps/issues/774)) ([c5f4b97](https://github.com/dryvist/ansible-proxmox-apps/commit/c5f4b9767df3f80fde9f981fe53ecfce43a3746f))
+
 ## [1.99.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.98.0...v1.99.0) (2026-07-08)
 
 
