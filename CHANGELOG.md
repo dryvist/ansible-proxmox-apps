@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.2...v1.96.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **hermes:** local-grade stream timeouts + cron model-drift recovery ([#766](https://github.com/dryvist/ansible-proxmox-apps/issues/766)) ([7b30b9b](https://github.com/dryvist/ansible-proxmox-apps/commit/7b30b9b9217c3df2240642cffbe0dc7aacb2cfc1))
+
 ## [1.96.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.1...v1.96.2) (2026-07-08)
 
 
