@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.89.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.88.0...v1.89.0) (2026-07-08)
+
+
+### Features
+
+* **hermes:** wire GH issues/projects PAT + usage skill ([#718](https://github.com/dryvist/ansible-proxmox-apps/issues/718)) ([bebf79c](https://github.com/dryvist/ansible-proxmox-apps/commit/bebf79cb1d98fb0340d884171e165bdae88513a9))
+
 ## [1.88.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.87.0...v1.88.0) (2026-07-08)
 
 
