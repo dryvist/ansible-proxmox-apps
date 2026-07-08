@@ -103,7 +103,26 @@ llm_router_large_models:
   # explicit max_input_tokens: the wildcard "*" entry below sets none, and a
   # null there makes Hermes/OpenWebUI fall back to a near-zero context guess and
   # compress every request to death.
-  - { alias: Qwen3.6-35B-A3B-OptiQ-4bit, backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit, context_window: 262144 }
+  #
+  # extra_body.repetition_penalty: the anti-repetition-loop fix. In long agentic
+  # sessions this brain emitted ~37 IDENTICAL tool calls per turn (Hermes dedups
+  # + executes once, the model re-emits next turn, the task never advances). The
+  # 20/20-clean agentic bench and the looping production sessions differ only in
+  # sampling. Hermes omits temperature/repetition_penalty, so the serving engine
+  # (vllm-mlx 0.4.0) applies its request-absent fallbacks — temperature 0.7 (NOT
+  # greedy; --default-temperature is unset) and repetition_penalty 1.0 (OFF). A
+  # gentle 1.05 penalty is the one lever whose current effective value is
+  # loop-permitting: it directly taxes verbatim re-emission while staying mild
+  # enough to preserve tool-call JSON validity. extra_body carries it past the
+  # router's drop_params to vllm-mlx, whose chat path honors a request-supplied
+  # repetition_penalty. (temperature is deliberately NOT pinned here: 0.7 would
+  # merely restate the engine fallback the loop already runs under. If 1.05 is
+  # insufficient, the next lever is to match the clean bench's sampling —
+  # temperature ~1.0 / presence_penalty 0.0 — added to this same extra_body.)
+  - alias: Qwen3.6-35B-A3B-OptiQ-4bit
+    backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+    context_window: 262144
+    extra_body: { repetition_penalty: 1.05 }
   # claude-sonnet-5 is a Claude Code alias deliberately mapped to a local Qwen3.6
   # backend (PR #624) — not a mis-map; it inherits that backend's 262144 context.
   - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }

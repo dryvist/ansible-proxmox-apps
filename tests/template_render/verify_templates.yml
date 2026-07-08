@@ -2071,6 +2071,11 @@
       - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit, context_window: 262144 }
       - { alias: Qwen3.6-35B-A3B-4bit, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
       - { alias: Qwen3.6-27B-4bit, backend: mlx-community/Qwen3.6-27B-4bit, context_window: 262144 }
+      # OptiQ carries a per-model extra_body (repetition_penalty anti-loop fix).
+      - alias: Qwen3.6-35B-A3B-OptiQ-4bit
+        backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+        context_window: 262144
+        extra_body: { repetition_penalty: 1.05 }
       - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
     llm_router_light_models:
       - { alias: hermes-4-14b, backend: hermes-4-14b }
@@ -2159,6 +2164,24 @@
           - _ctx['Qwen3.6-27B-4bit'] == 262144
           - _ctx['claude-sonnet-5'] == 262144
         fail_msg: "config.yaml.j2 did not render max_input_tokens for all large models: {{ _litellm.model_list }}"
+
+    - name: Assert a large model's extra_body sampling reaches BOTH its deployments
+      ansible.builtin.assert:
+        that:
+          # extra_body must render under litellm_params (so it forwards to the
+          # backend verbatim past drop_params) on both the alias AND physical-id
+          # deployment of the same model — the OptiQ repetition_penalty anti-loop
+          # fix. A model without extra_body must NOT sprout one.
+          - >-
+            (_litellm.model_list | selectattr('model_name', 'equalto', 'Qwen3.6-35B-A3B-OptiQ-4bit')
+             | first).litellm_params.extra_body.repetition_penalty == 1.05
+          - >-
+            (_litellm.model_list | selectattr('model_name', 'equalto', 'mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit')
+             | first).litellm_params.extra_body.repetition_penalty == 1.05
+          - >-
+            'extra_body' not in (_litellm.model_list
+             | selectattr('model_name', 'equalto', 'gpt-oss-120b') | first).litellm_params
+        fail_msg: "config.yaml.j2 did not render per-model extra_body sampling: {{ _litellm.model_list }}"
 
     - name: Assert routing, health checks, and observability callbacks
       ansible.builtin.assert:
