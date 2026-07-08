@@ -2121,12 +2121,18 @@
           - _model_names | select('equalto', 'embeddings') | list | length == 2
           - _model_names | select('equalto', 'claude-haiku-4-5') | list | length == 2
           # Large-tier passthrough: exactly one wildcard deployment forwarding
-          # any un-aliased model id to the serving gate (blocklist enforcement
-          # lives at the source — the gate only advertises non-blocked models),
-          # and check_provider_endpoint resolves it in /v1/models listings.
+          # any un-aliased model id to the serving gate, and
+          # check_provider_endpoint resolves it in /v1/models listings.
           - _model_names | select('equalto', '*') | list | length == 1
           - (_litellm.model_list | selectattr('model_name', 'equalto', '*') | first).litellm_params.model == 'openai/*'
           - _litellm.litellm_settings.check_provider_endpoint == true
+          # Hybrid guard: every tuned model is ALSO registered under its
+          # physical id (exact match beats the wildcard, so a physical-id
+          # request hits the TUNED deployment, never the dynamic tier), and
+          # a backend shared by two aliases is emitted exactly once.
+          - _model_names | select('equalto', 'mlx-community/gpt-oss-120b-MXFP4-Q8') | list | length == 1
+          - _model_names | select('equalto', 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit') | list | length == 1
+          - _model_names | select('equalto', 'mlx-community/Qwen3.6-35B-A3B-4bit') | list | length == 1
           # Secrets referenced via os.environ, never a literal in the config.
           - "'test-master-key-placeholder' not in (lookup('file', '/tmp/test_litellm_config.yaml'))"
           - _litellm.general_settings.master_key == 'os.environ/LLM_ROUTER_MASTER_KEY'
