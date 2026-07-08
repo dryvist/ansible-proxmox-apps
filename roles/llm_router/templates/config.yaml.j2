@@ -5,8 +5,17 @@
 
 model_list:
   # --- large tier: one deployment each, bearer-authed to llm-large ---
+  # Each tuned model is registered under BOTH its consumer-facing alias AND
+  # its physical id: exact model_name matches beat the "*" wildcard below, so
+  # a request naming the physical id still routes to the TUNED deployment
+  # (llama-swap: parsers, preload, batching) instead of falling through to
+  # the zero-config dynamic tier and double-loading the same weights.
+{% set _ns = namespace(seen=[]) %}
 {% for m in llm_router_large_models %}
-  - model_name: {{ m.alias }}
+{% for _name in ([m.alias, m.backend] | unique) %}
+{% if _name not in _ns.seen %}
+{% set _ns.seen = _ns.seen + [_name] %}
+  - model_name: {{ _name }}
     litellm_params:
       model: openai/{{ m.backend }}
       api_base: {{ llm_router_llm_large_base_url }}
@@ -22,6 +31,8 @@ model_list:
       max_input_tokens: {{ m.context_window }}
       max_tokens: {{ m.context_window }}
 {% endif %}
+{% endif %}
+{% endfor %}
 {% endfor %}
 {% if llm_router_large_passthrough_enabled | bool %}
   # --- large tier passthrough: every model the serving gate advertises ---
