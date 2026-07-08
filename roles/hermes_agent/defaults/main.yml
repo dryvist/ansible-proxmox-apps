@@ -52,10 +52,22 @@ hermes_agent_installer_path: "/usr/local/lib/hermes-agent-installer-{{ hermes_ag
 hermes_agent_model: "{{ ai_default_model }}"
 hermes_agent_model_base_url: "https://llm.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/v1"
 hermes_agent_model_api_mode: chat_completions
-# Qwen3.6-35B-A3B's native context window (256K = 262144 tokens). Custom
-# providers carry no context catalog Hermes can probe, so this is declared
-# explicitly (model.context_length in config.yaml.j2).
-hermes_agent_model_context_length: 262144
+# The context window Hermes budgets against and compacts under (it compresses at
+# hermes_agent_context_compression_threshold * this value). The model's TRUE
+# native window is 262144 (Qwen3.6-35B-A3B), but we deliberately DECLARE a
+# smaller 60000 to BOUND PREFILL TIME and break a stale-stream kill/re-prompt
+# spiral confirmed under load: the router's prefix cache is not reused
+# turn-to-turn, so every turn re-prefills the FULL prompt, and prefill emits no
+# stream chunks. A 70-90K-token re-prefill can run longer than
+# hermes_agent_stream_stale_timeout (900s) with zero chunks in flight, tripping a
+# FALSE "stream stale" kill; Hermes then re-prompts "continue where you left
+# off", the context grows, the next re-prefill is longer, and it spirals. Keeping
+# the declared window at 60000 makes compaction fire at ~0.85*60000 = 51000
+# tokens, so a full re-prefill stays well under the 900s stale window. Bounding
+# context is the correct fix — do NOT raise stream_stale_timeout to paper over a
+# runaway prefill. (Custom providers carry no context catalog Hermes can probe,
+# so this is declared explicitly as model.context_length in config.yaml.j2.)
+hermes_agent_model_context_length: 60000
 # ROOT-CAUSE fix for the "Context length exceeded (18/19 tokens). Cannot
 # compress further." death loop confirmed in ~/.hermes/logs/agent.log: the
 # router/backend hard-caps a single completion at 8192 output tokens
