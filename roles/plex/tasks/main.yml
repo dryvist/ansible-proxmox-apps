@@ -27,18 +27,16 @@
 
 # Plex moved repos in Plex Media Server 1.43.0 (v2 key, ed25519, repo.plex.tv).
 # The legacy RSA/SHA-1 PlexSign.key fails on Debian 13 (sqv) after 2026-02-01.
-# Strip any stale v1 artifacts before installing the v2 key/repo so apt does
-# not keep refusing updates on hosts that previously used the old layout.
+# Strip the stale v1 KEY so apt does not keep refusing updates on hosts that
+# previously used the old layout. The repo FILE is NOT removed here: it lives at
+# the same path the v2 apt_repository task manages (plexmediaserver.list), so
+# apt_repository rewrites it in place to the v2 signed-by — removing it first
+# only deletes what the next task recreates, which is non-idempotent (both tasks
+# report changed on every run).
 - name: Remove legacy Plex v1 apt keyring (if present)
   ansible.builtin.file:
     path: /etc/apt/keyrings/plex.asc
     state: absent
-
-- name: Remove legacy Plex v1 apt repo file (if present)
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/plexmediaserver.list
-    state: absent
-  register: plex_legacy_repo
 
 - name: Add Plex apt signing key (v2, ed25519)
   ansible.builtin.get_url:
@@ -51,17 +49,16 @@
     repo: "{{ plex_apt_repo }}"
     filename: plexmediaserver
     state: present
-  register: plex_repo
 
-- name: Refresh apt cache after Plex repo changes
-  ansible.builtin.apt:
-    update_cache: true
-  when: plex_repo is changed or plex_legacy_repo is changed
-
-- name: Install Plex Media Server
+# update_cache is folded into the install: a just-added repo has a stale index
+# regardless of age, so refresh unconditionally here (cheap, no cache_valid_time)
+# rather than in a separate `when: repo is changed` task — apt only reports
+# changed when the package state changes, so this stays idempotent.
+- name: Install Plex Media Server (refreshing the apt index first)
   ansible.builtin.apt:
     name: "{{ plex_package }}"
     state: present
+    update_cache: true
 
 - name: Ensure plex user is in the media group (read tank/media)
   ansible.builtin.user:

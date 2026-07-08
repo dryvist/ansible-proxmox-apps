@@ -1,0 +1,106 @@
+---
+# Molecule verification for plex (install/render layer).
+#
+# Proves the LAN-only Plex install contract without a running server:
+#   1. The shared media user/group contract (gid 13000 — role-owned).
+#   2. The Debian-13 apt-key v1->v2 migration: v2 ed25519 key present, the
+#      legacy v1 key absent, and the repo source points at repo.plex.tv via the
+#      v2 keyring. This is the highest-value regression to guard (a v1 relapse
+#      silently breaks apt updates on trixie after 2026-02-01).
+#   3. Directory skeleton: the shared /data library roots exist with the
+#      host-side 2775 contract (never chowned — unmapped-owner mount).
+#   4. The real plexmediaserver package installed from the apt repo.
+#   5. The role source keeps its fail-loud persistence guard (mountpoint check
+#      + ntfy alert + hard fail), gated on manage_services.
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    plex_media_dir: /data/media
+    plex_v2_keyring: /etc/apt/keyrings/plexmediaserver.v2.asc
+    plex_legacy_keyring: /etc/apt/keyrings/plex.asc
+    plex_repo_source: /etc/apt/sources.list.d/plexmediaserver.list
+
+  tasks:
+    # The plex role creates the media GROUP (gid 13000) and runs Plex as the
+    # `plex` user added to it — there is no `media` USER (unlike sonarr), so
+    # query the group database, not `id media`.
+    - name: Read the media group contract
+      ansible.builtin.getent:
+        database: group
+        key: media
+
+    - name: Assert the shared media gid contract
+      ansible.builtin.assert:
+        that:
+          - getent_group['media'][1] == '13000'
+        fail_msg: "media group is no longer the shared gid 13000"
+
+    - name: Stat the apt keyrings and the library roots
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: plex_paths
+      loop:
+        - "{{ plex_v2_keyring }}"
+        - "{{ plex_legacy_keyring }}"
+        - "{{ plex_media_dir }}"
+        - "{{ plex_media_dir }}/movies"
+        - "{{ plex_media_dir }}/tv"
+
+    - name: Assert the v2 apt migration + directory skeleton contract
+      ansible.builtin.assert:
+        that:
+          # v2 ed25519 key present, legacy v1 key gone
+          - plex_paths.results[0].stat.exists
+          - not plex_paths.results[1].stat.exists
+          # shared /data library roots exist, host-side 2775 (setgid) contract.
+          # default() so a missing path fails with the custom message below
+          # rather than an undefined-attribute Jinja error.
+          - plex_paths.results[2].stat.isdir | default(false)
+          - plex_paths.results[2].stat.mode | default('') == '2775'
+          - plex_paths.results[3].stat.isdir | default(false)
+          - plex_paths.results[3].stat.mode | default('') == '2775'
+          - plex_paths.results[4].stat.isdir | default(false)
+          - plex_paths.results[4].stat.mode | default('') == '2775'
+        fail_msg: "plex apt v2 migration or /data skeleton (2775) regressed"
+
+    - name: Read the rendered apt repo source
+      ansible.builtin.slurp:
+        src: "{{ plex_repo_source }}"
+      register: plex_repo_raw
+
+    - name: Assert the repo source uses repo.plex.tv signed by the v2 keyring
+      vars:
+        plex_repo: "{{ plex_repo_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'repo.plex.tv' in plex_repo"
+          - "plex_v2_keyring in plex_repo"
+        fail_msg: "plex apt source no longer points at repo.plex.tv via the v2 keyring"
+
+    - name: Confirm the plexmediaserver package is installed
+      ansible.builtin.command:
+        cmd: dpkg-query -W -f='${Status}' plexmediaserver
+      register: plex_pkg
+      changed_when: false
+      failed_when: "'install ok installed' not in plex_pkg.stdout"
+
+    - name: Read the role source (persistence-guard shape, unit-style)
+      ansible.builtin.slurp:
+        src: "{{ playbook_dir }}/../../roles/plex/tasks/main.yml"
+      register: plex_tasks_raw
+      delegate_to: localhost
+      become: false
+
+    - name: Assert the fail-loud persistence guard is intact in the role source
+      vars:
+        plex_tasks: "{{ plex_tasks_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'mountpoint -q' in plex_tasks"
+          - "'ansible.builtin.fail' in plex_tasks"
+          - "'plex_ntfy_url' in plex_tasks"
+        fail_msg: "plex's persistence guard (mountpoint + ntfy + fail) regressed"
