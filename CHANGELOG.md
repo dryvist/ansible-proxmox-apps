@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.94.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.93.2...v1.94.0) (2026-07-08)
+
+
+### Features
+
+* **servarr_wiring:** add Knaben + LimeTorrents public indexers ([#747](https://github.com/dryvist/ansible-proxmox-apps/issues/747)) ([1210776](https://github.com/dryvist/ansible-proxmox-apps/commit/121077697a37ea925c7f2e9fda76117d2fd6e277))
+
 ## [1.93.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.93.1...v1.93.2) (2026-07-08)
 
 
