@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.100.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.100.1...v1.100.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **hermes:** break the OptiQ tool-call loop (repetition_penalty) + stale-stream kill spiral (bounded context) ([#790](https://github.com/dryvist/ansible-proxmox-apps/issues/790)) ([b147e68](https://github.com/dryvist/ansible-proxmox-apps/commit/b147e68ce4ea8c7a1bc3d3028bb95ccd1bf57bb6))
+
 ## [1.100.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.100.0...v1.100.1) (2026-07-08)
 
 
