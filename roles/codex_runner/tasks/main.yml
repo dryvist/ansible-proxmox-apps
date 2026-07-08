@@ -97,12 +97,38 @@
     mode: "0440"
     validate: "visudo -cf %s"
 
-# Auth is a one-time, interactive, human step (ChatGPT OAuth device-code or
-# browser flow) that cannot be scripted here — see README.md for both
-# bootstrap options. This check is informational only: it never fails the
-# converge, it just tells the operator whether the step is still pending,
-# mirroring the repo's existing "report missing creds, don't fail" idiom
-# (roles/openbao_secrets/tasks/fetch_domain.yml).
+# Optional bootstrap: seed ~/.codex/auth.json from the Bao-sourced snapshot
+# (codex_runner_auth_json) when present. Deliberately create-only
+# (force: false): Codex rotates its refresh token guest-side after the first
+# login, so a live, already-refreshed token must NEVER be clobbered by this
+# stale bootstrap copy — Bao holds only the one-time snapshot. When the var is
+# empty, both tasks skip and the manual bootstrap paths (README) still apply.
+- name: Ensure the codex-runner .codex directory exists
+  ansible.builtin.file:
+    path: "{{ codex_runner_home }}/.codex"
+    state: directory
+    owner: "{{ codex_runner_user }}"
+    group: "{{ codex_runner_group }}"
+    mode: "0700"
+  when: codex_runner_auth_json | length > 0
+
+- name: Seed Codex auth from the Bao snapshot (create-only, never overwrite)
+  ansible.builtin.copy:
+    content: "{{ codex_runner_auth_json }}"
+    dest: "{{ codex_runner_home }}/.codex/auth.json"
+    owner: "{{ codex_runner_user }}"
+    group: "{{ codex_runner_group }}"
+    mode: "0600"
+    force: false
+  no_log: true
+  when: codex_runner_auth_json | length > 0
+
+# Auth is otherwise a one-time, interactive, human step (ChatGPT OAuth
+# device-code or browser flow) that cannot be scripted here — see README.md for
+# both manual bootstrap options. This check is informational only: it never
+# fails the converge, it just tells the operator whether the step is still
+# pending, mirroring the repo's existing "report missing creds, don't fail"
+# idiom (roles/openbao_secrets/tasks/fetch_domain.yml).
 - name: Check whether Codex auth has been bootstrapped for codex-runner
   ansible.builtin.stat:
     path: "{{ codex_runner_home }}/.codex/auth.json"

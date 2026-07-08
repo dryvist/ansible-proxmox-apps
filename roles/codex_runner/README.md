@@ -55,6 +55,15 @@ ssh <lxc-host> 'sudo install -o codex-runner -g codex-runner -m 0600 \
   sudo rm /tmp/codex-auth.json'
 ```
 
+**Option C — seed from OpenBao (bootstrap only):**
+
+Set `CODEX_AUTH_JSON` (the `~/.codex/auth.json` content) at `secret/ai/hermes`
+in the local-llm domain. On converge the role writes it to
+`~/.codex/auth.json` **create-only** — it seeds the initial login and then
+never touches the file again, so Codex's guest-side refresh takes over after
+first use and the live token is never clobbered by the stale snapshot. Leave
+the value empty to fall back to Option A or B.
+
 Either way, confirm with:
 
 ```bash
@@ -76,6 +85,7 @@ README, "Escalation (Codex via MCP)").
 | `codex_runner_npm_prefix` | `/usr/local` | forces a known global-install path |
 | `codex_runner_sudo_grantee` | `hermes` | the only user allowed to invoke Codex |
 | `codex_runner_mcp_command` | `{{ codex_runner_codex_bin }} mcp-server` | the exact, single command the sudo grant covers |
+| `codex_runner_auth_json` | `""` | optional `auth.json` bootstrap snapshot (Bao-first, env fallback); create-only |
 
 ## Group / invocation
 
