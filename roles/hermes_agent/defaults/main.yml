@@ -159,6 +159,106 @@ hermes_agent_splunk_mcp_enabled: true
 hermes_agent_splunk_mcp_url: ""
 hermes_agent_splunk_mcp_token: ""
 
+# --- Splunk monitor: 24/7 self-directed SIEM analyst -----------------------
+# Seeds a small fleet of Hermes cron jobs, each carrying the dryvist/splunk-monitor
+# skill. That skill encodes the HARD query-safety rails (bounded queries only —
+# tstats/stats/head, narrow time windows) plus a self-directed investigative
+# method: Hermes decides what to hunt for, remembers baselines, and alerts only on
+# confirmed anomalies. Every cron job runs in a FRESH isolated agent session, so
+# context never builds up run-to-run.
+#
+# Routing (user decision): anomaly alerts DM the operator, the routine digest
+# posts to the Slack home channel. Delivery of anomaly jobs is suppressed
+# whenever the run ends in the `[SILENT]` marker (skill contract), so a normal
+# run costs zero notifications.
+#
+# Gated (in tasks) on BOTH the Splunk MCP URL being set (can query) AND the Slack
+# tokens being set (can deliver) — a job that can't do both is never created.
+hermes_agent_splunk_monitor_enabled: true
+
+# DM target for anomaly alerts: `slack:<member-id>` when the operator's Slack
+# member id is known, else fall back to the home channel (`slack`). The digest
+# always goes to the home channel.
+hermes_agent_splunk_alert_deliver: >-
+  {{ 'slack:' ~ hermes_agent_slack_allowed_users
+     if (hermes_agent_slack_allowed_users | length > 0)
+     else 'slack' }}
+hermes_agent_splunk_digest_deliver: slack
+
+# Per-job cron definitions. Prompts stay short — the skill carries the discipline;
+# the prompt only sets each run's posture (a lens, not a checklist) and reinforces
+# the [SILENT]-unless-anomaly / always-deliver-the-digest delivery contract.
+# Minutes are staggered so no two monitoring runs fire in the same minute
+# (bounds concurrent load on the shared LLM serving tier).
+hermes_agent_splunk_triage_cron_name: splunk-triage
+hermes_agent_splunk_triage_cron_schedule: "3,18,33,48 * * * *"
+hermes_agent_splunk_triage_cron_prompt: >-
+  Do a broad, self-directed anomaly sweep of Splunk right now using only bounded
+  queries. Recall your known baselines first, confirm anything surprising with
+  follow-up bounded queries, and record notable findings and updated baselines to
+  memory. If nothing is genuinely off, reply with exactly [SILENT]; otherwise send
+  one concise, numbers-backed alert.
+
+hermes_agent_splunk_security_cron_name: splunk-security
+hermes_agent_splunk_security_cron_schedule: "9,39 * * * *"
+hermes_agent_splunk_security_cron_prompt: >-
+  Sweep Splunk with a security lens this run — firewall-drop spikes, auth-failure
+  spikes, honeypot index hits, unexpected source IPs — all as bounded stats,
+  compared against your remembered baselines. You are not limited to these; flag
+  anything that looks like a threat. Record findings to memory. Reply exactly
+  [SILENT] if clean; otherwise one concise, numbers-backed alert.
+
+hermes_agent_splunk_parsing_cron_name: splunk-parsing
+hermes_agent_splunk_parsing_cron_schedule: "24 * * * *"
+hermes_agent_splunk_parsing_cron_prompt: >-
+  Sweep Splunk with a data-quality lens this run — timestamp-extraction failures,
+  events dated far in the past/future, line-merge anomalies, new or unknown
+  sourcetypes, mis-sized or unparsed events, splunkd parsing warnings — all
+  bounded. Record findings and baselines to memory. Reply exactly [SILENT] if
+  clean; otherwise one concise, numbers-backed alert.
+
+# Quiet research run: builds long-term knowledge (RAG) rather than alerting.
+hermes_agent_splunk_deepdive_cron_name: splunk-deepdive
+hermes_agent_splunk_deepdive_cron_schedule: "44 */6 * * *"
+hermes_agent_splunk_deepdive_cron_prompt: >-
+  Pick ONE index or sourcetype you have not yet characterized well (check your
+  wiki/memory for gaps). Using only bounded queries, learn its normal shape,
+  volume and purpose, then write or update a page in the `splunk` area of your
+  wiki plus a memory baseline. This is a quiet research run — no alert needed.
+
+# Routine status post: always delivered (never [SILENT]).
+hermes_agent_splunk_digest_cron_name: splunk-digest
+hermes_agent_splunk_digest_cron_schedule: "50 8,20 * * *"
+hermes_agent_splunk_digest_cron_prompt: >-
+  Post a concise Splunk digest to the home channel: what you looked at recently,
+  the current normal (top indexes/sourcetypes by volume and their freshness), any
+  anomalies still open, and any splunk-auto-* checks you have added or removed.
+  Bounded queries only. This is a routine status post — always deliver it.
+
+# Aggregate list the seed loop iterates. Alert jobs DM the operator; the digest
+# posts to the home channel; the quiet deep-dive research run saves locally only.
+hermes_agent_splunk_cron_jobs:
+  - name: "{{ hermes_agent_splunk_triage_cron_name }}"
+    schedule: "{{ hermes_agent_splunk_triage_cron_schedule }}"
+    prompt: "{{ hermes_agent_splunk_triage_cron_prompt }}"
+    deliver: "{{ hermes_agent_splunk_alert_deliver }}"
+  - name: "{{ hermes_agent_splunk_security_cron_name }}"
+    schedule: "{{ hermes_agent_splunk_security_cron_schedule }}"
+    prompt: "{{ hermes_agent_splunk_security_cron_prompt }}"
+    deliver: "{{ hermes_agent_splunk_alert_deliver }}"
+  - name: "{{ hermes_agent_splunk_parsing_cron_name }}"
+    schedule: "{{ hermes_agent_splunk_parsing_cron_schedule }}"
+    prompt: "{{ hermes_agent_splunk_parsing_cron_prompt }}"
+    deliver: "{{ hermes_agent_splunk_alert_deliver }}"
+  - name: "{{ hermes_agent_splunk_deepdive_cron_name }}"
+    schedule: "{{ hermes_agent_splunk_deepdive_cron_schedule }}"
+    prompt: "{{ hermes_agent_splunk_deepdive_cron_prompt }}"
+    deliver: local
+  - name: "{{ hermes_agent_splunk_digest_cron_name }}"
+    schedule: "{{ hermes_agent_splunk_digest_cron_schedule }}"
+    prompt: "{{ hermes_agent_splunk_digest_cron_prompt }}"
+    deliver: "{{ hermes_agent_splunk_digest_deliver }}"
+
 # --- Context7 MCP client (current library/framework docs on demand) ---
 # Registers Context7's hosted HTTP MCP server so Hermes can pull up-to-date,
 # version-specific docs mid-task. Bao-first, env fallback (see group_vars); the

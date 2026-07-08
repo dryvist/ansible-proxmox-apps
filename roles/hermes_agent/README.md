@@ -160,6 +160,52 @@ cleanly before the creds exist.
 | `hermes_agent_splunk_mcp_url` | `""` | Splunk MCP Server endpoint (bao/env) |
 | `hermes_agent_splunk_mcp_token` | `""` | Bearer token (bao/env) |
 
+## Splunk monitoring (self-directed 24/7 analyst)
+
+On top of raw search access, the role turns Hermes into a **self-directed SIEM
+analyst**. It deploys the `dryvist/splunk-monitor` skill and seeds a small fleet
+of cron jobs that carry it. The skill encodes two things that sit together:
+
+- **Hard query-safety rails** — every search must be bounded (`tstats` / `stats` /
+  `head N ≤ 100`, an explicit narrow time window, project only needed fields). This
+  is what stops an unbounded search from flooding the agent's context and crashing
+  the run. The rails are non-negotiable.
+- **Free direction** — *what* to look for is Hermes' call. The skill teaches an
+  investigative method (recall known baselines → orient → hunt → confirm → record →
+  decide delivery) and offers lenses, not a checklist. Hermes learns the
+  environment over time and invents its own angles.
+
+Each cron job runs in a **fresh, isolated agent session**, so context never builds
+up run to run. Anomaly jobs stay silent when nothing is wrong: a run that ends in
+the `[SILENT]` marker suppresses delivery entirely, so a normal sweep costs zero
+notifications. Findings are written to memory (baselines + open issues, for
+dedup), and durable knowledge is captured as `llm-wiki` pages (RAG).
+
+**Routing:** anomaly alerts DM the operator (`slack:<member-id>`); the routine
+digest posts to the Slack home channel. The quiet deep-dive research run saves
+locally only (`--deliver local`).
+
+| Job | Schedule (staggered) | Delivery | Posture |
+| --- | --- | --- | --- |
+| `splunk-triage` | `3,18,33,48 * * * *` | DM, silent-unless-anomaly | broad anomaly hunt |
+| `splunk-security` | `9,39 * * * *` | DM, silent-unless-anomaly | security lens |
+| `splunk-parsing` | `24 * * * *` | DM, silent-unless-anomaly | data-quality / parsing lens |
+| `splunk-deepdive` | `44 */6 * * *` | local (quiet) | characterize one index → wiki + memory |
+| `splunk-digest` | `50 8,20 * * *` | home channel (always) | "what I'm seeing + current normal" |
+
+Cron seeding is idempotent (create-if-absent) and gated on Hermes being able to
+**both** query Splunk (`hermes_agent_splunk_mcp_url` set) **and** deliver to Slack
+(bot + app tokens + home channel set) — a job that can't do both is never created.
+When Hermes finds a signal worth watching continuously it may register its own
+`splunk-auto-*` check and surfaces it in the next digest.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_splunk_monitor_enabled` | `true` | Deploy the skill + seed the cron fleet |
+| `hermes_agent_splunk_*_cron_name` / `_schedule` / `_prompt` | — | per-job overrides |
+| `hermes_agent_splunk_alert_deliver` | `slack:<member-id>` | DM target for anomaly alerts |
+| `hermes_agent_splunk_digest_deliver` | `slack` | home-channel target for the digest |
+
 ## Live docs (Context7)
 
 Registers Context7's hosted HTTP MCP server (`mcp_servers.context7`) so Hermes
