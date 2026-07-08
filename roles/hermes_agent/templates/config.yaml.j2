@@ -75,7 +75,8 @@ plugins:
    entry renders whenever enabled — the API-key header is added only when a key
    is actually set, below. #}
 {% set _mcp_context7 = (hermes_agent_context7_mcp_enabled | bool) %}
-{% if _mcp_splunk or _mcp_context7 %}
+{% set _mcp_escalation = (hermes_agent_codex_mcp_enabled | bool) %}
+{% if _mcp_splunk or _mcp_context7 or _mcp_escalation %}
 # MCP servers. ${VARS} resolve from .env at connect time, so tokens/endpoints
 # never land in this file. The Splunk entry is omitted until its creds are
 # present; Context7 is keyless so it renders whenever enabled.
@@ -95,6 +96,24 @@ mcp_servers:
     headers:
       CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}"
 {% endif %}
+{% endif %}
+{% if _mcp_escalation %}
+  # Escalation: Codex (ChatGPT-OAuth-backed reasoning), for problems worth a
+  # stronger model or a stuck/looping session — a deliberate per-call tool
+  # choice, not automatic on-error fallback. Runs under a SEPARATE, isolated
+  # OS user (codex_runner role) — this sudo invocation is the only capability
+  # Hermes has; it never gains filesystem access to that user's OAuth
+  # credential. Errors on use (not at daemon startup) until an operator
+  # completes the one-time Codex login — see roles/codex_runner/README.md.
+  codex:
+    command: sudo
+    args:
+      - "-u"
+      - "{{ codex_runner_user }}"
+      - "--"
+{% for _arg in codex_runner_mcp_command.split(' ') %}
+      - "{{ _arg }}"
+{% endfor %}
 {% endif %}
 {% endif %}
 timezone: '{{ hermes_agent_timezone }}'
