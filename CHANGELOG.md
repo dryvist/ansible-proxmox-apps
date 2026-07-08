@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.92.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.91.2...v1.92.0) (2026-07-08)
+
+
+### Features
+
+* **hermes:** wire Codex as an isolated, agent-invoked escalation tool ([47847a2](https://github.com/dryvist/ansible-proxmox-apps/commit/47847a2518e2f3d07dfdca43ea51ddde16ce93cb))
+
 ## [1.91.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.91.1...v1.91.2) (2026-07-08)
 
 
