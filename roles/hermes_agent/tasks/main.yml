@@ -165,6 +165,40 @@
     mode: "0640"
   notify: Restart hermes-gateway
 
+# --- Cron model-drift recovery ------------------------------------------------
+# Unpinned cron jobs snapshot the global default model at creation and FAIL
+# CLOSED when model.default later changes: every subsequent fire is skipped
+# with a provider/model-drift alert (upstream spend guard, hermes-agent
+# #44585), so a brain repoint silently stops the entire seeded fleet. The CLI
+# cannot re-pin an existing job's model, so recovery is: remove the drifted
+# job here and let the create-if-absent seeding below recreate it, snapshotting
+# the new model. No drift means nothing is removed (idempotent).
+- name: Read the cron job store to detect model-snapshot drift
+  ansible.builtin.slurp:
+    src: "{{ hermes_agent_hermes_home }}/cron/jobs.json"
+  register: hermes_agent_cron_store
+  failed_when: false
+
+- name: Remove role-seeded cron jobs whose model snapshot drifted
+  ansible.builtin.command: "{{ hermes_agent_bin }} cron remove {{ item }}"
+  environment:
+    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
+  become: true
+  become_user: "{{ hermes_agent_user }}"
+  # The loop expression is templated before `when` would be evaluated
+  # (per-item semantics), so it must be self-safe: default the slurped
+  # content to base64("{}") when jobs.json does not exist yet (fresh
+  # install) — the loop resolves to [] and the task is a no-op.
+  loop: >-
+    {{ (hermes_agent_cron_store.content | default('e30=', true) | b64decode | from_json).jobs
+       | default([])
+       | selectattr('name', 'in', hermes_agent_seeded_cron_names)
+       | selectattr('model_snapshot', 'defined')
+       | rejectattr('model_snapshot', 'none')
+       | rejectattr('model_snapshot', 'equalto', hermes_agent_model)
+       | map(attribute='name') | list }}
+  changed_when: true
+
 # Hermes ships its own cron scheduler. Seed the daily Slack status report here so
 # the next gateway run picks it up without any manual post-install step.
 - name: Check whether the daily Slack status cron job already exists
