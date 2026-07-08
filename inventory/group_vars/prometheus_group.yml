@@ -14,10 +14,34 @@ smokeping_scrape_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['smokeping_prober']
      | default(9374) }}
 
+# PVE host metrics (B9): scrape each commissioned node's pinned node_exporter
+# through this container's Prometheus + the existing remote_write leg —
+# the Cribl prometheus SCRAPER source is not allowed on the standalone
+# Edge/Stream deployments, so the scrape has to happen here. Targets derive
+# from the inventory nodes map (role + domain, never a literal hostname);
+# Stream's prometheus_to_netmon pipeline splits this job into the
+# host_metrics metric index.
+node_exporter_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['node_exporter']
+     | default(9100) }}
+pve_node_exporter_scrape_targets: >-
+  {%- set out = [] -%}
+  {%- for name, node in (hostvars['localhost']['tofu_data']['nodes'] | default({})) | dictsort -%}
+  {%- if node.commissioned | default(false) -%}
+  {%- set _ = out.append((node.role | default(name)) ~ '.'
+      ~ hostvars['localhost']['tofu_data']['domain'] ~ ':' ~ node_exporter_scrape_port) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+
 prometheus_stack_extra_scrape_configs: |
   - job_name: smokeping
     static_configs:
       - targets: ["127.0.0.1:{{ smokeping_scrape_port }}"]
+  - job_name: pve_node_exporter
+    scrape_interval: 60s
+    static_configs:
+      - targets: {{ pve_node_exporter_scrape_targets | to_json }}
 
 # Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics).
 # Points at cribl-stream-01 directly (no HAProxy — WAL provides delivery durability).
