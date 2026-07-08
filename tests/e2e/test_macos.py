@@ -1,222 +1,85 @@
-"""macOS Cribl Edge -> Cribl Cloud -> Splunk freshness gate.
+"""macOS Cribl Edge -> Cribl Stream -> Splunk freshness gate.
 
-Verifies the macbook-m4 Cribl Edge node continues to emit events through
-Cribl Cloud and into Splunk. Catches silent chain breakage at any layer
-(Mac offline, pack misconfigured, Cribl Cloud rejecting enrollment,
-Stream pipeline broken, Splunk indexer down).
+Verifies the Mac hosts' standalone Cribl Edge nodes continue to emit
+events through Cribl Stream (shared S2S port) into Splunk. Catches silent
+chain breakage at any layer (Mac offline, Edge daemon down, Stream
+pipeline broken, Splunk indexer down).
 
-Complements the Splunk silence-detector saved search in ansible-splunk —
-the saved search alerts an on-call human; this pytest test fails the
-scheduled E2E run so CI catches the same condition.
+Architecture note (2026-07): the old Cribl-Cloud "mac pack" that routed
+``macos:unified_log`` / ``macos:system:*`` into ``os`` / ``mac_perf`` is
+retired, as is the BSD-syslogd remote forward (RFC3164 is never skew-safe
+from a local-time workstation). The live Mac Edge sources are:
 
-Design note: this is a freshness gate, not a sentinel injection. The Mac
-pack continuously emits events (system_metrics every 60s,
-apple_unified_logs streaming), so any 5-minute window of silence is a
-real failure. Sentinel injection from a Linux runner to a Mac at a
-remote site would require either runner-to-Mac SSH or a publicly-reachable
-HEC endpoint on the Mac — both add deployment complexity without
-materially improving the failure detection signal.
+- ``in_system_metrics`` -> ``index=llm sourcetype=mlx:metrics`` — emits
+  every 60s from every inference Mac; this is the continuous freshness
+  signal for the whole Edge -> Stream -> Splunk chain.
+- ``in_firewall_logs`` -> ``index=firewall sourcetype=macos:firewall`` —
+  the firewall unified-log tail (nix-darwin modules/darwin/logging.nix).
+  Event volume is intrinsically bursty (a marker line per daemon start
+  plus whatever the OS firewall logs), so it gets an existence gate over
+  a longer window, not a per-5-minute freshness gate.
+
+Complements the Splunk silence-detector saved searches in ansible-splunk —
+those alert an on-call human; these tests fail the scheduled E2E run so CI
+catches the same condition.
 """
-
-from datetime import datetime, timezone
 
 from .helpers import query_splunk
 
 
-MACOS_INDEX_FILTER = "(index=os OR index=mac_perf)"
-MACOS_SOURCETYPE_FILTER = "sourcetype=macos:*"
-MACOS_NATIVE_FILTER = (
-    "(sourcetype=macos:unified_log OR sourcetype=macos:system:*)"
-)
+# Continuous per-minute emitter from every inference Mac's Edge.
+MACOS_CHAIN_FILTER = "index=llm sourcetype=mlx:metrics"
+# Firewall unified-log tail; bursty by nature.
+MACOS_FIREWALL_FILTER = "index=firewall sourcetype=macos:firewall"
 
-
-def _format_epoch(epoch):
-    """Return an ISO-8601 UTC timestamp for a Splunk epoch value."""
-    if epoch in (None, ""):
-        return "unknown"
-    try:
-        return (
-            datetime.fromtimestamp(float(epoch), tz=timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-    except (TypeError, ValueError):
-        return str(epoch)
-
-
-def _format_sourcetype_rows(rows):
-    """Format compact sourcetype freshness diagnostics."""
-    if not rows:
-        return "none"
-
-    formatted = []
-    for row in rows[:8]:
-        sourcetype = row.get("sourcetype") or "(missing sourcetype)"
-        index = row.get("index")
-        label = f"{index}/{sourcetype}" if index else sourcetype
-        last_seen = _format_epoch(row.get("last_seen"))
-        seconds_ago = row.get("seconds_ago")
-        count = row.get("count")
-        parts = [f"{label}: last_seen={last_seen}"]
-        if seconds_ago not in (None, ""):
-            parts.append(f"seconds_ago={seconds_ago}")
-        if count not in (None, ""):
-            parts.append(f"count={count}")
-        formatted.append(" ".join(parts))
-    return "; ".join(formatted)
-
-
-def _macos_history_context(mgmt_url, user, password):
-    """Return recent historical macOS sourcetype activity for failure messages."""
-    search_str = (
-        "| tstats latest(_time) as last_seen count WHERE earliest=-30d "
-        f"{MACOS_INDEX_FILTER} {MACOS_SOURCETYPE_FILTER} BY sourcetype "
-        "| eval seconds_ago=round(now() - last_seen, 0) "
-        "| sort 0 -last_seen"
-    )
-    rows = query_splunk(
-        mgmt_url, user, password, search_str, earliest=None, timeout=30
-    )
-    return _format_sourcetype_rows(rows)
-
-
-def _macos_any_index_context(mgmt_url, user, password):
-    """Return recent macOS sourcetype activity across all indexes."""
-    search_str = (
-        "| tstats latest(_time) as last_seen count WHERE earliest=-30d "
-        f"index=* {MACOS_SOURCETYPE_FILTER} BY index sourcetype "
-        "| eval seconds_ago=round(now() - last_seen, 0) "
-        "| sort 0 -last_seen"
-    )
-    rows = query_splunk(
-        mgmt_url, user, password, search_str, earliest=None, timeout=30
-    )
-    return _format_sourcetype_rows(rows)
+# Number of Mac hosts expected to be emitting (MacBook + Mac Studio).
+EXPECTED_MAC_HOSTS = 2
 
 
 class TestMacOSPipelineFreshness:
     """Verify the macOS Cribl Edge -> Splunk chain produces fresh data."""
 
-    def test_macos_pack_events_arrive(self, splunk_creds):
-        """Assert at least one macOS pack event landed in Splunk in the
-        last 5 minutes.
+    def test_macos_edge_chain_fresh(self, splunk_creds):
+        """The continuous system-metrics stream from every Mac Edge is fresh.
 
-        Searches both indexes the pack routes to (``os`` for log events,
-        ``mac_perf`` for metric snapshots) and matches any ``macos:*``
-        sourcetype set by the pack's main pipeline.
+        ``in_system_metrics`` emits every 60s, so any 5-minute window of
+        silence from a host is a real failure of that host's chain.
         """
         mgmt_url, user, password = splunk_creds
-        search_str = (
-            f"{MACOS_INDEX_FILTER} {MACOS_SOURCETYPE_FILTER} | head 5"
-        )
-        results = query_splunk(
-            mgmt_url, user, password, search_str, earliest="-5m", timeout=30
-        )
-        assert results, (
-            "macbook-m4 Cribl Edge -> Cloud -> Splunk chain appears broken: "
-            "no events with sourcetype=macos:* in (os OR mac_perf) within "
-            "the last 5 minutes. Investigate: Cribl Edge daemon on macbook-m4, "
-            "Cribl Cloud enrollment status, Cribl Stream pipelines, and "
-            "Splunk HEC ingestion. Latest macOS history in last 30d: "
-            f"{_macos_history_context(mgmt_url, user, password)}. "
-            "Any-index macOS history in last 30d: "
-            f"{_macos_any_index_context(mgmt_url, user, password)}"
-        )
-
-    def test_macos_native_sources_emitting(self, splunk_creds):
-        """Assert both 4.18 native Source types are emitting data.
-
-        Verifies the pack's apple_unified_logs and system_metrics sources
-        are actually producing events, not just any macOS sourcetype.
-        Catches the case where one native source is enabled but stuck.
-
-        Uses tstats on the indexed sourcetype field so the search is cheap
-        even over a multi-hour window.
-        """
-        mgmt_url, user, password = splunk_creds
-        # Splunk's IN(...) operator does not support wildcards — its
-        # arguments are matched literally. Use OR'd sourcetype clauses so
-        # `macos:system:*` expands as a glob on the indexed sourcetype.
-        search_str = (
-            "| tstats count WHERE "
-            f"{MACOS_INDEX_FILTER} earliest=-15m "
-            f"{MACOS_NATIVE_FILTER} "
-            "BY sourcetype"
-        )
-        results = query_splunk(
-            mgmt_url, user, password, search_str, timeout=30
-        )
-        sourcetypes_seen = {row.get("sourcetype") for row in results}
-        seen_context = ", ".join(sorted(filter(None, sourcetypes_seen))) or "none"
-
-        assert any(
-            st == "macos:unified_log" for st in sourcetypes_seen
-        ), (
-            "apple_unified_logs source not emitting: no events with "
-            "sourcetype=macos:unified_log in last 15m. The native Cribl 4.18 "
-            "apple_unified_logs Source on macbook-m4 may be misconfigured "
-            "or the daemon predicate is filtering everything out. Native "
-            f"sourcetypes seen in last 15m: {seen_context}. Latest macOS "
-            "history in last 30d: "
-            f"{_macos_history_context(mgmt_url, user, password)}. "
-            "Any-index macOS history in last 30d: "
-            f"{_macos_any_index_context(mgmt_url, user, password)}"
-        )
-        assert any(
-            (st or "").startswith("macos:system:") for st in sourcetypes_seen
-        ), (
-            "system_metrics source not emitting: no events with "
-            "sourcetype=macos:system:* in last 15m. The native Cribl 4.18 "
-            "system_metrics Source on macbook-m4 may be misconfigured. Native "
-            f"sourcetypes seen in last 15m: {seen_context}. Latest macOS "
-            "history in last 30d: "
-            f"{_macos_history_context(mgmt_url, user, password)}. "
-            "Any-index macOS history in last 30d: "
-            f"{_macos_any_index_context(mgmt_url, user, password)}"
-        )
-
-    def test_macos_pack_recently_active(self, splunk_creds):
-        """Latest event timestamp on the chain is within the last 5 minutes.
-
-        Stricter than ``test_macos_pack_events_arrive``: instead of "any
-        event in 5m", asserts the freshest event is recent. Catches
-        backed-up pipelines where old events keep arriving long after
-        the source went silent.
-        """
-        mgmt_url, user, password = splunk_creds
-        # `tstats latest(...) WHERE ...` without a BY clause always emits
-        # a single row even when no events match (the aggregate is null),
-        # so the row count alone is not a freshness signal. Filter out the
-        # null case with `where isnotnull(last_seen)` so the assertion below
-        # actually detects a never-indexed pack vs. a stalled one.
         search_str = (
             "| tstats latest(_time) as last_seen WHERE "
-            f"{MACOS_INDEX_FILTER} {MACOS_SOURCETYPE_FILTER} "
-            "| where isnotnull(last_seen) "
-            "| eval seconds_ago = now() - last_seen | head 1"
+            f"{MACOS_CHAIN_FILTER} earliest=-5m BY host "
+            "| eval seconds_ago=round(now() - last_seen, 0)"
         )
-        results = query_splunk(
-            mgmt_url, user, password, search_str, timeout=30
+        results = query_splunk(mgmt_url, user, password, search_str, timeout=30)
+        hosts_seen = sorted(
+            row.get("host") for row in results if row.get("host")
         )
-        assert results, (
-            "no macOS pack events ever indexed in (index=os OR index=mac_perf): "
-            "the pack may have never emitted data, or the indexes do not "
-            "exist yet. Latest macOS history in last 30d: "
-            f"{_macos_history_context(mgmt_url, user, password)}. "
-            "Any-index macOS history in last 30d: "
-            f"{_macos_any_index_context(mgmt_url, user, password)}"
+        assert len(hosts_seen) >= EXPECTED_MAC_HOSTS, (
+            "Mac Cribl Edge -> Stream -> Splunk chain appears broken for at "
+            f"least one host: expected metrics from >= {EXPECTED_MAC_HOSTS} "
+            f"Mac hosts in the last 5 minutes, saw {hosts_seen or 'none'}. "
+            "Investigate: cribl-edge daemon on the missing Mac, the shared "
+            "S2S ingest on Cribl Stream, and Splunk HEC ingestion."
         )
 
-        # tstats can emit null/missing aggregates even after the filter when
-        # the underlying index has no data — coerce defensively.
-        raw_seconds_ago = results[0].get("seconds_ago")
-        assert raw_seconds_ago not in (None, ""), (
-            f"tstats returned a row but seconds_ago is empty "
-            f"({raw_seconds_ago!r}) — pack may have never emitted data"
+    def test_macos_firewall_log_indexed(self, splunk_creds):
+        """The firewall unified-log tail has landed events recently.
+
+        The shipping daemon writes a marker line on every start (boot,
+        rebuild, restart), so a 7-day window with zero events means the
+        pipeline is broken, not merely quiet.
+        """
+        mgmt_url, user, password = splunk_creds
+        search_str = (
+            "| tstats latest(_time) as last_seen count WHERE "
+            f"{MACOS_FIREWALL_FILTER} earliest=-7d BY host "
+            "| eval seconds_ago=round(now() - last_seen, 0)"
         )
-        seconds_ago = float(raw_seconds_ago)
-        assert seconds_ago < 300, (
-            f"newest macbook-m4 pack event is {seconds_ago:.0f}s old "
-            f"(threshold: 300s). Chain appears to have backed up or "
-            f"stalled between Edge and Splunk."
+        results = query_splunk(mgmt_url, user, password, search_str, timeout=30)
+        assert results, (
+            "no macOS firewall unified-log events in the last 7 days: the "
+            "firewall-log-shipping launch daemon or the Edge in_firewall_logs "
+            "file input is broken on every Mac (each daemon start writes a "
+            "marker line, so a healthy host cannot be silent for a week)."
         )
