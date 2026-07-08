@@ -237,6 +237,60 @@
           The lanroute table must route only RFC1918 + unreachable default.
         success_msg: "Marked internet-bound packets cannot egress the LAN NIC (fail-closed)."
 
+    # --- J. FlareSolverr egresses the SAME VPN exit IP as the tunnel --------
+    # CloudFlare binds the cf_clearance cookie FlareSolverr returns to the IP
+    # that solved the challenge. Prowlarr (VPN-egressing) then reuses that
+    # clearance — so if FlareSolverr's Chromium ever exited a different IP than
+    # wg0, every CF-gated search would fail the moment the clearance was reused.
+    # Section E already fetched the tunnel's public IP (download_vpn_vpn_ip);
+    # here we make FlareSolverr fetch the same probe and assert the IPs match.
+    - name: Wait for FlareSolverr to be listening (headless Chromium init takes seconds)
+      ansible.builtin.wait_for:
+        host: "{{ download_vpn_flaresolverr_bind_host }}"
+        port: "{{ download_vpn_flaresolverr_port }}"
+        timeout: 90
+      when: download_vpn_flaresolverr_enabled
+
+    - name: Solve the IP-probe URL through FlareSolverr
+      ansible.builtin.uri:
+        url: "http://{{ download_vpn_flaresolverr_bind_host }}:{{ download_vpn_flaresolverr_port }}/v1"
+        method: POST
+        body_format: json
+        body:
+          cmd: request.get
+          url: "{{ download_vpn_ip_probe_url }}"
+          maxTimeout: 60000
+        status_code: 200
+      register: download_vpn_fs_probe
+      changed_when: false
+      # The port opening precedes Chromium being ready to solve the first
+      # request; retry until the response actually carries an IPv4.
+      retries: 5
+      delay: 6
+      until: >-
+        (download_vpn_fs_probe.status | default(0)) == 200
+        and (download_vpn_fs_probe.json.solution.response | default('', true)
+             | regex_search('(\d{1,3}\.){3}\d{1,3}')) is not none
+      when: download_vpn_flaresolverr_enabled
+
+    - name: Assert FlareSolverr's egress IP equals the tunnel exit IP
+      vars:
+        _fs_ip: >-
+          {{ (download_vpn_fs_probe.json.solution.response | default('', true)
+              | regex_search('(\d{1,3}\.){3}\d{1,3}')) | default('', true) }}
+        _wg_ip: "{{ download_vpn_vpn_ip.stdout | trim }}"
+      ansible.builtin.assert:
+        that:
+          - _fs_ip | length > 0
+          - _fs_ip == _wg_ip
+        fail_msg: >-
+          FlareSolverr egress IP ({{ _fs_ip | default('(none)') }}) does not match
+          the wg0 tunnel exit IP ({{ _wg_ip }}). CloudFlare clearance solved by
+          FlareSolverr would be rejected when Prowlarr reuses it — and a mismatch
+          means FlareSolverr is not exiting the VPN.
+        success_msg: "FlareSolverr egresses the tunnel exit IP ({{ _wg_ip }})."
+      when: download_vpn_flaresolverr_enabled
+
     - name: Report killswitch validation success
       ansible.builtin.debug:
         msg: >-
@@ -244,4 +298,5 @@
           routes via {{ download_vpn_wg_interface }} (Table=auto); no IPv6 default
           route; qBittorrent bound to {{ download_vpn_wg_interface }}; VPN IPv4
           egress works; non-VPN IPv4 + all IPv6 egress refused; LAN-reply routing
-          present (web UIs reachable cross-subnet).
+          present (web UIs reachable cross-subnet); FlareSolverr egress IP matches
+          the tunnel.

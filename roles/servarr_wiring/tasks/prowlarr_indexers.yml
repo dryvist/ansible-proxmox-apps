@@ -12,8 +12,9 @@
 #      we stay resilient to Prowlarr / Cardigann definition drift.
 #
 # The default set (servarr_wiring_prowlarr_indexers) is PUBLIC, non-Cloudflare
-# trackers — no FlareSolverr required. Cloudflare-gated indexers need
-# FlareSolverr (out of scope) and are intentionally excluded.
+# trackers — no proxy required. Cloudflare-gated indexers
+# (servarr_wiring_prowlarr_cf_indexers) are added separately below, tagged so
+# Prowlarr routes them through the FlareSolverr proxy (see prowlarr_proxies.yml).
 
 - name: Fetch Prowlarr indexer schema
   ansible.builtin.uri:
@@ -93,17 +94,69 @@
     - servarr_wiring_indexer_schema.json | selectattr('name', 'equalto', item) | list | length > 0
     - servarr_wiring_indexer_existing.json | selectattr('name', 'equalto', item) | list | length == 0
 
-# Surface any indexer Prowlarr refused (almost always Cloudflare → needs
-# FlareSolverr, out of scope). Non-fatal: the rest of the wiring proceeds.
-- name: Warn about indexers Prowlarr could not add
+# Surface any non-CF indexer Prowlarr refused. Non-fatal: wiring proceeds.
+- name: Warn about public indexers Prowlarr could not add
   ansible.builtin.debug:
     msg: >-
-      Prowlarr did not add indexer "{{ item.item }}" (HTTP
-      {{ item.status | default('n/a') }}) — usually a Cloudflare-gated tracker
-      that needs FlareSolverr (out of scope). Pick a non-Cloudflare public
-      indexer in servarr_wiring_prowlarr_indexers, or add this one in the
-      Prowlarr UI with FlareSolverr configured.
+      Prowlarr did not add public indexer "{{ item.item }}" (HTTP
+      {{ item.status | default('n/a') }}). If it is Cloudflare-gated, move it to
+      servarr_wiring_prowlarr_cf_indexers so it is routed through FlareSolverr;
+      otherwise pick another non-Cloudflare public indexer.
   loop: "{{ servarr_wiring_indexer_add.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('?') }}"
+  when:
+    - not (item.skipped | default(false))
+    - item.status is defined
+    - item.status not in [200, 201]
+
+# --- CloudFlare-gated indexers (routed through FlareSolverr) ------------------
+# Same schema-overlay add, but each carries the flaresolverr tag so Prowlarr
+# proxies its requests through the solver. Requires the FlareSolverr proxy +
+# tag from prowlarr_proxies.yml (imported before this file). Still best-effort:
+# a 400 (e.g. the solver briefly unavailable) must not abort the rest of the
+# wiring. Only runs when FlareSolverr is enabled.
+- name: Add missing CloudFlare-gated Prowlarr indexers (via FlareSolverr, best-effort)
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer"
+    method: POST
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    body_format: json
+    body: >-
+      {{ _cf_indexer_template | combine({
+           'enable': true,
+           'appProfileId': servarr_wiring_indexer_app_profile_id,
+           'tags': [servarr_wiring_flaresolverr_tag_id | int]
+         }) }}
+    status_code: [200, 201, 400]
+    return_content: true
+  register: servarr_wiring_cf_indexer_add
+  changed_when: servarr_wiring_cf_indexer_add.status in [200, 201]
+  failed_when: false
+  no_log: true
+  loop: "{{ servarr_wiring_prowlarr_cf_indexers }}"
+  loop_control:
+    label: "{{ item }}"
+  vars:
+    _cf_indexer_template: >-
+      {{ servarr_wiring_indexer_schema.json
+         | selectattr('name', 'equalto', item)
+         | first }}
+  when:
+    - servarr_wiring_flaresolverr_enabled | bool
+    - servarr_wiring_flaresolverr_tag_id is defined
+    - servarr_wiring_indexer_schema.json | selectattr('name', 'equalto', item) | list | length > 0
+    - servarr_wiring_indexer_existing.json | selectattr('name', 'equalto', item) | list | length == 0
+
+- name: Warn about CloudFlare-gated indexers Prowlarr could not add
+  ansible.builtin.debug:
+    msg: >-
+      Prowlarr did not add CF indexer "{{ item.item }}" (HTTP
+      {{ item.status | default('n/a') }}) even via FlareSolverr — check the
+      FlareSolverr proxy is up (flaresolverr.service) and the definition name
+      matches Prowlarr's exactly.
+  loop: "{{ servarr_wiring_cf_indexer_add.results | default([]) }}"
   loop_control:
     label: "{{ item.item | default('?') }}"
   when:

@@ -33,6 +33,10 @@
     download_vpn_qbittorrent_profile_dir: /data/.qbittorrent-profile
     download_vpn_qbittorrent_config_dir: /data/.qbittorrent-profile/qBittorrent/config
     download_vpn_qbittorrent_export_dir: /data/.qbittorrent-profile/exported-torrents
+    # Match the role defaults (verify.yml is standalone — role defaults are not
+    # auto-loaded here) so the FlareSolverr unit assertion can resolve them.
+    download_vpn_flaresolverr_bind_host: "127.0.0.1"
+    download_vpn_flaresolverr_memory_max: "2G"
 
   tasks:
     # --- 1. ruleset content ------------------------------------------------
@@ -186,6 +190,30 @@
           qbittorrent-nox.service does not start with --profile pointing under
           the persistent /data tree — the session/queue state would land back
           on the disposable container rootfs.
+
+    # --- 2c. FlareSolverr unit is loopback-bound, capped, killswitch-gated --
+    - name: Read the deployed FlareSolverr systemd unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/flaresolverr.service
+      register: fs_unit
+
+    - name: Assert the FlareSolverr unit is loopback-bound, memory-capped, VPN-gated
+      vars:
+        fs: "{{ fs_unit.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          # loopback bind only — no LAN exposure, no firewall rule needed
+          - "'Environment=HOST=' ~ download_vpn_flaresolverr_bind_host in fs"
+          - download_vpn_flaresolverr_bind_host == '127.0.0.1'
+          # hard memory ceiling so Chromium is the OOM victim, never qBittorrent
+          - "'MemoryMax=' ~ download_vpn_flaresolverr_memory_max in fs"
+          # cannot start without the killswitch AND the tunnel
+          - "'Requires=download-vpn-killswitch.service download-vpn-wg.service' in fs"
+          - "'BindsTo=download-vpn-wg.service' in fs"
+        fail_msg: >-
+          flaresolverr.service must bind loopback, carry MemoryMax, and require
+          the killswitch + wg tunnel — a regression here risks LAN exposure, an
+          OOM hitting qBittorrent, or a solve on a non-VPN IP.
 
     # --- 3. simulate wg0 down -> no v4/v6 egress ---------------------------
     - name: Ensure IPv6 is disabled (as the role does on real hosts)

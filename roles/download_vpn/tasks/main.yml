@@ -719,6 +719,59 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
+# --- Phase 7b: FlareSolverr (CloudFlare challenge solver) --------------------
+# A native binary + bundled headless Chromium, co-located here so its solve
+# traffic shares Prowlarr's wg0 egress (CloudFlare binds the clearance to the
+# solving IP). Loopback-bound; the killswitch already covers its egress.
+- name: Create the FlareSolverr system user
+  ansible.builtin.user:
+    name: "{{ download_vpn_flaresolverr_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+    state: present
+  when: download_vpn_flaresolverr_enabled
+
+- name: Check if FlareSolverr is already installed
+  ansible.builtin.stat:
+    path: "{{ download_vpn_flaresolverr_install_dir }}/flaresolverr"
+  register: download_vpn_flaresolverr_bin
+  when: download_vpn_flaresolverr_enabled
+
+- name: Download + extract FlareSolverr
+  ansible.builtin.unarchive:
+    src: "{{ download_vpn_flaresolverr_tarball_url }}"
+    dest: /opt
+    remote_src: true
+    owner: "{{ download_vpn_flaresolverr_user }}"
+    group: "{{ download_vpn_flaresolverr_user }}"
+  # Gated on manage_services so render-only runs (Molecule) skip the ~230 MB
+  # Chromium-bundled tarball — the unit still renders and is asserted there.
+  when:
+    - download_vpn_flaresolverr_enabled
+    - download_vpn_manage_services
+    - not (download_vpn_flaresolverr_bin.stat.exists | default(false))
+
+- name: Deploy FlareSolverr systemd unit
+  ansible.builtin.template:
+    src: flaresolverr.service.j2
+    dest: /etc/systemd/system/flaresolverr.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+  when: download_vpn_flaresolverr_enabled
+
+- name: Enable + start FlareSolverr
+  ansible.builtin.systemd:
+    name: flaresolverr.service
+    state: started
+    enabled: true
+    daemon_reload: true
+  when:
+    - download_vpn_flaresolverr_enabled
+    - download_vpn_manage_services
+
 # --- Phase 8: NAT-PMP port forwarding ---------------------------------------
 - name: Deploy NAT-PMP env file (qBittorrent admin password)
   ansible.builtin.copy:
