@@ -123,6 +123,14 @@ llm_router_large_models:
     backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
     context_window: 262144
     extra_body: { repetition_penalty: 1.05 }
+  # Qwen3-Next-80B Thinking: the large-phase brain for the daily rotation
+  # (ai_default_model_large). A first-class alias so the rotating ai-default
+  # entry carries its real 262144 context. Served from the nix-darwin swap tier
+  # (lib/hosts.nix), loaded on demand only while ai-default points at it. Block
+  # style (not the flow one-liner above) only to stay under the 120-char limit.
+  - alias: Qwen3-Next-80B-A3B-Thinking-4bit
+    backend: mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit
+    context_window: 262144
   # claude-sonnet-5 is a Claude Code alias deliberately mapped to a local Qwen3.6
   # backend (PR #624) — not a mis-map; it inherits that backend's 262144 context.
   - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
@@ -210,3 +218,27 @@ llm_router_llm_fast_enabled: true
 # per-model edit. llm_router_large_models stays as the stable consumer-facing
 # alias set (exact-match aliases win over the wildcard).
 llm_router_large_passthrough_enabled: true
+
+# --- Daily brain rotation (docs/BRAIN_ROTATION.md) ---------------------------
+# When enabled, the router exposes ONE stable alias (`ai-default`) that Hermes
+# and Open WebUI point at permanently, and two systemd timers rotate which
+# backend that alias maps to: 00:00 UTC -> the large brain, 12:00 UTC -> the
+# optimized brain. Consumers never change, so no gateway restart and no cron
+# churn — only `litellm` bounces on this tier at the mark. Off by default: the
+# whole block below is inert and config.yaml renders exactly as it did before.
+llm_router_rotation_enabled: "{{ ai_rotation_enabled | default(false) | bool }}"
+llm_router_rotation_alias: ai-default
+# The two phases, by their first-class alias id in llm_router_large_models above
+# (the role resolves each to its backend + context_window from that table).
+llm_router_rotation_large_model: "{{ ai_default_model_large }}"
+llm_router_rotation_optimized_model: "{{ ai_default_model_optimized }}"
+# Fixed-hour UTC schedule. The `UTC` suffix needs systemd >= 252 (Debian 12).
+llm_router_rotation_large_oncalendar: "*-*-* 00:00:00 UTC"
+llm_router_rotation_optimized_oncalendar: "*-*-* 12:00:00 UTC"
+# Per-phase rendered configs; config.yaml is a symlink to the live one.
+llm_router_rotation_config_large: "{{ llm_router_config_dir }}/config-large.yaml"
+llm_router_rotation_config_optimized: "{{ llm_router_config_dir }}/config-optimized.yaml"
+# Bench-window guard: while this sentinel exists the large timer no-ops (the
+# fabric stays on the optimized brain so a bench is never crowded out). The
+# bench runbook touches it to pause and removes it to resume.
+llm_router_rotation_pause_sentinel: "{{ llm_router_config_dir }}/rotation-paused"

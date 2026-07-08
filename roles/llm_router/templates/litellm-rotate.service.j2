@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+# Point config.yaml at the {{ _rotation_phase }}-phase config, then bounce the
+# router so LiteLLM reloads it. Fired by litellm-rotate-{{ _rotation_phase }}.timer
+# (docs/BRAIN_ROTATION.md). The swap is a symlink flip + restart — no script.
+
+[Unit]
+Description=Rotate the ai-default router alias to the {{ _rotation_phase }} brain
+Documentation=https://github.com/JacobPEvans/ansible-proxmox-apps
+After={{ llm_router_service }}.service
+{% if _rotation_phase == 'large' %}
+# Bench-window guard: skip the large flip while the pause sentinel exists, so a
+# managed benchmark on the serving host is never crowded out by the big brain
+# loading. Removing the sentinel resumes rotation at the next fire.
+ConditionPathExists=!{{ llm_router_rotation_pause_sentinel }}
+{% endif %}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ln -sfn {{ _rotation_config }} {{ llm_router_config_file }}
+ExecStart=/usr/bin/systemctl restart {{ llm_router_service }}.service
