@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.99.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.2...v1.99.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **technitium_dns:** repair molecule verify fail_msg templating ([#781](https://github.com/dryvist/ansible-proxmox-apps/issues/781)) ([a9f037f](https://github.com/dryvist/ansible-proxmox-apps/commit/a9f037f95457bd98a2bb34ed53ea60c418e10cda))
+
 ## [1.99.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.1...v1.99.2) (2026-07-08)
 
 
