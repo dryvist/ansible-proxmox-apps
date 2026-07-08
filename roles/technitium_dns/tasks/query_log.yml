@@ -7,15 +7,14 @@
 # -> read the app's live config -> write the desired config only on drift.
 # Everything is skipped under technitium_dns_apply=false (molecule/CI).
 #
-# VERIFY LOCALLY before first apply (best-effort against current Technitium
-# docs; the HTTP API surface for DNS apps is version-sensitive):
-#   1. the store app's exact `name` in /api/apps/listStoreApps (expected
-#      "Log Exporter" — technitium_dns_query_log_app_name);
-#   2. the config JSON shape in /api/apps/config/get?name=<app> for the
-#      installed app version (technitium_dns_query_log_config mirrors the
-#      documented file/http/syslog exporter blocks);
-#   3. that the app version matches the running server version (the store
-#      list carries per-version download URLs).
+# Install source is the INTERNAL object-storage mirror, not the public DNS App
+# Store: the resolvers are outbound-internal (RFC1918 only) and cannot reach
+# download.technitium.com, so a live listStoreApps against them times out.
+# `downloadAndInstall` takes an arbitrary `url` — we point it at the mirrored
+# app zip (technitium_dns_query_log_app_url, artifacts bucket) instead of a
+# store URL. The object-storage endpoint is internal, so outbound-internal
+# already permits the fetch (no firewall change). Seed the mirror per the
+# re-seed note in defaults/main.yml before first apply.
 
 - name: List installed DNS apps
   ansible.builtin.uri:
@@ -40,48 +39,7 @@
           | map(attribute='name') | list) }}
   when: technitium_dns_apply | bool
 
-- name: Look up the Log Exporter app in the DNS App Store
-  ansible.builtin.uri:
-    url: "{{ technitium_dns_api_url }}/api/apps/listStoreApps?token={{ technitium_dns_api_token }}"
-    method: GET
-    return_content: true
-    timeout: "{{ technitium_dns_api_timeout }}"
-  register: technitium_dns_store_apps
-  changed_when: false
-  failed_when: >-
-    technitium_dns_store_apps.failed or
-    technitium_dns_store_apps.json is not defined or
-    technitium_dns_store_apps.json.status != "ok"
-  when:
-    - technitium_dns_apply | bool
-    - not technitium_dns_query_log_app_installed
-  no_log: true
-
-- name: Resolve the Log Exporter store download URL
-  ansible.builtin.set_fact:
-    technitium_dns_query_log_app_url: >-
-      {{ technitium_dns_store_apps.json.response.storeApps | default([])
-         | selectattr('name', 'equalto', technitium_dns_query_log_app_name)
-         | map(attribute='url') | first | default('') }}
-  when:
-    - technitium_dns_apply | bool
-    - not technitium_dns_query_log_app_installed
-
-- name: Assert the Log Exporter app exists in the DNS App Store
-  ansible.builtin.assert:
-    that:
-      - technitium_dns_query_log_app_url | length > 0
-    fail_msg: >-
-      '{{ technitium_dns_query_log_app_name }}' was not found in this
-      Technitium server's DNS App Store listing. Verify the app name against
-      /api/apps/listStoreApps for the running server version and update
-      technitium_dns_query_log_app_name.
-    quiet: true
-  when:
-    - technitium_dns_apply | bool
-    - not technitium_dns_query_log_app_installed
-
-- name: Install the Log Exporter app from the DNS App Store
+- name: Install the Log Exporter app from the internal object-storage mirror
   ansible.builtin.uri:
     url: >-
       {{ technitium_dns_api_url }}/api/apps/downloadAndInstall?token={{
