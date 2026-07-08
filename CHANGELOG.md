@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.98.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.97.0...v1.98.0) (2026-07-08)
+
+
+### Features
+
+* **openbao:** least-privilege write AppRole for secret/ai/hermes ([#714](https://github.com/dryvist/ansible-proxmox-apps/issues/714)) ([f27fa4f](https://github.com/dryvist/ansible-proxmox-apps/commit/f27fa4fc3fc77e09b67f5ed37a28269c63e21a26))
+
 ## [1.97.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.3...v1.97.0) (2026-07-08)
 
 
