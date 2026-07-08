@@ -78,8 +78,25 @@
   when: technitium_dns_apply | bool
   no_log: true
 
+# Manage ONLY the syslog exporter block: merge our syslog settings over the
+# app's own live config and write that back. This role never has to mirror the
+# app's other keys (maxQueueSize/file/http and the version-specific
+# `ebableEdnsLogging` typo v2.x ships / `enableEdnsLogging` v3.x uses), so it
+# stays idempotent AND correct across app versions — the drift compare is our
+# merged desired vs live, and only the syslog keys we set can differ.
+- name: Compute the desired Log Exporter config (app config + our syslog block)
+  ansible.builtin.set_fact:
+    technitium_dns_query_log_live_config: >-
+      {{ technitium_dns_query_log_live.json.response.config
+         | default('{}', true) | from_json }}
+    technitium_dns_query_log_desired_config: >-
+      {{ (technitium_dns_query_log_live.json.response.config
+          | default('{}', true) | from_json)
+         | combine({'syslog': technitium_dns_query_log_syslog}, recursive=true) }}
+  when: technitium_dns_apply | bool
+
 # config/set is an unconditional overwrite on the Technitium side — the drift
-# compare (parsed live JSON vs desired dict) is what keeps re-runs change-free.
+# compare (merged desired vs live) is what keeps re-runs change-free.
 - name: Configure Log Exporter syslog export (drift-gated)
   ansible.builtin.uri:
     url: >-
@@ -89,7 +106,7 @@
     body_format: form-urlencoded
     body:
       name: "{{ technitium_dns_query_log_app_name }}"
-      config: "{{ technitium_dns_query_log_config | to_json }}"
+      config: "{{ technitium_dns_query_log_desired_config | to_json }}"
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_query_log_set
@@ -100,7 +117,5 @@
     technitium_dns_query_log_set.json.status != "ok"
   when:
     - technitium_dns_apply | bool
-    - >-
-      (technitium_dns_query_log_live.json.response.config | default('{}', true)
-       | from_json) != technitium_dns_query_log_config
+    - technitium_dns_query_log_desired_config != technitium_dns_query_log_live_config
   no_log: true

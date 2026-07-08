@@ -161,18 +161,27 @@ technitium_dns_query_log_app_name: "Log Exporter"
 # bucket over 443 with a valid wildcard cert the resolver already trusts.
 technitium_dns_query_log_app_mirror_endpoint: >-
   https://s3.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/artifacts
-# App version tracks the Technitium server release cycle. As with the server
-# tarball, a Renovate bump here is only a SIGNAL — it cannot re-host a private
-# object. On every bump the operator MUST re-seed
-# artifacts/technitium/<this filename> in object-storage from the official
-# store zip (capture LogExporterApp.zip from download.technitium.com on a host
-# with egress, or extract it from the matching technitium/dns-server image).
+# App version is pinned to the Log Exporter build compatible with the RUNNING
+# server (14.3 -> the highest store entry whose serverVersion <= ours is
+# 14.2.0 -> app 2.1). NOT the latest (3.0.1 needs server 15.3). A Renovate bump
+# is only a SIGNAL — it cannot re-host a private object. On a server upgrade the
+# operator MUST (1) pick the app version for the new serverVersion from the
+# store manifest (https://go.technitium.com/?id=44), (2) re-seed
+# artifacts/technitium/<filename> in object-storage from a clean-egress host
+# (the homelab is UDW-blocked from Technitium — use a GitHub Actions runner),
+# and (3) update the version + sha256 below. NOTE app v3.x renamed the
+# `ebableEdnsLogging` typo key below to `enableEdnsLogging` — fix that in the
+# config too on a 3.x bump.
 # renovate: datasource=docker depName=technitium/dns-server
-technitium_dns_query_log_app_version: "3.0.1"
+technitium_dns_query_log_app_version: "2.1"
 technitium_dns_query_log_app_filename: "LogExporterApp-{{ technitium_dns_query_log_app_version }}.zip"
 technitium_dns_query_log_app_url: >-
   {{ technitium_dns_query_log_app_mirror_endpoint }}/technitium/{{
   technitium_dns_query_log_app_filename }}
+# sha256 of the mirrored zip — documents the exact pinned build (the
+# downloadAndInstall API has no checksum param, so this is verified by the
+# operator at seed time, not enforced at install). Update with the version.
+technitium_dns_query_log_app_sha256: "53e84d2c3b8715e5fd59b415b57920bd4845ef8cb38cc935c25bddb89915c7fd"
 # Same stable syslog entry point the syslog_forwarder role uses (the `syslog`
 # CNAME this very role creates -> HAProxy). Never a committed literal.
 technitium_dns_query_log_syslog_host: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
@@ -181,27 +190,15 @@ technitium_dns_query_log_syslog_host: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAI
 technitium_dns_query_log_syslog_port: >-
   {{ tofu_data.constants.syslog_port_map.dns_query.standard | default(522) }}
 technitium_dns_query_log_syslog_protocol: "TCP"
-# Desired Log Exporter app config. Key set matches the app's own dnsApp.config
-# schema (LogExporterApp v3.x): the enable flag is `enabled` (NOT `enable`),
-# and a top-level `enableEdnsLogging` exists. The earlier best-effort shape used
-# `enable`, which the app silently ignored — every exporter stayed off and
-# nothing shipped despite a clean config/set. file + http exporters off, syslog
-# exporter on (TCP to the dns_query family frontend).
-technitium_dns_query_log_config:
-  maxQueueSize: 1000000
-  enableEdnsLogging: false
-  file:
-    path: "./dns_logs.json"
-    enabled: false
-  http:
-    endpoint: ""
-    headers: {}
-    enabled: false
-  syslog:
-    address: "{{ technitium_dns_query_log_syslog_host }}"
-    port: "{{ technitium_dns_query_log_syslog_port | int }}"
-    protocol: "{{ technitium_dns_query_log_syslog_protocol }}"
-    enabled: true
+# The ONLY block this role manages — merged over the app's own live config
+# (see tasks/query_log.yml), so we never mirror the app's other keys or its
+# version-specific spellings. `enabled` (NOT `enable`) is the real flag; the
+# earlier `enable` shape was silently ignored, so nothing ever shipped.
+technitium_dns_query_log_syslog:
+  address: "{{ technitium_dns_query_log_syslog_host }}"
+  port: "{{ technitium_dns_query_log_syslog_port | int }}"
+  protocol: "{{ technitium_dns_query_log_syslog_protocol }}"
+  enabled: true
 
 # --- HA: primary / secondary roles (native AXFR/IXFR zone transfer) -----------
 # The role runs across the whole technitium_dns_group. The PRIMARY authors the
