@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.94.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.94.1...v1.94.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **hermes:** repoint brain to Qwen3.6-35B-A3B + hourly digest heartbeat ([#753](https://github.com/dryvist/ansible-proxmox-apps/issues/753)) ([6043f99](https://github.com/dryvist/ansible-proxmox-apps/commit/6043f99ed317081e1de0396b035264f599c9ed12))
+
 ## [1.94.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.94.0...v1.94.1) (2026-07-08)
 
 
