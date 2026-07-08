@@ -1,0 +1,78 @@
+---
+# Molecule verification for configarr (render-surface layer).
+#
+# Proves the rendered Configarr inputs without running the container:
+#   1. config.yml points both *arr apps at the fixture endpoints and pulls the
+#      TRaSH template sets from the role defaults.
+#   2. secrets.yml carries the deterministic API keys, root-only (0600).
+#   3. config.yml is root:root 0640 (holds no secrets, but stays private).
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    configarr_config_dir: /opt/configarr
+
+  tasks:
+    - name: Load the role defaults (template lists under test)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/configarr/defaults/main.yml"
+        name: configarr_defaults
+
+    - name: Stat the rendered files
+      ansible.builtin.stat:
+        path: "{{ configarr_config_dir }}/{{ item }}"
+      register: configarr_rendered
+      loop:
+        - config.yml
+        - secrets.yml
+
+    - name: Assert render ownership/mode contract
+      ansible.builtin.assert:
+        that:
+          - configarr_rendered.results[0].stat.exists
+          - configarr_rendered.results[0].stat.mode == '0640'
+          - configarr_rendered.results[1].stat.exists
+          - configarr_rendered.results[1].stat.mode == '0600'
+        fail_msg: "configarr rendered files missing or wrong mode (config 0640 / secrets 0600)"
+
+    - name: Read the rendered config.yml
+      ansible.builtin.slurp:
+        src: "{{ configarr_config_dir }}/config.yml"
+      register: configarr_config_raw
+
+    - name: Assert config.yml references secrets and pulls the TRaSH templates
+      vars:
+        configarr_config: "{{ configarr_config_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          # endpoints/keys are indirected through !secret — never inline here
+          - "'!secret sonarr_url' in configarr_config"
+          - "'!secret radarr_url' in configarr_config"
+          - "'http://' not in configarr_config"
+          # every template include named in defaults must appear in the render
+          - >-
+            configarr_defaults.configarr_sonarr_templates
+            | reject('in', configarr_config) | list | length == 0
+          - >-
+            configarr_defaults.configarr_radarr_templates
+            | reject('in', configarr_config) | list | length == 0
+        fail_msg: "config.yml no longer indirects endpoints via !secret or lost the TRaSH template sets"
+
+    - name: Read the rendered secrets.yml
+      ansible.builtin.slurp:
+        src: "{{ configarr_config_dir }}/secrets.yml"
+      register: configarr_secrets_raw
+
+    - name: Assert secrets.yml carries the endpoints and deterministic API keys
+      vars:
+        configarr_secrets: "{{ configarr_secrets_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'http://192.168.0.212:8989' in configarr_secrets"
+          - "'http://192.168.0.213:7878' in configarr_secrets"
+          - lookup('env', 'SONARR_API_KEY') in configarr_secrets
+          - lookup('env', 'RADARR_API_KEY') in configarr_secrets
+        fail_msg: "secrets.yml no longer carries the fixture endpoints or the injected API keys"

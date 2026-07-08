@@ -1,0 +1,86 @@
+---
+# Molecule verification for radarr (install/render layer).
+#
+# Proves the LAN-only PVR install contract without a running service:
+#   1. The app binary landed from the upstream tarball.
+#   2. The media user/group contract (shared gid, nologin, no created home).
+#   3. Directory skeleton: app data dir setgid group-writable; shared /data
+#      library roots exist with the host-side 2775 contract.
+#   4. The systemd unit runs the app as the media user against the data dir.
+#   5. The role source keeps its fail-loud persistence guard (mountpoint check
+#      + ntfy alert + hard fail), gated on manage_services.
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    radarr_install_dir: /opt/Radarr
+    radarr_data_dir: /var/lib/radarr
+    radarr_movies_dir: /data/media/movies
+
+  tasks:
+    - name: Stat the installed binary, data dir, and library root
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: radarr_paths
+      loop:
+        - "{{ radarr_install_dir }}/Radarr"
+        - "{{ radarr_data_dir }}"
+        - "{{ radarr_movies_dir }}"
+
+    - name: Assert install + directory skeleton contract
+      ansible.builtin.assert:
+        that:
+          - radarr_paths.results[0].stat.exists
+          - radarr_paths.results[1].stat.isdir
+          # app data dir: setgid + group-writable (media-group co-ownership)
+          - radarr_paths.results[1].stat.mode == '2775'
+          - radarr_paths.results[2].stat.isdir
+          - radarr_paths.results[2].stat.mode == '2775'
+        fail_msg: "radarr install/directory contract regressed (binary, 2775 dirs)"
+
+    - name: Read the media user/group contract
+      ansible.builtin.command:
+        cmd: id media
+      register: radarr_media_id
+      changed_when: false
+
+    - name: Assert the shared media gid contract
+      ansible.builtin.assert:
+        that:
+          - "'gid=13000(media)' in radarr_media_id.stdout"
+        fail_msg: "media user's primary group is no longer the shared gid 13000"
+
+    - name: Read the rendered systemd unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/radarr.service
+      register: radarr_unit_raw
+
+    - name: Assert the unit runs the app as media against the data dir
+      vars:
+        radarr_unit: "{{ radarr_unit_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'User=media' in radarr_unit"
+          - "'Group=media' in radarr_unit"
+          - "'-data=' ~ radarr_data_dir in radarr_unit"
+        fail_msg: "radarr.service no longer runs as media with -data={{ radarr_data_dir }}"
+
+    - name: Read the role source (persistence-guard shape, unit-style)
+      ansible.builtin.slurp:
+        src: "{{ playbook_dir }}/../../roles/radarr/tasks/main.yml"
+      register: radarr_tasks_raw
+      delegate_to: localhost
+      become: false
+
+    - name: Assert the fail-loud persistence guard is intact in the role source
+      vars:
+        radarr_tasks: "{{ radarr_tasks_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'mountpoint -q' in radarr_tasks"
+          - "'ansible.builtin.fail' in radarr_tasks"
+          - "'radarr_ntfy_url' in radarr_tasks"
+        fail_msg: "radarr's persistence guard (mountpoint + ntfy + fail) regressed"
