@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.86.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.85.0...v1.86.0) (2026-07-08)
+
+
+### Features
+
+* **hermes:** add llm-wiki knowledge base + autonomous GitHub docs-contributor ([#698](https://github.com/dryvist/ansible-proxmox-apps/issues/698)) ([5d78153](https://github.com/dryvist/ansible-proxmox-apps/commit/5d781531152a7b9566481c89b40936f0bcf1e23a))
+
 ## [1.85.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.84.1...v1.85.0) (2026-07-08)
 
 
