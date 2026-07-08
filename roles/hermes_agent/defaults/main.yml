@@ -42,20 +42,29 @@ hermes_agent_installer_path: "/usr/local/lib/hermes-agent-installer-{{ hermes_ag
 
 # --- Brain: the LiteLLM router (the fabric front door, OpenAI-compatible /v1) ---
 # Reached by its neutral Traefik FQDN — never a hardcoded IP. The router routes by
-# model alias, so the agent just names the model it wants: Qwen3-Coder-30B-A3B
-# on the Mac Studio large tier (non-hybrid MoE, proven stable — avoids the
-# qwen3_5_moe batching crash that rules out Qwen3.6). Replaces the interim
-# hermes-4-14b light-tier brain. The api key is the router master key,
-# env-sourced (SOPS/Doppler).
-# Must match llm_router_large_models' alias exactly (llm_router role,
-# roles/llm_router/defaults/main.yml) — PR #624 renamed the router's alias
-# from the lowercase `qwen3-coder` to the model-id-cased `Qwen3-Coder-30B-A3B`
-# without updating this consumer; the live router hadn't been reconverged
-# since, so both sides still matched by accident until this fix.
-hermes_agent_model: Qwen3-Coder-30B-A3B
+# model alias, so the agent just names the model it wants.
+#
+# Qwen3.6-35B-A3B is THE brain for this autonomous, tool-calling role. Qwen3-Coder-30B
+# is faster single-stream but emits malformed tool calls under agentic load (observed
+# live 2026-07-08: repeated "repairing tool_call with empty function.name", ignored
+# output bounds — a 129K-char query result — and unreliable multi-turn runs). The 35B
+# drove the full autonomous llm-wiki loop cleanly where the Coder model failed.
+#
+# The old "avoids the qwen3_5_moe batching crash that rules out Qwen3.6" rationale was
+# DISPROVEN on the Mac Studio (2026-07-08): 3 concurrent requests to Qwen3.6-35B-A3B-4bit
+# completed with zero crashes / zero 402 recovery — 8.7 tok/s single-stream, 3.7-5.7 tok/s
+# each under 3-way batching (graceful degradation, not the 0.1-4 tok/s death-loop the
+# nix-darwin serving comment claimed). That claim came from old, heavily-loaded MacBook
+# Pro tests, not the Studio. The 35B is slower than the Coder model but reliable, which
+# is the right trade for a background monitor. (An 8bit variant is a quality upgrade once
+# it is registered in the router.)
+#
+# Alias must match what the router serves (llm_router role) — currently
+# Qwen3.6-35B-A3B-4bit.
+hermes_agent_model: Qwen3.6-35B-A3B-4bit
 hermes_agent_model_base_url: "https://llm.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/v1"
 hermes_agent_model_api_mode: chat_completions
-# Qwen3-Coder-30B-A3B's native context window (256K = 262144 tokens). Custom
+# Qwen3.6-35B-A3B's native context window (256K = 262144 tokens). Custom
 # providers carry no context catalog Hermes can probe, so this is declared
 # explicitly (model.context_length in config.yaml.j2).
 hermes_agent_model_context_length: 262144
@@ -237,7 +246,9 @@ hermes_agent_splunk_deepdive_cron_prompt: >-
 
 # Routine status post: always delivered (never [SILENT]).
 hermes_agent_splunk_digest_cron_name: splunk-digest
-hermes_agent_splunk_digest_cron_schedule: "50 8,20 * * *"
+# Hourly heartbeat: a visible "here's what I'm seeing" post every hour so silence
+# never reads as "is it even running?". Anomaly sweeps stay silent-unless-anomaly.
+hermes_agent_splunk_digest_cron_schedule: "50 * * * *"
 hermes_agent_splunk_digest_cron_prompt: >-
   Post a concise Splunk digest to the home channel: what you looked at recently,
   the current normal (top indexes/sourcetypes by volume and their freshness), any
