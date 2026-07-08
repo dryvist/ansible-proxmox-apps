@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.95.0...v1.96.0) (2026-07-08)
+
+
+### Features
+
+* **llm:** blocklisted passthrough exposure + one shared default model ([#755](https://github.com/dryvist/ansible-proxmox-apps/issues/755)) ([d6e46ab](https://github.com/dryvist/ansible-proxmox-apps/commit/d6e46ab6c1ee482bdaf96de59fbb997f59ec6a6a))
+
 ## [1.95.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.94.2...v1.95.0) (2026-07-08)
 
 
