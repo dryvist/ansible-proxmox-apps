@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.99.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.1...v1.99.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **technitium_dns:** repair verify fail_msg after [#774](https://github.com/dryvist/ansible-proxmox-apps/issues/774) var rename ([#782](https://github.com/dryvist/ansible-proxmox-apps/issues/782)) ([9f3c226](https://github.com/dryvist/ansible-proxmox-apps/commit/9f3c226770f0c2e7f31904cedcfaccc291124baa))
+
 ## [1.99.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.0...v1.99.1) (2026-07-08)
 
 
