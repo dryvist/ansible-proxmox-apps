@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.100.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.100.0...v1.100.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **inventory:** repoint containers['object-storage'] lookups to renamed key 's3' ([#787](https://github.com/dryvist/ansible-proxmox-apps/issues/787)) ([efbb945](https://github.com/dryvist/ansible-proxmox-apps/commit/efbb945a48b5f6776a55b34ff361d4d0b19e51b5))
+
 ## [1.100.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.99.3...v1.100.0) (2026-07-08)
 
 
