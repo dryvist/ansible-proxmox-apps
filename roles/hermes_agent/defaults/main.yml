@@ -71,6 +71,19 @@ hermes_agent_model_context_length: 262144
 # server cap instead of exceeding it.
 # Capping max_tokens here means an oversized request is never sent.
 hermes_agent_model_max_tokens: 32768
+# Hermes classifies the brain endpoint by HOSTNAME STRING, never by DNS
+# resolution (agent/model_metadata.py is_local_endpoint: loopback, RFC-1918
+# IP literals, container suffixes, dot-less names). Our router base_url is an
+# FQDN, so Hermes applies its strict REMOTE-provider timeouts — 120s stream
+# read, 180s stale-stream kill — to a local model whose thinking-mode prefill
+# on a 20-60K context legitimately exceeds both. Confirmed live 2026-07-08:
+# "Stream stale for 180s (threshold 180s) ... Killing connection" followed by
+# a 0-char truncated stub that surfaces as "Model generated invalid tool
+# call". These overrides restore the values Hermes itself auto-applies to
+# endpoints it recognizes as local (read 1800s; stale kept enabled but far
+# above any healthy prefill).
+hermes_agent_stream_read_timeout: 1800
+hermes_agent_stream_stale_timeout: 900
 # The api key IS the LiteLLM router master key; source it from the canonical
 # LLM_ROUTER_MASTER_KEY env (same as the llm_router role) so no per-run mapping
 # is needed. HERMES_AGENT_MODEL_API_KEY still overrides if explicitly set.
@@ -267,6 +280,13 @@ hermes_agent_splunk_cron_jobs:
     schedule: "{{ hermes_agent_splunk_digest_cron_schedule }}"
     prompt: "{{ hermes_agent_splunk_digest_cron_prompt }}"
     deliver: "{{ hermes_agent_splunk_digest_deliver }}"
+
+# Every cron job this role seeds. The model-drift recovery task (tasks/main.yml)
+# only ever removes jobs on this list — user- and agent-created jobs are never
+# touched.
+hermes_agent_seeded_cron_names: >-
+  {{ [hermes_agent_daily_status_cron_name, hermes_agent_nightly_wiki_cron_name]
+     + (hermes_agent_splunk_cron_jobs | map(attribute='name') | list) }}
 
 # --- Context7 MCP client (current library/framework docs on demand) ---
 # Registers Context7's hosted HTTP MCP server so Hermes can pull up-to-date,
