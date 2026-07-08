@@ -70,10 +70,15 @@ plugins:
     - observability/otel
 
 {% set _mcp_splunk = (hermes_agent_splunk_mcp_enabled | bool) and (hermes_agent_splunk_mcp_url | length > 0) %}
-{% set _mcp_context7 = (hermes_agent_context7_mcp_enabled | bool) and (hermes_agent_context7_api_key | length > 0) %}
+{# Context7's hosted MCP serves unauthenticated requests (verified: keyless
+   `initialize` returns 200); a key only raises the shared rate limit. So this
+   entry renders whenever enabled — the API-key header is added only when a key
+   is actually set, below. #}
+{% set _mcp_context7 = (hermes_agent_context7_mcp_enabled | bool) %}
 {% if _mcp_splunk or _mcp_context7 %}
 # MCP servers. ${VARS} resolve from .env at connect time, so tokens/endpoints
-# never land in this file. Each entry is omitted until its creds are present.
+# never land in this file. The Splunk entry is omitted until its creds are
+# present; Context7 is keyless so it renders whenever enabled.
 mcp_servers:
 {% if _mcp_splunk %}
   # Splunk MCP Server — read/search the SIEM (run_splunk_query, get_indexes, ...).
@@ -86,8 +91,10 @@ mcp_servers:
   # Context7 — current, version-specific library/framework docs on demand.
   context7:
     url: "https://mcp.context7.com/mcp"
+{% if hermes_agent_context7_api_key | length > 0 %}
     headers:
       CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}"
+{% endif %}
 {% endif %}
 {% endif %}
 timezone: '{{ hermes_agent_timezone }}'
