@@ -233,6 +233,28 @@
       changed_when: true
       failed_when: false
 
+    # --- Unattended security upgrades -----------------------------------------
+    # The guest fetches updates over the tunnel; these apt drop-ins are what
+    # make them APPLY. Reboot must stay manual so a kernel update can never
+    # bounce the tunnel unattended.
+    - name: Read the unattended-upgrades apt drop-ins
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _unattended_dropins
+      loop:
+        - /etc/apt/apt.conf.d/20auto-upgrades
+        - /etc/apt/apt.conf.d/52unattended-upgrades-local
+
+    - name: Assert unattended security upgrades are enabled and reboot-free
+      ansible.builtin.assert:
+        that:
+          - "'APT::Periodic::Unattended-Upgrade \"1\";' in (_unattended_dropins.results[0].content | b64decode)"
+          - "'APT::Periodic::Update-Package-Lists \"1\";' in (_unattended_dropins.results[0].content | b64decode)"
+          - "'Unattended-Upgrade::Automatic-Reboot \"false\";' in (_unattended_dropins.results[1].content | b64decode)"
+        fail_msg: >-
+          The unattended-upgrades apt drop-ins regressed (periodic apply off,
+          or auto-reboot no longer pinned off).
+
 # --- 5. persistent-storage guards (unit-style — gated on manage_services, ----
 # never live in this scenario since there is no real Proton tunnel in CI) -----
 # download_vpn_manage_services is false here (see converge.yml), so the guard
