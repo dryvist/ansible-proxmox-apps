@@ -1,0 +1,110 @@
+---
+# Add a FlareSolverr indexer proxy to Prowlarr so CloudFlare-gated indexers can
+# be reached. Prowlarr routes an indexer through a proxy when they share a TAG,
+# so the flow is: ensure the tag -> ensure the proxy (tagged) -> add the CF
+# indexers carrying the same tag (prowlarr_indexers.yml).
+#
+# Schema-driven + idempotent, the same house pattern as prowlarr_apps.yml:
+#   1. Ensure the `flaresolverr` tag exists (GET, POST if missing) -> capture id.
+#   2. GET /api/v1/indexerproxy/schema — the FlareSolverr field template.
+#   3. GET /api/v1/indexerproxy        — what already exists (match by name).
+#   4. If missing, overlay only host + the tag onto the schema template and POST.
+
+- name: Fetch existing Prowlarr tags
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/tag"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_tags_existing
+  changed_when: false
+  no_log: true
+
+- name: Create the flaresolverr Prowlarr tag (if missing)
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/tag"
+    method: POST
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    body_format: json
+    body:
+      label: "{{ servarr_wiring_flaresolverr_tag }}"
+    status_code: [200, 201]
+  register: servarr_wiring_tag_add
+  changed_when: servarr_wiring_tag_add.status in [200, 201]
+  no_log: true
+  when: >-
+    servarr_wiring_tags_existing.json
+    | selectattr('label', 'equalto', servarr_wiring_flaresolverr_tag)
+    | list | length == 0
+
+# Resolve the tag id whether it already existed or we just created it.
+- name: Resolve the flaresolverr tag id
+  ansible.builtin.set_fact:
+    servarr_wiring_flaresolverr_tag_id: >-
+      {{ (servarr_wiring_tag_add.json.id
+          if (servarr_wiring_tag_add is defined and not (servarr_wiring_tag_add.skipped | default(false)))
+          else (servarr_wiring_tags_existing.json
+                | selectattr('label', 'equalto', servarr_wiring_flaresolverr_tag)
+                | map(attribute='id') | first)) }}
+
+- name: Fetch Prowlarr indexer-proxy schema
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexerproxy/schema"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_proxy_schema
+  changed_when: false
+  no_log: true
+
+- name: Fetch existing Prowlarr indexer proxies
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexerproxy"
+    method: GET
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_proxy_existing
+  changed_when: false
+  no_log: true
+
+# Overlay only the host value onto the FlareSolverr schema template, tag it, and
+# POST. The fields array is rebuilt in pure Jinja (no custom filter): keep every
+# schema field, swapping in our host value for the `host` field.
+- name: Add the FlareSolverr indexer proxy (if missing)
+  ansible.builtin.uri:
+    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexerproxy"
+    method: POST
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    body_format: json
+    body: >-
+      {{ _proxy_template | combine({
+           'name': 'FlareSolverr',
+           'tags': [servarr_wiring_flaresolverr_tag_id | int],
+           'fields': _proxy_fields
+         }) }}
+    status_code: [200, 201]
+  register: servarr_wiring_proxy_add
+  changed_when: servarr_wiring_proxy_add.status in [200, 201]
+  no_log: true
+  vars:
+    _proxy_template: >-
+      {{ servarr_wiring_proxy_schema.json
+         | selectattr('implementation', 'equalto', 'FlareSolverr')
+         | first }}
+    # Only the host value needs overriding; the schema defaults (requestTimeout,
+    # etc.) are complete. Same rebuild pattern as prowlarr_apps.yml: keep every
+    # schema field whose name is NOT overridden, then append our {name, value}.
+    _proxy_overrides:
+      host: "{{ servarr_wiring_flaresolverr_host }}"
+    _proxy_fields: >-
+      {{ (_proxy_template.fields | rejectattr('name', 'in', _proxy_overrides.keys()) | list)
+         + (_proxy_overrides | dict2items(key_name='name', value_name='value')) }}
+  when: >-
+    servarr_wiring_proxy_existing.json
+    | selectattr('name', 'equalto', 'FlareSolverr')
+    | list | length == 0
