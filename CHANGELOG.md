@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.91.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.91.1...v1.91.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **haproxy:** retry service start through the boot DNS warm-up ([#738](https://github.com/dryvist/ansible-proxmox-apps/issues/738)) ([da7d1a8](https://github.com/dryvist/ansible-proxmox-apps/commit/da7d1a83623398a19bbe66224a30045a2d80869a))
+
 ## [1.91.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.91.0...v1.91.1) (2026-07-08)
 
 
