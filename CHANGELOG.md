@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.96.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.1...v1.96.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **llm_router:** raise per-attempt timeout 300s -&gt; 1200s ([#767](https://github.com/dryvist/ansible-proxmox-apps/issues/767)) ([c9844be](https://github.com/dryvist/ansible-proxmox-apps/commit/c9844be484264754f977395030ae319c0ff4ac4f))
+
 ## [1.96.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.96.0...v1.96.1) (2026-07-08)
 
 
