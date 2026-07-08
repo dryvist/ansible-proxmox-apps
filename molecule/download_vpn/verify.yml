@@ -52,15 +52,47 @@
           - "'policy drop' in ks"
         fail_msg: "Killswitch output chain is not default-DROP."
 
-    - name: Assert reload is replace-not-merge (flush precedes the definition)
+    - name: Assert reload is replace-not-merge (declare < flush < definition)
+      vars:
+        # The bare declaration line and the definition open share a prefix, so
+        # anchor each by its full line/opening form.
+        ks_lines: "{{ ks.split('\n') }}"
       ansible.builtin.assert:
         that:
           - "'flush table inet killswitch' in ks"
+          # bare declaration must exist as its own line…
+          - "'table inet killswitch' in ks_lines"
+          # …BEFORE the flush (flush on a nonexistent table errors → the whole
+          # transaction fails → fail-OPEN at first boot)
+          - ks_lines.index('table inet killswitch') < ks_lines.index('flush table inet killswitch')
+          # …and the flush before the definition (or ExecReload MERGES new
+          # rules after the old unconditional drop and changes never apply)
           - ks.index('flush table inet killswitch') < ks.index('table inet killswitch {')
         fail_msg: >-
-          killswitch.nft must declare+flush its table before defining it, or a
-          systemd ExecReload merges new rules after the old unconditional drop
-          and config changes never take effect.
+          killswitch.nft must declare, then flush, then define its table —
+          declaration-first keeps the first-boot load valid, flush-before-
+          definition keeps reloads replace-not-merge.
+
+    - name: Read the rendered lanroute connmark (mangle) ruleset
+      ansible.builtin.slurp:
+        src: /etc/nftables.d/download-vpn-lanroute.nft
+      register: mangle_file
+
+    - name: Assert the mangle table reload is also replace-not-merge
+      vars:
+        mangle: "{{ mangle_file.content | b64decode }}"
+        mangle_lines: "{{ mangle.split('\n') }}"
+      ansible.builtin.assert:
+        that:
+          - "'flush table inet vpn_lanroute' in mangle"
+          - "'table inet vpn_lanroute' in mangle_lines"
+          - mangle_lines.index('table inet vpn_lanroute') < mangle_lines.index('flush table inet vpn_lanroute')
+          - mangle.index('flush table inet vpn_lanroute') < mangle.index('table inet vpn_lanroute {')
+        fail_msg: >-
+          mangle.nft must declare, then flush, then define vpn_lanroute — its
+          handler re-runs nft -f on every mangle change, and without the
+          preamble that merge appends a duplicate connmark rule for the old
+          web-UI port instead of replacing the ruleset.
 
     - name: Assert ONLY the allowed egress rules are present
       ansible.builtin.assert:
