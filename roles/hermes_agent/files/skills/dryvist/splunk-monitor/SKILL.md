@@ -155,6 +155,11 @@ Record baselines even on quiet runs — a quiet run that refreshes "index X is n
 Do not pad an alert to seem busy, and do not stay silent about something real to avoid
 bothering the user. Signal, not noise, in both directions.
 
+**`[SILENT]` is only for the anomaly sweeps** (triage / security / parsing). The
+routine **digest** run must ALWAYS post its summary — never reply `[SILENT]` for the
+digest, even when everything is normal; "everything is normal" is exactly what the
+digest exists to report.
+
 ### 2.7 Grow your own coverage (guardrailed)
 
 When you find a signal that deserves *continuous* watching (not just this run), you may
