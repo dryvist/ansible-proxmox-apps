@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.99.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.98.0...v1.99.0) (2026-07-08)
+
+
+### Features
+
+* **llm_router:** register tuned models under alias AND physical id ([#770](https://github.com/dryvist/ansible-proxmox-apps/issues/770)) ([9157661](https://github.com/dryvist/ansible-proxmox-apps/commit/91576615e1939afffaf6431e4fe77605a116087a))
+
 ## [1.98.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.97.0...v1.98.0) (2026-07-08)
 
 
