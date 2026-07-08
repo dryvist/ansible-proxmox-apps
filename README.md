@@ -112,6 +112,23 @@ doppler run -- ansible-playbook \
 
 ## Roles
 
+### docker_engine (shared dependency)
+
+Shared Docker-in-LXC bootstrap consumed as a meta dependency by the `*_docker`
+app roles. Installs Docker CE + the compose plugin and (LXC-conditional) the
+fuse-overlayfs storage driver. App roles pull it in via `meta/main.yml`
+`dependencies:` instead of repeating the bootstrap block; the apt install work
+is skipped on hosts that already have Docker.
+
+The Python venv (`pip install docker`) is **off by default**:
+`community.docker.docker_compose_v2` shells out to the `docker compose` CLI and
+does not need the docker SDK. Only roles that use the SDK-based modules
+(`docker_container`/`_exec`/`_info`, `docker_image`, `docker_swarm`/`_stack`,
+`docker_prune`) set `docker_engine_manage_venv: true`. Behaviour is parameterised
+through `docker_engine_manage_venv`, `docker_engine_set_global_interpreter`,
+`docker_engine_install_fuse_overlayfs`, `docker_engine_configure_daemon_json`,
+and `docker_engine_storage_driver`.
+
 ### cribl_edge
 
 Deploy Cribl Edge log processor with syslog listeners and Splunk HEC output.

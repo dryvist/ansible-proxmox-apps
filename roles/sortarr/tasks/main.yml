@@ -18,92 +18,9 @@
       set (env vars, sourced from the secret store) before Sortarr can start.
     quiet: true
 
-# =============================================================================
-# Docker installation (Docker-in-LXC pattern, mirrors seerr/idrac_kvm_docker)
-# =============================================================================
-
-- name: Install Docker prerequisites
-  ansible.builtin.apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-    update_cache: true
-
-- name: Create keyrings directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: "0755"
-
-- name: Set Docker repository distribution
-  ansible.builtin.set_fact:
-    sortarr_distro: "{{ ansible_distribution | lower }}"
-
-- name: Add Docker GPG key
-  ansible.builtin.get_url:
-    url: "https://download.docker.com/linux/{{ sortarr_distro }}/gpg"
-    dest: /etc/apt/keyrings/docker.asc
-    mode: "0644"
-    force: false
-
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch={{ 'arm64' if ansible_architecture in ['aarch64', 'arm64']
-        else 'amd64' }} signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/{{ sortarr_distro }}
-      {{ ansible_distribution_release }} stable
-    state: present
-    filename: docker
-
-- name: Install Docker packages
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
-# fuse-overlayfs is required for Docker on ZFS-backed LXC containers only;
-# VMs use the default overlay2 storage driver natively.
-- name: Install fuse-overlayfs for Docker on ZFS-backed LXC
-  ansible.builtin.apt:
-    name: fuse-overlayfs
-    state: present
-  when: ansible_virtualization_type == 'lxc'
-
-- name: Ensure Docker service is running
-  ansible.builtin.systemd:
-    name: docker
-    state: started
-    enabled: true
-
-# =============================================================================
-# Python venv for Ansible Docker modules
-# =============================================================================
-
-- name: Install Python venv and pip for dependencies
-  ansible.builtin.apt:
-    name:
-      - python3-pip
-      - python3-venv
-      - python3-full
-    state: present
-
-- name: Create virtualenv for Ansible Python dependencies
-  ansible.builtin.pip:
-    name:
-      - docker
-    state: present
-    virtualenv: /opt/ansible-venv
-    virtualenv_command: python3 -m venv
+# Docker itself is installed by the docker_engine meta dependency (see
+# meta/main.yml). No daemon.json and no venv: sortarr deploys via
+# docker_compose_v2, which uses the docker compose CLI (not the docker SDK).
 
 # =============================================================================
 # Data directories
@@ -236,8 +153,6 @@
     project_src: "{{ sortarr_data_dir }}"
     state: present
     pull: always
-  vars:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
   environment:
     SONARR_API_KEY: "{{ sortarr_sonarr_api_key }}"
     RADARR_API_KEY: "{{ sortarr_radarr_api_key }}"
