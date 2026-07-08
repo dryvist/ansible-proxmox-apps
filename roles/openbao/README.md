@@ -194,6 +194,7 @@ plans):
 | `media` | `secret/apps/media` | — | *arr/qBittorrent/Plex stack |
 | `local-llm` | `secret/ai/*` | — | The LLM serving stack itself |
 | `public` | `secret/public/*` | — | **Anonymous** — creds NOT keychain-gated; shipped ambiently |
+| `ai-orchestrator` | `secret/ai/*` | `secret/ai/*` (create/update) | AI agent/orchestrator WRITE identity; role_id/secret_id **operator-held in the macOS keychain**, not Doppler-managed |
 | `ai-readonly` | `secret/ai/*`, `secret/apps/*` | — | **default AI agent; NO `secret/infra/*`** |
 | `ai-elevated` | `ai-readonly` + `secret/platform/*` | — | trusted infra-touching agents; no write |
 | `snapshot` | `sys/storage/raft/snapshot` | — | least-priv backup identity |
