@@ -1,0 +1,110 @@
+---
+# Daily brain rotation (docs/BRAIN_ROTATION.md). Included from main.yml only when
+# llm_router_rotation_enabled is true. Renders one full config per phase (they
+# differ solely in the ai-default alias backend), points config.yaml at the phase
+# matching the current UTC half-day, and installs the two systemd timers that flip
+# the symlink + bounce litellm at 00:00 / 12:00 UTC. When rotation is disabled
+# none of this runs and main.yml renders the single static config as before.
+
+- name: Build the rotation phase table (model + rendered config + schedule)
+  ansible.builtin.set_fact:
+    llm_router_rotation_phases:
+      large:
+        model: "{{ llm_router_rotation_large_model }}"
+        config: "{{ llm_router_rotation_config_large }}"
+        oncalendar: "{{ llm_router_rotation_large_oncalendar }}"
+      optimized:
+        model: "{{ llm_router_rotation_optimized_model }}"
+        config: "{{ llm_router_rotation_config_optimized }}"
+        oncalendar: "{{ llm_router_rotation_optimized_oncalendar }}"
+
+- name: Assert both rotation phase models are first-class router aliases
+  ansible.builtin.assert:
+    that:
+      - llm_router_large_models | selectattr('alias', 'equalto', item.value.model) | list | length == 1
+    fail_msg: >-
+      Rotation phase model '{{ item.value.model }}' is not a first-class alias in
+      llm_router_large_models — add it (with context_window) so the ai-default
+      alias can resolve its backend + context. (docs/BRAIN_ROTATION.md)
+    quiet: true
+  loop: "{{ llm_router_rotation_phases | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} -> {{ item.value.model }}"
+
+- name: Render the per-phase LiteLLM configs (ai-default -> that phase's brain)
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ item.value.config }}"
+    owner: root
+    group: "{{ llm_router_group }}"
+    mode: "0640"
+  loop: "{{ llm_router_rotation_phases | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    _alias_entry: "{{ llm_router_large_models | selectattr('alias', 'equalto', item.value.model) | first }}"
+    llm_router_rotation_active_backend: "{{ _alias_entry.backend }}"
+    llm_router_rotation_active_context: "{{ _alias_entry.context_window }}"
+  notify: Restart litellm
+
+- name: Determine the current rotation phase from the guest's UTC hour
+  ansible.builtin.command: date -u +%H
+  register: llm_router_rotation_utc_hour
+  changed_when: false
+
+- name: Point config.yaml at the config for the current UTC half-day
+  # force + a computed target means a converge always re-affirms the correct live
+  # phase (00:00-11:59 UTC = large, 12:00-23:59 = optimized) instead of resetting
+  # it to a fixed default; the timers own the flip between converges.
+  ansible.builtin.file:
+    src: >-
+      {{ llm_router_rotation_config_large
+         if (llm_router_rotation_utc_hour.stdout | int) < 12
+         else llm_router_rotation_config_optimized }}
+    dest: "{{ llm_router_config_file }}"
+    state: link
+    force: true
+    follow: false
+  notify: Restart litellm
+
+- name: Deploy the rotation systemd service units
+  ansible.builtin.template:
+    src: litellm-rotate.service.j2
+    dest: "/etc/systemd/system/litellm-rotate-{{ item.key }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ llm_router_rotation_phases | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    _rotation_phase: "{{ item.key }}"
+    _rotation_config: "{{ item.value.config }}"
+  notify: Restart rotation timers
+
+- name: Deploy the rotation systemd timer units
+  ansible.builtin.template:
+    src: litellm-rotate.timer.j2
+    dest: "/etc/systemd/system/litellm-rotate-{{ item.key }}.timer"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ llm_router_rotation_phases | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    _rotation_phase: "{{ item.key }}"
+    _rotation_oncalendar: "{{ item.value.oncalendar }}"
+  notify: Restart rotation timers
+
+# Skipped under Docker (molecule) — no functional systemd init in the container.
+- name: Enable and start the rotation timers
+  ansible.builtin.systemd:
+    name: "litellm-rotate-{{ item }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - large
+    - optimized
+  when: ansible_virtualization_type | default('') != 'docker'

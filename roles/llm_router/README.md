@@ -25,6 +25,20 @@ pair and cools a failed deployment down (`allowed_fails` / `cooldown_time`), so 
 outage drains to CPU automatically. There is **no** cross-tier fallback — a large
 request that fails surfaces the error rather than silently degrading to a small model.
 
+## Daily brain rotation (optional)
+
+When `ai_rotation_enabled` (in `group_vars/all.yml`) is `true`, the router exposes
+one stable alias, `ai-default`, that Hermes and Open WebUI point at permanently,
+and two systemd timers flip which backend it maps to on a UTC schedule: **00:00 →
+the large brain, 12:00 → the optimized brain** (`ai_default_model_large` /
+`ai_default_model_optimized`, both first-class aliases in `llm_router_large_models`).
+The flip is a `config.yaml` symlink swap between two pre-rendered per-phase configs
+plus a `litellm` restart — no gateway restart, no Hermes cron churn. A
+`ConditionPathExists` sentinel (`rotation-paused`) lets a bench window keep the
+fabric on the optimized brain. Off by default: `config.yaml` is a single static
+file and the render is byte-identical. Full rationale, capacity math, and the
+flagship upgrade path: [`docs/BRAIN_ROTATION.md`](../../docs/BRAIN_ROTATION.md).
+
 ## Observability
 
 `litellm_settings.callbacks: ["otel"]`:

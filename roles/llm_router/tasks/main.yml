@@ -55,14 +55,35 @@
   no_log: true
   notify: Restart litellm
 
-- name: Deploy the LiteLLM proxy config
+# Rotation turns config.yaml into a symlink (rotation.yml). If rotation is later
+# disabled, drop that symlink first so the static render below writes a real file
+# at the same path rather than being ambiguous about the link.
+- name: Stat the LiteLLM config path
+  ansible.builtin.stat:
+    path: "{{ llm_router_config_file }}"
+  register: llm_router_config_stat
+
+- name: Drop a stale rotation symlink when rotation is disabled
+  ansible.builtin.file:
+    path: "{{ llm_router_config_file }}"
+    state: absent
+  when:
+    - not (llm_router_rotation_enabled | bool)
+    - llm_router_config_stat.stat.islnk | default(false)
+
+- name: Deploy the static LiteLLM proxy config (rotation disabled)
   ansible.builtin.template:
     src: config.yaml.j2
     dest: "{{ llm_router_config_file }}"
     owner: root
     group: "{{ llm_router_group }}"
     mode: "0640"
+  when: not (llm_router_rotation_enabled | bool)
   notify: Restart litellm
+
+- name: Configure daily brain rotation (per-phase configs + timers)
+  ansible.builtin.include_tasks: rotation.yml
+  when: llm_router_rotation_enabled | bool
 
 - name: Resolve the Mac Studio apex IP for LiteLLM host pinning
   # Reuse the same single-source Studio reservation the DNS role publishes;
