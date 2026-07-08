@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.90.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.90.0...v1.90.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **cribl_edge:** logLevel is required on the prometheus input schema ([#726](https://github.com/dryvist/ansible-proxmox-apps/issues/726)) ([6a937aa](https://github.com/dryvist/ansible-proxmox-apps/commit/6a937aa1e9c2a9161d52bbd82829deff83432bcd))
+
 ## [1.90.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.89.0...v1.90.0) (2026-07-08)
 
 
