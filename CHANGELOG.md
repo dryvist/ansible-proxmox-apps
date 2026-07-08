@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.102.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.101.0...v1.102.0) (2026-07-08)
+
+
+### Features
+
+* **llm:** enable the daily brain rotation (next80 00:00 UTC / OptiQ 12:00 UTC) ([#795](https://github.com/dryvist/ansible-proxmox-apps/issues/795)) ([80370d9](https://github.com/dryvist/ansible-proxmox-apps/commit/80370d98aef48585d570daa8b5bdedfaca6101ae))
+
 ## [1.101.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.100.2...v1.101.0) (2026-07-08)
 
 
