@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.95.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.94.2...v1.95.0) (2026-07-08)
+
+
+### Features
+
+* **cribl:** 4.12.2 bump + OTel routes fan-out to Langfuse AND Splunk ([#694](https://github.com/dryvist/ansible-proxmox-apps/issues/694)) ([c25e2a9](https://github.com/dryvist/ansible-proxmox-apps/commit/c25e2a9673173ce8c8f852fafbbe682b51ea64bb))
+
 ## [1.94.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.94.1...v1.94.2) (2026-07-08)
 
 
