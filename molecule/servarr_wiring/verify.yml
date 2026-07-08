@@ -1,0 +1,115 @@
+---
+# Molecule verification for servarr_wiring (defaults-contract layer).
+#
+# The role is almost entirely live API wiring (skipped in CI), so this verify
+# guards the CONTRACTS the live run depends on:
+#   1. Endpoint resolution prefers reserved_ip and falls back ip -> hostvars
+#      -> loopback (the coordinator runs behind the VPN and cannot resolve
+#      internal FQDNs, so this expression is load-bearing).
+#   2. Ports come from the OpenTofu constants, never literals.
+#   3. The auth policy pins a v4-valid method (never None).
+#   4. Data dirs / owners match the app roles' install contract (the
+#      config.xml delegation writes into these exact paths as these users).
+#   5. Tracker-stewardship floors: seed criteria stay at-or-above a
+#      good-citizen baseline, and at least one indexer is defined.
+
+- name: Verify
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    # Same synthetic fixture as converge.yml — the defaults under test template
+    # lazily against whatever tofu_data is in scope here.
+    container_ip: "192.168.0.210"
+    tofu_data:
+      containers:
+        sonarr: { reserved_ip: "192.168.0.212" }
+        radarr: { reserved_ip: "192.168.0.213" }
+        download-vpn: { reserved_ip: "192.168.0.210" }
+      constants:
+        media_ports:
+          sonarr_web: 8989
+          radarr_web: 7878
+          prowlarr_web: 9696
+          qbittorrent_web: 8080
+
+  tasks:
+    - name: Load the role defaults (the contract under test)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/servarr_wiring/defaults/main.yml"
+
+    - name: Assert endpoint hosts resolve from the inventory fixture (reserved_ip first)
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_host == tofu_data.containers['sonarr'].reserved_ip
+          - servarr_wiring_radarr_host == tofu_data.containers['radarr'].reserved_ip
+          - servarr_wiring_prowlarr_host == tofu_data.containers['download-vpn'].reserved_ip
+        fail_msg: "endpoint host resolution no longer prefers the guest's reserved_ip"
+
+    - name: Assert the ip-field fallback still works when reserved_ip is absent
+      vars:
+        # Re-derive the role's expression against a fixture WITHOUT reserved_ip.
+        _fallback_fixture: { containers: { sonarr: { ip: "192.168.0.99" } } }
+        _fallback_host: >-
+          {{ _fallback_fixture.containers['sonarr'].reserved_ip
+             if (_fallback_fixture.containers['sonarr'].reserved_ip | default('', true) | length > 0)
+             else (_fallback_fixture.containers['sonarr'].ip
+                   | default('127.0.0.1', true)) }}
+      ansible.builtin.assert:
+        that:
+          - _fallback_host == '192.168.0.99'
+        fail_msg: "endpoint resolution fallback (reserved_ip -> ip) regressed"
+
+    - name: Assert ports come from the OpenTofu constants
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_port | int == tofu_data.constants.media_ports.sonarr_web
+          - servarr_wiring_radarr_port | int == tofu_data.constants.media_ports.radarr_web
+          - servarr_wiring_prowlarr_port | int == tofu_data.constants.media_ports.prowlarr_web
+        fail_msg: "*arr ports drifted from the tofu constants"
+
+    - name: Assert the auth policy is a v4-valid method (never None)
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_auth_method in ['Forms', 'Basic', 'External']
+          - servarr_wiring_auth_required in ['Enabled', 'DisabledForLocalAddresses']
+        fail_msg: >-
+          servarr_wiring_auth_method/_required must be a combination *arr v4
+          accepts — AuthenticationMethod=None walls off the UI.
+
+    - name: Assert data dirs and owners match the app roles' install contract
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_data_dir == '/var/lib/sonarr'
+          - servarr_wiring_radarr_data_dir == '/var/lib/radarr'
+          - servarr_wiring_prowlarr_data_dir == '/var/lib/prowlarr'
+          - servarr_wiring_sonarr_user == 'media'
+          - servarr_wiring_radarr_user == 'media'
+          - servarr_wiring_prowlarr_user == 'qbittorrent'
+          - servarr_wiring_group == 'media'
+        fail_msg: >-
+          servarr_wiring's data-dir/owner contract drifted from the app roles —
+          the delegated config.xml writes would land on the wrong path or owner.
+
+    - name: Assert tracker-stewardship floors and indexer presence
+      ansible.builtin.assert:
+        that:
+          # Good-citizen baseline: never seed below ratio 1.0 / 2 days.
+          - servarr_wiring_seed_ratio | float >= 1.0
+          - servarr_wiring_seed_time_minutes | int >= 2880
+          # Without an indexer, Prowlarr syncs nothing and the *arrs find nothing.
+          - servarr_wiring_prowlarr_indexers | length >= 1
+          - servarr_wiring_indexer_app_profile_id | int >= 1
+          - servarr_wiring_sync_level in ['disabled', 'addOnly', 'fullSync']
+        fail_msg: "seed-criteria stewardship floor or indexer contract regressed"
+
+    - name: Assert import safety knobs stay sane
+      ansible.builtin.assert:
+        that:
+          # The recycler must share the /data volume (atomic moves) and the
+          # min-free-space floor must keep real headroom.
+          - servarr_wiring_recycler_bin_path is match('^/data/')
+          - servarr_wiring_recycler_bin_days | int >= 0
+          - servarr_wiring_min_free_space_mb | int >= 1024
+        fail_msg: "recycler-bin/min-free-space import safety contract regressed"

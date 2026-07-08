@@ -147,6 +147,45 @@
          or (not (download_vpn_apt_proxy.failed | default(false))) }}
     cache_valid_time: 3600
 
+# --- Phase 1a: unattended security upgrades ----------------------------------
+# apt egress works in steady state (the default route rides the tunnel), but
+# nothing ever APPLIED the downloaded updates, leaving the most
+# internet-exposed guest unpatched between converges. Debian's own
+# unattended-upgrades closes that: security-origin-only by default, native apt
+# machinery, no bespoke scheduler. Reboots stay manual — the killswitch
+# validator and the BindsTo unit chain recover services, not kernels.
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+  when: download_vpn_unattended_upgrades | bool
+
+- name: Enable periodic unattended upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      // Managed by Ansible (download_vpn role). List refresh + the
+      // unattended-upgrades apply both ride the stock apt-daily timers.
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+  when: download_vpn_unattended_upgrades | bool
+
+- name: Keep unattended upgrades reboot-free
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52unattended-upgrades-local
+    content: |
+      // Managed by Ansible (download_vpn role). The stock origin allowlist
+      // (security only) is kept; make the no-reboot contract explicit so a
+      // kernel update can never bounce the tunnel unattended.
+      Unattended-Upgrade::Automatic-Reboot "false";
+    owner: root
+    group: root
+    mode: "0644"
+  when: download_vpn_unattended_upgrades | bool
+
 # --- Phase 1b: timezone -----------------------------------------------------
 # The qBittorrent scheduler evaluates SYSTEM LOCAL time, so pin the container to
 # UTC (default) and express the throttle window in UTC. glibc reads the zone at
@@ -647,6 +686,11 @@
     path: "{{ download_vpn_prowlarr_data_dir }}"
     state: directory
     owner: "{{ download_vpn_user }}"
+    # Explicit group (the shared media gid): a from-scratch create must never
+    # inherit the connecting user's default group — the mapped-ownership
+    # contract with media_lxc_features' config-dataset chown assumes owner and
+    # group are both the app's own ids.
+    group: "{{ download_vpn_group }}"
     mode: "0750"
 
 - name: Download + extract Prowlarr
