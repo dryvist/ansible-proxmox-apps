@@ -13,6 +13,12 @@
 # provider init from config.yaml alone (it may need its client package on
 # first run).
 
+# Layer 1 — render-time contract assertions. Imported FIRST so a known-bad brain
+# config (context below the 64k floor, inverted timeout chain) fails the play
+# before anything is installed or deployed. Inherits the play's hermes_agent tag.
+- name: Assert brain-wiring contracts before converging
+  ansible.builtin.import_tasks: assert.yml
+
 - name: Install role prerequisites (installer + clone)
   ansible.builtin.apt:
     name:
@@ -409,29 +415,7 @@
 - name: Flush handlers so config/unit changes apply before verification
   ansible.builtin.meta: flush_handlers
 
-# Type=simple reports 'active' the instant the daemon forks, so a single check
-# can pass a service that crashes a moment later. Poll until ActiveState settles
-# on 'active' to confirm the gateway actually stays up.
-- name: Verify the Hermes gateway is active
-  ansible.builtin.systemd:
-    name: hermes-gateway
-  register: hermes_agent_gateway_state
-  until: hermes_agent_gateway_state.status.ActiveState | default('') == 'active'
-  retries: 5
-  delay: 2
-
-# Best-effort: surface the active memory provider. Non-fatal so a Hindsight
-# first-run hiccup doesn't fail the whole converge (verify/fix live).
-- name: Check the active memory provider (non-fatal)
-  ansible.builtin.command: "{{ hermes_agent_bin }} memory status"
-  environment:
-    HERMES_HOME: "{{ hermes_agent_hermes_home }}"
-  become: true
-  become_user: "{{ hermes_agent_user }}"
-  register: hermes_agent_memory_status
-  changed_when: false
-  failed_when: false
-
-- name: Report the active memory provider
-  ansible.builtin.debug:
-    var: hermes_agent_memory_status.stdout_lines
+# Layer 2 — post-converge verification gate (gateway up + clean journal + a real
+# tool-call probe through the router), with a rollback recipe on any failure.
+- name: Verify the brain wiring end-to-end after converge
+  ansible.builtin.import_tasks: verify.yml

@@ -103,7 +103,10 @@ hermes_agent_model_max_tokens: 32768
 # call". These overrides restore the values Hermes itself auto-applies to
 # endpoints it recognizes as local (read 1800s; stale kept enabled but far
 # above any healthy prefill).
-hermes_agent_stream_read_timeout: 1800
+# The read value is the innermost link of the fabric-wide timeout chain, so it is
+# sourced from the single-source-of-truth constant (all.yml) that the Layer-1
+# assert checks against the router's per-attempt timeout — resolves to 1800.
+hermes_agent_stream_read_timeout: "{{ ai_stream_read_timeout_seconds }}"
 hermes_agent_stream_stale_timeout: 900
 # The api key IS the LiteLLM router master key; source it from the canonical
 # LLM_ROUTER_MASTER_KEY env (same as the llm_router role) so no per-run mapping
@@ -340,3 +343,26 @@ hermes_agent_context7_api_key: ""
 # escalation tool (see README), which will need its own independent flag when
 # wired, not a shared one.
 hermes_agent_codex_mcp_enabled: true
+
+# --- Layer 2 post-converge verification gate (tasks/verify.yml) --------------
+# After the gateway (re)starts, a real end-to-end probe proves the brain wiring
+# actually works before the converge is called done — every 2026-07-08 breakage
+# was a config mistake that a single tool-call probe (or a journal grep) would
+# have surfaced immediately. Disable only where there is no live brain to reach
+# (mirrors llamaindex_verify_router); default on for real converges.
+hermes_agent_verify_enabled: true
+# journalctl tail scanned for fatal config-rejection lines since the restart.
+hermes_agent_verify_journal_lines: 200
+# Fatal startup/config-rejection substrings Hermes emits when the brain wiring is
+# wrong: the context floor rejection ("below the minimum 64,000 required") and an
+# unknown/mis-aliased model ("Model <id> does not exist"). Match => gate fails.
+hermes_agent_verify_fatal_log_patterns:
+  - "below the minimum"
+  - "does not exist"
+# The live tool-call probe forces a tool call through the router at the resolved
+# brain and asserts a structurally valid tool_call comes back (non-empty
+# function.name — the exact "invalid tool call" shape of the outage). Generous
+# per-attempt timeout: the swap-tier brain may be loading on first hit.
+hermes_agent_verify_probe_timeout: 300
+hermes_agent_verify_probe_retries: 3
+hermes_agent_verify_probe_delay: 10

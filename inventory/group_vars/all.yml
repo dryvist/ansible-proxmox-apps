@@ -101,6 +101,21 @@ ai_default_model_optimized: Qwen3.6-35B-A3B-OptiQ-4bit
 ai_default_model_large: Qwen3-Next-80B-A3B-Thinking-4bit
 ai_default_model: "{{ 'ai-default' if ai_rotation_enabled | bool else ai_default_model_optimized }}"
 
+# AI serving timeout chain (client-is-decider). Each OUTER layer must OUTLIVE the
+# inner one, so no intermediate guard kills a still-healthy generation and the
+# CLIENT alone decides when to give up:
+#   nix-darwin vllm-mlx server guard 3600s (external to this repo, not assertable)
+#     > llm_router per-attempt timeout  (ai_router_request_timeout_seconds)
+#       > Hermes client stream read     (ai_stream_read_timeout_seconds)
+# The two in-repo layers are named ONCE here (not as bare literals in each role)
+# so the ordering invariant is a single source of truth AND the hermes_agent
+# Layer-1 assert can verify `read < router` across two roles that never share a
+# play — see roles/hermes_agent/tasks/assert.yml. Consumers:
+# hermes_agent_stream_read_timeout and llm_router_request_timeout_seconds resolve
+# to these, so the rendered configs stay byte-identical to the prior literals.
+ai_stream_read_timeout_seconds: 1800
+ai_router_request_timeout_seconds: 2400
+
 # Resource-domain secrets fetched from OpenBao by the openbao_secrets pre-play,
 # one dict per domain. Defaults to an empty dict for each so every consumer's
 # `bao_<domain>_secrets.X | default(lookup('env','X'), true)` resolves even
