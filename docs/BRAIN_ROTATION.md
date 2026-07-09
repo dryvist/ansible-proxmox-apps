@@ -132,20 +132,29 @@ measured Next-80B's real per-process peak at **51.5 GB** (scheduler
 `[Metal memory] ... peak=51.5GB` — activations and paged-cache overshoot on top
 of ~46 GB), putting the composition at ~109.5 GB ≥ the trip: all three backends
 crashed (`upstream exited unexpectedly`) within 33 minutes. Budget large-phase
-capacity from **measured peak**, not weights + cache. The cache is deliberately
-kept small (4 GB); the model
-idle-unloads at 900 s back to the 58.6 GB baseline. It is registered in
-`lib/hosts.nix:mlx.models` (see the companion nix-darwin PR), **not** auto-
-discovered — a discovered model would inherit the default model's serve flags
-(wrong parser for a Qwen brain).
+capacity from **measured peak**, not weights + cache.
+
+**The large brain therefore serves SOLO.** The 00:00 UTC flip first unloads
+every model on the serving host (`POST /api/models/unload` through the gate,
+best-effort), so Next-80B's 51.5 GB peak lands on an empty host with ~57 GB of
+headroom instead of stacking on the resident pair. The 12:00 UTC flip unloads
+the large brain and re-warms the resident pair with 1-token completions
+(llama-swap only preloads at proxy startup, not on config flips). Both curls
+degrade gracefully: if the serving host is unreachable the alias flip still
+completes and the fabric falls back to load-on-demand. The model is registered
+in the nix-ai catalog (swap class), **not** auto-discovered — a discovered
+model would inherit the default model's serve flags (wrong parser for a Qwen
+brain).
 
 **Why not `gpt-oss-120b` as the large brain?** It is the biggest local model, but
 it scored **0% valid agentic tool calls** in the 2026-07-08 grid, so serving it as
 Hermes's brain 12h/day would lobotomize tool-calling — the exact regression the
 A/B is meant to surface, not cause. Next-80B benched 100% valid (single run,
-provisional), degrades ~round 17, ~12 tok/s. Both rotation phases carry a 262144
-context, so the `ai-default` alias's `max_input_tokens` is identical across the
-flip.
+provisional), degrades ~round 17, ~12 tok/s. The two phases advertise their
+EFFECTIVE SERVING windows (`llm_router_large_models` — 65536 optimized, 32768
+large), not the 262144 native window: `max_input_tokens` is the fabric's only
+input-length enforcement and what sizes hermes-agent's auto-compaction, so it
+must track what the KV budget actually sustains.
 
 ## Flagship-generation upgrade path (the 50–90 GB tier)
 
