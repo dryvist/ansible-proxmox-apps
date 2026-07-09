@@ -174,6 +174,57 @@
     mode: "0640"
   notify: Restart hermes-gateway
 
+# --- Hindsight memory: local embedded daemon ---------------------------------
+# The provider name in config.yaml is not enough: hindsight defaults to CLOUD
+# mode, and with no HINDSIGHT_API_KEY its is_available() is false — every
+# memory tool call fails with "Memory is not available" (the recurring digest
+# warning). local_embedded needs (a) the hindsight-all package in the venv,
+# (b) $HERMES_HOME/hindsight/config.json selecting the mode + the extraction
+# LLM (the same router brain), (c) HINDSIGHT_LLM_API_KEY in .env (rendered by
+# hermes-env.j2).
+- name: Install the Hindsight local-embedded stack into the Hermes venv
+  ansible.builtin.command:
+    cmd: >-
+      {{ hermes_agent_uv_bin }} pip install
+      --python {{ hermes_agent_venv_python }}
+      hindsight-all
+  register: hermes_agent_hindsight_install
+  changed_when: >-
+    'Installed' in hermes_agent_hindsight_install.stderr
+    or 'Uninstalled' in hermes_agent_hindsight_install.stderr
+  when: hermes_agent_memory_provider == 'hindsight' and hermes_agent_memory_mode == 'local_embedded'
+
+- name: Ensure the hindsight config dir exists
+  ansible.builtin.file:
+    path: "{{ hermes_agent_hermes_home }}/hindsight"
+    state: directory
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_user }}"
+    mode: "0750"
+  when: hermes_agent_memory_provider == 'hindsight'
+
+- name: Deploy the hindsight provider config (mode + embedded-daemon LLM)
+  ansible.builtin.template:
+    src: hindsight-config.json.j2
+    dest: "{{ hermes_agent_hermes_home }}/hindsight/config.json"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_user }}"
+    mode: "0640"
+  notify: Restart hermes-gateway
+  when: hermes_agent_memory_provider == 'hindsight'
+
+# --- Guest SSH hardening ------------------------------------------------------
+# Flagged by the agent's own security self-audit: password auth was accepted on
+# the guest's sshd. Ansible reaches this guest via proxmox_pct_remote (through
+# the PVE host), not sshd, so this cannot lock out converges.
+- name: Disable SSH password authentication
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication\s'
+    line: PasswordAuthentication no
+    validate: sshd -t -f %s
+  notify: Restart sshd
+
 # --- Cron model-drift recovery ------------------------------------------------
 # Unpinned cron jobs snapshot the global default model at creation and FAIL
 # CLOSED when model.default later changes: every subsequent fire is skipped
