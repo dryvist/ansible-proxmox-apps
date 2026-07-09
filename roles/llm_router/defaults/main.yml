@@ -88,16 +88,26 @@ llm_router_llm_large_base_url: "https://{{ llm_router_llm_large_fqdn }}:{{ llm_r
 # --- Model groups ------------------------------------------------------------
 # large: exposed alias -> the backend's own model id (the serving gate lists
 # models under their full MLX repo ids). One deployment each, bearer-authed.
-# context_window on EVERY entry = the backend's real native context
-# (max_position_embeddings from each mlx-community repo's config.json).
+# context_window on EVERY entry = the backend's EFFECTIVE SERVING window —
+# what its KV-cache budget (nix-ai catalog cacheMemoryMb) sustains — NOT the
+# model's native max_position_embeddings. vllm-mlx enforces no input-length
+# ceiling at all (--max-request-tokens caps OUTPUT tokens; a 113K-token
+# prompt passed a "65536 cap" untouched, 2026-07-09), so this value is the
+# fabric's ONLY input enforcement (enable_pre_call_checks) AND what sizes
+# client behavior: hermes-agent auto-compaction triggers at ~75% of it.
+# Advertising native windows (previously 262144) let agent sessions grow far
+# past the serving ceiling and die mid-stream (Metal buffer exhaustion)
+# instead of compacting. OptiQ gets 65536 (16 GB KV; 113K single-stream
+# validated, 65K leaves 4-way-concurrency headroom); the small-cache tiers
+# get 32768. Native windows for reference: gpt-oss 131072, Qwen3* 262144.
 # LiteLLM has no built-in entry for these mlx-community backend ids, so an
 # unset context_window resolves max_input_tokens to null — clients that read
 # that (e.g. Hermes, OpenWebUI) fall back to a near-zero context guess and
 # compress every request to death (see config.yaml.j2 for the failure mode).
 llm_router_large_models:
-  - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8, context_window: 131072 }
-  - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit, context_window: 262144 }
-  - { alias: Qwen3.6-35B-A3B-4bit, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
+  - { alias: gpt-oss-120b, backend: mlx-community/gpt-oss-120b-MXFP4-Q8, context_window: 32768 }
+  - { alias: Qwen3-Coder-30B-A3B, backend: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit, context_window: 32768 }
+  - { alias: Qwen3.6-35B-A3B-4bit, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 32768 }
   # OptiQ-4bit: the agentic-bench-winning brain (ai_default_model, all.yml). A
   # first-class alias — NOT passthrough — so the default model carries an
   # explicit max_input_tokens: the wildcard "*" entry below sets none, and a
@@ -121,19 +131,19 @@ llm_router_large_models:
   # temperature ~1.0 / presence_penalty 0.0 — added to this same extra_body.)
   - alias: Qwen3.6-35B-A3B-OptiQ-4bit
     backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
-    context_window: 262144
+    context_window: 65536
     extra_body: { repetition_penalty: 1.05 }
   # Qwen3-Next-80B Thinking: the large-phase brain for the daily rotation
   # (ai_default_model_large). A first-class alias so the rotating ai-default
-  # entry carries its real 262144 context. Served from the nix-darwin swap tier
-  # (lib/hosts.nix), loaded on demand only while ai-default points at it. Block
-  # style (not the flow one-liner above) only to stay under the 120-char limit.
+  # entry carries its serving window. Served from the nix-ai catalog swap tier,
+  # loaded on demand only while ai-default points at it. Block style (not the
+  # flow one-liner above) only to stay under the 120-char limit.
   - alias: Qwen3-Next-80B-A3B-Thinking-4bit
     backend: mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit
-    context_window: 262144
+    context_window: 32768
   # claude-sonnet-5 is a Claude Code alias deliberately mapped to a local Qwen3.6
-  # backend (PR #624) — not a mis-map; it inherits that backend's 262144 context.
-  - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 262144 }
+  # backend (PR #624) — not a mis-map; it inherits that backend's serving window.
+  - { alias: claude-sonnet-5, backend: mlx-community/Qwen3.6-35B-A3B-4bit, context_window: 32768 }
 # light: exposed aliases -> the llama-swap model_name they map to. Each becomes two
 # same-name deployments (llm-fast GPU + llm-light CPU) in the rendered config.
 # `embedding: true` marks the entry as an embeddings model_group.
@@ -246,3 +256,9 @@ llm_router_rotation_config_optimized: "{{ llm_router_config_dir }}/config-optimi
 # fabric stays on the optimized brain so a bench is never crowded out). The
 # bench runbook touches it to pause and removes it to resume.
 llm_router_rotation_pause_sentinel: "{{ llm_router_config_dir }}/rotation-paused"
+# Serving-host model names (role aliases) the optimized flip re-warms after
+# dropping the large brain — llama-swap only preloads at proxy startup, so the
+# flip itself must reload the resident pair (litellm-rotate.service.j2).
+llm_router_rotation_warm_roles:
+  - coding
+  - tool-calling
