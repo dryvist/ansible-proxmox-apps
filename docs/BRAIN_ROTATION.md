@@ -124,9 +124,16 @@ drops to on-demand and idle-unloads. Auto-discovery is force-disabled fleet-wide
 (`hosts/common/mlx-no-autodiscover.nix`), so every swap model is registered
 explicitly.
 
-**The large phase (`Qwen3-Next-80B-A3B-Thinking-4bit`) fits the swap tier:**
-58.6 GB residents + ~42 GB weights + 4 GB cache **≈ 104.6 GB**, under the ~109 GB
-trip. The cache is deliberately kept small (4 GB) to hold that margin; the model
+**The large phase (`Qwen3-Next-80B-A3B-Thinking-4bit`) does NOT fit the swap
+tier alongside both residents** — the original estimate here (58.6 GB residents
++ ~42 GB weights + 4 GB cache ≈ 104.6 GB, under the ~109 GB trip) budgeted only
+weights + configured cache. The first live large phase (2026-07-09 00:00 UTC)
+measured Next-80B's real per-process peak at **51.5 GB** (scheduler
+`[Metal memory] ... peak=51.5GB` — activations and paged-cache overshoot on top
+of ~46 GB), putting the composition at ~109.5 GB ≥ the trip: all three backends
+crashed (`upstream exited unexpectedly`) within 33 minutes. Budget large-phase
+capacity from **measured peak**, not weights + cache. The cache is deliberately
+kept small (4 GB); the model
 idle-unloads at 900 s back to the 58.6 GB baseline. It is registered in
 `lib/hosts.nix:mlx.models` (see the companion nix-darwin PR), **not** auto-
 discovered — a discovered model would inherit the default model's serve flags
@@ -188,6 +195,40 @@ repo's rotation is unchanged — it only ever swaps which alias `ai-default` map
 - **A phase id is not in the alias table.** The converge fails loud — the
   phase→backend/context resolution asserts membership in
   `llm_router_large_models`.
+
+## Incident 2026-07-09: first live large phase (paused pending gates)
+
+The rotation's first large phase caused a production outage and the rotation is
+now **paused** (sentinel present on all three routers, fabric held on the
+optimized brain). Two independent causes, both evidence-backed:
+
+1. **Memory overcommit → backend crashes (00:33 UTC).** See the corrected
+   capacity math above: Next-80B's measured 51.5 GB peak pushed the composition
+   to ~109.5 GB ≥ the ~109 GB trip. OptiQ crashed twice and Coder once
+   (`upstream exited unexpectedly`); the crash/restart cycle then wedged
+   `llama-swap`'s routing (backends health-checked "ready" but zero requests
+   forwarded for ~70 minutes) until a full serving restart.
+2. **Throughput below the cron fleet's floor.** One production generation took
+   **40m51s** (3.4 MB response) — past the router's 2400 s per-attempt timeout
+   and the client's 1800 s budget — with a 6-deep queue behind it
+   (`maxNumSeqs 2`). At Next-80B's under-load decode rate the scheduled sweep
+   fleet saturates it permanently, so every large-phase cron fails even when
+   nothing crashes.
+
+**Re-enable gates** (in addition to "Open questions" below): a large brain must
+(a) fit under the trip using its **measured** per-process peak alongside
+whatever stays resident, and (b) sustain the cron fleet — its under-load decode
+rate must complete the fleet's typical generation (~15–20k tokens) inside the
+client's 1800 s stream budget with the fleet's concurrency, i.e. ≥ ~10 tok/s
+per stream **sustained at its real queue depth**, which Next-80B does not meet
+today (40m51s ≈ 7–8 tok/s effective on one stream while queueing five more).
+Until a candidate passes both, `rotation-paused` stays.
+
+**Operational note — restarting the serving stack:** `launchctl kickstart -k
+gui/<uid>/dev.vllm-mlx.server` kills only `llama-swap`; the `vllm-mlx serve`
+children survive as orphans squatting their ports, and the fresh `llama-swap`
+health-checks those orphans "ready" while unable to manage them. Always
+`pkill -f "vllm-mlx serve"` (escalate to `-9`) before the kickstart.
 
 ## Open questions for the gate
 
