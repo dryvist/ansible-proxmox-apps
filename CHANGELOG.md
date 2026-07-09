@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.104.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.103.0...v1.104.0) (2026-07-09)
+
+
+### Features
+
+* **hermes:** fix memory tool via hindsight local-embedded; disable SSH password auth ([#815](https://github.com/dryvist/ansible-proxmox-apps/issues/815)) ([508d995](https://github.com/dryvist/ansible-proxmox-apps/commit/508d995362e7a6630c3c6882df32f46a23d8d017))
+* **llm_router:** rotation evicts residents for a solo large phase; advertise serving windows ([#814](https://github.com/dryvist/ansible-proxmox-apps/issues/814)) ([9821a44](https://github.com/dryvist/ansible-proxmox-apps/commit/9821a4413dd12b32d101f45f785ff369d23a33c5))
+
 ## [1.103.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.102.1...v1.103.0) (2026-07-09)
 
 
