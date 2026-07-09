@@ -1,0 +1,42 @@
+---
+# Layer 1 — render-time contract assertions for the Hermes Agent brain wiring.
+#
+# Every production break on 2026-07-08 was a config-level mistake that was
+# machine-detectable BEFORE the converge reached the running daemon. These
+# asserts encode those invariants and fail the play at the top of the role,
+# before any config is deployed — so a known-bad config never converges.
+#
+# Imported (not included) at the very top of tasks/main.yml so the checks inherit
+# the play's `hermes_agent` tag and ALWAYS run with the role they guard, even
+# under `--tags hermes_agent`. Read-only; safe in check mode.
+
+- name: Assert Hermes Agent brain-wiring contracts hold before converging
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      # (1) Hermes Agent HARD context floor. The agent refuses to start against
+      #     any model declaring under 64,000 tokens ("below the minimum 64,000
+      #     required"); at 60,000 every seeded cron failed on 2026-07-08.
+      #     context_length is declared explicitly in config.yaml.j2 because
+      #     custom/vLLM providers carry no context catalog Hermes can probe.
+      - hermes_agent_model_context_length | int >= 64000
+      # (3) Client-is-decider timeout chain. The Hermes stream read timeout must
+      #     sit BELOW the router's per-attempt timeout so the CLIENT gives up
+      #     first (by design) while the router keeps waiting on a healthy
+      #     generation. Both values are the single-source constants in all.yml;
+      #     the outermost link (nix-darwin vllm-mlx server guard, 3600s) lives
+      #     out of this repo's reach and is not assertable here.
+      - hermes_agent_stream_read_timeout | int < ai_router_request_timeout_seconds | int
+    fail_msg: >-
+      Hermes Agent brain-wiring contract violated (roles/hermes_agent/tasks/assert.yml).
+      (1) model.context_length is {{ hermes_agent_model_context_length }}; it must be
+      >= 64000 — the Hermes Agent hard floor that rejected 60000 at startup and
+      failed every seeded cron on 2026-07-08 (raise hermes_agent_model_context_length).
+      (3) stream read timeout is {{ hermes_agent_stream_read_timeout }} and the router
+      per-attempt timeout is {{ ai_router_request_timeout_seconds }}; read must be < router
+      so the client decides (chain: hermes read < router attempt < nix-darwin server
+      guard 3600). Fix the offending value in all.yml / roles/hermes_agent/defaults.
+    success_msg: >-
+      Hermes Agent brain-wiring contracts hold (context_length
+      {{ hermes_agent_model_context_length }} >= 64000; read
+      {{ hermes_agent_stream_read_timeout }} < router {{ ai_router_request_timeout_seconds }}).
