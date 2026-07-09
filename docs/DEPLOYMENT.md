@@ -110,8 +110,10 @@ can silently invert.
 
 A pre-production staging instance that catches these violations by *executing*
 the config — the way Hermes itself rejected the 64k-floor violation at startup —
-is tracked as a GitHub issue. It requires a new guest (a terraform-proxmox
+is tracked in [issue #800][staging]. It requires a new guest (a terraform-proxmox
 `deployment.json` change), so it is user-gated.
+
+[staging]: https://github.com/dryvist/ansible-proxmox-apps/issues/800
 
 ---
 
