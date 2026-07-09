@@ -61,13 +61,21 @@ hermes_agent_model_api_mode: chat_completions
 # stream chunks. A 70-90K-token re-prefill can run longer than
 # hermes_agent_stream_stale_timeout (900s) with zero chunks in flight, tripping a
 # FALSE "stream stale" kill; Hermes then re-prompts "continue where you left
-# off", the context grows, the next re-prefill is longer, and it spirals. Keeping
-# the declared window at 60000 makes compaction fire at ~0.85*60000 = 51000
-# tokens, so a full re-prefill stays well under the 900s stale window. Bounding
-# context is the correct fix — do NOT raise stream_stale_timeout to paper over a
-# runaway prefill. (Custom providers carry no context catalog Hermes can probe,
-# so this is declared explicitly as model.context_length in config.yaml.j2.)
-hermes_agent_model_context_length: 60000
+# off", the context grows, the next re-prefill is longer, and it spirals.
+# Constraints this number traces to (do not change it without re-checking all
+# three): (1) HARD FLOOR — Hermes Agent refuses any model declaring under
+# 64000 ("below the minimum 64,000 required"; every cron failed at 60000 on
+# 2026-07-08). (2) Native window 262144 (config.json). (3) A full re-prefill
+# of the declared window must finish inside the 900s stream-stale budget:
+# prefill must exceed context/900 tok/s — 131072 needs >=146 tok/s, safe by
+# a wide margin at healthy rates and ~2x even at the worst rate measured
+# during the (since-fixed) repetition-storm saturation. Half the native
+# window keeps per-turn latency and KV pressure sane on the 16 GB serving
+# cache; the earlier tighter bound was sized against the storm pathology,
+# which the router-side repetition_penalty now prevents at the source.
+# (Custom providers carry no context catalog Hermes can probe, so this is
+# declared as model.context_length in config.yaml.j2.)
+hermes_agent_model_context_length: 131072
 # ROOT-CAUSE fix for the "Context length exceeded (18/19 tokens). Cannot
 # compress further." death loop confirmed in ~/.hermes/logs/agent.log: the
 # router/backend hard-caps a single completion at 8192 output tokens
