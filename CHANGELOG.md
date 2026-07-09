@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.103.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.102.1...v1.103.0) (2026-07-09)
+
+
+### Features
+
+* **hermes_agent,llm_router:** production-deployment guardrails for the brain fabric ([#799](https://github.com/dryvist/ansible-proxmox-apps/issues/799)) ([2f78f21](https://github.com/dryvist/ansible-proxmox-apps/commit/2f78f213284356eba14e2266095c3b942f72a795))
+
 ## [1.102.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.102.0...v1.102.1) (2026-07-09)
 
 
