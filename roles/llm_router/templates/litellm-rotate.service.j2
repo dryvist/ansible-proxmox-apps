@@ -30,13 +30,13 @@ ConditionPathExists=!{{ llm_router_rotation_pause_sentinel }}
 Type=oneshot
 # Bearer for the serving gate (same token the router's large deployments use).
 EnvironmentFile={{ llm_router_env_file }}
-{% if _rotation_phase == 'large' %}
+# Unload-all BEFORE the flip in BOTH phases — unloading after the router
+# restart races incoming requests loading the new phase's models while the
+# old phase's are still resident (memory over-commit).
 ExecStart=-/usr/bin/curl -fsS -m 60 -X POST -H "Authorization: Bearer ${LLM_LARGE_BEARER_TOKEN}" {{ llm_router_llm_large_base_url | replace('/v1', '') }}/api/models/unload
-{% endif %}
 ExecStart=/usr/bin/ln -sfn {{ _rotation_config }} {{ llm_router_config_file }}
 ExecStart=/usr/bin/systemctl restart {{ llm_router_service }}.service
 {% if _rotation_phase == 'optimized' %}
-ExecStart=-/usr/bin/curl -fsS -m 60 -X POST -H "Authorization: Bearer ${LLM_LARGE_BEARER_TOKEN}" {{ llm_router_llm_large_base_url | replace('/v1', '') }}/api/models/unload
 {% for _warm_role in llm_router_rotation_warm_roles %}
 ExecStart=-/usr/bin/curl -fsS -m 300 -X POST -H "Authorization: Bearer ${LLM_LARGE_BEARER_TOKEN}" -H "Content-Type: application/json" -d '{"model":"{{ _warm_role }}","max_tokens":1,"messages":[{"role":"user","content":"warm"}]}' {{ llm_router_llm_large_base_url }}/chat/completions
 {% endfor %}
