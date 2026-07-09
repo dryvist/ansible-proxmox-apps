@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.102.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.102.0...v1.102.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **hermes_agent:** context_length 60000 -&gt; 131072 (Hermes 64k floor; storm-era bound retired) ([#797](https://github.com/dryvist/ansible-proxmox-apps/issues/797)) ([a0b6159](https://github.com/dryvist/ansible-proxmox-apps/commit/a0b6159092391ed0d5c685001f2b08ea09e59b6c))
+
 ## [1.102.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.101.0...v1.102.0) (2026-07-08)
 
 
