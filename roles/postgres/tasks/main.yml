@@ -206,22 +206,14 @@
 
 # =============================================================================
 # Phase 4: Roles, databases, and host-based auth
-# Credentials are generate-if-absent: a role's password is set only when the
-# role does not yet exist, which keeps the run idempotent under scram (whose
-# salted verifier cannot be recomputed for comparison) and matches the
-# workspace "generate at the source, idempotent" secrets convention.
+# Credentials come from the source secret store; apply them on each run so an
+# app cutover can rotate from bootstrap SOPS values without manual SQL.
 # =============================================================================
 - name: Provision managed roles and databases
   become: true
   become_user: postgres
   block:
-    - name: List existing login roles
-      community.postgresql.postgresql_query:
-        query: "SELECT rolname FROM pg_roles"
-      register: postgres_existing_roles
-      changed_when: false
-
-    - name: Create the login role for each managed database (password set once)
+    - name: Ensure each managed login role exists with the source password
       community.postgresql.postgresql_user:
         name: "{{ item.user }}"
         password: "{{ item.password }}"
@@ -231,18 +223,6 @@
       loop_control:
         label: "{{ item.user }}"
       no_log: true
-      when: >-
-        item.user not in
-        (postgres_existing_roles.query_result | map(attribute='rolname') | list)
-
-    - name: Ensure each managed login role exists (no password change)
-      community.postgresql.postgresql_user:
-        name: "{{ item.user }}"
-        role_attr_flags: LOGIN
-        state: present
-      loop: "{{ postgres_managed_databases }}"
-      loop_control:
-        label: "{{ item.user }}"
 
     - name: Create each managed database owned by its role
       community.postgresql.postgresql_db:
@@ -259,6 +239,7 @@
       loop: "{{ postgres_managed_databases }}"
       loop_control:
         label: "{{ item.name }}"
+      no_log: true
 
     - name: Grant the owning role all privileges on its database
       community.postgresql.postgresql_privs:
@@ -270,6 +251,7 @@
       loop: "{{ postgres_managed_databases }}"
       loop_control:
         label: "{{ item.name }}"
+      no_log: true
 
     - name: Allow each managed user to connect from its client CIDR (scram)
       community.postgresql.postgresql_pg_hba:
@@ -283,6 +265,7 @@
       loop: "{{ postgres_managed_databases }}"
       loop_control:
         label: "{{ item.name }} <- {{ item.client_cidr }}"
+      no_log: true
       notify: Reload postgresql
 
 - name: Apply pending pg_hba reload
