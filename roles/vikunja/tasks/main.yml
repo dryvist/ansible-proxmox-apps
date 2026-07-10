@@ -1,0 +1,156 @@
+---
+# Vikunja native install. The controller stages the checksum-verified release
+# bundle (LXCs here are firewalled outbound-internal-only and cannot reach
+# GitHub), extracts the single binary, and copies it to the target — same
+# controller-staging pattern as roles/openbao and roles/technitium_install.
+
+- name: Validate Vikunja secrets are set
+  ansible.builtin.assert:
+    that:
+      - vikunja_db_password | length > 0
+      - vikunja_jwt_secret | length > 0
+      - vikunja_admin_password | length > 0
+    fail_msg: >-
+      VIKUNJA_DB_PASSWORD / VIKUNJA_JWT_SECRET / VIKUNJA_ADMIN_PASSWORD must
+      all be set before first deploy. Add via: doppler secrets set
+      VIKUNJA_DB_PASSWORD=<password> VIKUNJA_JWT_SECRET=<secret>
+      VIKUNJA_ADMIN_PASSWORD=<password>
+    quiet: true
+  no_log: true
+
+- name: Create vikunja system group
+  ansible.builtin.group:
+    name: "{{ vikunja_group }}"
+    system: true
+    state: present
+
+- name: Create vikunja system user
+  ansible.builtin.user:
+    name: "{{ vikunja_user }}"
+    group: "{{ vikunja_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ vikunja_install_dir }}"
+    create_home: false
+    state: present
+
+- name: Create Vikunja directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ vikunja_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ vikunja_install_dir }}", owner: root, mode: "0755" }
+    - { path: "{{ vikunja_config_dir }}", owner: root, mode: "0750" }
+    - { path: "{{ vikunja_files_dir }}", owner: "{{ vikunja_user }}", mode: "0750" }
+  loop_control:
+    label: "{{ item.path }}"
+
+# ansible_become: false on the delegated tasks is REQUIRED — Ansible inherits
+# the play's become: true on delegated tasks regardless of task-level become,
+# which fails with "sudo: a password is required" on the controller.
+- name: Stage the Vikunja release bundle on controller (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ vikunja_release_zip_url }}"
+    dest: "/tmp/{{ vikunja_release_zip }}"
+    checksum: "sha256:{{ vikunja_release_zip_sha256 }}"
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Extract the Vikunja binary on controller
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ vikunja_release_zip }}"
+    dest: /tmp
+    remote_src: true
+    include:
+      - "{{ vikunja_binary_name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Copy the Vikunja binary to the target
+  ansible.builtin.copy:
+    src: "/tmp/{{ vikunja_binary_name }}"
+    dest: "{{ vikunja_binary_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart vikunja
+
+- name: Render Vikunja config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ vikunja_config_file }}"
+    owner: root
+    group: "{{ vikunja_group }}"
+    mode: "0640"
+  notify: Restart vikunja
+
+- name: Install the vikunja systemd unit
+  ansible.builtin.template:
+    src: vikunja.service.j2
+    dest: /etc/systemd/system/vikunja.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart vikunja
+
+- name: Enable and start Vikunja
+  ansible.builtin.systemd:
+    name: vikunja
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Flush so a config/unit/binary change is live before the health check and
+# CLI user-management tasks below run against it.
+- name: Apply any pending Vikunja restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Vikunja to answer its info endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/info"
+    method: GET
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_health
+  until: vikunja_health.status == 200
+  retries: 10
+  delay: 3
+  changed_when: false
+
+# `vikunja user list` needs no --config flag — the CLI shares the server's
+# config auto-discovery (rootpath -> /etc/vikunja/ -> ~/.config/vikunja -> .),
+# and /etc/vikunja/ is always searched regardless of cwd.
+- name: List existing Vikunja users
+  ansible.builtin.command:
+    argv:
+      - "{{ vikunja_binary_path }}"
+      - user
+      - list
+  register: vikunja_user_list
+  changed_when: false
+
+- name: Create the Vikunja admin user (idempotent — skipped if already present)
+  ansible.builtin.command:
+    argv:
+      - "{{ vikunja_binary_path }}"
+      - user
+      - create
+      - "--username={{ vikunja_admin_user }}"
+      - "--email={{ vikunja_admin_email }}"
+      - "--password={{ vikunja_admin_password }}"
+  when: vikunja_admin_user not in vikunja_user_list.stdout
+  changed_when: true
+  no_log: true
