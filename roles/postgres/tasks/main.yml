@@ -316,6 +316,65 @@
         enabled: true
         daemon_reload: true
 
+# Trust the standby node's puller so ansible-proxmox roles/postgres_standby can
+# rsync the backup directory into the replicated archive (Tier 1 of the
+# Database DR Standard). Env-gated: no key supplied, no trust installed.
+- name: Authorize the standby puller's SSH key(s) for root
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ postgres_standby_pull_pubkeys }}"
+  when: postgres_standby_pull_pubkeys | length > 0
+
+# =============================================================================
+# DR restore (explicit invocation only — the Database DR Standard's per-engine
+# restore path). Runs a controller-fetched dump into the named database:
+#   ansible-playbook ... --tags dr_restore \
+#     -e postgres_dr_restore_db=<db> -e postgres_dr_restore_dump=<local path>
+# Point _db at a scratch database for the mandatory restore drill.
+# =============================================================================
+- name: DR restore from a logical dump
+  tags:
+    - never
+    - dr_restore
+  block:
+    - name: Require the restore inputs
+      ansible.builtin.assert:
+        that:
+          - postgres_dr_restore_db | length > 0
+          - postgres_dr_restore_dump | length > 0
+        fail_msg: >-
+          dr_restore needs -e postgres_dr_restore_db=<db> and
+          -e postgres_dr_restore_dump=<controller-side dump path>
+
+    - name: Stage the dump on the guest
+      ansible.builtin.copy:
+        src: "{{ postgres_dr_restore_dump }}"
+        dest: /tmp/pg-dr-restore.dump
+        owner: postgres
+        group: postgres
+        mode: "0600"
+
+    - name: Ensure the restore target database exists
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ postgres_dr_restore_db }}"
+        state: present
+
+    - name: Restore the dump (clean, if-exists)
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        cmd: >-
+          pg_restore --clean --if-exists
+          --dbname={{ postgres_dr_restore_db }} /tmp/pg-dr-restore.dump
+      changed_when: true
+
+    - name: Remove the staged dump
+      ansible.builtin.file:
+        path: /tmp/pg-dr-restore.dump
+        state: absent
+
 # =============================================================================
 # Phase 6: Health check
 # =============================================================================
