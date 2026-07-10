@@ -323,3 +323,22 @@
       retries: 20
       delay: 6
       changed_when: false
+
+    # Load the seed bundle into Nautobot by running the additive SSoT DiffSync
+    # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. Off by
+    # default — enable at cutover with -e nautobot_run_seed_jobs=true after the
+    # seed bundle is placed (nautobot_build_seed=true). The jobs are additive
+    # (create/update only), so re-running is safe and idempotent. The worker
+    # executes them with the units' EnvironmentFile, so it already holds the
+    # seed-file path + export S3 credentials.
+    - name: Run the SSoT seed jobs (and optional export) once
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+        stdin: "{{ lookup('ansible.builtin.file', 'run_seed_jobs.py') }}"
+      environment: >-
+        {{ nautobot_env | combine({'NAUTOBOT_RUN_EXPORT': nautobot_run_export | string}) }}
+      register: nautobot_run_seed
+      changed_when: "'JOB_DONE' in nautobot_run_seed.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+      when: nautobot_run_seed_jobs | bool
