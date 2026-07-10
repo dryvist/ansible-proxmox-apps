@@ -14,6 +14,9 @@
 # The curls are best-effort (=-): if the serving host is unreachable at flip
 # time the alias flip must still complete — the fabric then degrades to the
 # old load-on-demand behavior rather than wedging rotation.
+# Only the ACTUATOR router (first by sort, flips first) runs the curls: the
+# later, staggered flips would otherwise re-fire unload-all and abort
+# requests the already-flipped fabric had started.
 
 [Unit]
 Description=Rotate the ai-default router alias to the {{ _rotation_phase }} brain
@@ -33,10 +36,12 @@ EnvironmentFile={{ llm_router_env_file }}
 # Unload-all BEFORE the flip in BOTH phases — unloading after the router
 # restart races incoming requests loading the new phase's models while the
 # old phase's are still resident (memory over-commit).
+{% if llm_router_rotation_actuator | bool %}
 ExecStart=-/usr/bin/curl -fsS -m 60 -X POST -H "Authorization: Bearer ${LLM_LARGE_BEARER_TOKEN}" {{ llm_router_llm_large_base_url | replace('/v1', '') }}/api/models/unload
+{% endif %}
 ExecStart=/usr/bin/ln -sfn {{ _rotation_config }} {{ llm_router_config_file }}
 ExecStart=/usr/bin/systemctl restart {{ llm_router_service }}.service
-{% if _rotation_phase == 'optimized' %}
+{% if _rotation_phase == 'optimized' and llm_router_rotation_actuator | bool %}
 {% for _warm_role in llm_router_rotation_warm_roles %}
 ExecStart=-/usr/bin/curl -fsS -m 300 -X POST -H "Authorization: Bearer ${LLM_LARGE_BEARER_TOKEN}" -H "Content-Type: application/json" -d '{"model":"{{ _warm_role }}","max_tokens":1,"messages":[{"role":"user","content":"warm"}]}' {{ llm_router_llm_large_base_url }}/chat/completions
 {% endfor %}
