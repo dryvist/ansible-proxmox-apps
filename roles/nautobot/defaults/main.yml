@@ -1,0 +1,114 @@
+---
+# Native Nautobot (issue #138): a Python venv running uWSGI (web) + celery
+# worker + celery beat scheduler, with Redis colocated on loopback. Role
+# defaults carry only non-secret, molecule-safe values; group_vars supplies the
+# tofu-derived FQDNs/ports and the bao-first secrets.
+
+nautobot_root: /opt/nautobot
+nautobot_user: nautobot
+nautobot_group: nautobot
+
+# System packages: python build chain, libpq for psycopg, redis, git.
+nautobot_system_packages:
+  - python3
+  - python3-venv
+  - python3-dev
+  - build-essential
+  - libpq-dev
+  - redis-server
+  - git
+  - openssl
+
+# Python packages installed into the venv (latest stable). The pip
+# distribution names differ from the Django app/plugin names used in PLUGINS:
+#   nautobot-ssot              -> nautobot_ssot
+#   nautobot-device-onboarding -> nautobot_device_onboarding
+nautobot_pip_packages:
+  - nautobot
+  - nautobot-ssot
+  - nautobot-device-onboarding
+nautobot_plugins:
+  - nautobot_ssot
+  - nautobot_device_onboarding
+
+# Web listener. Traefik fronts Nautobot on this port; uWSGI serves HTTP on it
+# directly (no nginx) and serves collected static files via a static-map.
+nautobot_web_port: 8080
+nautobot_web_bind: "0.0.0.0"
+# uWSGI worker/process sizing — small, a homelab single node.
+nautobot_uwsgi_processes: 3
+nautobot_uwsgi_threads: 2
+
+# Database (shared native postgres). group_vars overrides host+password.
+nautobot_db_host: "127.0.0.1"
+nautobot_db_port: 5432
+nautobot_db_name: nautobot
+nautobot_db_user: nautobot
+nautobot_db_password: ""
+
+# Redis, colocated and bound to loopback (no ingress).
+nautobot_redis_host: "127.0.0.1"
+nautobot_redis_port: 6379
+
+# Identity / CSRF. group_vars overrides with the real Traefik-fronted UI FQDN.
+nautobot_ui_fqdn: "localhost"
+nautobot_allowed_hosts:
+  - "{{ nautobot_ui_fqdn }}"
+  - localhost
+  - 127.0.0.1
+# Traefik terminates TLS and forwards one hop; trust its X-Forwarded-Proto.
+nautobot_trust_proxy_ssl_header: true
+
+# SECRET_KEY: bao-first in group_vars; when unset the role generates one once
+# and persists it to nautobot_secret_key_file (generate-if-absent), so the
+# rendered env stays stable across runs.
+nautobot_secret_key: ""
+nautobot_secret_key_file: "{{ nautobot_root }}/.secret_key"
+
+# Superuser (idempotent create-or-update). Password bao-first in group_vars.
+nautobot_superuser_name: admin
+nautobot_superuser_email: "admin@{{ nautobot_ui_fqdn }}"
+nautobot_superuser_password: ""
+
+# Jobs. The SSoT seed jobs, export job, and onboarding setup ship in
+# files/jobs and are copied into JOBS_ROOT.
+nautobot_jobs_root: "{{ nautobot_root }}/jobs"
+nautobot_seed_file: "{{ nautobot_root }}/nautobot_seed.json"
+
+# Export Job → S3 (mirrors terraform-proxmox/inventory_publish.tf: same bucket,
+# a new key; ambient creds). group_vars/env supplies the bucket.
+nautobot_export_s3_bucket: ""
+nautobot_export_s3_key: "nautobot/nautobot_export.json"
+nautobot_export_schema_dir: "{{ nautobot_root }}/contracts"
+nautobot_export_schema_file: "{{ nautobot_export_schema_dir }}/nautobot-export-v1.json"
+# Export runs on a schedule via celery beat; this is the beat crontab (UTC).
+nautobot_export_schedule_hour: 6
+nautobot_export_schedule_minute: 17
+
+# Seed-bundle assembly (tasks/seed_bundle.yml). Off by default — the four
+# sources live in sibling repos the controller only has at cutover (WS-E). Paths
+# and the network definitions come from the runtime environment.
+nautobot_build_seed: false
+nautobot_seed_sops_path: "{{ lookup('env', 'TERRAFORM_PROXMOX_SOPS') | default('', true) }}"
+nautobot_seed_fixed_ips_path: "{{ lookup('env', 'TOFU_UNIFI_FIXED_IPS') | default('', true) }}"
+nautobot_seed_hosts_yml_path: "{{ lookup('env', 'ANSIBLE_PROXMOX_HOSTS') | default('', true) }}"
+# VLAN/prefix definitions (list of {vid, name, cidr}) from Doppler / terraform
+# output, supplied as a JSON string.
+nautobot_seed_networks: "{{ (lookup('env', 'NAUTOBOT_SEED_NETWORKS') | default('[]', true)) | from_json }}"
+# Rack topology is not carried by rack_servers; default to one homelab rack.
+nautobot_seed_racks:
+  - name: homelab-rack-1
+    site: homelab
+# Source-shape assumptions (WS-E confirms at cutover):
+#   fixed-ips.json is a list; map its keys to the reservation schema.
+nautobot_seed_fixed_ips_query: >-
+  [].{address: ip, dns_name: dns_name, hostname: name, mac: mac, vlan_vid: vlan_id}
+#   hosts.yml groups the pve hypervisors under this key.
+nautobot_seed_hosts_group: proxmox
+
+# Gate the heavy live application layer: pip install of Nautobot + apps,
+# post_upgrade (migrate/collectstatic), superuser, service start, HTTP health.
+# Molecule sets this false to validate the deterministic config/unit/redis/jobs
+# layer without a multi-minute install + live DB; live app validation is the
+# cutover gate (issue #138 "Done when"). Same idea as keepalived_manage_services.
+nautobot_manage_app: true

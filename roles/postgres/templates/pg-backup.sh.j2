@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Per-database pg_dump to the persistent ZFS mount, then prune dumps older than
+# the retention window. Runs as the postgres user (see pg-backup.service), so it
+# authenticates to the local cluster over the unix socket (peer auth).
+set -euo pipefail
+
+BACKUP_DIR="{{ postgres_backup_dir }}"
+RETENTION_DAYS="{{ postgres_backup_retention_days }}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+
+mkdir -p "$BACKUP_DIR"
+
+{% for db in postgres_managed_databases %}
+pg_dump --format=custom --dbname="{{ db.name }}" \
+  --file="${BACKUP_DIR}/{{ db.name }}-${STAMP}.dump"
+{% endfor %}
+
+# Retention: drop dumps older than the window. -mtime +N counts whole days.
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.dump' \
+  -mtime "+${RETENTION_DAYS}" -delete

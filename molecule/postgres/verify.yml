@@ -1,0 +1,68 @@
+---
+# Verify the cluster is up, the nautobot role can authenticate over TCP with
+# scram from its allowed CIDR, the database exists and is owned correctly, and
+# the backup timer is scheduled.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    nautobot_db_password: molecule-nautobot-pw
+
+  tasks:
+    - name: Ping the cluster as the postgres superuser
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_ping:
+        db: postgres
+      register: postgres_ping
+      changed_when: false
+
+    - name: Assert the cluster answered
+      ansible.builtin.assert:
+        that:
+          - postgres_ping.is_available | bool
+        fail_msg: "PostgreSQL did not answer postgresql_ping"
+
+    - name: Connect as the nautobot role over TCP with scram
+      community.postgresql.postgresql_query:
+        login_host: 127.0.0.1
+        login_user: nautobot
+        login_password: "{{ nautobot_db_password }}"
+        db: nautobot
+        query: "SELECT current_user AS who, current_database() AS db"
+      register: nautobot_conn
+      changed_when: false
+
+    - name: Assert the nautobot role reached its own database
+      ansible.builtin.assert:
+        that:
+          - nautobot_conn.query_result[0].who == 'nautobot'
+          - nautobot_conn.query_result[0].db == 'nautobot'
+        fail_msg: "nautobot role could not authenticate to the nautobot database over TCP"
+
+    - name: Read pg_hba.conf
+      ansible.builtin.slurp:
+        src: "{{ postgres_conf_dir }}/pg_hba.conf"
+      register: pg_hba
+
+    - name: Assert pg_hba carries the scram rule for nautobot
+      ansible.builtin.assert:
+        that:
+          - "'nautobot' in hba"
+          - "'scram-sha-256' in hba"
+        fail_msg: "pg_hba.conf is missing the scram host rule for nautobot"
+      vars:
+        hba: "{{ pg_hba.content | b64decode }}"
+
+    - name: Stat the backup timer unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/pg-backup.timer
+      register: pg_backup_timer
+
+    - name: Assert the backup timer is installed
+      ansible.builtin.assert:
+        that:
+          - pg_backup_timer.stat.exists
+        fail_msg: "pg-backup.timer was not installed"

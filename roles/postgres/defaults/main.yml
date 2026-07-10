@@ -1,0 +1,65 @@
+---
+# Native PostgreSQL role defaults (issue #138). Installs the PGDG apt build so
+# the homelab tracks a current major independent of the Debian base, and keeps
+# all persistent state (cluster + pg_dump backups) on the container's ZFS bind
+# mount so a ChaosMonkey rebuild reconstructs everything from Ansible while the
+# data survives.
+
+# PGDG package. The unversioned metapackage tracks PGDG's current stable major;
+# set postgres_version only for tests or emergency pinning.
+postgres_version: ""
+postgres_package: >-
+  {{ ('postgresql-' ~ postgres_version)
+     if (postgres_version | string | length > 0)
+     else 'postgresql' }}
+postgres_cluster_name: main
+
+# Persistent state root. The LXC bind-mounts a ZFS dataset here (provided by
+# terraform-proxmox), so the PGDG-default cluster path AND the backup dir below
+# both land on persistent storage without moving PGDATA off the packaged
+# location. WS-C must bind-mount the dataset at this exact path.
+postgres_data_root: /var/lib/postgresql
+postgres_data_dir: >-
+  {{ postgres_data_root }}/{{ postgres_cluster_version | default(postgres_version) }}/{{ postgres_cluster_name }}
+postgres_conf_dir: >-
+  /etc/postgresql/{{ postgres_cluster_version | default(postgres_version) }}/{{ postgres_cluster_name }}
+
+# Listener. Role default is permissive because access is gated by pg_hba
+# (scram, per-CIDR) + the host firewall, NOT by the bind address. group_vars
+# narrows this to the data-VLAN address in production. Port is standard 5432.
+postgres_port: 5432
+postgres_listen_addresses: "*"
+# scram-sha-256 for every stored password (no md5). Applied cluster-wide via
+# postgresql_set; each managed role is created with the scram hash.
+postgres_password_encryption: scram-sha-256
+
+# PGDG apt repository. Key is dearmored into a dedicated keyring and referenced
+# with signed-by so the repo is trusted narrowly (no global apt-key).
+postgres_pgdg_key_url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+# ASCII-armored key stored directly; apt signed-by accepts a .asc keyring, so no
+# non-idempotent gpg --dearmor step is needed.
+postgres_pgdg_keyring: /usr/share/keyrings/pgdg.asc
+postgres_pgdg_repo: >-
+  deb [signed-by={{ postgres_pgdg_keyring }}]
+  https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main
+
+# Managed databases. One entry per app sharing this cluster; extensible so
+# Vikunja (P3) / EspoCRM (P4) append here without a new role. Populated by
+# inventory/group_vars/postgres_group.yml (bao-first password, apps-subnet
+# client_cidr). Each entry:
+#   name        - database name (owner is a role of the same name)
+#   user        - login role that owns the db and connects remotely
+#   password    - bao-first with env fallback (never a literal here)
+#   client_cidr - CIDR the user may connect from (the app's LXC subnet); the
+#                 ONLY place an IP literal is legitimate (pg_hba needs a CIDR,
+#                 not an FQDN), and even then it is env-derived, not hard-coded.
+postgres_managed_databases: []
+
+# pg_dump backups via a systemd timer, written to the persistent mount.
+postgres_backup_enabled: true
+postgres_backup_dir: "{{ postgres_data_root }}/backups"
+# Daily at 02:30 with a small randomized delay (set on the timer) to avoid a
+# thundering herd if more timers land on the same minute.
+postgres_backup_on_calendar: "*-*-* 02:30:00"
+postgres_backup_randomized_delay_sec: 900
+postgres_backup_retention_days: 14
