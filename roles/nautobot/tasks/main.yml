@@ -344,12 +344,23 @@
       changed_when: false
 
     # The seed jobs enqueue to the worker, which executes them with its
-    # EnvironmentFile. Flush the restart handler now so a worker started this
-    # converge already carries the fresh nautobot.env (seed-file path + export
-    # S3 credentials) before any job is enqueued — otherwise the export runs on
-    # a stale worker and fails "NAUTOBOT_EXPORT_S3_BUCKET is not set".
+    # EnvironmentFile. Flush any pending restart handler first (covers the
+    # nautobot.env-changed case)...
     - name: Restart nautobot services before enqueuing jobs
       ansible.builtin.meta: flush_handlers
+
+    # ...then restart the worker UNCONDITIONALLY when a seed/export run is
+    # requested. flush_handlers only fires if a task notified the handler this
+    # converge; when nautobot.env is unchanged the worker keeps its start-time
+    # env, so the export would enqueue onto a stale worker and fail
+    # "NAUTOBOT_EXPORT_S3_BUCKET is not set". An explicit restart guarantees the
+    # worker carries the current env before any job is enqueued. Gated on the
+    # run flag so ordinary converges are untouched.
+    - name: Ensure the worker carries the current env before enqueuing jobs
+      ansible.builtin.systemd:
+        name: nautobot-worker
+        state: restarted
+      when: nautobot_run_seed_jobs | bool
 
     # Load the seed bundle into Nautobot by running the additive SSoT DiffSync
     # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. Off by
