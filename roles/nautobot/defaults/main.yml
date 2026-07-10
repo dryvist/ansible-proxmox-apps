@@ -109,7 +109,10 @@ nautobot_env: >-
                if nautobot_export_s3_endpoint | length > 0 else {})
      | combine({'AWS_ACCESS_KEY_ID': nautobot_export_s3_access_key,
                 'AWS_SECRET_ACCESS_KEY': nautobot_export_s3_secret_key}
-               if nautobot_export_s3_access_key | length > 0 else {}) }}
+               if nautobot_export_s3_access_key | length > 0 else {})
+     | combine({'NAUTOBOT_ONBOARD_USERNAME': nautobot_onboard_username,
+                'NAUTOBOT_ONBOARD_PASSWORD': nautobot_onboard_password}
+               if nautobot_onboard_username | length > 0 else {}) }}
 nautobot_env_base:
   NAUTOBOT_ROOT: "{{ nautobot_root }}"
   NAUTOBOT_SECRET_KEY: "{{ nautobot_effective_secret_key }}"
@@ -154,3 +157,30 @@ nautobot_manage_app: true
 # is placed. nautobot_run_export additionally runs the export Job that same pass.
 nautobot_run_seed_jobs: false
 nautobot_run_export: false
+
+# --- Automated discovery (nautobot-device-onboarding) -----------------------
+# One shared discovery credential (env-sourced, never a literal). Folded into
+# nautobot.env only when set, then bound to Nautobot Secret objects (provider
+# `environment-variable`) inside the `device-onboarding` SecretsGroup by
+# device_onboarding_setup.py. The nautobot-device-onboarding "Sync Devices From
+# Network" job (SSOTSyncDevices) drives SSH-CLI discovery for netmiko platforms.
+#
+# SCOPE NOTE: that plugin onboards SSH-CLI *network* devices (switches/routers).
+# Proxmox VE nodes (Linux), iDRAC/BMC (IPMI/Redfish), and the UniFi controller
+# (HTTP API) are NOT netmiko platforms — full discovery of those needs their
+# native APIs and is tracked as a follow-up (see roles/nautobot/README). This
+# wiring makes the SSH-CLI path real and leaves the discovery run inert until
+# real SSH targets + a platform are configured.
+nautobot_onboard_username: "{{ lookup('env', 'NAUTOBOT_ONBOARD_USERNAME') | default('', true) }}"
+nautobot_onboard_password: "{{ lookup('env', 'NAUTOBOT_ONBOARD_PASSWORD') | default('', true) }}"
+# Run + schedule the SSOTSyncDevices discovery — off by default; the run is
+# inert unless discovery targets are supplied (empty ip list -> nothing swept).
+nautobot_run_discovery: false
+# Comma-separated target IPs/CIDRs for the SSH-CLI sweep (env-sourced; the only
+# place an IP literal is legitimate, and even then env-derived, not committed).
+nautobot_onboard_targets: "{{ lookup('env', 'NAUTOBOT_ONBOARD_TARGETS') | default('', true) }}"
+nautobot_onboard_platform: "{{ lookup('env', 'NAUTOBOT_ONBOARD_PLATFORM') | default('', true) }}"
+nautobot_onboard_location: "{{ lookup('env', 'NAUTOBOT_ONBOARD_LOCATION') | default('homelab', true) }}"
+nautobot_onboard_port: 22
+nautobot_discovery_schedule_hour: 5
+nautobot_discovery_schedule_minute: 43

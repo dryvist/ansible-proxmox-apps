@@ -20,13 +20,18 @@ import time
 from django.contrib.auth import get_user_model
 from nautobot.extras.models import Job, JobResult
 
-SEED_JOBS = [
+# SSoT DataSource jobs default to a dry run — they need dryrun=False to commit.
+SSOT_JOBS = [
     "Seed VLANs and Prefixes",
     "Seed IP Addresses and Reservations",
     "Seed DCIM Racks and Devices",
     "Seed Proxmox Node Facts",
     "SSoT: Virtualization (Proxmox guests)",
 ]
+# Plain Jobs (no dryrun var) — enqueued without job kwargs.
+PLAIN_JOBS = ["Configure Device Onboarding Targets"]
+
+SEED_JOBS = SSOT_JOBS + PLAIN_JOBS
 if os.environ.get("NAUTOBOT_RUN_EXPORT", "").lower() in ("1", "true", "yes"):
     SEED_JOBS.append("Export Nautobot Inventory to S3")
 
@@ -41,8 +46,8 @@ def run_one(name):
     """Enable, enqueue, and poll a single job by display name.
 
     SSoT DataSource jobs default to a dry run (compute diffs, commit nothing);
-    pass ``dryrun=False`` so the additive sync actually persists. The export
-    Job has no such var, so it is enqueued without job kwargs.
+    pass ``dryrun=False`` so the additive sync actually persists. Plain Jobs
+    (export, onboarding setup) have no such var, so they get no job kwargs.
     """
     job = Job.objects.filter(name=name).first()
     if job is None:
@@ -51,7 +56,7 @@ def run_one(name):
     if not job.enabled:
         job.enabled = True
         job.save()
-    kwargs = {} if "Export" in name else {"dryrun": False}
+    kwargs = {"dryrun": False} if name in SSOT_JOBS else {}
     try:
         result = JobResult.enqueue_job(job, approver, **kwargs)
     except Exception as exc:  # noqa: BLE001 - enqueue signature is version-sensitive
