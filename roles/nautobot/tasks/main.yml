@@ -313,6 +313,25 @@
       become: true
       become_user: "{{ nautobot_user }}"
 
+    # Schedule the SSH-CLI discovery sweep (SSOTSyncDevices). Inert unless
+    # NAUTOBOT_ONBOARD_TARGETS is set — see the scope note in defaults/main.yml.
+    - name: Schedule the device-discovery Job via celery beat
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+        stdin: "{{ lookup('ansible.builtin.file', 'schedule_discovery.py') }}"
+      environment: >-
+        {{ nautobot_env | combine({
+             'NAUTOBOT_ONBOARD_TARGETS': nautobot_onboard_targets,
+             'NAUTOBOT_ONBOARD_PLATFORM': nautobot_onboard_platform,
+             'NAUTOBOT_ONBOARD_LOCATION': nautobot_onboard_location,
+             'NAUTOBOT_ONBOARD_PORT': nautobot_onboard_port | string,
+             'NAUTOBOT_DISCOVERY_SCHEDULE_HOUR': nautobot_discovery_schedule_hour | string,
+             'NAUTOBOT_DISCOVERY_SCHEDULE_MINUTE': nautobot_discovery_schedule_minute | string}) }}
+      register: nautobot_discovery_schedule
+      changed_when: "'DISCOVERY_SCHEDULED' in nautobot_discovery_schedule.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+
     - name: Wait for the Nautobot web UI to answer
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ nautobot_web_port }}/"
