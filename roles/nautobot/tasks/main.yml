@@ -259,40 +259,28 @@
   become: true
   block:
     - name: Apply database migrations
-      ansible.builtin.shell:
-        cmd: >-
-          set -a &&
-          . {{ nautobot_root }}/nautobot.env &&
-          set +a &&
-          {{ nautobot_root }}/bin/nautobot-server migrate
-        executable: /bin/bash
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server migrate"
+      environment: "{{ nautobot_env }}"
       register: nautobot_migrate
       changed_when: "'No migrations to apply' not in nautobot_migrate.stdout"
       become: true
       become_user: "{{ nautobot_user }}"
 
     - name: Collect static files
-      ansible.builtin.shell:
-        cmd: >-
-          set -a &&
-          . {{ nautobot_root }}/nautobot.env &&
-          set +a &&
-          {{ nautobot_root }}/bin/nautobot-server collectstatic --no-input
-        executable: /bin/bash
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server collectstatic --no-input"
+      environment: "{{ nautobot_env }}"
       register: nautobot_collectstatic
       changed_when: "'0 static files copied' not in nautobot_collectstatic.stdout"
       become: true
       become_user: "{{ nautobot_user }}"
 
     - name: Ensure the Nautobot superuser exists
-      ansible.builtin.shell:
-        cmd: >-
-          set -a &&
-          . {{ nautobot_root }}/nautobot.env &&
-          set +a &&
-          {{ nautobot_root }}/bin/nautobot-server shell --interface python
-        executable: /bin/bash
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
         stdin: "{{ lookup('ansible.builtin.file', 'superuser_bootstrap.py') }}"
+      environment: "{{ nautobot_env }}"
       register: nautobot_superuser
       changed_when: "'SUPERUSER_CHANGED' in nautobot_superuser.stdout"
       become: true
@@ -313,16 +301,13 @@
         - nautobot-scheduler
 
     - name: Schedule the export Job via celery beat
-      ansible.builtin.shell:
-        cmd: >-
-          set -a &&
-          . {{ nautobot_root }}/nautobot.env &&
-          set +a &&
-          NAUTOBOT_EXPORT_SCHEDULE_HOUR={{ nautobot_export_schedule_hour }}
-          NAUTOBOT_EXPORT_SCHEDULE_MINUTE={{ nautobot_export_schedule_minute }}
-          {{ nautobot_root }}/bin/nautobot-server shell --interface python
-        executable: /bin/bash
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
         stdin: "{{ lookup('ansible.builtin.file', 'schedule_export.py') }}"
+      environment: >-
+        {{ nautobot_env | combine({
+             'NAUTOBOT_EXPORT_SCHEDULE_HOUR': nautobot_export_schedule_hour | string,
+             'NAUTOBOT_EXPORT_SCHEDULE_MINUTE': nautobot_export_schedule_minute | string}) }}
       register: nautobot_schedule
       changed_when: "'SCHEDULE_CREATED' in nautobot_schedule.stdout"
       become: true
