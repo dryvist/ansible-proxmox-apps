@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Plex Direct-Play session probe. Polls Plex /status/sessions and alerts ntfy
+# when a client is being forced to TRANSCODE (especially audio) instead of
+# Direct Play — the live signature of the Apple-TV audio dropout this program
+# set out to fix. Reads the server token from Preferences.xml at runtime (no
+# baked-in secret). Best-effort and quiet on the happy path.
+set -uo pipefail
+
+PREFS="{{ media_monitor_preferences_path }}"
+API="http://127.0.0.1:{{ media_monitor_plex_api_port }}"
+NTFY_URL="{{ media_monitor_ntfy_url }}"
+STAMP="{{ media_monitor_probe_state_dir }}/last-transcode-alert"
+COOLDOWN={{ media_monitor_alert_cooldown }}
+
+# PlexOnlineToken is present once the server is claimed; an unclaimed server
+# accepts unauthenticated loopback requests, so an empty token is fine.
+token="$(grep -o 'PlexOnlineToken="[^"]*"' "$PREFS" 2>/dev/null | head -1 | cut -d'"' -f2)"
+
+sessions="$(curl -fsS -m 10 "$API/status/sessions${token:+?X-Plex-Token=$token}" 2>/dev/null)" || exit 0
+
+# No TranscodeSession element => every stream is Direct Play/Stream => nothing to do.
+printf '%s' "$sessions" | grep -q '<TranscodeSession' || exit 0
+
+audio_xcode="$(printf '%s' "$sessions" | grep -o 'audioDecision="transcode"' | wc -l | tr -d ' ')"
+video_xcode="$(printf '%s' "$sessions" | grep -o 'videoDecision="transcode"' | wc -l | tr -d ' ')"
+audio_xcode="${audio_xcode:-0}"; video_xcode="${video_xcode:-0}"
+
+if [ "$audio_xcode" -eq 0 ] && [ "$video_xcode" -eq 0 ]; then exit 0; fi
+
+# De-dupe: alert at most once per cooldown so a long transcode does not spam.
+now="$(date +%s)"
+if [ -f "$STAMP" ]; then
+  last="$(cat "$STAMP" 2>/dev/null || echo 0)"
+  if [ $(( now - last )) -lt "$COOLDOWN" ]; then exit 0; fi
+fi
+
+if [ -n "$NTFY_URL" ]; then
+  curl -fsS -m 15 \
+    -H "Title: Plex is transcoding (not Direct Play)" \
+    -H "Priority: high" -H "Tags: warning,tv" \
+    -d "Forced transcode on {{ inventory_hostname }}: audio=$audio_xcode video=$video_xcode. A client is NOT Direct Playing — check its audio-passthrough setting or the file's audio codec." \
+    "$NTFY_URL" >/dev/null 2>&1 || true
+fi
+echo "$now" >"$STAMP" 2>/dev/null || true
