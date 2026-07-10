@@ -247,8 +247,24 @@ llm_router_rotation_alias: ai-default
 llm_router_rotation_large_model: "{{ ai_default_model_large }}"
 llm_router_rotation_optimized_model: "{{ ai_default_model_optimized }}"
 # Fixed-hour UTC schedule. The `UTC` suffix needs systemd >= 252 (Debian 12).
-llm_router_rotation_large_oncalendar: "*-*-* 00:00:00 UTC"
-llm_router_rotation_optimized_oncalendar: "*-*-* 12:00:00 UTC"
+# STAGGERED per router (0/2/4 min by position in the group): every flip
+# restarts litellm, and three simultaneous restarts left HAProxy with NO
+# healthy backend — the 2026-07-10 00:00 UTC flip 503'd every in-flight
+# agent call ("no available server") long enough to exhaust hermes's 3
+# retries. A 2-minute stagger keeps two routers serving while one flips;
+# the ai-default alias differs across routers for at most 4 minutes twice
+# a day, which A/B-comparison tolerates and availability requires.
+llm_router_rotation_stagger_minutes: >-
+  {{ (groups['llm_router_group'] | sort).index(inventory_hostname) * 2 }}
+# Exactly ONE router (the first by sort order, which also flips first)
+# actuates the serving host (unload-all / warm curls). The later, staggered
+# flips would otherwise re-fire unload-all and abort requests the
+# already-flipped fabric had started.
+llm_router_rotation_actuator: >-
+  {{ (groups['llm_router_group'] | sort | first) == inventory_hostname }}
+llm_router_rotation_stagger_mm: "{{ '%02d' | format(llm_router_rotation_stagger_minutes | int) }}"
+llm_router_rotation_large_oncalendar: "*-*-* 00:{{ llm_router_rotation_stagger_mm }}:00 UTC"
+llm_router_rotation_optimized_oncalendar: "*-*-* 12:{{ llm_router_rotation_stagger_mm }}:00 UTC"
 # Per-phase rendered configs; config.yaml is a symlink to the live one.
 llm_router_rotation_config_large: "{{ llm_router_config_dir }}/config-large.yaml"
 llm_router_rotation_config_optimized: "{{ llm_router_config_dir }}/config-optimized.yaml"
