@@ -81,8 +81,16 @@ nautobot_seed_file: "{{ nautobot_root }}/nautobot_seed.json"
 
 # Export Job → S3 (mirrors terraform-proxmox/inventory_publish.tf: same bucket,
 # a new key; ambient creds). group_vars/env supplies the bucket.
-nautobot_export_s3_bucket: ""
+nautobot_export_s3_bucket: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_BUCKET') | default('', true) }}"
 nautobot_export_s3_key: "nautobot/nautobot_export.json"
+# Optional S3-compatible endpoint + credentials for the export upload (boto3
+# honors AWS_ENDPOINT_URL_S3), so the scheduled export can publish to the
+# on-prem object store with its own keys. Env-sourced; when unset these keys
+# are omitted from nautobot.env entirely and boto3 falls back to ambient AWS
+# credentials (the future long-lived-key path for the AWS state bucket).
+nautobot_export_s3_endpoint: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_ENDPOINT') | default('', true) }}"
+nautobot_export_s3_access_key: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_ACCESS_KEY') | default('', true) }}"
+nautobot_export_s3_secret_key: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_SECRET_KEY') | default('', true) }}"
 nautobot_export_schema_dir: "{{ nautobot_root }}/contracts"
 nautobot_export_schema_file: "{{ nautobot_export_schema_dir }}/nautobot-export-v1.json"
 # Export runs on a schedule via celery beat; this is the beat crontab (UTC).
@@ -95,7 +103,14 @@ nautobot_export_schedule_minute: 17
 # a secret value as code (#840 security review). Lives in role defaults (not
 # inventory group_vars) so it resolves under molecule too. Keep in lockstep with
 # templates/nautobot.env.j2, which renders from this dict.
-nautobot_env:
+nautobot_env: >-
+  {{ nautobot_env_base
+     | combine({'AWS_ENDPOINT_URL_S3': nautobot_export_s3_endpoint}
+               if nautobot_export_s3_endpoint | length > 0 else {})
+     | combine({'AWS_ACCESS_KEY_ID': nautobot_export_s3_access_key,
+                'AWS_SECRET_ACCESS_KEY': nautobot_export_s3_secret_key}
+               if nautobot_export_s3_access_key | length > 0 else {}) }}
+nautobot_env_base:
   NAUTOBOT_ROOT: "{{ nautobot_root }}"
   NAUTOBOT_SECRET_KEY: "{{ nautobot_effective_secret_key }}"
   NAUTOBOT_DB_PASSWORD: "{{ nautobot_db_password }}"
