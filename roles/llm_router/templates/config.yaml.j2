@@ -45,13 +45,32 @@ model_list:
 {% endfor %}
 {% endfor %}
 {% if llm_router_rotation_active_backend is defined and llm_router_rotation_active_backend %}
+{% set _night_live = llm_router_night_enabled | default(false) | bool
+     and llm_router_rotation_phase | default('') == 'large'
+     and (llm_router_night_model | default('')) | length > 0 %}
   # --- daily brain rotation: the one stable alias consumers point at ---
   # (docs/BRAIN_ROTATION.md). Hermes + Open WebUI address `{{ llm_router_rotation_alias }}`
   # forever; the systemd rotate timers swap which per-phase config.yaml symlink
   # is live, so this entry's backend flips 00:00/12:00 UTC without touching any
   # consumer. Context is the live phase model's real window (never null — a null
   # max_input_tokens is the compress-to-death trap the aliased entries avoid).
+{% if _night_live %}
+  # Night cluster live: the alias serves on the two-Mac night brain; the solo
+  # phase brain moves to `{{ llm_router_rotation_alias }}-solo` and the
+  # fallbacks entry under router_settings chains them. Cluster absent ->
+  # fail-fast + fallback (allowed_fails/cooldown_time drain the dead endpoint).
   - model_name: {{ llm_router_rotation_alias }}
+    litellm_params:
+      model: openai/{{ llm_router_night_model }}
+      api_base: {{ llm_router_night_base_url }}
+      api_key: os.environ/LLM_LARGE_BEARER_TOKEN
+    model_info:
+      max_input_tokens: {{ llm_router_night_context }}
+      max_tokens: {{ llm_router_night_context }}
+  - model_name: {{ llm_router_rotation_alias }}-solo
+{% else %}
+  - model_name: {{ llm_router_rotation_alias }}
+{% endif %}
     litellm_params:
       model: openai/{{ llm_router_rotation_active_backend }}
       api_base: {{ llm_router_llm_large_base_url }}
@@ -104,6 +123,13 @@ router_settings:
   routing_strategy: {{ llm_router_routing_strategy }}
   allowed_fails: {{ llm_router_allowed_fails }}
   cooldown_time: {{ llm_router_cooldown_time }}
+{% if llm_router_night_enabled | default(false) | bool
+     and llm_router_rotation_phase | default('') == 'large'
+     and (llm_router_night_model | default('')) | length > 0 %}
+  # Night-cluster fallback chain: alias -> solo phase brain (see model_list).
+  fallbacks:
+    - {{ llm_router_rotation_alias }}: ["{{ llm_router_rotation_alias }}-solo"]
+{% endif %}
   # Pre-call context-window checks so an over-long request is not routed to a model
   # that cannot serve it (no cross-tier fallback masks the error).
   enable_pre_call_checks: true
