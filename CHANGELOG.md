@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.105.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.104.0...v1.105.0) (2026-07-10)
+
+
+### Features
+
+* **configarr:** prefer Apple-TV direct-play audio on Sonarr + Radarr ([#823](https://github.com/dryvist/ansible-proxmox-apps/issues/823)) ([4bb01c9](https://github.com/dryvist/ansible-proxmox-apps/commit/4bb01c9062a2f148903ddb3225a0ce7cd3ad47e4))
+
+
+### Bug Fixes
+
+* **rotation:** stagger per-router flips + single serving-host actuator ([#824](https://github.com/dryvist/ansible-proxmox-apps/issues/824)) ([c518c5c](https://github.com/dryvist/ansible-proxmox-apps/commit/c518c5c4a77b7a4d048c976a21472feda7e9ebb2))
+
 ## [1.104.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.103.0...v1.104.0) (2026-07-09)
 
 
