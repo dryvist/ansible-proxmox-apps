@@ -33,9 +33,10 @@
 
 # =============================================================================
 # Phase 2: Install PostgreSQL
-# The postgresql-common postinst creates the `postgres` user and auto-creates
-# the default PGDG main cluster. With the ZFS dataset bind-mounted at
-# postgres_data_root, that cluster is created ON the persistent mount.
+# The postgresql-common postinst creates the `postgres` user. On normal LXCs it
+# also auto-creates the default PGDG main cluster on postgres_data_root, but
+# containers can skip that path (create_main_cluster/policy-rc.d), so the role
+# explicitly creates the cluster when discovery finds nothing.
 # =============================================================================
 - name: Install PostgreSQL from PGDG
   ansible.builtin.apt:
@@ -43,19 +44,148 @@
     state: present
     update_cache: true
 
-- name: Discover the installed PostgreSQL main cluster
+- name: Discover PostgreSQL clusters
   ansible.builtin.command:
     cmd: pg_lsclusters --no-header
   register: postgres_clusters
   changed_when: false
 
+- name: Select matching PostgreSQL cluster lines
+  ansible.builtin.set_fact:
+    postgres_matching_clusters: >-
+      {{ postgres_clusters.stdout_lines
+         | select('search', '^[0-9]+\\s+' ~ postgres_cluster_name ~ '\\s+')
+         | list }}
+
+- name: Create the PostgreSQL cluster when postinst did not
+  when: postgres_matching_clusters | length == 0
+  block:
+    - name: Discover installed PostgreSQL server versions
+      ansible.builtin.command:
+        argv:
+          - find
+          - /usr/lib/postgresql
+          - -mindepth
+          - "1"
+          - -maxdepth
+          - "1"
+          - -type
+          - d
+          - -printf
+          - "%f\n"
+      register: postgres_installed_versions
+      changed_when: false
+      failed_when: false
+
+    - name: Set the PostgreSQL cluster version to create
+      ansible.builtin.set_fact:
+        postgres_cluster_version: >-
+          {{ postgres_version
+             if (postgres_version | string | length > 0)
+             else (postgres_installed_versions.stdout_lines | sort | last | default('')) }}
+
+    - name: Fail when no PostgreSQL server version is installed
+      ansible.builtin.fail:
+        msg: >-
+          PostgreSQL package {{ postgres_package }} installed, but no server
+          version directories were found under /usr/lib/postgresql. Cannot
+          create cluster {{ postgres_cluster_name }}.
+      when: postgres_cluster_version | string | length == 0
+
+    - name: Check whether the persistent data directory already has a cluster
+      ansible.builtin.stat:
+        path: "{{ postgres_data_dir }}/PG_VERSION"
+      register: postgres_existing_data_version
+
+    - name: Read the persistent data directory version
+      ansible.builtin.slurp:
+        src: "{{ postgres_data_dir }}/PG_VERSION"
+      register: postgres_existing_data_pg_version
+      when: postgres_existing_data_version.stat.exists
+
+    - name: Fail when persistent data belongs to a different PostgreSQL major
+      ansible.builtin.fail:
+        msg: >-
+          Existing PostgreSQL data directory {{ postgres_data_dir }} belongs to
+          major version {{ postgres_existing_data_pg_version.content | b64decode | trim }},
+          but the installed server version selected for cluster
+          {{ postgres_cluster_name }} is {{ postgres_cluster_version }}. Pin
+          postgres_version or perform a controlled PostgreSQL upgrade before
+          recreating the postgresql-common cluster config.
+      when:
+        - postgres_existing_data_version.stat.exists
+        - (postgres_existing_data_pg_version.content | b64decode | trim) !=
+          (postgres_cluster_version | string)
+
+    - name: Set pg_createcluster data directory
+      ansible.builtin.set_fact:
+        postgres_createcluster_data_dir: >-
+          {{ postgres_data_root ~ '/.ansible-pg-createcluster-' ~
+             postgres_cluster_version ~ '-' ~ postgres_cluster_name
+             if postgres_existing_data_version.stat.exists
+             else postgres_data_dir }}
+
+    - name: Remove stale temporary pg_createcluster data directory
+      ansible.builtin.file:
+        path: "{{ postgres_createcluster_data_dir }}"
+        state: absent
+      when: postgres_existing_data_version.stat.exists
+
+    - name: Ensure the PostgreSQL version data root exists
+      ansible.builtin.file:
+        path: "{{ postgres_data_root }}/{{ postgres_cluster_version }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
+
+    - name: Create the PostgreSQL cluster
+      ansible.builtin.command:
+        argv:
+          - pg_createcluster
+          - --datadir
+          - "{{ postgres_createcluster_data_dir }}"
+          - "{{ postgres_cluster_version }}"
+          - "{{ postgres_cluster_name }}"
+      changed_when: true
+
+    - name: Point recreated cluster config at existing persistent data
+      ansible.builtin.lineinfile:
+        path: "{{ postgres_conf_dir }}/postgresql.conf"
+        regexp: "^data_directory\\s*="
+        line: "data_directory = '{{ postgres_data_dir }}'"
+      when: postgres_existing_data_version.stat.exists
+
+    - name: Remove temporary pg_createcluster data directory
+      ansible.builtin.file:
+        path: "{{ postgres_createcluster_data_dir }}"
+        state: absent
+      when: postgres_existing_data_version.stat.exists
+
+    - name: Re-discover PostgreSQL clusters after explicit creation
+      ansible.builtin.command:
+        cmd: pg_lsclusters --no-header
+      register: postgres_clusters
+      changed_when: false
+
+    - name: Re-select matching PostgreSQL cluster lines
+      ansible.builtin.set_fact:
+        postgres_matching_clusters: >-
+          {{ postgres_clusters.stdout_lines
+             | select('search', '^[0-9]+\\s+' ~ postgres_cluster_name ~ '\\s+')
+             | list }}
+
+- name: Fail when the PostgreSQL cluster is still missing
+  ansible.builtin.fail:
+    msg: >-
+      PostgreSQL cluster {{ postgres_cluster_name }} was not found after
+      package install and explicit pg_createcluster. pg_lsclusters output:
+      {{ postgres_clusters.stdout | default('') | trim | default('<empty>', true) }}
+  when: postgres_matching_clusters | length == 0
+
 - name: Set the PostgreSQL cluster version fact
   ansible.builtin.set_fact:
-    postgres_cluster_version: >-
-      {{ (postgres_clusters.stdout_lines
-          | select('search', '^[0-9]+\\s+' ~ postgres_cluster_name ~ '\\s+')
-          | first
-          | split)[0] }}
+    postgres_cluster_version: "{{ (postgres_matching_clusters | first | split)[0] }}"
 
 - name: Ensure the PostgreSQL cluster service is started and enabled
   ansible.builtin.systemd:
