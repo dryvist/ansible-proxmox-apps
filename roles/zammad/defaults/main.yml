@@ -1,0 +1,116 @@
+---
+# Zammad ITSM/ticketing + knowledge base — the homelab's incident-management
+# system of record. Native DEB from the packager.io apt repo (Rails web/worker/
+# websocket) with a colocated Elasticsearch (full-text incident search) and a
+# colocated Redis; state lives in the shared native Postgres cluster (#138).
+#
+# Two layers, mirroring the nautobot role:
+#   * always: apt repos, Elasticsearch, Redis, nginx, systemd wiring —
+#     deterministic, molecule-safe.
+#   * zammad_manage_app (default true): the Zammad DEB install, external-DB
+#     migrate/seed, search-index rebuild, and rails-runner bootstrap. Skipped
+#     by molecule (needs a real package + DB); validated live at converge.
+zammad_manage_app: true
+
+# --- System user / paths ------------------------------------------------------
+# The packager.io DEB creates the zammad user and installs under /opt/zammad
+# (a persistent ZFS bind mount from terraform-proxmox). Attachments live under
+# /opt/zammad/storage; the ES index is derived state on the rootfs.
+zammad_user: zammad
+zammad_group: zammad
+zammad_root: /opt/zammad
+
+# --- Network ------------------------------------------------------------------
+# nginx listens on zammad_web (8080), Traefik-fronted. Port is DERIVED from the
+# published constants, never a literal.
+zammad_web_port: "{{ tofu_data.constants.service_ports.zammad_web }}"
+# Public UI FQDN (Traefik router base domain) — Zammad uses it for the fqdn
+# Setting, generated links, and http_type. group_vars supplies the real value.
+zammad_ui_fqdn: "zammad.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+
+# --- Database: the shared native Postgres cluster (#138) ----------------------
+# FQDN + port are DERIVED, never literals. The zammad database/role itself is
+# provisioned by roles/postgres's postgres_managed_databases list — this role
+# only connects. pool sized small to fit the shared cluster's default
+# max_connections alongside nautobot + vikunja (see PR notes / open risk #2).
+zammad_db_host: "postgres.{{ tofu_data.domain }}"
+zammad_db_port: "{{ tofu_data.constants.service_ports.postgres_default }}"
+zammad_db_name: zammad
+zammad_db_user: zammad
+# pool is a per-process CEILING (Rails opens lazily up to this), not steady
+# usage — a small instance opens far fewer. 15 keeps the web/worker/websocket
+# processes under a shared max_connections=100 alongside nautobot + vikunja.
+zammad_db_pool: 15
+zammad_db_password: "{{ lookup('env', 'ZAMMAD_DB_PASSWORD') }}"
+
+# --- Redis: colocated, loopback only (nautobot precedent) --------------------
+zammad_redis_host: 127.0.0.1
+zammad_redis_port: 6379
+zammad_redis_url: "redis://{{ zammad_redis_host }}:{{ zammad_redis_port }}"
+
+# --- Elasticsearch: colocated single node, loopback only ---------------------
+# Zammad's full-text search backend (a core reason for choosing Zammad over a
+# task queue). ES 8.x bundles ingest-attachment, so no plugin install. Dev-mode
+# (network.host 127.0.0.1) keeps ES's bootstrap checks as warnings, not errors,
+# in the unprivileged LXC (vm.max_map_count is host-global — see open risk #3).
+zammad_es_apt_channel: "8.x"
+zammad_es_package: elasticsearch
+zammad_es_host: 127.0.0.1
+zammad_es_port: 9200
+zammad_es_url: "http://{{ zammad_es_host }}:{{ zammad_es_port }}"
+zammad_es_heap: 2g
+
+# --- Admin + Hermes API token -------------------------------------------------
+# Admin account seeded once (idempotent create-or-find). The Hermes API token
+# is seeded into a persistent api Token row so the agent can open/update
+# tickets; its value comes from the secret store (group_vars, bao-first).
+zammad_admin_user: admin
+zammad_admin_email: "{{ zammad_admin_user }}@{{ tofu_data.domain }}"
+zammad_admin_firstname: Zammad
+zammad_admin_lastname: Admin
+zammad_admin_password: "{{ lookup('env', 'ZAMMAD_ADMIN_PASSWORD') }}"
+zammad_hermes_api_token: "{{ lookup('env', 'ZAMMAD_API_TOKEN') }}"
+
+# Incident-management groups + severity priorities. Hermes maps its P-levels to
+# these priority ids: P1->4 critical, P2->3 high, P3->2 normal, P4->1 low. The
+# built-in 1/2/3 are kept; only "4 critical" is added.
+zammad_groups:
+  - Incidents
+zammad_extra_priority:
+  id: 4
+  name: 4 critical
+
+# --- Outbound email via the Mailpit relay (no real mail) ---------------------
+zammad_smtp_host: "mailpit.{{ tofu_data.domain }}"
+zammad_smtp_port: "{{ tofu_data.constants.notification_ports.mailpit_smtp }}"
+zammad_notification_sender: "Zammad <zammad@{{ tofu_data.domain }}>"
+
+# --- apt: controller-staged, sha256-pinned signing keys ----------------------
+# LXCs are firewalled outbound-internal-only and reach these HTTPS repos through
+# the apt-cacher-ng proxy (which allows go/dl.packager.io + artifacts.elastic.co
+# via PassThroughPattern). The signing keys are fetched + checksum-verified on
+# the CONTROLLER, then copied to the guest — same pattern as roles/postgres.
+# ASCII-armored keys are stored directly as the keyring; apt signed-by accepts
+# a .asc keyring, so no dearmor step is needed.
+zammad_packager_key_url: "https://go.packager.io/srv/deb/zammad/zammad/gpg-key.asc"
+zammad_packager_key_staging_path: /tmp/zammad-packager-key.asc
+zammad_packager_keyring: /usr/share/keyrings/zammad.asc
+zammad_packager_key_sha256: "a429c0ce1f0e2304fdcced83d0d541ad57a38c9c315e734f6f0927feef521376"
+# packager.io keys the pool by the numeric release (e.g. `12`), not the codename.
+zammad_packager_repo: >-
+  deb [signed-by={{ zammad_packager_keyring }}]
+  https://go.packager.io/srv/deb/zammad/zammad/stable/debian
+  {{ ansible_distribution_major_version }} main
+
+zammad_elastic_key_url: "https://artifacts.elastic.co/GPG-KEY-elasticsearch"
+zammad_elastic_key_staging_path: /tmp/zammad-elastic-key.asc
+zammad_elastic_keyring: /usr/share/keyrings/elasticsearch.asc
+zammad_elastic_key_sha256: "db52809c5f6b27f9c2bed45cb43e398c659275f3d35305653c6750a0db90f5eb"
+zammad_elastic_repo: >-
+  deb [signed-by={{ zammad_elastic_keyring }}]
+  https://artifacts.elastic.co/packages/{{ zammad_es_apt_channel }}/apt stable main
+
+# HTTP liveness poll for the nginx front after the app is up.
+zammad_api_timeout: 30
+zammad_health_retries: 30
+zammad_health_delay: 10
