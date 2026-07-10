@@ -1,0 +1,51 @@
+---
+# Zammad ITSM/ticketing + knowledge base — the incident-management system of
+# record. tofu-derived FQDNs/ports plus bao-first secrets (apps domain), env
+# fallback. Mirrors the nautobot_group.yml shape (shared-Postgres app on the
+# apps VLAN). The heavy app layer stays enabled here; molecule disables it via
+# zammad_manage_app.
+
+# Web port from the published constants (service_ports.zammad_web, 8080 — nginx
+# in-guest). Falls back to 8080 when the cache predates that key.
+zammad_web_port: >-
+  {{ (hostvars['localhost']['tofu_data']['constants']['service_ports']['zammad_web'])
+     | default(8080) }}
+
+# Postgres has no ingress; reach it by its guest FQDN on the data VLAN. The
+# guest DNS zone is tofu_data.domain and the hostname is fixed at `postgres`
+# by the container (a stable service identifier, not a hard-coded address).
+zammad_db_host: "postgres.{{ hostvars['localhost']['tofu_data']['domain'] }}"
+zammad_db_password: >-
+  {{ bao_apps_secrets.zammad_db_password
+     | default(lookup('env', 'ZAMMAD_DB_PASSWORD'), true) }}
+
+# Admin password bao-first (secret/apps/zammad), env fallback.
+zammad_admin_password: >-
+  {{ bao_apps_secrets.zammad_admin_password
+     | default(lookup('env', 'ZAMMAD_ADMIN_PASSWORD'), true) }}
+
+# Public UI FQDN (Traefik-fronted): zammad.<ingress subdomain>, matching the
+# Traefik router base domain and wildcard certificate from PROXMOX_SUBDOMAIN.
+# `lookup('env', …)` returns "" (not undefined) when unset; `or undef()` (empty
+# string is falsy) is what actually fails the play when PROXMOX_SUBDOMAIN is
+# missing, matching the nautobot_group.yml pattern.
+zammad_ui_fqdn: >-
+  zammad.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+     or undef('PROXMOX_SUBDOMAIN is required for the Zammad UI FQDN') }}
+
+# API token seeded into Zammad for the Hermes agent. Its canonical home is
+# ai/hermes (local-llm domain) so ONE token feeds both the seeding side here
+# and the Hermes skill env — bao-first with env fallback. On hosts where the
+# local-llm domain is not fetched, bao_local_llm_secrets is {} and the env
+# fallback (ZAMMAD_API_TOKEN, from Doppler/SOPS) resolves it.
+zammad_hermes_api_token: >-
+  {{ bao_local_llm_secrets.ZAMMAD_API_TOKEN
+     | default(lookup('env', 'ZAMMAD_API_TOKEN'), true) }}
+
+# Outbound notification email relays through the existing Mailpit LXC (SMTP on
+# notification_ports.mailpit_smtp). Reached by its guest FQDN — no auth, no TLS
+# on the internal relay. Notifications land in the Mailpit web UI, not real mail.
+zammad_smtp_host: "mailpit.{{ hostvars['localhost']['tofu_data']['domain'] }}"
+zammad_smtp_port: >-
+  {{ (hostvars['localhost']['tofu_data']['constants']['notification_ports']['mailpit_smtp'])
+     | default(1025) }}

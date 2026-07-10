@@ -1,0 +1,414 @@
+---
+# Zammad ITSM/ticketing + KB — native packager.io DEB, colocated Elasticsearch +
+# Redis, state in the shared external Postgres (#138). The whole body is gated on
+# zammad_manage_app (default true) so a molecule/dry run can no-op the network +
+# package + DB work; a real converge runs it all.
+#
+# The install is deterministic and avoids a local PostgreSQL despite the .deb's
+# hard `Depends: postgresql`: an equivs dummy satisfies the dependency, then
+# download-only + dpkg --unpack creates /opt/zammad WITHOUT running the postinst,
+# we template database.yml (pointing at the shared cluster), and only then
+# dpkg --configure runs the postinst — which takes its "database.yml exists"
+# branch (migrate against the remote DB) instead of creating a local one.
+
+- name: Configure Zammad
+  when: zammad_manage_app | bool
+  become: true
+  block:
+    # =========================================================================
+    # Phase 1: System packages
+    # =========================================================================
+    - name: Install Zammad system packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - gpg          # apt_repository needs a gpg binary on minimal templates
+          - equivs       # builds the dummy package that satisfies Depends: postgresql
+          - nginx        # reverse proxy in front of the puma/websocket servers
+          - redis-server # colocated, loopback only
+          - acl          # become_user file ops on unprivileged tmp
+        state: present
+        update_cache: true
+
+    # =========================================================================
+    # Phase 2: Redis — colocated, loopback only (nautobot precedent)
+    # =========================================================================
+    - name: Bind Redis to loopback only
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: "^bind "
+        line: "bind {{ zammad_redis_host }} -::1"
+        state: present
+      notify: Restart redis
+
+    - name: Enforce Redis protected-mode
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: "^protected-mode "
+        line: "protected-mode yes"
+        state: present
+      notify: Restart redis
+
+    - name: Create Redis systemd override directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/redis-server.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy Redis unprivileged-LXC systemd override
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/redis-server.service.d/lxc-override.conf
+        content: |
+          # Managed by Ansible (zammad role).
+          # Debian's Redis unit enables PrivateUsers, which requires user
+          # namespace setup that unprivileged Proxmox LXCs deny.
+          [Service]
+          PrivateUsers=no
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd daemon
+        - Restart redis
+
+    - name: Apply Redis overrides before starting Redis
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start Redis
+      ansible.builtin.systemd:
+        name: redis-server
+        state: started
+        enabled: true
+
+    # =========================================================================
+    # Phase 3: Signing keys — controller-staged, sha256-pinned (postgres pattern)
+    # LXCs are firewalled outbound-internal-only, so the keys are fetched +
+    # checksum-verified on the controller, then copied to the guest. ASCII-armored
+    # keys are stored directly as the keyring (apt signed-by accepts .asc).
+    # =========================================================================
+    - name: Stage the Elasticsearch + Zammad signing keys on the controller
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ item.staging }}"
+        checksum: "sha256:{{ item.sha256 }}"
+        mode: "0644"
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      run_once: true
+      loop:
+        - url: "{{ zammad_elastic_key_url }}"
+          staging: "{{ zammad_elastic_key_staging_path }}"
+          sha256: "{{ zammad_elastic_key_sha256 }}"
+        - url: "{{ zammad_packager_key_url }}"
+          staging: "{{ zammad_packager_key_staging_path }}"
+          sha256: "{{ zammad_packager_key_sha256 }}"
+      loop_control:
+        label: "{{ item.url }}"
+
+    - name: Install the signing keys into dedicated keyrings
+      ansible.builtin.copy:
+        src: "{{ item.staging }}"
+        dest: "{{ item.keyring }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - staging: "{{ zammad_elastic_key_staging_path }}"
+          keyring: "{{ zammad_elastic_keyring }}"
+        - staging: "{{ zammad_packager_key_staging_path }}"
+          keyring: "{{ zammad_packager_keyring }}"
+      loop_control:
+        label: "{{ item.keyring }}"
+
+    # =========================================================================
+    # Phase 4: apt repositories (Elasticsearch + Zammad)
+    # =========================================================================
+    - name: Add the Elasticsearch apt repository
+      ansible.builtin.apt_repository:
+        repo: "{{ zammad_elastic_repo }}"
+        filename: elastic
+        state: present
+        update_cache: true
+
+    - name: Add the Zammad (packager.io) apt repository
+      ansible.builtin.apt_repository:
+        repo: "{{ zammad_packager_repo }}"
+        filename: zammad
+        state: present
+        update_cache: true
+
+    # =========================================================================
+    # Phase 5: Elasticsearch — single node, loopback, before Zammad
+    # =========================================================================
+    - name: Install Elasticsearch
+      ansible.builtin.apt:
+        name: "{{ zammad_es_package }}"
+        state: present
+        update_cache: true
+
+    - name: Configure Elasticsearch (single node, loopback, security off)
+      ansible.builtin.template:
+        src: elasticsearch.yml.j2
+        dest: /etc/elasticsearch/elasticsearch.yml
+        owner: root
+        group: elasticsearch
+        mode: "0660"
+      notify: Restart elasticsearch
+
+    - name: Pin the Elasticsearch heap
+      ansible.builtin.template:
+        src: jvm-heap.options.j2
+        dest: /etc/elasticsearch/jvm.options.d/heap.options
+        owner: root
+        group: elasticsearch
+        mode: "0660"
+      notify: Restart elasticsearch
+
+    - name: Apply Elasticsearch config before starting it
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start Elasticsearch
+      ansible.builtin.systemd:
+        name: elasticsearch
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for Elasticsearch to answer
+      ansible.builtin.uri:
+        url: "{{ zammad_es_url }}"
+        status_code: [200]
+      register: zammad_es_health
+      until: zammad_es_health.status == 200
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    # =========================================================================
+    # Phase 6: equivs dummy — satisfy `Depends: postgresql` without a local server
+    # =========================================================================
+    - name: Check whether the postgresql-dummy equivs package is installed
+      ansible.builtin.command:
+        cmd: "dpkg-query -W -f='${db:Status-Status}' zammad-postgresql-dummy"
+      register: zammad_pg_dummy
+      failed_when: false
+      changed_when: false
+
+    - name: Build and install the postgresql-dummy equivs package
+      when: zammad_pg_dummy.stdout != 'installed'
+      block:
+        - name: Template the equivs control file
+          ansible.builtin.template:
+            src: zammad-postgresql-dummy.control.j2
+            dest: /tmp/zammad-postgresql-dummy.control
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: Build the dummy package with equivs
+          ansible.builtin.command:
+            cmd: equivs-build /tmp/zammad-postgresql-dummy.control
+            chdir: /tmp
+            creates: /tmp/zammad-postgresql-dummy_1.0_all.deb
+
+        - name: Install the dummy package (satisfies the postgresql dependency)
+          ansible.builtin.apt:
+            deb: /tmp/zammad-postgresql-dummy_1.0_all.deb
+            state: present
+
+    # =========================================================================
+    # Phase 7: Zammad package — download-only + unpack + template DB + configure
+    # =========================================================================
+    - name: Check whether the zammad package is fully configured
+      ansible.builtin.command:
+        cmd: "dpkg-query -W -f='${db:Status-Status}' zammad"
+      register: zammad_pkg
+      failed_when: false
+      changed_when: false
+
+    - name: Set the zammad-configured fact
+      ansible.builtin.set_fact:
+        zammad_configured: "{{ zammad_pkg.stdout == 'installed' }}"
+
+    - name: Download + unpack the zammad package without running its postinst
+      when: not zammad_configured
+      block:
+        # noqa command-instead-of-module: the ansible.builtin.apt module has no
+        # download-only mode, and installing normally would run the postinst
+        # before database.yml is templated — which takes the create-local-DB
+        # branch and fails (no local Postgres). Download only here, then unpack
+        # + template + configure below.
+        - name: Download the zammad package (and deps) into the apt cache  # noqa: command-instead-of-module
+          ansible.builtin.command: apt-get -y install --download-only zammad
+          register: zammad_download
+          changed_when: "'newly installed' in zammad_download.stdout or 'Get:' in zammad_download.stdout"
+
+        - name: Locate the downloaded zammad .deb
+          ansible.builtin.find:
+            paths: /var/cache/apt/archives
+            patterns: "zammad_*.deb"
+          register: zammad_deb
+
+        - name: Fail if the zammad .deb was not downloaded
+          ansible.builtin.assert:
+            that: zammad_deb.files | length > 0
+            fail_msg: "zammad .deb not found in the apt cache after download-only."
+
+        - name: Unpack zammad (creates /opt/zammad; runs NO postinst)
+          ansible.builtin.command:
+            cmd: "dpkg --unpack {{ (zammad_deb.files | sort(attribute='path') | last).path }}"
+          changed_when: true
+
+    - name: Template Zammad's database.yml (points at the shared external Postgres)
+      ansible.builtin.template:
+        src: database.yml.j2
+        dest: "{{ zammad_root }}/config/database.yml"
+        owner: "{{ zammad_user }}"
+        group: "{{ zammad_group }}"
+        mode: "0600"
+      register: zammad_dbyml
+      no_log: true
+
+    - name: Configure zammad (runs the postinst — migrates against the external DB)
+      ansible.builtin.command: dpkg --configure zammad
+      when: not zammad_configured
+      changed_when: true
+
+    - name: Seed the Zammad database (first configure only; seeds are create-if-missing)
+      ansible.builtin.command:
+        cmd: "zammad run rake db:seed"
+      when: not zammad_configured
+      changed_when: true
+
+    - name: Migrate the Zammad schema after a database.yml change (already-configured hosts)
+      ansible.builtin.command:
+        cmd: "zammad run rake db:migrate"
+      when:
+        - zammad_configured
+        - zammad_dbyml is changed
+      changed_when: true
+      notify: Restart zammad
+
+    # =========================================================================
+    # Phase 8: nginx reverse proxy
+    # =========================================================================
+    - name: Deploy the Zammad nginx vhost
+      ansible.builtin.template:
+        src: zammad.nginx.conf.j2
+        dest: /etc/nginx/sites-available/zammad.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable the Zammad nginx vhost
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/zammad.conf
+        dest: /etc/nginx/sites-enabled/zammad.conf
+        state: link
+      notify: Reload nginx
+
+    - name: Remove the default nginx vhost
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Apply pending restarts before health checks + bootstrap
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the Zammad + nginx services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - zammad
+        - nginx
+
+    # =========================================================================
+    # Phase 9: Idempotent bootstrap (settings incl. es_url, admin, Hermes token,
+    # Incidents group, P1-P4 severities, Mailpit channel, KB). The ruby prints
+    # ZAMMAD_BOOTSTRAP_CHANGED on drift. Runs BEFORE the search-index rebuild so
+    # es_url is set first.
+    # =========================================================================
+    - name: Validate the bootstrap secrets are present
+      ansible.builtin.assert:
+        that:
+          - zammad_admin_password | length > 0
+          - zammad_hermes_api_token | length > 0
+        fail_msg: >-
+          ZAMMAD_ADMIN_PASSWORD and ZAMMAD_API_TOKEN must be set before the
+          first converge (Doppler/SOPS or OpenBao apps/zammad + ai/hermes).
+        quiet: true
+      no_log: true
+
+    - name: Stage the bootstrap script on the target
+      ansible.builtin.copy:
+        src: zammad_bootstrap.rb
+        dest: "{{ zammad_root }}/ansible_bootstrap.rb"
+        owner: "{{ zammad_user }}"
+        group: "{{ zammad_group }}"
+        mode: "0640"
+
+    - name: Run the idempotent Zammad bootstrap
+      ansible.builtin.command:
+        cmd: "zammad run rails r {{ zammad_root }}/ansible_bootstrap.rb"
+      environment:
+        ZAMMAD_FQDN: "{{ zammad_ui_fqdn }}"
+        ZAMMAD_ES_URL: "{{ zammad_es_url }}"
+        ZAMMAD_ADMIN_EMAIL: "{{ zammad_admin_email }}"
+        ZAMMAD_ADMIN_FIRSTNAME: "{{ zammad_admin_firstname }}"
+        ZAMMAD_ADMIN_LASTNAME: "{{ zammad_admin_lastname }}"
+        ZAMMAD_ADMIN_PASSWORD: "{{ zammad_admin_password }}"
+        ZAMMAD_API_TOKEN: "{{ zammad_hermes_api_token }}"
+        ZAMMAD_SMTP_HOST: "{{ zammad_smtp_host }}"
+        ZAMMAD_SMTP_PORT: "{{ zammad_smtp_port }}"
+        ZAMMAD_NOTIFICATION_SENDER: "{{ zammad_notification_sender }}"
+        ZAMMAD_GROUPS: "{{ zammad_groups | join(',') }}"
+      register: zammad_bootstrap
+      changed_when: "'ZAMMAD_BOOTSTRAP_CHANGED' in zammad_bootstrap.stdout"
+      no_log: true
+
+    # =========================================================================
+    # Phase 10: Search-index rebuild (guarded — expensive, first time only)
+    # es_url was just set by the bootstrap above.
+    # =========================================================================
+    - name: Check whether the search index has already been built
+      ansible.builtin.stat:
+        path: "{{ zammad_root }}/.ansible-searchindex-built"
+      register: zammad_searchindex_marker
+
+    - name: Rebuild the Zammad search index (first time only — it is expensive)
+      ansible.builtin.command:
+        cmd: "zammad run rake zammad:searchindex:rebuild"
+      when: not zammad_searchindex_marker.stat.exists
+      changed_when: true
+
+    - name: Mark the search index as built
+      ansible.builtin.copy:
+        content: "built by the zammad role\n"
+        dest: "{{ zammad_root }}/.ansible-searchindex-built"
+        owner: "{{ zammad_user }}"
+        group: "{{ zammad_group }}"
+        mode: "0644"
+      when: not zammad_searchindex_marker.stat.exists
+
+    # =========================================================================
+    # Phase 11: Health
+    # =========================================================================
+    - name: Wait for the Zammad web UI to answer through nginx
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ zammad_web_port }}/"
+        status_code: [200, 301, 302]
+        follow_redirects: none
+      register: zammad_health
+      until: zammad_health.status in [200, 301, 302]
+      retries: "{{ zammad_health_retries | int }}"
+      delay: "{{ zammad_health_delay | int }}"
+      changed_when: false
