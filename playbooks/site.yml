@@ -25,6 +25,7 @@
     cribl_stream_group:cribl_edge:
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
+    postgres_group:nautobot_group:
     sonarr_group:radarr_group:plex_group:seerr_group:sortarr_group:download_vpn_group:immich_group
   gather_facts: false
   tags:
@@ -47,6 +48,7 @@
         bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
         bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
         bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
+        bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
       vars:
         openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
       no_log: true
@@ -534,6 +536,33 @@
     - database
   roles:
     - role: mssql_docker
+
+# =============================================================================
+# Phase 5b: Shared PostgreSQL + Nautobot IPAM/DCIM (issue #138)
+# Postgres (the shared native DB backend) must converge before Nautobot, which
+# connects to it by FQDN on the data VLAN. Both read their secrets from the
+# openbao_secrets pre-play (apps domain) with an env fallback. gather_facts is
+# on: the postgres role derives the PGDG apt repo from ansible_distribution_release.
+# =============================================================================
+
+- name: Configure shared PostgreSQL
+  hosts: postgres_group
+  become: true
+  gather_facts: true
+  tags:
+    - postgres
+    - database
+  roles:
+    - role: postgres
+
+- name: Configure Nautobot IPAM/DCIM
+  hosts: nautobot_group
+  become: true
+  gather_facts: true
+  tags:
+    - nautobot
+  roles:
+    - role: nautobot
 
 # =============================================================================
 # Phase 6: Qdrant Vector Database

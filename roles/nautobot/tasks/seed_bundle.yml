@@ -1,0 +1,129 @@
+---
+# Controller-side seed-bundle assembly (issue #138). Reads the four
+# hand-maintained sources, transforms each into the nautobot_seed.json schema,
+# and writes the bundle onto the Nautobot LXC (0600, never committed). Gated by
+# nautobot_build_seed (default false): the sources live in sibling repos the
+# controller only has at cutover. The SSoT seed jobs then DiffSync this bundle
+# into Nautobot.
+#
+# Source shapes: rack_servers (SOPS-encrypted in terraform-proxmox) is known —
+# chassis/bmc_ip/bmc_mac/service_tag/mgmt_ip, keyed by node name. VLAN/prefix
+# definitions come from a provided JSON var (Doppler / terraform output). The
+# fixed-ips.json (tofu-unifi) and hosts.yml (ansible-proxmox) mappings below are
+# documented ASSUMPTIONS about those shapes; WS-E confirms/adjusts the field
+# names against the live sources at cutover — the mappings are isolated here so
+# that is a one-place edit.
+
+- name: Assert seed sources are provided when building the seed
+  ansible.builtin.assert:
+    that:
+      - nautobot_seed_sops_path | length > 0
+      - nautobot_seed_fixed_ips_path | length > 0
+      - nautobot_seed_hosts_yml_path | length > 0
+    fail_msg: >-
+      nautobot_build_seed is true but a source path is unset. Set
+      TERRAFORM_PROXMOX_SOPS, TOFU_UNIFI_FIXED_IPS, and ANSIBLE_PROXMOX_HOSTS
+      (or the matching nautobot_seed_*_path vars) to the sibling-repo files.
+
+# --- Read + decrypt the sources on the controller --------------------------
+- name: Decrypt rack_servers from the terraform-proxmox SOPS file
+  ansible.builtin.command:
+    cmd: "sops -d {{ nautobot_seed_sops_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  changed_when: false
+  register: nautobot_seed_sops_raw
+  no_log: true
+
+- name: Read the tofu-unifi fixed-IP reservations
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_fixed_ips_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_fixed_ips_raw
+
+- name: Read the ansible-proxmox hosts inventory
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_hosts_yml_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_hosts_raw
+
+- name: Parse the sources
+  ansible.builtin.set_fact:
+    nautobot_seed_rack_servers: >-
+      {{ (nautobot_seed_sops_raw.stdout | from_json).rack_servers | default({}) }}
+    nautobot_seed_fixed_ips: "{{ nautobot_seed_fixed_ips_raw.content | b64decode | from_json }}"
+    nautobot_seed_hosts: "{{ nautobot_seed_hosts_raw.content | b64decode | from_yaml }}"
+  no_log: true
+
+# --- Transform into the nautobot_seed.json schema ---------------------------
+# VLANs + prefixes from the provided network definitions (list of {vid,name,cidr}).
+- name: Build VLANs and prefixes from the network definitions
+  ansible.builtin.set_fact:
+    nautobot_seed_vlans: >-
+      {{ nautobot_seed_networks
+         | map('community.general.json_query', '{vid: vid, name: name, cidr: cidr}')
+         | list }}
+    nautobot_seed_prefixes: >-
+      {{ nautobot_seed_networks
+         | map('community.general.json_query', '{prefix: cidr, vlan_vid: vid, role: name}')
+         | list }}
+
+# Devices from the decrypted rack_servers (known shape).
+- name: Build devices from the decrypted rack_servers
+  ansible.builtin.set_fact:
+    nautobot_seed_devices: >-
+      {{ nautobot_seed_rack_servers | dict2items
+         | community.general.json_query('[].{name: key, chassis: value.chassis,
+             bmc_ip: value.bmc_ip, bmc_mac: value.bmc_mac,
+             service_tag: value.service_tag, mgmt_ip: value.mgmt_ip}') }}
+  no_log: true
+
+# Reservations from fixed-ips.json. ASSUMPTION: a list of objects each carrying
+# an address plus optional name/mac (WS-E adjusts the key names at cutover).
+- name: Build reservations from the fixed-IP source
+  ansible.builtin.set_fact:
+    nautobot_seed_reservations: >-
+      {{ nautobot_seed_fixed_ips
+         | community.general.json_query(nautobot_seed_fixed_ips_query) }}
+  no_log: true
+
+# Nodes from hosts.yml. ASSUMPTION: the pve hypervisors are the host keys under
+# nautobot_seed_hosts_group (default proxmox); WS-E adjusts the path at cutover.
+- name: Build nodes from the hosts inventory
+  ansible.builtin.set_fact:
+    nautobot_seed_nodes: >-
+      {{ (nautobot_seed_hosts[nautobot_seed_hosts_group].hosts | default({}) | dict2items)
+         | community.general.json_query('[].{name: key, role: `pve-node`,
+             mgmt_ip: value.ansible_host, commissioned: `true`}') }}
+  no_log: true
+
+- name: Assemble the seed bundle
+  ansible.builtin.set_fact:
+    nautobot_seed_bundle:
+      schema_version: "1.0.0"
+      generated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime }}"
+      vlans: "{{ nautobot_seed_vlans }}"
+      prefixes: "{{ nautobot_seed_prefixes }}"
+      reservations: "{{ nautobot_seed_reservations }}"
+      racks: "{{ nautobot_seed_racks }}"
+      devices: "{{ nautobot_seed_devices }}"
+      nodes: "{{ nautobot_seed_nodes }}"
+  no_log: true
+
+# --- Write the bundle onto the Nautobot LXC ---------------------------------
+- name: Write nautobot_seed.json onto the Nautobot LXC (0600)
+  ansible.builtin.copy:
+    content: "{{ nautobot_seed_bundle | to_nice_json }}\n"
+    dest: "{{ nautobot_seed_file }}"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0600"
+  no_log: true

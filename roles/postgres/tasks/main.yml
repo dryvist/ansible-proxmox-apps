@@ -1,0 +1,322 @@
+---
+# Native PostgreSQL (PGDG) for the shared homelab database backend (issue #138).
+# All persistent state lives on the container's ZFS bind mount at
+# postgres_data_root, so a ChaosMonkey rebuild reconstructs the cluster config,
+# roles, and databases from Ansible while the data on the mount survives.
+
+# =============================================================================
+# Phase 1: PGDG apt repository
+# =============================================================================
+- name: Install apt prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-psycopg2   # community.postgresql modules connect via psycopg2
+      - acl                # become_user:postgres file ops on unprivileged tmp
+    state: present
+    update_cache: true
+
+- name: Install the PGDG repository signing key
+  ansible.builtin.get_url:
+    url: "{{ postgres_pgdg_key_url }}"
+    dest: "{{ postgres_pgdg_keyring }}"
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Add the PGDG apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ postgres_pgdg_repo }}"
+    filename: pgdg
+    state: present
+    update_cache: true
+
+# =============================================================================
+# Phase 2: Install PostgreSQL
+# The postgresql-common postinst creates the `postgres` user and usually creates
+# the default cluster. Use the config directory as the existence test because
+# pg_createcluster refuses to run when /etc/postgresql/<major>/<name> exists.
+# =============================================================================
+- name: Install PostgreSQL from PGDG
+  ansible.builtin.apt:
+    name: "{{ postgres_package }}"
+    state: present
+    update_cache: true
+
+- name: Discover installed PostgreSQL major
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --version
+  register: postgres_psql_version
+  changed_when: false
+
+- name: Set the PostgreSQL cluster version fact
+  ansible.builtin.set_fact:
+    postgres_cluster_version: >-
+      {{ postgres_version
+         if (postgres_version | string | length > 0)
+         else (postgres_psql_version.stdout | regex_search('[0-9]+')) }}
+
+- name: Fail when PostgreSQL major discovery failed
+  ansible.builtin.fail:
+    msg: >-
+      PostgreSQL package {{ postgres_package }} installed, but psql --version
+      did not expose a server major version: {{ postgres_psql_version.stdout }}
+  when: postgres_cluster_version | string | length == 0
+
+- name: Check whether the PostgreSQL cluster config exists
+  ansible.builtin.stat:
+    path: "{{ postgres_conf_dir }}"
+  register: postgres_cluster_config
+
+- name: Check whether the persistent data directory already has a cluster
+  ansible.builtin.stat:
+    path: "{{ postgres_data_dir }}/PG_VERSION"
+  register: postgres_existing_data_version
+
+- name: Read the persistent data directory version
+  ansible.builtin.slurp:
+    src: "{{ postgres_data_dir }}/PG_VERSION"
+  register: postgres_existing_data_pg_version
+  when: postgres_existing_data_version.stat.exists
+
+- name: Fail when persistent data belongs to a different PostgreSQL major
+  ansible.builtin.fail:
+    msg: >-
+      Existing PostgreSQL data directory {{ postgres_data_dir }} belongs to
+      major version {{ postgres_existing_data_pg_version.content | b64decode | trim }},
+      but the installed server version selected for cluster
+      {{ postgres_cluster_name }} is {{ postgres_cluster_version }}. Pin
+      postgres_version or perform a controlled PostgreSQL upgrade before
+      recreating the postgresql-common cluster config.
+  when:
+    - postgres_existing_data_version.stat.exists
+    - (postgres_existing_data_pg_version.content | b64decode | trim) !=
+      (postgres_cluster_version | string)
+
+- name: Set pg_createcluster data directory
+  ansible.builtin.set_fact:
+    postgres_createcluster_data_dir: >-
+      {{ postgres_data_root ~ '/.ansible-pg-createcluster-' ~
+         postgres_cluster_version ~ '-' ~ postgres_cluster_name
+         if postgres_existing_data_version.stat.exists
+         else postgres_data_dir }}
+  when: not postgres_cluster_config.stat.exists
+
+- name: Remove stale temporary pg_createcluster data directory
+  ansible.builtin.file:
+    path: "{{ postgres_createcluster_data_dir }}"
+    state: absent
+  when:
+    - not postgres_cluster_config.stat.exists
+    - postgres_existing_data_version.stat.exists
+
+- name: Create the PostgreSQL cluster when config is absent
+  ansible.builtin.command:
+    argv:
+      - pg_createcluster
+      - --datadir
+      - "{{ postgres_createcluster_data_dir }}"
+      - "{{ postgres_cluster_version }}"
+      - "{{ postgres_cluster_name }}"
+  changed_when: true
+  when: not postgres_cluster_config.stat.exists
+
+- name: Point recreated cluster config at existing persistent data
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_conf_dir }}/postgresql.conf"
+    regexp: "^data_directory\\s*="
+    line: "data_directory = '{{ postgres_data_dir }}'"
+  when:
+    - not postgres_cluster_config.stat.exists
+    - postgres_existing_data_version.stat.exists
+
+- name: Remove temporary pg_createcluster data directory
+  ansible.builtin.file:
+    path: "{{ postgres_createcluster_data_dir }}"
+    state: absent
+  when:
+    - not postgres_cluster_config.stat.exists
+    - postgres_existing_data_version.stat.exists
+
+- name: Ensure the PostgreSQL cluster config exists
+  ansible.builtin.stat:
+    path: "{{ postgres_conf_dir }}/postgresql.conf"
+  register: postgres_cluster_config_file
+  failed_when: not postgres_cluster_config_file.stat.exists
+
+- name: Ensure the PostgreSQL cluster service is started and enabled
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+    state: started
+    enabled: true
+
+# =============================================================================
+# Phase 3: Cluster configuration (idempotent GUCs)
+# postgresql_set only writes when the value differs, so the idempotence run is
+# clean. listen_addresses/port need a restart; password_encryption reloads.
+# =============================================================================
+- name: Configure cluster GUCs
+  become: true
+  become_user: postgres
+  vars:
+    ansible_ssh_pipelining: true
+  block:
+    - name: Set listen_addresses
+      community.postgresql.postgresql_set:
+        name: listen_addresses
+        value: "{{ postgres_listen_addresses }}"
+      notify: Restart postgresql
+
+    - name: Set port
+      community.postgresql.postgresql_set:
+        name: port
+        value: "{{ postgres_port }}"
+      notify: Restart postgresql
+
+    - name: Enforce scram-sha-256 password encryption
+      community.postgresql.postgresql_set:
+        name: password_encryption
+        value: "{{ postgres_password_encryption }}"
+      notify: Reload postgresql
+
+# Apply a pending restart NOW so the remote listener + scram are live before we
+# create roles and run the health check (handlers otherwise flush at play end).
+- name: Apply pending PostgreSQL restart/reload
+  ansible.builtin.meta: flush_handlers
+
+# =============================================================================
+# Phase 4: Roles, databases, and host-based auth
+# Credentials are generate-if-absent: a role's password is set only when the
+# role does not yet exist, which keeps the run idempotent under scram (whose
+# salted verifier cannot be recomputed for comparison) and matches the
+# workspace "generate at the source, idempotent" secrets convention.
+# =============================================================================
+- name: Provision managed roles and databases
+  become: true
+  become_user: postgres
+  block:
+    - name: List existing login roles
+      community.postgresql.postgresql_query:
+        query: "SELECT rolname FROM pg_roles"
+      register: postgres_existing_roles
+      changed_when: false
+
+    - name: Create the login role for each managed database (password set once)
+      community.postgresql.postgresql_user:
+        name: "{{ item.user }}"
+        password: "{{ item.password }}"
+        role_attr_flags: LOGIN
+        state: present
+      loop: "{{ postgres_managed_databases }}"
+      loop_control:
+        label: "{{ item.user }}"
+      no_log: true
+      when: >-
+        item.user not in
+        (postgres_existing_roles.query_result | map(attribute='rolname') | list)
+
+    - name: Ensure each managed login role exists (no password change)
+      community.postgresql.postgresql_user:
+        name: "{{ item.user }}"
+        role_attr_flags: LOGIN
+        state: present
+      loop: "{{ postgres_managed_databases }}"
+      loop_control:
+        label: "{{ item.user }}"
+
+    - name: Create each managed database owned by its role
+      community.postgresql.postgresql_db:
+        name: "{{ item.name }}"
+        owner: "{{ item.user }}"
+        encoding: UTF-8
+        state: present
+      loop: "{{ postgres_managed_databases }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Grant the owning role all privileges on its database
+      community.postgresql.postgresql_privs:
+        database: "{{ item.name }}"
+        roles: "{{ item.user }}"
+        type: database
+        privs: ALL
+        state: present
+      loop: "{{ postgres_managed_databases }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Allow each managed user to connect from its client CIDR (scram)
+      community.postgresql.postgresql_pg_hba:
+        dest: "{{ postgres_conf_dir }}/pg_hba.conf"
+        contype: host
+        databases: "{{ item.name }}"
+        users: "{{ item.user }}"
+        source: "{{ item.client_cidr }}"
+        method: scram-sha-256
+        state: present
+      loop: "{{ postgres_managed_databases }}"
+      loop_control:
+        label: "{{ item.name }} <- {{ item.client_cidr }}"
+      notify: Reload postgresql
+
+- name: Apply pending pg_hba reload
+  ansible.builtin.meta: flush_handlers
+
+# =============================================================================
+# Phase 5: pg_dump backups on the persistent mount, via a systemd timer
+# =============================================================================
+- name: Configure pg_dump backups
+  when: postgres_backup_enabled | bool
+  block:
+    - name: Create the backup directory on the persistent mount
+      ansible.builtin.file:
+        path: "{{ postgres_backup_dir }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
+
+    - name: Deploy the pg_dump backup script
+      ansible.builtin.template:
+        src: pg-backup.sh.j2
+        dest: /usr/local/bin/pg-backup.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy the pg_dump backup systemd service
+      ansible.builtin.template:
+        src: pg-backup.service.j2
+        dest: /etc/systemd/system/pg-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Deploy the pg_dump backup systemd timer
+      ansible.builtin.template:
+        src: pg-backup.timer.j2
+        dest: /etc/systemd/system/pg-backup.timer
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable and start the pg_dump backup timer
+      ansible.builtin.systemd:
+        name: pg-backup.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+# =============================================================================
+# Phase 6: Health check
+# =============================================================================
+- name: Verify PostgreSQL answers a trivial query
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_ping:
+    db: postgres
+  register: postgres_ping
+  failed_when: not postgres_ping.is_available
+  changed_when: false
