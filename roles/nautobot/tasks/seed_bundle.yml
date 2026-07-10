@@ -117,12 +117,16 @@
     - nautobot_seed_network_cidrs[item.value.cidr_key | default('')] is defined
   no_log: true
 
-# Nodes from hosts.yml. ASSUMPTION: the pve hypervisors are the host keys under
-# nautobot_seed_hosts_group (default proxmox); WS-E adjusts the path at cutover.
+# Nodes from hosts.yml. Confirmed live shape (WS-E cutover): the pve hypervisors
+# are the host keys under all.children.<group>.hosts (not a top-level <group>
+# key), so read that nested path. mgmt_ip carries ansible_host verbatim (a
+# lookup template when DHCP-first); ssot_nodes does not key on it (Device
+# Onboarding binds the real management IP), so it is informational only.
 - name: Build nodes from the hosts inventory
   ansible.builtin.set_fact:
     nautobot_seed_nodes: >-
-      {{ (nautobot_seed_hosts[nautobot_seed_hosts_group].hosts | default({}) | dict2items)
+      {{ (((nautobot_seed_hosts.all | default({})).children | default({}))[nautobot_seed_hosts_group]
+          | default({})).hosts | default({}) | dict2items
          | community.general.json_query('[].{name: key, role: `pve-node`,
              mgmt_ip: value.ansible_host, commissioned: `true`}') }}
   no_log: true

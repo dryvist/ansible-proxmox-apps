@@ -38,7 +38,12 @@ approver = get_user_model().objects.filter(is_superuser=True).order_by("pk").fir
 
 
 def run_one(name):
-    """Enable, enqueue, and poll a single job by display name."""
+    """Enable, enqueue, and poll a single job by display name.
+
+    SSoT DataSource jobs default to a dry run (compute diffs, commit nothing);
+    pass ``dryrun=False`` so the additive sync actually persists. The export
+    Job has no such var, so it is enqueued without job kwargs.
+    """
     job = Job.objects.filter(name=name).first()
     if job is None:
         print("JOB_SKIPPED", name, "not-registered")
@@ -46,8 +51,9 @@ def run_one(name):
     if not job.enabled:
         job.enabled = True
         job.save()
+    kwargs = {} if "Export" in name else {"dryrun": False}
     try:
-        result = JobResult.enqueue_job(job, approver)
+        result = JobResult.enqueue_job(job, approver, **kwargs)
     except Exception as exc:  # noqa: BLE001 - enqueue signature is version-sensitive
         print("JOB_ERROR", name, "enqueue:%s" % exc)
         return

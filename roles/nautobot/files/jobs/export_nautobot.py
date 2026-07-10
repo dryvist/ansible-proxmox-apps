@@ -185,13 +185,26 @@ class ExportNautobotToS3(Job):
         self.logger.info("Export validated against %s", schema_path)
 
     def _upload(self, document: dict) -> None:
-        """Upload the document to S3 with ambient credentials."""
+        """Upload the document to S3 (ambient creds, optional custom endpoint).
+
+        When a non-AWS endpoint is configured (AWS_ENDPOINT_URL_S3, e.g. an
+        on-prem RustFS/MinIO store), force path-style addressing — those stores
+        do not serve the virtual-hosted ``<bucket>.<host>`` form boto3 defaults
+        to. A default region keeps the SigV4 signer happy when none is set.
+        """
         bucket = os.environ.get("NAUTOBOT_EXPORT_S3_BUCKET", "")
         if not bucket:
             raise ValueError("NAUTOBOT_EXPORT_S3_BUCKET is not set — cannot publish export")
         key = os.environ.get("NAUTOBOT_EXPORT_S3_KEY", DEFAULT_KEY)
         body = json.dumps(document, indent=2, sort_keys=True).encode("utf-8")
-        boto3.client("s3").put_object(
+        client_kwargs: dict[str, Any] = {
+            "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        }
+        if os.environ.get("AWS_ENDPOINT_URL_S3"):
+            from botocore.config import Config
+
+            client_kwargs["config"] = Config(s3={"addressing_style": "path"})
+        boto3.client("s3", **client_kwargs).put_object(
             Bucket=bucket, Key=key, Body=body, ContentType="application/json"
         )
         self.logger.info("Published %d bytes to s3://%s/%s", len(body), bucket, key)
