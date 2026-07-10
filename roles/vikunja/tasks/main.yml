@@ -154,11 +154,14 @@
       - "--username={{ vikunja_admin_user }}"
       - "--email={{ vikunja_admin_email }}"
       - "--password={{ vikunja_admin_password }}"
-  # Word-boundary match — a bare substring test would false-positive on user
-  # names or emails that merely contain the admin name (e.g. "sysadmin").
-  # NB: '\\b' — a single '\b' in a Jinja string literal is a backspace char,
-  # which silently never matches and re-runs the create on every converge.
-  when: not (vikunja_user_list.stdout | default('') | regex_search('\\b' ~ vikunja_admin_user ~ '\\b'))
+  # Match the exact username as a whole table cell in `vikunja user list`
+  # output. A `\b` word boundary is wrong here: `-` is a non-word char, so
+  # `\badmin\b` would match "admin" inside "admin-helper". Anchor on
+  # start/whitespace/pipe (the table delimiters) instead. `default('', true)`
+  # guards against an undefined stdout when the list task is skipped.
+  when: >-
+    not (vikunja_user_list.stdout | default('', true)
+         | regex_search('(?:^|\\s|\\|)' ~ vikunja_admin_user ~ '(?:\\s|\\||$)'))
   changed_when: true
   no_log: true
 
@@ -174,8 +177,13 @@
   loop: "{{ vikunja_service_users }}"
   loop_control:
     label: "{{ item.username }}"
+  # Whole-cell match (see the admin task above): a `\b` boundary would let
+  # `svc-mcp-ro` false-match inside a hypothetical `svc-mcp-ro-x` and skip
+  # a real creation.
   when:
     - item.password | length > 0
-    - not (vikunja_user_list.stdout | default('') | regex_search('\\b' ~ item.username ~ '\\b'))
+    - >-
+      not (vikunja_user_list.stdout | default('', true)
+           | regex_search('(?:^|\\s|\\|)' ~ item.username ~ '(?:\\s|\\||$)'))
   changed_when: true
   no_log: true
