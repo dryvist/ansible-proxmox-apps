@@ -387,3 +387,35 @@ hermes_agent_verify_fatal_log_patterns:
 hermes_agent_verify_probe_timeout: 300
 hermes_agent_verify_probe_retries: 3
 hermes_agent_verify_probe_delay: 10
+
+# --- Brain-health watchdog: stop cron-failure spam during brain outages -------
+# ai-default is a single-deployment brain (llm_router role) with no viable
+# fallback, and upstream Hermes ALWAYS delivers a cron failure ("Failed jobs
+# always deliver regardless of the [SILENT] marker"). So a brain outage makes the
+# stateless seeded fleet fail-and-DM the operator twice an hour per job, while
+# nothing pages that the brain is even down (service_deadman watches DNS/Traefik/
+# HAProxy/OpenBao, not the LLM fabric). This watchdog closes both gaps: a systemd
+# timer probes the brain end-to-end and, on a DEBOUNCED transition, pauses/resumes
+# the seeded cron fleet and alerts EXACTLY ONCE per edge. See templates/ +
+# tasks/main.yml and the README.
+hermes_agent_brain_watchdog_enabled: true
+hermes_agent_brain_watchdog_script_path: /usr/local/bin/hermes-brain-watchdog.sh
+# Probe cadence (systemd OnUnitActiveSec). 60s matches service_deadman.
+hermes_agent_brain_watchdog_interval: "60s"
+# Per-probe curl deadline. Comfortably covers a warm 1-token completion; a hung or
+# unreachable brain trips it and counts as one failure toward the debounce.
+hermes_agent_brain_watchdog_probe_timeout: 15
+# Hysteresis: consecutive failures before declaring DOWN (pause+alert), and
+# consecutive successes before declaring UP (resume+alert). down_after=3 over the
+# 60s cadence (~3 min) rides rotation-flip bounces and cold reloads so the
+# watchdog never becomes a new source of spam; up_after=2 damps flapping.
+hermes_agent_brain_watchdog_down_after: 3
+hermes_agent_brain_watchdog_up_after: 2
+# Urgent page target. Same ntfy LXC + notification port + topic service_deadman
+# pages on ("same feed as other homelab outages", operator decision) — the brain
+# is now a keystone. Port is single-sourced from tofu constants; host from the
+# ntfy inventory entry (fallback to the bare name).
+hermes_agent_brain_watchdog_ntfy_topic: "keystone"
+hermes_agent_brain_watchdog_ntfy_url: >-
+  http://{{ hostvars['ntfy']['container_ip'] | default('ntfy') }}:{{
+  tofu_data.constants.notification_ports.ntfy_http }}/{{ hermes_agent_brain_watchdog_ntfy_topic }}

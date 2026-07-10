@@ -213,6 +213,49 @@ When Hermes finds a signal worth watching continuously it may register its own
 | `hermes_agent_splunk_alert_deliver` | `slack:<member-id>` | DM target for anomaly alerts |
 | `hermes_agent_splunk_digest_deliver` | `slack` | home-channel target for the digest |
 
+## Brain-health watchdog (no cron-failure spam)
+
+The cron fleet above talks to a **single-deployment brain** (`ai-default`, served
+by one Mac Studio via the `llm_router` proxy) with **no viable fallback**. When
+that brain is unreachable, two upstream facts combine badly: each cron run is a
+**fresh, stateless session**, and upstream *always* delivers a failure —
+*"Failed jobs always deliver regardless of the `[SILENT]` marker; only successful
+runs can be silenced."* So a brain outage makes every seeded job fail and DM the
+operator (twice an hour for `splunk-security` alone), while nothing pages that the
+brain is even down — `service_deadman` watches DNS/Traefik/HAProxy/OpenBao, not
+the LLM fabric.
+
+This watchdog closes both gaps with a small `systemd` timer
+(`hermes-brain-watchdog.timer`, every 60s, run as the `hermes` user):
+
+1. **Probe** `ai-default` end-to-end through the same router URL the crons use — a
+   1-token completion, so it catches a connection error *and* a reachable-but-
+   wedged brain. It hits the already-active model (no cold-model spawn) and keeps
+   it warm, matching the intended 24/7 posture.
+2. **Debounce** — declare DOWN only after `down_after` consecutive failures (3 ≈
+   3 min) and UP after `up_after` successes (2). This rides brief bounces
+   (rotation flips, cold reloads) so the watchdog never becomes a *new* source of
+   spam.
+3. **On a transition** — `hermes cron pause` (or `resume`) the role-seeded fleet
+   (`hermes_agent_seeded_cron_names`; user/agent jobs are never touched) and alert
+   **exactly once** per edge to **both** a Slack DM (the operator, same place the
+   spam was) and an **urgent ntfy** push (the `keystone` feed other homelab
+   outages page on). Paused jobs don't fire, so the outage stops producing spam
+   instead of amplifying it.
+
+Pausing loses no coverage a run would otherwise achieve — the brain is down either
+way — it just makes the gap visible **once** instead of drowning it in 500s.
+Gated on the same Slack tokens that seed the fleet (no fleet → nothing to guard).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `hermes_agent_brain_watchdog_enabled` | `true` | Deploy + start the watchdog timer |
+| `hermes_agent_brain_watchdog_interval` | `60s` | Probe cadence (`OnUnitActiveSec`) |
+| `hermes_agent_brain_watchdog_probe_timeout` | `15` | Per-probe curl deadline (seconds) |
+| `hermes_agent_brain_watchdog_down_after` | `3` | Consecutive fails → pause + alert |
+| `hermes_agent_brain_watchdog_up_after` | `2` | Consecutive oks → resume + alert |
+| `hermes_agent_brain_watchdog_ntfy_topic` | `keystone` | ntfy topic for the urgent page |
+
 ## Live docs (Context7)
 
 Registers Context7's hosted HTTP MCP server (`mcp_servers.context7`) so Hermes
