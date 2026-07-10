@@ -13,11 +13,13 @@ nautobot_system_packages:
   - python3
   - python3-venv
   - python3-dev
+  - python3-packaging
   - build-essential
   - libpq-dev
   - redis-server
   - git
   - openssl
+  - sudo
 
 # Python packages installed into the venv (latest stable). The pip
 # distribution names differ from the Django app/plugin names used in PLUGINS:
@@ -27,6 +29,8 @@ nautobot_pip_packages:
   - nautobot
   - nautobot-ssot
   - nautobot-device-onboarding
+  - boto3
+  - jsonschema
 nautobot_plugins:
   - nautobot_ssot
   - nautobot_device_onboarding
@@ -84,6 +88,24 @@ nautobot_export_schema_file: "{{ nautobot_export_schema_dir }}/nautobot-export-v
 # Export runs on a schedule via celery beat; this is the beat crontab (UTC).
 nautobot_export_schedule_hour: 6
 nautobot_export_schedule_minute: 17
+
+# Single source of truth for the Nautobot runtime environment. Rendered into the
+# root-only (0600) EnvironmentFile for the systemd units AND passed via each
+# management task's `environment:` — so no shell `. nautobot.env` ever evaluates
+# a secret value as code (#840 security review). Lives in role defaults (not
+# inventory group_vars) so it resolves under molecule too. Keep in lockstep with
+# templates/nautobot.env.j2, which renders from this dict.
+nautobot_env:
+  NAUTOBOT_ROOT: "{{ nautobot_root }}"
+  NAUTOBOT_SECRET_KEY: "{{ nautobot_effective_secret_key }}"
+  NAUTOBOT_DB_PASSWORD: "{{ nautobot_db_password }}"
+  NAUTOBOT_SUPERUSER_NAME: "{{ nautobot_superuser_name }}"
+  NAUTOBOT_SUPERUSER_EMAIL: "{{ nautobot_superuser_email }}"
+  NAUTOBOT_SUPERUSER_PASSWORD: "{{ nautobot_superuser_password }}"
+  NAUTOBOT_SEED_FILE: "{{ nautobot_seed_file }}"
+  NAUTOBOT_EXPORT_S3_BUCKET: "{{ nautobot_export_s3_bucket }}"
+  NAUTOBOT_EXPORT_S3_KEY: "{{ nautobot_export_s3_key }}"
+  NAUTOBOT_EXPORT_SCHEMA: "{{ nautobot_export_schema_file }}"
 
 # Seed-bundle assembly (tasks/seed_bundle.yml). Off by default — the four
 # sources live in sibling repos the controller only has at cutover (WS-E). Paths
