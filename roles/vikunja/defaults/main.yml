@@ -1,0 +1,56 @@
+---
+# Vikunja task-management app (issue #141) — a single native Go binary
+# (web + API on one port), state in the shared native Postgres cluster
+# (issue #138), file attachments on a persistent ZFS bind mount.
+
+# --- Version / controller-staged, checksum-verified download ----------------
+# LXCs in this repo are firewalled outbound-internal-only, so the release
+# bundle is downloaded and checksum-verified on the CONTROLLER (unrestricted
+# egress), then the extracted binary is copied to the target — same pattern
+# as roles/openbao (its .deb) and roles/technitium_install (its mirrored
+# .tgz). The pin is GitHub's own published digest for this exact asset
+# (go-vikunja/vikunja publishes no separate checksums.txt); get_url verifies
+# it before anything is extracted.
+vikunja_version: "2.3.0"
+# renovate: datasource=github-releases depName=go-vikunja/vikunja
+vikunja_release_zip: "vikunja-v{{ vikunja_version }}-linux-amd64-full.zip"
+vikunja_release_zip_url: >-
+  https://github.com/go-vikunja/vikunja/releases/download/v{{ vikunja_version }}/{{ vikunja_release_zip }}
+vikunja_release_zip_sha256: "c37f8291698e288cd95198b52b826ffca40c3665d351041b93358e142862994d"
+vikunja_binary_name: "vikunja-v{{ vikunja_version }}-linux-amd64"
+
+# --- System user / paths ------------------------------------------------------
+vikunja_user: vikunja
+vikunja_group: vikunja
+vikunja_install_dir: /opt/vikunja
+vikunja_binary_path: "{{ vikunja_install_dir }}/vikunja"
+vikunja_config_dir: /etc/vikunja
+vikunja_config_file: "{{ vikunja_config_dir }}/config.yml"
+# Attachments live on the persistent ZFS bind mount at /var/lib/vikunja
+# (provisioned by terraform-proxmox), never under the ephemeral install dir.
+vikunja_files_dir: /var/lib/vikunja/files
+
+# --- Network -------------------------------------------------------------------
+vikunja_port: "{{ tofu_data.constants.service_ports.vikunja_web }}"
+# Must match the Traefik router FQDN (<name>.<ingress base domain>) — Vikunja
+# uses it for generated links and CORS, so the bare container domain is wrong.
+vikunja_public_url: "https://vikunja.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+
+# --- Database: the shared native Postgres cluster (issue #138) --------------
+# FQDN + port are DERIVED, never literals. The vikunja database/role itself is
+# provisioned by roles/postgres's postgres_managed_databases list (a follow-up
+# once #831 merges) — this role only needs somewhere to connect to.
+vikunja_db_host: "postgres.{{ tofu_data.domain }}"
+vikunja_db_port: "{{ tofu_data.constants.service_ports.postgres_default }}"
+vikunja_db_name: vikunja
+vikunja_db_user: vikunja
+
+# --- Secrets: injection-agnostic plain env lookups (AGENTS.md convention) ---
+# Populated today via `doppler run --`; validated fail-loud in tasks/main.yml.
+vikunja_db_password: "{{ lookup('env', 'VIKUNJA_DB_PASSWORD') }}"
+vikunja_jwt_secret: "{{ lookup('env', 'VIKUNJA_JWT_SECRET') }}"
+vikunja_admin_user: admin
+vikunja_admin_email: "{{ vikunja_admin_user }}@{{ tofu_data.domain }}"
+vikunja_admin_password: "{{ lookup('env', 'VIKUNJA_ADMIN_PASSWORD') }}"
+
+vikunja_api_timeout: 30
