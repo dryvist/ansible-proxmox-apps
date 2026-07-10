@@ -86,13 +86,35 @@
              service_tag: value.service_tag, mgmt_ip: value.mgmt_ip}') }}
   no_log: true
 
-# Reservations from fixed-ips.json. ASSUMPTION: a list of objects each carrying
-# an address plus optional name/mac (WS-E adjusts the key names at cutover).
+# Reservations from fixed-ips.json. Confirmed live shape (WS-E cutover): the file
+# is {fixed_ips: {<name>: {cidr_key, host, hostname, mac, ...}}} and carries
+# NO literal IP — the address is cidrhost(NETWORK_CIDR_<cidr_key>, host),
+# resolved downstream in terragrunt. We reproduce that resolution here from the
+# network CIDRs the caller already supplies (nautobot_seed_networks), so the
+# committed sources still hold zero IP literals. dns_name is the hostname up to
+# the first space (some entries append a parenthetical label).
+- name: Build the VLAN-name to CIDR lookup for reservation resolution
+  ansible.builtin.set_fact:
+    nautobot_seed_network_cidrs: >-
+      {{ dict(nautobot_seed_networks | map(attribute='name')
+              | zip(nautobot_seed_networks | map(attribute='cidr'))) }}
+
 - name: Build reservations from the fixed-IP source
   ansible.builtin.set_fact:
     nautobot_seed_reservations: >-
-      {{ nautobot_seed_fixed_ips
-         | community.general.json_query(nautobot_seed_fixed_ips_query) }}
+      {{ nautobot_seed_reservations | default([]) + [{
+           'address': nautobot_seed_network_cidrs[item.value.cidr_key]
+                      | ansible.utils.ipaddr(item.value.host)
+                      | ansible.utils.ipaddr('address'),
+           'dns_name': item.value.hostname | default('') | regex_replace(' .*$', '')
+         }] }}
+  loop: "{{ (nautobot_seed_fixed_ips.fixed_ips | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.value.cidr_key is defined
+    - item.value.host is defined
+    - nautobot_seed_network_cidrs[item.value.cidr_key | default('')] is defined
   no_log: true
 
 # Nodes from hosts.yml. ASSUMPTION: the pve hypervisors are the host keys under
