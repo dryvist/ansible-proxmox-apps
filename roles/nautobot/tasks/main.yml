@@ -61,6 +61,33 @@
     state: present
   notify: Restart redis
 
+- name: Create Redis systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/redis-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Redis unprivileged-LXC systemd override
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/redis-server.service.d/lxc-override.conf
+    content: |
+      # Managed by Ansible (nautobot role).
+      # Debian's Redis unit enables PrivateUsers, which requires user namespace
+      # setup that unprivileged Proxmox LXCs deny.
+      [Service]
+      PrivateUsers=no
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd daemon
+    - Restart redis
+
+- name: Apply Redis systemd override before starting Redis
+  ansible.builtin.meta: flush_handlers
+
 - name: Enable and start Redis
   ansible.builtin.systemd:
     name: redis-server
@@ -230,35 +257,46 @@
 - name: Bring up the Nautobot application
   when: nautobot_manage_app | bool
   become: true
-  become_user: "{{ nautobot_user }}"
-  environment:
-    NAUTOBOT_ROOT: "{{ nautobot_root }}"
-    NAUTOBOT_SECRET_KEY: "{{ nautobot_effective_secret_key }}"
-    NAUTOBOT_DB_PASSWORD: "{{ nautobot_db_password }}"
-    NAUTOBOT_SUPERUSER_NAME: "{{ nautobot_superuser_name }}"
-    NAUTOBOT_SUPERUSER_EMAIL: "{{ nautobot_superuser_email }}"
-    NAUTOBOT_SUPERUSER_PASSWORD: "{{ nautobot_superuser_password }}"
-    NAUTOBOT_EXPORT_S3_BUCKET: "{{ nautobot_export_s3_bucket }}"
-    NAUTOBOT_EXPORT_S3_KEY: "{{ nautobot_export_s3_key }}"
   block:
     - name: Apply database migrations
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server migrate"
+      ansible.builtin.shell:
+        cmd: >-
+          set -a &&
+          . {{ nautobot_root }}/nautobot.env &&
+          set +a &&
+          {{ nautobot_root }}/bin/nautobot-server migrate
+        executable: /bin/bash
       register: nautobot_migrate
       changed_when: "'No migrations to apply' not in nautobot_migrate.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
 
     - name: Collect static files
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server collectstatic --no-input"
+      ansible.builtin.shell:
+        cmd: >-
+          set -a &&
+          . {{ nautobot_root }}/nautobot.env &&
+          set +a &&
+          {{ nautobot_root }}/bin/nautobot-server collectstatic --no-input
+        executable: /bin/bash
       register: nautobot_collectstatic
       changed_when: "'0 static files copied' not in nautobot_collectstatic.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
 
     - name: Ensure the Nautobot superuser exists
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+      ansible.builtin.shell:
+        cmd: >-
+          set -a &&
+          . {{ nautobot_root }}/nautobot.env &&
+          set +a &&
+          {{ nautobot_root }}/bin/nautobot-server shell --interface python
+        executable: /bin/bash
         stdin: "{{ lookup('ansible.builtin.file', 'superuser_bootstrap.py') }}"
       register: nautobot_superuser
       changed_when: "'SUPERUSER_CHANGED' in nautobot_superuser.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
       no_log: true
 
     - name: Apply pending systemd reload before starting services
@@ -275,14 +313,20 @@
         - nautobot-scheduler
 
     - name: Schedule the export Job via celery beat
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+      ansible.builtin.shell:
+        cmd: >-
+          set -a &&
+          . {{ nautobot_root }}/nautobot.env &&
+          set +a &&
+          NAUTOBOT_EXPORT_SCHEDULE_HOUR={{ nautobot_export_schedule_hour }}
+          NAUTOBOT_EXPORT_SCHEDULE_MINUTE={{ nautobot_export_schedule_minute }}
+          {{ nautobot_root }}/bin/nautobot-server shell --interface python
+        executable: /bin/bash
         stdin: "{{ lookup('ansible.builtin.file', 'schedule_export.py') }}"
-      environment:
-        NAUTOBOT_EXPORT_SCHEDULE_HOUR: "{{ nautobot_export_schedule_hour }}"
-        NAUTOBOT_EXPORT_SCHEDULE_MINUTE: "{{ nautobot_export_schedule_minute }}"
       register: nautobot_schedule
       changed_when: "'SCHEDULE_CREATED' in nautobot_schedule.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
 
     - name: Wait for the Nautobot web UI to answer
       ansible.builtin.uri:
