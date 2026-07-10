@@ -44,7 +44,6 @@ try:
                     "user": approver,
                     "start_time": timezone.now(),
                     "enabled": True,
-                    "approval_required": False,
                 },
             )
             print("SCHEDULE_CREATED" if created else "SCHEDULE_EXISTS")
