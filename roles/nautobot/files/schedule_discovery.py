@@ -90,7 +90,6 @@ try:
             "user": approver,
             "start_time": timezone.now(),
             "enabled": True,
-            "approval_required": False,
             "kwargs": job_kwargs,
         },
     )
