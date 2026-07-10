@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import boto3
@@ -32,6 +31,73 @@ def _name(obj: Any, attr: str) -> Optional[str]:
     return related.name if related is not None else None
 
 
+def _all(related: Any) -> list[Any]:
+    """Return a concrete list from a Django related manager or plain iterable."""
+    if related is None:
+        return []
+    if hasattr(related, "all"):
+        return list(related.all())
+    return list(related)
+
+
+def _address(value: Any, *, host_only: bool = False) -> Optional[str]:
+    """Return a string IP address, optionally without its prefix length."""
+    if value is None:
+        return None
+    rendered = str(getattr(value, "address", value))
+    if host_only:
+        return rendered.split("/", 1)[0]
+    return rendered
+
+
+def _interface_for_ip(ip: Any) -> Optional[Any]:
+    """Find the first interface assigned to a Nautobot IPAddress."""
+    for attr in ("interfaces", "assigned_object", "interface"):
+        candidate = getattr(ip, attr, None)
+        if candidate is None:
+            continue
+        if attr == "interfaces":
+            interfaces = _all(candidate)
+            if interfaces:
+                return interfaces[0]
+            continue
+        if getattr(candidate, "device", None) is not None:
+            return candidate
+    return None
+
+
+def _assigned_interface(ip: Any) -> Optional[dict]:
+    """Return the contract's assigned_interface object for an IPAddress."""
+    interface = _interface_for_ip(ip)
+    if interface is None:
+        return None
+    return {"device": interface.device.name, "name": interface.name}
+
+
+def _interface_mac(interface: Any) -> Optional[str]:
+    """Return an interface MAC address as a string when present."""
+    mac = getattr(interface, "mac_address", None)
+    return str(mac) if mac else None
+
+
+def _bmc_for_device(device: Any) -> Optional[dict]:
+    """Return the contract's BMC object from a device's management interface."""
+    for interface in _all(getattr(device, "interfaces", None)):
+        if not (
+            getattr(interface, "mgmt_only", False)
+            or str(getattr(interface, "name", "")).lower() in {"bmc", "idrac", "ipmi"}
+        ):
+            continue
+        addresses = _all(getattr(interface, "ip_addresses", None))
+        if not addresses:
+            continue
+        return {
+            "address": _address(addresses[0], host_only=True),
+            "mac": _interface_mac(interface),
+        }
+    return None
+
+
 def build_export() -> dict:
     """Shape Nautobot's current contents into the export document.
 
@@ -39,25 +105,23 @@ def build_export() -> dict:
     the homelab-contracts schema.
     """
     vlans = [
-        {"vid": v.vid, "name": v.name, "status": _name(v, "status")}
+        {"vid": v.vid, "name": v.name, "group": _name(v, "vlan_group") or _name(v, "group")}
         for v in VLAN.objects.all()
     ]
     prefixes = [
         {
-            "prefix": str(p.prefix),
-            "vlan_vid": p.vlan.vid if p.vlan_id else None,
+            "cidr": str(p.prefix),
+            "vlan": p.vlan.vid if p.vlan_id else None,
             "role": _name(p, "role"),
-            "status": _name(p, "status"),
         }
         for p in Prefix.objects.all()
     ]
-    reservations = [
+    ip_addresses = [
         {
-            "address": ip.host,
+            "address": _address(getattr(ip, "address", getattr(ip, "host", None))),
             "dns_name": ip.dns_name or None,
-            "device": None,
-            "interface": None,
-            "status": _name(ip, "status"),
+            "mac": _interface_mac(_interface_for_ip(ip)),
+            "assigned_interface": _assigned_interface(ip),
         }
         for ip in IPAddress.objects.all()
     ]
@@ -65,26 +129,20 @@ def build_export() -> dict:
         {
             "name": d.name,
             "role": _name(d, "role"),
-            "status": _name(d, "status"),
             "rack": _name(d, "rack"),
-            "position": d.position,
-            "primary_ip": str(d.primary_ip.address) if d.primary_ip else None,
-            "manufacturer": d.device_type.manufacturer.name,
-            "model": d.device_type.model,
-            "serial": d.serial or None,
+            "bmc": _bmc_for_device(d),
         }
         for d in Device.objects.all()
     ]
     racks = [
-        {"name": r.name, "site": _name(r, "location"), "u_height": r.u_height}
+        {"name": r.name, "site": _name(r, "location") or ""}
         for r in Rack.objects.all()
     ]
     interfaces = [
         {
-            "device": i.device.name,
             "name": i.name,
+            "device": i.device.name,
             "mac": str(i.mac_address) if i.mac_address else None,
-            "type": i.type,
             "mgmt_only": i.mgmt_only,
         }
         for i in Interface.objects.all()
@@ -92,11 +150,9 @@ def build_export() -> dict:
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source": "nautobot",
         "vlans": vlans,
         "prefixes": prefixes,
-        "reservations": reservations,
+        "ip_addresses": ip_addresses,
         "devices": devices,
         "racks": racks,
         "interfaces": interfaces,
@@ -143,11 +199,11 @@ class ExportNautobotToS3(Job):
     def run(self) -> None:  # noqa: D102 - Nautobot Job entrypoint
         document = build_export()
         self.logger.info(
-            "Built export: %d vlans, %d prefixes, %d reservations, %d devices, "
+            "Built export: %d vlans, %d prefixes, %d ip_addresses, %d devices, "
             "%d racks, %d interfaces",
             len(document["vlans"]),
             len(document["prefixes"]),
-            len(document["reservations"]),
+            len(document["ip_addresses"]),
             len(document["devices"]),
             len(document["racks"]),
             len(document["interfaces"]),
