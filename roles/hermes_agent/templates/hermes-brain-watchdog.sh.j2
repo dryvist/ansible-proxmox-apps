@@ -131,18 +131,66 @@ STREAK_FILE="${STATE_DIR}/streak"
 state="$(cat "${STATE_FILE}" 2>/dev/null || echo up)"
 streak="$(cat "${STREAK_FILE}" 2>/dev/null || echo 0)"
 
+# --- Maintenance window (pre-staged, non-interactive) -------------------------
+# playbooks/hermes-maintenance.yml stages "<start_epoch> <end_epoch>" in
+# MAINT_FILE, hours ahead if desired. While now is inside the window the seeded
+# fleet is paused ONCE (marker) and every alert is suppressed — a PLANNED brain
+# outage (e.g. the night cluster borrowing the Studio) makes zero noise and
+# needs zero live decisions. At expiry (or cancel = the playbook deleting the
+# file) the watchdog cleans up and resumes the fleet by itself within one tick —
+# unless the brain is still down, in which case the outage is no longer planned
+# and the suppressed DOWN alert fires now instead of being lost.
+MAINT_FILE="${STATE_DIR}/maintenance-window"
+MAINT_MARKER="${STATE_DIR}/maintenance-paused"
+maint_active=0
+m_start=0; m_end=0
+if [[ -f "${MAINT_FILE}" ]]; then
+  read -r m_start m_end < "${MAINT_FILE}" || true
+fi
+now_epoch="$(date +%s)"
+if [[ -f "${MAINT_FILE}" ]] && (( now_epoch >= m_start && now_epoch < m_end )); then
+  maint_active=1
+  if [[ ! -f "${MAINT_MARKER}" ]]; then
+    cron_do pause
+    touch "${MAINT_MARKER}"
+    logger -t hermes-brain-watchdog "maintenance window active until ${m_end} (epoch) — fleet paused, alerts suppressed"
+  fi
+elif [[ -f "${MAINT_MARKER}" ]]; then
+  # Window over (expired or cancelled): clean up and hand back to normal ops.
+  rm -f "${MAINT_FILE}" "${MAINT_MARKER}"
+  if probe_ok; then
+    cron_do resume
+    logger -t hermes-brain-watchdog "maintenance window ended — fleet resumed"
+    state="up"
+  else
+    # Still down past the window: an unplanned outage now — say so, once.
+    alert down
+    state="down"
+  fi
+  streak=0
+  printf '%s\n' "${state}" > "${STATE_FILE}"
+  printf '%s\n' "${streak}" > "${STREAK_FILE}"
+  exit 0
+elif [[ -f "${MAINT_FILE}" ]] && (( now_epoch >= m_end )); then
+  rm -f "${MAINT_FILE}"   # expired before it ever activated (stale stage)
+fi
+
 if probe_ok; then
   if (( streak < 0 )); then streak=1; else streak=$(( streak + 1 )); fi
   if [[ "${state}" == "down" ]] && (( streak >= UP_AFTER )); then
-    cron_do resume
-    alert up
+    if (( ! maint_active )); then
+      cron_do resume
+      alert up
+    fi
     state="up"; streak=0
   fi
 else
   if (( streak > 0 )); then streak=-1; else streak=$(( streak - 1 )); fi
   if [[ "${state}" == "up" ]] && (( streak <= -DOWN_AFTER )); then
-    cron_do pause
-    alert down
+    if (( ! maint_active )); then
+      cron_do pause
+      alert down
+    fi
     state="down"; streak=0
   fi
 fi

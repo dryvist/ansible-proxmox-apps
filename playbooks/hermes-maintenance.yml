@@ -1,0 +1,112 @@
+---
+# Hermes maintenance window — pre-staged, non-interactive alert suppression.
+#
+# Stages a "<start_epoch> <end_epoch>" window file the brain-health watchdog
+# (roles/hermes_agent/templates/hermes-brain-watchdog.sh.j2) reads every tick.
+# Inside the window the watchdog pauses the role-seeded cron fleet once and
+# suppresses every alert; at expiry it resumes the fleet by itself (alerting
+# only if the brain is STILL down — then it's an unplanned outage). So a
+# planned brain outage (the night cluster borrowing the Studio at 2am) needs
+# zero live decisions and wakes nobody: stage the window in the afternoon,
+# walk away. Stage the start a few minutes before the actual quiesce — the
+# watchdog ticks every 60s, and a job firing in the sub-tick gap would still
+# deliver.
+#
+# Usage (times are parsed by GNU date on the guest — ISO 8601 works):
+#   Stage:  doppler run -- ansible-playbook -i inventory/hosts.yml \
+#             playbooks/hermes-maintenance.yml \
+#             -e hermes_maintenance_start='2026-07-12T01:45:00-04:00' \
+#             -e hermes_maintenance_end='2026-07-12T06:00:00-04:00'
+#           (or -e hermes_maintenance_minutes=240 for start=now)
+#   Cancel: ... -e hermes_maintenance_cancel=true
+#   Status: run with no -e vars — prints the window file, pause marker, and
+#           recent watchdog journal lines.
+#
+# --limit must include localhost (inventory loader), e.g.
+#   --limit hermes_agent_group,localhost
+
+- name: Import OpenTofu infrastructure inventory
+  import_playbook: ../inventory/load_tofu.yml
+
+- name: Hermes maintenance window (stage / cancel / status)
+  hosts: hermes_agent_group
+  become: true
+  gather_facts: false
+  vars_files:
+    # Reuse the role's defaults so HERMES_HOME stays defined in ONE place —
+    # the same DRY pattern validate-media.yml uses for servarr_wiring.
+    - ../roles/hermes_agent/defaults/main.yml
+  vars:
+    hermes_maintenance_state_dir: "{{ hermes_agent_hermes_home }}/brain-watchdog"
+    hermes_maintenance_file: "{{ hermes_maintenance_state_dir }}/maintenance-window"
+    hermes_maintenance_marker: "{{ hermes_maintenance_state_dir }}/maintenance-paused"
+  tasks:
+    - name: Cancel the maintenance window
+      when: hermes_maintenance_cancel | default(false) | bool
+      ansible.builtin.file:
+        path: "{{ hermes_maintenance_file }}"
+        state: absent
+      # The watchdog's marker path resumes the fleet within one 60s tick.
+
+    - name: Stage the maintenance window
+      when:
+        - not (hermes_maintenance_cancel | default(false) | bool)
+        - (hermes_maintenance_end is defined) or (hermes_maintenance_minutes is defined)
+      block:
+        - name: Resolve window epochs on the guest (GNU date)
+          ansible.builtin.command:
+            cmd: >-
+              date -d "{{ item }}" +%s
+          loop:
+            - "{{ hermes_maintenance_start | default('now') }}"
+            - >-
+              {{ hermes_maintenance_end
+                 | default(hermes_maintenance_start | default('now')
+                           ~ ' + ' ~ hermes_maintenance_minutes | default(0) ~ ' minutes') }}
+          register: hermes_maintenance_epochs
+          changed_when: false
+
+        - name: Assert the window is in the future and ordered
+          ansible.builtin.assert:
+            quiet: true
+            that:
+              - hermes_maintenance_epochs.results[1].stdout | int
+                > hermes_maintenance_epochs.results[0].stdout | int
+            fail_msg: >-
+              Window end must be after start
+              ({{ hermes_maintenance_epochs.results[0].stdout }} ..
+              {{ hermes_maintenance_epochs.results[1].stdout }}).
+
+        - name: Ensure the watchdog state dir exists
+          ansible.builtin.file:
+            path: "{{ hermes_maintenance_state_dir }}"
+            state: directory
+            owner: hermes
+            group: hermes
+            mode: "0755"
+
+        - name: Write the window file the watchdog consumes
+          ansible.builtin.copy:
+            content: >-
+              {{ hermes_maintenance_epochs.results[0].stdout }}
+              {{ hermes_maintenance_epochs.results[1].stdout }}
+            dest: "{{ hermes_maintenance_file }}"
+            owner: hermes
+            group: hermes
+            mode: "0644"
+
+    - name: Read window file, pause marker, and recent watchdog journal
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo "window-file: $(cat {{ hermes_maintenance_file }} 2>/dev/null || echo '<absent>')"
+        echo "pause-marker: $(test -f {{ hermes_maintenance_marker }} && echo present || echo absent)"
+        echo "now-epoch: $(date +%s)"
+        journalctl -t hermes-brain-watchdog -n 8 --no-pager -o cat 2>/dev/null | tail -8
+      args:
+        executable: /bin/bash
+      register: hermes_maintenance_status
+      changed_when: false
+
+    - name: Show maintenance status
+      ansible.builtin.debug:
+        var: hermes_maintenance_status.stdout_lines
