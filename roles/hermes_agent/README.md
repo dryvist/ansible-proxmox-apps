@@ -279,6 +279,26 @@ Gated on the same Slack tokens that seed the fleet (no fleet → nothing to guar
 | `hermes_agent_brain_watchdog_up_after` | `2` | Consecutive oks → resume + alert |
 | `hermes_agent_brain_watchdog_ntfy_topic` | `keystone` | ntfy topic for the urgent page |
 
+### Maintenance window (planned outages, zero live decisions)
+
+A **pre-staged, non-interactive** window for planned brain outages (e.g. the
+night cluster borrowing the Studio at 2am). `playbooks/hermes-maintenance.yml`
+stages a `"<start_epoch> <end_epoch>"` file in the watchdog state dir — hours
+ahead if desired. While `now` is inside the window the watchdog pauses the
+seeded fleet once and **suppresses every alert** (Slack DM, ntfy page,
+resume notifications); at expiry it resumes the fleet by itself. If the brain
+is *still* down at expiry, the outage is no longer planned — the suppressed
+DOWN alert fires then, exactly once. Cancel = the playbook's
+`-e hermes_maintenance_cancel=true` (fleet resumes within one tick).
+
+```sh
+# Stage a 01:45–06:00 window in the afternoon; nothing else to do.
+doppler run -- ansible-playbook -i inventory/hosts.yml \
+  playbooks/hermes-maintenance.yml --limit hermes_agent_group,localhost \
+  -e hermes_maintenance_start='2026-07-12T01:45:00-04:00' \
+  -e hermes_maintenance_end='2026-07-12T06:00:00-04:00'
+```
+
 ## Live docs (Context7)
 
 Registers Context7's hosted HTTP MCP server (`mcp_servers.context7`) so Hermes
