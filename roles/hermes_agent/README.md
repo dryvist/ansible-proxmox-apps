@@ -213,6 +213,29 @@ When Hermes finds a signal worth watching continuously it may register its own
 | `hermes_agent_splunk_alert_deliver` | `slack:<member-id>` | DM target for anomaly alerts |
 | `hermes_agent_splunk_digest_deliver` | `slack` | home-channel target for the digest |
 
+## Inbound job-submission API (sanctioned non-exec path)
+
+The upstream `api_server` gateway platform, enabled when
+`hermes_agent_api_server_key` is present (bao-first, `secret/ai/hermes`
+`HERMES_API_SERVER_KEY`). It is the **sanctioned way to submit work to the
+agent without touching the guest** — no `pct exec`, no SSH-in-and-run:
+
+- `POST /v1/runs` — enqueue an agent run (`{"input": "<prompt>"}`),
+  returns `202` + `run_id`; poll `GET /v1/runs/{run_id}` (or stream
+  `/v1/runs/{run_id}/events`).
+- `/api/jobs` — full cron-job CRUD (create/pause/resume/run), the REST
+  equivalent of `hermes cron …`.
+- `GET /health` — unauthenticated liveness (everything else requires
+  `Authorization: Bearer <key>`; upstream refuses to start the platform
+  keyless).
+
+Traefik fronts it as `https://hermes-api.<subdomain>` (tofu ingress row;
+port DRY from `service_ports.hermes_api`); the guest firewall scopes the
+port to internal sources. Distinct from the webhook receiver below: webhooks
+are pre-declared event triggers, this is arbitrary job submission. The
+post-converge gate probes `/health` and asserts a keyless `POST /v1/runs`
+is refused with 401.
+
 ## Brain-health watchdog (no cron-failure spam)
 
 The cron fleet above talks to a **single-deployment brain** (`ai-default`, served

@@ -114,6 +114,30 @@
           from a mis-wired brain (wrong parser, null context, unroutable alias).
         success_msg: "Brain returned a valid tool call ({{ hermes_agent_model }})."
 
+    # Inbound job-submission API (api_server platform), only when the key is
+    # seeded: the platform must be listening (health 200 on the guest) AND must
+    # refuse unauthenticated submissions (401 on a keyless POST /v1/runs) — the
+    # negative half proves the bearer gate is actually on, not just the port.
+    - name: Gate — the job-submission API answers its health check
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hermes_agent_api_server_port }}/health"
+        method: GET
+      register: hermes_agent_api_health
+      retries: "{{ hermes_agent_verify_probe_retries }}"
+      delay: "{{ hermes_agent_verify_probe_delay }}"
+      until: hermes_agent_api_health.status | default(0) == 200
+      when: hermes_agent_api_server_key | length > 0
+
+    - name: Gate — an unauthenticated job submission is refused (401)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hermes_agent_api_server_port }}/v1/runs"
+        method: POST
+        body_format: json
+        body:
+          input: "unauthenticated probe — must be refused"
+        status_code: 401
+      when: hermes_agent_api_server_key | length > 0
+
   rescue:
     - name: Verification gate failed — fail loudly with a rollback recipe
       ansible.builtin.fail:
