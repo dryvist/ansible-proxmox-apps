@@ -112,6 +112,18 @@ router_settings:
   # how long one attempt waits before LiteLLM calls it a connection failure.
   num_retries: {{ llm_router_num_retries }}
   timeout: {{ llm_router_request_timeout_seconds }}
+  # 429 absorption. The serving tiers cap in-flight requests at the proxy
+  # (llama-swap concurrencyLimit) and 429 the excess; without this, a burst of
+  # concurrent agents trips allowed_fails ({{ llm_router_allowed_fails }}/min)
+  # and cools down the SINGLE large deployment — turning a momentary queue into
+  # a hard "no deployments available" cascade (the 2026-07-08 bench collapse
+  # signature). Rate-limit errors instead retry with backoff (queue-by-retry)
+  # and never count toward cooldown; real faults still cool down via
+  # allowed_fails above.
+  retry_policy:
+    RateLimitErrorRetries: {{ llm_router_rate_limit_retries }}
+  allowed_fails_policy:
+    RateLimitErrorAllowedFails: {{ llm_router_rate_limit_allowed_fails }}
 
 general_settings:
   master_key: os.environ/LLM_ROUTER_MASTER_KEY

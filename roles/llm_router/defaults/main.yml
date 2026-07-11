@@ -188,6 +188,19 @@ llm_router_cooldown_time: 30
 # to 2400.
 llm_router_num_retries: 2
 llm_router_request_timeout_seconds: "{{ ai_router_request_timeout_seconds }}"
+# 429 absorption (queue-by-retry). The serving proxies (llama-swap
+# concurrencyLimit) 429 anything past their in-flight cap. Two failure modes
+# without special handling: (a) the 429 surfaces raw to the caller, which
+# retries into the same wall (the 2026-07-08 bench collapse: 9,262 429s ->
+# session death); (b) worse, with allowed_fails=2/min the router COOLS DOWN
+# the single large deployment, escalating a momentary queue into
+# "no deployments available". So rate-limit errors get their own budget:
+# retried more times with LiteLLM's backoff, and effectively never counted
+# toward cooldown. Real faults (auth, 5xx, timeouts) still cool down via
+# allowed_fails. Retries=6 with exponential backoff spans ~1-2 min of queue
+# pressure — roughly one long large-tier generation ahead in line.
+llm_router_rate_limit_retries: 6
+llm_router_rate_limit_allowed_fails: 1000
 # Background health checks send REAL test requests to every deployment — on the
 # llama-swap fast tier each probe spawns the target model, and with 3 routers
 # probing every model this both churns VRAM constantly and (pre swap-groups)
