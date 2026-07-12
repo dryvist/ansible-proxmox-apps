@@ -15,6 +15,7 @@ raises, so one job's quirk cannot abort the converge. Markers:
 ``JOB_ERROR <name> <detail>`` / ``JOB_TIMEOUT <name>``.
 """
 import os
+import sys
 import time
 
 from django.contrib.auth import get_user_model
@@ -43,7 +44,9 @@ approver = get_user_model().objects.filter(is_superuser=True).order_by("pk").fir
 
 
 def run_one(name):
-    """Enable, enqueue, and poll a single job by display name.
+    """Enable, enqueue, and poll a single job by display name. Returns True on
+    success so the caller can exit non-zero if any seed job failed — Ansible
+    must not report the converge green when the database wasn't seeded.
 
     SSoT DataSource jobs default to a dry run (compute diffs, commit nothing);
     pass ``dryrun=False`` so the additive sync actually persists. Plain Jobs
@@ -52,7 +55,7 @@ def run_one(name):
     job = Job.objects.filter(name=name).first()
     if job is None:
         print("JOB_SKIPPED", name, "not-registered")
-        return
+        return False
     if not job.enabled:
         job.enabled = True
         job.save()
@@ -61,17 +64,18 @@ def run_one(name):
         result = JobResult.enqueue_job(job, approver, **kwargs)
     except Exception as exc:  # noqa: BLE001 - enqueue signature is version-sensitive
         print("JOB_ERROR", name, "enqueue:%s" % exc)
-        return
+        return False
     deadline = time.time() + TIMEOUT
     while time.time() < deadline:
         result.refresh_from_db()
         status = str(getattr(result, "status", "")).upper()
         if status in TERMINAL:
             print("JOB_DONE", name, status)
-            return
+            return status == "SUCCESS"
         time.sleep(3)
     print("JOB_TIMEOUT", name)
+    return False
 
 
-for job_name in SEED_JOBS:
-    run_one(job_name)
+if not all([run_one(job_name) for job_name in SEED_JOBS]):
+    sys.exit(1)

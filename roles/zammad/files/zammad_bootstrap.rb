@@ -83,9 +83,14 @@ if Ticket::Priority.find_by(id: 4).nil? && Ticket::Priority.find_by(name: '4 cri
   changed = true
 end
 
-# --- Hermes API token (persistent api token seeded with the supplied value) --
-if Token.find_by(action: 'api', name: 'hermes').nil?
+# --- Hermes API token (persistent api token seeded with the supplied value;
+# reconciled if it already exists but was rotated in OpenBao/Doppler) --------
+hermes_token = Token.find_by(action: 'api', name: 'hermes')
+if hermes_token.nil?
   Token.create!(action: 'api', name: 'hermes', persistent: true, user_id: admin.id, token: api_token)
+  changed = true
+elsif hermes_token.token != api_token
+  hermes_token.update!(token: api_token)
   changed = true
 end
 
