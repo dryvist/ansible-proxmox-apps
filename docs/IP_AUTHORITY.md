@@ -46,10 +46,45 @@ Every guest in `tofu_inventory.json` is described by three addressing fields
 | `reserved_ip` | `null` | the UniFi DHCP **reservation** address (what DNS A records point at) |
 
 `inventory/load_tofu.yml` surfaces `container_ip` (= `ip`) and
-`container_reserved_ip` (= `reserved_ip`) as hostvars. Consumers that need a
-literal address prefer `reserved_ip`, then `ip`, then the peer's
-`container_ip` — and now stop there (no loopback tail). Consumers that can use a
-name resolve the FQDN through Technitium/Traefik instead of any literal.
+`container_reserved_ip` (= `reserved_ip`) as hostvars — but these exist for
+the **DNS tier only**. Application configs never consume them.
+
+## Consumers use FQDNs, full stop
+
+App configuration references services **by name, never by address**:
+
+- **Traefik-fronted service** (has a row in the upstream ingress table):
+  `https://<name>.{{ tofu_data.domain }}` — port 443, TLS via the wildcard
+  cert. The name resolves to the ingress; the backend address is Traefik's
+  concern, not the consumer's.
+- **Non-fronted guest**: `<hostname>.{{ tofu_data.domain }}` plus the port
+  from `tofu_data.constants` — the per-guest A record Technitium builds from
+  the inventory.
+- `{{ tofu_data.domain }}` is the **single domain source of truth**
+  (published by terraform-proxmox, validated non-empty by
+  `inventory/load_tofu.yml`). Never repeat a literal domain per role.
+- Hostnames **match the app/role/stanza name**. Never invent a third name.
+
+The bring-up order guarantees names work before any role converges:
+IaC creates the guest (deterministic MAC) → UniFi gets the reservation →
+Technitium gets the A record → the role converges by FQDN.
+
+### Where IP-valued variables are still legitimate
+
+1. **`roles/technitium_dns`** — builds the A records themselves. The DNS
+   record is the one place an IP belongs; `container_reserved_ip` /
+   `container_ip` exist for this consumer.
+2. **The IPAM tier** (`roles/nautobot` seed prefixes/CIDRs) — IPAM stores
+   addresses by definition. It feeds DNS records, never app configs.
+3. **`roles/download_vpn` ntfy alert target** — documented exception: the
+   guest resolves through the VPN tunnel, so internal FQDNs do not resolve,
+   and the killswitch alert must work exactly when the tunnel is down.
+   Removed once split-DNS lands inside that container (#870).
+
+Anything else that dereferences `container_ip` / `container_reserved_ip` /
+`tofu_data.containers[*].ip|reserved_ip` in a role is a defect to migrate —
+tracked in #871 (the configarr/servarr_wiring cascades are the largest
+remainder). Name-based SMTP for the Traefik-fronted mailpit is #872.
 
 ## Static-anchor policy
 
@@ -75,14 +110,8 @@ upstream. Track them there:
 1. **Convert non-anchor guests to DHCP-first**: for each guest that is not a
    static anchor, drop the static IPv4, and give it a deterministic `mac`, an
    FQDN, and a `reserved_host` so the export emits `reserved_ip`. Keep only the
-   anchors static.
-2. **Publish the missing constants** so this repo can drop the remaining port
-   `default()` fallbacks (kept for now precisely because these are absent):
-   `service_ports.{openbao_api, satellite_exporter, smokeping_prober,
-   prometheus_web, blackbox_exporter, mssql}`, `ingress_ports.keepalived_vrid`,
-   and the `syslog_port_map.{dns_query, macos}` families. Add each to
-   `pipeline_constants`, `terragrunt apply`, then this repo removes the matching
-   `| default(...)` and adds the constant to the CI fixture.
+   anchors static. App configs in this repo are unaffected either way — they
+   reference the FQDN, and only the DNS record's target changes.
 
 ### tofu-unifi (`fixed-ips.json`)
 
