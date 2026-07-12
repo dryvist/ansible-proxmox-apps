@@ -291,3 +291,23 @@ llm_router_rotation_pause_sentinel: "{{ llm_router_config_dir }}/rotation-paused
 llm_router_rotation_warm_roles:
   - coding
   - tool-calling
+
+# --- Night-cluster brain (docs/BRAIN_ROTATION.md "Night cluster") ------------
+# When enabled, ONLY the large-phase config changes shape: the rotation alias
+# becomes a deployment on the serving host's night-cluster endpoint (the
+# two-Mac pipeline-parallel brain, gated on its own port by the same bearer
+# token), the solo large brain moves to `<alias>-solo`, and LiteLLM fallbacks
+# chain them. Presence detection is free: cluster absent/unhealthy -> the
+# night attempt fails fast, the request falls back to the solo brain, and
+# allowed_fails + cooldown_time drain traffic there — exactly today's
+# behavior. No new trigger plumbing, no timer changes. Off by default; flip
+# ai_night_brain_enabled (group_vars) on the first plug night per the runbook.
+llm_router_night_enabled: "{{ ai_night_brain_enabled | default(false) | bool }}"
+# Physical id the night rank serves (mlx-lm rank 0; single night model).
+llm_router_night_model: "{{ ai_night_model | default('') }}"
+# SERVING window of the night brain (apps#814 rule: never the native window).
+llm_router_night_context: "{{ ai_night_context_window | default(32768) }}"
+# Night endpoint port from the tofu ports registry (fails loud when enabled
+# without the constant; lazy Jinja keeps the disabled default render clean).
+llm_router_night_port: "{{ tofu_data.constants.service_ports.llm_night_api }}"
+llm_router_night_base_url: "https://{{ llm_router_llm_large_fqdn }}:{{ llm_router_night_port }}/v1"

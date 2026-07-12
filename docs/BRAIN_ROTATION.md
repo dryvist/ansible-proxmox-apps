@@ -125,9 +125,9 @@ drops to on-demand and idle-unloads. Auto-discovery is force-disabled fleet-wide
 explicitly.
 
 **The large phase (`Qwen3-Next-80B-A3B-Thinking-4bit`) does NOT fit the swap
-tier alongside both residents** — the original estimate here (58.6 GB residents
-+ ~42 GB weights + 4 GB cache ≈ 104.6 GB, under the ~109 GB trip) budgeted only
-weights + configured cache. The first live large phase (2026-07-09 00:00 UTC)
+tier alongside both residents** — the original estimate here (58.6 GB
+residents + ~42 GB weights + 4 GB cache ≈ 104.6 GB, under the ~109 GB trip)
+budgeted only weights + configured cache. The first live large phase (2026-07-09 00:00 UTC)
 measured Next-80B's real per-process peak at **51.5 GB** (scheduler
 `[Metal memory] ... peak=51.5GB` — activations and paged-cache overshoot on top
 of ~46 GB), putting the composition at ~109.5 GB ≥ the trip: all three backends
@@ -253,3 +253,26 @@ health-checks those orphans "ready" while unable to manage them. Always
 3. **Per-guest rotation (3 routers, 3 timers) vs a single owner?** This design
    rotates per router guest (idempotent, resilient, no elected owner). All three
    bounce `litellm` within `AccuracySec` at the mark.
+
+## Night cluster (large phase only)
+
+With `ai_night_brain_enabled: true` (group_vars), the LARGE phase config gains
+a second shape (docs on the serving side: nix-darwin `docs/NIGHT_CLUSTER.md`):
+
+- `ai-default` becomes a deployment on the serving host's **night-cluster
+  endpoint** — the two-Mac pipeline-parallel brain the Thunderbolt cable
+  creates — gated on its own port by the same bearer token.
+- The solo large brain (the phase model, today Qwen3-Next-80B) moves to
+  **`ai-default-solo`**, and `router_settings.fallbacks` chains
+  `ai-default → ai-default-solo`.
+- Presence detection needs no plumbing: cluster absent or unhealthy means the
+  night attempt fails fast, the request falls back to the solo brain, and
+  `allowed_fails` + `cooldown_time` drain traffic there — byte-identical
+  behavior to today's large phase.
+- The optimized phase never changes. Timers, stagger, and the actuator are
+  untouched.
+
+Inputs (all group_vars; defaults render the flag off and the block inert):
+`ai_night_brain_enabled`, `ai_night_model` (physical id the night rank
+serves), `ai_night_context_window` (SERVING window, same rule as every other
+entry), plus the `llm_night_api` port constant in the tofu ports registry.
