@@ -104,3 +104,47 @@
   loop: "{{ hermes_agent_curriculum.jobs }}"
   loop_control:
     label: "{{ item.id }}"
+
+# H-17 tool-policy contracts. Negative regression checks: these confirm the
+# safety net actually excludes what it exists to exclude, so a future edit
+# that quietly re-adds a persistence or injection surface fails the play
+# before the config deploys.
+- name: Assert the runner-enforced tool policy excludes what it must exclude
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      # Both job-class allowlists must be real (non-empty) lists — an empty
+      # allowlist silently falls back to upstream's platform default, which
+      # is the opposite of a policy.
+      - hermes_agent_api_server_toolsets | length > 0
+      - hermes_agent_cron_toolsets | length > 0
+      # An API-submitted (untrusted-input) run must never be able to schedule
+      # persistent jobs, drive a browser, delegate sub-agents, or block on a
+      # clarifying question. Cron gets the same envelope.
+      - >-
+        ['cronjob', 'browser', 'delegation', 'clarify']
+        | intersect(hermes_agent_api_server_toolsets) | length == 0
+      - >-
+        ['cronjob', 'browser', 'delegation', 'clarify']
+        | intersect(hermes_agent_cron_toolsets) | length == 0
+      # A toolset cannot be both globally denied and platform-allowlisted:
+      # upstream resolves that contradiction by silently dropping the tool,
+      # which reads as a mysterious "Unknown tool" at run time. Catch it here.
+      - >-
+        hermes_agent_disabled_toolsets
+        | intersect(hermes_agent_api_server_toolsets) | length == 0
+      - >-
+        hermes_agent_disabled_toolsets
+        | intersect(hermes_agent_cron_toolsets) | length == 0
+    fail_msg: >-
+      Hermes tool-policy contract violated (roles/hermes_agent/tasks/assert.yml).
+      The api_server/cron allowlists must be non-empty, must not contain any of
+      cronjob/browser/delegation/clarify, and must be disjoint from
+      hermes_agent_disabled_toolsets (api_server:
+      {{ hermes_agent_api_server_toolsets }}; cron: {{ hermes_agent_cron_toolsets }};
+      denied: {{ hermes_agent_disabled_toolsets }}). Fix the lists in
+      roles/hermes_agent/defaults/main.yml.
+    success_msg: >-
+      Hermes tool-policy contracts hold ({{ hermes_agent_api_server_toolsets | length }}
+      api_server toolsets, {{ hermes_agent_cron_toolsets | length }} cron toolsets,
+      {{ hermes_agent_disabled_toolsets | length }} globally denied).

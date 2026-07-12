@@ -272,6 +272,27 @@ every `prompt_file` present in the role, and a non-empty `success_checks`
 list per job. Job ids follow clustered/normal naming (the original
 `night-orient` draft id shipped here as `orient`).
 
+## Runner-enforced tool policy (per job class)
+
+A submitted `input` — and everything a job retrieves while running — is
+untrusted text that can carry prompt injection. The **runner's toolset
+resolution**, not the prompt, decides what each job class may load; injected
+instructions cannot widen a toolset list the runner never registered. Policy
+is plain data in `defaults/main.yml`:
+
+| Layer | Rendered as | Scope |
+| --- | --- | --- |
+| `hermes_agent_disabled_toolsets` | `agent.disabled_toolsets` | Global deny floor; no allowlist can widen past it |
+| `hermes_agent_api_server_toolsets` | `platform_toolsets.api_server` | API-submitted runs (untrusted input) |
+| `hermes_agent_cron_toolsets` | `platform_toolsets.cron` | The scheduled fleet (upstream also hard-blocks cronjob/messaging/clarify in cron) |
+
+The allowlists deliberately exclude `cronjob` (no injected persistence),
+`browser`, `delegation`, and `clarify`; Layer-1 asserts fail the converge if
+any of those creep back in or a denied toolset is simultaneously allowlisted.
+Enabled MCP servers (splunk/context7/codex) layer onto the allowlists by
+upstream's platform-tools semantics. The interactive Slack surface keeps the
+upstream default (operator-driven, allowed-users gate) minus the deny floor.
+
 ## Brain-health watchdog (no cron-failure spam)
 
 The cron fleet above talks to a **single-deployment brain** (`ai-default`, served
