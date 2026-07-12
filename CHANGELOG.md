@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.106.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.105.0...v1.106.0) (2026-07-12)
+
+
+### Features
+
+* add zammad ITSM role (incident-management system of record) ([#852](https://github.com/dryvist/ansible-proxmox-apps/issues/852)) ([0b3a173](https://github.com/dryvist/ansible-proxmox-apps/commit/0b3a173b3099a70baa9e2c2629a5b8f7ab69896a))
+* **agentgateway_docker:** front LangGraph A2A endpoint through the gateway ([#856](https://github.com/dryvist/ansible-proxmox-apps/issues/856)) ([ef04227](https://github.com/dryvist/ansible-proxmox-apps/commit/ef04227af45335ae43c1e94ab10f2d5704e8aa8b))
+* **hermes_agent:** enable inbound job-submission API (api_server platform) ([#861](https://github.com/dryvist/ansible-proxmox-apps/issues/861)) ([257702b](https://github.com/dryvist/ansible-proxmox-apps/commit/257702b719add7258ef7d67772c74119367bed31))
+* **hermes_agent:** enable inbound webhook receiver (event-driven trigger) ([#860](https://github.com/dryvist/ansible-proxmox-apps/issues/860)) ([1c99947](https://github.com/dryvist/ansible-proxmox-apps/commit/1c999479edebc3f35c7caf01692bec4f59edbb9e))
+* **hermes_agent:** manage SOUL.md with the shared behavioral base + Hermes variant ([a59d8da](https://github.com/dryvist/ansible-proxmox-apps/commit/a59d8da8e24f0791644c1acc4885aca64d1a95cc))
+* **hermes_agent:** manage SOUL.md with the shared behavioral base + Hermes variant ([4e837e2](https://github.com/dryvist/ansible-proxmox-apps/commit/4e837e2d30e7209822b394c863a2b6f22dd50da9))
+* **hermes_agent:** pre-staged maintenance window (zero-alert planned outages) ([#862](https://github.com/dryvist/ansible-proxmox-apps/issues/862)) ([89d97b4](https://github.com/dryvist/ansible-proxmox-apps/commit/89d97b408c40615d2824cff92ee81dd574f450c1))
+* **hermes_agent:** watchdog to pause cron fleet + alert once on brain outage ([#859](https://github.com/dryvist/ansible-proxmox-apps/issues/859)) ([36bc3df](https://github.com/dryvist/ansible-proxmox-apps/commit/36bc3df942958528264a70d63811fff1de24813b))
+* **hermes:** add cluster-window pause/resume playbooks ([#867](https://github.com/dryvist/ansible-proxmox-apps/issues/867)) ([1a8d9e5](https://github.com/dryvist/ansible-proxmox-apps/commit/1a8d9e5bc6c6acd419ab4a862d72bcd4bad9b2f5))
+* **hermes:** open + document incidents in Zammad from splunk-monitor ([#853](https://github.com/dryvist/ansible-proxmox-apps/issues/853)) ([c7f86d6](https://github.com/dryvist/ansible-proxmox-apps/commit/c7f86d6db5a4b315d166a588557a5d52fb5d8121))
+* **llm_router:** absorb serving-tier 429s with retry-backoff, no cooldown ([#863](https://github.com/dryvist/ansible-proxmox-apps/issues/863)) ([3f5caae](https://github.com/dryvist/ansible-proxmox-apps/commit/3f5caae396d52bd26435ebf3adf30ae7da7dfc9a))
+* **nautobot:** env-wired export bucket + optional S3 endpoint/creds ([#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)) ([ce10193](https://github.com/dryvist/ansible-proxmox-apps/commit/ce101931d5c25899edfe42fff8c55118339e115f))
+* **nautobot:** fold tofu inventory into seed + SSoT virtualization job ([#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)) ([1e0c653](https://github.com/dryvist/ansible-proxmox-apps/commit/1e0c6534053b9b83c4d124fb7f6fa99d88f05c3e))
+* **nautobot:** real device-onboarding wiring — SecretsGroup, sync schedule ([#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)) ([76822d2](https://github.com/dryvist/ansible-proxmox-apps/commit/76822d251e57d8ae18da50d63ccfaebdb9580667))
+* **nautobot:** run SSoT seed jobs (+ optional export) in the converge ([#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)) ([a93d5e7](https://github.com/dryvist/ansible-proxmox-apps/commit/a93d5e777a8e3b210538107e3fa909f9c17bbfc1))
+* **openbao:** add apps-seed AppRole for automated secret/apps/* writes ([#857](https://github.com/dryvist/ansible-proxmox-apps/issues/857)) ([ddbae3f](https://github.com/dryvist/ansible-proxmox-apps/commit/ddbae3f1568ab61a11dd577aac815bf55aa840b6))
+* **openbao:** add AWS secrets engine for dynamic tf-proxmox STS creds ([#869](https://github.com/dryvist/ansible-proxmox-apps/issues/869)) ([7ad589b](https://github.com/dryvist/ansible-proxmox-apps/commit/7ad589bd6b860409e36eb46cd6ede034c7c3ac3b))
+* **openbao:** seed vikunja MCP tokens into secret/apps/vikunja ([#849](https://github.com/dryvist/ansible-proxmox-apps/issues/849)) ([1500d0e](https://github.com/dryvist/ansible-proxmox-apps/commit/1500d0e78bce77d76e026bc6e83b3797b20ee137))
+* **postgres:** standby pull trust + dr_restore path (DB DR Standard) ([be34ede](https://github.com/dryvist/ansible-proxmox-apps/commit/be34ede8352640caab572da6e86ca1c6c5a7bc78))
+* **vikunja:** tiered service accounts for API automation ([96bf70a](https://github.com/dryvist/ansible-proxmox-apps/commit/96bf70afe06b5fb9870020a97725b9485169135c))
+
+
+### Bug Fixes
+
+* address PR [#868](https://github.com/dryvist/ansible-proxmox-apps/issues/868) review findings before develop→main promotion ([333dcea](https://github.com/dryvist/ansible-proxmox-apps/commit/333dceaa208ef9095345361969f692d835135430))
+* **addressing:** FQDN-first — eliminate IP variables from app configs ([191ec89](https://github.com/dryvist/ansible-proxmox-apps/commit/191ec89e2f8b09cedd0f31ff94ad5b01b17df45d))
+* **hermes_agent:** SOUL.md banner as HTML comment, not a markdown heading ([9492065](https://github.com/dryvist/ansible-proxmox-apps/commit/94920658aa01c9d485c43b03b40834ab9df195d8))
+* **lint:** yaml document start on the canonical markdownlint config ([ee8f999](https://github.com/dryvist/ansible-proxmox-apps/commit/ee8f99982aa30cba01c4f61db7719b3989a3b385))
+* **nautobot:** boolean when on the guest fold (ansible-core 2.19+) ([0ed6fc5](https://github.com/dryvist/ansible-proxmox-apps/commit/0ed6fc51b48af7eba156c34b72306b359bc21bc3)), closes [#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)
+* **nautobot:** drop invalid approval_required from ScheduledJob create ([2c6ee1a](https://github.com/dryvist/ansible-proxmox-apps/commit/2c6ee1abba7e4b38ba8ef15a20d66823f9fa62da)), closes [#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)
+* **nautobot:** resolve fixed-ips reservations against the live shape ([#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)) ([8999df5](https://github.com/dryvist/ansible-proxmox-apps/commit/8999df59aaabfd6b5e0764425fac6eefbdcccbd7))
+* **nautobot:** restart worker before enqueuing seed/export jobs ([#858](https://github.com/dryvist/ansible-proxmox-apps/issues/858)) ([fdf3780](https://github.com/dryvist/ansible-proxmox-apps/commit/fdf3780d7b13c7bb3b321d24304d62150e2314e0)), closes [#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)
+* **nautobot:** seed load completeness — nodes path, dryrun, worker env, S3 path-style ([#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)) ([4057b47](https://github.com/dryvist/ansible-proxmox-apps/commit/4057b47b75290151c9fabd54ffb64586ca243c6c))
+* **postgres:** install rsync — the standby pull needs it on the source ([3ee1230](https://github.com/dryvist/ansible-proxmox-apps/commit/3ee12305e098a8b6f0508b88809f3f4375b6555e)), closes [#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)
+* **postgres:** var-gate dr_restore — inherited role tag defeats never ([c46b714](https://github.com/dryvist/ansible-proxmox-apps/commit/c46b714bd45f89712ed6cefe3bed290b505244bf)), closes [#138](https://github.com/dryvist/ansible-proxmox-apps/issues/138)
+* revert incorrect regex_search fix in openbao AWS plugin checksum ([b4aa96a](https://github.com/dryvist/ansible-proxmox-apps/commit/b4aa96abb495f2687bcfcb04835f09d74c22ae20))
+
 ## [1.105.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.104.0...v1.105.0) (2026-07-10)
 
 
