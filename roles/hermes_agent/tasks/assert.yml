@@ -27,6 +27,12 @@
       #     the outermost link (nix-darwin vllm-mlx server guard, 3600s) lives
       #     out of this repo's reach and is not assertable here.
       - hermes_agent_stream_read_timeout | int < ai_router_request_timeout_seconds | int
+      # (4) Job-API concurrency cap must be a real cap. Upstream treats 0 as
+      #     "cap disabled" — on a single shared serving deployment that means
+      #     an unbounded request flood lands directly on the brain, which is
+      #     exactly what the cap exists to prevent. Negative values clamp to
+      #     0 upstream, so they are equally forbidden.
+      - hermes_agent_api_max_concurrent_runs | int >= 1
     fail_msg: >-
       Hermes Agent brain-wiring contract violated (roles/hermes_agent/tasks/assert.yml).
       (1) model.context_length is {{ hermes_agent_model_context_length }}; it must be
@@ -36,7 +42,11 @@
       per-attempt timeout is {{ ai_router_request_timeout_seconds }}; read must be < router
       so the client decides (chain: hermes read < router attempt < nix-darwin server
       guard 3600). Fix the offending value in all.yml / roles/hermes_agent/defaults.
+      (4) hermes_agent_api_max_concurrent_runs is
+      {{ hermes_agent_api_max_concurrent_runs }}; it must be >= 1 — 0 disables the
+      upstream cap entirely and exposes the single shared brain to request floods.
     success_msg: >-
       Hermes Agent brain-wiring contracts hold (context_length
       {{ hermes_agent_model_context_length }} >= 64000; read
-      {{ hermes_agent_stream_read_timeout }} < router {{ ai_router_request_timeout_seconds }}).
+      {{ hermes_agent_stream_read_timeout }} < router {{ ai_router_request_timeout_seconds }};
+      api cap {{ hermes_agent_api_max_concurrent_runs }} >= 1).

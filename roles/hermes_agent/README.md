@@ -236,6 +236,14 @@ are pre-declared event triggers, this is arbitrary job submission. The
 post-converge gate probes `/health` and asserts a keyless `POST /v1/runs`
 is refused with 401.
 
+Concurrency is capped (`hermes_agent_api_max_concurrent_runs`, rendered as
+`gateway.api_server.max_concurrent_runs`): the brain is one shared serving
+deployment the cron fleet already uses, so over-cap submissions get
+`429 + Retry-After` at the door instead of stacking prefills on the GPU.
+Upstream already provides per-run `cancelled` state and `POST
+/v1/runs/{run_id}/stop`; idempotency keys and a priority queue on `/v1/runs`
+are upstream feature gaps tracked as a build-out issue, not role config.
+
 ## Brain-health watchdog (no cron-failure spam)
 
 The cron fleet above talks to a **single-deployment brain** (`ai-default`, served
