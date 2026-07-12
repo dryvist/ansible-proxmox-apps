@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dryvist/homelab-contracts/schemas/nautobot-export-v1.json",
+  "$comment": "Vendored from homelab-contracts nautobot-export-v1 v1.0.0.",
+  "title": "dryvist homelab nautobot_export contract (v1)",
+  "description": "schema_version 1.0.0. Shape of the nautobot_export.json artifact published to the S3 artifact bucket by the Nautobot GraphQL export job (issue #138). Consumers read this artifact, never live Nautobot, so a full rebuild works with Nautobot down — the same pattern as ansible_inventory.json. Self-contained: every cross-reference resolves within this document (prefixes[].vlan -> vlans[].vid, devices[].rack -> racks[].name, interfaces[].device -> devices[].name, ip_addresses[].assigned_interface -> interfaces[].{device,name}). Breaking changes bump the major and add a versions/v<X.Y.Z>/ snapshot.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "vlans",
+    "prefixes",
+    "ip_addresses",
+    "devices",
+    "racks",
+    "interfaces"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Semantic version of this contract. Consumers fail-fast when the major differs.",
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$",
+      "examples": ["1.0.0"]
+    },
+    "vlans": {
+      "description": "Layer-2 VLANs (Nautobot VLAN objects).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/vlan" }
+    },
+    "prefixes": {
+      "description": "IP prefixes (Nautobot Prefix objects). Each may reference a VLAN by vid.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/prefix" }
+    },
+    "ip_addresses": {
+      "description": "Assigned IP addresses / reservations (Nautobot IPAddress objects). Each may bind to an interface.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/ipAddress" }
+    },
+    "devices": {
+      "description": "Physical/virtual devices (Nautobot Device objects): Proxmox nodes, iDRACs, UniFi gear, LXC/VM guests.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/device" }
+    },
+    "racks": {
+      "description": "Racks (Nautobot Rack objects), each within a site.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/rack" }
+    },
+    "interfaces": {
+      "description": "Device interfaces (Nautobot Interface objects). Each belongs to a device.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/interface" }
+    }
+  },
+  "$defs": {
+    "mac": {
+      "type": ["string", "null"],
+      "description": "IEEE 802 MAC address (colon-separated hex, either case); null when the object carries no MAC.",
+      "pattern": "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+    },
+    "ipv4": {
+      "type": "string",
+      "pattern": "^(\\d{1,3}\\.){3}\\d{1,3}$"
+    },
+    "ipv4Cidr": {
+      "type": "string",
+      "pattern": "^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"
+    },
+    "ipv4OrHostname": {
+      "type": "string",
+      "anyOf": [
+        { "pattern": "^(\\d{1,3}\\.){3}\\d{1,3}$" },
+        { "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" }
+      ]
+    },
+    "vlan": {
+      "type": "object",
+      "required": ["vid", "name", "group"],
+      "additionalProperties": false,
+      "properties": {
+        "vid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4094,
+          "description": "802.1Q VLAN ID."
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "group": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "VLAN group name; null when the VLAN is ungrouped."
+        }
+      }
+    },
+    "prefix": {
+      "type": "object",
+      "required": ["cidr", "vlan", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "cidr": { "$ref": "#/$defs/ipv4Cidr" },
+        "vlan": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 4094,
+          "description": "vid of the associated VLAN (resolves to vlans[].vid); null when unassociated."
+        },
+        "role": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Prefix role (e.g. mgmt, servers, dhcp-pool); null when unset."
+        }
+      }
+    },
+    "ipAddress": {
+      "type": "object",
+      "required": ["address", "dns_name", "mac", "assigned_interface"],
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "description": "IPv4 host address, with or without prefix length (Nautobot IPAddress.address).",
+          "type": "string",
+          "anyOf": [
+            { "$ref": "#/$defs/ipv4" },
+            { "$ref": "#/$defs/ipv4Cidr" }
+          ]
+        },
+        "dns_name": {
+          "type": ["string", "null"],
+          "description": "Forward DNS name for this address; null when unset."
+        },
+        "mac": { "$ref": "#/$defs/mac" },
+        "assigned_interface": {
+          "description": "The interface this address is bound to (resolves to interfaces[] by device+name); null when unassigned.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["device", "name"],
+              "additionalProperties": false,
+              "properties": {
+                "device": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": ["name", "role", "rack", "bmc"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Device role (e.g. proxmox_node, idrac, switch); null when unset."
+        },
+        "rack": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Rack name this device sits in (resolves to racks[].name); null when unracked."
+        },
+        "bmc": {
+          "description": "Baseboard management controller (iDRAC/IPMI) reachability; null when the device has no BMC.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["address"],
+              "additionalProperties": false,
+              "properties": {
+                "address": { "$ref": "#/$defs/ipv4OrHostname" },
+                "mac": { "$ref": "#/$defs/mac" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "rack": {
+      "type": "object",
+      "required": ["name", "site"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "site": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Site/location name the rack belongs to."
+        }
+      }
+    },
+    "interface": {
+      "type": "object",
+      "required": ["name", "device", "mac", "mgmt_only"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Owning device name (resolves to devices[].name)."
+        },
+        "mac": { "$ref": "#/$defs/mac" },
+        "mgmt_only": {
+          "type": "boolean",
+          "description": "true = management-only interface (excluded from data-plane assignment)."
+        }
+      }
+    }
+  }
+}

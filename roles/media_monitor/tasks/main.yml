@@ -1,0 +1,69 @@
+---
+# Deploy the media playback monitor (session probe + weekly codec audit) on the
+# Plex host: two scripts driven by systemd timers, alerting ntfy.
+
+- name: Install ffmpeg (ffprobe for the weekly codec audit)
+  ansible.builtin.apt:
+    name: ffmpeg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: media_monitor_manage | bool
+
+- name: Ensure the monitor state directory exists
+  ansible.builtin.file:
+    path: "{{ media_monitor_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: media_monitor_manage | bool
+
+- name: Deploy the media monitor scripts
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ media_monitor_bin_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - plex-session-probe.sh
+    - plex-codec-audit.sh
+  when: media_monitor_manage | bool
+
+- name: Deploy the media monitor systemd service units
+  ansible.builtin.template:
+    src: "{{ item }}.service.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - plex-session-probe
+    - plex-codec-audit
+  notify: Reload systemd for media monitor
+  when: media_monitor_manage | bool
+
+- name: Deploy the media monitor systemd timer units
+  ansible.builtin.template:
+    src: "{{ item }}.timer.j2"
+    dest: "/etc/systemd/system/{{ item }}.timer"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for media monitor
+  loop:
+    - plex-session-probe
+    - plex-codec-audit
+  when: media_monitor_manage | bool
+
+- name: Enable + start the media monitor timers
+  ansible.builtin.systemd:
+    name: "{{ item }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - plex-session-probe
+    - plex-codec-audit
+  when: media_monitor_manage | bool

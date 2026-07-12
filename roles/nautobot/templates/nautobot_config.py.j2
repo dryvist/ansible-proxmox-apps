@@ -1,0 +1,77 @@
+# {{ ansible_managed }}
+# Nautobot configuration (issue #138). Non-secret values are rendered here;
+# every secret (SECRET_KEY, DB password) is read from the environment supplied
+# by the systemd EnvironmentFile (nautobot.env, 0600), so no secret is written
+# into this world-readable file.
+import os
+
+from nautobot.core.settings import *  # noqa: F403 - inherit Nautobot defaults, then override below
+
+#
+# Core
+#
+ALLOWED_HOSTS = {{ nautobot_allowed_hosts | to_json }}
+
+SECRET_KEY = os.environ["NAUTOBOT_SECRET_KEY"]
+
+#
+# Database — the shared native PostgreSQL cluster (no ingress; reached by FQDN).
+#
+DATABASES = {
+    "default": {
+        "NAME": "{{ nautobot_db_name }}",
+        "USER": "{{ nautobot_db_user }}",
+        "PASSWORD": os.environ["NAUTOBOT_DB_PASSWORD"],
+        "HOST": "{{ nautobot_db_host }}",
+        "PORT": "{{ nautobot_db_port }}",
+        "CONN_MAX_AGE": 300,
+        "ENGINE": "django.db.backends.postgresql",
+    }
+}
+
+#
+# Redis — colocated, loopback only. DB 0 = celery broker, DB 1 = cache.
+#
+REDIS_HOST = "{{ nautobot_redis_host }}"
+REDIS_PORT = {{ nautobot_redis_port }}
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+    }
+}
+
+CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+
+#
+# Proxy / CSRF — Traefik terminates TLS and forwards one hop.
+#
+CSRF_TRUSTED_ORIGINS = [
+{% for host in nautobot_allowed_hosts if host not in ['localhost', '127.0.0.1'] %}
+    "https://{{ host }}",
+{% endfor %}
+]
+{% if nautobot_trust_proxy_ssl_header %}
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+{% endif %}
+
+#
+# Jobs + Apps (plugins)
+#
+JOBS_ROOT = "{{ nautobot_jobs_root }}"
+
+PLUGINS = {{ nautobot_plugins | to_json }}
+
+PLUGINS_CONFIG = {
+    "nautobot_ssot": {
+        "hide_example_jobs": True,
+    },
+    "nautobot_device_onboarding": {},
+}
+
+INSTALLATION_METRICS_ENABLED = False

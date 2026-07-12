@@ -1,0 +1,186 @@
+---
+# Native Nautobot (issue #138): a Python venv running uWSGI (web) + celery
+# worker + celery beat scheduler, with Redis colocated on loopback. Role
+# defaults carry only non-secret, molecule-safe values; group_vars supplies the
+# tofu-derived FQDNs/ports and the bao-first secrets.
+
+nautobot_root: /opt/nautobot
+nautobot_user: nautobot
+nautobot_group: nautobot
+
+# System packages: python build chain, libpq for psycopg, redis, git.
+nautobot_system_packages:
+  - python3
+  - python3-venv
+  - python3-dev
+  - python3-packaging
+  - build-essential
+  - libpq-dev
+  - redis-server
+  - git
+  - openssl
+  - sudo
+
+# Python packages installed into the venv (latest stable). The pip
+# distribution names differ from the Django app/plugin names used in PLUGINS:
+#   nautobot-ssot              -> nautobot_ssot
+#   nautobot-device-onboarding -> nautobot_device_onboarding
+nautobot_pip_packages:
+  - nautobot
+  - nautobot-ssot
+  - nautobot-device-onboarding
+  - boto3
+  - jsonschema
+nautobot_plugins:
+  - nautobot_ssot
+  - nautobot_device_onboarding
+
+# Web listener. Traefik fronts Nautobot on this port; uWSGI serves HTTP on it
+# directly (no nginx) and serves collected static files via a static-map.
+nautobot_web_port: 8080
+nautobot_web_bind: "0.0.0.0"
+# uWSGI worker/process sizing — small, a homelab single node.
+nautobot_uwsgi_processes: 3
+nautobot_uwsgi_threads: 2
+
+# Database (shared native postgres). group_vars overrides host+password.
+nautobot_db_host: "127.0.0.1"
+nautobot_db_port: 5432
+nautobot_db_name: nautobot
+nautobot_db_user: nautobot
+nautobot_db_password: ""
+
+# Redis, colocated and bound to loopback (no ingress).
+nautobot_redis_host: "127.0.0.1"
+nautobot_redis_port: 6379
+
+# Identity / CSRF. group_vars overrides with the real Traefik-fronted UI FQDN.
+nautobot_ui_fqdn: "localhost"
+nautobot_allowed_hosts:
+  - "{{ nautobot_ui_fqdn }}"
+  - localhost
+  - 127.0.0.1
+# Traefik terminates TLS and forwards one hop; trust its X-Forwarded-Proto.
+nautobot_trust_proxy_ssl_header: true
+
+# SECRET_KEY: bao-first in group_vars; when unset the role generates one once
+# and persists it to nautobot_secret_key_file (generate-if-absent), so the
+# rendered env stays stable across runs.
+nautobot_secret_key: ""
+nautobot_secret_key_file: "{{ nautobot_root }}/.secret_key"
+
+# Superuser (idempotent create-or-update). Password bao-first in group_vars.
+nautobot_superuser_name: admin
+nautobot_superuser_email: "admin@{{ nautobot_ui_fqdn }}"
+nautobot_superuser_password: ""
+
+# Jobs. The SSoT seed jobs, export job, and onboarding setup ship in
+# files/jobs and are copied into JOBS_ROOT.
+nautobot_jobs_root: "{{ nautobot_root }}/jobs"
+nautobot_seed_file: "{{ nautobot_root }}/nautobot_seed.json"
+
+# Export Job → S3 (mirrors terraform-proxmox/inventory_publish.tf: same bucket,
+# a new key; ambient creds). group_vars/env supplies the bucket.
+nautobot_export_s3_bucket: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_BUCKET') | default('', true) }}"
+nautobot_export_s3_key: "nautobot/nautobot_export.json"
+# Optional S3-compatible endpoint + credentials for the export upload (boto3
+# honors AWS_ENDPOINT_URL_S3), so the scheduled export can publish to the
+# on-prem object store with its own keys. Env-sourced; when unset these keys
+# are omitted from nautobot.env entirely and boto3 falls back to ambient AWS
+# credentials (the future long-lived-key path for the AWS state bucket).
+nautobot_export_s3_endpoint: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_ENDPOINT') | default('', true) }}"
+nautobot_export_s3_access_key: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_ACCESS_KEY') | default('', true) }}"
+nautobot_export_s3_secret_key: "{{ lookup('env', 'NAUTOBOT_EXPORT_S3_SECRET_KEY') | default('', true) }}"
+nautobot_export_schema_dir: "{{ nautobot_root }}/contracts"
+nautobot_export_schema_file: "{{ nautobot_export_schema_dir }}/nautobot-export-v1.json"
+# Export runs on a schedule via celery beat; this is the beat crontab (UTC).
+nautobot_export_schedule_hour: 6
+nautobot_export_schedule_minute: 17
+
+# Single source of truth for the Nautobot runtime environment. Rendered into the
+# root-only (0600) EnvironmentFile for the systemd units AND passed via each
+# management task's `environment:` — so no shell `. nautobot.env` ever evaluates
+# a secret value as code (#840 security review). Lives in role defaults (not
+# inventory group_vars) so it resolves under molecule too. Keep in lockstep with
+# templates/nautobot.env.j2, which renders from this dict.
+nautobot_env: >-
+  {{ nautobot_env_base
+     | combine({'AWS_ENDPOINT_URL_S3': nautobot_export_s3_endpoint}
+               if nautobot_export_s3_endpoint | length > 0 else {})
+     | combine({'AWS_ACCESS_KEY_ID': nautobot_export_s3_access_key,
+                'AWS_SECRET_ACCESS_KEY': nautobot_export_s3_secret_key}
+               if nautobot_export_s3_access_key | length > 0 else {})
+     | combine({'NAUTOBOT_ONBOARD_USERNAME': nautobot_onboard_username,
+                'NAUTOBOT_ONBOARD_PASSWORD': nautobot_onboard_password}
+               if nautobot_onboard_username | length > 0 else {}) }}
+nautobot_env_base:
+  NAUTOBOT_ROOT: "{{ nautobot_root }}"
+  NAUTOBOT_SECRET_KEY: "{{ nautobot_effective_secret_key }}"
+  NAUTOBOT_DB_PASSWORD: "{{ nautobot_db_password }}"
+  NAUTOBOT_SUPERUSER_NAME: "{{ nautobot_superuser_name }}"
+  NAUTOBOT_SUPERUSER_EMAIL: "{{ nautobot_superuser_email }}"
+  NAUTOBOT_SUPERUSER_PASSWORD: "{{ nautobot_superuser_password }}"
+  NAUTOBOT_SEED_FILE: "{{ nautobot_seed_file }}"
+  NAUTOBOT_EXPORT_S3_BUCKET: "{{ nautobot_export_s3_bucket }}"
+  NAUTOBOT_EXPORT_S3_KEY: "{{ nautobot_export_s3_key }}"
+  NAUTOBOT_EXPORT_SCHEMA: "{{ nautobot_export_schema_file }}"
+
+# Seed-bundle assembly (tasks/seed_bundle.yml). Off by default — the four
+# sources live in sibling repos the controller only has at cutover (WS-E). Paths
+# and the network definitions come from the runtime environment.
+nautobot_build_seed: false
+nautobot_seed_sops_path: "{{ lookup('env', 'TERRAFORM_PROXMOX_SOPS') | default('', true) }}"
+nautobot_seed_fixed_ips_path: "{{ lookup('env', 'TOFU_UNIFI_FIXED_IPS') | default('', true) }}"
+nautobot_seed_hosts_yml_path: "{{ lookup('env', 'ANSIBLE_PROXMOX_HOSTS') | default('', true) }}"
+# VLAN/prefix definitions (list of {vid, name, cidr}) from Doppler / terraform
+# output, supplied as a JSON string.
+nautobot_seed_networks: "{{ (lookup('env', 'NAUTOBOT_SEED_NETWORKS') | default('[]', true)) | from_json }}"
+# Rack topology is not carried by rack_servers; default to one homelab rack.
+nautobot_seed_racks:
+  - name: homelab-rack-1
+    site: homelab
+# fixed-ips.json reservation resolution is handled in seed_bundle.yml (confirmed
+# live shape: {value: {<name>: {cidr_key, host, hostname}}}, no literal IP —
+# address = cidrhost(network_cidrs[cidr_key], host)). No json_query var needed.
+#   hosts.yml groups the pve hypervisors under this key.
+nautobot_seed_hosts_group: proxmox
+
+# Gate the heavy live application layer: pip install of Nautobot + apps,
+# post_upgrade (migrate/collectstatic), superuser, service start, HTTP health.
+# Molecule sets this false to validate the deterministic config/unit/redis/jobs
+# layer without a multi-minute install + live DB; live app validation is the
+# cutover gate (issue #138 "Done when"). Same idea as keepalived_manage_services.
+nautobot_manage_app: true
+
+# Run the additive SSoT seed jobs (load nautobot_seed.json into Nautobot) once
+# during the converge — off by default, enabled at cutover after the seed bundle
+# is placed. nautobot_run_export additionally runs the export Job that same pass.
+nautobot_run_seed_jobs: false
+nautobot_run_export: false
+
+# --- Automated discovery (nautobot-device-onboarding) -----------------------
+# One shared discovery credential (env-sourced, never a literal). Folded into
+# nautobot.env only when set, then bound to Nautobot Secret objects (provider
+# `environment-variable`) inside the `device-onboarding` SecretsGroup by
+# device_onboarding_setup.py. The nautobot-device-onboarding "Sync Devices From
+# Network" job (SSOTSyncDevices) drives SSH-CLI discovery for netmiko platforms.
+#
+# SCOPE NOTE: that plugin onboards SSH-CLI *network* devices (switches/routers).
+# Proxmox VE nodes (Linux), iDRAC/BMC (IPMI/Redfish), and the UniFi controller
+# (HTTP API) are NOT netmiko platforms — full discovery of those needs their
+# native APIs and is tracked as a follow-up (see roles/nautobot/README). This
+# wiring makes the SSH-CLI path real and leaves the discovery run inert until
+# real SSH targets + a platform are configured.
+nautobot_onboard_username: "{{ lookup('env', 'NAUTOBOT_ONBOARD_USERNAME') | default('', true) }}"
+nautobot_onboard_password: "{{ lookup('env', 'NAUTOBOT_ONBOARD_PASSWORD') | default('', true) }}"
+# Run + schedule the SSOTSyncDevices discovery — off by default; the run is
+# inert unless discovery targets are supplied (empty ip list -> nothing swept).
+nautobot_run_discovery: false
+# Comma-separated target IPs/CIDRs for the SSH-CLI sweep (env-sourced; the only
+# place an IP literal is legitimate, and even then env-derived, not committed).
+nautobot_onboard_targets: "{{ lookup('env', 'NAUTOBOT_ONBOARD_TARGETS') | default('', true) }}"
+nautobot_onboard_platform: "{{ lookup('env', 'NAUTOBOT_ONBOARD_PLATFORM') | default('', true) }}"
+nautobot_onboard_location: "{{ lookup('env', 'NAUTOBOT_ONBOARD_LOCATION') | default('homelab', true) }}"
+nautobot_onboard_port: 22
+nautobot_discovery_schedule_hour: 5
+nautobot_discovery_schedule_minute: 43

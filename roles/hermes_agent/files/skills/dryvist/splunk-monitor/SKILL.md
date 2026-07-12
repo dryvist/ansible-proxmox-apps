@@ -9,7 +9,7 @@ metadata:
   hermes:
     category: research
     tags: [splunk, siem, monitoring, observability, dryvist]
-    related_skills: [research/llm-wiki, dryvist/github-issues]
+    related_skills: [research/llm-wiki, dryvist/github-issues, dryvist/zammad-incidents]
 ---
 
 # dryvist splunk-monitor
@@ -144,13 +144,25 @@ Record baselines even on quiet runs — a quiet run that refreshes "index X is n
 
 ### 2.6 Decide delivery
 
-- **Genuinely off** → deliver a **concise alert**: one concern per message, plain
-  language, and include the **bounded query** you ran and the **numbers** that make it
-  actionable. No walls of text, no raw events.
+- **Genuinely off** → this is a confirmed incident. Do BOTH, in this order:
+  1. **Record it in Zammad** (the system of record) via the `dryvist/zammad-incidents`
+     skill. **Dedupe first**: search open tickets for this problem's fingerprint. If one
+     exists, **append** your new finding as an article on that ticket; if not, **open** a
+     new ticket in the `Incidents` group at the mapped priority (P1→critical … P4→low).
+     Keep it numbers-backed — the same bounded query + figures you would put in an alert.
+  2. **Then DM the operator on Slack** — a **concise alert**, one concern per message,
+     plain language, with the **bounded query** and the **numbers**, **and the Zammad
+     ticket URL** (`$ZAMMAD_URL/#ticket/zoom/<id>`) so they can jump straight to it. Every
+     confirmed anomaly still pages Slack, exactly as before — Zammad adds the durable
+     record, it does not replace the notification. No walls of text, no raw events.
+
+  If Zammad is unreachable or its token is unset, do not drop the alert: send the Slack
+  DM anyway and note in it that the ticket could not be filed.
 - **Nothing notable** → reply with **exactly `[SILENT]`** and nothing else. The cron
   system suppresses delivery entirely when your final response contains `[SILENT]`, so
   a normal run costs the user zero notifications. Use it liberally — silence when all is
-  well is the whole point.
+  well is the whole point. (No ticket for a non-finding — Zammad is for confirmed
+  incidents only.)
 
 Do not pad an alert to seem busy, and do not stay silent about something real to avoid
 bothering the user. Signal, not noise, in both directions.

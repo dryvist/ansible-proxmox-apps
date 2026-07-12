@@ -1,0 +1,146 @@
+---
+# Verify the deterministic layer the role renders with nautobot_manage_app=false:
+# rendered config + env + uWSGI, the three systemd units, Redis bound to
+# loopback, the persisted SECRET_KEY, and the deployed SSoT/export jobs.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    nautobot_root: /opt/nautobot
+
+  tasks:
+    - name: Read the rendered nautobot_config.py
+      ansible.builtin.slurp:
+        src: "{{ nautobot_root }}/nautobot_config.py"
+      register: nautobot_config
+
+    - name: Assert the config carries the UI host, plugins, and DB host
+      ansible.builtin.assert:
+        that:
+          - "'nautobot.example.test' in config"
+          - "'nautobot_ssot' in config"
+          - "'nautobot_device_onboarding' in config"
+          - "'postgres.example.test' in config"
+          - "'NAUTOBOT_SECRET_KEY' in config"
+        fail_msg: "nautobot_config.py is missing expected content"
+      vars:
+        config: "{{ nautobot_config.content | b64decode }}"
+
+    - name: Stat the environment file
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/nautobot.env"
+      register: nautobot_env
+
+    - name: Assert the env file is present and root-only
+      ansible.builtin.assert:
+        that:
+          - nautobot_env.stat.exists
+          - nautobot_env.stat.mode == '0600'
+        fail_msg: "nautobot.env missing or not 0600"
+
+    - name: Stat the installed export schema contract
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/contracts/nautobot-export-v1.json"
+      register: nautobot_export_schema
+
+    - name: Assert the export schema contract was deployed
+      ansible.builtin.assert:
+        that:
+          - nautobot_export_schema.stat.exists
+          - nautobot_export_schema.stat.mode == '0644'
+          - nautobot_export_schema.stat.size > 0
+        fail_msg: "nautobot-export-v1 schema was not deployed"
+
+    - name: Stat the persisted SECRET_KEY
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/.secret_key"
+      register: nautobot_secret_key
+
+    - name: Assert the SECRET_KEY was generated and is root-only
+      ansible.builtin.assert:
+        that:
+          - nautobot_secret_key.stat.exists
+          - nautobot_secret_key.stat.mode == '0600'
+          - nautobot_secret_key.stat.size > 0
+        fail_msg: "SECRET_KEY was not generated/persisted at 0600"
+
+    - name: Read the uWSGI config
+      ansible.builtin.slurp:
+        src: "{{ nautobot_root }}/uwsgi.ini"
+      register: nautobot_uwsgi
+
+    - name: Assert uWSGI binds the web port and serves static
+      ansible.builtin.assert:
+        that:
+          - "'8080' in uwsgi"
+          - "'static-map' in uwsgi"
+        fail_msg: "uwsgi.ini missing http bind or static-map"
+      vars:
+        uwsgi: "{{ nautobot_uwsgi.content | b64decode }}"
+
+    - name: Stat the systemd units
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ item }}"
+      register: nautobot_units
+      loop:
+        - nautobot-server.service
+        - nautobot-worker.service
+        - nautobot-scheduler.service
+
+    - name: Assert all three units are installed
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "systemd unit {{ item.item }} not installed"
+      loop: "{{ nautobot_units.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read redis.conf
+      ansible.builtin.slurp:
+        src: /etc/redis/redis.conf
+      register: nautobot_redis_conf
+
+    - name: Assert Redis is bound to loopback
+      ansible.builtin.assert:
+        that:
+          - "'bind 127.0.0.1' in redis_conf"
+        fail_msg: "redis.conf is not bound to loopback"
+      vars:
+        redis_conf: "{{ nautobot_redis_conf.content | b64decode }}"
+
+    - name: Assert Redis is running
+      ansible.builtin.systemd:
+        name: redis-server
+      register: nautobot_redis_state
+      changed_when: false
+
+    - name: Assert redis-server is active
+      ansible.builtin.assert:
+        that:
+          - nautobot_redis_state.status.ActiveState == 'active'
+        fail_msg: "redis-server is not active"
+
+    - name: Stat the deployed SSoT/export jobs
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/jobs/{{ item }}"
+      register: nautobot_jobs
+      loop:
+        - ssot_common.py
+        - ssot_vlans_prefixes.py
+        - ssot_ip_addresses.py
+        - ssot_dcim.py
+        - ssot_nodes.py
+        - export_nautobot.py
+        - device_onboarding_setup.py
+
+    - name: Assert every job file was deployed
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "job {{ item.item }} was not deployed to JOBS_ROOT"
+      loop: "{{ nautobot_jobs.results }}"
+      loop_control:
+        label: "{{ item.item }}"

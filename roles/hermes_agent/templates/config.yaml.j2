@@ -71,20 +71,47 @@ plugins:
   enabled:
     - observability/otel
 
-{% if hermes_agent_slack_bot_token | length > 0 %}
-# Slack delivery behavior. Every scheduled (cron) run is an isolated, fresh
-# session, so its Slack post should read that way too — a NEW top-level channel
-# message, not another reply threaded under one ever-growing root. Upstream
-# defaults reply_in_thread=true, which makes cron deliveries continue in a single
-# thread; reply_in_thread=false posts them flat/top-level, and
-# cron_continuable_surface=in_channel keeps those flat posts continuable (a reply
-# in the channel still continues that run's session) without a dedicated thread.
-# These are bridged from platforms.<p> by gateway/config.py; Slack enablement
-# still comes from the SLACK_* tokens in .env, so this block only tunes behavior.
+{% set _slack_on = hermes_agent_slack_bot_token | length > 0 %}
+{% set _webhook_on = (hermes_agent_webhook_enabled | bool) and (hermes_agent_webhook_secret | length > 0) %}
+{% if _slack_on or _webhook_on %}
 platforms:
+{% if _slack_on %}
+  # Slack delivery behavior. Every scheduled (cron) run is an isolated, fresh
+  # session, so its Slack post should read that way too — a NEW top-level channel
+  # message, not another reply threaded under one ever-growing root. Upstream
+  # defaults reply_in_thread=true, which makes cron deliveries continue in a single
+  # thread; reply_in_thread=false posts them flat/top-level, and
+  # cron_continuable_surface=in_channel keeps those flat posts continuable (a reply
+  # in the channel still continues that run's session) without a dedicated thread.
+  # These are bridged from platforms.<p> by gateway/config.py; Slack enablement
+  # still comes from the SLACK_* tokens in .env, so this block only tunes behavior.
   slack:
     reply_in_thread: {{ hermes_agent_slack_reply_in_thread | to_json }}
     cron_continuable_surface: {{ hermes_agent_slack_cron_continuable_surface }}
+{% endif %}
+{% if _webhook_on %}
+  # Inbound webhook receiver (event-driven agent trigger). `enabled` + the global
+  # HMAC secret + port arrive via .env (WEBHOOK_ENABLED/SECRET/PORT), injected by
+  # gateway/config.py's env bridge — which merges those keys and preserves the
+  # `routes` declared here. Keeping the secret in .env (0600, no_log) means it
+  # never lands in this 0640 file. The `inbound` route is a zero-LLM demo of the
+  # inter-agent trigger path: a signed POST to https://hermes.<sub>/webhooks/inbound
+  # relays its rendered payload straight to Slack (deliver_only skips the agent).
+  # It inherits the global secret (no per-route secret). Real agent-triggering
+  # routes are added per concrete producer later — scaffolding a paid agent run
+  # with no producer is YAGNI.
+  webhook:
+    enabled: true
+    extra:
+      port: {{ hermes_agent_webhook_port }}
+{% if _slack_on %}
+      routes:
+        inbound:
+          deliver: slack
+          deliver_only: true
+          prompt: "Inbound webhook ping: {__raw__}"
+{% endif %}
+{% endif %}
 {% endif %}
 {% set _mcp_splunk = (hermes_agent_splunk_mcp_enabled | bool) and (hermes_agent_splunk_mcp_url | length > 0) %}
 {# Context7's hosted MCP serves unauthenticated requests (verified: keyless
@@ -106,9 +133,10 @@ mcp_servers:
       Authorization: "Bearer ${SPLUNK_MCP_TOKEN}"
 {% endif %}
 {% if _mcp_context7 %}
-  # Context7 — current, version-specific library/framework docs on demand.
+  # Context7 — current, version-specific library/framework docs on demand,
+  # via the shared agentgateway MCP plane (see defaults).
   context7:
-    url: "https://mcp.context7.com/mcp"
+    url: "{{ hermes_agent_context7_mcp_url }}"
 {% if hermes_agent_context7_api_key | length > 0 %}
     headers:
       CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}"

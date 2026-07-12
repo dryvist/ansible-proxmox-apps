@@ -1,0 +1,36 @@
+---
+# media_remux role defaults — the Apple-TV Direct-Play audio guard, deployed on
+# the Sonarr/Radarr hosts. This role only puts the tool + script on disk
+# (ffmpeg + a universal remux script the *arr "Custom Script" Connect calls on
+# import/upgrade). The API-side registration of that Connect lives in the
+# servarr_wiring role (notifications.yml). One script serves both apps: it reads
+# whichever of the sonarr_*/radarr_* env vars the caller set.
+
+media_remux_manage: true
+
+# Where the script lives on the *arr host. servarr_wiring registers this exact
+# path as the CustomScript `path` field — keep the two in sync via the matching
+# servarr_wiring_remux_script_path default.
+media_remux_dir: /opt/appletv-remux
+media_remux_script: "{{ media_remux_dir }}/appletv-remux.sh"
+media_remux_log: /var/log/appletv-remux.log
+
+# Service user the *arr process (and therefore the script) runs as — must match
+# the sonarr/radarr role user so the log + library files are writable.
+media_remux_user: media
+media_remux_group: media
+
+# AC3 target bitrate (640k = the Dolby-recommended 5.1 ceiling).
+media_remux_bitrate: 640k
+
+# Codecs an Apple-TV AVR passes through reliably → left untouched. Everything
+# else (eac3, dts, truehd, flac, …) is remuxed to AC3. EAC3 is treated as
+# non-compatible on purpose: the first Apple-TV's EAC3 (Dolby Digital Plus)
+# passthrough handshake is the original fault this guard exists to prevent.
+media_remux_compatible_codecs_re: '^(ac3|aac)$'
+
+# ntfy alert target on remux failure — FQDN-first: the Traefik-fronted
+# service name (mirrors the sonarr role's derivation).
+media_remux_ntfy_topic: media
+media_remux_ntfy_url: >-
+  https://ntfy.{{ tofu_data.domain }}/{{ media_remux_ntfy_topic }}

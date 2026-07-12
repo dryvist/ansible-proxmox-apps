@@ -1,0 +1,382 @@
+---
+# Native Nautobot (issue #138). Two layers:
+#   * always: system deps, user/dirs, Redis, SECRET_KEY, config + env + uWSGI +
+#     jobs + systemd units. Deterministic, molecule-tested.
+#   * nautobot_manage_app (default true): venv + pip install of Nautobot and
+#     apps, migrate/collectstatic, superuser, service start, export schedule,
+#     HTTP health. Skipped by molecule; validated live at cutover.
+
+# =============================================================================
+# Phase 1: System packages + user + directories
+# =============================================================================
+- name: Install Nautobot system packages
+  ansible.builtin.apt:
+    name: "{{ nautobot_system_packages }}"
+    state: present
+    update_cache: true
+
+- name: Create the nautobot system group
+  ansible.builtin.group:
+    name: "{{ nautobot_group }}"
+    system: true
+
+- name: Create the nautobot system user
+  ansible.builtin.user:
+    name: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ nautobot_root }}"
+    create_home: true
+
+- name: Create Nautobot directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0755"
+  loop:
+    - "{{ nautobot_root }}"
+    - "{{ nautobot_jobs_root }}"
+    - "{{ nautobot_export_schema_dir }}"
+    - "{{ nautobot_root }}/static"
+
+# =============================================================================
+# Phase 2: Redis — colocated, loopback only
+# =============================================================================
+- name: Bind Redis to loopback only
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^bind "
+    line: "bind {{ nautobot_redis_host }} -::1"
+    state: present
+  notify: Restart redis
+
+- name: Enforce Redis protected-mode
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^protected-mode "
+    line: "protected-mode yes"
+    state: present
+  notify: Restart redis
+
+- name: Create Redis systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/redis-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Redis unprivileged-LXC systemd override
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/redis-server.service.d/lxc-override.conf
+    content: |
+      # Managed by Ansible (nautobot role).
+      # Debian's Redis unit enables PrivateUsers, which requires user namespace
+      # setup that unprivileged Proxmox LXCs deny.
+      [Service]
+      PrivateUsers=no
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd daemon
+    - Restart redis
+
+- name: Apply Redis systemd override before starting Redis
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Redis
+  ansible.builtin.systemd:
+    name: redis-server
+    state: started
+    enabled: true
+
+# =============================================================================
+# Phase 3: SECRET_KEY — bao-first, else generate-once and persist
+# =============================================================================
+- name: Decide whether a SECRET_KEY was supplied (bao/env)
+  ansible.builtin.set_fact:
+    nautobot_secret_key_supplied: "{{ (nautobot_secret_key | default('', true) | length) > 0 }}"
+
+- name: Persist the supplied SECRET_KEY
+  ansible.builtin.copy:
+    content: "{{ nautobot_secret_key }}"
+    dest: "{{ nautobot_secret_key_file }}"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0600"
+  no_log: true
+  when: nautobot_secret_key_supplied
+
+- name: Stat the persisted SECRET_KEY
+  ansible.builtin.stat:
+    path: "{{ nautobot_secret_key_file }}"
+  register: nautobot_secret_key_stat
+
+- name: Generate a SECRET_KEY once when none supplied and none persisted
+  ansible.builtin.copy:
+    content: "{{ lookup('community.general.random_string', length=64, special=false) }}"
+    dest: "{{ nautobot_secret_key_file }}"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0600"
+  no_log: true
+  when:
+    - not nautobot_secret_key_supplied
+    - not nautobot_secret_key_stat.stat.exists
+
+- name: Read the effective SECRET_KEY
+  ansible.builtin.slurp:
+    src: "{{ nautobot_secret_key_file }}"
+  register: nautobot_secret_key_slurp
+  no_log: true
+
+- name: Publish the effective SECRET_KEY fact
+  ansible.builtin.set_fact:
+    nautobot_effective_secret_key: "{{ nautobot_secret_key_slurp.content | b64decode | trim }}"
+  no_log: true
+
+# =============================================================================
+# Phase 4: Python venv + Nautobot install (heavy — gated)
+# =============================================================================
+- name: Create the Nautobot virtualenv
+  ansible.builtin.command:
+    cmd: "python3 -m venv {{ nautobot_root }}"
+    creates: "{{ nautobot_root }}/bin/python"
+  become: true
+  become_user: "{{ nautobot_user }}"
+
+- name: Install/upgrade pip tooling in the venv
+  ansible.builtin.pip:
+    name:
+      - pip
+      - wheel
+    state: latest  # noqa package-latest - pip/wheel bootstrap, not app pinning
+    virtualenv: "{{ nautobot_root }}"
+  become: true
+  become_user: "{{ nautobot_user }}"
+  when: nautobot_manage_app | bool
+
+- name: Install Nautobot and apps into the venv
+  ansible.builtin.pip:
+    name: "{{ nautobot_pip_packages }}"
+    state: present
+    virtualenv: "{{ nautobot_root }}"
+  become: true
+  become_user: "{{ nautobot_user }}"
+  when: nautobot_manage_app | bool
+
+- name: Pin the app packages in local_requirements for future upgrades
+  ansible.builtin.copy:
+    content: "{{ nautobot_pip_packages | join('\n') }}\n"
+    dest: "{{ nautobot_root }}/local_requirements.txt"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+
+# =============================================================================
+# Phase 5: Configuration, environment, uWSGI, jobs (always)
+# =============================================================================
+- name: Render nautobot_config.py
+  ansible.builtin.template:
+    src: nautobot_config.py.j2
+    dest: "{{ nautobot_root }}/nautobot_config.py"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+  notify: Restart nautobot services
+
+- name: Render the root-only environment file
+  ansible.builtin.template:
+    src: nautobot.env.j2
+    dest: "{{ nautobot_root }}/nautobot.env"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart nautobot services
+
+- name: Render the uWSGI config
+  ansible.builtin.template:
+    src: uwsgi.ini.j2
+    dest: "{{ nautobot_root }}/uwsgi.ini"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+  notify: Restart nautobot services
+
+- name: Deploy the SSoT/export/onboarding jobs into JOBS_ROOT
+  ansible.builtin.copy:
+    src: jobs/
+    dest: "{{ nautobot_jobs_root }}/"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+  notify: Restart nautobot services
+
+- name: Deploy the Nautobot export schema contract
+  ansible.builtin.copy:
+    src: contracts/nautobot-export-v1.json
+    dest: "{{ nautobot_export_schema_file }}"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+  notify: Restart nautobot services
+
+# =============================================================================
+# Phase 6: systemd units (always deployed; started only when managing the app)
+# =============================================================================
+- name: Deploy the Nautobot systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - nautobot-server.service
+    - nautobot-worker.service
+    - nautobot-scheduler.service
+  notify:
+    - Reload systemd daemon
+    - Restart nautobot services
+
+# =============================================================================
+# Phase 6b: Seed-bundle assembly (cutover-gated)
+# =============================================================================
+- name: Assemble and place the seed bundle
+  ansible.builtin.include_tasks: seed_bundle.yml
+  when: nautobot_build_seed | bool
+
+# =============================================================================
+# Phase 7: Live application bring-up (gated)
+# =============================================================================
+- name: Bring up the Nautobot application
+  when: nautobot_manage_app | bool
+  become: true
+  block:
+    - name: Apply database migrations
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server migrate"
+      environment: "{{ nautobot_env }}"
+      register: nautobot_migrate
+      changed_when: "'No migrations to apply' not in nautobot_migrate.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+
+    - name: Collect static files
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server collectstatic --no-input"
+      environment: "{{ nautobot_env }}"
+      register: nautobot_collectstatic
+      changed_when: "'0 static files copied' not in nautobot_collectstatic.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+
+    - name: Ensure the Nautobot superuser exists
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+        stdin: "{{ lookup('ansible.builtin.file', 'superuser_bootstrap.py') }}"
+      environment: "{{ nautobot_env }}"
+      register: nautobot_superuser
+      changed_when: "'SUPERUSER_CHANGED' in nautobot_superuser.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+      no_log: true
+
+    - name: Apply pending systemd reload before starting services
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the Nautobot services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - nautobot-server
+        - nautobot-worker
+        - nautobot-scheduler
+
+    - name: Schedule the export Job via celery beat
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+        stdin: "{{ lookup('ansible.builtin.file', 'schedule_export.py') }}"
+      environment: >-
+        {{ nautobot_env | combine({
+             'NAUTOBOT_EXPORT_SCHEDULE_HOUR': nautobot_export_schedule_hour | string,
+             'NAUTOBOT_EXPORT_SCHEDULE_MINUTE': nautobot_export_schedule_minute | string}) }}
+      register: nautobot_schedule
+      changed_when: "'SCHEDULE_CREATED' in nautobot_schedule.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+
+    # Schedule the SSH-CLI discovery sweep (SSOTSyncDevices). Inert unless
+    # NAUTOBOT_ONBOARD_TARGETS is set — see the scope note in defaults/main.yml.
+    - name: Schedule the device-discovery Job via celery beat
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+        stdin: "{{ lookup('ansible.builtin.file', 'schedule_discovery.py') }}"
+      environment: >-
+        {{ nautobot_env | combine({
+             'NAUTOBOT_ONBOARD_TARGETS': nautobot_onboard_targets,
+             'NAUTOBOT_ONBOARD_PLATFORM': nautobot_onboard_platform,
+             'NAUTOBOT_ONBOARD_LOCATION': nautobot_onboard_location,
+             'NAUTOBOT_ONBOARD_PORT': nautobot_onboard_port | string,
+             'NAUTOBOT_DISCOVERY_SCHEDULE_HOUR': nautobot_discovery_schedule_hour | string,
+             'NAUTOBOT_DISCOVERY_SCHEDULE_MINUTE': nautobot_discovery_schedule_minute | string}) }}
+      register: nautobot_discovery_schedule
+      changed_when: "'DISCOVERY_SCHEDULED' in nautobot_discovery_schedule.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+
+    - name: Wait for the Nautobot web UI to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ nautobot_web_port }}/"
+        status_code: [200, 302]
+        follow_redirects: none
+      register: nautobot_health
+      until: nautobot_health.status in [200, 302]
+      retries: 20
+      delay: 6
+      changed_when: false
+
+    # The seed jobs enqueue to the worker, which executes them with its
+    # EnvironmentFile. Flush any pending restart handler first (covers the
+    # nautobot.env-changed case)...
+    - name: Restart nautobot services before enqueuing jobs
+      ansible.builtin.meta: flush_handlers
+
+    # ...then restart the worker UNCONDITIONALLY when a seed/export run is
+    # requested. flush_handlers only fires if a task notified the handler this
+    # converge; when nautobot.env is unchanged the worker keeps its start-time
+    # env, so the export would enqueue onto a stale worker and fail
+    # "NAUTOBOT_EXPORT_S3_BUCKET is not set". An explicit restart guarantees the
+    # worker carries the current env before any job is enqueued. Gated on the
+    # run flag so ordinary converges are untouched.
+    - name: Ensure the worker carries the current env before enqueuing jobs
+      ansible.builtin.systemd:
+        name: nautobot-worker
+        state: restarted
+      when: nautobot_run_seed_jobs | bool
+
+    # Load the seed bundle into Nautobot by running the additive SSoT DiffSync
+    # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. Off by
+    # default — enable at cutover with -e nautobot_run_seed_jobs=true after the
+    # seed bundle is placed (nautobot_build_seed=true). The jobs are additive
+    # (create/update only), so re-running is safe and idempotent. The worker
+    # executes them with the units' EnvironmentFile, so it already holds the
+    # seed-file path + export S3 credentials.
+    - name: Run the SSoT seed jobs (and optional export) once
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+        stdin: "{{ lookup('ansible.builtin.file', 'run_seed_jobs.py') }}"
+      environment: >-
+        {{ nautobot_env | combine({'NAUTOBOT_RUN_EXPORT': nautobot_run_export | string}) }}
+      register: nautobot_run_seed
+      changed_when: "'JOB_DONE' in nautobot_run_seed.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+      when: nautobot_run_seed_jobs | bool

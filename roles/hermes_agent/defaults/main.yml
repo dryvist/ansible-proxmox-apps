@@ -144,6 +144,46 @@ hermes_agent_daily_status_cron_prompt: >-
   Summarize the homelab AI fabric status, including router health, Hermes
   gateway health, DNS readiness, and any merge-ready PRs. Keep it concise.
 
+# --- Inbound webhook receiver (event-driven agent trigger) ------------------
+# The `hermes gateway` webhook platform: an HTTP receiver (/webhooks/<name>,
+# HMAC-signed) so any homelab agent/system can trigger Hermes without speaking
+# A2A. Traefik fronts it as https://hermes.<sub>/webhooks/<name>; the guest
+# firewall opens the port from internal only (modules/firewall in terraform-proxmox).
+# The adapter binds 0.0.0.0 by default (Traefik reaches it from another guest).
+# Port is DRY from the tofu pipeline constant — never a literal. The global HMAC
+# secret is bao-first (group_vars) and injected via .env (WEBHOOK_SECRET), never
+# config.yaml; the platform only renders when a secret is present (a route with
+# no secret and no global secret fails the adapter at startup, by design).
+hermes_agent_webhook_enabled: true
+hermes_agent_webhook_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hermes_webhook']
+     | mandatory('tofu_data.constants.service_ports.hermes_webhook missing — regenerate tofu_inventory.json') }}
+
+# --- Persona: the shared behavioral base (SOUL.md) ----------------------------
+# Deploy templates/SOUL.md.j2 (shared autonomous base prompt + Hermes variant,
+# vendored from ai-assistant-instructions agentsmd/prompts/autonomous-base.md)
+# over the upstream-default persona. Upstream reloads SOUL.md per message.
+# Flip false to hand the file back to manual/agent ownership.
+hermes_agent_soul_managed: true
+
+# --- Inbound job-submission API (`api_server` platform) ----------------------
+# The `hermes gateway` api_server platform: a bearer-authenticated HTTP API
+# (POST /v1/runs enqueues an agent run -> 202 + run_id; /api/jobs is cron CRUD;
+# GET /health). The SANCTIONED non-exec path to submit work to the agent — the
+# webhook above is event-trigger-only (pre-declared routes, no job submission).
+# Traefik fronts it as https://hermes-api.<sub>; the guest firewall opens the
+# port from internal only (modules/firewall in terraform-proxmox). Enablement is
+# key-presence (empty key = platform off, port closed) — the same contract as
+# the Slack tokens; upstream also refuses to start the platform without a key.
+# Key is bao-first (group_vars); port DRY from the tofu constant. Upstream
+# defaults to a loopback bind, so the non-loopback host below only takes effect
+# when the key-gated platform renders at all.
+hermes_agent_api_server_key: "{{ lookup('env', 'HERMES_API_SERVER_KEY') | default('', true) }}"
+hermes_agent_api_server_host: "0.0.0.0"
+hermes_agent_api_server_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hermes_api']
+     | mandatory('tofu_data.constants.service_ports.hermes_api missing — regenerate tofu_inventory.json') }}
+
 # --- Memory: best self-hostable as of June 2026 (Agy-validated) ---
 # Hindsight: local knowledge-graph + multi-strategy retrieval. Runs alongside the
 # always-on built-in MEMORY.md/USER.md. The whole HERMES_HOME is the durable surface.
@@ -209,6 +249,13 @@ hermes_agent_github_issues_pat: ""
 hermes_agent_splunk_mcp_enabled: true
 hermes_agent_splunk_mcp_url: ""
 hermes_agent_splunk_mcp_token: ""
+
+# Zammad ITSM client (dryvist/zammad-incidents skill — the incident-management
+# system of record). Bao-first, env fallback (see group_vars). An empty URL or
+# token means the skill simply has nothing to call until Zammad is deployed and
+# its API token is seeded; the agent still starts cleanly.
+hermes_agent_zammad_url: ""
+hermes_agent_zammad_api_token: ""
 
 # --- Splunk monitor: 24/7 self-directed SIEM analyst -----------------------
 # Seeds a small fleet of Hermes cron jobs, each carrying the dryvist/splunk-monitor
@@ -321,10 +368,16 @@ hermes_agent_seeded_cron_names: >-
      + (hermes_agent_splunk_cron_jobs | map(attribute='name') | list) }}
 
 # --- Context7 MCP client (current library/framework docs on demand) ---
-# Registers Context7's hosted HTTP MCP server so Hermes can pull up-to-date,
-# version-specific docs mid-task. Bao-first, env fallback (see group_vars); the
-# entry is omitted until the API key is set.
+# Registers Context7 so Hermes can pull up-to-date, version-specific docs
+# mid-task. Bao-first, env fallback (see group_vars); the entry is omitted
+# until the API key is set. Dialed through the shared agentgateway MCP plane
+# (one governed front door per target; the gateway federates outbound HTTPS
+# to Context7) — set the URL back to https://mcp.context7.com/mcp to bypass
+# the gateway.
 hermes_agent_context7_mcp_enabled: true
+hermes_agent_context7_mcp_url: >-
+  https://mcp.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | mandatory('PROXMOX_SUBDOMAIN required (Doppler)') }}/context7/mcp
 hermes_agent_context7_api_key: ""
 
 # --- Escalation (Codex via MCP) ---
@@ -374,3 +427,33 @@ hermes_agent_verify_fatal_log_patterns:
 hermes_agent_verify_probe_timeout: 300
 hermes_agent_verify_probe_retries: 3
 hermes_agent_verify_probe_delay: 10
+
+# --- Brain-health watchdog: stop cron-failure spam during brain outages -------
+# ai-default is a single-deployment brain (llm_router role) with no viable
+# fallback, and upstream Hermes ALWAYS delivers a cron failure ("Failed jobs
+# always deliver regardless of the [SILENT] marker"). So a brain outage makes the
+# stateless seeded fleet fail-and-DM the operator twice an hour per job, while
+# nothing pages that the brain is even down (service_deadman watches DNS/Traefik/
+# HAProxy/OpenBao, not the LLM fabric). This watchdog closes both gaps: a systemd
+# timer probes the brain end-to-end and, on a DEBOUNCED transition, pauses/resumes
+# the seeded cron fleet and alerts EXACTLY ONCE per edge. See templates/ +
+# tasks/main.yml and the README.
+hermes_agent_brain_watchdog_enabled: true
+hermes_agent_brain_watchdog_script_path: /usr/local/bin/hermes-brain-watchdog.sh
+# Probe cadence (systemd OnUnitActiveSec). 60s matches service_deadman.
+hermes_agent_brain_watchdog_interval: "60s"
+# Per-probe curl deadline. Comfortably covers a warm 1-token completion; a hung or
+# unreachable brain trips it and counts as one failure toward the debounce.
+hermes_agent_brain_watchdog_probe_timeout: 15
+# Hysteresis: consecutive failures before declaring DOWN (pause+alert), and
+# consecutive successes before declaring UP (resume+alert). down_after=3 over the
+# 60s cadence (~3 min) rides rotation-flip bounces and cold reloads so the
+# watchdog never becomes a new source of spam; up_after=2 damps flapping.
+hermes_agent_brain_watchdog_down_after: 3
+hermes_agent_brain_watchdog_up_after: 2
+# Urgent page target. Same topic service_deadman pages on ("same feed as other
+# homelab outages", operator decision) — the brain is now a keystone.
+# FQDN-first: the Traefik-fronted ntfy service name; DHCP/DNS own the address.
+hermes_agent_brain_watchdog_ntfy_topic: "keystone"
+hermes_agent_brain_watchdog_ntfy_url: >-
+  https://ntfy.{{ tofu_data.domain }}/{{ hermes_agent_brain_watchdog_ntfy_topic }}

@@ -24,18 +24,22 @@ healthchecks_docker_db_path: /data/hc.sqlite
 healthchecks_docker_allowed_hosts: "*"
 
 # Base URL the UI emits in ping links — must be reachable from the Mac.
-# Override per-inventory to your internal domain. Default keeps the IP form
-# so the role works on a fresh LXC before DNS is wired.
+# FQDN-first: this guest's own DNS name (`hostname` fact from load_tofu.yml,
+# suffixed with the single tofu-published domain). Bring-up order guarantees
+# the DNS record exists before this role converges (reservation -> A record
+# -> converge), so no IP form is needed.
 healthchecks_docker_site_root: >-
-  http://{{ hostvars[inventory_hostname]['container_ip'] | default('127.0.0.1') }}:{{ healthchecks_docker_http_port }}
+  http://{{ hostname }}.{{ tofu_data.domain }}:{{ healthchecks_docker_http_port }}
 healthchecks_docker_site_name: "Healthchecks (homelab)"
 
-# Email delivery. Defaults wire to Mailpit LXC (already in this repo) so
+# Email delivery. Defaults wire to the Mailpit LXC (already in this repo) so
 # alerts land in the developer Mailpit UI without extra config. Override
 # per-inventory to use a real SMTP server when you want alerts to leave
-# the LAN.
-healthchecks_docker_email_host: >-
-  {{ hostvars['mailpit']['container_ip'] | default('mailpit') }}
+# the LAN. FQDN-first, matching the zammad role's mailpit derivation. NOTE:
+# mailpit's name currently resolves to the Traefik ingress, which has no TCP
+# entrypoint for SMTP — name-based SMTP needs the ingress TCP route (#872)
+# before delivery works end-to-end.
+healthchecks_docker_email_host: "mailpit.{{ tofu_data.domain }}"
 healthchecks_docker_email_port: 1025
 healthchecks_docker_email_use_tls: false
 healthchecks_docker_email_host_user: ""

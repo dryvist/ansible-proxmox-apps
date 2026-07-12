@@ -5,15 +5,16 @@
 
 ### Features
 
+* **configarr:** prefer Apple-TV direct-play audio on Sonarr + Radarr ([#823](https://github.com/dryvist/ansible-proxmox-apps/issues/823)) ([4bb01c9](https://github.com/dryvist/ansible-proxmox-apps/commit/4bb01c9062a2f148903ddb3225a0ce7cd3ad47e4))
 * **llm_router:** night-cluster brain in the large phase with solo fallback ([bae171e](https://github.com/dryvist/ansible-proxmox-apps/commit/bae171e1d6a3796b8838f93cd584b1e2e267c578))
 * **llm_router:** night-cluster brain in the large phase with solo fallback ([1724702](https://github.com/dryvist/ansible-proxmox-apps/commit/1724702bdd9c580b5ed7f5fdfeb9c5aeeb811e50))
 
 
 ### Bug Fixes
 
+* **rotation:** stagger per-router flips + single serving-host actuator ([#824](https://github.com/dryvist/ansible-proxmox-apps/issues/824)) ([c518c5c](https://github.com/dryvist/ansible-proxmox-apps/commit/c518c5c4a77b7a4d048c976a21472feda7e9ebb2))
 * **rotation:** stagger per-router flips + single serving-host actuator ([fe9536a](https://github.com/dryvist/ansible-proxmox-apps/commit/fe9536a56a474b02b1cd5fc755e36e36269fedf2))
 * **rotation:** stagger per-router flips + single serving-host actuator ([#824](https://github.com/dryvist/ansible-proxmox-apps/issues/824)) ([cd9c3f9](https://github.com/dryvist/ansible-proxmox-apps/commit/cd9c3f9b9431720e7350964e22124f5cd4bc4a60))
-
 ## [1.104.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.103.0...v1.104.0) (2026-07-09)
 
 

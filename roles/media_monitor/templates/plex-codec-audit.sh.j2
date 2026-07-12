@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Weekly library codec audit. Scans the media library for primary-audio codecs
+# that are NOT Apple-TV direct-play friendly (anything but ac3/aac) and reports
+# the count to ntfy. Complements the import-time media_remux guard: catches
+# files that arrived out-of-band (manual copy, pre-existing library, a failed
+# remux). Read-only (ffprobe) and niced/idle-scheduled by the unit so it never
+# hurts live playback on a shared node.
+set -uo pipefail
+
+NTFY_URL="{{ media_monitor_ntfy_url }}"
+COMPAT_RE='{{ media_monitor_compatible_codecs_re }}'
+LOG="{{ media_monitor_audit_log }}"
+OK_PRIORITY="{{ media_monitor_audit_ok_priority }}"
+roots=({% for r in media_monitor_library_roots %}"{{ r }}" {% endfor %})
+
+: >"$LOG" 2>/dev/null || true
+bad=0; total=0
+for root in "${roots[@]}"; do
+  [ -d "$root" ] || continue
+  while IFS= read -r -d '' f; do
+    total=$((total + 1))
+    codec="$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$f" 2>/dev/null)"
+    if ! printf '%s' "$codec" | grep -qE "$COMPAT_RE"; then
+      bad=$((bad + 1)); printf '%s\t%s\n' "${codec:-unknown}" "$f" >>"$LOG"
+    fi
+  done < <(find "$root" -type f \( -iname '*.mkv' -o -iname '*.mp4' -o -iname '*.m4v' -o -iname '*.avi' \) -print0)
+done
+
+prio="$OK_PRIORITY"; tags="white_check_mark"
+if [ "$bad" -gt 0 ]; then prio="high"; tags="rotating_light"; fi
+
+if [ -n "$NTFY_URL" ]; then
+  curl -fsS -m 20 \
+    -H "Title: Plex codec audit — $bad/$total non-AppleTV" \
+    -H "Priority: $prio" -H "Tags: $tags" \
+    -d "{{ inventory_hostname }}: $bad of $total files have non-AppleTV audio (need remux). Detail: $LOG" \
+    "$NTFY_URL" >/dev/null 2>&1 || true
+fi

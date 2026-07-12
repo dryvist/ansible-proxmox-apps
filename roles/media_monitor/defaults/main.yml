@@ -1,0 +1,49 @@
+---
+# media_monitor — visibility for the media stack, deployed on the Plex host.
+# Two systemd timers:
+#   1. plex-session-probe: polls Plex /status/sessions and alerts ntfy when a
+#      client is forced to TRANSCODE (especially audio) instead of Direct Play —
+#      the live signature of the Apple-TV audio dropout this program set out to
+#      fix.
+#   2. plex-codec-audit: a weekly ffprobe sweep of the library flagging any
+#      primary-audio codec that is not Apple-TV direct-play friendly, catching
+#      files that slipped past the grab-time policy (#823) and the import-time
+#      remux (media_remux).
+
+media_monitor_manage: true
+
+media_monitor_plex_api_port: 32400
+# Preferences.xml holds PlexOnlineToken; the probe reads it at runtime (no baked
+# secret). Matches the plex role's plex_preferences_path.
+media_monitor_preferences_path: >-
+  /var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml
+
+# Library roots swept by the weekly codec audit (the plex role's scaffolded roots).
+media_monitor_library_roots:
+  - /data/media/movies
+  - /data/media/tv
+
+# Codecs an Apple-TV AVR passes through reliably; everything else is "needs
+# remux". Kept identical to media_remux_compatible_codecs_re so the audit and
+# the import guard agree on what counts as compatible.
+media_monitor_compatible_codecs_re: '^(ac3|aac)$'
+
+# Session probe cadence + de-dupe cooldown (a long transcode must not spam).
+media_monitor_probe_interval: "120s"
+media_monitor_alert_cooldown: 1800
+
+# Weekly audit schedule (systemd OnCalendar). Off-hours, off-minute; low-priority
+# ntfy when clean, high when files need remux.
+media_monitor_audit_oncalendar: "Sun *-*-* 04:17:00"
+media_monitor_audit_ok_priority: "low"
+
+# Working paths.
+media_monitor_bin_dir: /usr/local/bin
+media_monitor_state_dir: /var/lib/media-playback-monitor
+media_monitor_probe_state_dir: "{{ media_monitor_state_dir }}"
+media_monitor_audit_log: "{{ media_monitor_state_dir }}/codec-audit.log"
+
+# ntfy alert target — FQDN-first: the Traefik-fronted service name.
+media_monitor_ntfy_topic: media
+media_monitor_ntfy_url: >-
+  https://ntfy.{{ tofu_data.domain }}/{{ media_monitor_ntfy_topic }}

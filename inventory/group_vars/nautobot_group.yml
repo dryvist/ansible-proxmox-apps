@@ -1,0 +1,42 @@
+---
+# Nautobot IPAM/DCIM (issue #138). tofu-derived FQDNs/ports plus bao-first
+# secrets (apps domain). The heavy app layer stays enabled here; molecule
+# disables it separately.
+
+# Web port from the published constants (WS-C adds service_ports.nautobot_web,
+# 8080). Falls back to 8080 when the cache predates that key.
+nautobot_web_port: >-
+  {{ (hostvars['localhost']['tofu_data']['constants']['service_ports']['nautobot_web'])
+     | default(8080) }}
+
+# Postgres has no ingress; reach it by its guest FQDN on the data VLAN. The
+# guest DNS zone is tofu_data.domain and the hostname is fixed at `postgres`
+# by the container (a stable service identifier, not a hard-coded address).
+nautobot_db_host: "postgres.{{ hostvars['localhost']['tofu_data']['domain'] }}"
+nautobot_db_password: >-
+  {{ bao_apps_secrets.db_password
+     | default(lookup('env', 'NAUTOBOT_DB_PASSWORD'), true) }}
+
+# Public UI FQDN (Traefik-fronted): nautobot.<ingress subdomain>, matching the
+# Traefik router base domain and wildcard certificate from PROXMOX_SUBDOMAIN.
+# The guest zone stays available for east-west service discovery only.
+# `lookup('env', …)` returns "" (not undefined) when unset, and `| mandatory`
+# does NOT fire on an empty string — so `or undef()` (empty string is falsy)
+# is what actually fails the play when PROXMOX_SUBDOMAIN is missing (#840 review).
+nautobot_ui_fqdn: >-
+  nautobot.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+     or undef('PROXMOX_SUBDOMAIN is required for the Nautobot UI FQDN') }}
+
+# SECRET_KEY + superuser password bao-first (secret/apps/nautobot), env fallback.
+nautobot_secret_key: >-
+  {{ bao_apps_secrets.secret_key
+     | default(lookup('env', 'NAUTOBOT_SECRET_KEY'), true) }}
+nautobot_superuser_password: >-
+  {{ bao_apps_secrets.superuser_password
+     | default(lookup('env', 'NAUTOBOT_SUPERUSER_PASSWORD'), true) }}
+
+# Export artifact target — the same S3 state bucket the ansible inventory
+# artifact uses (terraform-proxmox-state-useast2-<account>), from the runtime
+# secret store.
+nautobot_export_s3_bucket: >-
+  {{ lookup('env', 'NAUTOBOT_EXPORT_S3_BUCKET') | default('', true) }}

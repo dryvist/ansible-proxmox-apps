@@ -25,6 +25,7 @@
     cribl_stream_group:cribl_edge:
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
+    postgres_group:nautobot_group:
     sonarr_group:radarr_group:plex_group:seerr_group:sortarr_group:download_vpn_group:immich_group
   gather_facts: false
   tags:
@@ -47,6 +48,7 @@
         bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
         bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
         bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
+        bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
       vars:
         openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
       no_log: true
@@ -509,7 +511,7 @@
 # =============================================================================
 
 - name: Deploy keystone SPOF deadman watchdog
-  hosts: technitium_dns_group:traefik_group:haproxy_group:openbao_group
+  hosts: technitium_dns_group:traefik_group:haproxy_group:openbao_group:agentgateway_group
   become: true
   gather_facts: false
   tags:
@@ -534,6 +536,33 @@
     - database
   roles:
     - role: mssql_docker
+
+# =============================================================================
+# Phase 5b: Shared PostgreSQL + Nautobot IPAM/DCIM (issue #138)
+# Postgres (the shared native DB backend) must converge before Nautobot, which
+# connects to it by FQDN on the data VLAN. Both read their secrets from the
+# openbao_secrets pre-play (apps domain) with an env fallback. gather_facts is
+# on: the postgres role derives the PGDG apt repo from ansible_distribution_release.
+# =============================================================================
+
+- name: Configure shared PostgreSQL
+  hosts: postgres_group
+  become: true
+  gather_facts: true
+  tags:
+    - postgres
+    - database
+  roles:
+    - role: postgres
+
+- name: Configure Nautobot IPAM/DCIM
+  hosts: nautobot_group
+  become: true
+  gather_facts: true
+  tags:
+    - nautobot
+  roles:
+    - role: nautobot
 
 # =============================================================================
 # Phase 6: Qdrant Vector Database
@@ -759,6 +788,16 @@
   roles:
     - role: langfuse_docker
 
+- name: Configure agentgateway MCP/LLM/A2A data plane
+  hosts: agentgateway_group
+  become: true
+  gather_facts: true
+  tags:
+    - agentgateway_docker
+    - ai-orchestration
+  roles:
+    - role: agentgateway_docker
+
 # =============================================================================
 # Phase 8b: OpenProject Community Edition
 # Project management web app — Docker all-in-one in LXC (bundles postgres,
@@ -847,6 +886,9 @@
     - media
   roles:
     - role: sonarr
+    # Apple-TV Direct-Play audio guard: ffmpeg + the import-time AC3 remux
+    # script the servarr_wiring Custom Script Connect invokes on this host.
+    - role: media_remux
 
 - name: Configure Radarr (LAN-only movie PVR)
   hosts: radarr_group
@@ -857,6 +899,9 @@
     - media
   roles:
     - role: radarr
+    # Apple-TV Direct-Play audio guard (same script as Sonarr; reads the
+    # radarr_* env vars when Radarr's Custom Script Connect fires).
+    - role: media_remux
 
 - name: Configure Plex Media Server (LAN-only)
   hosts: plex_group
@@ -867,6 +912,9 @@
     - media
   roles:
     - role: plex
+    # Playback visibility: a session probe that alerts on forced transcode
+    # (the audio-dropout signature) + a weekly library codec audit.
+    - role: media_monitor
 
 # Seerr request UI (Docker in LXC). Registers Sonarr/Radarr/Plex via its settings
 # API — depends only on those apps being up (from the plays above), not on the
@@ -987,6 +1035,43 @@
     - ipam
   roles:
     - role: phpipam
+
+# =============================================================================
+# Phase 8g: Vikunja task management (issue #141)
+# Native single-binary install, state in the shared native Postgres cluster
+# (issue #138). Requires DNS (Phase 1a/1b, for the postgres/vikunja FQDNs) and
+# Postgres (once #831 merges) to have already converged.
+# =============================================================================
+
+- name: Configure Vikunja task management
+  hosts: vikunja_group
+  become: true
+  gather_facts: false
+  tags:
+    - vikunja
+    - projects
+    - collaboration
+  roles:
+    - role: vikunja
+
+# =============================================================================
+# Phase 8h: Zammad ITSM/ticketing + knowledge base (incident-management SoR)
+# Native packager.io DEB with a colocated Elasticsearch + Redis, state in the
+# shared native Postgres cluster (#138). Requires DNS (Phase 1a/1b) and Postgres
+# (Phase 5b) to have converged first. gather_facts is on: the role derives the
+# packager.io apt repo from ansible_distribution_major_version.
+# =============================================================================
+
+- name: Configure Zammad ITSM
+  hosts: zammad_group
+  become: true
+  gather_facts: true
+  tags:
+    - zammad
+    - itsm
+    - incident
+  roles:
+    - role: zammad
 
 # =============================================================================
 # Phase 8d: HTTPS ingress (Traefik)
