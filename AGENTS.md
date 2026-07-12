@@ -182,6 +182,14 @@ documented once at
 | `SOPS_AGE_KEY` | Age private key content for SOPS decryption in runner containers | Doppler |
 | `GITHUB_RUNNER_TOKEN` | (deprecated) Single-repo registration token (1h expiry) | SOPS |
 | `QDRANT_API_KEY` | Qdrant vector database API key | SOPS |
+| `BAO_TOKEN` | Privileged token for reconciling an initialized OpenBao cluster | operator environment |
+| `OPENBAO_AWS_ROOT_ACCESS_KEY_ID` | AWS engine bootstrap/rotation access key | tier-0 injection |
+| `OPENBAO_AWS_ROOT_SECRET_ACCESS_KEY` | AWS engine bootstrap/rotation secret key | tier-0 injection |
+| `OPENBAO_AWS_TF_PROXMOX_ROLE_ARN` | IAM role exposed by `aws/sts/tf-proxmox` | environment |
+| `OPENBAO_GITHUB_APP_ID` | Dedicated GitHub broker App ID | one-time environment |
+| `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Dedicated GitHub broker App private key | one-time environment |
+| `OPENBAO_GITHUB_DRYVIST_INSTALLATION_ID` | GitHub App installation on `dryvist` | environment |
+| `OPENBAO_GITHUB_PERSONAL_INSTALLATION_ID` | GitHub App installation on the personal account | environment |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | Doppler |
 | `IDRAC_R410_USER` | R410 iDRAC username | Doppler |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | Doppler |
