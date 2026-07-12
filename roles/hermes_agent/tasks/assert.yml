@@ -50,3 +50,56 @@
       {{ hermes_agent_model_context_length }} >= 64000; read
       {{ hermes_agent_stream_read_timeout }} < router {{ ai_router_request_timeout_seconds }};
       api cap {{ hermes_agent_api_max_concurrent_runs }} >= 1).
+
+# Curriculum manifest contracts. The manifest is the machine-readable side of
+# the graded curriculum; these checks guarantee every job the queue would
+# execute has a prompt file that exists, a unique id, and at least one
+# machine-checkable success gate — so a manifest edit can never silently ship
+# an unexecutable or ungradeable job.
+- name: Load the curriculum manifest for contract checks
+  ansible.builtin.set_fact:
+    hermes_agent_curriculum: >-
+      {{ lookup('ansible.builtin.file', role_path ~ '/files/curriculum/curriculum.yml')
+         | from_yaml }}
+
+- name: Assert every curriculum job is executable and machine-checkable
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - hermes_agent_curriculum.jobs | length > 0
+      # Unique ids — duplicate ids would make run results ungradeable.
+      - >-
+        hermes_agent_curriculum.jobs | map(attribute='id') | list | unique | length
+        == hermes_agent_curriculum.jobs | length
+      # Every job names a prompt file (existence is checked per-file below).
+      - >-
+        hermes_agent_curriculum.jobs
+        | selectattr('prompt_file', 'undefined') | list | length == 0
+      # Every job has at least one machine-checkable success gate.
+      - >-
+        hermes_agent_curriculum.jobs
+        | selectattr('success_checks', 'undefined') | list | length == 0
+      - >-
+        hermes_agent_curriculum.jobs
+        | map(attribute='success_checks') | map('length') | min > 0
+    fail_msg: >-
+      Curriculum manifest contract violated
+      (roles/hermes_agent/files/curriculum/curriculum.yml): every job needs a
+      unique id, a prompt_file, and a non-empty success_checks list. Jobs seen:
+      {{ hermes_agent_curriculum.jobs | map(attribute='id') | list }}.
+    success_msg: >-
+      Curriculum manifest contracts hold
+      ({{ hermes_agent_curriculum.jobs | length }} jobs, all with prompt files
+      and machine-checkable success gates).
+
+- name: Assert every curriculum prompt file exists in the role
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - (role_path ~ '/files/curriculum/' ~ item.prompt_file) is file
+    fail_msg: >-
+      Curriculum job '{{ item.id }}' names prompt_file '{{ item.prompt_file }}',
+      which does not exist under roles/hermes_agent/files/curriculum/.
+  loop: "{{ hermes_agent_curriculum.jobs }}"
+  loop_control:
+    label: "{{ item.id }}"
