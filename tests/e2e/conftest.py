@@ -85,7 +85,7 @@ def tofu_inventory():
         pytest.skip(
             f"OpenTofu inventory not found at {path}. "
             "Generate it with: cd ~/git/terraform-proxmox/main && "
-            "terragrunt output -json ansible_inventory > "
+            "tofu output -json ansible_inventory > "
             "~/git/ansible-proxmox-apps/main/inventory/tofu_inventory.json"
         )
     with open(path) as f:
