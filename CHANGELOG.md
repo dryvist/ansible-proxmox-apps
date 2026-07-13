@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.108.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.107.0...v1.108.0) (2026-07-13)
+
+
+### Features
+
+* **hermes_agent:** add read-only github-triage monitoring cron ([#892](https://github.com/dryvist/ansible-proxmox-apps/issues/892)) ([9730ed2](https://github.com/dryvist/ansible-proxmox-apps/commit/9730ed231dda5af655f71105f0834ce1c42dd33a))
+
+
+### Bug Fixes
+
+* **llm_router:** add repetition_penalty guardrail to 80B deep-brain aliases ([#891](https://github.com/dryvist/ansible-proxmox-apps/issues/891)) ([f5bd1d2](https://github.com/dryvist/ansible-proxmox-apps/commit/f5bd1d2b3e0dedb500a7d4d8c7cc5c1098c68a24))
+
 ## [1.107.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.106.0...v1.107.0) (2026-07-13)
 
 
