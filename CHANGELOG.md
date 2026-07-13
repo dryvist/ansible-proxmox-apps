@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.107.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.106.0...v1.107.0) (2026-07-13)
+
+
+### Features
+
+* **hermes_agent:** cap inbound job-API concurrency from the measured envelope ([#876](https://github.com/dryvist/ansible-proxmox-apps/issues/876)) ([e4bd529](https://github.com/dryvist/ansible-proxmox-apps/commit/e4bd529abb2cd8b1aa5e2d2d3b9bcf4c0b347dc0))
+* **hermes_agent:** runner-enforced per-job-class tool policy (H-17) ([#877](https://github.com/dryvist/ansible-proxmox-apps/issues/877)) ([c2252a4](https://github.com/dryvist/ansible-proxmox-apps/commit/c2252a4f90edf98809cfeeb1f926825f02a6be91))
+* **hermes_agent:** version the graded curriculum as executable job definitions (H-9) ([#878](https://github.com/dryvist/ansible-proxmox-apps/issues/878)) ([b04cbec](https://github.com/dryvist/ansible-proxmox-apps/commit/b04cbecf330d4fca9b9ec477903c5542c845e4fa))
+* **llm_router:** encode escalation rubric v1 as config data + deep-analysis tier alias ([#879](https://github.com/dryvist/ansible-proxmox-apps/issues/879)) ([d4afafb](https://github.com/dryvist/ansible-proxmox-apps/commit/d4afafb57ddc407dcad4cbe948edc840637824ae))
+* **openbao:** add independent AWS and GitHub service engines ([#882](https://github.com/dryvist/ansible-proxmox-apps/issues/882)) ([39fda3c](https://github.com/dryvist/ansible-proxmox-apps/commit/39fda3cef0a49988bbdf0e51aed3dac8e037022e))
+
+
+### Bug Fixes
+
+* **openbao:** verify rendered policy boundary ([#883](https://github.com/dryvist/ansible-proxmox-apps/issues/883)) ([10d9cef](https://github.com/dryvist/ansible-proxmox-apps/commit/10d9cef4b2952fe1c100a45828e3c2f14ca37944))
+
 ## [1.106.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.105.0...v1.106.0) (2026-07-12)
 
 
