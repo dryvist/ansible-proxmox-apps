@@ -43,6 +43,10 @@ memory:
 agent:
   max_turns: {{ hermes_agent_max_turns }}
   tool_use_enforcement: auto
+  # H-17 global deny floor: toolsets NO agent this gateway spawns may load,
+  # regardless of any per-platform or per-job allowlist (upstream layers this
+  # on top — see defaults/main.yml for the policy rationale).
+  disabled_toolsets: {{ hermes_agent_disabled_toolsets | to_json }}
 
 # Local execution backend (the LXC is the blast-radius boundary).
 terminal:
@@ -70,6 +74,30 @@ compression:
 plugins:
   enabled:
     - observability/otel
+
+{% if hermes_agent_api_server_key | length > 0 %}
+# Inbound job-submission API queue hardening. The platform itself is enabled by
+# key presence via the .env bridge (API_SERVER_* in hermes-env.j2); this caps
+# in-flight agent runs across all its agent-serving endpoints. Over-cap
+# submissions are refused up front (429 + Retry-After) instead of stacking
+# prefills on the single shared serving deployment — see defaults/main.yml
+# for the measured-envelope rationale behind the value.
+gateway:
+  api_server:
+    max_concurrent_runs: {{ hermes_agent_api_max_concurrent_runs }}
+{% endif %}
+
+# H-17 per-job-class tool policy, enforced by the runner's toolset resolution
+# (never the prompt). Each list is the NATIVE-toolset envelope for that job
+# class; enabled MCP servers are layered on by upstream's platform-tools
+# semantics. The interactive Slack platform is deliberately absent (operator-
+# driven; upstream default minus the deny floor above). Policy rationale and
+# the per-class exclusions live in defaults/main.yml.
+platform_toolsets:
+  cron: {{ hermes_agent_cron_toolsets | to_json }}
+{% if hermes_agent_api_server_key | length > 0 %}
+  api_server: {{ hermes_agent_api_server_toolsets | to_json }}
+{% endif %}
 
 {% set _slack_on = hermes_agent_slack_bot_token | length > 0 %}
 {% set _webhook_on = (hermes_agent_webhook_enabled | bool) and (hermes_agent_webhook_secret | length > 0) %}
