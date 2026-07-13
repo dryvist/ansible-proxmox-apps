@@ -239,6 +239,23 @@
       or (openbao_vikunja_current.stdout | default('{}') | from_json).data.data | default({})
          != (openbao_vikunja_desired | default({}))
 
+# --- App-secret generation (generate-if-absent) -----------------------------
+# Generate + seed each app's service credentials directly in OpenBao, replacing
+# the retired terraform-proxmox vault-secrets root. Human-gated: runs only on
+# the bootstrap host under the admin token. Each secret is created ONCE when
+# absent and never rewritten, so a live credential is never rotated (same
+# create-once contract the tofu root had via random_password + ignore_changes).
+- name: Generate + seed per-app service secrets in OpenBao (generate-if-absent)
+  ansible.builtin.include_tasks: seed_generated_app_secret.yml
+  loop: "{{ openbao_generated_app_secrets | dict2items }}"
+  loop_control:
+    loop_var: openbao_seed_item
+    label: "{{ openbao_seed_item.key }}"
+  vars:
+    openbao_seed_app: "{{ openbao_seed_item.key }}"
+    openbao_seed_fields: "{{ openbao_seed_item.value }}"
+  when: openbao_bootstrap_token is defined
+
 # --- AWS secrets engine (external plugin: register + enable, add-if-missing) -
 # Dynamic STS creds for role/tf-proxmox — replaces the laptop's static
 # aws-vault base key. The engine is NOT builtin: main.yml staged the plugin
