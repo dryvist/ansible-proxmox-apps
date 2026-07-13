@@ -58,7 +58,7 @@ syslog_ports: "{{ tofu_data.constants.syslog_ports.values() | list }}"
 To change any port or IP:
 
 1. Update `terraform-proxmox/main/locals.tf`
-2. Run `terragrunt apply` in terraform-proxmox — the apply natively publishes
+2. Run the tofu-proxmox Terrakube workspace — the apply natively publishes
    the inventory to S3 and its after-hook refreshes the local
    `inventory/tofu_inventory.json` cache. `load_tofu.yml` resolves S3-first,
    so no manual regeneration step exists.

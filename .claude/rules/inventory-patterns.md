@@ -81,7 +81,7 @@ The `load_tofu.yml` playbook resolves an inventory source
 (`TOFU_INVENTORY_PATH` → S3 artifact → local cache) and validates that
 the `constants` section is present.
 
-If validation fails, run `terragrunt apply` in terraform-proxmox — the
+If validation fails, re-run the tofu-proxmox Terrakube workspace — the
 apply publishes the inventory to S3 and refreshes the local cache via
 its after-hook. With AWS read creds, `load_tofu.yml` fetches the
 published artifact directly; no manual regeneration step exists.
