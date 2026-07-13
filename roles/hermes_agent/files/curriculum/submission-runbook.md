@@ -11,17 +11,18 @@ All endpoints by FQDN only. Set once for the session:
 ```bash
 HERMES_API="https://hermes-api.${PROXMOX_SUBDOMAIN:?set from Doppler/SOPS}"
 CURR="$(dirname "$0")"   # this directory (the versioned curriculum)
+CURL_TIMEOUTS=(--connect-timeout 15 --max-time 60)
 ```
 
 ## 0. Preflight gates (all must pass)
 
 ```bash
 # Gate 1 — DNS + unauthenticated liveness (canonical post-converge probe)
-curl -sS -o /dev/null -w '%{http_code}\n' "$HERMES_API/health"
+curl "${CURL_TIMEOUTS[@]}" -sS -o /dev/null -w '%{http_code}\n' "$HERMES_API/health"
 # expect: 200
 
 # Gate 2 — negative auth test: keyless submit must be refused
-curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$HERMES_API/v1/runs" \
+curl "${CURL_TIMEOUTS[@]}" -sS -o /dev/null -w '%{http_code}\n' -X POST "$HERMES_API/v1/runs" \
   -H 'Content-Type: application/json' -d '{"input":"noop"}'
 # expect: 401
 ```
@@ -43,7 +44,7 @@ HERMES_API_SERVER_KEY="$(bao kv get -field=HERMES_API_SERVER_KEY secret/ai/herme
 ## 2. Positive smoke test (one trivial run before the batch)
 
 ```bash
-curl -sS -X POST "$HERMES_API/v1/runs" \
+curl "${CURL_TIMEOUTS[@]}" -sS -X POST "$HERMES_API/v1/runs" \
   -H "Authorization: Bearer $HERMES_API_SERVER_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"input":"Reply with exactly: curriculum-smoke-ok. Do not use any tools."}'
@@ -61,15 +62,17 @@ Splunk crons are also firing):
 
 ```bash
 SUBLOG="$CURR/submissions.log"
-for job in orient reposweep splunk apps improve; do
+while IFS=$'\t' read -r job stagger_minutes; do
   ts=$(date -u +%FT%TZ)
   resp=$(jq -n --rawfile p "$CURR/jobs/$job.md" '{input:$p}' \
-    | curl -sS -X POST "$HERMES_API/v1/runs" \
+    | curl "${CURL_TIMEOUTS[@]}" -sS -X POST "$HERMES_API/v1/runs" \
         -H "Authorization: Bearer $HERMES_API_SERVER_KEY" \
         -H 'Content-Type: application/json' -d @-)
   echo "$ts $job $resp" | tee -a "$SUBLOG"
-  [[ "$job" != improve ]] && sleep 1200
-done
+  if (( stagger_minutes > 0 )); then
+    sleep "$((stagger_minutes * 60))"
+  fi
+done < <(yq -r '.jobs[] | [.id, .stagger_minutes] | @tsv' "$CURR/curriculum.yml")
 ```
 
 Each iteration logs a 202-style body with a `run_id`. If a submit fails, log
@@ -80,7 +83,7 @@ it and continue (no retry loops); resubmit that one job manually later.
 Runs are long (budgets 45–75 min each). Per job:
 
 ```bash
-curl -sS -H "Authorization: Bearer $HERMES_API_SERVER_KEY" \
+curl "${CURL_TIMEOUTS[@]}" -sS -H "Authorization: Bearer $HERMES_API_SERVER_KEY" \
   "$HERMES_API/v1/runs/<run_id>"          # status + final output
 # or stream live: .../v1/runs/<run_id>/events
 ```
