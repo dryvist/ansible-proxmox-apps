@@ -183,6 +183,18 @@ hermes_agent_api_server_host: "0.0.0.0"
 hermes_agent_api_server_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hermes_api']
      | mandatory('tofu_data.constants.service_ports.hermes_api missing — regenerate tofu_inventory.json') }}
+# Queue hardening: cap in-flight agent runs across ALL of the platform's
+# agent-serving endpoints (/v1/runs, /v1/chat/completions, /v1/responses).
+# Upstream reads this from config.yaml (gateway.api_server.max_concurrent_runs)
+# and refuses over-cap submissions with 429 + Retry-After — the submitter
+# retries, nothing stacks unbounded prefills on the shared brain. Upstream's
+# default (10) is sized for cloud brains; ours is a SINGLE serving deployment
+# the cron fleet already shares, and the serving tier runs one stream well
+# but does not batch (measured 2-stream aggregate ~0.71x of single-stream,
+# 2026-07-11 bench). 2 = one operator submission + one background/curriculum
+# run in flight; anything more waits at the door, not in the GPU queue.
+# 0 would disable the cap entirely — assert.yml forbids that.
+hermes_agent_api_max_concurrent_runs: 2
 
 # --- Memory: best self-hostable as of June 2026 (Agy-validated) ---
 # Hindsight: local knowledge-graph + multi-strategy retrieval. Runs alongside the
