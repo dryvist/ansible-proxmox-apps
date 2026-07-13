@@ -211,7 +211,7 @@ as both OIDC discovery URL and bound issuer. Each fleet workspace in
 `openbao_terrakube_workspaces` has its own `terrakube-<workspace>` role and
 policy. The role binds audience
 `openbao.workload.identity` and the exact subject
-`organization:dryvist:workspace:<workspace>`; a token from one workspace cannot
+`organization:<openbao_terrakube_organization>:workspace:<workspace>`; a token from one workspace cannot
 select another workspace's policy. Terrakube stores only the non-secret dynamic
 credential controls. Provider credentials remain in their native OpenBao KV or
 secrets-engine paths and are returned through a short-lived OpenBao token.
