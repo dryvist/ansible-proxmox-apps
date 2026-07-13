@@ -207,8 +207,9 @@ plans):
 ### Terrakube workload identity
 
 The role enables JWT auth at `auth/terrakube` using the internal Terrakube API
-as both OIDC discovery URL and bound issuer. Each of the nine fleet workspaces
-has its own `terrakube-<workspace>` role and policy. The role binds audience
+as both OIDC discovery URL and bound issuer. Each fleet workspace in
+`openbao_terrakube_workspaces` has its own `terrakube-<workspace>` role and
+policy. The role binds audience
 `openbao.workload.identity` and the exact subject
 `organization:dryvist:workspace:<workspace>`; a token from one workspace cannot
 select another workspace's policy. Terrakube stores only the non-secret dynamic
