@@ -274,7 +274,8 @@ prebuilt, checksum-verified release binaries. The role therefore:
 - The `terraform-apply` AppRole reads `aws/sts/tf-proxmox` to mint a session —
   see the [^aws-sts] policy footnote above.
 - The laptop side (nix-darwin `credential_process` wrapper reading
-  `terraform-apply`'s `role_id`/`secret_id` from `openbao.keychain-db`) is
+  `terraform-apply`'s `role_id`/`secret_id` secret-zero from the ambient
+  environment, injected by running terragrunt under `doppler run`) is
   documented in the nix-darwin repo, not here.
 
 ## GitHub secrets engine (ephemeral GitHub App tokens)
