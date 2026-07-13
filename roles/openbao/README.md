@@ -199,7 +199,7 @@ plans):
 | `hermes` | `secret/ai/hermes` only | — | Dedicated least-privilege reader for the Hermes agent; NO broad `secret/ai/*` |
 | `hermes-write` | `secret/ai/hermes` only | `secret/ai/hermes` only | Narrow Doppler-published writer; least-priv complement to `ai-orchestrator` |
 | `public` | `secret/public/*` | — | **Anonymous** — no secret-zero; shipped ambiently |
-| `ai-orchestrator` | `secret/ai/*` | `secret/ai/*` (create/update) | Broad AI-orchestrator WRITE; secret-zero operator-held in Doppler tier-0 |
+| `ai-orchestrator` | `secret/ai/{hermes,agents}` | `secret/ai/{hermes,agents}` (create/update) | WRITE; Doppler tier-0; narrowed + 30m TTL at Phase-3 |
 | `ai-readonly` | `secret/ai/*`, `secret/apps/*` | — | **default AI agent; NO `secret/infra/*`** |
 | `ai-elevated` | `ai-readonly` + `secret/platform/*` | — | trusted infra-touching agents; no write |
 | `snapshot` | `sys/storage/raft/snapshot` | — | least-priv backup identity |
