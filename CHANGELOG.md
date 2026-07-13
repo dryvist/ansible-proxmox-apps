@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.109.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.108.0...v1.109.0) (2026-07-13)
+
+
+### Features
+
+* consume Terrakube inventory and provision OpenBao identities ([#895](https://github.com/dryvist/ansible-proxmox-apps/issues/895)) ([8f3528f](https://github.com/dryvist/ansible-proxmox-apps/commit/8f3528f4e2a994b45eb8c0cc2b9d68aca8cb7a8d))
+* **openbao:** AWS secrets engine for dynamic tf-proxmox STS creds ([#908](https://github.com/dryvist/ansible-proxmox-apps/issues/908)) ([9b09e11](https://github.com/dryvist/ansible-proxmox-apps/commit/9b09e11a678abf7e9779728ba8804938f4e5e11b))
+
+
+### Bug Fixes
+
+* **llm_router:** point ai-default at 80B while OptiQ engine bug is open ([#913](https://github.com/dryvist/ansible-proxmox-apps/issues/913)) ([09c7fff](https://github.com/dryvist/ansible-proxmox-apps/commit/09c7fff87df6dfe048c9036497c103ba8ced20b3))
+
 ## [1.108.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.107.0...v1.108.0) (2026-07-13)
 
 
