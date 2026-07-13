@@ -31,12 +31,14 @@ The inventory loader (`inventory/load_tofu.yml`) resolves the artifact at run
 time, in priority order (first that resolves wins):
 
 1. `TOFU_INVENTORY_PATH` — an explicit local file (pin / override, e.g. tests).
-2. **Published S3 artifact** — the raw inventory JSON fetched natively from S3
-   (`amazon.aws.aws_caller_info` + `amazon.aws.s3_object`; boto3 comes from the
-   dev shell — no checkout, no provisioning toolchain, no `aws` CLI). Point at it
-   with `TOFU_INVENTORY_S3_URI` (else the URI is derived from the active AWS
-   account); set the region with `TOFU_INVENTORY_S3_REGION` (default `us-east-2`).
-3. `inventory/tofu_inventory.json` — a local gitignored cache.
+2. **Published RustFS artifact** — the raw inventory JSON fetched over the
+   homelab network with `amazon.aws.s3_object`. The shared resolver reads the
+   object-store credentials directly from OpenBao
+   `secret/platform/object-storage`; only `BAO_ADDR` and `BAO_TOKEN` are needed.
+   `TOFU_INVENTORY_S3_URI` may override the default
+   `s3://iac-inventory/ansible_inventory.json` object.
+3. `inventory/tofu_inventory.json` — a local gitignored cache, only when
+   `TOFU_INVENTORY_ALLOW_STALE=1` is explicitly set.
 
 The resolved document is loaded as `tofu_data` and validated before any play
 runs. It MUST contain at least:

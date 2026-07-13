@@ -11,10 +11,9 @@
 
   # Inventory source resolution (priority order, first that resolves wins):
   #   1. TOFU_INVENTORY_PATH  — explicit local path / pin (tests, overrides)
-  #   2. S3 published artifact — `terragrunt apply` publishes the RAW tofu output
-  #      to the terraform-proxmox state bucket; fetched natively (amazon.aws,
-  #      boto3 from the dev shell — no aws CLI, no checkout, no toolchain).
-  #      Location override: TOFU_INVENTORY_S3_URI, else derived from the account.
+  #   2. RustFS published artifact — the tofu-proxmox Terrakube workspace
+  #      publishes the raw inventory; the shared role reads store credentials
+  #      natively from OpenBao and fetches it with amazon.aws.
   #   3. inventory/tofu_inventory.json — the local gitignored cache the
   #      terraform-proxmox after-hook writes.
   vars:
@@ -30,8 +29,8 @@
     ansible_python_interpreter: auto_silent
 
   tasks:
-    # Inventory resolution (TOFU_INVENTORY_PATH -> on-prem store -> legacy AWS
-    # bucket -> opt-in local cache) is delegated to the shared inventory_resolve
+    # Inventory resolution (TOFU_INVENTORY_PATH -> RustFS via OpenBao ->
+    # opt-in local cache) is delegated to the shared inventory_resolve
     # role (dryvist/homelab-contracts), which ends with `tofu_data` loaded. The
     # role's amazon.aws S3 fetch runs on this localhost play, so it inherits the
     # ansible_python_interpreter: auto_silent set above (dev-shell boto3). The
@@ -58,8 +57,8 @@
 
           Please ensure OpenTofu outputs (including pipeline_constants) are
           correctly generated and merged into ansible_inventory — run
-          terraform-proxmox `terragrunt apply` so the inventory is republished
-          to S3 and the local cache is refreshed by the after-hook.
+          the tofu-proxmox Terrakube workspace so the inventory is republished
+          to RustFS.
 
     - name: Validate tofu_data carries the node-FQDN derivation inputs
       ansible.builtin.assert:
@@ -74,7 +73,7 @@
           empty domain would silently produce a broken host (a bare
           "{node-role}." with no domain suffix).
 
-          Re-run terraform-proxmox `terragrunt apply` so the inventory is
+          Re-run the tofu-proxmox Terrakube workspace so the inventory is
           republished with `nodes` and `domain` populated.
 
     - name: Validate Docker VM SSH key path is set when Docker VMs are present
