@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.110.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.109.0...v1.110.0) (2026-07-14)
+
+
+### Features
+
+* **openbao:** add least-privilege llm-gate AppRole + policy ([#925](https://github.com/dryvist/ansible-proxmox-apps/issues/925)) ([6e3e19a](https://github.com/dryvist/ansible-proxmox-apps/commit/6e3e19aec51ad9952ac67065735a691f03a572aa))
+* **openbao:** reproduce openbao-iac-admin AWS broker role in IaC ([#924](https://github.com/dryvist/ansible-proxmox-apps/issues/924)) ([51330ef](https://github.com/dryvist/ansible-proxmox-apps/commit/51330ef7180c56f703766cd877aa7d76a39d795b))
+
+
+### Bug Fixes
+
+* **llm_router:** give the ai-default rotation alias its own repetition_penalty ([9ca45f2](https://github.com/dryvist/ansible-proxmox-apps/commit/9ca45f2bc2178d8ebb7acc90017d7e9dab4d9169))
+* **llm_router:** make stock 35B the fleet brain, 80B for deep escalation only ([#915](https://github.com/dryvist/ansible-proxmox-apps/issues/915)) ([0baaf22](https://github.com/dryvist/ansible-proxmox-apps/commit/0baaf22ef0ae3d0663ee913c464110e859a4708f))
+* **llm_router:** repetition_penalty guard on the ai-default rotation alias ([9be4480](https://github.com/dryvist/ansible-proxmox-apps/commit/9be4480023b81a8a2cbe9b875ed787c9fda6a65e))
+* **openbao:** bind Terrakube JWT roles to the real org name ([#927](https://github.com/dryvist/ansible-proxmox-apps/issues/927)) ([55473b4](https://github.com/dryvist/ansible-proxmox-apps/commit/55473b45a99b1f810bae1111e4b24cba3920788d))
+* **openbao:** coerce -e-overridable bool conditionals with | bool ([#918](https://github.com/dryvist/ansible-proxmox-apps/issues/918)) ([cd590ea](https://github.com/dryvist/ansible-proxmox-apps/commit/cd590eaa8bbc19f09bd43ebbb0061e2a0459a8e9))
+* **openbao:** use PROXMOX_SUBDOMAIN for the Terrakube JWT issuer ([#922](https://github.com/dryvist/ansible-proxmox-apps/issues/922)) ([8dce882](https://github.com/dryvist/ansible-proxmox-apps/commit/8dce8826973a40150cbff1a62ea0c866350629ec))
+* **openproject:** pin AIO image to 14, block auto major bumps ([#929](https://github.com/dryvist/ansible-proxmox-apps/issues/929)) ([00533eb](https://github.com/dryvist/ansible-proxmox-apps/commit/00533ebb70781ac048f7e1adbb8eaa1ed8e6d9c9)), closes [#928](https://github.com/dryvist/ansible-proxmox-apps/issues/928)
+
 ## [1.109.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.108.0...v1.109.0) (2026-07-13)
 
 
