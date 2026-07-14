@@ -350,6 +350,29 @@ openbao_ai_readonly_policy_name: ai-readonly
 openbao_ai_readonly_approle_name: ai-readonly
 openbao_ai_elevated_policy_name: ai-elevated
 openbao_ai_elevated_approle_name: ai-elevated
+# --- AI-agent task-scoped access tiers (human-gated, ephemeral, audited) ------
+# The middle + top tiers of the AI-agent access model (readonly is ai-readonly
+# above). Authorization is scoped by TASK / BLAST-RADIUS and gated by a HUMAN,
+# never by model capability; the model is an AUDIT claim, never a key.
+#   ai-apply-<domain> — scoped WRITE to ONE resource domain (per-task, <=1h).
+#   ai-admin          — break-glass root-ish (per-task, <=10m, alerted).
+# Both are provisioned with manage_secret_id:false below, so the converge
+# creates the INERT role but never mints/stores a standing secret_id. A token
+# exists only after a human response-wraps a single-use secret_id on demand
+# (`bao write -wrap-ttl=90s -f auth/approle/role/<role>/secret-id`). See the
+# docs.dryvist.com "AI Agent Access (OpenBao)" runbook for the full grant flow.
+# One ai-apply policy+approle is rendered per domain in this list (KV subtree
+# secret/<domain>/* becomes writable). Grow the AI apply surface by adding a
+# domain here AND a matching pair of entries in openbao_policies/openbao_approles
+# below (mirrors how a Terrakube workspace is added).
+openbao_ai_apply_domains: [ai, apps]
+openbao_ai_admin_policy_name: ai-admin
+openbao_ai_admin_approle_name: ai-admin
+# Token/secret_id bounds for the elevated tiers. secret_id_ttl bounds an UNUSED
+# minted grant; num_uses=1 makes the wrapped secret_id single-login.
+openbao_ai_apply_token_ttl: 1h
+openbao_ai_admin_token_ttl: 10m
+openbao_ai_elevated_secret_id_ttl: 15m
 openbao_snapshot_policy_name: snapshot
 openbao_snapshot_approle_name: snapshot
 # apps-seed — the automated WRITER for per-app service secrets under
@@ -408,6 +431,29 @@ openbao_approles:
     policy: "{{ openbao_ai_readonly_policy_name }}"
   - name: "{{ openbao_ai_elevated_approle_name }}"
     policy: "{{ openbao_ai_elevated_policy_name }}"
+  # ai-apply-<domain> + ai-admin: NO standing secret_id (manage_secret_id:false)
+  # — the converge creates the inert role; a token exists only after a human
+  # response-wraps a single-use secret_id on demand. secret_id_num_uses=1 makes
+  # the wrapped grant single-login; short secret_id_ttl bounds an unused grant.
+  - name: ai-apply-ai
+    policy: ai-apply-ai
+    token_ttl: "{{ openbao_ai_apply_token_ttl }}"
+    manage_secret_id: false
+    secret_id_ttl: "{{ openbao_ai_elevated_secret_id_ttl }}"
+    secret_id_num_uses: 1
+  - name: ai-apply-apps
+    policy: ai-apply-apps
+    token_ttl: "{{ openbao_ai_apply_token_ttl }}"
+    manage_secret_id: false
+    secret_id_ttl: "{{ openbao_ai_elevated_secret_id_ttl }}"
+    secret_id_num_uses: 1
+  - name: "{{ openbao_ai_admin_approle_name }}"
+    policy: "{{ openbao_ai_admin_policy_name }}"
+    token_ttl: "{{ openbao_ai_admin_token_ttl }}"
+    token_max_ttl: "{{ openbao_ai_admin_token_ttl }}"
+    manage_secret_id: false
+    secret_id_ttl: "{{ openbao_ai_elevated_secret_id_ttl }}"
+    secret_id_num_uses: 1
   - name: "{{ openbao_snapshot_approle_name }}"
     policy: "{{ openbao_snapshot_policy_name }}"
   # apps-seed: Doppler-published writer for secret/apps/* (Terraform vault-secrets).
@@ -472,6 +518,17 @@ openbao_policies:
     template: ai-readonly-policy.hcl.j2
   - name: "{{ openbao_ai_elevated_policy_name }}"
     template: ai-elevated-policy.hcl.j2
+  # ai-apply-<domain>: one scoped-write policy per AI apply domain. `domain` is
+  # read by ai-apply-policy.hcl.j2 (as item.domain) to scope the writable subtree.
+  - name: ai-apply-ai
+    template: ai-apply-policy.hcl.j2
+    domain: ai
+  - name: ai-apply-apps
+    template: ai-apply-policy.hcl.j2
+    domain: apps
+  # ai-admin: break-glass. Intentionally root-ish; contained by TTL + human grant.
+  - name: "{{ openbao_ai_admin_policy_name }}"
+    template: ai-admin-policy.hcl.j2
   - name: "{{ openbao_snapshot_policy_name }}"
     template: snapshot-policy.hcl.j2
   - name: "{{ openbao_apps_seed_policy_name }}"

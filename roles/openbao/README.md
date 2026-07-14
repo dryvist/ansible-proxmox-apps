@@ -202,6 +202,8 @@ plans):
 | `ai-orchestrator` | `secret/ai/{hermes,agents}` | `secret/ai/{hermes,agents}` (create/update) | WRITE; Doppler tier-0; narrowed + 30m TTL at Phase-3 |
 | `ai-readonly` | `secret/ai/*`, `secret/apps/*` | — | **default AI agent; NO `secret/infra/*`** |
 | `ai-elevated` | `ai-readonly` + `secret/platform/*` | — | trusted infra-touching agents; no write |
+| `ai-apply-<domain>` | `secret/{ai,apps,<domain>}/*` | `secret/<domain>/*` + GitHub token | Task-scoped WRITE; no standing secret_id; ≤1h[^ai-tiers] |
+| `ai-admin` | all KV + policy/auth admin | policy/AppRole/token admin, all KV, AWS STS | Break-glass; no standing secret_id; ≤10m; alerted[^ai-tiers] |
 | `snapshot` | `sys/storage/raft/snapshot` | — | least-priv backup identity |
 
 ### Terrakube workload identity
@@ -215,6 +217,15 @@ policy. The role binds audience
 select another workspace's policy. Terrakube stores only the non-secret dynamic
 credential controls. Provider credentials remain in their native OpenBao KV or
 secrets-engine paths and are returned through a short-lived OpenBao token.
+
+[^ai-tiers]: Task-scoped AI access tiers. Authorization is by task/blast-radius
+    and human-gated, never by model capability (model is an audit claim). Both
+    tiers are created inert (`manage_secret_id: false`) — a token exists only
+    after a human response-wraps a single-use `secret_id`. The apply tier's
+    policy enumerates an allowlist that excludes `sys/policies`, `auth/*`,
+    `token/create`, and `secret/infra/*`, so it cannot edit policy, mint a
+    `secret_id`, mint a child token, or reach the IaC kernel — no self-escalation.
+    Full grant/redeem runbook: docs.dryvist.com "AI Agent Access (OpenBao)".
 
 [^aws-sts]: Also grants `read`+`update` on `aws/sts/tf-proxmox` and
     `aws/sts/openbao-iac-admin` — dynamic AWS STS creds (assumed_role) for

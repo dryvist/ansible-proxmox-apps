@@ -1,0 +1,69 @@
+{{ ansible_managed | comment }}
+# OpenBao policy for an ai-apply-<domain> AppRole — a SCOPED, per-task WRITE
+# identity for ONE resource domain (rendered once per entry in
+# openbao_ai_apply_domains; `domain` is the loop var). This is the middle tier
+# of the AI-agent access model:
+#
+#   ai-readonly   read/plan/scan            (default, ambient, standing)
+#   ai-apply-<d>  scoped WRITE to domain d  (per-task, human-minted, <=1h)   <-- this
+#   ai-admin      break-glass root-ish      (per-task, human-minted, <=10m)
+#
+# Authorization is scoped by TASK / BLAST-RADIUS and gated by a HUMAN, never by
+# model capability. This AppRole has NO standing secret_id: the converge creates
+# the role but never mints or stores a secret_id for it (manage_secret_id:false
+# in openbao_approles). A token exists only after a human response-wraps a
+# single-use secret_id on demand — see docs.dryvist.com AI Agent Access runbook.
+#
+# SELF-ESCALATION PREVENTION (enumerated allowlist — everything else is DENY by
+# OpenBao default-deny). This policy deliberately EXCLUDES:
+#   * sys/policies/*  -> cannot edit its own or any policy (no capability grant).
+#   * auth/*          -> cannot mint a secret_id (its own or another role's),
+#                        create/rewrap the wrapped grant, or touch the auth
+#                        mounts. It cannot perpetuate or clone its own access.
+#   * auth/token/create + token/* -> cannot mint a child token carrying other
+#                        policies, so it cannot widen beyond token_policies.
+#   * secret/infra/*  -> never the IaC kernel (proxmox token, AWS state creds).
+#   * any domain KV except `{{ item.domain }}` -> one domain, one blast radius.
+#   * {{ openbao_github_mount }}/config/* and .../permissionset/* -> cannot widen
+#                        the GitHub App token; it may only MINT the two
+#                        administrator-defined permission sets.
+# The token's own TTL (<=1h) and the single-use secret_id bound the window.
+
+# --- Read context: its own domain plus the shared read-only AI surface --------
+# So an apply agent can read what it needs to reason before it writes, without a
+# second (readonly) grant. Mirrors ai-readonly's read surface (ai + apps),
+# never widening to secret/infra/*.
+{% for sub in (['ai', 'apps'] + [item.domain]) | unique %}
+path "{{ openbao_kv_mount }}/data/{{ sub }}/*" {
+  capabilities = ["read"]
+}
+
+path "{{ openbao_kv_mount }}/metadata/{{ sub }}/*" {
+  capabilities = ["read", "list"]
+}
+
+{% endfor %}
+# --- Scoped WRITE: exactly one domain subtree --------------------------------
+# create/update/read only. No `delete` and no `sudo`: an apply agent adds or
+# rotates a value, it never destroys the KV metadata/version history (destroy is
+# a human/ai-admin action, matching the estate's ChaosMonkey-rebuild posture).
+path "{{ openbao_kv_mount }}/data/{{ item.domain }}/*" {
+  capabilities = ["create", "update", "read"]
+}
+
+path "{{ openbao_kv_mount }}/metadata/{{ item.domain }}/*" {
+  capabilities = ["read", "list"]
+}
+
+# --- Per-run GitHub attribution ----------------------------------------------
+# Mint ONLY the administrator-defined GitHub App permission sets (ephemeral
+# installation tokens) so a run's commits/merges are attributed to a per-run
+# token, not a standing PAT. The raw github/token endpoint and the engine's
+# config/permissionset administration paths are absent, so this identity cannot
+# widen the token's scope.
+{% for permission_set in openbao_github_permission_sets %}
+path "{{ openbao_github_mount }}/token/{{ permission_set.name }}" {
+  capabilities = ["update"]
+}
+
+{% endfor %}
