@@ -103,15 +103,26 @@ llm_large_serving_ip: >-
 # remains the fabric alias; the sentinel holds the optimized phase until a
 # candidate passes the re-enable gates in docs/BRAIN_ROTATION.md
 # (measured-peak capacity + fleet-throughput).
-# OptiQ-4bit temporarily DE-DEFAULTED (2026-07-13): the current vllm-mlx build
-# regressed its inference path — OptiQ is misdetected as a VLM and its MTP patch
-# throws `Cannot broadcast array of shape (1,1,1,0) into shape (1,16,1,1)` mid
-# generation, returning finish_reason=error (0 tokens) and killing the worker.
-# The 80B and stock 35B run clean on the same build. Both rotation phases point
-# at the 80B until OptiQ's engine bug is fixed (then revert optimized to OptiQ).
+# FLEET BRAIN = stock 35B (2026-07-13). Two build faults forced this off both
+# the OptiQ default and the 80B stopgap:
+#   1. OptiQ-4bit: the current vllm-mlx build misdetects it as a VLM; its MTP
+#      patch throws `Cannot broadcast array of shape (1,1,1,0) into shape
+#      (1,16,1,1)` mid generation → finish_reason=error (0 tokens), worker dies.
+#   2. 80B (the interim #913 stopgap): it is swap-class with a 6 GB KV cache on
+#      the Studio (sized for the ~20 GB residents), so under the CONCURRENT cron
+#      fleet it exceeds a Metal resource ceiling — `[metal::malloc] Resource
+#      limit exceeded` → generation_error_recovery aborts ALL in-flight requests
+#      → Hermes retry storm, ~zero clean posts. The 80B is a competent
+#      concurrency-1 brain, not a fleet brain.
+# Stock Qwen3.6-35B-A3B-4bit is OptiQ's clean twin (same ~20 GB, clean 20/20
+# multi-turn, 4.1 tok/s) and runs clean on this build — the natural drop-in for
+# the broken resident OptiQ slot, fitting the existing cache + concurrency. Both
+# rotation phases point at it so the fleet never routes to the 80B. The 80B
+# stays reachable ONLY via the ai-deep-analysis alias (escalation, concurrency
+# 1). Revert optimized → OptiQ once its engine bug is fixed.
 ai_rotation_enabled: true
-ai_default_model_optimized: Qwen3-Next-80B-A3B-Thinking-4bit
-ai_default_model_large: Qwen3-Next-80B-A3B-Thinking-4bit
+ai_default_model_optimized: Qwen3.6-35B-A3B-4bit
+ai_default_model_large: Qwen3.6-35B-A3B-4bit
 ai_default_model: "{{ 'ai-default' if ai_rotation_enabled | bool else ai_default_model_optimized }}"
 
 # Escalation rubric v1 — WHICH tier a task deserves, encoded as data (from the

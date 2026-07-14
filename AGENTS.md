@@ -187,6 +187,7 @@ documented once at
 | `OPENBAO_AWS_ROOT_ACCESS_KEY_ID` | AWS engine bootstrap/rotation access key | tier-0 injection |
 | `OPENBAO_AWS_ROOT_SECRET_ACCESS_KEY` | AWS engine bootstrap/rotation secret key | tier-0 injection |
 | `OPENBAO_AWS_TF_PROXMOX_ROLE_ARN` | IAM role exposed by `aws/sts/tf-proxmox` | environment |
+| `OPENBAO_AWS_IAC_ADMIN_ROLE_ARN` | IAM role exposed by `aws/sts/openbao-iac-admin` | environment |
 | `OPENBAO_GITHUB_APP_ID` | Dedicated GitHub broker App ID | one-time environment |
 | `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Dedicated GitHub broker App private key | one-time environment |
 | `OPENBAO_GITHUB_DRYVIST_INSTALLATION_ID` | GitHub App installation on `dryvist` | environment |

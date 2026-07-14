@@ -269,6 +269,16 @@ llm_router_large_passthrough_enabled: true
 # whole block below is inert and config.yaml renders exactly as it did before.
 llm_router_rotation_enabled: "{{ ai_rotation_enabled | default(false) | bool }}"
 llm_router_rotation_alias: ai-default
+# Anti-repetition-loop guard for the rotation alias itself. `ai-default` is a
+# distinct model_name from the per-phase aliases in llm_router_large_models, so
+# their extra_body does NOT reach it — Hermes addresses `ai-default` and would
+# otherwise run with the engine's request-absent repetition_penalty 1.0 (OFF).
+# That is what regressed when the fleet brain switched OptiQ->stock 35B (#915):
+# the guard lived only on the OptiQ alias, so the 35B fleet brain looped
+# (identical-tool-call spam, !!!!/status degeneration; 2026-07-14 incident).
+# 1.05 matches the value validated on the OptiQ twin; raise toward the clean
+# bench's sampling (temperature ~1.0 / presence_penalty 0.0) if loops persist.
+llm_router_rotation_repetition_penalty: 1.05
 # The two phases, by their first-class alias id in llm_router_large_models above
 # (the role resolves each to its backend + context_window from that table).
 llm_router_rotation_large_model: "{{ ai_default_model_large }}"
