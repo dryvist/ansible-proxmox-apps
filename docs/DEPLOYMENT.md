@@ -13,10 +13,15 @@ production and each took the fabric down:
 | Every request compressed to death | brain alias fell through the `*` wildcard → null `max_input_tokens` | L1 router-alias assert; L2 tool-call probe fails |
 | Generations killed mid-stream | server guard below generation time / inverted timeout chain | L1 timeout-ordering assert |
 | "invalid tool call" loop | wrong tool parser / mis-wired brain | L2 tool-call probe returns no valid `function.name` |
+| Cron output loops/repeats | `ai-default` alias ran with `repetition_penalty` off (`extra_body` misses the distinct `model_name`) | Cron-cycle watch |
 
 Every one was **machine-detectable before or immediately after converge**. The
 two guardrail layers below make that detection automatic, so an unvalidated
-converge can no longer reach production silently.
+converge can no longer reach production silently. The last row (2026-07-14) is
+the exception the others are not: the repetition degeneration produced valid
+tool calls, so the Layer-2 probe passed — only watching a full cron cycle
+surfaced it (see [HERMES_OPS.md](HERMES_OPS.md) "Repetition guard"). Prefer a
+cron-cycle observation over declaring a brain-affecting converge settled.
 
 ## The staged deployment path
 
@@ -41,6 +46,24 @@ Always deploy the fabric in this order. Each stage gates the next.
    doppler run -- ansible-playbook \
      -i inventory/hosts.yml playbooks/site.yml --tags llm_router
    ```
+
+   **Converging without object-storage inventory access.** Inventory is
+   normally the object-storage-published `tofu_inventory.json`, fetched with an
+   OpenBao-authed AppRole. From a workstation lacking that AppRole, pin the
+   local gitignored cache instead — `inventory_resolve` resolves
+   `TOFU_INVENTORY_PATH` first (tier 1) and skips the object-storage fetch
+   entirely:
+
+   ```bash
+   TOFU_INVENTORY_PATH="$PWD/inventory/tofu_inventory.json" \
+     doppler run -- ansible-playbook \
+       -i inventory/hosts.yml playbooks/site.yml --tags llm_router
+   ```
+
+   The cache is safe when topology is stable (host set unchanged) — the common
+   case for a config-only converge. If a host moved or was added, refresh the
+   cache from the tofu-proxmox workspace first, or converge with normal
+   object-storage resolution.
 
 3. **Verify gate (post-converge, Layer 2).** `roles/hermes_agent/tasks/verify.yml`
    runs at the end of the role, after handlers flush. It proves the wiring
