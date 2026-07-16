@@ -148,9 +148,10 @@ with its own scoped identity. The URL and Bearer token are referenced as
 `${SPLUNK_MCP_URL}` / `${SPLUNK_MCP_TOKEN}` and resolved from `.env` at connect
 time, so neither the endpoint nor the token ever lands in `config.yaml`.
 
-Creds come from OpenBao `secret/ai/hermes` (`bao_local_llm_secrets`) with an env
-fallback. `ansible-splunk` mints the per-user token (a Splunk token is bound to a
-user and inherits its roles) and publishes it as `SPLUNK_MCP_TOKEN`. The
+Creds come from the shared OpenBao `secret/ai/mcp/splunk` path (merged into
+`bao_local_llm_secrets`) with an env fallback. `ansible-splunk` publishes the
+existing shared Splunk service identity as `SPLUNK_MCP_URL` and
+`SPLUNK_MCP_TOKEN`. The
 `mcp_servers.splunk` entry is omitted until the URL is set, so the agent starts
 cleanly before the creds exist.
 

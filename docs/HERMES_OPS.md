@@ -62,10 +62,11 @@ removed and re-seeded (`tasks/main.yml`); the canonical set is
 > memory bug — see "Repetition guard" below. The literal string is an upstream
 > runtime line, not something this role emits.
 
-## Credentials — `secret/ai/hermes`
+## Credentials
 
-Hermes reads its app credentials from OpenBao `secret/ai/hermes`
-(`bao_local_llm_secrets`, bao-first with env fallback). By design every field
+Hermes reads its app credentials from OpenBao `secret/ai/hermes`, plus the
+shared Splunk MCP connection from `secret/ai/mcp/splunk`. Both paths merge into
+`bao_local_llm_secrets` with an env fallback. By design every field
 defaults to empty and an empty value **disables that capability** rather than
 failing the converge — so an un-seeded field silently turns a platform off.
 That is the deliberate contract; there is no converge-time assertion that a
@@ -73,7 +74,7 @@ field is present.
 
 | Field | Enables | Notes |
 | --- | --- | --- |
-| `SPLUNK_MCP_URL` + `SPLUNK_MCP_TOKEN` | the entire `splunk-*` cron fleet | minted by the ansible-splunk path; known stale-token caveat |
+| `SPLUNK_MCP_URL` + `SPLUNK_MCP_TOKEN` | the entire `splunk-*` cron fleet | sourced from shared `secret/ai/mcp/splunk`; published by ansible-splunk |
 | `GH_PAT_WRITE_PROJECT_ISSUES` | `github-triage` cron + github-issues skill | empty until the token is issued |
 | `HERMES_GITHUB_APP_ID` / `_INSTALLATION_ID` / `_PRIVATE_KEY` | GitHub-App docs-contributor / nightly-wiki path | empty until the App is provisioned |
 | `HERMES_API_SERVER_KEY` | inbound job-submission API (`POST /v1/runs`, cron CRUD) | seeded programmatically; empty disables the api_server platform |
