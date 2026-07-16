@@ -20,7 +20,7 @@ registers nothing back into those apps).
 Wired into `playbooks/site.yml` (Phase 8c, media stack) against any host in
 `sortarr_group`. The group is populated by `inventory/load_tofu.yml`
 from `containers` tagged `sortarr` in the OpenTofu inventory
-(terraform-proxmox `sortarr` LXC), reached over `proxmox_pct_remote`.
+(tofu-proxmox `sortarr` LXC), reached over `proxmox_pct_remote`.
 
 Prerequisites:
 
@@ -84,12 +84,12 @@ Radarr; the Plex overlay (playback/history) is added only when
 
 ## Secrets
 
-| Variable                  | Purpose                                  | Source              |
-| ------------------------- | ----------------------------------------- | -------------------- |
-| `SONARR_API_KEY`          | Sonarr API key (read library/queue)       | environment variable |
-| `RADARR_API_KEY`          | Radarr API key (read library/queue)       | environment variable |
-| `PLEX_TOKEN`              | Optional Plex account token (overlay)     | environment variable |
-| `SORTARR_BASIC_AUTH_PASS` | Sortarr's own basic-auth password         | environment variable |
+| Variable                  | Purpose                               | Source               |
+| ------------------------- | ------------------------------------- | -------------------- |
+| `SONARR_API_KEY`          | Sonarr API key (read library/queue)   | environment variable |
+| `RADARR_API_KEY`          | Radarr API key (read library/queue)   | environment variable |
+| `PLEX_TOKEN`              | Optional Plex account token (overlay) | environment variable |
+| `SORTARR_BASIC_AUTH_PASS` | Sortarr's own basic-auth password     | environment variable |
 
 None are ever committed to git. The role's first task asserts the required
 ones are set and fails fast if any is missing.

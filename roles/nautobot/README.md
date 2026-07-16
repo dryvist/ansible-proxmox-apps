@@ -5,7 +5,7 @@ a native install plus the SSoT DiffSync jobs that seed it from the hand-maintain
 upstream sources, and an export Job that publishes the inventory artifact to S3.
 
 Nautobot is the IPAM authority in the [addressing model](../../docs/IP_AUTHORITY.md);
-**UniFi remains the DHCP + core-networking authority** and **terraform-proxmox
+**UniFi remains the DHCP + core-networking authority** and **tofu-proxmox
 remains the provisioning + constants authority**. This role never runs a DHCP
 server and never re-defines an upstream-owned value.
 
@@ -82,7 +82,7 @@ cutover deliberately:
 4. Optionally `-e nautobot_run_export=true` for an immediate publish; otherwise
    the daily beat schedule publishes.
 5. **Observe** the shadow `nautobot_export.json` for one or more cycles.
-6. The **authority-flip** — terraform-proxmox deriving `tofu_inventory.json`
+6. The **authority-flip** — tofu-proxmox deriving `tofu_inventory.json`
    *from* Nautobot instead of `deployment.json` — is a separate, upstream,
    operator-approved step. It also requires the export contract to first grow to
    a superset of the inventory (`vmid`, `node`, `tags`, ports, static-vs-reserved

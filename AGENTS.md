@@ -1,7 +1,7 @@
 # Ansible Proxmox Apps — AI Agent Documentation
 
 Configure applications on Proxmox VMs and LXC containers.
-VMs/containers are provisioned by `terraform-proxmox`;
+VMs/containers are provisioned by `tofu-proxmox`;
 this repo handles app config only.
 
 ## This Repo Owns
@@ -36,7 +36,7 @@ this repo handles app config only.
   Prowlarr indexers, Prowlarr -> Sonarr/Radarr app sync, and media-management
   settings — hardlinks + recycler bin). Root folders + qBittorrent download
   clients are owned by the devopsarr `servarr-config` tofu module
-  (`terraform-proxmox`); quality profiles + custom formats by the `configarr`
+  (`tofu-proxmox`); quality profiles + custom formats by the `configarr`
   role (TRaSH-Guides). `servarr_wiring` no longer touches those.
 - **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
   Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
@@ -123,7 +123,7 @@ CI runners MUST NOT share Docker networks with dev/test services.
 | 6333 | Qdrant HTTP (from tofu `vector_db_ports`) |
 | 6334 | Qdrant gRPC (from tofu `vector_db_ports`) |
 
-Values are sourced from `terraform-proxmox/locals.tf`
+Values are sourced from `tofu-proxmox/locals.tf`
 `pipeline_constants.{service_ports, netflow_ports, vector_db_ports}`.
 Do not hand-edit — fix the constant and refresh
 `inventory/tofu_inventory.json`.
@@ -137,7 +137,7 @@ workspace; fetched with `amazon.aws` using credentials read directly from
 OpenBao `secret/platform/object-storage`) → the explicitly enabled local
 gitignored `inventory/tofu_inventory.json` cache.
 Port constants come from `tofu_data.constants`
-(defined in terraform-proxmox `locals.tf`).
+(defined in tofu-proxmox `locals.tf`).
 
 This repo is a **read-only consumer** — it never reads `deployment.json`; the
 published inventory is the source of truth, fetched fresh with no authoritative
@@ -354,6 +354,6 @@ nix develop "github:JacobPEvans/nix-devenv#ansible-apps"
 
 | Repo | Relationship |
 | --- | --- |
-| terraform-proxmox | Upstream: provisions VMs/containers |
+| tofu-proxmox | Upstream: provisions VMs/containers |
 | ansible-splunk | Peer: owns Splunk Enterprise deployment |
 | ansible-proxmox | Peer: owns Proxmox host config (kernel, ZFS, firewall) |
