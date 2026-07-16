@@ -172,6 +172,104 @@
     enabled: true
 
 # =============================================================================
+# Phase 2b: Standby bootstrap (streaming replication, issue #138)
+# Only a replication standby with no standby.signal yet. Reinitializes PGDATA
+# from a fresh pg_basebackup of the primary, then the cluster comes back up in
+# standby mode (pg_basebackup --write-recovery-conf drops standby.signal +
+# primary_conninfo). Idempotent: once standby.signal exists this is skipped.
+# Converge the PRIMARY first so its replication role + slot exist — a stray
+# out-of-order run cannot corrupt data: the basebackup lands in a temp dir and
+# only replaces PGDATA on success, and the interlock below refuses to touch a
+# populated PGDATA unless the demotion is explicitly confirmed.
+# =============================================================================
+- name: Bootstrap the streaming standby
+  when:
+    - postgres_replication_enabled | bool
+    - postgres_role == 'standby'
+  block:
+    - name: Check whether this guest is already a standby
+      ansible.builtin.stat:
+        path: "{{ postgres_data_dir }}/standby.signal"
+      register: postgres_standby_signal
+
+    - name: Reinitialize PGDATA as a streaming standby
+      when: not postgres_standby_signal.stat.exists
+      block:
+        # postgres_existing_data_version (Phase 2) stat'd PGDATA/PG_VERSION.
+        - name: Refuse to wipe populated data without an explicit reinit
+          ansible.builtin.fail:
+            msg: >-
+              {{ postgres_data_dir }} already holds a PostgreSQL cluster and
+              this guest is being demoted to a standby. Reinitializing wipes it.
+              Set postgres_standby_reinit=true (env POSTGRES_STANDBY_REINIT)
+              only AFTER confirming its data is migrated to
+              {{ postgres_primary_fqdn }}.
+          when:
+            - postgres_existing_data_version.stat.exists
+            - not (postgres_standby_reinit | bool)
+
+        - name: Write the replicator .pgpass for the postgres user
+          ansible.builtin.copy:
+            # `>` folds the split back to one line and keeps a single trailing
+            # newline; the fold-space lands inside `{{ ... }}` so it is inert.
+            dest: /var/lib/postgresql/.pgpass
+            content: >
+              {{ postgres_primary_fqdn }}:{{ postgres_port }}:replication:{{ postgres_replication_user
+              }}:{{ postgres_replication_password }}
+            owner: postgres
+            group: postgres
+            mode: "0600"
+          no_log: true
+
+        - name: Verify the primary is reachable before touching PGDATA
+          ansible.builtin.command:
+            argv:
+              - pg_isready
+              - --host={{ postgres_primary_fqdn }}
+              - --port={{ postgres_port }}
+              - --timeout=10
+          changed_when: false
+
+        - name: Stop the cluster before reinitializing PGDATA
+          ansible.builtin.systemd:
+            name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+            state: stopped
+
+        - name: Remove any stale basebackup staging directory
+          ansible.builtin.file:
+            path: "{{ postgres_data_root }}/.ansible-standby-basebackup"
+            state: absent
+
+        - name: Take a base backup from the primary
+          become: true
+          become_user: postgres
+          ansible.builtin.command:
+            argv:
+              - pg_basebackup
+              - --pgdata={{ postgres_data_root }}/.ansible-standby-basebackup
+              - --wal-method=stream
+              - --slot={{ postgres_replication_slot }}
+              - --write-recovery-conf
+              - --checkpoint=fast
+              - --no-password
+              - --host={{ postgres_primary_fqdn }}
+              - --port={{ postgres_port }}
+              - --username={{ postgres_replication_user }}
+          changed_when: true
+
+        - name: Replace PGDATA with the base backup
+          ansible.builtin.shell:
+            cmd: >-
+              rm -rf {{ postgres_data_dir }} &&
+              mv {{ postgres_data_root }}/.ansible-standby-basebackup {{ postgres_data_dir }}
+          changed_when: true
+
+        - name: Start the cluster in standby mode
+          ansible.builtin.systemd:
+            name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+            state: started
+
+# =============================================================================
 # Phase 3: Cluster configuration (idempotent GUCs)
 # postgresql_set only writes when the value differs, so the idempotence run is
 # clean. listen_addresses/port need a restart; password_encryption reloads.
@@ -206,13 +304,70 @@
   ansible.builtin.meta: flush_handlers
 
 # =============================================================================
+# Phase 3b: Primary replication config (streaming replication, issue #138)
+# Primary-only. Creates the replication login role, one physical slot per
+# standby (so WAL is retained while a standby is down), and the replication
+# pg_hba line. Converge the primary before any standby so these exist when the
+# standby's pg_basebackup connects.
+# =============================================================================
+- name: Configure the replication primary
+  become: true
+  become_user: postgres
+  when:
+    - postgres_replication_enabled | bool
+    - postgres_role == 'primary'
+  block:
+    - name: Ensure wal_level supports replication
+      community.postgresql.postgresql_set:
+        name: wal_level
+        value: replica
+      notify: Restart postgresql
+
+    - name: Ensure the replication login role exists
+      community.postgresql.postgresql_user:
+        name: "{{ postgres_replication_user }}"
+        password: "{{ postgres_replication_password }}"
+        role_attr_flags: LOGIN,REPLICATION
+        state: present
+      no_log: true
+
+    - name: Ensure a physical replication slot exists for each standby
+      community.postgresql.postgresql_slot:
+        name: "standby_{{ item | regex_replace('[^A-Za-z0-9]', '_') }}"
+        slot_type: physical
+        state: present
+      loop: "{{ groups['postgres_group'] | default([]) | difference([postgres_primary_host]) }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Allow the replicator to connect from the standby subnet (scram)
+      community.postgresql.postgresql_pg_hba:
+        dest: "{{ postgres_conf_dir }}/pg_hba.conf"
+        contype: host
+        databases: replication
+        users: "{{ postgres_replication_user }}"
+        source: "{{ postgres_replication_cidr }}"
+        method: scram-sha-256
+        state: present
+      when: postgres_replication_cidr | length > 0
+      notify: Reload postgresql
+
+- name: Apply pending replication restart/reload
+  ansible.builtin.meta: flush_handlers
+  when: postgres_replication_enabled | bool
+
+# =============================================================================
 # Phase 4: Roles, databases, and host-based auth
 # Credentials come from the source secret store; apply them on each run so an
 # app cutover can rotate from bootstrap SOPS values without manual SQL.
+# Primary-only: a standby is read-only and inherits every role and database
+# through streaming (they are catalog state carried in the WAL), so running
+# these writes there would fail against the read-only replica.
 # =============================================================================
 - name: Provision managed roles and databases
   become: true
   become_user: postgres
+  when: postgres_role == 'primary'
   block:
     - name: Ensure each managed login role exists with the source password
       community.postgresql.postgresql_user:

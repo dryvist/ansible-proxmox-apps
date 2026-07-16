@@ -81,3 +81,46 @@ postgres_standby_pull_pubkeys: "{{ lookup('env', 'POSTGRES_STANDBY_SSH_PUBKEYS')
 # database for the mandatory restore drill.
 postgres_dr_restore_db: ""
 postgres_dr_restore_dump: ""
+
+# =============================================================================
+# Streaming replication (issue #138). Disabled by default: with
+# postgres_primary_host empty this role behaves exactly as a single primary and
+# creates every managed database here. Set postgres_primary_host (group_vars/all,
+# env POSTGRES_PRIMARY_HOST) to the primary guest's inventory hostname to enable
+# — the primary then gains a replication role + slot + pg_hba line, and every
+# OTHER postgres-tagged guest reinitializes as a hot standby streaming from it.
+# =============================================================================
+# Floor for postgres_primary_host so the role resolves standalone (group_vars/all
+# overrides with the env value). A host is the primary when no primary is named,
+# or when it IS the named primary; anything else is a standby.
+postgres_primary_host: ""
+postgres_role: >-
+  {{ 'standby'
+     if (postgres_primary_host | length > 0 and inventory_hostname != postgres_primary_host)
+     else 'primary' }}
+postgres_replication_enabled: "{{ (postgres_primary_host | length > 0) | bool }}"
+
+# The standby authenticates to the primary as this LOGIN + REPLICATION role. The
+# password is bao-first with an env fallback — never a literal.
+postgres_replication_user: replicator
+postgres_replication_password: >-
+  {{ bao_apps_secrets.replication_password
+     | default(lookup('env', 'POSTGRES_REPLICATION_PASSWORD'), true) }}
+# One physical slot per standby, so the primary retains WAL while a standby is
+# down instead of relying on wal_keep_size guesswork.
+postgres_replication_slot: "standby_{{ inventory_hostname | regex_replace('[^A-Za-z0-9]', '_') }}"
+# CIDR the primary accepts replication connections from (the standby's subnet).
+# Same env-derived pg_hba pattern as the app client_cidrs — pg_hba needs a CIDR,
+# not an FQDN, so this is the one legitimate place for one, and even here it is
+# env-sourced. The demoted standby (CT 303000) lives on the data VLAN.
+postgres_replication_cidr: "{{ lookup('env', 'NETWORK_CIDR_DATA') | default('', true) }}"
+# The primary's FQDN the standby streams from — by name, never an address.
+postgres_primary_fqdn: >-
+  {{ lookup('env', 'POSTGRES_PRIMARY_FQDN')
+     | default(postgres_primary_host ~ '.' ~ (tofu_data.domain | default('')), true) }}
+# Data-loss interlock. The standby bootstrap REFUSES to wipe a populated PGDATA
+# unless this is true, so a stray role flip can never destroy a live primary. A
+# fresh/empty standby bootstraps with no interlock. Set true ONLY after the
+# migration to the new primary is confirmed; env-gated so it is deliberate and
+# ephemeral.
+postgres_standby_reinit: "{{ lookup('env', 'POSTGRES_STANDBY_REINIT') | default(false, true) | bool }}"
