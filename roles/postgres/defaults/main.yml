@@ -74,6 +74,37 @@ postgres_backup_retention_days: 14
 # never a committed literal). Empty -> no trust installed.
 postgres_standby_pull_pubkeys: "{{ lookup('env', 'POSTGRES_STANDBY_SSH_PUBKEYS') | default('', true) }}"
 
+# --- Streaming replication (primary/standby) ---------------------------------
+# postgres_role selects the converge shape. `primary` (default) is the current
+# single-node path: 303000 keeps converging byte-identically. `standby`
+# bootstraps this node from a primary with pg_basebackup and provisions no
+# roles/databases (they arrive over the stream).
+postgres_role: primary
+
+# On the PRIMARY: the standby's FQDN. Empty (default) adds no replication
+# wiring, so an ordinary primary converge is unchanged. Set it to open a
+# `host replication` pg_hba entry for the standby (a hostname, per the FQDN
+# rule) and turn on the replication GUCs + replicator role below.
+postgres_replication_standby_host: ""
+
+# On the STANDBY: the primary's FQDN to clone from. Required when role=standby.
+postgres_replication_primary_host: ""
+
+# Replication login role (LOGIN + REPLICATION). Injection-agnostic: the
+# password is a plain env lookup and the secrets backend supplies it. The
+# fail-loud assert fires only when replication is actually enabled, so a
+# non-replicating converge needs no env var.
+postgres_replication_user: replicator
+postgres_replication_password: "{{ lookup('env', 'POSTGRES_REPLICATOR_PASSWORD') | default('', true) }}"
+
+# Optional physical replication slot. Empty = no slot (the standby streams
+# without one). Set the same name on primary and standby to pin a slot so the
+# primary retains WAL for a disconnected standby.
+postgres_replication_slot: ""
+
+# Streaming capacity. 10 covers a few standbys plus concurrent base backups.
+postgres_max_wal_senders: 10
+
 # DR restore inputs (docs/DATABASE_DR_STANDARD.md in ansible-proxmox; tagged
 # `never,dr_restore` — runs only on explicit invocation). `_dump` is a
 # CONTROLLER-side path (fetched from the replicated archive or the Tier-2

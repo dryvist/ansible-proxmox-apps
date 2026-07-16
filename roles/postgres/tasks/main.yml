@@ -165,6 +165,99 @@
   register: postgres_cluster_config_file
   failed_when: not postgres_cluster_config_file.stat.exists
 
+# =============================================================================
+# Phase 2b: Standby bootstrap (postgres_role == 'standby')
+# The Debian postinst always pre-creates a fresh cluster at PGDATA, so "empty
+# PGDATA" never holds literally. The guard is therefore: clone only when there
+# is no standby.signal (an established standby is left alone — idempotent
+# rebuild) AND the pre-existing cluster holds zero user databases (a former
+# primary's data is never destroyed). pg_basebackup -R writes standby.signal +
+# primary_conninfo; role/database provisioning is skipped (Phase 4 is gated).
+# =============================================================================
+- name: Bootstrap this node as a streaming standby
+  when: postgres_role == 'standby'
+  block:
+    - name: Check for an existing standby.signal
+      ansible.builtin.stat:
+        path: "{{ postgres_data_dir }}/standby.signal"
+      register: postgres_standby_signal
+
+    - name: Clone from the primary when no standby is established yet
+      when: not postgres_standby_signal.stat.exists
+      block:
+        - name: Require the primary FQDN and replicator password for the clone
+          ansible.builtin.assert:
+            that:
+              - postgres_replication_primary_host | length > 0
+              - postgres_replication_password | length > 0
+            fail_msg: >-
+              postgres_role=standby needs postgres_replication_primary_host and
+              POSTGRES_REPLICATOR_PASSWORD (env) set before it can pg_basebackup.
+            quiet: true
+
+        - name: Ensure the freshly-installed cluster is up so it can be inspected
+          ansible.builtin.systemd:
+            name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+            state: started
+
+        - name: Count user databases in the pre-existing cluster
+          become: true
+          become_user: postgres
+          community.postgresql.postgresql_query:
+            db: postgres
+            query: >-
+              SELECT count(*) AS n FROM pg_database
+              WHERE datistemplate = false AND datname <> 'postgres'
+          register: postgres_preexisting_userdbs
+
+        - name: Refuse to clone over a cluster that already holds user data
+          ansible.builtin.assert:
+            that: postgres_preexisting_userdbs.query_result[0].n | int == 0
+            fail_msg: >-
+              {{ postgres_data_dir }} already contains user databases; refusing
+              to overwrite it with a base backup. Remove the data deliberately
+              if this node is meant to become a standby.
+            quiet: true
+
+        - name: Stop the cluster so PGDATA can be replaced by the base backup
+          ansible.builtin.systemd:
+            name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+            state: stopped
+
+        - name: Empty PGDATA for pg_basebackup
+          ansible.builtin.file:
+            path: "{{ postgres_data_dir }}"
+            state: "{{ item }}"
+            owner: postgres
+            group: postgres
+            mode: "0700"
+          loop:
+            - absent
+            - directory
+
+        - name: Base-backup PGDATA from the primary (streaming, self-configuring)
+          become: true
+          become_user: postgres
+          ansible.builtin.command:
+            argv: >-
+              {{ ['pg_basebackup',
+                  '--host', postgres_replication_primary_host,
+                  '--username', postgres_replication_user,
+                  '--pgdata', postgres_data_dir,
+                  '--wal-method', 'stream',
+                  '--write-recovery-conf']
+                 + (['--slot', postgres_replication_slot]
+                    if postgres_replication_slot | length > 0 else []) }}
+            creates: "{{ postgres_data_dir }}/standby.signal"
+          environment:
+            PGPASSWORD: "{{ postgres_replication_password }}"
+          no_log: true
+
+        - name: Start the cluster as a standby
+          ansible.builtin.systemd:
+            name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+            state: started
+
 - name: Ensure the PostgreSQL cluster service is started and enabled
   ansible.builtin.systemd:
     name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
@@ -200,6 +293,68 @@
         value: "{{ postgres_password_encryption }}"
       notify: Reload postgresql
 
+# =============================================================================
+# Phase 3b: Primary replication config (postgres_role == 'primary' with a
+# standby FQDN set). wal_level/max_wal_senders need a restart, folded into the
+# flush below. The replicator role + hostname pg_hba entry let exactly the named
+# standby stream. Off by default (empty standby host), so a plain primary is
+# untouched.
+# =============================================================================
+- name: Configure the primary for streaming replication
+  become: true
+  become_user: postgres
+  when:
+    - postgres_role == 'primary'
+    - postgres_replication_standby_host | length > 0
+  vars:
+    ansible_ssh_pipelining: true
+  block:
+    - name: Require the replicator password before enabling replication
+      ansible.builtin.assert:
+        that: postgres_replication_password | length > 0
+        fail_msg: >-
+          postgres_replication_standby_host is set but POSTGRES_REPLICATOR_PASSWORD
+          (env) is empty; refusing to create a passwordless replication role.
+        quiet: true
+
+    - name: Set wal_level to replica
+      community.postgresql.postgresql_set:
+        name: wal_level
+        value: replica
+      notify: Restart postgresql
+
+    - name: Set max_wal_senders
+      community.postgresql.postgresql_set:
+        name: max_wal_senders
+        value: "{{ postgres_max_wal_senders }}"
+      notify: Restart postgresql
+
+    - name: Ensure the replicator login/replication role exists
+      community.postgresql.postgresql_user:
+        name: "{{ postgres_replication_user }}"
+        password: "{{ postgres_replication_password }}"
+        role_attr_flags: LOGIN,REPLICATION
+        state: present
+      no_log: true
+
+    - name: Ensure the physical replication slot exists
+      community.postgresql.postgresql_slot:
+        name: "{{ postgres_replication_slot }}"
+        slot_type: physical
+        state: present
+      when: postgres_replication_slot | length > 0
+
+    - name: Allow the standby to stream replication (hostname pg_hba, scram)
+      community.postgresql.postgresql_pg_hba:
+        dest: "{{ postgres_conf_dir }}/pg_hba.conf"
+        contype: host
+        databases: replication
+        users: "{{ postgres_replication_user }}"
+        source: "{{ postgres_replication_standby_host }}"
+        method: scram-sha-256
+        state: present
+      notify: Reload postgresql
+
 # Apply a pending restart NOW so the remote listener + scram are live before we
 # create roles and run the health check (handlers otherwise flush at play end).
 - name: Apply pending PostgreSQL restart/reload
@@ -209,10 +364,13 @@
 # Phase 4: Roles, databases, and host-based auth
 # Credentials come from the source secret store; apply them on each run so an
 # app cutover can rotate from bootstrap SOPS values without manual SQL.
+# Primary only: a standby is read-only and receives roles/databases over the
+# replication stream, so provisioning them there would fail.
 # =============================================================================
 - name: Provision managed roles and databases
   become: true
   become_user: postgres
+  when: postgres_role == 'primary'
   block:
     - name: Ensure each managed login role exists with the source password
       community.postgresql.postgresql_user:
