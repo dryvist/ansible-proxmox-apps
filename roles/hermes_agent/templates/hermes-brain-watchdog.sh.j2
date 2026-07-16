@@ -70,9 +70,14 @@ probe_ok() {
   code="${response##*$'\n'}"
   body="${response%$'\n'*}"
   # stop|length|tool_calls = the model really generated; "error" (or a body
-  # with no finish_reason at all) = broken regardless of the 200.
+  # with no finish_reason at all) = broken regardless of the 200. The
+  # finish_reason check alone is not enough: LiteLLM can remap an upstream
+  # finish_reason "error" to "stop" (core_helpers "Unmapped finish_reason
+  # 'error', defaulting to 'stop'", seen live 2026-07-16), so also require
+  # completion_tokens >= 1 — a wedged engine always reports 0.
   [[ "${code}" == "200" ]] \
-    && grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(stop|length|tool_calls)"' <<< "${body}"
+    && grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(stop|length|tool_calls)"' <<< "${body}" \
+    && grep -Eq '"completion_tokens"[[:space:]]*:[[:space:]]*[1-9]' <<< "${body}"
 }
 
 # --- Cron fleet control (best-effort; idempotent) ----------------------------
