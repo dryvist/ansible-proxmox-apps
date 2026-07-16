@@ -1,0 +1,30 @@
+---
+# Vikunja task management (issue #141) — bao-first secrets (apps domain) with an
+# env fallback, mirroring nautobot_group.yml / zammad_group.yml. Only the fields
+# with a home in secret/apps/vikunja (the openbao_vikunja_secrets promotion map)
+# are wired bao-first here; VIKUNJA_JWT_SECRET and VIKUNJA_ADMIN_PASSWORD have no
+# bao home yet, so they stay pure env lookups on the role default.
+#
+# The database password is app-namespaced (vikunja_db_password) so the flat merge
+# into bao_apps_secrets never collides with Nautobot's bare db_password. It MUST
+# match the postgres side (postgres_managed_databases reads the same
+# bao_apps_secrets.vikunja_db_password), so both ends resolve one canonical value.
+# On hosts where the apps domain was not fetched (BAO_ADDR or the apps role_id/
+# secret_id unset) bao_apps_secrets is {} and the env fallback resolves instead.
+vikunja_db_password: >-
+  {{ bao_apps_secrets.vikunja_db_password
+     | default(lookup('env', 'VIKUNJA_DB_PASSWORD'), true) }}
+
+# MCP service-account passwords bao-first (secret/apps/vikunja fields
+# svc_mcp_ro_password / svc_mcp_rw_password). Redefines the role-default list so
+# the accounts the role creates and the tokens the MCP mint step later issues
+# resolve the same canonical password. Usernames match the role defaults.
+vikunja_service_users:
+  - username: svc-mcp-ro
+    password: >-
+      {{ bao_apps_secrets.svc_mcp_ro_password
+         | default(lookup('env', 'VIKUNJA_SVC_MCP_RO_PASSWORD'), true) }}
+  - username: svc-mcp-rw
+    password: >-
+      {{ bao_apps_secrets.svc_mcp_rw_password
+         | default(lookup('env', 'VIKUNJA_SVC_MCP_RW_PASSWORD'), true) }}
