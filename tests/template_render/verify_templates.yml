@@ -447,128 +447,6 @@
           - docker-compose.yml.j2: image, port 80:80, OPENPROJECT_SECRET_KEY_BASE,
             SMTP env vars, persistent volumes, host name
 
-- name: Render and verify infisical_docker templates
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  vars:
-    # Mirror roles/infisical_docker/defaults/main.yml (test stand-ins for
-    # SOPS-sourced env lookups and tofu_data constants).
-    infisical_docker_postgres_image: "postgres:14-alpine"
-    infisical_docker_redis_image: "redis:7-alpine"
-    infisical_docker_app_image: "infisical/infisical:latest"
-    infisical_docker_container_name: infisical
-    infisical_docker_data_dir: /opt/infisical
-    infisical_docker_postgres_data_dir: /opt/infisical/postgres
-    infisical_docker_redis_data_dir: /opt/infisical/redis
-    infisical_docker_postgres_internal_data: /var/lib/postgresql/data
-    infisical_docker_redis_internal_data: /data
-    infisical_docker_db_service: db
-    infisical_docker_redis_service: redis
-    infisical_docker_app_service: infisical
-    infisical_docker_db_name: infisical
-    infisical_docker_db_user: infisical
-    infisical_docker_restart_policy: unless-stopped
-    infisical_docker_api_port: 8080
-    infisical_docker_postgres_port: 5432
-    infisical_docker_redis_port: 6379
-    infisical_docker_site_url: "https://infisical.test.example.com"
-    infisical_docker_db_uri: "postgres://infisical:test-db-pw@db:5432/infisical"
-    infisical_docker_redis_url: "redis://redis:6379"
-    infisical_docker_encryption_key: "test-encryption-key-placeholder-do-not-use"
-    infisical_docker_auth_secret: "test-auth-secret-placeholder-do-not-use"
-    infisical_docker_db_password: "test-db-pw"
-    _template_dir: "../../roles/infisical_docker/templates"
-
-  tasks:
-    - name: Render infisical docker-compose.yml.j2 to /tmp
-      ansible.builtin.template:
-        src: "{{ _template_dir }}/docker-compose.yml.j2"
-        dest: /tmp/test_infisical_compose.yml
-        mode: "0644"
-
-    - name: Read rendered infisical docker-compose.yml
-      ansible.builtin.slurp:
-        src: /tmp/test_infisical_compose.yml
-      register: _infisical_compose_raw
-
-    - name: Decode infisical compose content
-      ansible.builtin.set_fact:
-        _infisical_compose: "{{ _infisical_compose_raw.content | b64decode }}"
-
-    - name: Assert infisical compose references all three expected images
-      ansible.builtin.assert:
-        that:
-          - "'postgres:14-alpine' in _infisical_compose"
-          - "'redis:7-alpine' in _infisical_compose"
-          - "'infisical/infisical:latest' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 missing one of the three required
-          images (postgres:14-alpine, redis:7-alpine, infisical/infisical:latest)
-
-    - name: Assert infisical compose publishes api port 8080:8080
-      ansible.builtin.assert:
-        that:
-          - "'8080:8080' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 missing api port mapping 8080:8080
-          (service_ports.infisical_api must be on both sides)
-
-    - name: Assert infisical compose builds DB_CONNECTION_URI from vars (no literal port)
-      ansible.builtin.assert:
-        that:
-          - "'DB_CONNECTION_URI' in _infisical_compose"
-          - "'postgres://infisical:test-db-pw@db:5432/infisical' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 missing DB_CONNECTION_URI or it does
-          not assemble from the DRY pieces (user, password, service host,
-          postgres_default port, db_name)
-
-    - name: Assert infisical compose builds REDIS_URL from vars (no literal port)
-      ansible.builtin.assert:
-        that:
-          - "'REDIS_URL' in _infisical_compose"
-          - "'redis://redis:6379' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 missing REDIS_URL or it does not
-          assemble from the redis service host + redis_default port
-
-    - name: Assert infisical compose sets SITE_URL to the HTTPS FQDN
-      ansible.builtin.assert:
-        that:
-          - "'SITE_URL' in _infisical_compose"
-          - "'https://infisical.test.example.com' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 missing SITE_URL or did not
-          substitute the HTTPS FQDN
-
-    - name: Assert infisical compose mounts persistent volumes for postgres and redis
-      ansible.builtin.assert:
-        that:
-          - "'/opt/infisical/postgres:/var/lib/postgresql/data' in _infisical_compose"
-          - "'/opt/infisical/redis:/data' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 missing required persistent volume
-          mounts for postgres and redis
-
-    - name: Assert infisical compose passes ENCRYPTION_KEY and AUTH_SECRET
-      ansible.builtin.assert:
-        that:
-          - "'ENCRYPTION_KEY' in _infisical_compose"
-          - "'AUTH_SECRET' in _infisical_compose"
-        fail_msg: >-
-          infisical docker-compose.yml.j2 must pass ENCRYPTION_KEY and
-          AUTH_SECRET (Infisical fails to start without them)
-
-    - name: Infisical template rendering PASSED
-      ansible.builtin.debug:
-        msg: |
-          Infisical template assertions passed:
-          - docker-compose.yml.j2: postgres+redis+app images, port 8080:8080,
-            DB_CONNECTION_URI, REDIS_URL, SITE_URL, persistent volumes,
-            ENCRYPTION_KEY/AUTH_SECRET
-
 - name: Render and verify haproxy templates
   hosts: localhost
   connection: local
@@ -698,7 +576,7 @@
           haproxy_http_enabled was false. The Jinja conditional gate is broken.
 
     # =========================================================================
-    # Enabled path: single frontend entry (the Infisical case)
+    # Enabled path: single frontend entry (one service)
     # =========================================================================
     - name: Render haproxy.cfg.j2 with HTTP enabled and one frontend
       ansible.builtin.template:
@@ -708,11 +586,11 @@
       vars:
         haproxy_http_enabled: true
         haproxy_http_frontends:
-          - name: infisical
-            server_name: infisical.test.example.com
+          - name: webapp
+            server_name: webapp.test.example.com
             backend_host: 192.168.0.108
             backend_port: 8080
-            cert_path: /etc/ssl/private/infisical.pem
+            cert_path: /etc/ssl/private/webapp.pem
 
     - name: Read rendered haproxy.cfg (single)
       ansible.builtin.slurp:
@@ -736,8 +614,8 @@
       ansible.builtin.assert:
         that:
           - "'frontend https_in' in _haproxy_single"
-          - "'bind *:443 ssl crt /etc/ssl/private/infisical.pem' in _haproxy_single"
-          - "'use_backend http_backend_infisical if { hdr(host) -i infisical.test.example.com }' in _haproxy_single"
+          - "'bind *:443 ssl crt /etc/ssl/private/webapp.pem' in _haproxy_single"
+          - "'use_backend http_backend_webapp if { hdr(host) -i webapp.test.example.com }' in _haproxy_single"
           - "'http-request set-header X-Forwarded-Proto https' in _haproxy_single"
           - "'option forwardfor' in _haproxy_single"
         fail_msg: >-
@@ -747,10 +625,10 @@
     - name: Assert single-entry render has per-service backend pointed at backend_host
       ansible.builtin.assert:
         that:
-          - "'backend http_backend_infisical' in _haproxy_single"
-          - "'server infisical 192.168.0.108:8080 check' in _haproxy_single"
+          - "'backend http_backend_webapp' in _haproxy_single"
+          - "'server webapp 192.168.0.108:8080 check' in _haproxy_single"
         fail_msg: >-
-          backend http_backend_infisical missing or server line does not point
+          backend http_backend_webapp missing or server line does not point
           at backend_host:backend_port.
 
     - name: Assert single-entry render keeps option httplog out of the backend section
@@ -783,11 +661,11 @@
       vars:
         haproxy_http_enabled: true
         haproxy_http_frontends:
-          - name: infisical
-            server_name: infisical.test.example.com
+          - name: webapp
+            server_name: webapp.test.example.com
             backend_host: 192.168.0.108
             backend_port: 8080
-            cert_path: /etc/ssl/private/infisical.pem
+            cert_path: /etc/ssl/private/webapp.pem
           - name: gitea
             server_name: gitea.test.example.com
             backend_host: 192.168.0.109
@@ -818,7 +696,7 @@
     - name: Assert multi-entry render lists both certs on the single SNI bind line
       ansible.builtin.assert:
         that:
-          - "'crt /etc/ssl/private/infisical.pem' in _haproxy_multi"
+          - "'crt /etc/ssl/private/webapp.pem' in _haproxy_multi"
           - "'crt /etc/ssl/private/gitea.pem' in _haproxy_multi"
         fail_msg: >-
           Multi-entry render is missing a cert keyword on the SNI bind line.
@@ -826,7 +704,7 @@
     - name: Assert multi-entry render emits one use_backend ACL per service
       ansible.builtin.assert:
         that:
-          - "'use_backend http_backend_infisical if { hdr(host) -i infisical.test.example.com }' in _haproxy_multi"
+          - "'use_backend http_backend_webapp if { hdr(host) -i webapp.test.example.com }' in _haproxy_multi"
           - "'use_backend http_backend_gitea if { hdr(host) -i gitea.test.example.com }' in _haproxy_multi"
         fail_msg: >-
           Multi-entry render is missing a use_backend ACL — services would
@@ -836,9 +714,9 @@
     - name: Assert multi-entry render emits one per-service backend block
       ansible.builtin.assert:
         that:
-          - "'backend http_backend_infisical' in _haproxy_multi"
+          - "'backend http_backend_webapp' in _haproxy_multi"
           - "'backend http_backend_gitea' in _haproxy_multi"
-          - "'server infisical 192.168.0.108:8080 check' in _haproxy_multi"
+          - "'server webapp 192.168.0.108:8080 check' in _haproxy_multi"
           - "'server gitea 192.168.0.109:3000 check' in _haproxy_multi"
         fail_msg: >-
           Multi-entry render is missing a per-service backend or its server line.

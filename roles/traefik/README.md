@@ -90,7 +90,7 @@ fronted service is added/removed in exactly one place. Add it in terraform-proxm
   at layer 2 — no UniFi rule, and **no killswitch change** (the qBittorrent/Prowlarr
   WebUIs are LAN-reachable; the killswitch governs egress only).
 - **Tier 2 — infra UIs on other VLANs** (`technitium`, `pihole`, `phpipam`, `minio`,
-  `infisical`, `mailpit`, `ntfy`, `homeassistant`, `openproject`, `prometheus`,
+  `mailpit`, `ntfy`, `homeassistant`, `openproject`, `prometheus`,
   `qdrant`, `haproxy-stats`): each needs a **UniFi inter-VLAN allow** (Traefik
   `media_svc` → target VLAN), enforced in `terraform-unifi`. Some apps also need
   their own reverse-proxy trust setting (e.g. **Home Assistant**
