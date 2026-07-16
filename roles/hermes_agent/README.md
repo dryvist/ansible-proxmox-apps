@@ -374,10 +374,13 @@ options (fresh `codex login`, or copying an already-authenticated
 `~/.codex/auth.json`). Until that's done, the MCP entry is present but every
 call to it errors; the daemon itself starts and runs normally regardless.
 
-`OPENROUTER_API_KEY` is already seeded in OpenBao `secret/ai/hermes` (from an
-earlier pass at this problem) but is **not consumed** by anything in this
-role — parked for a possible future escalation option, not wired to an
-active MCP/delegation target this round.
+OpenRouter is reachable with **no Hermes-side wiring**: the `llm_router` role
+registers OpenRouter models as explicit router aliases (first:
+`openrouter-free`), with one OpenBao-held key **per model** under
+`secret/ai/saas/openrouter` — Hermes just names the alias like any other
+model. The old account-wide `OPENROUTER_API_KEY` parked in `secret/ai/hermes`
+is superseded by those per-model keys and should be retired once they are
+seeded.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
