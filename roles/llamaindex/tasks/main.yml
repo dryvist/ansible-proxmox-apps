@@ -59,6 +59,9 @@
       - llama-index-core
       - llama-index-vector-stores-qdrant
       - llama-index-embeddings-openai
+      # index_docs.py reads the rendered config.yaml; qdrant-client arrives via
+      # llama-index-vector-stores-qdrant, PyYAML is not guaranteed transitively.
+      - pyyaml
     state: present
     virtualenv: "{{ llamaindex_data_dir }}/venv"
 
@@ -73,6 +76,49 @@
     owner: root
     group: root
     mode: "0640"
+
+# =============================================================================
+# RAG Indexer (the consumer that makes Qdrant a live index)
+# =============================================================================
+
+- name: Deploy the RAG indexer script
+  ansible.builtin.copy:
+    src: index_docs.py
+    dest: "{{ llamaindex_data_dir }}/index_docs.py"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Render the service-registry document for indexing
+  ansible.builtin.template:
+    src: registry.json.j2
+    dest: "{{ llamaindex_data_dir }}/registry.json"
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - llamaindex_registry_enabled | default(true)
+    - tofu_data is defined
+
+- name: Install the RAG index refresh systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - llamaindex-index.service
+    - llamaindex-index.timer
+  when: llamaindex_index_enabled | default(true)
+
+- name: Enable the RAG index refresh timer
+  ansible.builtin.systemd:
+    name: llamaindex-index.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: llamaindex_index_enabled | default(true)
 
 # =============================================================================
 # Health Checks
