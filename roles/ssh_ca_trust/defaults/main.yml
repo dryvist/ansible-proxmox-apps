@@ -1,0 +1,45 @@
+---
+# ssh_ca_trust (VM/guest half) — trust the OpenBao SSH client CA on the VMs
+# this repo converges (ssh-certificate-authority ADR). SIBLING of the
+# ansible-proxmox role of the same name, which owns PVE nodes + LXCs (via
+# pct): keep the trust-file / principals / drop-in shape in lockstep. The two
+# repos share no galaxy path (the contracts repo's single galaxy slot is
+# taken by inventory_resolve), so this is a deliberate, documented sibling.
+#
+# Fail-closed pinning: the CA public key is fetched from OpenBao's
+# unauthenticated public_key endpoint but only trusted when its fingerprint
+# matches the PINNED value recorded from the openbao converge's trusted
+# ceremony. Never trust-on-first-use.
+
+# Two-condition activation gate. The role is a NO-OP unless BOTH a pinned CA
+# fingerprint exists AND rollout is explicitly enabled for this host group.
+# Separating "a pin exists" from "roll out today" keeps a stray/stale
+# SSH_CA_FINGERPRINT from distributing trust estate-wide, and enables staged,
+# host-class-by-host-class activation (flip rollout per group_vars once proven).
+# When active it is still fail-closed on a fingerprint MISMATCH.
+ssh_ca_trust_rollout_enabled: false
+ssh_ca_trust_enabled: "{{ (ssh_ca_trust_ca_fingerprint | length > 0) and (ssh_ca_trust_rollout_enabled | bool) }}"
+
+ssh_ca_trust_bao_addr: >-
+  {{ lookup('env', 'BAO_ADDR')
+     | default(lookup('env', 'VAULT_ADDR') | default('', true), true) }}
+ssh_ca_trust_mount: ssh-client-ca
+
+# PINNED CA fingerprint (`ssh-keygen -l` SHA256:... form) — env
+# SSH_CA_FINGERPRINT via Doppler. Empty leaves the role a no-op via the
+# activation gate above (not a hard failure).
+ssh_ca_trust_ca_fingerprint: "{{ lookup('env', 'SSH_CA_FINGERPRINT') | default('', true) }}"
+
+# Rotation: append the NEW issuer's public key here first; drop the old one
+# after every old cert's TTL has drained.
+ssh_ca_trust_extra_ca_keys: []
+
+# principal -> login-user map, default-deny. VMs converge as `debian`.
+# `ai-agent` is deny-by-default here; add it only via an explicit group_vars
+# opt-in on the hosts that actually need agent shell (never root by default).
+ssh_ca_trust_principals:
+  debian: [ansible]
+
+ssh_ca_trust_ca_file: /etc/ssh/trusted-user-ca-keys.pem
+ssh_ca_trust_principals_dir: /etc/ssh/principals
+ssh_ca_trust_dropin: /etc/ssh/sshd_config.d/99-openbao-ca.conf

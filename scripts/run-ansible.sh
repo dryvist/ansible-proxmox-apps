@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Ansible runner — prefers a short-lived SSH certificate from the OpenBao CA
+# (ssh-certificate-authority ADR) over the shared static key, then runs the
+# playbook. Invoke under your secrets manager so BAO_ADDR + the
+# ansible-converge AppRole are ambient:
+#   doppler run -- scripts/run-ansible.sh playbooks/site.yml [args...]
+# Without those env vars the static PROXMOX_SSH_KEY_PATH flow is unchanged.
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 <playbook> [ansible-playbook args...]"
+  echo "Example: doppler run -- $0 playbooks/site.yml --limit vms"
+  exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+
+PLAYBOOK="$1"
+shift
+
+CERT_DIR=""
+cleanup() {
+  [[ -n $CERT_DIR ]] && rm -rf "$CERT_DIR"
+}
+trap cleanup EXIT
+
+# Mint an ephemeral ed25519 keypair signed by ssh-client-ca/sign/
+# automation-ansible (principal `ansible`, TTL <=1h). OpenSSH pairs
+# id + id-cert.pub automatically via PROXMOX_SSH_KEY_PATH. No secret
+# material on any command line.
+mint_ssh_cert() {
+  local mount=${SSH_CA_MOUNT:-ssh-client-ca} login token signed
+  CERT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ansible-sshcert.XXXXXX") || return 1
+  chmod 700 "$CERT_DIR"
+  (umask 077 && ssh-keygen -q -t ed25519 -N '' -C "ansible-converge" -f "$CERT_DIR/id") || return 1
+  { set +x; } 2>/dev/null
+  login=$(jq -nc --arg r "$OPENBAO_APPROLE_ANSIBLE_ROLE_ID" --arg s "$OPENBAO_APPROLE_ANSIBLE_SECRET_ID" \
+    '{role_id: $r, secret_id: $s}' \
+    | curl -fsSL --max-time 10 -H 'Content-Type: application/json' --data @- \
+      "$BAO_ADDR/v1/auth/approle/login") || return 1
+  token=$(printf '%s' "$login" | jq -er '.auth.client_token') || return 1
+  signed=$(jq -nc --rawfile pub "$CERT_DIR/id.pub" --arg ttl "${SSH_CERT_TTL:-1h}" \
+    '{public_key: $pub, ttl: $ttl}' \
+    | curl -fsSL --max-time 10 -H "X-Vault-Token: $token" --data @- \
+      "$BAO_ADDR/v1/$mount/sign/automation-ansible" \
+    | jq -er '.data.signed_key') || return 1
+  printf '%s\n' "$signed" > "$CERT_DIR/id-cert.pub"
+  export PROXMOX_SSH_KEY_PATH="$CERT_DIR/id"
+}
+
+if [[ -n ${BAO_ADDR:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]] \
+  && mint_ssh_cert; then
+  echo "Using a short-lived SSH certificate from the OpenBao CA (automation-ansible)."
+elif [[ -z ${PROXMOX_SSH_KEY_PATH:-} ]]; then
+  echo "ERROR: no SSH auth available — set BAO_ADDR + OPENBAO_APPROLE_ANSIBLE_* for cert" >&2
+  echo "minting, or PROXMOX_SSH_KEY_PATH for the static break-glass key." >&2
+  exit 1
+fi
+
+ansible-playbook "$PLAYBOOK" "$@"
