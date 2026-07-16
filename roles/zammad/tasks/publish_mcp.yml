@@ -1,0 +1,70 @@
+---
+# Publish the shared Zammad MCP connection (API base URL + the seeded Hermes API
+# token) to OpenBao secret/ai/mcp/zammad. Mirrors the OpenBao half of
+# roles/vikunja's publisher: flag-gated, sibling-preserving KV-v2
+# read-modify-write, no_log, delegated to the controller where BAO_* live.
+#
+# Zammad's token is SEEDED, not minted — zammad_bootstrap.rb runs
+# Token.create!(... token: ZAMMAD_API_TOKEN) with a value supplied from OpenBao,
+# so there is nothing to mint here; the token is already in hand as
+# zammad_hermes_api_token.
+# ponytail: reuses the existing admin 'hermes' api token as the MCP token
+# (promote-existing-credential rule — a 2nd consumer of a token that already
+# exists). Upgrade path for MCP least-privilege: a dedicated svc-mcp Zammad user
+# + its own Token.create! in zammad_bootstrap.rb, published to this same field.
+
+- name: Assert OpenBao write credentials are present for the MCP publish
+  ansible.builtin.assert:
+    that:
+      - zammad_token_openbao_addr | length > 0
+      - zammad_token_openbao_token | length > 0
+    fail_msg: >-
+      zammad_token_publish_openbao is on but BAO_ADDR/BAO_TOKEN are unset.
+      Provide a write-capable OpenBao AppRole in the converge environment.
+    quiet: true
+
+- name: Read current OpenBao secret at {{ zammad_token_openbao_path }}
+  ansible.builtin.uri:
+    url: "{{ zammad_token_openbao_addr }}/v1/{{ zammad_token_openbao_mount }}/data/{{ zammad_token_openbao_path }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ zammad_token_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: zammad_bao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+# KV v2 replaces the whole secret, so merge the canonical fields over current
+# data to preserve siblings. Delta-guarded so a converge with no change no-ops.
+- name: Publish the Zammad MCP connection to OpenBao
+  ansible.builtin.uri:
+    url: "{{ zammad_token_openbao_addr }}/v1/{{ zammad_token_openbao_mount }}/data/{{ zammad_token_openbao_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ zammad_token_openbao_token }}"
+    body_format: json
+    body:
+      data: >-
+        {{ (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+           | combine({
+               zammad_url_openbao_key: zammad_mcp_url,
+               zammad_token_openbao_key: zammad_hermes_api_token
+             }) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: >-
+    (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_url_openbao_key)
+      != zammad_mcp_url
+    or (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_token_openbao_key)
+      != zammad_hermes_api_token
+  no_log: true
