@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.112.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.111.0...v1.112.0) (2026-07-16)
+
+
+### Features
+
+* **openbao:** add apps read AppRole for the shared-Postgres app tier ([#952](https://github.com/dryvist/ansible-proxmox-apps/issues/952)) ([0ed9b88](https://github.com/dryvist/ansible-proxmox-apps/commit/0ed9b88251caeb12ec98df8d86b7da05ab676454))
+* **openbao:** grant ansible-converge exact-path write to ai/mcp/splunk ([#950](https://github.com/dryvist/ansible-proxmox-apps/issues/950)) ([cfaef7b](https://github.com/dryvist/ansible-proxmox-apps/commit/cfaef7b1f1c674e460dea11683f734dc3041cdc8))
+
+
+### Bug Fixes
+
+* **hermes_agent:** declare context_length as the served window, not half-native ([#949](https://github.com/dryvist/ansible-proxmox-apps/issues/949)) ([680584e](https://github.com/dryvist/ansible-proxmox-apps/commit/680584e6d00773d0377075f5f8d9131a2ced0221))
+* **hermes_agent:** pin compression summary_model to a &gt;=64K-window deployment ([#946](https://github.com/dryvist/ansible-proxmox-apps/issues/946)) ([bb7b4c6](https://github.com/dryvist/ansible-proxmox-apps/commit/bb7b4c66afcefea1353c5774c0c76de9eb86a72f))
+* **hermes_agent:** scope the verify-gate journal read to the current gateway start ([#947](https://github.com/dryvist/ansible-proxmox-apps/issues/947)) ([7ca812c](https://github.com/dryvist/ansible-proxmox-apps/commit/7ca812cf5bcf4605c53435d3178dade11d9a3977))
+* **hermes:** detect 200-wrapped brain errors and degrade instead of dying ([#939](https://github.com/dryvist/ansible-proxmox-apps/issues/939)) ([c8ec206](https://github.com/dryvist/ansible-proxmox-apps/commit/c8ec20634c1edd8b6b0b61ed74c206b2cbfdd200))
+* **llm_router:** disable rotation fallback below the primary's context floor ([#954](https://github.com/dryvist/ansible-proxmox-apps/issues/954)) ([16147d3](https://github.com/dryvist/ansible-proxmox-apps/commit/16147d39d4b60ff9050536ca2ad1d721510de61c))
+* **llm_router:** restore OptiQ as the fleet brain — stock twin serves below Hermes' context floor ([#948](https://github.com/dryvist/ansible-proxmox-apps/issues/948)) ([2804efe](https://github.com/dryvist/ansible-proxmox-apps/commit/2804efef2d1a52fd48a6034603360ba56bb5fd67))
+
+## [1.111.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.110.0...v1.111.0) (2026-07-16)
+
+
+### Features
+
+* **openbao:** add shared Splunk MCP secret contract ([0168d32](https://github.com/dryvist/ansible-proxmox-apps/commit/0168d327d195ae499d5affea3483c87883f9c568))
+* **openbao:** human-gated ai-apply-&lt;domain&gt; + ai-admin access tiers ([#931](https://github.com/dryvist/ansible-proxmox-apps/issues/931)) ([874a0e8](https://github.com/dryvist/ansible-proxmox-apps/commit/874a0e84e332014662713273986ac967bfcbe0be))
+
+
+### Bug Fixes
+
+* **openbao:** pin apply-tier token_max_ttl and repair contract test ([#940](https://github.com/dryvist/ansible-proxmox-apps/issues/940)) ([bd0718a](https://github.com/dryvist/ansible-proxmox-apps/commit/bd0718a55d3c9dbf0273b0ba1220697e014c1dcd))
+* **sonarr:** retry transient upstream downloads ([c85e496](https://github.com/dryvist/ansible-proxmox-apps/commit/c85e496d6e25d93dd5216f68068905d18a7b2b05))
+
 ## [1.110.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.109.0...v1.110.0) (2026-07-14)
 
 
