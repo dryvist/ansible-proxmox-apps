@@ -14,14 +14,12 @@
 # resolve its secrets bao-first with an env fallback. Runs once on the
 # controller and publishes to the union of every domain's consuming groups;
 # each domain SKIPS CLEANLY when BAO_ADDR or that domain's own role_id/
-# secret_id envs are unset. Placed before Phase 6 (qdrant) so it precedes
-# every consumer.
+# secret_id envs are unset.
 # =============================================================================
 
 - name: Pre-fetch resource-domain secrets from OpenBao
   hosts: >-
-    qdrant_group:open_webui_group:hermes_agent_group:llm_router_group:ai_orchestration_group:
-    langfuse_group:langflow_group:
+    ai_orchestration_group:
     cribl_stream_group:cribl_edge:
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
@@ -511,7 +509,7 @@
 # =============================================================================
 
 - name: Deploy keystone SPOF deadman watchdog
-  hosts: technitium_dns_group:traefik_group:haproxy_group:openbao_group:agentgateway_group
+  hosts: technitium_dns_group:traefik_group:haproxy_group:openbao_group
   become: true
   gather_facts: false
   tags:
@@ -565,27 +563,6 @@
     - role: nautobot
 
 # =============================================================================
-# Phase 6: Qdrant Vector Database
-# AI RAG vector database -- Docker in LXC container
-# =============================================================================
-
-- name: Configure Qdrant vector database
-  hosts: qdrant_group
-  become: true
-  gather_facts: false
-  tags:
-    - qdrant_docker
-    - vectordb
-    - ai
-  vars:
-    _vdb_ports: >-
-      {{ hostvars['localhost']['tofu_data']['constants']['vector_db_ports'] }}
-    qdrant_docker_http_port: "{{ _vdb_ports.qdrant_http }}"
-    qdrant_docker_grpc_port: "{{ _vdb_ports.qdrant_grpc }}"
-  roles:
-    - role: qdrant_docker
-
-# =============================================================================
 # Phase 7: GitHub Actions Runners
 # CI runners on docker-host VM — isolated from dev/test workloads
 # =============================================================================
@@ -620,133 +597,8 @@
     - role: idrac_kvm_docker
 
 # =============================================================================
-# Phase 8a: Local LLM — Ollama inference (AMD ROCm) + Open WebUI chat
-# Ollama (CT 167, RX 6800) serves Hermes 4 14B; Open WebUI (CT 168) is the chat
-# front-end. Open WebUI is fronted by Traefik at https://llm.<subdomain>
-# (Phase 8d); Ollama stays internal on the ai VLAN.
-# =============================================================================
-
-- name: Configure Ollama LLM inference (AMD ROCm)
-  hosts: ollama_group
-  become: true
-  gather_facts: true
-  tags:
-    - ollama
-    - llm
-    - ai
-  roles:
-    - role: ollama
-
-- name: Configure Open WebUI chat front-end
-  hosts: open_webui_group
-  become: true
-  gather_facts: true
-  tags:
-    - open_webui
-    - llm
-    - ai
-  roles:
-    - role: open_webui
-
-# =============================================================================
-# Phase 8a2: Hermes Agent — the NousResearch autonomous agent (NOT the serving
-# stack above). Headless `hermes gateway` daemon; brain = the homelab Ollama;
-# memory = Hindsight; HERMES_HOME on a persisted ZFS volume (backed up pve->pve3).
-# =============================================================================
-
-- name: Configure Hermes Agent (autonomous agent)
-  hosts: hermes_agent_group
-  become: true
-  gather_facts: true
-  tags:
-    - hermes_agent
-    - agent
-    - ai
-  roles:
-    # codex_runner MUST run first — hermes_agent's config.yaml references its
-    # sudo grant + resolved Codex binary path (the escalation MCP entry).
-    - role: codex_runner
-    - role: hermes_agent
-
-# =============================================================================
-# Phase 8a3: LLM serving fabric — llama.cpp light tier + LiteLLM front door.
-# llama.cpp + llama-swap (llm-fast, RX 6800) serves the co-resident light models;
-# the LiteLLM proxy (llm-router x3) is the single OpenAI-compatible endpoint,
-# fronted by Traefik at https://llm.<subdomain>, routing large vs light by alias.
-# =============================================================================
-
-- name: Configure llama.cpp light-tier serving (llama-swap, AMD ROCm)
-  hosts: llm_fast_group
-  become: true
-  gather_facts: true
-  tags:
-    - llama_cpp
-    - llm
-    - ai
-  roles:
-    - role: llama_cpp
-
-- name: Configure the LiteLLM router (fabric front door)
-  hosts: llm_router_group
-  become: true
-  gather_facts: true
-  tags:
-    - llm_router
-    - llm
-    - ai
-  roles:
-    - role: llm_router
-
-# =============================================================================
-# Phase 8a-post: LlamaIndex RAG Engine
-# Embeddings via the fabric router (llm-fast) — must converge AFTER the
-# router play; its health check queries https://llm.<subdomain>/v1/models.
-# =============================================================================
-
-- name: Configure LlamaIndex RAG engine
-  hosts: llamaindex_group
-  become: true
-  gather_facts: true
-  tags:
-    - llamaindex
-    - rag
-    - ai
-  vars:
-    _vdb_ports: >-
-      {{ hostvars['localhost']['tofu_data']['constants']['vector_db_ports'] }}
-    llamaindex_qdrant_host: "{{ hostvars['qdrant']['container_ip'] }}"
-    llamaindex_qdrant_port: "{{ _vdb_ports.qdrant_http }}"
-  roles:
-    - role: llamaindex
-
-# =============================================================================
 # Phase 8a-bis: AI Orchestration Layer
-# Visual builders (Dify, LangFlow) + a CrewAI/LangChain runtime on the ai
-# VLAN; Langfuse LLM-observability on siem. Docker-in-LXC except agent-exec
-# (plain Python venv). Each emits OpenTelemetry to the Cribl Edge OTLP endpoint
-# (ai_orchestration_otel_endpoint); the Cribl source + Langfuse fan-out are
-# configured live (Cribl can't split one input across outputs in this version).
 # =============================================================================
-
-- name: Configure Dify LLMOps platform
-  hosts: dify_group
-  become: true
-  gather_facts: true
-  tags:
-    - dify_docker
-    - ai-orchestration
-  roles:
-    - role: dify_docker
-
-- name: Configure LangFlow visual prototyping
-  hosts: langflow_group
-  become: true
-  gather_facts: true
-  tags:
-    - langflow_docker
-    - ai-orchestration
-  roles:
-    - role: langflow_docker
 
 - name: Configure n8n workflow automation
   hosts: n8n_group
@@ -757,46 +609,6 @@
     - ai-orchestration
   roles:
     - role: n8n_docker
-
-- name: Configure LangGraph server + Agent Chat UI (zero-cloud)
-  hosts: langgraph_group
-  become: true
-  gather_facts: true
-  tags:
-    - langgraph_docker
-    - ai-orchestration
-  roles:
-    - role: langgraph_docker
-
-- name: Configure agent-exec runtime (CrewAI + LangChain)
-  hosts: agent_exec_group
-  become: true
-  gather_facts: true
-  tags:
-    - agent_exec
-    - ai-orchestration
-  roles:
-    - role: agent_exec
-
-- name: Configure Langfuse LLM observability
-  hosts: langfuse_group
-  become: true
-  gather_facts: true
-  tags:
-    - langfuse_docker
-    - observability
-  roles:
-    - role: langfuse_docker
-
-- name: Configure agentgateway MCP/LLM/A2A data plane
-  hosts: agentgateway_group
-  become: true
-  gather_facts: true
-  tags:
-    - agentgateway_docker
-    - ai-orchestration
-  roles:
-    - role: agentgateway_docker
 
 # =============================================================================
 # Phase 8b: OpenProject Community Edition
