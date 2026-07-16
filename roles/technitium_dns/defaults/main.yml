@@ -162,18 +162,25 @@ technitium_dns_query_log_app_name: "Log Exporter"
 technitium_dns_query_log_app_mirror_endpoint: >-
   https://s3.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/artifacts
 # App version is pinned to the Log Exporter build compatible with the RUNNING
-# server (14.3 -> the highest store entry whose serverVersion <= ours is
-# 14.2.0 -> app 2.1). NOT the latest (3.0.1 needs server 15.3). A Renovate bump
-# is only a SIGNAL — it cannot re-host a private object. On a server upgrade the
-# operator MUST (1) pick the app version for the new serverVersion from the
-# store manifest (https://go.technitium.com/?id=44), (2) re-seed
-# artifacts/technitium/<filename> in object-storage from a clean-egress host
-# (the homelab is UDW-blocked from Technitium — use a GitHub Actions runner),
-# and (3) update the version + sha256 below. NOTE app v3.x renamed the
-# `ebableEdnsLogging` typo key below to `enableEdnsLogging` — fix that in the
-# config too on a 3.x bump.
-# renovate: datasource=docker depName=technitium/dns-server
-technitium_dns_query_log_app_version: "15.4.0"
+# server: the app has its OWN version stream, unrelated to the server tag (app
+# 3.0.1 ships with server 15.4). It is sourced from the DnsServer repo at the
+# matching server tag — Apps/LogExporterApp/LogExporterApp.csproj carries the
+# authoritative <Version>. A Renovate bump is only a SIGNAL: it cannot re-host a
+# private object, and no datasource tracks this app, so major bumps are blocked
+# in renovate.json. On a server upgrade the operator MUST (1) read <Version>
+# from the csproj at the new server tag, (2) re-seed
+# artifacts/technitium/<filename> in object-storage, and (3) update the version
+# + sha256 below.
+#
+# Neither download.technitium.com nor go.technitium.com is reachable from this
+# network, so the vendor zip cannot be mirrored directly. Build it instead —
+# `dotnet build -c Release` the csproj at the server tag inside the
+# mcr.microsoft.com/dotnet/sdk image, referencing TechnitiumLibrary{,.Net}.dll
+# and DnsServerCore.ApplicationCommon.dll extracted from the matching
+# technitium/dns-server image (those are <Private>false</Private> compile-time
+# refs, so using the image's own copies guarantees an ABI match). Zip the build
+# output flat, minus README.md, to match the vendor layout.
+technitium_dns_query_log_app_version: "3.0.1"
 technitium_dns_query_log_app_filename: "LogExporterApp-{{ technitium_dns_query_log_app_version }}.zip"
 technitium_dns_query_log_app_url: >-
   {{ technitium_dns_query_log_app_mirror_endpoint }}/technitium/{{
@@ -181,7 +188,7 @@ technitium_dns_query_log_app_url: >-
 # sha256 of the mirrored zip — documents the exact pinned build (the
 # downloadAndInstall API has no checksum param, so this is verified by the
 # operator at seed time, not enforced at install). Update with the version.
-technitium_dns_query_log_app_sha256: "53e84d2c3b8715e5fd59b415b57920bd4845ef8cb38cc935c25bddb89915c7fd"
+technitium_dns_query_log_app_sha256: "b2c32bb090e164b102185db819d97b0bf4cbe8cbe6090a5e9ffebfecce13f0c3"
 # Same stable syslog entry point the syslog_forwarder role uses (the `syslog`
 # CNAME this very role creates -> HAProxy). Never a committed literal.
 technitium_dns_query_log_syslog_host: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
