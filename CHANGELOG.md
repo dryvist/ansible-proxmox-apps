@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.1.0...v2.2.0) (2026-07-16)
+
+
+### Features
+
+* **inventory:** add opt-in Nautobot GraphQL dynamic inventory ([#992](https://github.com/dryvist/ansible-proxmox-apps/issues/992)) ([4714cb1](https://github.com/dryvist/ansible-proxmox-apps/commit/4714cb135ddf89975acb5408311342e1610775f2))
+* **object_storage:** add private versioned dryvist-homelab-backups bucket ([#990](https://github.com/dryvist/ansible-proxmox-apps/issues/990)) ([d5bed93](https://github.com/dryvist/ansible-proxmox-apps/commit/d5bed93e8d06a09e7a986a23f7f1c00580cd3c5f))
+* **postgres:** add pgBackRest WAL archiving + base backups to S3 (PITR) ([#989](https://github.com/dryvist/ansible-proxmox-apps/issues/989)) ([9db4a48](https://github.com/dryvist/ansible-proxmox-apps/commit/9db4a4824b341b6fe5cceda08932da52f750df07))
+* **zammad:** publish MCP connection to OpenBao secret/ai/mcp/zammad ([#986](https://github.com/dryvist/ansible-proxmox-apps/issues/986)) ([9468c4c](https://github.com/dryvist/ansible-proxmox-apps/commit/9468c4c0c85a0c349fb61d25dd8229eda9c09821))
+
 ## [2.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.0.0...v2.1.0) (2026-07-16)
 
 
