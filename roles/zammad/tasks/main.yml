@@ -160,6 +160,27 @@
         mode: "0660"
       notify: Restart elasticsearch
 
+    # The deb postinst auto-configures xpack security and stores transport-SSL
+    # secure passwords in the ES keystore. With security disabled in the config
+    # above, ES refuses to boot while those keystore entries remain ("invalid
+    # configuration for xpack.security.transport.ssl"), so strip them.
+    - name: List Elasticsearch keystore entries
+      ansible.builtin.command:
+        cmd: /usr/share/elasticsearch/bin/elasticsearch-keystore list
+      register: zammad_es_keystore
+      changed_when: false
+
+    - name: Remove the auto-configured transport-SSL secure passwords
+      ansible.builtin.command:
+        cmd: >-
+          /usr/share/elasticsearch/bin/elasticsearch-keystore remove {{ item }}
+      loop:
+        - xpack.security.transport.ssl.keystore.secure_password
+        - xpack.security.transport.ssl.truststore.secure_password
+        - xpack.security.http.ssl.keystore.secure_password
+      when: item in zammad_es_keystore.stdout_lines
+      notify: Restart elasticsearch
+
     - name: Pin the Elasticsearch heap
       ansible.builtin.template:
         src: jvm-heap.options.j2
