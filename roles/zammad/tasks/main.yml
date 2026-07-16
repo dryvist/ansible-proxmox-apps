@@ -295,8 +295,16 @@
       register: zammad_dbyml
       no_log: true
 
-    - name: Configure zammad (runs the postinst — migrates against the external DB)
-      ansible.builtin.command: dpkg --configure zammad
+    # dpkg --unpack skipped apt's dependency resolution, so zammad's REAL
+    # runtime deps (libpq5, libxslt1.1, curl, ...) may be missing and a bare
+    # `dpkg --configure` fails. `apt-get -f install` pulls exactly the missing
+    # deps and configures the unpacked package (running the postinst, which
+    # migrates against the external DB); the equivs dummy keeps the
+    # `postgresql` dep satisfied without a local cluster.
+    - name: Configure zammad (resolve deps + run the postinst against the external DB)
+      ansible.builtin.command: apt-get --fix-broken --yes install
+      environment:
+        DEBIAN_FRONTEND: noninteractive
       when: not zammad_configured
       changed_when: true
 
