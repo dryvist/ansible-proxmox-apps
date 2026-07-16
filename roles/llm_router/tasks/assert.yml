@@ -15,12 +15,8 @@
   ansible.builtin.assert:
     quiet: true
     that:
-      # (2) + (4) The fabric default the agent/UI actually request must resolve
-      #     to a first-class alias with a non-null context_window. With rotation
-      #     ON, consumers request the stable `ai-default` alias whose backend is
-      #     swapped per phase, so BOTH phase models must be safe aliases (the
-      #     role derives each rotation entry's real context from this table);
-      #     with rotation OFF, the optimized id is requested directly.
+      # The fabric default the agent/UI actually request must resolve to a
+      # first-class alias with a non-null context_window.
       - _llm_router_required_safe_models | difference(_llm_router_safe_aliases) | length == 0
     fail_msg: >-
       Compress-death trap (roles/llm_router/tasks/assert.yml): model(s)
@@ -41,23 +37,5 @@
          | selectattr('context_window', 'defined')
          | rejectattr('context_window', 'none')
          | map(attribute='alias') | list }}
-    # The model ids consumers actually request as the brain: the two rotation
-    # phases when rotation is on, else the single optimized default.
-    _llm_router_required_safe_models: >-
-      {{ [ai_default_model_large, ai_default_model_optimized]
-         if (llm_router_rotation_enabled | bool)
-         else [ai_default_model] }}
-
-- name: Assert consumers resolve to the rotation alias when rotation is enabled
-  ansible.builtin.assert:
-    quiet: true
-    that:
-      - ai_default_model == llm_router_rotation_alias
-    fail_msg: >-
-      ai_rotation_enabled is true but ai_default_model ({{ ai_default_model }}) is
-      not the rotation alias ({{ llm_router_rotation_alias }}); consumers would
-      request a model the rotate timers never publish, so the brain would resolve
-      through the wildcard with no context. Constraint: all.yml ai_default_model
-      derivation.
-    success_msg: "Consumers resolve to the stable rotation alias ({{ llm_router_rotation_alias }})."
-  when: llm_router_rotation_enabled | bool
+    # The model id consumers actually request as the fabric brain.
+    _llm_router_required_safe_models: "{{ [ai_default_model] }}"
