@@ -174,17 +174,35 @@
     mode: "0640"
   notify: Restart hermes-gateway
 
+# --- nix-hermes content bundle: SOUL.md + the dryvist skills ------------------
+# Content is built by the pinned nix-hermes flake ref on the CONTROLLER (the
+# only side with nix; the guest never needs it) and byte-copied over. First
+# build needs network; the nix store caches re-runs. changed_when: false —
+# building never mutates the guest.
+- name: Build the nix-hermes content bundle on the controller
+  ansible.builtin.command:
+    cmd: nix build --no-link --print-out-paths "{{ hermes_agent_bundle_flake_ref }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: hermes_agent_bundle_build
+  changed_when: false
+
+- name: Resolve the nix-hermes bundle store path
+  ansible.builtin.set_fact:
+    hermes_agent_bundle_path: "{{ hermes_agent_bundle_build.stdout_lines | last }}"
+
 # SOUL.md = the persona/behavior surface upstream loads FRESH on every message
-# (no restart needed). Until now it held the upstream default — nothing played
-# the role the AGENTS.md chain plays for Claude Code. This deploys the shared
-# autonomous base prompt + the Hermes variant (vendored from
-# ai-assistant-instructions agentsmd/prompts/autonomous-base.md — edit intent
-# there first). Ansible owns the file from here on; Hermes self-edits
-# MEMORY.md, not SOUL.md, so no agent-written state is overwritten. backup:true
-# preserves the pre-management content once on first converge.
+# (no restart needed) — the role the AGENTS.md chain plays for Claude Code.
+# The bundle composes it at BUILD time from ai-assistant-instructions'
+# agentsmd/prompts/autonomous-base.md + nix-hermes data/soul/hermes-variant.md
+# (edit intent in those sources, never a vendored copy here). Ansible owns the
+# file; Hermes self-edits MEMORY.md, not SOUL.md, so no agent-written state is
+# overwritten. backup:true preserves the pre-management content once on first
+# converge.
 - name: Deploy the Hermes SOUL.md (shared behavioral base + Hermes variant)
-  ansible.builtin.template:
-    src: SOUL.md.j2
+  ansible.builtin.copy:
+    src: "{{ hermes_agent_bundle_path }}/SOUL.md"
     dest: "{{ hermes_agent_hermes_home }}/SOUL.md"
     owner: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_user }}"
@@ -389,31 +407,16 @@
     group: "{{ hermes_agent_user }}"
     mode: preserve
 
-- name: Deploy the dryvist docs-pr skill
+# All dryvist skills (docs-pr, github-issues, zammad-incidents, splunk-monitor)
+# arrive in one copy from the nix-hermes bundle built above. This deploys
+# BEFORE the curriculum and every cron-seeding step, so `cron create --skill
+# dryvist/splunk-monitor` (and zammad-incidents delivery references) always
+# resolve. splunk-monitor is present even when the monitor fleet is disabled —
+# an unreferenced skill on disk is inert.
+- name: Deploy the dryvist skills from the nix-hermes bundle
   ansible.builtin.copy:
-    src: skills/dryvist/docs-pr/
-    dest: "{{ hermes_agent_hermes_home }}/skills/dryvist/docs-pr/"
-    owner: "{{ hermes_agent_user }}"
-    group: "{{ hermes_agent_user }}"
-    mode: "0640"
-    directory_mode: "0750"
-
-- name: Deploy the dryvist github-issues skill
-  ansible.builtin.copy:
-    src: skills/dryvist/github-issues/
-    dest: "{{ hermes_agent_hermes_home }}/skills/dryvist/github-issues/"
-    owner: "{{ hermes_agent_user }}"
-    group: "{{ hermes_agent_user }}"
-    mode: "0640"
-    directory_mode: "0750"
-
-# The incident-management system of record. Materialized BEFORE splunk-monitor
-# so its delivery step can reference dryvist/zammad-incidents to open/append
-# tickets for confirmed anomalies.
-- name: Deploy the dryvist zammad-incidents skill
-  ansible.builtin.copy:
-    src: skills/dryvist/zammad-incidents/
-    dest: "{{ hermes_agent_hermes_home }}/skills/dryvist/zammad-incidents/"
+    src: "{{ hermes_agent_bundle_path }}/skills/dryvist/"
+    dest: "{{ hermes_agent_hermes_home }}/skills/dryvist/"
     owner: "{{ hermes_agent_user }}"
     group: "{{ hermes_agent_user }}"
     mode: "0640"
@@ -435,20 +438,10 @@
     mode: "0640"
     directory_mode: "0750"
 
-# --- Splunk monitor: skill + self-directed 24/7 SIEM analyst cron fleet ------
-# The skill encodes the hard query-safety rails (bounded queries only) + the
-# self-directed investigative method. It must be materialized BEFORE the cron
-# jobs are seeded so `cron create --skill dryvist/splunk-monitor` resolves it.
-- name: Deploy the dryvist splunk-monitor skill
-  ansible.builtin.copy:
-    src: skills/dryvist/splunk-monitor/
-    dest: "{{ hermes_agent_hermes_home }}/skills/dryvist/splunk-monitor/"
-    owner: "{{ hermes_agent_user }}"
-    group: "{{ hermes_agent_user }}"
-    mode: "0640"
-    directory_mode: "0750"
-  when: hermes_agent_splunk_monitor_enabled | bool
-
+# --- Splunk monitor: self-directed 24/7 SIEM analyst cron fleet --------------
+# The dryvist/splunk-monitor skill (hard query-safety rails + investigative
+# method) was materialized with the bundle copy above, so `cron create
+# --skill dryvist/splunk-monitor` resolves.
 # Seed the monitoring cron fleet idempotently (create-if-absent), gated on the
 # agent being able to BOTH query Splunk (MCP URL set) AND deliver to Slack
 # (tokens + home channel set). Each job runs in a fresh isolated agent session.

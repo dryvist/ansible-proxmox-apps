@@ -121,8 +121,23 @@ with an env fallback; the PEM is written to `{{ hermes_agent_hermes_home }}/gith
 | `hermes_agent_github_app_installation_id` | `""` | App installation ID (bao/env) |
 | `hermes_agent_github_app_private_key` | `""` | App PEM (bao/env; written to a 0600 file) |
 
-Helper unit tests: `roles/hermes_agent/files/skills/dryvist/docs-pr/tests/` — run
-`python -m pytest` from that skill dir (all guardrail logic, no network).
+Helper unit tests live with the skill in
+[nix-hermes](https://github.com/dryvist/nix-hermes)
+(`data/skills/dryvist/docs-pr/tests/`) — run `python -m pytest` from that
+skill dir (all guardrail logic, no network).
+
+## Content bundle (nix-hermes)
+
+The dryvist skills (docs-pr, github-issues, zammad-incidents, splunk-monitor)
+and `SOUL.md` are CONTENT owned by the
+[nix-hermes](https://github.com/dryvist/nix-hermes) flake, pinned here by
+`hermes_agent_bundle_flake_ref` (a release tag). The converge builds that ref
+on the **controller** (`nix build`, guarded by a Layer-1 assert) and
+byte-copies the result into `$HERMES_HOME` — the guest never needs nix.
+`SOUL.md` is composed at build time from `ai-assistant-instructions`'
+`autonomous-base.md` plus the Hermes variant, so no vendored copy can drift.
+Renovate bumps the pin on each nix-hermes release; edit skills/persona there,
+never in this role.
 
 ## GitHub issues & projects
 
