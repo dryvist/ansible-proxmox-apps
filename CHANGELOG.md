@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.111.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.110.0...v1.111.0) (2026-07-16)
+
+
+### Features
+
+* **openbao:** add shared Splunk MCP secret contract ([0168d32](https://github.com/dryvist/ansible-proxmox-apps/commit/0168d327d195ae499d5affea3483c87883f9c568))
+* **openbao:** human-gated ai-apply-&lt;domain&gt; + ai-admin access tiers ([#931](https://github.com/dryvist/ansible-proxmox-apps/issues/931)) ([874a0e8](https://github.com/dryvist/ansible-proxmox-apps/commit/874a0e84e332014662713273986ac967bfcbe0be))
+
+
+### Bug Fixes
+
+* **openbao:** pin apply-tier token_max_ttl and repair contract test ([#940](https://github.com/dryvist/ansible-proxmox-apps/issues/940)) ([bd0718a](https://github.com/dryvist/ansible-proxmox-apps/commit/bd0718a55d3c9dbf0273b0ba1220697e014c1dcd))
+* **sonarr:** retry transient upstream downloads ([c85e496](https://github.com/dryvist/ansible-proxmox-apps/commit/c85e496d6e25d93dd5216f68068905d18a7b2b05))
+
 ## [1.110.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.109.0...v1.110.0) (2026-07-14)
 
 
