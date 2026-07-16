@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.0.0...v2.1.0) (2026-07-16)
+
+
+### Features
+
+* **llm_router:** add deepseek-v4-flash OpenRouter alias; bump hermes bundle to v0.4.0 ([#991](https://github.com/dryvist/ansible-proxmox-apps/issues/991)) ([9e03d2e](https://github.com/dryvist/ansible-proxmox-apps/commit/9e03d2e4a08fe1e70ef2d5cffa3795d2627fceae))
+
 ## [2.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.113.0...v2.0.0) (2026-07-16)
 
 
