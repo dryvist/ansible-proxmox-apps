@@ -1,0 +1,118 @@
+---
+# =============================================================================
+# OPT-IN Nautobot GraphQL dynamic inventory (networktocode.nautobot.gql_inventory)
+# =============================================================================
+# This is a PARALLEL inventory, NOT a replacement for inventory/load_tofu.yml.
+# The default path (inventory/hosts.yml + load_tofu.yml, wired in ansible.cfg)
+# is unchanged. Cutting over to Nautobot-sourced inventory is the deliberate
+# "migration moment" — it happens later, explicitly, by choosing `-i` (and, at
+# that point, enabling this plugin in ansible.cfg). Nothing here is referenced
+# by hosts.yml or ansible.cfg.
+#
+# WHY the groups below mirror load_tofu: so a future `-i inventory/nautobot.yml`
+# swap is drop-in — every play in site.yml targets a tag-derived `*_group`, and
+# this file reproduces that exact tag -> group mapping from Nautobot device/VM
+# tags via the `constructed` `groups` option.
+#
+# -----------------------------------------------------------------------------
+# Credentials (env, injection-agnostic — the plugin's native `env:` fallbacks):
+#   NAUTOBOT_URL    - API endpoint, shape https://nautobot.<PROXMOX_DOMAIN>
+#   NAUTOBOT_TOKEN  - Nautobot API token with read on dcim/virtualization/tags
+# An inventory plugin file cannot Jinja-template a group_var the way group_vars
+# can, so the URL is not written here — it comes from NAUTOBOT_URL at runtime.
+#
+# Token: OpenBao secret/apps/nautobot currently holds SUPERUSER creds. Inventory
+# should NOT use those — mint a dedicated read-only API token as a follow-up and
+# inject it as NAUTOBOT_TOKEN. Superuser will work in the interim but is wrong.
+#
+# -----------------------------------------------------------------------------
+# Opt-in usage (does NOT touch ansible.cfg — enable the plugin per-invocation):
+#
+#   NAUTOBOT_URL=https://nautobot.<domain> NAUTOBOT_TOKEN=<ro-token> \
+#   ANSIBLE_INVENTORY_ENABLED=networktocode.nautobot.gql_inventory \
+#     doppler run -- ansible-playbook -i inventory/nautobot.yml \
+#       playbooks/site.yml --limit <group>
+#
+# At the real cutover, add the plugin to ansible.cfg `enable_plugins` and make
+# `-i inventory/nautobot.yml` the default instead of load_tofu.
+# =============================================================================
+plugin: networktocode.nautobot.gql_inventory
+
+# api_endpoint/token intentionally omitted — resolved from NAUTOBOT_URL /
+# NAUTOBOT_TOKEN (the plugin's native env fallbacks). validate_certs stays at
+# its default (true): the endpoint is Traefik-fronted with a real certificate.
+
+# Pull name, primary IP (-> ansible_host), and tags (-> grouping) for both
+# bare-metal devices and virtual machines; Proxmox guests may be modeled as
+# either, so query both and let the tag groups sort them.
+query:
+  devices:
+    name:
+    primary_ip4:
+      host:
+    tags: name
+  virtual_machines:
+    name:
+    primary_ip4:
+      host:
+    tags: name
+
+# Reproduce load_tofu.yml's tag -> group mapping 1:1 (including the aliased
+# names: tag `smtp` -> mailpit_group, `database` -> mssql_group, `dns` ->
+# technitium_dns_group, `vpn` -> download_vpn_group, `ipam` -> phpipam_group,
+# `vectordb` -> qdrant_group, `rag` -> llamaindex_group). Left side is the exact
+# group name a site.yml play targets; right side is the Nautobot tag condition.
+#
+# ponytail: assumes `tags: name` exposes the host's `tags` var as a list of tag
+# NAME strings. If the live plugin surfaces tags as a list of dicts instead,
+# these become `tags | map(attribute='name')`. Unverifiable here (no live
+# Nautobot token) — confirm at cutover with `ansible-inventory --list --yaml`.
+groups:
+  haproxy_group: "'haproxy' in (tags | default([])) or 'loadbalancer' in (tags | default([]))"
+  cribl_edge: "'edge' in (tags | default([])) and 'cribl' in (tags | default([]))"
+  cribl_stream_group: "'stream' in (tags | default([])) and 'cribl' in (tags | default([]))"
+  mailpit_group: "'smtp' in (tags | default([]))"
+  ntfy_group: "'push' in (tags | default([]))"
+  mssql_group: "'database' in (tags | default([]))"
+  postgres_group: "'postgres' in (tags | default([]))"
+  nautobot_group: "'nautobot' in (tags | default([]))"
+  qdrant_group: "'vectordb' in (tags | default([]))"
+  llamaindex_group: "'rag' in (tags | default([]))"
+  ollama_group: "'ollama' in (tags | default([]))"
+  open_webui_group: "'open-webui' in (tags | default([]))"
+  hermes_agent_group: "'hermes-agent' in (tags | default([]))"
+  llm_fast_group: "'llm-fast' in (tags | default([]))"
+  llm_router_group: "'llm-router' in (tags | default([]))"
+  ai_orchestration_group: "'ai-orchestration' in (tags | default([]))"
+  dify_group: "'dify' in (tags | default([]))"
+  langflow_group: "'langflow' in (tags | default([]))"
+  n8n_group: "'n8n' in (tags | default([]))"
+  langgraph_group: "'langgraph' in (tags | default([]))"
+  agent_exec_group: "'agent-exec' in (tags | default([]))"
+  langfuse_group: "'langfuse' in (tags | default([]))"
+  agentgateway_group: "'agentgateway' in (tags | default([]))"
+  apt_cacher_group: "'apt-cache' in (tags | default([]))"
+  registry_group: "'registry' in (tags | default([]))"
+  minio_group: "'minio' in (tags | default([]))"
+  object_storage_group: "'object-storage' in (tags | default([]))"
+  openbao_group: "'openbao' in (tags | default([]))"
+  technitium_dns_group: "'dns' in (tags | default([]))"
+  openproject_group: "'openproject' in (tags | default([]))"
+  healthchecks_group: "'healthcheck' in (tags | default([]))"
+  netmon_group: "'netmon' in (tags | default([]))"
+  unifi_metrics_group: "'unifi_metrics' in (tags | default([]))"
+  prometheus_group: "'prometheus' in (tags | default([]))"
+  download_vpn_group: "'vpn' in (tags | default([]))"
+  sonarr_group: "'sonarr' in (tags | default([]))"
+  radarr_group: "'radarr' in (tags | default([]))"
+  plex_group: "'plex' in (tags | default([]))"
+  seerr_group: "'seerr' in (tags | default([]))"
+  sortarr_group: "'sortarr' in (tags | default([]))"
+  immich_group: "'immich' in (tags | default([]))"
+  homeassistant_group: "'homeassistant' in (tags | default([]))"
+  phpipam_group: "'ipam' in (tags | default([]))"
+  traefik_group: "'traefik' in (tags | default([]))"
+  media_group: "'media' in (tags | default([]))"
+  idrac_kvm_group: "'idrac' in (tags | default([]))"
+  vikunja_group: "'vikunja' in (tags | default([]))"
+  zammad_group: "'zammad' in (tags | default([]))"
