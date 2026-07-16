@@ -18,12 +18,36 @@ tofu inventory). Tools come from the repo's Nix dev shell (`direnv allow`).
 | --- | --- | --- |
 | `gpt-oss-120b`, `Qwen3-Coder-30B-A3B`, `Qwen3.6-35B-A3B-4bit`, `claude-sonnet-5` | `llm-large` runner (`/v1`, bearer) | `LLM_LARGE_BEARER_TOKEN` |
 | `qwen3-4b`, `embeddings`, `claude-haiku-4-5` | `llm-fast` (GPU) **and** `llm-light` (CPU) | none |
+| `openrouter-free` (extensible list) | OpenRouter (paid-SaaS egress) | one key **per model** |
 
 Each light alias is registered as **two deployments** with the same `model_name`
 (the GPU `llm-fast` box and the CPU `llm-light` standby). LiteLLM load-balances the
 pair and cools a failed deployment down (`allowed_fails` / `cooldown_time`), so a GPU
 outage drains to CPU automatically. There is **no** cross-tier fallback — a large
 request that fails surfaces the error rather than silently degrading to a small model.
+
+## OpenRouter egress tier (optional, per-model keys)
+
+`llm_router_openrouter_models` registers explicitly-named aliases for
+OpenRouter-hosted models. Deliberate properties:
+
+- **One OpenRouter API key per MODEL** (never per harness/caller). Each entry's
+  `key_field` names its field in the OpenBao paid-SaaS key area
+  `secret/ai/saas/openrouter`; the `openbao_secrets` pre-play delivers it via
+  the `ai-saas-openrouter` policy leaf, and the rendered EnvironmentFile
+  carries it as `OPENROUTER_API_KEY_<KEY_FIELD upper-snaked>`.
+- **Inert until seeded** — an entry whose key is absent renders nothing, so
+  the list is safe to extend before the key exists.
+- **Opt-in only** — OpenRouter aliases are never chained into `ai-default`
+  rotation or fallbacks; consumers (Hermes, Open WebUI, workstation harnesses)
+  must name the alias to reach the SaaS egress.
+
+Seeding a new model (operator, once per model): mint a scoped key in the
+OpenRouter console, then
+`bao kv patch secret/ai/saas/openrouter <model-slug>=<key>` and re-converge
+this role. The first entry is `openrouter-free` →
+`nvidia/nemotron-3-ultra-550b-a55b:free` (rate-limited; NVIDIA logs prompts on
+the `:free` endpoint — never send confidential material through it).
 
 ## Daily brain rotation (optional)
 

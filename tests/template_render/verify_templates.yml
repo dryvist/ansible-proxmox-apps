@@ -2082,6 +2082,20 @@
       - { alias: qwen3-4b, backend: qwen3-4b }
       - { alias: embeddings, backend: embeddings, embedding: true }
       - { alias: claude-haiku-4-5, backend: hermes-4-14b }
+    # OpenRouter egress tier: one key per MODEL. First entry's key is "seeded"
+    # via the bao fact stand-in below; the second is deliberately unseeded and
+    # must render nothing (inert-until-creds contract).
+    llm_router_openrouter_models:
+      - alias: openrouter-free
+        model: nvidia/nemotron-3-ultra-550b-a55b:free
+        key_field: nvidia-nemotron-3-ultra-550b-a55b-free
+        context_window: 1000000
+      - alias: openrouter-unseeded
+        model: example/unseeded-model
+        key_field: example-unseeded-model
+        context_window: 32768
+    bao_local_llm_secrets:
+      nvidia-nemotron-3-ultra-550b-a55b-free: test-openrouter-key-placeholder
     llm_router_routing_strategy: simple-shuffle
     llm_router_large_passthrough_enabled: true
     llm_router_allowed_fails: 2
@@ -2140,8 +2154,21 @@
           - _model_names | select('equalto', 'mlx-community/gpt-oss-120b-MXFP4-Q8') | list | length == 1
           - _model_names | select('equalto', 'mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit') | list | length == 1
           - _model_names | select('equalto', 'mlx-community/Qwen3.6-35B-A3B-4bit') | list | length == 1
+          # OpenRouter egress tier: the seeded model renders exactly once with
+          # its per-MODEL key as an os.environ ref; the unseeded model renders
+          # nothing (inert-until-creds).
+          - _model_names | select('equalto', 'openrouter-free') | list | length == 1
+          - >-
+            (_litellm.model_list | selectattr('model_name', 'equalto', 'openrouter-free')
+             | first).litellm_params.model == 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free'
+          - >-
+            (_litellm.model_list | selectattr('model_name', 'equalto', 'openrouter-free')
+             | first).litellm_params.api_key
+             == 'os.environ/OPENROUTER_API_KEY_NVIDIA_NEMOTRON_3_ULTRA_550B_A55B_FREE'
+          - _model_names | select('equalto', 'openrouter-unseeded') | list | length == 0
           # Secrets referenced via os.environ, never a literal in the config.
           - "'test-master-key-placeholder' not in (lookup('file', '/tmp/test_litellm_config.yaml'))"
+          - "'test-openrouter-key-placeholder' not in (lookup('file', '/tmp/test_litellm_config.yaml'))"
           - _litellm.general_settings.master_key == 'os.environ/LLM_ROUTER_MASTER_KEY'
           # 429 absorption: rate-limit errors retry with backoff and never cool
           # down the single large deployment (they get their own huge budget).
@@ -2227,6 +2254,12 @@
           - "'LLM_LARGE_BEARER_TOKEN=test-bearer-placeholder' in _litellm_env"
           - "'OTEL_EXPORTER=otlp_http' in _litellm_env"
           - "'OTEL_ENDPOINT=http://cribl-edge.pve.example.net:4318/v1/traces' in _litellm_env"
+          # OpenRouter per-MODEL keys: seeded model's env line present (bao-first
+          # value), unseeded model absent entirely.
+          - >-
+            'OPENROUTER_API_KEY_NVIDIA_NEMOTRON_3_ULTRA_550B_A55B_FREE=test-openrouter-key-placeholder'
+            in _litellm_env
+          - "'OPENROUTER_API_KEY_EXAMPLE_UNSEEDED_MODEL' not in _litellm_env"
         fail_msg: "litellm.env.j2 missing secrets or OTLP traces path: {{ _litellm_env }}"
 
     - name: Render litellm.service.j2 to /tmp
