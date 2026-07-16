@@ -22,7 +22,7 @@ node loss or a local Traefik failure — there is no manual DR step.
 ## Requirements
 
 - Two or more LXCs tagged `ingress` (the Traefik HA pair), on different nodes.
-- terraform-proxmox publishing `ingress_vip` + `ingress_hosts` in the inventory.
+- tofu-proxmox publishing `ingress_vip` + `ingress_hosts` in the inventory.
 
 ## Key variables
 

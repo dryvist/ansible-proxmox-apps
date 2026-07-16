@@ -107,7 +107,7 @@ If/when IPv6 is enabled, do **all** of these or it can leak:
 
 ## Installation
 
-Provisioned by the `download-vpn` LXC in `terraform-proxmox` (unprivileged,
+Provisioned by the `download-vpn` LXC in `tofu-proxmox` (unprivileged,
 `/dev/net/tun` passthrough, `nesting`/`keyctl`, `tank/downloads` + `tank/media`
 bind-mounts). Deploy the role from this repo:
 

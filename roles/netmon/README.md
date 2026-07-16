@@ -93,4 +93,4 @@ Or include the role directly against the prober group:
 Cribl Edge receives the HEC push on `cribl_hec_input_port`
 (`group_vars/all.yml`) and routes it through the `netmon` pipeline, which stamps
 `index = netmon`. See the `cribl_edge` role and `docs/NETWORK_DIAGNOSIS.md` in
-terraform-proxmox.
+tofu-proxmox.

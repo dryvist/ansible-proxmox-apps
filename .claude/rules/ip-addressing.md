@@ -7,7 +7,7 @@ description: No hardcoded values - OpenTofu is authority
 
 ## Principle
 
-**terraform-proxmox is the single source of truth** for all infrastructure
+**tofu-proxmox is the single source of truth** for all infrastructure
 constants. This repository CONSUMES values, never DEFINES them.
 
 ## Prohibited Patterns
@@ -57,7 +57,7 @@ syslog_ports: "{{ tofu_data.constants.syslog_ports.values() | list }}"
 
 To change any port or IP:
 
-1. Update `terraform-proxmox/main/locals.tf`
+1. Update `tofu-proxmox/main/locals.tf`
 2. Run the tofu-proxmox Terrakube workspace — the apply natively publishes
    the inventory to S3 and its after-hook refreshes the local
    `inventory/tofu_inventory.json` cache. `load_tofu.yml` resolves S3-first,
