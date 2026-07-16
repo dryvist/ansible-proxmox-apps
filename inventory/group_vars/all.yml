@@ -64,73 +64,19 @@ llm_large_serving_ip: >-
 # router model id (alias or passthrough physical id) served via
 # https://llm.<subdomain>/v1. Change it here — never re-pin it per consumer.
 #
-# Current value: Qwen3.6-35B-A3B-OptiQ-4bit, chosen by the 2026-07-08 agentic
-# tool-calling benchmark (8 candidates, results in HF dataset
-# JacobPEvans/mlx-benchmarks). OptiQ-4bit scored 100% valid tool calls with
-# 0/20 multi-turn degradation at concurrency 4 + thinking + large context, at
-# ~7.4 tok/s single-stream large-ctx — the same clean tool-calling as the stock
-# 4-bit brain (PR #753) but ~1.8x its 4.1 tok/s, so it supersedes it. The whole
-# Qwen3.6-35B-A3B family ran under continuous batching at concurrency 4 with
-# zero crashes, retiring the old "qwen3_5_moe batching crash rules out Qwen3.6"
-# claim for good. Qwen3-Coder-30B stays faster single-stream but emits malformed
-# tool calls under agentic load ("repairing tool_call with empty function.name",
-# unreliable multi-turn), so it is not the brain. The stock 4-bit alias
-# (Qwen3.6-35B-A3B-4bit) remains defined in the router for any other consumer.
-#
-# Daily brain rotation (docs/BRAIN_ROTATION.md): when ai_rotation_enabled is
-# true, the fabric default becomes the STABLE router alias `ai-default`, whose
-# backend the llm_router role rotates on a UTC schedule — 00:00 -> the large
-# brain, 12:00 -> the optimized brain — giving a built-in daily A/B without
-# touching the Hermes gateway, Open WebUI, or the cron-snapshot fleet. When it
-# is false (default) ai_default_model equals the optimized id below, so the
-# rendered output is byte-identical to a non-rotating converge. The two phase
-# ids MUST each be a first-class alias in llm_router_large_models so the router
-# can resolve their backend + context_window (a null max_input_tokens is the
-# compress-to-death trap).
-#
-# Large brain = Qwen3-Next-80B-A3B-Thinking-4bit: a genuinely bigger brain that
-# is STILL a competent agent tool-caller (100% valid agentic tool calls, single
-# run). gpt-oss-120b is deliberately NOT the large brain — it scored 0% valid
-# agentic tool calls, so serving it as Hermes's brain for 12h/day would
-# lobotomize tool-calling, the exact opposite of the A/B's purpose.
-#
-# ROTATION CURRENTLY PAUSED (sentinel on all three routers): the first live
-# large phase (2026-07-09) crashed the serving host — next80's MEASURED
-# per-process peak is 51.5 GB, not the ~46 GB budgeted, overcommitting the
-# ~109 GB trip alongside the resident pair — and its under-load decode rate
-# cannot sustain the cron fleet (one 40m51s production generation vs the
-# 1800 s client budget). Rotation stays enabled in code so `ai-default`
-# remains the fabric alias; the sentinel holds the optimized phase until a
-# candidate passes the re-enable gates in docs/BRAIN_ROTATION.md
-# (measured-peak capacity + fleet-throughput).
-# FLEET BRAIN = stock 35B (2026-07-13). Two build faults forced this off both
-# the OptiQ default and the 80B stopgap:
-#   1. OptiQ-4bit: the current vllm-mlx build misdetects it as a VLM; its MTP
-#      patch throws `Cannot broadcast array of shape (1,1,1,0) into shape
-#      (1,16,1,1)` mid generation → finish_reason=error (0 tokens), worker dies.
-#   2. 80B (the interim #913 stopgap): it is swap-class with a 6 GB KV cache on
-#      the Studio (sized for the ~20 GB residents), so under the CONCURRENT cron
-#      fleet it exceeds a Metal resource ceiling — `[metal::malloc] Resource
-#      limit exceeded` → generation_error_recovery aborts ALL in-flight requests
-#      → Hermes retry storm, ~zero clean posts. The 80B is a competent
-#      concurrency-1 brain, not a fleet brain.
-# REVERTED to OptiQ 2026-07-16: the "stock twin runs clean on this build"
-# premise did not survive contact — the stock 35B wedged with the SAME
-# broadcast_shapes batch-scheduler crash (805 errors / 603 consecutive
-# zero-token completions wrapped in HTTP 200, ~15h of failed crons; nix-ai
-# #1234). With crash risk equal, the twins differ only where OptiQ wins:
-# 65,536-token serving window (the stock instance serves 32,768, BELOW
-# Hermes' hard 64K compression floor — the fleet cannot run on it at all)
-# and 7.4 vs 4.1 tok/s. The wedge is now survivable regardless of brain:
-# the watchdog detects 200-wrapped error bodies and pauses the fleet
-# (#939), ai-default carries a light-tier fallback (#939), and Splunk
-# alerts on the wedge signature (ansible-splunk#342). Both rotation phases
-# point at OptiQ so the fleet never routes to the 80B; the 80B stays
-# reachable ONLY via the ai-deep-analysis alias (escalation, concurrency 1).
-ai_rotation_enabled: true
-ai_default_model_optimized: Qwen3.6-35B-A3B-OptiQ-4bit
-ai_default_model_large: Qwen3.6-35B-A3B-OptiQ-4bit
-ai_default_model: "{{ 'ai-default' if ai_rotation_enabled | bool else ai_default_model_optimized }}"
+# `ai-default` is a static router alias (llm_router_large_models) backed by
+# Qwen3.6-35B-A3B-OptiQ-4bit — the 2026-07-08 agentic bench winner (100% valid
+# tool calls at concurrency 4, ~7.4 tok/s; HF dataset JacobPEvans/
+# mlx-benchmarks) and the only brain serving >= Hermes' hard 64K compression
+# floor (65,536-token window). Constraints that keep other models off the hot
+# path: Qwen3-Coder-30B emits malformed tool calls under agentic load;
+# gpt-oss-120b scored 0% valid agentic tool calls; the 80B thinking brain is a
+# competent concurrency-1 escalation tier (ai-deep-analysis) but cannot
+# sustain the concurrent fleet. Re-point the brain by editing the ai-default
+# entry's backend in llm_router defaults — never per consumer. The daily
+# 00/12 UTC rotation machinery was deleted 2026-07-16 (no-op flip). Full
+# incident/decision history: Zammad (AI/LLM Serving).
+ai_default_model: ai-default
 
 # Escalation rubric v1 — WHICH tier a task deserves, encoded as data (from the
 # 2026-07-12 document benchmark: two planted traps, three model classes).
@@ -222,3 +168,13 @@ bao_media_secrets: {}
 # `apps` domain — shared-Postgres app secrets (Nautobot #138: db_password,
 # secret_key, superuser_password under secret/apps/nautobot).
 bao_apps_secrets: {}
+
+# Shared-Postgres primary host — the SINGLE switch for the streaming-replication
+# topology (issue #138). Empty = single-primary (today): every postgres-tagged
+# guest is its own primary and apps reach the DB by the stable `postgres` name.
+# Set it to the primary guest's inventory hostname (e.g. `postgres-apps`) to cut
+# over in one move: that guest stays primary, every OTHER postgres-tagged guest
+# reinitializes as a hot standby streaming from it, and the apps repoint at the
+# primary. Env-driven so the cutover is a deliberate, ephemeral flip — no
+# committed edit. The postgres role and the app *_db_host both read this.
+postgres_primary_host: "{{ lookup('env', 'POSTGRES_PRIMARY_HOST') | default('', true) }}"

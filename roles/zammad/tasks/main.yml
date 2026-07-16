@@ -160,6 +160,30 @@
         mode: "0660"
       notify: Restart elasticsearch
 
+    # The deb postinst auto-configures xpack security and stores transport-SSL
+    # secure passwords in the ES keystore. With security disabled in the config
+    # above, ES refuses to boot while those keystore entries remain ("invalid
+    # configuration for xpack.security.transport.ssl"), so strip them.
+    - name: List Elasticsearch keystore entries
+      ansible.builtin.command:
+        cmd: /usr/share/elasticsearch/bin/elasticsearch-keystore list
+      register: zammad_es_keystore
+      changed_when: false
+
+    - name: Remove the auto-configured transport-SSL secure passwords
+      ansible.builtin.command:
+        cmd: >-
+          /usr/share/elasticsearch/bin/elasticsearch-keystore remove {{ item }}
+      loop:
+        - xpack.security.transport.ssl.keystore.secure_password
+        - xpack.security.transport.ssl.truststore.secure_password
+        - xpack.security.http.ssl.keystore.secure_password
+      when: item in zammad_es_keystore.stdout_lines
+      # The presence guard above makes this run only when there is something
+      # to remove, so a run always mutates the keystore.
+      changed_when: true
+      notify: Restart elasticsearch
+
     - name: Pin the Elasticsearch heap
       ansible.builtin.template:
         src: jvm-heap.options.j2
@@ -274,10 +298,16 @@
       register: zammad_dbyml
       no_log: true
 
-    - name: Configure zammad (runs the postinst — migrates against the external DB)
-      ansible.builtin.command: dpkg --configure zammad
+    # dpkg --unpack skipped apt's dependency resolution, so zammad's REAL
+    # runtime deps (libpq5, libxslt1.1, curl, ...) may be missing and a bare
+    # `dpkg --configure` fails. `apt-get -f install` pulls exactly the missing
+    # deps and configures the unpacked package (running the postinst, which
+    # migrates against the external DB); the equivs dummy keeps the
+    # `postgresql` dep satisfied without a local cluster.
+    - name: Configure zammad (resolve deps + run the postinst against the external DB)
+      ansible.builtin.apt:
+        state: fixed
       when: not zammad_configured
-      changed_when: true
 
     - name: Seed the Zammad database (first configure only; seeds are create-if-missing)
       ansible.builtin.command:

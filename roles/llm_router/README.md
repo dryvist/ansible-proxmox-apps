@@ -16,7 +16,7 @@ tofu inventory). Tools come from the repo's Nix dev shell (`direnv allow`).
 
 | Alias(es) | Backend | Auth |
 | --- | --- | --- |
-| `gpt-oss-120b`, `Qwen3-Coder-30B-A3B`, `Qwen3.6-35B-A3B-4bit`, `claude-sonnet-5` | `llm-large` runner (`/v1`, bearer) | `LLM_LARGE_BEARER_TOKEN` |
+| `ai-default`, `ai-deep-analysis`, `gpt-oss-120b`, and other large aliases | `llm-large` runner (`/v1`, bearer) | `LLM_LARGE_BEARER_TOKEN` |
 | `qwen3-4b`, `embeddings`, `claude-haiku-4-5` | `llm-fast` (GPU) **and** `llm-light` (CPU) | none |
 | `openrouter-free` (extensible list) | OpenRouter (paid-SaaS egress) | one key **per model** |
 
@@ -39,7 +39,7 @@ OpenRouter-hosted models. Deliberate properties:
 - **Inert until seeded** — an entry whose key is absent renders nothing, so
   the list is safe to extend before the key exists.
 - **Opt-in only** — OpenRouter aliases are never chained into `ai-default`
-  rotation or fallbacks; consumers (Hermes, Open WebUI, workstation harnesses)
+  fallbacks; consumers (Hermes, Open WebUI, workstation harnesses)
   must name the alias to reach the SaaS egress.
 
 Seeding a new model (operator, once per model): mint a scoped key in the
@@ -49,19 +49,13 @@ this role. The first entry is `openrouter-free` →
 `nvidia/nemotron-3-ultra-550b-a55b:free` (rate-limited; NVIDIA logs prompts on
 the `:free` endpoint — never send confidential material through it).
 
-## Daily brain rotation (optional)
+## The fabric brain alias
 
-When `ai_rotation_enabled` (in `group_vars/all.yml`) is `true`, the router exposes
-one stable alias, `ai-default`, that Hermes and Open WebUI point at permanently,
-and two systemd timers flip which backend it maps to on a UTC schedule: **00:00 →
-the large brain, 12:00 → the optimized brain** (`ai_default_model_large` /
-`ai_default_model_optimized`, both first-class aliases in `llm_router_large_models`).
-The flip is a `config.yaml` symlink swap between two pre-rendered per-phase configs
-plus a `litellm` restart — no gateway restart, no Hermes cron churn. A
-`ConditionPathExists` sentinel (`rotation-paused`) lets a bench window keep the
-fabric on the optimized brain. Off by default: `config.yaml` is a single static
-file and the render is byte-identical. Full rationale, capacity math, and the
-flagship upgrade path: [`docs/BRAIN_ROTATION.md`](../../docs/BRAIN_ROTATION.md).
+`ai-default` is the one stable alias every consumer (Hermes, Open WebUI, the
+cron fleet) points at permanently; re-pointing the fabric brain is a one-line
+backend edit on its `llm_router_large_models` entry. The daily 00/12 UTC
+rotation machinery was deleted 2026-07-16 as a no-op (both phases had served
+the same model); incident/decision history lives in Zammad (AI/LLM Serving).
 
 ## Observability
 
@@ -86,7 +80,7 @@ Traefik health checks need no credential.
 
 ## Dependencies
 
-- `terraform-proxmox` constants must expose `service_ports.llm_router_api` **and**
+- `tofu-proxmox` constants must expose `service_ports.llm_router_api` **and**
   `service_ports.llm_fast_api` (added by the parallel constants PR). Both are
   hard-required — a missing constant fails loud.
 - Secrets `LLM_ROUTER_MASTER_KEY` + `LLM_LARGE_BEARER_TOKEN` are env-sourced

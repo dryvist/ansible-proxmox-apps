@@ -18,7 +18,7 @@ config-as-code tools:
 
 | Config | Owner |
 | --- | --- |
-| Root folders + qBittorrent download clients | devopsarr **`servarr-config`** tofu module (`terraform-proxmox`) |
+| Root folders + qBittorrent download clients | devopsarr **`servarr-config`** tofu module (`tofu-proxmox`) |
 | Quality profiles + custom formats + quality definitions | **`configarr`** role (TRaSH-Guides) |
 
 This role no longer POSTs root folders, download clients, or quality profiles —

@@ -11,7 +11,7 @@ co-located on the monitoring (`prometheus`) LXC alongside `prometheus_stack`:
 `irtt` (jitter/MOS) is **deferred** — see below. The role is named `network_quality`
 (not `smokeping`) so the jitter/atlas legs can be added later without a rename.
 
-See `terraform-proxmox/docs/SMOKEPING.md` for the measurement design.
+See `tofu-proxmox/docs/SMOKEPING.md` for the measurement design.
 
 ## Networking
 

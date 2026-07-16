@@ -11,10 +11,13 @@ zammad_web_port: >-
   {{ (hostvars['localhost']['tofu_data']['constants']['service_ports']['zammad_web'])
      | default(8080) }}
 
-# Postgres has no ingress; reach it by its guest FQDN on the data VLAN. The
-# guest DNS zone is tofu_data.domain and the hostname is fixed at `postgres`
-# by the container (a stable service identifier, not a hard-coded address).
-zammad_db_host: "postgres.{{ hostvars['localhost']['tofu_data']['domain'] }}"
+# Postgres has no ingress; reach it by the primary guest's FQDN. Tracks the
+# shared postgres_primary_host switch (group_vars/all): unset -> the stable
+# `postgres` name (today); set to the apps-tier primary at cutover -> that name.
+# A guest hostname is a stable service identifier here, not a hard-coded address.
+zammad_db_host: >-
+  {{ (postgres_primary_host if (postgres_primary_host | default('', true) | length > 0) else 'postgres')
+     }}.{{ hostvars['localhost']['tofu_data']['domain'] }}
 zammad_db_password: >-
   {{ bao_apps_secrets.zammad_db_password
      | default(lookup('env', 'ZAMMAD_DB_PASSWORD'), true) }}

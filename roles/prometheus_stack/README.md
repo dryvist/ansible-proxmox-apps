@@ -4,7 +4,7 @@ Deploys [Prometheus](https://prometheus.io/) **and** the
 [blackbox_exporter](https://github.com/prometheus/blackbox_exporter) as a **single
 Docker-in-LXC compose stack** — one project, two services. This is the **system of
 record** for the Prometheus-native network-quality monitoring stack (see
-`terraform-proxmox/docs/SMOKEPING.md`). Prometheus scrapes the co-located exporter
+`tofu-proxmox/docs/SMOKEPING.md`). Prometheus scrapes the co-located exporter
 via the multi-target `/probe` pattern, producing WAN/ISP loss, latency, and
 reachability metrics, and grows `smokeping_prober` / `irtt` / `snmp_exporter` jobs
 as those roles land.

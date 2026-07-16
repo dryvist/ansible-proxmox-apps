@@ -1,0 +1,84 @@
+---
+# Mint a long-lived Vikunja API token for each MCP service user and publish the
+# shared connection (URL + per-tier tokens) to OpenBao secret/ai/mcp/vikunja.
+#
+# Mirrors ansible-splunk roles/splunk_docker/tasks/manage_one_user.yml:
+#   * mint only when absent (idempotent — Vikunja returns the key exactly once)
+#   * sibling-preserving KV-v2 read-modify-write
+#   * no_log on every secret-bearing task
+# Included from tasks/main.yml only when vikunja_token_publish_openbao is true.
+# The converge enables it with -e '{"vikunja_token_publish_openbao": true}';
+# BAO_ADDR/BAO_TOKEN must be in the CONTROLLER environment.
+#
+# Permissions are built from the LIVE GET /api/v1/routes response, never
+# hardcoded: Vikunja's PermissionsAreValid rejects any group/action not in the
+# current route set, and the route-group keys are derived from URL paths (so
+# they shift across versions). Building from the running instance keeps the
+# minted permissions valid by construction.
+
+- name: Assert OpenBao write credentials are present
+  ansible.builtin.assert:
+    that:
+      - vikunja_token_openbao_addr | length > 0
+      - vikunja_token_openbao_token | length > 0
+    fail_msg: >-
+      vikunja_token_publish_openbao is on but BAO_ADDR/BAO_TOKEN are unset.
+      Provide a write-capable OpenBao AppRole in the converge environment.
+    quiet: true
+
+- name: Log in to Vikunja as admin to read the token route catalogue
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_admin_user }}"
+      password: "{{ vikunja_admin_password }}"
+    status_code: [200]
+  register: vikunja_admin_login
+  no_log: true
+
+- name: Fetch the API token route catalogue
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/routes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_admin_login.json.token }}"
+    status_code: [200]
+  register: vikunja_routes
+  no_log: true
+
+- name: Determine in-scope Vikunja route groups
+  ansible.builtin.set_fact:
+    vikunja_scoped_groups: "{{ vikunja_mcp_token_scopes | select('in', vikunja_routes.json) | list }}"
+
+# read_all/read_one are the only read actions; create/update/delete are writes.
+# RW grants every action on a scoped group; RO grants only the read_* actions,
+# dropping any group left with none.
+- name: Build read-write and read-only permission maps
+  ansible.builtin.set_fact:
+    vikunja_rw_permissions: >-
+      {{ dict(vikunja_scoped_groups
+              | zip(vikunja_scoped_groups | map('extract', vikunja_routes.json) | map('list'))) }}
+    vikunja_ro_permissions: >-
+      {{ dict(vikunja_scoped_groups
+              | zip(vikunja_scoped_groups | map('extract', vikunja_routes.json)
+                    | map('list') | map('select', 'match', 'read') | map('list')))
+         | dict2items | rejectattr('value', 'eq', []) | items2dict }}
+
+- name: Assert MCP token permission scopes resolved
+  ansible.builtin.assert:
+    that:
+      - vikunja_rw_permissions | length > 0
+      - vikunja_ro_permissions | length > 0
+    fail_msg: >-
+      No Vikunja route groups matched vikunja_mcp_token_scopes
+      ({{ vikunja_mcp_token_scopes | join(', ') }}) in GET /api/v1/routes.
+    quiet: true
+
+- name: Mint and publish MCP tokens per service user
+  ansible.builtin.include_tasks: mcp_token_one.yml
+  loop: "{{ vikunja_mcp_token_users }}"
+  loop_control:
+    loop_var: vikunja_mcp_user
+    label: "{{ vikunja_mcp_user.username }}"

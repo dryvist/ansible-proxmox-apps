@@ -6,13 +6,13 @@ inside an LXC (CT 167 `hermes-infer`, RX 6800), and provisions **Hermes 4 14B**.
 ## Installation
 
 Ships with the `ansible-proxmox-apps` repo; no external install. The container is
-provisioned by `terraform-proxmox` and the GPU device nodes (`/dev/kfd`,
+provisioned by `tofu-proxmox` and the GPU device nodes (`/dev/kfd`,
 `/dev/dri`) are passed in by `ansible-proxmox` (role `lxc_gpu_features`) — both
 must be in place first. This role is wired into `playbooks/site.yml` against the
 `ollama_group` (containers tagged `ollama` in the tofu inventory). Tools come
 from the repo's Nix dev shell (`direnv allow`).
 
-Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough) →
+Ordering: `tofu-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough) →
 **this role** (Ollama + ROCm + model) → `open_webui` (chat UI).
 
 ## What it does

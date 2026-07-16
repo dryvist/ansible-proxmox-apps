@@ -25,7 +25,7 @@ to IPv6) is a reservation change, not an edit sprawled across roles.
 | --- | --- | --- |
 | DHCP + core networking (L2/L3, VLANs, gateway, reservations) | **UniFi** | Issues every DHCP reservation (MAC → IP); this repo never runs a DHCP server. |
 | IPAM / DCIM source of truth | **Nautobot** (`roles/nautobot`, #138) | Staged SSoT DiffSync + export pipeline, currently gated off. |
-| Provisioning + constants | **terraform-proxmox** (upstream) | Owns `deployment.json`; publishes `tofu_inventory.json` + `pipeline_constants` to S3. |
+| Provisioning + constants | **tofu-proxmox** (upstream) | Owns `deployment.json`; publishes `tofu_inventory.json` + `pipeline_constants` to S3. |
 | Reservation seed (MAC → host) | **tofu-unifi** | `fixed-ips.json` — committed reservations, no literal IP (`cidrhost(cidr, host)`). |
 | App configuration | **this repo** | **Read-only consumer**; reads the published inventory, never defines an IP/port, fails loud. |
 
@@ -61,7 +61,7 @@ App configuration references services **by name, never by address**:
   from `tofu_data.constants` — the per-guest A record Technitium builds from
   the inventory.
 - `{{ tofu_data.domain }}` is the **single domain source of truth**
-  (published by terraform-proxmox, validated non-empty by
+  (published by tofu-proxmox, validated non-empty by
   `inventory/load_tofu.yml`). Never repeat a literal domain per role.
 - Hostnames **match the app/role/stanza name**. Never invent a third name.
 
@@ -105,7 +105,7 @@ guest — if it is not one of the anchors above, it should have `mac` +
 The guest static→DHCP conversion and the constants this repo consumes live
 upstream. Track them there:
 
-### terraform-proxmox (`deployment.json` + constants)
+### tofu-proxmox (`deployment.json` + constants)
 
 1. **Convert non-anchor guests to DHCP-first**: for each guest that is not a
    static anchor, drop the static IPv4, and give it a deterministic `mac`, an

@@ -15,13 +15,13 @@ scoped to `llm_fast_group` only.
 ## Installation
 
 Ships with the `ansible-proxmox-apps` repo; no external install. The container is
-provisioned by `terraform-proxmox` and the GPU device nodes (`/dev/kfd`, `/dev/dri`)
+provisioned by `tofu-proxmox` and the GPU device nodes (`/dev/kfd`, `/dev/dri`)
 are passed in by `ansible-proxmox` (role `lxc_gpu_features`) — both must be in place
 first. Wired into `playbooks/site.yml` against `llm_fast_group` (guests tagged
 `llm-fast` in the tofu inventory). Tools come from the repo's Nix dev shell
 (`direnv allow`).
 
-Ordering: `terraform-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough) →
+Ordering: `tofu-proxmox` (LXC shell) → `ansible-proxmox` (GPU passthrough) →
 **this role** (llama.cpp + llama-swap + models) → `llm_router` (LiteLLM front door).
 
 ## What it does

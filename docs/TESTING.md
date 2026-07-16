@@ -40,7 +40,7 @@ container IP for service testing, use `tofu_data.containers` from
 
 ### Port Constants
 
-Ports are defined once in terraform-proxmox `locals.tf`
+Ports are defined once in tofu-proxmox `locals.tf`
 (`pipeline_constants`), exported through the `ansible_inventory` output
 into `inventory/tofu_inventory.json`, and loaded as `tofu_data.constants`
 by `inventory/load_tofu.yml`:
@@ -59,7 +59,7 @@ unifi_port: "{{ tofu_data.constants.syslog_ports.unifi }}"
 
 ### Source of Truth
 
-Port assignments and IP derivation both live in the `terraform-proxmox`
+Port assignments and IP derivation both live in the `tofu-proxmox`
 repository (`locals.tf` `pipeline_constants`). To change port values,
 edit them there and apply; the apply publishes the inventory to S3
 (fetched directly by `load_tofu.yml` when AWS read creds are present)

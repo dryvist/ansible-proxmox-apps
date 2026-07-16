@@ -1,0 +1,105 @@
+---
+# Ensure ONE MCP service user has a live API token and publish it (with the
+# shared connection URL) to OpenBao. Included per item from mcp_tokens.yml with
+# loop_var: vikunja_mcp_user ({ username, readonly, kv_field }). The token is
+# minted on behalf of the user logging in (PUT /tokens uses that user's JWT).
+
+- name: "Log in to Vikunja as {{ vikunja_mcp_user.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_mcp_user.username }}"
+      password: >-
+        {{ (vikunja_service_users
+            | selectattr('username', 'equalto', vikunja_mcp_user.username)
+            | first).password }}
+    status_code: [200]
+  register: vikunja_mcp_login
+  no_log: true
+
+- name: "List existing API tokens for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_mcp_login.json.token }}"
+    status_code: [200]
+  register: vikunja_mcp_token_list
+  no_log: true
+
+# The list omits the secret value (returned exactly once at creation), so a live
+# token titled mcp-<user> means "already provisioned" — do not re-mint.
+- name: "Detect a live mcp token for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.set_fact:
+    vikunja_mcp_token_exists: >-
+      {{ (vikunja_mcp_token_list.json | default([], true))
+         | selectattr('title', 'defined')
+         | selectattr('title', 'equalto', 'mcp-' ~ vikunja_mcp_user.username)
+         | list | length > 0 }}
+
+- name: "Mint API token for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_mcp_login.json.token }}"
+    body_format: json
+    body:
+      title: "mcp-{{ vikunja_mcp_user.username }}"
+      permissions: "{{ vikunja_ro_permissions if vikunja_mcp_user.readonly else vikunja_rw_permissions }}"
+      expires_at: >-
+        {{ '%Y-%m-%dT%H:%M:%SZ'
+           | strftime((now(utc=true).timestamp() | int) + (vikunja_token_expiry_days | int * 86400), utc=true) }}
+    status_code: [200, 201]
+  register: vikunja_mcp_token_mint
+  when: not vikunja_mcp_token_exists
+  no_log: true
+
+- name: "Read current OpenBao secret at {{ vikunja_token_openbao_path }}"
+  ansible.builtin.uri:
+    url: "{{ vikunja_token_openbao_addr }}/v1/{{ vikunja_token_openbao_mount }}/data/{{ vikunja_token_openbao_path }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: vikunja_bao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+# KV v2 replaces the whole secret, so merge canonical fields over current data
+# to preserve siblings. The URL (non-secret) is written whenever it is missing
+# or stale; the token is added only when freshly minted (Vikunja returns it
+# exactly once). Guarding the write on an actual delta keeps the task
+# idempotent — once URL + token are present, later converges no-op here.
+- name: "Publish MCP connection to OpenBao for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.uri:
+    url: "{{ vikunja_token_openbao_addr }}/v1/{{ vikunja_token_openbao_mount }}/data/{{ vikunja_token_openbao_path }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    body_format: json
+    body:
+      data: >-
+        {{ (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+           | combine({vikunja_url_openbao_key: vikunja_mcp_url})
+           | combine({vikunja_mcp_user.kv_field: vikunja_mcp_token_mint.json.token}
+                     if (vikunja_mcp_token_mint is not skipped) else {}) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: >-
+    vikunja_mcp_token_mint is not skipped
+    or (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(vikunja_url_openbao_key)
+       != vikunja_mcp_url
+  no_log: true
