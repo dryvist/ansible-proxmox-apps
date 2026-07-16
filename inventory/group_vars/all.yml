@@ -114,15 +114,22 @@ llm_large_serving_ip: >-
 #      limit exceeded` → generation_error_recovery aborts ALL in-flight requests
 #      → Hermes retry storm, ~zero clean posts. The 80B is a competent
 #      concurrency-1 brain, not a fleet brain.
-# Stock Qwen3.6-35B-A3B-4bit is OptiQ's clean twin (same ~20 GB, clean 20/20
-# multi-turn, 4.1 tok/s) and runs clean on this build — the natural drop-in for
-# the broken resident OptiQ slot, fitting the existing cache + concurrency. Both
-# rotation phases point at it so the fleet never routes to the 80B. The 80B
-# stays reachable ONLY via the ai-deep-analysis alias (escalation, concurrency
-# 1). Revert optimized → OptiQ once its engine bug is fixed.
+# REVERTED to OptiQ 2026-07-16: the "stock twin runs clean on this build"
+# premise did not survive contact — the stock 35B wedged with the SAME
+# broadcast_shapes batch-scheduler crash (805 errors / 603 consecutive
+# zero-token completions wrapped in HTTP 200, ~15h of failed crons; nix-ai
+# #1234). With crash risk equal, the twins differ only where OptiQ wins:
+# 65,536-token serving window (the stock instance serves 32,768, BELOW
+# Hermes' hard 64K compression floor — the fleet cannot run on it at all)
+# and 7.4 vs 4.1 tok/s. The wedge is now survivable regardless of brain:
+# the watchdog detects 200-wrapped error bodies and pauses the fleet
+# (#939), ai-default carries a light-tier fallback (#939), and Splunk
+# alerts on the wedge signature (ansible-splunk#342). Both rotation phases
+# point at OptiQ so the fleet never routes to the 80B; the 80B stays
+# reachable ONLY via the ai-deep-analysis alias (escalation, concurrency 1).
 ai_rotation_enabled: true
-ai_default_model_optimized: Qwen3.6-35B-A3B-4bit
-ai_default_model_large: Qwen3.6-35B-A3B-4bit
+ai_default_model_optimized: Qwen3.6-35B-A3B-OptiQ-4bit
+ai_default_model_large: Qwen3.6-35B-A3B-OptiQ-4bit
 ai_default_model: "{{ 'ai-default' if ai_rotation_enabled | bool else ai_default_model_optimized }}"
 
 # Escalation rubric v1 — WHICH tier a task deserves, encoded as data (from the

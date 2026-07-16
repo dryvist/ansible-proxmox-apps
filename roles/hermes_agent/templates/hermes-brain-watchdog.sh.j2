@@ -47,21 +47,37 @@ SLACK_TOKEN="${SLACK_BOT_TOKEN:-}"
 SLACK_USER="${SLACK_ALLOWED_USERS:-}"
 
 # --- Probe: a tiny real completion, mirroring what the crons actually do ------
-# Healthy iff HTTP 200. A connection error (curl fails -> 000), a 5xx, an auth
-# 4xx, or a wedged brain that hangs past PROBE_TIMEOUT all read as DOWN — the
-# same failures that would fail a cron. It hits the already-active rotation model
-# (no cold-model spawn), and probing on this cadence keeps the brain warm, which
-# matches the intended 24/7 posture. ponytail: 1-token probe, not a bare TCP
-# check, so "reachable but not serving" is caught too.
+# Healthy iff HTTP 200 AND the body carries a real finish_reason. HTTP code
+# alone is NOT health: when the MLX engine's batch scheduler wedges (2026-07-16
+# broadcast_shapes incident) every completion returns HTTP 200 with
+# `"finish_reason":"error"` and zero tokens — the code-only probe stayed green
+# for hours while every cron failed. A connection error (curl fails -> 000), a
+# 5xx, an auth 4xx, a hang past PROBE_TIMEOUT, or a 200-wrapped error body all
+# read as DOWN — the same failures that would fail a cron. It hits the
+# already-active rotation model (no cold-model spawn), and probing on this
+# cadence keeps the brain warm, which matches the intended 24/7 posture.
+# ponytail: grep on the body, no jq and no temp file on the guest.
 probe_ok() {
-  local code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "${PROBE_TIMEOUT}" \
+  local response code body
+  # Body and status code in one call: -w appends the code on its own line
+  # after the body, so no temp file is needed on a 60s cadence.
+  response="$(curl -sS -w '\n%{http_code}' --max-time "${PROBE_TIMEOUT}" \
     -X POST "${PROBE_URL}" \
     -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
-    -d "{\"model\":\"${MODEL}\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" \
-    2>/dev/null)" || code="000"
-  [[ "${code}" == "200" ]]
+    -d "{\"model\":\"${MODEL}\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" \
+    2>/dev/null)" || return 1
+  code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  # stop|length|tool_calls = the model really generated; "error" (or a body
+  # with no finish_reason at all) = broken regardless of the 200. The
+  # finish_reason check alone is not enough: LiteLLM can remap an upstream
+  # finish_reason "error" to "stop" (core_helpers "Unmapped finish_reason
+  # 'error', defaulting to 'stop'", seen live 2026-07-16), so also require
+  # completion_tokens >= 1 — a wedged engine always reports 0.
+  [[ "${code}" == "200" ]] \
+    && grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(stop|length|tool_calls)"' <<< "${body}" \
+    && grep -Eq '"completion_tokens"[[:space:]]*:[[:space:]]*[1-9]' <<< "${body}"
 }
 
 # --- Cron fleet control (best-effort; idempotent) ----------------------------
