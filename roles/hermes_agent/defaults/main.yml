@@ -369,8 +369,15 @@ hermes_agent_splunk_digest_deliver: slack
 # the [SILENT]-unless-anomaly / always-deliver-the-digest delivery contract.
 # Minutes are staggered so no two monitoring runs fire in the same minute
 # (bounds concurrent load on the shared LLM serving tier).
+#
+# Cadence calmed 2026-07-16 (operator decision): the old fleet (triage every
+# 15 min, security 2x/hr, parsing+digest hourly) generated most of the
+# concurrent load on the single serving engine — the load that triggered the
+# vllm-mlx batch-scheduler wedge (nix-ai#1234) and the llama-swap 429 bursts.
+# Homelab triage does not need 15-minute latency; ~85% fewer LLM calls with
+# zero overlapping start minutes.
 hermes_agent_splunk_triage_cron_name: splunk-triage
-hermes_agent_splunk_triage_cron_schedule: "3,18,33,48 * * * *"
+hermes_agent_splunk_triage_cron_schedule: "7 * * * *"
 hermes_agent_splunk_triage_cron_prompt: >-
   Do a broad, self-directed anomaly sweep of Splunk right now using only bounded
   queries. Recall your known baselines first, confirm anything surprising with
@@ -379,7 +386,7 @@ hermes_agent_splunk_triage_cron_prompt: >-
   one concise, numbers-backed alert.
 
 hermes_agent_splunk_security_cron_name: splunk-security
-hermes_agent_splunk_security_cron_schedule: "9,39 * * * *"
+hermes_agent_splunk_security_cron_schedule: "22 */6 * * *"
 hermes_agent_splunk_security_cron_prompt: >-
   Sweep Splunk with a security lens this run — firewall-drop spikes, auth-failure
   spikes, honeypot index hits, unexpected source IPs — all as bounded stats,
@@ -388,7 +395,7 @@ hermes_agent_splunk_security_cron_prompt: >-
   [SILENT] if clean; otherwise one concise, numbers-backed alert.
 
 hermes_agent_splunk_parsing_cron_name: splunk-parsing
-hermes_agent_splunk_parsing_cron_schedule: "24 * * * *"
+hermes_agent_splunk_parsing_cron_schedule: "37 2 * * *"
 hermes_agent_splunk_parsing_cron_prompt: >-
   Sweep Splunk with a data-quality lens this run — timestamp-extraction failures,
   events dated far in the past/future, line-merge anomalies, new or unknown
@@ -398,7 +405,7 @@ hermes_agent_splunk_parsing_cron_prompt: >-
 
 # Quiet research run: builds long-term knowledge (RAG) rather than alerting.
 hermes_agent_splunk_deepdive_cron_name: splunk-deepdive
-hermes_agent_splunk_deepdive_cron_schedule: "44 */6 * * *"
+hermes_agent_splunk_deepdive_cron_schedule: "11 3 * * *"
 hermes_agent_splunk_deepdive_cron_prompt: >-
   Pick ONE index or sourcetype you have not yet characterized well (check your
   wiki/memory for gaps). Using only bounded queries, learn its normal shape,
@@ -407,9 +414,10 @@ hermes_agent_splunk_deepdive_cron_prompt: >-
 
 # Routine status post: always delivered (never [SILENT]).
 hermes_agent_splunk_digest_cron_name: splunk-digest
-# Hourly heartbeat: a visible "here's what I'm seeing" post every hour so silence
-# never reads as "is it even running?". Anomaly sweeps stay silent-unless-anomaly.
-hermes_agent_splunk_digest_cron_schedule: "50 * * * *"
+# Daily digest (calmed from hourly): a visible "here's what I'm seeing" post so
+# silence never reads as "is it even running?". Anomaly sweeps stay
+# silent-unless-anomaly.
+hermes_agent_splunk_digest_cron_schedule: "52 8 * * *"
 hermes_agent_splunk_digest_cron_prompt: >-
   Post a concise Splunk digest to the home channel: what you looked at recently,
   the current normal (top indexes/sourcetypes by volume and their freshness), any
@@ -451,7 +459,7 @@ hermes_agent_splunk_cron_jobs:
 # (can query) AND the Slack tokens (can deliver) — same shape as splunk.
 hermes_agent_github_monitor_enabled: true
 hermes_agent_github_monitor_cron_name: github-triage
-hermes_agent_github_monitor_cron_schedule: "12 */2 * * *"
+hermes_agent_github_monitor_cron_schedule: "26 */6 * * *"
 hermes_agent_github_monitor_cron_prompt: >-
   Do a read-only triage sweep of the dryvist GitHub org right now using your
   github-issues skill. Enumerate open PRs and issues across non-archived repos;
