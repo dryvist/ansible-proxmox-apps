@@ -124,3 +124,60 @@ postgres_primary_fqdn: >-
 # migration to the new primary is confirmed; env-gated so it is deliberate and
 # ephemeral.
 postgres_standby_reinit: "{{ lookup('env', 'POSTGRES_STANDBY_REINIT') | default(false, true) | bool }}"
+
+# =============================================================================
+# Object-storage PITR backups (pgBackRest -> S3). A SECOND, independent tier
+# from the pg_dump layer above: pgBackRest archives WAL continuously
+# (archive_command) and takes scheduled full/incremental base backups to an
+# S3-compatible endpoint (the homelab RustFS instance; the same objects are
+# replicated to Backblaze B2 by an out-of-band job), giving point-in-time
+# recovery that logical dumps cannot. Primary-only, and OFF by default so the
+# merge is inert — flip postgres_pgbackrest_enabled at bring-up.
+#
+# Flag name: task #7 asked for `postgres_backup_enabled`, but that is already
+# the pg_dump tier's switch (default true). Repurposing it would silently
+# disable pg_dump, so this tier owns its own flag.
+postgres_pgbackrest_enabled: false
+
+# Stanza + repo layout. One stanza per cluster; the repo path is the in-bucket
+# prefix, so objects land at s3://<bucket>/postgres/<cluster_name>/... . The
+# bucket name is identical on RustFS and Backblaze B2 — B2's namespace is
+# global, so one globally-unique name satisfies the 1:1 RustFS<->B2 parity rule.
+postgres_pgbackrest_stanza: "{{ postgres_cluster_name }}"
+postgres_backup_s3_bucket: dryvist-homelab-backups
+postgres_pgbackrest_repo_path: "/postgres/{{ postgres_cluster_name }}"
+
+# S3-compatible endpoint + credentials. Injection-agnostic: the role reads env,
+# never a specific secret backend. RustFS/MinIO ignore the region but the AWS
+# SDK pgBackRest embeds requires a non-empty value, and they need path-style
+# URIs (bucket in the path, not the hostname).
+postgres_backup_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_S3_ENDPOINT') | default('', true) }}"
+postgres_backup_s3_region: "{{ lookup('env', 'POSTGRES_BACKUP_S3_REGION') | default('us-east-1', true) }}"
+postgres_backup_s3_uri_style: path
+postgres_backup_s3_access_key_id: "{{ lookup('env', 'POSTGRES_BACKUP_S3_ACCESS_KEY_ID') | default('', true) }}"
+postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY') | default('', true) }}"
+
+# Retention: number of full backups to keep. pgBackRest expires the WAL that
+# predates the oldest retained full automatically, so this one knob bounds both
+# base-backup and WAL storage.
+postgres_pgbackrest_retention_full: 4
+
+# Backup schedule. pgBackRest's standard pattern is a weekly full plus daily
+# incrementals (the first backup is always promoted to full). Each entry deploys
+# a pgbackrest-backup@<type>.timer that triggers pgbackrest-backup@<type>.service.
+postgres_pgbackrest_schedules:
+  - type: full
+    on_calendar: "Sun *-*-* 01:00:00"
+  - type: incr
+    on_calendar: "Mon..Sat *-*-* 01:00:00"
+postgres_pgbackrest_randomized_delay_sec: 900
+
+# PITR restore (explicit invocation only; tags never,pgbackrest_restore). Stops
+# the cluster, restores the repo into PGDATA with --delta, and starts it to
+# replay WAL. Arm with postgres_pgbackrest_restore=true; optionally pin a target
+# with postgres_pgbackrest_restore_target (e.g. an ISO timestamp) and
+# _target_type (time/name/xid/lsn). Point a drill at a scratch cluster/stanza,
+# NEVER the live primary.
+postgres_pgbackrest_restore: false
+postgres_pgbackrest_restore_target: ""
+postgres_pgbackrest_restore_target_type: "time"

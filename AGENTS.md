@@ -21,8 +21,6 @@ this repo handles app config only.
 - **Mailpit** (LXC container, SMTP relay with web UI)
 - **ntfy** (LXC container, push notification server)
 - **GitHub Actions Runners** (`github_runner` role — Docker Compose on docker-host VM)
-- **Qdrant** (`qdrant_docker` role — Docker in LXC container)
-- **LlamaIndex** (`llamaindex` role — Python + Ollama CPU-only embeddings on LXC container)
 - **iDRAC KVM** (`idrac_kvm_docker` role — domistyle/idrac6 HTML5 KVM viewer +
   host `ipmitool`, Docker on dedicated VM 251). A Mac-only OrbStack exploratory
   variant lives at `orbstack-kubernetes/docker/idrac-webtop` (webtop +
@@ -41,11 +39,6 @@ this repo handles app config only.
 - **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
   Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
   API keys, no new *arr-side wiring).
-- **Hermes agent** (`hermes_agent` role — the autonomous NousResearch agent
-  gateway, native install; not the LLM serving stack).
-- **LLM fabric** (`llm_router` role — LiteLLM proxy, the single OpenAI-compatible
-  front door for the large/light tiers; `open_webui`, `llama_cpp`, `ollama`
-  roles for the backends).
 
 **This repo does NOT own Splunk.** Splunk is managed by `ansible-splunk`.
 
@@ -120,8 +113,6 @@ CI runners MUST NOT share Docker networks with dev/test services.
 | 1025 | Mailpit SMTP |
 | 8025 | Mailpit Web UI |
 | 8080 | ntfy HTTP |
-| 6333 | Qdrant HTTP (from tofu `vector_db_ports`) |
-| 6334 | Qdrant gRPC (from tofu `vector_db_ports`) |
 
 Values are sourced from `tofu-proxmox/locals.tf`
 `pipeline_constants.{service_ports, netflow_ports, vector_db_ports}`.
@@ -154,8 +145,6 @@ documented once at
 - `idrac_kvm_group`: Docker VMs tagged `idrac` (iDRAC KVM viewer VM 251)
 - `mailpit_group`: Containers tagged `smtp` (Mailpit SMTP relay)
 - `ntfy_group`: Containers tagged `push` (ntfy push notifications)
-- `qdrant_group`: Containers tagged `vectordb` (Qdrant vector database)
-- `llamaindex_group`: Containers tagged `rag` (LlamaIndex RAG engine)
 
 ### Environment Variables
 
@@ -182,7 +171,6 @@ documented once at
 | `GH_PAT_RUNNER_TOKEN` | Fine-grained PAT for runner auto-registration (multi-repo) | Doppler (`gh-workflow-tokens`) |
 | `SOPS_AGE_KEY` | Age private key content for SOPS decryption in runner containers | Doppler |
 | `GITHUB_RUNNER_TOKEN` | (deprecated) Single-repo registration token (1h expiry) | SOPS |
-| `QDRANT_API_KEY` | Qdrant vector database API key | SOPS |
 | `BAO_TOKEN` | Privileged token for reconciling an initialized OpenBao cluster | operator environment |
 | `OPENBAO_AWS_ROOT_ACCESS_KEY_ID` | AWS engine bootstrap/rotation access key | tier-0 injection |
 | `OPENBAO_AWS_ROOT_SECRET_ACCESS_KEY` | AWS engine bootstrap/rotation secret key | tier-0 injection |
