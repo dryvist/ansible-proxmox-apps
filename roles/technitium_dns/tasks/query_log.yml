@@ -37,6 +37,13 @@
       {{ technitium_dns_query_log_app_name in
          (technitium_dns_apps_installed.json.response.apps | default([])
           | map(attribute='name') | list) }}
+    # The server renders this from the app assembly's version with trailing
+    # zero components dropped (DnsWebService.GetCleanVersion), so it compares
+    # equal to the plain pin: assembly 3.0.1.0 -> "3.0.1". Empty when absent.
+    technitium_dns_query_log_app_live_version: >-
+      {{ technitium_dns_apps_installed.json.response.apps | default([])
+         | selectattr('name', 'eq', technitium_dns_query_log_app_name)
+         | map(attribute='version') | first | default('', true) }}
   when: technitium_dns_apply | bool
 
 - name: Install the Log Exporter app from the internal object-storage mirror
@@ -58,6 +65,32 @@
   when:
     - technitium_dns_apply | bool
     - not technitium_dns_query_log_app_installed
+  no_log: true
+
+# The install above only fires when the app is ABSENT, so an already-installed
+# app would keep its old build forever. The app is compiled against the server's
+# DnsServerCore.ApplicationCommon, so a server major upgrade strands it on an
+# incompatible build — this drift-gated update is what carries it across.
+- name: Update the Log Exporter app to the pinned version
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/apps/downloadAndUpdate?token={{
+      technitium_dns_api_token }}&name={{
+      technitium_dns_query_log_app_name | urlencode }}&url={{
+      technitium_dns_query_log_app_url | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_query_log_update
+  changed_when: technitium_dns_query_log_update.json.status == "ok"
+  failed_when: >-
+    technitium_dns_query_log_update.failed or
+    technitium_dns_query_log_update.json is not defined or
+    technitium_dns_query_log_update.json.status != "ok"
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_query_log_app_installed
+    - technitium_dns_query_log_app_live_version != technitium_dns_query_log_app_version
   no_log: true
 
 - name: Read the live Log Exporter app config

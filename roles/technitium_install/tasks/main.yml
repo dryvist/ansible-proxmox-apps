@@ -23,62 +23,46 @@
   failed_when: false
   changed_when: false
 
+# The runtime tasks below are idempotent and run on EVERY converge, not just
+# the fresh-install path: a server bump onto a newer target framework (15.x is
+# net10.0, 14.x was net9.0) needs the new runtime present BEFORE the binaries
+# are swapped. Previous runtimes are deliberately left installed — .NET runs
+# side-by-side, and keeping the old one is what lets a rollback to the previous
+# build start at all.
+- name: Gather minimal facts (Debian version for the Microsoft apt repo)
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+      - "min"
+
+- name: Install base dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - libicu-dev
+    state: present
+    update_cache: true
+
+- name: Register the Microsoft package repository (.NET runtime source)
+  # The config .deb installs the apt source list + signing key; this
+  # replaces the dead vendor host as the runtime source.
+  ansible.builtin.apt:
+    deb: >-
+      https://packages.microsoft.com/config/debian/{{
+      ansible_facts.distribution_major_version }}/packages-microsoft-prod.deb
+
+- name: Install the ASP.NET Core runtime
+  ansible.builtin.apt:
+    name: "{{ technitium_install_dotnet_pkg }}"
+    state: present
+    update_cache: true
+
 - name: Install Technitium DNS server (bare-metal from mirror)
   when: technitium_install_check.status == -1
   block:
-    - name: Gather minimal facts (Debian version for the Microsoft apt repo)
-      ansible.builtin.setup:
-        gather_subset:
-          - "!all"
-          - "min"
-
-    - name: Install base dependencies
-      ansible.builtin.apt:
-        name:
-          - curl
-          - ca-certificates
-          - libicu-dev
-        state: present
-        update_cache: true
-
-    - name: Register the Microsoft package repository (.NET runtime source)
-      # The config .deb installs the apt source list + signing key; this
-      # replaces the dead vendor host as the runtime source.
-      ansible.builtin.apt:
-        deb: >-
-          https://packages.microsoft.com/config/debian/{{
-          ansible_facts.distribution_major_version }}/packages-microsoft-prod.deb
-
-    - name: Install the ASP.NET Core runtime
-      ansible.builtin.apt:
-        name: "{{ technitium_install_dotnet_pkg }}"
-        state: present
-        update_cache: true
-
-    - name: Ensure the Technitium app directory exists
-      ansible.builtin.file:
-        path: "{{ technitium_install_app_dir }}"
-        state: directory
-        mode: "0755"
-
-    - name: Download the Technitium app from the mirror (checksum-pinned)
-      ansible.builtin.get_url:
-        url: "{{ technitium_install_app_url }}"
-        dest: /tmp/technitium-app.tgz
-        checksum: "sha256:{{ technitium_install_app_sha256 }}"
-        mode: "0644"
-
-    - name: Extract the Technitium app distribution
-      ansible.builtin.unarchive:
-        src: /tmp/technitium-app.tgz
-        dest: "{{ technitium_install_app_dir }}"
-        remote_src: true
-        creates: "{{ technitium_install_app_dir }}/dns/DnsServerApp.dll"
-
-    - name: Remove the downloaded tarball
-      ansible.builtin.file:
-        path: /tmp/technitium-app.tgz
-        state: absent
+    - name: Deploy the pinned Technitium app build
+      ansible.builtin.include_tasks: deploy_app.yml
 
     - name: Install the dns.service systemd unit
       ansible.builtin.template:
@@ -165,6 +149,82 @@
   changed_when: false
   failed_when: technitium_install_login.json.status | default('') != "ok"
   no_log: true
+
+# The install block above only fires when the API is unreachable, so an
+# already-running server would never pick up a version bump — the pins could
+# advance while the fleet silently stayed put. This is the upgrade path. It is
+# gated on the version the server actually reports, so a converge with no bump
+# pending is a no-op. Runs here (not next to the install block) because the
+# running version comes from the authenticated login response above.
+- name: Upgrade Technitium DNS server to the pinned version
+  when:
+    - technitium_install_check.status != -1
+    - >-
+      (technitium_install_login.json.info.version | default('', true)) !=
+      (technitium_install_app_version_clean | trim)
+  block:
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ technitium_install_backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Stop dns.service before swapping the app binaries
+      ansible.builtin.systemd_service:
+        name: dns.service
+        state: stopped
+
+    - name: Back up the data directory (rollback point)
+      # Taken while stopped, so the on-disk config/zones are quiescent. Named
+      # for the version being replaced — that is the build this archive pairs
+      # with if the upgrade has to be rolled back.
+      community.general.archive:
+        path: "{{ technitium_install_data_dir }}"
+        dest: >-
+          {{ technitium_install_backup_dir }}/dns-data-{{
+          technitium_install_login.json.info.version }}-{{
+          ansible_facts.date_time.epoch }}.tgz
+        format: gz
+        mode: "0600"
+
+    - name: Deploy the pinned Technitium app build
+      ansible.builtin.include_tasks: deploy_app.yml
+
+    - name: Start Technitium DNS
+      ansible.builtin.systemd_service:
+        name: dns.service
+        state: started
+
+    - name: Wait for Technitium to come back after the upgrade
+      ansible.builtin.uri:
+        url: "{{ technitium_install_api_url }}"
+        method: GET
+        status_code: [200, 301, 302]
+        timeout: "{{ technitium_install_api_timeout }}"
+      register: technitium_install_upgrade_wait
+      retries: 12
+      delay: 5
+      until: technitium_install_upgrade_wait.status in [200, 301, 302]
+
+    - name: Confirm the upgraded server reports the pinned version
+      # Answering on the port is not proof the new build loaded — a runtime
+      # mismatch fails at assembly load, not at startup. Assert the version.
+      ansible.builtin.uri:
+        url: "{{ technitium_install_api_url }}/api/user/login"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          user: "{{ technitium_install_admin_user }}"
+          pass: "{{ technitium_install_admin_password }}"
+        return_content: true
+        timeout: "{{ technitium_install_api_timeout }}"
+      register: technitium_install_upgrade_verify
+      changed_when: false
+      failed_when: >-
+        (technitium_install_upgrade_verify.json.status | default('')) != "ok" or
+        (technitium_install_upgrade_verify.json.info.version | default('')) !=
+        (technitium_install_app_version_clean | trim)
+      no_log: true
 
 - name: Create API token
   # Technitium /api/user/createToken takes user/pass directly (not a
