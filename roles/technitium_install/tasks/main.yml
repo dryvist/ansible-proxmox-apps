@@ -150,17 +150,33 @@
   failed_when: technitium_install_login.json.status | default('') != "ok"
   no_log: true
 
+- name: Read the running server version
+  # /api/user/login does NOT carry an info block — only /api/user/session/get
+  # reports info.version. Reading the version off the login response yields an
+  # undefined attribute, so the upgrade gate can never compare a real version.
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_install_api_url }}/api/user/session/get?token={{
+      technitium_install_login.json.token }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_install_api_timeout }}"
+  register: technitium_install_session
+  changed_when: false
+  failed_when: technitium_install_session.json.status | default('') != "ok"
+  no_log: true
+
 # The install block above only fires when the API is unreachable, so an
 # already-running server would never pick up a version bump — the pins could
 # advance while the fleet silently stayed put. This is the upgrade path. It is
 # gated on the version the server actually reports, so a converge with no bump
 # pending is a no-op. Runs here (not next to the install block) because the
-# running version comes from the authenticated login response above.
+# running version comes from the authenticated session lookup above.
 - name: Upgrade Technitium DNS server to the pinned version
   when:
     - technitium_install_check.status != -1
     - >-
-      (technitium_install_login.json.info.version | default('', true)) !=
+      (technitium_install_session.json.info.version | default('', true)) !=
       (technitium_install_app_version_clean | trim)
   block:
     - name: Ensure the backup directory exists
@@ -182,7 +198,7 @@
         path: "{{ technitium_install_data_dir }}"
         dest: >-
           {{ technitium_install_backup_dir }}/dns-data-{{
-          technitium_install_login.json.info.version }}-{{
+          technitium_install_session.json.info.version | default('unknown', true) }}-{{
           ansible_facts.date_time.epoch }}.tgz
         format: gz
         mode: "0600"
@@ -206,9 +222,9 @@
       delay: 5
       until: technitium_install_upgrade_wait.status in [200, 301, 302]
 
-    - name: Confirm the upgraded server reports the pinned version
-      # Answering on the port is not proof the new build loaded — a runtime
-      # mismatch fails at assembly load, not at startup. Assert the version.
+    - name: Log in to the upgraded server
+      # A fresh login: the pre-upgrade session token does not survive the
+      # restart, so it cannot be reused to read the new version.
       ansible.builtin.uri:
         url: "{{ technitium_install_api_url }}/api/user/login"
         method: POST
@@ -216,6 +232,21 @@
         body:
           user: "{{ technitium_install_admin_user }}"
           pass: "{{ technitium_install_admin_password }}"
+        return_content: true
+        timeout: "{{ technitium_install_api_timeout }}"
+      register: technitium_install_upgrade_login
+      changed_when: false
+      failed_when: technitium_install_upgrade_login.json.status | default('') != "ok"
+      no_log: true
+
+    - name: Confirm the upgraded server reports the pinned version
+      # Answering on the port is not proof the new build loaded — a runtime
+      # mismatch fails at assembly load, not at startup. Assert the version.
+      ansible.builtin.uri:
+        url: >-
+          {{ technitium_install_api_url }}/api/user/session/get?token={{
+          technitium_install_upgrade_login.json.token }}
+        method: GET
         return_content: true
         timeout: "{{ technitium_install_api_timeout }}"
       register: technitium_install_upgrade_verify
