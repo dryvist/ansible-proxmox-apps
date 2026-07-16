@@ -56,24 +56,23 @@ SLACK_USER="${SLACK_ALLOWED_USERS:-}"
 # read as DOWN — the same failures that would fail a cron. It hits the
 # already-active rotation model (no cold-model spawn), and probing on this
 # cadence keeps the brain warm, which matches the intended 24/7 posture.
-# ponytail: grep on the body, no jq on the guest for two fields.
+# ponytail: grep on the body, no jq and no temp file on the guest.
 probe_ok() {
-  local code body rc=1
-  body="$(mktemp)"
-  code="$(curl -sS -o "${body}" -w '%{http_code}' --max-time "${PROBE_TIMEOUT}" \
+  local response code body
+  # Body and status code in one call: -w appends the code on its own line
+  # after the body, so no temp file is needed on a 60s cadence.
+  response="$(curl -sS -w '\n%{http_code}' --max-time "${PROBE_TIMEOUT}" \
     -X POST "${PROBE_URL}" \
     -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"${MODEL}\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" \
-    2>/dev/null)" || code="000"
+    2>/dev/null)" || return 1
+  code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
   # stop|length|tool_calls = the model really generated; "error" (or a body
   # with no finish_reason at all) = broken regardless of the 200.
-  if [[ "${code}" == "200" ]] \
-    && grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(stop|length|tool_calls)"' "${body}"; then
-    rc=0
-  fi
-  rm -f "${body}"
-  return "${rc}"
+  [[ "${code}" == "200" ]] \
+    && grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(stop|length|tool_calls)"' <<< "${body}"
 }
 
 # --- Cron fleet control (best-effort; idempotent) ----------------------------
