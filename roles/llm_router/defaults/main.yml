@@ -133,11 +133,20 @@ llm_router_large_models:
     backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
     context_window: 65536
     extra_body: { repetition_penalty: 1.05 }
-  # Qwen3-Next-80B Thinking: the large-phase brain for the daily rotation
-  # (ai_default_model_large). A first-class alias so the rotating ai-default
-  # entry carries its serving window. Served from the nix-ai catalog swap tier,
-  # loaded on demand only while ai-default points at it. Block style (not the
-  # flow one-liner above) only to stay under the 120-char limit.
+  # ai-default: THE stable fabric-brain alias every consumer (Hermes, Open
+  # WebUI, the cron fleet) points at permanently. Statically bound since
+  # 2026-07-16: the daily 00/12 UTC rotation was deleted once both phases
+  # pointed at the same model (a no-op flip whose timers still restarted
+  # litellm twice a day). Re-pointing the fabric brain = edit this one
+  # backend line. Carries its own repetition_penalty because extra_body on
+  # the physical alias above never reaches a distinct model_name.
+  - alias: ai-default
+    backend: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+    context_window: 65536
+    extra_body: { repetition_penalty: 1.05 }
+  # Qwen3-Next-80B Thinking: served from the nix-ai catalog swap tier, loaded
+  # on demand (reachable directly and via ai-deep-analysis below). Block style
+  # (not the flow one-liner above) only to stay under the 120-char limit.
   - alias: Qwen3-Next-80B-A3B-Thinking-4bit
     backend: mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit
     context_window: 32768
@@ -260,90 +269,9 @@ llm_router_llm_fast_enabled: true
 # alias set (exact-match aliases win over the wildcard).
 llm_router_large_passthrough_enabled: true
 
-# --- Daily brain rotation (docs/BRAIN_ROTATION.md) ---------------------------
-# When enabled, the router exposes ONE stable alias (`ai-default`) that Hermes
-# and Open WebUI point at permanently, and two systemd timers rotate which
-# backend that alias maps to: 00:00 UTC -> the large brain, 12:00 UTC -> the
-# optimized brain. Consumers never change, so no gateway restart and no cron
-# churn — only `litellm` bounces on this tier at the mark. Off by default: the
-# whole block below is inert and config.yaml renders exactly as it did before.
-llm_router_rotation_enabled: "{{ ai_rotation_enabled | default(false) | bool }}"
-llm_router_rotation_alias: ai-default
-# Anti-repetition-loop guard for the rotation alias itself. `ai-default` is a
-# distinct model_name from the per-phase aliases in llm_router_large_models, so
-# their extra_body does NOT reach it — Hermes addresses `ai-default` and would
-# otherwise run with the engine's request-absent repetition_penalty 1.0 (OFF).
-# That is what regressed when the fleet brain switched OptiQ->stock 35B (#915):
-# the guard lived only on the OptiQ alias, so the 35B fleet brain looped
-# (identical-tool-call spam, !!!!/status degeneration; 2026-07-14 incident).
-# 1.05 matches the value validated on the OptiQ twin; raise toward the clean
-# bench's sampling (temperature ~1.0 / presence_penalty 0.0) if loops persist.
-llm_router_rotation_repetition_penalty: 1.05
-# The two phases, by their first-class alias id in llm_router_large_models above
-# (the role resolves each to its backend + context_window from that table).
-llm_router_rotation_large_model: "{{ ai_default_model_large }}"
-llm_router_rotation_optimized_model: "{{ ai_default_model_optimized }}"
-# Fixed-hour UTC schedule. The `UTC` suffix needs systemd >= 252 (Debian 12).
-# STAGGERED per router (0/2/4 min by position in the group): every flip
-# restarts litellm, and three simultaneous restarts left HAProxy with NO
-# healthy backend — the 2026-07-10 00:00 UTC flip 503'd every in-flight
-# agent call ("no available server") long enough to exhaust hermes's 3
-# retries. A 2-minute stagger keeps two routers serving while one flips;
-# the ai-default alias differs across routers for at most 4 minutes twice
-# a day, which A/B-comparison tolerates and availability requires.
-llm_router_rotation_stagger_minutes: >-
-  {{ (groups['llm_router_group'] | sort).index(inventory_hostname) * 2 }}
-# Exactly ONE router (the first by sort order, which also flips first)
-# actuates the serving host (unload-all / warm curls). The later, staggered
-# flips would otherwise re-fire unload-all and abort requests the
-# already-flipped fabric had started.
-llm_router_rotation_actuator: >-
-  {{ (groups['llm_router_group'] | sort | first) == inventory_hostname }}
-llm_router_rotation_stagger_mm: "{{ '%02d' | format(llm_router_rotation_stagger_minutes | int) }}"
-llm_router_rotation_large_oncalendar: "*-*-* 00:{{ llm_router_rotation_stagger_mm }}:00 UTC"
-llm_router_rotation_optimized_oncalendar: "*-*-* 12:{{ llm_router_rotation_stagger_mm }}:00 UTC"
-# Degraded-mode fallback for the rotation alias. Empty string disables — and
-# it MUST stay disabled until a fallback deployment exists that satisfies the
-# same context floor as the primary (>= the rotation alias's served window).
-# The 2026-07-16 attempt chained qwen3-4b here, but the light tier's only live
-# deployment is llm-light (CPU, 2048-token context; llm-fast GPU is frozen for
-# hardware hard-locks): every Hermes-sized fallback request died with
-# ContextWindowExceeded, Hermes adopted the 2048 window and compressed itself
-# to death ("Cannot compress further"), and the watchdog's tiny probe DID fit
-# in 2048 — so the fallback masked the engine wedge from the watchdog while
-# every real request failed. A fallback smaller than the primary's window is
-# worse than none: fail loud, let the watchdog pause the fleet.
-llm_router_rotation_fallback_model: ""
-# Per-phase rendered configs; config.yaml is a symlink to the live one.
-llm_router_rotation_config_large: "{{ llm_router_config_dir }}/config-large.yaml"
-llm_router_rotation_config_optimized: "{{ llm_router_config_dir }}/config-optimized.yaml"
-# Bench-window guard: while this sentinel exists the large timer no-ops (the
-# fabric stays on the optimized brain so a bench is never crowded out). The
-# bench runbook touches it to pause and removes it to resume.
-llm_router_rotation_pause_sentinel: "{{ llm_router_config_dir }}/rotation-paused"
-# Serving-host model names (role aliases) the optimized flip re-warms after
-# dropping the large brain — llama-swap only preloads at proxy startup, so the
-# flip itself must reload the resident pair (litellm-rotate.service.j2).
-llm_router_rotation_warm_roles:
-  - coding
-  - tool-calling
-
-# --- Night-cluster brain (docs/BRAIN_ROTATION.md "Night cluster") ------------
-# When enabled, ONLY the large-phase config changes shape: the rotation alias
-# becomes a deployment on the serving host's night-cluster endpoint (the
-# two-Mac pipeline-parallel brain, gated on its own port by the same bearer
-# token), the solo large brain moves to `<alias>-solo`, and LiteLLM fallbacks
-# chain them. Presence detection is free: cluster absent/unhealthy -> the
-# night attempt fails fast, the request falls back to the solo brain, and
-# allowed_fails + cooldown_time drain traffic there — exactly today's
-# behavior. No new trigger plumbing, no timer changes. Off by default; flip
-# ai_night_brain_enabled (group_vars) on the first plug night per the runbook.
-llm_router_night_enabled: "{{ ai_night_brain_enabled | default(false) | bool }}"
-# Physical id the night rank serves (mlx-lm rank 0; single night model).
-llm_router_night_model: "{{ ai_night_model | default('') }}"
-# SERVING window of the night brain (apps#814 rule: never the native window).
-llm_router_night_context: "{{ ai_night_context_window | default(32768) }}"
-# Night endpoint port from the tofu ports registry (fails loud when enabled
-# without the constant; lazy Jinja keeps the disabled default render clean).
-llm_router_night_port: "{{ tofu_data.constants.service_ports.llm_night_api }}"
-llm_router_night_base_url: "https://{{ llm_router_llm_large_fqdn }}:{{ llm_router_night_port }}/v1"
+# Daily brain rotation + night-cluster deployment shapes were deleted
+# 2026-07-16 (no-op since both phases served the same model; night cluster not
+# provisioned). `ai-default` is a static first-class alias above. Night-cluster
+# shape, if it returns, rebuilds against this static config (old design:
+# tasks/rotation.yml + docs/BRAIN_ROTATION.md at 97ae96a). Incident history:
+# Zammad (AI/LLM Serving).

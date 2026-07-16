@@ -110,15 +110,12 @@ sanctioned break-fix if the watchdog is not yet deployed.
 ## Repetition guard
 
 The stable router alias every consumer addresses (`ai-default`) is a **distinct
-litellm `model_name`** from the per-phase model aliases, so per-phase sampling
-defaults (`extra_body`) never reach it. Without its own guard the alias ran
-with `repetition_penalty` at the backend default of 1.0 (off), and under long
-agentic contexts the brain degenerated into non-terminating repetition
-(`!!!!`, a repeated status line) that runs to the disconnect guard and aborts
-mid-stream. The rotation alias now carries its own
-`repetition_penalty: 1.05` guard (`llm_router_rotation_repetition_penalty`). If
+litellm `model_name`** from the physical model aliases, so their sampling
+defaults (`extra_body`) never reach it — it carries its own
+`repetition_penalty: 1.05` guard on its `llm_router_large_models` entry. If
 1.05 proves insufficient the next levers are `temperature ~1.0` /
-`presence_penalty 0.0` in the same `extra_body`.
+`presence_penalty 0.0` in the same `extra_body`. Incident history: Zammad
+(AI/LLM Serving).
 
 ## Cron schedule — review (proposed, pending operator decision)
 

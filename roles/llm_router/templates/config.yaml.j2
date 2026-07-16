@@ -44,51 +44,6 @@ model_list:
 {% endif %}
 {% endfor %}
 {% endfor %}
-{% if llm_router_rotation_active_backend is defined and llm_router_rotation_active_backend %}
-{% set _night_live = llm_router_night_enabled | default(false) | bool
-     and llm_router_rotation_phase | default('') == 'large'
-     and (llm_router_night_model | default('')) | length > 0 %}
-  # --- daily brain rotation: the one stable alias consumers point at ---
-  # (docs/BRAIN_ROTATION.md). Hermes + Open WebUI address `{{ llm_router_rotation_alias }}`
-  # forever; the systemd rotate timers swap which per-phase config.yaml symlink
-  # is live, so this entry's backend flips 00:00/12:00 UTC without touching any
-  # consumer. Context is the live phase model's real window (never null — a null
-  # max_input_tokens is the compress-to-death trap the aliased entries avoid).
-{% if _night_live %}
-  # Night cluster live: the alias serves on the two-Mac night brain; the solo
-  # phase brain moves to `{{ llm_router_rotation_alias }}-solo` and the
-  # fallbacks entry under router_settings chains them. Cluster absent ->
-  # fail-fast + fallback (allowed_fails/cooldown_time drain the dead endpoint).
-  - model_name: {{ llm_router_rotation_alias }}
-    litellm_params:
-      model: openai/{{ llm_router_night_model }}
-      api_base: {{ llm_router_night_base_url }}
-      api_key: os.environ/LLM_LARGE_BEARER_TOKEN
-      # See llm_router_rotation_repetition_penalty in defaults: the rotation
-      # alias needs its own guard (the per-phase aliases' extra_body never
-      # reaches this distinct model_name).
-      extra_body:
-        repetition_penalty: {{ llm_router_rotation_repetition_penalty }}
-    model_info:
-      max_input_tokens: {{ llm_router_night_context }}
-      max_tokens: {{ llm_router_night_context }}
-  - model_name: {{ llm_router_rotation_alias }}-solo
-{% else %}
-  - model_name: {{ llm_router_rotation_alias }}
-{% endif %}
-    litellm_params:
-      model: openai/{{ llm_router_rotation_active_backend }}
-      api_base: {{ llm_router_llm_large_base_url }}
-      api_key: os.environ/LLM_LARGE_BEARER_TOKEN
-      # See llm_router_rotation_repetition_penalty in defaults: the rotation
-      # alias needs its own guard (the per-phase aliases' extra_body never
-      # reaches this distinct model_name).
-      extra_body:
-        repetition_penalty: {{ llm_router_rotation_repetition_penalty }}
-    model_info:
-      max_input_tokens: {{ llm_router_rotation_active_context }}
-      max_tokens: {{ llm_router_rotation_active_context }}
-{% endif %}
 {% if llm_router_large_passthrough_enabled | bool %}
   # --- large tier passthrough: every model the serving gate advertises ---
   # Exposure is blocklist-shaped, enforced at the source: the serving host
@@ -133,23 +88,9 @@ router_settings:
   routing_strategy: {{ llm_router_routing_strategy }}
   allowed_fails: {{ llm_router_allowed_fails }}
   cooldown_time: {{ llm_router_cooldown_time }}
-{% set _fb = [] %}
-{% if llm_router_night_enabled | default(false) | bool
-     and llm_router_rotation_phase | default('') == 'large'
-     and (llm_router_night_model | default('')) | length > 0 %}
-{% set _fb = _fb + [llm_router_rotation_alias ~ '-solo'] %}
-{% endif %}
-{% if (llm_router_rotation_fallback_model | default('')) | length > 0 %}
-{% set _fb = _fb + [llm_router_rotation_fallback_model] %}
-{% endif %}
-{% if _fb %}
-  # Fallback chain for the rotation alias: night cluster -> solo phase brain
-  # (night mode only), then the light tier as the standing degraded-mode
-  # deployment (see llm_router_rotation_fallback_model in defaults). Covers
-  # both pre-call failures and LiteLLM's mid-stream fallback path.
-  fallbacks:
-    - {{ llm_router_rotation_alias }}: {{ _fb | to_json }}
-{% endif %}
+  # No cross-tier fallbacks for ai-default, on purpose: a fallback serving a
+  # smaller context than the primary poisons callers instead of degrading them
+  # (incident history: Zammad, AI/LLM Serving). Fail loud; the watchdog pauses.
   # Pre-call context-window checks so an over-long request is not routed to a model
   # that cannot serve it (no cross-tier fallback masks the error).
   enable_pre_call_checks: true
