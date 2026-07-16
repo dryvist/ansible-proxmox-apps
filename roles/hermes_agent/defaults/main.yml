@@ -72,19 +72,23 @@ hermes_agent_compression_model: Qwen3.6-35B-A3B-OptiQ-4bit
 # FALSE "stream stale" kill; Hermes then re-prompts "continue where you left
 # off", the context grows, the next re-prefill is longer, and it spirals.
 # Constraints this number traces to (do not change it without re-checking all
-# three): (1) HARD FLOOR — Hermes Agent refuses any model declaring under
+# FOUR): (1) HARD FLOOR — Hermes Agent refuses any model declaring under
 # 64000 ("below the minimum 64,000 required"; every cron failed at 60000 on
 # 2026-07-08). (2) Native window 262144 (config.json). (3) A full re-prefill
-# of the declared window must finish inside the 900s stream-stale budget:
-# prefill must exceed context/900 tok/s — 131072 needs >=146 tok/s, safe by
-# a wide margin at healthy rates and ~2x even at the worst rate measured
-# during the (since-fixed) repetition-storm saturation. Half the native
-# window keeps per-turn latency and KV pressure sane on the 16 GB serving
-# cache; the earlier tighter bound was sized against the storm pathology,
-# which the router-side repetition_penalty now prevents at the source.
+# of the declared window must finish inside the 900s stream-stale budget
+# (65536 needs >=73 tok/s prefill — trivially safe). (4) NEW, and binding:
+# the ROUTER enforces the serving window as max_input_tokens on the
+# ai-default alias (enable_pre_call_checks) — OptiQ serves 65,536. A
+# declaration ABOVE the served window creates a dead zone: Hermes budgets
+# past it and only compacts at threshold*declared, so every request between
+# the served window and the compaction point is router-rejected
+# (ContextWindowExceededError) before compression ever runs — observed live
+# 2026-07-16 at 34k tokens against the then-32k stock brain. Declare exactly
+# the served window so compaction (0.85 * 65536 ≈ 55.7k) fires BELOW the
+# router's rejection point.
 # (Custom providers carry no context catalog Hermes can probe, so this is
 # declared as model.context_length in config.yaml.j2.)
-hermes_agent_model_context_length: 131072
+hermes_agent_model_context_length: 65536
 # ROOT-CAUSE fix for the "Context length exceeded (18/19 tokens). Cannot
 # compress further." death loop confirmed in ~/.hermes/logs/agent.log: the
 # router/backend hard-caps a single completion at 8192 output tokens
