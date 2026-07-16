@@ -1,0 +1,185 @@
+---
+# Object-storage PITR tier: pgBackRest archives WAL continuously and takes
+# scheduled base backups to an S3-compatible endpoint (RustFS; replicated to
+# Backblaze B2 out of band). Primary-only — a standby's WAL arrives via
+# streaming, and archive_command runs on the primary. Statically imported from
+# main.yml after the cluster is up and the version fact is set, so inner block
+# tags (never,pgbackrest_restore) behave exactly like inline tasks.
+
+- name: Configure pgBackRest object-storage PITR backups
+  when:
+    - postgres_pgbackrest_enabled | bool
+    - postgres_role == 'primary'
+  block:
+    - name: Assert the pgBackRest S3 endpoint and credentials are set
+      ansible.builtin.assert:
+        that:
+          - postgres_backup_s3_endpoint | length > 0
+          - postgres_backup_s3_access_key_id | length > 0
+          - postgres_backup_s3_secret_access_key | length > 0
+        fail_msg: >-
+          pgBackRest is enabled but the S3 endpoint/credentials are unset. Set
+          POSTGRES_BACKUP_S3_ENDPOINT, POSTGRES_BACKUP_S3_ACCESS_KEY_ID, and
+          POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY.
+        quiet: true
+
+    - name: Install pgBackRest
+      ansible.builtin.apt:
+        name: pgbackrest
+        state: present
+        update_cache: true
+
+    - name: Create the pgBackRest config directory
+      ansible.builtin.file:
+        path: /etc/pgbackrest
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
+
+    - name: Deploy the pgBackRest configuration
+      ansible.builtin.template:
+        src: pgbackrest.conf.j2
+        dest: /etc/pgbackrest/pgbackrest.conf
+        owner: postgres
+        group: postgres
+        mode: "0640"
+      no_log: true
+
+    - name: Configure WAL archiving GUCs for pgBackRest
+      become: true
+      become_user: postgres
+      block:
+        - name: Ensure wal_level supports archiving
+          community.postgresql.postgresql_set:
+            name: wal_level
+            value: replica
+          notify: Restart postgresql
+
+        - name: Enable WAL archiving
+          community.postgresql.postgresql_set:
+            name: archive_mode
+            value: "on"
+          notify: Restart postgresql
+
+        - name: Point archive_command at pgBackRest
+          community.postgresql.postgresql_set:
+            name: archive_command
+            value: "pgbackrest --stanza={{ postgres_pgbackrest_stanza }} archive-push %p"
+          notify: Restart postgresql
+
+    # archive_mode only takes effect after a restart, and stanza-create/check
+    # below need archiving live, so flush the restart before touching the repo.
+    - name: Apply pending archiving restart
+      ansible.builtin.meta: flush_handlers
+
+    - name: Read existing pgBackRest stanza info
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - pgbackrest
+          - --stanza={{ postgres_pgbackrest_stanza }}
+          - --output=json
+          - info
+      register: postgres_pgbackrest_info
+      changed_when: false
+      failed_when: false
+
+    - name: Create the pgBackRest stanza
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - pgbackrest
+          - --stanza={{ postgres_pgbackrest_stanza }}
+          - stanza-create
+      register: postgres_pgbackrest_stanza_create
+      changed_when: "'already exists' not in (postgres_pgbackrest_stanza_create.stderr | default(''))"
+      when: >-
+        postgres_pgbackrest_info.rc != 0
+        or (postgres_pgbackrest_stanza not in
+            (postgres_pgbackrest_info.stdout | default('[]', true)
+             | from_json | map(attribute='name') | list))
+
+    - name: Verify pgBackRest archiving is healthy
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - pgbackrest
+          - --stanza={{ postgres_pgbackrest_stanza }}
+          - check
+      changed_when: false
+
+    - name: Deploy the instanced pgBackRest backup service
+      ansible.builtin.template:
+        src: pgbackrest-backup@.service.j2
+        dest: /etc/systemd/system/pgbackrest-backup@.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Deploy a pgBackRest backup timer per schedule
+      ansible.builtin.template:
+        src: pgbackrest-backup@.timer.j2
+        dest: "/etc/systemd/system/pgbackrest-backup@{{ item.type }}.timer"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ postgres_pgbackrest_schedules }}"
+      loop_control:
+        label: "{{ item.type }}"
+
+    - name: Enable and start each pgBackRest backup timer
+      ansible.builtin.systemd:
+        name: "pgbackrest-backup@{{ item.type }}.timer"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop: "{{ postgres_pgbackrest_schedules }}"
+      loop_control:
+        label: "{{ item.type }}"
+
+# =============================================================================
+# PITR restore (explicit invocation only — the object-storage tier's restore
+# drill). Restores the repo into PGDATA and replays WAL to the latest committed
+# transaction, or to a pinned target when postgres_pgbackrest_restore_target is
+# set:
+#   ansible-playbook ... --tags pgbackrest_restore \
+#     -e postgres_pgbackrest_enabled=true -e postgres_pgbackrest_restore=true \
+#     [-e postgres_pgbackrest_restore_target='2026-07-16 12:00:00+00']
+# Point a drill at a scratch cluster/stanza — restoring here overwrites PGDATA.
+# =============================================================================
+# Var-gated in addition to the `never` tag: the role include's `postgres` tag is
+# inherited here, so a plain `--tags postgres` converge would otherwise select
+# it; the postgres_pgbackrest_restore=false default is what keeps it inert.
+- name: Restore PostgreSQL from pgBackRest
+  when:
+    - postgres_pgbackrest_enabled | bool
+    - postgres_role == 'primary'
+    - postgres_pgbackrest_restore | bool
+  tags:
+    - never
+    - pgbackrest_restore
+  block:
+    - name: Stop the cluster before restoring
+      ansible.builtin.systemd:
+        name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+        state: stopped
+
+    - name: Restore the repository into PGDATA (delta)
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv: >-
+          {{ ['pgbackrest', '--stanza=' ~ postgres_pgbackrest_stanza, '--delta', 'restore']
+             + (['--type=' ~ postgres_pgbackrest_restore_target_type,
+                 '--target=' ~ postgres_pgbackrest_restore_target]
+                if (postgres_pgbackrest_restore_target | length > 0) else []) }}
+      changed_when: true
+
+    - name: Start the cluster to replay WAL
+      ansible.builtin.systemd:
+        name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+        state: started
