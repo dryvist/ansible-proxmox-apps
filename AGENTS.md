@@ -209,6 +209,29 @@ never bake a specific backend (OpenBao, Doppler, SOPS) into a role default.
 The secrets architecture (which store holds what, per-domain RBAC, the
 workstation consumption path) is documented on the docs site, not here.
 
+### OpenBao: always use the plugin, never manual credential control
+
+**Read [`.claude/rules/openbao-plugins-first.md`](.claude/rules/openbao-plugins-first.md)
+before making any OpenBao change of any kind.** It is the binding rule, not a
+suggestion, and it is short.
+
+The one-line version: if a resource has an OpenBao **secrets engine**, that
+engine is the only way its credentials may be produced. A credential a human
+minted, typed, pasted, or stored in KV is manual control and is banned wherever
+an engine exists. **GitHub and AWS both have engines here and are already
+enabled** — so a static PAT or a static AWS access key is never the answer,
+never a starting point, and never a "temporary" step.
+
+| Resource | Engine (enabled by default) | Mint from | Never |
+| --- | --- | --- | --- |
+| GitHub | `vault-plugin-secrets-github` @ `github` | `github/token/<permission_set>` (attach the existing `github-mint` policy) | a PAT in `secret/github/*` |
+| AWS | [`openbao-plugins`](https://github.com/openbao/openbao-plugins) secrets-aws @ `aws` | `aws/sts/<role>` | a static access key |
+
+Adding a **new** resource? Check
+[openbao/openbao-plugins](https://github.com/openbao/openbao-plugins) for an
+engine first. An engine that exists upstream and is not enabled here is a gap to
+close, not a reason to reach for KV.
+
 ## Commands
 
 ```bash
