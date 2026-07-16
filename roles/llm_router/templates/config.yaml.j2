@@ -133,12 +133,22 @@ router_settings:
   routing_strategy: {{ llm_router_routing_strategy }}
   allowed_fails: {{ llm_router_allowed_fails }}
   cooldown_time: {{ llm_router_cooldown_time }}
+{% set _fb = [] %}
 {% if llm_router_night_enabled | default(false) | bool
      and llm_router_rotation_phase | default('') == 'large'
      and (llm_router_night_model | default('')) | length > 0 %}
-  # Night-cluster fallback chain: alias -> solo phase brain (see model_list).
+{% set _fb = _fb + [llm_router_rotation_alias ~ '-solo'] %}
+{% endif %}
+{% if (llm_router_rotation_fallback_model | default('')) | length > 0 %}
+{% set _fb = _fb + [llm_router_rotation_fallback_model] %}
+{% endif %}
+{% if _fb %}
+  # Fallback chain for the rotation alias: night cluster -> solo phase brain
+  # (night mode only), then the light tier as the standing degraded-mode
+  # deployment (see llm_router_rotation_fallback_model in defaults). Covers
+  # both pre-call failures and LiteLLM's mid-stream fallback path.
   fallbacks:
-    - {{ llm_router_rotation_alias }}: ["{{ llm_router_rotation_alias }}-solo"]
+    - {{ llm_router_rotation_alias }}: {{ _fb | to_json }}
 {% endif %}
   # Pre-call context-window checks so an over-long request is not routed to a model
   # that cannot serve it (no cross-tier fallback masks the error).
