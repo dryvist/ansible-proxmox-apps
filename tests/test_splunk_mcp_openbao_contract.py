@@ -10,7 +10,7 @@ CANONICAL_DATA_PATH = 'path "{{ openbao_kv_mount }}/data/ai/mcp/splunk"'
 
 
 def _read(relative_path: str) -> str:
-    return (ROOT / relative_path).read_text()
+    return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
 def test_hermes_can_read_own_bundle_and_shared_splunk_secret():
