@@ -19,7 +19,7 @@ Seerr is **config-only** — it has no `/tank` bind-mounts and reaches the
 Wired into `playbooks/site.yml` (Phase 8c, media stack) against any host in
 `seerr_group`. The group is populated by `inventory/load_tofu.yml`
 from `containers` tagged `seerr` in the OpenTofu inventory
-(terraform-proxmox `seerr` LXC), reached over `proxmox_pct_remote`.
+(tofu-proxmox `seerr` LXC), reached over `proxmox_pct_remote`.
 
 Prerequisites:
 

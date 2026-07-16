@@ -43,7 +43,7 @@ compose stack. Prerequisites:
   Ansible run (the `network` keychain items, same creds the tofu-unifi provider
   uses). A read-only UniFi local admin is sufficient and recommended.
 - The `cribl_edge` group deployed (provides the HEC input + `unifi_metrics`
-  index branch) and a Splunk `unifi_metrics` index (terraform-proxmox).
+  index branch) and a Splunk `unifi_metrics` index (tofu-proxmox).
 
 ## Usage
 

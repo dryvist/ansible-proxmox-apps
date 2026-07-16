@@ -80,10 +80,10 @@ The dashboard password is **generated on the host** (not a Doppler secret) — s
 ## Fronted services
 
 The route list is **not** maintained in this role. It is the single tofu-owned
-ingress table — `terraform-proxmox` `locals.tf` `ingress_services`, surfaced as
+ingress table — `tofu-proxmox` `locals.tf` `ingress_services`, surfaced as
 `ansible_inventory.ingress` and consumed here as `tofu_data.ingress`. The
 `technitium_dns` role derives its DNS aliases from the **same** source, so a
-fronted service is added/removed in exactly one place. Add it in terraform-proxmox.
+fronted service is added/removed in exactly one place. Add it in tofu-proxmox.
 
 - **Tier 1 — media stack** (same `media_svc` VLAN as Traefik): `plex`, `seerr`
   (→ `seerr` backend), `sonarr`, `radarr`, `qbittorrent`, `prowlarr`. Reachable

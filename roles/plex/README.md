@@ -8,7 +8,7 @@ imported media is visible — including on Roku.
 
 ## Installation
 
-Provisioned by the `plex` LXC in `terraform-proxmox` (single
+Provisioned by the `plex` LXC in `tofu-proxmox` (single
 `bulk/data` bind-mount at `/data`). Deploy via this repo:
 
 ```bash

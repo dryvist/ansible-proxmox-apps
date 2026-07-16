@@ -86,7 +86,7 @@ Traefik health checks need no credential.
 
 ## Dependencies
 
-- `terraform-proxmox` constants must expose `service_ports.llm_router_api` **and**
+- `tofu-proxmox` constants must expose `service_ports.llm_router_api` **and**
   `service_ports.llm_fast_api` (added by the parallel constants PR). Both are
   hard-required — a missing constant fails loud.
 - Secrets `LLM_ROUTER_MASTER_KEY` + `LLM_LARGE_BEARER_TOKEN` are env-sourced
