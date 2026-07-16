@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.113.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.112.0...v1.113.0) (2026-07-16)
+
+
+### Features
+
+* **hermes_agent:** calm the cron fleet — hourly triage, daily digest, staggered ([#959](https://github.com/dryvist/ansible-proxmox-apps/issues/959)) ([b5a3154](https://github.com/dryvist/ansible-proxmox-apps/commit/b5a31541ec260d9c408f21fc999e0c29668e228c))
+* **hermes_agent:** consume skills + SOUL from pinned nix-hermes bundle ([#958](https://github.com/dryvist/ansible-proxmox-apps/issues/958)) ([df5067f](https://github.com/dryvist/ansible-proxmox-apps/commit/df5067fcfef5e29c01120e8014f0b09406c0fc1e))
+* OpenRouter egress tier via llm_router with per-model keys ([#957](https://github.com/dryvist/ansible-proxmox-apps/issues/957)) ([07f35c8](https://github.com/dryvist/ansible-proxmox-apps/commit/07f35c80de9f01778f3cbd8765061a50f31e5c99))
+
+
+### Bug Fixes
+
+* **hermes_agent:** hourly digest heartbeat per operator law ([#963](https://github.com/dryvist/ansible-proxmox-apps/issues/963)) ([c83ac76](https://github.com/dryvist/ansible-proxmox-apps/commit/c83ac76c96fc360c977ef3c945e783f987fe41fd))
+* **zammad:** restate path.data/path.logs in the managed elasticsearch.yml ([#960](https://github.com/dryvist/ansible-proxmox-apps/issues/960)) ([4794d71](https://github.com/dryvist/ansible-proxmox-apps/commit/4794d71aa789bb1660b8b924846a0571cf492d3c))
+
 ## [1.112.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.111.0...v1.112.0) (2026-07-16)
 
 
