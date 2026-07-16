@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.113.0...v2.0.0) (2026-07-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **llm_router:** delete the daily brain-rotation and night-cluster machinery ([#964](https://github.com/dryvist/ansible-proxmox-apps/issues/964))
+
+### Features
+
+* **llamaindex:** build a Qdrant RAG index from the docs llms.txt exports ([#965](https://github.com/dryvist/ansible-proxmox-apps/issues/965)) ([25864e4](https://github.com/dryvist/ansible-proxmox-apps/commit/25864e497215d7a5bceb9510b69d10f61d501c38))
+* **llm_router:** delete the daily brain-rotation and night-cluster machinery ([#964](https://github.com/dryvist/ansible-proxmox-apps/issues/964)) ([a27b87a](https://github.com/dryvist/ansible-proxmox-apps/commit/a27b87ad9afb6edd49f3abb1e6a1bc41b4048242))
+* **openbao:** provision apps read tier for vikunja + namespaced zammad fields ([#979](https://github.com/dryvist/ansible-proxmox-apps/issues/979)) ([0a23972](https://github.com/dryvist/ansible-proxmox-apps/commit/0a2397280ae7e320f6b13e9aebc81bf85d2cec9e))
+* **openbao:** SSH client CA — builtin engine, per-principal-class signing roles ([#969](https://github.com/dryvist/ansible-proxmox-apps/issues/969)) ([8837f11](https://github.com/dryvist/ansible-proxmox-apps/commit/8837f11d23e6a811c2289b442a408c244fae5486))
+* **postgres:** add streaming replication with a single-switch primary cutover ([#983](https://github.com/dryvist/ansible-proxmox-apps/issues/983)) ([b9fc927](https://github.com/dryvist/ansible-proxmox-apps/commit/b9fc927984c5b8f2be08e4b2828f8dd5afcc379e))
+* **vikunja:** mint MCP service-user API tokens and publish to OpenBao ([#980](https://github.com/dryvist/ansible-proxmox-apps/issues/980)) ([7851ecc](https://github.com/dryvist/ansible-proxmox-apps/commit/7851ecc72d4aa4f5ed6a46a17e937ebc9349f60f))
+
+
+### Bug Fixes
+
+* **hermes_agent:** controller bundle tasks must unset the ansible_become var ([#972](https://github.com/dryvist/ansible-proxmox-apps/issues/972)) ([5a95f6d](https://github.com/dryvist/ansible-proxmox-apps/commit/5a95f6d67ec1ade7924f197f76bf7b7f157114c1))
+* **zammad:** resolve real runtime deps when configuring the unpacked package ([#973](https://github.com/dryvist/ansible-proxmox-apps/issues/973)) ([9f97fb9](https://github.com/dryvist/ansible-proxmox-apps/commit/9f97fb9e47bd53c427ddbffcb9f8c02d88786d64))
+* **zammad:** strip the deb auto-config's transport-SSL keystore entries ([#970](https://github.com/dryvist/ansible-proxmox-apps/issues/970)) ([142ac3f](https://github.com/dryvist/ansible-proxmox-apps/commit/142ac3f9e76b5dfa1df0cf1bb481850998d4e9c4))
+* **zammad:** use the apt module's fixed state instead of raw apt-get ([#982](https://github.com/dryvist/ansible-proxmox-apps/issues/982)) ([3decccc](https://github.com/dryvist/ansible-proxmox-apps/commit/3decccce6ebed6698da46723bab73650cee27aed))
+
 ## [1.113.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v1.112.0...v1.113.0) (2026-07-16)
 
 
