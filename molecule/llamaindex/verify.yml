@@ -80,3 +80,38 @@
         that:
           - not ollama_binary.stat.exists
         fail_msg: "Legacy Ollama binary still present at /usr/local/bin/ollama"
+
+    - name: Assert config.yaml declares the index collection and sources
+      ansible.builtin.assert:
+        that:
+          - "'collection' in (config_content.content | b64decode)"
+          - "'sources' in (config_content.content | b64decode)"
+        fail_msg: "config.yaml is missing the index collection/sources block"
+
+    - name: Check the RAG indexer script was deployed
+      ansible.builtin.stat:
+        path: "{{ llamaindex_data_dir }}/index_docs.py"
+      register: indexer_script
+
+    - name: Assert the RAG indexer script exists and is executable
+      ansible.builtin.assert:
+        that:
+          - indexer_script.stat.exists
+          - indexer_script.stat.executable
+        fail_msg: "index_docs.py missing or not executable"
+
+    - name: Byte-compile the RAG indexer script
+      ansible.builtin.command:
+        cmd: "{{ llamaindex_data_dir }}/venv/bin/python -m py_compile {{ llamaindex_data_dir }}/index_docs.py"
+      changed_when: false
+
+    - name: Check the RAG index timer unit was installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/llamaindex-index.timer
+      register: index_timer_unit
+
+    - name: Assert the RAG index timer unit exists
+      ansible.builtin.assert:
+        that:
+          - index_timer_unit.stat.exists
+        fail_msg: "llamaindex-index.timer was not installed"
