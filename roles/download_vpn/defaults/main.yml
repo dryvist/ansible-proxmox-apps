@@ -118,6 +118,26 @@ download_vpn_lan_interface: ""
 download_vpn_lan_gateway: >-
   {{ download_vpn_lan_subnet | ansible.utils.ipaddr('1') | ansible.utils.ipaddr('address') }}
 
+# --- Central-syslog egress (the fail-closed killswitch must let logs OUT) -----
+# This guest's rsyslog (roles/syslog_forwarder) forwards to the central syslog
+# pipeline, but the default-DROP killswitch would silently eat it. The killswitch
+# permits exactly two flows, both derived from inventory at converge time (no
+# hardcoded IPs) and templated as literal daddr rules — see tasks/main.yml Phase 0
+# (download_vpn_resolvers_resolved / download_vpn_syslog_hosts_resolved):
+#   (a) DNS (udp+tcp/53) to the internal Technitium resolvers, so rsyslog can
+#       resolve the `syslog` CNAME once split-DNS (#870) points this guest at
+#       them instead of Proton's tunnel resolver; and
+#   (b) syslog TCP to the pipeline entry point. The `syslog` CNAME targets the
+#       `haproxy` host (roles/technitium_dns), so the destinations are the
+#       HAProxy guests' inventory IPs (reservation-first, same pattern as
+#       download_vpn_ntfy_url).
+# Groups the killswitch reads for those two flows. Override only if the resolver
+# or syslog-LB groups are named differently.
+download_vpn_syslog_resolver_group: technitium_dns_group
+download_vpn_syslog_lb_group: haproxy_group
+# Linux syslog port, mirrored from roles/syslog_forwarder (tofu constants).
+download_vpn_syslog_target_port: "{{ tofu_data.constants.syslog_ports.linux }}"
+
 # --- LAN-reply policy routing (cross-subnet web UI reachability) -------------
 # A connmark + dedicated routing table let cross-subnet clients (e.g. Traefik on
 # the management VLAN) reach the qBittorrent/Prowlarr web UIs: inbound web-UI
