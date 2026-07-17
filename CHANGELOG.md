@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.6.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.5.0...v2.6.0) (2026-07-17)
+
+
+### Features
+
+* **authelia:** bypass the SSO gate for token-authenticated /api paths ([#1049](https://github.com/dryvist/ansible-proxmox-apps/issues/1049)) ([f5c5600](https://github.com/dryvist/ansible-proxmox-apps/commit/f5c5600a248a71f56be6fbc78179e939cc2e3699))
+* **ssh:** fail-loud cert fallback + strict pinned host-key verification ([#1046](https://github.com/dryvist/ansible-proxmox-apps/issues/1046)) ([2bc6ccf](https://github.com/dryvist/ansible-proxmox-apps/commit/2bc6ccf7e2dadf190f3a3e56efe9844f49e4e377))
+* **zammad:** per-actor AI service accounts for a real audit trail ([#1044](https://github.com/dryvist/ansible-proxmox-apps/issues/1044)) ([3c5256f](https://github.com/dryvist/ansible-proxmox-apps/commit/3c5256f0fb7c386c0eafa6fd5104ce26022c0135))
+
+
+### Bug Fixes
+
+* **authelia:** disable notifier startup check to survive transient SMTP/DNS outage ([#1047](https://github.com/dryvist/ansible-proxmox-apps/issues/1047)) ([510b640](https://github.com/dryvist/ansible-proxmox-apps/commit/510b64067584ed595e3615a7c934dd2fa59275c2))
+* **technitium:** stop minting a new permanent API token every converge ([#1040](https://github.com/dryvist/ansible-proxmox-apps/issues/1040)) ([6071f19](https://github.com/dryvist/ansible-proxmox-apps/commit/6071f195e16c23d13c6d653ae4c2d1311a417a5a))
+
 ## [2.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.4.0...v2.5.0) (2026-07-17)
 
 
