@@ -1,13 +1,27 @@
 ---
-# Deploy the media playback monitor (session probe + weekly codec audit) on the
-# Plex host: two scripts driven by systemd timers, alerting ntfy.
+# Deploy the media playback monitor (Plex transcode session probe) on the Plex
+# host: one script driven by a systemd timer, alerting ntfy.
 
-- name: Install ffmpeg (ffprobe for the weekly codec audit)
-  ansible.builtin.apt:
-    name: ffmpeg
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+# Retire the weekly codec-audit half of this role (the AC3 pipeline it fed was
+# proven unnecessary — Zammad #17040). Stop/disable/remove its live units so a
+# converge cleans them up instead of leaving an orphaned timer running.
+- name: Retire the codec-audit systemd timer
+  ansible.builtin.systemd:
+    name: plex-codec-audit.timer
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: media_monitor_manage | bool
+
+- name: Remove the retired codec-audit units + script
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/plex-codec-audit.timer
+    - /etc/systemd/system/plex-codec-audit.service
+    - "{{ media_monitor_bin_dir }}/plex-codec-audit.sh"
+  notify: Reload systemd for media monitor
   when: media_monitor_manage | bool
 
 - name: Ensure the monitor state directory exists
@@ -28,7 +42,6 @@
     mode: "0755"
   loop:
     - plex-session-probe.sh
-    - plex-codec-audit.sh
   when: media_monitor_manage | bool
 
 - name: Deploy the media monitor systemd service units
@@ -40,7 +53,6 @@
     mode: "0644"
   loop:
     - plex-session-probe
-    - plex-codec-audit
   notify: Reload systemd for media monitor
   when: media_monitor_manage | bool
 
@@ -54,7 +66,6 @@
   notify: Reload systemd for media monitor
   loop:
     - plex-session-probe
-    - plex-codec-audit
   when: media_monitor_manage | bool
 
 - name: Enable + start the media monitor timers
@@ -65,5 +76,4 @@
     daemon_reload: true
   loop:
     - plex-session-probe
-    - plex-codec-audit
   when: media_monitor_manage | bool
