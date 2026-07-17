@@ -19,7 +19,8 @@ this repo handles app config only.
 - **Technitium DNS** (LXC container)
 - **Authelia SSO** (`authelia` role — criticality-1 core service: passkey-first
   portal + Traefik forwardAuth gate on every `sso`-flagged ingress route;
-  native binary on a mgmt-VLAN LXC, local SQLite state)
+  native binary on a mgmt-VLAN LXC, local SQLite state. All its secrets are
+  generated-at-source on the guest — none live in Doppler/SOPS/OpenBao)
 - **apt-cacher-ng** (LXC container)
 - **Mailpit** (LXC container, SMTP relay with web UI)
 - **ntfy** (LXC container, push notification server)
@@ -166,10 +167,6 @@ documented once at
 | `SPLUNK_PASSWORD` | Splunk admin password (for E2E validation) | Doppler / SOPS |
 | `HAPROXY_STATS_PASSWORD` | HAProxy stats page password | SOPS |
 | `TECHNITIUM_DNS_API_TOKEN` | Technitium DNS API token | Doppler |
-| `AUTHELIA_JWT_SECRET` | Authelia identity-validation JWT secret | Doppler |
-| `AUTHELIA_SESSION_SECRET` | Authelia session cookie encryption secret | Doppler |
-| `AUTHELIA_STORAGE_ENCRYPTION_KEY` | Authelia SQLite at-rest encryption key (immutable after first start) | Doppler |
-| `AUTHELIA_ADMIN_PASSWORD` | Authelia bootstrap password (first login + passkey registration) | Doppler |
 | `MAILPIT_RELAY_HOST` | SMTP relay hostname | SOPS |
 | `MAILPIT_RELAY_PORT` | SMTP relay port (default 587) | SOPS |
 | `MAILPIT_RELAY_USERNAME` | SMTP relay username | SOPS |
