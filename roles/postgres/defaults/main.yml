@@ -57,7 +57,16 @@ postgres_pgdg_repo: >-
 #   client_cidr - CIDR the user may connect from (the app's LXC subnet); the
 #                 ONLY place an IP literal is legitimate (pg_hba needs a CIDR,
 #                 not an FQDN), and even then it is env-derived, not hard-coded.
+#   extensions  - optional list of PostgreSQL extensions to enable in the
+#                 database (e.g. [vector]); the matching PGDG package is
+#                 installed via postgres_extension_packages below.
 postgres_managed_databases: []
+
+# Extension name -> PGDG apt package suffix (postgresql-<major>-<suffix>).
+# Only extensions that ship as separate PGDG packages need an entry; contrib
+# extensions resolve to the empty string and skip the package install.
+postgres_extension_packages:
+  vector: pgvector
 
 # pg_dump backups via a systemd timer, written to the persistent mount.
 postgres_backup_enabled: true
@@ -139,13 +148,17 @@ postgres_standby_reinit: "{{ lookup('env', 'POSTGRES_STANDBY_REINIT') | default(
 # disable pg_dump, so this tier owns its own flag.
 postgres_pgbackrest_enabled: false
 
-# Stanza + repo layout. One stanza per cluster; the repo path is the in-bucket
-# prefix, so objects land at s3://<bucket>/postgres/<cluster_name>/... . The
-# bucket name is identical on RustFS and Backblaze B2 — B2's namespace is
+# Stanza + repo layout. The stanza is named for the HOST, not the cluster: every
+# Debian host names its cluster `main`, so deriving from postgres_cluster_name
+# gave each host the same stanza AND the same repo path, colliding them in one
+# shared repo (#1017). The repo path is the in-bucket prefix, so objects land at
+# s3://<bucket>/postgres/<inventory_hostname>/... — one prefix per host.
+#
+# The bucket name is identical on RustFS and Backblaze B2 — B2's namespace is
 # global, so one globally-unique name satisfies the 1:1 RustFS<->B2 parity rule.
-postgres_pgbackrest_stanza: "{{ postgres_cluster_name }}"
+postgres_pgbackrest_stanza: "{{ inventory_hostname }}"
 postgres_backup_s3_bucket: dryvist-homelab-backups
-postgres_pgbackrest_repo_path: "/postgres/{{ postgres_cluster_name }}"
+postgres_pgbackrest_repo_path: "/postgres/{{ postgres_pgbackrest_stanza }}"
 
 # S3-compatible endpoint + credentials. Injection-agnostic: the role reads env,
 # never a specific secret backend. RustFS/MinIO ignore the region but the AWS
@@ -156,6 +169,33 @@ postgres_backup_s3_region: "{{ lookup('env', 'POSTGRES_BACKUP_S3_REGION') | defa
 postgres_backup_s3_uri_style: path
 postgres_backup_s3_access_key_id: "{{ lookup('env', 'POSTGRES_BACKUP_S3_ACCESS_KEY_ID') | default('', true) }}"
 postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY') | default('', true) }}"
+
+# Offsite repo (repo2). pgBackRest writes every backup and WAL segment to both
+# repos itself, which is what makes the 1:1 parity rule structural instead of
+# aspirational: there is no out-of-band mirror to drift, truncate, or silently
+# copy a subset (#1027). Restores read it with `--repo=2`, and `check` validates
+# archiving against every configured repo.
+#
+# Do NOT reach for `pgbackrest verify` as the offsite gate: it exits 0 against a
+# repo it cannot read at all, printing only "No usable backup.info file" (#1027).
+#
+# OFF by default so the merge is inert; needs the offsite credentials in env.
+postgres_pgbackrest_repo2_enabled: false
+postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
+postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
+postgres_backup_repo2_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ENDPOINT') | default('', true) }}"
+# Backblaze's S3 endpoint embeds its region (s3.<region>.backblazeb2.com), so
+# derive it rather than making the operator restate it in a second variable.
+postgres_backup_repo2_s3_region: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_REGION')
+     | default(postgres_backup_repo2_s3_endpoint
+               | regex_replace('^s3\.([^.]+)\..*$', '\1'), true) }}
+postgres_backup_repo2_s3_uri_style: path
+postgres_backup_repo2_s3_access_key_id: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ACCESS_KEY_ID') | default('', true) }}
+postgres_backup_repo2_s3_secret_access_key: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
+postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
 
 # Retention: number of full backups to keep. pgBackRest expires the WAL that
 # predates the oldest retained full automatically, so this one knob bounds both

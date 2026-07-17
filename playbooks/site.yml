@@ -23,7 +23,7 @@
     cribl_stream_group:cribl_edge:
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
-    postgres_group:nautobot_group:zammad_group:vikunja_group:
+    postgres_group:postgres_ai_group:hindsight_group:nautobot_group:zammad_group:vikunja_group:
     sonarr_group:radarr_group:plex_group:seerr_group:sortarr_group:download_vpn_group:immich_group
   gather_facts: false
   # `always`: every consumer role resolves its secrets bao-first, so a tagged
@@ -576,6 +576,19 @@
   roles:
     - role: postgres
 
+- name: Configure ai-VLAN PostgreSQL (Hindsight memory cluster)
+  hosts: postgres_ai_group
+  become: true
+  gather_facts: true
+  # serial keeps the converge primary-then-standby: the standby's basebackup
+  # needs a running, already-converged primary.
+  serial: 1
+  tags:
+    - postgres_ai
+    - database
+  roles:
+    - role: postgres
+
 - name: Configure Nautobot IPAM/DCIM
   hosts: nautobot_group
   become: true
@@ -887,6 +900,24 @@
     - incident
   roles:
     - role: zammad
+
+# =============================================================================
+# Phase 8c2: Authelia SSO portal (criticality-1 core service, auth plane)
+# Passkey-first forwardAuth provider gating every sso-flagged ingress route.
+# Must converge BEFORE Traefik so the forwardAuth backend answers when the
+# gated routes go live. Requires DNS (Phase 1a/1b) and Mailpit (notifier).
+# =============================================================================
+
+- name: Configure Authelia SSO portal
+  hosts: authelia_group
+  become: true
+  gather_facts: false
+  tags:
+    - authelia
+    - sso
+    - auth
+  roles:
+    - role: authelia
 
 # =============================================================================
 # Phase 8d: HTTPS ingress (Traefik)
