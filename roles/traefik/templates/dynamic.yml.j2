@@ -17,10 +17,16 @@ http:
       service: {{ route.name }}
       entryPoints:
         - websecure
+{# strip-remote-headers goes on EVERY router, ahead of authelia, and is not
+   optional: an app that trusts Remote-User (Zammad's auth_sso) would otherwise
+   accept whatever a client sent. Ungated and bypassed paths need it MOST —
+   they never reach Authelia, so nothing else would overwrite a forged header.
+   Authelia re-adds the real values via authResponseHeaders on gated routes. #}
 {# route.name != 'authelia': the portal must never gate itself (auth loop),
    even if its inventory row is ever mis-flagged sso: true. #}
-{% if sso_enabled and route.name != 'authelia' and route.sso | default(false) %}
       middlewares:
+        - strip-remote-headers
+{% if sso_enabled and route.name != 'authelia' and route.sso | default(false) %}
         - authelia
 {% endif %}
       tls:
@@ -37,6 +43,7 @@ http:
       entryPoints:
         - websecure
       middlewares:
+        - strip-remote-headers
         - dashboard-auth
       tls:
         certResolver: letsencrypt
@@ -82,9 +89,20 @@ http:
     insecure-backend:
       insecureSkipVerify: true
 {% endif %}
-{% if traefik_dashboard_enabled or sso_enabled %}
 
   middlewares:
+{# Always defined — every router references it, and an undefined middleware
+   makes Traefik drop the whole router. Setting a header to "" removes it from
+   the forwarded request, so a client cannot smuggle an identity into an app
+   that trusts these (Zammad auth_sso). This is the control that makes header
+   trust safe; do not make it conditional on sso_enabled. #}
+    strip-remote-headers:
+      headers:
+        customRequestHeaders:
+          Remote-User: ""
+          Remote-Groups: ""
+          Remote-Email: ""
+          Remote-Name: ""
 {% if traefik_dashboard_enabled %}
     dashboard-auth:
       basicAuth:
@@ -99,5 +117,4 @@ http:
           - Remote-Groups
           - Remote-Email
           - Remote-Name
-{% endif %}
 {% endif %}

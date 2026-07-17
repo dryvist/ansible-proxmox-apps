@@ -1,12 +1,25 @@
 [Unit]
 Description=download-vpn LAN-reply policy routing (cross-subnet web UI reachability)
 Documentation=https://github.com/JacobPEvans/ansible-proxmox-apps
-# Order after wg0 so wg-quick's own fwmark policy rules already exist and we
-# layer a higher-priority rule above them; network-online ensures the LAN NIC is
-# configured. Deliberately NOT Requires=download-vpn-wg.service: this reply
-# routing is independent of the tunnel, so the web UIs stay reachable for
-# debugging even during a VPN outage. The killswitch (not this unit) is the
-# egress security boundary, so keeping it up never enables a leak.
+# Order after wg0 so wg-quick's own fwmark policy rules already exist; network-
+# online ensures the LAN NIC is configured. Deliberately NOT
+# Requires=download-vpn-wg.service: this reply routing is independent of the
+# tunnel, so the web UIs stay reachable for debugging even during a VPN outage.
+# The killswitch (not this unit) is the egress security boundary, so keeping it
+# up never enables a leak.
+#
+# TWO mechanisms live here, because they have different robustness needs:
+#   - Syslog log shipping (step 3) → a /32 in the MAIN table. Immune to
+#     wg-quick's rule ordering (see step 3). This is what actually gets this
+#     guest's logs to Cribl/Splunk.
+#   - Web-UI reply routing (steps 1-2) → the fwmark table below. This carries a
+#     KNOWN FRAGILITY: `ip rule` priority is lowest-number-first, and wg-quick
+#     assigns its own rules (lowest-existing - 1), so a wg0 restart while our
+#     fwmark rule already exists lets wg-quick land just below it and win. On a
+#     clean boot the ordering holds (wg-quick runs first, gets high numbers);
+#     after a mid-life wg0 restart it can invert. A robust fix for the reply
+#     path (main-table RFC1918 routes, or rebuilding wg's rules) is deferred —
+#     it is not on the log-shipping path and is tracked separately.
 After=network-online.target download-vpn-wg.service
 Wants=network-online.target
 
@@ -43,17 +56,37 @@ ExecStartPre=/usr/sbin/nft -f {{ download_vpn_mangle_ruleset_path }}
 #    packet that somehow carries the mark but is destined for the public internet
 #    finds no route here and fails CLOSED — clearnet egress via the LAN table is
 #    structurally impossible, not merely policy-gated by the killswitch.
-ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
-ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
+ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
 {% for net in download_vpn_lanroute_reply_networks %}
 ExecStart=/usr/bin/env ip route replace {{ net }} via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} table {{ download_vpn_lanroute_table }}
 {% endfor %}
 ExecStart=/usr/bin/env ip route replace unreachable default table {{ download_vpn_lanroute_table }}
 
-# Teardown: remove the rule, flush the table, drop the mangle marking — leaving
-# no standing non-VPN routing state.
-ExecStop=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+# 3. Log shipping: route THIS guest's syslog connection to the pipeline LB out
+#    the LAN NIC via a per-host /32 in the MAIN table. This deliberately does
+#    NOT use the fwmark table above: wg-quick assigns its own policy-rule
+#    priorities as (lowest-existing - 1), so whenever wg0 restarts while our
+#    fwmark rule already exists, wg-quick lands JUST BELOW it and wins the
+#    lookup — no fixed fwmark priority can reliably beat it (observed live
+#    2026-07-17: after a wg0 restart, wg's rules moved to 898/899 under our
+#    900 and marked syslog packets black-holed into wg0 again). A /32 in main
+#    is immune: wg-quick's own `suppress_prefixlength 0` rule consults main and
+#    suppresses ONLY default routes, so a /32 is always honored, ahead of wg's
+#    catch-all, regardless of restart ordering. The killswitch still gates what
+#    may egress (only syslog TCP to this LB is allowed), so the /32 opens no
+#    leak — it only fixes WHERE the already-permitted packets route.
+{% for _sl in download_vpn_syslog_hosts_resolved | default([]) %}
+ExecStart=/usr/bin/env ip route replace {{ _sl }}/32 via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }}
+{% endfor %}
+
+# Teardown: remove the rule, flush the table, drop the mangle marking + the
+# syslog /32s — leaving no standing non-VPN routing state.
+ExecStop=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
 ExecStop=-/usr/bin/env ip route flush table {{ download_vpn_lanroute_table }}
+{% for _sl in download_vpn_syslog_hosts_resolved | default([]) %}
+ExecStop=-/usr/bin/env ip route del {{ _sl }}/32 via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }}
+{% endfor %}
 ExecStop=-/usr/sbin/nft delete table inet vpn_lanroute
 
 [Install]

@@ -382,6 +382,29 @@
   become_user: postgres
   when: postgres_role == 'primary'
   block:
+    # Every managed password resolves through
+    # `bao_apps_secrets.<app>_db_password | default(lookup('env', '<APP>_DB_PASSWORD'), true)`.
+    # `bao_apps_secrets` defaults to {} (group_vars/all.yml), so a converge run
+    # WITHOUT the secrets environment (sops exec-env / doppler run) silently
+    # resolves every password to '' and rewrites the role with an empty one —
+    # the app then fails auth against a password only this play knows it broke.
+    # Fail loudly instead: an absent secret is an operator error, never an
+    # empty password.
+    - name: Assert every managed role has a non-empty source password
+      ansible.builtin.assert:
+        that:
+          - item.password | default('', true) | length > 0
+        fail_msg: >-
+          No password resolved for the '{{ item.user }}' role. Re-run under the
+          secrets environment (sops exec-env secrets.enc.yaml 'doppler run -- ...')
+          or populate bao_apps_secrets — converging without it would set an empty
+          password and lock the app out of its own database.
+        quiet: true
+      loop: "{{ postgres_managed_databases }}"
+      loop_control:
+        label: "{{ item.user }}"
+      no_log: true
+
     - name: Ensure each managed login role exists with the source password
       community.postgresql.postgresql_user:
         name: "{{ item.user }}"

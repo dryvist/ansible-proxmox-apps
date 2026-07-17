@@ -1183,9 +1183,9 @@
         that:
           # sso: true -> the router carries the authelia middleware.
           - "'authelia' in _traefik_dynamic_yaml.http.routers.splunk.middlewares"
-          # Unflagged routers (and the portal itself) carry none.
-          - "'middlewares' not in _traefik_dynamic_yaml.http.routers.plex"
-          - "'middlewares' not in _traefik_dynamic_yaml.http.routers.authelia"
+          # Unflagged routers (and the portal itself) are NOT gated.
+          - "'authelia' not in _traefik_dynamic_yaml.http.routers.plex.middlewares"
+          - "'authelia' not in _traefik_dynamic_yaml.http.routers.authelia.middlewares"
           # The middleware dials the portal BACKEND url (never the public FQDN,
           # which CNAMEs back to Traefik and would loop).
           - >-
@@ -1196,6 +1196,35 @@
           dynamic.yml.j2 sso gating wrong: middleware missing on a flagged
           router, present on an unflagged one, or the forwardAuth address does
           not target the portal backend.
+
+    # A forged Remote-User must never reach a backend that trusts it (Zammad's
+    # auth_sso). Ungated/bypassed routes are the dangerous ones — they never
+    # reach Authelia, so only this strip protects them. Ordering matters: the
+    # strip has to run BEFORE authelia, or it would erase the identity Authelia
+    # just established.
+    - name: Assert every router strips client-supplied Remote-* headers, before authelia
+      ansible.builtin.assert:
+        that:
+          - >-
+            _traefik_dynamic_yaml.http.routers.values()
+            | map(attribute='middlewares') | select('defined')
+            | map('first') | unique | list == ['strip-remote-headers']
+          - >-
+            _traefik_dynamic_yaml.http.routers.splunk.middlewares
+            == ['strip-remote-headers', 'authelia']
+          - "'strip-remote-headers' in _traefik_dynamic_yaml.http.routers.plex.middlewares"
+          - "'strip-remote-headers' in _traefik_dynamic_yaml.http.routers.authelia.middlewares"
+          - >-
+            _traefik_dynamic_yaml.http.middlewares['strip-remote-headers'].headers.customRequestHeaders['Remote-User']
+            == ""
+          - >-
+            _traefik_dynamic_yaml.http.middlewares['strip-remote-headers'].headers.customRequestHeaders['Remote-Groups']
+            == ""
+        fail_msg: >-
+          dynamic.yml.j2 header hardening wrong: a router is missing
+          strip-remote-headers, does not run it first, or the middleware does
+          not clear the Remote-* headers. A client could then forge Remote-User
+          on an ungated or /api-bypassed route and be trusted by Zammad.
 
     - name: Assert HTTPS backend gets an https URL + insecure-backend serversTransport
       ansible.builtin.assert:
@@ -1269,6 +1298,7 @@
     syslog_forwarder_imfile_inputs:
       - file: /data/.qbittorrent-profile/qBittorrent/data/logs/qbittorrent.log
         tag: qbittorrent
+    syslog_forwarder_imfile_work_directory: /var/spool/rsyslog
     _sf_template_dir: "../../roles/syslog_forwarder/templates"
 
   tasks:
@@ -1327,6 +1357,16 @@
           - "'load=' ~ '\"imfile\"' in _sf"
           - "'qbittorrent.log' in _sf"
         fail_msg: imfile input for the file-only logger did not render.
+
+    - name: Assert imfile's global workDirectory renders and precedes the module load
+      ansible.builtin.assert:
+        that:
+          - "'workDirectory=' ~ '\"/var/spool/rsyslog\"' in _sf"
+          - "_sf.index('workDirectory=') < _sf.index('load=' ~ '\"imfile\"')"
+        fail_msg: >-
+          global(workDirectory=...) must render before module(load="imfile") or
+          the standalone config-validate step fails (imfile has no working dir
+          in scope without it).
 
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:

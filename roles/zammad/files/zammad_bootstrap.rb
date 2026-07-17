@@ -31,6 +31,11 @@ smtp_host   = env!('ZAMMAD_SMTP_HOST')
 smtp_port   = env!('ZAMMAD_SMTP_PORT').to_i
 sender      = env!('ZAMMAD_NOTIFICATION_SENDER')
 groups      = env!('ZAMMAD_GROUPS').split(',').map(&:strip).reject(&:empty?)
+sso_login   = env!('ZAMMAD_SSO_LOGIN')
+sso_email   = env!('ZAMMAD_SSO_EMAIL')
+sso_first   = env!('ZAMMAD_SSO_FIRSTNAME')
+sso_last    = env!('ZAMMAD_SSO_LASTNAME')
+sso_ips     = env!('ZAMMAD_SSO_TRUSTED_IPS')
 
 def set_setting(name, value)
   return false if Setting.get(name) == value
@@ -39,12 +44,28 @@ def set_setting(name, value)
 end
 
 # --- Core settings: end the getting-started wizard, https, storage, es -------
+# auth_sso: Zammad's SessionsController#create_sso reads the login from
+# request.env REMOTE_USER / HTTP_REMOTE_USER / X-Forwarded-User, so Authelia's
+# `Remote-User` forwardAuth header lands as HTTP_REMOTE_USER and logs the user
+# in with no password. Traefik STRIPS any client-supplied Remote-* header before
+# forwardAuth (roles/traefik), which is what makes trusting this header safe —
+# without that strip anyone could assert any login here, so the two ship together.
+#
+# auth_sso_trusted_ips is a hard requirement, not defence in depth: Zammad's
+# verify_sso_trusted_ip! does `return if trusted_ips.blank?` — a blank value
+# skips the source check entirely.
 {
   'system_init_done' => true,
   'fqdn'             => fqdn,
   'http_type'       => 'https',
   'storage_provider' => 'File',
   'es_url'          => es_url,
+  'auth_sso'        => true,
+  # A comma-separated STRING, never an Array: Auth::Sso::TrustedIps does
+  # `setting_value.to_s.split(',')`, so an Array stringifies to `["a", "b"]` and
+  # every entry then fails IPAddr parsing — include? returns false and SSO is
+  # rejected for everyone. CIDR entries are supported.
+  'auth_sso_trusted_ips' => sso_ips.split(',').map(&:strip).reject(&:empty?).join(','),
 }.each { |k, v| changed = true if set_setting(k, v) }
 
 # --- Admin user (create-or-find; ensure Admin+Agent + active) ----------------
@@ -62,6 +83,30 @@ else
   unless missing.empty?
     admin.roles = (admin.roles.to_a + missing).uniq
     admin.save!
+    changed = true
+  end
+end
+
+# --- Human SSO account (Authelia forwardAuth identity) -----------------------
+# Zammad looks the user up by LOGIN (User.lookup(login: login&.downcase)), so
+# the login MUST equal the Authelia username verbatim — the email is metadata,
+# not the lookup key. No password is set: this account authenticates only by the
+# SSO header, and admin@ stays the break-glass password login for when Authelia
+# itself is down.
+sso_roles = Role.where(name: %w[Admin Agent]).to_a
+sso_user = User.find_by(login: sso_login.downcase)
+if sso_user.nil?
+  sso_user = User.create!(
+    login: sso_login.downcase, firstname: sso_first, lastname: sso_last,
+    email: sso_email.downcase, roles: sso_roles, active: true
+  )
+  changed = true
+else
+  missing_sso = sso_roles - sso_user.roles.to_a
+  if !missing_sso.empty? || !sso_user.active
+    sso_user.roles = (sso_user.roles.to_a + missing_sso).uniq
+    sso_user.active = true
+    sso_user.save!
     changed = true
   end
 end

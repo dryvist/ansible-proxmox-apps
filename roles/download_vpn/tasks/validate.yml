@@ -213,6 +213,38 @@
           `default via` clearnet route) in that table.
         success_msg: "LAN-reply policy routing present + fail-closed (no clearnet default)."
 
+    # --- H2. syslog log-shipping egress actually routes via LAN, not wg0 -----
+    # 2026-07-17 incident: rsyslog's own outbound connection to the syslog LB
+    # was nftables-accepted (killswitch.nft.j2 rule 4c) but the DEFAULT route
+    # still pointed at wg0, so the RFC1918 destination was black-holed toward
+    # Proton and no logs ever reached Cribl/Splunk. download-vpn-lanroute.service
+    # now installs a /32 for the LB in the MAIN table (step 3), so an ordinary
+    # UNMARKED lookup resolves out the LAN NIC. Prove it here — no mark, because
+    # the fix is deliberately mark-free (immune to wg-quick's rule ordering).
+    - name: Resolve the route a NEW connection to the syslog LB would take
+      vars:
+        _syslog_lb: "{{ download_vpn_syslog_hosts_resolved | first | default('127.0.0.1') }}"
+      ansible.builtin.command:
+        cmd: ip -4 route get {{ _syslog_lb }}
+      register: download_vpn_syslog_route
+      changed_when: false
+      failed_when: false
+      when: download_vpn_syslog_hosts_resolved | default([]) | length > 0
+
+    - name: Assert syslog log-shipping egresses via the LAN NIC, not wg0
+      ansible.builtin.assert:
+        that:
+          - "'dev ' ~ download_vpn_lan_interface in download_vpn_syslog_route.stdout"
+        fail_msg: >-
+          Log shipping is silently broken: the route to the syslog LB
+          ({{ download_vpn_syslog_hosts_resolved | first | default('127.0.0.1') }}) does not resolve out
+          {{ download_vpn_lan_interface }} ({{ download_vpn_syslog_route.stdout | trim }}).
+          It would be encapsulated toward the VPN and black-holed — this guest's
+          logs would never reach Cribl/Splunk. Check the /32 main-table route in
+          download-vpn-lanroute.service.
+        success_msg: "Syslog log-shipping egresses via the LAN NIC (reaches Cribl/Splunk)."
+      when: download_vpn_syslog_hosts_resolved | default([]) | length > 0
+
     # --- I. marked-path leak check (closes the validator blind spot) --------
     # Checks A-G probe only UNMARKED traffic, so they never exercise the table
     # that the lanroute fwmark rule selects. Prove that a packet carrying the
