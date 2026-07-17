@@ -1,0 +1,46 @@
+---
+# Egress boundary for autonomous agent containers (dryvist/nix-agent-sandbox)
+# on the docker-host VM. Creates an internal-only docker network whose sole
+# route out is an allowlisting CONNECT proxy; `agent run --host` attaches
+# fresh containers to it with plain `docker run` — no IaC in the loop.
+
+agent_sandbox_dir: /opt/agent-sandbox
+agent_sandbox_squid_image: "ubuntu/squid:6.10-24.04_beta"
+agent_sandbox_probe_image: "curlimages/curl:8.15.0"
+agent_sandbox_proxy_container: agent-squid
+# Network + alias names are the contract with the nix-agent-sandbox launcher
+# (its AGENT_NETWORK / AGENT_PROXY_URL defaults: agents / http://proxy:3128).
+agent_sandbox_network: agents
+agent_sandbox_egress_network: agents-egress
+agent_sandbox_proxy_alias: proxy
+agent_sandbox_proxy_port: 3128
+
+# Committed mirror of dryvist/nix-agent-sandbox `lib.egressDomains` — that
+# repo is the source of truth. Regenerate with:
+#   nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
+agent_sandbox_egress_domains:
+  modelApis:
+    - api.anthropic.com
+    - api.openai.com
+    - chatgpt.com
+    - generativelanguage.googleapis.com
+    - cloudcode-pa.googleapis.com
+  github:
+    - github.com
+    - api.github.com
+    - objects.githubusercontent.com
+    - raw.githubusercontent.com
+    - ghcr.io
+    - pkg-containers.githubusercontent.com
+  nix:
+    - cache.nixos.org
+    - channels.nixos.org
+    - install.determinate.systems
+  internal: []
+
+# In-network FQDNs appended at converge time (the OpenBao ingress route for
+# task-profile secret fetch + GitHub token minting). The sensitive domain is
+# ambient env, never a committed literal — same pattern as the openbao role's
+# Terrakube issuer.
+agent_sandbox_internal_domains:
+  - "openbao.{{ lookup('env', 'PROXMOX_SUBDOMAIN') | default('local', true) }}"
