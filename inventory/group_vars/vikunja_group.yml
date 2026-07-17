@@ -15,6 +15,18 @@ vikunja_db_password: >-
   {{ bao_apps_secrets.vikunja_db_password
      | default(lookup('env', 'VIKUNJA_DB_PASSWORD'), true) }}
 
+# Postgres has no ingress; reach it by the primary guest's FQDN. Tracks the
+# shared postgres_primary_host switch (group_vars/all): unset -> the stable
+# `postgres` name (today); set to the apps-tier primary at cutover -> that name.
+# A guest hostname is a stable service identifier here, not a hard-coded address.
+#
+# Without this, Vikunja alone keeps the role default (`postgres`) while Nautobot
+# and Zammad follow the switch — and the same cutover reinitializes that guest as
+# a read-only standby, so Vikunja's writes would fail against it.
+vikunja_db_host: >-
+  {{ (postgres_primary_host if (postgres_primary_host | default('', true) | length > 0) else 'postgres')
+     }}.{{ hostvars['localhost']['tofu_data']['domain'] }}
+
 # MCP service-account passwords bao-first (secret/apps/vikunja fields
 # svc_mcp_ro_password / svc_mcp_rw_password). Redefines the role-default list so
 # the accounts the role creates and the tokens the MCP mint step later issues
