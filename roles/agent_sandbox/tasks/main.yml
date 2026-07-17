@@ -1,0 +1,88 @@
+---
+# Agent sandbox egress boundary: internal docker network + allowlisting
+# CONNECT proxy on the docker-host VM. Agent containers are NOT managed here —
+# dryvist/nix-agent-sandbox's `agent run --host` spawns them ad hoc.
+
+# The nix-agent-sandbox launcher spawns containers over DOCKER_HOST=ssh://
+# as this user, which needs direct daemon access (no sudo in that path).
+- name: Grant the launcher SSH user docker daemon access
+  ansible.builtin.user:
+    name: "{{ agent_sandbox_operator_user }}"
+    groups: docker
+    append: true
+
+- name: Create agent sandbox directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy squid configuration
+  ansible.builtin.template:
+    src: squid.conf.j2
+    dest: "{{ agent_sandbox_dir }}/squid.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy egress domain allowlist
+  ansible.builtin.template:
+    src: allowed-domains.txt.j2
+    dest: "{{ agent_sandbox_dir }}/allowed-domains.txt"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy agent sandbox docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ agent_sandbox_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy agent sandbox networks and proxy via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ agent_sandbox_dir }}"
+    state: present
+
+- name: Flush handlers so the proxy restarts before validation
+  ansible.builtin.meta: flush_handlers
+
+- name: Validate squid parses the deployed configuration
+  community.docker.docker_container_exec:
+    container: "{{ agent_sandbox_proxy_container }}"
+    command: squid -k parse
+  changed_when: false
+
+# Functional probes from INSIDE the internal network — the same path agent
+# containers use. Allow = an origin HTTP status comes back through the CONNECT
+# tunnel ('000' means no tunnel); deny = curl fails on the proxy's refusal.
+- name: Probe an allowlisted domain through the proxy
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null -w '%{http_code}' --max-time 20
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://api.anthropic.com
+  register: agent_sandbox_allow_probe
+  changed_when: false
+  failed_when: agent_sandbox_allow_probe.rc != 0 or agent_sandbox_allow_probe.stdout == '000'
+
+- name: Probe a non-allowlisted domain through the proxy (expect denial)
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --max-time 20
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://example.com
+  register: agent_sandbox_deny_probe
+  changed_when: false
+  failed_when: agent_sandbox_deny_probe.rc == 0

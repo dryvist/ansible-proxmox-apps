@@ -616,6 +616,23 @@
       when: github_runner_admin_token is defined or github_runner_token is defined
 
 # =============================================================================
+# Phase 7a: Agent Sandbox Egress Boundary
+# Internal `agents` docker network + allowlisting CONNECT proxy on the
+# docker-host VM. Agent containers themselves are launched ad hoc by
+# dryvist/nix-agent-sandbox (`agent run --host`), never by Ansible.
+# =============================================================================
+
+- name: Deploy agent sandbox egress boundary
+  hosts: docker_vms
+  become: true
+  gather_facts: false
+  tags:
+    - agent_sandbox
+  roles:
+    - role: agent_sandbox
+      when: inventory_hostname == agent_sandbox_host | default('docker-host')
+
+# =============================================================================
 # Phase 7b: iDRAC KVM HTML5 Viewer
 # domistyle/idrac6-based viewers (R410 + R710) on dedicated LXC 251.
 # Credentials come from Doppler IDRAC_R*_HOST/USER/PASSWORD env vars.
@@ -736,8 +753,12 @@
   roles:
     - role: plex
     # Playback visibility: a session probe that alerts on forced transcode
-    # (incident history: Zammad ticket #17040, Media).
+    # (incident history: Zammad ticket #17040, Media). Carries its own
+    # `media_monitor` tag so `--tags media_monitor` converges just this role
+    # (e.g. to run its absent-cleanup) without re-converging the Plex role.
     - role: media_monitor
+      tags:
+        - media_monitor
 
 # Seerr request UI (Docker in LXC). Registers Sonarr/Radarr/Plex via its settings
 # API — depends only on those apps being up (from the plays above), not on the
