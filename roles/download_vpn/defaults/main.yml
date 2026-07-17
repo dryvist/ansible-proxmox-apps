@@ -147,6 +147,17 @@ download_vpn_syslog_target_port: "{{ tofu_data.constants.syslog_ports.linux }}"
 # new egress path. See templates/mangle.nft.j2 + download-vpn-lanroute.service.j2.
 download_vpn_lanroute_table: 100
 download_vpn_lanroute_mark: "0x1"
+# MUST be a lower number than wg-quick's own auto-generated catch-all rule
+# ("not fwmark <wg-hash> lookup <wg-table>", observed at priority 999 for this
+# wg0 interface) — ip rule evaluates lowest-number-first, and the first rule
+# whose table produces ANY matching route (even a bare `default`) wins. Table
+# 51820's `default dev wg0` always matches, so if this rule sits at priority
+# 1000 (as it did until 2026-07-17) it never gets a chance to fire: every
+# mark-{{ download_vpn_lanroute_mark }} packet — replies AND the syslog
+# log-shipping connection in mangle.nft.j2 — silently fell through to wg0
+# instead of the LAN NIC. Confirmed via `ip route get <lan-target> mark
+# {{ download_vpn_lanroute_mark }}` resolving `dev wg0` instead of eth0.
+download_vpn_lanroute_rule_priority: 900
 # Reply-routing scope. Legitimate marked replies only ever target RFC1918 LAN
 # clients (e.g. the Traefik mgmt VLAN), NEVER public IPs. The lanroute table
 # therefore routes ONLY these ranges out the LAN NIC and installs an `unreachable`

@@ -13,18 +13,30 @@
   subnet, so it is black-holed and the client times out. Same-subnet replies
   work only because that /24 is a connected route on the LAN NIC.
 
+  A second, narrower case of the same problem: rsyslog on THIS guest
+  self-initiates a connection to the internal syslog pipeline LB
+  (killswitch.nft.j2 rule 4c already ACCEPTs it) — but an nftables accept
+  doesn't change routing, and the default route still points at wg0, so the
+  SYN is encapsulated toward Proton and black-holed there too (confirmed
+  2026-07-17: `ip route get <lb-ip>` resolved via wg0/table 51820, TCP connect
+  hung). The mark below (output chain, matched by dest LB IP+port only) fixes
+  this the same way, WITHOUT touching the "apps never self-initiate non-VPN
+  egress" invariant — it is scoped to our own log-shipping target, never to
+  general RFC1918 or public destinations.
+
   FIX: tag the *inbound* connections we want reachable with a connmark, restore
   that mark onto their *reply* packets, and (via the companion `ip rule fwmark`)
   route only those replies out the LAN NIC. See download-vpn-lanroute.service.
 
   SECURITY INVARIANT (unchanged): this never lets the apps INITIATE non-VPN
-  egress. Only packets belonging to an already-marked inbound connection get the
-  mark; app-initiated flows (torrents, indexer fetches, DNS) are never marked, so
-  they still resolve via wg0 — or are dropped by the killswitch if wg0 is down.
-  The `ct mark {{ download_vpn_lanroute_mark }}` guard on the output chain is
-  load-bearing: an unconditional `meta mark set ct mark` would also clobber
-  WireGuard's own fwmark on its encapsulated UDP (ct mark 0), recursively routing
-  the handshake into the tunnel and breaking the VPN.
+  egress to the public internet. Only packets belonging to an already-marked
+  inbound connection, OR a new connection to our own syslog LB specifically,
+  get the mark; app-initiated flows (torrents, indexer fetches, DNS) are never
+  marked, so they still resolve via wg0 — or are dropped by the killswitch if
+  wg0 is down. The `ct mark {{ download_vpn_lanroute_mark }}` guard on the
+  output chain is load-bearing: an unconditional `meta mark set ct mark` would
+  also clobber WireGuard's own fwmark on its encapsulated UDP (ct mark 0),
+  recursively routing the handshake into the tunnel and breaking the VPN.
 -#}
 {#
   Declare-then-flush so a re-apply replaces the ruleset instead of merging
@@ -46,16 +58,38 @@ table inet vpn_lanroute {
   chain output {
     type route hook output priority mangle;
 
-    # Restore ONLY our mark onto reply packets so the `ip rule fwmark` sends
-    # them out the LAN NIC. `type route` makes the kernel re-evaluate routing
-    # when the mark changes. The `ct mark` guard means WireGuard's encapsulated
-    # UDP (ct mark 0) and every app-initiated flow are left untouched.
+    # FIRST: tag locally-originated NEW connections to our own syslog pipeline
+    # LB with the CONNMARK, so the restore line below sets the fwmark on EVERY
+    # packet of the flow — not just the SYN. This routes rsyslog's log shipping
+    # out the LAN NIC instead of the default route into wg0 (where an RFC1918
+    # dest is unreachable and black-holed). Scoped to this exact IP+port set —
+    # never a blanket RFC1918 or "any new connection" match — so app-initiated
+    # egress (torrents, indexer fetches) is untouched and still forced through
+    # the VPN or dropped.
+    #
+    # Why CONNMARK (`ct mark`) and not `meta mark` here: the fwmark is per-packet
+    # and `ct state new` only matches the SYN. If we set the fwmark directly, the
+    # SYN would route out eth0 but the completing ACK (ct state established) would
+    # get no mark and fall back to wg0 — the handshake never completes and log
+    # shipping silently hangs (the 2026-07-17 bug this replaces). The connmark
+    # persists in conntrack, and the restore line marks every subsequent packet.
+    # It MUST precede the restore line so the SYN is re-marked in the same pass.
+{% for _sl in download_vpn_syslog_hosts_resolved | default([]) %}
+    ip daddr {{ _sl }} tcp dport {{ download_vpn_syslog_target_port }} ct state new ct mark set {{ download_vpn_lanroute_mark }}
+{% endfor %}
+
+    # Restore our connmark onto the fwmark for EVERY packet carrying it — reply
+    # packets of inbound web-UI flows (marked in prerouting) AND every packet of
+    # the syslog flow tagged just above — so the `ip rule fwmark` sends them out
+    # the LAN NIC. `type route` makes the kernel re-evaluate routing when the
+    # mark changes. The `ct mark` guard means WireGuard's encapsulated UDP
+    # (ct mark 0) and every unmarked app-initiated flow are left untouched.
     #
     # IPv6 INVARIANT: this rule is family-agnostic, but no v6 packet is ever
-    # marked because the prerouting rule above matches `ip saddr` (v4-only). Keep
-    # it that way until the README "Enabling IPv6 later" runbook is followed —
-    # adding v6 marking without a v6 lanroute table (RFC-ULA-scoped, no v6
-    # `default`) would create a v6 leak path.
+    # marked because both marking rules above match `ip saddr`/`ip daddr`
+    # (v4-only). Keep it that way until the README "Enabling IPv6 later" runbook
+    # is followed — adding v6 marking without a v6 lanroute table (RFC-ULA-scoped,
+    # no v6 `default`) would create a v6 leak path.
     ct mark {{ download_vpn_lanroute_mark }} meta mark set {{ download_vpn_lanroute_mark }}
   }
 }

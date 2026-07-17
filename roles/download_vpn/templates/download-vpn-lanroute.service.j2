@@ -1,12 +1,22 @@
 [Unit]
 Description=download-vpn LAN-reply policy routing (cross-subnet web UI reachability)
 Documentation=https://github.com/JacobPEvans/ansible-proxmox-apps
-# Order after wg0 so wg-quick's own fwmark policy rules already exist and we
-# layer a higher-priority rule above them; network-online ensures the LAN NIC is
-# configured. Deliberately NOT Requires=download-vpn-wg.service: this reply
-# routing is independent of the tunnel, so the web UIs stay reachable for
-# debugging even during a VPN outage. The killswitch (not this unit) is the
-# egress security boundary, so keeping it up never enables a leak.
+# Order after wg0 so wg-quick's own fwmark policy rules already exist; network-
+# online ensures the LAN NIC is configured. Deliberately NOT
+# Requires=download-vpn-wg.service: this reply routing is independent of the
+# tunnel, so the web UIs stay reachable for debugging even during a VPN outage.
+# The killswitch (not this unit) is the egress security boundary, so keeping it
+# up never enables a leak.
+#
+# PRIORITY DIRECTION (2026-07-17 fix): `ip rule` priority is LOWEST-number-first
+# — the opposite of what "higher priority" suggests in English. This rule MUST
+# use a number below wg-quick's own auto-generated catch-all (observed at 999
+# for Table=auto), or wg-quick's `default dev wg0` always matches first and
+# this table never gets a chance to fire. Confirmed live: at priority 1000
+# (the original value here, before this fix), `ip route get <lan-ip> mark
+# {{ download_vpn_lanroute_mark }}` resolved via wg0/table 51820 instead of the
+# LAN NIC — silently defeating both the pre-existing reply-routing feature and
+# the syslog log-shipping mark in mangle.nft.j2.
 After=network-online.target download-vpn-wg.service
 Wants=network-online.target
 
@@ -43,8 +53,8 @@ ExecStartPre=/usr/sbin/nft -f {{ download_vpn_mangle_ruleset_path }}
 #    packet that somehow carries the mark but is destined for the public internet
 #    finds no route here and fails CLOSED — clearnet egress via the LAN table is
 #    structurally impossible, not merely policy-gated by the killswitch.
-ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
-ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
+ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
 {% for net in download_vpn_lanroute_reply_networks %}
 ExecStart=/usr/bin/env ip route replace {{ net }} via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} table {{ download_vpn_lanroute_table }}
 {% endfor %}
@@ -52,7 +62,7 @@ ExecStart=/usr/bin/env ip route replace unreachable default table {{ download_vp
 
 # Teardown: remove the rule, flush the table, drop the mangle marking — leaving
 # no standing non-VPN routing state.
-ExecStop=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority 1000
+ExecStop=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
 ExecStop=-/usr/bin/env ip route flush table {{ download_vpn_lanroute_table }}
 ExecStop=-/usr/sbin/nft delete table inet vpn_lanroute
 
