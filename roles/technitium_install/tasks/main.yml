@@ -310,33 +310,31 @@
         (technitium_install_app_version_clean | trim)
       no_log: true
 
-- name: Create API token
-  # Technitium /api/user/createToken takes user/pass directly (not a
-  # session token) and produces a long-lived token that does not expire.
-  # The previous role passed a session token in `token` along with `user`
-  # but no `pass`, which the server interprets as a malformed login and
-  # rejects with "Parameter 'pass' missing."
-  ansible.builtin.uri:
-    url: "{{ technitium_install_api_url }}/api/user/createToken"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      user: "{{ technitium_install_admin_user }}"
-      pass: "{{ technitium_install_admin_password }}"
-      tokenName: "{{ technitium_install_token_name }}"
-    return_content: true
-    timeout: "{{ technitium_install_api_timeout }}"
-  register: technitium_install_token_result
-  changed_when: technitium_install_token_result.json.status == "ok"
-  failed_when: technitium_install_token_result.json.status | default('') != "ok"
-  no_log: true
-
+# NOTE: this role deliberately does NOT create an API token. It used to call
+# /api/user/createToken on every converge, which mints a NEW long-lived token
+# that never expires — the server does not deduplicate by tokenName, so every
+# run left another one behind (the fleet had accumulated dozens each). The token
+# was only ever used for the health check below, and a login session token does
+# that job identically without persisting anything. Nothing else consumes it:
+# technitium_dns logs in for its own session token, and the TECHNITIUM_DNS_API_TOKEN
+# env var is injected from the secret store, not produced here.
+#
+# If a durable token is ever needed again, mint it ONCE out-of-band and inject
+# it — do not re-add a per-converge createToken call.
 - name: Verify Technitium DNS is healthy
-  # Technitium authenticates API calls via ?token=... query parameter,
-  # NOT via an X-Api-Token header. The header is silently ignored and
-  # the server responds with "Parameter 'token' missing."
+  # Reuses an existing session token instead of minting a permanent one.
+  # Prefer the post-upgrade login: the upgrade block stops and restarts the
+  # service, which invalidates the pre-upgrade session token, so it re-logs in
+  # as technitium_install_upgrade_login. Fall back to the pre-upgrade token
+  # when no upgrade ran (fresh install or steady state), where it is still
+  # valid. Technitium authenticates via the ?token=... query parameter, NOT an
+  # X-Api-Token header — the header is silently ignored and the server responds
+  # with "Parameter 'token' missing."
   ansible.builtin.uri:
-    url: "{{ technitium_install_api_url }}/api/zones/list?token={{ technitium_install_token_result.json.token }}"
+    url: >-
+      {{ technitium_install_api_url }}/api/zones/list?token={{
+      technitium_install_upgrade_login.json.token
+      | default(technitium_install_login.json.token) }}
     method: GET
     return_content: true
     timeout: "{{ technitium_install_api_timeout }}"
