@@ -1023,7 +1023,11 @@
     traefik_ingress_routes:
       - { name: plex, ip: "192.0.2.10", port: 32400 }
       # HTTPS backend with a self-signed cert (e.g. Splunk Web) -> insecure_tls.
-      - { name: splunk, ip: "192.0.2.12", port: 8000, scheme: https, insecure_tls: true }
+      # sso: true -> the router gets the authelia forwardAuth middleware.
+      - { name: splunk, ip: "192.0.2.12", port: 8000, scheme: https, insecure_tls: true, sso: true }
+      # The Authelia portal row itself (never sso-gated); its backend url is
+      # what the forwardAuth middleware dials.
+      - { name: authelia, ip: "192.0.2.14", port: 9091 }
       # Proxmox cluster-UI apex: load-balanced pool over the node FQDNs, sticky
       # + health-checked, https to self-signed node backends.
       - name: proxmox
@@ -1057,7 +1061,8 @@
               'scheme': item.scheme | default('http'),
               'insecure_tls': item.insecure_tls | default(false),
               'sticky': item.sticky | default(false),
-              'health_check': item.health_check | default(false)
+              'health_check': item.health_check | default(false),
+              'sso': item.sso | default(false)
             }]
           }}
       loop: "{{ traefik_ingress_routes }}"
@@ -1172,6 +1177,25 @@
         fail_msg: >-
           dynamic.yml.j2 apex service wrong: pool size/urls, sticky cookie,
           healthCheck, or serversTransport not rendered as expected.
+
+    - name: Assert the sso flag gates exactly the flagged routers via forwardAuth
+      ansible.builtin.assert:
+        that:
+          # sso: true -> the router carries the authelia middleware.
+          - "'authelia' in _traefik_dynamic_yaml.http.routers.splunk.middlewares"
+          # Unflagged routers (and the portal itself) carry none.
+          - "'middlewares' not in _traefik_dynamic_yaml.http.routers.plex"
+          - "'middlewares' not in _traefik_dynamic_yaml.http.routers.authelia"
+          # The middleware dials the portal BACKEND url (never the public FQDN,
+          # which CNAMEs back to Traefik and would loop).
+          - >-
+            _traefik_dynamic_yaml.http.middlewares.authelia.forwardAuth.address
+            == "http://192.0.2.14:9091/api/authz/forward-auth"
+          - "'Remote-User' in _traefik_dynamic_yaml.http.middlewares.authelia.forwardAuth.authResponseHeaders"
+        fail_msg: >-
+          dynamic.yml.j2 sso gating wrong: middleware missing on a flagged
+          router, present on an unflagged one, or the forwardAuth address does
+          not target the portal backend.
 
     - name: Assert HTTPS backend gets an https URL + insecure-backend serversTransport
       ansible.builtin.assert:

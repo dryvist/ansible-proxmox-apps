@@ -2,6 +2,13 @@
    inventory (traefik_routes, built in tasks/main.yml). Each router requests the
    single wildcard *.{{ traefik_base_domain }} cert so Traefik issues it once and
    serves it for every host. Managed by Ansible (traefik role). Do not edit. #}
+{# The Authelia forwardAuth middleware dials the authelia BACKEND url directly
+   (its ingress-row server), never authelia.<domain> — that FQDN CNAMEs back to
+   Traefik itself and would loop. Routes opt in via the tofu-owned sso flag;
+   when no authelia route exists in the inventory nothing is gated (safe
+   pre-cutover rollout). #}
+{% set authelia_routes = traefik_routes | selectattr('name', 'equalto', 'authelia') | list %}
+{% set sso_enabled = authelia_routes | length > 0 %}
 http:
   routers:
 {% for route in traefik_routes %}
@@ -10,6 +17,10 @@ http:
       service: {{ route.name }}
       entryPoints:
         - websecure
+{% if sso_enabled and route.sso | default(false) %}
+      middlewares:
+        - authelia
+{% endif %}
       tls:
         certResolver: letsencrypt
         domains:
@@ -69,10 +80,22 @@ http:
     insecure-backend:
       insecureSkipVerify: true
 {% endif %}
-{% if traefik_dashboard_enabled %}
+{% if traefik_dashboard_enabled or sso_enabled %}
 
   middlewares:
+{% if traefik_dashboard_enabled %}
     dashboard-auth:
       basicAuth:
         usersFile: "{{ traefik_dashboard_users_file }}"
+{% endif %}
+{% if sso_enabled %}
+    authelia:
+      forwardAuth:
+        address: "{{ authelia_routes[0].servers[0] }}/api/authz/forward-auth"
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Email
+          - Remote-Name
+{% endif %}
 {% endif %}
