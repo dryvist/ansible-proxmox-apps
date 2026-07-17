@@ -5,9 +5,10 @@
 # no drift prints nothing and stays idempotent.
 #
 # Essential seeding (settings, admin, per-actor service accounts + API tokens,
-# Incidents group, severities) fails loudly. The version-sensitive extras (Mailpit notification channel, the
-# knowledge base) are wrapped so a model-API drift warns but never aborts the
-# converge — both have a one-click manual fallback in the UI.
+# Incidents group, severities) fails loudly. The version-sensitive extras
+# (Mailpit notification channel, knowledge base) are wrapped so a model-API
+# drift warns but never aborts the converge — both have a one-click manual
+# fallback in the UI.
 
 changed = false
 UserInfo.current_user_id = 1 # act as the system user for created_by/updated_by
@@ -80,6 +81,11 @@ service_users = [
     u = User.create!(login: email.downcase, firstname: first, lastname: last,
                      email: email.downcase, roles: agent_role, active: true)
     changed = true
+  elsif u.roles.to_a != agent_role || !u.active
+    # Reconcile drift: service accounts are Agent-only and active — strip any
+    # elevated role that snuck on outside this bootstrap.
+    u.update!(roles: agent_role, active: true)
+    changed = true
   end
   u
 end
@@ -147,8 +153,8 @@ token_prefs = { 'permission' => %w[ticket.agent knowledge_base.editor] }
     t = Token.create!(action: 'api', name: name, persistent: true,
                       user_id: user.id, preferences: token_prefs)
     changed = true
-  elsif t.user_id != user.id || t.preferences != token_prefs
-    t.update!(user_id: user.id, preferences: token_prefs)
+  elsif t.user_id != user.id || t.preferences != token_prefs || !t.persistent
+    t.update!(user_id: user.id, preferences: token_prefs, persistent: true)
     changed = true
   end
   if t.token != value
