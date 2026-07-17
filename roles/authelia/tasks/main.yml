@@ -69,16 +69,32 @@
     ansible_become: false
   run_once: true
 
+# Extract into a VERSIONED staging dir: the tarball's binary is named bare
+# `authelia`, so an unversioned creates-guard would keep copying a stale
+# binary after a version bump (the vikunja role dodges this only because its
+# binary name embeds the version).
+- name: Create versioned staging dir on controller
+  ansible.builtin.file:
+    path: "/tmp/authelia-v{{ authelia_version }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
 - name: Extract the Authelia binary on controller
   ansible.builtin.unarchive:
     src: "/tmp/{{ authelia_release_tgz }}"
-    dest: /tmp
+    dest: "/tmp/authelia-v{{ authelia_version }}"
     remote_src: true
     include:
       - "{{ authelia_binary_name }}"
     # unarchive re-extracts (and reports changed) every run without this guard;
     # the tarball is checksum-pinned, so an existing extract is always current.
-    creates: "/tmp/{{ authelia_binary_name }}"
+    creates: "/tmp/authelia-v{{ authelia_version }}/{{ authelia_binary_name }}"
   delegate_to: localhost
   connection: local
   become: false
@@ -88,7 +104,7 @@
 
 - name: Copy the Authelia binary to the target
   ansible.builtin.copy:
-    src: "/tmp/{{ authelia_binary_name }}"
+    src: "/tmp/authelia-v{{ authelia_version }}/{{ authelia_binary_name }}"
     dest: "{{ authelia_binary_path }}"
     owner: root
     group: root
