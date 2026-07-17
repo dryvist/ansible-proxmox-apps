@@ -72,19 +72,25 @@ end
 # human-only. No password is set: these accounts are API-token-only and cannot
 # log in via the web UI.
 agent_role = [Role.find_by!(name: 'Agent')]
+# hermes also carries Customer: the zammad-incidents skill omits the customer
+# field, so Zammad makes the token's user the ticket customer — which routes
+# every Hermes-filed ticket into the dedicated Hermes org (blast-radius
+# isolation for a 24/7 autonomous filer).
+hermes_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 service_users = [
-  [hermes_email, 'Hermes', 'Agent'],
-  [ai_email, 'AI', 'Assistant'],
-].map do |email, first, last|
+  [hermes_email, 'Hermes', 'Agent', hermes_roles],
+  [ai_email, 'AI', 'Assistant', agent_role],
+].map do |email, first, last, desired_roles|
   u = User.find_by(email: email.downcase)
   if u.nil?
     u = User.create!(login: email.downcase, firstname: first, lastname: last,
-                     email: email.downcase, roles: agent_role, active: true)
+                     email: email.downcase, roles: desired_roles, active: true)
     changed = true
-  elsif u.roles.to_a != agent_role || !u.active
-    # Reconcile drift: service accounts are Agent-only and active — strip any
-    # elevated role that snuck on outside this bootstrap.
-    u.update!(roles: agent_role, active: true)
+  elsif u.roles.to_a.sort_by(&:id) != desired_roles.sort_by(&:id) || !u.active
+    # Reconcile drift: service accounts carry exactly their desired roles and
+    # stay active — strip any elevated role that snuck on outside this
+    # bootstrap.
+    u.update!(roles: desired_roles, active: true)
     changed = true
   end
   u
@@ -98,7 +104,10 @@ if kb_perm && !agent_role.first.permissions.include?(kb_perm)
   changed = true
 end
 
-# --- Top-level organization (create-or-find; all our users belong to it) -----
+# --- Organizations ------------------------------------------------------------
+# Top-level org holds the humans + the interactive-AI account; hermes gets its
+# OWN non-shared org so its 24/7 auto-filed tickets live in a separate
+# container (filter, bulk-manage, or purge them without touching the rest).
 org_name = ENV['ZAMMAD_ORGANIZATION']
 if org_name && !org_name.empty?
   org = Organization.find_by(name: org_name)
@@ -106,9 +115,23 @@ if org_name && !org_name.empty?
     org = Organization.create!(name: org_name, shared: true, active: true)
     changed = true
   end
-  ([admin] + service_users).each do |u|
+  [admin, service_users[1]].each do |u|
     next if u.organization_id == org.id
     u.update!(organization_id: org.id)
+    changed = true
+  end
+end
+
+hermes_org_name = ENV['ZAMMAD_HERMES_ORGANIZATION']
+if hermes_org_name && !hermes_org_name.empty?
+  hermes_org = Organization.find_by(name: hermes_org_name)
+  if hermes_org.nil?
+    hermes_org = Organization.create!(name: hermes_org_name, shared: false, active: true,
+                                      note: 'Container for tickets auto-filed by the Hermes agent')
+    changed = true
+  end
+  unless service_users[0].organization_id == hermes_org.id
+    service_users[0].update!(organization_id: hermes_org.id)
     changed = true
   end
 end
@@ -231,6 +254,10 @@ begin
     if ov['updated_within_days']
       condition['ticket.updated_at'] =
         { 'operator' => 'within last (relative)', 'range' => 'day', 'value' => ov['updated_within_days'] }
+    end
+    if ov['organization']
+      condition['ticket.organization_id'] =
+        { 'operator' => 'is', 'value' => [Organization.find_by!(name: ov['organization']).id] }
     end
     Overview.create!(
       name: ov['name'], link: ov['link'], prio: ov['prio'], condition: condition,
