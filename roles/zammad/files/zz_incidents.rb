@@ -444,4 +444,25 @@ seed_ticket(
   ]
 )
 
+# ============================================================================
+# Today's incident (2026-07-17) — Default LAN (10.0.1.x) deleted then restored
+# ============================================================================
+
+seed_ticket(
+  title: 'Default LAN 10.0.1.x (UniFi lan_main / VLAN 0) deleted then restored — self-inflicted (2026-07-17)',
+  group: hi, state: closed, priority: high, customer: admin,
+  created: Time.utc(2026, 7, 17, 12, 0), closed_at: Time.utc(2026, 7, 17, 13, 0),
+  custom: {
+    incident_start: Time.utc(2026, 7, 17, 12, 0),
+    incident_end: Time.utc(2026, 7, 17, 13, 0),
+    affected_services: ['network'],
+    root_cause: 'After standing up a dedicated Management VLAN (UniFi lan_mgmt, VLAN 5, 10.0.5.x) alongside the original management range, the operator manually deleted the 10.0.1.x Default network (UniFi lan_main, VLAN 0) in the UniFi UI because the now-redundant range was "bothering me". 10.0.1.1 is that network gateway, so removing it dropped the default LAN. Restored manually in the UniFi UI.',
+    detection_method: 'user-report', source_issue: 'dryvist/tofu-unifi (lan_main / Default network)',
+  },
+  articles: [
+    { subject: 'Incident', body: 'The operator, having added a dedicated Management VLAN (VLAN 5, 10.0.5.x), deleted the original 10.0.1.x Default LAN (UniFi lan_main, VLAN 0) directly in the UniFi UI, judging the two overlapping management ranges redundant. That network carries the 10.0.1.1 gateway, so its removal dropped the default LAN. The mistake was recognised and the network was restored in the UniFi UI (10.0.1.1 back: pings ~2.7ms, http 301 -> https 200). Incident window is approximate (~1h, 2026-07-17 midday).' },
+    { subject: 'Follow-up (IaC drift)', body: 'lan_main is a tofu-managed resource (module.networks.unifi_network.this["lan_main"], from deployment/networks.json). It was never removed from code, so DESIRED state is correct — but the manual delete+restore diverged tofu STATE: the tracked network ID is stale and the restored network is an untracked new object. A future tofu-unifi plan/apply (or the periodic drift workflow) may try to RECREATE the Default LAN, re-running the outage automatically. Resolution: run a plan; if it wants to recreate lan_main, terraform state rm the stale entry and import the restored network ID so tofu re-adopts it. Runbook staged 2026-07-17.' },
+  ]
+)
+
 puts 'SEED_DONE'
