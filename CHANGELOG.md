@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.2.0...v2.3.0) (2026-07-17)
+
+
+### Features
+
+* **openbao:** generate the shared-apps postgres replication credential ([#1005](https://github.com/dryvist/ansible-proxmox-apps/issues/1005)) ([026bfb7](https://github.com/dryvist/ansible-proxmox-apps/commit/026bfb7e7e544c55d7ab421fde59b207bc28a891))
+* **ssh_ca_trust:** trust the OpenBao SSH client CA on VMs + cert-mint runner ([#976](https://github.com/dryvist/ansible-proxmox-apps/issues/976)) ([8277455](https://github.com/dryvist/ansible-proxmox-apps/commit/8277455c2f456bee72efb9cc5b9a059909d48633))
+
+
+### Bug Fixes
+
+* **site:** OpenBao secrets pre-fetch must run on every tagged converge ([#1007](https://github.com/dryvist/ansible-proxmox-apps/issues/1007)) ([2a86640](https://github.com/dryvist/ansible-proxmox-apps/commit/2a86640e7542e74aebedda93aaa69277e2214572))
+* **technitium:** converge onto the apt .NET layout, gate the binary swap, pin the official Log Exporter ([#1019](https://github.com/dryvist/ansible-proxmox-apps/issues/1019)) ([f977995](https://github.com/dryvist/ansible-proxmox-apps/commit/f9779955acdbd505738bb9e8ca12cfc7508a04ce))
+* **technitium:** read the running version from session/get, not login ([#1003](https://github.com/dryvist/ansible-proxmox-apps/issues/1003)) ([f5f3ffe](https://github.com/dryvist/ansible-proxmox-apps/commit/f5f3ffe341a8dc859d4915a82e2d933b5e8eb2d2))
+* **zammad:** build the schema before seeding on first configure ([#1010](https://github.com/dryvist/ansible-proxmox-apps/issues/1010)) ([e4e0598](https://github.com/dryvist/ansible-proxmox-apps/commit/e4e0598ef993230451ff9422f0797eca621c3a92))
+
 ## [2.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.1.0...v2.2.0) (2026-07-16)
 
 
