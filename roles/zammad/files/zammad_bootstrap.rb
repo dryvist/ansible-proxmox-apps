@@ -208,7 +208,7 @@ end
 begin
   require 'json'
   overviews = JSON.parse(ENV['ZAMMAD_OVERVIEWS'] || '[]')
-  agent_role_id = Role.find_by!(name: 'Agent').id
+  overview_agent_role = Role.find_by!(name: 'Agent')
   overview_view = {
     'd' => %w[title customer group state priority created_at],
     's' => %w[title customer group state priority created_at],
@@ -235,7 +235,7 @@ begin
     Overview.create!(
       name: ov['name'], link: ov['link'], prio: ov['prio'], condition: condition,
       order: { 'by' => ov['order_by'], 'direction' => ov['order_direction'] },
-      roles: Role.where(id: agent_role_id), user_ids: [], view: overview_view
+      roles: [overview_agent_role], user_ids: [], view: overview_view
     )
     changed = true
   end
