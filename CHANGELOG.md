@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.7.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.6.0...v2.7.0) (2026-07-17)
+
+
+### Features
+
+* **zammad:** add Media group for user-facing media incidents ([#1050](https://github.com/dryvist/ansible-proxmox-apps/issues/1050)) ([0b8e60a](https://github.com/dryvist/ansible-proxmox-apps/commit/0b8e60a122412841e2854180ae263b9f19a6bcb1))
+* **zammad:** dedicated Hermes customer org for blast-radius isolation ([#1058](https://github.com/dryvist/ansible-proxmox-apps/issues/1058)) ([f055146](https://github.com/dryvist/ansible-proxmox-apps/commit/f0551464db72f57a3a007f38dd62cd10aa082cc4))
+* **zammad:** incident custom fields + backdated history seed ([#1061](https://github.com/dryvist/ansible-proxmox-apps/issues/1061)) ([2a95170](https://github.com/dryvist/ansible-proxmox-apps/commit/2a95170c0f13f44af2b828c93d9818060b109697))
+* **zammad:** seed agent overviews + document the tag taxonomy ([#1053](https://github.com/dryvist/ansible-proxmox-apps/issues/1053)) ([8a5a801](https://github.com/dryvist/ansible-proxmox-apps/commit/8a5a801ebd754bd77ae0b054ccac9401739ea70b))
+
+
+### Bug Fixes
+
+* **authelia:** make passkey enrolment reachable (two_factor policy + filesystem notifier) ([#1048](https://github.com/dryvist/ansible-proxmox-apps/issues/1048)) ([97f7885](https://github.com/dryvist/ansible-proxmox-apps/commit/97f7885467c37bbf5165a1a95d77b060c5835510))
+* **configarr:** score Apple-TV audio policy on every quality profile ([#1051](https://github.com/dryvist/ansible-proxmox-apps/issues/1051)) ([872aba9](https://github.com/dryvist/ansible-proxmox-apps/commit/872aba90620202bb7d02c627118d88eea4c4b40e))
+* **logging:** close media-stack gaps to Cribl/Splunk ([#1056](https://github.com/dryvist/ansible-proxmox-apps/issues/1056)) ([99553ad](https://github.com/dryvist/ansible-proxmox-apps/commit/99553adb5ec65e7f06a946239d5326f4b9108a84))
+* **postgres:** bind the address the guest holds, not the one it was assigned ([#1059](https://github.com/dryvist/ansible-proxmox-apps/issues/1059)) ([9d05fae](https://github.com/dryvist/ansible-proxmox-apps/commit/9d05fae930fb90a0b5e94462a6d34a56b63c113d))
+
 ## [2.6.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.5.0...v2.6.0) (2026-07-17)
 
 
