@@ -200,4 +200,47 @@ rescue => e
   warn "WARN: knowledge base not created automatically (#{e.class}: #{e.message}). Create it once in the UI."
 end
 
+# --- Overviews: saved filtered views, defined as DATA in zammad_overviews ----
+# (role defaults, ZAMMAD_OVERVIEWS json env). Idempotent by name. Each entry's
+# small declarative keys (open_only, priority_ids, tag, updated_within_days)
+# map onto Zammad's Overview condition schema here, so the YAML stays free of
+# Zammad internals.
+begin
+  require 'json'
+  overviews = JSON.parse(ENV['ZAMMAD_OVERVIEWS'] || '[]')
+  overview_agent_role = Role.find_by!(name: 'Agent')
+  overview_view = {
+    'd' => %w[title customer group state priority created_at],
+    's' => %w[title customer group state priority created_at],
+    'm' => %w[number title customer group state priority created_at],
+    'view_mode_default' => 's',
+  }
+  overviews.each do |ov|
+    next if Overview.exists?(name: ov['name'])
+    condition = {}
+    if ov['open_only']
+      condition['ticket.state_id'] =
+        { 'operator' => 'is', 'value' => Ticket::State.by_category(:open).pluck(:id) }
+    end
+    if ov['priority_ids']
+      condition['ticket.priority_id'] = { 'operator' => 'is', 'value' => ov['priority_ids'] }
+    end
+    if ov['tag']
+      condition['ticket.tags'] = { 'operator' => 'contains one', 'value' => ov['tag'] }
+    end
+    if ov['updated_within_days']
+      condition['ticket.updated_at'] =
+        { 'operator' => 'within last (relative)', 'range' => 'day', 'value' => ov['updated_within_days'] }
+    end
+    Overview.create!(
+      name: ov['name'], link: ov['link'], prio: ov['prio'], condition: condition,
+      order: { 'by' => ov['order_by'], 'direction' => ov['order_direction'] },
+      roles: [overview_agent_role], user_ids: [], view: overview_view
+    )
+    changed = true
+  end
+rescue => e
+  warn "WARN: overviews not seeded automatically (#{e.class}: #{e.message}). Create them once in the UI."
+end
+
 puts 'ZAMMAD_BOOTSTRAP_CHANGED' if changed
