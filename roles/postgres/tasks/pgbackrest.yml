@@ -87,20 +87,16 @@
     - name: Apply pending archiving restart
       ansible.builtin.meta: flush_handlers
 
-    - name: Read existing pgBackRest stanza info
-      become: true
-      become_user: postgres
-      ansible.builtin.command:
-        argv:
-          - pgbackrest
-          - --stanza={{ postgres_pgbackrest_stanza }}
-          - --output=json
-          - info
-      register: postgres_pgbackrest_info
-      changed_when: false
-      failed_when: false
-
-    - name: Create the pgBackRest stanza
+    # stanza-create is idempotent and PER-REPO: on an existing host it reports
+    # "stanza '<name>' already exists on repo1 and is valid" (rc=0) while still
+    # initializing any repo that lacks it. So it runs unconditionally.
+    #
+    # It used to be gated on `pgbackrest info`, which broke two ways. `info`
+    # reports the stanza as present if it exists in ANY repo, so enabling repo2
+    # on an existing host skipped creation and left the offsite repo
+    # uninitialized. And `info` exits 0 with a stub for a missing stanza, so on a
+    # fresh host the gate never fired at all (#1017).
+    - name: Create the pgBackRest stanza in every configured repo
       become: true
       become_user: postgres
       ansible.builtin.command:
@@ -109,12 +105,10 @@
           - --stanza={{ postgres_pgbackrest_stanza }}
           - stanza-create
       register: postgres_pgbackrest_stanza_create
-      changed_when: "'already exists' not in (postgres_pgbackrest_stanza_create.stderr | default(''))"
-      when: >-
-        postgres_pgbackrest_info.rc != 0
-        or (postgres_pgbackrest_stanza not in
-            (postgres_pgbackrest_info.stdout | default('[]', true)
-             | from_json | map(attribute='name') | list))
+      changed_when: >-
+        'already exists' not in
+        (postgres_pgbackrest_stanza_create.stdout | default('')
+         ~ postgres_pgbackrest_stanza_create.stderr | default(''))
 
     # `check` validates archiving against every configured repo, so enabling
     # repo2 extends this gate to the offsite copy automatically. Do NOT swap it
