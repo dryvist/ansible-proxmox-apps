@@ -79,24 +79,29 @@
 # daddr rules: DNS to the internal resolvers, and syslog TCP to the pipeline LB.
 - name: Resolve internal DNS resolver IPs for the killswitch (DNS egress)
   ansible.builtin.set_fact:
-    download_vpn_resolvers_resolved: "{{ download_vpn_resolvers_resolved | default([]) + [_ip] }}"
+    download_vpn_resolvers_resolved: "{{ (download_vpn_resolvers_resolved | default([]) + [_ip]) | unique }}"
   vars:
     _hv: "{{ hostvars[item] }}"
     _ip: >-
       {{ _hv.container_reserved_ip
          if (_hv.container_reserved_ip | default('', true) | length > 0)
-         else _hv.container_ip }}
+         else (_hv.container_ip | default('', true)) }}
+  # Skip any host with no IP — a blank daddr renders an invalid nft rule that
+  # fails the whole killswitch apply. `| default('', true)` above keeps this
+  # guard from erroring when container_ip itself is undefined.
+  when: _ip | trim | length > 0
   loop: "{{ groups[download_vpn_syslog_resolver_group] | default([]) }}"
 
 - name: Resolve syslog pipeline LB IPs for the killswitch (log egress)
   ansible.builtin.set_fact:
-    download_vpn_syslog_hosts_resolved: "{{ download_vpn_syslog_hosts_resolved | default([]) + [_ip] }}"
+    download_vpn_syslog_hosts_resolved: "{{ (download_vpn_syslog_hosts_resolved | default([]) + [_ip]) | unique }}"
   vars:
     _hv: "{{ hostvars[item] }}"
     _ip: >-
       {{ _hv.container_reserved_ip
          if (_hv.container_reserved_ip | default('', true) | length > 0)
-         else _hv.container_ip }}
+         else (_hv.container_ip | default('', true)) }}
+  when: _ip | trim | length > 0
   loop: "{{ groups[download_vpn_syslog_lb_group] | default([]) }}"
 
 - name: Derive the IPv4-only tunnel address (drop any v6 half Proton issues)
