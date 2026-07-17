@@ -157,6 +157,33 @@ postgres_backup_s3_uri_style: path
 postgres_backup_s3_access_key_id: "{{ lookup('env', 'POSTGRES_BACKUP_S3_ACCESS_KEY_ID') | default('', true) }}"
 postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY') | default('', true) }}"
 
+# Offsite repo (repo2). pgBackRest writes every backup and WAL segment to both
+# repos itself, which is what makes the 1:1 parity rule structural instead of
+# aspirational: there is no out-of-band mirror to drift, truncate, or silently
+# copy a subset (#1027). Restores read it with `--repo=2`, and `check` validates
+# archiving against every configured repo.
+#
+# Do NOT reach for `pgbackrest verify` as the offsite gate: it exits 0 against a
+# repo it cannot read at all, printing only "No usable backup.info file" (#1027).
+#
+# OFF by default so the merge is inert; needs the offsite credentials in env.
+postgres_pgbackrest_repo2_enabled: false
+postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
+postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
+postgres_backup_repo2_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ENDPOINT') | default('', true) }}"
+# Backblaze's S3 endpoint embeds its region (s3.<region>.backblazeb2.com), so
+# derive it rather than making the operator restate it in a second variable.
+postgres_backup_repo2_s3_region: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_REGION')
+     | default(postgres_backup_repo2_s3_endpoint
+               | regex_replace('^s3\.([^.]+)\..*$', '\1'), true) }}
+postgres_backup_repo2_s3_uri_style: path
+postgres_backup_repo2_s3_access_key_id: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ACCESS_KEY_ID') | default('', true) }}
+postgres_backup_repo2_s3_secret_access_key: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
+postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
+
 # Retention: number of full backups to keep. pgBackRest expires the WAL that
 # predates the oldest retained full automatically, so this one knob bounds both
 # base-backup and WAL storage.
