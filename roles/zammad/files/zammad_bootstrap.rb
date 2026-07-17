@@ -62,6 +62,20 @@ else
   end
 end
 
+# --- Top-level organization (create-or-find; admin belongs to it) ------------
+org_name = ENV['ZAMMAD_ORGANIZATION']
+if org_name && !org_name.empty?
+  org = Organization.find_by(name: org_name)
+  if org.nil?
+    org = Organization.create!(name: org_name, shared: true, active: true)
+    changed = true
+  end
+  unless admin.organization_id == org.id
+    admin.update!(organization_id: org.id)
+    changed = true
+  end
+end
+
 # --- Incident groups (create-or-find; make admin a full agent in each) -------
 groups.each do |gname|
   group = Group.find_by(name: gname)
@@ -85,13 +99,27 @@ end
 
 # --- Hermes API token (persistent api token seeded with the supplied value;
 # reconciled if it already exists but was rotated in OpenBao/Doppler) --------
+# Two hard-won constraints (first live bring-up, 2026-07-16):
+#   1. Token.create!/update! REGENERATE the token value via callbacks —
+#      update_column is the only way the supplied secret actually persists.
+#   2. An api token with empty preferences has NO permission scopes and every
+#      HTTP request is rejected "Authentication required".
+hermes_token_prefs = { 'permission' => %w[admin ticket.agent knowledge_base.editor] }
 hermes_token = Token.find_by(action: 'api', name: 'hermes')
 if hermes_token.nil?
-  Token.create!(action: 'api', name: 'hermes', persistent: true, user_id: admin.id, token: api_token)
+  hermes_token = Token.create!(action: 'api', name: 'hermes', persistent: true,
+                               user_id: admin.id, preferences: hermes_token_prefs)
+  hermes_token.update_column(:token, api_token)
   changed = true
-elsif hermes_token.token != api_token
-  hermes_token.update!(token: api_token)
-  changed = true
+else
+  if hermes_token.token != api_token
+    hermes_token.update_column(:token, api_token)
+    changed = true
+  end
+  if hermes_token.preferences != hermes_token_prefs
+    hermes_token.update!(preferences: hermes_token_prefs)
+    changed = true
+  end
 end
 
 # --- Outbound email via the Mailpit relay (best-effort; manual UI fallback) --
