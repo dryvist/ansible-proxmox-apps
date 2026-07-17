@@ -4,10 +4,11 @@
 # mutates state, so the Ansible task can report changed accurately; a re-run with
 # no drift prints nothing and stays idempotent.
 #
-# Essential seeding (settings, admin, API token, Incidents group, severities)
-# fails loudly. The version-sensitive extras (Mailpit notification channel, the
-# knowledge base) are wrapped so a model-API drift warns but never aborts the
-# converge — both have a one-click manual fallback in the UI.
+# Essential seeding (settings, admin, per-actor service accounts + API tokens,
+# Incidents group, severities) fails loudly. The version-sensitive extras
+# (Mailpit notification channel, knowledge base) are wrapped so a model-API
+# drift warns but never aborts the converge — both have a one-click manual
+# fallback in the UI.
 
 changed = false
 UserInfo.current_user_id = 1 # act as the system user for created_by/updated_by
@@ -18,11 +19,14 @@ def env!(key)
   v
 end
 
-fqdn        = env!('ZAMMAD_FQDN')
-es_url      = env!('ZAMMAD_ES_URL')
-admin_email = env!('ZAMMAD_ADMIN_EMAIL')
-admin_pass  = env!('ZAMMAD_ADMIN_PASSWORD')
-api_token   = env!('ZAMMAD_API_TOKEN')
+fqdn         = env!('ZAMMAD_FQDN')
+es_url       = env!('ZAMMAD_ES_URL')
+admin_email  = env!('ZAMMAD_ADMIN_EMAIL')
+admin_pass   = env!('ZAMMAD_ADMIN_PASSWORD')
+api_token    = env!('ZAMMAD_API_TOKEN')
+ai_api_token = env!('ZAMMAD_AI_API_TOKEN')
+hermes_email = env!('ZAMMAD_HERMES_EMAIL')
+ai_email     = env!('ZAMMAD_AI_EMAIL')
 smtp_host   = env!('ZAMMAD_SMTP_HOST')
 smtp_port   = env!('ZAMMAD_SMTP_PORT').to_i
 sender      = env!('ZAMMAD_NOTIFICATION_SENDER')
@@ -62,7 +66,39 @@ else
   end
 end
 
-# --- Top-level organization (create-or-find; admin belongs to it) ------------
+# --- Dedicated AI service accounts (per-actor audit trail) -------------------
+# Every machine actor gets its OWN Agent-role user so the activity stream and
+# ticket history attribute writes to the real actor — the admin account stays
+# human-only. No password is set: these accounts are API-token-only and cannot
+# log in via the web UI.
+agent_role = [Role.find_by!(name: 'Agent')]
+service_users = [
+  [hermes_email, 'Hermes', 'Agent'],
+  [ai_email, 'AI', 'Assistant'],
+].map do |email, first, last|
+  u = User.find_by(email: email.downcase)
+  if u.nil?
+    u = User.create!(login: email.downcase, firstname: first, lastname: last,
+                     email: email.downcase, roles: agent_role, active: true)
+    changed = true
+  elsif u.roles.to_a != agent_role || !u.active
+    # Reconcile drift: service accounts are Agent-only and active — strip any
+    # elevated role that snuck on outside this bootstrap.
+    u.update!(roles: agent_role, active: true)
+    changed = true
+  end
+  u
+end
+
+# Agents need knowledge_base.editor for their tokens to carry that scope; the
+# default Agent role does not always include it.
+kb_perm = Permission.find_by(name: 'knowledge_base.editor')
+if kb_perm && !agent_role.first.permissions.include?(kb_perm)
+  agent_role.first.permissions << kb_perm
+  changed = true
+end
+
+# --- Top-level organization (create-or-find; all our users belong to it) -----
 org_name = ENV['ZAMMAD_ORGANIZATION']
 if org_name && !org_name.empty?
   org = Organization.find_by(name: org_name)
@@ -70,23 +106,24 @@ if org_name && !org_name.empty?
     org = Organization.create!(name: org_name, shared: true, active: true)
     changed = true
   end
-  unless admin.organization_id == org.id
-    admin.update!(organization_id: org.id)
+  ([admin] + service_users).each do |u|
+    next if u.organization_id == org.id
+    u.update!(organization_id: org.id)
     changed = true
   end
 end
 
-# --- Incident groups (create-or-find; make admin a full agent in each) -------
+# --- Incident groups (create-or-find; admin + service users get full access) -
 groups.each do |gname|
   group = Group.find_by(name: gname)
   if group.nil?
     group = Group.create!(name: gname, active: true)
     changed = true
   end
-  # Grant the admin full access to the group so it can own/route incidents.
-  unless admin.group_ids_access('full').include?(group.id)
-    admin.group_names_access_map = admin.group_names_access_map.merge(group.name => ['full'])
-    admin.save!
+  ([admin] + service_users).each do |u|
+    next if u.group_ids_access('full').include?(group.id)
+    u.group_names_access_map = u.group_names_access_map.merge(group.name => ['full'])
+    u.save!
     changed = true
   end
 end
@@ -97,27 +134,31 @@ if Ticket::Priority.find_by(id: 4).nil? && Ticket::Priority.find_by(name: '4 cri
   changed = true
 end
 
-# --- Hermes API token (persistent api token seeded with the supplied value;
-# reconciled if it already exists but was rotated in OpenBao/Doppler) --------
+# --- API tokens (persistent, seeded with supplied values; reconciled on
+# rotation in OpenBao/Doppler). Each token belongs to ITS OWN service user —
+# never the admin — and carries only Agent-level scopes.
 # Two hard-won constraints (first live bring-up, 2026-07-16):
 #   1. Token.create!/update! REGENERATE the token value via callbacks —
-#      update_column is the only way the supplied secret actually persists.
+#      update_column is the only way the supplied secret actually persists,
+#      so the value is re-asserted LAST, after any update!.
 #   2. An api token with empty preferences has NO permission scopes and every
 #      HTTP request is rejected "Authentication required".
-hermes_token_prefs = { 'permission' => %w[admin ticket.agent knowledge_base.editor] }
-hermes_token = Token.find_by(action: 'api', name: 'hermes')
-if hermes_token.nil?
-  hermes_token = Token.create!(action: 'api', name: 'hermes', persistent: true,
-                               user_id: admin.id, preferences: hermes_token_prefs)
-  hermes_token.update_column(:token, api_token)
-  changed = true
-else
-  if hermes_token.token != api_token
-    hermes_token.update_column(:token, api_token)
+token_prefs = { 'permission' => %w[ticket.agent knowledge_base.editor] }
+[
+  ['hermes', service_users[0], api_token],
+  ['ai', service_users[1], ai_api_token],
+].each do |name, user, value|
+  t = Token.find_by(action: 'api', name: name)
+  if t.nil?
+    t = Token.create!(action: 'api', name: name, persistent: true,
+                      user_id: user.id, preferences: token_prefs)
+    changed = true
+  elsif t.user_id != user.id || t.preferences != token_prefs || !t.persistent
+    t.update!(user_id: user.id, preferences: token_prefs, persistent: true)
     changed = true
   end
-  if hermes_token.preferences != hermes_token_prefs
-    hermes_token.update!(preferences: hermes_token_prefs)
+  if t.token != value
+    t.update_column(:token, value)
     changed = true
   end
 end
