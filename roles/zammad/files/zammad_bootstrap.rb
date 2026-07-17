@@ -86,7 +86,7 @@ service_users = [
     u = User.create!(login: email.downcase, firstname: first, lastname: last,
                      email: email.downcase, roles: desired_roles, active: true)
     changed = true
-  elsif u.roles.to_a.sort_by(&:id) != desired_roles.sort_by(&:id) || !u.active
+  elsif u.role_ids.sort != desired_roles.map(&:id).sort || !u.active
     # Reconcile drift: service accounts carry exactly their desired roles and
     # stay active — strip any elevated role that snuck on outside this
     # bootstrap.
@@ -108,6 +108,7 @@ end
 # Top-level org holds the humans + the interactive-AI account; hermes gets its
 # OWN non-shared org so its 24/7 auto-filed tickets live in a separate
 # container (filter, bulk-manage, or purge them without touching the rest).
+hermes_user, ai_user = service_users
 org_name = ENV['ZAMMAD_ORGANIZATION']
 if org_name && !org_name.empty?
   org = Organization.find_by(name: org_name)
@@ -115,7 +116,7 @@ if org_name && !org_name.empty?
     org = Organization.create!(name: org_name, shared: true, active: true)
     changed = true
   end
-  [admin, service_users[1]].each do |u|
+  [admin, ai_user].each do |u|
     next if u.organization_id == org.id
     u.update!(organization_id: org.id)
     changed = true
@@ -130,8 +131,8 @@ if hermes_org_name && !hermes_org_name.empty?
                                       note: 'Container for tickets auto-filed by the Hermes agent')
     changed = true
   end
-  unless service_users[0].organization_id == hermes_org.id
-    service_users[0].update!(organization_id: hermes_org.id)
+  unless hermes_user.organization_id == hermes_org.id
+    hermes_user.update!(organization_id: hermes_org.id)
     changed = true
   end
 end
@@ -256,8 +257,12 @@ begin
         { 'operator' => 'within last (relative)', 'range' => 'day', 'value' => ov['updated_within_days'] }
     end
     if ov['organization']
-      condition['ticket.organization_id'] =
-        { 'operator' => 'is', 'value' => [Organization.find_by!(name: ov['organization']).id] }
+      ov_org = Organization.find_by(name: ov['organization'])
+      if ov_org.nil?
+        warn "WARN: organization '#{ov['organization']}' not found — skipping overview '#{ov['name']}'."
+        next
+      end
+      condition['ticket.organization_id'] = { 'operator' => 'is', 'value' => [ov_org.id] }
     end
     Overview.create!(
       name: ov['name'], link: ov['link'], prio: ov['prio'], condition: condition,
