@@ -68,8 +68,11 @@ fi
 # Pin host identities: materialize the reviewed known_hosts (Doppler
 # SSH_KNOWN_HOSTS, harvested over authenticated channels) and verify strictly.
 # A rebuilt guest gets a new host key and fails closed until re-harvested —
-# that is the intended tradeoff. Without the pin ambient, ssh falls back to
-# the user's own known_hosts + interactive confirmation.
+# that is the intended tradeoff. These pinned options are PREPENDED and
+# OpenSSH uses the first value per option, so appended caller extras cannot
+# weaken them; GlobalKnownHostsFile is disabled so only the pin is consulted.
+# Without the pin ambient, non-interactive runs fail closed for any host not
+# already in the user's own known_hosts.
 if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   if [[ -z $CERT_DIR ]]; then
     CERT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ansible-sshkh.XXXXXX")
@@ -77,7 +80,7 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   fi
   printf '%s\n' "$SSH_KNOWN_HOSTS" > "$CERT_DIR/known_hosts"
   chmod 600 "$CERT_DIR/known_hosts"
-  export ANSIBLE_SSH_COMMON_ARGS="-o UserKnownHostsFile=$CERT_DIR/known_hosts -o StrictHostKeyChecking=yes${ANSIBLE_SSH_COMMON_ARGS:+ $ANSIBLE_SSH_COMMON_ARGS}"
+  export ANSIBLE_SSH_COMMON_ARGS="-o UserKnownHostsFile=$CERT_DIR/known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes${ANSIBLE_SSH_COMMON_ARGS:+ $ANSIBLE_SSH_COMMON_ARGS}"
 fi
 
 ansible-playbook "$PLAYBOOK" "$@"
