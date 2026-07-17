@@ -52,11 +52,64 @@
       https://packages.microsoft.com/config/debian/{{
       ansible_facts.distribution_major_version }}/packages-microsoft-prod.deb
 
-- name: Install the ASP.NET Core runtime
+- name: Check whether /usr/bin/dotnet is the legacy tarball muxer
+  ansible.builtin.stat:
+    path: /usr/bin/dotnet
+  register: technitium_install_legacy_muxer
+
+- name: Retire the legacy tarball .NET muxer symlink
+  # The fleet was built by Technitium's official install.sh: a tarball runtime in
+  # /opt/dotnet with /usr/bin/dotnet symlinked to it, owned by no package. The
+  # apt dotnet-host package ships /usr/bin/dotnet itself, so the unowned symlink
+  # is removed first — that way dpkg lays down its own link cleanly instead of us
+  # depending on its overwrite semantics for a file no package owns.
+  # Removing it cannot disturb a RUNNING server: the unit resolves ExecStart at
+  # start time, and the apt install below restores the path before any restart.
+  ansible.builtin.file:
+    path: /usr/bin/dotnet
+    state: absent
+  when:
+    - technitium_install_legacy_muxer.stat.islnk | default(false)
+    - technitium_install_dotnet_legacy_root in
+      (technitium_install_legacy_muxer.stat.lnk_target | default(''))
+
+- name: Install the ASP.NET Core runtimes
+  # Routed through apt-cacher-ng like every other apt call on these guests: the
+  # Microsoft repo is HTTPS-only, so the proxy tunnels it via the CONNECT
+  # passthrough the apt_cacher_ng role configures for packages.microsoft.com.
   ansible.builtin.apt:
-    name: "{{ technitium_install_dotnet_pkg }}"
+    name: "{{ technitium_install_dotnet_pkgs }}"
     state: present
     update_cache: true
+
+- name: Read the frameworks the active muxer can resolve
+  ansible.builtin.command:
+    cmd: /usr/bin/dotnet --list-runtimes
+  register: technitium_install_runtimes
+  changed_when: false
+  # check mode cannot install the repo or the packages, so the muxer legitimately
+  # has nothing to report yet — don't fail the dry-run on it.
+  failed_when: false
+
+- name: Require the pinned build's framework before touching the server
+  # THE safety gate. The binaries are swapped while dns.service is stopped, and a
+  # framework mismatch fails at assembly load — i.e. AFTER the old build is gone.
+  # Asserting here means a runtime that the muxer cannot see stops the play with
+  # DNS still serving, instead of stranding a stopped server with no rollback.
+  ansible.builtin.assert:
+    that:
+      - >-
+        'Microsoft.AspNetCore.App ' ~ technitium_install_dotnet_framework_major
+        in technitium_install_runtimes.stdout | default('')
+    fail_msg: >-
+      /usr/bin/dotnet does not expose Microsoft.AspNetCore.App
+      {{ technitium_install_dotnet_framework_major }}.x, which
+      {{ technitium_install_app_version }} requires. Resolved muxer:
+      {{ technitium_install_legacy_muxer.stat.lnk_target | default('/usr/bin/dotnet') }}.
+      Runtimes seen: {{ technitium_install_runtimes.stdout_lines | default([]) }}.
+      Refusing to swap binaries — the server is still running the old build.
+    quiet: true
+  when: not ansible_check_mode
 
 - name: Install Technitium DNS server (bare-metal from mirror)
   when: technitium_install_check.status == -1

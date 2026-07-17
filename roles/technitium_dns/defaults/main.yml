@@ -161,26 +161,27 @@ technitium_dns_query_log_app_name: "Log Exporter"
 # bucket over 443 with a valid wildcard cert the resolver already trusts.
 technitium_dns_query_log_app_mirror_endpoint: >-
   https://s3.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/artifacts
-# App version is pinned to the Log Exporter build compatible with the RUNNING
-# server: the app has its OWN version stream, unrelated to the server tag (app
-# 3.0.1 ships with server 15.4). It is sourced from the DnsServer repo at the
-# matching server tag — Apps/LogExporterApp/LogExporterApp.csproj carries the
-# authoritative <Version>. A Renovate bump is only a SIGNAL: it cannot re-host a
-# private object, and no datasource tracks this app, so major bumps are blocked
-# in renovate.json. On a server upgrade the operator MUST (1) read <Version>
-# from the csproj at the new server tag, (2) re-seed
-# artifacts/technitium/<filename> in object-storage, and (3) update the version
-# + sha256 below.
+# The app has its OWN version stream and is NOT coupled to the server tag. A
+# server upgrade does NOT require an app upgrade: this exact 2.1 build (the
+# official vendor zip mirrored below) was verified running on server 14.3 AND
+# on 15.4 — same zip, app loads, one DNS app class registered. The DNS app API
+# (DnsServerCore.ApplicationCommon) is stable across the 14->15 major, so do
+# not bump this pin just because the server moved.
 #
-# Neither download.technitium.com nor go.technitium.com is reachable from this
-# network, so the vendor zip cannot be mirrored directly. Build it instead —
-# `dotnet build -c Release` the csproj at the server tag inside the
-# mcr.microsoft.com/dotnet/sdk image, referencing TechnitiumLibrary{,.Net}.dll
-# and DnsServerCore.ApplicationCommon.dll extracted from the matching
-# technitium/dns-server image (those are <Private>false</Private> compile-time
-# refs, so using the image's own copies guarantees an ABI match). Zip the build
-# output flat, minus README.md, to match the vendor layout.
-technitium_dns_query_log_app_version: "3.0.1"
+# DO NOT hand-build this app from source. It was tried: a locally built 3.0.1
+# (the <Version> in Apps/LogExporterApp/LogExporterApp.csproj at tag v15.4.0)
+# installs and reports status ok, but its assembly fails to load on the server
+# with SecurityException "Invalid assembly public key" thrown out of
+# Technitium's own DnsApplicationAssemblyLoadContext.Load fallback loop. The
+# app then registers ZERO app classes and query-log export silently stops —
+# while /api/apps/list still reports the app as installed, so nothing looks
+# wrong. Only mirror official vendor-built zips here.
+#
+# Because neither download.technitium.com nor go.technitium.com is reachable
+# from this network, a NEW app version can only be pinned once its official zip
+# has been obtained out-of-band and re-seeded into artifacts/technitium/. Until
+# then this pin stays where it is. Renovate cannot track or re-host it.
+technitium_dns_query_log_app_version: "2.1"
 technitium_dns_query_log_app_filename: "LogExporterApp-{{ technitium_dns_query_log_app_version }}.zip"
 technitium_dns_query_log_app_url: >-
   {{ technitium_dns_query_log_app_mirror_endpoint }}/technitium/{{
@@ -188,7 +189,7 @@ technitium_dns_query_log_app_url: >-
 # sha256 of the mirrored zip — documents the exact pinned build (the
 # downloadAndInstall API has no checksum param, so this is verified by the
 # operator at seed time, not enforced at install). Update with the version.
-technitium_dns_query_log_app_sha256: "b2c32bb090e164b102185db819d97b0bf4cbe8cbe6090a5e9ffebfecce13f0c3"
+technitium_dns_query_log_app_sha256: "53e84d2c3b8715e5fd59b415b57920bd4845ef8cb38cc935c25bddb89915c7fd"
 # Same stable syslog entry point the syslog_forwarder role uses (the `syslog`
 # CNAME this very role creates -> HAProxy). Never a committed literal.
 technitium_dns_query_log_syslog_host: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
