@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.9.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.8.0...v2.9.0) (2026-07-17)
+
+
+### Features
+
+* **agent_sandbox:** egress boundary for ad-hoc autonomous agent containers ([#1082](https://github.com/dryvist/ansible-proxmox-apps/issues/1082)) ([a4eda65](https://github.com/dryvist/ansible-proxmox-apps/commit/a4eda65e313e4d4ec6c9d80893a7a13a69eadc19))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** image-default squid logging; docker group for launcher user ([#1085](https://github.com/dryvist/ansible-proxmox-apps/issues/1085)) ([21d6a18](https://github.com/dryvist/ansible-proxmox-apps/commit/21d6a187694698d867090e3c7fbaed25add6f8b2))
+* **agent_sandbox:** real squid tag; gate role to the agent host only ([#1084](https://github.com/dryvist/ansible-proxmox-apps/issues/1084)) ([054bcde](https://github.com/dryvist/ansible-proxmox-apps/commit/054bcde8906c835d6fcac30601f387cb4e42d13d))
+* **postgres:** create replication slots for the cluster being converged ([#1081](https://github.com/dryvist/ansible-proxmox-apps/issues/1081)) ([061f8c0](https://github.com/dryvist/ansible-proxmox-apps/commit/061f8c010ff03c2f394c9a8d9db95829465be430))
+* **traefik:** honour the ingress contract health_check_path ([#1080](https://github.com/dryvist/ansible-proxmox-apps/issues/1080)) ([af10dc4](https://github.com/dryvist/ansible-proxmox-apps/commit/af10dc48aad0f92c3484c8b3fa212ab357c478d6))
+
 ## [2.8.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.7.0...v2.8.0) (2026-07-17)
 
 
