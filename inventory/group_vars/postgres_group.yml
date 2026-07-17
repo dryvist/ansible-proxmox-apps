@@ -1,18 +1,20 @@
 ---
 # Shared native PostgreSQL (issue #138) — backs Nautobot now, Vikunja/EspoCRM
 # later. Secrets resolve bao-first (apps domain) with an env fallback; the
-# listener is narrowed to the data-VLAN reservation address.
+# listener is narrowed to the guest's live data-VLAN address.
 
-# Narrow the listener to the guest's own data-VLAN reservation address (derived
-# from the tofu inventory, never a literal). Falls back to the permissive role
-# default only when the reservation fact is absent (e.g. a molecule run, which
-# sets its own value anyway).
+# Narrow the listener to the address the guest ACTUALLY holds, discovered at
+# runtime — never an intended/reserved address. postgres silently skips a
+# listen_addresses entry it cannot bind, so any drift between the reservation
+# and the live lease degrades the cluster to localhost-only while it still
+# reports healthy. Falls back to the permissive role default only when the
+# fact is absent (e.g. a molecule run, which sets its own value anyway).
 # NB the space after the comma: postgres normalizes list GUCs to ", " — a
 # space-less value never matches SHOW output, so postgresql_set re-applies and
 # restarts the cluster on every converge.
 postgres_listen_addresses: >-
-  {{ ('localhost, ' ~ container_reserved_ip)
-     if (container_reserved_ip | default('', true) | length > 0)
+  {{ ('localhost, ' ~ ansible_default_ipv4.address)
+     if (ansible_default_ipv4.address | default('', true) | length > 0)
      else '*' }}
 
 # Databases on this shared cluster. Each password is bao-first
