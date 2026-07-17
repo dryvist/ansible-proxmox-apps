@@ -26,9 +26,14 @@
     postgres_group:nautobot_group:zammad_group:vikunja_group:
     sonarr_group:radarr_group:plex_group:seerr_group:sortarr_group:download_vpn_group:immich_group
   gather_facts: false
+  # `always`: every consumer role resolves its secrets bao-first, so a tagged
+  # converge (--tags zammad, --tags nautobot, ...) MUST still run this play —
+  # under the old `openbao_secrets, ai` tags a tagged converge skipped the
+  # fetch and templated empty passwords (zammad database.yml, 2026-07-16).
+  # The role still skips cleanly when BAO_ADDR / a domain's AppRole envs are
+  # unset, so `always` costs nothing in env-less runs.
   tags:
-    - openbao_secrets
-    - ai
+    - always
   tasks:
     - name: Fetch each resource-domain's KV subtree via its own AppRole
       ansible.builtin.include_role:
@@ -193,6 +198,24 @@
     - baseline
   roles:
     - role: ntp
+
+# =============================================================================
+# Phase 0a1b: OpenBao SSH client-CA trust on VMs (ssh-certificate-authority
+# ADR). SSH-reached guests only — LXCs get the same trust from ansible-proxmox
+# (pct push, no SSH chicken-and-egg). Runs after NTP: certificate validity is
+# time-bound and the role preflights clock sync. Pinned-fingerprint fetch,
+# fail-closed; static keys stay as break-glass until the WS4 rotation.
+# =============================================================================
+
+- name: Trust the OpenBao SSH client CA on VMs
+  hosts: vms:splunk_vms:docker_vms
+  become: true
+  gather_facts: true
+  tags:
+    - ssh_ca_trust
+    - baseline
+  roles:
+    - role: ssh_ca_trust
 
 # =============================================================================
 # Phase 0a2: Syslog forwarding to the central pipeline

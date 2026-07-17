@@ -1,0 +1,39 @@
+---
+# Deploy the pinned Technitium app build into app_dir. Shared by the fresh
+# install and the upgrade paths so both land the exact same layout.
+#
+# Callers gate this behind their own `when`, and it always replaces
+# app_dir/dns, so it reports changed whenever it runs — which is only when a
+# deploy is actually due.
+
+- name: Ensure the Technitium app directory exists
+  ansible.builtin.file:
+    path: "{{ technitium_install_app_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download the Technitium app from the mirror (checksum-pinned)
+  ansible.builtin.get_url:
+    url: "{{ technitium_install_app_url }}"
+    dest: /tmp/technitium-app.tgz
+    checksum: "sha256:{{ technitium_install_app_sha256 }}"
+    mode: "0644"
+
+- name: Remove the previous app build (no-op on first install)
+  # app_dir holds binaries only — all state lives in data_dir, which the unit
+  # passes to DnsServerApp.dll as an argument. Clearing it first keeps a
+  # downgrade from leaving newer stray assemblies behind to be loaded.
+  ansible.builtin.file:
+    path: "{{ technitium_install_app_dir }}/dns"
+    state: absent
+
+- name: Extract the Technitium app distribution
+  ansible.builtin.unarchive:
+    src: /tmp/technitium-app.tgz
+    dest: "{{ technitium_install_app_dir }}"
+    remote_src: true
+
+- name: Remove the downloaded tarball
+  ansible.builtin.file:
+    path: /tmp/technitium-app.tgz
+    state: absent

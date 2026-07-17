@@ -29,12 +29,36 @@ technitium_install_api_timeout: 30
 # the DNS-secondary bring-up entirely). Instead: the .NET runtime comes from
 # Microsoft's apt repo, and the Technitium app distribution is mirrored in our
 # own object-storage (RustFS) `artifacts` bucket (public-read, non-secret
-# binaries), captured from the official `technitium/dns-server:14.3.0` image's
-# `/opt/technitium/dns` (the 14.3 / .NET 9 build). Same bare-metal layout as the
+# binaries), captured from the official `technitium/dns-server:15.4.0` image's
+# `/opt/technitium/dns` (the 15.4 / .NET 10 build). Same bare-metal layout as the
 # primary; no single-vendor-host SPOF.
 
-# ASP.NET Core runtime package (installed from the Microsoft apt repo).
-technitium_install_dotnet_pkg: "aspnetcore-runtime-9.0"
+# ASP.NET Core runtime packages (from the Microsoft apt repo, reached through
+# apt-cacher-ng's packages.microsoft.com CONNECT passthrough). The FIRST entry
+# must match the target framework the pinned server build was compiled against:
+# 15.x is net10.0, 14.x was net9.0. A major bump moves that entry.
+#
+# The previous runtime stays in the list on purpose. .NET runs side-by-side, and
+# a rollback to the previous server build only starts if ITS framework is still
+# installed — dropping the old entry would silently disarm the rollback path.
+technitium_install_dotnet_pkgs:
+  - "aspnetcore-runtime-10.0"
+  - "aspnetcore-runtime-9.0"
+
+# The framework version 'dotnet --list-runtimes' must report before the binaries
+# are swapped. Derived from the pinned build's runtimeconfig.json "frameworks"
+# entry (15.4.0 requires Microsoft.AspNetCore.App 10.0.0).
+technitium_install_dotnet_framework_major: "10"
+
+# Where the apt-managed .NET lives. The fleet was originally built by
+# Technitium's official install.sh, which drops a self-managed tarball runtime in
+# /opt/dotnet and points /usr/bin/dotnet at it. Since .NET 7 the muxer only
+# probes frameworks under its OWN root, so an apt runtime under /usr/share/dotnet
+# is invisible to an /opt/dotnet muxer. The role converges onto the apt layout.
+# Verified live on Debian 13: the MS apt packages install the muxer + shared
+# frameworks under /usr/share/dotnet (NOT /usr/lib/dotnet).
+technitium_install_dotnet_apt_root: /usr/share/dotnet
+technitium_install_dotnet_legacy_root: /opt/dotnet
 
 # Mirror endpoint for the Technitium app tarball. The host + port resolve from
 # the published inventory (the object-storage container) — never a committed
@@ -49,15 +73,33 @@ technitium_install_mirror_endpoint: >-
 # every bump you MUST also: (1) re-seed artifacts/technitium/ in object-storage
 # from the new official build — extract /opt/technitium/dns from the matching
 # technitium/dns-server image and tar it with `dns/` as the archive root — and
-# (2) update technitium_install_app_sha256 below to the new tarball's digest.
+# (2) update technitium_install_app_sha256 below to the new tarball's digest,
+# (3) check the image's .deps.json "tfm" and move the first
+# technitium_install_dotnet_pkgs entry, technitium_install_dotnet_framework_major,
+# and the -netN suffix below if the target framework changed.
+# Renovate cannot do any of that, so major bumps are blocked in renovate.json.
 # renovate: datasource=docker depName=technitium/dns-server
 technitium_install_app_version: "15.4.0"
-technitium_install_app_filename: "technitium-dns-app-{{ technitium_install_app_version }}-net9.tgz"
+technitium_install_app_filename: "technitium-dns-app-{{ technitium_install_app_version }}-net10.tgz"
 technitium_install_app_url: "{{ technitium_install_mirror_endpoint }}/technitium/{{ technitium_install_app_filename }}"
 # sha256 of the mirror object — pins the exact build (the vendor installer
 # offered no such guarantee). Update together with the version on every re-seed.
-technitium_install_app_sha256: "c34d32e73502067dabaa1803234eb4921c3986bfe3e4bc7e070b584571a99d25"
+technitium_install_app_sha256: "c696f7ce59dc3833d6044a26042a0d0e9a5e53e375129e4e1f744eb76fc38f0e"
+
+# The API reports the running version with trailing zero components dropped
+# (DnsWebService.GetCleanVersion), but always keeps Major.Minor: 15.4.0 -> "15.4",
+# 15.4.1 -> "15.4.1". Pins mirror the Docker tag (always X.Y.Z), so normalize the
+# pin the same way to make the upgrade drift-compare idempotent. The anchored
+# two-group form is what protects Major.Minor: a bare `(\.0)+$` strip would turn
+# a future "16.0.0" into "16", which the server never reports.
+technitium_install_app_version_clean: >-
+  {{ technitium_install_app_version | regex_replace('^(\d+\.\d+)(\.0)+$', '\1') }}
 
 # Install + data dirs (match the existing primary's bare-metal layout).
 technitium_install_app_dir: "/opt/technitium"
 technitium_install_data_dir: "/etc/dns"
+# Pre-upgrade snapshot of the data dir, taken while the service is stopped. The
+# binary swap only touches app_dir, but a new major MIGRATES the config/zone
+# schema in data_dir on first start — so re-extracting the old tarball is not by
+# itself a rollback. Restoring this archive alongside it is.
+technitium_install_backup_dir: "/var/backups/technitium"

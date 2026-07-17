@@ -37,6 +37,13 @@
       {{ technitium_dns_query_log_app_name in
          (technitium_dns_apps_installed.json.response.apps | default([])
           | map(attribute='name') | list) }}
+    # The server renders this from the app assembly's version with trailing
+    # zero components dropped (DnsWebService.GetCleanVersion), so it compares
+    # equal to the plain pin: assembly 3.0.1.0 -> "3.0.1". Empty when absent.
+    technitium_dns_query_log_app_live_version: >-
+      {{ technitium_dns_apps_installed.json.response.apps | default([])
+         | selectattr('name', 'eq', technitium_dns_query_log_app_name)
+         | map(attribute='version') | first | default('', true) }}
   when: technitium_dns_apply | bool
 
 - name: Install the Log Exporter app from the internal object-storage mirror
@@ -59,6 +66,77 @@
     - technitium_dns_apply | bool
     - not technitium_dns_query_log_app_installed
   no_log: true
+
+# The install above only fires when the app is ABSENT, so an already-installed
+# app would keep its old build forever; this drift-gated update carries a
+# re-pinned version across. It is NOT needed to follow a server upgrade — the
+# DNS app API is stable across majors and the pinned build is verified on both
+# 14.3 and 15.4 (see defaults/main.yml). Firing only on drift is what keeps the
+# converge idempotent.
+- name: Update the Log Exporter app to the pinned version
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/apps/downloadAndUpdate?token={{
+      technitium_dns_api_token }}&name={{
+      technitium_dns_query_log_app_name | urlencode }}&url={{
+      technitium_dns_query_log_app_url | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_query_log_update
+  changed_when: technitium_dns_query_log_update.json.status == "ok"
+  failed_when: >-
+    technitium_dns_query_log_update.failed or
+    technitium_dns_query_log_update.json is not defined or
+    technitium_dns_query_log_update.json.status != "ok"
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_query_log_app_installed
+    - technitium_dns_query_log_app_live_version != technitium_dns_query_log_app_version
+  no_log: true
+
+# A broken app build is INVISIBLE to every check above: downloadAndInstall /
+# downloadAndUpdate return status ok as long as the zip unpacks, and the app
+# keeps showing up in /api/apps/list. But if its assembly fails to load, the
+# server registers zero app classes, reports the version as "0.0", and silently
+# exports nothing — query logs just stop reaching the syslog pipeline with no
+# error anywhere. A self-built 3.0.1 zip did exactly this on 15.4. Re-read the
+# list after install/update and fail loudly on that state.
+- name: Re-read the DNS app list after install or update
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/apps/list?token={{ technitium_dns_api_token }}"
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_apps_verify
+  changed_when: false
+  failed_when: >-
+    technitium_dns_apps_verify.failed or
+    technitium_dns_apps_verify.json is not defined or
+    technitium_dns_apps_verify.json.status != "ok"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Require the Log Exporter app to have actually loaded
+  vars:
+    technitium_dns_query_log_app_entry: >-
+      {{ technitium_dns_apps_verify.json.response.apps | default([])
+         | selectattr('name', 'eq', technitium_dns_query_log_app_name)
+         | first | default({}, true) }}
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_query_log_app_entry.dnsApps | default([]) | length > 0
+      - technitium_dns_query_log_app_entry.version | default('0.0') != "0.0"
+    fail_msg: >-
+      The '{{ technitium_dns_query_log_app_name }}' app is installed but loaded
+      NO app classes (version reported as
+      '{{ technitium_dns_query_log_app_entry.version | default('none') }}').
+      Its assembly failed to load, so query-log export is silently dead on this
+      host. The pinned zip is not a working build for this server — check the
+      DNS server log for an assembly load exception, and pin a version whose
+      OFFICIAL vendor-built zip is mirrored (never a hand-built one).
+    quiet: true
+  when: technitium_dns_apply | bool
 
 - name: Read the live Log Exporter app config
   ansible.builtin.uri:
