@@ -200,43 +200,43 @@ rescue => e
   warn "WARN: knowledge base not created automatically (#{e.class}: #{e.message}). Create it once in the UI."
 end
 
-# --- Overviews: saved filtered views so tickets stay filterable at scale -----
-# Idempotent by name. Conditions use the documented Overview condition schema.
-# Tag taxonomy convention (applied by seeds + agents; controlled vocabulary):
-#   system:  macos screenpipe vllm-mlx llama-swap postgres zammad vikunja plex
-#            hermes splunk wireguard windowserver
-#   class:   kernel-panic oom memory wedge outage degradation data-loss
-#            config-drift auth network wifi wan monitoring-gap llm-serving
-#   series:  rc-series (the Mac-performance root-cause investigation series)
-# Filter in the UI/API with tags:"<tag>" search syntax or the overviews below.
+# --- Overviews: saved filtered views, defined as DATA in zammad_overviews ----
+# (role defaults, ZAMMAD_OVERVIEWS json env). Idempotent by name. Each entry's
+# small declarative keys (open_only, priority_ids, tag, updated_within_days)
+# map onto Zammad's Overview condition schema here, so the YAML stays free of
+# Zammad internals.
 begin
+  require 'json'
+  overviews = JSON.parse(ENV['ZAMMAD_OVERVIEWS'] || '[]')
   agent_role_id = Role.find_by!(name: 'Agent').id
-  overview_defaults = {
-    roles: Role.where(id: agent_role_id), user_ids: [],
-    view: {
-      'd' => %w[title customer group state priority created_at],
-      's' => %w[title customer group state priority created_at],
-      'm' => %w[number title customer group state priority created_at],
-      'view_mode_default' => 's',
-    },
+  overview_view = {
+    'd' => %w[title customer group state priority created_at],
+    's' => %w[title customer group state priority created_at],
+    'm' => %w[number title customer group state priority created_at],
+    'view_mode_default' => 's',
   }
-  [
-    { name: 'Open incidents', prio: 1010, link: 'open_incidents',
-      condition: { 'ticket.state_id' => { operator: 'is', value: Ticket::State.by_category(:open).pluck(:id) } },
-      order: { by: 'priority_id', direction: 'DESC' } },
-    { name: 'Critical & high (open)', prio: 1020, link: 'critical_high_open',
-      condition: { 'ticket.state_id' => { operator: 'is', value: Ticket::State.by_category(:open).pluck(:id) },
-                   'ticket.priority_id' => { operator: 'is', value: [3, 4] } },
-      order: { by: 'priority_id', direction: 'DESC' } },
-    { name: 'RC series (Mac performance)', prio: 1030, link: 'rc_series',
-      condition: { 'ticket.tags' => { operator: 'contains one', value: 'rc-series' } },
-      order: { by: 'created_at', direction: 'ASC' } },
-    { name: 'Recently updated', prio: 1040, link: 'recently_updated',
-      condition: { 'ticket.updated_at' => { operator: 'within last (relative)', range: 'day', value: 7 } },
-      order: { by: 'updated_at', direction: 'DESC' } },
-  ].each do |ov|
-    next if Overview.exists?(name: ov[:name])
-    Overview.create!(overview_defaults.merge(ov))
+  overviews.each do |ov|
+    next if Overview.exists?(name: ov['name'])
+    condition = {}
+    if ov['open_only']
+      condition['ticket.state_id'] =
+        { 'operator' => 'is', 'value' => Ticket::State.by_category(:open).pluck(:id) }
+    end
+    if ov['priority_ids']
+      condition['ticket.priority_id'] = { 'operator' => 'is', 'value' => ov['priority_ids'] }
+    end
+    if ov['tag']
+      condition['ticket.tags'] = { 'operator' => 'contains one', 'value' => ov['tag'] }
+    end
+    if ov['updated_within_days']
+      condition['ticket.updated_at'] =
+        { 'operator' => 'within last (relative)', 'range' => 'day', 'value' => ov['updated_within_days'] }
+    end
+    Overview.create!(
+      name: ov['name'], link: ov['link'], prio: ov['prio'], condition: condition,
+      order: { 'by' => ov['order_by'], 'direction' => ov['order_direction'] },
+      roles: Role.where(id: agent_role_id), user_ids: [], view: overview_view
+    )
     changed = true
   end
 rescue => e
