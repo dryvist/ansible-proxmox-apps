@@ -7,6 +7,9 @@
     - loopback
     - the LAN subnet (web UIs + *arr <-> qBittorrent/Prowlarr)
     - UDP to the Proton WireGuard endpoint IP:port (the handshake)
+    - DNS (udp+tcp/53) to the internal Technitium resolvers (so rsyslog can
+      resolve the syslog CNAME for central log forwarding)
+    - syslog TCP to the pipeline LB (this guest's own logs -> Cribl/Splunk)
     - anything leaving via the wg0 tunnel interface
   Everything else is dropped. If wg0 goes down there is no route and no rule
   that permits non-VPN egress, so traffic is cut off instantly.
@@ -55,6 +58,21 @@ table inet killswitch {
 {% else %}
     ip6 daddr {{ _ep.host }} udp dport {{ _ep.port }} accept
 {% endif %}
+{% endfor %}
+
+    # 4b. DNS (udp+tcp/53) to the internal resolvers, so rsyslog can resolve the
+    #     `syslog` CNAME for central log forwarding. IPs from inventory, never
+    #     hardcoded. Resolvers may sit on a different VLAN than the LAN /24 above,
+    #     hence a dedicated rule rather than relying on rule 3.
+{% for _dns in download_vpn_resolvers_resolved | default([]) %}
+    ip daddr {{ _dns }} udp dport 53 accept
+    ip daddr {{ _dns }} tcp dport 53 accept
+{% endfor %}
+
+    # 4c. Syslog TCP to the pipeline LB (this guest's own logs -> Cribl/Splunk).
+    #     The `syslog` CNAME targets the `haproxy` host; IPs from inventory.
+{% for _sl in download_vpn_syslog_hosts_resolved | default([]) %}
+    ip daddr {{ _sl }} tcp dport {{ download_vpn_syslog_target_port }} accept
 {% endfor %}
 
     # 5. Anything via the VPN tunnel.
