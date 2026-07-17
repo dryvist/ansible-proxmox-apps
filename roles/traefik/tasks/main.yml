@@ -156,3 +156,42 @@
     enabled: true
     daemon_reload: true
   when: traefik_manage_services | bool
+
+# --- Post-deploy: verify Traefik actually ACCEPTED the dynamic config --------
+# Traefik's file provider hot-reloads dynamic.yml and, on a parse/build error,
+# logs it and SILENTLY KEEPS THE LAST-GOOD CONFIG (or none) — every backing
+# host then 404s with no signal. A rendered config that CI's YAML-parse guard
+# somehow still let through (or an env-specific breakage) would otherwise land
+# live and stay invisible until someone notices the outage. Flush the pending
+# restart, then fail the converge loudly if the file provider rejected the
+# config, instead of reporting a green run over a dead ingress.
+- name: Apply the pending Traefik restart before verifying the config loaded
+  ansible.builtin.meta: flush_handlers
+
+- name: Give Traefik's file provider a moment to (re)load the dynamic config
+  ansible.builtin.wait_for:
+    timeout: 5
+  when: traefik_manage_services | bool
+
+- name: Read the recent Traefik journal for file-provider errors
+  ansible.builtin.command:
+    cmd: journalctl -u traefik --no-pager --since "-30 seconds"
+  register: _traefik_journal
+  changed_when: false
+  failed_when: false
+  when: traefik_manage_services | bool
+
+- name: Fail loudly if Traefik rejected the rendered dynamic config
+  ansible.builtin.assert:
+    that:
+      # "collecting file configs" is Traefik's wrapper for ANY file-provider
+      # config error (YAML parse, unknown key, ...); it never appears on a clean
+      # load, so its presence means the live routers were NOT updated.
+      - "'collecting file configs' not in _traefik_journal.stdout"
+    fail_msg: >-
+      Traefik's file provider REJECTED the rendered dynamic config — the live
+      routers are stale and every host behind Traefik will 404. Fix
+      dynamic.yml.j2 and re-converge. Recent journal:
+      {{ _traefik_journal.stdout_lines[-12:] | join('\n') }}
+    success_msg: "Traefik accepted the dynamic config (file provider loaded clean)."
+  when: traefik_manage_services | bool
