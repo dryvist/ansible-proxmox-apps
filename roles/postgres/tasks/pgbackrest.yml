@@ -1,7 +1,9 @@
 ---
 # Object-storage PITR tier: pgBackRest archives WAL continuously and takes
-# scheduled base backups to an S3-compatible endpoint (RustFS; replicated to
-# Backblaze B2 out of band). Primary-only — a standby's WAL arrives via
+# scheduled base backups to an S3-compatible endpoint (repo1 = RustFS, and the
+# offsite repo2 when enabled — pgBackRest writes both itself; an out-of-band
+# mirror used to fill that role and silently copied a truncated subset, #1027).
+# Primary-only — a standby's WAL arrives via
 # streaming, and archive_command runs on the primary. Statically imported from
 # main.yml after the cluster is up and the version fact is set, so inner block
 # tags (never,pgbackrest_restore) behave exactly like inline tasks.
@@ -95,7 +97,7 @@
     # reports the stanza as present if it exists in ANY repo, so enabling repo2
     # on an existing host skipped creation and left the offsite repo
     # uninitialized. And `info` exits 0 with a stub for a missing stanza, so on a
-    # fresh host the gate never fired at all (#1017).
+    # fresh host the gate never fired at all (#1037).
     - name: Create the pgBackRest stanza in every configured repo
       become: true
       become_user: postgres
@@ -107,8 +109,8 @@
       register: postgres_pgbackrest_stanza_create
       changed_when: >-
         'already exists' not in
-        (postgres_pgbackrest_stanza_create.stdout | default('')
-         ~ postgres_pgbackrest_stanza_create.stderr | default(''))
+        ((postgres_pgbackrest_stanza_create.stdout | default(''))
+         ~ (postgres_pgbackrest_stanza_create.stderr | default('')))
 
     # `check` validates archiving against every configured repo, so enabling
     # repo2 extends this gate to the offsite copy automatically. Do NOT swap it
