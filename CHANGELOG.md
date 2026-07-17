@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.4.0...v2.5.0) (2026-07-17)
+
+
+### Features
+
+* **authelia:** passkey-first SSO role + Traefik forwardAuth gate ([#1038](https://github.com/dryvist/ansible-proxmox-apps/issues/1038)) ([2688acc](https://github.com/dryvist/ansible-proxmox-apps/commit/2688acca6ab90da0f93a04039998b5c63e40907c))
+* **postgres:** pgvector support + dedicated ai-VLAN memory cluster wiring ([#1035](https://github.com/dryvist/ansible-proxmox-apps/issues/1035)) ([2216b86](https://github.com/dryvist/ansible-proxmox-apps/commit/2216b8692f11f9f53eaeed183c9a491783893159))
+* **postgres:** write backups to an offsite repo2 natively ([#1029](https://github.com/dryvist/ansible-proxmox-apps/issues/1029)) ([d70a06f](https://github.com/dryvist/ansible-proxmox-apps/commit/d70a06ffb42de08ae2faa08862fd7f2ae927c687))
+* **ssh_ca_trust:** opt splunk_vms + docker_vms into SSH CA trust ([#1039](https://github.com/dryvist/ansible-proxmox-apps/issues/1039)) ([4eea8b5](https://github.com/dryvist/ansible-proxmox-apps/commit/4eea8b5d6a4530f33517857fb0ff61a4d09333e0))
+* **zammad:** seed the org + incident groups and make the hermes token usable ([#1022](https://github.com/dryvist/ansible-proxmox-apps/issues/1022)) ([903ab10](https://github.com/dryvist/ansible-proxmox-apps/commit/903ab1067c268133412f05eadb13ff2ce73368b4))
+
+
+### Bug Fixes
+
+* **postgres:** name the pgBackRest stanza for the host, not the cluster ([#1036](https://github.com/dryvist/ansible-proxmox-apps/issues/1036)) ([ca059f0](https://github.com/dryvist/ansible-proxmox-apps/commit/ca059f06178c08be714da2b84d7ccb3bb5ffb850))
+* **vikunja:** track the postgres primary-host cutover switch ([#1032](https://github.com/dryvist/ansible-proxmox-apps/issues/1032)) ([33e9369](https://github.com/dryvist/ansible-proxmox-apps/commit/33e9369c7f4afbec57fa5f8d71d21b17784a5012))
+
 ## [2.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.3.0...v2.4.0) (2026-07-17)
 
 
