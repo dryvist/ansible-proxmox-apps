@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.8.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.7.0...v2.8.0) (2026-07-17)
+
+
+### Features
+
+* **openbao:** add github-read/github-admin token-provider AppRoles ([#1012](https://github.com/dryvist/ansible-proxmox-apps/issues/1012)) ([0a38b19](https://github.com/dryvist/ansible-proxmox-apps/commit/0a38b1995ea92a923861bf52f5f6dfe6f1ad19f3))
+* **zammad:** seed the 10.0.1.x Default LAN delete/restore incident ([#1075](https://github.com/dryvist/ansible-proxmox-apps/issues/1075)) ([675ac28](https://github.com/dryvist/ansible-proxmox-apps/commit/675ac28345b223b8b3802c8c8a8b90f96daf1187))
+
+
+### Bug Fixes
+
+* **download_vpn:** route syslog log-shipping via LAN, not the VPN tunnel ([#1067](https://github.com/dryvist/ansible-proxmox-apps/issues/1067)) ([a2f5e2b](https://github.com/dryvist/ansible-proxmox-apps/commit/a2f5e2b07d66781e214ff785b6991b0b00b75b34))
+* **download-vpn:** route syslog via /32 in main table, immune to wg-quick rule ordering ([#1073](https://github.com/dryvist/ansible-proxmox-apps/issues/1073)) ([2ce72ec](https://github.com/dryvist/ansible-proxmox-apps/commit/2ce72ec3368624e5878654eba3b2fe3b2119ff45))
+* **syslog_forwarder:** set global workDirectory so imfile config validates ([#1060](https://github.com/dryvist/ansible-proxmox-apps/issues/1060)) ([570ce51](https://github.com/dryvist/ansible-proxmox-apps/commit/570ce51e507a844370833d00aae43d10252d1480))
+* **traefik:** fail the converge if Traefik rejects the rendered dynamic config ([#1069](https://github.com/dryvist/ansible-proxmox-apps/issues/1069)) ([9baec18](https://github.com/dryvist/ansible-proxmox-apps/commit/9baec18788c12b3528c1126d9d91f0955282a450))
+* **zammad:** SSO login as jevans, DB-password guard, self-healing restart ([#1070](https://github.com/dryvist/ansible-proxmox-apps/issues/1070)) ([8c3f107](https://github.com/dryvist/ansible-proxmox-apps/commit/8c3f107c331bd8cc2d4df86923f25c9ccb3c3756))
+
 ## [2.7.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.6.0...v2.7.0) (2026-07-17)
 
 
