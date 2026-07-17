@@ -6,16 +6,21 @@
 #    to expose ssh_ca_trust_principals and assert the deny-by-default
 #    principals map: `debian: [ansible]` only, `ai-agent` absent unless a
 #    group opts in via an override.
-# 3. Asserts the activation-gate FORMULA for the pin+rollout-both-true case,
-#    matching defaults/main.yml verbatim — this scenario does not stand up a
-#    live/mocked OpenBao endpoint to exercise the real fetch/write path, so a
-#    future edit to the boolean logic is what this assertion protects
-#    against. See PR description for what is/isn't covered.
+# 3. Asserts the role's OWN ssh_ca_trust_enabled (loaded from defaults/main.yml
+#    via vars_files below, then re-templated under overridden inputs) for all
+#    three gate combinations — not a hand-copied formula — so drift in the
+#    real boolean logic breaks this test. The pin+rollout-both-true path is
+#    exercised only through this derived var: this scenario does not stand up
+#    a live/mocked OpenBao endpoint to exercise the real fetch/write path. See
+#    PR description for what is/isn't covered.
 
 - name: Verify
   hosts: all
   become: true
   gather_facts: false
+
+  vars_files:
+    - ../../roles/ssh_ca_trust/defaults/main.yml
 
   tasks:
     - name: Stat the CA trust artifacts (should not exist — gate stayed closed both times)
@@ -47,29 +52,29 @@
           - "'ai-agent' not in (ssh_ca_trust_principals.debian | default([]))"
         fail_msg: "ssh_ca_trust_principals default drifted from the deny-by-default map"
 
-    - name: Assert the activation-gate formula opens when both conditions hold
+    - name: Assert the role's own gate opens when both conditions hold
       ansible.builtin.assert:
         that:
-          - (ca_fp | length > 0) and (rollout | bool)
-        fail_msg: "gate formula did not evaluate true with pin+rollout both set"
+          - ssh_ca_trust_enabled | bool
+        fail_msg: "ssh_ca_trust_enabled did not open with pin+rollout both set"
       vars:
-        ca_fp: "SHA256:fakeFAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKEfak"
-        rollout: true
+        ssh_ca_trust_ca_fingerprint: "SHA256:test"
+        ssh_ca_trust_rollout_enabled: true
 
-    - name: Assert the activation-gate formula stays closed when rollout is off
+    - name: Assert the role's own gate stays closed when rollout is off
       ansible.builtin.assert:
         that:
-          - not ((ca_fp | length > 0) and (rollout | bool))
-        fail_msg: "gate formula opened with rollout OFF"
+          - not (ssh_ca_trust_enabled | bool)
+        fail_msg: "ssh_ca_trust_enabled opened with rollout OFF"
       vars:
-        ca_fp: "SHA256:fakeFAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKEfak"
-        rollout: false
+        ssh_ca_trust_ca_fingerprint: "SHA256:test"
+        ssh_ca_trust_rollout_enabled: false
 
-    - name: Assert the activation-gate formula stays closed with no pin
+    - name: Assert the role's own gate stays closed with no pin
       ansible.builtin.assert:
         that:
-          - not ((ca_fp | length > 0) and (rollout | bool))
-        fail_msg: "gate formula opened with no pin"
+          - not (ssh_ca_trust_enabled | bool)
+        fail_msg: "ssh_ca_trust_enabled opened with no pin"
       vars:
-        ca_fp: ""
-        rollout: true
+        ssh_ca_trust_ca_fingerprint: ""
+        ssh_ca_trust_rollout_enabled: true
