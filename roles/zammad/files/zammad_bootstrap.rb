@@ -72,19 +72,25 @@ end
 # human-only. No password is set: these accounts are API-token-only and cannot
 # log in via the web UI.
 agent_role = [Role.find_by!(name: 'Agent')]
+# hermes also carries Customer: the zammad-incidents skill omits the customer
+# field, so Zammad makes the token's user the ticket customer — which routes
+# every Hermes-filed ticket into the dedicated Hermes org (blast-radius
+# isolation for a 24/7 autonomous filer).
+hermes_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 service_users = [
-  [hermes_email, 'Hermes', 'Agent'],
-  [ai_email, 'AI', 'Assistant'],
-].map do |email, first, last|
+  [hermes_email, 'Hermes', 'Agent', hermes_roles],
+  [ai_email, 'AI', 'Assistant', agent_role],
+].map do |email, first, last, desired_roles|
   u = User.find_by(email: email.downcase)
   if u.nil?
     u = User.create!(login: email.downcase, firstname: first, lastname: last,
-                     email: email.downcase, roles: agent_role, active: true)
+                     email: email.downcase, roles: desired_roles, active: true)
     changed = true
-  elsif u.roles.to_a != agent_role || !u.active
-    # Reconcile drift: service accounts are Agent-only and active — strip any
-    # elevated role that snuck on outside this bootstrap.
-    u.update!(roles: agent_role, active: true)
+  elsif u.role_ids.sort != desired_roles.map(&:id).sort || !u.active
+    # Reconcile drift: service accounts carry exactly their desired roles and
+    # stay active — strip any elevated role that snuck on outside this
+    # bootstrap.
+    u.update!(roles: desired_roles, active: true)
     changed = true
   end
   u
@@ -98,7 +104,11 @@ if kb_perm && !agent_role.first.permissions.include?(kb_perm)
   changed = true
 end
 
-# --- Top-level organization (create-or-find; all our users belong to it) -----
+# --- Organizations ------------------------------------------------------------
+# Top-level org holds the humans + the interactive-AI account; hermes gets its
+# OWN non-shared org so its 24/7 auto-filed tickets live in a separate
+# container (filter, bulk-manage, or purge them without touching the rest).
+hermes_user, ai_user = service_users
 org_name = ENV['ZAMMAD_ORGANIZATION']
 if org_name && !org_name.empty?
   org = Organization.find_by(name: org_name)
@@ -106,9 +116,23 @@ if org_name && !org_name.empty?
     org = Organization.create!(name: org_name, shared: true, active: true)
     changed = true
   end
-  ([admin] + service_users).each do |u|
+  [admin, ai_user].each do |u|
     next if u.organization_id == org.id
     u.update!(organization_id: org.id)
+    changed = true
+  end
+end
+
+hermes_org_name = ENV['ZAMMAD_HERMES_ORGANIZATION']
+if hermes_org_name && !hermes_org_name.empty?
+  hermes_org = Organization.find_by(name: hermes_org_name)
+  if hermes_org.nil?
+    hermes_org = Organization.create!(name: hermes_org_name, shared: false, active: true,
+                                      note: 'Container for tickets auto-filed by the Hermes agent')
+    changed = true
+  end
+  unless hermes_user.organization_id == hermes_org.id
+    hermes_user.update!(organization_id: hermes_org.id)
     changed = true
   end
 end
@@ -198,6 +222,57 @@ begin
   end
 rescue => e
   warn "WARN: knowledge base not created automatically (#{e.class}: #{e.message}). Create it once in the UI."
+end
+
+# --- Overviews: saved filtered views, defined as DATA in zammad_overviews ----
+# (role defaults, ZAMMAD_OVERVIEWS json env). Idempotent by name. Each entry's
+# small declarative keys (open_only, priority_ids, tag, updated_within_days)
+# map onto Zammad's Overview condition schema here, so the YAML stays free of
+# Zammad internals.
+begin
+  require 'json'
+  overviews = JSON.parse(ENV['ZAMMAD_OVERVIEWS'] || '[]')
+  overview_agent_role = Role.find_by!(name: 'Agent')
+  overview_view = {
+    'd' => %w[title customer group state priority created_at],
+    's' => %w[title customer group state priority created_at],
+    'm' => %w[number title customer group state priority created_at],
+    'view_mode_default' => 's',
+  }
+  overviews.each do |ov|
+    next if Overview.exists?(name: ov['name'])
+    condition = {}
+    if ov['open_only']
+      condition['ticket.state_id'] =
+        { 'operator' => 'is', 'value' => Ticket::State.by_category(:open).pluck(:id) }
+    end
+    if ov['priority_ids']
+      condition['ticket.priority_id'] = { 'operator' => 'is', 'value' => ov['priority_ids'] }
+    end
+    if ov['tag']
+      condition['ticket.tags'] = { 'operator' => 'contains one', 'value' => ov['tag'] }
+    end
+    if ov['updated_within_days']
+      condition['ticket.updated_at'] =
+        { 'operator' => 'within last (relative)', 'range' => 'day', 'value' => ov['updated_within_days'] }
+    end
+    if ov['organization']
+      ov_org = Organization.find_by(name: ov['organization'])
+      if ov_org.nil?
+        warn "WARN: organization '#{ov['organization']}' not found — skipping overview '#{ov['name']}'."
+        next
+      end
+      condition['ticket.organization_id'] = { 'operator' => 'is', 'value' => [ov_org.id] }
+    end
+    Overview.create!(
+      name: ov['name'], link: ov['link'], prio: ov['prio'], condition: condition,
+      order: { 'by' => ov['order_by'], 'direction' => ov['order_direction'] },
+      roles: [overview_agent_role], user_ids: [], view: overview_view
+    )
+    changed = true
+  end
+rescue => e
+  warn "WARN: overviews not seeded automatically (#{e.class}: #{e.message}). Create them once in the UI."
 end
 
 puts 'ZAMMAD_BOOTSTRAP_CHANGED' if changed

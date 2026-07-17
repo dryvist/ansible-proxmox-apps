@@ -418,9 +418,51 @@
         ZAMMAD_NOTIFICATION_SENDER: "{{ zammad_notification_sender }}"
         ZAMMAD_GROUPS: "{{ zammad_groups | join(',') }}"
         ZAMMAD_ORGANIZATION: "{{ zammad_organization }}"
+        ZAMMAD_HERMES_ORGANIZATION: "{{ zammad_hermes_organization }}"
+        ZAMMAD_OVERVIEWS: "{{ zammad_overviews | to_json }}"
       register: zammad_bootstrap
       changed_when: "'ZAMMAD_BOOTSTRAP_CHANGED' in zammad_bootstrap.stdout"
       no_log: true
+
+    # =========================================================================
+    # Phase 9b: Incident schema + backdated history (opt-in)
+    # Runs after the bootstrap (needs its groups/org/admin) and before the
+    # search-index rebuild, so seeded tickets land in the first index build.
+    # The two tasks are ordered: the custom fields must exist before the
+    # incident seed can set them.
+    # =========================================================================
+    - name: Seed incident custom fields and backdated incident history
+      when: zammad_seed_incidents | bool
+      block:
+        - name: Stage the ObjectManager attribute seed on the target
+          ansible.builtin.copy:
+            src: object_manager_attributes.rb
+            dest: "{{ zammad_root }}/ansible_object_manager_attributes.rb"
+            owner: "{{ zammad_user }}"
+            group: "{{ zammad_group }}"
+            mode: "0640"
+
+        - name: Run the idempotent Ticket custom-field seed
+          ansible.builtin.command:
+            cmd: "zammad run rails r {{ zammad_root }}/ansible_object_manager_attributes.rb"
+          register: zammad_attrs_seed
+          changed_when: "'ZAMMAD_ATTRS_CHANGED' in zammad_attrs_seed.stdout"
+
+        - name: Stage the backdated incident seed on the target
+          ansible.builtin.copy:
+            src: zz_incidents.rb
+            dest: "{{ zammad_root }}/ansible_zz_incidents.rb"
+            owner: "{{ zammad_user }}"
+            group: "{{ zammad_group }}"
+            mode: "0640"
+
+        - name: Run the idempotent incident seed
+          ansible.builtin.command:
+            cmd: "zammad run rails r {{ zammad_root }}/ansible_zz_incidents.rb"
+          register: zammad_incidents_seed
+          changed_when: >-
+            {{ 'created #' in zammad_incidents_seed.stdout
+               or 'backfilled' in zammad_incidents_seed.stdout }}
 
     # =========================================================================
     # Phase 10: Search-index rebuild (guarded — expensive, first time only)

@@ -73,6 +73,37 @@
        + ([download_vpn_wg_backup_endpoint]
           if (download_vpn_wg_failover_enabled | bool) else []) }}
 
+# The fail-closed killswitch would otherwise drop this guest's own logs. Punch
+# two holes, both derived from inventory here (reservation IP first, static ip
+# otherwise — same pattern as download_vpn_ntfy_url) and templated as literal
+# daddr rules: DNS to the internal resolvers, and syslog TCP to the pipeline LB.
+- name: Resolve internal DNS resolver IPs for the killswitch (DNS egress)
+  ansible.builtin.set_fact:
+    download_vpn_resolvers_resolved: "{{ (download_vpn_resolvers_resolved | default([]) + [_ip]) | unique }}"
+  vars:
+    _hv: "{{ hostvars[item] }}"
+    _ip: >-
+      {{ _hv.container_reserved_ip
+         if (_hv.container_reserved_ip | default('', true) | length > 0)
+         else (_hv.container_ip | default('', true)) }}
+  # Skip any host with no IP — a blank daddr renders an invalid nft rule that
+  # fails the whole killswitch apply. `| default('', true)` above keeps this
+  # guard from erroring when container_ip itself is undefined.
+  when: _ip | trim | length > 0
+  loop: "{{ groups[download_vpn_syslog_resolver_group] | default([]) }}"
+
+- name: Resolve syslog pipeline LB IPs for the killswitch (log egress)
+  ansible.builtin.set_fact:
+    download_vpn_syslog_hosts_resolved: "{{ (download_vpn_syslog_hosts_resolved | default([]) + [_ip]) | unique }}"
+  vars:
+    _hv: "{{ hostvars[item] }}"
+    _ip: >-
+      {{ _hv.container_reserved_ip
+         if (_hv.container_reserved_ip | default('', true) | length > 0)
+         else (_hv.container_ip | default('', true)) }}
+  when: _ip | trim | length > 0
+  loop: "{{ groups[download_vpn_syslog_lb_group] | default([]) }}"
+
 - name: Derive the IPv4-only tunnel address (drop any v6 half Proton issues)
   # Proton's Address is dual-stack ("10.2.0.2/32,fd00::.../128"); keep only the
   # IPv4 entry on the wg0 Address line so no v6 address is configured.
