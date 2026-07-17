@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.3.0...v2.4.0) (2026-07-17)
+
+
+### Features
+
+* **ssh_ca_trust:** roll out OpenBao SSH CA trust to the vms class ([#1025](https://github.com/dryvist/ansible-proxmox-apps/issues/1025)) ([0f0f75b](https://github.com/dryvist/ansible-proxmox-apps/commit/0f0f75b1a2ddf93df8000d023cca616c86ab31cc))
+
 ## [2.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.2.0...v2.3.0) (2026-07-17)
 
 
