@@ -84,6 +84,19 @@
       did not expose a server major version: {{ postgres_psql_version.stdout }}
   when: postgres_cluster_version | string | length == 0
 
+# Extension packages must be present on primary AND standbys (the standby
+# replays the catalog state but still needs the shared library on disk).
+- name: Install PGDG extension packages required by managed databases
+  ansible.builtin.apt:
+    name: >-
+      postgresql-{{ postgres_cluster_version }}-{{ postgres_extension_packages[item] }}
+    state: present
+  loop: >-
+    {{ postgres_managed_databases | map(attribute='extensions', default=[])
+       | flatten | unique | select('in', postgres_extension_packages) | list }}
+  # Contrib extensions map to an empty suffix — nothing to apt-install.
+  when: postgres_extension_packages[item] | length > 0
+
 - name: Check whether the PostgreSQL cluster config exists
   ansible.builtin.stat:
     path: "{{ postgres_conf_dir }}"
@@ -408,6 +421,17 @@
       loop_control:
         label: "{{ item.name }}"
       no_log: true
+
+    - name: Enable each managed database's extensions
+      community.postgresql.postgresql_ext:
+        db: "{{ item.0.name }}"
+        name: "{{ item.1 }}"
+        state: present
+      loop: >-
+        {{ postgres_managed_databases
+           | subelements('extensions', skip_missing=True) }}
+      loop_control:
+        label: "{{ item.0.name }}: {{ item.1 }}"
 
     - name: Allow each managed user to connect from its client CIDR (scram)
       community.postgresql.postgresql_pg_hba:
