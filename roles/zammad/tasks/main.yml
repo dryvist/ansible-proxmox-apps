@@ -384,10 +384,15 @@
           - zammad_admin_password | length > 0
           - zammad_hermes_api_token | length > 0
           - zammad_ai_api_token | length > 0
+          # Never let auth_sso be enabled with a blank trusted-IP list:
+          # verify_sso_trusted_ip! treats blank as "skip the check", so an empty
+          # value here silently accepts an SSO assertion from any source.
+          - zammad_sso_trusted_ips | length > 0
         fail_msg: >-
           ZAMMAD_ADMIN_PASSWORD, ZAMMAD_API_TOKEN and ZAMMAD_AI_API_TOKEN must
           be set before the first converge (Doppler/SOPS or OpenBao
-          apps/zammad + ai/hermes).
+          apps/zammad + ai/hermes), and zammad_sso_trusted_ips must be non-empty
+          (a blank value disables Zammad's SSO source check entirely).
         quiet: true
       no_log: true
 
@@ -416,6 +421,11 @@
         ZAMMAD_SMTP_HOST: "{{ zammad_smtp_host }}"
         ZAMMAD_SMTP_PORT: "{{ zammad_smtp_port }}"
         ZAMMAD_NOTIFICATION_SENDER: "{{ zammad_notification_sender }}"
+        ZAMMAD_SSO_LOGIN: "{{ zammad_sso_login }}"
+        ZAMMAD_SSO_EMAIL: "{{ zammad_sso_email }}"
+        ZAMMAD_SSO_FIRSTNAME: "{{ zammad_sso_firstname }}"
+        ZAMMAD_SSO_LASTNAME: "{{ zammad_sso_lastname }}"
+        ZAMMAD_SSO_TRUSTED_IPS: "{{ zammad_sso_trusted_ips }}"
         ZAMMAD_GROUPS: "{{ zammad_groups | join(',') }}"
         ZAMMAD_ORGANIZATION: "{{ zammad_organization }}"
         ZAMMAD_HERMES_ORGANIZATION: "{{ zammad_hermes_organization }}"
@@ -491,16 +501,43 @@
     # =========================================================================
     # Phase 11: Health
     # =========================================================================
-    - name: Wait for the Zammad web UI to answer through nginx
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ zammad_web_port }}/"
-        status_code: [200, 301, 302]
-        follow_redirects: none
-      register: zammad_health
-      until: zammad_health.status in [200, 301, 302]
-      retries: "{{ zammad_health_retries | int }}"
-      delay: "{{ zammad_health_delay | int }}"
-      changed_when: false
+    # Self-healing, because "config correct + process stale" is a trap this role
+    # cannot otherwise escape: a converge that rewrote database.yml and then
+    # failed before flushing handlers leaves Zammad running with the OLD
+    # credentials, and every later converge sees the file already correct,
+    # notifies no handler, and never restarts it — so the stale process 500s
+    # forever while every file on disk looks right. (Observed 2026-07-17:
+    # web started 05:58, database.yml rewritten 07:21, PG::ConnectionBad until
+    # a restart.) An unhealthy service therefore earns one restart and a
+    # re-check before the converge is allowed to fail.
+    - name: Ensure Zammad answers through nginx
+      block:
+        - name: Wait for the Zammad web UI to answer through nginx
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ zammad_web_port }}/"
+            status_code: [200, 301, 302]
+            follow_redirects: none
+          register: zammad_health
+          until: zammad_health.status in [200, 301, 302]
+          retries: "{{ zammad_health_retries | int }}"
+          delay: "{{ zammad_health_delay | int }}"
+          changed_when: false
+      rescue:
+        - name: Restart Zammad — the running process may predate its config
+          ansible.builtin.systemd_service:
+            name: zammad
+            state: restarted
+
+        - name: Wait for the Zammad web UI to answer after the restart
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ zammad_web_port }}/"
+            status_code: [200, 301, 302]
+            follow_redirects: none
+          register: zammad_health_retry
+          until: zammad_health_retry.status in [200, 301, 302]
+          retries: "{{ zammad_health_retries | int }}"
+          delay: "{{ zammad_health_delay | int }}"
+          changed_when: false
 
 # Publish the Zammad MCP connection to OpenBao (task #12). Deferred: gated on
 # zammad_token_publish_openbao (default false); the converge flips it with -e.
