@@ -18,6 +18,8 @@ SSoT DiffSync jobs. Current modeled coverage, all verified against source:
 | Fixed-IP reservations | IPAddress | UniFi fixed-ips | ✅ complete |
 | Guests (containers/VMs) | VirtualMachine (+ cluster, eth0, primary IP) | tofu inventory | ✅ complete |
 | Guest tags → groups | Tag | tofu inventory | ✅ complete |
+| DNS names | `IPAddress.dns_name` | reservation/guest hostnames | ✅ complete (77/77) |
+| VM interfaces | VMInterface (eth0) + primary IP | tofu inventory | ✅ complete (65) |
 | Proxmox nodes | Device (role pve-node) | Ansible hosts | ✅ complete |
 | Rack servers | Device / Rack | SOPS (optional) | ⚠️ retained; source file absent |
 
@@ -41,7 +43,6 @@ represent. Per-domain plan (no source-system changes — read-only ingestion onl
 
 | Source domain | Native target | Mechanism | Status |
 | --- | --- | --- | --- |
-| DNS names | `IPAddress.dns_name` | extend the reservation/guest seed | tractable next |
 | Physical devices/interfaces | DCIM Device/Interface | `nautobot-device-onboarding` (live discovery) | dry-run next |
 | Cabling | DCIM Cable | onboarding / manual as-known | after onboarding |
 | Firewall groups/rules, NAT/port-forwards | firewall models | `nautobot-firewall-models` app + SSoT job | needs app install |
