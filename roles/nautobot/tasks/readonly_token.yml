@@ -1,0 +1,88 @@
+---
+# Mint a role-managed, read-only Nautobot API token for the GraphQL dynamic
+# inventory (issue #1006) and publish it (with the API URL) to OpenBao so the
+# inventory plugin reads it bao-first — instead of the superuser creds that
+# secret/apps/nautobot holds today. Included from tasks/main.yml only when
+# nautobot_token_publish_openbao is true; BAO_ADDR/BAO_TOKEN must be in the
+# CONTROLLER environment. Mirrors roles/vikunja/tasks/mcp_tokens.yml (KV v2
+# read-modify-write that preserves sibling keys — the superuser creds stay put).
+
+- name: Assert OpenBao write credentials are present
+  ansible.builtin.assert:
+    that:
+      - nautobot_token_openbao_addr | length > 0
+      - nautobot_token_openbao_token | length > 0
+    fail_msg: >-
+      nautobot_token_publish_openbao is on but BAO_ADDR/BAO_TOKEN are unset.
+      Provide a write-capable OpenBao AppRole in the converge environment.
+    quiet: true
+
+- name: Resolve the OpenBao KV v2 data URL
+  ansible.builtin.set_fact:
+    nautobot_bao_kv_url: >-
+      {{ nautobot_token_openbao_addr }}/v1/{{
+      nautobot_token_openbao_mount }}/data/{{ nautobot_token_openbao_path }}
+
+- name: Ensure the read-only inventory token exists
+  ansible.builtin.command:
+    cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+    stdin: "{{ lookup('ansible.builtin.file', 'readonly_token_bootstrap.py') }}"
+  environment: "{{ nautobot_env | combine({'NAUTOBOT_RO_USERNAME': nautobot_ro_username}) }}"
+  register: nautobot_ro_token_run
+  changed_when: "'RO_TOKEN_CHANGED' in nautobot_ro_token_run.stdout"
+  become: true
+  become_user: "{{ nautobot_user }}"
+  no_log: true
+
+- name: Extract the read-only token from the bootstrap output
+  ansible.builtin.set_fact:
+    nautobot_ro_token: "{{ nautobot_ro_token_run.stdout | regex_search('RO_TOKEN=(\\S+)', '\\1') }}"
+  no_log: true
+
+- name: Read current OpenBao secret at {{ nautobot_token_openbao_path }}
+  ansible.builtin.uri:
+    url: "{{ nautobot_bao_kv_url }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ nautobot_token_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: nautobot_bao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Capture the current secret data (preserve siblings on write)
+  ansible.builtin.set_fact:
+    nautobot_bao_data: "{{ (nautobot_bao_current.json | default({}, true)).get('data', {}).get('data', {}) }}"
+  no_log: true
+
+# KV v2 replaces the whole secret, so merge the read-only URL + token over the
+# current data to preserve the superuser siblings. Guarded on an actual delta so
+# repeat converges no-op once URL + token are present and current.
+- name: Publish the read-only inventory connection to OpenBao
+  ansible.builtin.uri:
+    url: "{{ nautobot_bao_kv_url }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ nautobot_token_openbao_token }}"
+    body_format: json
+    body:
+      data: >-
+        {{ nautobot_bao_data
+           | combine({nautobot_token_openbao_url_key: nautobot_ro_url})
+           | combine({nautobot_token_openbao_token_key: nautobot_ro_token}) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: >-
+    nautobot_bao_data.get(nautobot_token_openbao_token_key) != nautobot_ro_token
+    or nautobot_bao_data.get(nautobot_token_openbao_url_key) != nautobot_ro_url
+  no_log: true
