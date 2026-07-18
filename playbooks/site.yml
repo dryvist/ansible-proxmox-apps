@@ -34,27 +34,39 @@
   # unset, so `always` costs nothing in env-less runs.
   tags:
     - always
+  # Wrapped in block/rescue for play-level failure isolation (issue #672): a
+  # hard failure on one host in this large combined-group play (e.g. an
+  # undefined var) would otherwise be 100% of that host's "batch" and abort
+  # every remaining play in site.yml, not just this one. See
+  # tasks/record_isolated_failure.yml for the mechanism.
   tasks:
-    - name: Fetch each resource-domain's KV subtree via its own AppRole
-      ansible.builtin.include_role:
-        name: openbao_secrets
+    - name: Converge OpenBao secrets pre-fetch (isolated — failure does not abort downstream plays)
+      block:
+        - name: Fetch each resource-domain's KV subtree via its own AppRole
+          ansible.builtin.include_role:
+            name: openbao_secrets
 
-    # Publish each domain's shared, un-prefixed fact at the playbook layer
-    # (like tofu_data in load_tofu.yml). openbao_secrets_by_domain was
-    # computed once on the delegated controller; a domain that was skipped
-    # (BAO_ADDR or that domain's creds unset) is simply absent from the dict,
-    # so `default({})` covers it the same as a host outside this play.
-    - name: Publish each domain's merged secrets to every host in this play
-      ansible.builtin.set_fact:
-        bao_observability_secrets: "{{ openbao_secrets_by_domain['observability'] | default({}) }}"
-        bao_local_cloud_secrets: "{{ openbao_secrets_by_domain['local-cloud'] | default({}) }}"
-        bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
-        bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
-        bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
-        bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
-      vars:
-        openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
-      no_log: true
+        # Publish each domain's shared, un-prefixed fact at the playbook layer
+        # (like tofu_data in load_tofu.yml). openbao_secrets_by_domain was
+        # computed once on the delegated controller; a domain that was skipped
+        # (BAO_ADDR or that domain's creds unset) is simply absent from the dict,
+        # so `default({})` covers it the same as a host outside this play.
+        - name: Publish each domain's merged secrets to every host in this play
+          ansible.builtin.set_fact:
+            bao_observability_secrets: "{{ openbao_secrets_by_domain['observability'] | default({}) }}"
+            bao_local_cloud_secrets: "{{ openbao_secrets_by_domain['local-cloud'] | default({}) }}"
+            bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
+            bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
+            bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
+            bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
+          vars:
+            openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
+          no_log: true
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: openbao-secrets-prefetch
 
 # =============================================================================
 # Phase 0: APT Cache Infrastructure
@@ -491,6 +503,11 @@
 # Mailpit SMTP relay and ntfy push notifications
 # =============================================================================
 
+# Independent leaf app plays below are wrapped in block/rescue for
+# play-level failure isolation (issue #672) — see
+# tasks/record_isolated_failure.yml for the mechanism and the end-of-run
+# gate play for how the run's exit code still reflects a failure.
+
 - name: Configure Mailpit SMTP relay
   hosts: mailpit_group
   become: true
@@ -499,8 +516,17 @@
     - mailpit
     - notifications
     - smtp
-  roles:
-    - role: mailpit_docker
+  tasks:
+    - name: Converge mailpit_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include mailpit_docker role
+          ansible.builtin.include_role:
+            name: mailpit_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: mailpit
 
 - name: Configure ntfy push notification server
   hosts: ntfy_group
@@ -510,8 +536,17 @@
     - ntfy
     - notifications
     - push
-  roles:
-    - role: ntfy_docker
+  tasks:
+    - name: Converge ntfy_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include ntfy_docker role
+          ansible.builtin.include_role:
+            name: ntfy_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: ntfy
 
 - name: Configure self-hosted Healthchecks (deadman watchdog receiver)
   hosts: healthchecks_group
@@ -521,8 +556,17 @@
     - healthchecks
     - monitoring
     - deadman
-  roles:
-    - role: healthchecks_docker
+  tasks:
+    - name: Converge healthchecks_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include healthchecks_docker role
+          ansible.builtin.include_role:
+            name: healthchecks_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: healthchecks
 
 # =============================================================================
 # Phase 4b: Keystone SPOF deadman watchdog
@@ -541,8 +585,17 @@
     - monitoring
     - deadman
     - resiliency
-  roles:
-    - role: service_deadman
+  tasks:
+    - name: Converge service_deadman (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include service_deadman role
+          ansible.builtin.include_role:
+            name: service_deadman
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: service_deadman
 
 # =============================================================================
 # Phase 5: Microsoft SQL Server
@@ -556,8 +609,17 @@
   tags:
     - mssql_docker
     - database
-  roles:
-    - role: mssql_docker
+  tasks:
+    - name: Converge mssql_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include mssql_docker role
+          ansible.builtin.include_role:
+            name: mssql_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: mssql_docker
 
 # =============================================================================
 # Phase 5b: Shared PostgreSQL + Nautobot IPAM/DCIM (issue #138)
@@ -596,8 +658,17 @@
   gather_facts: true
   tags:
     - nautobot
-  roles:
-    - role: nautobot
+  tasks:
+    - name: Converge nautobot (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include nautobot role
+          ansible.builtin.include_role:
+            name: nautobot
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: nautobot
 
 # =============================================================================
 # Phase 7: GitHub Actions Runners
@@ -611,9 +682,18 @@
   tags:
     - github_runner
     - ci
-  roles:
-    - role: github_runner
-      when: github_runner_admin_token is defined or github_runner_token is defined
+  tasks:
+    - name: Converge github_runner (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include github_runner role
+          ansible.builtin.include_role:
+            name: github_runner
+          when: github_runner_admin_token is defined or github_runner_token is defined
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: github_runner
 
 # =============================================================================
 # Phase 7a: Agent Sandbox Egress Boundary
@@ -628,9 +708,18 @@
   gather_facts: false
   tags:
     - agent_sandbox
-  roles:
-    - role: agent_sandbox
-      when: inventory_hostname == agent_sandbox_host | default('docker-host')
+  tasks:
+    - name: Converge agent_sandbox (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include agent_sandbox role
+          ansible.builtin.include_role:
+            name: agent_sandbox
+          when: inventory_hostname == agent_sandbox_host | default('docker-host')
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: agent_sandbox
 
 # =============================================================================
 # Phase 7b: iDRAC KVM HTML5 Viewer
@@ -647,8 +736,17 @@
     - idrac
     - oob
     - management
-  roles:
-    - role: idrac_kvm_docker
+  tasks:
+    - name: Converge idrac_kvm_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include idrac_kvm_docker role
+          ansible.builtin.include_role:
+            name: idrac_kvm_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: idrac_kvm_docker
 
 # =============================================================================
 # Phase 8a-bis: AI Orchestration Layer
@@ -661,8 +759,17 @@
   tags:
     - n8n_docker
     - ai-orchestration
-  roles:
-    - role: n8n_docker
+  tasks:
+    - name: Converge n8n_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include n8n_docker role
+          ansible.builtin.include_role:
+            name: n8n_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: n8n_docker
 
 # =============================================================================
 # Phase 8b: OpenProject Community Edition
@@ -680,8 +787,17 @@
     - openproject_docker
     - projects
     - collaboration
-  roles:
-    - role: openproject_docker
+  tasks:
+    - name: Converge openproject_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include openproject_docker role
+          ansible.builtin.include_role:
+            name: openproject_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: openproject_docker
 
 # =============================================================================
 # Phase 8.4: OpenBao secrets-management engine (machine/IaC/dynamic secrets)
@@ -703,8 +819,17 @@
     - openbao
     - secrets
     - secrets-management
-  roles:
-    - role: openbao
+  tasks:
+    - name: Converge openbao (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include openbao role
+          ansible.builtin.include_role:
+            name: openbao
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: openbao
 
 # =============================================================================
 # Phase 8c: Media stack (pve2)
@@ -714,9 +839,14 @@
 #
 # ORDERING IS DELIBERATE — RESILIENCE: download_vpn imports its own validate.yml
 # at the end and FAILS its play on any killswitch/leak violation (correct: the
-# tunnel must never leak). These are independent plays per host-group with no
-# any_errors_fatal, so a download_vpn failure does NOT abort the others — and by
-# running it LAST, Sonarr/Radarr/Plex/Seerr are already converged and serving
+# tunnel must never leak). Every play below is wrapped in block/rescue for
+# play-level failure isolation (issue #672) — a download_vpn failure does NOT
+# abort the others, and a plain `any_errors_fatal: false` is NOT sufficient for
+# that on its own (it only changes what happens when *some* hosts in a play
+# fail; when the *only* host in a narrow group like download_vpn_group fails,
+# Ansible's executor aborts every remaining play in the run regardless of
+# any_errors_fatal — see tasks/record_isolated_failure.yml). By running
+# download_vpn LAST, Sonarr/Radarr/Plex/Seerr are already converged and serving
 # before the fragile, security-gated downloader is even attempted. qBittorrent is
 # not required for Plex. Do NOT move download_vpn earlier and do NOT weaken its
 # validate.yml; resilience comes from play isolation + ordering, not from making
@@ -730,8 +860,17 @@
   tags:
     - sonarr
     - media
-  roles:
-    - role: sonarr
+  tasks:
+    - name: Converge sonarr (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include sonarr role
+          ansible.builtin.include_role:
+            name: sonarr
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: sonarr
 
 - name: Configure Radarr (LAN-only movie PVR)
   hosts: radarr_group
@@ -740,8 +879,17 @@
   tags:
     - radarr
     - media
-  roles:
-    - role: radarr
+  tasks:
+    - name: Converge radarr (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include radarr role
+          ansible.builtin.include_role:
+            name: radarr
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: radarr
 
 - name: Configure Plex Media Server (LAN-only)
   hosts: plex_group
@@ -750,15 +898,26 @@
   tags:
     - plex
     - media
-  roles:
-    - role: plex
-    # Playback visibility: a session probe that alerts on forced transcode
-    # (incident history: Zammad ticket #17040, Media). Carries its own
-    # `media_monitor` tag so `--tags media_monitor` converges just this role
-    # (e.g. to run its absent-cleanup) without re-converging the Plex role.
-    - role: media_monitor
-      tags:
-        - media_monitor
+  tasks:
+    - name: Converge plex + media_monitor (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include plex role
+          ansible.builtin.include_role:
+            name: plex
+        # Playback visibility: a session probe that alerts on forced transcode
+        # (incident history: Zammad ticket #17040, Media). Carries its own
+        # `media_monitor` tag so `--tags media_monitor` converges just this role
+        # (e.g. to run its absent-cleanup) without re-converging the Plex role.
+        - name: Include media_monitor role
+          ansible.builtin.include_role:
+            name: media_monitor
+          tags:
+            - media_monitor
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: plex
 
 # Seerr request UI (Docker in LXC). Registers Sonarr/Radarr/Plex via its settings
 # API — depends only on those apps being up (from the plays above), not on the
@@ -771,8 +930,17 @@
   tags:
     - seerr
     - media
-  roles:
-    - role: seerr
+  tasks:
+    - name: Converge seerr (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include seerr role
+          ansible.builtin.include_role:
+            name: seerr
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: seerr
 
 # Sortarr insights dashboard (Docker in LXC). Read-only — reads Sonarr/Radarr
 # (and optionally Plex) via their existing API keys; registers nothing back
@@ -784,23 +952,40 @@
   tags:
     - sortarr
     - media
-  roles:
-    - role: sortarr
+  tasks:
+    - name: Converge sortarr (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include sortarr role
+          ansible.builtin.include_role:
+            name: sortarr
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: sortarr
 
-# VPN-locked downloader runs LAST (see Phase 8c header). any_errors_fatal is
-# explicitly false so a killswitch/leak failure here can never abort the media
+# VPN-locked downloader runs LAST (see Phase 8c header). Isolated via
+# block/rescue so a killswitch/leak failure here can never abort the media
 # stack converged above.
 - name: Configure VPN-locked downloader (qBittorrent + Prowlarr)
   hosts: download_vpn_group
   become: true
   gather_facts: true
-  any_errors_fatal: false
   tags:
     - download_vpn
     - media
     - vpn
-  roles:
-    - role: download_vpn
+  tasks:
+    - name: Converge download_vpn (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include download_vpn role
+          ansible.builtin.include_role:
+            name: download_vpn
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: download_vpn
 
 # Self-wiring: auto-configures the Prowlarr <-> Sonarr/Radarr <-> qBittorrent
 # pipeline via each app's API (deterministic SOPS keys). Runs from the
@@ -814,8 +999,17 @@
   tags:
     - servarr_wiring
     - media
-  roles:
-    - role: servarr_wiring
+  tasks:
+    - name: Converge servarr_wiring (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include servarr_wiring role
+          ansible.builtin.include_role:
+            name: servarr_wiring
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: servarr_wiring
 
 # Enforce TRaSH-Guides quality profiles + custom formats on Sonarr/Radarr via
 # the official Configarr container. Runs on docker-host (reaches the *arr LAN
@@ -830,8 +1024,17 @@
   tags:
     - configarr
     - media
-  roles:
-    - role: configarr
+  tasks:
+    - name: Converge configarr (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include configarr role
+          ansible.builtin.include_role:
+            name: configarr
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: configarr
 
 # Immich photo/video backup (Docker-in-LXC). Standalone — no cross-app API
 # wiring; phone/Mac clients point straight at it. Inert until an LXC is tagged
@@ -844,8 +1047,17 @@
     - immich
     - media
     - photos
-  roles:
-    - role: immich
+  tasks:
+    - name: Converge immich (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include immich role
+          ansible.builtin.include_role:
+            name: immich
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: immich
 
 # =============================================================================
 # Phase 8e: Home Assistant (Docker-in-LXC)
@@ -861,8 +1073,17 @@
   tags:
     - homeassistant
     - automation
-  roles:
-    - role: homeassistant
+  tasks:
+    - name: Converge homeassistant (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include homeassistant role
+          ansible.builtin.include_role:
+            name: homeassistant
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: homeassistant
 
 # =============================================================================
 # Phase 8f: phpIPAM (Docker-in-LXC)
@@ -877,8 +1098,17 @@
   tags:
     - phpipam
     - ipam
-  roles:
-    - role: phpipam
+  tasks:
+    - name: Converge phpipam (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include phpipam role
+          ansible.builtin.include_role:
+            name: phpipam
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: phpipam
 
 # =============================================================================
 # Phase 8g: Vikunja task management (issue #141)
@@ -895,8 +1125,17 @@
     - vikunja
     - projects
     - collaboration
-  roles:
-    - role: vikunja
+  tasks:
+    - name: Converge vikunja (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include vikunja role
+          ansible.builtin.include_role:
+            name: vikunja
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: vikunja
 
 # =============================================================================
 # Phase 8h: Zammad ITSM/ticketing + knowledge base (incident-management SoR)
@@ -914,8 +1153,17 @@
     - zammad
     - itsm
     - incident
-  roles:
-    - role: zammad
+  tasks:
+    - name: Converge zammad (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include zammad role
+          ansible.builtin.include_role:
+            name: zammad
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: zammad
 
 # =============================================================================
 # Phase 8c2: Authelia SSO portal (criticality-1 core service, auth plane)
@@ -949,12 +1197,23 @@
   tags:
     - traefik
     - ingress
-  roles:
-    - role: traefik
-    # keepalived floats the ingress VRRP virtual IP across every Traefik
-    # instance so a node loss migrates ingress automatically (no manual DR).
-    # No-ops below 2 ingress instances / without a published VIP.
-    - role: keepalived
+  tasks:
+    - name: Converge traefik + keepalived (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include traefik role
+          ansible.builtin.include_role:
+            name: traefik
+        # keepalived floats the ingress VRRP virtual IP across every Traefik
+        # instance so a node loss migrates ingress automatically (no manual DR).
+        # No-ops below 2 ingress instances / without a published VIP.
+        - name: Include keepalived role
+          ansible.builtin.include_role:
+            name: keepalived
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: traefik
 
 # =============================================================================
 # Phase 9: Systemd Restart Policies
@@ -973,3 +1232,25 @@
   roles:
     - role: systemd_restart_policy
       when: systemd_restart_policy_services | default([]) | length > 0
+
+# =============================================================================
+# Phase 10: End-of-run failure gate (issue #672)
+# Every independent app play above records its own failures into
+# site_isolated_failures (see tasks/record_isolated_failure.yml) instead of
+# letting them abort the rest of the run. This final play is what makes the
+# overall ansible-playbook exit code non-zero again when that happened, so
+# CI/cron/exit-code monitoring is never silently green on a real failure.
+# =============================================================================
+
+- name: Fail the run if any isolated play recorded a failure
+  hosts: localhost
+  gather_facts: false
+  tags:
+    - always
+  tasks:
+    - name: Surface isolated play failures
+      ansible.builtin.fail:
+        msg: >-
+          {{ site_isolated_failures | length }} isolated play failure(s) —
+          the rest of site.yml still ran: {{ site_isolated_failures | join('; ') }}
+      when: site_isolated_failures | default([]) | length > 0
