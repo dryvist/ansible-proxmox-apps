@@ -179,3 +179,33 @@ Each step is independently reversible because Phase 1 leaves the artifact intact
 Rollback invariant: **keep the old writer's data intact and the old artifact
 published until the new reader path is proven green**, so any step reverts to a
 known-good source with no data reconstruction.
+
+## 9. Phase-2 safety gates (from adversarial review)
+
+These gates were surfaced by an independent review and must be satisfied before
+authority flips — schema validity and additive absorption are necessary but not
+sufficient.
+
+- **Semantic validation, not just schema.** A schema-valid export can still
+  carry duplicate IP allocations, overlapping subnets, duplicate MACs, or
+  unresolvable FQDNs. Before Phase 2 applies Nautobot data, run pre-flight checks
+  for IP collisions, subnet overlap, duplicate MAC, and FQDN resolvability. A
+  schema pass alone must not gate the flip.
+- **Drift triage before absorption.** Classify every drift item before it enters
+  Nautobot: IaC-managed (stale seed — safe to absorb), ephemeral/test, or
+  genuinely out-of-band (created outside IaC). Absorbing an out-of-band object
+  makes it authoritative with no OpenTofu state behind it — a Phase-2 trap where
+  the controller has no HCL/state and may conflict or re-create. Only IaC-sourced
+  facts absorb silently; others are classified or fixed upstream first.
+- **Explicit DiffSync diff, reviewed before commit.** The seed runner commits
+  directly (`dryrun=False`). Phase-2-grade absorption should first run the SSoT
+  jobs in `dryrun=True`, capture the create/update/delete DiffSync diff, and
+  review it before the committing run — the drift report is a proxy, not the
+  native diff.
+- **Deletion-safety cap.** Additive models make delete a no-op today; if any
+  future sync enables deletion, gate it on a threshold (e.g. abort if >5% of a
+  model's objects would be deleted) so a bad source never mass-deletes.
+- **No boot-loop dependency.** Nautobot must never become a boot prerequisite for
+  the execution planes: if it is down or state-lost, DNS/DHCP/controllers and
+  OpenTofu must still boot and be able to reconstruct Nautobot — not deadlock
+  waiting on it. Audit the recovery order before the flip.
