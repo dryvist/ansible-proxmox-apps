@@ -77,6 +77,38 @@ zammad_ai_email: "ai@{{ tofu_data.domain }}"
 zammad_hermes_api_token: "{{ lookup('env', 'ZAMMAD_API_TOKEN') }}"
 zammad_ai_api_token: "{{ lookup('env', 'ZAMMAD_AI_API_TOKEN') }}"
 
+# --- AI provider: Zammad AI on Hermes' brain (the LiteLLM router) -------------
+# Zammad's built-in AI features (ticket summaries, writing assistant) run against
+# the SAME LLM front door Hermes and n8n use — the LiteLLM router at
+# https://llm.<subdomain>/v1 — NOT through the Hermes agent. Provider type is
+# `custom_open_ai` (Zammad's "Custom (OpenAI-compatible)" option); the URL MUST
+# include `/v1` because that provider appends `/chat/completions` and `/models`
+# itself. Seeded idempotently by zammad_bootstrap.rb with validate:false so an
+# unreachable brain at converge time cannot abort essential seeding (the
+# validated path pings the endpoint). Turn the whole block off with
+# zammad_ai_enabled: false (molecule/dry runs never reach it — bootstrap is
+# gated on zammad_manage_app).
+#
+# AI *Agents* (AI::Agent records) are intentionally NOT seeded here yet: their
+# prompts belong in the canonical dryvist/ai-llm-prompts registry (see
+# docs/ai-prompt-format.md), consumed once migration resumes after the main push.
+zammad_ai_enabled: true
+zammad_ai_provider_name: custom_open_ai
+zammad_ai_provider_url: "https://llm.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/v1"
+# Model to request. Defaults to the router alias n8n already uses; override via
+# ZAMMAD_AI_MODEL to match Hermes' ai_default_model (the "OptiQ brain") when they
+# differ. Zammad needs a model that reliably emits strict JSON.
+zammad_ai_model: "{{ lookup('env', 'ZAMMAD_AI_MODEL') | default('gpt-oss-120b', true) }}"
+# Bearer for the router. custom_open_ai treats the token as optional, but our
+# router requires it — group_vars supplies it bao-first (ai/llm's
+# LLM_ROUTER_MASTER_KEY); this env-only default is the fallback.
+zammad_ai_provider_token: "{{ lookup('env', 'LLM_ROUTER_MASTER_KEY') }}"
+# Per-feature toggles enabled once the provider is configured. Names match
+# zammad/zammad (Setting area AI::Assistance).
+zammad_ai_features:
+  - ai_assistance_ticket_summary
+  - ai_assistance_text_tools
+
 # --- Human SSO account (Authelia forwardAuth identity) ------------------------
 # `login` MUST equal the Authelia username verbatim: Zammad's create_sso does
 # User.lookup(login: ...) on the Remote-User header value, so the email is
