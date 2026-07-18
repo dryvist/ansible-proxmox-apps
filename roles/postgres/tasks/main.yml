@@ -346,12 +346,34 @@
 
     - name: Ensure a physical replication slot exists for each standby
       community.postgresql.postgresql_slot:
-        name: "standby_{{ item | regex_replace('[^A-Za-z0-9]', '_') }}"
+        name: "{{ item }}"
         slot_type: physical
         state: present
+      loop: "{{ postgres_expected_replication_slots }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # Reconcile: a standby removed from the cluster leaves its slot behind, and
+    # an inactive slot retains WAL forever. Drop any inactive physical slot with
+    # no matching converged standby. The active = false filter means a live
+    # standby's slot (even one briefly down but still expected) is never a drop
+    # candidate; postgresql_slot state=absent also refuses an active slot.
+    - name: Enumerate inactive physical replication slots
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT slot_name FROM pg_replication_slots
+          WHERE slot_type = 'physical' AND active = false
+      register: postgres_inactive_slots
+      changed_when: false
+
+    - name: Drop inactive slots with no converged standby (orphan reconcile)
+      community.postgresql.postgresql_slot:
+        name: "{{ item }}"
+        state: absent
       loop: >-
-        {{ groups[postgres_cluster_group] | default([])
-           | difference([postgres_primary_host]) }}
+        {{ postgres_inactive_slots.query_result | map(attribute='slot_name') | list
+           | difference(postgres_expected_replication_slots) }}
       loop_control:
         label: "{{ item }}"
 

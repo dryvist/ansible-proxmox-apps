@@ -126,6 +126,15 @@ postgres_replication_password: >-
 # One physical slot per standby, so the primary retains WAL while a standby is
 # down instead of relying on wal_keep_size guesswork.
 postgres_replication_slot: "standby_{{ inventory_hostname | regex_replace('[^A-Za-z0-9]', '_') }}"
+# Final physical-slot names the primary must have — one per standby in this
+# cluster. Single source of truth for the create loop and the orphan reconcile,
+# so the name transform can never drift between them. Lazily evaluated, so
+# groups[...] resolves per-host at runtime and stays overridable (molecule).
+postgres_expected_replication_slots: >-
+  {{ groups.get(postgres_cluster_group, [])
+     | difference([postgres_primary_host])
+     | map('regex_replace', '[^A-Za-z0-9]', '_')
+     | map('regex_replace', '^', 'standby_') | list }}
 # CIDR the primary accepts replication connections from (the standby's subnet).
 # Same env-derived pg_hba pattern as the app client_cidrs — pg_hba needs a CIDR,
 # not an FQDN, so this is the one legitimate place for one, and even here it is

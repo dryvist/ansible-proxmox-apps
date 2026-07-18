@@ -35,22 +35,30 @@ The engines are already paid for — installed, version-pinned, checksum- and
 signature-verified, and mounted. Reaching past a working engine for KV
 re-introduces every property the engine was adopted to eliminate.
 
-## What is already enabled — check before you build
+## What is live — check before you build
 
 | Resource | Engine | Mount | Mint from |
 | --- | --- | --- | --- |
-| GitHub | `vault-plugin-secrets-github` | `github` | `github/token/<permission_set>` |
+| GitHub | `vault-plugin-secrets-github` | `github` | `github/token/<permission_set>` or the tiered AppRoles below |
 | AWS | `openbao-plugins` secrets-aws | `aws` | `aws/sts/<role>` |
 
 Both default to enabled (`openbao_github_engine_enabled`,
-`openbao_aws_engine_enabled` in `roles/openbao/defaults/main.yml`).
+`openbao_aws_engine_enabled` in `roles/openbao/defaults/main.yml`). AWS has been
+converged and live for some time; the **GitHub engine was configured and
+converged on 2026-07-17** (App `openbao-service-broker`, both installations,
+read + per-repo-write + admin tiers). Engine-not-ready is never a licence to
+seed a PAT: if the GitHub engine is ever found unconfigured on a cluster, the
+fix is to converge it (supply the App credentials), not to reach for KV.
 
-**GitHub — do not build a new grant.** The `github-mint` base-capability policy
-(`templates/github-mint-policy.hcl.j2`) already grants
-`github/token/<permission_set>` for every administrator-defined permission set,
-and already composes with the KV leaves. An identity that needs a GitHub token
-attaches `github-mint`. It does not get a new policy template, and it does not
-get a KV path.
+**GitHub — do not build a new grant.** Estate/AI identities that need a GitHub
+token attach the `github-mint` base-capability policy
+(`templates/github-mint-policy.hcl.j2`), which grants the **read-tier**
+permission sets (`github/token/read-*`) only. The workstation git/gh path uses
+the dedicated AppRoles instead: `github-read` (ambient all-repo read),
+`github-write` (per-repo write via the parameter-pinned raw `github/token`
+endpoint plus a claim lease), and the inert, human-gated `github-admin`. There
+is no `secret/github/*` KV path and never was — do not add one, and do not
+widen `github-mint` to reach the write or admin sets.
 
 **AWS — same shape.** Consumers read `aws/sts/<role>` for short-lived STS
 credentials. Never plumb `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
