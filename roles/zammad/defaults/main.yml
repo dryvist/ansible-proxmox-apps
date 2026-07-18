@@ -109,6 +109,17 @@ zammad_ai_features:
   - ai_assistance_ticket_summary
   - ai_assistance_text_tools
 
+# --- GitHub issue-linking (opt-in) -------------------------------------------
+# Zammad's native GitHub integration links tickets to GitHub issues. OFF by
+# default; the operator flips zammad_configure_github with -e once a read-tier
+# token is in the converge environment. PLUGINS-FIRST (binding rule): GitHub has
+# a live OpenBao engine, so this PAT is NEVER seeded into secret/* KV — it is
+# minted per converge from github/token/read-* and passed as ZAMMAD_GITHUB_API_TOKEN,
+# re-asserted each run (short-lived, attributable, re-minted). endpoint is the
+# public GraphQL API; override only for GitHub Enterprise Server.
+zammad_configure_github: false
+zammad_github_endpoint: "https://api.github.com/graphql"
+zammad_github_api_token: "{{ lookup('env', 'ZAMMAD_GITHUB_API_TOKEN') | default('', true) }}"
 # --- Human SSO account (Authelia forwardAuth identity) ------------------------
 # `login` MUST equal the Authelia username verbatim: Zammad's create_sso does
 # User.lookup(login: ...) on the Remote-User header value, so the email is
@@ -195,6 +206,42 @@ zammad_overviews:
 zammad_extra_priority:
   id: 4
   name: 4 critical
+
+# Incident-response ticket templates (prefill the create form), seeded
+# idempotently by name — mirrors the zammad_overviews declarative-data pattern.
+# `group`/`priority` are resolved to ids by NAME in the bootstrap (so the YAML
+# stays free of Zammad internal ids). `detection_method` is applied only when
+# the opt-in incident custom field exists, so a template still seeds cleanly on
+# an instance that never ran the zammad_seed_incidents field seed.
+zammad_ticket_templates:
+  - name: "Incident — Homelab Infrastructure"
+    group: Homelab Infrastructure
+    priority: 3 high
+    title: "Incident: "
+    detection_method: alert
+  - name: "Incident — AI/LLM Serving"
+    group: AI/LLM Serving
+    priority: 3 high
+    title: "Incident: "
+    detection_method: alert
+  - name: "Incident — critical outage"
+    group: Incidents
+    priority: 4 critical
+    title: "Outage: "
+    detection_method: user-report
+
+# Knowledge-base answers that link OUT to the docs site. Zammad has no dedicated
+# redirect field, so each answer's rich-HTML body carries the outbound link.
+# Seeded idempotently by title into a "Documentation" category. Data-driven so
+# the docs URLs live here, not in the Ruby. Best-effort in the bootstrap.
+zammad_kb_docs_category: Documentation
+zammad_kb_answers:
+  - title: "Deployment state contract"
+    url: "https://docs.jacobpevans.com/infrastructure/deployment-state-contract"
+    blurb: "The upstream desired-state ACID single-writer contract for the estate."
+  - title: "Infrastructure docs (home)"
+    url: "https://docs.jacobpevans.com/infrastructure"
+    blurb: "Top-level infrastructure documentation for the homelab + AI estate."
 
 # --- Outbound email via the Mailpit relay (no real mail) ---------------------
 zammad_smtp_host: "mailpit.{{ tofu_data.domain }}"
