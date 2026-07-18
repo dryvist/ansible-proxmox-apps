@@ -315,16 +315,32 @@ begin
         changed = true
       end
       answers.each do |a|
-        next if KnowledgeBase::Answer::Translation.exists?(title: a['title'])
         body = "<p>#{a['blurb']}</p>" \
                "<p><a href=\"#{a['url']}\" target=\"_blank\" rel=\"noopener\">#{a['url']}</a></p>"
-        answer = category.answers.create!
-        answer.translations.create!(
-          title: a['title'], kb_locale: kb_locale,
-          content: KnowledgeBase::Answer::Translation::Content.new(body: body)
-        )
-        answer.update!(published_at: Time.current) if answer.respond_to?(:published_at)
-        changed = true
+        translation = KnowledgeBase::Answer::Translation.find_by(title: a['title'])
+        if translation.nil?
+          answer = category.answers.create!
+          answer.translations.create!(
+            title: a['title'], kb_locale: kb_locale,
+            content: KnowledgeBase::Answer::Translation::Content.new(body: body)
+          )
+          answer.update!(published_at: Time.current) if answer.respond_to?(:published_at)
+          changed = true
+        else
+          # Reconcile drift when the docs URL or blurb changes. Compare on the
+          # URL + blurb TEXT, not the exact body: Zammad sanitizes answer HTML on
+          # save (tag/attribute rewrites), so an exact-body compare would report
+          # changed on every converge.
+          stored = translation.content&.body.to_s
+          unless stored.include?(a['url']) && stored.include?(a['blurb'])
+            if translation.content
+              translation.content.update!(body: body)
+            else
+              translation.update!(content: KnowledgeBase::Answer::Translation::Content.new(body: body))
+            end
+            changed = true
+          end
+        end
       end
     end
   end
@@ -341,7 +357,6 @@ end
 begin
   require 'json'
   JSON.parse(ENV['ZAMMAD_TICKET_TEMPLATES'] || '[]').each do |tpl|
-    next if Template.exists?(name: tpl['name'])
     grp  = Group.find_by(name: tpl['group'])
     prio = Ticket::Priority.find_by(name: tpl['priority'])
     options = {}
@@ -351,8 +366,17 @@ begin
     if tpl['detection_method'] && ObjectManager::Attribute.get(object: 'Ticket', name: 'detection_method')
       options['ticket.detection_method'] = { 'value' => tpl['detection_method'] }
     end
-    Template.create!(name: tpl['name'], active: true, options: options)
-    changed = true
+    # find-or-create, reconciling options on drift so an edit to the role YAML
+    # propagates. Template#options is stored verbatim, so this compare is stable
+    # across converges (no churn).
+    template = Template.find_by(name: tpl['name'])
+    if template.nil?
+      Template.create!(name: tpl['name'], active: true, options: options)
+      changed = true
+    elsif template.options != options
+      template.update!(options: options)
+      changed = true
+    end
   end
 rescue => e
   warn "WARN: ticket templates not seeded automatically (#{e.class}: #{e.message}). Create them once in the UI."
