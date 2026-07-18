@@ -130,3 +130,22 @@ def ensure_role(name: str, *models) -> None:
         role.content_types.add(
             *[ContentType.objects.get_for_model(model) for model in models]
         )
+
+
+def ensure_tag(name: str, *models):
+    """Idempotently ensure a Tag exists and covers the given content-type models.
+
+    Guest tags drive the GraphQL dynamic inventory group construction
+    (``inventory/nautobot.yml`` keys its ``*_group`` mapping on ``tags:name``),
+    so the seed jobs must import them as first-class Tag objects (issue #1008).
+    Mirrors :func:`ensure_role`: additive content-type grants, never removed.
+    """
+    from django.contrib.contenttypes.models import ContentType
+    from nautobot.extras.models import Tag
+
+    tag, _ = Tag.objects.get_or_create(name=name)
+    if models:
+        tag.content_types.add(
+            *[ContentType.objects.get_for_model(model) for model in models]
+        )
+    return tag
