@@ -14,16 +14,27 @@
 # names against the live sources at cutover — the mappings are isolated here so
 # that is a one-place edit.
 
-- name: Assert seed sources are provided when building the seed
+- name: Assert the required seed sources are provided
   ansible.builtin.assert:
     that:
-      - nautobot_seed_sops_path | length > 0
       - nautobot_seed_fixed_ips_path | length > 0
       - nautobot_seed_hosts_yml_path | length > 0
     fail_msg: >-
-      nautobot_build_seed is true but a source path is unset. Set
-      TERRAFORM_PROXMOX_SOPS, TOFU_UNIFI_FIXED_IPS, and ANSIBLE_PROXMOX_HOSTS
-      (or the matching nautobot_seed_*_path vars) to the sibling-repo files.
+      nautobot_build_seed is true but a required source path is unset. Set
+      TOFU_UNIFI_FIXED_IPS and ANSIBLE_PROXMOX_HOSTS (or the matching
+      nautobot_seed_*_path vars) to the sibling-repo files.
+    quiet: true
+
+# rack_servers (TERRAFORM_PROXMOX_SOPS) is optional: when its source is absent
+# the DCIM device seed contributes no devices and, being additive, leaves any
+# existing Nautobot devices untouched. Warn loudly rather than fail so a seed
+# run is not blocked by a source that has no file yet.
+- name: Warn when the optional rack_servers source is absent
+  ansible.builtin.debug:
+    msg: >-
+      TERRAFORM_PROXMOX_SOPS (rack_servers) is unset — DCIM device seed
+      contributes no devices this run; existing Nautobot devices are retained.
+  when: nautobot_seed_sops_path | length == 0
 
 # --- Read + decrypt the sources on the controller --------------------------
 - name: Decrypt rack_servers from the terraform-proxmox SOPS file
@@ -35,6 +46,7 @@
     ansible_become: false
   changed_when: false
   register: nautobot_seed_sops_raw
+  when: nautobot_seed_sops_path | length > 0
   no_log: true
 
 - name: Read the tofu-unifi fixed-IP reservations
@@ -58,7 +70,7 @@
 - name: Parse the sources
   ansible.builtin.set_fact:
     nautobot_seed_rack_servers: >-
-      {{ (nautobot_seed_sops_raw.stdout | from_json).rack_servers | default({}) }}
+      {{ (nautobot_seed_sops_raw.stdout | default('{}', true) | from_json).rack_servers | default({}) }}
     nautobot_seed_fixed_ips: "{{ nautobot_seed_fixed_ips_raw.content | b64decode | from_json }}"
     nautobot_seed_hosts: "{{ nautobot_seed_hosts_raw.content | b64decode | from_yaml }}"
   no_log: true
@@ -175,13 +187,13 @@
     nautobot_seed_bundle:
       schema_version: "1.0.0"
       generated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime }}"
-      vlans: "{{ nautobot_seed_vlans }}"
-      prefixes: "{{ nautobot_seed_prefixes }}"
-      reservations: "{{ nautobot_seed_reservations }}"
-      racks: "{{ nautobot_seed_racks }}"
-      devices: "{{ nautobot_seed_devices }}"
-      nodes: "{{ nautobot_seed_nodes }}"
-      virtual_machines: "{{ nautobot_seed_virtual_machines }}"
+      vlans: "{{ nautobot_seed_vlans | default([]) }}"
+      prefixes: "{{ nautobot_seed_prefixes | default([]) }}"
+      reservations: "{{ nautobot_seed_reservations | default([]) }}"
+      racks: "{{ nautobot_seed_racks | default([]) }}"
+      devices: "{{ nautobot_seed_devices | default([]) }}"
+      nodes: "{{ nautobot_seed_nodes | default([]) }}"
+      virtual_machines: "{{ nautobot_seed_virtual_machines | default([]) }}"
   no_log: true
 
 # --- Write the bundle onto the Nautobot LXC ---------------------------------
