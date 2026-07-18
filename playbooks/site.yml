@@ -1248,9 +1248,17 @@
   tags:
     - always
   tasks:
+    # Failures are recorded host-locally (see tasks/record_isolated_failure.yml
+    # — a shared delegated fact would drop entries when hosts fail
+    # concurrently), so aggregate across every host's hostvars here.
     - name: Surface isolated play failures
+      vars:
+        _all_isolated_failures: >-
+          {{ groups['all'] | union(['localhost'])
+             | map('extract', hostvars, 'site_isolated_failures')
+             | select('defined') | flatten }}
       ansible.builtin.fail:
         msg: >-
-          {{ site_isolated_failures | length }} isolated play failure(s) —
-          the rest of site.yml still ran: {{ site_isolated_failures | join('; ') }}
-      when: site_isolated_failures | default([]) | length > 0
+          {{ _all_isolated_failures | length }} isolated play failure(s) —
+          the rest of site.yml still ran: {{ _all_isolated_failures | join('; ') }}
+      when: _all_isolated_failures | length > 0
