@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.10.0...v2.11.0) (2026-07-18)
+
+
+### Features
+
+* **zammad:** configure AI provider on Hermes' brain (LiteLLM router) ([2116d49](https://github.com/dryvist/ansible-proxmox-apps/commit/2116d49e35a116b01d68663dc9b5d8ca8e2efaae))
+
 ## [2.10.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.9.0...v2.10.0) (2026-07-18)
 
 
