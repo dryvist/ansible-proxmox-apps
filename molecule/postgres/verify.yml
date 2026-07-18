@@ -82,3 +82,57 @@
         that:
           - pg_backup_timer.stat.exists
         fail_msg: "pg-backup.timer was not installed"
+
+    # --- Replication-slot orphan reconcile (Zammad #17050) ---
+    # converge created standby_fake_standby (the one expected standby). Seed a
+    # stale slot with no matching standby, re-run the role, and prove the
+    # reconcile drops the orphan while keeping the expected (also inactive) slot.
+    - name: Gather facts before re-running the role
+      ansible.builtin.setup:
+
+    - name: Seed a stale orphan physical slot with no matching standby
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_slot:
+        name: standby_stale_orphan
+        slot_type: physical
+        state: present
+
+    - name: Re-run the role so the primary reconcile drops the orphan
+      ansible.builtin.include_role:
+        name: postgres
+      vars:
+        postgres_listen_addresses: localhost
+        postgres_primary_host: postgres-test
+        postgres_replication_password: molecule-replication-pw
+        postgres_expected_replication_slots:
+          - standby_fake_standby
+        postgres_managed_databases:
+          - name: nautobot
+            user: nautobot
+            password: molecule-nautobot-pw
+            client_cidr: 127.0.0.1/32
+
+    - name: Query physical replication slots after reconcile
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: "SELECT slot_name FROM pg_replication_slots WHERE slot_type = 'physical'"
+      register: postgres_slots_after
+      changed_when: false
+
+    # A genuinely active=true slot needs a streaming standby, impossible
+    # single-node. The expected-but-inactive standby_fake_standby covers the same
+    # keep-guard (active=false slots that ARE expected must survive) that protects
+    # a live standby briefly down; add a two-container scenario only if it regresses.
+    - name: Assert the orphan was dropped and the expected slot kept
+      ansible.builtin.assert:
+        that:
+          - "'standby_stale_orphan' not in slot_names"
+          - "'standby_fake_standby' in slot_names"
+        fail_msg: >-
+          reconcile did not drop the orphan or dropped an expected slot;
+          slots present: {{ slot_names }}
+      vars:
+        slot_names: "{{ postgres_slots_after.query_result | map(attribute='slot_name') | list }}"
