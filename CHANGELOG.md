@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.10.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.9.0...v2.10.0) (2026-07-18)
+
+
+### Features
+
+* **openbao:** add read-only ai-public AppRole for the fabric-brain runtime domain ([#1108](https://github.com/dryvist/ansible-proxmox-apps/issues/1108)) ([ac62499](https://github.com/dryvist/ansible-proxmox-apps/commit/ac62499c08472a3fc6ba07b1e5e52d1d8866306c))
+* **openbao:** per-repo GitHub write minting + unreachable first-config fix ([#1089](https://github.com/dryvist/ansible-proxmox-apps/issues/1089)) ([6ffdd53](https://github.com/dryvist/ansible-proxmox-apps/commit/6ffdd538b5b7775821c7710363db8ed1680a1ddc)), closes [#1079](https://github.com/dryvist/ansible-proxmox-apps/issues/1079)
+* **zammad:** make the incident seed independently taggable ([#1090](https://github.com/dryvist/ansible-proxmox-apps/issues/1090)) ([aac2615](https://github.com/dryvist/ansible-proxmox-apps/commit/aac2615e1db61198a34d5e71caad24f0540b6dbe))
+
+
+### Bug Fixes
+
+* **openbao:** declare the file audit device in server config, drop the impossible API enable ([#1102](https://github.com/dryvist/ansible-proxmox-apps/issues/1102)) ([1ce6b02](https://github.com/dryvist/ansible-proxmox-apps/commit/1ce6b02e0d6875156059533133e9c7d3ea713bd7))
+* **openbao:** grant create on the github mint paths — POST routes as CreateOperation ([#1103](https://github.com/dryvist/ansible-proxmox-apps/issues/1103)) ([b3912f0](https://github.com/dryvist/ansible-proxmox-apps/commit/b3912f084d1dcb9841ad1310098cd2119cddd734))
+* **openbao:** make the file audit-device enable idempotent ([#1092](https://github.com/dryvist/ansible-proxmox-apps/issues/1092)) ([867555e](https://github.com/dryvist/ansible-proxmox-apps/commit/867555e447d05357b677df1dca512edfdd2e2a33))
+* **openbao:** string-form github-write params — OpenBao ACL cannot element-match lists ([#1104](https://github.com/dryvist/ansible-proxmox-apps/issues/1104)) ([fdfc326](https://github.com/dryvist/ansible-proxmox-apps/commit/fdfc3266ef7b38cdea7bbfec5dd63dd37f4f674a))
+* **postgres:** reconcile orphaned physical replication slots on the primary ([#1109](https://github.com/dryvist/ansible-proxmox-apps/issues/1109)) ([c2fe0d9](https://github.com/dryvist/ansible-proxmox-apps/commit/c2fe0d9e2d2bfd5c0a7028c438be266b15fdedd6))
+* **site:** isolate independent app play failures so they cannot abort site.yml ([#1094](https://github.com/dryvist/ansible-proxmox-apps/issues/1094)) ([7d4950d](https://github.com/dryvist/ansible-proxmox-apps/commit/7d4950d8cd26d49e3867d08e496d2826a6ec655a))
+
 ## [2.9.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.8.0...v2.9.0) (2026-07-17)
 
 
