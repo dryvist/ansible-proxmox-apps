@@ -185,17 +185,28 @@ class SeedVirtualization(DataSource):
         are applied here like the primary-IP FK. Additive: tags are only added,
         never removed, matching the additive seed contract.
         """
-        for guest in load_seed()["virtual_machines"]:
+        guests = load_seed()["virtual_machines"]
+
+        def _valid_names(guest) -> list[str]:
+            """The guest's non-empty tag names, dropping None (never ``'None'``)."""
+            return [str(tag) for tag in (guest.get("tags") or []) if tag and str(tag)]
+
+        # Ensure each distinct tag once (get_or_create is idempotent but not free)
+        # rather than per-tag-per-guest.
+        tag_cache = {
+            tag_name: ensure_tag(tag_name, VirtualMachine)
+            for guest in guests
+            for tag_name in _valid_names(guest)
+        }
+        for guest in guests:
             name = str(guest.get("name") or "")
-            tags = guest.get("tags") or []
-            if not name or not tags:
+            tag_objs = [tag_cache[tag_name] for tag_name in _valid_names(guest)]
+            if not name or not tag_objs:
                 continue
             vm = VirtualMachine.objects.filter(name=name).first()
             if vm is None:  # not created (e.g. dry run) — nothing to tag
                 continue
-            tag_objs = [ensure_tag(str(tag), VirtualMachine) for tag in tags if str(tag)]
-            if tag_objs:
-                vm.tags.add(*tag_objs)
+            vm.tags.add(*tag_objs)
 
 
 register_jobs(SeedVirtualization)
