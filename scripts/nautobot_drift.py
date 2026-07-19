@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import ssl
+import sys
 import urllib.request
 
 # Source domains Nautobot core has no model for yet (see the Phase-2 design doc
@@ -59,7 +60,12 @@ def _graphql(query: str, url: str, token: str) -> dict:
         headers={"Authorization": "Token " + token, "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=45, context=ssl.create_default_context()) as resp:
-        return json.load(resp)["data"]
+        payload = json.load(resp)
+    # A GraphQL 200 can still carry an ``errors`` array with ``data: null`` — treat
+    # that as a hard failure instead of dereferencing None downstream.
+    if payload.get("errors"):
+        raise RuntimeError("Nautobot GraphQL error: %s" % json.dumps(payload["errors"]))
+    return payload["data"]
 
 
 def source_guests(tofu: dict) -> dict[str, set]:
@@ -76,8 +82,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tofu-inventory", required=True, help="published inventory artifact JSON")
     args = ap.parse_args()
-    url = os.environ["NAUTOBOT_URL"]
-    token = os.environ["NAUTOBOT_TOKEN"]
+    url = os.environ.get("NAUTOBOT_URL")
+    token = os.environ.get("NAUTOBOT_TOKEN")
+    if not url or not token:
+        print("NAUTOBOT_URL and NAUTOBOT_TOKEN must both be set", file=sys.stderr)
+        return 2
 
     with open(args.tofu_inventory, encoding="utf-8") as handle:
         src = source_guests(json.load(handle))
@@ -102,10 +111,13 @@ def main() -> int:
 
     missing_guests = sorted(set(src) - set(nb))
     extra_guests = sorted(set(nb) - set(src))
+    # Only guests present in BOTH sources have meaningful tag drift; guests
+    # missing from Nautobot are already reported as missing_guests, so counting
+    # their tags here would double-count and inflate the drift.
     tag_drift = {
-        name: sorted(src[name] - nb.get(name, set()))
+        name: sorted(src[name] - nb[name])
         for name in src
-        if src[name] - nb.get(name, set())
+        if name in nb and src[name] - nb[name]
     }
     missing_tag_assignments = sum(len(v) for v in tag_drift.values())
 
