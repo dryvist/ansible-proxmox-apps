@@ -2,8 +2,10 @@
 # Vikunja task management (issue #141) — bao-first secrets (apps domain) with an
 # env fallback, mirroring nautobot_group.yml / zammad_group.yml. Only the fields
 # with a home in secret/apps/vikunja (the openbao_vikunja_secrets promotion map)
-# are wired bao-first here; VIKUNJA_JWT_SECRET and VIKUNJA_ADMIN_PASSWORD have no
-# bao home yet, so they stay pure env lookups on the role default.
+# are wired bao-first here. As of the apps-tier cutover (#17039) all three of the
+# role's required secrets — vikunja_db_password, vikunja_jwt_secret,
+# vikunja_admin_password — have a bao home and are wired bao-first below; the env
+# fallback stays for hosts where the apps domain was not fetched.
 #
 # The database password is app-namespaced (vikunja_db_password) so the flat merge
 # into bao_apps_secrets never collides with Nautobot's bare db_password. It MUST
@@ -14,6 +16,21 @@
 vikunja_db_password: >-
   {{ bao_apps_secrets.vikunja_db_password
      | default(lookup('env', 'VIKUNJA_DB_PASSWORD'), true) }}
+
+# JWT signing secret + initial admin password bao-first (secret/apps/vikunja
+# fields vikunja_jwt_secret / vikunja_admin_password, promoted via
+# openbao_vikunja_secrets). App-namespaced so the flat merge into
+# bao_apps_secrets never collides with a sibling app's bare field name. The
+# role's secrets-assert requires all three; seeding these two closes the
+# half-migrated gap that blocked converge (#17039). The JWT secret is a stable
+# value promoted from the live guest, NOT regenerated — rotating it would
+# invalidate every issued session/API token.
+vikunja_jwt_secret: >-
+  {{ bao_apps_secrets.vikunja_jwt_secret
+     | default(lookup('env', 'VIKUNJA_JWT_SECRET'), true) }}
+vikunja_admin_password: >-
+  {{ bao_apps_secrets.vikunja_admin_password
+     | default(lookup('env', 'VIKUNJA_ADMIN_PASSWORD'), true) }}
 
 # Postgres has no ingress; reach it by the primary guest's FQDN. Tracks the
 # shared postgres_primary_host switch (group_vars/all): unset -> the stable
@@ -40,3 +57,12 @@ vikunja_service_users:
     password: >-
       {{ bao_apps_secrets.svc_mcp_rw_password
          | default(lookup('env', 'VIKUNJA_SVC_MCP_RW_PASSWORD'), true) }}
+
+# Robust auto-restart (#17046). The vikunja.service unit already carries
+# Restart=on-failure inline, but with systemd's default start-rate limiter it
+# gave up during the apps-tier backend outage and stayed dead after Postgres
+# recovered. Wiring the service into systemd_restart_policy adds the widened
+# StartLimitIntervalSec/Burst drop-in so it keeps retrying until the backend
+# returns and self-heals after a blip.
+systemd_restart_policy_services:
+  - vikunja
