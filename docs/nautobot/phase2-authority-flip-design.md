@@ -113,10 +113,16 @@ Retirement is a **`schema_version 3.0.0` breaking bump**, done in two options
 (prefer **A** first, then **B** once all readers are proven on Nautobot):
 
 - **Option A — strip network fields, keep the shim.** Remove per-guest `ip`,
-  `mac`, `reserved_ip` (and `ingress*`, `domain`) from the published artifact;
+  `mac`, `reserved_ip` (and `ingress*`) from the published artifact;
   consumers pull addressing from Nautobot's dynamic inventory. Guest-lifecycle
   keys (`vmid`, `node`, `ansible_connection`, `ansible_pct_vmid`, `tags`,
   `pool_id`, `constants`) stay OpenTofu-sourced — those never live in Nautobot.
+  **`domain` also stays in the shim.** `inventory/load_tofu.yml` asserts
+  `tofu_data.domain` is defined and non-empty (the "carries the node-FQDN
+  derivation inputs" gate) and derives every LXC `ansible_host` as
+  `{node-role}.{domain}`; stripping `domain` breaks the loader before any reader
+  reaches Nautobot. It leaves only once `load_tofu.yml` itself is retired
+  (Option B).
 - **Option B — full retire.** Delete `aws_s3_object.ansible_inventory` and the
   `iac-inventory/ansible_inventory.json` key; repoint all five consumers at
   Nautobot. Only reachable after every consumer runs green on Option A.
@@ -130,8 +136,9 @@ matching the #977 "done when" state.
   to the lifecycle field set; delete/repoint the `locals.tf` network-derivation
   block; bump the published artifact to `3.0.0` (Option A: strip network fields).
 - **ansible-proxmox-apps (this repo)** — flip `ansible.cfg` inventory to
-  `inventory/nautobot.yml`; close the parity gap first (add `postgres_ai`,
-  `ai_orchestration`, `authelia` groups or confirm they moved to
+  `inventory/nautobot.yml`; close the parity gap first (add `postgres_ai_group`,
+  `ai_orchestration_group`, `authelia_group` — the exact `_group`-suffixed names
+  `load_tofu.yml` emits — or confirm they moved to
   `ansible-proxmox-ai`); land #1006 (role-managed read-only token) and #1008
   (tag sync) so the GraphQL inventory is trustworthy; retire the `load_tofu.yml`
   network-field dependence.
@@ -144,7 +151,11 @@ matching the #977 "done when" state.
   this is the largest reader change and is gated on the Nautobot model coverage
   in §7.
 - **technitium_dns role** — source A/PTR records from `IPAddress.dns_name`
-  instead of the artifact's reserved IP.
+  instead of the artifact's reserved IP. **Gap:** the GraphQL dynamic-inventory
+  query in `inventory/nautobot.yml` fetches only `name`, `primary_ip4.host`, and
+  `tags` — not `dns_name` — and the role today keys on
+  `hostvars[item].hostname`. The query must add `dns_name` and the role repoint
+  to it before this reader can flip.
 
 ## 7. Prerequisites & open questions (must close before flip)
 
