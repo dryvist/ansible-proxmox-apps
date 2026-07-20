@@ -316,6 +316,48 @@
 - name: Apply pending PostgreSQL restart/reload
   ansible.builtin.meta: flush_handlers
 
+# A cluster that comes up listening only on loopback is invisible to every
+# other guest, and nothing downstream notices until an app tier starts timing
+# out — which is how this surfaced once already: apps could not reach the
+# shared database, and the failure looked like connection-pool exhaustion
+# rather than a missing listener. The GUC being set is not proof the listener
+# is live; only a bind off loopback is. Assert it here, right after the
+# restart, so a divergence fails this converge instead of a later outage.
+# Read the bound sockets on the guest itself. Deliberately NOT a connect from
+# the control node: a workstation controller is often firewalled off the guest
+# VLAN, so that would fail for hosts that are perfectly healthy. What the guest
+# is bound to is the fact that matters, and it is knowable locally.
+- name: List the bound PostgreSQL sockets
+  ansible.builtin.command:
+    argv: [ss, -H, -ltn, "sport = :{{ postgres_port }}"]
+  register: postgres_bound_sockets
+  changed_when: false
+  failed_when: false
+
+# ss prints the local address in column 4 (host:port). Anything bound to
+# 0.0.0.0, [::] or a real interface address is reachable off-box; only
+# 127.0.0.1/[::1] is not.
+- name: Fail when the cluster is listening on loopback only
+  vars:
+    postgres_local_addrs: >-
+      {{ postgres_bound_sockets.stdout_lines | default([])
+         | map('split') | map(attribute=3)
+         | map('regex_replace', ':[0-9]+$', '') | list }}
+  ansible.builtin.assert:
+    that:
+      - postgres_local_addrs | reject('in', ['127.0.0.1', '[::1]']) | list | length > 0
+    fail_msg: >-
+      PostgreSQL on {{ inventory_hostname }} is bound only to
+      {{ postgres_local_addrs | default([], true) }}, so no other guest can
+      reach it on port {{ postgres_port }}. Expected a listener matching
+      postgres_listen_addresses={{ postgres_listen_addresses }}. A cluster
+      recreated by pg_createcluster starts from the packaged default, so this
+      usually means the ALTER SYSTEM above did not survive or the restart did
+      not apply.
+    success_msg: >-
+      PostgreSQL is reachable off loopback (bound: {{ postgres_local_addrs }}).
+  when: postgres_listen_addresses not in ['localhost', '127.0.0.1', '::1']
+
 # =============================================================================
 # Phase 3b: Primary replication config (streaming replication, issue #138)
 # Primary-only. Creates the replication login role, one physical slot per
