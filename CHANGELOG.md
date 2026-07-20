@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.12.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.11.0...v2.12.0) (2026-07-20)
+
+
+### Features
+
+* **nautobot:** repeatable read-only drift report (Nautobot vs sources) ([#977](https://github.com/dryvist/ansible-proxmox-apps/issues/977)) ([#1113](https://github.com/dryvist/ansible-proxmox-apps/issues/1113)) ([75e10d4](https://github.com/dryvist/ansible-proxmox-apps/commit/75e10d4df4e3f36489016d86ada3be33047c4175))
+* **zammad:** wire built-in AI at the LLM router + ITSM tunings ([740b985](https://github.com/dryvist/ansible-proxmox-apps/commit/740b985ca1c698e1d389fa2745ca7b14949b0b53))
+
+
+### Bug Fixes
+
+* **apps:** self-healing restart policy + bao-first vikunja jwt/admin ([#1117](https://github.com/dryvist/ansible-proxmox-apps/issues/1117)) ([9fe980b](https://github.com/dryvist/ansible-proxmox-apps/commit/9fe980b96e32a992a11a54a29540e04a63a43654))
+* **nautobot:** dedupe tag ensure calls; null-safe seed defaults ([#1132](https://github.com/dryvist/ansible-proxmox-apps/issues/1132)) ([80af7bd](https://github.com/dryvist/ansible-proxmox-apps/commit/80af7bd784c0f72b0bcab92e28e3125ebf54ad45))
+* **nautobot:** role-managed read-only inventory token via OpenBao ([#1006](https://github.com/dryvist/ansible-proxmox-apps/issues/1006)) ([#1111](https://github.com/dryvist/ansible-proxmox-apps/issues/1111)) ([9ba031d](https://github.com/dryvist/ansible-proxmox-apps/commit/9ba031d90a33e4462a241666b6c675e31b34bb38))
+* **nautobot:** sync guest tags so GraphQL inventory groups populate ([#1008](https://github.com/dryvist/ansible-proxmox-apps/issues/1008)) ([#1110](https://github.com/dryvist/ansible-proxmox-apps/issues/1110)) ([4683570](https://github.com/dryvist/ansible-proxmox-apps/commit/468357010271dc9f5e7cf90d47563af3a874df38))
+* **zammad:** reconcile ticket-template and KB-answer drift on converge ([c7a29ab](https://github.com/dryvist/ansible-proxmox-apps/commit/c7a29aba3b9fb57a6d1139b38c6cdafd9e4f907e))
+
 ## [2.11.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.10.0...v2.11.0) (2026-07-18)
 
 
