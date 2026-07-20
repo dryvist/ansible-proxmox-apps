@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.1...v3.0.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **ci:** pass OPENAI_API_KEY through to the shared AI workflows ([#1150](https://github.com/dryvist/ansible-proxmox-apps/issues/1150)) ([71d8ea9](https://github.com/dryvist/ansible-proxmox-apps/commit/71d8ea94a89dd58bdc8f80c4f3e6c54808c820ab))
+* **postgres:** restart the cluster when it comes up bound loopback-only ([#1147](https://github.com/dryvist/ansible-proxmox-apps/issues/1147)) ([eca7f5f](https://github.com/dryvist/ansible-proxmox-apps/commit/eca7f5f3d65bdd9067c88c66e73a76b8c3a3a70f))
+
 ## [3.0.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.0...v3.0.1) (2026-07-20)
 
 
