@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.0...v3.0.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **cribl_stream:** redeploy outputs.yml when a per-index output is missing ([#1146](https://github.com/dryvist/ansible-proxmox-apps/issues/1146)) ([c0c8efd](https://github.com/dryvist/ansible-proxmox-apps/commit/c0c8efdc8f7d7872416ff41794b1e5254027e9a1))
+* **openbao:** let read tokens see code-scanning and Dependabot alerts ([#1142](https://github.com/dryvist/ansible-proxmox-apps/issues/1142)) ([9ec5958](https://github.com/dryvist/ansible-proxmox-apps/commit/9ec595870c76fbf9ab1988b0d0ae5ce3d87cd355))
+* **postgres:** fail the converge when the cluster is loopback-only ([#1143](https://github.com/dryvist/ansible-proxmox-apps/issues/1143)) ([e8399bf](https://github.com/dryvist/ansible-proxmox-apps/commit/e8399bf4282bde5583ae88d95fa33a27137a66b4))
+
 ## [3.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.12.0...v3.0.0) (2026-07-20)
 
 
