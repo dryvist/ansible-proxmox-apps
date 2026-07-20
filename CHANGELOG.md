@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.12.0...v3.0.0) (2026-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **openbao:** converging the openbao role now requires OPENBAO_GITHUB_WRITE_REPOS in the environment. Without it the github-write policy is rewritten to allow no repositories.
+
+### Features
+
+* **cribl_stream:** add hermes_agent syslog input type ([#1137](https://github.com/dryvist/ansible-proxmox-apps/issues/1137)) ([6b2fda3](https://github.com/dryvist/ansible-proxmox-apps/commit/6b2fda31d57a747841131f1c7af0987ad049956f))
+
+
+### Bug Fixes
+
+* **openbao:** source github-write allowlist from the iac secret store ([#1136](https://github.com/dryvist/ansible-proxmox-apps/issues/1136)) ([f7106c9](https://github.com/dryvist/ansible-proxmox-apps/commit/f7106c9ea8f515f1227e48e8e80b8b2c679d4eea))
+
 ## [2.12.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v2.11.0...v2.12.0) (2026-07-20)
 
 
