@@ -337,7 +337,38 @@
 # ss prints the local address in column 4 (host:port). Anything bound to
 # 0.0.0.0, [::] or a real interface address is reachable off-box; only
 # 127.0.0.1/[::1] is not.
-- name: Fail when the cluster is listening on loopback only
+#
+# Why a restart rather than going straight to the assert: postgresql_set is
+# idempotent against the STORED setting, not the runtime bind. ALTER SYSTEM
+# writes $PGDATA/postgresql.auto.conf, so once the correct value is stored
+# every later converge is a no-op — changed=false, the restart handler never
+# fires, and flush_handlers has nothing to flush. If the server started before
+# the container NIC was up it binds loopback, fails to bind the real address,
+# and does NOT exit (a partial bind failure is a warning; only a total failure
+# is fatal). The config is right and the process is wrong, which is a state
+# Ansible can repair on its own. Restart, re-read, and let the assert below
+# fail only if the restart did not fix it.
+- name: Restart the cluster when it is bound loopback-only
+  vars:
+    postgres_local_addrs: >-
+      {{ postgres_bound_sockets.stdout_lines | default([])
+         | map('split') | map(attribute=3)
+         | map('regex_replace', ':[0-9]+$', '') | list }}
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+    state: restarted
+  when:
+    - postgres_listen_addresses not in ['localhost', '127.0.0.1', '::1']
+    - postgres_local_addrs | reject('in', ['127.0.0.1', '[::1]']) | list | length == 0
+
+- name: Re-read the bound PostgreSQL sockets after the repair restart
+  ansible.builtin.command:
+    argv: [ss, -H, -ltn, "sport = :{{ postgres_port }}"]
+  register: postgres_bound_sockets
+  changed_when: false
+  failed_when: false
+
+- name: Fail when the cluster is still listening on loopback only
   vars:
     postgres_local_addrs: >-
       {{ postgres_bound_sockets.stdout_lines | default([])
@@ -348,12 +379,13 @@
       - postgres_local_addrs | reject('in', ['127.0.0.1', '[::1]']) | list | length > 0
     fail_msg: >-
       PostgreSQL on {{ inventory_hostname }} is bound only to
-      {{ postgres_local_addrs | default([], true) }}, so no other guest can
-      reach it on port {{ postgres_port }}. Expected a listener matching
-      postgres_listen_addresses={{ postgres_listen_addresses }}. A cluster
-      recreated by pg_createcluster starts from the packaged default, so this
-      usually means the ALTER SYSTEM above did not survive or the restart did
-      not apply.
+      {{ postgres_local_addrs | default([], true) }} even after a restart, so
+      no other guest can reach it on port {{ postgres_port }}. Expected a
+      listener matching
+      postgres_listen_addresses={{ postgres_listen_addresses }}. Since the
+      restart did not fix it, the stored setting itself is wrong or the address
+      does not exist on this guest — check
+      `SHOW listen_addresses` and the interface addresses, not just the config.
     success_msg: >-
       PostgreSQL is reachable off loopback (bound: {{ postgres_local_addrs }}).
   when: postgres_listen_addresses not in ['localhost', '127.0.0.1', '::1']
