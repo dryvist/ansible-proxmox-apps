@@ -111,6 +111,12 @@
     cribl_stream_hec_live: >-
       {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
           | default({}, true)).get('outputs', {}).get('splunk_hec', {}) }}
+    # Live output ids, so a NEW per-index output (a fresh index in
+    # ai_log_routing) counts as drift — the url/token compare below only sees
+    # the legacy shared output and left outputs.yml stale when hermes was added.
+    cribl_stream_outputs_live_ids: >-
+      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+          | default({}, true)).get('outputs', {}).keys() | list }}
   no_log: true
 
 - name: Deploy Cribl Stream outputs configuration
@@ -131,6 +137,10 @@
          != cribl_stream_splunk_hec_tls_verify | bool
       or cribl_stream_hec_live.get('pqEnabled', none) | bool
          != cribl_stream_pq_enabled | bool
+      or ((cribl_stream_hec_namespace | default('')) | length > 0
+          and (cribl_stream_per_index_indexes
+               | map('regex_replace', '^', 'splunk_hec_') | list)
+              | difference(cribl_stream_outputs_live_ids) | length > 0)
 
 - name: Deploy IPFIX pipeline configuration
   ansible.builtin.template:
