@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.2...v3.0.3) (2026-07-20)
+
+
+### Bug Fixes
+
+* **postgres:** wait for network-online before binding ([#1155](https://github.com/dryvist/ansible-proxmox-apps/issues/1155)) ([1bb9e22](https://github.com/dryvist/ansible-proxmox-apps/commit/1bb9e224a695faa969d42b08401959a9a983b884))
+
 ## [3.0.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.1...v3.0.2) (2026-07-20)
 
 
