@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.3...v3.0.4) (2026-07-20)
+
+
+### Bug Fixes
+
+* **postgres:** bind listen_addresses to wildcard, drop network-online race fix ([#1160](https://github.com/dryvist/ansible-proxmox-apps/issues/1160)) ([170001c](https://github.com/dryvist/ansible-proxmox-apps/commit/170001cc97a421816a53c4a081aaa951b817b846))
+* **systemd_restart_policy:** default restart to always, not on-failure ([#1162](https://github.com/dryvist/ansible-proxmox-apps/issues/1162)) ([04eb3ca](https://github.com/dryvist/ansible-proxmox-apps/commit/04eb3ca118b9d61f2f0a18c0c03906ba7b4fd28e)), closes [#1161](https://github.com/dryvist/ansible-proxmox-apps/issues/1161)
+
 ## [3.0.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.2...v3.0.3) (2026-07-20)
 
 
