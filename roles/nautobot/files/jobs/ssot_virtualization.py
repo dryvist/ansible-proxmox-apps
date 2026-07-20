@@ -31,6 +31,7 @@ from ssot_common import (
     AdditiveNautobotModel,
     ensure_location,
     ensure_role,
+    ensure_tag,
     load_seed,
 )
 
@@ -133,9 +134,10 @@ class SeedVirtualization(DataSource):
         self.target_adapter.load()
 
     def run(self, *args, **kwargs):  # noqa: D102 - see _bind_primary_ips
-        """Run the additive VM sync, then bind eth0 + primary IP in the ORM."""
+        """Run the additive VM sync, then bind eth0 + primary IP + tags in the ORM."""
         super().run(*args, **kwargs)
         self._bind_primary_ips()
+        self._bind_tags()
 
     def _bind_primary_ips(self) -> None:
         """Ensure eth0 + an assigned IPAddress + primary_ip4 for each guest.
@@ -173,6 +175,35 @@ class SeedVirtualization(DataSource):
             if vm.primary_ip4_id != ip_address.id:
                 vm.primary_ip4 = ip_address
                 vm.validated_save()
+
+    def _bind_tags(self) -> None:
+        """Assign each guest's tofu tags to its VirtualMachine (additive ORM phase).
+
+        Tags drive the GraphQL dynamic inventory group construction
+        (``inventory/nautobot.yml`` keys its ``*_group`` mapping on ``tags:name``),
+        so the seed must import them (issue #1008). DiffSync avoids m2m, so tags
+        are applied here like the primary-IP FK. Additive: tags are only added,
+        never removed, matching the additive seed contract.
+        """
+        guests = load_seed()["virtual_machines"]
+
+        def _valid_names(guest) -> list[str]:
+            """The guest's non-empty tag names, dropping None (never ``'None'``)."""
+            return [str(tag) for tag in (guest.get("tags") or []) if tag and str(tag)]
+
+        # Ensure each distinct tag once (get_or_create is idempotent but not free)
+        # rather than per-tag-per-guest.
+        unique_tags = {tag_name for guest in guests for tag_name in _valid_names(guest)}
+        tag_cache = {tag_name: ensure_tag(tag_name, VirtualMachine) for tag_name in unique_tags}
+        for guest in guests:
+            name = str(guest.get("name") or "")
+            tag_objs = [tag_cache[tag_name] for tag_name in _valid_names(guest)]
+            if not name or not tag_objs:
+                continue
+            vm = VirtualMachine.objects.filter(name=name).first()
+            if vm is None:  # not created (e.g. dry run) — nothing to tag
+                continue
+            vm.tags.add(*tag_objs)
 
 
 register_jobs(SeedVirtualization)

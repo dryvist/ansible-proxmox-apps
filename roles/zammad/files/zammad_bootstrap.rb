@@ -59,6 +59,11 @@ end
   'fqdn'             => fqdn,
   'http_type'       => 'https',
   'storage_provider' => 'File',
+  # Hard-set the system identifier to 1. Zammad assigns a random id (1-99) at
+  # install (this instance drew 17); pin it so the ticket-number prefix is
+  # deterministic across rebuilds. Stored as an Integer — set_setting compares
+  # Setting.get('system_id') (Integer) to this, so a re-run is a no-op.
+  'system_id'       => 1,
   'es_url'          => es_url,
   'auth_sso'        => true,
   # A comma-separated STRING, never an Array: Auth::Sso::TrustedIps does
@@ -67,6 +72,23 @@ end
   # rejected for everyone. CIDR entries are supported.
   'auth_sso_trusted_ips' => sso_ips.split(',').map(&:strip).reject(&:empty?).join(','),
 }.each { |k, v| changed = true if set_setting(k, v) }
+
+# --- GitHub issue-linking (opt-in) -------------------------------------------
+# Enabled only when ZAMMAD_CONFIGURE_GITHUB=true AND a token is present. The
+# token is minted per converge from the OpenBao github engine (github/token/
+# read-*), never seeded into KV. Best-effort: github_config runs verify!, which
+# reaches out to the GitHub API and can take a moment.
+if ENV['ZAMMAD_CONFIGURE_GITHUB'] == 'true' && !ENV['ZAMMAD_GITHUB_API_TOKEN'].to_s.empty?
+  begin
+    changed = true if set_setting('github_config', {
+      'endpoint'  => env!('ZAMMAD_GITHUB_ENDPOINT'),
+      'api_token' => env!('ZAMMAD_GITHUB_API_TOKEN'),
+    })
+    changed = true if set_setting('github_integration', true)
+  rescue => e
+    warn "WARN: GitHub integration not configured (#{e.class}: #{e.message}). Set it once in Admin -> Integrations -> GitHub."
+  end
+end
 
 # --- Admin user (create-or-find; ensure Admin+Agent + active) ----------------
 admin = User.find_by(email: admin_email.downcase)
@@ -255,18 +277,109 @@ rescue => e
   warn "WARN: Mailpit notification channel not configured automatically (#{e.class}: #{e.message}). Configure it once in the UI."
 end
 
-# --- Knowledge base (best-effort; manual UI fallback) ------------------------
+# --- Knowledge base + docs-linking answers (best-effort; manual UI fallback) --
+# Creates the KB if absent, then ensures a "Documentation" category whose answers
+# link OUT to the docs site — the external link lives in the rich-HTML answer
+# body (Zammad has no dedicated redirect field). All wrapped: KB model APIs shift
+# between versions, so drift WARNS rather than aborting, and every step has a
+# one-screen UI fallback. Idempotent by KB presence + category/answer title.
 begin
-  if defined?(KnowledgeBase) && KnowledgeBase.count.zero?
-    kb = KnowledgeBase.create!(
-      iconset: 'FontAwesome', color_highlight: '#38ae6a', color_header: '#f9fafb',
-      homepage_layout: 'grid', category_layout: 'grid', active: true, translations: []
-    )
-    kb.kb_locales.create!(kb_locale: 'en-us', primary: true) if kb.respond_to?(:kb_locales)
-    changed = true
+  if defined?(KnowledgeBase)
+    kb = KnowledgeBase.first
+    if kb.nil?
+      kb = KnowledgeBase.create!(
+        iconset: 'FontAwesome', color_highlight: '#38ae6a', color_header: '#f9fafb',
+        homepage_layout: 'grid', category_layout: 'grid', active: true, translations: []
+      )
+      changed = true
+    end
+
+    kb_locale = nil
+    if kb.respond_to?(:kb_locales)
+      kb_locale = kb.kb_locales.find_by(primary: true) || kb.kb_locales.first
+      if kb_locale.nil?
+        kb_locale = kb.kb_locales.create!(kb_locale: 'en-us', primary: true)
+        changed = true
+      end
+    end
+
+    require 'json'
+    cat_name = ENV['ZAMMAD_KB_DOCS_CATEGORY'].to_s
+    answers  = JSON.parse(ENV['ZAMMAD_KB_ANSWERS'] || '[]')
+    if kb_locale && !cat_name.empty? && answers.any?
+      # find-or-create the docs category, matched by its translated title
+      category = kb.categories.detect { |c| c.translations.any? { |t| t.title == cat_name } }
+      if category.nil?
+        category = kb.categories.create!(category_icon: 'f02d')
+        category.translations.create!(title: cat_name, kb_locale: kb_locale)
+        changed = true
+      end
+      answers.each do |a|
+        body = "<p>#{a['blurb']}</p>" \
+               "<p><a href=\"#{a['url']}\" target=\"_blank\" rel=\"noopener\">#{a['url']}</a></p>"
+        translation = KnowledgeBase::Answer::Translation.find_by(title: a['title'])
+        if translation.nil?
+          answer = category.answers.create!
+          answer.translations.create!(
+            title: a['title'], kb_locale: kb_locale,
+            content: KnowledgeBase::Answer::Translation::Content.new(body: body)
+          )
+          answer.update!(published_at: Time.current) if answer.respond_to?(:published_at)
+          changed = true
+        else
+          # Reconcile drift when the docs URL or blurb changes. Compare on the
+          # URL + blurb TEXT, not the exact body: Zammad sanitizes answer HTML on
+          # save (tag/attribute rewrites), so an exact-body compare would report
+          # changed on every converge.
+          stored = translation.content&.body.to_s
+          unless stored.include?(a['url']) && stored.include?(a['blurb'])
+            if translation.content
+              translation.content.update!(body: body)
+            else
+              translation.update!(content: KnowledgeBase::Answer::Translation::Content.new(body: body))
+            end
+            changed = true
+          end
+        end
+      end
+    end
   end
 rescue => e
-  warn "WARN: knowledge base not created automatically (#{e.class}: #{e.message}). Create it once in the UI."
+  warn "WARN: knowledge base docs answers not seeded automatically (#{e.class}: #{e.message}). Add them once in the UI."
+end
+
+# --- Incident ticket templates (best-effort; declarative data via ENV json) --
+# Prefill the ticket-create form for fast incident filing. Idempotent by name.
+# group/priority are resolved by NAME here so the role YAML carries no Zammad
+# ids. Optional incident custom fields (detection_method) are added ONLY when the
+# attribute exists, so a template still seeds cleanly on an instance that never
+# ran the opt-in zammad_seed_incidents custom-field seed.
+begin
+  require 'json'
+  JSON.parse(ENV['ZAMMAD_TICKET_TEMPLATES'] || '[]').each do |tpl|
+    grp  = Group.find_by(name: tpl['group'])
+    prio = Ticket::Priority.find_by(name: tpl['priority'])
+    options = {}
+    options['ticket.title'] = { 'value' => tpl['title'] } if tpl['title']
+    options['ticket.group_id'] = { 'value' => grp.id.to_s, 'value_completion' => grp.name } if grp
+    options['ticket.priority_id'] = { 'value' => prio.id.to_s, 'value_completion' => prio.name } if prio
+    if tpl['detection_method'] && ObjectManager::Attribute.get(object: 'Ticket', name: 'detection_method')
+      options['ticket.detection_method'] = { 'value' => tpl['detection_method'] }
+    end
+    # find-or-create, reconciling options on drift so an edit to the role YAML
+    # propagates. Template#options is stored verbatim, so this compare is stable
+    # across converges (no churn).
+    template = Template.find_by(name: tpl['name'])
+    if template.nil?
+      Template.create!(name: tpl['name'], active: true, options: options)
+      changed = true
+    elsif template.options != options
+      template.update!(options: options)
+      changed = true
+    end
+  end
+rescue => e
+  warn "WARN: ticket templates not seeded automatically (#{e.class}: #{e.message}). Create them once in the UI."
 end
 
 # --- Overviews: saved filtered views, defined as DATA in zammad_overviews ----
