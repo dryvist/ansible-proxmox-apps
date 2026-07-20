@@ -183,29 +183,34 @@
 # and answers nothing off-box until the next converge notices (INC-17124).
 # Instance-generic (postgresql@.service.d) so a PostgreSQL major bump never
 # orphans the drop-in the way a version-pinned path would.
-- name: Create the postgresql@ systemd drop-in directory
+#
+# A previous fix (#1155) deployed an After=/Wants=network-online.target
+# drop-in here to close a boot-time race where postgres started before its
+# listen address existed. Removed (INC-17124): on these ip=dhcp LXCs,
+# network-online.target is reached before DHCP actually completes, so
+# ordering against it never guaranteed the address was live. listen_addresses
+# is now '*' (roles/postgres/defaults/main.yml), which makes the race moot —
+# a wildcard bind never depends on address-assignment timing. The tasks below
+# remove any copy of the drop-in a prior converge already deployed.
+- name: Remove the (retired) postgresql@ network-online drop-in
   ansible.builtin.file:
-    path: /etc/systemd/system/postgresql@.service.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    path: /etc/systemd/system/postgresql@.service.d/network-online.conf
+    state: absent
+  register: postgres_network_online_dropin_removed
 
-- name: Deploy the postgresql@ network-online drop-in
-  ansible.builtin.copy:
-    src: postgresql-network-online.conf
-    dest: /etc/systemd/system/postgresql@.service.d/network-online.conf
-    owner: root
-    group: root
-    mode: "0644"
-  register: postgres_network_online_dropin
+- name: Remove the postgresql@ systemd drop-in directory if now empty
+  ansible.builtin.command:
+    argv: [rmdir, /etc/systemd/system/postgresql@.service.d]
+  register: postgres_network_online_dropin_dir
+  changed_when: postgres_network_online_dropin_dir.rc == 0
+  failed_when: false
 
 - name: Ensure the PostgreSQL cluster service is started and enabled
   ansible.builtin.systemd:
     name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
     state: started
     enabled: true
-    daemon_reload: "{{ postgres_network_online_dropin.changed }}"
+    daemon_reload: "{{ postgres_network_online_dropin_removed.changed }}"
 
 # =============================================================================
 # Phase 2b: Standby bootstrap (streaming replication, issue #138)

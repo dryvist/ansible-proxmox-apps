@@ -24,9 +24,18 @@ postgres_data_dir: >-
 postgres_conf_dir: >-
   /etc/postgresql/{{ postgres_cluster_version | default(postgres_version) }}/{{ postgres_cluster_name }}
 
-# Listener. Role default is permissive because access is gated by pg_hba
-# (scram, per-CIDR) + the host firewall, NOT by the bind address. group_vars
-# narrows this to the data-VLAN address in production. Port is standard 5432.
+# Listener. Access is gated by pg_hba (scram, per-CIDR) + the host firewall,
+# NOT by the bind address, so the wildcard below is safe. This used to be
+# narrowed per-group to the guest's live ansible_default_ipv4 address to
+# minimize the bind surface, but that traded safety for a boot-time race: on
+# these ip=dhcp LXCs, systemd's network-online.target is reached before DHCP
+# actually completes (no functional wait-online service), so postgres could
+# start before the fact existed, silently degrade to loopback-only, and the
+# converge still reported healthy (INC-17124). A postgresql@.service
+# After=network-online.target drop-in was tried first and proved
+# insufficient — ordering can't fix a target that lies about being ready.
+# listen_addresses='*' sidesteps the timing problem entirely: a wildcard bind
+# never depends on address-assignment timing. Port is standard 5432.
 postgres_port: 5432
 # Seconds the post-restart probe waits for the cluster to answer over the
 # network. Generous enough for a cold start after a restart, short enough that
