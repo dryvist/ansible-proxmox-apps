@@ -193,11 +193,8 @@ class SeedVirtualization(DataSource):
 
         # Ensure each distinct tag once (get_or_create is idempotent but not free)
         # rather than per-tag-per-guest.
-        tag_cache = {
-            tag_name: ensure_tag(tag_name, VirtualMachine)
-            for guest in guests
-            for tag_name in _valid_names(guest)
-        }
+        unique_tags = {tag_name for guest in guests for tag_name in _valid_names(guest)}
+        tag_cache = {tag_name: ensure_tag(tag_name, VirtualMachine) for tag_name in unique_tags}
         for guest in guests:
             name = str(guest.get("name") or "")
             tag_objs = [tag_cache[tag_name] for tag_name in _valid_names(guest)]
