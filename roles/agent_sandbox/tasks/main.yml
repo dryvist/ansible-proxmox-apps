@@ -37,6 +37,116 @@
     mode: "0644"
   notify: Restart agent sandbox proxy
 
+# --- Transcript spool + Cribl Edge (Phase D) --------------------------------
+# The launcher (nix-agent-sandbox `agent run --host`) creates the per-run leaves
+# with a throwaway uid-1000 container, which needs this root to already exist
+# world-writable (1777). The Cribl Edge below tails the tree read-only.
+- name: Create agent transcript spool root
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_spool_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "1777"
+
+- name: Create Cribl Edge config directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_cribl_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Cribl Edge inputs configuration
+  ansible.builtin.template:
+    src: cribl/inputs.yml.j2
+    dest: "{{ agent_sandbox_cribl_config_dir }}/inputs.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy Cribl Edge outputs configuration
+  ansible.builtin.template:
+    src: cribl/outputs.yml.j2
+    dest: "{{ agent_sandbox_cribl_config_dir }}/outputs.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy Cribl Edge event breaker
+  ansible.builtin.template:
+    src: cribl/breakers.yml.j2
+    dest: "{{ agent_sandbox_cribl_config_dir }}/breakers.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+# Worker-level pack pipelines, taken verbatim from the released pack .crbls.
+# Fetched on the controller (unrestricted egress) then extracted onto the host —
+# the same controller-stage pattern as the cribl_packs role, since docker-host
+# has no guaranteed path to github.com.
+- name: Create Cribl Edge pipeline directories
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_cribl_config_dir }}/pipelines/{{ item.pipeline }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.pipeline }}"
+
+- name: Fetch transcript pack .crbl to controller
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/{{ item.repo }}/releases/download/{{
+      item.version }}/{{ item.name }}-{{ item.version }}.crbl
+    dest: "/tmp/agent-sandbox-{{ item.name }}-{{ item.version }}.crbl"
+    mode: "0644"
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.version }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+
+# Extract only the one pipeline conf each pack contributes; --strip-components=3
+# drops the `default/pipelines/<pipeline>/` prefix so conf.yml lands directly in
+# the pipeline dir the container bind-mounts.
+- name: Install pack pipeline conf as a worker-level pipeline
+  ansible.builtin.unarchive:
+    src: "/tmp/agent-sandbox-{{ item.name }}-{{ item.version }}.crbl"
+    dest: "{{ agent_sandbox_cribl_config_dir }}/pipelines/{{ item.pipeline }}"
+    remote_src: false
+    include:
+      - "default/pipelines/{{ item.pipeline }}/conf.yml"
+    extra_opts:
+      - "--strip-components=3"
+    owner: root
+    group: root
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.pipeline }}"
+  notify: Restart agent sandbox proxy
+
+- name: Remove pack staging files from controller
+  ansible.builtin.file:
+    path: "/tmp/agent-sandbox-{{ item.name }}-{{ item.version }}.crbl"
+    state: absent
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+
 - name: Deploy agent sandbox docker-compose template
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -86,3 +196,29 @@
   register: agent_sandbox_deny_probe
   changed_when: false
   failed_when: agent_sandbox_deny_probe.rc == 0
+
+# --- Spool retention (Phase D) ----------------------------------------------
+# Each <run-id> dir is a self-contained run; a daily timer drops whole runs
+# past the retention window. Cheap `find -mtime` prune, no state to track.
+- name: Deploy transcript spool prune service
+  ansible.builtin.template:
+    src: spool-prune.service.j2
+    dest: /etc/systemd/system/agent-sandbox-spool-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy transcript spool prune timer
+  ansible.builtin.template:
+    src: spool-prune.timer.j2
+    dest: /etc/systemd/system/agent-sandbox-spool-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable transcript spool prune timer
+  ansible.builtin.systemd:
+    name: agent-sandbox-spool-prune.timer
+    state: started
+    enabled: true
+    daemon_reload: true

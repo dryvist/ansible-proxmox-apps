@@ -50,6 +50,28 @@ nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
 ingress route) at converge time from ambient `PROXMOX_SUBDOMAIN` — the
 sensitive domain is never committed.
 
+## Transcript shipping
+
+Agent containers are `--rm`, so their CLI transcripts would die with the
+container. `agent run --host` bind-mounts each run's per-CLI transcript subdir
+under `{{ agent_sandbox_spool_dir }}/<run-id>/{claude,codex,gemini}/`, and this
+role runs a **Cribl Edge container** (`agent-cribl-edge`) that tails the spool
+and ships each run's session records to Splunk before teardown:
+
+- Worker-level file inputs (one per CLI) with a 4 MiB newline breaker for the
+  oversized transcript lines and per-CLI `datatype` metadata — the same shape
+  as the Mac Edge (`dryvist/nix-darwin` `hosts/common/cribl.nix`).
+- codex/gemini run their pack pipeline (`codex_sessions` / `llm_normalize`,
+  installed verbatim from the released `.crbl`s); claude ships raw and is
+  stamped Stream-side.
+- Outputs are `tcpjson` to the HAProxy-fronted Stream per-CLI frontends
+  (`agent_sandbox_cribl_ports`), with the persistent queue buffering across any
+  downtime.
+
+A daily `agent-sandbox-spool-prune.timer` drops whole runs older than
+`agent_sandbox_spool_retention_days` (7). The launcher side (the bind mounts)
+lives in `dryvist/nix-agent-sandbox`.
+
 ## Later hardening
 
 Docker's `internal: true` is the enforcement point. If containers ever get
