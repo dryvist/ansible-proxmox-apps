@@ -1,0 +1,74 @@
+---
+# {{ ansible_managed }}
+# Cribl Edge inputs — agent-sandbox transcript spool tail on docker-host.
+#
+# Mirrors the Mac Edge shape (dryvist/nix-darwin hosts/common/cribl.nix): one
+# worker-level file input per CLI, a 4 MiB newline breaker for the oversized
+# transcript lines, per-CLI datatype metadata, each QuickConnected into a
+# worker-level pack pipeline (codex/gemini) or straight to its per-CLI tcpjson
+# output (claude, whose index/sourcetype is stamped Stream-side).
+#
+# `filenames` globs match the FULL PATH and must lead with "*/" — a pattern
+# without a leading wildcard silently matches nothing (nix-darwin #1623). The
+# launcher bind-mounts each run's transcripts under {{ agent_sandbox_spool_mount }}/<run-id>/<cli>/,
+# so the CLI is selected by a distinctive filename (codex `rollout-*.jsonl`,
+# gemini `session-*.json`) or by the `/claude/` path segment.
+inputs:
+  # codex rollout transcripts: <spool>/<run>/codex/<date-dirs>/rollout-*.jsonl
+  in_agent_codex:
+    type: file
+    disabled: false
+    mode: manual
+    interval: 30
+    path: {{ agent_sandbox_spool_mount }}
+    filenames:
+      - "*/rollout-*.jsonl"
+    recurse: true
+    tailOnly: false
+    sendToRoutes: false
+    breakerRulesets:
+      - AI CLI JSONL
+    metadata:
+      - name: datatype
+        value: "'codex-cli-session'"
+    connections:
+      - pipeline: codex_sessions
+        output: cribl_codex
+  # claude session transcripts: <spool>/<run>/claude/<project>/<uuid>.jsonl.
+  # Filename is not distinctive (.jsonl), so scope by the /claude/ segment.
+  # Ships raw — Stream stamps index/sourcetype (mirrors the Mac in_claude_logs,
+  # no local pipeline).
+  in_agent_claude:
+    type: file
+    disabled: false
+    mode: manual
+    interval: 30
+    path: {{ agent_sandbox_spool_mount }}
+    filenames:
+      - "*/claude/*.jsonl"
+    recurse: true
+    tailOnly: false
+    sendToRoutes: false
+    connections:
+      - output: cribl_claude
+  # gemini-cli session transcripts: <spool>/<run>/gemini/<hash>/session-*.json(l)
+  in_agent_gemini:
+    type: file
+    disabled: false
+    mode: manual
+    interval: 30
+    path: {{ agent_sandbox_spool_mount }}
+    filenames:
+      - "*/session-*.json"
+      - "*/session-*.jsonl"
+    recurse: true
+    tailOnly: false
+    sendToRoutes: false
+    breakerRulesets:
+      - AI CLI JSONL
+    metadata:
+      - name: datatype
+        value: "'gemini-cli-session'"
+    connections:
+      - pipeline: llm_normalize
+        output: cribl_agy

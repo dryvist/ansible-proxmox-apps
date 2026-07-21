@@ -24,3 +24,30 @@ services:
     volumes:
       - {{ agent_sandbox_dir }}/squid.conf:/etc/squid/squid.conf:ro
       - {{ agent_sandbox_dir }}/allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+
+  # Cribl Edge that tails the per-run transcript spool and ships each run's
+  # session records to the HAProxy-fronted Cribl Stream per-CLI frontends before
+  # the --rm agent container is destroyed. On the egress network (NOT the
+  # internal `agents` net) so it can reach the syslog CNAME; the spool is
+  # mounted read-only — the Edge only reads transcripts, never mutates them.
+  cribl-edge:
+    image: {{ agent_sandbox_cribl_image }}
+    container_name: {{ agent_sandbox_cribl_container }}
+    restart: unless-stopped
+    environment:
+      - CRIBL_EDGE=1
+      - CRIBL_HOME=/opt/cribl
+    networks:
+      {{ agent_sandbox_egress_network }}: {}
+    volumes:
+      - {{ agent_sandbox_cribl_config_dir }}/inputs.yml:/opt/cribl/local/edge/inputs.yml:ro
+      - {{ agent_sandbox_cribl_config_dir }}/outputs.yml:/opt/cribl/local/edge/outputs.yml:ro
+      - {{ agent_sandbox_cribl_config_dir }}/breakers.yml:/opt/cribl/local/edge/breakers.yml:ro
+      - {{ agent_sandbox_cribl_config_dir }}/pipelines:/opt/cribl/local/edge/pipelines:ro
+      - {{ agent_sandbox_spool_dir }}:{{ agent_sandbox_spool_mount }}:ro
+      - agent-cribl-state:/opt/cribl/state
+
+volumes:
+  # Persistent-queue + Edge state; survives container recreate so buffered
+  # transcripts are not lost across a config change or restart.
+  agent-cribl-state: {}
