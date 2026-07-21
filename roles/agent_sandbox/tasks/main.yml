@@ -37,6 +37,118 @@
     mode: "0644"
   notify: Restart agent sandbox proxy
 
+# --- Transcript spool + Cribl Edge (Phase D) --------------------------------
+# The launcher (nix-agent-sandbox `agent run --host`) creates the per-run leaves
+# with a throwaway uid-1000 container, which needs this root to already exist
+# world-writable (1777). The Cribl Edge below tails the tree read-only.
+- name: Create agent transcript spool root
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_spool_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "1777"
+
+- name: Create Cribl Edge config directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_cribl_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Cribl Edge inputs configuration
+  ansible.builtin.template:
+    src: cribl/inputs.yml.j2
+    dest: "{{ agent_sandbox_cribl_config_dir }}/inputs.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy Cribl Edge outputs configuration
+  ansible.builtin.template:
+    src: cribl/outputs.yml.j2
+    dest: "{{ agent_sandbox_cribl_config_dir }}/outputs.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+- name: Deploy Cribl Edge event breaker
+  ansible.builtin.template:
+    src: cribl/breakers.yml.j2
+    dest: "{{ agent_sandbox_cribl_config_dir }}/breakers.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart agent sandbox proxy
+
+# Worker-level pack pipelines, taken verbatim from the released pack .crbls.
+# Fetched on the controller (unrestricted egress) then extracted onto the host —
+# the same controller-stage pattern as the cribl_packs role, since docker-host
+# has no guaranteed path to github.com.
+- name: Create Cribl Edge pipeline directories
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_cribl_config_dir }}/pipelines/{{ item.pipeline }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.pipeline }}"
+
+- name: Fetch transcript pack .crbl to controller
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/{{ item.repo }}/releases/download/{{
+      item.version }}/{{ item.name }}-{{ item.version }}.crbl
+    dest: "/tmp/agent-sandbox-{{ item.name }}-{{ item.version }}.crbl"
+    mode: "0644"
+    # Verify the immutable release asset where a pinned digest is known.
+    checksum: "{{ ('sha256:' ~ item.sha256) if (item.sha256 | default('')) else omit }}"
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.version }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+
+# Extract only the one pipeline conf each pack contributes; --strip-components=3
+# drops the `default/pipelines/<pipeline>/` prefix so conf.yml lands directly in
+# the pipeline dir the container bind-mounts.
+- name: Install pack pipeline conf as a worker-level pipeline
+  ansible.builtin.unarchive:
+    src: "/tmp/agent-sandbox-{{ item.name }}-{{ item.version }}.crbl"
+    dest: "{{ agent_sandbox_cribl_config_dir }}/pipelines/{{ item.pipeline }}"
+    remote_src: false
+    include:
+      - "default/pipelines/{{ item.pipeline }}/conf.yml"
+    extra_opts:
+      - "--strip-components=3"
+    owner: root
+    group: root
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.pipeline }}"
+  notify: Restart agent sandbox proxy
+
+- name: Remove pack staging files from controller
+  ansible.builtin.file:
+    path: "/tmp/agent-sandbox-{{ item.name }}-{{ item.version }}.crbl"
+    state: absent
+  loop: "{{ agent_sandbox_cribl_packs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+
 - name: Deploy agent sandbox docker-compose template
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -86,3 +198,190 @@
   register: agent_sandbox_deny_probe
   changed_when: false
   failed_when: agent_sandbox_deny_probe.rc == 0
+
+# --- Adversarial bypass probes ----------------------------------------------
+# The two probes above test the SUPPORTED path (through the proxy). These test
+# that there is NO OTHER path: every one attempts egress AROUND squid and must
+# FAIL. A success = a hole in the boundary and fails the converge loudly.
+# The invariant: `agents` is internal:true (no route out) and dual-homed squid
+# is the sole egress. Codex-reviewed spec.
+#
+# ACCEPTED RESIDUAL (SNI/Host fronting): squid gates the CONNECT authority, not
+# the TLS SNI inside the tunnel, and does no TLS interception. A client CONNECTing
+# to an allowlisted host can present a different inner SNI — only exploitable to
+# reach a non-allowlisted origin that shares an allowlisted origin's IP. Left as
+# documented residual; closing it would need MITM interception we don't want.
+
+- name: "Egress invariant — inspect egress-network membership"
+  ansible.builtin.command:
+    cmd: "docker network inspect {{ agent_sandbox_egress_network }}"
+  register: agent_sandbox_egress_inspect
+  changed_when: false
+
+- name: "Egress invariant — only squid may be dual-homed onto the egress network"
+  vars:
+    _egress_members: >-
+      {{ (agent_sandbox_egress_inspect.stdout | from_json | first).Containers.values()
+         | map(attribute='Name') | list }}
+  ansible.builtin.assert:
+    that:
+      - _egress_members | reject('equalto', agent_sandbox_proxy_container) | list | length == 0
+    fail_msg: >-
+      Egress bypass: container(s) other than {{ agent_sandbox_proxy_container }}
+      are attached to {{ agent_sandbox_egress_network }}: {{ _egress_members }}
+    success_msg: "Only {{ agent_sandbox_proxy_container }} reaches the egress network."
+    quiet: true
+
+- name: "Bypass probe — CONNECT to an allowlisted host on a non-TLS port (expect denial)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --connect-timeout 5 --max-time 15
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://api.anthropic.com:22
+  register: agent_sandbox_port_probe
+  changed_when: false
+  failed_when: agent_sandbox_port_probe.rc == 0
+
+- name: "Bypass probe — CONNECT to a raw external IP via the proxy (expect denial)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --connect-timeout 5 --max-time 15
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://{{ agent_sandbox_probe_external_ip }}:443
+  register: agent_sandbox_rawip_probe
+  changed_when: false
+  failed_when: agent_sandbox_rawip_probe.rc == 0
+
+- name: "Bypass probe — direct TCP to an external IP, no proxy (expect no route)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --noproxy '*' --connect-timeout 5 --max-time 15
+      https://{{ agent_sandbox_probe_external_ip }}
+  register: agent_sandbox_directtcp_probe
+  changed_when: false
+  failed_when: agent_sandbox_directtcp_probe.rc == 0
+
+- name: "Bypass probe — allowlisted domain WITHOUT the proxy (expect no route)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --noproxy '*' --connect-timeout 5 --max-time 15
+      https://api.anthropic.com
+  register: agent_sandbox_proxyunset_probe
+  changed_when: false
+  failed_when: agent_sandbox_proxyunset_probe.rc == 0
+
+- name: "Bypass probe — DoH to a non-allowlisted resolver via the proxy (expect denial)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --connect-timeout 5 --max-time 15
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      'https://{{ agent_sandbox_probe_doh_host }}/dns-query?name=example.com&type=A'
+  register: agent_sandbox_doh_probe
+  changed_when: false
+  failed_when: agent_sandbox_doh_probe.rc == 0
+
+- name: "Bypass probe — cloud metadata endpoint, no proxy (expect no route)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null --noproxy '*' --connect-timeout 5 --max-time 10
+      http://{{ agent_sandbox_probe_metadata_ip }}/
+  register: agent_sandbox_metadata_probe
+  changed_when: false
+  failed_when: agent_sandbox_metadata_probe.rc == 0
+
+- name: "Bypass probe — UDP egress to an external resolver (expect no route)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_netprobe_image }}
+      timeout 8 nc -u -w3 {{ agent_sandbox_probe_external_ip }} 53
+  register: agent_sandbox_udp_probe
+  changed_when: false
+  failed_when: agent_sandbox_udp_probe.rc == 0
+
+- name: "Bypass probe — ICMP echo to an external IP (expect no route)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_netprobe_image }}
+      ping -c1 -W2 {{ agent_sandbox_probe_external_ip }}
+  register: agent_sandbox_icmp_probe
+  changed_when: false
+  failed_when: agent_sandbox_icmp_probe.rc == 0
+
+# IPv6: record global v6 state first so a v6 pass is non-vacuous — it proves
+# "no v6 stack/route", not "curl -6 happened to fail".
+- name: "IPv6 state — record global v6 addresses (context for the v6 probe)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_netprobe_image }}
+      ip -6 addr show scope global
+  register: agent_sandbox_v6_state
+  changed_when: false
+  failed_when: false
+
+- name: "Bypass probe — IPv6 egress to an external address (expect no route/stack)"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null -6 --noproxy '*' --connect-timeout 5 --max-time 15
+      'https://[{{ agent_sandbox_probe_external_ip6 }}]'
+  register: agent_sandbox_v6_probe
+  changed_when: false
+  failed_when: agent_sandbox_v6_probe.rc == 0
+
+# Documented residual (NOT a gate): docker's embedded resolver (127.0.0.11)
+# forwards recursively, so external names resolve = a low-bandwidth DNS-tunnel
+# exfil channel squid cannot see. TCP/UDP egress stays blocked (probes above),
+# so it cannot be upgraded to bulk egress. Informational only — never fails the
+# converge; pinning the resolver to an internal-only one later is an
+# improvement, not a regression this should flag.
+- name: "Residual (documented) — embedded DNS resolves external names"
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_netprobe_image }}
+      nslookup example.com
+  register: agent_sandbox_dns_residual
+  changed_when: false
+  failed_when: false
+
+# --- Spool retention (Phase D) ----------------------------------------------
+# Each <run-id> dir is a self-contained run; a daily timer drops whole runs
+# past the retention window. Cheap `find -mtime` prune, no state to track.
+- name: Deploy transcript spool prune service
+  ansible.builtin.template:
+    src: spool-prune.service.j2
+    dest: /etc/systemd/system/agent-sandbox-spool-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy transcript spool prune timer
+  ansible.builtin.template:
+    src: spool-prune.timer.j2
+    dest: /etc/systemd/system/agent-sandbox-spool-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable transcript spool prune timer
+  ansible.builtin.systemd:
+    name: agent-sandbox-spool-prune.timer
+    state: started
+    enabled: true
+    daemon_reload: true

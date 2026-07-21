@@ -13,6 +13,15 @@ agent_sandbox_operator_user: "{{ ansible_user | default('debian') }}"
 agent_sandbox_dir: /opt/agent-sandbox
 agent_sandbox_squid_image: "ubuntu/squid:6.6-24.04_beta"
 agent_sandbox_probe_image: "curlimages/curl:8.21.0"
+# Adversarial-probe helper: busybox has nc/ping/nslookup/ip applets for the
+# UDP, ICMP, raw-DNS and IPv6-state checks curl can't do. Public well-known
+# literals below are route-existence targets (a bypass would REACH them); they
+# are NOT homelab infra, so hardcoding them is intentional, not an IP leak.
+agent_sandbox_netprobe_image: "busybox:1.37"
+agent_sandbox_probe_external_ip: "1.1.1.1"
+agent_sandbox_probe_external_ip6: "2606:4700:4700::1111"
+agent_sandbox_probe_doh_host: "cloudflare-dns.com"
+agent_sandbox_probe_metadata_ip: "169.254.169.254"
 agent_sandbox_proxy_container: agent-squid
 # Network + alias names are the contract with the nix-agent-sandbox launcher
 # (its AGENT_NETWORK / AGENT_PROXY_URL defaults: agents / http://proxy:3128).
@@ -50,3 +59,50 @@ agent_sandbox_egress_domains:
 # Terrakube issuer.
 agent_sandbox_internal_domains:
   - "openbao.{{ lookup('env', 'PROXMOX_SUBDOMAIN') | default('local', true) }}"
+
+# --- Transcript shipping (Phase D) ------------------------------------------
+# nix-agent-sandbox `agent run --host` bind-mounts each run's per-CLI transcript
+# subdir under {{ agent_sandbox_spool_dir }}/<run-id>/<cli>/. A Cribl Edge
+# container on this host tails the tree and ships every run's session records to
+# Splunk before the --rm agent container is destroyed. Root is mode 1777 so the
+# launcher's throwaway uid-1000 container can create the per-run leaves.
+agent_sandbox_spool_dir: /var/lib/agent-sandbox/spool
+agent_sandbox_spool_retention_days: 7
+# Where the spool root is bind-mounted inside the Cribl Edge container (the
+# `path` the file inputs tail).
+agent_sandbox_spool_mount: /spool
+
+# Cribl Edge (container) that tails the spool. Pinned to the same image the
+# cribl_docker_stack role uses so the estate runs one Cribl build; keep in sync.
+agent_sandbox_cribl_image: cribl/cribl:latest
+agent_sandbox_cribl_container: agent-cribl-edge
+agent_sandbox_cribl_config_dir: "{{ agent_sandbox_dir }}/cribl"
+
+# tcpjson destination: the stable `syslog` CNAME -> HAProxy, which load-balances
+# the Cribl Stream per-CLI frontends (same target the syslog_forwarder role
+# uses). FQDN only, never an IP.
+agent_sandbox_cribl_stream_host: >-
+  syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | mandatory('PROXMOX_SUBDOMAIN environment variable is required (Doppler)') }}
+# One Stream frontend port per CLI so Stream keys routing/enrichment off the
+# port (mirrors the Mac Edge cribl_claude/cribl_codex/cribl_agy outputs).
+agent_sandbox_cribl_ports:
+  claude: 10311
+  codex: 10312
+  gemini: 10313
+
+# Worker-level transcript pipelines are taken verbatim from the released pack
+# .crbls — the same single-source model as the Mac Edge (the pack ships the
+# pipeline conf; this role installs it as a worker-level pipeline, since the
+# pack-internal routing layer never loads on a standalone Edge). claude ships
+# raw (Stream stamps it) and has no pipeline here.
+agent_sandbox_cribl_packs:
+  - name: cc-edge-codex-io
+    repo: dryvist/cc-edge-codex-io
+    version: v0.1.1
+    pipeline: codex_sessions
+  - name: cc-edge-gemini-antigravity-io
+    repo: JacobPEvans-personal/cc-edge-gemini-antigravity-io
+    version: v0.4.1
+    pipeline: llm_normalize
+    sha256: 27164d2afe6590cc36dac4c82f79809a5bdee6f6eed3f2aa205fbdd44e2b2fe6
