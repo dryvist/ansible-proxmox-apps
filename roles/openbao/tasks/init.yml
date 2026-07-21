@@ -1375,3 +1375,96 @@
   when:
     - openbao_bootstrap_token is defined
     - (openbao_new_approle_names | default([])) | length > 0
+
+# Reissuing a secret_id is deliberately separate from role convergence. OpenBao
+# cannot safely enumerate a role's existing secret_ids, so this mints a new
+# bootstrap credential without claiming to revoke an unknown older one. The
+# caller must explicitly request only a standing-credential role, transfer the
+# controller handoff material to its runtime secret manager, and delete it.
+- name: Validate explicitly requested AppRole secret_id reissues
+  ansible.builtin.assert:
+    that:
+      - >-
+        openbao_reissue_approle_secret_ids | difference(
+          openbao_approles | map(attribute='name') | list
+        ) | length == 0
+      - >-
+        openbao_reissue_approle_secret_ids | intersect(
+          openbao_approles
+          | selectattr('manage_secret_id', 'defined')
+          | selectattr('manage_secret_id', 'equalto', false)
+          | map(attribute='name') | list
+        ) | length == 0
+      - openbao_bootstrap_token is defined
+    fail_msg: >-
+      AppRole secret_id reissue needs a privileged BAO_TOKEN and may name only
+      declared standing-credential roles; human-gated roles must keep
+      manage_secret_id:false.
+  when: openbao_reissue_approle_secret_ids | length > 0
+
+- name: Read role_ids for explicitly requested AppRole secret_id reissues
+  ansible.builtin.command:
+    cmd: "bao read -format=json auth/approle/role/{{ item }}/role-id"
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_bootstrap_token }}"
+  loop: "{{ openbao_reissue_approle_secret_ids }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openbao_reissued_approle_role_ids
+  no_log: true
+  changed_when: false
+  when: openbao_reissue_approle_secret_ids | length > 0
+
+- name: Mint explicitly requested AppRole secret_ids
+  ansible.builtin.command:
+    cmd: "bao write -f -format=json auth/approle/role/{{ item }}/secret-id"
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_bootstrap_token }}"
+  loop: "{{ openbao_reissue_approle_secret_ids }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openbao_reissued_approle_secret_id_results
+  no_log: true
+  changed_when: true
+  when: openbao_reissue_approle_secret_ids | length > 0
+
+- name: Write reissued AppRole material to the controller (0600)
+  ansible.builtin.copy:
+    content: |
+      {
+        "approle": "{{ item.0 }}",
+        "vault_addr": "{{ openbao_api_addr }}",
+        "role_id": "{{ (item.1.stdout | from_json).data.role_id }}",
+        "secret_id": "{{ (item.2.stdout | from_json).data.secret_id }}"
+      }
+    dest: "{{ openbao_approle_file_prefix }}-{{ item.0 }}-{{ inventory_hostname }}.json"
+    mode: "0600"
+  loop: >-
+    {{ openbao_reissue_approle_secret_ids
+       | zip(openbao_reissued_approle_role_ids.results | default([]),
+             openbao_reissued_approle_secret_id_results.results | default([]))
+       | list }}
+  loop_control:
+    label: "{{ item.0 }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+  when: openbao_reissue_approle_secret_ids | length > 0
+
+- name: INSTRUCT — transfer reissued AppRole material, then delete the handoff file
+  ansible.builtin.debug:
+    msg: >-
+      Reissued AppRole secret_id material for:
+      {{ openbao_reissue_approle_secret_ids | join(', ') }}. Each role_id +
+      secret_id is in the controller-only file
+      {{ openbao_approle_file_prefix }}-<role>-{{ inventory_hostname }}.json.
+      Place it in the consumer's approved runtime secret manager, verify the
+      consumer can authenticate, then securely delete the handoff file. This
+      is a reissue: revoke any known older secret_id separately if it remains
+      available.
+  when: openbao_reissue_approle_secret_ids | length > 0

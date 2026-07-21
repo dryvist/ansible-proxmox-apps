@@ -428,6 +428,22 @@ the seal key is ever lost, so they are treated as paper secrets:
   `doppler run`), then **securely delete** the files.
 - Nothing secret is ever written into the repo or onto a target host.
 
+### Explicit AppRole secret_id reissue
+
+Normal convergence never mints another credential for an existing AppRole. If
+a standing consumer has lost its local `secret_id`, run the role with a
+privileged `BAO_TOKEN` and an explicit list, for example
+`openbao_reissue_approle_secret_ids: [ai-readonly]`. The role verifies that
+each name is declared and is not a human-gated `manage_secret_id: false` role,
+then writes the role ID and one newly minted secret ID to the existing
+controller-only `0600` handoff file. Move that material directly into the
+consumer's approved runtime secret manager, verify the consumer, and securely
+delete the handoff file.
+
+This operation is a **reissue**, not a revocation: OpenBao cannot safely
+enumerate an AppRole's older secret IDs. If an older ID is known, revoke it
+separately after the replacement consumer has been verified.
+
 These controller files are gitignored (`.openbao-recovery-*.json` /
 `.openbao-approle-*.json`). After transcription:
 
