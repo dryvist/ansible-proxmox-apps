@@ -218,18 +218,40 @@
   register: agent_sandbox_egress_inspect
   changed_when: false
 
+- name: "Egress invariant — inspect internal-network membership"
+  ansible.builtin.command:
+    cmd: "docker network inspect {{ agent_sandbox_network }}"
+  register: agent_sandbox_internal_inspect
+  changed_when: false
+
+# The bypass condition is DUAL-HOMING: a container on both the internal agents
+# net and the egress net bridges agents around squid. Egress-only members
+# (the Cribl Edge shipping spooled transcripts) are unreachable from agents and
+# are allowed — but only the two declared services, so a surprise container on
+# the egress net still fails loudly.
 - name: "Egress invariant — only squid may be dual-homed onto the egress network"
   vars:
     _egress_members: >-
       {{ (agent_sandbox_egress_inspect.stdout | from_json | first).Containers.values()
          | map(attribute='Name') | list }}
+    _internal_members: >-
+      {{ (agent_sandbox_internal_inspect.stdout | from_json | first).Containers.values()
+         | map(attribute='Name') | list }}
+    _dual_homed: "{{ _egress_members | intersect(_internal_members) }}"
+    _egress_allowed:
+      - "{{ agent_sandbox_proxy_container }}"
+      - "{{ agent_sandbox_cribl_container }}"
   ansible.builtin.assert:
     that:
-      - _egress_members | reject('equalto', agent_sandbox_proxy_container) | list | length == 0
+      - _dual_homed | reject('equalto', agent_sandbox_proxy_container) | list | length == 0
+      - _egress_members | difference(_egress_allowed) | length == 0
     fail_msg: >-
-      Egress bypass: container(s) other than {{ agent_sandbox_proxy_container }}
-      are attached to {{ agent_sandbox_egress_network }}: {{ _egress_members }}
-    success_msg: "Only {{ agent_sandbox_proxy_container }} reaches the egress network."
+      Egress bypass: dual-homed={{ _dual_homed }} (only
+      {{ agent_sandbox_proxy_container }} may bridge both networks);
+      egress members={{ _egress_members }} (allowed: {{ _egress_allowed }})
+    success_msg: >-
+      Only {{ agent_sandbox_proxy_container }} bridges the internal and egress
+      networks; egress membership limited to {{ _egress_allowed }}.
     quiet: true
 
 - name: "Bypass probe — CONNECT to an allowlisted host on a non-TLS port (expect denial)"
