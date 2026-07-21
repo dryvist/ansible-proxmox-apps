@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.4...v3.1.0) (2026-07-21)
+
+
+### Features
+
+* **agent_sandbox:** adversarial egress probe suite ([#1169](https://github.com/dryvist/ansible-proxmox-apps/issues/1169)) ([424a822](https://github.com/dryvist/ansible-proxmox-apps/commit/424a82298e20173aa06cfc5ef3557a8dae11d33d))
+* **agent_sandbox:** ship container agent transcripts to Splunk ([#1168](https://github.com/dryvist/ansible-proxmox-apps/issues/1168)) ([21c0d2b](https://github.com/dryvist/ansible-proxmox-apps/commit/21c0d2b7f25d735ff8e38db09f17ef4c79981daa))
+
+
+### Bug Fixes
+
+* **cribl_stream:** map antigravity-cli-* datatypes to colon sourcetype ([#1167](https://github.com/dryvist/ansible-proxmox-apps/issues/1167)) ([12d2061](https://github.com/dryvist/ansible-proxmox-apps/commit/12d206133283838e73087953d5fcc11396b2a501))
+* **cribl_stream:** use _value not value in prometheus_to_netmon eval ([#1166](https://github.com/dryvist/ansible-proxmox-apps/issues/1166)) ([db87ca7](https://github.com/dryvist/ansible-proxmox-apps/commit/db87ca7f3c1964f601ca78025d80ede27740f0e7))
+
 ## [3.0.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.3...v3.0.4) (2026-07-20)
 
 
