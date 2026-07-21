@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.1.0...v3.1.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** egress probe asserts dual-homing, not bare membership ([#1173](https://github.com/dryvist/ansible-proxmox-apps/issues/1173)) ([ddb2a8c](https://github.com/dryvist/ansible-proxmox-apps/commit/ddb2a8cc287f3c47e50548bac87cb4d7e04d4683))
+
 ## [3.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.0.4...v3.1.0) (2026-07-21)
 
 
