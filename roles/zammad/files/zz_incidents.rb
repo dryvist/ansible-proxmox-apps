@@ -160,7 +160,7 @@ seed_ticket(
     detection_method: 'agent', source_issue: 'n/a',
   },
   articles: [
-    { subject: 'Resolution', at: Time.utc(2026, 7, 16, 20, 30), body: 'VIKUNJA_API_TOKEN in secret/ai/hermes (and ai/vikunja api_token) returned 401; replaced with the working Doppler ai-ci-automation token, verified 200 against /api/v1/projects.' },
+    { subject: 'Resolution', at: Time.utc(2026, 7, 16, 20, 30), body: 'VIKUNJA_API_TOKEN in secret/ai/hermes (and ai/vikunja api_token) returned 401; replaced with the working Doppler-sourced token, verified 200 against /api/v1/projects.' },
   ]
 )
 
