@@ -88,9 +88,10 @@
 # port} — a load-balanced pool over the node FQDNs. Optional per row: scheme
 # (default http), insecure_tls (self-signed backend, e.g. Splunk / Proxmox),
 # sticky + health_check (pool session affinity + per-node health checks). Every
-# row is normalised here to {name, fqdn, servers[], scheme, insecure_tls,
-# sticky, health_check, sso} so the template stays dumb (and fixture-testable):
-#   - fqdn    = base domain itself when apex, else <name>.<base domain>
+# row is normalised here to {name, fqdn, path_prefix, priority, servers[],
+# scheme, insecure_tls, sticky, health_check, sso} so the template stays dumb
+# (and fixture-testable):
+#   - fqdn    = base domain itself when apex, else <hostname>.<base domain>
 #   - servers = one <scheme>://<host-or-ip>:<port> url per backend (or the
 #               single ip), so single and multi-backend rows render uniformly.
 - name: Build Traefik routers from the inventory ingress table
@@ -101,7 +102,9 @@
           'name': item.name,
           'fqdn': (item.apex | default(false)) | ternary(
                     traefik_base_domain,
-                    item.name ~ '.' ~ traefik_base_domain),
+                    (item.hostname | default(item.name, true)) ~ '.' ~ traefik_base_domain),
+          'path_prefix': item.path_prefix | default('', true),
+          'priority': item.priority | default(0, true),
           'servers': (item.backends | default([item.ip | default('')]))
                      | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
                      | map('regex_replace', '$', ':' ~ (item.port | string))

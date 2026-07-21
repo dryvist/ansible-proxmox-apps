@@ -49,6 +49,15 @@ Caveats:
 until the authority-flip. If the export bucket is unset the upload fails closed
 (nothing is published).
 
+## Ingress catalog boundary
+
+The published OpenTofu ingress table is the current writer for UI hostname,
+path, backend, and SSO metadata. It supports a shared hostname with a
+path-specific API or webhook route, which lets browser UIs be SSO-gated without
+breaking machine clients. A future Nautobot Config Context mirror may validate
+this catalog, but it must remain additive and non-boot-critical until the
+separate authority-flip gates are complete.
+
 ## Prefix roles and `dhcp-pool`
 
 `tasks/seed_bundle.yml` builds Nautobot prefixes from `NAUTOBOT_SEED_NETWORKS`

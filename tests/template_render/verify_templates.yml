@@ -1028,6 +1028,9 @@
       # The Authelia portal row itself (never sso-gated); its backend url is
       # what the forwardAuth middleware dials.
       - { name: authelia, ip: "192.0.2.14", port: 9091 }
+      # Shared host: root dashboard plus an unauthenticated webhook path.
+      - { name: hermes-dashboard, hostname: hermes, ip: "192.0.2.15", port: 8080, sso: true }
+      - { name: hermes, hostname: hermes, path_prefix: /webhooks/, priority: 100, ip: "192.0.2.15", port: 8644, sso: false }
       # Proxmox cluster-UI apex: load-balanced pool over the node FQDNs, sticky
       # + health-checked, https to self-signed node backends.
       - name: proxmox
@@ -1053,7 +1056,9 @@
               'name': item.name,
               'fqdn': (item.apex | default(false)) | ternary(
                         traefik_base_domain,
-                        item.name ~ '.' ~ traefik_base_domain),
+                        (item.hostname | default(item.name, true)) ~ '.' ~ traefik_base_domain),
+              'path_prefix': item.path_prefix | default('', true),
+              'priority': item.priority | default(0, true),
               'servers': (item.backends | default([item.ip | default('')]))
                          | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
                          | map('regex_replace', '$', ':' ~ (item.port | string))
@@ -1083,6 +1088,8 @@
             "https://proxmox2.example.com:8006", "https://proxmox3.example.com:8006"]
           - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).sticky | bool
           - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).health_check | bool
+          - (traefik_routes | selectattr('name', 'equalto', 'hermes-dashboard') | first).fqdn == "hermes.pve.example.com"
+          - (traefik_routes | selectattr('name', 'equalto', 'hermes') | first).path_prefix == "/webhooks/"
         fail_msg: >-
           The route-builder did not normalise the ingress table correctly: apex
           fqdn, the multi-backend servers list, or the sticky/health flags wrong.
@@ -1142,6 +1149,9 @@
           - "'*.pve.example.com' in _traefik_dynamic"
           # The apex router's Host rule is the base domain ITSELF (no <name>. prefix).
           - _traefik_dynamic_yaml.http.routers.proxmox.rule == "Host(`pve.example.com`)"
+          - _traefik_dynamic_yaml.http.routers['hermes-dashboard'].rule == "Host(`hermes.pve.example.com`)"
+          - _traefik_dynamic_yaml.http.routers.hermes.rule == "Host(`hermes.pve.example.com`) && PathPrefix(`/webhooks/`)"
+          - _traefik_dynamic_yaml.http.routers.hermes.priority == 100
           # Wildcard requested via the resolver; dashboard secured by a usersFile
           # (no credential inline — the role generates the file on the host).
           - _traefik_dynamic_yaml.http.routers.plex.tls.certResolver == "letsencrypt"
