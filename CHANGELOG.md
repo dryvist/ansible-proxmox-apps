@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.1.2...v3.2.0) (2026-07-21)
+
+
+### Features
+
+* **ingress:** support path-routed SSO UIs ([#1182](https://github.com/dryvist/ansible-proxmox-apps/issues/1182)) ([35fb449](https://github.com/dryvist/ansible-proxmox-apps/commit/35fb4492114ae80e73b0898d95850beae3e53c1b))
+
 ## [3.1.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.1.1...v3.1.2) (2026-07-21)
 
 
