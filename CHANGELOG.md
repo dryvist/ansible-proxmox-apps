@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.1.1...v3.1.2) (2026-07-21)
+
+
+### Bug Fixes
+
+* **dns:** publish cribl-stream-01 apex A record for INC-17123 ([#1178](https://github.com/dryvist/ansible-proxmox-apps/issues/1178)) ([6aa3633](https://github.com/dryvist/ansible-proxmox-apps/commit/6aa3633d1c303b131bb026254e078accea5cf96b))
+
 ## [3.1.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.1.0...v3.1.1) (2026-07-21)
 
 
