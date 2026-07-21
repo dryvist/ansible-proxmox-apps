@@ -53,6 +53,15 @@ represent. Per-domain plan (no source-system changes — read-only ingestion onl
 | RADIUS | Secrets / custom | design decision | design |
 | Node storage / ingress | custom fields / config-context | design decision | design |
 
+### Ingress UI boundary
+
+The ingress contract is now explicit enough to represent a browser UI, an API,
+or a webhook on the same hostname (`hostname`, optional `path_prefix`, and
+priority). OpenTofu remains its writer and Traefik/Technitium remain readers.
+Nautobot must mirror that catalog only through an additive Config Context SSoT
+job after a reviewed dry run; it is not a Traefik boot dependency and it does
+not become an authority flip in Phase 1.
+
 **Rule for every addition:** a new SSoT DataSource job per domain, run
 `dryrun=True` first with the DiffSync diff reviewed before any committing run
 (see the Phase-2 design §9). Add a mature app only where it demonstrably
