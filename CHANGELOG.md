@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.2.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.0...v3.2.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **openbao:** allow exact Splunk KV undelete ([03b62cd](https://github.com/dryvist/ansible-proxmox-apps/commit/03b62cd24af878f2e7a80061fe3876199e8f57af))
+* **openbao:** allow exact Splunk KV undelete ([9c4dc68](https://github.com/dryvist/ansible-proxmox-apps/commit/9c4dc68324c7164fd5a8490924a68d19bca68437))
+
 ## [3.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.1.2...v3.2.0) (2026-07-21)
 
 
