@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.6...v3.3.0) (2026-07-22)
+
+
+### Features
+
+* **openbao:** add isolated Slack OAuth application proof of concept ([#1210](https://github.com/dryvist/ansible-proxmox-apps/issues/1210)) ([f6028eb](https://github.com/dryvist/ansible-proxmox-apps/commit/f6028ebe3142f5274b6659df675cfda8a0f70f14))
+
 ## [3.2.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.5...v3.2.6) (2026-07-22)
 
 
