@@ -30,6 +30,36 @@
   gather_facts: false
 
   tasks:
+    - name: Read resolved PCT transport options
+      ansible.builtin.command:
+        argv:
+          - ansible-config
+          - dump
+          - --type
+          - connection
+          - community.proxmox.proxmox_pct_remote
+          - --format
+          - json
+        chdir: "{{ playbook_dir }}/../.."
+      register: pct_transport_config
+      changed_when: false
+      vars:
+        ansible_become: false
+
+    - name: Verify PCT transport does not request a PTY
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              pct_transport_config.stdout | from_json | first | dict2items | first
+            ).value
+            | selectattr('name', 'equalto', 'pty')
+            | map(attribute='value')
+            | list == [false]
+        fail_msg: >-
+          community.proxmox.proxmox_pct_remote must resolve pty=false because
+          automation-ansible SSH certificates intentionally omit permit-pty
+
     - name: Verify tofu_data constants were loaded
       ansible.builtin.assert:
         that:
