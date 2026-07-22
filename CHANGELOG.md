@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.3.0...v3.3.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **openbao:** use canonical Slack bootstrap inputs ([#1215](https://github.com/dryvist/ansible-proxmox-apps/issues/1215)) ([8139300](https://github.com/dryvist/ansible-proxmox-apps/commit/81393005d2ee0760f82b314c0a2a87e12086f12b))
+
 ## [3.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.6...v3.3.0) (2026-07-22)
 
 
