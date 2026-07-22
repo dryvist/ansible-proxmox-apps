@@ -184,8 +184,8 @@ documented once at
 | `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Dedicated GitHub broker App private key | one-time environment |
 | `OPENBAO_GITHUB_DRYVIST_INSTALLATION_ID` | GitHub App installation on `dryvist` | environment |
 | `OPENBAO_GITHUB_PERSONAL_INSTALLATION_ID` | GitHub App installation on the personal account | environment |
-| `OPENBAO_SLACK_POC_CLIENT_ID` | Slack POC OAuth client ID | one-time environment |
-| `OPENBAO_SLACK_POC_CLIENT_SECRET` | Slack POC OAuth client secret | one-time environment |
+| `SLACK_OPENBAO_CLIENT_ID` | Slack OAuth client ID | Doppler (`iac-conf-mgmt` / `prd`) |
+| `SLACK_OPENBAO_CLIENT_SECRET` | Slack OAuth client secret | Doppler (`iac-conf-mgmt` / `prd`) |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | Doppler |
 | `IDRAC_R410_USER` | R410 iDRAC username | Doppler |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | Doppler |
