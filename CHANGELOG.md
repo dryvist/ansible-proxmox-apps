@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.2.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.1...v3.2.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **ansible:** pass owned OpenBao token to child ([bdf1fe0](https://github.com/dryvist/ansible-proxmox-apps/commit/bdf1fe02c6f8472547379f894465e4fc3bdfd976))
+* **ansible:** pass owned OpenBao token to child ([b518d20](https://github.com/dryvist/ansible-proxmox-apps/commit/b518d20e088558a2b1ca82f1ff82ea9e6c20c27a))
+
 ## [3.2.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.0...v3.2.1) (2026-07-21)
 
 
