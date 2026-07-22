@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.3...v3.2.4) (2026-07-22)
+
+
+### Bug Fixes
+
+* **ansible:** disable PTY for PCT transport ([7cc81dd](https://github.com/dryvist/ansible-proxmox-apps/commit/7cc81dd51e8ab7874a54571e62997288c4723331))
+
 ## [3.2.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.2...v3.2.3) (2026-07-22)
 
 
