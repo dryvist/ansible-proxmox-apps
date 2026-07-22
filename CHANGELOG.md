@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.2.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.2...v3.2.3) (2026-07-22)
+
+
+### Bug Fixes
+
+* **media:** remove client-specific quality policy ([0e4b89d](https://github.com/dryvist/ansible-proxmox-apps/commit/0e4b89df86502349d4957815ea91eb75a4e5a3c5))
+* **media:** remove client-specific quality policy ([58101bf](https://github.com/dryvist/ansible-proxmox-apps/commit/58101bf8edc14f17e4dd9d7f90b866957bb5a78c))
+* **media:** retire Apple TV quality policy ([6d20bea](https://github.com/dryvist/ansible-proxmox-apps/commit/6d20beac4c3f1cbffb50b1e54dab2c06f685853e))
+
 ## [3.2.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.1...v3.2.2) (2026-07-22)
 
 
