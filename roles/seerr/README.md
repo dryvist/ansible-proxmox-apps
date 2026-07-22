@@ -71,8 +71,11 @@ via the Seerr settings API (GET-then-PUT-always — the repo's house pattern,
 no bespoke scripts):
 
 - `GET /api/v1/settings/{radarr,sonarr}` to read existing servers.
-- Resolve the target app's first quality-profile id from its own
-  `/api/v3/qualityprofile` (Seerr requires `activeProfileId`).
+- Resolve the stock `HD - 720p/1080p` quality-profile id from its own
+  `/api/v3/qualityprofile` (Seerr requires `activeProfileId`). The role fails
+  instead of silently falling back if that profile is absent; this keeps normal
+  requests above SD and at or below 1080p. Higher-quality requests remain an
+  explicit per-item choice in Sonarr/Radarr.
 - `POST` the server only when no entry with that hostname exists yet.
 - `PUT /api/v1/settings/{radarr,sonarr}/{id}` to reconcile an existing entry
   whenever its stored `apiKey`, `port`, or `useSsl` drifts from the current

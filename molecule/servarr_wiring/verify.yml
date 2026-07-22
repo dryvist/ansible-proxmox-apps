@@ -113,3 +113,32 @@
           - servarr_wiring_recycler_bin_days | int >= 0
           - servarr_wiring_min_free_space_mb | int >= 1024
         fail_msg: "recycler-bin/min-free-space import safety contract regressed"
+
+    - name: Assert the legacy profile migration preserves explicit overrides
+      ansible.builtin.assert:
+        that:
+          - servarr_wiring_sonarr_native_quality_profile == 'HD - 720p/1080p'
+          - servarr_wiring_radarr_native_quality_profile == 'HD - 720p/1080p'
+          - servarr_wiring_sonarr_legacy_quality_profile == 'WEB-1080p'
+          - servarr_wiring_radarr_legacy_quality_profile == 'HD Bluray + WEB'
+        fail_msg: >-
+          The profile migration must replace only the two retired Apple-TV
+          profiles with the native HD profile.
+
+    - name: Read the legacy-profile retirement task
+      ansible.builtin.slurp:
+        src: "{{ playbook_dir }}/../../roles/servarr_wiring/tasks/retire_quality_profile.yml"
+      register: servarr_wiring_retirement_task_raw
+
+    - name: Assert profile deletion is guarded by assignment migration
+      vars:
+        servarr_wiring_retirement_task: >-
+          {{ servarr_wiring_retirement_task_raw.content | b64decode }}
+      ansible.builtin.assert:
+        that:
+          - "'Migrate legacy-profile items to native HD' in servarr_wiring_retirement_task"
+          - "'Require migrated legacy assignments' in servarr_wiring_retirement_task"
+          - "'Delete retired quality profile' in servarr_wiring_retirement_task"
+        fail_msg: >-
+          Legacy profile deletion must follow migration and a no-remaining-
+          assignments assertion.

@@ -143,17 +143,26 @@
       changed_when: false
       no_log: true
 
-    - name: Resolve the desired Radarr quality profile (by name; fall back to first)
+    - name: Resolve the required native Radarr quality profile
       ansible.builtin.set_fact:
         seerr_radarr_profile: >-
           {{
             (seerr_radarr_profiles.json
              | selectattr('name', 'equalto', seerr_radarr_quality_profile)
-             | list | first)
-            | default((seerr_radarr_profiles.json | first), true)
-            | default({'id': 0, 'name': ''}, true)
+             | list | first) | default({}, true)
           }}
       no_log: true
+
+    - name: Require the native Radarr quality profile
+      ansible.builtin.assert:
+        that:
+          - seerr_radarr_profile.name | default('') == seerr_radarr_quality_profile
+          - seerr_radarr_profile.id | default(0) | int > 0
+        fail_msg: >-
+          Radarr does not expose the required native quality profile
+          {{ seerr_radarr_quality_profile }}. Refusing to fall back to an
+          arbitrary or custom profile.
+        quiet: true
 
     - name: Read existing Seerr Radarr servers
       ansible.builtin.uri:
@@ -275,17 +284,26 @@
       changed_when: false
       no_log: true
 
-    - name: Resolve the desired Sonarr quality profile (by name; fall back to first)
+    - name: Resolve the required native Sonarr quality profile
       ansible.builtin.set_fact:
         seerr_sonarr_profile: >-
           {{
             (seerr_sonarr_profiles.json
              | selectattr('name', 'equalto', seerr_sonarr_quality_profile)
-             | list | first)
-            | default((seerr_sonarr_profiles.json | first), true)
-            | default({'id': 0, 'name': ''}, true)
+             | list | first) | default({}, true)
           }}
       no_log: true
+
+    - name: Require the native Sonarr quality profile
+      ansible.builtin.assert:
+        that:
+          - seerr_sonarr_profile.name | default('') == seerr_sonarr_quality_profile
+          - seerr_sonarr_profile.id | default(0) | int > 0
+        fail_msg: >-
+          Sonarr does not expose the required native quality profile
+          {{ seerr_sonarr_quality_profile }}. Refusing to fall back to an
+          arbitrary or custom profile.
+        quiet: true
 
     - name: Read existing Seerr Sonarr servers
       ansible.builtin.uri:
@@ -357,7 +375,7 @@
 
     # Self-heal: PUT only when the stored entry drifts from the desired
     # connection, library root, or default quality profile (apiKey rotation,
-    # port/SSL change, a moved root folder, or a configarr profile change).
+    # port/SSL change, a moved root folder, or a changed default profile).
     # Body preserves the existing
     # entry (combine) and overlays only the reconciled values.
     - name: Update Sonarr in Seerr (reconcile drifted apiKey/port/ssl/root-folder/profile)

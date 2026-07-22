@@ -12,17 +12,20 @@ together over the LAN.
 
 This role owns the **VPN-reachable cross-app API wiring** — the parts that must
 run from inside the `download_vpn` coordinator (it sits behind the Proton VPN
-and can still reach the other media LXCs on the LAN). Two slices of *arr config
-that are reachable from anywhere on the LAN have moved to dedicated
-config-as-code tools:
+and can still reach the other media LXCs on the LAN). Root folders and download
+clients are managed upstream; quality selection uses the applications' native
+profiles:
 
 | Config | Owner |
 | --- | --- |
 | Root folders + qBittorrent download clients | devopsarr **`servarr-config`** tofu module (`tofu-proxmox`) |
-| Quality profiles + custom formats + quality definitions | **`configarr`** role (TRaSH-Guides) |
+| Normal request quality | stock `HD - 720p/1080p` profile in Sonarr/Radarr |
 
-This role no longer POSTs root folders, download clients, or quality profiles —
-removing the overlap keeps each piece of config single-owned.
+This role does not POST root folders or download clients. On its first run
+after this change, it migrates only items on the retired `WEB-1080p` (Sonarr)
+and `HD Bluray + WEB` (Radarr) profiles to the native HD profile, verifies no
+items remain on those legacy profiles, then deletes them. Other explicit
+profile choices are left untouched.
 
 ## What it does (all idempotent — GET-then-POST/PUT)
 
@@ -52,8 +55,8 @@ A search-first pass (logged in the PR) found the community Servarr Ansible
 roles (`tinyoverflow`, `coaxial`, `Amixp`, `sleepy_nols`) are **install-only**
 — none do cross-app API wiring. For the LAN-reachable structural config (root
 folders, download clients, quality profiles) the stack now uses declarative
-tools — the `servarr-config` tofu module and the `configarr` role — but the
-**VPN-locked** Prowlarr wiring this role still owns has to run from inside the
+tool — the `servarr-config` tofu module — but the **VPN-locked** Prowlarr
+wiring this role still owns has to run from inside the
 `download_vpn` coordinator, where those LAN/CI-reachable tools cannot reach. So
 this role keeps the repo's vetted house pattern — `ansible.builtin.uri`
 GET-then-POST, the same one the `download_vpn` role uses for qBittorrent.

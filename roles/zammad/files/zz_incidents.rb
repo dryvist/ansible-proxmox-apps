@@ -465,4 +465,25 @@ seed_ticket(
   ]
 )
 
+# Existing ticket: backfill the final finding rather than creating a duplicate.
+# The Zammad API/MCP is responsible for linking this ticket to any separately
+# open incidents once its live integration is available.
+plex_audio = Ticket.find_by(number: '17040')
+if plex_audio
+  add_article(
+    plex_audio,
+    subject: 'Resolution and configuration retirement record',
+    at: Time.utc(2026, 7, 21, 12, 0),
+    custom: {
+      affected_services: %w[plex media],
+      root_cause: 'Plex tvOS playback was stabilized by enabling Use Old Audio Engine. HomePod Mini audio output was relevant client context, but the evidence does not establish it as the sole root cause. File container, codec, ffmpeg conversion, and release-quality theories were ruled out after AC3 5.1 direct play still dropped audio.',
+      detection_method: 'user-report',
+      source_issue: 'ansible-proxmox-apps#823, #825, #829, #830, #1051, #1057, #1068',
+    },
+    body: 'Canonical resolution: Plex tvOS Use Old Audio Engine stabilized playback. The HomePod Mini was the audio-output context, not an independently proven sole cause. AC3 5.1 direct play still dropped audio, so file format, codec, ffmpeg conversion, and release-quality hypotheses were rejected. Follow-up configuration removes only the legacy Apple-TV-specific Configarr profile/custom-format bundles and remux artifacts: existing items on WEB-1080p (Sonarr) or HD Bluray + WEB (Radarr) migrate to the stock HD - 720p/1080p profile before those legacy profiles are deleted. Explicit higher per-item profiles remain unchanged. Related work: project#823, project#825, project#829, project#830, project#1051, project#1057, project#1068.'
+  )
+else
+  puts 'WARN: Zammad #17040 not found; Plex incident backfill skipped'
+end
+
 puts 'SEED_DONE'
