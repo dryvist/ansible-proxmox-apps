@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.2.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.4...v3.2.5) (2026-07-22)
+
+
+### Bug Fixes
+
+* **authelia:** avoid guest sudo for OIDC key ([66f0ba7](https://github.com/dryvist/ansible-proxmox-apps/commit/66f0ba74730a56f024ee14fd634f882af2eeea16))
+* **authelia:** avoid guest sudo for OIDC key ([adfd475](https://github.com/dryvist/ansible-proxmox-apps/commit/adfd475cd5e2efc5a10ae4f958cb94129c6beac0))
+
 ## [3.2.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.3...v3.2.4) (2026-07-22)
 
 
