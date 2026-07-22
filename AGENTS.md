@@ -38,9 +38,8 @@ this repo handles app config only.
   Prowlarr indexers, Prowlarr -> Sonarr/Radarr app sync, and media-management
   settings — hardlinks + recycler bin). Root folders + qBittorrent download
   clients are owned by the devopsarr `servarr-config` tofu module
-  (`tofu-proxmox`); reusable quality definitions and future general policy by
-  the `configarr` role (TRaSH-Guides). `servarr_wiring` performs only the
-  one-time migration and retirement of the two legacy Apple-TV profiles.
+  (`tofu-proxmox`); reusable quality definitions and general policy by the
+  `configarr` role (TRaSH-Guides). `servarr_wiring` does not manage profiles.
 - **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
   Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
   API keys, no new *arr-side wiring).

@@ -8,8 +8,8 @@ current; this role just points Configarr at the live apps.
 
 ## Boundary
 
-- **Configarr (this role)** owns reusable quality definitions and future
-  non-client-specific policy.
+- **Configarr (this role)** owns reusable quality definitions and general
+  policy.
 - **devopsarr `servarr-config` (tofu)** owns root folders + download clients.
 - No overlap — and Prowlarr stays with `servarr_wiring` (behind the VPN).
 
@@ -31,13 +31,9 @@ secret-free (URLs + keys live in `secrets.yml`, mode 0600, via Configarr's
 
 ## Quality policy
 
-Normal Seerr requests use Sonarr/Radarr's stock `HD - 720p/1080p` profile: no
-SD and no resolution above 1080p. A higher profile remains an explicit per-item
-choice. The retired `WEB-1080p` and `HD Bluray + WEB` profiles, their audio
-scoring, and their Apple-TV-specific custom-format policy are intentionally not
-rendered again. The template include lists remain variables
-(`configarr_sonarr_templates` / `configarr_radarr_templates`) so Configarr can
-grow with new general-purpose policy without recreating client-specific rules.
+Template includes are variables (`configarr_sonarr_templates` /
+`configarr_radarr_templates`) so Configarr can grow with general-purpose policy
+without tying that policy to a particular playback client.
 
 ## Key variables
 
@@ -66,5 +62,5 @@ sops exec-env secrets.enc.yaml \
 ```
 
 Disable it without removing the play by setting `configarr_manage: false`. Add
-or tune reviewed general-purpose policy through `configarr_sonarr_templates` /
+or tune general-purpose policy through `configarr_sonarr_templates` /
 `configarr_radarr_templates` in inventory.
