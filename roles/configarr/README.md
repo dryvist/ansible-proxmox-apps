@@ -1,14 +1,15 @@
 # configarr
 
-Declarative [TRaSH-Guides](https://trash-guides.info/) quality profiles and
-custom formats for Sonarr/Radarr, applied by the official
+Declarative [TRaSH-Guides](https://trash-guides.info/) configuration for
+Sonarr/Radarr, applied by the official
 [Configarr](https://configarr.de) container. This is the "adopt, don't build"
 replacement for hand-maintained quality config: the community keeps the formats
 current; this role just points Configarr at the live apps.
 
 ## Boundary
 
-- **Configarr (this role)** owns quality profiles + custom formats.
+- **Configarr (this role)** owns reusable quality definitions and general
+  policy.
 - **devopsarr `servarr-config` (tofu)** owns root folders + download clients.
 - No overlap — and Prowlarr stays with `servarr_wiring` (behind the VPN).
 
@@ -28,16 +29,11 @@ variables — the same deterministic keys `servarr_wiring` uses. The rendered
 secret-free (URLs + keys live in `secrets.yml`, mode 0600, via Configarr's
 `!secret` tag).
 
-## Quality target
+## Quality policy
 
-720p minimum, 1080p maximum (Bluray + WEB); per-item higher quality is left to
-Sonarr/Radarr's native per-series / per-movie profile selection. The template
-includes are variables (`configarr_sonarr_templates` /
-`configarr_radarr_templates`) — tune them in inventory without editing the
-role. Radarr's "HD Bluray + WEB" profile matches the 720p/1080p intent
-directly; Sonarr's official TRaSH profiles are WEB-tier-oriented (WEB-1080p is
-the 1080p cap), so adjust the allowed qualities there if you want 720p Bluray
-on the TV side.
+Template includes are variables (`configarr_sonarr_templates` /
+`configarr_radarr_templates`) so Configarr can grow with general-purpose policy
+without tying that policy to a particular playback client.
 
 ## Key variables
 
@@ -45,8 +41,8 @@ on the TV side.
 | --- | --- | --- |
 | `configarr_manage` | `true` | master on/off |
 | `configarr_image_tag` | `latest` | pin for a frozen version |
-| `configarr_sonarr_templates` | WEB-1080p set | Recyclarr/TRaSH includes |
-| `configarr_radarr_templates` | HD Bluray+WEB set | Recyclarr/TRaSH includes |
+| `configarr_sonarr_templates` | quality definition | Recyclarr/TRaSH includes |
+| `configarr_radarr_templates` | quality definition | Recyclarr/TRaSH includes |
 
 ## Installation
 
@@ -65,6 +61,6 @@ sops exec-env secrets.enc.yaml \
   './scripts/fetch-openbao-secrets.sh media -- ansible-playbook playbooks/site.yml --tags configarr --limit docker_vms'
 ```
 
-Disable it without removing the play by setting `configarr_manage: false`. Tune
-the enforced profiles via `configarr_sonarr_templates` /
+Disable it without removing the play by setting `configarr_manage: false`. Add
+or tune general-purpose policy through `configarr_sonarr_templates` /
 `configarr_radarr_templates` in inventory.
