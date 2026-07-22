@@ -19,7 +19,8 @@ engine exists.
 **GitHub and AWS both have engines here, and both are enabled.** A static PAT
 or a static AWS access key is therefore never the answer for either — not as a
 default, not as a starting point, and not as a "temporary step until the engine
-is wired up."
+is wired up." The opt-in Slack POC uses OAuthapp at `oauthapp/`; its bot token
+also belongs only in that engine, never in KV.
 
 Upstream catalog: <https://github.com/openbao/openbao-plugins>
 
@@ -41,6 +42,7 @@ re-introduces every property the engine was adopted to eliminate.
 | --- | --- | --- | --- |
 | GitHub | `vault-plugin-secrets-github` | `github` | `github/token/<permission_set>` or the tiered AppRoles below |
 | AWS | `openbao-plugins` secrets-aws | `aws` | `aws/sts/<role>` |
+| Slack POC (opt-in) | `openbao-plugin-secrets-oauthapp` | `oauthapp` | `oauthapp/creds/slack-poc` |
 
 Both default to enabled (`openbao_github_engine_enabled`,
 `openbao_aws_engine_enabled` in `roles/openbao/defaults/main.yml`). AWS has been
@@ -62,6 +64,13 @@ widen `github-mint` to reach the write or admin sets.
 
 **AWS — same shape.** Consumers read `aws/sts/<role>` for short-lived STS
 credentials. Never plumb `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`.
+
+**Slack POC — OAuth V2 token rotation.** The engine holds the OAuth client and
+refresh token after a one-time consent. The consumer AppRole can read only
+`oauthapp/creds/slack-poc`; it cannot configure a server or write a credential.
+Slack, not OpenBao, fixes the returned access-token lifetime at 12 hours, so an
+OpenBao token's shorter TTL limits future reads but cannot invalidate a token
+already returned to a caller.
 
 ## Rules
 

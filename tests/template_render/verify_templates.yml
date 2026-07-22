@@ -1011,6 +1011,9 @@
     # only the path is in the config — never a credential.
     traefik_dashboard_users_file: /etc/traefik/dashboard.htpasswd
     traefik_tls_min_version: VersionTLS12
+    traefik_openbao_oauth_callback_enabled: true
+    traefik_openbao_oauth_callback_path: /oauth/slack/callback
+    traefik_openbao_oauth_callback_priority: 10000
     # Test creds (placeholders) for the EnvironmentFile.
     traefik_acme_aws_access_key_id: "AKIATESTACCESSKEYID00"
     traefik_acme_aws_secret_access_key: "testsecretplaceholderplaceholderplaceholde"
@@ -1022,6 +1025,9 @@
     # builder (mirrored in the first task below) turns these into traefik_routes.
     traefik_ingress_routes:
       - { name: plex, ip: "192.0.2.10", port: 32400 }
+      # The OAuth return receiver uses this existing OpenBao ingress hostname;
+      # it is a no-op Traefik router, not an OpenBao backend request.
+      - { name: openbao, ip: "192.0.2.20", port: 8200, sticky: true, health_check: true }
       # HTTPS backend with a self-signed cert (e.g. Splunk Web) -> insecure_tls.
       # sso: true -> the router gets the authelia forwardAuth middleware.
       - { name: splunk, ip: "192.0.2.12", port: 8000, scheme: https, insecure_tls: true, sso: true }
@@ -1121,6 +1127,7 @@
           - "'/etc/traefik/acme/acme.json' in _traefik_static"
           - "'insecure: false' in _traefik_static"
           - "'minVersion: VersionTLS12' in _traefik_static"
+          - "'defaultMode: drop' in _traefik_static"
           # Empty ACME email -> the email line is omitted entirely.
           - "'email:' not in _traefik_static"
           # Credentials must NOT appear in the (group-readable) static config.
@@ -1166,6 +1173,12 @@
             _traefik_dynamic_yaml.http.middlewares['dashboard-auth'].basicAuth.usersFile
             == "/etc/traefik/dashboard.htpasswd"
           - _traefik_dynamic_yaml.http.services.plex.loadBalancer.servers[0].url == "http://192.0.2.10:32400"
+          - >-
+            _traefik_dynamic_yaml.http.routers['openbao-oauth-callback'].rule
+            == "Host(`openbao.pve.example.com`) && Path(`/oauth/slack/callback`)"
+          - _traefik_dynamic_yaml.http.routers['openbao-oauth-callback'].priority == 10000
+          - _traefik_dynamic_yaml.http.routers['openbao-oauth-callback'].service == "noop@internal"
+          - "'middlewares' not in _traefik_dynamic_yaml.http.routers['openbao-oauth-callback']"
         fail_msg: >-
           dynamic.yml.j2 missing a router/service, the apex Host rule, the
           wildcard SAN, or the usersFile-secured dashboard.

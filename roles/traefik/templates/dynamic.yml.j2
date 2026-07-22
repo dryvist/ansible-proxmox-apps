@@ -8,9 +8,26 @@
    when no authelia route exists in the inventory nothing is gated (safe
    pre-cutover rollout). #}
 {% set authelia_routes = traefik_routes | selectattr('name', 'equalto', 'authelia') | list %}
+{% set openbao_routes = traefik_routes | selectattr('name', 'equalto', 'openbao') | list %}
 {% set sso_enabled = authelia_routes | length > 0 %}
 http:
   routers:
+{% if traefik_openbao_oauth_callback_enabled and openbao_routes | length > 0 %}
+    openbao-oauth-callback:
+      rule: "Host(`{{ openbao_routes[0].fqdn }}`) && Path(`{{ traefik_openbao_oauth_callback_path }}`)"
+      priority: {{ traefik_openbao_oauth_callback_priority }}
+      # noop@internal returns a fixed 418 and retains no authorization code.
+      # Do not attach Authelia: it would redirect the OAuth return URL.
+      service: noop@internal
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ traefik_base_domain }}"
+            sans:
+              - "*.{{ traefik_base_domain }}"
+{% endif %}
 {% for route in traefik_routes %}
     {{ route.name }}:
       rule: "Host(`{{ route.fqdn }}`){% if route.path_prefix | default('') | length > 0 %} && PathPrefix(`{{ route.path_prefix }}`){% endif %}"
