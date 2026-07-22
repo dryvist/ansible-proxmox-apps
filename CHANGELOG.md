@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.5...v3.2.6) (2026-07-22)
+
+
+### Bug Fixes
+
+* **openbao:** narrow hermes writer policy ([7871532](https://github.com/dryvist/ansible-proxmox-apps/commit/7871532f2ec7885aa844c837a1ae30d93886db60))
+
 ## [3.2.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.2.4...v3.2.5) (2026-07-22)
 
 
