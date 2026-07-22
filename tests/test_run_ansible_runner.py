@@ -74,13 +74,16 @@ class RunAnsibleTokenContract(unittest.TestCase):
             printf 'curl %s%s\n' "$url" "$auth" >> "$FAKE_EVENT_LOG"
             case "$url" in
               */auth/approle/login)
+                cat >/dev/null
                 printf '%s\n' '{{"auth":{{"client_token":"{MINTED_TOKEN}"}}}}'
                 ;;
               */sign/automation-ansible)
+                cat >/dev/null
                 [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 22
                 printf '%s\n' '{{"data":{{"signed_key":"test-certificate"}}}}'
                 ;;
               */auth/token/revoke-self)
+                cat >/dev/null
                 ;;
               *)
                 exit 2
