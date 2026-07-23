@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.3.1...v3.3.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **openbao:** create Slack server before selecting it ([4c529ff](https://github.com/dryvist/ansible-proxmox-apps/commit/4c529ffdccba20f81653405aaded872390f9eedb))
+
 ## [3.3.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.3.0...v3.3.1) (2026-07-22)
 
 
