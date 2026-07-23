@@ -34,18 +34,26 @@ jobs:
 
   syntax-check:
     name: Syntax Check
-    runs-on: ubuntu-latest
+    # Self-hosted (pre-baked ansible + collections); fork PRs fall back to a
+    # hosted runner so fork-author code never runs on the fleet.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Hosted-only provisioning: fleet runners use the image's pre-baked
+      # toolchain — setup-python's standalone build needs a newer CPU ISA
+      # level than the runner VMs expose, and the apt python3 is PEP-668
+      # externally-managed so pip installs are refused there.
       - name: Set up Python
+        if: runner.environment == 'github-hosted'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
       - name: Install Ansible
+        if: runner.environment == 'github-hosted'
         run: |
           python -m pip install --upgrade pip
           pip install ansible
@@ -91,18 +99,21 @@ jobs:
 
   verify-inventory-load:
     name: Verify Inventory Load
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Hosted-only provisioning — same constraint as syntax-check above.
       - name: Set up Python
+        if: runner.environment == 'github-hosted'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
       - name: Install Ansible and collections
+        if: runner.environment == 'github-hosted'
         run: |
           python -m pip install --upgrade pip
           pip install ansible
