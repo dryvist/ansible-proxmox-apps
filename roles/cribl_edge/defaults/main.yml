@@ -62,6 +62,19 @@ cribl_edge_syslog_ports: "{{ cribl_edge_syslog_port_mappings.values() | list }}"
 cribl_edge_unifi_fw_match: >-
   \[[A-Z][A-Z0-9_.-]*-[ADR](-\d+)?\]|\bIN=\S* OUT=\S* MAC=|suricata
 
+# Hardware/disk-failure syslog signatures. Raw OS-syslog lines (the os-index
+# families — linux/windows) whose _raw matches this JS regex (case-insensitive
+# BODY, no surrounding slashes) are reclassified index=os -> index=hardware by
+# the syslog pipeline; the splunk_hec_os_router (outputs.yml.j2) then ships
+# them to the dedicated splunk_hec_hardware output (hardware HEC token) instead
+# of the os catch-all. `I\/O error` is the superset that catches every kernel
+# ATA/NVMe/SCSI/Buffer/blk disk-I/O error; smartd, medium/failed-command SCSI
+# errors, and ZFS/ZED pool-fault events round it out. Forward slashes are
+# escaped (\/) because the pipeline interpolates this between /.../ literals.
+# Single source of truth — tune HERE only; the pipeline just interpolates it.
+cribl_edge_hardware_match: >-
+  smartd|medium error|failed command|I\/O error|vdev_state=|\bZED\b|\bZFS\b
+
 # Edge API bind port from tofu constants (no hardcoded values).
 # Templated into local/edge/cribl.yml with host 0.0.0.0 so the API is
 # reachable from the internal network, not just 127.0.0.1.
@@ -100,6 +113,12 @@ cribl_edge_per_index_indexes:
   - honeypot
   # otel: Splunk leg of the 4.12 OTel routes fan-out (routes.yml).
   - otel
+  # hardware: host disk/health telemetry (SMART, ZFS/ZED, kernel disk I/O).
+  # Not a syslog family of its own — populated by the syslog pipeline's
+  # hardware reclassify (cribl_edge_hardware_match) diverting os-family lines,
+  # plus the Cribl exec packs. Gets a dedicated splunk_hec_hardware output
+  # whose token matches the standalone hardware index in ansible-splunk.
+  - hardware
 
 # netmon Telegraf HEC ingestion. The per-WAN probers (roles/netmon) push
 # Splunk-HEC to this Edge on cribl_hec_input_port (group_vars/all.yml); the

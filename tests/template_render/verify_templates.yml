@@ -1612,12 +1612,23 @@
 
   vars:
     # Mirror roles/cribl_edge/defaults/main.yml: a representative subset of the
-    # tofu syslog_port_map plus the firewall-split match pattern.
+    # tofu syslog_port_map plus the firewall-split and hardware-reclassify match
+    # patterns. HEC namespace is set so the per-index outputs + os router render.
     cribl_edge_syslog_routing:
       unifi: { standard: 514, high: 1514, index: unifi, sourcetype: "ubiquiti:unifi" }
       linux: { standard: 517, high: 1517, index: os, sourcetype: syslog }
+    cribl_edge_syslog_port_mappings: { unifi: 1514, linux: 1517 }
     cribl_edge_unifi_fw_match: >-
       \[[A-Z][A-Z0-9_-]*-[AD]\]|\bIN=\S* OUT=\S* MAC=|suricata
+    cribl_edge_hardware_match: >-
+      smartd|medium error|failed command|I\/O error|vdev_state=|\bZED\b|\bZFS\b
+    cribl_edge_hec_namespace: "12345678-1234-5678-1234-567812345678"
+    cribl_edge_hec_url: "https://splunk-hec.pve.example.com"
+    cribl_edge_hec_token: "test-hec-token-placeholder"
+    cribl_edge_hec_input_port: 8088
+    cribl_edge_hec_input_token: ""
+    cribl_edge_langfuse_public_key: ""
+    cribl_edge_per_index_indexes: [unifi, firewall, os, netmon, hardware]
     _template_dir: "../../roles/cribl_edge/templates"
 
   tasks:
@@ -1662,6 +1673,69 @@
           The unifi firewall/IPS split did not render before the plain unifi
           branch (or leaked into other families): {{ _edge_index_expr }}
 
+    - name: Assert the hardware reclassify eval renders (os-scoped, sets index=hardware)
+      ansible.builtin.assert:
+        that:
+          # A dedicated eval, scoped to index=='os', matches the hardware
+          # signatures on _raw and overrides index -> 'hardware'.
+          - "\"index == 'os' && /\" in _edge_syslog"
+          - "'smartd' in _edge_syslog"
+          - "\"value: \\\"'hardware'\\\"\" in _edge_syslog"
+        fail_msg: >-
+          The hardware reclassify eval (index==os && hardware_match ->
+          index=hardware) did not render into the syslog pipeline:
+          {{ _edge_syslog }}
+
+    # The reclassify only moves os -> hardware if the OUTPUT follows: the os
+    # families pin an output router that reads the stamped index and ships
+    # index=hardware to the dedicated hardware HEC output. Render outputs +
+    # inputs and prove that wiring, mirroring the unifi assertion above.
+    - name: Render the edge outputs + inputs to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: outputs.yml.j2, dest: /tmp/test_cribl_edge_outputs.yml }
+        - { src: inputs.yml.j2, dest: /tmp/test_cribl_edge_inputs.yml }
+
+    - name: Read + parse the rendered outputs + inputs
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _edge_oi_raw
+      loop:
+        - /tmp/test_cribl_edge_outputs.yml
+        - /tmp/test_cribl_edge_inputs.yml
+
+    - name: Decode the rendered outputs + inputs
+      ansible.builtin.set_fact:
+        _edge_outputs: "{{ _edge_oi_raw.results[0].content | b64decode | from_yaml }}"
+        _edge_inputs: "{{ _edge_oi_raw.results[1].content | b64decode | from_yaml }}"
+
+    - name: Assert the os router ships index=hardware to the hardware HEC output
+      ansible.builtin.assert:
+        that:
+          # Dedicated hardware HEC output exists (one index = one HEC).
+          - "'splunk_hec_hardware' in _edge_outputs.outputs"
+          # The os router keys on the stamped index and routes hardware first.
+          - "_edge_outputs.outputs.splunk_hec_os_router.type == 'router'"
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[0].filter == \"index=='hardware'\""
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[0].output == 'splunk_hec_hardware'"
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[0].final"
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[1].output == 'splunk_hec_os'"
+        fail_msg: >-
+          The os output router did not route index=hardware to
+          splunk_hec_hardware: {{ _edge_outputs.outputs.splunk_hec_os_router | default('MISSING') }}
+
+    - name: Assert the os-family input pins the router; other families pin their own output
+      ansible.builtin.assert:
+        that:
+          - "_edge_inputs.inputs.in_syslog_1517.connections[0].output == 'splunk_hec_os_router'"
+          - "_edge_inputs.inputs.in_syslog_1514.connections[0].output == 'splunk_hec_unifi'"
+        fail_msg: >-
+          The os-family syslog input did not pin splunk_hec_os_router (or the
+          unifi family was wrongly rerouted).
+
     - name: Cribl Edge syslog pipeline rendering PASSED
       ansible.builtin.debug:
         msg: |
@@ -1669,6 +1743,9 @@
           - unifi fw/IPS split branch (regex on _raw) renders BEFORE the plain
             unifi branch, stamping index=firewall sourcetype=ubiquiti:firewall
           - other families keep their single plain branch
+          - hardware reclassify eval (os-scoped) overrides index=hardware, and
+            the os router ships index=hardware to splunk_hec_hardware while the
+            os-family input pins that router
 
 - name: Render and verify unifi_metrics templates
   hosts: localhost
