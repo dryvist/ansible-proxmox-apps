@@ -39,6 +39,25 @@ functions:
         - name: source
           value: "'syslog:' + ((__inputId.match(/\\d{4}/) || ['0000'])[0])"
 
+  # Hardware reclassify: host OS-syslog lines matching disk/SMART/ZFS failure
+  # signatures (cribl_edge_hardware_match) move index=os -> index=hardware. The
+  # splunk_hec_os_router (outputs.yml.j2) reads this stamped index and ships the
+  # matches to the dedicated hardware HEC output instead of the os catch-all —
+  # so the signature list lives ONLY here, never duplicated in a route filter.
+  # Scoped to index=='os' (just stamped above), so only the linux/windows OS
+  # families are reclassified, never the app/network syslog families.
+  - id: eval
+    # Folded block scalar (not a double-quoted string) so the regex backslashes
+    # (\b, \/) stay literal for Cribl — YAML would reject/rewrite them in a
+    # quoted scalar. Same convention as the unifi index eval's value block.
+    filter: >-
+      index == 'os' && /{{ cribl_edge_hardware_match }}/i.test(_raw)
+    disabled: false
+    conf:
+      add:
+        - name: index
+          value: "'hardware'"
+
   - id: regex_extract
     filter: "!__inputId.includes('ipfix')"
     disabled: false
