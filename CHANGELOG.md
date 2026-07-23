@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.4.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.4.0...v3.4.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **github_runner:** libicu78 for ubuntu 26.04 base image ([6b7cfc8](https://github.com/dryvist/ansible-proxmox-apps/commit/6b7cfc81263ecddf3b5228f0f0b47a73732e9d07))
+* **github_runner:** libicu78 for ubuntu 26.04 base image ([571e77b](https://github.com/dryvist/ansible-proxmox-apps/commit/571e77bd956dcd51bb328a66046437cc3e11237b))
+
 ## [3.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.3.2...v3.4.0) (2026-07-23)
 
 
