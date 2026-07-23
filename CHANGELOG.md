@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.3.2...v3.4.0) (2026-07-23)
+
+
+### Features
+
+* **openbao:** broker public Slack channel access ([#1227](https://github.com/dryvist/ansible-proxmox-apps/issues/1227)) ([2d57217](https://github.com/dryvist/ansible-proxmox-apps/commit/2d57217270bc33559e0e95f7d3df2f3cd5e69388))
+
 ## [3.3.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.3.1...v3.3.2) (2026-07-23)
 
 
