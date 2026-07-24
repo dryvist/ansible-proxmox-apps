@@ -24,7 +24,9 @@ this repo handles app config only.
 - **apt-cacher-ng** (LXC container)
 - **Mailpit** (LXC container, SMTP relay with web UI)
 - **ntfy** (LXC container, push notification server)
-- **GitHub Actions Runners** (`github_runner` role — Docker Compose on docker-host VM)
+- **GitHub Actions Runners** (`github_runner` role — Docker Compose on docker-host VM).
+  Runner images are built off-node (e.g. the iac VM) and `docker load`-ed in, never
+  built on the Proxmox guests — a heavy image build can overload a hypervisor node.
 - **iDRAC KVM** (`idrac_kvm_docker` role — domistyle/idrac6 HTML5 KVM viewer +
   host `ipmitool`, Docker on dedicated VM 251). A Mac-only OrbStack exploratory
   variant lives at `orbstack-kubernetes/docker/idrac-webtop` (webtop +
