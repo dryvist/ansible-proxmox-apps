@@ -39,6 +39,11 @@ CLUSTER_TYPE = "Proxmox"
 DEFAULT_CLUSTER = "unknown"
 DEFAULT_ROLE = "vm"
 INTERFACE_NAME = "eth0"
+# Proxmox guest id. Nautobot has no native field for it, so it rides in a custom
+# field — the export job reads this same key.
+VMID_FIELD = "vmid"
+# Nautobot's own IPAddress.type value for an address held by DHCP reservation.
+DEFAULT_IP_TYPE = "host"
 
 
 def _active_status():
@@ -46,6 +51,24 @@ def _active_status():
     from nautobot.extras.models import Status
 
     return Status.objects.get(name=STATUS_ACTIVE)
+
+
+def ensure_vmid_field():
+    """Idempotently ensure the ``vmid`` custom field exists on VirtualMachine.
+
+    Mirrors how the sibling jobs ensure their DeviceType/Role scaffolding via the
+    ORM before the DiffSync run. Integer-typed so consumers get a number, not a
+    stringly-typed id.
+    """
+    from django.contrib.contenttypes.models import ContentType
+    from nautobot.extras.models import CustomField
+
+    field, _ = CustomField.objects.get_or_create(
+        key=VMID_FIELD,
+        defaults={"label": "VMID", "type": "integer"},
+    )
+    field.content_types.add(ContentType.objects.get_for_model(VirtualMachine))
+    return field
 
 
 def ensure_cluster(name: str):
@@ -125,6 +148,7 @@ class SeedVirtualization(DataSource):
     def load_source_adapter(self) -> None:
         """Ensure org scaffolding, then load the seed source adapter."""
         ensure_location()
+        ensure_vmid_field()
         self.source_adapter = VirtualizationSourceAdapter(job=self)
         self.source_adapter.load()
 
@@ -134,10 +158,34 @@ class SeedVirtualization(DataSource):
         self.target_adapter.load()
 
     def run(self, *args, **kwargs):  # noqa: D102 - see _bind_primary_ips
-        """Run the additive VM sync, then bind eth0 + primary IP + tags in the ORM."""
+        """Run the additive VM sync, then bind eth0 + primary IP + vmid + tags."""
         super().run(*args, **kwargs)
         self._bind_primary_ips()
+        self._bind_vmids()
         self._bind_tags()
+
+    def _bind_vmids(self) -> None:
+        """Store each guest's Proxmox vmid in its ``vmid`` custom field.
+
+        Its own ORM phase rather than folded into ``_bind_primary_ips`` because
+        that method skips any guest without a numeric address — a guest with no
+        IP still has a vmid, and the export needs it. Non-numeric or absent vmids
+        are skipped, never fatal.
+        """
+        for guest in load_seed()["virtual_machines"]:
+            name = str(guest.get("name") or "")
+            if not name:
+                continue
+            try:
+                vmid = int(guest.get("vmid"))
+            except (TypeError, ValueError):
+                continue
+            vm = VirtualMachine.objects.filter(name=name).first()
+            if vm is None:  # not created (e.g. dry run) — nothing to stamp
+                continue
+            if vm.custom_field_data.get(VMID_FIELD) != vmid:
+                vm.custom_field_data[VMID_FIELD] = vmid
+                vm.validated_save()
 
     def _bind_primary_ips(self) -> None:
         """Ensure eth0 + an assigned IPAddress + primary_ip4 for each guest.
@@ -159,13 +207,22 @@ class SeedVirtualization(DataSource):
             vm = VirtualMachine.objects.filter(name=name).first()
             if vm is None:  # not created (e.g. dry run) — nothing to bind
                 continue
+            # 'dhcp' when the guest holds its address by reservation, else
+            # 'host'. Carried from the seed so the static-vs-reserved
+            # distinction reaches Nautobot and, from there, the export.
+            ip_type = str(guest.get("ip_type") or DEFAULT_IP_TYPE)
             try:
-                ip_address, _ = IPAddress.objects.get_or_create(
-                    host=host, defaults={"mask_length": 32, "status": status}
+                ip_address, created = IPAddress.objects.get_or_create(
+                    host=host,
+                    defaults={"mask_length": 32, "status": status, "type": ip_type},
                 )
             except Exception as exc:  # noqa: BLE001 - stay additive on any IP error
                 self.logger.warning("Skipped IP for VM %s: %s", name, exc)
                 continue
+            # Correct the type on an address seeded before it was tracked.
+            if not created and ip_address.type != ip_type:
+                ip_address.type = ip_type
+                ip_address.validated_save()
             interface, _ = VMInterface.objects.get_or_create(
                 virtual_machine=vm, name=INTERFACE_NAME, defaults={"status": status}
             )

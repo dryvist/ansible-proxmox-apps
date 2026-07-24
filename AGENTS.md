@@ -24,7 +24,9 @@ this repo handles app config only.
 - **apt-cacher-ng** (LXC container)
 - **Mailpit** (LXC container, SMTP relay with web UI)
 - **ntfy** (LXC container, push notification server)
-- **GitHub Actions Runners** (`github_runner` role — Docker Compose on docker-host VM)
+- **GitHub Actions Runners** (`github_runner` role — Docker Compose on docker-host VM).
+  Runner images are built off-node (e.g. the iac VM) and `docker load`-ed in, never
+  built on the Proxmox guests — a heavy image build can overload a hypervisor node.
 - **iDRAC KVM** (`idrac_kvm_docker` role — domistyle/idrac6 HTML5 KVM viewer +
   host `ipmitool`, Docker on dedicated VM 251). A Mac-only OrbStack exploratory
   variant lives at `orbstack-kubernetes/docker/idrac-webtop` (webtop +
@@ -58,7 +60,7 @@ Sources: external (network gear, OS hosts) + infra LXCs self-logging
          - Output: Splunk HEC (https, port 8088)
            |
        Cribl Stream LXCs (182, 183) [IPFIX port 2055]
-         - Pipeline: sets index=network, sourcetype=ipfix
+         - Pipeline: sets index=netflow, sourcetype=ipfix
          - Output: Splunk HEC (https, port 8088)
            |
        Splunk Enterprise (200, managed by ansible-splunk)
@@ -100,7 +102,7 @@ CI runners MUST NOT share Docker networks with dev/test services.
 
 | Port | Source | Splunk Index |
 | --- | --- | --- |
-| 2055 | UniFi IPFIX (UDP) | network |
+| 2055 | UniFi IPFIX (UDP) | netflow |
 
 ### Service Ports (from tofu pipeline_constants)
 

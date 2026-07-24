@@ -35,6 +35,13 @@ keepalived_priority_base: 200
 keepalived_priority: >-
   {{ (keepalived_priority_base - (keepalived_peers_all | sort).index(keepalived_this_addr))
      if keepalived_this_addr in keepalived_peers_all else 100 }}
+# Preemption stays on (deterministic priority is the point), but a bare
+# recovering-master preempts the instant its track_script passes once — a
+# flapping Traefik (crash-loop, brief network blip) then bounces the VIP twice
+# per incident instead of once. preempt_delay makes a recovered higher-priority
+# node wait this long with a stable BACKUP state before reclaiming, so a
+# genuinely-recovered node still becomes master, just without the double-flap.
+keepalived_preempt_delay_seconds: 30
 
 # LXC guest NIC that carries the ingress VLAN address + the floating VIP.
 keepalived_interface: eth0
@@ -44,11 +51,16 @@ keepalived_interface: eth0
 # consistent. keepalived truncates a PASS to 8 chars.
 keepalived_auth_pass: "{{ lookup('env', 'KEEPALIVED_AUTH_PASS') | default('', true) }}"
 
-# Local Traefik liveness probe for the track_script. pidof returns non-zero when
-# Traefik is not running -> keepalived drops this node's priority -> the VIP
-# migrates. ponytail: liveness only; swap for an HTTP /ping probe if a
-# wedged-but-alive Traefik ever becomes a real failure mode.
-keepalived_track_command: "pidof traefik"
+# Local Traefik health probe for the track_script: an actual TLS handshake +
+# HTTP response on :443, not just "the process exists" — a listening-but-wedged
+# Traefik (accepted connection, no response) fails this and hands off the VIP,
+# which a bare `pidof` check would miss entirely. No `--fail`: every router is
+# Host()-matched, so an unmatched-Host request to the bare loopback IP legitimately
+# 404s on a perfectly healthy Traefik — any completed response (any status) proves
+# liveness; only a connect failure or timeout (wedged/down) should count as bad.
+keepalived_track_command: >-
+  curl --silent --show-error --max-time 2 --insecure
+  https://127.0.0.1:443/ -o /dev/null
 keepalived_track_interval: 2
 keepalived_track_fall: 2
 keepalived_track_rise: 2

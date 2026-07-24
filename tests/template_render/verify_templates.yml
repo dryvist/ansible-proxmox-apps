@@ -11,6 +11,51 @@
 #   - cribl/inputs.yml.j2 renders combined syslog listeners (TCP+UDP) for each port
 #   - stream/inputs.yml.j2 renders IPFIX/NetFlow UDP listener on port 2055
 #   - outputs.yml.j2 renders HEC URL with correct splunk host
+#
+# Every play sets `ansible_become: false`. group_vars/all.yml sets
+# `ansible_become: true` for managed nodes, and the implicit localhost inherits
+# it, so without the override each play escalates to root to render a fixture
+# into /tmp — needless privilege that fails outright wherever the caller has no
+# passwordless sudo (a workstation, a runner image without sudo installed).
+# The play keyword `become: false` does NOT override it — the connection
+# variable wins — so the override has to be `ansible_become` in play vars.
+# Add it to any new play here.
+#
+# Fixtures render under `_fixture_dir`, a directory created fresh per run by
+# the first play and deleted by the last, never a fixed path. The runners are
+# long-lived and shared, so a fixed path collides with whatever a previous job
+# left behind — including root-owned files from before the become fix above,
+# which an unprivileged rename cannot replace — and with any job running the
+# same scenario concurrently.
+#
+# Deriving the directory from RUNNER_TEMP would only cover GitHub Actions:
+# that variable is unset everywhere else, so the fallback lands back on the
+# fixed paths this exists to avoid. A per-run directory needs no environment
+# variable and makes no assumption about who cleans the executor's temp space.
+# Use `_fixture_dir` for any new fixture here.
+
+- name: Create the per-run fixture output directory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+
+  tasks:
+    - name: Create a directory unique to this run
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: verify_templates_
+      register: _render_tmp
+
+    - name: Publish the fixture directory to every later play
+      ansible.builtin.set_fact:
+        render_tmp: "{{ _render_tmp.path }}"
+
+    - name: Report where this run's fixtures are being written
+      ansible.builtin.debug:
+        msg: "Rendering fixtures under {{ render_tmp }}"
 
 - name: Render and verify cribl_docker_stack templates
   hosts: localhost
@@ -18,6 +63,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror the role defaults (cribl_docker_stack/defaults/main.yml).
     # Role default is `cribl/cribl:latest`; this fixture tracks the same tag
     # so the test never silently freezes on an old version. The previous
@@ -64,12 +111,12 @@
     - name: Render docker-stack.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/docker-stack.yml.j2"
-        dest: /tmp/test_docker_stack.yml
+        dest: "{{ _fixture_dir }}/test_docker_stack.yml"
         mode: "0644"
 
     - name: Read rendered docker-stack.yml
       ansible.builtin.slurp:
-        src: /tmp/test_docker_stack.yml
+        src: "{{ _fixture_dir }}/test_docker_stack.yml"
       register: _docker_stack_raw
 
     - name: Decode docker-stack content
@@ -108,12 +155,12 @@
     - name: Render inputs.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/cribl/inputs.yml.j2"
-        dest: /tmp/test_inputs.yml
+        dest: "{{ _fixture_dir }}/test_inputs.yml"
         mode: "0644"
 
     - name: Read rendered inputs.yml
       ansible.builtin.slurp:
-        src: /tmp/test_inputs.yml
+        src: "{{ _fixture_dir }}/test_inputs.yml"
       register: _inputs_raw
 
     - name: Decode inputs content
@@ -135,12 +182,12 @@
     - name: Render stream/inputs.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/stream/inputs.yml.j2"
-        dest: /tmp/test_stream_inputs.yml
+        dest: "{{ _fixture_dir }}/test_stream_inputs.yml"
         mode: "0644"
 
     - name: Read rendered stream/inputs.yml
       ansible.builtin.slurp:
-        src: /tmp/test_stream_inputs.yml
+        src: "{{ _fixture_dir }}/test_stream_inputs.yml"
       register: _stream_inputs_raw
 
     - name: Decode stream inputs content
@@ -161,12 +208,12 @@
     - name: Render outputs.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/cribl/outputs.yml.j2"
-        dest: /tmp/test_outputs.yml
+        dest: "{{ _fixture_dir }}/test_outputs.yml"
         mode: "0644"
 
     - name: Read rendered outputs.yml
       ansible.builtin.slurp:
-        src: /tmp/test_outputs.yml
+        src: "{{ _fixture_dir }}/test_outputs.yml"
       register: _outputs_raw
 
     - name: Decode outputs content
@@ -211,6 +258,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/mailpit_docker/defaults/main.yml
     mailpit_docker_image: "axllent/mailpit:v1.29.2"
     mailpit_docker_container_name: mailpit
@@ -229,12 +278,12 @@
     - name: Render mailpit docker-compose.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/docker-compose.yml.j2"
-        dest: /tmp/test_mailpit_compose.yml
+        dest: "{{ _fixture_dir }}/test_mailpit_compose.yml"
         mode: "0644"
 
     - name: Read rendered mailpit docker-compose.yml
       ansible.builtin.slurp:
-        src: /tmp/test_mailpit_compose.yml
+        src: "{{ _fixture_dir }}/test_mailpit_compose.yml"
       register: _mailpit_compose_raw
 
     - name: Decode mailpit compose content
@@ -274,6 +323,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/ntfy_docker/defaults/main.yml
     ntfy_docker_image: "binwiederhier/ntfy:v2.17.0"
     ntfy_docker_container_name: ntfy
@@ -288,12 +339,12 @@
     - name: Render ntfy docker-compose.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/docker-compose.yml.j2"
-        dest: /tmp/test_ntfy_compose.yml
+        dest: "{{ _fixture_dir }}/test_ntfy_compose.yml"
         mode: "0644"
 
     - name: Read rendered ntfy docker-compose.yml
       ansible.builtin.slurp:
-        src: /tmp/test_ntfy_compose.yml
+        src: "{{ _fixture_dir }}/test_ntfy_compose.yml"
       register: _ntfy_compose_raw
 
     - name: Decode ntfy compose content
@@ -322,12 +373,12 @@
     - name: Render ntfy server.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/server.yml.j2"
-        dest: /tmp/test_ntfy_server.yml
+        dest: "{{ _fixture_dir }}/test_ntfy_server.yml"
         mode: "0644"
 
     - name: Read rendered ntfy server.yml
       ansible.builtin.slurp:
-        src: /tmp/test_ntfy_server.yml
+        src: "{{ _fixture_dir }}/test_ntfy_server.yml"
       register: _ntfy_server_raw
 
     - name: Decode ntfy server content
@@ -357,6 +408,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/openproject_docker/defaults/main.yml
     openproject_docker_image: "openproject/community:15"
     openproject_docker_container_name: openproject
@@ -379,12 +432,12 @@
     - name: Render openproject docker-compose.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/docker-compose.yml.j2"
-        dest: /tmp/test_openproject_compose.yml
+        dest: "{{ _fixture_dir }}/test_openproject_compose.yml"
         mode: "0644"
 
     - name: Read rendered openproject docker-compose.yml
       ansible.builtin.slurp:
-        src: /tmp/test_openproject_compose.yml
+        src: "{{ _fixture_dir }}/test_openproject_compose.yml"
       register: _openproject_compose_raw
 
     - name: Decode openproject compose content
@@ -453,6 +506,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/haproxy/defaults/main.yml (only vars referenced by haproxy.cfg.j2)
     haproxy_stats_enabled: true
     haproxy_stats_port: 8404
@@ -512,7 +567,7 @@
     - name: Render haproxy.cfg.j2 with HTTP disabled
       ansible.builtin.template:
         src: "{{ _template_dir }}/haproxy.cfg.j2"
-        dest: /tmp/test_haproxy_disabled.cfg
+        dest: "{{ _fixture_dir }}/test_haproxy_disabled.cfg"
         mode: "0644"
       vars:
         haproxy_http_enabled: false
@@ -520,7 +575,7 @@
 
     - name: Read rendered haproxy.cfg (disabled)
       ansible.builtin.slurp:
-        src: /tmp/test_haproxy_disabled.cfg
+        src: "{{ _fixture_dir }}/test_haproxy_disabled.cfg"
       register: _haproxy_disabled_raw
 
     - name: Decode haproxy.cfg disabled content
@@ -581,7 +636,7 @@
     - name: Render haproxy.cfg.j2 with HTTP enabled and one frontend
       ansible.builtin.template:
         src: "{{ _template_dir }}/haproxy.cfg.j2"
-        dest: /tmp/test_haproxy_single.cfg
+        dest: "{{ _fixture_dir }}/test_haproxy_single.cfg"
         mode: "0644"
       vars:
         haproxy_http_enabled: true
@@ -594,7 +649,7 @@
 
     - name: Read rendered haproxy.cfg (single)
       ansible.builtin.slurp:
-        src: /tmp/test_haproxy_single.cfg
+        src: "{{ _fixture_dir }}/test_haproxy_single.cfg"
       register: _haproxy_single_raw
 
     - name: Decode haproxy.cfg single content
@@ -656,7 +711,7 @@
     - name: Render haproxy.cfg.j2 with HTTP enabled and two frontends
       ansible.builtin.template:
         src: "{{ _template_dir }}/haproxy.cfg.j2"
-        dest: /tmp/test_haproxy_multi.cfg
+        dest: "{{ _fixture_dir }}/test_haproxy_multi.cfg"
         mode: "0644"
       vars:
         haproxy_http_enabled: true
@@ -674,7 +729,7 @@
 
     - name: Read rendered haproxy.cfg (multi)
       ansible.builtin.slurp:
-        src: /tmp/test_haproxy_multi.cfg
+        src: "{{ _fixture_dir }}/test_haproxy_multi.cfg"
       register: _haproxy_multi_raw
 
     - name: Decode haproxy.cfg multi content
@@ -727,13 +782,13 @@
     - name: Render nginx-stream.conf.j2 (macos relay enabled)
       ansible.builtin.template:
         src: "{{ _template_dir }}/nginx-stream.conf.j2"
-        dest: /tmp/test_nginx_stream_macos.conf
+        dest: "{{ _fixture_dir }}/test_nginx_stream_macos.conf"
         mode: "0644"
 
     - name: Render nginx-stream.conf.j2 (macos relay self-disabled)
       ansible.builtin.template:
         src: "{{ _template_dir }}/nginx-stream.conf.j2"
-        dest: /tmp/test_nginx_stream_no_macos.conf
+        dest: "{{ _fixture_dir }}/test_nginx_stream_no_macos.conf"
         mode: "0644"
       vars:
         haproxy_macos_udp_relay_enabled: false
@@ -743,8 +798,8 @@
         src: "{{ item }}"
       register: _nginx_stream_raw
       loop:
-        - /tmp/test_nginx_stream_macos.conf
-        - /tmp/test_nginx_stream_no_macos.conf
+        - "{{ _fixture_dir }}/test_nginx_stream_macos.conf"
+        - "{{ _fixture_dir }}/test_nginx_stream_no_macos.conf"
 
     - name: Decode rendered nginx-stream configs
       ansible.builtin.set_fact:
@@ -798,6 +853,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/seerr/defaults/main.yml (test stand-ins for the
     # SOPS-sourced API key and tofu_data ports).
     seerr_image: "ghcr.io/seerr-team/seerr:v3.3.0"
@@ -814,12 +871,12 @@
     - name: Render seerr docker-compose.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/docker-compose.yml.j2"
-        dest: /tmp/test_seerr_compose.yml
+        dest: "{{ _fixture_dir }}/test_seerr_compose.yml"
         mode: "0644"
 
     - name: Read rendered seerr docker-compose.yml
       ansible.builtin.slurp:
-        src: /tmp/test_seerr_compose.yml
+        src: "{{ _fixture_dir }}/test_seerr_compose.yml"
       register: _seerr_compose_raw
 
     - name: Decode seerr compose content
@@ -839,12 +896,12 @@
     - name: Render seerr settings.json.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/settings.json.j2"
-        dest: /tmp/test_seerr_settings.json
+        dest: "{{ _fixture_dir }}/test_seerr_settings.json"
         mode: "0640"
 
     - name: Read rendered seerr settings.json
       ansible.builtin.slurp:
-        src: /tmp/test_seerr_settings.json
+        src: "{{ _fixture_dir }}/test_seerr_settings.json"
       register: _seerr_settings_raw
 
     - name: Parse seerr settings.json (must be valid JSON with the seeded key)
@@ -883,6 +940,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Canned Prowlarr "Sonarr application" schema fragment (as /applications/schema
     # returns it): default field entries the role must preserve or override.
     _mock_prowlarr_schema_fields:
@@ -997,6 +1056,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/traefik/defaults/main.yml (scrubbed domain + test creds).
     traefik_base_domain: "pve.example.com"
     # ACME email is optional; empty here to prove it is OMITTED from the rendered
@@ -1049,6 +1110,14 @@
         insecure_tls: true
         sticky: true
         health_check: true
+      # MCP-fabric pool: the health check probes a DIFFERENT port than the
+      # traffic port (agentgateway stats /metrics) via health_check_port.
+      - name: mcp
+        backends: ["agentgateway-10.example.com", "agentgateway-30.example.com"]
+        port: 8080
+        health_check: true
+        health_check_path: /metrics
+        health_check_port: 15020
     _template_dir: "../../roles/traefik/templates"
 
   tasks:
@@ -1075,6 +1144,8 @@
               'insecure_tls': item.insecure_tls | default(false),
               'sticky': item.sticky | default(false),
               'health_check': item.health_check | default(false),
+              'health_check_path': item.health_check_path | default('/'),
+              'health_check_port': item.health_check_port | default(0),
               'sso': item.sso | default(false)
             }]
           }}
@@ -1107,12 +1178,12 @@
     - name: Render traefik static config to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/traefik.yml.j2"
-        dest: /tmp/test_traefik.yml
+        dest: "{{ _fixture_dir }}/test_traefik.yml"
         mode: "0640"
 
     - name: Read rendered traefik static config
       ansible.builtin.slurp:
-        src: /tmp/test_traefik.yml
+        src: "{{ _fixture_dir }}/test_traefik.yml"
       register: _traefik_static_raw
 
     - name: Decode traefik static config
@@ -1139,12 +1210,12 @@
     - name: Render traefik dynamic config to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/dynamic.yml.j2"
-        dest: /tmp/test_traefik_dynamic.yml
+        dest: "{{ _fixture_dir }}/test_traefik_dynamic.yml"
         mode: "0640"
 
     - name: Read rendered traefik dynamic config
       ansible.builtin.slurp:
-        src: /tmp/test_traefik_dynamic.yml
+        src: "{{ _fixture_dir }}/test_traefik_dynamic.yml"
       register: _traefik_dynamic_raw
 
     - name: Decode + parse traefik dynamic config (must be valid YAML)
@@ -1203,6 +1274,11 @@
           # A single-backend http service gets neither sticky nor healthCheck.
           - "'sticky' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
           - "'healthCheck' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+          # health_check_port -> healthCheck.port (mcp probes stats, not proxy);
+          # routes without it must NOT render a port key (proxmox stays portless).
+          - _traefik_dynamic_yaml.http.services.mcp.loadBalancer.healthCheck.path == "/metrics"
+          - _traefik_dynamic_yaml.http.services.mcp.loadBalancer.healthCheck.port == 15020
+          - "'port' not in _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck"
         fail_msg: >-
           dynamic.yml.j2 apex service wrong: pool size/urls, sticky cookie,
           healthCheck, or serversTransport not rendered as expected.
@@ -1273,12 +1349,12 @@
     - name: Render traefik ACME EnvironmentFile to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/acme.env.j2"
-        dest: /tmp/test_traefik_acme.env
+        dest: "{{ _fixture_dir }}/test_traefik_acme.env"
         mode: "0600"
 
     - name: Read rendered ACME EnvironmentFile
       ansible.builtin.slurp:
-        src: /tmp/test_traefik_acme.env
+        src: "{{ _fixture_dir }}/test_traefik_acme.env"
       register: _traefik_env_raw
 
     - name: Decode ACME EnvironmentFile
@@ -1313,6 +1389,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/syslog_forwarder/defaults/main.yml with scrubbed values.
     syslog_forwarder_target_host: "syslog.pve.example.com"
     syslog_forwarder_target_port: 1517
@@ -1334,12 +1412,12 @@
     - name: Render the syslog forward rule to /tmp
       ansible.builtin.template:
         src: "{{ _sf_template_dir }}/10-forward-cribl.conf.j2"
-        dest: /tmp/test_syslog_forward.conf
+        dest: "{{ _fixture_dir }}/test_syslog_forward.conf"
         mode: "0644"
 
     - name: Read rendered syslog forward rule
       ansible.builtin.slurp:
-        src: /tmp/test_syslog_forward.conf
+        src: "{{ _fixture_dir }}/test_syslog_forward.conf"
       register: _sf_raw
 
     - name: Decode rendered syslog forward rule
@@ -1407,6 +1485,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/cribl_stream/defaults/main.yml (only vars inputs.yml.j2 uses;
     # the real defaults derive these from tofu_data constants).
     cribl_stream_netflow_port: 2055
@@ -1437,31 +1517,31 @@
     - name: Render cribl_stream inputs.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/inputs.yml.j2"
-        dest: /tmp/test_cribl_stream_inputs.yml
+        dest: "{{ _fixture_dir }}/test_cribl_stream_inputs.yml"
         mode: "0644"
 
     - name: Render force_splunk_meta conf.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/pipelines/force_splunk_meta/conf.yml.j2"
-        dest: /tmp/test_cribl_stream_force_splunk_meta.yml
+        dest: "{{ _fixture_dir }}/test_cribl_stream_force_splunk_meta.yml"
         mode: "0644"
 
     - name: Render prometheus_to_netmon conf.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/pipelines/prometheus_to_netmon/conf.yml.j2"
-        dest: /tmp/test_cribl_stream_prometheus_to_netmon.yml
+        dest: "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_netmon.yml"
         mode: "0644"
 
     - name: Render ai_stamp conf.yml.j2 to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/pipelines/ai_stamp/conf.yml.j2"
-        dest: /tmp/test_cribl_stream_ai_stamp.yml
+        dest: "{{ _fixture_dir }}/test_cribl_stream_ai_stamp.yml"
         mode: "0644"
 
     - name: Render outputs.yml.j2 with per-index HEC enabled to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/outputs.yml.j2"
-        dest: /tmp/test_cribl_stream_outputs_per_index.yml
+        dest: "{{ _fixture_dir }}/test_cribl_stream_outputs_per_index.yml"
         mode: "0644"
       vars:
         # Documentation-only namespace UUID (RFC 4122 test value).
@@ -1472,11 +1552,11 @@
         src: "{{ item }}"
       register: _cribl_stream_rendered
       loop:
-        - /tmp/test_cribl_stream_inputs.yml
-        - /tmp/test_cribl_stream_force_splunk_meta.yml
-        - /tmp/test_cribl_stream_prometheus_to_netmon.yml
-        - /tmp/test_cribl_stream_ai_stamp.yml
-        - /tmp/test_cribl_stream_outputs_per_index.yml
+        - "{{ _fixture_dir }}/test_cribl_stream_inputs.yml"
+        - "{{ _fixture_dir }}/test_cribl_stream_force_splunk_meta.yml"
+        - "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_netmon.yml"
+        - "{{ _fixture_dir }}/test_cribl_stream_ai_stamp.yml"
+        - "{{ _fixture_dir }}/test_cribl_stream_outputs_per_index.yml"
 
     - name: Decode cribl_stream rendered content
       ansible.builtin.set_fact:
@@ -1611,25 +1691,38 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/cribl_edge/defaults/main.yml: a representative subset of the
-    # tofu syslog_port_map plus the firewall-split match pattern.
+    # tofu syslog_port_map plus the firewall-split and hardware-reclassify match
+    # patterns. HEC namespace is set so the per-index outputs + os router render.
     cribl_edge_syslog_routing:
       unifi: { standard: 514, high: 1514, index: unifi, sourcetype: "ubiquiti:unifi" }
       linux: { standard: 517, high: 1517, index: os, sourcetype: syslog }
+    cribl_edge_syslog_port_mappings: { unifi: 1514, linux: 1517 }
     cribl_edge_unifi_fw_match: >-
       \[[A-Z][A-Z0-9_-]*-[AD]\]|\bIN=\S* OUT=\S* MAC=|suricata
+    cribl_edge_hardware_match: >-
+      smartd|medium error|failed command|I\/O error|vdev_state=|\bZED\b|\bZFS\b
+    cribl_edge_hec_namespace: "12345678-1234-5678-1234-567812345678"
+    cribl_edge_hec_url: "https://splunk-hec.pve.example.com"
+    cribl_edge_hec_token: "test-hec-token-placeholder"
+    cribl_edge_hec_input_port: 8088
+    cribl_edge_hec_input_token: ""
+    cribl_edge_langfuse_public_key: ""
+    cribl_edge_per_index_indexes: [unifi, firewall, os, netmon, hardware]
     _template_dir: "../../roles/cribl_edge/templates"
 
   tasks:
     - name: Render the edge syslog pipeline to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/pipelines/syslog/conf.yml.j2"
-        dest: /tmp/test_cribl_edge_syslog_pipeline.yml
+        dest: "{{ _fixture_dir }}/test_cribl_edge_syslog_pipeline.yml"
         mode: "0644"
 
     - name: Read the rendered edge syslog pipeline
       ansible.builtin.slurp:
-        src: /tmp/test_cribl_edge_syslog_pipeline.yml
+        src: "{{ _fixture_dir }}/test_cribl_edge_syslog_pipeline.yml"
       register: _edge_syslog_raw
 
     - name: Decode and parse the rendered edge syslog pipeline
@@ -1662,6 +1755,69 @@
           The unifi firewall/IPS split did not render before the plain unifi
           branch (or leaked into other families): {{ _edge_index_expr }}
 
+    - name: Assert the hardware reclassify eval renders (os-scoped, sets index=hardware)
+      ansible.builtin.assert:
+        that:
+          # A dedicated eval, scoped to index=='os', matches the hardware
+          # signatures on _raw and overrides index -> 'hardware'.
+          - "\"index == 'os' && /\" in _edge_syslog"
+          - "'smartd' in _edge_syslog"
+          - "\"value: \\\"'hardware'\\\"\" in _edge_syslog"
+        fail_msg: >-
+          The hardware reclassify eval (index==os && hardware_match ->
+          index=hardware) did not render into the syslog pipeline:
+          {{ _edge_syslog }}
+
+    # The reclassify only moves os -> hardware if the OUTPUT follows: the os
+    # families pin an output router that reads the stamped index and ships
+    # index=hardware to the dedicated hardware HEC output. Render outputs +
+    # inputs and prove that wiring, mirroring the unifi assertion above.
+    - name: Render the edge outputs + inputs to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: outputs.yml.j2, dest: "{{ _fixture_dir }}/test_cribl_edge_outputs.yml" }
+        - { src: inputs.yml.j2, dest: "{{ _fixture_dir }}/test_cribl_edge_inputs.yml" }
+
+    - name: Read + parse the rendered outputs + inputs
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: _edge_oi_raw
+      loop:
+        - "{{ _fixture_dir }}/test_cribl_edge_outputs.yml"
+        - "{{ _fixture_dir }}/test_cribl_edge_inputs.yml"
+
+    - name: Decode the rendered outputs + inputs
+      ansible.builtin.set_fact:
+        _edge_outputs: "{{ _edge_oi_raw.results[0].content | b64decode | from_yaml }}"
+        _edge_inputs: "{{ _edge_oi_raw.results[1].content | b64decode | from_yaml }}"
+
+    - name: Assert the os router ships index=hardware to the hardware HEC output
+      ansible.builtin.assert:
+        that:
+          # Dedicated hardware HEC output exists (one index = one HEC).
+          - "'splunk_hec_hardware' in _edge_outputs.outputs"
+          # The os router keys on the stamped index and routes hardware first.
+          - "_edge_outputs.outputs.splunk_hec_os_router.type == 'router'"
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[0].filter == \"index=='hardware'\""
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[0].output == 'splunk_hec_hardware'"
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[0].final"
+          - "_edge_outputs.outputs.splunk_hec_os_router.rules[1].output == 'splunk_hec_os'"
+        fail_msg: >-
+          The os output router did not route index=hardware to
+          splunk_hec_hardware: {{ _edge_outputs.outputs.splunk_hec_os_router | default('MISSING') }}
+
+    - name: Assert the os-family input pins the router; other families pin their own output
+      ansible.builtin.assert:
+        that:
+          - "_edge_inputs.inputs.in_syslog_1517.connections[0].output == 'splunk_hec_os_router'"
+          - "_edge_inputs.inputs.in_syslog_1514.connections[0].output == 'splunk_hec_unifi'"
+        fail_msg: >-
+          The os-family syslog input did not pin splunk_hec_os_router (or the
+          unifi family was wrongly rerouted).
+
     - name: Cribl Edge syslog pipeline rendering PASSED
       ansible.builtin.debug:
         msg: |
@@ -1669,6 +1825,9 @@
           - unifi fw/IPS split branch (regex on _raw) renders BEFORE the plain
             unifi branch, stamping index=firewall sourcetype=ubiquiti:firewall
           - other families keep their single plain branch
+          - hardware reclassify eval (os-scoped) overrides index=hardware, and
+            the os router ships index=hardware to splunk_hec_hardware while the
+            os-family input pins that router
 
 - name: Render and verify unifi_metrics templates
   hosts: localhost
@@ -1676,6 +1835,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/unifi_metrics/defaults/main.yml (only vars the templates use).
     unifi_metrics_telegraf_interval: "30s"
     unifi_metrics_unpoller_port: 9130
@@ -1701,18 +1862,18 @@
         dest: "{{ item.dest }}"
         mode: "0644"
       loop:
-        - { src: "{{ _um_role_dir }}/telegraf.conf.j2", dest: /tmp/test_um_telegraf.conf }
-        - { src: "{{ _um_role_dir }}/docker-compose.yml.j2", dest: /tmp/test_um_compose.yml }
-        - { src: "{{ _um_cribl_dir }}/pipelines/netmon/conf.yml.j2", dest: /tmp/test_um_pipeline.yml }
+        - { src: "{{ _um_role_dir }}/telegraf.conf.j2", dest: "{{ _fixture_dir }}/test_um_telegraf.conf" }
+        - { src: "{{ _um_role_dir }}/docker-compose.yml.j2", dest: "{{ _fixture_dir }}/test_um_compose.yml" }
+        - { src: "{{ _um_cribl_dir }}/pipelines/netmon/conf.yml.j2", dest: "{{ _fixture_dir }}/test_um_pipeline.yml" }
 
     - name: Read rendered unifi_metrics templates
       ansible.builtin.slurp:
         src: "{{ item }}"
       register: _um
       loop:
-        - /tmp/test_um_telegraf.conf
-        - /tmp/test_um_compose.yml
-        - /tmp/test_um_pipeline.yml
+        - "{{ _fixture_dir }}/test_um_telegraf.conf"
+        - "{{ _fixture_dir }}/test_um_compose.yml"
+        - "{{ _fixture_dir }}/test_um_pipeline.yml"
 
     - name: Decode rendered unifi_metrics content
       ansible.builtin.set_fact:
@@ -1774,6 +1935,8 @@
   gather_facts: false
 
   vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/wan_hop_discovery/defaults/main.yml.
     wan_hop_discovery_private_regex: '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)'
     wan_hop_discovery_probe_target: "1.1.1.1"
@@ -1855,12 +2018,12 @@
     - name: Render network_quality smokeping.yml.j2 with the folded targets
       ansible.builtin.template:
         src: "{{ _template_dir }}/smokeping.yml.j2"
-        dest: /tmp/test_smokeping.yml
+        dest: "{{ _fixture_dir }}/test_smokeping.yml"
         mode: "0644"
 
     - name: Read rendered smokeping.yml
       ansible.builtin.slurp:
-        src: /tmp/test_smokeping.yml
+        src: "{{ _fixture_dir }}/test_smokeping.yml"
       register: _smokeping_raw
 
     - name: Parse rendered smokeping.yml (must be valid YAML)
@@ -1938,6 +2101,9 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
 
   tasks:
     - name: Read each role's tasks/main.yml
@@ -1990,3 +2156,20 @@
           - each checks its config/data dir is a real persistent mountpoint
           - each alerts ntfy (<role>_ntfy_url) before failing
           - each FAILS the converge (not just a warning) when not persistent
+
+- name: Remove the per-run fixture output directory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+
+  tasks:
+    # ponytail: a failed run leaves its directory behind. Harmless — the name
+    # is unique so nothing collides with it, and the fixtures are useful when
+    # debugging the failure. Add a rescue only if leftovers ever cost disk.
+    - name: Delete this run's rendered fixtures
+      ansible.builtin.file:
+        path: "{{ render_tmp }}"
+        state: absent

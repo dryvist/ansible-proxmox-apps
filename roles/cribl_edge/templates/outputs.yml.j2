@@ -52,6 +52,26 @@ outputs:
     failedRequestLoggingMode: payload
     safeHeaders: []
 {% endfor %}
+  # Output router for the os syslog family (linux/windows). The syslog pipeline
+  # reclassifies disk/SMART/ZFS failure lines to index=hardware (see
+  # cribl_edge_hardware_match); this router reads that post-pipeline index and
+  # ships the matches to the dedicated splunk_hec_hardware output, everything
+  # else to splunk_hec_os. Keyed on the stamped index field so the hardware
+  # signature list lives ONLY in the pipeline — no duplicated match here. The
+  # os-family inputs pin this router instead of splunk_hec_os (inputs.yml.j2).
+  splunk_hec_os_router:
+    id: splunk_hec_os_router
+    type: router
+    disabled: false
+    rules:
+      - filter: "index=='hardware'"
+        output: splunk_hec_hardware
+        final: true
+        description: SMART/ZFS/kernel disk-failure syslog -> hardware index
+      - filter: "true"
+        output: splunk_hec_os
+        final: true
+        description: all other os-family syslog -> os index
 {% endif %}
 {% if cribl_edge_langfuse_public_key | length > 0 %}
 
