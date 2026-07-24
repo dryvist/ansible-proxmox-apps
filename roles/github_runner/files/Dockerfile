@@ -1,13 +1,14 @@
 FROM ubuntu:26.04
 
-ARG RUNNER_VERSION=2.322.0
+# 2.328+ required for actions that declare `using: node24` (e.g. checkout v7).
+ARG RUNNER_VERSION=2.336.0
 ARG SOPS_VERSION=3.12.1
 ARG YQ_VERSION=4.44.1
 ARG TARGETARCH=amd64
 ARG RUNNER_ARCH=x64
 
 # Image version — bump on any toolchain change so a converge rebuilds the image.
-LABEL org.opencontainers.image.version="2.0.0"
+LABEL org.opencontainers.image.version="2.1.0"
 
 # Install curl first (not in ubuntu base image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
