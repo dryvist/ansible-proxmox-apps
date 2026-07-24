@@ -21,12 +21,41 @@
 # variable wins — so the override has to be `ansible_become` in play vars.
 # Add it to any new play here.
 #
-# Fixtures render under `_fixture_dir` (RUNNER_TEMP on a runner, /tmp locally),
-# never a fixed /tmp path. The runners are long-lived and shared, so a fixed
-# path collides with whatever a previous job left behind — including root-owned
-# files from before the become fix above, which an unprivileged rename cannot
-# replace — and with any job running the same scenario concurrently.
+# Fixtures render under `_fixture_dir`, a directory created fresh per run by
+# the first play and deleted by the last, never a fixed path. The runners are
+# long-lived and shared, so a fixed path collides with whatever a previous job
+# left behind — including root-owned files from before the become fix above,
+# which an unprivileged rename cannot replace — and with any job running the
+# same scenario concurrently.
+#
+# Deriving the directory from RUNNER_TEMP would only cover GitHub Actions:
+# that variable is unset everywhere else, so the fallback lands back on the
+# fixed paths this exists to avoid. A per-run directory needs no environment
+# variable and makes no assumption about who cleans the executor's temp space.
 # Use `_fixture_dir` for any new fixture here.
+
+- name: Create the per-run fixture output directory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+
+  tasks:
+    - name: Create a directory unique to this run
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: verify_templates_
+      register: _render_tmp
+
+    - name: Publish the fixture directory to every later play
+      ansible.builtin.set_fact:
+        render_tmp: "{{ _render_tmp.path }}"
+
+    - name: Report where this run's fixtures are being written
+      ansible.builtin.debug:
+        msg: "Rendering fixtures under {{ render_tmp }}"
 
 - name: Render and verify cribl_docker_stack templates
   hosts: localhost
@@ -35,7 +64,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror the role defaults (cribl_docker_stack/defaults/main.yml).
     # Role default is `cribl/cribl:latest`; this fixture tracks the same tag
     # so the test never silently freezes on an old version. The previous
@@ -230,7 +259,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/mailpit_docker/defaults/main.yml
     mailpit_docker_image: "axllent/mailpit:v1.29.2"
     mailpit_docker_container_name: mailpit
@@ -295,7 +324,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/ntfy_docker/defaults/main.yml
     ntfy_docker_image: "binwiederhier/ntfy:v2.17.0"
     ntfy_docker_container_name: ntfy
@@ -380,7 +409,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/openproject_docker/defaults/main.yml
     openproject_docker_image: "openproject/community:15"
     openproject_docker_container_name: openproject
@@ -478,7 +507,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/haproxy/defaults/main.yml (only vars referenced by haproxy.cfg.j2)
     haproxy_stats_enabled: true
     haproxy_stats_port: 8404
@@ -825,7 +854,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/seerr/defaults/main.yml (test stand-ins for the
     # SOPS-sourced API key and tofu_data ports).
     seerr_image: "ghcr.io/seerr-team/seerr:v3.3.0"
@@ -912,7 +941,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Canned Prowlarr "Sonarr application" schema fragment (as /applications/schema
     # returns it): default field entries the role must preserve or override.
     _mock_prowlarr_schema_fields:
@@ -1028,7 +1057,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/traefik/defaults/main.yml (scrubbed domain + test creds).
     traefik_base_domain: "pve.example.com"
     # ACME email is optional; empty here to prove it is OMITTED from the rendered
@@ -1361,7 +1390,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/syslog_forwarder/defaults/main.yml with scrubbed values.
     syslog_forwarder_target_host: "syslog.pve.example.com"
     syslog_forwarder_target_port: 1517
@@ -1457,7 +1486,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/cribl_stream/defaults/main.yml (only vars inputs.yml.j2 uses;
     # the real defaults derive these from tofu_data constants).
     cribl_stream_netflow_port: 2055
@@ -1663,7 +1692,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/cribl_edge/defaults/main.yml: a representative subset of the
     # tofu syslog_port_map plus the firewall-split and hardware-reclassify match
     # patterns. HEC namespace is set so the per-index outputs + os router render.
@@ -1807,7 +1836,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/unifi_metrics/defaults/main.yml (only vars the templates use).
     unifi_metrics_telegraf_interval: "30s"
     unifi_metrics_unpoller_port: 9130
@@ -1907,7 +1936,7 @@
 
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
     # Mirror roles/wan_hop_discovery/defaults/main.yml.
     wan_hop_discovery_private_regex: '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)'
     wan_hop_discovery_probe_target: "1.1.1.1"
@@ -2074,7 +2103,7 @@
   gather_facts: false
   vars:
     ansible_become: false
-    _fixture_dir: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}"
+    _fixture_dir: "{{ render_tmp }}"
 
   tasks:
     - name: Read each role's tasks/main.yml
@@ -2127,3 +2156,20 @@
           - each checks its config/data dir is a real persistent mountpoint
           - each alerts ntfy (<role>_ntfy_url) before failing
           - each FAILS the converge (not just a warning) when not persistent
+
+- name: Remove the per-run fixture output directory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+
+  tasks:
+    # ponytail: a failed run leaves its directory behind. Harmless — the name
+    # is unique so nothing collides with it, and the fixtures are useful when
+    # debugging the failure. Add a rescue only if leftovers ever cost disk.
+    - name: Delete this run's rendered fixtures
+      ansible.builtin.file:
+        path: "{{ render_tmp }}"
+        state: absent

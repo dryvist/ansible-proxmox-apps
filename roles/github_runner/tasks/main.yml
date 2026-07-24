@@ -1,4 +1,15 @@
 ---
+# Converge this role from `develop` only. The image is built from the checkout
+# you run from, so converging from `main` ships whatever runner version and
+# packages `main` still carries — that has already downgraded a live fleet to a
+# runner too old for `using: node24` actions.
+#
+# The guards below cannot enforce this on their own: they check the built image
+# against that same checkout's Dockerfile, so a converge from a stale branch is
+# self-consistent and passes the version check. Today's `main` happens to be
+# caught, by the sudo guard rather than the version one. The rule is what
+# actually protects the fleet.
+#
 # =============================================================================
 # Resolve repository list
 # =============================================================================
@@ -66,7 +77,18 @@
     - src: "{{ playbook_dir }}/../requirements.yml"
       dest: requirements.yml
       mode: "0644"
-  register: github_runner_build_files
+
+# Tag the image by the content that produced it, so "which image is this host
+# running" is answerable from the tag alone. A rebuild yields a new tag, which
+# changes the rendered compose file, which is what makes compose recreate the
+# containers — the drift that a fixed tag made undetectable and unrepairable.
+- name: Derive the image tag from the build-context content hash
+  ansible.builtin.set_fact:
+    github_runner_image_tag: >-
+      {{ ((lookup('file', role_path ~ '/files/Dockerfile')
+           ~ lookup('file', role_path ~ '/files/entrypoint.sh')
+           ~ lookup('file', playbook_dir ~ '/../requirements.yml'))
+          | hash('sha1'))[:12] }}
 
 # =============================================================================
 # Docker Compose Deployment
@@ -80,6 +102,26 @@
 - name: Set docker GID fact
   ansible.builtin.set_fact:
     github_runner_docker_gid: "{{ getent_group.docker[1] }}"
+
+- name: Stat the docker socket the runners bind-mount
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: github_runner_docker_sock
+
+# group_add has to match the socket's owning GID, not merely the GID of a group
+# named "docker" — they diverge on a host where the socket is group-owned by
+# something else, and the runners then fail with "Unable to contact the Docker
+# daemon" only once a job tries to use it.
+- name: Assert the group_add GID matches the docker socket's group
+  ansible.builtin.assert:
+    that:
+      - github_runner_docker_sock.stat.exists
+      - github_runner_docker_sock.stat.gid | int == github_runner_docker_gid | int
+    fail_msg: >-
+      /var/run/docker.sock on {{ inventory_hostname }} is group-owned by GID
+      {{ github_runner_docker_sock.stat.gid | default('<no socket>') }}, but the
+      docker group is GID {{ github_runner_docker_gid }}. Runners would start and
+      then fail to reach the daemon.
 
 - name: Deploy docker-compose template
   ansible.builtin.template:
@@ -116,6 +158,11 @@
   ansible.builtin.set_fact:
     ansible_python_interpreter: /opt/ansible-venv/bin/python
 
+# No force_source: the tag IS the build context's hash, so an existing tag can
+# only be the image this context produces, and a changed context asks for a tag
+# that does not exist yet. Keying the rebuild off "did the file copy change"
+# instead left a host with a current Dockerfile and a stale image permanently
+# unable to repair itself — the copy reported unchanged, so nothing rebuilt.
 - name: Build runner image
   community.docker.docker_image:
     name: "{{ github_runner_image_name }}"
@@ -124,13 +171,56 @@
     build:
       path: "{{ github_runner_work_dir }}"
       pull: true
-    force_source: "{{ github_runner_build_files.changed }}"
+
+# A runner that starts fine but lacks what jobs need fails much later, inside an
+# unrelated job, as someone else's bug. Both states below were observed live:
+# an image without sudo, and an image whose bundled runner predated the
+# Dockerfile's RUNNER_VERSION (too old for `using: node24` actions).
+- name: Probe the built image for what CI jobs require of it
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --entrypoint sh
+      {{ github_runner_image_name }}:{{ github_runner_image_tag }}
+      -c 'command -v sudo >/dev/null || echo MISSING_SUDO; ./bin/Runner.Listener --version'
+  register: github_runner_image_probe
+  changed_when: false
+
+- name: Assert the built image satisfies its own requirements
+  vars:
+    _wanted_runner_version: >-
+      {{ (lookup('file', role_path ~ '/files/Dockerfile')
+          | regex_search('RUNNER_VERSION=([0-9.]+)', '\1') | first) }}
+  ansible.builtin.assert:
+    that:
+      - "'MISSING_SUDO' not in github_runner_image_probe.stdout"
+      - github_runner_image_probe.stdout_lines | last is version(_wanted_runner_version, '>=')
+    fail_msg: >-
+      Image {{ github_runner_image_name }}:{{ github_runner_image_tag }} is not fit
+      to serve jobs — wanted runner >= {{ _wanted_runner_version }} with sudo
+      present, probe returned: {{ github_runner_image_probe.stdout | trim }}
 
 - name: Deploy GitHub Actions runners via docker compose
   community.docker.docker_compose_v2:
     project_src: "{{ github_runner_work_dir }}"
     project_name: github-runner
     state: present
+
+# Content-hash tags accumulate one multi-GB image per build context, where a
+# fixed tag reused the same one. Superseded tags are unreferenced by definition
+# once compose is on the current tag. GC never fails the converge — an image
+# still pinned by some stopped container is a reason to skip it, not to abort a
+# deploy that already succeeded.
+- name: Drop superseded runner image tags
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      docker image ls "{{ github_runner_image_name }}" \
+        | awk 'NR > 1 && $2 != "{{ github_runner_image_tag }}" {print $1 ":" $2}' \
+        | xargs -r docker image rm
+    executable: /bin/bash
+  register: github_runner_image_gc
+  changed_when: github_runner_image_gc.stdout | length > 0
+  failed_when: false
 
 # =============================================================================
 # Health Check
