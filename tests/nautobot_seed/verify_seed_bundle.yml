@@ -1,0 +1,165 @@
+---
+# Nautobot seed-bundle assembly verification (offline).
+#
+# Usage:
+#   ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
+#
+# Covers roles/nautobot/tasks/seed_bundle.yml, which Molecule cannot: the role's
+# Molecule scenario pins nautobot_build_seed false because the bundle stamps
+# generated_at and would break idempotence.
+#
+# Asserts that each source contributes independently:
+#   - tofu inventory alone builds the virtual_machines slice
+#   - the sibling-repo sources stay absent without failing the run
+#   - an all-sources-absent run fails loudly instead of writing an empty bundle
+#
+# The bundle is written to a temp path, never to a real Nautobot guest.
+
+- name: Verify nautobot seed-bundle assembly
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # inventory/group_vars/all.yml sets ansible_become: true estate-wide and
+    # localhost inherits it, but this play only writes a bundle into a temp dir
+    # as the current user. It must be the `ansible_become` var, not the
+    # `become:` play keyword — the connection variable wins, so the keyword is
+    # silently ignored. tests/template_render opts out the same way.
+    ansible_become: false
+    # Stands in for what inventory/load_tofu.yml delegates to localhost. Two
+    # guest kinds, one DHCP-first (reserved_ip, ip carries an FQDN) and one
+    # static, so the address-selection branch is exercised both ways. Addresses
+    # are RFC 5737 documentation values, not homelab values.
+    seed_test_tofu_data:
+      containers:
+        seed-test-ct:
+          hostname: seed-test-ct
+          vmid: 999001
+          node: proxmox1
+          tags:
+            - container
+            - testing
+          mac: "02:00:00:00:00:01"
+          ip: "seed-test-ct.example.invalid"
+          reserved_ip: "192.0.2.11"
+      vms:
+        seed-test-vm:
+          hostname: seed-test-vm
+          vmid: 999002
+          node: proxmox2
+          tags: []
+          mac: "02:00:00:00:00:02"
+          ip: "192.0.2.12"
+
+    # Role vars the tasks read. All sibling-repo sources deliberately unset —
+    # this is the tofu-only path.
+    nautobot_seed_sops_path: ""
+    nautobot_seed_fixed_ips_path: ""
+    nautobot_seed_hosts_yml_path: ""
+    nautobot_seed_networks: []
+    nautobot_seed_racks: []
+    nautobot_seed_hosts_group: proxmox
+    # The bundle lands in a temp dir owned by whoever runs the test, so leave
+    # ownership alone — the nautobot user/group only exists on the real guest.
+    nautobot_user: "{{ omit }}"
+    nautobot_group: "{{ omit }}"
+
+  tasks:
+    - name: Build the bundle from the tofu inventory alone
+      vars:
+        nautobot_seed_file: "{{ seed_tmp.path }}/nautobot_seed.json"
+      block:
+        - name: Publish the tofu inventory as a host fact, as load_tofu.yml does
+          ansible.builtin.set_fact:
+            tofu_data: "{{ seed_test_tofu_data }}"
+
+        - name: Create a temp dir for the rendered bundle
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: nautobot-seed
+          register: seed_tmp
+
+        - name: Assemble the seed bundle
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_bundle.yml
+
+        - name: Read the rendered bundle back
+          ansible.builtin.slurp:
+            src: "{{ seed_tmp.path }}/nautobot_seed.json"
+          register: seed_rendered
+
+        - name: Parse the rendered bundle
+          ansible.builtin.set_fact:
+            seed_bundle: "{{ seed_rendered.content | b64decode | from_json }}"
+
+        - name: Both guests reach virtual_machines with vmid, node and tags intact
+          vars:
+            seed_vms: "{{ seed_bundle.virtual_machines | items2dict(key_name='name', value_name='vmid') }}"
+            seed_ct: >-
+              {{ seed_bundle.virtual_machines
+                 | selectattr('name', 'equalto', 'seed-test-ct') | first }}
+            seed_vm: >-
+              {{ seed_bundle.virtual_machines
+                 | selectattr('name', 'equalto', 'seed-test-vm') | first }}
+          ansible.builtin.assert:
+            that:
+              - seed_bundle.virtual_machines | length == 2
+              - seed_vms['seed-test-ct'] | int == 999001
+              - seed_ct.cluster == 'proxmox1'
+              - seed_ct.tags == ['container', 'testing']
+              # DHCP-first guest: reserved_ip wins over the FQDN-bearing ip.
+              - seed_ct.ip == '192.0.2.11'
+              - seed_ct.role == 'container'
+              # Static guest with no tags falls back to the 'vm' role.
+              - seed_vm.ip == '192.0.2.12'
+              - seed_vm.role == 'vm'
+              - seed_vm.cluster == 'proxmox2'
+            fail_msg: >-
+              The tofu inventory did not survive assembly into virtual_machines.
+            quiet: true
+
+        - name: Slices with no source are present and empty, never missing
+          ansible.builtin.assert:
+            that:
+              - seed_bundle.devices | length == 0
+              - seed_bundle.nodes | length == 0
+              - seed_bundle.reservations | length == 0
+              - seed_bundle.vlans | length == 0
+              - seed_bundle.prefixes | length == 0
+              - seed_bundle.schema_version == '1.0.0'
+            fail_msg: >-
+              An absent source must yield an empty slice, not a missing key —
+              ssot_common.load_seed keys off these names.
+            quiet: true
+      always:
+        - name: Remove the temp dir
+          ansible.builtin.file:
+            path: "{{ seed_tmp.path }}"
+            state: absent
+          when: seed_tmp.path is defined
+
+    - name: An all-sources-absent build fails instead of writing an empty bundle
+      vars:
+        nautobot_seed_file: /dev/null
+      block:
+        - name: Drop the tofu inventory so no source remains
+          ansible.builtin.set_fact:
+            tofu_data: {}
+
+        - name: Assemble with every source absent
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_bundle.yml
+
+        - name: Reaching here means the guard did not fire
+          ansible.builtin.fail:
+            msg: >-
+              seed_bundle.yml built a bundle with no source available; the
+              "at least one seed source" assert should have failed the run.
+      rescue:
+        - name: Confirm the failure was the source guard, not an unrelated error
+          ansible.builtin.assert:
+            that:
+              - "'no seed source is available' in (ansible_failed_result.msg | default('') | string)"
+            fail_msg: >-
+              Expected the "no seed source is available" assert, got:
+              {{ ansible_failed_result.msg | default('(no message)') }}
+            quiet: true
