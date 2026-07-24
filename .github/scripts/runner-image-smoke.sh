@@ -21,6 +21,9 @@ docker run --rm --entrypoint "" runner-image-smoke sh -eu -c '
   sops --version
   yq --version
   gh --version
+  # Jobs run as the unprivileged runner user; anything needing root goes
+  # through sudo. Dropping it from the image broke template-render CI.
+  command -v sudo
   v=$(/home/runner/actions-runner/bin/Runner.Listener --version)
   echo "runner=$v"
   maj=${v%%.*}; rest=${v#*.}; min=${rest%%.*}
