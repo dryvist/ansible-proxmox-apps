@@ -198,6 +198,14 @@
 # Virtual machines from the guest map merged above (issue #138). The numeric
 # address is reserved_ip when the guest is DHCP-first (its `ip` then carries an
 # FQDN) else the static `ip`; role is the guest's first tag.
+#
+# `ip_type` records WHICH of those two it was, so the distinction survives into
+# Nautobot instead of being flattened away. A guest with a reserved_ip holds its
+# address by DHCP reservation (UniFi owns the lease, Nautobot records intent);
+# anything else is statically configured. A rebuild has to tell these apart —
+# a reservation must be re-created as a reservation, not written onto the guest.
+# The values are Nautobot's own IPAddress.type choices, so no translation layer
+# and no custom field is needed.
 - name: Start from an empty virtual-machine list
   ansible.builtin.set_fact:
     nautobot_seed_virtual_machines: []
@@ -212,6 +220,7 @@
            'role': (item.value.tags | default([], true) | first)
                    if (item.value.tags | default([], true) | length) > 0 else 'vm',
            'ip': item.value.reserved_ip | default('', true) or (item.value.ip | default('', true)),
+           'ip_type': 'dhcp' if (item.value.reserved_ip | default('', true) | length) > 0 else 'host',
            'mac': item.value.mac | default('', true),
            'tags': item.value.tags | default([], true)
          }] }}

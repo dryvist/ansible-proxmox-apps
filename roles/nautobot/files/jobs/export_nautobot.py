@@ -20,9 +20,14 @@ import boto3
 from nautobot.apps.jobs import Job, register_jobs
 from nautobot.dcim.models import Device, Interface, Rack
 from nautobot.ipam.models import VLAN, IPAddress, Prefix
+from nautobot.virtualization.models import VirtualMachine
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 DEFAULT_KEY = "nautobot/nautobot_export.json"
+
+# Custom-field key holding the Proxmox guest id. Written by the virtualization
+# seed job (ssot_virtualization.py); read here.
+VMID_FIELD = "vmid"
 
 
 def _name(obj: Any, attr: str) -> Optional[str]:
@@ -98,6 +103,31 @@ def _bmc_for_device(device: Any) -> Optional[dict]:
     return None
 
 
+def _vmid(vm: Any) -> Optional[int]:
+    """Return the guest's Proxmox vmid from its custom-field data, else None.
+
+    Tolerates a missing field, a null, or a non-numeric value — the export must
+    never fail because one guest predates the custom field.
+    """
+    data = getattr(vm, "custom_field_data", None) or {}
+    raw = data.get(VMID_FIELD)
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _vm_mac(vm: Any) -> Optional[str]:
+    """Return the MAC of the guest's first VM interface that carries one."""
+    for interface in _all(getattr(vm, "interfaces", None)):
+        mac = _interface_mac(interface)
+        if mac:
+            return mac
+    return None
+
+
 def build_export() -> dict:
     """Shape Nautobot's current contents into the export document.
 
@@ -122,6 +152,7 @@ def build_export() -> dict:
             "dns_name": ip.dns_name or None,
             "mac": _interface_mac(_interface_for_ip(ip)),
             "assigned_interface": _assigned_interface(ip),
+            "type": getattr(ip, "type", None) or None,
         }
         for ip in IPAddress.objects.all()
     ]
@@ -148,6 +179,19 @@ def build_export() -> dict:
         for i in Interface.objects.all()
     ]
 
+    virtual_machines = [
+        {
+            "name": vm.name,
+            "vmid": _vmid(vm),
+            "cluster": _name(vm, "cluster"),
+            "role": _name(vm, "role"),
+            "tags": sorted(tag.name for tag in _all(getattr(vm, "tags", None))),
+            "primary_address": _address(getattr(vm, "primary_ip4", None)),
+            "mac": _vm_mac(vm),
+        }
+        for vm in VirtualMachine.objects.all()
+    ]
+
     return {
         "schema_version": SCHEMA_VERSION,
         "vlans": vlans,
@@ -156,6 +200,7 @@ def build_export() -> dict:
         "devices": devices,
         "racks": racks,
         "interfaces": interfaces,
+        "virtual_machines": virtual_machines,
     }
 
 
@@ -213,13 +258,14 @@ class ExportNautobotToS3(Job):
         document = build_export()
         self.logger.info(
             "Built export: %d vlans, %d prefixes, %d ip_addresses, %d devices, "
-            "%d racks, %d interfaces",
+            "%d racks, %d interfaces, %d virtual_machines",
             len(document["vlans"]),
             len(document["prefixes"]),
             len(document["ip_addresses"]),
             len(document["devices"]),
             len(document["racks"]),
             len(document["interfaces"]),
+            len(document["virtual_machines"]),
         )
         self._validate(document)
         self._upload(document)
