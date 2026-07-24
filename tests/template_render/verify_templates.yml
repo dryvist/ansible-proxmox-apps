@@ -1049,6 +1049,14 @@
         insecure_tls: true
         sticky: true
         health_check: true
+      # MCP-fabric pool: the health check probes a DIFFERENT port than the
+      # traffic port (agentgateway stats /metrics) via health_check_port.
+      - name: mcp
+        backends: ["agentgateway-10.example.com", "agentgateway-30.example.com"]
+        port: 8080
+        health_check: true
+        health_check_path: /metrics
+        health_check_port: 15020
     _template_dir: "../../roles/traefik/templates"
 
   tasks:
@@ -1075,6 +1083,8 @@
               'insecure_tls': item.insecure_tls | default(false),
               'sticky': item.sticky | default(false),
               'health_check': item.health_check | default(false),
+              'health_check_path': item.health_check_path | default('/'),
+              'health_check_port': item.health_check_port | default(0),
               'sso': item.sso | default(false)
             }]
           }}
@@ -1203,6 +1213,11 @@
           # A single-backend http service gets neither sticky nor healthCheck.
           - "'sticky' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
           - "'healthCheck' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+          # health_check_port -> healthCheck.port (mcp probes stats, not proxy);
+          # routes without it must NOT render a port key (proxmox stays portless).
+          - _traefik_dynamic_yaml.http.services.mcp.loadBalancer.healthCheck.path == "/metrics"
+          - _traefik_dynamic_yaml.http.services.mcp.loadBalancer.healthCheck.port == 15020
+          - "'port' not in _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck"
         fail_msg: >-
           dynamic.yml.j2 apex service wrong: pool size/urls, sticky cookie,
           healthCheck, or serversTransport not rendered as expected.
