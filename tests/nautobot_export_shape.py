@@ -60,6 +60,10 @@ class Rack:
     """Fake Nautobot Rack model."""
 
 
+class VirtualMachine:
+    """Fake Nautobot VirtualMachine model."""
+
+
 def install_import_stubs() -> None:
     """Install enough modules for importing the Nautobot job file."""
     boto3 = types.ModuleType("boto3")
@@ -80,16 +84,21 @@ def install_import_stubs() -> None:
     ipam_models.IPAddress = IPAddress
     ipam_models.Prefix = Prefix
 
+    virtualization_models = types.ModuleType("nautobot.virtualization.models")
+    virtualization_models.VirtualMachine = VirtualMachine
+
     for name in (
         "nautobot",
         "nautobot.apps",
         "nautobot.dcim",
         "nautobot.ipam",
+        "nautobot.virtualization",
     ):
         sys.modules[name] = types.ModuleType(name)
     sys.modules["nautobot.apps.jobs"] = jobs
     sys.modules["nautobot.dcim.models"] = dcim_models
     sys.modules["nautobot.ipam.models"] = ipam_models
+    sys.modules["nautobot.virtualization.models"] = virtualization_models
 
 
 def load_export_module() -> Any:
@@ -136,14 +145,35 @@ def main() -> None:
         address="192.0.2.10/24",
         dns_name="node-1.example.com",
         interfaces=Related([primary_interface]),
+        type="host",
     )
     bmc_interface.ip_addresses = Related([bmc_ip])
     primary_interface.ip_addresses = Related([primary_ip])
     device.interfaces = Related([bmc_interface, primary_interface])
 
+    # A guest holding its address by DHCP reservation — the static-vs-reserved
+    # distinction the contract exists to carry.
+    guest_ip = Object(
+        address="192.0.2.11/24",
+        dns_name="guest-1.example.com",
+        interfaces=Related([]),
+        type="dhcp",
+    )
+    guest_interface = Object(name="eth0", mac_address="02:00:00:00:00:11")
+    guest = Object(
+        name="example-guest-1",
+        cluster=Object(name="proxmox1"),
+        role=Object(name="container"),
+        tags=Related([Object(name="testing"), Object(name="container")]),
+        primary_ip4=guest_ip,
+        interfaces=Related([guest_interface]),
+        custom_field_data={"vmid": 999001},
+    )
+
     Device.objects = Manager([device])
     Interface.objects = Manager([bmc_interface, primary_interface])
-    IPAddress.objects = Manager([primary_ip])
+    IPAddress.objects = Manager([primary_ip, guest_ip])
+    VirtualMachine.objects = Manager([guest])
 
     document = module.build_export()
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -157,10 +187,31 @@ def main() -> None:
         "devices": "device",
         "racks": "rack",
         "interfaces": "interface",
+        "virtual_machines": "virtualMachine",
     }
     for collection in required[1:]:
         expected_item_keys = schema["$defs"][defs_by_collection[collection]]["required"]
         assert list(document[collection][0]) == expected_item_keys, document[collection][0]
+
+    # The point of 1.1.0: the artifact carries the per-guest provisioning facts a
+    # rebuild needs, not just the IPAM view. Assert the values, not just the keys
+    # — a shape-only check would pass on an export that emitted null for all of
+    # them, which is exactly the gap this version closes.
+    exported_guest = document["virtual_machines"][0]
+    assert exported_guest["name"] == "example-guest-1", exported_guest
+    assert exported_guest["vmid"] == 999001, exported_guest
+    assert exported_guest["cluster"] == "proxmox1", exported_guest
+    assert exported_guest["role"] == "container", exported_guest
+    assert exported_guest["tags"] == ["container", "testing"], exported_guest
+    assert exported_guest["primary_address"] == "192.0.2.11/24", exported_guest
+    assert exported_guest["mac"] == "02:00:00:00:00:11", exported_guest
+
+    # Static and reserved addresses must be distinguishable in the artifact.
+    types_by_address = {ip["address"]: ip["type"] for ip in document["ip_addresses"]}
+    assert types_by_address["192.0.2.10/24"] == "host", types_by_address
+    assert types_by_address["192.0.2.11/24"] == "dhcp", types_by_address
+
+    assert document["schema_version"] == "1.1.0", document["schema_version"]
 
     jsonschema_status = "skipped"
     try:

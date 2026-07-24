@@ -145,9 +145,34 @@ cutover deliberately:
 5. **Observe** the shadow `nautobot_export.json` for one or more cycles.
 6. The **authority-flip** — tofu-proxmox deriving `tofu_inventory.json`
    *from* Nautobot instead of `deployment.json` — is a separate, upstream,
-   operator-approved step. It also requires the export contract to first grow to
-   a superset of the inventory (`vmid`, `node`, `tags`, ports, static-vs-reserved
-   distinction). Never a default here.
+   operator-approved step. Never a default here.
+
+## Export contract coverage (authority-flip precondition)
+
+The flip needs the export to be a **superset of the inventory**, so a rebuild
+can read the artifact alone. Contract `1.1.0` closes most of that gap:
+
+| Inventory fact | In the export | How |
+| --- | --- | --- |
+| hostname | yes | `virtual_machines[].name` |
+| vmid | yes | `virtual_machines[].vmid`, from the `vmid` custom field |
+| node | yes | `virtual_machines[].cluster` — one Cluster per Proxmox node |
+| tags | yes | `virtual_machines[].tags` |
+| mac | yes | `virtual_machines[].mac` |
+| address | yes | `virtual_machines[].primary_address` |
+| static vs reserved | yes | `ip_addresses[].type` — `host` vs `dhcp` |
+| ports | **no, by design** | see below |
+
+**Ports stay out.** `tofu_data.constants` (service, syslog and netflow ports) is
+owned by tofu-proxmox, which is the constants authority. Exporting ports from
+Nautobot would re-define an upstream-owned value, which this role does not do.
+A consumer that needs both reads the constants from its existing source and the
+IPAM facts from here; the flip does not change who owns a port number.
+
+Still open before the flip, and all upstream of this repo: a consumer in
+tofu-proxmox that reads the artifact, agreement on what happens when Nautobot
+and `deployment.json` disagree during the cutover, and a soak period long enough
+to trust the shadow artifact.
 
 See [`docs/IP_AUTHORITY.md`](../../docs/IP_AUTHORITY.md) for the full authority
 model, the static-anchor policy, and the cross-repo instructions.

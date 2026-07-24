@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/dryvist/homelab-contracts/schemas/nautobot-export-v1.json",
-  "$comment": "Vendored from homelab-contracts nautobot-export-v1 v1.0.0.",
+  "$comment": "Vendored from homelab-contracts nautobot-export-v1 v1.1.0.",
   "title": "dryvist homelab nautobot_export contract (v1)",
-  "description": "schema_version 1.0.0. Shape of the nautobot_export.json artifact published to the S3 artifact bucket by the Nautobot GraphQL export job (issue #138). Consumers read this artifact, never live Nautobot, so a full rebuild works with Nautobot down — the same pattern as ansible_inventory.json. Self-contained: every cross-reference resolves within this document (prefixes[].vlan -> vlans[].vid, devices[].rack -> racks[].name, interfaces[].device -> devices[].name, ip_addresses[].assigned_interface -> interfaces[].{device,name}). Breaking changes bump the major and add a versions/v<X.Y.Z>/ snapshot.",
+  "description": "schema_version 1.1.0. Shape of the nautobot_export.json artifact published to the S3 artifact bucket by the Nautobot GraphQL export job (issue #138). Consumers read this artifact, never live Nautobot, so a full rebuild works with Nautobot down — the same pattern as ansible_inventory.json. Self-contained: every cross-reference resolves within this document (prefixes[].vlan -> vlans[].vid, devices[].rack -> racks[].name, interfaces[].device -> devices[].name, ip_addresses[].assigned_interface -> interfaces[].{device,name}, virtual_machines[].primary_address -> ip_addresses[].address). 1.1.0 adds virtual_machines (the Proxmox guests, carrying vmid/cluster/tags) and ip_addresses[].type, which together make the artifact a superset of the provisioning inventory's per-guest facts. Every field the producer emits is listed in required and nullable where unset, so a consumer never probes for key presence. Breaking changes bump the major and add a versions/v<X.Y.Z>/ snapshot.",
   "type": "object",
   "required": [
     "schema_version",
@@ -12,7 +12,8 @@
     "ip_addresses",
     "devices",
     "racks",
-    "interfaces"
+    "interfaces",
+    "virtual_machines"
   ],
   "additionalProperties": false,
   "properties": {
@@ -20,7 +21,7 @@
       "description": "Semantic version of this contract. Consumers fail-fast when the major differs.",
       "type": "string",
       "pattern": "^1\\.\\d+\\.\\d+$",
-      "examples": ["1.0.0"]
+      "examples": ["1.1.0"]
     },
     "vlans": {
       "description": "Layer-2 VLANs (Nautobot VLAN objects).",
@@ -51,6 +52,11 @@
       "description": "Device interfaces (Nautobot Interface objects). Each belongs to a device.",
       "type": "array",
       "items": { "$ref": "#/$defs/interface" }
+    },
+    "virtual_machines": {
+      "description": "Proxmox VE guests (Nautobot VirtualMachine objects): LXC containers and VMs. Carries the provisioning facts a rebuild needs — vmid, hosting node, and tags.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/virtualMachine" }
     }
   },
   "$defs": {
@@ -114,9 +120,14 @@
     },
     "ipAddress": {
       "type": "object",
-      "required": ["address", "dns_name", "mac", "assigned_interface"],
+      "required": ["address", "dns_name", "mac", "assigned_interface", "type"],
       "additionalProperties": false,
       "properties": {
+        "type": {
+          "description": "How the address is held (Nautobot IPAddress.type). 'host' is a statically configured address; 'dhcp' is a DHCP reservation, i.e. UniFi owns the lease and Nautobot records the intent. This is the static-vs-reserved distinction a rebuild needs, because a reserved address must be re-created as a reservation rather than written onto the guest.",
+          "type": ["string", "null"],
+          "enum": ["host", "dhcp", "slaac", null]
+        },
         "address": {
           "description": "IPv4 host address, with or without prefix length (Nautobot IPAddress.address).",
           "type": "string",
@@ -191,6 +202,47 @@
           "minLength": 1,
           "description": "Site/location name the rack belongs to."
         }
+      }
+    },
+    "virtualMachine": {
+      "type": "object",
+      "required": ["name", "vmid", "cluster", "role", "tags", "primary_address", "mac"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Guest hostname."
+        },
+        "vmid": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Proxmox VE guest id (VMID); null when Nautobot holds no vmid for this guest."
+        },
+        "cluster": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Nautobot Cluster the guest belongs to, which models the Proxmox node hosting it; null when unassigned."
+        },
+        "role": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Guest role; null when unset."
+        },
+        "tags": {
+          "description": "Tag names on the guest. These drive dynamic-inventory group construction, so they are part of the contract, not decoration.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "primary_address": {
+          "description": "The guest's primary IPv4 (resolves to ip_addresses[].address, whose type says whether it is static or a reservation); null when unset.",
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/ipv4" },
+            { "$ref": "#/$defs/ipv4Cidr" }
+          ]
+        },
+        "mac": { "$ref": "#/$defs/mac" }
       }
     },
     "interface": {
