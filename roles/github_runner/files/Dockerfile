@@ -21,7 +21,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && echo "deb [arch=${TARGETARCH} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-      git jq make python3 python3-pip python3-venv python3-pytest libicu78 gh \
+      git jq make python3 python3-pip python3-venv python3-pytest libicu78 gh sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Docker CLI client — molecule-plugins[docker] drives the daemon over the host
@@ -68,6 +68,7 @@ RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}
 
 # GitHub Actions runner (uses x64 not amd64 in release filenames)
 RUN useradd -m -d /home/runner runner \
+    && echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner \
     && mkdir -p /home/runner/actions-runner \
     && cd /home/runner/actions-runner \
     && curl -fsSL "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz" \
