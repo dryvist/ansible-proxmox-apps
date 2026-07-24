@@ -60,7 +60,7 @@ Sources: external (network gear, OS hosts) + infra LXCs self-logging
          - Output: Splunk HEC (https, port 8088)
            |
        Cribl Stream LXCs (182, 183) [IPFIX port 2055]
-         - Pipeline: sets index=network, sourcetype=ipfix
+         - Pipeline: sets index=netflow, sourcetype=ipfix
          - Output: Splunk HEC (https, port 8088)
            |
        Splunk Enterprise (200, managed by ansible-splunk)
@@ -102,7 +102,7 @@ CI runners MUST NOT share Docker networks with dev/test services.
 
 | Port | Source | Splunk Index |
 | --- | --- | --- |
-| 2055 | UniFi IPFIX (UDP) | network |
+| 2055 | UniFi IPFIX (UDP) | netflow |
 
 ### Service Ports (from tofu pipeline_constants)
 
