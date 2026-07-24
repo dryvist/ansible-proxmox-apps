@@ -1,10 +1,13 @@
 ---
-# Controller-side seed-bundle assembly (issue #138). Reads the four
-# hand-maintained sources, transforms each into the nautobot_seed.json schema,
-# and writes the bundle onto the Nautobot LXC (0600, never committed). Gated by
-# nautobot_build_seed (default false): the sources live in sibling repos the
-# controller only has at cutover. The SSoT seed jobs then DiffSync this bundle
-# into Nautobot.
+# Controller-side seed-bundle assembly (issue #138). Reads each available
+# source, transforms it into its slice of the nautobot_seed.json schema, and
+# writes the bundle onto the Nautobot LXC (0600, never committed). Gated by
+# nautobot_build_seed (default false). The SSoT seed jobs then DiffSync this
+# bundle into Nautobot.
+#
+# Sources are independent: the resolved tofu inventory is present on every run,
+# while the sibling-repo sources reach the controller only at cutover. Any
+# subset produces a valid bundle covering just those slices.
 #
 # Source shapes: rack_servers (SOPS-encrypted in terraform-proxmox) is known —
 # chassis/bmc_ip/bmc_mac/service_tag/mgmt_ip, keyed by node name. VLAN/prefix
@@ -14,27 +17,64 @@
 # names against the live sources at cutover — the mappings are isolated here so
 # that is a one-place edit.
 
-- name: Assert the required seed sources are provided
+# Every source is independently optional and contributes only its own slice of
+# the bundle. The seed jobs are additive and tolerate an absent slice
+# (ssot_common.load_seed defaults each key to an empty array), so a partial
+# bundle never deletes what another source owns.
+#
+# The tofu inventory is resolved on every run of this repo, while the three
+# sibling-repo sources only reach the controller at cutover. Requiring the
+# latter to seed the former inverted the dependency: the always-available guest
+# data could not be seeded without two files that are usually absent. Each
+# source now stands alone, so a seed built from the tofu inventory only is the
+# ordinary case.
+- name: Merge every tofu guest kind into one map
+  vars:
+    nautobot_seed_tofu: "{{ hostvars['localhost'].tofu_data | default({}, true) }}"
+  ansible.builtin.set_fact:
+    nautobot_seed_guests: >-
+      {{ (nautobot_seed_tofu.containers | default({}, true))
+         | combine(nautobot_seed_tofu.vms | default({}, true))
+         | combine(nautobot_seed_tofu.docker_vms | default({}, true))
+         | combine(nautobot_seed_tofu.splunk_vm | default({}, true)) }}
+
+# Fail only when no source at all would contribute. That writes an empty bundle
+# over whatever is already on the guest, which is always an operator mistake.
+- name: Assert at least one seed source is available
   ansible.builtin.assert:
     that:
-      - nautobot_seed_fixed_ips_path | length > 0
-      - nautobot_seed_hosts_yml_path | length > 0
+      - >-
+        (nautobot_seed_guests | length) > 0
+        or (nautobot_seed_networks | length) > 0
+        or (nautobot_seed_fixed_ips_path | length) > 0
+        or (nautobot_seed_hosts_yml_path | length) > 0
+        or (nautobot_seed_sops_path | length) > 0
     fail_msg: >-
-      nautobot_build_seed is true but a required source path is unset. Set
-      TOFU_UNIFI_FIXED_IPS and ANSIBLE_PROXMOX_HOSTS (or the matching
-      nautobot_seed_*_path vars) to the sibling-repo files.
+      nautobot_build_seed is true but no seed source is available: the tofu
+      inventory resolved no guests and NAUTOBOT_SEED_NETWORKS,
+      TOFU_UNIFI_FIXED_IPS, ANSIBLE_PROXMOX_HOSTS and TERRAFORM_PROXMOX_SOPS
+      are all unset. The bundle would be empty.
     quiet: true
 
-# rack_servers (TERRAFORM_PROXMOX_SOPS) is optional: when its source is absent
-# the DCIM device seed contributes no devices and, being additive, leaves any
-# existing Nautobot devices untouched. Warn loudly rather than fail so a seed
-# run is not blocked by a source that has no file yet.
-- name: Warn when the optional rack_servers source is absent
+# Warn per absent source so a thin bundle is never silent.
+- name: Warn when an optional seed source is absent
   ansible.builtin.debug:
     msg: >-
-      TERRAFORM_PROXMOX_SOPS (rack_servers) is unset — DCIM device seed
-      contributes no devices this run; existing Nautobot devices are retained.
-  when: nautobot_seed_sops_path | length == 0
+      {{ item.env }} is unset — the {{ item.slice }} seed contributes nothing
+      this run; existing Nautobot objects of that kind are retained.
+  loop:
+    - env: TERRAFORM_PROXMOX_SOPS
+      slice: DCIM device
+      missing: "{{ (nautobot_seed_sops_path | length) == 0 }}"
+    - env: TOFU_UNIFI_FIXED_IPS
+      slice: IP reservation
+      missing: "{{ (nautobot_seed_fixed_ips_path | length) == 0 }}"
+    - env: ANSIBLE_PROXMOX_HOSTS
+      slice: pve node
+      missing: "{{ (nautobot_seed_hosts_yml_path | length) == 0 }}"
+  loop_control:
+    label: "{{ item.env }}"
+  when: item.missing | bool
 
 # --- Read + decrypt the sources on the controller --------------------------
 - name: Decrypt rack_servers from the terraform-proxmox SOPS file
@@ -57,6 +97,7 @@
   vars:
     ansible_become: false
   register: nautobot_seed_fixed_ips_raw
+  when: nautobot_seed_fixed_ips_path | length > 0
 
 - name: Read the ansible-proxmox hosts inventory
   ansible.builtin.slurp:
@@ -66,13 +107,20 @@
   vars:
     ansible_become: false
   register: nautobot_seed_hosts_raw
+  when: nautobot_seed_hosts_yml_path | length > 0
 
+# A skipped slurp registers with no `content`, so each parse falls back to an
+# empty document rather than an undefined-attribute error.
 - name: Parse the sources
   ansible.builtin.set_fact:
     nautobot_seed_rack_servers: >-
       {{ (nautobot_seed_sops_raw.stdout | default('{}', true) | from_json).rack_servers | default({}) }}
-    nautobot_seed_fixed_ips: "{{ nautobot_seed_fixed_ips_raw.content | b64decode | from_json }}"
-    nautobot_seed_hosts: "{{ nautobot_seed_hosts_raw.content | b64decode | from_yaml }}"
+    nautobot_seed_fixed_ips: >-
+      {{ (nautobot_seed_fixed_ips_raw.content | default('', true) | b64decode | from_json)
+         if (nautobot_seed_fixed_ips_raw.content is defined) else {} }}
+    nautobot_seed_hosts: >-
+      {{ (nautobot_seed_hosts_raw.content | default('', true) | b64decode | from_yaml)
+         if (nautobot_seed_hosts_raw.content is defined) else {} }}
   no_log: true
 
 # --- Transform into the nautobot_seed.json schema ---------------------------
@@ -146,22 +194,12 @@
              mgmt_ip: value.ansible_host, commissioned: `true`}') }}
   no_log: true
 
-# Virtual machines from the resolved tofu inventory (issue #138): every guest
-# (containers + vms + docker_vms + splunk_vm) folded into one additive list. The
-# tofu inventory is resolved onto localhost by inventory/load_tofu.yml; default
-# to an empty map so the bundle build stays green when it is absent (molecule /
-# tests). The numeric address is reserved_ip when the guest is DHCP-first (its
-# `ip` then carries an FQDN) else the static `ip`; role is the guest's first tag.
-- name: Merge every guest kind into one map
-  vars:
-    nautobot_seed_tofu: "{{ hostvars['localhost'].tofu_data | default({}) }}"
+# Virtual machines from the guest map merged above (issue #138). The numeric
+# address is reserved_ip when the guest is DHCP-first (its `ip` then carries an
+# FQDN) else the static `ip`; role is the guest's first tag.
+- name: Start from an empty virtual-machine list
   ansible.builtin.set_fact:
     nautobot_seed_virtual_machines: []
-    nautobot_seed_guests: >-
-      {{ (nautobot_seed_tofu.containers | default({}))
-         | combine(nautobot_seed_tofu.vms | default({}))
-         | combine(nautobot_seed_tofu.docker_vms | default({}))
-         | combine(nautobot_seed_tofu.splunk_vm | default({})) }}
 
 - name: Fold the tofu inventory guests into virtual_machines
   ansible.builtin.set_fact:
