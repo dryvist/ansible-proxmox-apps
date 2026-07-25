@@ -1491,6 +1491,7 @@
     # the real defaults derive these from tofu_data constants).
     cribl_stream_netflow_port: 2055
     cribl_stream_s2s_port: 10300
+    cribl_stream_otel_port: 4318
     cribl_stream_pq_enabled: true
     cribl_stream_prometheus_rw_port: 9201
     cribl_stream_prometheus_rw_api_path: /api/v1/write
@@ -1504,7 +1505,7 @@
       openbao_audit: syslog
     cribl_stream_hec_namespace: ""
     cribl_stream_per_index_indexes: >-
-      {{ (['netflow']
+      {{ (['netflow', 'otel_traces']
           + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
          | unique | list }}
     # outputs.yml.j2 stand-ins (per-index render below).
@@ -1538,6 +1539,12 @@
         dest: "{{ _fixture_dir }}/test_cribl_stream_ai_stamp.yml"
         mode: "0644"
 
+    - name: Render otel_stamp conf.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/otel_stamp/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/test_cribl_stream_otel_stamp.yml"
+        mode: "0644"
+
     - name: Render outputs.yml.j2 with per-index HEC enabled to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/outputs.yml.j2"
@@ -1557,6 +1564,7 @@
         - "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_netmon.yml"
         - "{{ _fixture_dir }}/test_cribl_stream_ai_stamp.yml"
         - "{{ _fixture_dir }}/test_cribl_stream_outputs_per_index.yml"
+        - "{{ _fixture_dir }}/test_cribl_stream_otel_stamp.yml"
 
     - name: Decode cribl_stream rendered content
       ansible.builtin.set_fact:
@@ -1565,6 +1573,7 @@
         _cribl_stream_prom_pipeline: "{{ _cribl_stream_rendered.results[2].content | b64decode }}"
         _cribl_stream_ai_pipeline: "{{ _cribl_stream_rendered.results[3].content | b64decode }}"
         _cribl_stream_outputs_pi: "{{ _cribl_stream_rendered.results[4].content | b64decode }}"
+        _cribl_stream_otel_pipeline: "{{ _cribl_stream_rendered.results[5].content | b64decode }}"
 
     - name: Assert S2S input attaches the force_splunk_meta connection pipeline
       ansible.builtin.assert:
@@ -1589,6 +1598,21 @@
           inputs.yml.j2 must include a prometheus_rw input on port 9201 with
           prometheusAPI: /api/v1/write (required by Cribl schema) connected
           to the prometheus_to_netmon pipeline
+
+    - name: Assert OTLP input renders on the otel port with the otel_stamp pipeline
+      ansible.builtin.assert:
+        that:
+          - "'open_telemetry:in_otel' in _cribl_stream_inputs"
+          - "'type: open_telemetry' in _cribl_stream_inputs"
+          - "'port: 4318' in _cribl_stream_inputs"
+          - "'extractSpans: true' in _cribl_stream_inputs"
+          - "'pipeline: otel_stamp' in _cribl_stream_inputs"
+          - "\"index || 'otel_traces'\" in _cribl_stream_otel_pipeline"
+          - "\"sourcetype || 'otel:span'\" in _cribl_stream_otel_pipeline"
+        fail_msg: >-
+          inputs.yml.j2 must include an open_telemetry in_otel listener on the
+          otel port with extractSpans, wired to the otel_stamp pipeline that
+          stamps index=otel_traces / sourcetype=otel:span
 
     - name: Assert AI ingest inputs render per routing entry with the right type
       ansible.builtin.assert:

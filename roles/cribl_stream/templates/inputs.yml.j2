@@ -85,3 +85,30 @@ inputs:
       - output: splunk_hec
         pipeline: prometheus_to_netmon
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+  # OTLP trace spans, fronted by the otel Traefik ingress on 443 (TLS
+  # terminated at Traefik; this listens plain HTTP). Claude Code and any other
+  # OTLP/HTTP producer POST /v1/traces here. extractSpans turns each OTLP span
+  # into a Splunk event; the otel_stamp connection pipeline stamps
+  # index=otel_traces / sourcetype=otel:span (single index -> dedicated HEC).
+  open_telemetry:in_otel:
+    id: in_otel
+    type: open_telemetry
+    disabled: false
+    host: "0.0.0.0"
+    port: {{ cribl_stream_otel_port }}
+    protocol: http
+    otlpVersion: "1.3.1"
+    extractSpans: true
+    extractMetrics: false
+    extractLogs: false
+    sendToRoutes: false
+    connections:
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      # One index per HEC: OTLP traces are single-index (otel_traces).
+      - output: splunk_hec_otel_traces
+        pipeline: otel_stamp
+{% else %}
+      - output: splunk_hec
+        pipeline: otel_stamp
+{% endif %}
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
