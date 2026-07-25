@@ -1,5 +1,32 @@
 # Changelog
 
+## [3.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.4.1...v3.5.0) (2026-07-25)
+
+
+### Features
+
+* **ci:** run gate jobs on the self-hosted runner fleet ([#1237](https://github.com/dryvist/ansible-proxmox-apps/issues/1237)) ([ca71fd5](https://github.com/dryvist/ansible-proxmox-apps/commit/ca71fd5d8737c790e64ea8697ec6ab38d015b059))
+* **cribl_stream:** OTLP trace-span ingest to otel_traces index ([#1271](https://github.com/dryvist/ansible-proxmox-apps/issues/1271)) ([3dfdce2](https://github.com/dryvist/ansible-proxmox-apps/commit/3dfdce2f676a44b281314d8ec3f2f91c4f118a47))
+* **github_runner:** pre-bake CI toolchain into runner image ([#1244](https://github.com/dryvist/ansible-proxmox-apps/issues/1244)) ([1396cb6](https://github.com/dryvist/ansible-proxmox-apps/commit/1396cb6a1808f171fa84abf1499912b92fbb667c))
+* **nautobot:** export the guests, vmid and static-vs-reserved (contract 1.1.0) ([#1269](https://github.com/dryvist/ansible-proxmox-apps/issues/1269)) ([52bfe54](https://github.com/dryvist/ansible-proxmox-apps/commit/52bfe54425373d4b74d2e31f7096f3f4bd211aa9))
+* **nautobot:** let each seed source stand alone ([#1257](https://github.com/dryvist/ansible-proxmox-apps/issues/1257)) ([aca05ac](https://github.com/dryvist/ansible-proxmox-apps/commit/aca05ac3387dccbb7da4063c27a92589ef560d29))
+* **traefik:** render healthCheck.port for routes probing a non-traffic port ([#1252](https://github.com/dryvist/ansible-proxmox-apps/issues/1252)) ([6499c8c](https://github.com/dryvist/ansible-proxmox-apps/commit/6499c8cc6770d79cb152aa76eadcd286e60a41e3))
+
+
+### Bug Fixes
+
+* **github_runner:** bump runner to 2.336.0 for node24 actions ([#1247](https://github.com/dryvist/ansible-proxmox-apps/issues/1247)) ([a6431a0](https://github.com/dryvist/ansible-proxmox-apps/commit/a6431a07bbeaa50b4777097b9573f6b0dcec7ace))
+* **github_runner:** group_add host docker GID for socket access (runner 2.336.0) ([#1253](https://github.com/dryvist/ansible-proxmox-apps/issues/1253)) ([8b6d31d](https://github.com/dryvist/ansible-proxmox-apps/commit/8b6d31daef557727080a967ac990e5464e7d588b))
+* **github_runner:** point terraform runner at renamed tofu-proxmox repo ([#1256](https://github.com/dryvist/ansible-proxmox-apps/issues/1256)) ([2099048](https://github.com/dryvist/ansible-proxmox-apps/commit/2099048dd006fdfcfcca6066329570f6a33c2c76))
+* **github_runner:** resolve repo-root requirements.yml in build-files copy ([#1245](https://github.com/dryvist/ansible-proxmox-apps/issues/1245)) ([f376662](https://github.com/dryvist/ansible-proxmox-apps/commit/f37666256624c132a1f25606e82be3a36cbdb5cb))
+* **github_runner:** tag the image by build-context hash so drift self-heals ([#1264](https://github.com/dryvist/ansible-proxmox-apps/issues/1264)) ([d2a745a](https://github.com/dryvist/ansible-proxmox-apps/commit/d2a745aaf98bcd6f21fce897b3916d7a185a8e27))
+* **keepalived:** HTTPS health probe + preempt_delay for ingress HA ([#1246](https://github.com/dryvist/ansible-proxmox-apps/issues/1246)) ([144751a](https://github.com/dryvist/ansible-proxmox-apps/commit/144751ac1ebad90bd619b76fc5f1c2f44dee7865))
+* **netflow:** make netflow the canonical IPFIX index name ([#1270](https://github.com/dryvist/ansible-proxmox-apps/issues/1270)) ([10d1189](https://github.com/dryvist/ansible-proxmox-apps/commit/10d118933b5cd25fdf51261b202a33420f1299e2))
+* **technitium_dns:** key ingress aliases by name + keep splunk direct ([#1251](https://github.com/dryvist/ansible-proxmox-apps/issues/1251)) ([b710e00](https://github.com/dryvist/ansible-proxmox-apps/commit/b710e0080a78d2eb3d68c15e43d5be6c51e8515a))
+* **tests:** render template fixtures to a per-run directory ([#1268](https://github.com/dryvist/ansible-proxmox-apps/issues/1268)) ([31c59d3](https://github.com/dryvist/ansible-proxmox-apps/commit/31c59d3414c1b57e512503b9e31aed8999401af1))
+* **tests:** render template fixtures under RUNNER_TEMP, not fixed /tmp ([#1265](https://github.com/dryvist/ansible-proxmox-apps/issues/1265)) ([f3d9461](https://github.com/dryvist/ansible-proxmox-apps/commit/f3d9461c5db7bed782de987cdaa1cc5df8489c91))
+* **tests:** stop template-render plays escalating to root on localhost ([#1258](https://github.com/dryvist/ansible-proxmox-apps/issues/1258)) ([4757361](https://github.com/dryvist/ansible-proxmox-apps/commit/47573619a0ddf4f190209135cfafa88f1b62c902))
+
 ## [3.4.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.4.0...v3.4.1) (2026-07-23)
 
 
