@@ -13,9 +13,12 @@ node loss or a local Traefik failure — there is no manual DR step.
   `constants.ingress_ports.keepalived_vrid`) — no hardcoded IPs or ids.
 - **Deterministic master election, no manual flag.** Priority decreases with the
   node's position in the sorted `ingress_hosts` list, so the first instance is
-  MASTER and the rest are ordered BACKUPs. keepalived preempts on priority.
-- **Health-aware.** A `track_script` (`pidof traefik`) drops this node's priority
-  when Traefik is down, so the VIP leaves even if the host itself stays up.
+  MASTER and the rest are ordered BACKUPs. keepalived preempts on priority, with
+  a `preempt_delay` so a flapping Traefik does not bounce the VIP twice per
+  incident.
+- **Health-aware.** A `track_script` — an HTTPS request to the local Traefik on
+  `:443` — drops this node's priority when Traefik is down *or* wedged (listening
+  but not responding), so the VIP leaves even if the process is technically alive.
 - **No-op when not HA-ready.** With `< 2` ingress instances or no published VIP,
   the role skips cleanly (single-ingress / pre-HA deployments stay green).
 

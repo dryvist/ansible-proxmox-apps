@@ -45,8 +45,11 @@ technitium_dns_cname_records:
   # ponytail: single-edge target; repoint to an LB when edge HA matters.
   - name: cribl-edge
     target: cribl-edge-01
+  # Cribl Stream moved off the docker host to the cribl-stream-01/02 LXCs; the
+  # old `docker` target dangled (docker is a testing/dev guest, absent during the
+  # #17136 rebuild), so point at the real LXC like cribl-edge above.
   - name: cribl-stream
-    target: docker
+    target: cribl-stream-01
   # Stable syslog entry point - always points to HAProxy load balancer.
   # Clients send syslog to: syslog.<PROXMOX_SUBDOMAIN>:514 (or 515-518 per source).
   - name: syslog
@@ -89,12 +92,25 @@ technitium_dns_ingress_target_ip: >-
   {{ (tofu_data['ingress_vip'] | default('', true))
      if (tofu_data['ingress_vip'] | default('', true)) | length > 0
      else (hostvars[technitium_dns_ingress_host].container_ip | default('')) }}
+# Ingress names that must NOT be aliased to Traefik: a direct-access consumer
+# reaches the service on a non-HTTP port that Traefik does not proxy, so the name
+# must keep its own guest A record (-> the host itself), not the Traefik VIP.
+# splunk is the proven case (Zammad #17144): Cribl posts to splunk.<zone>:8088
+# (HEC) directly, so aliasing splunk to the ingress VIP blackholed estate-wide log
+# ingestion. splunk-mgmt / splunk-hec are separate names and stay Traefik-fronted.
+technitium_dns_ingress_alias_exclude:
+  - splunk
 # Apex ingress rows (the Proxmox cluster UI fronted at the bare subdomain) are
 # EXCLUDED here — they resolve at the zone root, not as <name>.<subdomain> — and
-# are handled by technitium_dns_ingress_apex below instead.
+# are handled by technitium_dns_ingress_apex below instead. The tofu ingress rows
+# are keyed `name` (NOT `hostname`); mapping the wrong attribute silently yields an
+# empty alias list, which then lets the inventory A-record builder overwrite every
+# fronted name with a direct host IP (regression from #1182, cause of the #17136
+# rebuild NXDOMAIN gap).
 technitium_dns_ingress_aliases: >-
   {{ tofu_data.ingress | default([]) | rejectattr('apex', 'defined')
-     | map(attribute='hostname') | map('default', '', true) | reject('equalto', '')
+     | map(attribute='name') | map('default', '', true) | reject('equalto', '')
+     | reject('in', technitium_dns_ingress_alias_exclude)
      | list | unique }}
 # Apex ingress rows: a fronted service that lives at the subdomain zone root
 # itself, e.g. the Proxmox cluster UI load-balanced across the nodes.

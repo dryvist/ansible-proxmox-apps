@@ -9,6 +9,51 @@ Nautobot is the IPAM authority in the [addressing model](../../docs/IP_AUTHORITY
 remains the provisioning + constants authority**. This role never runs a DHCP
 server and never re-defines an upstream-owned value.
 
+## Installation
+
+Wired into `playbooks/site.yml` against any host in `nautobot_group`. The group
+is populated by `inventory/load_tofu.yml` from `containers` tagged `nautobot` in
+the OpenTofu inventory, reached over `proxmox_pct_remote`.
+
+Prerequisites:
+
+- The `nautobot` LXC exists (OpenTofu-managed; tags include `container`,
+  `nautobot`).
+- A reachable PostgreSQL primary, plus the SECRET_KEY and superuser password as
+  environment variables. However you manage that is an implementation detail —
+  the role reads plain environment variables, so anything that sets them works.
+
+Install the collection dependencies once:
+
+```sh
+ansible-galaxy collection install -r requirements.yml
+```
+
+## Usage
+
+Converge the role:
+
+```sh
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
+  --tags nautobot --limit nautobot_group,localhost
+```
+
+Build a seed bundle without writing to the database, then inspect it:
+
+```sh
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
+  --tags nautobot --limit nautobot_group,localhost \
+  -e nautobot_build_seed=true
+```
+
+Verify seed assembly offline, with no guest involved:
+
+```sh
+ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
+```
+
+See the flag ladder below before enabling anything that writes.
+
 ## Two layers
 
 `tasks/main.yml` splits into:
@@ -38,7 +83,12 @@ flag here flips authority.
 Caveats:
 
 - **`manage_app`** — idempotent; Molecule pins it `false` to skip the multi-minute install and live DB.
-- **`build_seed`** — needs the sibling-repo sources on the controller; never enable in Molecule (it stamps `generated_at`, breaking idempotence).
+- **`build_seed`** — every source is independent, so any subset builds a valid
+  bundle covering just those slices; the run fails only when no source at all is
+  available. The tofu inventory is resolved on every run, so a seed carrying the
+  guest slice alone needs nothing extra on the controller. Never enable in
+  Molecule (it stamps `generated_at`, breaking idempotence) —
+  `tests/nautobot_seed/verify_seed_bundle.yml` covers assembly instead.
 - **`run_seed_jobs`** — every model's `delete()` is a no-op, so re-runs are safe and cannot delete another owner's objects; an empty bundle is a no-op.
 - **`run_export`** — only meaningful with `run_seed_jobs`; steady-state publishing already runs daily via the beat schedule.
 - **`run_discovery`** — inert unless `NAUTOBOT_ONBOARD_TARGETS` is set; native-API discovery of Proxmox/iDRAC/UniFi is a tracked follow-up.
@@ -81,9 +131,11 @@ IPv6 prefixes seed with no code change once a v6 CIDR is present in
 All runtime gates ship `false`/`true` at their safe defaults above; advance the
 cutover deliberately:
 
-1. Place the four sources on the controller and export their paths +
-   `NAUTOBOT_SEED_NETWORKS` (now optionally carrying `role: dhcp-pool` and, later,
-   v6 CIDRs) + `NAUTOBOT_EXPORT_S3_BUCKET`.
+1. Place whichever sibling-repo sources you have on the controller and export
+   their paths + `NAUTOBOT_SEED_NETWORKS` (now optionally carrying
+   `role: dhcp-pool` and, later, v6 CIDRs) + `NAUTOBOT_EXPORT_S3_BUCKET`. None
+   of these is required on its own: the resolved tofu inventory always supplies
+   the guest slice, and each absent source just contributes nothing.
 2. `… site.yml -t nautobot -e nautobot_build_seed=true` → writes
    `nautobot_seed.json` only. **Inspect it.**
 3. Re-run with `-e nautobot_build_seed=true -e nautobot_run_seed_jobs=true` →
@@ -93,9 +145,34 @@ cutover deliberately:
 5. **Observe** the shadow `nautobot_export.json` for one or more cycles.
 6. The **authority-flip** — tofu-proxmox deriving `tofu_inventory.json`
    *from* Nautobot instead of `deployment.json` — is a separate, upstream,
-   operator-approved step. It also requires the export contract to first grow to
-   a superset of the inventory (`vmid`, `node`, `tags`, ports, static-vs-reserved
-   distinction). Never a default here.
+   operator-approved step. Never a default here.
+
+## Export contract coverage (authority-flip precondition)
+
+The flip needs the export to be a **superset of the inventory**, so a rebuild
+can read the artifact alone. Contract `1.1.0` closes most of that gap:
+
+| Inventory fact | In the export | How |
+| --- | --- | --- |
+| hostname | yes | `virtual_machines[].name` |
+| vmid | yes | `virtual_machines[].vmid`, from the `vmid` custom field |
+| node | yes | `virtual_machines[].cluster` — one Cluster per Proxmox node |
+| tags | yes | `virtual_machines[].tags` |
+| mac | yes | `virtual_machines[].mac` |
+| address | yes | `virtual_machines[].primary_address` |
+| static vs reserved | yes | `ip_addresses[].type` — `host` vs `dhcp` |
+| ports | **no, by design** | see below |
+
+**Ports stay out.** `tofu_data.constants` (service, syslog and netflow ports) is
+owned by tofu-proxmox, which is the constants authority. Exporting ports from
+Nautobot would re-define an upstream-owned value, which this role does not do.
+A consumer that needs both reads the constants from its existing source and the
+IPAM facts from here; the flip does not change who owns a port number.
+
+Still open before the flip, and all upstream of this repo: a consumer in
+tofu-proxmox that reads the artifact, agreement on what happens when Nautobot
+and `deployment.json` disagree during the cutover, and a soak period long enough
+to trust the shadow artifact.
 
 See [`docs/IP_AUTHORITY.md`](../../docs/IP_AUTHORITY.md) for the full authority
 model, the static-anchor policy, and the cross-repo instructions.

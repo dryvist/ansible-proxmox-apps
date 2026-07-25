@@ -18,7 +18,8 @@ so hostnames are e.g. `plex.pve.<apex>`, and the cert covers `*.pve.<apex>`.
   file provider watching `dynamic/`, secured API (`insecure: false`), TLS ≥1.2 +
   `sniStrict`.
 - **Dynamic config** (`templates/dynamic.yml.j2`) — one router + service per entry
-  in the tofu-owned ingress table `tofu_data.ingress` (`{name, ip, port}`).
+  in the tofu-owned ingress table `tofu_data.ingress` (`{name, ip, port}`, plus an
+  optional `health_check_port` for pooled routes — see below).
   Every router requests the wildcard via `tls.domains`, so Traefik issues it once
   and serves it for all hosts.
 - **Credentials** — the dedicated `acme` AWS user's keys are written to a
@@ -99,7 +100,10 @@ fronted service is added/removed in exactly one place. Add it in tofu-proxmox.
   `pve.<domain>`, with no `<name>.` prefix): an `apex` + multi-backend ingress
   row that **load-balances across every commissioned node's web UI**
   (`https://<role>.<domain>:8006`) with a sticky session cookie + per-node health
-  checks. Backends are node **FQDNs** (hostnames, not IPs) that already resolve
+  checks. Where a pool's traffic port can't answer a health probe (it returns
+  404/406, or serving and health live on different ports), the ingress row sets
+  `health_check_port` and Traefik probes that port (e.g. a stats/metrics endpoint)
+  instead. Backends are node **FQDNs** (hostnames, not IPs) that already resolve
   internally; Traefik re-encrypts over HTTPS and skips verification via the
   shared `insecure-backend` transport (self-signed node certs). The apex is
   already a SAN on the wildcard cert, so no extra certificate work.

@@ -32,8 +32,12 @@ jobs:
       - name: Verify runner token ownership and cleanup
         run: python3 tests/test_run_ansible_runner.py -v
 
-  syntax-check:
-    name: Syntax Check
+  # The nautobot-export contract had a shape check (tests/nautobot_export_shape.py)
+  # that nothing ever ran, so the export job and its schema could drift apart
+  # silently. Its own job, not a step on another, so an unrelated failure cannot
+  # stop it before it runs.
+  export-contract:
+    name: Verify Nautobot Export Contract
     runs-on: ubuntu-latest
 
     steps:
@@ -45,7 +49,36 @@ jobs:
         with:
           python-version: '3.14'
 
+      # jsonschema is optional for the check, which degrades to a keys-only
+      # comparison without it. Install it so CI always does the full validation.
+      - name: Install jsonschema
+        run: python3 -m pip install --upgrade jsonschema
+
+      - name: Verify export shape matches the contract schema
+        run: python3 tests/nautobot_export_shape.py
+
+  syntax-check:
+    name: Syntax Check
+    # Self-hosted (pre-baked ansible + collections); fork PRs fall back to a
+    # hosted runner so fork-author code never runs on the fleet.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Hosted-only provisioning: fleet runners use the image's pre-baked
+      # toolchain — setup-python's standalone build needs a newer CPU ISA
+      # level than the runner VMs expose, and the apt python3 is PEP-668
+      # externally-managed so pip installs are refused there.
+      - name: Set up Python
+        if: runner.environment == 'github-hosted'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
       - name: Install Ansible
+        if: runner.environment == 'github-hosted'
         run: |
           python -m pip install --upgrade pip
           pip install ansible
@@ -91,18 +124,21 @@ jobs:
 
   verify-inventory-load:
     name: Verify Inventory Load
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Hosted-only provisioning — same constraint as syntax-check above.
       - name: Set up Python
+        if: runner.environment == 'github-hosted'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
       - name: Install Ansible and collections
+        if: runner.environment == 'github-hosted'
         run: |
           python -m pip install --upgrade pip
           pip install ansible
