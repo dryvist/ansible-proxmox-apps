@@ -92,3 +92,30 @@ traefik_manage_services: true
 # inter-VLAN allow (terraform-unifi); some apps also need their own reverse-proxy
 # trust setting (e.g. Home Assistant trusted_proxies) — see README.
 traefik_ingress_routes: "{{ tofu_data.ingress | default([]) }}"
+
+# --- Health-check cadence -----------------------------------------------------
+# Estate defaults, unchanged from the values previously hardcoded in the
+# template, so every route renders byte-identical unless it opts out.
+traefik_health_check_interval: "10s"
+traefik_health_check_timeout: "5s"
+
+# Per-route interval overrides, keyed by route name. A route's own
+# `health_check_interval` from the tofu ingress table always wins; this map is
+# the consuming-side policy layer for backends whose probe cadence needs tuning
+# before the upstream contract carries the value.
+#
+# openbao: only the Raft leader answers 200. Standbys return 429 BY DESIGN —
+# pooling them amplified a real inter-node-forward failure, so their exclusion
+# is deliberate and must not be "fixed" with standbyok. The consequence is that
+# a pool of N voters has exactly ONE eligible member at any moment, so a short
+# interval re-probes every voter constantly to sustain that single member, and
+# one slow probe empties the pool and returns "no available server". Measured
+# through the ingress at 10s: 503,503,503,200,200 across a single minute — the
+# route flaps rather than being down. A longer interval is less twitchy about a
+# backend set that is mostly-429 by design.
+#
+# LONG-TERM: this belongs in the tofu ingress contract next to health_check_path
+# so there is one definition. Tracked in Vikunja; remove the entry here when the
+# upstream row carries it.
+traefik_health_check_interval_overrides:
+  openbao: "30s"
