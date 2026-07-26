@@ -244,11 +244,29 @@
     create_home: true
     state: present
 
-- name: Ensure qbittorrent home is traversable in unprivileged LXC
+# Recursive + world-readable (not just execute-only "traversable"): PVE's
+# vzdump backs up an unprivileged LXC by running `tar` through
+# `lxc-usernsexec` with THIS container's own lxc.idmap — i.e. as the
+# container's mapped root, not real host root, so it gets no DAC_OVERRIDE
+# bypass here. mode 0711 (owner rwx, group/other execute-only, no read) let
+# the mapped-root backup process traverse into the directory but never list
+# or open anything inside it, so vzdump failed with "tar: ./home/qbittorrent:
+# Cannot open: Permission denied" on every run of pve2's hourly rescue-backup
+# job (confirmed on CT 725140, 12/12 retained runs). Recursing also heals a
+# pre-existing ownership drift: some files/dirs under this home predate the
+# GID-13000 idmap punch-through and still carry an orphaned host GID with no
+# in-container mapping at all — "other" read/execute is checked independent
+# of owner/group resolution, so it reaches those files too without requiring
+# a separate chown pass. `X` (not `x`) only sets execute on directories /
+# already-executable files, so plain data files never become executable.
+# Nothing besides host root and this container's own usernsexec view can
+# ever reach these host paths, so this costs nothing in practice.
+- name: Ensure qbittorrent home is vzdump-readable in unprivileged LXC
   ansible.builtin.file:
     path: "/home/{{ download_vpn_user }}"
     state: directory
-    mode: "0711"
+    recurse: true
+    mode: u=rwX,go+rX
 
 # The whole shared /data tree — the /data/media library AND /data/torrents
 # (incomplete/tv/movies) — is created host-side by the media_lxc_features role
