@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.5.0...v3.5.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **cribl:** consume the shared roles as the dryvist.homelab collection ([f2e5d59](https://github.com/dryvist/ansible-proxmox-apps/commit/f2e5d59604f733ae86034785ce390156d9b54667))
+
 ## [3.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.4.1...v3.5.0) (2026-07-25)
 
 
