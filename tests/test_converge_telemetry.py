@@ -9,6 +9,9 @@ import json
 from pathlib import Path
 import unittest
 
+from ansible import context
+from ansible.module_utils.common.collections import ImmutableDict
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "callback_plugins" / "converge_telemetry.py"
@@ -126,6 +129,75 @@ class EventShapeContract(unittest.TestCase):
         events = telemetry.build_events({"delta": summary()}, CONFIG, "site.yml", 0.0)
         converge = [e for e in events if e["sourcetype"] == telemetry.SOURCETYPE_CONVERGE]
         self.assertEqual(converge[0]["host"], "delta")
+
+
+class FakeStats(object):
+    """Minimal stand-in for Ansible's end-of-run ``AggregateStats``."""
+
+    def __init__(self, config):
+        self.custom = {"_run": {telemetry.STATS_KEY: config}}
+        self.processed = {"alpha": 1}
+
+    def summarize(self, host):  # noqa: ARG002 - one fixed clean host is enough
+        return summary()
+
+
+class RecordingCallback(telemetry.CallbackModule):
+    """The real callback with only its Ansible plumbing stubbed out."""
+
+    def __init__(self):
+        telemetry.CallbackModule.__init__(self)
+        self.warnings = []
+        self._plugin_options = {"enabled": True, "hec_token": "unit-test-token"}
+
+    def get_option(self, name):
+        return self._plugin_options[name]
+
+
+def emit_and_capture(config, cliargs):
+    """Run the callback's emit path; return every ``open_url`` call it made."""
+    posted = []
+    original_open_url = telemetry.open_url
+    original_cliargs = context.CLIARGS
+    telemetry.open_url = lambda url, **kwargs: posted.append((url, kwargs))
+    context.CLIARGS = ImmutableDict(cliargs)
+    try:
+        callback = RecordingCallback()
+        callback.v2_playbook_on_stats(FakeStats(config))
+    finally:
+        telemetry.open_url = original_open_url
+        context.CLIARGS = original_cliargs
+    return posted
+
+
+class CheckModeContract(unittest.TestCase):
+    """A dry run must never refresh a host's converge-freshness clock.
+
+    A ``--check`` run changes nothing on the targets, but Ansible still reports
+    ``ok>0`` for every host it walked, so ``host_status`` would call it a
+    success. Publishing that would make a genuinely stale host look fresh and
+    silently defeat the >7-day staleness alert this telemetry exists to feed.
+    """
+
+    def test_a_real_run_does_publish(self):
+        # Instrument validation: this proves the harness CAN observe an emit,
+        # so a "nothing was posted" assertion below is evidence, not an
+        # artefact of a test that could never fail.
+        posted = emit_and_capture(CONFIG, {"check": False})
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0][0], CONFIG["hec_url"])
+
+    def test_cli_check_flag_suppresses_every_event(self):
+        self.assertEqual(emit_and_capture(CONFIG, {"check": True}), [])
+
+    def test_published_check_mode_flag_suppresses_every_event(self):
+        # Covers API-driven runs (ansible-runner and friends) where CLIARGS
+        # carries no --check flag at all.
+        config = dict(CONFIG, **{telemetry.CHECK_MODE_KEY: True})
+        self.assertEqual(emit_and_capture(config, {}), [])
+
+    def test_absent_signals_are_not_read_as_check_mode(self):
+        self.assertFalse(telemetry.is_check_mode(CONFIG))
 
 
 if __name__ == "__main__":

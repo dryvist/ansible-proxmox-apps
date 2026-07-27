@@ -56,6 +56,7 @@ over:
 | `git_sha` | `git rev-parse HEAD` in the converging worktree |
 | `roster` | every inventory host except `localhost` |
 | `fqdns` | inventory hostname -> `hostname` fact + `tofu_data.domain` |
+| `check_mode` | `ansible_check_mode` — see below |
 
 No IP or port literal appears anywhere in the implementation
 (`.claude/rules/ip-addressing.md`).
@@ -63,6 +64,33 @@ No IP or port literal appears anywhere in the implementation
 **The HEC token is deliberately not published through `set_stats`.** The
 plugin reads `SPLUNK_HEC_TOKEN` from its own environment, so the secret never
 enters run stats, callback output, or a stats dump.
+
+### A dry run publishes nothing
+
+`--check` changes nothing on the targets, but Ansible still reports `ok > 0`
+for every host the run walked, so `host_status()` would call each one a
+success. Publishing that would refresh the freshness clock of a host that was
+never converged — a genuinely stale host would read as fresh purely because
+someone dry-ran `site.yml`, which is exactly the failure the staleness alert
+exists to catch.
+
+The plugin therefore returns before building any event when either signal says
+check mode, and one signal alone is enough:
+
+| Signal | Set by | Covers |
+| --- | --- | --- |
+| `config.check_mode` | site.yml publishes `ansible_check_mode` via `set_stats` | any run, however launched |
+| `context.CLIARGS['check']` | the `--check` CLI flag | `ansible-playbook` runs; empty for API-driven runs |
+
+`tests/test_converge_telemetry.py` pins both independently, plus a control
+case asserting a non-check run *does* post — so "nothing was published" is
+evidence rather than a test that could never fail.
+
+Confirm on any dry run with `-vvv`:
+
+```text
+converge_telemetry: check mode; converge freshness not published
+```
 
 Off switch: `ANSIBLE_CONVERGE_TELEMETRY_ENABLED=false`.
 
