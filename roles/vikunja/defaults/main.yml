@@ -62,6 +62,50 @@ vikunja_service_users:
   - username: svc-mcp-rw
     password: "{{ lookup('env', 'VIKUNJA_SVC_MCP_RW_PASSWORD') }}"
 
+# --- Operator (human) account + project access ------------------------------
+# AUTH MODEL: this deployment authenticates LOCALLY. templates/config.yml.j2
+# renders no `auth:` block at all, so Vikunja's packaged defaults apply — and
+# upstream v2.3.0 pkg/config/config.go sets auth.local.enabled true,
+# auth.openid.enabled false, auth.ldap.enabled false. The published ingress row
+# for this service also carries sso: false, so Traefik does not put it behind
+# the Authelia forwardAuth gate. There is therefore no OIDC identity to attach
+# an operator account to, and declaring OIDC wiring here would be actively
+# harmful: a Vikunja OIDC login provisions a SEPARATE account keyed on
+# issuer+subject, which would shadow the local account and inherit none of the
+# project shares granted below. Local account is the correct declaration today;
+# an SSO migration is a distinct change (see docs) that must move the shares too.
+#
+# Self-registration is off (service.enableregistration false), so this account
+# cannot be self-served — it is declared here and reconciled by the same CLI
+# path the admin and service accounts already use.
+#
+# Credentials are read injection-agnostically. These two are Doppler-native
+# (project iac-conf-mgmt/prd) and have no home in the secret/apps/vikunja
+# promotion map, so unlike the vikunja_* secrets there is no bao-first wiring
+# to mirror in group_vars — a plain env lookup is the whole contract.
+vikunja_operator_username: "{{ lookup('env', 'DEFAULT_USERNAME') | default('', true) }}"
+vikunja_operator_password: "{{ lookup('env', 'DEFAULT_PASSWORD') | default('', true) }}"
+vikunja_operator_email: "{{ vikunja_operator_username }}@{{ tofu_data.domain }}"
+
+# ACCESS MODEL: Vikunja projects are per-user. A project is visible only to its
+# owner and to the users/teams it has been explicitly shared with, and there is
+# no super-user override — `admin` is NOT a superset of every other account.
+# The boards this estate runs on are owned by the svc-mcp-rw service account, so
+# a bare operator login lands on an empty board list until these shares exist.
+#
+# Accounts whose owned projects are shared with the operator, BY USERNAME only.
+# The password for each is resolved at converge time from the canonical sources
+# already wired in this role (vikunja_admin_password and vikunja_service_users),
+# so the bao-first values group_vars sets are picked up automatically and no
+# secret is restated here.
+vikunja_operator_share_owner_usernames:
+  - "{{ vikunja_admin_user }}"
+  - svc-mcp-rw
+
+# models.Permission: 0 = Read, 1 = Read & Write, 2 = Admin. Admin so the
+# operator can manage the boards themselves, not merely the tasks on them.
+vikunja_operator_permission: 2
+
 vikunja_api_timeout: 30
 
 # --- MCP API tokens -> OpenBao (issue #141) ---------------------------------
