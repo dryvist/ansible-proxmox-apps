@@ -147,7 +147,6 @@ class RecordingCallback(telemetry.CallbackModule):
 
     def __init__(self):
         telemetry.CallbackModule.__init__(self)
-        self.warnings = []
         self._plugin_options = {"enabled": True, "hec_token": "unit-test-token"}
 
     def get_option(self, name):
@@ -197,7 +196,12 @@ class CheckModeContract(unittest.TestCase):
         self.assertEqual(emit_and_capture(config, {}), [])
 
     def test_absent_signals_are_not_read_as_check_mode(self):
-        self.assertFalse(telemetry.is_check_mode(CONFIG))
+        original = context.CLIARGS
+        context.CLIARGS = ImmutableDict({})
+        try:
+            self.assertFalse(telemetry.is_check_mode(CONFIG))
+        finally:
+            context.CLIARGS = original
 
 
 if __name__ == "__main__":
