@@ -45,6 +45,12 @@ this repo handles app config only.
 - **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
   Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
   API keys, no new *arr-side wiring).
+- **Converge-freshness telemetry** (`callback_plugins/converge_telemetry.py` —
+  posts per-host converge success/failure events to Splunk HEC at end of every
+  `site.yml` run, so stale configuration management is detectable. The SPL for
+  the stale-converge and orphan-host alerts ships in
+  [docs/CONVERGE_FRESHNESS.md](docs/CONVERGE_FRESHNESS.md); the saved searches
+  themselves land in `ansible-splunk`.)
 
 **This repo does NOT own Splunk.** Splunk is managed by `ansible-splunk`.
 
@@ -157,6 +163,7 @@ documented once at
 | Variable | Purpose | Source |
 | --- | --- | --- |
 | `TOFU_INVENTORY_PATH` | Explicit inventory file pin (tests/overrides) | env (optional) |
+| `ANSIBLE_CONVERGE_TELEMETRY_ENABLED` | Off switch for converge-freshness telemetry (default on) | env (optional) |
 | `TOFU_INVENTORY_S3_URI` | Override the published-inventory S3 location | env (optional) |
 | `BAO_ADDR` | Internal OpenBao API used by the inventory resolver | env |
 | `BAO_TOKEN` | Secret-zero token allowed to read the object-storage path | env |
@@ -317,6 +324,7 @@ To increase execution speed, you can leverage several options:
 | Ansible lint | `ansible-lint` | pre-commit, every PR |
 | Playbook syntax | `ansible-playbook --syntax-check` | every PR (CI) |
 | Inventory group validation | see below | every PR (CI) |
+| Converge-telemetry contract | `python3 tests/test_converge_telemetry.py` | every PR (CI) |
 | Molecule syntax | `molecule syntax` | every PR (CI, roles/molecule changes) |
 
 **Inventory validation locally:**
