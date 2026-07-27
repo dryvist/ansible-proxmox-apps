@@ -47,7 +47,8 @@ this repo handles app config only.
   API keys, no new *arr-side wiring).
 - **Converge-freshness telemetry** (`callback_plugins/converge_telemetry.py` —
   posts per-host converge success/failure events to Splunk HEC at end of every
-  `site.yml` run, so stale configuration management is detectable. The SPL for
+  `site.yml` run, so stale configuration management is detectable. Inert under
+  `--check`, so a dry run cannot make a stale host look fresh. The SPL for
   the stale-converge and orphan-host alerts ships in
   [docs/CONVERGE_FRESHNESS.md](docs/CONVERGE_FRESHNESS.md); the saved searches
   themselves land in `ansible-splunk`.)
