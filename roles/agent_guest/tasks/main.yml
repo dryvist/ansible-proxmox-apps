@@ -1,0 +1,208 @@
+---
+# Converge a pooled Debian LXC into an autonomous AI agent guest: one non-root
+# user, the three agent CLIs, the nix-ai autonomous config mirror, and a
+# queue-driven systemd task runner supervised by OpenBao Agent.
+
+- name: Create the agent group
+  ansible.builtin.group:
+    name: "{{ agent_guest_user }}"
+    gid: "{{ agent_guest_uid }}"
+    state: present
+
+# No sudo, deliberately: the runner never needs root, and a task that thinks it
+# does is a gap in this role to fix, not a privilege to grant. Home is 0755 so
+# the cribl user can tail the transcript trees.
+- name: Create the agent user
+  ansible.builtin.user:
+    name: "{{ agent_guest_user }}"
+    uid: "{{ agent_guest_uid }}"
+    group: "{{ agent_guest_user }}"
+    home: "{{ agent_guest_home }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Set agent home permissions
+  ansible.builtin.file:
+    path: "{{ agent_guest_home }}"
+    state: directory
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0755"
+
+# molecule-notest: apt repos, npm registry and release tarballs need real egress;
+# the molecule scenario exercises the render surface instead (same split the
+# configarr scenario uses).
+- name: Install the CLI toolchain
+  ansible.builtin.include_tasks: toolchain.yml
+  tags:
+    - molecule-notest
+
+# --- Autonomous config mirror ----------------------------------------------
+- name: Create agent config directories
+  ansible.builtin.file:
+    path: "{{ agent_guest_home }}/{{ item }}"
+    state: directory
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0755"
+  loop:
+    - .claude
+    - .codex/rules
+    - .gemini/policies
+    - .githooks
+
+# JSON files come straight from the defaults dicts (which derive their deny
+# lists from the one agent_guest_residual_deny mirror); the TOML/rules formats
+# need a renderer, so they are templates. Same single-list inheritance nix-ai
+# uses across the three tools.
+- name: Deploy the Claude autonomous settings
+  ansible.builtin.copy:
+    content: "{{ agent_guest_claude_settings | to_nice_json }}\n"
+    dest: "{{ agent_guest_home }}/.claude/settings.json"
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0644"
+
+# Remote Control key kept for W1 render parity; inert for headless setup-token
+# sessions (RC needs interactive OAuth) — serves the future interactive profile.
+- name: Deploy the Claude runtime config
+  ansible.builtin.copy:
+    content: "{{ {'remoteControlAtStartup': true} | to_nice_json }}\n"
+    dest: "{{ agent_guest_home }}/.claude.json"
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0644"
+
+- name: Deploy the Gemini autonomous settings
+  ansible.builtin.copy:
+    content: "{{ agent_guest_gemini_settings | to_nice_json }}\n"
+    dest: "{{ agent_guest_home }}/.gemini/settings.json"
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0644"
+
+- name: Deploy the rendered autonomous policy files
+  ansible.builtin.template:
+    src: "autonomous/{{ item.src }}.j2"
+    dest: "{{ agent_guest_home }}/{{ item.dest }}"
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0644"
+  loop:
+    - { src: codex-config.toml, dest: .codex/config.toml }
+    - { src: codex-default.rules, dest: .codex/rules/default.rules }
+    - { src: gemini-autonomous.toml, dest: .gemini/policies/autonomous.toml }
+  loop_control:
+    label: "{{ item.dest }}"
+
+# --- gitleaks pre-push gate -------------------------------------------------
+# core.hooksPath is set globally for the agent user, so every clone the runner
+# makes is gated without per-repo setup. `gitleaks protect --staged` is the same
+# scan the runner performs before its own push — this covers anything that
+# pushes outside the runner.
+- name: Deploy the gitleaks pre-push hook
+  ansible.builtin.copy:
+    content: |
+      #!/bin/sh
+      # {{ ansible_managed }}
+      exec gitleaks protect --staged --redact --no-banner
+    dest: "{{ agent_guest_home }}/.githooks/pre-push"
+    owner: "{{ agent_guest_user }}"
+    group: "{{ agent_guest_user }}"
+    mode: "0755"
+
+# core.hooksPath: every clone the runner makes is gated with no per-repo setup.
+# credential.helper: gh's own helper reads GITHUB_TOKEN from the environment
+# `bao agent` rendered, so the runner needs no credential plumbing of its own and
+# no token ever reaches git's config or a credential store.
+- name: Configure the agent user's global git settings
+  community.general.git_config:
+    name: "{{ item.name }}"
+    scope: global
+    value: "{{ item.value }}"
+  become: true
+  become_user: "{{ agent_guest_user }}"
+  loop:
+    - { name: core.hooksPath, value: "{{ agent_guest_home }}/.githooks" }
+    - { name: credential.https://github.com.helper, value: "!gh auth git-credential" }
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- OpenBao Agent + task units --------------------------------------------
+# The AppRole credentials are seeded out of band (0640 root:agent) — this role
+# creates the directory and never writes a secret into it. `bao agent` runs as
+# the agent user, so the guest's OpenBao identity IS the agent user's; that is
+# the model, not an oversight.
+- name: Create the agent-guest config directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ agent_guest_user }}"
+    mode: "0750"
+  loop:
+    - "{{ agent_guest_config_dir }}"
+    - "{{ agent_guest_approle_dir }}"
+
+- name: Deploy the OpenBao Agent configuration
+  ansible.builtin.template:
+    src: openbao-agent.hcl.j2
+    dest: "{{ agent_guest_config_dir }}/openbao-agent.hcl"
+    owner: root
+    group: "{{ agent_guest_user }}"
+    mode: "0640"
+
+- name: Deploy the task environment file
+  ansible.builtin.copy:
+    content: |
+      # {{ ansible_managed }}
+      {% for k, v in agent_guest_task_env.items() %}
+      {{ k }}={{ v }}
+      {% endfor %}
+    dest: "{{ agent_guest_config_dir }}/agent-task.env"
+    owner: root
+    group: "{{ agent_guest_user }}"
+    mode: "0640"
+
+- name: Deploy the task runner and queue poller
+  ansible.builtin.template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: agent-task-run.sh, dest: "{{ agent_guest_runner_bin }}" }
+    - { src: agent-queue-poll.sh, dest: "{{ agent_guest_queue_poll_bin }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Deploy the agent task and queue units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - agent-task@.service
+    - agent-queue.service
+    - agent-queue.timer
+  notify: Reload systemd for agent guest units
+
+- name: Flush handlers so the units are loaded before the timer starts
+  ansible.builtin.meta: flush_handlers
+
+# Gated on a queue being configured: without it the poller exits 0 every cycle
+# and the timer is just noise.
+- name: Enable the queue poll timer
+  ansible.builtin.systemd:
+    name: agent-queue.timer
+    state: "{{ 'started' if agent_guest_queue_url | length > 0 else 'stopped' }}"
+    enabled: "{{ agent_guest_queue_url | length > 0 }}"
+
+- name: Install the transcript-shipping Cribl Edge
+  ansible.builtin.include_tasks: cribl.yml
+  tags:
+    - molecule-notest

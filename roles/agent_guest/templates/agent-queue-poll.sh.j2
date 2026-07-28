@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# List the queue and start one agent-task@<id> unit per unclaimed task. Claiming
+# is the runner's job (see agent-task-run.sh) so a double-start is harmless:
+# the loser's conditional PUT gets a 412 and it exits 0.
+set -euo pipefail
+
+QUEUE_URL='{{ agent_guest_queue_url }}'
+[ -n "$QUEUE_URL" ] || { echo "agent_guest_queue_url is unset; nothing to poll" >&2; exit 0; }
+
+aws s3 ls "$QUEUE_URL/queue/" |
+  awk '{ print $4 }' |
+  sed -n 's/\.json$//p' |
+  while read -r task_id; do
+    systemctl start --no-block "agent-task@${task_id}.service"
+  done

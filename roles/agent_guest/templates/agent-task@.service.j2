@@ -1,0 +1,34 @@
+[Unit]
+# {{ ansible_managed }}
+# One instance per queued task; %i is the task id. ExecStart is `bao agent` in
+# process-supervisor mode — it authenticates, renders GITHUB_TOKEN into the
+# child environment, and execs the task runner. The runner is never started
+# directly, so there is no code path where it runs without credentials scoped
+# and leased by OpenBao.
+Description=Autonomous agent task %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ agent_guest_user }}
+Group={{ agent_guest_user }}
+WorkingDirectory={{ agent_guest_home }}
+Environment=HOME={{ agent_guest_home }}
+Environment=AGENT_TASK_ID=%i
+# CLI trace telemetry (OTLP -> otel ingress -> Cribl fork). Rendered by the role
+# from agent_guest_task_env; bao agent passes its environment to the child.
+EnvironmentFile={{ agent_guest_config_dir }}/agent-task.env
+ExecStart={{ agent_guest_bao_bin }} agent -config={{ agent_guest_config_dir }}/openbao-agent.hcl
+# A wedged CLI is killed rather than left holding a lease.
+RuntimeMaxSec={{ agent_guest_task_max_sec }}
+TimeoutStopSec=30
+# PrivateTmp gives the unit its own tmpfs /tmp; the runner mktemps its workspace
+# there, so the checkout is memory-backed and cannot outlive the unit.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ReadWritePaths={{ agent_guest_home }}

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# One autonomous agent task, start to finish. Runs as {{ agent_guest_user }},
+# supervised by `bao agent` (GITHUB_TOKEN arrives in the environment, never on
+# disk). AGENT_TASK_ID comes from the agent-task@<id>.service instance name.
+#
+# QUEUE CLAIM CONTRACT (v0, S3/RustFS at {{ agent_guest_queue_url | default('<unset>', true) }}):
+#   queue/<id>.json    task object, written by the submitter
+#   leases/<id>        claim marker, written by exactly one worker
+#   done/<id>.json     the task object, moved here after a terminal outcome
+# LIST  = `aws s3 ls <queue>/queue/` (the poller's job, not this script's)
+# CLAIM = conditional PUT of leases/<id> with `--if-none-match '*'`. The store
+#   rejects the second writer with 412, so the claim is atomic with no lock
+#   service in the loop and no copy+delete race.
+# ponytail: conditional PUT is the whole mutex. If RustFS ever answers 501 to
+#   If-None-Match, move the claim to `flow-lock run` (the estate's existing
+#   single-writer lease) rather than inventing a retry heuristic here.
+#
+# Task object fields: {"id","repo","cli","prompt","base"} — cli is one of
+# claude|codex|gemini, base defaults to {{ agent_guest_task_default_base }}.
+set -euo pipefail
+
+QUEUE_URL='{{ agent_guest_queue_url }}'
+TASK_ID="${AGENT_TASK_ID:?AGENT_TASK_ID not set (started outside agent-task@.service?)}"
+: "${GITHUB_TOKEN:?GITHUB_TOKEN not in environment (bao agent env_template did not render)}"
+
+[ -n "$QUEUE_URL" ] || { echo "agent_guest_queue_url is unset; nothing to poll" >&2; exit 78; }
+
+# PrivateTmp gives this unit its own tmpfs /tmp, so the workspace is memory-backed
+# and gone when the unit stops. The trap covers the mid-run exit paths.
+WORKSPACE="$(mktemp -d /tmp/agent-task.XXXXXX)"
+cleanup() {
+  cd /
+  rm -rf "$WORKSPACE"
+}
+trap cleanup EXIT
+
+# --- claim -----------------------------------------------------------------
+if ! aws s3api put-object --if-none-match '*' \
+  --bucket "${QUEUE_URL#s3://}" --key "leases/$TASK_ID" >/dev/null 2>&1; then
+  echo "task $TASK_ID already claimed elsewhere" >&2
+  exit 0
+fi
+
+aws s3 cp "$QUEUE_URL/queue/$TASK_ID.json" "$WORKSPACE/task.json" --quiet
+REPO="$(jq -r '.repo' "$WORKSPACE/task.json")"
+CLI="$(jq -r '.cli' "$WORKSPACE/task.json")"
+PROMPT="$(jq -r '.prompt' "$WORKSPACE/task.json")"
+BASE="$(jq -r '.base // "{{ agent_guest_task_default_base }}"' "$WORKSPACE/task.json")"
+BRANCH="agent/$TASK_ID"
+
+# --- clone + branch --------------------------------------------------------
+# No credential plumbing here: the role wires git's github.com credential helper
+# to `gh auth git-credential` at converge time, and gh reads GITHUB_TOKEN from
+# the environment bao agent rendered. Nothing to set up, nothing to tear down.
+git clone --depth 50 --branch "$BASE" "https://github.com/$REPO.git" "$WORKSPACE/repo"
+cd "$WORKSPACE/repo"
+git switch -c "$BRANCH"
+
+# --- run the CLI headless --------------------------------------------------
+case "$CLI" in
+  # No permission flag: the baked ~/.claude/settings.json sets
+  # permissions.defaultMode=bypassPermissions (filesystem-only YOLO). Gemini is
+  # the one exception — upstream strips yolo from settings, the flag is load-bearing.
+  claude) claude -p "$PROMPT" ;;
+  codex)  codex exec "$PROMPT" ;;
+  gemini) gemini --approval-mode yolo --prompt "$PROMPT" ;;
+  *)      echo "unknown cli: $CLI" >&2; exit 64 ;;
+esac
+
+if git diff --quiet HEAD; then
+  echo "task $TASK_ID produced no changes" >&2
+  aws s3 mv "$QUEUE_URL/queue/$TASK_ID.json" "$QUEUE_URL/done/$TASK_ID.json" --quiet
+  exit 0
+fi
+
+# --- secret gate -----------------------------------------------------------
+# Fail-closed: a task that generated a credential never reaches the remote. The
+# pre-push hook covers interactive pushes; this covers the runner's own push.
+git add -A
+gitleaks protect --staged --redact --no-banner
+
+# --- publish ---------------------------------------------------------------
+git commit -m "feat(agent): $TASK_ID"
+git push --set-upstream origin "$BRANCH"
+gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
+  --title "agent task $TASK_ID" --body "Autonomous run by \`$CLI\` on $(hostname -f)."
+
+aws s3 mv "$QUEUE_URL/queue/$TASK_ID.json" "$QUEUE_URL/done/$TASK_ID.json" --quiet
