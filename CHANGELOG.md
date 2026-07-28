@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.5.1...v4.0.0) (2026-07-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **openbao:** enumerate converge KV grants instead of platform/apps wildcards ([#1280](https://github.com/dryvist/ansible-proxmox-apps/issues/1280))
+
+### Features
+
+* **vikunja:** declare the operator account and its project access ([#1289](https://github.com/dryvist/ansible-proxmox-apps/issues/1289)) ([9d1b02f](https://github.com/dryvist/ansible-proxmox-apps/commit/9d1b02f77637df9cf34e5fcb2b03de75d1754382))
+
+
+### Bug Fixes
+
+* **openbao:** dual-mount github/openrouter/acme reads to secrets-external ([#1281](https://github.com/dryvist/ansible-proxmox-apps/issues/1281)) ([7daaab6](https://github.com/dryvist/ansible-proxmox-apps/commit/7daaab606e3d41e3b08ecd049cc7de3b713667c1))
+* **openbao:** enumerate converge KV grants instead of platform/apps wildcards ([#1280](https://github.com/dryvist/ansible-proxmox-apps/issues/1280)) ([fcb3fad](https://github.com/dryvist/ansible-proxmox-apps/commit/fcb3fad1765048c040b1f605464d913fef3f65ed))
+* **telemetry:** make converge-freshness inert under --check ([#1290](https://github.com/dryvist/ansible-proxmox-apps/issues/1290)) ([4db41ec](https://github.com/dryvist/ansible-proxmox-apps/commit/4db41ec7fee270995ab112349ca522523d81d773))
+
 ## [3.5.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.5.0...v3.5.1) (2026-07-27)
 
 
