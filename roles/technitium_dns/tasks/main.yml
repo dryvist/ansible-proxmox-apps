@@ -474,10 +474,41 @@
     - technitium_dns_apply | bool
   no_log: true
 
-# Point each Traefik-fronted service name at the Traefik LXC so clients reach it
-# over TLS at https://<name>.{domain}. A-records (not CNAMEs) to avoid A/CNAME
-# coexistence issues and to cleanly overwrite any prior host record. Skipped
-# entirely until the Traefik LXC exists in the inventory.
+# Never publish a VIP that nothing is answering on.
+#
+# The ingress VIP is bound by keepalived, which converges LATE in the site play,
+# while these records are written EARLY. So the first run after a second ingress
+# instance appears would otherwise point every fronted name at an address no
+# host has taken yet, blackholing ingress for the rest of the run.
+#
+# Probing here makes the failure mode one-directional: a VIP that answers is
+# used, a VIP that does not falls back to a real ingress host. Records are never
+# pointed at something unreachable, and the promotion simply happens on the next
+# run once keepalived holds the address.
+- name: Probe the ingress VIP before trusting it
+  ansible.builtin.wait_for:
+    host: "{{ tofu_data['ingress_vip'] }}"
+    port: "{{ technitium_dns_ingress_probe_port }}"
+    timeout: "{{ technitium_dns_ingress_probe_timeout }}"
+  register: technitium_dns_vip_probe
+  failed_when: false
+  changed_when: false
+  when:
+    - (tofu_data['ingress_vip'] | default('', true)) | length > 0
+    - technitium_dns_role == 'primary'
+
+- name: Report which address the fronted names will resolve to
+  ansible.builtin.debug:
+    msg: >-
+      ingress target = {{ technitium_dns_ingress_target_ip | default('(none)', true) }}
+      (vip={{ tofu_data['ingress_vip'] | default('', true) | default('unset', true) }},
+      vip_answered={{ not (technitium_dns_vip_probe.failed | default(true)) }})
+  when: technitium_dns_role == 'primary'
+
+# Point each Traefik-fronted service name at the ingress target so clients reach
+# it over TLS at https://<name>.{domain}. A-records (not CNAMEs) to avoid
+# A/CNAME coexistence issues and to cleanly overwrite any prior host record.
+# Skipped entirely until an ingress target resolves.
 - name: Create Traefik ingress alias A records
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"

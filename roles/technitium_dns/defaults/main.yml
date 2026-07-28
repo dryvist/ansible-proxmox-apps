@@ -85,13 +85,28 @@ technitium_dns_apex_domain: >-
 technitium_dns_ingress_host: traefik
 # Ingress HA: fronted-service aliases resolve to the keepalived VRRP virtual IP
 # (tofu_data.ingress_vip) so a Traefik node loss never breaks name resolution —
-# the VIP floats to a surviving instance. Falls back to the single Traefik LXC's
-# own IP when no VIP is published (single-ingress / pre-HA deployments),
-# preserving the prior behavior exactly.
+# the VIP floats to a surviving instance.
+#
+# The VIP is used ONLY when it actually answers (see the probe task). Otherwise
+# the target falls back to a published ingress host, and only then to the
+# legacy single-Traefik lookup. That ordering matters: the VIP is bound by
+# keepalived late in the site play while these records are written early, so an
+# unprobed VIP would blackhole every fronted name for the rest of the run.
+#
+# The ingress_hosts fallback also removes the dependency on a hard-coded
+# inventory hostname, which stops being correct once ingress instances are
+# generated per node.
 technitium_dns_ingress_target_ip: >-
   {{ (tofu_data['ingress_vip'] | default('', true))
-     if (tofu_data['ingress_vip'] | default('', true)) | length > 0
-     else (hostvars[technitium_dns_ingress_host].container_ip | default('')) }}
+     if ((tofu_data['ingress_vip'] | default('', true)) | length > 0
+         and not (technitium_dns_vip_probe.failed | default(true)))
+     else ((tofu_data['ingress_hosts'] | default([]) | first | default('', true))
+           | default(hostvars[technitium_dns_ingress_host].container_ip | default(''), true)) }}
+
+# Probe applied to the VIP before it is published. Port 443 is the ingress
+# listener; a short timeout keeps a dead VIP from stalling the play.
+technitium_dns_ingress_probe_port: 443
+technitium_dns_ingress_probe_timeout: 5
 # Ingress names that must NOT be aliased to Traefik: a direct-access consumer
 # reaches the service on a non-HTTP port that Traefik does not proxy, so the name
 # must keep its own guest A record (-> the host itself), not the Traefik VIP.
