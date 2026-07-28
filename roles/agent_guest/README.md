@@ -22,7 +22,11 @@ rebuilt from IaC; nothing irreplaceable lives on one.
 ## Installation
 
 Included via the `Deploy autonomous agent guests` play in `playbooks/site.yml`
-(hosts: `agent_guest_group` — LXCs tagged `agent-guest` in the tofu inventory).
+(hosts: `ai_agent_pool_group` — the pooled `ai-runner-pool-NN` LXCs, selected by
+the `ai-proxied` profile tag in the tofu inventory). The three legacy
+`ai-runner` guests are deliberately excluded: they are converged by the
+`ai_runner` role in the peer `ansible-proxmox-ai` repo, and two roles must never
+converge one guest.
 Converge just this role:
 
 ```sh
@@ -131,11 +135,19 @@ else. If agent-unit logs need their own index, add an `agent_guest` entry to
 
 ## Guest rebuild / pool return ordering
 
-Before wiping a workspace or rebuilding the guest: (1) wait for the Cribl Edge
-persistent queue (`/opt/cribl/state/queues`) to drain to zero files — a clean
-`systemctl stop` is NOT a delivery proof, the queue survives restarts by
-design; (2) stop Edge; (3) remove credentials; (4) wipe. Reversed order
-strands undeliverable telemetry.
+Implemented in `tasks/pool_return.yml`, tagged `never` so it only ever runs when
+asked for explicitly:
+
+```sh
+ansible-playbook playbooks/site.yml --tags agent_guest_pool_return --limit <guest>,localhost
+```
+
+The order is load-bearing: (1) wait for the Cribl Edge persistent queue
+(`/opt/cribl/state/queues`) to drain to zero files — a clean `systemctl stop` is
+NOT delivery proof, the queue survives restarts by design, and the wait fails
+loud after ~5 minutes rather than recycling a guest with an undeliverable
+backlog; (2) stop Edge; (3) remove credentials; (4) wipe the workspace.
+Reversed order strands undeliverable telemetry.
 
 Codex (`~/.codex/auth.json`) and Gemini (`~/.gemini/oauth_creds.json`) auth
 files are seeded out of band beside the AppRole credentials — they
