@@ -17,14 +17,6 @@ jobs:
     # Self-hosted (pre-baked toolchain); fork PRs fall back to a hosted runner
     # so fork-author code never runs on the fleet.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
-    env:
-      # Per-job Ansible state. The fleet runners share ~/.ansible, and
-      # concurrent `ansible-galaxy collection install` runs race in it — the
-      # git-sourced collection is tar-built under ANSIBLE_HOME/tmp, so two jobs
-      # on one host corrupt each other's build and every later job on that
-      # runner dies with "Collection tar file member MANIFEST.json does not
-      # contain a valid json string". runner.temp is unique per job.
-      ANSIBLE_HOME: ${{ runner.temp }}/ansible-home
     strategy:
       fail-fast: false
       matrix:
@@ -50,6 +42,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Per-job Ansible state. The fleet runners share ~/.ansible, and
+      # concurrent `ansible-galaxy collection install` runs race in it — the
+      # git-sourced collection is tar-built under ANSIBLE_HOME/tmp, so two
+      # jobs on one host corrupt each other's build and every later job on
+      # that runner dies with "Collection tar file member MANIFEST.json does
+      # not contain a valid json string". RUNNER_TEMP is unique per job. A
+      # $GITHUB_ENV step, not job-level env: the runner context is not
+      # available to jobs.<id>.env.
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
 
       # Hosted-only provisioning: fleet runners use the image's pre-baked
       # toolchain — setup-python's standalone build needs a newer CPU ISA
@@ -134,13 +137,14 @@ jobs:
   template-render:
     name: Template Rendering Tests
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
-    env:
-      # Per-job Ansible state — see the `test` job above for why.
-      ANSIBLE_HOME: ${{ runner.temp }}/ansible-home
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Per-job Ansible state — see the `test` job above for why.
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
 
       # Hosted-only provisioning — same constraint as the test job above.
       - name: Set up Python
