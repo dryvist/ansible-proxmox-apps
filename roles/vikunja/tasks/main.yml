@@ -188,6 +188,61 @@
   changed_when: true
   no_log: true
 
+- name: Create the Vikunja operator user (idempotent — skipped if already present)
+  ansible.builtin.command:
+    argv:
+      - "{{ vikunja_binary_path }}"
+      - user
+      - create
+      - "--username={{ vikunja_operator_username }}"
+      - "--email={{ vikunja_operator_email }}"
+      - "--password={{ vikunja_operator_password }}"
+  # Whole-cell match, same reasoning as the admin/service-user tasks above.
+  when:
+    - vikunja_operator_username | length > 0
+    - vikunja_operator_password | length > 0
+    - >-
+      not (vikunja_user_list.stdout | default('', true)
+           | regex_search('(?:^|\\s|\\|)' ~ vikunja_operator_username ~ '(?:\\s|\\||$)'))
+  changed_when: true
+  no_log: true
+
+# Share every project the automation accounts own with the operator. Vikunja
+# projects are per-owner with no super-user override, so without this the
+# operator logs in to an empty board list. Additive only — the owning accounts
+# keep ownership and access.
+- name: Grant the operator access to the automation-owned projects
+  ansible.builtin.include_tasks: operator_access.yml
+  when:
+    - vikunja_operator_username | length > 0
+    - vikunja_operator_password | length > 0
+    - not ansible_check_mode
+  tags: vikunja_operator_access
+
+# ansible.builtin.uri has no check-mode support, so every request in the share
+# reconciliation would be skipped and the facts derived from them left
+# undefined. Skipping the include outright and saying so is honest; running it
+# half-evaluated would fail on undefined vars and prove nothing.
+- name: Note operator project sharing is not evaluated in check mode
+  ansible.builtin.debug:
+    msg: >-
+      Operator project sharing is skipped in check mode (ansible.builtin.uri
+      does not support it). Run without --check to reconcile the operator's
+      share on the automation-owned projects.
+  when:
+    - vikunja_operator_username | length > 0
+    - vikunja_operator_password | length > 0
+    - ansible_check_mode
+  tags: vikunja_operator_access
+
+- name: Note operator account provisioning is skipped
+  ansible.builtin.debug:
+    msg: >-
+      Vikunja operator provisioning is skipped — DEFAULT_USERNAME and/or
+      DEFAULT_PASSWORD are absent from the converge environment. Set both to
+      create the human account and share the automation-owned projects with it.
+  when: not (vikunja_operator_username | length > 0 and vikunja_operator_password | length > 0)
+
 # Mint per-user MCP API tokens and publish the shared connection to OpenBao.
 # Deferred by default: the converge flips the flag with
 # -e '{"vikunja_token_publish_openbao": true}' once a write-capable OpenBao
