@@ -44,12 +44,21 @@
       register: converge_telemetry_head
       changed_when: false
       failed_when: false
+      # Read-only, so it is safe under --check. Without this the task skips in
+      # check mode and git_sha publishes as an empty string.
+      check_mode: false
 
     - name: Publish converge-freshness configuration for the callback plugin
       ansible.builtin.set_stats:
         aggregate: false
         data:
           converge_telemetry:
+            # A dry run converges nothing, so the callback must stay silent for
+            # it — publishing a "success" event would refresh the freshness
+            # clock of a host that was never touched. The callback also reads
+            # the CLI --check flag itself; this is the belt to that's braces,
+            # and it is the only signal available to an API-driven run.
+            check_mode: "{{ ansible_check_mode }}"
             hec_url: >-
               https://splunk.{{ tofu_data.domain }}:{{
                 tofu_data.constants.service_ports.splunk_hec
@@ -397,7 +406,9 @@
     - pipeline
 
   roles:
-    - role: cribl_edge
+    # Shared with ansible-proxmox via the dryvist.homelab collection
+    # (homelab-contracts), hence the FQCN.
+    - role: dryvist.homelab.cribl_edge
 
 # =============================================================================
 # Phase 2b: Cribl Stream (IPFIX/NetFlow processing)
@@ -433,7 +444,7 @@
     - pipeline
 
   roles:
-    - role: cribl_packs
+    - role: dryvist.homelab.cribl_packs
 
 # =============================================================================
 # Phase 3: HAProxy Syslog/NetFlow VIP

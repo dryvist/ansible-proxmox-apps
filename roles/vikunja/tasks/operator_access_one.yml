@@ -1,0 +1,72 @@
+---
+# Share every project owned by ONE automation account with the operator.
+# Included per item from operator_access.yml with loop_var: vikunja_share_owner
+# (a username string; its password comes from vikunja_share_owner_password_map).
+#
+# Acting as the owner via a password JWT — not via a minted MCP API token — is
+# deliberate. The MCP tokens are bounded to the task-management route groups
+# (vikunja_mcp_token_scopes), and project sharing is a permission-management
+# route outside that scope. The JWT carries exactly the owner's own rights and
+# nothing broader, and only a project's owner/admin may share it.
+
+- name: "Log in to Vikunja as {{ vikunja_share_owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_share_owner }}"
+      password: "{{ vikunja_share_owner_password_map[vikunja_share_owner] }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_share_login
+  no_log: true
+
+# Page 1 also carries the pagination headers, so the remaining page count is
+# read from the response rather than assumed. Silently taking only page 1 would
+# leave the operator without whichever boards happened to sort onto later pages.
+- name: "List the first page of projects visible to {{ vikunja_share_owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_share_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_share_projects_p1
+  changed_when: false
+
+- name: "List the remaining pages of projects visible to {{ vikunja_share_owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_share_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ range(2, (vikunja_share_projects_p1.x_pagination_total_pages
+                 | default(1, true) | int) + 1) | list }}
+  register: vikunja_share_projects_rest
+  changed_when: false
+
+# Only projects this account OWNS are in scope. Anything merely shared with it
+# belongs to another owner and is covered by that owner's own pass — re-sharing
+# it from here would fail anyway, since sharing needs owner/admin rights.
+# models.Project exposes the owner as a nested user object (json:"owner").
+- name: "Select the projects owned by {{ vikunja_share_owner }}"
+  ansible.builtin.set_fact:
+    vikunja_owned_projects: >-
+      {{ ((vikunja_share_projects_p1.json | default([], true))
+          + (vikunja_share_projects_rest.results | default([], true)
+             | map(attribute='json') | select('iterable') | list | flatten))
+         | selectattr('owner', 'defined')
+         | selectattr('owner.username', 'equalto', vikunja_share_owner)
+         | list }}
+
+- name: "Reconcile the operator's share on each project owned by {{ vikunja_share_owner }}"
+  ansible.builtin.include_tasks: operator_access_project.yml
+  loop: "{{ vikunja_owned_projects }}"
+  loop_control:
+    loop_var: vikunja_share_project
+    label: "{{ vikunja_share_project.id }}:{{ vikunja_share_project.title | default('') }}"
