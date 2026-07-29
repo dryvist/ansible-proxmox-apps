@@ -2331,6 +2331,70 @@
           - none of them render when disabled
           - the async block lands inside [global], before the stanza section
 
+# =============================================================================
+# Initial-full-backup detection (roles/postgres/tasks/pgbackrest.yml)
+# =============================================================================
+# The one branch that decides whether bring-up leaves the stanza restorable.
+# Get it wrong towards false and the cluster archives WAL for up to a week with
+# no base backup to replay onto — WAL alone restores nothing, and `pgbackrest
+# check` passes the whole time because it validates archiving, not backups.
+# Get it wrong towards true and every converge re-runs a full backup.
+#
+# Exercised here rather than in the postgres molecule scenario because that
+# scenario cannot enable pgBackRest at all (no S3 endpoint in CI).
+- name: Verify the pgBackRest initial-backup detection expression
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    # Shapes `pgbackrest --output=json info` actually returns.
+    _pgbackrest_info_cases:
+      - name: fresh stanza, stanza-create ran but no backup exists yet
+        stdout: '[{"name":"h","backup":[],"status":{"code":1}}]'
+        expect_backup: true
+      - name: stanza already holds a full backup
+        stdout: '[{"name":"h","backup":[{"label":"20260729-120000F"}]}]'
+        expect_backup: false
+      # info returns a bare [] for a stanza it cannot see. `| first` would raise
+      # on this instead of taking the branch, which is why the task does not
+      # use it.
+      - name: bare list, stanza not visible
+        stdout: '[]'
+        expect_backup: true
+      # In check mode the info command is skipped and registers no stdout.
+      - name: check mode, nothing registered
+        stdout: ''
+        expect_backup: true
+
+  tasks:
+    # KEEP IN SYNC with the `when:` on "Take the initial full backup so PITR
+    # has a base to replay onto" in roles/postgres/tasks/pgbackrest.yml.
+    - name: Assert the branch resolves correctly for every info shape
+      ansible.builtin.assert:
+        that:
+          - >-
+            (((item.stdout | default('[]', true) | from_json
+               | map(attribute='backup') | flatten | length) == 0)
+             | bool) == (item.expect_backup | bool)
+        fail_msg: >-
+          {{ item.name }}: expected take-initial-backup={{ item.expect_backup }}.
+          The initial-backup branch in roles/postgres/tasks/pgbackrest.yml has
+          drifted from this check.
+        quiet: true
+      loop: "{{ _pgbackrest_info_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: PgBackRest initial-backup detection verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          initial-backup branch assertions passed:
+          - empty stanza takes a full backup
+          - populated stanza does not
+          - bare [] and check-mode both take the branch without raising
+
 - name: Remove the per-run fixture output directory
   hosts: localhost
   connection: local

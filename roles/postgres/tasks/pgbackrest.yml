@@ -147,6 +147,48 @@
           - check
       changed_when: false
 
+    # WAL alone restores nothing — replay needs a base backup to replay ONTO.
+    # The timers below only schedule one (the first full lands at the next
+    # Sunday 01:00), so a stanza created on a Monday archives WAL for six days
+    # while being completely unrestorable. `check` does not catch it: it
+    # validates archiving, not the presence of a backup.
+    #
+    # `info --output=json` is safe here specifically because stanza-create ran
+    # first — the "info stubs a missing stanza" trap (#1037) needs a stanza that
+    # was never created. A fresh stanza reports an empty `backup` list.
+    - name: Check whether the stanza already holds a base backup
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - pgbackrest
+          - --stanza={{ postgres_pgbackrest_stanza }}
+          - --output=json
+          - info
+      register: postgres_pgbackrest_info
+      changed_when: false
+
+    # Only ever on an empty stanza, so this is a one-time cost at bring-up, not
+    # something every converge pays. Expect it to take as long as a full base
+    # backup of the cluster.
+    - name: Take the initial full backup so PITR has a base to replay onto
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - pgbackrest
+          - --stanza={{ postgres_pgbackrest_stanza }}
+          - --type=full
+          - backup
+      # No `first`: info returns a bare [] for a stanza it cannot see, and
+      # indexing that raises instead of taking the branch. The default('[]')
+      # keeps check mode (where the command above is skipped and registers no
+      # stdout) from erroring here too.
+      when: >-
+        ((postgres_pgbackrest_info.stdout | default('[]', true) | from_json
+          | map(attribute='backup') | flatten | length) == 0)
+      changed_when: true
+
     - name: Deploy the instanced pgBackRest backup service
       ansible.builtin.template:
         src: pgbackrest-backup@.service.j2

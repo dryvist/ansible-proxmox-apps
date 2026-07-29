@@ -216,7 +216,24 @@ postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECR
 # Do NOT reach for `pgbackrest verify` as the offsite gate: it exits 0 against a
 # repo it cannot read at all, printing only "No usable backup.info file" (#1027).
 #
-postgres_pgbackrest_repo2_enabled: true
+# STILL OFF, and this is a credential gap, not a preference. Enabling it without
+# a credential path would point the config at a repo it cannot authenticate to,
+# which is strictly worse than an honest `false`. Three things are missing:
+#
+#   1. A scoped B2 application key pair for the backup bucket. The convention is
+#      one bucket, exactly two keys — <bucket>-ro and <bucket>-rw — and the
+#      writer here takes the -rw one. Neither exists.
+#   2. A home for it. B2 is internet-facing, so it belongs in the
+#      `secrets-external/` mount, never `secret/`.
+#   3. A delivery path. scripts/fetch-openbao-secrets.sh — the thing that turns
+#      a KV entry into the POSTGRES_BACKUP_REPO2_S3_* env vars this role reads —
+#      only ever LISTs and reads `secret/apps/<domain>`. It has no
+#      `secrets-external/` code path at all, so even an existing key could not
+#      reach the converge. That script is the blocking item.
+#
+# Flip this to true in the same change that closes all three, so the assert in
+# tasks/pgbackrest.yml is satisfiable the first time it runs.
+postgres_pgbackrest_repo2_enabled: false
 postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
 postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
 postgres_backup_repo2_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ENDPOINT') | default('', true) }}"
