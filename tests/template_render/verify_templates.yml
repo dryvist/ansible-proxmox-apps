@@ -2267,6 +2267,7 @@
     postgres_backup_repo2_s3_secret_access_key: fixture-secret-2
     postgres_pgbackrest_repo2_retention_full: 4
     postgres_pgbackrest_spool_path: /var/spool/pgbackrest
+    postgres_pgbackrest_queue_max: 4GiB
 
   tasks:
     - name: Render pgbackrest.conf with async archiving enabled
@@ -2300,14 +2301,17 @@
 
     # spool-path without archive-async is inert, and archive-async without a
     # spool-path makes archive-push fail outright, so both must appear together
-    # or not at all.
-    - name: Assert async archiving renders both keys, and the negative case renders neither
+    # or not at all. archive-push-queue-max rides with them: it is the pg_wal
+    # bound during a repo outage — without it, async still fills the disk.
+    - name: Assert async archiving renders all three keys, and the negative case renders none
       ansible.builtin.assert:
         that:
           - "'archive-async=y' in _pgbackrest_async"
           - "'spool-path=/var/spool/pgbackrest' in _pgbackrest_async"
+          - "'archive-push-queue-max=4GiB' in _pgbackrest_async"
           - "'archive-async' not in _pgbackrest_sync"
           - "'spool-path' not in _pgbackrest_sync"
+          - "'archive-push-queue-max' not in _pgbackrest_sync"
           # Guards against the async block being emitted outside [global],
           # where pgBackRest would reject it.
           - _pgbackrest_async.index('archive-async') > _pgbackrest_async.index('[global]')
@@ -2315,15 +2319,16 @@
             _pgbackrest_async.index('archive-async')
             < _pgbackrest_async.index('[' ~ postgres_pgbackrest_stanza ~ ']')
         fail_msg: >-
-          pgbackrest.conf.j2 no longer emits archive-async plus spool-path
-          together inside [global] when async archiving is enabled.
+          pgbackrest.conf.j2 no longer emits archive-async, spool-path, and
+          archive-push-queue-max together inside [global] when async archiving
+          is enabled.
 
     - name: PgBackRest async-archiving render verification PASSED
       ansible.builtin.debug:
         msg: |
           pgbackrest.conf.j2 assertions passed:
-          - archive-async=y and spool-path render together when enabled
-          - neither key renders when disabled
+          - archive-async=y, spool-path, archive-push-queue-max render together when enabled
+          - none of them render when disabled
           - the async block lands inside [global], before the stanza section
 
 - name: Remove the per-run fixture output directory

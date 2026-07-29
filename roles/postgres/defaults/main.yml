@@ -233,18 +233,25 @@ postgres_backup_repo2_s3_secret_access_key: >-
   {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
 postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
 
-# Asynchronous archiving. NOT optional once a repo lives on the network: with
-# synchronous archive-push, archive_command blocks on the S3 write, so an
-# unreachable repo makes every push fail, PostgreSQL retries the same segment
-# forever, pg_wal grows unbounded, and the primary halts when the filesystem
-# fills — a backup-target outage becomes a database outage.
+# Asynchronous archiving. NOT optional once a repo lives on the network:
+# synchronous archive-push blocks archive_command on the S3 write, so every
+# segment pays full round-trip latency and a slow repo backs archiving up
+# behind write volume. Async batches and parallelizes the pushes in a
+# background process; the spool holds only its acknowledgement files (zero
+# bytes on success), not WAL, so it lives on local disk and is safe to lose.
 #
-# Async decouples them: archive_command hands the segment to the spool
-# directory and returns, a background process drains the spool to every repo,
-# and a repo outage costs spool disk instead of availability. The spool holds
-# only in-flight WAL, so it lives on local disk and is safe to lose.
+# Async alone does NOT bound pg_wal during a repo outage — segments stay in
+# pg_wal until actually pushed, so an unreachable repo still fills the disk
+# and halts the primary eventually. archive-push-queue-max below is what
+# bounds it: past the limit pgBackRest acks the segment to PostgreSQL and
+# DROPS it (with a warning in the PostgreSQL log). That trades a PITR gap —
+# unrestorable between the drop and the next base backup — for primary
+# availability, which is the estate's stated preference (rebuildable over
+# un-killable). A dropped chain shows up in pgbackrest info as a missing WAL
+# range; the scheduled base backups re-establish recoverability.
 postgres_pgbackrest_archive_async: true
 postgres_pgbackrest_spool_path: /var/spool/pgbackrest
+postgres_pgbackrest_queue_max: 4GiB
 
 # Retention: number of full backups to keep. pgBackRest expires the WAL that
 # predates the oldest retained full automatically, so this one knob bounds both
