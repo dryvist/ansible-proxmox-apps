@@ -53,6 +53,18 @@
         group: postgres
         mode: "0750"
 
+    # Async archiving writes here before the background process drains it to
+    # the repos. pgBackRest does not create it, and archive-push fails outright
+    # if it is missing.
+    - name: Create the pgBackRest spool directory
+      ansible.builtin.file:
+        path: "{{ postgres_pgbackrest_spool_path }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
+      when: postgres_pgbackrest_archive_async | bool
+
     - name: Deploy the pgBackRest configuration
       ansible.builtin.template:
         src: pgbackrest.conf.j2
@@ -83,6 +95,14 @@
             name: archive_command
             value: "pgbackrest --stanza={{ postgres_pgbackrest_stanza }} archive-push %p"
           notify: Restart postgresql
+
+        # Reload, not restart: archive_timeout is SIGHUP-settable, unlike
+        # archive_mode above.
+        - name: Bound the archive lag on an idle cluster
+          community.postgresql.postgresql_set:
+            name: archive_timeout
+            value: "{{ postgres_archive_timeout }}"
+          notify: Reload postgresql
 
     # archive_mode only takes effect after a restart, and stanza-create/check
     # below need archiving live, so flush the restart before touching the repo.

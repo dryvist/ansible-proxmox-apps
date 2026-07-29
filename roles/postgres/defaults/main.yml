@@ -176,7 +176,14 @@ postgres_standby_reinit: "{{ lookup('env', 'POSTGRES_STANDBY_REINIT') | default(
 # Flag name: task #7 asked for `postgres_backup_enabled`, but that is already
 # the pg_dump tier's switch (default true). Repurposing it would silently
 # disable pg_dump, so this tier owns its own flag.
-postgres_pgbackrest_enabled: false
+postgres_pgbackrest_enabled: true
+
+# Force a WAL segment closed on this cadence so an idle cluster still ships
+# archive. Without it PostgreSQL only archives a segment once it fills, so a
+# quiet database can leave the last committed transactions unarchived
+# indefinitely — the recovery-point objective becomes "whenever write volume
+# happens to reach 16 MB", which is not an objective at all. Seconds.
+postgres_archive_timeout: 60
 
 # Stanza + repo layout. The stanza is named for the HOST, not the cluster: every
 # Debian host names its cluster `main`, so deriving from postgres_cluster_name
@@ -209,8 +216,7 @@ postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECR
 # Do NOT reach for `pgbackrest verify` as the offsite gate: it exits 0 against a
 # repo it cannot read at all, printing only "No usable backup.info file" (#1027).
 #
-# OFF by default so the merge is inert; needs the offsite credentials in env.
-postgres_pgbackrest_repo2_enabled: false
+postgres_pgbackrest_repo2_enabled: true
 postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
 postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
 postgres_backup_repo2_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ENDPOINT') | default('', true) }}"
@@ -226,6 +232,19 @@ postgres_backup_repo2_s3_access_key_id: >-
 postgres_backup_repo2_s3_secret_access_key: >-
   {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
 postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
+
+# Asynchronous archiving. NOT optional once a repo lives on the network: with
+# synchronous archive-push, archive_command blocks on the S3 write, so an
+# unreachable repo makes every push fail, PostgreSQL retries the same segment
+# forever, pg_wal grows unbounded, and the primary halts when the filesystem
+# fills — a backup-target outage becomes a database outage.
+#
+# Async decouples them: archive_command hands the segment to the spool
+# directory and returns, a background process drains the spool to every repo,
+# and a repo outage costs spool disk instead of availability. The spool holds
+# only in-flight WAL, so it lives on local disk and is safe to lose.
+postgres_pgbackrest_archive_async: true
+postgres_pgbackrest_spool_path: /var/spool/pgbackrest
 
 # Retention: number of full backups to keep. pgBackRest expires the WAL that
 # predates the oldest retained full automatically, so this one knob bounds both
