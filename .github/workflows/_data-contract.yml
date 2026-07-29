@@ -62,6 +62,14 @@ jobs:
     # Self-hosted (pre-baked ansible + collections); fork PRs fall back to a
     # hosted runner so fork-author code never runs on the fleet.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    env:
+      # Per-job Ansible state. The fleet runners share ~/.ansible, and
+      # concurrent `ansible-galaxy collection install` runs race in it — the
+      # git-sourced collection is tar-built under ANSIBLE_HOME/tmp, so two jobs
+      # on one host corrupt each other's build and every later job on that
+      # runner dies with "Collection tar file member MANIFEST.json does not
+      # contain a valid json string". runner.temp is unique per job.
+      ANSIBLE_HOME: ${{ runner.temp }}/ansible-home
 
     steps:
       - name: Checkout code
@@ -130,6 +138,9 @@ jobs:
   verify-inventory-load:
     name: Verify Inventory Load
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    env:
+      # Per-job Ansible state — see syntax-check above for why.
+      ANSIBLE_HOME: ${{ runner.temp }}/ansible-home
 
     steps:
       - name: Checkout code
