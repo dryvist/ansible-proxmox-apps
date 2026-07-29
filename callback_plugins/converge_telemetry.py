@@ -28,6 +28,10 @@ DOCUMENTATION = """
       - Inert unless the converging playbook publishes its configuration with
         C(ansible.builtin.set_stats) under the C(converge_telemetry) key, so
         enabling the plugin globally does not make unrelated playbooks emit.
+      - Inert in check mode. A dry run changes nothing on the targets, so
+        publishing a C(success) event for it would refresh the freshness clock
+        of a host that was never actually converged — exactly the staleness the
+        downstream alert exists to detect.
     requirements:
       - Splunk HEC endpoint reachable from the control node
     options:
@@ -55,6 +59,7 @@ DOCUMENTATION = """
 import json
 import time
 
+from ansible import context
 from ansible.module_utils.common.text.converters import to_text
 from ansible.module_utils.urls import open_url
 from ansible.plugins.callback import CallbackBase
@@ -62,6 +67,9 @@ from ansible.plugins.callback import CallbackBase
 #: Key the converging playbook uses with ``set_stats`` to hand this plugin its
 #: tofu-derived configuration (endpoint, index, host FQDN map, git SHA).
 STATS_KEY = "converge_telemetry"
+
+#: Key inside that configuration carrying the playbook's own view of check mode.
+CHECK_MODE_KEY = "check_mode"
 
 SOURCETYPE_CONVERGE = "ansible:converge"
 SOURCETYPE_ROSTER = "ansible:converge:roster"
@@ -80,6 +88,29 @@ def host_status(summary):
         if summary.get(counter, 0):
             return "failed"
     return "success"
+
+
+def is_check_mode(config):
+    """Return True when this run must not publish converge freshness.
+
+    A check run touches nothing on the targets, so an event from one would
+    refresh the freshness clock for a host that never converged — silently
+    defeating the >7-day staleness alert this telemetry feeds.
+
+    Two independent signals, either of which is sufficient:
+
+    * ``config[CHECK_MODE_KEY]`` — the converging playbook's own
+      ``ansible_check_mode``, handed over with the rest of the configuration
+      via ``set_stats``. Authoritative and available however the run was
+      launched.
+    * ``context.CLIARGS['check']`` — the ``--check`` flag as parsed by the CLI.
+      This is how ansible-core's own ``default`` callback reads check mode.
+      Empty for API-driven runs (``ansible-runner`` and friends), which is why
+      the ``set_stats`` signal above exists as well.
+    """
+    if (config or {}).get(CHECK_MODE_KEY):
+        return True
+    return bool((context.CLIARGS or {}).get("check"))
 
 
 def build_events(summaries, config, playbook, now):
@@ -183,6 +214,12 @@ class CallbackModule(CallbackBase):
         config = (getattr(stats, "custom", None) or {}).get("_run", {}).get(STATS_KEY)
         if not config:
             # Not a converge run (no playbook published the configuration).
+            return
+
+        if is_check_mode(config):
+            self._display.vvv(
+                "converge_telemetry: check mode; converge freshness not published"
+            )
             return
 
         url = config.get("hec_url")

@@ -1,0 +1,37 @@
+---
+# Share the projects owned by each automation account with the operator's human
+# account. Vikunja projects are per-owner with no super-user override — an
+# account sees only what it owns or what has been explicitly shared with it — so
+# the login created in tasks/main.yml is worthless on its own.
+#
+# Sharing is strictly ADDITIVE: the owning account keeps ownership and its full
+# permission, which the Hermes bridge (polling its project every 60s) and every
+# agent MCP session authenticate as and depend on. Ownership is never moved, and
+# no share is ever revoked here.
+#
+# Not included in check mode — see the guard in tasks/main.yml. ansible.builtin.uri
+# does not support check mode, so every request task below would be skipped and
+# the facts derived from them would be undefined.
+
+# Resolved from the role's canonical secret sources rather than restated, so the
+# bao-first values inventory/group_vars/vikunja_group.yml sets for the admin and
+# the MCP service accounts are picked up automatically. Restating them as env
+# lookups here would silently bypass OpenBao on any host where the apps domain
+# was fetched.
+- name: Build the sharing-owner credential map from the role's canonical sources
+  ansible.builtin.set_fact:
+    vikunja_share_owner_password_map: >-
+      {{ {vikunja_admin_user: vikunja_admin_password}
+         | combine(dict(vikunja_service_users | map(attribute='username')
+                        | zip(vikunja_service_users | map(attribute='password')))) }}
+  no_log: true
+
+- name: Share automation-owned projects with the operator, per owning account
+  ansible.builtin.include_tasks: operator_access_one.yml
+  loop: "{{ vikunja_operator_share_owner_usernames }}"
+  loop_control:
+    loop_var: vikunja_share_owner
+    label: "{{ vikunja_share_owner }}"
+  when: >-
+    vikunja_share_owner_password_map.get(vikunja_share_owner, '')
+    | default('', true) | length > 0
