@@ -62,6 +62,79 @@ vikunja_service_users:
   - username: svc-mcp-rw
     password: "{{ lookup('env', 'VIKUNJA_SVC_MCP_RW_PASSWORD') }}"
 
+# --- Operator (human) account + project access ------------------------------
+# THREE IDENTITIES, three purposes. Keeping them separate is the point:
+#   jevans      — the operator's DAILY-USE account (this block). An ordinary
+#                 user; never used as the admin account.
+#   admin       — BREAK-GLASS ONLY. Rare, deliberate, never routine. Its
+#                 credential already lives in OpenBao at secret/apps/vikunja
+#                 (field vikunja_admin_password, via the openbao_vikunja_secrets
+#                 promotion map) — that is its canonical home; do not create a
+#                 competing path. It must KEEP WORKING: never disable or lock it.
+#   svc-mcp-rw  — the AUTOMATION service account. Keeps ownership of its
+#                 projects; the Hermes bridge polls project 64 through it and
+#                 every agent MCP session authenticates as it.
+#
+# AUTH MODEL: this deployment authenticates LOCALLY. Confirmed live against the
+# instance (GET /api/v1/info: auth.local.enabled true, auth.openid_connect
+# .enabled false with no providers, auth.ldap.enabled false; GET / returns 200
+# with no redirect, so nothing gates it) and consistent with the rendered
+# config, which carries no `auth:` block at all and so takes upstream v2.3.0's
+# defaults, plus the published ingress row's sso: false. There is therefore no
+# OIDC identity to attach an operator account to, and declaring OIDC wiring here
+# would be actively harmful: a Vikunja OIDC login provisions a SEPARATE account
+# keyed on issuer+subject, which would shadow the local account and inherit none
+# of the project shares granted below. Local account is the correct declaration
+# today; an SSO migration is a distinct change that must move the shares too.
+#
+# Self-registration is off (service.enableregistration false), so this account
+# cannot be self-served — it is declared here and reconciled by the same CLI
+# path the admin and service accounts already use.
+#
+# Credentials are read injection-agnostically. These two are Doppler-native
+# (project iac-conf-mgmt/prd) and have no home in the secret/apps/vikunja
+# promotion map, so unlike the vikunja_* secrets there is no bao-first wiring
+# to mirror in group_vars — a plain env lookup is the whole contract.
+vikunja_operator_username: "{{ lookup('env', 'DEFAULT_USERNAME') | default('', true) }}"
+vikunja_operator_password: "{{ lookup('env', 'DEFAULT_PASSWORD') | default('', true) }}"
+vikunja_operator_email: "{{ vikunja_operator_username }}@{{ tofu_data.domain }}"
+
+# ACCESS MODEL: Vikunja projects are per-user. A project is visible only to its
+# owner and to the users/teams it has been explicitly shared with, and there is
+# no super-user override — `admin` is NOT a superset of every other account. A
+# new account lands on an empty board list until these shares exist.
+#
+# Permission does, however, CASCADE DOWN a project tree. checkPermissionsForProjects
+# walks the hierarchy upward and grants 2 at any level where owner_id matches,
+# and LEFT JOINs users_projects at every level too, nearest grant winning. So
+# both ownership AND a share on an ancestor reach every descendant. This role
+# still reconciles a share on EVERY owned project explicitly rather than relying
+# on the cascade: an explicit grant survives any later reparenting, where an
+# inherited one silently disappears the moment a project is moved.
+#
+# SHARE, NEVER TRANSFER. Sharing is additive — the owning account keeps
+# ownership and its full permission, which the Hermes bridge and every agent
+# session depend on. It is also the only option: Vikunja cannot transfer
+# ownership at all. There is no owner/transfer route, UpdateProject writes an
+# explicit column allowlist that excludes owner_id (so an owner sent in an
+# update is silently ignored), and Create hardcodes the owner to the caller.
+# This costs little, because permission 2 IS the ownership code path: IsAdmin()
+# is true if the user is the owner OR holds Admin via a share, and CanDelete()
+# = IsAdmin(). A permission-2 sharee can update, delete, reparent, and re-share.
+#
+# Accounts whose owned projects are shared with the operator, BY USERNAME only.
+# The password for each is resolved at converge time from the canonical sources
+# already wired in this role (vikunja_admin_password and vikunja_service_users),
+# so the bao-first values group_vars sets are picked up automatically and no
+# secret is restated here.
+vikunja_operator_share_owner_usernames:
+  - "{{ vikunja_admin_user }}"
+  - svc-mcp-rw
+
+# models.Permission: 0 = Read, 1 = Read & Write, 2 = Admin. Admin so the
+# operator can manage the boards themselves, not merely the tasks on them.
+vikunja_operator_permission: 2
+
 vikunja_api_timeout: 30
 
 # --- MCP API tokens -> OpenBao (issue #141) ---------------------------------

@@ -1,0 +1,81 @@
+---
+# Reconcile the operator's share on ONE project. Included per item from
+# operator_access_one.yml with loop_var: vikunja_share_project, using the owning
+# account's JWT in vikunja_share_login.
+#
+# Create-if-absent, correct-if-drifted, no-op otherwise — and never a delete.
+# Revoking a share is not this role's job, and an accidental revoke would cut
+# the automation accounts off the boards they run on.
+
+# Bounded by the ?s= username search (ReadAll filters users.username with ILIKE)
+# so this can never be truncated by the 50-per-page default no matter how many
+# accounts a project is shared with. ILIKE is a substring match, so the exact
+# username is still selected out of the result below.
+- name: "Read the operator's current share on project {{ vikunja_share_project.id }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{
+        vikunja_share_project.id }}/users?s={{ vikunja_operator_username | urlencode }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_share_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_project_shares
+  changed_when: false
+
+# models.UserWithPermission = the user object plus its `permission` on this
+# project. Match the username exactly — the search above is a substring filter.
+- name: "Resolve the operator's existing share on project {{ vikunja_share_project.id }}"
+  ansible.builtin.set_fact:
+    vikunja_operator_share: >-
+      {{ (vikunja_project_shares.json | default([], true))
+         | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', vikunja_operator_username)
+         | list | first | default({}, true) }}
+
+# PUT /projects/{id}/users is the create path; it addresses the grantee by
+# username in the body (models.ProjectUser.Username, json:"username").
+- name: "Grant the operator a share on project {{ vikunja_share_project.id }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_share_project.id }}/users"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_share_login.json.token }}"
+    body_format: json
+    body:
+      username: "{{ vikunja_operator_username }}"
+      permission: "{{ vikunja_operator_permission | int }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  when: vikunja_operator_share | length == 0
+  changed_when: true
+
+# POST /projects/{id}/users/{user} is the update path, and it runs only when the
+# stored permission has actually drifted from desired.
+#
+# The final path segment is the USERNAME, not any numeric id. Upstream registers
+# the route as /projects/:project/users/:user, ProjectUser.Username carries
+# `param:"user"`, and Update() resolves the row via GetUserByUsername(Username).
+# The swagger annotation on that handler claims `userID path int` and is simply
+# wrong — passing a numeric id yields a user-not-found 404 and fails the
+# converge on the first genuine drift. The body repeats the same username so the
+# field is populated regardless of Echo's path/body bind order.
+- name: "Correct the operator's permission on project {{ vikunja_share_project.id }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{
+        vikunja_share_project.id }}/users/{{ vikunja_operator_username | urlencode }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vikunja_share_login.json.token }}"
+    body_format: json
+    body:
+      username: "{{ vikunja_operator_username }}"
+      permission: "{{ vikunja_operator_permission | int }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  when:
+    - vikunja_operator_share | length > 0
+    - (vikunja_operator_share.permission | default(0) | int) != (vikunja_operator_permission | int)
+  changed_when: true
