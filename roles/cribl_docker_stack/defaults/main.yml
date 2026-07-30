@@ -29,13 +29,34 @@ cribl_docker_stack_stream_memory_limit: "1024M"
 cribl_docker_stack_stream_cpu_reservation: "0.5"
 cribl_docker_stack_stream_memory_reservation: "256M"
 
-# Syslog ports - matches the port assignment table
-cribl_docker_stack_syslog_ports:
-  - 1514  # UniFi
-  - 1515  # Palo Alto
-  - 1516  # Cisco ASA
-  - 1517  # Linux hosts
-  - 1518  # Windows
+# Syslog receiver ports, derived from the tofu syslog_port_map — the same single
+# source of truth the haproxy role already reads for its frontends.
+#
+# This was a hand-maintained list of five, and it had drifted: the map declares
+# ten families, so honeypot, unifi_fw, macos, dns_query and proxy were all
+# declared upstream, fronted by HAProxy, and arriving at a Cribl instance with no
+# receiver on their port. Nothing errored — the data simply had nowhere to land.
+#
+# Deriving it means adding a family upstream is one edit rather than two that
+# must be kept in step by a comment, and the two cannot silently disagree again.
+# `high` is the backend port Cribl listens on; `standard` is HAProxy's frontend.
+cribl_docker_stack_syslog_ports: >-
+  {{ (hostvars['localhost']['tofu_data']['constants']['syslog_port_map'].values()
+      | map(attribute='high') | unique | sort)
+     if (hostvars['localhost']['tofu_data'] is defined
+         and hostvars['localhost']['tofu_data']['constants'] is defined
+         and 'syslog_port_map' in hostvars['localhost']['tofu_data']['constants'])
+     else cribl_docker_stack_syslog_ports_fallback }}
+
+# Used only when the tofu inventory is not loaded (a credential-free or
+# offline run). Kept minimal and explicitly labelled as a fallback so it cannot
+# be mistaken for the source of truth and start drifting again.
+cribl_docker_stack_syslog_ports_fallback:
+  - 1514
+  - 1515
+  - 1516
+  - 1517
+  - 1518
 
 # NetFlow port
 cribl_docker_stack_netflow_port: 2055
