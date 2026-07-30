@@ -195,17 +195,17 @@
              mgmt_ip: value.ansible_host, commissioned: `true`}') }}
   no_log: true
 
-# Virtual machines from the guest map merged above (issue #138). The numeric
-# address is reserved_ip when the guest is DHCP-first (its `ip` then carries an
-# FQDN) else the static `ip`; role is the guest's first tag.
+# Virtual machines from the guest map merged above (issue #138). Role is the
+# guest's first tag; the address comes from the single `ip` field.
 #
-# `ip_type` records WHICH of those two it was, so the distinction survives into
-# Nautobot instead of being flattened away. A guest with a reserved_ip holds its
-# address by DHCP reservation (UniFi owns the lease, Nautobot records intent);
-# anything else is statically configured. A rebuild has to tell these apart —
-# a reservation must be re-created as a reservation, not written onto the guest.
-# The values are Nautobot's own IPAddress.type choices, so no translation layer
-# and no custom field is needed.
+# `ip_type` records HOW the guest holds its address, so the distinction survives
+# into Nautobot instead of being flattened away — a rebuild has to tell them
+# apart. A leased guest publishes an FQDN, because its address exists only in
+# the DHCP lease and is deliberately written down nowhere; it is recorded as
+# `dhcp` with no address, which is the honest record. A network/critical guest
+# publishes the static address it declared, recorded as `host`. The values are
+# Nautobot's own IPAddress.type choices, so no translation layer and no custom
+# field is needed.
 - name: Start from an empty virtual-machine list
   ansible.builtin.set_fact:
     nautobot_seed_virtual_machines: []
@@ -219,8 +219,11 @@
            'cluster': item.value.node | default('unknown', true),
            'role': (item.value.tags | default([], true) | first)
                    if (item.value.tags | default([], true) | length) > 0 else 'vm',
-           'ip': item.value.reserved_ip | default('', true) or (item.value.ip | default('', true)),
-           'ip_type': 'dhcp' if (item.value.reserved_ip | default('', true) | length) > 0 else 'host',
+           'ip': (item.value.ip | default('', true))
+                 if (item.value.ip | default('', true)) is match('^\d{1,3}(\.\d{1,3}){3}$') else '',
+           'ip_type': 'host'
+                      if (item.value.ip | default('', true)) is match('^\d{1,3}(\.\d{1,3}){3}$')
+                      else 'dhcp',
            'mac': item.value.mac | default('', true),
            'tags': item.value.tags | default([], true)
          }] }}

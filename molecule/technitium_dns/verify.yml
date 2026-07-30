@@ -52,30 +52,26 @@
         fail_msg: >-
           Unexpected secondary IPs: {{ technitium_dns_secondary_ips }}.
 
-    - name: Assert inventory A-records were built for both hosts
+    - name: Assert an A-record was built for the guest that declares an address
       ansible.builtin.assert:
         that:
-          - technitium_dns_a_records | length >= 2
           - "'technitium-1' in (technitium_dns_a_records | map(attribute='name') | list)"
-          - "'technitium-2' in (technitium_dns_a_records | map(attribute='name') | list)"
-        fail_msg: >-
-          A-records not built as expected: {{ technitium_dns_a_records }}.
-
-    # dhcp-first guest contract: when container_reserved_ip is set (technitium-2),
-    # the A record must point at it — container_ip carries the FQDN for real dhcp
-    # guests, never a valid A-record target. Static guests (technitium-1, no
-    # reserved_ip) keep resolving to container_ip.
-    - name: Assert reserved_ip wins over container_ip for dhcp-first guests
-      ansible.builtin.assert:
-        that:
-          - >-
-            (technitium_dns_a_records | selectattr('name', 'equalto', 'technitium-2')
-             | map(attribute='ip') | first) == '192.168.5.111'
           - >-
             (technitium_dns_a_records | selectattr('name', 'equalto', 'technitium-1')
              | map(attribute='ip') | first) == '192.168.5.10'
         fail_msg: >-
-          A-record target precedence wrong: {{ technitium_dns_a_records }}.
+          A-records not built as expected: {{ technitium_dns_a_records }}.
+
+    # A leased guest (technitium-2) advertises an FQDN, because its address lives
+    # only in the DHCP lease and the gateway answers for it. Publishing a record
+    # here would be a second copy of that address with nothing keeping the two in
+    # agreement, so the builder must skip it entirely.
+    - name: Assert leased guests are skipped, not published with a name
+      ansible.builtin.assert:
+        that:
+          - "'technitium-2' not in (technitium_dns_a_records | map(attribute='name') | list)"
+        fail_msg: >-
+          a leased guest reached the zone: {{ technitium_dns_a_records }}.
 
     - name: Assert the query-log export target derives from the syslog CNAME + tofu port
       ansible.builtin.assert:

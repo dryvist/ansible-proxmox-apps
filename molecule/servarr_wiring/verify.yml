@@ -3,9 +3,9 @@
 #
 # The role is almost entirely live API wiring (skipped in CI), so this verify
 # guards the CONTRACTS the live run depends on:
-#   1. Endpoint resolution prefers reserved_ip and falls back ip -> hostvars
-#      -> loopback (the coordinator runs behind the VPN and cannot resolve
-#      internal FQDNs, so this expression is load-bearing).
+#   1. Endpoint resolution reads each guest's DISCOVERED address off its own
+#      interface (the coordinator runs behind the VPN and cannot resolve
+#      internal FQDNs, so getting a real address here is load-bearing).
 #   2. Ports come from the OpenTofu constants, never literals.
 #   3. The auth policy pins a v4-valid method (never None).
 #   4. Data dirs / owners match the app roles' install contract (the
@@ -22,11 +22,15 @@
     # Same synthetic fixture as converge.yml — the defaults under test template
     # lazily against whatever tofu_data is in scope here.
     container_ip: "192.168.0.210"
+    # The coordinator's own interface — what prowlarr_host resolves to.
+    ansible_default_ipv4: { address: "192.168.0.210" }
+    # Sonarr/Radarr are leased guests: nothing declares their address, so the
+    # role reads it from each guest's gathered facts.
+    hostvars:
+      sonarr: { ansible_default_ipv4: { address: "192.168.0.212" } }
+      radarr: { ansible_default_ipv4: { address: "192.168.0.213" } }
     tofu_data:
-      containers:
-        sonarr: { reserved_ip: "192.168.0.212" }
-        radarr: { reserved_ip: "192.168.0.213" }
-        download-vpn: { reserved_ip: "192.168.0.210" }
+      containers: {}
       constants:
         media_ports:
           sonarr_web: 8989
@@ -39,27 +43,26 @@
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../roles/servarr_wiring/defaults/main.yml"
 
-    - name: Assert endpoint hosts resolve from the inventory fixture (reserved_ip first)
+    - name: Assert endpoint hosts resolve to each guest's discovered address
       ansible.builtin.assert:
         that:
-          - servarr_wiring_sonarr_host == tofu_data.containers['sonarr'].reserved_ip
-          - servarr_wiring_radarr_host == tofu_data.containers['radarr'].reserved_ip
-          - servarr_wiring_prowlarr_host == tofu_data.containers['download-vpn'].reserved_ip
-        fail_msg: "endpoint host resolution no longer prefers the guest's reserved_ip"
+          - servarr_wiring_sonarr_host == '192.168.0.212'
+          - servarr_wiring_radarr_host == '192.168.0.213'
+          # Prowlarr is co-located, so it is this host's own interface.
+          - servarr_wiring_prowlarr_host == '192.168.0.210'
+        fail_msg: "endpoint host resolution no longer reads the guest's own address"
 
-    - name: Assert the ip-field fallback still works when reserved_ip is absent
+    - name: Assert resolution falls back to the inventory name without gathered facts
       vars:
-        # Re-derive the role's expression against a fixture WITHOUT reserved_ip.
-        _fallback_fixture: { containers: { sonarr: { ip: "192.168.0.99" } } }
+        hostvars:
+          sonarr: { container_ip: "sonarr.example.net" }
         _fallback_host: >-
-          {{ _fallback_fixture.containers['sonarr'].reserved_ip
-             if (_fallback_fixture.containers['sonarr'].reserved_ip | default('', true) | length > 0)
-             else (_fallback_fixture.containers['sonarr'].ip
-                   | default('127.0.0.1', true)) }}
+          {{ hostvars['sonarr'].ansible_default_ipv4.address
+             | default(hostvars['sonarr'].container_ip, true) }}
       ansible.builtin.assert:
         that:
-          - _fallback_host == '192.168.0.99'
-        fail_msg: "endpoint resolution fallback (reserved_ip -> ip) regressed"
+          - _fallback_host == 'sonarr.example.net'
+        fail_msg: "endpoint resolution no longer falls back to the inventory name"
 
     - name: Assert ports come from the OpenTofu constants
       ansible.builtin.assert:
