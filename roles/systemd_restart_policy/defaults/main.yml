@@ -8,17 +8,52 @@ systemd_restart_policy_services: []
 # dead. Override per-service via group_vars when a clean exit is genuinely terminal.
 systemd_restart_policy_restart: "always"
 
-# Delay between restart attempts
-systemd_restart_policy_restart_sec: "5s"
+# Delay before the FIRST restart attempt. Subsequent attempts back off
+# geometrically toward _restart_max_delay_sec (see below), so this is the floor,
+# not a fixed interval.
+systemd_restart_policy_restart_sec: "1s"
+
+# Exponential backoff (systemd >= 254; every managed guest runs 257). systemd
+# interpolates geometrically from RestartSec to RestartMaxDelaySec across
+# RestartSteps, so these values yield roughly:
+#
+#   1s -> 3s -> 10s -> 31s -> 96s -> 300s, then 300s forever
+#
+# WHY not a flat interval: a fixed 5s retry is fine for one service and a
+# thundering herd for a node full of them. When a shared backend goes down,
+# every dependent service on the node fails together and then retries in
+# lockstep every 5s indefinitely — tens of units spinning up processes against a
+# backend that is already struggling. Backoff keeps retries fast while a blip is
+# still plausibly a blip, then decays to one attempt per service per 5 minutes,
+# which is negligible load and still self-heals promptly once the backend is
+# back.
+#
+# Set _restart_steps to 0 to disable backoff and fall back to a flat RestartSec.
+# RestartMaxDelaySec is silently IGNORED by systemd unless RestartSteps is also
+# set, so the template emits both together or neither.
+systemd_restart_policy_restart_steps: 5
+systemd_restart_policy_restart_max_delay_sec: "300s"
 
 # Start-rate limiter (systemd [Unit] StartLimitIntervalSec/StartLimitBurst).
-# WHY these exist: systemd's DEFAULT limiter (5 starts / 10s) makes a service
+# WHY this matters: systemd's DEFAULT limiter (5 starts / 10s) makes a service
 # GIVE UP and stay `failed` when a backend outage outlasts the budget — the
 # service then never comes back on its own after the backend recovers (the
-# apps-tier outage, #17046). A wide window plus a high burst keeps the service
-# retrying every restart_sec for the whole realistic length of a backend blip:
-# at one start per restart_sec (5s), a 300s window yields ~60 starts, well under
-# the 100 burst, so the limiter never trips and the service self-heals. The
-# burst still backstops a genuinely pathological instant crash-loop.
-systemd_restart_policy_start_limit_interval_sec: "300s"
+# apps-tier outage, #17046).
+#
+# This was a wide window (300s) plus a high burst (100), sized so a flat 5s
+# retry could not exhaust it. Backoff makes that arithmetic obsolete and fragile:
+# once attempts decay to one per 300s, ANY finite window/burst pair is a bound on
+# how long an outage may last before the service gives up permanently — exactly
+# the failure #17046 was about, just with a longer fuse.
+#
+# 0 disables the limiter outright: retry forever, at the backed-off rate. The
+# thing the burst used to backstop — a pathological instant crash-loop — is now
+# handled by backoff itself, which stretches that loop to one attempt per 5
+# minutes. A service that cannot start is then cheap to leave retrying, and it
+# recovers unattended whenever its dependency returns.
+#
+# StartLimitBurst is meaningless while the interval is 0, so the template omits
+# it rather than emitting a directive that does nothing. It is still honoured if
+# a consumer sets a non-zero interval.
+systemd_restart_policy_start_limit_interval_sec: "0"
 systemd_restart_policy_start_limit_burst: "100"
