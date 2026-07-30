@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.0.0...v4.1.0) (2026-07-30)
+
+
+### Features
+
+* **cribl_stream:** Langfuse OTLP trace leg ([#1295](https://github.com/dryvist/ansible-proxmox-apps/issues/1295)) ([8bbccbd](https://github.com/dryvist/ansible-proxmox-apps/commit/8bbccbd7d93a4f0cd33d72a1919da5972b6e9989))
+* **systemd_restart_policy:** back off exponentially instead of retrying flat ([#1306](https://github.com/dryvist/ansible-proxmox-apps/issues/1306)) ([38799a6](https://github.com/dryvist/ansible-proxmox-apps/commit/38799a62d8d69178046839aba52833e591c7bb57))
+
+
+### Bug Fixes
+
+* **ci:** isolate per-job ANSIBLE_HOME on the shared fleet runners ([#1305](https://github.com/dryvist/ansible-proxmox-apps/issues/1305)) ([fffd821](https://github.com/dryvist/ansible-proxmox-apps/commit/fffd821ba9ee5314748a6039256f66f450d58ce3))
+* **cribl:** derive syslog receiver ports from the inventory, not a hand-list ([#1308](https://github.com/dryvist/ansible-proxmox-apps/issues/1308)) ([233b9e9](https://github.com/dryvist/ansible-proxmox-apps/commit/233b9e92d7e06c3a7917e48f0164c2ba3548c318))
+* **haproxy:** stop killing idle AI-ingest pipes at the health-check timeout ([#1301](https://github.com/dryvist/ansible-proxmox-apps/issues/1301)) ([109ea8c](https://github.com/dryvist/ansible-proxmox-apps/commit/109ea8c015b80fc1eb294dfc037f32372b70070d))
+* **ntp:** mask chrony inside containers instead of only skipping it ([#1307](https://github.com/dryvist/ansible-proxmox-apps/issues/1307)) ([b3c3139](https://github.com/dryvist/ansible-proxmox-apps/commit/b3c3139f34c029384fd36562509859058bb79a81))
+* **object_storage:** per-bucket noncurrent expiry, reconciled not add-only ([#1300](https://github.com/dryvist/ansible-proxmox-apps/issues/1300)) ([f7ff6f5](https://github.com/dryvist/ansible-proxmox-apps/commit/f7ff6f55fca5a13309d5ed01e5c1b4a641b8d002))
+
 ## [4.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.5.1...v4.0.0) (2026-07-28)
 
 
