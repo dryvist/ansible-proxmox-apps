@@ -24,11 +24,6 @@
     container_ip: "192.168.0.210"
     # The coordinator's own interface — what prowlarr_host resolves to.
     ansible_default_ipv4: { address: "192.168.0.210" }
-    # Sonarr/Radarr are leased guests: nothing declares their address, so the
-    # role reads it from each guest's gathered facts.
-    hostvars:
-      sonarr: { ansible_default_ipv4: { address: "192.168.0.212" } }
-      radarr: { ansible_default_ipv4: { address: "192.168.0.213" } }
     tofu_data:
       containers: {}
       constants:
@@ -39,6 +34,26 @@
           qbittorrent_web: 8080
 
   tasks:
+    # Sonarr/Radarr are leased guests: nothing declares their address, so the
+    # role reads it off each guest's own gathered facts. Add them as real
+    # inventory hosts carrying that fact — `hostvars` is read-only and cannot be
+    # faked with a play var, and going through the real lookup is the stronger
+    # test anyway. `sonarr-nofacts` stands in for a guest whose facts were never
+    # gathered, exercising the fallback to the inventory name.
+    - name: Add stand-in target guests carrying their discovered address
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: servarr_wiring_fixture
+        ansible_default_ipv4: "{{ item.addr | default(omit) }}"
+        container_ip: "{{ item.fqdn | default(omit) }}"
+      loop:
+        - { name: sonarr, addr: { address: "192.168.0.212" } }
+        - { name: radarr, addr: { address: "192.168.0.213" } }
+        - { name: sonarr-nofacts, fqdn: "sonarr.example.net" }
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+
     - name: Load the role defaults (the contract under test)
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../roles/servarr_wiring/defaults/main.yml"
@@ -54,11 +69,10 @@
 
     - name: Assert resolution falls back to the inventory name without gathered facts
       vars:
-        hostvars:
-          sonarr: { container_ip: "sonarr.example.net" }
+        # Same expression as the role default, against the facts-less stand-in.
         _fallback_host: >-
-          {{ hostvars['sonarr'].ansible_default_ipv4.address
-             | default(hostvars['sonarr'].container_ip, true) }}
+          {{ hostvars['sonarr-nofacts'].ansible_default_ipv4.address
+             | default(hostvars['sonarr-nofacts'].container_ip, true) }}
       ansible.builtin.assert:
         that:
           - _fallback_host == 'sonarr.example.net'
