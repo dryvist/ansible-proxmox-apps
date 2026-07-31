@@ -169,9 +169,15 @@ download_vpn_lanroute_reply_networks:
 # cache. The cache is an HA pair tracked by apt_cacher_group (same source as the
 # proxy wiring in playbooks/site.yml); the probe takes the first instance by
 # FQDN. Empty when the group is empty (e.g. CI).
+#
+# One expression, not an {% if %} wrapper: under Jinja native types a template
+# whose statement tags emit nothing yields None, not "", so `| length` on the
+# result raised "object of type 'NoneType' has no len()" in the molecule run.
+# A conditional expression always produces a value, and its unused branch is
+# never evaluated — so tofu_data may be undefined wherever the group is empty.
 download_vpn_apt_cacher_host: >-
-  {%- if groups['apt_cacher_group'] | default([]) | length > 0 -%}
-  {{ groups['apt_cacher_group'] | sort | first }}.{{ tofu_data.domain }}{%- endif -%}
+  {{ (groups['apt_cacher_group'] | sort | first) ~ '.' ~ tofu_data.domain
+     if (groups['apt_cacher_group'] | default([]) | length > 0) else '' }}
 download_vpn_apt_cacher_port: "{{ tofu_data.constants.service_ports.apt_cacher_ng | default(3142) }}"
 
 # --- unattended security upgrades ---------------------------------------------
