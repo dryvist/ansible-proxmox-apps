@@ -120,8 +120,8 @@ CI runners MUST NOT share Docker networks with dev/test services.
 | 8089 | Splunk Management |
 | 8404 | HAProxy Stats |
 | 9420 | Cribl Edge API |
-| 9000 | Cribl Stream API (also S3 API on `object-storage` LXC; `minio` LXC during 30-day soak) |
-| 9001 | object-storage Console (loopback only; `minio` Console during 30-day soak) |
+| 9000 | Cribl Stream API (also S3 API on `object-storage` LXC) |
+| 9001 | object-storage Console (loopback only) |
 | 3142 | apt-cacher-ng |
 | 1025 | Mailpit SMTP |
 | 8025 | Mailpit Web UI |
