@@ -233,7 +233,7 @@ class ExportNautobotToS3(Job):
         """Upload the document to S3 (ambient creds, optional custom endpoint).
 
         When a non-AWS endpoint is configured (AWS_ENDPOINT_URL_S3, e.g. an
-        on-prem RustFS/MinIO store), force path-style addressing — those stores
+        on-prem RustFS store), force path-style addressing — such stores
         do not serve the virtual-hosted ``<bucket>.<host>`` form boto3 defaults
         to. A default region keeps the SigV4 signer happy when none is set.
         """
