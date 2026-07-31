@@ -344,7 +344,7 @@ Requires Docker on the local machine (~5-10 min).
 
 ```bash
 # Install Ansible Galaxy dependencies (once)
-ansible-galaxy collection install -r requirements.yml
+ansible-galaxy install -r requirements.yml
 
 # Run full test cycle (create -> converge -> idempotence -> verify -> destroy)
 molecule test
