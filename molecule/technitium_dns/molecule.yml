@@ -49,27 +49,43 @@ provisioner:
       interpreter_python: auto_silent
       roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
   # Per-host facts normally injected by load_tofu.yml. vmids 10/11 make
-  # technitium-1 the lowest-vmid (primary). IPs are RFC1918 placeholders.
-  # technitium-2 carries an FQDN in container_ip — the leased-guest shape — so
-  # verify.yml can assert the A-record builder SKIPS it. Only guests with a
-  # declared address (technitium-1) belong in the zone.
+  # technitium-1 the lowest-vmid (primary). Addresses are RFC 5737
+  # documentation space (192.0.2.0/24), which cannot collide with real infra.
+  #
+  # Both resolvers carry a literal address: a Technitium peer is a critical
+  # guest and is statically addressed by law, and the AXFR ACL
+  # (zoneTransferNetworkACL) is a list of addresses — a name there is not a
+  # weaker form of the same thing, it is a broken ACL. A leased resolver is
+  # therefore not a case to model; it cannot exist.
+  #
+  # leased-guest-test is inventory-only (no container): it exercises the
+  # A-record builder's leased-guest skip through groups['all'] without any play
+  # connecting to it. That is why the plays target technitium_dns_group.
   inventory:
+    hosts:
+      leased_guests:
+        hosts:
+          leased-guest-test:
     host_vars:
       technitium-1-test:
         proxmox_vmid: 10
-        container_ip: "192.168.5.10"
+        container_ip: "192.0.2.10"
         hostname: technitium-1
       technitium-2-test:
         proxmox_vmid: 11
-        container_ip: "technitium-2.example.net"
+        container_ip: "192.0.2.11"
         hostname: technitium-2
+      leased-guest-test:
+        proxmox_vmid: 42
+        container_ip: "leased-guest.example.net"
+        hostname: leased-guest
   env:
     # Non-correlated placeholder values only — never the real domain/subdomain.
     # apply=false (converge/verify) means no live API call is ever made.
     PROXMOX_DOMAIN: "${PROXMOX_DOMAIN:-example.net}"
     PROXMOX_SUBDOMAIN: "${PROXMOX_SUBDOMAIN:-svc.example.net}"
-    PROXMOX_IP_ADDRESSES: "${PROXMOX_IP_ADDRESSES:-192.168.5.10,192.168.5.11}"
-    PROXMOX_VE_GATEWAY: "${PROXMOX_VE_GATEWAY:-192.168.5.1}"
+    PROXMOX_IP_ADDRESSES: "${PROXMOX_IP_ADDRESSES:-192.0.2.10,192.0.2.11}"
+    PROXMOX_VE_GATEWAY: "${PROXMOX_VE_GATEWAY:-192.0.2.1}"
     TECHNITIUM_DNS_API_TOKEN: "${TECHNITIUM_DNS_API_TOKEN:-moleculetesttoken}"
     TECHNITIUM_DNS_ADMIN_PASSWORD: "${TECHNITIUM_DNS_ADMIN_PASSWORD:-moleculetestpass}"
 

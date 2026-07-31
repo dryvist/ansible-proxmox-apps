@@ -10,7 +10,9 @@
 #   - the authoritative zone is the subdomain and forwarders point at the gateway.
 
 - name: Verify
-  hosts: all
+  # See converge.yml: leased-guest-test is inventory-only and must not be a
+  # play target.
+  hosts: technitium_dns_group
   gather_facts: false
 
   vars:
@@ -30,16 +32,16 @@
     - name: Assert the primary is the lowest-vmid node (technitium-1 / .10)
       ansible.builtin.assert:
         that:
-          - technitium_dns_primary_ip == '192.168.5.10'
+          - technitium_dns_primary_ip == '192.0.2.10'
         fail_msg: >-
-          Expected primary 192.168.5.10, got '{{ technitium_dns_primary_ip }}'.
+          Expected primary 192.0.2.10, got '{{ technitium_dns_primary_ip }}'.
 
     - name: Assert this host's role matches its identity
       ansible.builtin.assert:
         that:
           - >-
             technitium_dns_role ==
-            ('primary' if container_ip == '192.168.5.10' else 'secondary')
+            ('primary' if container_ip == '192.0.2.10' else 'secondary')
         fail_msg: >-
           Role mismatch on {{ inventory_hostname }} ({{ container_ip }}):
           got '{{ technitium_dns_role }}'.
@@ -47,8 +49,8 @@
     - name: Assert the secondary-IP list excludes the primary and includes the peer
       ansible.builtin.assert:
         that:
-          - "'192.168.5.10' not in technitium_dns_secondary_ips"
-          - "'192.168.5.11' in technitium_dns_secondary_ips"
+          - "'192.0.2.10' not in technitium_dns_secondary_ips"
+          - "'192.0.2.11' in technitium_dns_secondary_ips"
         fail_msg: >-
           Unexpected secondary IPs: {{ technitium_dns_secondary_ips }}.
 
@@ -58,20 +60,23 @@
           - "'technitium-1' in (technitium_dns_a_records | map(attribute='name') | list)"
           - >-
             (technitium_dns_a_records | selectattr('name', 'equalto', 'technitium-1')
-             | map(attribute='ip') | first) == '192.168.5.10'
+             | map(attribute='ip') | first) == '192.0.2.10'
         fail_msg: >-
           A-records not built as expected: {{ technitium_dns_a_records }}.
 
-    # A leased guest (technitium-2) advertises an FQDN, because its address lives
+    # A leased guest (leased-guest) advertises an FQDN, because its address lives
     # only in the DHCP lease and the gateway answers for it. Publishing a record
     # here would be a second copy of that address with nothing keeping the two in
-    # agreement, so the builder must skip it entirely.
+    # agreement, so the builder must skip it entirely. Both resolvers are static
+    # and DO belong in the zone — hence a separate fixture host for this case.
     - name: Assert leased guests are skipped, not published with a name
       ansible.builtin.assert:
         that:
-          - "'technitium-2' not in (technitium_dns_a_records | map(attribute='name') | list)"
+          - "'leased-guest' not in (technitium_dns_a_records | map(attribute='name') | list)"
+          - "'technitium-2' in (technitium_dns_a_records | map(attribute='name') | list)"
         fail_msg: >-
-          a leased guest reached the zone: {{ technitium_dns_a_records }}.
+          a leased guest reached the zone, or a static resolver was dropped from
+          it: {{ technitium_dns_a_records }}.
 
     - name: Assert the query-log export target derives from the syslog CNAME + tofu port
       ansible.builtin.assert:
@@ -108,14 +113,14 @@
     - name: Assert Proxmox endpoint apex A records are built from env
       ansible.builtin.assert:
         that:
-          - technitium_dns_proxmox_endpoint_ips == ['192.168.5.10', '192.168.5.11']
+          - technitium_dns_proxmox_endpoint_ips == ['192.0.2.10', '192.0.2.11']
           - technitium_dns_proxmox_endpoint_a_records | length == 2
           - >-
             technitium_dns_proxmox_endpoint_a_records
             | map(attribute='domain') | unique | list == ['svc.example.net']
           - >-
             technitium_dns_proxmox_endpoint_a_records
-            | map(attribute='ip') | list == ['192.168.5.10', '192.168.5.11']
+            | map(attribute='ip') | list == ['192.0.2.10', '192.0.2.11']
         fail_msg: >-
           Proxmox endpoint apex records were not built from PROXMOX_IP_ADDRESSES:
           {{ technitium_dns_proxmox_endpoint_a_records }}.

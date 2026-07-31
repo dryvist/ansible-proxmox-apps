@@ -13,17 +13,33 @@
 
   vars:
     # Mirror load_tofu.yml so the role's tofu_data lookups resolve. Synthetic
-    # fixture values only — never production data.
+    # fixture values only — never production data. The containers map is empty
+    # because nothing declares a leased guest's address any more; see below.
     tofu_data:
-      containers:
-        sonarr: { ip: "sonarr.example.net" }
-        radarr: { ip: "radarr.example.net" }
+      containers: {}
       constants:
         media_ports:
           sonarr_web: 8989
           radarr_web: 7878
 
   tasks:
+    # Sonarr/Radarr are leased guests: nothing declares their address, so the
+    # role reads it off each guest's own gathered facts. They must therefore be
+    # real inventory hosts here — `hostvars` is read-only and cannot be faked
+    # with a play var, and exercising the real lookup is the stronger test.
+    # Addresses are RFC 5737 documentation space.
+    - name: Add stand-in target guests carrying their discovered address
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: configarr_fixture
+        ansible_default_ipv4: { address: "{{ item.addr }}" }
+      loop:
+        - { name: sonarr, addr: "192.0.2.12" }
+        - { name: radarr, addr: "192.0.2.13" }
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+
     - name: Include configarr role
       ansible.builtin.include_role:
         name: configarr
