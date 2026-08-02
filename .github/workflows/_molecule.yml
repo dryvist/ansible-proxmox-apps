@@ -19,12 +19,19 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
     strategy:
       fail-fast: false
-      # Only 3 self-hosted runners are registered for this repo (docker_vms.yml),
-      # so the matrix is already runner-bound near this number -- but explicit
-      # beats implicit: it caps how many privileged, Docker-in-Docker Molecule
-      # containers can hit the one shared dockerd at once, independent of any
-      # future runner scaling, and leaves headroom for other repos' runners on
-      # the same host.
+      # Concurrency is the only lever that bounds Molecule's load here.
+      #
+      # The test containers are created through the bind-mounted docker.sock,
+      # so they are SIBLINGS of the runner on the shared dockerd -- not children
+      # of its cgroup. The runner's own cpus/mem_limit therefore does not apply
+      # to them, and the host is deliberately oversubscribed, so an unbounded
+      # matrix can starve a scenario mid-run and the container dies.
+      #
+      # Capping concurrency bounds that without capping any single container.
+      # A per-container `memory:` ceiling was tried and reverted: 1536m killed
+      # download_vpn outright while the same scenario passed on develop, and no
+      # measurement existed to justify any particular number. Bound what is
+      # actually shared; do not guess a limit for each consumer of it.
       max-parallel: 2
       matrix:
         scenario:
