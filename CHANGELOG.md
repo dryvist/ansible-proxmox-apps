@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.2.0...v4.3.0) (2026-08-02)
+
+
+### Features
+
+* **cribl:** route workstation datatype prefix to workstation index ([#1328](https://github.com/dryvist/ansible-proxmox-apps/issues/1328)) ([b7964c6](https://github.com/dryvist/ansible-proxmox-apps/commit/b7964c6e39cdc324e480b42d2c38f5088eeee56b))
+* **openbao:** add read-only Raft-voter health telemetry ([#1285](https://github.com/dryvist/ansible-proxmox-apps/issues/1285)) ([250e080](https://github.com/dryvist/ansible-proxmox-apps/commit/250e080b52063a57201d8f25a4618fb1279cc09b))
+
+
+### Bug Fixes
+
+* **ci:** drop unused id-token: write from ci-fix.yml ([#1337](https://github.com/dryvist/ansible-proxmox-apps/issues/1337)) ([edd8852](https://github.com/dryvist/ansible-proxmox-apps/commit/edd885201e7d83c787d15f9c114a5fae47c98219))
+* **ci:** give molecule docker teardown a realistic API timeout ([#1334](https://github.com/dryvist/ansible-proxmox-apps/issues/1334)) ([a8546d1](https://github.com/dryvist/ansible-proxmox-apps/commit/a8546d10b00c8a53e7badd690aa34423e894894e))
+* **dns:** never publish an ingress VIP that nothing answers on ([#1298](https://github.com/dryvist/ansible-proxmox-apps/issues/1298)) ([fa84b5d](https://github.com/dryvist/ansible-proxmox-apps/commit/fa84b5d67c014c2eca17c474966f578b13572dfa))
+* **postgres:** declare the primary and assert the live topology ([#1299](https://github.com/dryvist/ansible-proxmox-apps/issues/1299)) ([39ebba4](https://github.com/dryvist/ansible-proxmox-apps/commit/39ebba475da7657dc69297808c7248137f645b1c))
+
 ## [4.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.1...v4.2.0) (2026-08-02)
 
 
