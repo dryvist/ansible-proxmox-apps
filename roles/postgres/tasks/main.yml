@@ -496,6 +496,77 @@
   when: postgres_replication_enabled | bool
 
 # =============================================================================
+# Phase 3c: Assert the declared topology matches the running one
+# Configuring replication and observing it are different things. Every slot
+# task above is create-if-absent, so a cluster whose standby stopped streaming
+# converges perfectly green while the replica silently falls behind — the same
+# class of failure as an HA service reading healthy over a replica that does
+# not exist. These asserts turn that into a converge failure.
+# Read-only queries, so check_mode-safe and idempotent.
+# =============================================================================
+- name: Verify the running replication topology
+  become: true
+  become_user: postgres
+  when:
+    - postgres_assert_topology | bool
+    - postgres_replication_enabled | bool
+    - postgres_role == 'primary'
+    - postgres_expected_replication_slots | length > 0
+  block:
+    - name: Read pg_stat_replication
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT application_name, state, sync_state
+          FROM pg_stat_replication
+      register: postgres_live_replication
+      changed_when: false
+      check_mode: false
+
+    - name: Assert every expected standby is actually streaming
+      ansible.builtin.assert:
+        that:
+          - >-
+            (postgres_live_replication.query_result
+             | selectattr('state', 'equalto', 'streaming') | list | length)
+            >= (postgres_expected_replication_slots | length)
+        fail_msg: >-
+          Declared {{ postgres_expected_replication_slots | length }} standby(s)
+          but only
+          {{ postgres_live_replication.query_result
+             | selectattr('state', 'equalto', 'streaming') | list | length }}
+          are streaming. The live topology does not match IaC. Check the
+          standby is up, its slot is active, and its primary_conninfo points
+          here — do NOT silence this by shrinking
+          postgres_expected_replication_slots.
+        quiet: true
+
+    # archive_mode is set at server start, not reload. A primary with
+    # pgBackRest enabled but archive_mode off accepts the archive_command
+    # config and never calls it, so backups look configured and no WAL is ever
+    # shipped. Catch it here rather than at restore time.
+    - name: Read archive_mode
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SHOW archive_mode
+      register: postgres_live_archive_mode
+      changed_when: false
+      check_mode: false
+      when: postgres_pgbackrest_enabled | bool
+
+    - name: Assert archive_mode is on when pgBackRest is enabled
+      ansible.builtin.assert:
+        that:
+          - postgres_live_archive_mode.query_result[0].archive_mode == 'on'
+        fail_msg: >-
+          pgBackRest is enabled but archive_mode is
+          '{{ postgres_live_archive_mode.query_result[0].archive_mode }}'.
+          No WAL is being shipped, so PITR is silently impossible.
+          archive_mode requires a full restart, not a reload.
+        quiet: true
+      when: postgres_pgbackrest_enabled | bool
+
+# =============================================================================
 # Phase 4: Roles, databases, and host-based auth
 # Credentials come from the source secret store; apply them on each run so an
 # app cutover can rotate from bootstrap SOPS values without manual SQL.
