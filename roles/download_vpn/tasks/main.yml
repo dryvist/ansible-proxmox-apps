@@ -82,13 +82,16 @@
     download_vpn_resolvers_resolved: "{{ (download_vpn_resolvers_resolved | default([]) + [_ip]) | unique }}"
   vars:
     _hv: "{{ hostvars[item] }}"
+    # Resolvers are network-tier, so container_ip is their declared static
+    # address. Fall back to the guest's discovered address if facts are present,
+    # which covers a resolver that has not yet been made static.
     _ip: >-
-      {{ _hv.container_reserved_ip
-         if (_hv.container_reserved_ip | default('', true) | length > 0)
-         else (_hv.container_ip | default('', true)) }}
-  # Skip any host with no IP — a blank daddr renders an invalid nft rule that
-  # fails the whole killswitch apply. `| default('', true)` above keeps this
-  # guard from erroring when container_ip itself is undefined.
+      {{ _hv.container_ip | default('', true)
+         if (_hv.container_ip | default('', true)) is match('^\d{1,3}(\.\d{1,3}){3}$')
+         else (_hv.ansible_default_ipv4.address | default('', true)) }}
+  # Skip any host with no address — a blank daddr renders an invalid nft rule
+  # that fails the whole killswitch apply, and a NAME here would render an
+  # equally invalid one, so both are filtered out by the match above.
   when: _ip | trim | length > 0
   loop: "{{ groups[download_vpn_syslog_resolver_group] | default([]) }}"
 
@@ -97,10 +100,12 @@
     download_vpn_syslog_hosts_resolved: "{{ (download_vpn_syslog_hosts_resolved | default([]) + [_ip]) | unique }}"
   vars:
     _hv: "{{ hostvars[item] }}"
+    # Same resolution as the resolver block above: the LB is network-tier and
+    # declares a static address; a name would render an invalid nft rule.
     _ip: >-
-      {{ _hv.container_reserved_ip
-         if (_hv.container_reserved_ip | default('', true) | length > 0)
-         else (_hv.container_ip | default('', true)) }}
+      {{ _hv.container_ip | default('', true)
+         if (_hv.container_ip | default('', true)) is match('^\d{1,3}(\.\d{1,3}){3}$')
+         else (_hv.ansible_default_ipv4.address | default('', true)) }}
   when: _ip | trim | length > 0
   loop: "{{ groups[download_vpn_syslog_lb_group] | default([]) }}"
 

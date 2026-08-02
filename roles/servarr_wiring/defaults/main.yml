@@ -35,26 +35,28 @@ servarr_wiring_group: media
 # --- Endpoints (host:port). Hosts from inventory, ports from OpenTofu. ---
 # Sonarr / Radarr are LAN-only LXCs; Prowlarr + qBittorrent live in download-vpn.
 # Address resolution: this role runs FROM the download-vpn coordinator, which is
-# behind the Proton VPN with Proton DNS (10.2.0.1) — it CANNOT resolve internal
-# FQDNs. So prefer the per-guest `reserved_ip` (the actual LAN address; the
-# killswitch allows the container's own /24) and only fall back to the `ip`
-# field (an IP for static guests; an FQDN under the dhcp-first rebuild, used
-# only where DNS works). NEVER a hardcoded IP and never a vmid-derived literal.
+# behind the Proton VPN with Proton DNS — it CANNOT resolve internal FQDNs, so it
+# genuinely needs an address here, not a name.
+#
+# That address is DISCOVERED from the target guest's own running interface, not
+# declared anywhere. Sonarr and Radarr are ordinary leased guests: nothing in IaC
+# knows their address, and nothing should — the lease holds it. Reading
+# ansible_default_ipv4 off the guest is therefore the only source that cannot go
+# stale, and it needs no re-apply after a re-IP. (This used to read a declared
+# `reserved_ip` from the inventory, which was a second copy of the address and
+# could disagree with the lease the guest actually held.)
+#
+# Falls back to the inventory name only when facts have not been gathered for
+# that guest — correct where DNS works, and loud enough to notice where it does not.
 servarr_wiring_sonarr_host: >-
-  {{ tofu_data.containers['sonarr'].reserved_ip
-     if (tofu_data.containers['sonarr'].reserved_ip | default('', true) | length > 0)
-     else (tofu_data.containers['sonarr'].ip
-           | default(hostvars['sonarr'].container_ip, true)) }}
+  {{ hostvars['sonarr'].ansible_default_ipv4.address
+     | default(hostvars['sonarr'].container_ip, true) }}
 servarr_wiring_radarr_host: >-
-  {{ tofu_data.containers['radarr'].reserved_ip
-     if (tofu_data.containers['radarr'].reserved_ip | default('', true) | length > 0)
-     else (tofu_data.containers['radarr'].ip
-           | default(hostvars['radarr'].container_ip, true)) }}
-servarr_wiring_prowlarr_host: >-
-  {{ tofu_data.containers['download-vpn'].reserved_ip
-     if (tofu_data.containers['download-vpn'].reserved_ip | default('', true) | length > 0)
-     else (tofu_data.containers['download-vpn'].ip
-           | default(hostvars['download-vpn'].container_ip, true)) }}
+  {{ hostvars['radarr'].ansible_default_ipv4.address
+     | default(hostvars['radarr'].container_ip, true) }}
+# Prowlarr runs inside download-vpn — this role's own host — so its address is
+# just this guest's own interface. No inventory lookup needed at all.
+servarr_wiring_prowlarr_host: "{{ ansible_default_ipv4.address }}"
 
 servarr_wiring_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
 servarr_wiring_radarr_port: "{{ tofu_data.constants.media_ports.radarr_web }}"
