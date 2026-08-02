@@ -29,22 +29,39 @@ cribl_hec_input_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['splunk_hec']
      | default(8088) }}
 
-# Heavy-tier LLM serving host (the Mac Studio) — SINGLE SOURCE OF TRUTH for its
-# short hostname and reserved IP, so neither literal is repeated across
-# group_vars (technitium_dns). The host is a tofu-unifi fixed_ips.json
-# reservation and is NOT a PVE guest, so it is absent from the tofu ansible
-# inventory; parameterize it from the environment instead (LLM_LARGE_RUNNER_HOST
-# is the FQDN used for the llm-large alias below — take its short host here). The
-# defaults are the current live values, so with the env unset the rendered output
-# is byte-identical to before.
-llm_large_serving_host: "{{ (lookup('env', 'LLM_LARGE_RUNNER_HOST') or 'jevans-ms') | split('.') | first }}"
-# IP default is the local Studio reservation ONLY when no external runner host is
-# configured. If LLM_LARGE_RUNNER_HOST points at an external host without an
-# explicit LLM_LARGE_RUNNER_IP, resolve to empty so the A-record truthy filter
-# skips it (never point an external name at the local IP).
+# Heavy-tier LLM serving host — short hostname and reserved address, read from
+# the inventory artifact and NEVER written here.
+#
+# This host is a fixed-address reservation made by the network IaC rather than
+# a PVE guest, so it is absent from the tofu inventory's guest list and its
+# address cannot be derived the way every other host's is. Until
+# tofu-proxmox#827 there was nothing to read, so this repository and
+# ansible-proxmox-ai each carried their own copy of the two values, with a
+# comment in each telling the reader to change both together. Both repositories
+# are PUBLIC, which made those copies committed topology rather than a
+# committed convention.
+#
+# tofu-proxmox now publishes both as constants.serving.host/.ip, supplied from
+# the private deployment object at apply time. The env vars remain as the
+# operator override and as the supply path while the published artifact is
+# still catching up; what is gone is the third option, a value baked into a
+# public file.
+#
+# DELIBERATELY NO FALLBACK VALUE. An address that merely looks plausible is
+# worse here than no address at all, because this repository is where the A
+# record is WRITTEN — a wrong value would not fail on this host, it would be
+# published to the whole estate as authoritative DNS.
+llm_large_serving_host: >-
+  {{ ((tofu_data.constants.serving | default({})).host | default('', true))
+     or (lookup('env', 'LLM_LARGE_RUNNER_HOST') | split('.') | first) }}
+# Resolves empty when an EXTERNAL LLM_LARGE_RUNNER_HOST is configured without
+# its own address: the A-record truthy filter then skips the record, which is
+# correct — an external name must never be pointed at a local address. That is
+# the one legitimate empty case, and it is why absence is asserted where the
+# record is built (technitium_dns_group.yml) rather than unconditionally here.
 llm_large_serving_ip: >-
-  {{ lookup('env', 'LLM_LARGE_RUNNER_IP')
-     or ('' if lookup('env', 'LLM_LARGE_RUNNER_HOST') else '10.0.50.10') }}
+  {{ ((tofu_data.constants.serving | default({})).ip | default('', true))
+     or lookup('env', 'LLM_LARGE_RUNNER_IP') }}
 
 # NOTE: the `llm-large` CNAME record lives in group_vars/technitium_dns_group.yml,
 # NOT here — an `extra_cname_records` list defined in the more-specific group file
