@@ -1,0 +1,91 @@
+---
+# Mint a role-managed, read-only Nautobot API token for the agentgateway MCP
+# route and publish it (with the API URL) to OpenBao secret/ai/mcp/nautobot —
+# the ai/mcp/<service> convention shared by the splunk, vikunja, and zammad
+# MCP tokens (ansible-proxmox-ai's agentgateway_docker role reads it
+# bao-first). Included from tasks/main.yml only when
+# nautobot_mcp_token_publish_openbao is true; BAO_ADDR/BAO_TOKEN must be in
+# the CONTROLLER environment. Mirrors tasks/readonly_token.yml (KV v2
+# read-modify-write that preserves sibling keys) and
+# roles/vikunja/tasks/mcp_tokens.yml (the ai/mcp/* publication shape).
+
+- name: Assert OpenBao write credentials are present
+  ansible.builtin.assert:
+    that:
+      - nautobot_mcp_token_openbao_addr | length > 0
+      - nautobot_mcp_token_openbao_token | length > 0
+    fail_msg: >-
+      nautobot_mcp_token_publish_openbao is on but BAO_ADDR/BAO_TOKEN are
+      unset. Provide a write-capable OpenBao AppRole (ansible-converge policy,
+      exact-path grant on ai/mcp/nautobot) in the converge environment.
+    quiet: true
+
+- name: Resolve the OpenBao KV v2 data URL
+  ansible.builtin.set_fact:
+    nautobot_mcp_bao_kv_url: >-
+      {{ nautobot_mcp_token_openbao_addr }}/v1/{{
+      nautobot_mcp_token_openbao_mount }}/data/{{ nautobot_mcp_token_openbao_path }}
+
+- name: Ensure the read-only MCP token exists
+  ansible.builtin.command:
+    cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+    stdin: "{{ lookup('ansible.builtin.file', 'mcp_token_bootstrap.py') }}"
+  environment: "{{ nautobot_env | combine({'NAUTOBOT_MCP_USERNAME': nautobot_mcp_username}) }}"
+  register: nautobot_mcp_token_run
+  changed_when: "'MCP_TOKEN_CHANGED' in nautobot_mcp_token_run.stdout"
+  become: true
+  become_user: "{{ nautobot_user }}"
+  no_log: true
+
+- name: Extract the read-only token from the bootstrap output
+  ansible.builtin.set_fact:
+    nautobot_mcp_token: "{{ (nautobot_mcp_token_run.stdout | regex_search('MCP_TOKEN=(\\S+)', '\\1')) | first }}"
+  no_log: true
+
+- name: Read current OpenBao secret at {{ nautobot_mcp_token_openbao_path }}
+  ansible.builtin.uri:
+    url: "{{ nautobot_mcp_bao_kv_url }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ nautobot_mcp_token_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: nautobot_mcp_bao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Capture the current secret data (preserve siblings on write)
+  ansible.builtin.set_fact:
+    nautobot_mcp_bao_data: "{{ (nautobot_mcp_bao_current.json | default({}, true)).get('data', {}).get('data', {}) }}"
+  no_log: true
+
+# KV v2 replaces the whole secret, so merge the read-only URL + token over the
+# current data to preserve any sibling fields. Guarded on an actual delta so
+# repeat converges no-op once URL + token are present and current.
+- name: Publish the read-only MCP connection to OpenBao
+  ansible.builtin.uri:
+    url: "{{ nautobot_mcp_bao_kv_url }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ nautobot_mcp_token_openbao_token }}"
+    body_format: json
+    body:
+      data: >-
+        {{ nautobot_mcp_bao_data
+           | combine({nautobot_mcp_token_openbao_url_key: nautobot_mcp_url})
+           | combine({nautobot_mcp_token_openbao_token_key: nautobot_mcp_token}) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: >-
+    nautobot_mcp_bao_data.get(nautobot_mcp_token_openbao_token_key) != nautobot_mcp_token
+    or nautobot_mcp_bao_data.get(nautobot_mcp_token_openbao_url_key) != nautobot_mcp_url
+  no_log: true
