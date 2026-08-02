@@ -68,8 +68,8 @@ git clone <repo-url> ansible-proxmox-apps
 cd ansible-proxmox-apps
 direnv allow    # one-time per worktree — auto-activates the dev shell on cd
 
-# Install required Ansible Galaxy collections
-ansible-galaxy collection install -r requirements.yml
+# Install the pinned Galaxy content — both sections of requirements.yml
+ansible-galaxy install -r requirements.yml
 
 # Configure Doppler for secrets (API keys, passwords)
 doppler configure set project ansible-proxmox-apps
