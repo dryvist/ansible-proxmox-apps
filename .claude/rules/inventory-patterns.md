@@ -78,10 +78,9 @@ ports: >-
 ## Validation
 
 The `load_tofu.yml` playbook resolves an inventory source
-(`TOFU_INVENTORY_PATH` → S3 artifact → local cache) and validates that
-the `constants` section is present.
+(`TOFU_INVENTORY_PATH` → the published object) and validates that the
+`constants` section is present.
 
 If validation fails, re-run the tofu-proxmox Terrakube workspace — the
-apply publishes the inventory to S3 and refreshes the local cache via
-its after-hook. With AWS read creds, `load_tofu.yml` fetches the
-published artifact directly; no manual regeneration step exists.
+apply republishes the inventory object, which `load_tofu.yml` fetches
+directly. There is no manual regeneration step.
