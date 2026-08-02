@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.3.0...v4.3.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **ci:** bound Molecule container resource usage and matrix concurrency ([#1336](https://github.com/dryvist/ansible-proxmox-apps/issues/1336)) ([dcd78cb](https://github.com/dryvist/ansible-proxmox-apps/commit/dcd78cb4872c799e76ceec3c7167ba1f41461a22))
+
 ## [4.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.2.0...v4.3.0) (2026-08-02)
 
 
