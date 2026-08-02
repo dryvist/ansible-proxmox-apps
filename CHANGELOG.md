@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.1...v4.2.0) (2026-08-02)
+
+
+### Features
+
+* **nautobot:** mint a read-only MCP token and publish it to OpenBao ([#1330](https://github.com/dryvist/ansible-proxmox-apps/issues/1330)) ([d1999e3](https://github.com/dryvist/ansible-proxmox-apps/commit/d1999e3c9a8c13bcdf0621217ed5bc69e7a17f94))
+
 ## [4.1.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.0...v4.1.1) (2026-07-31)
 
 
