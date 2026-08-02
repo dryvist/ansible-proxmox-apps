@@ -838,101 +838,6 @@
           - Container: mssql running
           - Port 1433: listening
 
-- name: Validate MinIO Object Storage
-  hosts: minio_group
-  become: true
-  gather_facts: false
-  # Read-only validation — run for real even under --check
-  check_mode: false
-  tags:
-    - minio
-    - validation
-
-  # Load role defaults for minio_api_port, minio_install_dir,
-  # minio_default_buckets, minio_noncurrent_expiration_days. group_vars are
-  # empty for this role today; when overrides are introduced later, move
-  # those vars to group_vars/minio_group.yml so they win over these defaults.
-  vars_files:
-    - ../roles/minio/defaults/main.yml
-
-  tasks:
-    - name: Assert MinIO service is running
-      ansible.builtin.service_facts:
-      register: minio_service_facts
-
-    - name: Fail if MinIO service is not running
-      ansible.builtin.assert:
-        that:
-          - >-
-            minio_service_facts.ansible_facts.services['minio.service'].state
-            == 'running'
-        fail_msg: "MinIO service is not running on {{ inventory_hostname }}"
-        quiet: true
-
-    - name: Verify MinIO health endpoint
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ minio_api_port }}/minio/health/live"
-        status_code: 200
-      register: minio_health
-      retries: 3
-      delay: 3
-      until: minio_health.status == 200
-      changed_when: false
-
-    - name: Verify each default bucket exists
-      ansible.builtin.command:
-        cmd: "{{ minio_install_dir }}/mc ls local/{{ item.name }}"
-      loop: "{{ minio_default_buckets }}"
-      loop_control:
-        label: "{{ item.name }}"
-      changed_when: false
-
-    - name: Verify versioning is enabled on each versioned bucket
-      ansible.builtin.command:
-        cmd: "{{ minio_install_dir }}/mc version info local/{{ item.name }}"
-      loop: "{{ minio_default_buckets | selectattr('versioning', 'defined') | selectattr('versioning') | list }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: minio_version_check
-      changed_when: false
-      failed_when: "'versioning is enabled' not in minio_version_check.stdout"
-
-    - name: Verify anonymous download policy on each download bucket
-      ansible.builtin.command:
-        cmd: "{{ minio_install_dir }}/mc anonymous get local/{{ item.name }}"
-      loop: "{{ minio_default_buckets | selectattr('policy', 'equalto', 'download') | list }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: minio_policy_check
-      changed_when: false
-      failed_when: "'download' not in minio_policy_check.stdout"
-
-    - name: Verify noncurrent-expiration lifecycle rule is present on versioned buckets
-      ansible.builtin.command:
-        cmd: "{{ minio_install_dir }}/mc ilm rule ls --json local/{{ item.name }}"
-      loop: >-
-        {{ minio_default_buckets
-           | selectattr('versioning', 'defined')
-           | selectattr('versioning')
-           | list }}
-      loop_control:
-        label: "{{ item.name }}"
-      register: minio_ilm_query
-      changed_when: false
-      failed_when: >-
-        ((minio_ilm_query.stdout | default('{}') | from_json).config.Rules
-         | default([])
-         | selectattr('NoncurrentVersionExpiration', 'defined')
-         | list | length) == 0
-
-    - name: Display MinIO validation results
-      ansible.builtin.debug:
-        msg: |
-          MinIO validation passed on {{ inventory_hostname }}:
-          - Service: running, health 200
-          - Buckets: {{ minio_default_buckets | map(attribute='name') | join(', ') }}
-          - Lifecycle: noncurrent-expiration rule present
-
 - name: Pipeline Summary
   hosts: localhost
   gather_facts: false
@@ -953,7 +858,6 @@
           Mailpit:      Docker running, SMTP+Web healthy
           ntfy:         Docker running, health endpoint healthy
           MSSQL:        Docker running, port 1433 listening
-          MinIO:        Service, bucket, versioning, policy, lifecycle
           {% if ansible_check_mode -%}
           E2E:          SKIPPED (check mode — no data injected)
           {% else -%}

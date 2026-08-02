@@ -21,8 +21,11 @@ templates) directly — no VPN dependency. Configarr is idempotent: it writes on
 what differs, so a re-run on an in-sync stack is a no-op, making it safe on every
 converge.
 
-Endpoints resolve from the OpenTofu inventory (`reserved_ip` → `ip` →
-discovered `container_ip`), never a hardcoded IP. API keys
+Endpoints resolve to each target guest's own discovered address
+(`ansible_default_ipv4`), falling back to its inventory name — never a hardcoded
+IP and never a declared one. Sonarr and Radarr are leased guests, so their
+address exists only in the DHCP lease; the guest itself is the only source that
+cannot go stale. API keys
 (`SONARR_API_KEY` / `RADARR_API_KEY`) come in as plain environment
 variables — the same deterministic keys `servarr_wiring` uses. The rendered
 `config.yml` is

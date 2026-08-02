@@ -48,27 +48,35 @@
   # `is defined` checks behave differently from plain dicts and silently
   # skip every host. Using groups + hostvars[host] is the supported pattern.
   #
-  # DHCP-first guests (tofu contract): `container_ip` carries the guest's FQDN
-  # (DNS-first addressing), so it is NOT a valid A-record target — the record
-  # would point a name at a name. For those guests `container_reserved_ip`
-  # holds the DHCP-reservation address (the same address tofu-unifi pins the
-  # deterministic MAC to), so it wins whenever set. Static guests carry an
-  # empty reserved_ip and keep using container_ip / ansible_host unchanged.
+  # Only guests that HAVE a declared address get a record here, and that is
+  # exactly the network/critical tier (resolvers, ingress, secrets) — their
+  # `container_ip` is a real address because they are the one exception to the
+  # pool-lease default.
+  #
+  # Leased guests are skipped deliberately, not by oversight. Their address is
+  # held solely by the DHCP lease, and the gateway already answers for its own
+  # lease-table clients, so `{hostname}.{apex}` resolves without anything here.
+  # Publishing a record for them would mean writing the same address down a
+  # second time, in a second system, with no way to notice when the two
+  # disagreed — which is the failure this addressing model exists to remove. A
+  # leased guest's `container_ip` is its FQDN, and the filter below drops it.
   ansible.builtin.set_fact:
     technitium_dns_a_records: >-
       {{
         technitium_dns_a_records | default([]) +
         [{
           'name': hostvars[item].hostname,
-          'ip': (hostvars[item].container_reserved_ip | default('', true))
-                if (hostvars[item].container_reserved_ip | default('', true) | length > 0)
-                else (hostvars[item].container_ip | default(hostvars[item].ansible_host))
+          'ip': hostvars[item].container_ip | default(hostvars[item].ansible_host)
         }]
       }}
   loop: "{{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}"
   when:
     - hostvars[item].hostname is defined
     - (hostvars[item].container_ip is defined) or (hostvars[item].ansible_host is defined)
+    # Skip leased guests: a name, not an address, means there is nothing to
+    # publish and the lease table already answers for them.
+    - (hostvars[item].container_ip | default(hostvars[item].ansible_host))
+      is match('^\d{1,3}(\.\d{1,3}){3}$')
     # Fronted-service names are owned by the Traefik ingress A-records below
     # (they resolve to Traefik, not the backend host), so skip them here.
     - hostvars[item].hostname not in (technitium_dns_ingress_aliases | default([]))
@@ -89,9 +97,10 @@
       `container_ip`/`ansible_host` on the dynamically-added guests.
     quiet: true
 
-# Fail loud, not silent: a dhcp guest with no reserved_ip would land here with
-# its FQDN as the record target and Technitium would store a broken A record.
-# Reject any non-IPv4 target before a single API call is made.
+# Belt-and-braces: the builder's filter should already have dropped every
+# name-valued target, so this can only fire if that filter is weakened. An A
+# record pointing at a hostname is stored happily by Technitium and fails at
+# resolution time, far from the cause — so reject it before any API call.
 - name: Assert every A-record target is an IPv4 address
   ansible.builtin.assert:
     that:
@@ -100,12 +109,12 @@
         | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
         | list | length == 0
     fail_msg: >-
-      dhcp guest(s) [{{ technitium_dns_a_records | default([])
+      Guest(s) [{{ technitium_dns_a_records | default([])
       | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
-      | map(attribute='name') | join(', ') }}] have no reserved_ip —
-      an A record must point at an IPv4 address, not a hostname.
-      Add reserved_host to each guest in terraform-proxmox deployment.json
-      and re-apply so the inventory exports reserved_ip.
+      | map(attribute='name') | join(', ') }}] reached the writer with a name,
+      not an address. A leased guest must be skipped by the builder above (the
+      lease table answers for it); only network/critical guests, which declare a
+      static address, belong in this zone.
     quiet: true
 
 - name: Build Proxmox endpoint apex A records
