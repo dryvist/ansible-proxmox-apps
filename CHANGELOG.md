@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.1...v4.2.0) (2026-08-02)
+
+
+### Features
+
+* **nautobot:** mint a read-only MCP token and publish it to OpenBao ([#1330](https://github.com/dryvist/ansible-proxmox-apps/issues/1330)) ([d1999e3](https://github.com/dryvist/ansible-proxmox-apps/commit/d1999e3c9a8c13bcdf0621217ed5bc69e7a17f94))
+
+## [4.1.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.0...v4.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **apt-proxy:** follow the apt-cacher-ng HA pair via the group, by FQDN ([#1317](https://github.com/dryvist/ansible-proxmox-apps/issues/1317)) ([0499f74](https://github.com/dryvist/ansible-proxmox-apps/commit/0499f74ea0587b6f4f30ca4b48ccf1d5a0b961ee))
+* **inventory:** one address fact per guest — delete reserved_ip and its eight copies ([#1316](https://github.com/dryvist/ansible-proxmox-apps/issues/1316)) ([cdb55cd](https://github.com/dryvist/ansible-proxmox-apps/commit/cdb55cdd1c39142b1f5e26eadd706fcfe782a234))
+* **renovate:** track the object-storage engine's pre-1.0 releases ([#1323](https://github.com/dryvist/ansible-proxmox-apps/issues/1323)) ([a938d5f](https://github.com/dryvist/ansible-proxmox-apps/commit/a938d5feff890432fad6468664c4ccbe2abbda37))
+
 ## [4.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.0.0...v4.1.0) (2026-07-30)
 
 

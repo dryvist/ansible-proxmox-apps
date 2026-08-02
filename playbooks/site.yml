@@ -157,29 +157,58 @@
     - apt_proxy
     - lxc
   tasks:
-    - name: Configure apt proxy
-      when: "'apt-cacher-ng' in hostvars"
+    # The cache is an HA pair (tofu node_services generates one instance per
+    # always-on node; all carry the `apt-cache` tag, so apt_cacher_group tracks
+    # them with no inventory change here). apt itself supports only a single
+    # Acquire::http::Proxy value, so instance selection uses apt's native
+    # Proxy-Auto-Detect hook instead: at every apt run the script probes each
+    # instance by FQDN and prints the first live one, or DIRECT so apt fails
+    # open when the whole pool is down. An instance (or its node) going down
+    # therefore costs one probe timeout, never apt itself.
+    - name: Deploy apt proxy autodetect script
+      when: groups['apt_cacher_group'] | default([]) | length > 0
       vars:
-        _apt_cache_ip: >-
-          {{ hostvars['apt-cacher-ng']['container_ip'] }}
         _apt_cache_port: >-
-          {{ hostvars['localhost']['tofu_data']
-             ['constants']['service_ports']['apt_cacher_ng']
+          {{ tofu_data.constants.service_ports.apt_cacher_ng
              | default(3142) }}
+      ansible.builtin.copy:
+        dest: /usr/local/bin/apt-proxy-detect
+        content: |
+          #!/bin/bash
+          # Managed by Ansible (ansible-proxmox-apps site.yml) — do not edit.
+          # apt Acquire::http::Proxy-Auto-Detect hook: first live cache wins,
+          # DIRECT when none answer (fail open, apt fetches upstream).
+          for host in {% for h in groups['apt_cacher_group'] | sort -%}
+          {{ h }}.{{ tofu_data.domain }} {% endfor %}; do
+            if timeout 2 bash -c "exec 3<>/dev/tcp/${host}/{{ _apt_cache_port }}" 2>/dev/null; then
+              exec 3>&- 2>/dev/null
+              echo "http://${host}:{{ _apt_cache_port }}"
+              exit 0
+            fi
+          done
+          echo DIRECT
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure apt proxy
+      when: groups['apt_cacher_group'] | default([]) | length > 0
       ansible.builtin.copy:
         dest: /etc/apt/apt.conf.d/00proxy
         content: |
-          Acquire::http::Proxy
-            "http://{{ _apt_cache_ip }}:{{ _apt_cache_port }}";
+          Acquire::http::Proxy-Auto-Detect "/usr/local/bin/apt-proxy-detect";
         owner: root
         group: root
         mode: '0644'
 
     - name: Remove stale apt proxy configuration
-      when: "'apt-cacher-ng' not in hostvars"
+      when: groups['apt_cacher_group'] | default([]) | length == 0
       ansible.builtin.file:
-        path: /etc/apt/apt.conf.d/00proxy
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /etc/apt/apt.conf.d/00proxy
+        - /usr/local/bin/apt-proxy-detect
 
 - name: Remove apt proxy from download_vpn (killswitch blocks cross-subnet proxy)
   hosts: download_vpn_group
@@ -316,22 +345,10 @@
     - role: syslog_forwarder
 
 # =============================================================================
-# Phase 0b: MinIO Object Storage
+# Phase 0b: Object Storage
 # S3-compatible artifact store for Splunk add-ons and other deployment assets
 # =============================================================================
 
-- name: Deploy MinIO object storage
-  hosts: minio_group
-  become: true
-  gather_facts: false
-  tags:
-    - minio
-    - storage
-  roles:
-    - role: minio
-
-# RustFS object storage — MinIO replacement. Runs alongside the minio play
-# during the migration soak; both are removed together after cutover.
 - name: Deploy RustFS object storage
   hosts: object_storage_group
   become: true
@@ -897,6 +914,27 @@
           ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
           vars:
             _isolated_play_name: openbao
+
+- name: Deploy OpenBao Raft-voter health telemetry (read-only, isolated)
+  hosts: openbao_group
+  become: true
+  gather_facts: false
+  tags:
+    - openbao
+    - openbao_voter_health
+    - secrets
+    - secrets-management
+  tasks:
+    - name: Converge openbao_voter_health (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include openbao_voter_health role
+          ansible.builtin.include_role:
+            name: openbao_voter_health
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: openbao_voter_health
 
 # =============================================================================
 # Phase 8c: Media stack (pve2)
