@@ -89,16 +89,12 @@ download_vpn_wg_backup_key_path: /etc/wireguard/wg0-backup.key
 # LAN subnet that may reach the web UIs and that *arr/qBit/Prowlarr use to talk
 # to each other. Derived from the container's own /24 (tofu-owned IP) so
 # nothing is hardcoded. Override only if the LAN is not a /24.
-# DHCP-first inventory contract: container_ip carries the guest's FQDN (DNS-first
-# addressing) and container_reserved_ip the actual DHCP-reservation address.
-# Static guests put the IP in container_ip and leave reserved_ip empty. All LAN
-# IP math below uses this resolved address so it works under both layouts — an
-# FQDN fed to ipaddr() yields `False`, which renders an invalid nftables rule
-# (`ip daddr False accept`) and fails the killswitch deploy.
-download_vpn_lan_ip: >-
-  {{ container_reserved_ip
-     if (container_reserved_ip | default('', true) | length > 0)
-     else (container_ip | default(ansible_default_ipv4.address)) }}
+# This guest's own LAN address, read off its running interface. It is a leased
+# guest, so no declared address for it exists anywhere — the lease holds it, and
+# the guest itself is the only truthful source. This also has to be a real
+# address, not a name: an FQDN fed to ipaddr() yields `False`, which renders an
+# invalid nftables rule (`ip daddr False accept`) and fails the killswitch deploy.
+download_vpn_lan_ip: "{{ ansible_default_ipv4.address }}"
 
 download_vpn_lan_subnet: >-
   {{ (download_vpn_lan_ip ~ '/24')
@@ -169,10 +165,19 @@ download_vpn_lanroute_reply_networks:
   - "192.168.0.0/16"
 
 # --- apt proxy ---------------------------------------------------------------
-# apt-cacher proxy coordinates, used only to probe reachability before refreshing
-# the cache. Same source as the proxy config in playbooks/site.yml. Empty when the
-# proxy host isn't in inventory (e.g. CI).
-download_vpn_apt_cacher_host: "{{ hostvars['apt-cacher-ng']['container_ip'] | default('') }}"
+# apt-cacher coordinates, used only to probe reachability before refreshing the
+# cache. The cache is an HA pair tracked by apt_cacher_group (same source as the
+# proxy wiring in playbooks/site.yml); the probe takes the first instance by
+# FQDN. Empty when the group is empty (e.g. CI).
+#
+# One expression, not an {% if %} wrapper: under Jinja native types a template
+# whose statement tags emit nothing yields None, not "", so `| length` on the
+# result raised "object of type 'NoneType' has no len()" in the molecule run.
+# A conditional expression always produces a value, and its unused branch is
+# never evaluated — so tofu_data may be undefined wherever the group is empty.
+download_vpn_apt_cacher_host: >-
+  {{ (groups['apt_cacher_group'] | sort | first) ~ '.' ~ tofu_data.domain
+     if (groups['apt_cacher_group'] | default([]) | length > 0) else '' }}
 download_vpn_apt_cacher_port: "{{ tofu_data.constants.service_ports.apt_cacher_ng | default(3142) }}"
 
 # --- unattended security upgrades ---------------------------------------------
@@ -361,11 +366,12 @@ download_vpn_validator_interval: "2min"
 # through the Proton VPN tunnel, so internal FQDNs do not resolve — and the
 # killswitch alert must reach ntfy over the LAN exactly when the tunnel is
 # DOWN. Until split-DNS (internal zone -> Technitium) exists inside this
-# container, the target stays a routable IP from the inventory (reservation
-# address first, static ip otherwise). Flip to https://ntfy.<domain> only
-# after the split-DNS follow-up (#870) lands.
+# container, the target stays a routable address discovered from the ntfy guest
+# itself rather than a name this guest cannot resolve. Flip to
+# https://ntfy.<domain> only after the split-DNS follow-up (#870) lands.
 download_vpn_ntfy_url: >-
-  http://{{ hostvars['ntfy']['container_reserved_ip'] | default(hostvars['ntfy']['container_ip'], true) }}:{{
+  http://{{ hostvars['ntfy']['ansible_default_ipv4']['address']
+            | default(hostvars['ntfy']['container_ip'], true) }}:{{
   tofu_data.constants.notification_ports.ntfy_http }}/{{ download_vpn_ntfy_topic }}
 download_vpn_ntfy_topic: "killswitch"
 # healthchecks.io-style deadman ping URL. Empty => deadman ping skipped (the
