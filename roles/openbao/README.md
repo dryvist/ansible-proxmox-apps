@@ -249,6 +249,29 @@ bootstrap steps short-circuit on their existence checks.
 
 ## Secret hierarchy & RBAC
 
+Three KV v2 mounts, split by what a leak would cost. The split is a **mount**
+and never a path prefix: a prefix shares one policy namespace, so every
+wildcard already granted on `secret/` would reach across it.
+
+| Mount | Holds | A leak costs |
+| --- | --- | --- |
+| `secret/` | Credentials for services reachable only inside the network | Bounded by network access |
+| `secrets-external/` | Credentials for internet-reachable vendor APIs | Critical — exploitable by anyone, anywhere |
+| `config/` | Non-secret configuration: operator selections, tunables, thresholds, coordination facts | Nothing exploitable by construction |
+
+`config/` is read by exactly one AppRole (`config-read`, below) with a
+mount-wide read + list grant, and its KV v2 retention is set explicitly
+(`openbao_config_mount_max_versions`, default 30) so version history and
+rollback are actually available. `delete_version_after` is left at its default
+of 0 — versions never time-expire, because history that silently ages out
+cannot be rolled back to.
+
+**Known gap — `config/` has no write identity.** `config-read` is read-only, so
+writes fall to the existing admin/converge path. The design goal of a store
+humans and agents can update *without* a git commit is therefore only half
+delivered; a `config-write` role is a deliberate follow-up decision, not an
+oversight.
+
 The KV v2 mount `secret/` is organized by category (canonical doc:
 `tofu-proxmox` `docs/SECRETS_HIERARCHY.md`):
 
@@ -282,6 +305,7 @@ plans):
 | `hermes` | `secret/ai/hermes`, `secret/ai/mcp/splunk` | — | Dedicated least-privilege reader for Hermes; NO broad `secret/ai/*` |
 | `hermes-write` | `secret/ai/hermes` | `secret/ai/hermes` | Narrow one-time credential seed writer; shared MCP publication belongs to `ansible-converge` |
 | `public` | `secret/public/*` | — | **Anonymous** — no secret-zero; shipped ambiently |
+| `config-read` | all of `config/` (data + metadata) | — | Sole identity on the non-secret mount; mount-wide wildcard is correct here; shipped ambiently |
 | `ai-orchestrator` | `secret/ai/{hermes,agents}` | `secret/ai/{hermes,agents}` (create/update) | WRITE; Doppler tier-0; narrowed + 30m TTL at Phase-3 |
 | `ai-readonly` | `read-all` (= `read-<svc>` ∀ services) | — | **default AI agent; NO `secret/infra/*`**[^ai-tiers] |
 | `ai-elevated` | `read-all` + `read-platform` | — | trusted infra-touching agents; no write[^ai-tiers] |
