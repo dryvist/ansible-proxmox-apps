@@ -1465,6 +1465,12 @@
   failed_when: false
   when: openbao_bootstrap_token is defined
 
+# Terrakube authenticates by JWT workload identity, not AppRole, so it cannot
+# be handed a shared config-write AppRole the way a converge could be. The
+# grant therefore composes onto each workspace role's policy list — the same
+# attach-a-capability-policy model ansible-converge uses. Sorted on both sides
+# of the drift check below because OpenBao returns token_policies in its own
+# order, and an order-sensitive compare would rewrite the role every converge.
 - name: Reconcile exact-claim Terrakube workspace JWT roles
   ansible.builtin.command:
     cmd: "bao write auth/{{ openbao_terrakube_jwt_auth_path }}/role/terrakube-{{ item.0.name }} -"
@@ -1475,7 +1481,10 @@
               'sub': 'organization:' ~ openbao_terrakube_organization ~ ':workspace:' ~ item.0.name
             },
             'user_claim': 'sub',
-            'policies': ['terrakube-' ~ item.0.name],
+            'policies': (['terrakube-' ~ item.0.name]
+                         + ([openbao_config_write_policy_name]
+                            if item.0.name in openbao_config_write_terrakube_workspaces
+                            else [])) | sort,
             'token_ttl': openbao_terrakube_jwt_token_ttl} | to_json }}
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
@@ -1495,9 +1504,12 @@
       or (((item.1.stdout | default('{}') | from_json).data
            | default({}, true)).bound_claims | default({}, true)).sub | default('')
          != 'organization:' ~ openbao_terrakube_organization ~ ':workspace:' ~ item.0.name
-      or ((item.1.stdout | default('{}') | from_json).data
-          | default({}, true)).token_policies | default([])
-         != ['terrakube-' ~ item.0.name]
+      or (((item.1.stdout | default('{}') | from_json).data
+           | default({}, true)).token_policies | default([]) | sort)
+         != ((['terrakube-' ~ item.0.name]
+              + ([openbao_config_write_policy_name]
+                 if item.0.name in openbao_config_write_terrakube_workspaces
+                 else [])) | sort)
       or ((item.1.stdout | default('{}') | from_json).data
           | default({}, true)).token_ttl | default(0) | int
          != (openbao_terrakube_jwt_token_ttl | regex_replace('m$', '') | int) * 60

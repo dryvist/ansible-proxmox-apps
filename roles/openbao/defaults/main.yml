@@ -627,13 +627,24 @@ openbao_hermes_write_policy_name: hermes-write
 openbao_hermes_write_approle_name: hermes-write
 openbao_public_policy_name: public
 openbao_public_approle_name: public
-# config-read: the ONLY identity on the non-secret `config` mount — read + list
-# across every path in it, and nothing anywhere else. Deliberately read-only:
-# writes to the config mount go through the existing admin/converge path, and
-# no write role is minted here. See roles/openbao/README.md for why that is a
-# known gap rather than an oversight.
+# config-read: THE DEFAULT identity on the non-secret `config` mount — read +
+# list across every path in it, and nothing anywhere else. Everything that only
+# consumes config uses this. Nothing in the mount is a secret, so per-path
+# least privilege would buy nothing and cost policy churn on every new key.
 openbao_config_read_policy_name: config-read
 openbao_config_read_approle_name: config-read
+# config-write: a capability policy ATTACHED to the three IaC systems that
+# author config (OpenTofu / Ansible / Terrakube), never a standalone AppRole —
+# see the template header for why a fourth credential would be the wrong shape.
+openbao_config_write_policy_name: config-write
+# Terrakube workspaces whose JWT role also carries config-write. Every declared
+# workspace by default, since Terrakube is named as a config author; narrowing
+# it is one edit here rather than a policy change. NOTE: Terrakube runs
+# VCS-driven, potentially untrusted plans, so this is the one config-write
+# grant whose blast radius is worth revisiting — it cannot reach a credential
+# mount, but it can rewrite config that other systems read.
+openbao_config_write_terrakube_workspaces: >-
+  {{ openbao_terrakube_workspaces | map(attribute='name') | list }}
 # ai-public: the fabric-brain runtime domain (secret/ai/public/*, field
 # active_model). Its OWN narrow read-only credential — NOT local-llm's broader
 # ai/* read — held by the hermes_agent / open_webui brain-sync timers to
@@ -811,15 +822,21 @@ openbao_oauthapp_approles: >-
 # repo (they live in terraform-proxmox's locals.tf), and a wrong CIDR would
 # silently break legitimate access — worse than the hardening it buys.
 openbao_base_approles:
+  # terraform-apply is the OpenTofu identity, and OpenTofu authors config —
+  # so it composes config-write onto its own policy rather than carrying a
+  # second credential for the same job.
   - name: "{{ openbao_terraform_apply_approle_name }}"
-    policy: "{{ openbao_terraform_apply_policy_name }}"
+    token_policies:
+      - "{{ openbao_terraform_apply_policy_name }}"
+      - "{{ openbao_config_write_policy_name }}"
   - name: "{{ openbao_flow_lock_approle_name }}"
     policy: "{{ openbao_flow_lock_policy_name }}"
   # ansible-converge additionally signs automation-ansible SSH certs: the
   # pre-play mint in each repo's run-ansible.sh replaces the shared static key.
+  # It is also the Ansible config author, so it composes config-write too.
   - name: "{{ openbao_ansible_converge_approle_name }}"
     token_policies: >-
-      {{ [openbao_ansible_converge_policy_name]
+      {{ [openbao_ansible_converge_policy_name, openbao_config_write_policy_name]
          + (['ssh-sign-automation-ansible'] if openbao_ssh_engine_enabled else []) }}
   - name: "{{ openbao_observability_approle_name }}"
     policy: "{{ openbao_observability_policy_name }}"
@@ -1006,6 +1023,8 @@ openbao_base_policies:
     template: public-policy.hcl.j2
   - name: "{{ openbao_config_read_policy_name }}"
     template: config-read-policy.hcl.j2
+  - name: "{{ openbao_config_write_policy_name }}"
+    template: config-write-policy.hcl.j2
   - name: "{{ openbao_ai_public_policy_name }}"
     template: ai-public-policy.hcl.j2
   # GitHub token tiers (workstation git/gh). Engine mints only — each template
