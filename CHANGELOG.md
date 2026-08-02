@@ -1,5 +1,86 @@
 # Changelog
 
+## [4.3.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.3.0...v4.3.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **ci:** bound Molecule container resource usage and matrix concurrency ([#1336](https://github.com/dryvist/ansible-proxmox-apps/issues/1336)) ([dcd78cb](https://github.com/dryvist/ansible-proxmox-apps/commit/dcd78cb4872c799e76ceec3c7167ba1f41461a22))
+
+## [4.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.2.0...v4.3.0) (2026-08-02)
+
+
+### Features
+
+* **cribl:** route workstation datatype prefix to workstation index ([#1328](https://github.com/dryvist/ansible-proxmox-apps/issues/1328)) ([b7964c6](https://github.com/dryvist/ansible-proxmox-apps/commit/b7964c6e39cdc324e480b42d2c38f5088eeee56b))
+* **openbao:** add read-only Raft-voter health telemetry ([#1285](https://github.com/dryvist/ansible-proxmox-apps/issues/1285)) ([250e080](https://github.com/dryvist/ansible-proxmox-apps/commit/250e080b52063a57201d8f25a4618fb1279cc09b))
+
+
+### Bug Fixes
+
+* **ci:** drop unused id-token: write from ci-fix.yml ([#1337](https://github.com/dryvist/ansible-proxmox-apps/issues/1337)) ([edd8852](https://github.com/dryvist/ansible-proxmox-apps/commit/edd885201e7d83c787d15f9c114a5fae47c98219))
+* **ci:** give molecule docker teardown a realistic API timeout ([#1334](https://github.com/dryvist/ansible-proxmox-apps/issues/1334)) ([a8546d1](https://github.com/dryvist/ansible-proxmox-apps/commit/a8546d10b00c8a53e7badd690aa34423e894894e))
+* **dns:** never publish an ingress VIP that nothing answers on ([#1298](https://github.com/dryvist/ansible-proxmox-apps/issues/1298)) ([fa84b5d](https://github.com/dryvist/ansible-proxmox-apps/commit/fa84b5d67c014c2eca17c474966f578b13572dfa))
+* **postgres:** declare the primary and assert the live topology ([#1299](https://github.com/dryvist/ansible-proxmox-apps/issues/1299)) ([39ebba4](https://github.com/dryvist/ansible-proxmox-apps/commit/39ebba475da7657dc69297808c7248137f645b1c))
+
+## [4.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.1...v4.2.0) (2026-08-02)
+
+
+### Features
+
+* **nautobot:** mint a read-only MCP token and publish it to OpenBao ([#1330](https://github.com/dryvist/ansible-proxmox-apps/issues/1330)) ([d1999e3](https://github.com/dryvist/ansible-proxmox-apps/commit/d1999e3c9a8c13bcdf0621217ed5bc69e7a17f94))
+
+## [4.1.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.1.0...v4.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **apt-proxy:** follow the apt-cacher-ng HA pair via the group, by FQDN ([#1317](https://github.com/dryvist/ansible-proxmox-apps/issues/1317)) ([0499f74](https://github.com/dryvist/ansible-proxmox-apps/commit/0499f74ea0587b6f4f30ca4b48ccf1d5a0b961ee))
+* **inventory:** one address fact per guest — delete reserved_ip and its eight copies ([#1316](https://github.com/dryvist/ansible-proxmox-apps/issues/1316)) ([cdb55cd](https://github.com/dryvist/ansible-proxmox-apps/commit/cdb55cdd1c39142b1f5e26eadd706fcfe782a234))
+* **renovate:** track the object-storage engine's pre-1.0 releases ([#1323](https://github.com/dryvist/ansible-proxmox-apps/issues/1323)) ([a938d5f](https://github.com/dryvist/ansible-proxmox-apps/commit/a938d5feff890432fad6468664c4ccbe2abbda37))
+
+## [4.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.0.0...v4.1.0) (2026-07-30)
+
+
+### Features
+
+* **cribl_stream:** Langfuse OTLP trace leg ([#1295](https://github.com/dryvist/ansible-proxmox-apps/issues/1295)) ([8bbccbd](https://github.com/dryvist/ansible-proxmox-apps/commit/8bbccbd7d93a4f0cd33d72a1919da5972b6e9989))
+* **systemd_restart_policy:** back off exponentially instead of retrying flat ([#1306](https://github.com/dryvist/ansible-proxmox-apps/issues/1306)) ([38799a6](https://github.com/dryvist/ansible-proxmox-apps/commit/38799a62d8d69178046839aba52833e591c7bb57))
+
+
+### Bug Fixes
+
+* **ci:** isolate per-job ANSIBLE_HOME on the shared fleet runners ([#1305](https://github.com/dryvist/ansible-proxmox-apps/issues/1305)) ([fffd821](https://github.com/dryvist/ansible-proxmox-apps/commit/fffd821ba9ee5314748a6039256f66f450d58ce3))
+* **cribl:** derive syslog receiver ports from the inventory, not a hand-list ([#1308](https://github.com/dryvist/ansible-proxmox-apps/issues/1308)) ([233b9e9](https://github.com/dryvist/ansible-proxmox-apps/commit/233b9e92d7e06c3a7917e48f0164c2ba3548c318))
+* **haproxy:** stop killing idle AI-ingest pipes at the health-check timeout ([#1301](https://github.com/dryvist/ansible-proxmox-apps/issues/1301)) ([109ea8c](https://github.com/dryvist/ansible-proxmox-apps/commit/109ea8c015b80fc1eb294dfc037f32372b70070d))
+* **ntp:** mask chrony inside containers instead of only skipping it ([#1307](https://github.com/dryvist/ansible-proxmox-apps/issues/1307)) ([b3c3139](https://github.com/dryvist/ansible-proxmox-apps/commit/b3c3139f34c029384fd36562509859058bb79a81))
+* **object_storage:** per-bucket noncurrent expiry, reconciled not add-only ([#1300](https://github.com/dryvist/ansible-proxmox-apps/issues/1300)) ([f7ff6f5](https://github.com/dryvist/ansible-proxmox-apps/commit/f7ff6f55fca5a13309d5ed01e5c1b4a641b8d002))
+
+## [4.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.5.1...v4.0.0) (2026-07-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **openbao:** enumerate converge KV grants instead of platform/apps wildcards ([#1280](https://github.com/dryvist/ansible-proxmox-apps/issues/1280))
+
+### Features
+
+* **vikunja:** declare the operator account and its project access ([#1289](https://github.com/dryvist/ansible-proxmox-apps/issues/1289)) ([9d1b02f](https://github.com/dryvist/ansible-proxmox-apps/commit/9d1b02f77637df9cf34e5fcb2b03de75d1754382))
+
+
+### Bug Fixes
+
+* **openbao:** dual-mount github/openrouter/acme reads to secrets-external ([#1281](https://github.com/dryvist/ansible-proxmox-apps/issues/1281)) ([7daaab6](https://github.com/dryvist/ansible-proxmox-apps/commit/7daaab606e3d41e3b08ecd049cc7de3b713667c1))
+* **openbao:** enumerate converge KV grants instead of platform/apps wildcards ([#1280](https://github.com/dryvist/ansible-proxmox-apps/issues/1280)) ([fcb3fad](https://github.com/dryvist/ansible-proxmox-apps/commit/fcb3fad1765048c040b1f605464d913fef3f65ed))
+* **telemetry:** make converge-freshness inert under --check ([#1290](https://github.com/dryvist/ansible-proxmox-apps/issues/1290)) ([4db41ec](https://github.com/dryvist/ansible-proxmox-apps/commit/4db41ec7fee270995ab112349ca522523d81d773))
+
+## [3.5.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.5.0...v3.5.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **cribl:** consume the shared roles as the dryvist.homelab collection ([f2e5d59](https://github.com/dryvist/ansible-proxmox-apps/commit/f2e5d59604f733ae86034785ce390156d9b54667))
+
 ## [3.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v3.4.1...v3.5.0) (2026-07-25)
 
 

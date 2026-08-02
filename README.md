@@ -68,8 +68,8 @@ git clone <repo-url> ansible-proxmox-apps
 cd ansible-proxmox-apps
 direnv allow    # one-time per worktree — auto-activates the dev shell on cd
 
-# Install required Ansible Galaxy collections
-ansible-galaxy collection install -r requirements.yml
+# Install the pinned Galaxy content — both sections of requirements.yml
+ansible-galaxy install -r requirements.yml
 
 # Configure Doppler for secrets (API keys, passwords)
 doppler configure set project ansible-proxmox-apps
@@ -140,7 +140,9 @@ Deploy Cribl Edge log processor with syslog listeners and Splunk HEC output.
 - Configures Splunk HEC output
 - Mounts 100GB persistent queue disk at `/opt/cribl/data`
 
-See `roles/cribl_edge/README.md` for detailed configuration.
+The role is shared with `ansible-proxmox` and ships in the `dryvist.homelab`
+collection from [homelab-contracts](https://github.com/dryvist/homelab-contracts);
+see `ansible/roles/cribl_edge/README.md` there for detailed configuration.
 
 ### cribl_stream
 

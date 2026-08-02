@@ -19,6 +19,20 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
     strategy:
       fail-fast: false
+      # Concurrency is the only lever that bounds Molecule's load here.
+      #
+      # The test containers are created through the bind-mounted docker.sock,
+      # so they are SIBLINGS of the runner on the shared dockerd -- not children
+      # of its cgroup. The runner's own cpus/mem_limit therefore does not apply
+      # to them, and the host is deliberately oversubscribed, so an unbounded
+      # matrix can starve a scenario mid-run and the container dies.
+      #
+      # Capping concurrency bounds that without capping any single container.
+      # A per-container `memory:` ceiling was tried and reverted: 1536m killed
+      # download_vpn outright while the same scenario passed on develop, and no
+      # measurement existed to justify any particular number. Bound what is
+      # actually shared; do not guess a limit for each consumer of it.
+      max-parallel: 2
       matrix:
         scenario:
           - default
@@ -43,6 +57,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Per-job Ansible state. The fleet runners share ~/.ansible, and
+      # concurrent `ansible-galaxy collection install` runs race in it — the
+      # git-sourced collection is tar-built under ANSIBLE_HOME/tmp, so two
+      # jobs on one host corrupt each other's build and every later job on
+      # that runner dies with "Collection tar file member MANIFEST.json does
+      # not contain a valid json string". RUNNER_TEMP is unique per job. A
+      # $GITHUB_ENV step, not job-level env: the runner context is not
+      # available to jobs.<id>.env.
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
+
       # Hosted-only provisioning: fleet runners use the image's pre-baked
       # toolchain — setup-python's standalone build needs a newer CPU ISA
       # level than the runner VMs expose, and the apt python3 is PEP-668
@@ -55,7 +80,7 @@ jobs:
 
       - name: Install uv
         if: runner.environment == 'github-hosted'
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "latest"
 
@@ -71,7 +96,7 @@ jobs:
             ansible-lint
 
       - name: Install Ansible collections
-        run: ansible-galaxy collection install -r requirements.yml --force
+        run: ansible-galaxy install -r requirements.yml --force
 
       # Least-privilege secret handling: this action (pinned v2.0.0) has NO
       # allowlist input — it always fetches the token's entire config.
@@ -93,6 +118,14 @@ jobs:
           PY_COLORS: "1"
           ANSIBLE_FORCE_COLOR: "1"
           MOLECULE_SCENARIO: ${{ matrix.scenario }}
+          # community.docker's `timeout` defaults to 60s on the Docker API
+          # socket. molecule-plugins' create/destroy playbooks never pass it,
+          # so the fallback env var is the only lever. With the whole matrix
+          # sharing one daemon, removing a privileged systemd container can
+          # exceed 60s and destroy fails with "Error removing container ...
+          # UnixHTTPConnectionPool ... Read timed out. (read timeout=60)" —
+          # the removal itself succeeds, only the client gives up early.
+          DOCKER_TIMEOUT: "300"
           # Only the secrets the scenarios reference (verified against
           # molecule/*/molecule.yml provisioner.env and the exercised roles):
           #   default     -> MSSQL_SA_PASSWORD
@@ -131,6 +164,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Per-job Ansible state — see the `test` job above for why.
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
+
       # Hosted-only provisioning — same constraint as the test job above.
       - name: Set up Python
         if: runner.environment == 'github-hosted'
@@ -140,7 +177,7 @@ jobs:
 
       - name: Install uv
         if: runner.environment == 'github-hosted'
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "latest"
 
@@ -151,7 +188,7 @@ jobs:
             'ansible-core>=2.16'
 
       - name: Install Ansible collections
-        run: ansible-galaxy collection install -r requirements.yml --force
+        run: ansible-galaxy install -r requirements.yml --force
 
       - name: Run template rendering tests
         run: ansible-playbook tests/template_render/verify_templates.yml -c local
@@ -180,7 +217,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "latest"
 
@@ -191,7 +228,7 @@ jobs:
             jmespath
 
       - name: Install Ansible collections
-        run: ansible-galaxy collection install -r requirements.yml --force
+        run: ansible-galaxy install -r requirements.yml --force
 
       # Covers roles/nautobot/tasks/seed_bundle.yml, which the nautobot Molecule
       # scenario cannot reach (it pins nautobot_build_seed false).

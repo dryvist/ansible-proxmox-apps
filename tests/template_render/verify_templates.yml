@@ -525,6 +525,7 @@
     haproxy_timeout_connect: 5000
     haproxy_timeout_client: 60000
     haproxy_timeout_server: 60000
+    haproxy_timeout_tunnel: 3600000
     haproxy_health_check_interval: 5000
     haproxy_health_check_timeout: 5000
     haproxy_http_port: 80
@@ -1508,6 +1509,11 @@
       {{ (['netflow', 'otel_traces']
           + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
          | unique | list }}
+    # Langfuse OTLP leg — keys present, so the gated output + input
+    # connection render (the absent-key path renders nothing to assert).
+    cribl_stream_langfuse_url: "https://langfuse.example.com/api/public/otel"
+    cribl_stream_langfuse_public_key: "PLACEHOLDER_PUBLIC_KEY"
+    cribl_stream_langfuse_secret_key: "PLACEHOLDER_SECRET_KEY"
     # outputs.yml.j2 stand-ins (per-index render below).
     cribl_stream_splunk_hec_url: "https://splunk-hec.pve.example.com/services/collector/event"
     cribl_stream_splunk_hec_token: "test-hec-token-placeholder"
@@ -1545,6 +1551,12 @@
         dest: "{{ _fixture_dir }}/test_cribl_stream_otel_stamp.yml"
         mode: "0644"
 
+    - name: Render otel_traces conf.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/otel_traces/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/test_cribl_stream_otel_traces.yml"
+        mode: "0644"
+
     - name: Render outputs.yml.j2 with per-index HEC enabled to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/outputs.yml.j2"
@@ -1565,6 +1577,7 @@
         - "{{ _fixture_dir }}/test_cribl_stream_ai_stamp.yml"
         - "{{ _fixture_dir }}/test_cribl_stream_outputs_per_index.yml"
         - "{{ _fixture_dir }}/test_cribl_stream_otel_stamp.yml"
+        - "{{ _fixture_dir }}/test_cribl_stream_otel_traces.yml"
 
     - name: Decode cribl_stream rendered content
       ansible.builtin.set_fact:
@@ -1574,6 +1587,7 @@
         _cribl_stream_ai_pipeline: "{{ _cribl_stream_rendered.results[3].content | b64decode }}"
         _cribl_stream_outputs_pi: "{{ _cribl_stream_rendered.results[4].content | b64decode }}"
         _cribl_stream_otel_pipeline: "{{ _cribl_stream_rendered.results[5].content | b64decode }}"
+        _cribl_stream_otel_traces: "{{ _cribl_stream_rendered.results[6].content | b64decode }}"
 
     - name: Assert S2S input attaches the force_splunk_meta connection pipeline
       ansible.builtin.assert:
@@ -1613,6 +1627,21 @@
           inputs.yml.j2 must include an open_telemetry in_otel listener on the
           otel port with extractSpans, wired to the otel_stamp pipeline that
           stamps index=otel_traces / sourcetype=otel:span
+
+    - name: Assert the Langfuse OTLP leg renders end to end
+      ansible.builtin.assert:
+        that:
+          - "'output: langfuse_otlp' in _cribl_stream_inputs"
+          - "'pipeline: otel_traces' in _cribl_stream_inputs"
+          - "'langfuse_otlp:' in _cribl_stream_outputs_pi"
+          - "'type: open_telemetry' in _cribl_stream_outputs_pi"
+          - "'otlpVersion: \"1.3.1\"' in _cribl_stream_outputs_pi"
+          - "\"__otlp.type !== 'traces'\" in _cribl_stream_otel_traces"
+        fail_msg: >-
+          the Langfuse leg must render fully when the key vars are set — the
+          in_otel connection fork, the langfuse_otlp OTLP/HTTP output at
+          otlpVersion 1.3.1, and the trace-only drop filter (Langfuse rejects
+          non-trace signals; a missing filter jams the persistent queue)
 
     - name: Assert AI ingest inputs render per routing entry with the right type
       ansible.builtin.assert:
@@ -1735,7 +1764,18 @@
     cribl_edge_hec_input_token: ""
     cribl_edge_langfuse_public_key: ""
     cribl_edge_per_index_indexes: [unifi, firewall, os, netmon, hardware]
-    _template_dir: "../../roles/cribl_edge/templates"
+    # cribl_edge ships in the dryvist.homelab collection (homelab-contracts),
+    # not in this repo's roles/. Resolve its templates under whichever
+    # configured collections path the install landed in, so the test works
+    # against a default ~/.ansible install and an explicit
+    # ANSIBLE_COLLECTIONS_PATH alike.
+    _template_dir: >-
+      {{ lookup('ansible.builtin.first_found',
+                files=['templates'],
+                paths=(lookup('ansible.builtin.config', 'COLLECTIONS_PATHS')
+                       | map('regex_replace', '$',
+                             '/ansible_collections/dryvist/homelab/roles/cribl_edge')
+                       | list)) }}
 
   tasks:
     - name: Render the edge syslog pipeline to /tmp
@@ -1877,7 +1917,14 @@
     unifi_metrics_hec_url: "http://192.168.0.180:8088/services/collector/event"
     unifi_metrics_hec_token: ""
     _um_role_dir: "../../roles/unifi_metrics/templates"
-    _um_cribl_dir: "../../roles/cribl_edge/templates"
+    # Same collection-resolved path as the cribl_edge syslog play above.
+    _um_cribl_dir: >-
+      {{ lookup('ansible.builtin.first_found',
+                files=['templates'],
+                paths=(lookup('ansible.builtin.config', 'COLLECTIONS_PATHS')
+                       | map('regex_replace', '$',
+                             '/ansible_collections/dryvist/homelab/roles/cribl_edge')
+                       | list)) }}
 
   tasks:
     - name: Render unifi_metrics templates to /tmp

@@ -1,6 +1,6 @@
 ---
 # RustFS object storage installation and configuration.
-# S3-compatible store replacing MinIO. Bucket administration uses the `aws`
+# S3-compatible store. Bucket administration uses the `aws`
 # CLI (s3api) against the loopback endpoint — RustFS speaks standard S3, so no
 # vendor client is needed.
 
@@ -259,9 +259,17 @@
   no_log: true
 
 # Phase 9: Lifecycle — expire noncurrent versions to bound the data volume.
-# Add-if-missing only, mirroring the MinIO role: if a noncurrent-expiration
-# rule already exists the role leaves it alone so operators can tighten
-# retention by hand without Ansible reverting it.
+# Add-if-missing for buckets that take the default, so an operator can tighten
+# retention by hand without Ansible reverting it (deliberate).
+#
+# BUT a bucket that declares `noncurrent_expiration_days` explicitly is
+# reconciled to the declared value. Add-if-missing alone is not enough there:
+# the rule is applied on first converge, after which the guard skips it
+# forever, so correcting a wrong value in code would silently never take
+# effect on the live bucket. That is exactly how the backups bucket ended up
+# holding a 10-year noncurrent retention while pgBackRest expected its deletes
+# to reclaim space. An explicit declaration is an assertion about the bucket,
+# not a default, so it wins over a hand edit.
 - name: Read current lifecycle configuration on versioned buckets
   ansible.builtin.command:
     cmd: >-
@@ -287,7 +295,7 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: Add noncurrent-version expiration rule when none exists
+- name: Apply the noncurrent-version expiration rule
   ansible.builtin.command:
     cmd: >-
       aws --endpoint-url {{ object_storage_endpoint }} s3api put-bucket-lifecycle-configuration
@@ -299,7 +307,16 @@
   environment: "{{ object_storage_aws_env }}"
   when: >-
     item.rc != 0 or
-    (item.stdout | default('')) is not search('NoncurrentVersionExpiration')
+    (item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
+    (
+      item.item.noncurrent_expiration_days is defined and
+      (
+        (item.stdout | from_json).Rules
+        | selectattr('NoncurrentVersionExpiration', 'defined')
+        | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+        | first | default(-1)
+      ) != item.item.noncurrent_expiration_days
+    )
   changed_when: true
   no_log: true
 

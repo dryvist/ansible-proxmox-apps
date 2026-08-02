@@ -32,11 +32,32 @@ collections:
   - name: networktocode.nautobot
     version: ">=6.2.0"  # gql_inventory plugin (inventory/nautobot.yml) — opt-in parallel inventory
 
-roles:
-  # Shared inventory resolver consumed by inventory/load_tofu.yml — replaces the
-  # per-repo resolution-tier copy-paste. Pinned to the release that first ships
-  # the role.
-  - name: inventory_resolve
-    src: https://github.com/dryvist/homelab-contracts.git
-    scm: git
-    version: 9aba451e9de0956f9c308d72a65e86924e243f23
+  # Shared homelab roles (cribl_edge, cribl_packs, inventory_resolve). A
+  # collection, not `roles:` git entries: `ansible-galaxy role install`
+  # archives the whole repo, then picks what to install by taking the SHORTEST
+  # path above any meta/main.yml it finds. The name in the entry selects
+  # nothing. A repo holding one role resolves to that role and looks correct;
+  # add a second role that sorts shorter and the same pin silently installs
+  # that one instead, still under the requested name — at this pin it installed
+  # cribl_edge as roles/inventory_resolve. A collection installs from the
+  # subdirectory holding galaxy.yml, so every role is addressed by FQCN.
+  # The Cribl roles moved to homelab-contracts because ansible-proxmox also
+  # needs them — Cribl Edge is required on every Proxmox host, not just these
+  # containers. Referenced by FQCN (dryvist.homelab.cribl_edge) in playbooks.
+  # PIN: c5e139c, the current homelab-contracts main commit. Carries #56,
+  # which declares Edge's own system_metrics source — the role templates the
+  # whole of inputs.yml, so every source Edge ships enabled by default was
+  # dropped on the first converge and no host metrics reached Splunk. Also
+  # carries the CDN pointer fix (#52), the by-host split of the os catch-all
+  # (#54), and #58 (inventory_resolve reports the real failure reason on
+  # every path).
+  # An immutable SHA, not a branch — a moving ref would let an unreviewed
+  # contracts change reach a converge here without a PR in this repo.
+  - name: https://github.com/dryvist/homelab-contracts.git#/ansible/
+    type: git
+    version: c5e139cb7ccb286016020dd85c2f1d9c3b5a376f
+
+# No `roles:` section — inventory_resolve comes from the collection above, by
+# FQCN, for the reason stated there. Install with `ansible-galaxy install -r
+# requirements.yml`: it covers both sections, while `collection install` and
+# `role install` each silently ignore the other and still exit zero.

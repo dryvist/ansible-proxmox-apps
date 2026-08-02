@@ -88,10 +88,10 @@ top-level `nodes`, `node_storage`, `pools`, `datastores`, `host_services`,
 `proxmox_node`, `vm_ssh_public_key`.
 
 **Leaves (moves to Nautobot authority):** `vlan`, `network_cidrs`, `ip_config`
-(`ipv4_address`/`ipv4_gateway`), `dhcp`, `reserved_host`, `network_interfaces[]`,
+(`ipv4_address`/`ipv4_gateway`), `dhcp`, `network_interfaces[]`,
 `domain`; and the `modules/proxmox-stack/locals.tf` derivation block
 (`container_address`, `container_mac`, `container_gateway`,
-`container_reserved_ip`, and the VM equivalents) is deleted or repointed to read
+and the VM equivalents) is deleted or repointed to read
 Nautobot.
 
 Migration order matters: **Nautobot must be authoritative and populated for the
@@ -113,7 +113,7 @@ Retirement is a **`schema_version 3.0.0` breaking bump**, done in two options
 (prefer **A** first, then **B** once all readers are proven on Nautobot):
 
 - **Option A — strip network fields, keep the shim.** Remove per-guest `ip`,
-  `mac`, `reserved_ip` (and `ingress*`) from the published artifact;
+  `mac` (and `ingress*`) from the published artifact;
   consumers pull addressing from Nautobot's dynamic inventory. Guest-lifecycle
   keys (`vmid`, `node`, `ansible_connection`, `ansible_pct_vmid`, `tags`,
   `pool_id`, `constants`) stay OpenTofu-sourced — those never live in Nautobot.

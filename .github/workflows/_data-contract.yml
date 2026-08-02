@@ -67,6 +67,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Per-job Ansible state. The fleet runners share ~/.ansible, and
+      # concurrent `ansible-galaxy collection install` runs race in it — the
+      # git-sourced collection is tar-built under ANSIBLE_HOME/tmp, so two
+      # jobs on one host corrupt each other's build and every later job on
+      # that runner dies with "Collection tar file member MANIFEST.json does
+      # not contain a valid json string". RUNNER_TEMP is unique per job. A
+      # $GITHUB_ENV step, not job-level env: the runner context is not
+      # available to jobs.<id>.env.
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
+
       # Hosted-only provisioning: fleet runners use the image's pre-baked
       # toolchain — setup-python's standalone build needs a newer CPU ISA
       # level than the runner VMs expose, and the apt python3 is PEP-668
@@ -85,7 +96,7 @@ jobs:
 
       - name: Install Ansible collections
         run: |
-          ansible-galaxy collection install -r requirements.yml
+          ansible-galaxy install -r requirements.yml
 
       - name: Syntax check playbooks
         run: |
@@ -100,6 +111,11 @@ jobs:
           done
         env:
           ANSIBLE_HOST_KEY_CHECKING: 'false'
+
+      # Runs in this job because the callback plugin imports ansible.plugins,
+      # which only this data-contract job already has installed.
+      - name: Verify converge-freshness telemetry contract
+        run: python3 tests/test_converge_telemetry.py -v
 
   validate-inventory-schema:
     name: Validate Inventory Schema
@@ -130,6 +146,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Per-job Ansible state — see syntax-check above for why.
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
+
       # Hosted-only provisioning — same constraint as syntax-check above.
       - name: Set up Python
         if: runner.environment == 'github-hosted'
@@ -143,15 +163,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install ansible
 
-      - name: Install Ansible collections
-        run: |
-          ansible-galaxy collection install -r requirements.yml
-
       # load_tofu.yml (imported by verify_inventory.yml) include_role's the
-      # shared inventory_resolve role, so it must be installed before the run.
-      - name: Install Ansible roles
+      # shared inventory_resolve role by FQCN, so this run is what proves the
+      # collection actually resolves it.
+      - name: Install Ansible dependencies
         run: |
-          ansible-galaxy role install -r requirements.yml
+          ansible-galaxy install -r requirements.yml
 
       - name: Verify inventory loads and groups are assigned correctly
         run: >-

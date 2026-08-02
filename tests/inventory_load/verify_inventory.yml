@@ -113,7 +113,8 @@
           - "'cribl-stream-01' in groups['lxc_containers']"
           - "'cribl-stream-02' in groups['lxc_containers']"
           - "'mssql' in groups['lxc_containers']"
-          - "'apt-cacher-ng' in groups['lxc_containers']"
+          - "'apt-cacher-ng-10' in groups['lxc_containers']"
+          - "'apt-cacher-ng-30' in groups['lxc_containers']"
           - "'qdrant' in groups['lxc_containers']"
           - "'mailpit' in groups['lxc_containers']"
           - "'ntfy' in groups['lxc_containers']"
@@ -186,12 +187,15 @@
           cribl_docker_group should contain 'docker-host';
           got {{ groups['cribl_docker_group'] | default([]) }}
 
-    - name: Assert apt-cacher-ng is in apt_cacher_group
+    - name: Assert the apt-cacher-ng HA pair is in apt_cacher_group
       ansible.builtin.assert:
         that:
           - "'apt_cacher_group' in groups"
-          - "'apt-cacher-ng' in groups['apt_cacher_group']"
-        fail_msg: "apt-cacher-ng should be in apt_cacher_group (tag: apt-cache)"
+          - "'apt-cacher-ng-10' in groups['apt_cacher_group']"
+          - "'apt-cacher-ng-30' in groups['apt_cacher_group']"
+        fail_msg: >-
+          both apt-cacher-ng instances should be in apt_cacher_group
+          (tag: apt-cache); got {{ groups['apt_cacher_group'] | default([]) }}
 
     - name: Verify mailpit is in mailpit_group
       ansible.builtin.assert:
@@ -272,29 +276,31 @@
           tofu_data.constants.media_ports missing or incorrect —
           expected qbittorrent_web: 8080, prowlarr_web: 9696, seerr_web: 5055
 
-    # DHCP-first guest contract (terraform-proxmox): `ip` carries the FQDN
-    # (DNS-first addressing), `reserved_ip` the DHCP-reservation address.
-    # load_tofu.yml must surface reserved_ip as the container_reserved_ip
-    # hostvar so the technitium_dns role points the A record at it.
-    - name: Verify dhcp-first guest hostvars carry container_reserved_ip
+    # Leased-guest contract (terraform-proxmox): `ip` carries the FQDN, because
+    # the guest's address lives only in the DHCP lease. load_tofu.yml surfaces
+    # exactly ONE address fact per guest — container_ip — so no consumer has to
+    # choose between two competing sources.
+    - name: Verify a leased guest is surfaced by name
       ansible.builtin.assert:
         that:
           - "'immich' in groups['lxc_containers']"
           - "'immich' in (groups['immich_group'] | default([]))"
           - hostvars['immich'].container_ip == 'immich.example.net'
-          - hostvars['immich'].container_reserved_ip == '192.168.0.220'
         fail_msg: >-
-          dhcp-first guest hostvars wrong —
-          container_ip={{ hostvars['immich'].container_ip | default('(undefined)') }},
-          container_reserved_ip={{ hostvars['immich'].container_reserved_ip | default('(undefined)') }}
+          leased guest hostvars wrong —
+          container_ip={{ hostvars['immich'].container_ip | default('(undefined)') }}
 
-    - name: Verify static guest carries an empty container_reserved_ip
+    # Regression guard: the second address fact is gone and must stay gone.
+    # Reintroducing it would restore the "prefer the reservation, else the name"
+    # branch that every consumer used to carry its own copy of.
+    - name: Verify no second address fact is surfaced for any guest
       ansible.builtin.assert:
         that:
-          - hostvars['haproxy'].container_reserved_ip | default('', true) | length == 0
+          - hostvars['immich'].container_reserved_ip is not defined
+          - hostvars['haproxy'].container_reserved_ip is not defined
         fail_msg: >-
-          static guest haproxy should have no reserved_ip;
-          got {{ hostvars['haproxy'].container_reserved_ip | default('(undefined)') }}
+          container_reserved_ip is defined again — there must be exactly one
+          address fact per guest (container_ip).
 
     # add_host swallows a `hostname:` arg (alias of `name`), so load_tofu.yml
     # must set it as a real per-host fact — the technitium_dns A-record builder

@@ -1,5 +1,5 @@
 ---
-# Object storage (RustFS) role defaults — S3-compatible store replacing MinIO.
+# Object storage (RustFS) role defaults — S3-compatible store.
 # RustFS is beta: the version below is pinned deliberately (never the rolling
 # "-latest" asset) and is tracked + bumped by Renovate via the annotation.
 
@@ -54,8 +54,8 @@ object_storage_aws_env:
   AWS_SECRET_ACCESS_KEY: "{{ object_storage_root_password }}"
   AWS_DEFAULT_REGION: "{{ object_storage_region }}"
 
-# Default buckets (same contract as the MinIO role: anonymous read on the
-# internal network, versioned, lifecycle-bounded).
+# Default buckets: anonymous read on the internal network, versioned,
+# lifecycle-bounded.
 #
 # - splunk-addons: Splunk apps + the Cribl infra mirror (anonymous read).
 # - artifacts: public-read mirror of non-secret infra binaries (the Technitium
@@ -63,8 +63,8 @@ object_storage_aws_env:
 #   Objects are operator-staged (no public upstream URL — captured from the
 #   official container image), so they are not in object_storage_infra_mirrors.
 # - idrac: store for the proprietary iDRAC KVM (AVCT) client build artifact.
-#   Anonymous-read on the internal network (mirrors how the retired MinIO bucket
-#   served it — the build fetches via plain get_url with no auth); the artifact
+#   Anonymous-read on the internal network (the build fetches via plain get_url
+#   with no auth); the artifact
 #   is gated by the internal-network boundary, not a bucket ACL, exactly like the
 #   other buckets. Operator-staged.
 # - dryvist-homelab-backups: the guest/database backup target (pgBackRest and the
@@ -84,10 +84,23 @@ object_storage_default_buckets:
     versioning: true
   - name: dryvist-homelab-backups
     versioning: true
+    # MUST stay short, and this is the one bucket where the 10-year default is
+    # actively harmful. pgBackRest reclaims space by DELETING expired WAL and
+    # backup objects. On a versioned bucket a delete only writes a delete
+    # marker and retains the noncurrent version, so with a 3650-day rule
+    # `pgbackrest expire` runs clean, reports success, and frees NOTHING —
+    # the volume fills and every database backup in the estate breaks at once.
+    # Immutability for this bucket belongs off-site in B2 Object Lock, not in
+    # on-prem version retention (an on-prem noncurrent version does not survive
+    # the ransomware case it would be there to cover).
+    noncurrent_expiration_days: 30
 
 # Lifecycle: expire noncurrent object versions after this many days, bounding
 # data-volume growth when artifacts are repeatedly re-uploaded. 10 years =
-# effectively "keep forever" with a safety ceiling. Lower per-host as needed.
+# effectively "keep forever" with a safety ceiling. This is the DEFAULT for
+# artifact buckets, which are re-uploaded rarely and want long history.
+# Override per bucket with `noncurrent_expiration_days` (see above) for any
+# bucket whose writer manages its own retention by deleting objects.
 object_storage_noncurrent_expiration_days: 3650
 
 # Infrastructure artifact mirrors. Roles on egress-restricted LXCs cannot reach

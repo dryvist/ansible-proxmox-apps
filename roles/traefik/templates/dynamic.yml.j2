@@ -104,8 +104,18 @@ http:
    answers 404/406 to plain GETs, health lives on the stats port's /metrics). #}
           port: {{ route.health_check_port }}
 {% endif %}
-          interval: "10s"
-          timeout: "5s"
+{# Interval and timeout are per-route, defaulting to the historic 10s/5s so every
+   existing route renders byte-identical. A route overrides them only when its
+   backend set has a reason to be probed less twitchily. OpenBao is the live
+   example: only the Raft leader answers 200 — standbys return 429 BY DESIGN
+   (pooling them amplified a real inter-node-forward failure, so excluding them
+   is deliberate, not a bug). That means a short interval re-probes every voter
+   constantly to keep exactly one marked up, and a single slow probe empties the
+   pool and surfaces as "no available server". Measured through the ingress at
+   the 10s default: 503,503,503,200,200 across one minute — flapping, not down.
+   #}
+          interval: "{{ route.health_check_interval | default('10s') }}"
+          timeout: "{{ route.health_check_timeout | default('5s') }}"
 {% endif %}
 {% if route.insecure_tls | default(false) %}
         serversTransport: insecure-backend

@@ -1,0 +1,58 @@
+---
+# Verifies the reconcile condition from roles/object_storage/tasks/main.yml.
+# Each case asserts whether the put-bucket-lifecycle-configuration task fires.
+- name: Test lifecycle reconcile condition
+  hosts: localhost
+  gather_facts: false
+  vars:
+    live_3650: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "NoncurrentVersionExpiration":{"NoncurrentDays":3650}}]}
+    live_30: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "NoncurrentVersionExpiration":{"NoncurrentDays":30}}]}
+    cases:
+      # backups bucket declares 30 but live is 3650 -> MUST fire
+      - name: declared-30-live-3650
+        item: {rc: 0, stdout: "{{ live_3650 }}", item: {name: b, noncurrent_expiration_days: 30}}
+        expect: true
+      # already reconciled -> must NOT fire (idempotent)
+      - name: declared-30-live-30
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: b, noncurrent_expiration_days: 30}}
+        expect: false
+      # no declaration, live differs from global default -> must NOT fire
+      # (hand-tightened retention is preserved)
+      - name: undeclared-live-30
+        item: {rc: 0, stdout: "{{ live_30 }}", item: {name: a}}
+        expect: false
+      # no lifecycle config at all -> MUST fire
+      - name: no-config
+        item: {rc: 255, stdout: "", item: {name: a}}
+        expect: true
+      # config exists but no expiration rule -> MUST fire
+      - name: config-without-rule
+        item: {rc: 0, stdout: '{"Rules":[]}', item: {name: a}}
+        expect: true
+  tasks:
+    - name: Evaluate the condition for each case
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              item.item.rc != 0 or
+              (item.item.stdout | default('')) is not search('NoncurrentVersionExpiration') or
+              (
+                item.item.item.noncurrent_expiration_days is defined and
+                (
+                  (item.item.stdout | from_json).Rules
+                  | selectattr('NoncurrentVersionExpiration', 'defined')
+                  | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
+                  | first | default(-1)
+                ) != item.item.item.noncurrent_expiration_days
+              )
+            ) == item.expect
+        fail_msg: "case {{ item.name }}: expected fires={{ item.expect }}"
+        success_msg: "case {{ item.name }}: OK (fires={{ item.expect }})"
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"
