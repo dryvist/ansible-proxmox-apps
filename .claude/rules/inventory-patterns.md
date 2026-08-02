@@ -7,14 +7,14 @@ description: OpenTofu-driven inventory consumption
 
 ## Principle
 
-Inventory is loaded dynamically from OpenTofu state via
-`inventory/tofu_inventory.json`. The `load_tofu.yml` playbook
+Inventory is loaded dynamically from the published OpenTofu inventory
+object. The `load_tofu.yml` playbook
 must run before all other playbooks. It also delegates `tofu_data`
 to all inventory hosts so roles can access it without indirection.
 
 ## Data Structure
 
-The tofu_inventory.json contains:
+The published inventory contains:
 
 ```json
 {

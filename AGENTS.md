@@ -132,8 +132,8 @@ CI runners MUST NOT share Docker networks with dev/test services.
 
 Values are sourced from `tofu-proxmox/locals.tf`
 `pipeline_constants.{service_ports, netflow_ports, vector_db_ports}`.
-Do not hand-edit — fix the constant and refresh
-`inventory/tofu_inventory.json`.
+Do not hand-edit — fix the constant and re-run the producer workspace so
+the published inventory is refreshed.
 
 ## Inventory
 
@@ -141,8 +141,7 @@ Inventory is loaded dynamically via `load_tofu.yml`, which resolves its
 source in priority order: `TOFU_INVENTORY_PATH` (explicit pin) → the
 **RustFS published artifact** (written natively by the tofu-proxmox Terrakube
 workspace; fetched with `amazon.aws` using credentials read directly from
-OpenBao `secret/platform/object-storage`) → the explicitly enabled local
-gitignored `inventory/tofu_inventory.json` cache.
+OpenBao `secret/platform/object-storage`). There is no third source.
 Port constants come from `tofu_data.constants`
 (defined in tofu-proxmox `locals.tf`).
 
@@ -334,9 +333,9 @@ To increase execution speed, you can leverage several options:
 **Inventory validation locally:**
 
 ```bash
-cp tests/inventory_load/tofu_inventory.json inventory/tofu_inventory.json
-ansible-playbook tests/inventory_load/verify_inventory.yml \
-  -i inventory/hosts.yml -c local
+TOFU_INVENTORY_PATH=$PWD/tests/inventory_load/tofu_inventory.json \
+  ansible-playbook tests/inventory_load/verify_inventory.yml \
+    -i inventory/hosts.yml -c local
 ```
 
 ### Extended (manual — run before merging role changes)

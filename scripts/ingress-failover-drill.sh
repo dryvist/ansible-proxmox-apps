@@ -16,12 +16,12 @@
 # Usage:
 #   ./scripts/ingress-failover-drill.sh [--probe-host NAME.SUBDOMAIN]
 # Env:
-#   INVENTORY_FILE   tofu inventory (default inventory/tofu_inventory.json)
+#   INVENTORY_FILE   tofu inventory (defaults to $TOFU_INVENTORY_PATH)
 #   SSH_USER         user for ssh to the ingress nodes (default root)
 #   PROBE_PATH       HTTPS path to probe through the VIP (default /)
 set -euo pipefail
 
-INVENTORY_FILE="${INVENTORY_FILE:-inventory/tofu_inventory.json}"
+INVENTORY_FILE="${INVENTORY_FILE:-${TOFU_INVENTORY_PATH:-}}"
 SSH_USER="${SSH_USER:-root}"
 PROBE_PATH="${PROBE_PATH:-/}"
 SSH_OPTS=(-o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o BatchMode=yes)
