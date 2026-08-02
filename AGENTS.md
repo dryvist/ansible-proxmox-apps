@@ -141,7 +141,7 @@ Inventory is loaded dynamically via `load_tofu.yml`, which resolves its
 source in priority order: `TOFU_INVENTORY_PATH` (explicit pin) → the
 **RustFS published artifact** (written natively by the tofu-proxmox Terrakube
 workspace; fetched with `amazon.aws` using credentials read directly from
-OpenBao `secret/platform/object-storage`). There is no third source.
+OpenBao `secret/platform/object-storage`).
 Port constants come from `tofu_data.constants`
 (defined in tofu-proxmox `locals.tf`).
 

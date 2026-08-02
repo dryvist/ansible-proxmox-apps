@@ -38,9 +38,8 @@ time, in priority order (first that resolves wins):
    `TOFU_INVENTORY_S3_URI` may override the default
    `s3://iac-inventory/ansible_inventory.json` object.
 
-There is no third source — see the
-[role README](https://github.com/dryvist/homelab-contracts/tree/main/ansible/roles/inventory_resolve),
-which is canonical for the resolution order.
+For the canonical resolution order, see the
+[role README](https://github.com/dryvist/homelab-contracts/tree/main/ansible/roles/inventory_resolve).
 
 The resolved document is loaded as `tofu_data` and validated before any play
 runs. It MUST contain at least:
