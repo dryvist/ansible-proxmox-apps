@@ -1,0 +1,231 @@
+---
+# Verify the converged static site end to end from inside the container:
+# rendered config, service state, document root, then real HTTP requests for
+# the index, a client-side route, a missing asset, and each MIME type — plus
+# two negative cases proving the hardening actually bites.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    static_site_base_url: http://127.0.0.1
+
+  tasks:
+    # --- Rendered configuration ------------------------------------------
+    - name: Read the rendered vhost
+      ansible.builtin.slurp:
+        src: /etc/nginx/sites-available/static-site.conf
+      register: static_site_vhost
+
+    - name: Assert the vhost carries the routing and hardening directives
+      ansible.builtin.assert:
+        that:
+          - "'listen 80;' in vhost"
+          - "'root /var/www/static-site;' in vhost"
+          - "'try_files $uri $uri/ /index.html;' in vhost"
+          - "'server_tokens off;' in vhost"
+          - "'autoindex off;' in vhost"
+          - "'gzip on;' in vhost"
+          - "'error_page 404 /404.html;' in vhost"
+          # TLS terminates upstream — this vhost must never bind 443 or name a
+          # certificate. Asserted against directive lines only: the template's
+          # own comments say "must never listen on 443", which would otherwise
+          # match and make this check pass for the wrong reason.
+          - "'443' not in directives"
+          - "'ssl' not in directives"
+        fail_msg: "Rendered vhost is missing expected directives:\n{{ vhost }}"
+      vars:
+        vhost: "{{ static_site_vhost.content | b64decode }}"
+        directives: >-
+          {{ vhost.split('\n') | map('trim') | reject('match', '#')
+             | join('\n') }}
+
+    - name: Stat the enabled vhost symlink
+      ansible.builtin.stat:
+        path: /etc/nginx/sites-enabled/static-site.conf
+      register: static_site_enabled_link
+
+    - name: Stat the packaged default vhost
+      ansible.builtin.stat:
+        path: /etc/nginx/sites-enabled/default
+      register: static_site_default_link
+
+    - name: Assert this vhost is enabled and the packaged default is not
+      ansible.builtin.assert:
+        that:
+          - static_site_enabled_link.stat.exists
+          - static_site_enabled_link.stat.islnk
+          - not static_site_default_link.stat.exists
+        fail_msg: >-
+          vhost enablement wrong: static-site linked=
+          {{ static_site_enabled_link.stat.exists }},
+          default still present={{ static_site_default_link.stat.exists }}.
+
+    # --- Service state ----------------------------------------------------
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert nginx is running and enabled at boot
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['nginx.service'].state == 'running'
+          - ansible_facts.services['nginx.service'].status == 'enabled'
+        fail_msg: >-
+          nginx service state wrong:
+          {{ ansible_facts.services['nginx.service'] | default('absent') }}.
+
+    # --- Document root ----------------------------------------------------
+    - name: Stat the document root
+      ansible.builtin.stat:
+        path: /var/www/static-site
+      register: static_site_docroot
+
+    - name: Stat the synced index
+      ansible.builtin.stat:
+        path: /var/www/static-site/index.html
+      register: static_site_docroot_index
+
+    - name: Assert the document root is a traversable directory holding the index
+      ansible.builtin.assert:
+        that:
+          - static_site_docroot.stat.isdir
+          - static_site_docroot.stat.mode == '0755'
+          - static_site_docroot_index.stat.exists
+          - static_site_docroot_index.stat.mode == '0644'
+        fail_msg: >-
+          Document root wrong: dir={{ static_site_docroot.stat }},
+          index={{ static_site_docroot_index.stat }}.
+
+    # --- HTTP: index and client-side routing ------------------------------
+    - name: Request the site root
+      ansible.builtin.uri:
+        url: "{{ static_site_base_url }}/"
+        return_content: true
+      register: static_site_index_response
+
+    - name: Assert the root returns 200 with the fixture index
+      ansible.builtin.assert:
+        that:
+          - static_site_index_response.status == 200
+          - "'STATIC_SITE_INDEX_OK' in static_site_index_response.content"
+        fail_msg: >-
+          Site root returned {{ static_site_index_response.status }}:
+          {{ static_site_index_response.content | default('') }}.
+
+    - name: Request a path that only the client-side router knows
+      ansible.builtin.uri:
+        url: "{{ static_site_base_url }}/deep/spa/route"
+        return_content: true
+      register: static_site_spa_response
+
+    - name: Assert an unknown path falls back to the index
+      ansible.builtin.assert:
+        that:
+          - static_site_spa_response.status == 200
+          - "'STATIC_SITE_INDEX_OK' in static_site_spa_response.content"
+        fail_msg: >-
+          Client-side-routing fallback broken: got
+          {{ static_site_spa_response.status }}.
+
+    # --- HTTP: the custom error page is actually reachable -----------------
+    # A missing asset must 404 rather than return the index shell, which is
+    # what makes the custom error document reachable at all.
+    - name: Request an asset that does not exist
+      ansible.builtin.uri:
+        url: "{{ static_site_base_url }}/missing-bundle.js"
+        return_content: true
+        status_code: [404]
+      register: static_site_missing_asset
+
+    - name: Assert a missing asset returns the custom 404 page
+      ansible.builtin.assert:
+        that:
+          - static_site_missing_asset.status == 404
+          - "'STATIC_SITE_404_OK' in static_site_missing_asset.content"
+          - "'STATIC_SITE_INDEX_OK' not in static_site_missing_asset.content"
+        fail_msg: >-
+          Missing asset did not return the custom 404 page: status
+          {{ static_site_missing_asset.status }},
+          body {{ static_site_missing_asset.content | default('') }}.
+
+    # --- HTTP: MIME types --------------------------------------------------
+    - name: Request each fixture asset
+      ansible.builtin.uri:
+        url: "{{ static_site_base_url }}/{{ item }}"
+        return_content: false
+      loop:
+        - style.css
+        - app.js
+        - data.json
+        - icon.svg
+        - font.woff2
+      register: static_site_mime_responses
+
+    - name: Assert each asset is served with the correct content type
+      ansible.builtin.assert:
+        that:
+          - types['style.css'] is search('^text/css')
+          # nginx moved .js from application/javascript to text/javascript in
+          # 1.21.x; both are correct for a browser, so accept either.
+          - types['app.js'] is search('^(text|application)/javascript')
+          - types['data.json'] is search('^application/json')
+          - types['icon.svg'] is search('^image/svg\\+xml')
+          - types['font.woff2'] is search('^font/woff2')
+        fail_msg: "Content-Type wrong for one or more assets: {{ types }}"
+      vars:
+        types: >-
+          {{ dict(static_site_mime_responses.results
+                  | map(attribute='item') | list
+                  | zip(static_site_mime_responses.results
+                        | map(attribute='content_type') | list)) }}
+
+    # --- NEGATIVE: dotfiles are denied ------------------------------------
+    # The fixture ships .hidden-fixture, so this proves the deny rule fires
+    # rather than merely that the directive is present in the config.
+    - name: Request a dotfile
+      ansible.builtin.uri:
+        url: "{{ static_site_base_url }}/.hidden-fixture"
+        return_content: true
+        status_code: [403]
+      register: static_site_dotfile_response
+
+    - name: Assert the dotfile is denied and its contents never leak
+      ansible.builtin.assert:
+        that:
+          - static_site_dotfile_response.status == 403
+          - "'Fixture dotfile' not in (static_site_dotfile_response.content | default(''))"
+        fail_msg: >-
+          Dotfile was not denied: status
+          {{ static_site_dotfile_response.status }}.
+
+    # --- NEGATIVE: no directory listing -----------------------------------
+    # files/site/assets/ deliberately has no index. With autoindex off nginx
+    # refuses the directory (403) instead of enumerating it.
+    - name: Request a directory that has no index
+      ansible.builtin.uri:
+        url: "{{ static_site_base_url }}/assets/"
+        return_content: true
+        status_code: [403]
+      register: static_site_dirlist_response
+
+    - name: Assert the directory is refused and never listed
+      ansible.builtin.assert:
+        that:
+          - static_site_dirlist_response.status == 403
+          - "'Index of' not in (static_site_dirlist_response.content | default(''))"
+          - "'nested.txt' not in (static_site_dirlist_response.content | default(''))"
+        fail_msg: >-
+          Directory listing leaked: status
+          {{ static_site_dirlist_response.status }},
+          body {{ static_site_dirlist_response.content | default('') }}.
+
+    # --- NEGATIVE: the nginx version is not advertised ---------------------
+    - name: Assert the Server header carries no version
+      ansible.builtin.assert:
+        that:
+          - static_site_index_response.server is defined
+          - static_site_index_response.server == 'nginx'
+        fail_msg: >-
+          server_tokens off is not in effect — Server header was
+          '{{ static_site_index_response.server | default('') }}'.

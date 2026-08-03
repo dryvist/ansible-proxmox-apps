@@ -1,0 +1,149 @@
+---
+# =============================================================================
+# Preflight: the content source must be supplied and must exist
+# =============================================================================
+# static_site_source_dir has no default on purpose. An undefined or missing
+# source would otherwise publish an empty document root and return 404s that
+# look like an application fault, so fail here with the actual cause.
+
+- name: Assert the static site content source is supplied
+  ansible.builtin.assert:
+    that:
+      - static_site_source_dir is defined
+      - static_site_source_dir | default('', true) | length > 0
+    fail_msg: >-
+      static_site_source_dir is not set. Point it at the control-node directory
+      whose contents become the document root, e.g.
+      -e static_site_source_dir=/path/to/site. It has no default because site
+      content is supplied at converge time and never committed to this repo.
+    quiet: true
+
+- name: Stat the static site content source on the control node
+  ansible.builtin.stat:
+    path: "{{ static_site_source_dir }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  register: static_site_source_stat
+
+- name: Assert the static site content source is a directory
+  ansible.builtin.assert:
+    that:
+      - static_site_source_stat.stat.exists
+      - static_site_source_stat.stat.isdir
+    fail_msg: >-
+      static_site_source_dir '{{ static_site_source_dir }}' is not an existing
+      directory on the control node. It must be a directory whose contents
+      (including {{ static_site_index }}) are copied to the document root.
+    quiet: true
+
+# =============================================================================
+# nginx from the distro repository
+# =============================================================================
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# =============================================================================
+# Document root
+# =============================================================================
+
+- name: Create the static site document root
+  ansible.builtin.file:
+    path: "{{ static_site_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Owned by root and world-readable: the nginx workers run as an unprivileged
+# user and only ever need read access, so nothing the web server can reach is
+# also writable by it.
+#
+# ponytail: copy mirrors the source in but never prunes files deleted from it.
+# Harmless for content-hashed build output (dead assets simply accumulate);
+# switch to a checked-out-then-swapped root if a stale file ever has to
+# disappear on republish.
+- name: Sync the static site content into the document root
+  ansible.builtin.copy:
+    src: "{{ static_site_source_dir | regex_replace('/*$', '') }}/"
+    dest: "{{ static_site_root }}/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+
+# =============================================================================
+# vhost
+# =============================================================================
+
+# The custom error document is optional: the vhost emits an `error_page`
+# directive only when the synced content actually carries one, so a site
+# without it falls back to nginx's built-in page instead of 404-ing its own
+# 404 handler.
+- name: Check whether the synced content carries a custom error page
+  ansible.builtin.stat:
+    path: "{{ static_site_root }}/{{ static_site_error_page }}"
+  register: static_site_error_page_stat
+
+- name: Record whether the custom error page is present
+  ansible.builtin.set_fact:
+    static_site_error_page_present: "{{ static_site_error_page_stat.stat.exists }}"
+
+- name: Deploy the static site nginx vhost
+  ansible.builtin.template:
+    src: static-site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ static_site_vhost_name }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the static site nginx vhost
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ static_site_vhost_name }}.conf"
+    dest: "/etc/nginx/sites-enabled/{{ static_site_vhost_name }}.conf"
+    state: link
+  notify: Reload nginx
+
+# The packaged default vhost claims the same port as `default_server`, so
+# leaving it enabled makes which site answers depend on load order.
+- name: Remove the packaged default nginx vhost
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+# Validates the whole tree, not just this vhost — a reload of a broken config
+# is refused by nginx and would otherwise surface as a confusing handler
+# failure at the end of the play.
+- name: Validate the nginx configuration
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+
+# =============================================================================
+# Service
+# =============================================================================
+
+- name: Ensure nginx is running and enabled
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+  when: static_site_manage_service | bool
+
+- name: Apply the pending nginx reload before the readiness check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the static site port to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ static_site_port }}"
+    state: started
+    timeout: 30
+  when: static_site_manage_service | bool
