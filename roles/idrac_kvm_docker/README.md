@@ -59,12 +59,13 @@ and fails fast with a Doppler pointer if any are missing.
 
 ## Access
 
-After a successful run on LXC 251 (IP 10.0.1.251):
+After a successful run on the KVM container, each server's HTML5 console is
+served on its own port at that container's address:
 
-| Server | URL                       | Container    |
-| ------ | ------------------------- | ------------ |
-| R410   | `http://10.0.1.251:5410/` | `idrac-r410` |
-| R710   | `http://10.0.1.251:5710/` | `idrac-r710` |
+| Server | Port   | Container    |
+| ------ | ------ | ------------ |
+| R410   | `5410` | `idrac-r410` |
+| R710   | `5710` | `idrac-r710` |
 
 Credentials are baked into the container via `.env` and forwarded to the
 iDRAC by the bundled viewer — no separate login screen on the HTML5 page.
