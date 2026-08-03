@@ -67,15 +67,16 @@ bao_media_secrets: {}
 # secret_key, superuser_password under secret/apps/nautobot).
 bao_apps_secrets: {}
 
-# Shared-Postgres primary host — the switch for the streaming-replication
-# topology (issue #138). Empty = single-primary: every postgres-tagged guest is
-# its own primary and apps reach the DB by the stable `postgres` name. Set to
-# the primary guest's inventory hostname to make that guest primary and every
-# OTHER postgres-tagged guest a hot standby streaming from it.
-#
-# This env lookup is only the fallback for groups WITHOUT a committed
-# declaration: the apps cluster declares its primary in postgres_group.yml
-# (group_vars beats all.yml, so POSTGRES_PRIMARY_HOST cannot reach it). For a
-# deliberate failover there, override with `-e postgres_primary_host=...`.
-# The postgres role and the app *_db_host both read this.
+# Generic PostgreSQL primary override for clusters that do not declare their
+# own primary. Empty preserves the role's single-primary default. The shared
+# apps cluster and AI cluster use scoped declarations, so changing this
+# fallback cannot reroute either tier.
 postgres_primary_host: "{{ lookup('env', 'POSTGRES_PRIMARY_HOST') | default('', true) }}"
+
+# One routing authority for the shared apps PostgreSQL cluster and all of its
+# clients. Keeping this scoped name in all.yml makes it visible to the
+# postgres, Nautobot, Vikunja, and Zammad groups without exposing those hosts
+# to each other's role vars. Override this one value for a deliberate apps-tier
+# failover; unrelated PostgreSQL tiers do not consume it.
+postgres_apps_primary_host: >-
+  {{ lookup('env', 'POSTGRES_APPS_PRIMARY_HOST') | default('postgres-apps', true) }}
