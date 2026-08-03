@@ -15,6 +15,38 @@
       the play vars.
     quiet: true
 
+# A LOCAL heavy-tier serving host with no address would silently publish nothing:
+# the A-record builder's truthy filter skips an empty ip, so the record the
+# router chain resolves would just be absent from an otherwise green converge.
+# That is the failure this repository is uniquely positioned to cause, because
+# this is where the record is WRITTEN rather than merely read.
+#
+# Conditional, not absolute: an EXTERNAL runner host legitimately has no local
+# address, and must not be pointed at one. The guard therefore fires only when a
+# local host is named without an address to go with it.
+- name: Assert a locally-named heavy-tier serving host has an address to publish
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - llm_large_serving_ip | default('') | trim | length > 0
+    fail_msg: >-
+      Heavy-tier serving host "{{ llm_large_serving_host }}" is named locally but
+      has no address, so its A record would be silently SKIPPED by the truthy
+      filter and this converge would report success while the name the router
+      pool dials resolves to nothing.
+      Supply the address from tofu-proxmox's constants.serving.ip (the
+      destination state, published once an apply republishes the inventory
+      artifact — tofu-proxmox#827) or from LLM_LARGE_RUNNER_IP.
+      This deliberately does NOT fall back to a built-in address: a committed
+      default is what this change removed, and here a wrong one would not fail
+      locally — it would be published to the estate as authoritative DNS.
+    success_msg: >-
+      Heavy-tier serving host "{{ llm_large_serving_host }}" has an address to publish.
+  when:
+    - llm_large_serving_host | default('') | trim | length > 0
+    # An external runner host is a full FQDN and owns its own DNS elsewhere.
+    - not (lookup('env', 'LLM_LARGE_RUNNER_HOST') | trim | length > 0)
+
 # Technitium API tokens are PER-INSTANCE — one shared token only authenticates the
 # node that minted it, so the HA secondaries could not be configured. Log into THIS
 # node's API with the shared admin password (technitium_install sets it identically

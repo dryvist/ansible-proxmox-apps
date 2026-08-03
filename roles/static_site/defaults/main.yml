@@ -1,0 +1,83 @@
+---
+# static_site role defaults — serve a directory of static files over plain HTTP.
+#
+# TLS terminates upstream at the reverse proxy, so this role never touches
+# certificates, ACME, or port 443. It installs nginx from the distro repo,
+# writes one vhost, and syncs a document root from the control node.
+#
+# `static_site_source_dir` is DELIBERATELY ABSENT from this file. It is the
+# control-node directory whose contents become the document root, it is
+# supplied at converge time, and its content is never committed to this repo.
+# Leaving it undefined makes tasks/main.yml fail loudly with an actionable
+# message instead of quietly publishing an empty site.
+
+# Document root on the target host. Content is mirrored here from
+# `static_site_source_dir`.
+static_site_root: /var/www/static-site
+
+# Plain-HTTP listen port. The reverse proxy in front of this host terminates
+# TLS and forwards here, so 80 is the normal value and 443 is never correct.
+static_site_port: 80
+
+# nginx `server_name`. `_` is nginx's catch-all: the vhost answers whatever
+# Host the proxy forwards, which is what a single-site host wants. Set a real
+# hostname when several vhosts share the port.
+static_site_server_name: "_"
+
+# Vhost filename under /etc/nginx/sites-available (symlinked into
+# sites-enabled). Change it only when hosting more than one site here.
+static_site_vhost_name: static-site
+
+# Directory index, served for `/` and as the client-side-routing fallback for
+# unknown paths so a single-page app's own router handles them.
+static_site_index: index.html
+
+# Custom error document, used only when a file of this name exists at the root
+# of the synced content. Absent -> nginx's built-in error page is used and no
+# `error_page` directive is emitted.
+static_site_error_page: 404.html
+
+# Serve requests for these extensions strictly from disk: a miss returns a real
+# 404 (and therefore the custom error page above) instead of the SPA shell.
+# Without this carve-out the client-side-routing fallback answers 200 + HTML for
+# every missing asset, which masks broken build output and makes the custom 404
+# page unreachable.
+static_site_asset_extensions:
+  - css
+  - js
+  - mjs
+  - json
+  - map
+  - svg
+  - woff
+  - woff2
+  - ttf
+  - eot
+  - ico
+  - png
+  - jpg
+  - jpeg
+  - gif
+  - webp
+  - avif
+
+# Response types compressed on the wire. text/html is always compressed by
+# nginx when gzip is on and must not be listed here.
+static_site_gzip_types:
+  - text/plain
+  - text/css
+  - text/javascript
+  - text/xml
+  - application/javascript
+  - application/json
+  - application/xml
+  - application/rss+xml
+  - image/svg+xml
+
+# Smallest response worth compressing, in bytes.
+static_site_gzip_min_length: 1024
+
+# When false, render the document root and vhost but leave the service alone.
+# Molecule/CI keep this true (nginx runs fine in the test container); it exists
+# for a config-only render on a host where the service is managed elsewhere.
+static_site_manage_service: true

@@ -1,0 +1,114 @@
+---
+# Serving-identity contract verification.
+#
+# Pins two properties of the heavy-tier serving host's hostname and address:
+# they resolve from a published authority rather than from a value committed to
+# this repository, and a locally-named host with no address stops the converge
+# instead of silently publishing nothing.
+#
+# WHY THIS TEST EXISTS. This repository is where the serving host's A record is
+# WRITTEN, not merely read, which makes its failure mode worse than a consumer's.
+# The record builder skips an empty ip via a truthy filter, so a missing address
+# produced a green converge with the record simply absent — and the name the
+# router pool dials resolving to nothing. Nothing in ansible-lint or a syntax
+# check can see that.
+#
+# Usage:
+#   ansible-playbook tests/serving_identity/verify_serving_identity.yml \
+#     -i localhost, -c local
+- name: Verify serving identity resolution and its guard
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _group_vars: "{{ playbook_dir }}/../../inventory/group_vars/all.yml"
+  tasks:
+    - name: Load the shared group vars as they ship
+      ansible.builtin.include_vars:
+        file: "{{ _group_vars }}"
+
+    - name: Assert the published constant supplies the serving identity
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - llm_large_serving_host | trim == 'llm-large-example'
+          - llm_large_serving_ip | trim == '192.0.2.10'
+        fail_msg: >-
+          constants.serving did not supply the serving identity:
+          host={{ llm_large_serving_host }}, ip={{ llm_large_serving_ip }}.
+          The published artifact is the destination authority; if this fails,
+          group_vars/all.yml is not reading tofu_data.constants.serving.
+        success_msg: Published constants.serving supplies host and address.
+      vars:
+        tofu_data:
+          constants:
+            serving:
+              host: llm-large-example
+              ip: 192.0.2.10
+
+    - name: Assert an undescribed serving host resolves empty rather than guessing
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - llm_large_serving_host | trim | length == 0
+          - llm_large_serving_ip | trim | length == 0
+        fail_msg: >-
+          With no published constant and no environment override, the serving
+          identity resolved to host="{{ llm_large_serving_host }}"
+          ip="{{ llm_large_serving_ip }}" instead of empty. A non-empty value
+          means a committed fallback has been reintroduced — and here a wrong
+          address is not a local failure, it is published to the estate as
+          authoritative DNS.
+        success_msg: An undescribed serving host resolves empty.
+      vars:
+        tofu_data:
+          constants: {}
+
+    # Proving the value is empty is not the same as proving emptiness stops the
+    # converge. Without this, deleting the role's guard would leave every
+    # assertion above still passing.
+    # set_fact, not task vars: include_vars above binds these names at a HIGHER
+    # precedence than a task/role var, so passing them to import_role leaves the
+    # loaded (empty) values in place — the guard then correctly stays silent for
+    # an unnamed host and this scenario never exercises anything. Caught on
+    # first run; set_fact outranks include_vars and actually takes effect.
+    - name: Name a local serving host with no address to publish
+      ansible.builtin.set_fact:
+        llm_large_serving_host: some-host
+        llm_large_serving_ip: ""
+
+    - name: Prove a locally-named host with no address fails the role guard
+      block:
+        - name: Import the technitium_dns guard with no address supplied
+          ansible.builtin.import_role:
+            name: technitium_dns
+            tasks_from: main
+          vars:
+            technitium_dns_apply: false
+            # The role's own prerequisite assert runs first and would otherwise
+            # be what fails, making this test pass without ever reaching the
+            # guard it exists to exercise. Satisfied with dummies so the
+            # failure below is unambiguously the serving-address guard.
+            technitium_dns_admin_password: test-only-not-a-real-password
+            technitium_dns_zone: example.test
+            technitium_dns_host: dns.example.test
+
+        - name: Fail because the guard admitted a host with no address
+          ansible.builtin.fail:
+            msg: >-
+              The technitium_dns serving-address guard PASSED with a locally
+              named host and no address. That guard is the only thing between a
+              missing reservation and a green converge that publishes no record
+              for the name the router pool dials.
+      rescue:
+        - name: Confirm the failure was the serving-address guard
+          ansible.builtin.assert:
+            quiet: true
+            that:
+              - "'has no address' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              The role failed, but not on the serving-address guard —
+              got {{ ansible_failed_result.msg | default('(none)') }}.
+              A failure from any other assertion would make this test pass for
+              the wrong reason, which it did on first run: the role's
+              prerequisite assert fired before the guard was ever reached.
+            success_msg: A locally-named host with no address is fatal.
