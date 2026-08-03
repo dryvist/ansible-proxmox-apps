@@ -1,20 +1,31 @@
 """Shared E2E test fixtures and source matrix.
 
-The syslog source matrix is built from ``constants.syslog_port_map`` in
-``inventory/tofu_inventory.json`` — the single source of truth exported by
-terraform-proxmox. Nothing here hardcodes ports, indexes, or sourcetypes.
+The syslog source matrix is built from ``constants.syslog_port_map`` in the
+resolved OpenTofu inventory — the single source of truth published by
+tofu-proxmox. Nothing here hardcodes ports, indexes, or sourcetypes.
 With no inventory (or an inventory predating syslog_port_map) the matrix is
 empty and the parametrized tests skip.
 """
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 
 def inventory_path():
-    """Path to the tofu-generated inventory consumed by all E2E tests."""
-    return Path(__file__).resolve().parents[2] / "inventory" / "tofu_inventory.json"
+    """Path to the OpenTofu inventory consumed by all E2E tests.
+
+    Reads TOFU_INVENTORY_PATH, the same tier-1 pin `inventory_resolve` uses,
+    so tests and converges agree on where inventory comes from. There is no
+    on-disk default: the published object is the only live source, and a path
+    guessed relative to the repo cannot know whether it is current.
+
+    Unset returns a path that cannot exist, so callers skip via their existing
+    ``.exists()`` check. Path("") would be Path(".") — a directory that exists
+    and then fails on open.
+    """
+    return Path(os.environ.get("TOFU_INVENTORY_PATH") or "/nonexistent/TOFU_INVENTORY_PATH-unset")
 
 
 @dataclass(frozen=True)

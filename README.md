@@ -37,8 +37,9 @@ time, in priority order (first that resolves wins):
    `secret/platform/object-storage`; only `BAO_ADDR` and `BAO_TOKEN` are needed.
    `TOFU_INVENTORY_S3_URI` may override the default
    `s3://iac-inventory/ansible_inventory.json` object.
-3. `inventory/tofu_inventory.json` — a local gitignored cache, only when
-   `TOFU_INVENTORY_ALLOW_STALE=1` is explicitly set.
+
+For the canonical resolution order, see the
+[role README](https://github.com/dryvist/homelab-contracts/tree/main/ansible/roles/inventory_resolve).
 
 The resolved document is loaded as `tofu_data` and validated before any play
 runs. It MUST contain at least:

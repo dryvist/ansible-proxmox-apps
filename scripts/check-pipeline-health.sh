@@ -10,11 +10,11 @@ readonly YELLOW='\033[1;33m'
 readonly NC='\033[0m' # No Color
 
 # Derive IPs from OpenTofu inventory (override with env vars if needed)
-INVENTORY_FILE="${INVENTORY_FILE:-inventory/tofu_inventory.json}"
+INVENTORY_FILE="${INVENTORY_FILE:-${TOFU_INVENTORY_PATH:-}}"
 
 if [ ! -f "$INVENTORY_FILE" ]; then
     echo -e "${RED}ERROR: $INVENTORY_FILE not found${NC}"
-    echo "Refresh it from the RustFS artifact published by the tofu-proxmox Terrakube workspace, or set INVENTORY_FILE to a copy."
+    echo "Set TOFU_INVENTORY_PATH (or INVENTORY_FILE) to a copy of the inventory object published by the tofu-proxmox Terrakube workspace."
     exit 1
 fi
 
