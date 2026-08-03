@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.3.1...v4.4.0) (2026-08-03)
+
+
+### Features
+
+* **openbao:** add non-secret config KV mount with one read-all role ([#1344](https://github.com/dryvist/ansible-proxmox-apps/issues/1344)) ([7e5cf1b](https://github.com/dryvist/ansible-proxmox-apps/commit/7e5cf1b1ccd1cfbb4cff2a724939a2d162d301e9))
+* **postgres:** add PITR via pgBackRest with async WAL archiving and an initial full backup ([#1302](https://github.com/dryvist/ansible-proxmox-apps/issues/1302)) ([737e90c](https://github.com/dryvist/ansible-proxmox-apps/commit/737e90c1c4366e25a1ad59a5f7b6c4b2f2fdb87a))
+
+
+### Bug Fixes
+
+* **download_vpn:** make qbittorrent home vzdump-readable ([#1275](https://github.com/dryvist/ansible-proxmox-apps/issues/1275)) ([94e80f5](https://github.com/dryvist/ansible-proxmox-apps/commit/94e80f5232e5f6a54affb57d593333fc565b9015))
+* **openbao:** fail the converge on stale break-glass credential files ([#1304](https://github.com/dryvist/ansible-proxmox-apps/issues/1304)) ([fbaed15](https://github.com/dryvist/ansible-proxmox-apps/commit/fbaed15dcc0d09de70173f51c269d7cfdbffed56))
+* **postgres:** wire pg-backup deadman-ping, mirroring syncoid's pattern ([#1326](https://github.com/dryvist/ansible-proxmox-apps/issues/1326)) ([83046e5](https://github.com/dryvist/ansible-proxmox-apps/commit/83046e5ba3447fac7599f59ed7dfe8bcf65bf50a))
+* remove host, address and topology literals from a public repo ([#1347](https://github.com/dryvist/ansible-proxmox-apps/issues/1347)) ([81a5886](https://github.com/dryvist/ansible-proxmox-apps/commit/81a5886ba8a9d127282fb09654dfe87781aac9e6))
+* **runners:** bound concurrent Molecule scenarios to the host's capacity ([#1345](https://github.com/dryvist/ansible-proxmox-apps/issues/1345)) ([b28ead7](https://github.com/dryvist/ansible-proxmox-apps/commit/b28ead7361a7be8b254579054633ddde87cda734))
+
 ## [4.3.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.3.0...v4.3.1) (2026-08-02)
 
 
