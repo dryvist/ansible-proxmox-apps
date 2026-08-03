@@ -9,6 +9,18 @@ BACKUP_DIR="{{ postgres_backup_dir }}"
 RETENTION_DAYS="{{ postgres_backup_retention_days }}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
+# Optional healthchecks.io deadman ping (same pattern as syncoid/postgres_standby):
+# "<url>" pinged on exit 0, "<url>/fail" on any other exit. Empty URL = no-op,
+# so this stays inert on hosts where no check has been provisioned.
+HC="{{ postgres_backup_healthcheck_url }}"
+ping_hc() { [ -n "$HC" ] && curl -fsS -m 10 --retry 3 -o /dev/null "$1" >/dev/null 2>&1 || true; }
+on_exit() {
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then ping_hc "$HC"; else ping_hc "$HC/fail"; fi
+  exit "$rc"
+}
+trap on_exit EXIT
+
 mkdir -p "$BACKUP_DIR"
 
 {% for db in postgres_managed_databases %}

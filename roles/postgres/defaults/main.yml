@@ -89,6 +89,11 @@ postgres_backup_dir: "{{ postgres_data_root }}/backups"
 postgres_backup_on_calendar: "*-*-* 02:30:00"
 postgres_backup_randomized_delay_sec: 900
 postgres_backup_retention_days: 14
+# Optional healthchecks.io URL; "<url>" pinged on success, "<url>/fail" on
+# failure — same shape as syncoid_healthcheck_url/postgres_standby_healthcheck_url.
+# Without this, a failed or silently-stopped backup is exit-code-only; set this
+# to get an actual alert.
+postgres_backup_healthcheck_url: ""
 
 # SSH public key(s) the standby node's puller (ansible-proxmox
 # roles/postgres_standby) uses to rsync the backup directory. One key per
@@ -181,13 +186,22 @@ postgres_standby_reinit: "{{ lookup('env', 'POSTGRES_STANDBY_REINIT') | default(
 # (archive_command) and takes scheduled full/incremental base backups to an
 # S3-compatible endpoint (the homelab RustFS instance; the same objects are
 # replicated to Backblaze B2 by an out-of-band job), giving point-in-time
-# recovery that logical dumps cannot. Primary-only, and OFF by default so the
-# merge is inert — flip postgres_pgbackrest_enabled at bring-up.
+# recovery that logical dumps cannot. Primary-only, and ON by default — the
+# on-site repo is the standard posture. The role asserts the S3 endpoint and
+# credentials are set, so an enabled host fails the converge loudly instead of
+# looking configured while archiving nothing.
 #
 # Flag name: task #7 asked for `postgres_backup_enabled`, but that is already
 # the pg_dump tier's switch (default true). Repurposing it would silently
 # disable pg_dump, so this tier owns its own flag.
-postgres_pgbackrest_enabled: false
+postgres_pgbackrest_enabled: true
+
+# Force a WAL segment closed on this cadence so an idle cluster still ships
+# archive. Without it PostgreSQL only archives a segment once it fills, so a
+# quiet database can leave the last committed transactions unarchived
+# indefinitely — the recovery-point objective becomes "whenever write volume
+# happens to reach 16 MB", which is not an objective at all. Seconds.
+postgres_archive_timeout: 60
 
 # Stanza + repo layout. The stanza is named for the HOST, not the cluster: every
 # Debian host names its cluster `main`, so deriving from postgres_cluster_name
@@ -220,7 +234,23 @@ postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECR
 # Do NOT reach for `pgbackrest verify` as the offsite gate: it exits 0 against a
 # repo it cannot read at all, printing only "No usable backup.info file" (#1027).
 #
-# OFF by default so the merge is inert; needs the offsite credentials in env.
+# STILL OFF, and this is a credential gap, not a preference. Enabling it without
+# a credential path would point the config at a repo it cannot authenticate to,
+# which is strictly worse than an honest `false`. Three things are missing:
+#
+#   1. A scoped B2 application key pair for the backup bucket. The convention is
+#      one bucket, exactly two keys — <bucket>-ro and <bucket>-rw — and the
+#      writer here takes the -rw one. Neither exists.
+#   2. A home for it. B2 is internet-facing, so it belongs in the
+#      `secrets-external/` mount, never `secret/`.
+#   3. A delivery path. scripts/fetch-openbao-secrets.sh — the thing that turns
+#      a KV entry into the POSTGRES_BACKUP_REPO2_S3_* env vars this role reads —
+#      only ever LISTs and reads `secret/apps/<domain>`. It has no
+#      `secrets-external/` code path at all, so even an existing key could not
+#      reach the converge. That script is the blocking item.
+#
+# Flip this to true in the same change that closes all three, so the assert in
+# tasks/pgbackrest.yml is satisfiable the first time it runs.
 postgres_pgbackrest_repo2_enabled: false
 postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
 postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
@@ -237,6 +267,26 @@ postgres_backup_repo2_s3_access_key_id: >-
 postgres_backup_repo2_s3_secret_access_key: >-
   {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
 postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
+
+# Asynchronous archiving. NOT optional once a repo lives on the network:
+# synchronous archive-push blocks archive_command on the S3 write, so every
+# segment pays full round-trip latency and a slow repo backs archiving up
+# behind write volume. Async batches and parallelizes the pushes in a
+# background process; the spool holds only its acknowledgement files (zero
+# bytes on success), not WAL, so it lives on local disk and is safe to lose.
+#
+# Async alone does NOT bound pg_wal during a repo outage — segments stay in
+# pg_wal until actually pushed, so an unreachable repo still fills the disk
+# and halts the primary eventually. archive-push-queue-max below is what
+# bounds it: past the limit pgBackRest acks the segment to PostgreSQL and
+# DROPS it (with a warning in the PostgreSQL log). That trades a PITR gap —
+# unrestorable between the drop and the next base backup — for primary
+# availability, which is the estate's stated preference (rebuildable over
+# un-killable). A dropped chain shows up in pgbackrest info as a missing WAL
+# range; the scheduled base backups re-establish recoverability.
+postgres_pgbackrest_archive_async: true
+postgres_pgbackrest_spool_path: /var/spool/pgbackrest
+postgres_pgbackrest_queue_max: 4GiB
 
 # Retention: number of full backups to keep. pgBackRest expires the WAL that
 # predates the oldest retained full automatically, so this one knob bounds both

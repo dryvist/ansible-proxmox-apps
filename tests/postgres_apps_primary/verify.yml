@@ -1,0 +1,50 @@
+---
+- name: Verify shared apps PostgreSQL routing authority
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../inventory/group_vars/all.yml
+    - ../../inventory/group_vars/postgres_group.yml
+    - ../../inventory/group_vars/nautobot_group.yml
+    - ../../inventory/group_vars/vikunja_group.yml
+    - ../../inventory/group_vars/zammad_group.yml
+  tasks:
+    - name: Set the published inventory domain fixture
+      ansible.builtin.set_fact:
+        tofu_data:
+          domain: example.test
+
+    - name: Assert every apps-tier consumer follows the declared primary
+      ansible.builtin.assert:
+        that:
+          - postgres_apps_primary_host == 'postgres-apps'
+          - postgres_primary_host == postgres_apps_primary_host
+          - nautobot_db_host == 'postgres-apps.example.test'
+          - vikunja_db_host == 'postgres-apps.example.test'
+          - zammad_db_host == 'postgres-apps.example.test'
+
+    - name: Model a deliberate apps-tier failover
+      ansible.builtin.set_fact:
+        postgres_apps_primary_host: postgres
+
+    - name: Assert one override moves the cluster role and every client
+      ansible.builtin.assert:
+        that:
+          - postgres_primary_host == 'postgres'
+          - nautobot_db_host == 'postgres.example.test'
+          - vikunja_db_host == 'postgres.example.test'
+          - zammad_db_host == 'postgres.example.test'
+
+- name: Verify the AI PostgreSQL tier remains independent
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../inventory/group_vars/all.yml
+    - ../../inventory/group_vars/postgres_ai_group.yml
+
+  tasks:
+    - name: Assert the AI primary declaration is unchanged
+      ansible.builtin.assert:
+        that:
+          - postgres_primary_host == 'postgres-ai-1'
+          - postgres_cluster_group == 'postgres_ai_group'

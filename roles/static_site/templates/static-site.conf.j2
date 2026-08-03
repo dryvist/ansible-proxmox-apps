@@ -1,0 +1,65 @@
+# {{ ansible_managed }}
+# Static document root served over plain HTTP.
+#
+# TLS terminates upstream at the reverse proxy, which forwards here in the
+# clear. This vhost must never listen on 443 or reference a certificate.
+#
+# IPv4-only `listen`: an `[::]` socket aborts nginx startup outright on a guest
+# built without IPv6, and the proxy in front of this host reaches it over the
+# address family the guest actually has.
+
+server {
+    listen {{ static_site_port }};
+
+    server_name {{ static_site_server_name }};
+
+    root {{ static_site_root }};
+    index {{ static_site_index }};
+
+    # Keep the nginx version out of responses and error pages.
+    server_tokens off;
+
+    # No directory listings, ever — a directory without an index must not
+    # enumerate its contents.
+    autoindex off;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length {{ static_site_gzip_min_length }};
+    # text/html is compressed unconditionally and is invalid in this list.
+    gzip_types {{ static_site_gzip_types | join(' ') }};
+
+    # Regex locations match in source order, so the dotfile deny has to precede
+    # the asset rule below — otherwise a request for `/.env.js` would match the
+    # asset rule first and be served.
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Build artifacts resolve strictly from disk: a miss is a real 404 rather
+    # than the index shell. Without this carve-out the client-side-routing
+    # fallback below would answer 200 + HTML for every missing asset, masking
+    # broken build output and leaving the custom error page unreachable.
+    location ~* \.({{ static_site_asset_extensions | join('|') }})$ {
+        try_files $uri =404;
+    }
+
+    location / {
+        # Unknown paths return the index so the app's own client-side router
+        # resolves them.
+        try_files $uri $uri/ /{{ static_site_index }};
+    }
+{% if static_site_error_page_present %}
+
+    error_page 404 /{{ static_site_error_page }};
+
+    # Reachable only through the error_page redirect above, never as a direct
+    # request path.
+    location = /{{ static_site_error_page }} {
+        internal;
+    }
+{% endif %}
+}

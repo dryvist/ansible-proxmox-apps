@@ -35,14 +35,14 @@ splunk_host: "{{ hostvars['splunk']['ansible_host'] }}"
 **Note**: For LXC containers using `proxmox_pct_remote` connection
 (including `haproxy`), `ansible_host` contains the Proxmox VE hostname
 for the connection plugin, not the container's IP. To get the actual
-container IP for service testing, use `tofu_data.containers` from
-`tofu_inventory.json`.
+container IP for service testing, use `tofu_data.containers` from the
+resolved inventory.
 
 ### Port Constants
 
 Ports are defined once in tofu-proxmox `locals.tf`
 (`pipeline_constants`), exported through the `ansible_inventory` output
-into `inventory/tofu_inventory.json`, and loaded as `tofu_data.constants`
+into the published inventory object, and loaded as `tofu_data.constants`
 by `inventory/load_tofu.yml`:
 
 ```yaml
@@ -61,10 +61,8 @@ unifi_port: "{{ tofu_data.constants.syslog_ports.unifi }}"
 
 Port assignments and IP derivation both live in the `tofu-proxmox`
 repository (`locals.tf` `pipeline_constants`). To change port values,
-edit them there and apply; the apply publishes the inventory to S3
-(fetched directly by `load_tofu.yml` when AWS read creds are present)
-and its after-hook rewrites the local `inventory/tofu_inventory.json`
-cache here.
+edit them there and apply; the apply publishes the inventory object, which
+`load_tofu.yml` fetches directly.
 
 ## Automated Testing
 
@@ -177,7 +175,7 @@ Each LXC container's Proxmox node host is derived from the inventory as
 
 In addition, these playbooks expect an OpenTofu-generated inventory file:
 
-- `inventory/tofu_inventory.json` must exist and be up to date before
+- `TOFU_INVENTORY_PATH` must point at a current published inventory before
   running `validate-pipeline.yml` or any playbook that relies on
   `inventory/load_tofu.yml`.
 
@@ -189,31 +187,31 @@ values from OpenTofu inventory or Doppler before running.
 ### Resolve IPs and Ports from Inventory
 
 ```bash
-# IPs come from tofu_inventory.json (gitignored, contains real IPs)
+# IPs come from the published inventory (contains real IPs — do not commit)
 HAPROXY_IP=$(jq -r '.containers.haproxy.ip' \
-  inventory/tofu_inventory.json)
+  "$TOFU_INVENTORY_PATH")
 
 CRIBL_EDGE_IP=$(jq -r '.containers | to_entries[] | select(.value.tags // [] | contains(["edge"])) | .value.ip' \
-  inventory/tofu_inventory.json | head -1)
+  "$TOFU_INVENTORY_PATH" | head -1)
 
 CRIBL_STREAM_IP=$(jq -r '.containers | to_entries[] | select(.value.tags // [] | contains(["stream"])) | .value.ip' \
-  inventory/tofu_inventory.json | head -1)
+  "$TOFU_INVENTORY_PATH" | head -1)
 
 SPLUNK_IP=$(jq -r '.splunk_vm.splunk.ip' \
-  inventory/tofu_inventory.json)
+  "$TOFU_INVENTORY_PATH")
 
-# Ports come from the constants section of tofu_inventory.json
+# Ports come from the constants section of the published inventory
 HAPROXY_STATS_PORT=$(jq -r '.constants.service_ports.haproxy_stats' \
-  inventory/tofu_inventory.json)
+  "$TOFU_INVENTORY_PATH")
 
 SPLUNK_HEC_PORT=$(jq -r '.constants.service_ports.splunk_hec' \
-  inventory/tofu_inventory.json)
+  "$TOFU_INVENTORY_PATH")
 
 CRIBL_EDGE_API_PORT=$(jq -r '.constants.service_ports.cribl_edge_api' \
-  inventory/tofu_inventory.json)
+  "$TOFU_INVENTORY_PATH")
 
 CRIBL_STREAM_API_PORT=$(jq -r '.constants.service_ports.cribl_stream_api' \
-  inventory/tofu_inventory.json)
+  "$TOFU_INVENTORY_PATH")
 ```
 
 ### HAProxy
@@ -249,12 +247,12 @@ curl -sk https://$SPLUNK_IP:$SPLUNK_HEC_PORT/services/collector/event \
 ## Configuring Syslog Sources
 
 Point syslog sources at the HAProxy IP. Each source type uses a dedicated
-port defined in the `constants` section of `inventory/tofu_inventory.json`.
+port defined in the `constants` section of the resolved inventory.
 
 To view port assignments:
 
 ```bash
-jq '.constants.syslog_ports' inventory/tofu_inventory.json
+jq '.constants.syslog_ports' "$TOFU_INVENTORY_PATH"
 ```
 
 HAProxy routes each port to the Cribl Edge backend using round-robin with
@@ -262,7 +260,7 @@ health checks.
 
 General configuration pattern for any syslog source:
 
-1. Look up the assigned port in `inventory/tofu_inventory.json` (`.constants.syslog_ports`)
+1. Look up the assigned port in the resolved inventory (`.constants.syslog_ports`)
 2. Configure the source to send syslog (UDP or TCP) to `$HAPROXY_IP:$ASSIGNED_PORT`
 3. Verify events arrive using `tests/e2e/test_pipeline.py`
 
