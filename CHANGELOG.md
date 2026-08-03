@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.6.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.5.0...v4.6.0) (2026-08-03)
+
+
+### Features
+
+* **openbao:** support independently-scoped github write realms ([#1362](https://github.com/dryvist/ansible-proxmox-apps/issues/1362)) ([e12249b](https://github.com/dryvist/ansible-proxmox-apps/commit/e12249b8060973cb3ae3ae5d981ec90dd5cb1dd7))
+
 ## [4.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.4.0...v4.5.0) (2026-08-03)
 
 
