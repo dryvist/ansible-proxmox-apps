@@ -7,14 +7,14 @@ description: OpenTofu-driven inventory consumption
 
 ## Principle
 
-Inventory is loaded dynamically from OpenTofu state via
-`inventory/tofu_inventory.json`. The `load_tofu.yml` playbook
+Inventory is loaded dynamically from the published OpenTofu inventory
+object. The `load_tofu.yml` playbook
 must run before all other playbooks. It also delegates `tofu_data`
 to all inventory hosts so roles can access it without indirection.
 
 ## Data Structure
 
-The tofu_inventory.json contains:
+The published inventory contains:
 
 ```json
 {
@@ -78,10 +78,9 @@ ports: >-
 ## Validation
 
 The `load_tofu.yml` playbook resolves an inventory source
-(`TOFU_INVENTORY_PATH` → S3 artifact → local cache) and validates that
-the `constants` section is present.
+(`TOFU_INVENTORY_PATH` → the published object) and validates that the
+`constants` section is present.
 
 If validation fails, re-run the tofu-proxmox Terrakube workspace — the
-apply publishes the inventory to S3 and refreshes the local cache via
-its after-hook. With AWS read creds, `load_tofu.yml` fetches the
-published artifact directly; no manual regeneration step exists.
+apply republishes the inventory object, which `load_tofu.yml` fetches
+directly. There is no manual regeneration step.
