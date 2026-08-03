@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.4.0...v4.5.0) (2026-08-03)
+
+
+### Features
+
+* **openbao:** grant ai-orchestrator read on the task-board credential ([#1356](https://github.com/dryvist/ansible-proxmox-apps/issues/1356)) ([6751331](https://github.com/dryvist/ansible-proxmox-apps/commit/6751331595b7a75d707ffe8140d12a890b79a6e0))
+* **static_site:** bind the role to a host group ([#1359](https://github.com/dryvist/ansible-proxmox-apps/issues/1359)) ([65abab1](https://github.com/dryvist/ansible-proxmox-apps/commit/65abab179f20a51586c7273abe87cbe8a8d528d0))
+* **static_site:** serve a static document root over HTTP behind the proxy ([#1358](https://github.com/dryvist/ansible-proxmox-apps/issues/1358)) ([4cbf997](https://github.com/dryvist/ansible-proxmox-apps/commit/4cbf9975ad85323a384319a31c8e4c2283f2b86e))
+
+
+### Bug Fixes
+
+* **postgres:** align apps with shared primary ([#1352](https://github.com/dryvist/ansible-proxmox-apps/issues/1352)) ([d4e9444](https://github.com/dryvist/ansible-proxmox-apps/commit/d4e9444a303b427f40cab1ab2cf7fd3179f73982))
+
 ## [4.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.3.1...v4.4.0) (2026-08-03)
 
 
