@@ -112,9 +112,27 @@ Both sourcetypes set the HEC `host` field to the guest **FQDN**.
   "repo": "ansible-proxmox-apps",
   "git_sha": "<40-char sha>",
   "ok": 42, "changed": 3, "skipped": 11,
-  "failures": 0, "unreachable": 0, "rescued": 0, "ignored": 0
+  "failures": 0, "unreachable": 0, "rescued": 0, "ignored": 0,
+  "desired_state_current": false,
+  "desired_state_published": "<etag the artifact was rendered from>",
+  "desired_state_live": "<etag of desired state right now>"
 }
 ```
+
+The three `desired_state_*` fields answer the link **upstream** of a converge:
+was the inventory this run consumed itself built from current desired state?
+An apply only re-renders the artifact and a converge only consumes whatever the
+artifact says, so a desired-state edit that was never applied makes every
+converge confidently wrong rather than failing. `inventory_resolve`
+(homelab-contracts) compares the fingerprint stamped into the artifact against
+the live desired-state object and publishes the verdict; site.yml passes it
+through.
+
+**They are omitted, not defaulted, when the check could not run** (no store
+credentials, or an artifact predating schema 2.1.0). A default of `true` would
+make the alert green for every converge that never checked — the same silent
+hold the alerting exists to catch. `tests/test_converge_telemetry.py` pins the
+absent case alongside both verdicts.
 
 `sourcetype="ansible:converge:roster"` — one per **inventory** host, emitted
 whether or not that host was targeted by this run. This is what makes orphan
@@ -190,7 +208,11 @@ subsearch result cap nor an autofinalize can silently truncate the answer.
 ## Where this lands
 
 `docs/splunk/converge_freshness_savedsearches.conf` carries both alerts as
-ready-to-deploy `savedsearches.conf` stanzas.
+ready-to-deploy `savedsearches.conf` stanzas. They now also ship as code in
+`ansible-splunk` (`roles/splunk_docker/templates/savedsearches.conf.j2`,
+stanzas `ansible_stale_converge`, `ansible_orphan_host`, `ansible_apply_owed`),
+which is what actually deploys them; keep the two in sync or retire this copy
+once that has converged.
 
 `ansible-splunk` owns the Splunk deployment, so it must:
 

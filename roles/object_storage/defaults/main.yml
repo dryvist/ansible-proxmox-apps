@@ -70,8 +70,13 @@ object_storage_aws_env:
 # - dryvist-homelab-backups: the guest/database backup target (pgBackRest and the
 #   guest vzdump S3 sync leg write here). PRIVATE — no `policy` key, so it never
 #   gets the anonymous-read document; backups must never be world-readable on the
-#   internal network. Versioned like the others for on-site anti-deletion; the
-#   same 1:1-named bucket mirrors to Backblaze B2 with object lock out of band.
+#   internal network. Versioned like the others for on-site anti-deletion.
+#   `offsite_owner` marks it as owned: its writer maintains the offsite copy
+#   itself (pgBackRest repo2, writing every backup and WAL segment to both repos
+#   in the same operation), so the scheduled copy below must never touch it. A
+#   second, out-of-band writer here can silently copy a truncated subset while
+#   reporting success — the exact failure the dual-repo arrangement exists to
+#   make structurally impossible.
 object_storage_default_buckets:
   - name: splunk-addons
     policy: download
@@ -84,6 +89,7 @@ object_storage_default_buckets:
     versioning: true
   - name: dryvist-homelab-backups
     versioning: true
+    offsite_owner: pgbackrest
     # MUST stay short, and this is the one bucket where the 10-year default is
     # actively harmful. pgBackRest reclaims space by DELETING expired WAL and
     # backup objects. On a versioned bucket a delete only writes a delete
@@ -113,3 +119,83 @@ object_storage_infra_mirrors:
     url: https://cdn.cribl.io/dl/latest/cribl-linux-x64.tgz
     bucket: splunk-addons
     key: infra/cribl-linux-x64.tgz
+
+# --- Offsite copies --------------------------------------------------------
+# Without these, every object in this store exists in exactly one place: this
+# guest. Losing it loses the remote state, the published inventory and the
+# staged artifacts simultaneously, with nothing left over to signal that it
+# happened. A scheduled rclone job copies each listed bucket to an
+# S3-compatible offsite target. See tasks/offsite.yml for why it copies rather
+# than syncs, and why an owned bucket is excluded.
+#
+# Off by default: it cannot work without a scoped offsite key per bucket, and
+# enabling it without one would install timers that fail every run. Turn it on
+# in the same change that provisions the keys.
+object_storage_offsite_enabled: false
+
+# One entry per bucket to copy. Environment-specific, so it is supplied by
+# inventory rather than named here:
+#   - name:        the local bucket
+#   - secret_path: its credential in the EXTERNAL secrets mount (an offsite
+#                  provider is internet-facing, so its key never belongs on
+#                  the internal mount)
+# Each offsite bucket gets its own write-scoped key, so a leaked key reaches
+# one bucket rather than the whole account.
+object_storage_offsite_buckets: []
+
+# Field names inside each credential entry. One convention for every bucket —
+# per-bucket field-name variables would be a second thing to keep in sync.
+object_storage_offsite_endpoint_field: S3_ENDPOINT
+object_storage_offsite_bucket_field: BUCKET
+object_storage_offsite_key_id_field: RW_KEY_ID
+object_storage_offsite_app_key_field: RW_APP_KEY
+object_storage_offsite_secret_fields:
+  - "{{ object_storage_offsite_endpoint_field }}"
+  - "{{ object_storage_offsite_bucket_field }}"
+  - "{{ object_storage_offsite_key_id_field }}"
+  - "{{ object_storage_offsite_app_key_field }}"
+
+# Buckets whose writer maintains its own offsite copy. Derived from the bucket
+# declarations rather than restated, so marking a bucket `offsite_owner` is the
+# single act that both documents and enforces the exclusion.
+object_storage_offsite_owner_managed: >-
+  {{ object_storage_default_buckets
+     | selectattr('offsite_owner', 'defined')
+     | map(attribute='name') | list }}
+
+# Where the credential is read from. Same route the rest of the estate uses:
+# an AppRole from the environment, never a secret written to a file here.
+object_storage_offsite_bao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+object_storage_offsite_bao_role_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_ANSIBLE_ROLE_ID') | default('', true) }}
+object_storage_offsite_bao_secret_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_ANSIBLE_SECRET_ID') | default('', true) }}
+
+# Deadman ping per bucket, keyed by bucket name. A bucket with no entry runs
+# without one — the copy still happens, but a run that stops happening raises
+# nothing, so set one for anything whose loss would matter.
+object_storage_offsite_healthcheck_urls: {}
+
+# Schedule. Daily off-peak, splayed so the buckets do not contend for the
+# uplink at once. Persistent, so a guest that was down at the scheduled time
+# catches up at boot instead of silently skipping a day.
+object_storage_offsite_unit: object-storage-offsite
+object_storage_offsite_schedule: "*-*-* 02:00:00"
+object_storage_offsite_splay: 1800
+
+# Transfer tuning. Concurrency, not per-connection speed, governs throughput
+# to a throttling offsite endpoint. The timeout is a stall ceiling for the
+# whole bucket, not a target: too low and a large bucket never completes.
+object_storage_offsite_transfers: 8
+object_storage_offsite_bandwidth_limit: ""
+object_storage_offsite_stats_interval: 5m
+object_storage_offsite_timeout: 6h
+
+# rclone moves objects between two different endpoints in one pass; the aws
+# CLI already installed here cannot, and would have to stage each whole bucket
+# on local disk first. Pinned + checksum-verified, matching the version already
+# vetted elsewhere in the estate. Renovate bumps the pair together; they must
+# never be changed independently.
+# renovate: datasource=github-releases depName=rclone/rclone
+object_storage_rclone_version: "1.74.4"
+object_storage_rclone_zip_sha256: "fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d"
