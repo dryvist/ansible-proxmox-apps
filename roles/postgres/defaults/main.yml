@@ -203,15 +203,31 @@ postgres_pgbackrest_enabled: true
 # happens to reach 16 MB", which is not an objective at all. Seconds.
 postgres_archive_timeout: 60
 
-# Stanza + repo layout. The stanza is named for the HOST, not the cluster: every
-# Debian host names its cluster `main`, so deriving from postgres_cluster_name
-# gave each host the same stanza AND the same repo path, colliding them in one
-# shared repo (#1017). The repo path is the in-bucket prefix, so objects land at
-# s3://<bucket>/postgres/<inventory_hostname>/... — one prefix per host.
+# Stanza + repo layout. A stanza is one pgBackRest view of one PostgreSQL
+# cluster, so it is named for the REPLICATION CLUSTER — the primary's inventory
+# hostname — and every member of that cluster resolves the same name. A standby
+# inherits archive_command from the primary when it is bootstrapped from a base
+# backup, so a host-scoped stanza names one thing in archive_command and another
+# in the config file's section header; the two agree only on the primary. That
+# also survives failover: a promoted standby keeps archiving into the stanza
+# that already holds the cluster's backup history, instead of silently opening a
+# second one and stranding every prior backup.
+#
+# It is NOT derived from postgres_cluster_name: every Debian host names its
+# cluster `main`, so that gave unrelated hosts the same stanza AND the same repo
+# path, colliding them in one shared repo (#1017). With no primary named, the
+# host stands alone and is its own cluster, so it falls back to its own name and
+# that collision stays fixed.
+#
+# The repo path is the in-bucket prefix, so objects land at
+# s3://<bucket>/postgres/<stanza>/... — one prefix per cluster.
 #
 # The bucket name is identical on RustFS and Backblaze B2 — B2's namespace is
 # global, so one globally-unique name satisfies the 1:1 RustFS<->B2 parity rule.
-postgres_pgbackrest_stanza: "{{ inventory_hostname }}"
+postgres_pgbackrest_stanza: >-
+  {{ postgres_primary_host
+     if (postgres_primary_host | length > 0)
+     else inventory_hostname }}
 postgres_backup_s3_bucket: dryvist-homelab-backups
 postgres_pgbackrest_repo_path: "/postgres/{{ postgres_pgbackrest_stanza }}"
 
