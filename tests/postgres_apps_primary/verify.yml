@@ -48,3 +48,35 @@
         that:
           - postgres_primary_host == 'postgres-ai-1'
           - postgres_cluster_group == 'postgres_ai_group'
+
+# The pgBackRest stanza is the unit of exclusive write access to a repo: two
+# instances archiving into one stanza put a WAL segment there under a name the
+# live cluster wrote different content to, and pgBackRest then refuses every
+# later push. So the stanza must follow the HOST and nothing else — in
+# particular it must never follow the cluster's primary, because a standby that
+# named the primary's stanza would start writing into it the moment it was
+# promoted, while the ex-primary still held the same name.
+- name: Verify the pgBackRest stanza is owned by the host, not the cluster role
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../roles/postgres/defaults/main.yml
+
+  tasks:
+    - name: Assert a standby's stanza and repo path are its own
+      # Set on the task, not the play: vars_files outranks play vars, so a play
+      # var here would lose to the empty default this file loads.
+      vars:
+        # This host is a member of the apps pair but NOT its primary, so the
+        # role resolves it to a standby — the case that must own its own stanza.
+        postgres_primary_host: postgres-apps
+      ansible.builtin.assert:
+        that:
+          - postgres_role == 'standby'
+          - postgres_pgbackrest_stanza == inventory_hostname
+          - postgres_pgbackrest_repo_path == '/postgres/' ~ inventory_hostname
+          - postgres_pgbackrest_stanza != postgres_primary_host
+        fail_msg: >-
+          The pgBackRest stanza or repo path follows something other than
+          inventory_hostname, so two hosts in one cluster can resolve to the
+          same stanza and archive into each other's repository.
