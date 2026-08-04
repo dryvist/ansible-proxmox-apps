@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Scheduled, read-only audit: compares every Sonarr episode file's audio
+# language (mediaInfo.audioLanguages, populated by Sonarr's own MediaInfo
+# scan at import) against the required-language policy below. Reports
+# mismatches only — never touches a file, a Sonarr setting, or a release.
+#
+# Fail-safe throughout: anything it cannot determine (unreadable API key,
+# unreachable Sonarr, a file with no MediaInfo language) is skipped and
+# logged, never treated as a mismatch.
+set -uo pipefail
+
+CONFIG_XML="{{ sonarr_language_audit_sonarr_config_path }}"
+API="http://127.0.0.1:{{ sonarr_language_audit_sonarr_port }}"
+REQUIRED="{{ sonarr_language_audit_required_language }}"
+NTFY_URL="{{ sonarr_language_audit_ntfy_url }}"
+
+log() { logger -t sonarr-language-audit "$1"; }
+
+api_key="$(grep -o '<ApiKey>[^<]*</ApiKey>' "$CONFIG_XML" 2>/dev/null | sed -e 's/<[^>]*>//g')"
+if [ -z "$api_key" ]; then
+  log "cannot read the Sonarr API key from $CONFIG_XML — skipping this run (fail safe)"
+  exit 0
+fi
+
+series="$(curl -fsS -m 15 -H "X-Api-Key: $api_key" "$API/api/v3/series")"
+if [ -z "$series" ]; then
+  log "could not reach the Sonarr API — skipping this run (fail safe)"
+  exit 0
+fi
+
+mismatches=""
+mismatch_count=0
+undetermined_count=0
+
+while IFS=$'\t' read -r series_id title; do
+  [ -z "$series_id" ] && continue
+
+  files="$(curl -fsS -m 15 -H "X-Api-Key: $api_key" "$API/api/v3/episodefile?seriesId=$series_id")"
+  [ -z "$files" ] && continue
+
+  while IFS=$'\t' read -r rel_path langs; do
+    [ -z "$rel_path" ] && continue
+    if [ -z "$langs" ]; then
+      undetermined_count=$((undetermined_count + 1))
+      continue
+    fi
+    if ! printf '%s' "$langs" | tr '/' ' ' | grep -qiw "$REQUIRED"; then
+      mismatch_count=$((mismatch_count + 1))
+      mismatches="${mismatches}${title} / ${rel_path}: found [${langs}], required [${REQUIRED}]"$'\n'
+    fi
+  done < <(jq -r '.[] | [.relativePath, (.mediaInfo.audioLanguages // "")] | @tsv' <<<"$files")
+done < <(jq -r '.[] | [.id, .title] | @tsv' <<<"$series")
+
+log "audit complete: $mismatch_count mismatch(es), $undetermined_count file(s) with no determinable language"
+
+if [ "$mismatch_count" -gt 0 ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] && log "mismatch: $line"
+  done <<<"$mismatches"
+
+  if [ -n "$NTFY_URL" ]; then
+    curl -fsS -m 15 \
+      -H "Title: Sonarr audio-language audit: $mismatch_count mismatch(es)" \
+      -H "Priority: default" -H "Tags: warning,speaking_head" \
+      -d "$mismatches" "$NTFY_URL" >/dev/null 2>&1 || true
+  fi
+fi
+
+exit 0
