@@ -583,6 +583,46 @@
     # Points at the ingress VIP when published, else the single Traefik LXC's IP.
     - technitium_dns_ingress_target_ip | length > 0
 
+# The SAME Traefik-fronted names also carry a record in the PARENT apex zone
+# (technitium_dns_apex_domain) left over from before this role narrowed to the
+# subdomain-only zone above. That record was never repointed at Traefik, so it
+# still answers with each service's old pre-migration backend address, which no
+# longer terminates TLS: the bare name resolves, then hangs until timeout
+# instead of failing fast or reaching the service. This task overwrites that
+# stale value in place with the same ingress target the subdomain alias above
+# already uses correctly — it never deletes a record, so it cannot touch the
+# apex zone's other content (cluster node entries, any other static record).
+# Scoped to exactly technitium_dns_ingress_aliases, the same fronted-service
+# name list the subdomain task above uses, so this self-heals on every primary
+# converge without a separate one-off list to maintain.
+- name: Create Traefik ingress alias apex A records
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item }}.{{ technitium_dns_apex_domain }}"
+      zone: "{{ technitium_dns_apex_domain }}"
+      type: A
+      ipAddress: "{{ technitium_dns_ingress_target_ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_ingress_aliases | default([]) }}"
+  loop_control:
+    label: "{{ item }}.{{ technitium_dns_apex_domain }} -> {{ technitium_dns_ingress_target_ip }}"
+  register: technitium_dns_ingress_apex_alias_result
+  changed_when: technitium_dns_ingress_apex_alias_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_ingress_apex_alias_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_ingress_apex_alias_result.json.errorMessage | default(''))"
+  no_log: true
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_ingress_target_ip | length > 0
+
 # The Proxmox API/UI apex (the subdomain zone root itself) resolves directly to
 # the Proxmox node endpoint IPs when PROXMOX_IP_ADDRESSES is set. Delete the old
 # apex A set first so the authoritative answer exactly matches the desired node
