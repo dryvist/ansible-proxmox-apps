@@ -153,6 +153,38 @@
           - "'policy drop' in live_chain.stdout"
         fail_msg: "Loaded killswitch output policy is not drop."
 
+    # --- 1b. self-healing /etc/nftables.conf survives an unattended flush --
+    # Reproduces exactly what Debian's nftables postinst does on every package
+    # upgrade (`nft flush ruleset` then `nft -f /etc/nftables.conf` — the
+    # ExecStop/ExecStart pair of nftables.service): proves the killswitch table
+    # is reconstructed by that reload, not merely present because we loaded it
+    # by hand two tasks ago.
+    - name: Simulate the exact flush an unattended nftables restart triggers
+      ansible.builtin.command:
+        cmd: nft flush ruleset
+      changed_when: true
+
+    - name: Simulate nftables.service's own reload of /etc/nftables.conf
+      ansible.builtin.command:
+        cmd: nft -f /etc/nftables.conf
+      changed_when: true
+
+    - name: Read the killswitch output chain after the simulated flush+reload
+      ansible.builtin.command:
+        cmd: nft list chain inet killswitch output
+      register: post_flush_chain
+      changed_when: false
+
+    - name: Assert the killswitch survives the simulated flush+reload
+      ansible.builtin.assert:
+        that:
+          - "'policy drop' in post_flush_chain.stdout"
+        fail_msg: >-
+          The killswitch table did NOT survive a simulated `nft flush ruleset`
+          + `nft -f /etc/nftables.conf` (exactly what an unattended nftables
+          package restart does). /etc/nftables.conf must `include` the
+          killswitch ruleset so that reload is atomic and self-healing.
+
     # --- 2. qBittorrent bound to wg0 ---------------------------------------
     - name: Read qBittorrent config
       ansible.builtin.slurp:
@@ -296,6 +328,26 @@
           - "'peer \"${BACKUP_PEER}\" endpoint' in (validator.content | b64decode)"
           - "'peer \"${PRIMARY_PEER}\" remove' in (validator.content | b64decode)"
         fail_msg: "Runtime validator does not cover both address families, fail closed, or sticky failover."
+
+    - name: Assert the self-heal loop restarts ALL FOUR tunnel-bound services
+      # All four units carry BindsTo=download-vpn-wg.service, so all four stop
+      # whenever the tunnel unit restarts (e.g. a real Proton failover) — not
+      # just qBittorrent/NAT-PMP. Prowlarr and FlareSolverr previously stayed
+      # down until the next converge; regressing this silently breaks indexer
+      # sync again.
+      vars:
+        _validator_content: "{{ validator.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'for svc in ' in _validator_content"
+          - "'qbittorrent-nox.service' in _validator_content"
+          - "'download-vpn-natpmp.service' in _validator_content"
+          - "'prowlarr.service' in _validator_content"
+          - "'flaresolverr.service' in _validator_content"
+        fail_msg: >-
+          The runtime validator's self-heal loop must restart all four
+          BindsTo=download-vpn-wg.service units, not just qbittorrent-nox and
+          download-vpn-natpmp.
 
     - name: Clean up the loaded killswitch table
       ansible.builtin.command:

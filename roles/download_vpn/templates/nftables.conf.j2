@@ -1,0 +1,42 @@
+#!/usr/sbin/nft -f
+{#
+  Self-healing replacement for Debian's stock /etc/nftables.conf.
+
+  WHY this file is now role-managed: nftables.service's own ExecStart/
+  ExecReload is `nft -f /etc/nftables.conf`, and its ExecStop is `nft flush
+  ruleset` (a GLOBAL flush — every table, every family, not just this
+  package's own). The nftables package's postinst runs
+  `deb-systemd-invoke try-restart nftables.service` on every upgrade,
+  including one unattended-upgrades applies with nobody watching. Before this
+  file included our rulesets, that restart flushed the killswitch (and the
+  LAN-reply mangle table) and reloaded only the stock empty stub below —
+  leaving the box wide open (no rule at all, not even fail-closed) until the
+  next converge, with no systemd-level signal (the killswitch unit reports
+  "active" throughout; only the kernel ruleset was ever gone).
+
+  `nft -f` loads an entire file as ONE atomic kernel transaction: a flush
+  followed by these `include`s can never be observed half-applied, so a
+  restart of nftables.service (however triggered) reconstructs killswitch +
+  lanroute in the same breath it tears them down — no open window, unlike
+  stopping and separately restarting the killswitch service's own unit would.
+  Deliberately NOT wired to notify a reload here (see tasks/main.yml) so
+  deploying this file is inert on a live host until nftables.service is next
+  triggered on its own.
+-#}
+
+flush ruleset
+
+include "{{ download_vpn_nft_ruleset_path }}"
+include "{{ download_vpn_mangle_ruleset_path }}"
+
+table inet filter {
+	chain input {
+		type filter hook input priority filter;
+	}
+	chain forward {
+		type filter hook forward priority filter;
+	}
+	chain output {
+		type filter hook output priority filter;
+	}
+}

@@ -37,6 +37,13 @@ outside the VPN:
    intact so the tunnel is never recursively routed. The role re-asserts this
    table immediately before the deploy-time gate, atomically rebuilding it only
    when it has drifted to a clearnet `default via`, so every converge is clean.
+7. **Self-healing `/etc/nftables.conf`** — Debian's nftables package restarts
+   `nftables.service` (a global `flush ruleset` + reload) on every package
+   upgrade, including unattended ones; without this, that restart would erase
+   the killswitch with no systemd-visible signal. `/etc/nftables.conf` is
+   role-managed to `include` the killswitch and LAN-reply rulesets, so the same
+   restart's reload is one atomic transaction that reconstructs them instead of
+   leaving the box open. See `templates/nftables.conf.j2`.
 
 ## Persistent state
 
@@ -103,7 +110,11 @@ If/when IPv6 is enabled, do **all** of these or it can leak:
   violation.**
 - **Runtime** — `download-vpn-validate.timer` (every ~2 min). Re-checks the
   above; on ANY breach it stops qBittorrent, alerts ntfy, and pings the
-  healthchecks deadman. A stalled validator also pages (deadman semantics).
+  healthchecks deadman. A stalled validator also pages (deadman semantics). On
+  a clean cycle it also self-heals: qBittorrent, NAT-PMP, Prowlarr, and
+  FlareSolverr all carry `BindsTo=download-vpn-wg.service`, so all four stop
+  whenever the tunnel unit restarts (e.g. a real Proton failover); the
+  validator restarts any of the four still down once the VPN is healthy again.
 
 ## Installation
 
