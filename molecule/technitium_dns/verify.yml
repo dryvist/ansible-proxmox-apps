@@ -168,3 +168,32 @@
         fail_msg: >-
           Extra-A truthy filter did not drop the empty-ip entry:
           {{ technitium_dns_extra_a_records }}.
+
+    # BMC records: the `<node>=<address>` env single source must parse into
+    # idrac-<node> entries, and an unset/empty source must yield an empty map
+    # rather than a malformed entry — a node with no BMC contributes nothing.
+    - name: Assert BMC address parsing yields idrac-<node> entries
+      vars:
+        parse_bmc: >-
+          {{ dict(bmc_source | default('', true)
+             | split(',') | map('trim') | reject('equalto', '')
+             | map('split', '=') | list) }}
+        bmc_records: >-
+          {{ dict(parse_bmc.keys() | map('regex_replace', '^', 'idrac-')
+                  | zip(parse_bmc.values()))
+             | dict2items(key_name='name', value_name='ip') }}
+      ansible.builtin.assert:
+        that:
+          - >-
+            (bmc_records | map(attribute='name') | list)
+            == (bmc_source | length > 0) | ternary(['idrac-node-a', 'idrac-node-b'], [])
+          - >-
+            (bmc_records | map(attribute='ip') | list)
+            == (bmc_source | length > 0) | ternary(['192.0.2.11', '192.0.2.12'], [])
+        fail_msg: >-
+          BMC parsing produced {{ bmc_records }} for source '{{ bmc_source }}'.
+      loop:
+        - "node-a=192.0.2.11, node-b=192.0.2.12"
+        - ""
+      loop_control:
+        loop_var: bmc_source

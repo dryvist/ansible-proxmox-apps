@@ -52,14 +52,33 @@ technitium_dns_extra_cname_records:
 # Studio above. IP comes from the live tofu reservation, not a literal, so it
 # tracks any future re-IP automatically. The underlying domain-naming mismatch
 # (every guest using bare-apex FQDNs is exposed to the same gap) is tracked
-# separately — see ansible-proxmox-apps issue (INC-17123 follow-up).
-technitium_dns_extra_a_records:
-  - name: "{{ llm_large_serving_host }}"
-    ip: "{{ llm_large_serving_ip }}"
-  - name: cribl-stream-01
-    # Cribl Stream is critical-tier, so container_ip is its declared static
-    # address. default('') so an incomplete inventory during a rebuild
-    # (cribl-stream-01 not yet loaded) yields a blank IP that the writer's truthy
-    # filter skips, instead of an undefined-var error that aborts the play (#17136).
-    ip: "{{ hostvars['cribl-stream-01'].container_ip | default('', true) }}"
-    zone: "{{ technitium_dns_apex_domain }}"
+# separately — see ansible-proxmox-apps issue (INC-17123 follow-up). Its IP keeps
+# default('') so an incomplete inventory during a rebuild (cribl-stream-01 not yet
+# loaded) yields a blank IP the writer's truthy filter skips, instead of an
+# undefined-var error that aborts the play (#17136).
+# Out-of-band management (BMC) addresses, as `<node>=<address>` pairs from the
+# PROXMOX_BMC_ADDRESSES single source. A BMC vends its own default hostname from
+# the CHASSIS MODEL or the vendor service tag, so the only names that resolve to
+# one identify the metal, not the node running on it — aiming a power or console
+# action by node name is then pure inference, and inferring it wrongly power-cycled
+# a live node (Zammad #17188). Publishing `idrac-<node>` gives that name.
+#
+# Env-sourced, never literals: this repo is public and a BMC address is the
+# privileged out-of-band interface. Unset env yields an empty map, hence no
+# records — the writer's truthy filter skips a blank IP, so a node whose BMC is
+# absent (consumer boards have none) simply contributes nothing.
+technitium_dns_bmc_addresses: >-
+  {{ dict(lookup('env', 'PROXMOX_BMC_ADDRESSES') | default('', true)
+     | split(',') | map('trim') | reject('equalto', '')
+     | map('split', '=') | list) }}
+
+technitium_dns_extra_a_records: >-
+  {{ [
+       {'name': llm_large_serving_host, 'ip': llm_large_serving_ip},
+       {'name': 'cribl-stream-01',
+        'ip': hostvars['cribl-stream-01'].container_ip | default('', true),
+        'zone': technitium_dns_apex_domain},
+     ]
+     + (dict(technitium_dns_bmc_addresses.keys() | map('regex_replace', '^', 'idrac-')
+             | zip(technitium_dns_bmc_addresses.values()))
+        | dict2items(key_name='name', value_name='ip')) }}
