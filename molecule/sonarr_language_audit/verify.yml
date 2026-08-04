@@ -2,7 +2,8 @@
 # Molecule verification for sonarr_language_audit (deployed artifacts only).
 #
 # Proves the audit landed correctly without a running Sonarr:
-#   1. jq is installed — the API-parsing dependency.
+#   1. jq + ffprobe (from ffmpeg) are installed — the API-parsing and
+#      fallback-probe dependencies.
 #   2. The script + systemd units are deployed with this scenario's config.
 #   3. The safety contract is intact: read-only against Sonarr (no file
 #      writes/deletes, no blocklist/connection wiring), fail-safe on any
@@ -19,9 +20,12 @@
     sonarr_language_audit_script_name: sonarr-language-audit.sh
 
   tasks:
-    - name: Check jq is on PATH
+    - name: Check jq and ffprobe are on PATH
       ansible.builtin.command:
-        cmd: which jq
+        cmd: "which {{ item }}"
+      loop:
+        - jq
+        - ffprobe
       changed_when: false
 
     - name: Stat the deployed artifacts
@@ -62,6 +66,8 @@
           - "'127.0.0.1:8989' in sonarr_language_audit_script"
           - "'ntfy.example.net/media' in sonarr_language_audit_script"
           - "'REQUIRED=\"eng\"' in sonarr_language_audit_script"
+          - "'ACTION=\"notify\"' in sonarr_language_audit_script"
+          - "'ffprobe' in sonarr_language_audit_script"
           # Read-only: only GET calls against the Sonarr API, no connection
           # wiring, no blocklist/history endpoint, no file mutation.
           - "'/api/v3/series' in sonarr_language_audit_script"
