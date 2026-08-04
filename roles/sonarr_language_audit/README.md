@@ -42,11 +42,11 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags sonarr_languag
    API key from `config.xml` and calls `GET /api/v3/series`, then
    `GET /api/v3/episodefile?seriesId={id}` for each series.
 2. For every episode file, it reads `mediaInfo.audioLanguages`. If that is
-   empty, it falls back to probing the file directly with `ffprobe` — the
-   stored field can be **permanently stale**: Sonarr's own rescan only
-   re-extracts MediaInfo when a file's size on disk has changed, so a file
-   whose language was never recorded at import stays that way indefinitely
-   unless re-imported.
+   empty, it falls back to probing the file directly with `ffprobe`. **Rescan
+   will not repopulate this field** — it only re-extracts MediaInfo when a
+   file's size on disk has changed. **Refresh does** re-extract it. The
+   fallback exists so the audit is correct either way, without depending on
+   either having been run.
 3. It checks whether `sonarr_language_audit_required_language` appears in the
    language(s) found. A file with no language from either source is skipped
    and logged as undetermined — **never treated as a mismatch**.
