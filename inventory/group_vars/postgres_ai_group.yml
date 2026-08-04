@@ -2,9 +2,21 @@
 # Dedicated ai-VLAN native PostgreSQL cluster backing the Hindsight
 # agent-memory service — separate from the shared-apps cluster
 # (postgres_group) because the memory plane must live entirely on the ai
-# VLAN. Same postgres role, same multi-tier DR standard (nightly pg_dump on
+# VLAN. Same postgres role, same multi-tier DR standard: nightly pg_dump on
 # the persistent mount, standby-node archive pull via its own
-# postgres_standby_jobs entry, Tier-2 cloud upload).
+# postgres_standby_jobs entry, Tier-2 cloud upload, PLUS the object-storage
+# PITR tier (pgBackRest, continuous WAL archiving to the same S3 bucket the
+# shared-apps cluster uses — one prefix per stanza, keyed off this cluster's
+# primary hostname).
+#
+# postgres_pgbackrest_enabled defaults to true at the role level (same
+# default the shared-apps cluster relies on) — declared here explicitly so
+# this cluster's PITR posture is visible in a diff instead of riding an
+# implicit role default. A dedicated stanza forms automatically
+# (postgres_pgbackrest_stanza falls back to postgres_primary_host, i.e.
+# "postgres-ai-1"), so this never shares a stanza — or a WAL archive — with
+# the apps-tier primary.
+postgres_pgbackrest_enabled: true
 
 # HA: postgres-ai-1 is the primary; every other postgres_ai-tagged guest
 # reinitializes as a hot streaming standby (the role's replication path).

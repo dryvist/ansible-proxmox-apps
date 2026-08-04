@@ -1,0 +1,99 @@
+---
+# Molecule verification for sonarr_language_audit (deployed artifacts only).
+#
+# Proves the audit landed correctly without a running Sonarr:
+#   1. jq + ffprobe (from ffmpeg) are installed — the API-parsing and
+#      fallback-probe dependencies.
+#   2. The script + systemd units are deployed with this scenario's config.
+#   3. The safety contract is intact: read-only against Sonarr (no file
+#      writes/deletes, no blocklist/connection wiring), fail-safe on any
+#      undetermined language, report-only via log + ntfy.
+#   4. manage_services=false actually held: the timer is not enabled/started.
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    sonarr_language_audit_bin_dir: /usr/local/bin
+    sonarr_language_audit_script_name: sonarr-language-audit.sh
+
+  tasks:
+    - name: Check jq and ffprobe are on PATH
+      ansible.builtin.command:
+        cmd: "which {{ item }}"
+      loop:
+        - jq
+        - ffprobe
+      changed_when: false
+
+    - name: Stat the deployed artifacts
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: sonarr_language_audit_stats
+      loop:
+        - "{{ sonarr_language_audit_bin_dir }}/{{ sonarr_language_audit_script_name }}"
+        - /etc/systemd/system/sonarr-language-audit.service
+        - /etc/systemd/system/sonarr-language-audit.timer
+
+    - name: Assert the script and units are deployed
+      ansible.builtin.assert:
+        that:
+          - sonarr_language_audit_stats.results[0].stat.exists
+          - sonarr_language_audit_stats.results[0].stat.executable
+          - sonarr_language_audit_stats.results[1].stat.exists
+          - sonarr_language_audit_stats.results[2].stat.exists
+        fail_msg: "sonarr_language_audit did not deploy its script/units"
+
+    - name: Read the rendered script and units
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      register: sonarr_language_audit_raw
+      loop:
+        - "{{ sonarr_language_audit_bin_dir }}/{{ sonarr_language_audit_script_name }}"
+        - /etc/systemd/system/sonarr-language-audit.service
+        - /etc/systemd/system/sonarr-language-audit.timer
+
+    - name: Assert the safety contract and config are intact
+      vars:
+        sonarr_language_audit_script: "{{ sonarr_language_audit_raw.results[0].content | b64decode }}"
+        sonarr_language_audit_service: "{{ sonarr_language_audit_raw.results[1].content | b64decode }}"
+        sonarr_language_audit_timer: "{{ sonarr_language_audit_raw.results[2].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          # Config resolved to this scenario's values.
+          - "'127.0.0.1:8989' in sonarr_language_audit_script"
+          - "'ntfy.example.net/media' in sonarr_language_audit_script"
+          - "'REQUIRED=\"eng\"' in sonarr_language_audit_script"
+          - "'ACTION=\"notify\"' in sonarr_language_audit_script"
+          - "'ffprobe' in sonarr_language_audit_script"
+          # Read-only: only GET calls against the Sonarr API, no connection
+          # wiring, no blocklist/history endpoint, no file mutation.
+          - "'/api/v3/series' in sonarr_language_audit_script"
+          - "'/api/v3/episodefile' in sonarr_language_audit_script"
+          - "'/api/v3/notification' not in sonarr_language_audit_script"
+          - "'/api/v3/history' not in sonarr_language_audit_script"
+          - "'rm ' not in sonarr_language_audit_script"
+          - "'ansible.builtin.file' not in sonarr_language_audit_script"
+          # Fail-safe exits: undetermined language never triggers a reaction.
+          - >-
+            sonarr_language_audit_script
+            | regex_findall('fail safe') | length >= 2
+          # oneshot service, timer targets it, scenario's schedule rendered.
+          - "'Type=oneshot' in sonarr_language_audit_service"
+          - "'sonarr-language-audit.sh' in sonarr_language_audit_service"
+          - "'OnCalendar=*-*-* 03:30:00' in sonarr_language_audit_timer"
+        fail_msg: "sonarr_language_audit's safety contract or config regressed"
+
+    - name: Read the timer's unit-file state (manage_services=false held)
+      ansible.builtin.systemd:
+        name: sonarr-language-audit.timer
+      register: sonarr_language_audit_timer_state
+      changed_when: false
+
+    - name: Assert the timer was not enabled/started under manage_services=false
+      ansible.builtin.assert:
+        that:
+          - sonarr_language_audit_timer_state.status.UnitFileState != 'enabled'
+        fail_msg: "sonarr_language_audit_manage_services=false did not gate the live timer"

@@ -1,0 +1,58 @@
+---
+# Scheduled online-consistent SQLite backups. See defaults/main.yml for why this
+# writes beside the live database rather than shipping anywhere itself.
+
+- name: Configure SQLite backups
+  when:
+    - sqlite_backup_enabled | bool
+    - sqlite_backup_dirs | length > 0
+  block:
+    - name: Install the SQLite CLI
+      ansible.builtin.apt:
+        name: "{{ sqlite_backup_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Deploy the SQLite backup script
+      ansible.builtin.template:
+        src: sqlite-backup.sh.j2
+        dest: /usr/local/bin/sqlite-backup.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy the SQLite backup systemd service
+      ansible.builtin.template:
+        src: sqlite-backup.service.j2
+        dest: /etc/systemd/system/sqlite-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Deploy the SQLite backup systemd timer
+      ansible.builtin.template:
+        src: sqlite-backup.timer.j2
+        dest: /etc/systemd/system/sqlite-backup.timer
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable and start the SQLite backup timer
+      ansible.builtin.systemd:
+        name: sqlite-backup.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # An installed timer is not a working backup. Run the job once, now, so a
+    # bad path or an unreadable database fails THIS converge instead of failing
+    # silently at 04:15 and being discovered at restore time.
+    # This is a probe, not a convergence step: it asserts the job works and
+    # leaves no managed state behind, so it reports no change. A non-zero exit
+    # still fails the task and therefore the converge, which is the guarantee
+    # above. Reporting a change on success instead made every converge report
+    # one forever, since the script has no no-op path.
+    - name: Take a backup now to prove the job works
+      ansible.builtin.command:
+        argv: [/usr/local/bin/sqlite-backup.sh]
+      changed_when: false

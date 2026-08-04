@@ -1,0 +1,42 @@
+---
+# Workflow engine — bao-first secrets (apps domain) with an env fallback,
+# mirroring vikunja_group.yml / zammad_group.yml.
+#
+# Both fields are app-namespaced (n8n_*) so the flat merge into bao_apps_secrets
+# never collides with a sibling app's bare field name. On hosts where the apps
+# domain was not fetched (BAO_ADDR or the apps role_id/secret_id unset)
+# bao_apps_secrets is {} and the env fallback resolves instead.
+
+# Login for this app's role on the shared cluster. It MUST match the postgres
+# side (postgres_managed_databases reads the same bao_apps_secrets.n8n_db_password),
+# so both ends resolve one canonical value. Generated at source in the secret
+# store, never hand-typed.
+n8n_docker_db_password: >-
+  {{ bao_apps_secrets.n8n_db_password
+     | default(lookup('env', 'N8N_DB_PASSWORD'), true) }}
+
+# The credential-encryption key. PROMOTED into the secret store, never
+# generated: it is the only thing that can decrypt the credentials already
+# stored in this app's database. A database backup without it restores
+# workflows whose every credential is permanently unrecoverable — and does so
+# without any error, which is the whole reason it belongs in the secret store
+# rather than only in a root-only file on the guest beside the data it unlocks.
+#
+# Empty here (secret store unavailable AND no env value) does NOT silently
+# become a fresh key: the role falls back to the guest's existing file and
+# asserts a non-empty result before deploying.
+n8n_docker_encryption_key: >-
+  {{ bao_apps_secrets.n8n_encryption_key
+     | default(lookup('env', 'N8N_ENCRYPTION_KEY'), true) }}
+
+# The shared cluster has no ingress; reach it by the primary guest's FQDN.
+# Tracks the shared postgres_primary_host switch (group_vars/all): unset -> the
+# stable `postgres` name; set to the apps-tier primary -> that name. A guest
+# hostname is a stable service identifier here, not a hard-coded address.
+#
+# Without this, this app alone keeps the role default while its siblings follow
+# the switch — and a cutover reinitializes that guest as a read-only standby,
+# so its writes would fail against it.
+n8n_docker_db_host: >-
+  {{ (postgres_primary_host if (postgres_primary_host | default('', true) | length > 0) else 'postgres')
+     }}.{{ hostvars['localhost']['tofu_data']['domain'] }}

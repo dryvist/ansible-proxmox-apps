@@ -1,6 +1,13 @@
 ---
 # n8n workflow automation (Community Edition) — self-hosted via Docker Compose in
-# an LXC. Bundled stack: postgres + n8n app. https://docs.n8n.io/hosting/
+# an LXC. The app container only; its database is the shared PostgreSQL cluster.
+# https://docs.n8n.io/hosting/
+#
+# The database used to be a compose service beside the app, on a mount the
+# guest-level backup mechanism cannot capture — so workflow definitions,
+# credentials and execution history had no backup at all. Pointing it at the
+# shared cluster inherits that cluster's continuous WAL archiving, PITR, and
+# nightly logical dumps instead of reproducing any of it here.
 #
 # All literals live here; the template references vars only (DRY).
 #
@@ -10,11 +17,9 @@
 
 # Image tags — single source of truth. Bump via Renovate or manual review.
 n8n_docker_app_image: "n8nio/n8n:2.32.5"
-n8n_docker_postgres_image: "postgres:16-alpine"
 
 n8n_docker_container_name: n8n
 n8n_docker_data_dir: /opt/n8n
-n8n_docker_postgres_data_dir: "{{ n8n_docker_data_dir }}/postgres"
 # n8n's home (.n8n): logs, binary-data, and the config file. Workflow + credential
 # state lives in postgres; this holds runtime files only.
 n8n_docker_app_data_dir: "{{ n8n_docker_data_dir }}/data"
@@ -22,8 +27,7 @@ n8n_docker_app_data_dir: "{{ n8n_docker_data_dir }}/data"
 # {{ n8n_docker_app_internal_data }}/seed for the `n8n import:workflow` exec.
 n8n_docker_seed_dir: "{{ n8n_docker_app_data_dir }}/seed"
 
-# Container-internal mount paths (image contracts — set once, referenced in template).
-n8n_docker_postgres_internal_data: /var/lib/postgresql/data
+# Container-internal mount path (image contract — set once, referenced in template).
 n8n_docker_app_internal_data: /home/node/.n8n
 # The n8n image runs as user `node` (uid 1000). In an unprivileged LXC that uid
 # maps straight through, so the bind-mounted home must be owned by 1000 or n8n
@@ -31,16 +35,18 @@ n8n_docker_app_internal_data: /home/node/.n8n
 n8n_docker_app_uid: 1000
 n8n_docker_app_gid: 1000
 
-# Compose service names (also the Docker DNS hostnames used in the DB URL).
-n8n_docker_db_service: postgres
+# Compose service name for the app container.
 n8n_docker_app_service: n8n
 
-# Database identity.
+# Database identity on the shared cluster. The host is overridden per-group so
+# it tracks the cluster's primary; the role default is the stable service name
+# under the deployment domain — a service identifier, never an address.
 n8n_docker_db_name: n8n
 n8n_docker_db_user: n8n
+n8n_docker_db_host: "postgres.{{ tofu_data.domain }}"
 
-# Restart policy applied to every service. Also absorbs the first-boot race where
-# n8n starts before postgres finishes initdb — n8n restarts until the DB answers.
+# Restart policy. Also absorbs a backend blip: the app restarts until the shared
+# cluster answers rather than staying dead after it returns.
 n8n_docker_restart_policy: unless-stopped
 
 # Public FQDN (Traefik fronts https://n8n.<subdomain> with the wildcard cert).
@@ -88,11 +94,21 @@ n8n_docker_owner_password: >-
 n8n_docker_owner_firstname: "Homelab"
 n8n_docker_owner_lastname: "Admin"
 
-# N8N_ENCRYPTION_KEY (encrypts stored credentials) — generated once on the LXC and
-# persisted to {{ n8n_docker_data_dir }}/.encryption_key (root:root 0600), then
-# reused so a redeploy does not invalidate stored credentials. Override only to
-# share an explicit value across hosts.
+# N8N_ENCRYPTION_KEY — the key that encrypts every credential stored in the
+# database. Set it from the secret store (inventory/group_vars/n8n_group.yml
+# resolves it bao-first); the role falls back to a generate-once file on the
+# guest only so a greenfield deploy still comes up.
+#
+# This value must be treated as part of the backup, not as configuration. A
+# perfect database restore paired with a DIFFERENT key yields workflows whose
+# every stored credential is permanently undecryptable — and the restore
+# reports success, which is why it must never be regenerated for an existing
+# install and must not live only beside the data it unlocks.
 n8n_docker_encryption_key: ""
+# Where the generate-once fallback copy lives on the guest. Kept as the
+# greenfield bootstrap and as a local read for the promotion into the secret
+# store; once the secret store holds the key, that is the authority.
+n8n_docker_encryption_key_path: "{{ n8n_docker_data_dir }}/.encryption_key"
 
 # Seed a minimal "hello" workflow (Manual Trigger -> HTTP Request to the LiteLLM
 # router) on first run so there is something to run immediately. Idempotent via a

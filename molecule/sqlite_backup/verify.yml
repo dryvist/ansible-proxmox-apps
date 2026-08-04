@@ -1,0 +1,101 @@
+---
+# Verify the sqlite_backup scenario.
+#
+# The assertions that matter are about the CONTENT of the backup, not the
+# presence of a file. A backup job that produces an unopenable or short file on
+# schedule is worse than no job at all, because it reports success.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    sqlite_backup_test_dir: /opt/molecule-appdata
+    sqlite_backup_test_dest: /opt/molecule-appdata/.backups
+
+  tasks:
+    - name: List the produced backups
+      ansible.builtin.find:
+        paths: "{{ sqlite_backup_test_dest }}"
+        file_type: file
+      register: sqlite_backup_produced
+
+    # Asserted as a SET of database names, not a file count. The scenario
+    # converges and then runs idempotence, so the job legitimately runs more
+    # than once and each run adds a timestamped copy. A count encoded "the role
+    # ran exactly once" and fails on the second — while the property worth
+    # guarding is WHICH databases were copied, which the count never stated.
+    - name: Assert exactly the two databases were backed up
+      vars:
+        sqlite_backup_names: >-
+          {{ sqlite_backup_produced.files | map(attribute='path') | map('basename') | list }}
+        sqlite_backup_dbs: >-
+          {{ sqlite_backup_names | map('regex_replace', '-[0-9]{8}T[0-9]{6}Z$', '')
+             | unique | sort | list }}
+      ansible.builtin.assert:
+        that:
+          - sqlite_backup_dbs == ['app.db', 'nested.sqlite3']
+          # The non-database file must not be copied, and no partial may survive.
+          - sqlite_backup_names | select('search', 'config\.xml') | list | length == 0
+          - sqlite_backup_names | select('search', '\.partial$') | list | length == 0
+        fail_msg: >-
+          Unexpected backup set: {{ sqlite_backup_names }}
+        quiet: true
+
+    - name: Locate the top-level database's backup
+      ansible.builtin.set_fact:
+        sqlite_backup_app_copy: >-
+          {{ (sqlite_backup_produced.files | map(attribute='path')
+              | select('search', '/app\.db-') | list | first) }}
+
+    # The row was committed with a WAL journal active. A plain file copy can
+    # omit exactly this; the online backup API folds the WAL in.
+    - name: Read the committed row back out of the backup
+      ansible.builtin.command:
+        argv:
+          - sqlite3
+          - "{{ sqlite_backup_app_copy }}"
+          - "SELECT count(*) FROM t WHERE v = 'committed-before-backup';"
+      register: sqlite_backup_row_count
+      changed_when: false
+
+    - name: Assert the backup carries the committed transaction
+      ansible.builtin.assert:
+        that:
+          - sqlite_backup_row_count.stdout | trim | int == 1
+        fail_msg: >-
+          The backup opened but does not contain the transaction committed
+          before it ran — the copy is not transactionally complete.
+        quiet: true
+
+    - name: Run an integrity check against the backup
+      ansible.builtin.command:
+        argv:
+          - sqlite3
+          - "{{ sqlite_backup_app_copy }}"
+          - "PRAGMA integrity_check;"
+      register: sqlite_backup_integrity
+      changed_when: false
+
+    - name: Assert the backup is a structurally sound database
+      ansible.builtin.assert:
+        that:
+          - sqlite_backup_integrity.stdout | trim == 'ok'
+        fail_msg: "integrity_check returned: {{ sqlite_backup_integrity.stdout }}"
+        quiet: true
+
+    - name: Read the timer state
+      ansible.builtin.command:
+        argv: [systemctl, is-enabled, sqlite-backup.timer]
+      register: sqlite_backup_timer
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the timer is enabled
+      ansible.builtin.assert:
+        that:
+          - sqlite_backup_timer.stdout | trim == 'enabled'
+        fail_msg: >-
+          The backup ran once during the converge but the timer is
+          '{{ sqlite_backup_timer.stdout | trim }}' — it would never run again.
+        quiet: true

@@ -1,0 +1,125 @@
+---
+# Verifies the offsite-copy guard from roles/object_storage/tasks/offsite.yml.
+#
+# The guard is the whole reason the scheduled copy is safe to have: a bucket
+# whose writer maintains its own offsite repo must never also be copied out of
+# band. The exclusion is DERIVED from the bucket declarations, so this test
+# checks the derivation and the condition together — a bucket that loses its
+# `offsite_owner` key silently becomes copyable, and nothing else would notice.
+- name: Test offsite copy exclusion guard
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../roles/object_storage/defaults/main.yml
+  vars:
+    owner_managed: >-
+      {{ object_storage_default_buckets
+         | selectattr('offsite_owner', 'defined')
+         | map(attribute='name') | list }}
+  tasks:
+    # A bucket with a writer that owns its offsite repo must appear in the
+    # exclusion list. If this is empty the guard passes everything.
+    - name: Assert at least one bucket is owner-managed
+      ansible.builtin.assert:
+        that:
+          - owner_managed | length > 0
+        fail_msg: >-
+          No bucket declares offsite_owner, so the exclusion list is empty and
+          the guard would accept every bucket — including one whose writer
+          already maintains the offsite copy.
+        success_msg: "owner-managed buckets: {{ owner_managed | length }}"
+
+    # The condition as written in the role, evaluated both ways.
+    - name: Evaluate the guard for each case
+      ansible.builtin.assert:
+        that:
+          - (item.name not in owner_managed) == item.accepted
+        fail_msg: >-
+          case {{ item.case }}: expected accepted={{ item.accepted }}
+        success_msg: "case {{ item.case }}: OK (accepted={{ item.accepted }})"
+      loop:
+        # every declared owner-managed bucket must be REFUSED
+        - case: owner-managed-refused
+          name: "{{ owner_managed | first }}"
+          accepted: false
+        # a bucket with no owner is copyable
+        - case: unowned-accepted
+          name: >-
+            {{ object_storage_default_buckets
+               | rejectattr('offsite_owner', 'defined')
+               | map(attribute='name') | first }}
+          accepted: true
+        # a bucket not declared in this role at all (created elsewhere) is
+        # copyable — the guard only knows what it was told to exclude
+        - case: undeclared-accepted
+          name: not-a-declared-bucket
+          accepted: true
+      loop_control:
+        label: "{{ item.case }}"
+
+    # The copy must never be a sync. A sync propagates deletions, so an emptied
+    # source empties the offsite copy — this asserts the unit template does not
+    # drift back to one.
+    - name: Assert the copy command never deletes on the destination
+      ansible.builtin.assert:
+        that:
+          - unit_template is search('rclone copy')
+          - unit_template is not search('rclone sync')
+          - unit_template is not search('--delete')
+        fail_msg: >-
+          The offsite unit must use `rclone copy`. A sync (or any --delete
+          flag) mirrors source deletions offsite, destroying the copy at
+          exactly the moment it is needed.
+        success_msg: "offsite unit copies without deleting"
+      vars:
+        unit_template: >-
+          {{ lookup('file',
+             '../../roles/object_storage/templates/object-storage-offsite@.service.j2') }}
+
+    # Render the unit for real. Reading the raw template above proves intent;
+    # this proves the file is valid Jinja and that the optional bandwidth flag
+    # appears only when a limit is set — a conditional that is never exercised
+    # until a converge would otherwise fail on the guest.
+    - name: Assert the unit renders, with the bandwidth flag only when set
+      ansible.builtin.assert:
+        that:
+          - unlimited is search('rclone copy')
+          - unlimited is not search('--bwlimit')
+          - limited is search('--bwlimit 20M')
+        fail_msg: >-
+          The offsite unit template failed to render as expected
+          (bandwidth limit conditional).
+        success_msg: "offsite unit renders in both bandwidth modes"
+      vars:
+        _unit: ../../roles/object_storage/templates/object-storage-offsite@.service.j2
+        unlimited: "{{ lookup('template', _unit) }}"
+        limited: >-
+          {{ lookup('template', _unit,
+             template_vars={'object_storage_offsite_bandwidth_limit': '20M'}) }}
+
+    # The destination region is DERIVED from the endpoint rather than carried
+    # as a second field, so the two can never disagree. A mismatch surfaces
+    # only as an opaque signature failure at run time, which is why the
+    # derivation is checked here instead of discovered on the guest.
+    - name: Assert the offsite region derives from the endpoint host
+      ansible.builtin.assert:
+        that:
+          - rendered is search('RCLONE_CONFIG_DST_REGION=us-west-004')
+          - rendered is search('OFFSITE_SRC_BUCKET=local-bucket')
+          - rendered is search('OFFSITE_DST_BUCKET=remote-bucket')
+          # the source side must reach the store over loopback, never outward
+          - rendered is search('RCLONE_CONFIG_SRC_ENDPOINT=http://127.0.0.1:')
+        fail_msg: "offsite env template rendered unexpectedly:\n{{ rendered }}"
+        success_msg: "offsite env renders, region derived from the endpoint"
+      vars:
+        offsite_bucket: local-bucket
+        offsite_secret:
+          S3_ENDPOINT: https://s3.us-west-004.example.invalid
+          BUCKET: remote-bucket
+          RW_KEY_ID: not-a-real-key
+          RW_APP_KEY: not-a-real-secret
+        object_storage_root_user: test-user
+        object_storage_root_password: test-password
+        rendered: >-
+          {{ lookup('template',
+             '../../roles/object_storage/templates/object-storage-offsite.env.j2') }}

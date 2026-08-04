@@ -332,7 +332,10 @@
     ntfy_docker_data_dir: /opt/ntfy
     ntfy_docker_cache_duration: "12h"
     ntfy_docker_attachment_cache_dir: /var/cache/ntfy/attachments
-    ansible_host: "192.168.0.111"
+    # Shape-mirror of the role default: service name + ingress base over HTTPS.
+    # A literal placeholder domain stands in for the environment lookup so the
+    # assertion below is exact rather than dependent on the runner's env.
+    ntfy_docker_base_url: "https://{{ ntfy_docker_container_name }}.example.test"
     _template_dir: "../../roles/ntfy_docker/templates"
 
   tasks:
@@ -393,6 +396,21 @@
           - "'cache-duration' in _ntfy_server"
         fail_msg: >-
           ntfy server.yml.j2 missing expected configuration;
+          rendered content: {{ _ntfy_server }}
+
+    # base-url is what the server hands to clients (emitted links, web-app
+    # origin, web-push subscriptions). A node hostname or a plain-HTTP scheme
+    # renders those unreachable while direct POSTs keep returning 200, so the
+    # breakage is invisible without an explicit assertion. The `http://` guard
+    # is a substring test that `https://` does not satisfy.
+    - name: Assert ntfy base-url is the reverse-proxied FQDN over HTTPS
+      ansible.builtin.assert:
+        that:
+          - "'base-url: \"https://ntfy.example.test\"' in _ntfy_server"
+          - "'http://' not in _ntfy_server"
+        fail_msg: >-
+          ntfy server.yml.j2 base-url must be the service FQDN over HTTPS
+          (never a host address, never plain HTTP);
           rendered content: {{ _ntfy_server }}
 
     - name: Ntfy template rendering PASSED
@@ -527,7 +545,6 @@
     haproxy_timeout_server: 60000
     haproxy_timeout_tunnel: 3600000
     haproxy_health_check_interval: 5000
-    haproxy_health_check_timeout: 5000
     haproxy_http_port: 80
     haproxy_https_port: 443
     haproxy_http_redirect_code: 301
@@ -2394,6 +2411,120 @@
           - empty stanza takes a full backup
           - populated stanza does not
           - bare [] and check-mode both take the branch without raising
+
+- name: Verify the pgBackRest stanza is cluster-scoped, not host-scoped
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "../../roles/postgres/templates"
+
+  tasks:
+    # Loaded from the role rather than mirrored here on purpose: the thing under
+    # test IS the default expression for postgres_pgbackrest_stanza. A local copy
+    # of it would pass whatever this file happened to say and prove nothing about
+    # what the role deploys.
+    - name: Load the real postgres role defaults
+      ansible.builtin.include_vars:
+        file: "../../roles/postgres/defaults/main.yml"
+
+    - name: Pin the cluster version so postgres_data_dir resolves offline
+      ansible.builtin.set_fact:
+        postgres_cluster_version: 18
+
+    # --- Case 1: standalone host, no primary named -------------------------
+    - name: Resolve as a standalone host
+      ansible.builtin.set_fact:
+        postgres_primary_host: ""
+
+    - name: Render pgbackrest.conf.j2 for a standalone host
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pgbackrest.conf.j2"
+        dest: "{{ _fixture_dir }}/pgbackrest_standalone.conf"
+        mode: "0644"
+
+    - name: Read the standalone render
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/pgbackrest_standalone.conf"
+      register: _pgbr_standalone_raw
+
+    - name: Extract the standalone stanza section and repo path
+      ansible.builtin.set_fact:
+        _pgbr_standalone_section: >-
+          {{ (_pgbr_standalone_raw.content | b64decode)
+             | regex_search('(?m)^\[(?!global\])(.+)\]$', '\1') | first }}
+        _pgbr_standalone_repo: >-
+          {{ (_pgbr_standalone_raw.content | b64decode)
+             | regex_search('(?m)^repo1-path=(.+)$', '\1') | first }}
+
+    # inventory_hostname is 'localhost' here, so this asserts the fallback keeps
+    # one prefix per standalone host (#1017) rather than collapsing them.
+    - name: Assert a standalone host is its own stanza
+      ansible.builtin.assert:
+        that:
+          - _pgbr_standalone_section == inventory_hostname
+          - _pgbr_standalone_repo == '/postgres/' ~ inventory_hostname
+        fail_msg: >-
+          standalone stanza/repo wrong: section={{ _pgbr_standalone_section }}
+          repo={{ _pgbr_standalone_repo }}
+
+    # --- Case 2: standby, a different host is the primary ------------------
+    - name: Resolve as a standby whose primary is another host
+      ansible.builtin.set_fact:
+        postgres_primary_host: db-primary
+
+    - name: Render pgbackrest.conf.j2 for a standby
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pgbackrest.conf.j2"
+        dest: "{{ _fixture_dir }}/pgbackrest_standby.conf"
+        mode: "0644"
+
+    - name: Read the standby render
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/pgbackrest_standby.conf"
+      register: _pgbr_standby_raw
+
+    - name: Extract the standby stanza section and repo path
+      ansible.builtin.set_fact:
+        _pgbr_standby_section: >-
+          {{ (_pgbr_standby_raw.content | b64decode)
+             | regex_search('(?m)^\[(?!global\])(.+)\]$', '\1') | first }}
+        _pgbr_standby_repo: >-
+          {{ (_pgbr_standby_raw.content | b64decode)
+             | regex_search('(?m)^repo1-path=(.+)$', '\1') | first }}
+        # The exact string roles/postgres/tasks/pgbackrest.yml writes into
+        # archive_command, which a standby inherits from the primary.
+        _pgbr_standby_archive_stanza: "{{ postgres_pgbackrest_stanza }}"
+
+    - name: Assert the standby adopts the primary's stanza, not its own name
+      ansible.builtin.assert:
+        that:
+          # Regression guard: postgres_pgbackrest_stanza used to be
+          # inventory_hostname, which named the cluster's stanza in
+          # archive_command and a different one in the config section header.
+          - _pgbr_standby_section == 'db-primary'
+          - _pgbr_standby_section != inventory_hostname
+          - _pgbr_standby_repo == '/postgres/db-primary'
+          # The section header and the repo prefix must name the same stanza,
+          # or the host writes into a tree its own config does not describe.
+          - _pgbr_standby_repo | basename == _pgbr_standby_section
+          # archive_command and the config file must agree, on every member.
+          - _pgbr_standby_archive_stanza == _pgbr_standby_section
+        fail_msg: >-
+          standby stanza is not cluster-scoped:
+          section={{ _pgbr_standby_section }} repo={{ _pgbr_standby_repo }}
+          archive_command stanza={{ _pgbr_standby_archive_stanza }}
+
+    - name: PgBackRest cluster-scoped stanza verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          pgBackRest stanza assertions passed:
+          - standalone host falls back to its own name (one prefix per host)
+          - standby adopts the primary's stanza, not its own hostname
+          - config section header, repo1-path, and archive_command all agree
 
 - name: Remove the per-run fixture output directory
   hosts: localhost

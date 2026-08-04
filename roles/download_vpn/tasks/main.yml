@@ -542,6 +542,25 @@
     daemon_reload: true
   when: download_vpn_manage_services
 
+# --- Phase 5c: self-healing /etc/nftables.conf (survives an unattended flush) -
+# Debian's nftables package restarts nftables.service (`nft flush ruleset` then
+# `nft -f /etc/nftables.conf`) on every package upgrade, including unattended
+# ones. Making that file `include` our own rulesets means the restart's own
+# atomic reload reconstructs the killswitch + LAN-reply tables instead of
+# leaving them flushed. See templates/nftables.conf.j2 for the full rationale.
+# Not notified to any handler: writing the file must never itself trigger an
+# nftables.service reload, which would also flush WireGuard's own fwmark table
+# and disrupt a live tunnel. It takes effect the next time something else
+# restarts nftables.service — precisely the event this guards against.
+- name: Deploy self-healing /etc/nftables.conf (includes our rulesets)
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: "0755"
+    validate: "/usr/sbin/nft -c -f %s"
+
 # --- Phase 6: qBittorrent ----------------------------------------------------
 # Pre-create every level of the --profile tree (see defaults/main.yml) with the
 # correct owner BEFORE the daemon starts, so it never has to mkdir its own tree
@@ -782,6 +801,24 @@
 # A native binary + bundled headless Chromium, co-located here so its solve
 # traffic shares Prowlarr's wg0 egress (CloudFlare binds the clearance to the
 # solving IP). Loopback-bound; the killswitch already covers its egress.
+# FlareSolverr's bundled Chromium was crash-looping (`error while loading
+# shared libraries`) because these runtime libs were never installed — the
+# role installed FlareSolverr but not the browser's own dependencies. See
+# defaults/main.yml for how the package list is derived and kept portable
+# across Debian releases.
+- name: Install FlareSolverr's headless-Chromium runtime dependencies
+  ansible.builtin.apt:
+    name: "{{ download_vpn_flaresolverr_chromium_libs }}"
+    state: present
+  # Gated on manage_services for the same reason as the tarball download below:
+  # render-only runs install nothing. Without the gate this pulls the full
+  # Chromium library set into a render-only container, which is enough to end
+  # the container mid-task — the module then returns no JSON at all and the
+  # failure surfaces as an unrelated-looking deserialization error.
+  when:
+    - download_vpn_flaresolverr_enabled
+    - download_vpn_manage_services
+
 - name: Create the FlareSolverr system user
   ansible.builtin.user:
     name: "{{ download_vpn_flaresolverr_user }}"

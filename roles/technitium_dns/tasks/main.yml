@@ -265,6 +265,38 @@
 # outage. Non-authoritative apex names already FORWARD to the upstream
 # resolvers (configured above) whether or not any apex zone exists locally, so
 # there is nothing to "clean up" here.
+#
+# CANONICAL ZONE FOR A GUEST HOSTNAME: technitium_dns_zone (the subdomain)
+# only. The per-guest A-record builder above writes exclusively into that
+# zone — it has never written per-guest records into the apex zone. A guest
+# created before this role became subdomain-only kept whatever apex-zone
+# record it already had (frozen there, unmaintained, per the NOTE above);
+# every guest created since has NO apex-zone record, by design. So an
+# apex-zone NXDOMAIN for a guest hostname means only "this guest postdates
+# the migration to a subdomain-only zone" — it is NOT a liveness signal and
+# must never be read as "this guest is down". Any health check, monitor, or
+# runbook resolving a GUEST hostname must query technitium_dns_zone, never
+# the apex.
+#
+# EXCEPTION — the cluster nodes themselves are the opposite: they have NO
+# record in the subdomain zone at all. Their only A-records are the apex
+# round-robin set this role writes below (technitium_dns_proxmox_endpoint_a_records
+# / the Traefik apex fallback), which is a separate write path from the
+# per-guest builder above. For a cluster node name, the apex is the only
+# zone that was ever authoritative — an apex-zone NXDOMAIN there DOES mean
+# the node is missing from that record set, and the subdomain zone has
+# nothing to fall back to.
+#
+# THIRD CASE — a Traefik-fronted SERVICE name's apex record is not merely
+# stale, it is actively wrong: it still holds the direct pre-migration
+# backend address instead of the Traefik VIP its subdomain alias correctly
+# points at, and the old backend no longer terminates TLS there. The apex
+# form of the name therefore resolves, then hangs until timeout — it does
+# not NXDOMAIN, so it reads as "service is down" while both the service and
+# the name are otherwise healthy. Same root cause as the guest case above
+# (this role has never written into the apex zone since narrowing to the
+# subdomain), different symptom because these names predate the migration
+# with a real value instead of no value at all.
 - name: Create authoritative subdomain DNS zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
@@ -583,6 +615,46 @@
     # Points at the ingress VIP when published, else the single Traefik LXC's IP.
     - technitium_dns_ingress_target_ip | length > 0
 
+# The SAME Traefik-fronted names also carry a record in the PARENT apex zone
+# (technitium_dns_apex_domain) left over from before this role narrowed to the
+# subdomain-only zone above. That record was never repointed at Traefik, so it
+# still answers with each service's old pre-migration backend address, which no
+# longer terminates TLS: the bare name resolves, then hangs until timeout
+# instead of failing fast or reaching the service. This task overwrites that
+# stale value in place with the same ingress target the subdomain alias above
+# already uses correctly — it never deletes a record, so it cannot touch the
+# apex zone's other content (cluster node entries, any other static record).
+# Scoped to exactly technitium_dns_ingress_aliases, the same fronted-service
+# name list the subdomain task above uses, so this self-heals on every primary
+# converge without a separate one-off list to maintain.
+- name: Create Traefik ingress alias apex A records
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item }}.{{ technitium_dns_apex_domain }}"
+      zone: "{{ technitium_dns_apex_domain }}"
+      type: A
+      ipAddress: "{{ technitium_dns_ingress_target_ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_ingress_aliases | default([]) }}"
+  loop_control:
+    label: "{{ item }}.{{ technitium_dns_apex_domain }} -> {{ technitium_dns_ingress_target_ip }}"
+  register: technitium_dns_ingress_apex_alias_result
+  changed_when: technitium_dns_ingress_apex_alias_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_ingress_apex_alias_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_ingress_apex_alias_result.json.errorMessage | default(''))"
+  no_log: true
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_ingress_target_ip | length > 0
+
 # The Proxmox API/UI apex (the subdomain zone root itself) resolves directly to
 # the Proxmox node endpoint IPs when PROXMOX_IP_ADDRESSES is set. Delete the old
 # apex A set first so the authoritative answer exactly matches the desired node
@@ -714,3 +786,13 @@
     (technitium_dns_final_zones.json.response.zones | default([]) | map(attribute='name') | list)
   when: technitium_dns_apply | bool
   no_log: true
+
+# Health-checked apex: reconcile the round-robin to nodes that actually answer.
+# Primary only — secondaries get the result by zone transfer, and two reconcilers
+# writing the same record set would fight each other.
+- name: Configure the health-checked zone apex
+  ansible.builtin.include_tasks: apex_health_check.yml
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_apex_health_check_enabled | bool

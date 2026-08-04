@@ -3,8 +3,10 @@
 # scheduled base backups to an S3-compatible endpoint (repo1 = RustFS, and the
 # offsite repo2 when enabled — pgBackRest writes both itself; an out-of-band
 # mirror used to fill that role and silently copied a truncated subset, #1027).
-# Primary-only — a standby's WAL arrives via
-# streaming, and archive_command runs on the primary. Statically imported from
+# Archiving and base backups are primary-only — a standby's WAL arrives via
+# streaming, and archive_command runs on the primary. The standby still gets the
+# config file, and gives up any backup timer it kept from an earlier primary
+# role; see the standby block below. Statically imported from
 # main.yml after the cluster is up and the version fact is set, so inner block
 # tags (never,pgbackrest_restore) behave exactly like inline tasks.
 
@@ -217,6 +219,79 @@
       loop: "{{ postgres_pgbackrest_schedules }}"
       loop_control:
         label: "{{ item.type }}"
+
+# =============================================================================
+# Standby side of the same tier. Only the primary archives WAL and takes base
+# backups — a standby's WAL arrives by streaming — but the standby is NOT left
+# unmanaged, because two things follow it across a role change and both write to
+# the repo if ignored.
+#
+# The config file: a standby bootstrapped from a base backup inherits the
+# primary's archive_command, naming the CLUSTER's stanza. Skipping the standby
+# leaves its config file defining some other stanza, so the two disagree until
+# the host is promoted — at which point it archives under a name its own config
+# does not define. Rendering the same template here makes the file agree with
+# the archive_command the host already carries, and makes a promotion continue
+# the cluster's existing backup history instead of opening a second stanza.
+#
+# The timers: a host demoted from primary to standby keeps whatever backup
+# timers it was given, and goes on running base backups against a stanza it no
+# longer owns. Nothing else removes them, so this does.
+# =============================================================================
+- name: Keep pgBackRest consistent but inert on a standby
+  when:
+    - postgres_pgbackrest_enabled | bool
+    - postgres_role == 'standby'
+  block:
+    - name: Install pgBackRest
+      ansible.builtin.apt:
+        name: pgbackrest
+        state: present
+        update_cache: true
+
+    - name: Create the pgBackRest config directory
+      ansible.builtin.file:
+        path: /etc/pgbackrest
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
+
+    - name: Deploy the pgBackRest configuration
+      ansible.builtin.template:
+        src: pgbackrest.conf.j2
+        dest: /etc/pgbackrest/pgbackrest.conf
+        owner: postgres
+        group: postgres
+        mode: "0640"
+      no_log: true
+
+    # Discovered rather than derived from postgres_pgbackrest_schedules: the
+    # schedule list may have changed since this host was a primary, and a timer
+    # for a since-removed schedule is exactly the one left running.
+    - name: Find pgBackRest backup timers left over from a primary role
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        patterns: pgbackrest-backup@*.timer
+      register: postgres_pgbackrest_stale_timers
+
+    - name: Stop and disable each leftover pgBackRest backup timer
+      ansible.builtin.systemd:
+        name: "{{ item.path | basename }}"
+        state: stopped
+        enabled: false
+      loop: "{{ postgres_pgbackrest_stale_timers.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Remove the leftover pgBackRest backup units
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ (postgres_pgbackrest_stale_timers.files | map(attribute='path') | list)
+           + ['/etc/systemd/system/pgbackrest-backup@.service'] }}
+      notify: Reload systemd daemon
 
 # =============================================================================
 # PITR restore (explicit invocation only — the object-storage tier's restore
