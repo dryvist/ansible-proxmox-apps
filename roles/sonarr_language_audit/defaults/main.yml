@@ -1,0 +1,41 @@
+---
+# sonarr_language_audit — scheduled, read-only audit comparing every Sonarr
+# episode file's audio language (mediaInfo.audioLanguages, populated by
+# Sonarr's own MediaInfo scan at import) against a required-language policy.
+# Reports mismatches only; never touches a file, a Sonarr setting, or a
+# release. Runs entirely outside Sonarr (systemd timer + oneshot service,
+# read-only API calls) — no event hook, no connection wired into Sonarr.
+#
+# Sonarr no longer exposes a per-series required-language field: its old
+# Language Profile API is a deprecated stub (SeriesResource.LanguageProfileId
+# always returns 1 in current Sonarr — verified against the Sonarr source).
+# Language enforcement now lives in Custom Formats, not a queryable series
+# attribute, so this role compares against one library-wide policy value
+# instead of a per-series lookup.
+
+sonarr_language_audit_manage_services: true
+
+sonarr_language_audit_bin_dir: /usr/local/bin
+sonarr_language_audit_script_name: sonarr-language-audit.sh
+
+# This role always runs on the Sonarr host itself, so the API is local.
+sonarr_language_audit_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
+# Sonarr keeps its own deterministic API key in config.xml; the script reads
+# it at runtime instead of a secret being baked into the deployed template.
+# Matches the sonarr role's sonarr_data_dir default.
+sonarr_language_audit_sonarr_config_path: /var/lib/sonarr/config.xml
+
+# Required audio language, exactly as Sonarr's MediaInfo scan reports it
+# (ISO 639-2, three-letter — e.g. eng/spa/jpn).
+sonarr_language_audit_required_language: eng
+
+# systemd OnCalendar schedule + jitter, same convention as the postgres
+# role's backup timer.
+sonarr_language_audit_on_calendar: "*-*-* 03:30:00"
+sonarr_language_audit_randomized_delay_sec: 900
+
+# ntfy alert target — FQDN-first, shares media_monitor's topic (one topic for
+# media-quality alerts).
+sonarr_language_audit_ntfy_topic: media
+sonarr_language_audit_ntfy_url: >-
+  https://ntfy.{{ tofu_data.domain }}/{{ sonarr_language_audit_ntfy_topic }}

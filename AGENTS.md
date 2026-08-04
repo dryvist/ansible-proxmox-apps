@@ -45,6 +45,9 @@ this repo handles app config only.
   clients are owned by the devopsarr `servarr-config` tofu module
   (`tofu-proxmox`); reusable quality definitions and general policy by the
   `configarr` role (TRaSH-Guides). `servarr_wiring` does not manage profiles.
+  `sonarr_language_audit` is a scheduled, read-only systemd timer that
+  compares each episode file's recorded audio language against policy and
+  reports mismatches (log + ntfy) — no Sonarr connection or setting touched.
 - **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
   Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
   API keys, no new *arr-side wiring).
