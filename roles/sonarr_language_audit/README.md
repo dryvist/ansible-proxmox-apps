@@ -33,18 +33,26 @@ ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags sonarr_languag
 - A running Sonarr instance on the same host (this role always talks to
   `127.0.0.1`, never a remote address).
 - `jq` (installed by this role) — parses the Sonarr API responses.
+- `ffmpeg` (installed by this role) — `ffprobe` is the fallback ground truth
+  when the stored MediaInfo field is empty (see below).
 
 ## How it works
 
 1. On its systemd timer schedule, the script reads Sonarr's own deterministic
    API key from `config.xml` and calls `GET /api/v3/series`, then
    `GET /api/v3/episodefile?seriesId={id}` for each series.
-2. For every episode file, it reads `mediaInfo.audioLanguages` and checks
-   whether `sonarr_language_audit_required_language` appears in it.
-3. A file with no MediaInfo language recorded is skipped and logged as
-   undetermined — **never treated as a mismatch**.
-4. Mismatches are logged (`logger -t sonarr-language-audit`) and, if any
-   exist, summarized in a single ntfy alert. A clean run stays quiet.
+2. For every episode file, it reads `mediaInfo.audioLanguages`. If that is
+   empty, it falls back to probing the file directly with `ffprobe` — the
+   stored field can be **permanently stale**: Sonarr's own rescan only
+   re-extracts MediaInfo when a file's size on disk has changed, so a file
+   whose language was never recorded at import stays that way indefinitely
+   unless re-imported.
+3. It checks whether `sonarr_language_audit_required_language` appears in the
+   language(s) found. A file with no language from either source is skipped
+   and logged as undetermined — **never treated as a mismatch**.
+4. Mismatches are always logged (`logger -t sonarr-language-audit`); if
+   `sonarr_language_audit_action` is `notify` (the default) and any exist,
+   they are also summarized in a single ntfy alert. A clean run stays quiet.
 5. Anything the script cannot complete (unreadable API key, unreachable
    Sonarr) is logged and the run exits — it never guesses.
 
@@ -57,6 +65,9 @@ See `defaults/main.yml`.
 
 - `sonarr_language_audit_required_language` — required audio language, as
   Sonarr's MediaInfo reports it (ISO 639-2, three-letter — default `eng`).
+- `sonarr_language_audit_action` — mismatch response, `log` or `notify`
+  (default `notify`). `log` always happens; `notify` adds the ntfy alert.
+  No blocklist/delete option exists.
 - `sonarr_language_audit_on_calendar` / `_randomized_delay_sec` — systemd
   `OnCalendar` schedule (default daily) + jitter.
 - `sonarr_language_audit_ntfy_url` — ntfy alert target (tofu-derived domain).
