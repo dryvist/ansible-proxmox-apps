@@ -130,6 +130,41 @@
           {{ technitium_dns_ingress_aliases }} apex_domain=
           {{ technitium_dns_apex_domain }}.
 
+    # The apex zone has no zone-transfer relationship between resolvers (unlike
+    # the subdomain zone, which a secondary replicates via AXFR), so the apex
+    # ingress-alias write must run on EVERY resolver, not just the primary —
+    # otherwise one resolver keeps serving the stale pre-migration address.
+    # No live server exists in CI to exercise the task's `when:`, so this reads
+    # the task source directly and asserts the role gate is gone from exactly
+    # that task, while confirming sibling tasks that must STAY primary-only
+    # (the subdomain zone's own equivalents) still have it — proving the
+    # extraction isolated the right task rather than matching too broadly.
+    - name: Assert the apex ingress-alias task dropped the primary-only gate
+      vars:
+        technitium_dns_tasks_source: >-
+          {{ lookup('file', playbook_dir ~ '/../../roles/technitium_dns/tasks/main.yml') }}
+        technitium_dns_apex_alias_block: >-
+          {{ technitium_dns_tasks_source
+             | regex_search('(?s)- name: Create Traefik ingress alias apex A records.*?(?=\n- name:|\Z)') }}
+        technitium_dns_subdomain_alias_block: >-
+          {{ technitium_dns_tasks_source
+             | regex_search('(?s)- name: Create Traefik ingress alias A records\n.*?(?=\n- name:|\Z)') }}
+        technitium_dns_secondary_zone_block: >-
+          {{ technitium_dns_tasks_source
+             | regex_search('(?s)- name: Create Secondary DNS zone \(secondary\).*?(?=\n- name:|\Z)') }}
+      ansible.builtin.assert:
+        that:
+          - technitium_dns_apex_alias_block | length > 0
+          - "'technitium_dns_role' not in technitium_dns_apex_alias_block"
+          - technitium_dns_subdomain_alias_block | length > 0
+          - "'technitium_dns_role' in technitium_dns_subdomain_alias_block"
+          - technitium_dns_secondary_zone_block | length > 0
+          - "'technitium_dns_role' in technitium_dns_secondary_zone_block"
+        fail_msg: >-
+          Expected the apex ingress-alias task to have no role gate while its
+          subdomain sibling and the secondary-zone task keep theirs.
+          apex_block={{ technitium_dns_apex_alias_block }}
+
     - name: Assert Proxmox endpoint apex A records are built from env
       ansible.builtin.assert:
         that:
