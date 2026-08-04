@@ -1,10 +1,10 @@
 ---
 # n8n Docker deployment.
 #
-# Installs Docker + Compose on the target LXC, generates (and persists) an
-# N8N_ENCRYPTION_KEY on first run, then deploys the n8nio/n8n image plus a
-# PostgreSQL backend via Docker Compose. Sets up the instance owner and seeds a
-# minimal "hello" workflow via the LiteLLM router.
+# Installs Docker + Compose on the target LXC, resolves the N8N_ENCRYPTION_KEY,
+# then deploys the n8nio/n8n image via Docker Compose against the shared
+# PostgreSQL cluster. Sets up the instance owner and seeds a minimal "hello"
+# workflow via the LiteLLM router.
 #
 # Docker itself (docker-ce + compose plugin, fuse-overlayfs, the fuse-overlayfs
 # daemon.json) is installed by the docker_engine meta dependency (meta/main.yml).
@@ -13,21 +13,17 @@
 
 # =============================================================================
 # Data Directories
-# Postgres writes to a bind-mounted volume; its image entrypoint self-chowns as
-# root. n8n runs as `node` (uid 1000) and CANNOT chown its own home, so the .n8n
+# n8n runs as `node` (uid 1000) and CANNOT chown its own home, so the .n8n
 # mount is chowned to 1000:1000 up front.
 # =============================================================================
 
-- name: Create n8n data subdirectories
+- name: Create n8n data directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ n8n_docker_data_dir }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
-  loop:
-    - "{{ n8n_docker_data_dir }}"
-    - "{{ n8n_docker_postgres_data_dir }}"
 
 - name: Create n8n app home (.n8n) + seed subdir owned by the container's node uid
   ansible.builtin.file:
@@ -41,21 +37,26 @@
     - "{{ n8n_docker_seed_dir }}"
 
 # =============================================================================
-# N8N_ENCRYPTION_KEY (generate-once, persist on disk)
+# N8N_ENCRYPTION_KEY
 # =============================================================================
-# n8n needs a stable encryption key to encrypt stored credentials; if we
-# randomized it per play, every deployment would make previously-stored
-# credentials undecryptable. Persist it in a root-only file the first time the
-# role runs and reuse it thereafter.
+# The key that decrypts every credential stored in the database. Order of
+# authority: the secret store (supplied as n8n_docker_encryption_key), then the
+# generate-once file on the guest.
+#
+# The file remains the greenfield bootstrap, but it is NOT the durable home: a
+# key that lives only beside the data it unlocks is lost with that guest, and a
+# database restored without it yields workflows whose credentials cannot be
+# recovered — while reporting success. Once the secret store holds the key it
+# wins, and the on-guest copy is only a local fallback.
 
-- name: Check for existing n8n encryption key
+- name: Check for the on-guest n8n encryption key
   ansible.builtin.stat:
-    path: "{{ n8n_docker_data_dir }}/.encryption_key"
+    path: "{{ n8n_docker_encryption_key_path }}"
   register: n8n_docker_encryption_key_stat
 
-- name: Generate n8n encryption key (first run only)
+- name: Generate an n8n encryption key on the guest (greenfield bootstrap only)
   ansible.builtin.copy:
-    dest: "{{ n8n_docker_data_dir }}/.encryption_key"
+    dest: "{{ n8n_docker_encryption_key_path }}"
     # 48 alphanumeric chars. Character set specified by unambiguous boolean flags
     # rather than the password lookup's implicit keyword expansion.
     content: >-
@@ -66,22 +67,48 @@
     owner: root
     group: root
     mode: "0600"
-  when: not n8n_docker_encryption_key_stat.stat.exists
+  when:
+    - not n8n_docker_encryption_key_stat.stat.exists
+    - n8n_docker_encryption_key | length == 0
   no_log: true
 
-- name: Read n8n encryption key into memory
+- name: Re-check for the on-guest n8n encryption key
+  ansible.builtin.stat:
+    path: "{{ n8n_docker_encryption_key_path }}"
+  register: n8n_docker_encryption_key_stat
+
+- name: Read the on-guest n8n encryption key into memory
   ansible.builtin.slurp:
-    src: "{{ n8n_docker_data_dir }}/.encryption_key"
+    src: "{{ n8n_docker_encryption_key_path }}"
   register: n8n_docker_encryption_key_file
+  when: n8n_docker_encryption_key_stat.stat.exists
   no_log: true
 
-- name: Resolve effective encryption key (inventory override or persisted file)
+- name: Resolve the effective encryption key (secret store, then on-guest file)
   ansible.builtin.set_fact:
     n8n_docker_encryption_key: >-
       {{ n8n_docker_encryption_key
          if n8n_docker_encryption_key | length > 0
-         else (n8n_docker_encryption_key_file.content | b64decode | trim) }}
+         else ((n8n_docker_encryption_key_file.content | default('') | b64decode | trim)
+               if n8n_docker_encryption_key_stat.stat.exists else '') }}
   no_log: true
+
+# Deploying with an empty key is the one failure this role must never convert
+# into a silent success: n8n would come up, re-encrypt under an empty key, and
+# every credential already in the database would become unreadable. Everything
+# about that looks healthy — the container is up, /healthz answers 200, the
+# workflows are listed — until a workflow actually runs.
+- name: Assert an encryption key resolved
+  ansible.builtin.assert:
+    that:
+      - n8n_docker_encryption_key | length > 0
+    fail_msg: >-
+      No n8n encryption key resolved from the secret store or the guest.
+      Deploying without it would make every credential already stored in the
+      database permanently undecryptable. Re-run under the secrets environment
+      so the apps domain is fetched, or restore the guest's key file — do NOT
+      let this converge proceed with a freshly generated value.
+    quiet: true
 
 # =============================================================================
 # Compose File + seed workflow

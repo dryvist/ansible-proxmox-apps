@@ -1,31 +1,25 @@
 ---
-# Self-hosted n8n (postgres + app) via Docker Compose.
+# Self-hosted n8n (app only) via Docker Compose.
 # Rendered by ansible-proxmox-apps/roles/n8n_docker.
+#
+# There is deliberately no database service here. Workflow definitions,
+# credentials and execution history live on the shared PostgreSQL cluster, which
+# already carries continuous WAL archiving, PITR and nightly logical dumps — a
+# database colocated in this stack would inherit none of it.
 services:
-  {{ n8n_docker_db_service }}:
-    image: {{ n8n_docker_postgres_image }}
-    environment:
-      POSTGRES_USER: {{ n8n_docker_db_user }}
-      POSTGRES_PASSWORD: "{{ n8n_docker_db_password }}"
-      POSTGRES_DB: {{ n8n_docker_db_name }}
-    volumes:
-      - {{ n8n_docker_postgres_data_dir }}:{{ n8n_docker_postgres_internal_data }}
-    restart: {{ n8n_docker_restart_policy }}
-
   {{ n8n_docker_app_service }}:
     image: {{ n8n_docker_app_image }}
     container_name: "{{ n8n_docker_container_name }}"
-    depends_on:
-      - {{ n8n_docker_db_service }}
     environment:
-      # Persist workflows/credentials in postgres, not sqlite.
+      # Persist workflows/credentials in the shared cluster, not sqlite.
       DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: {{ n8n_docker_db_service }}
+      DB_POSTGRESDB_HOST: "{{ n8n_docker_db_host }}"
       DB_POSTGRESDB_PORT: "{{ n8n_docker_postgres_port }}"
       DB_POSTGRESDB_DATABASE: {{ n8n_docker_db_name }}
       DB_POSTGRESDB_USER: {{ n8n_docker_db_user }}
       DB_POSTGRESDB_PASSWORD: "{{ n8n_docker_db_password }}"
-      # Stable key so stored credentials survive redeploys (generate-once on host).
+      # Decrypts the credentials already stored in the database above. It must be
+      # the SAME value for the life of that data — see the role defaults.
       N8N_ENCRYPTION_KEY: "{{ n8n_docker_encryption_key }}"
       # Public identity — Traefik terminates TLS and proxies to this port.
       N8N_HOST: "{{ n8n_docker_fqdn }}"
