@@ -1,9 +1,11 @@
 # opentofu_cli
 
-Installs the OpenTofu CLI from the official OpenTofu apt repository on the
-IaC execution host, so LAN-touching OpenTofu operations (`init` against the
-remote backend, `plan`, state operations) run from a host on the network
-instead of a workstation.
+Installs the OpenTofu CLI (from the official OpenTofu apt repository) plus the
+rest of the tooling the documented remote-plan flow needs — `direnv`, `jq`,
+and the Doppler CLI (from its own apt repository) — on the IaC execution host,
+so LAN-touching OpenTofu operations (`init` against the remote backend,
+`plan`, state operations) run from a host on the network instead of a
+workstation.
 
 ## Installation
 
@@ -18,10 +20,11 @@ from a playbook's `roles:` block — no Galaxy install needed:
 
 ## API
 
-The role adds two upstream signing keys to `/etc/apt/keyrings`, registers the
-OpenTofu apt repository, and installs the `tofu` package. It configures no
-credentials and writes no secret: backend coordinates and the API token are
-supplied by the operator's environment at call time.
+The role adds the OpenTofu and Doppler upstream signing keys to
+`/etc/apt/keyrings`, registers both apt repositories, and installs `tofu`,
+`doppler`, `direnv`, and `jq`. It configures no credentials and writes no
+secret: backend coordinates and the API token are supplied by the operator's
+environment at call time.
 
 ### Variables
 
@@ -31,11 +34,16 @@ See `defaults/main.yml` for the authoritative list.
   the execution host. `playbooks/site.yml` gates the role on this so the CLI
   does not land on every Docker VM.
 - `opentofu_cli_package_state` (string, default `present`) — passed through
-  to `ansible.builtin.apt`. Use `latest` to track upstream releases.
+  to `ansible.builtin.apt` for the `tofu` package. Use `latest` to track
+  upstream releases.
 - `opentofu_cli_keyring_dir`, `opentofu_cli_release_key_url`,
-  `opentofu_cli_repo_key_url`, `opentofu_cli_repo_uri` — apt repository
-  coordinates. Upstream requires two keys: the release key and the
+  `opentofu_cli_repo_key_url`, `opentofu_cli_repo_uri` — OpenTofu apt
+  repository coordinates. Upstream requires two keys: the release key and the
   package-host key.
+- `opentofu_cli_doppler_key_url`, `opentofu_cli_doppler_repo_uri` — Doppler
+  apt repository coordinates (single key, already ASCII-armoured).
+- `opentofu_cli_extra_packages` (list, default `[direnv, jq]`) — plain
+  Debian-archive packages installed alongside `doppler`.
 
 No version is pinned. The remote workspace declares the version it requires,
 and a pin here would drift against it.
@@ -56,6 +64,9 @@ by `inventory/load_tofu.yml`); run the tag against the whole site instead.
 ```sh
 tofu version
 apt-cache policy tofu
+doppler --version
+direnv --version
+jq --version
 ```
 
 ## Idempotency
