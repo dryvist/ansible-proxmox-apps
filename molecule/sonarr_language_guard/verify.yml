@@ -1,0 +1,67 @@
+---
+# Molecule verification for sonarr_language_guard (deployed script + deps).
+#
+# Proves the enforcement step landed correctly without a running Sonarr:
+#   1. jq + ffprobe (from ffmpeg) are installed — the API-parsing and
+#      fallback-probe dependencies.
+#   2. The script is deployed, executable, and rendered with this scenario's
+#      config (API port, ntfy URL).
+#   3. The script's safety contract is intact in the rendered output: it only
+#      acts on the Download event, it never guesses when the language cannot
+#      be determined, and blocklisting never touches the imported file
+#      directly (only the release, via history/failed).
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    sonarr_language_guard_bin_dir: /usr/local/bin
+    sonarr_language_guard_script_name: sonarr-language-guard.sh
+
+  tasks:
+    - name: Check jq and ffprobe are on PATH
+      ansible.builtin.command:
+        cmd: "which {{ item }}"
+      loop:
+        - jq
+        - ffprobe
+      changed_when: false
+
+    - name: Stat the deployed script
+      ansible.builtin.stat:
+        path: "{{ sonarr_language_guard_bin_dir }}/{{ sonarr_language_guard_script_name }}"
+      register: sonarr_language_guard_script_stat
+
+    - name: Assert the script is deployed and executable
+      ansible.builtin.assert:
+        that:
+          - sonarr_language_guard_script_stat.stat.exists
+          - sonarr_language_guard_script_stat.stat.executable
+        fail_msg: "sonarr_language_guard script did not deploy as an executable"
+
+    - name: Read the rendered script
+      ansible.builtin.slurp:
+        src: "{{ sonarr_language_guard_bin_dir }}/{{ sonarr_language_guard_script_name }}"
+      register: sonarr_language_guard_script_raw
+
+    - name: Assert the safety contract is intact in the rendered script
+      vars:
+        sonarr_language_guard_script: "{{ sonarr_language_guard_script_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          # Only the import/upgrade event is acted on.
+          - "'Download) ;;' in sonarr_language_guard_script"
+          # Config resolved to this scenario's values.
+          - "'127.0.0.1:8989' in sonarr_language_guard_script"
+          - "'ntfy.example.net/media' in sonarr_language_guard_script"
+          # Fail-safe exits: undetermined language never triggers a reaction.
+          - >-
+            sonarr_language_guard_script
+            | regex_findall('fail safe') | length >= 3
+          # blocklist calls history/failed (release only) — never a file delete.
+          - "'/api/v3/history/failed/' in sonarr_language_guard_script"
+          - "'rm ' not in sonarr_language_guard_script"
+          - "'ansible.builtin.file' not in sonarr_language_guard_script"
+        fail_msg: "sonarr_language_guard's safety contract regressed"

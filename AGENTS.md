@@ -45,6 +45,10 @@ this repo handles app config only.
   clients are owned by the devopsarr `servarr-config` tofu module
   (`tofu-proxmox`); reusable quality definitions and general policy by the
   `configarr` role (TRaSH-Guides). `servarr_wiring` does not manage profiles.
+  `sonarr_language_guard` wires a Sonarr Custom Script connection that
+  compares each imported episode's audio language against the series'
+  required language and alerts on mismatch (configurable
+  log/notify/blocklist; never deletes a file).
 - **Sortarr** (`sortarr` role — read-only media-library insights dashboard,
   Docker-in-LXC; reaches Sonarr/Radarr/Plex over the LAN via their existing
   API keys, no new *arr-side wiring).

@@ -1,0 +1,49 @@
+---
+# sonarr_language_guard — verifies an imported episode's audio language
+# matches the series' required language and alerts on mismatch.
+#
+# Sonarr's own MediaInfo scan already records the imported file's audio
+# languages (sonarr_episodefile_mediainfo_audiolanguages on the Custom Script
+# event) — this role is the missing comparison step: it checks that value
+# against the series' language profile and reacts when they disagree. It never
+# deletes or otherwise mutates the imported file; see
+# sonarr_language_guard_action below for how loud the reaction is.
+#
+# Wired as a Sonarr "Custom Script" connection (On Import / On Upgrade).
+
+sonarr_language_guard_manage_services: true
+
+# Where the script lives on the Sonarr host and who runs it — Sonarr itself,
+# as a subprocess of the Custom Script connection.
+sonarr_language_guard_bin_dir: /usr/local/bin
+sonarr_language_guard_script_name: sonarr-language-guard.sh
+
+# This role always runs on the Sonarr host itself, so the API is local.
+sonarr_language_guard_sonarr_port: "{{ tofu_data.constants.media_ports.sonarr_web }}"
+# Deterministic key, same source as the sonarr role's self-owned API key —
+# used only to wire the Custom Script connection at converge time. The
+# deployed script itself reads the key from config.xml at runtime instead
+# (see sonarr_language_guard_sonarr_config_path), so no secret is baked into
+# the template rendered to disk.
+sonarr_language_guard_sonarr_api_key: "{{ lookup('env', 'SONARR_API_KEY') | default('', true) }}"
+# Matches the sonarr role's sonarr_data_dir default.
+sonarr_language_guard_sonarr_config_path: /var/lib/sonarr/config.xml
+
+# Mismatch response — one of: log | notify | blocklist.
+#   log       - journal entry only.
+#   notify    - journal entry + ntfy alert (default).
+#   blocklist - journal entry + ntfy alert + blocklist the grabbed release via
+#               Sonarr's history API, so it is not re-grabbed. Never deletes
+#               the already-imported file.
+# A language the script cannot determine (missing MediaInfo, unreachable
+# Sonarr API) never triggers any of these — it exits quietly instead.
+sonarr_language_guard_action: notify
+
+# ntfy alert target — FQDN-first, shares media_monitor's topic (one topic for
+# media-quality alerts).
+sonarr_language_guard_ntfy_topic: media
+sonarr_language_guard_ntfy_url: >-
+  https://ntfy.{{ tofu_data.domain }}/{{ sonarr_language_guard_ntfy_topic }}
+
+# Name Sonarr shows for the Custom Script connection.
+sonarr_language_guard_connection_name: "Audio Language Guard"

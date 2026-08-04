@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Sonarr Custom Script connection (On Import / On Upgrade). Compares the
+# audio languages Sonarr's own MediaInfo scan already recorded at import
+# against the series' required language (its language profile cutoff) and
+# reacts on mismatch. Never deletes or otherwise mutates the imported file.
+#
+# Fail-safe throughout: any step it cannot complete (missing MediaInfo,
+# ffprobe absent, series/profile lookup failure, unreachable API) exits
+# quietly rather than guessing or blocking the import.
+set -uo pipefail
+
+# Only the import/upgrade event carries the fields this check needs.
+case "${sonarr_eventtype:-}" in
+  Download) ;;
+  *) exit 0 ;;
+esac
+
+CONFIG_XML="{{ sonarr_language_guard_sonarr_config_path }}"
+API="http://127.0.0.1:{{ sonarr_language_guard_sonarr_port }}"
+ACTION="{{ sonarr_language_guard_action }}"
+NTFY_URL="{{ sonarr_language_guard_ntfy_url }}"
+
+log() { logger -t sonarr-language-guard "$1"; }
+
+series_id="${sonarr_series_id:-}"
+series_title="${sonarr_series_title:-unknown series}"
+episode_path="${sonarr_episodefile_path:-}"
+found_langs="${sonarr_episodefile_mediainfo_audiolanguages:-}"
+
+# Fallback ground truth: probe the file directly when Sonarr's own MediaInfo
+# field came back empty (older Sonarr, or a parse it could not complete).
+if [ -z "$found_langs" ] && [ -n "$episode_path" ] && command -v ffprobe >/dev/null 2>&1; then
+  found_langs="$(ffprobe -v error -select_streams a \
+    -show_entries stream_tags=language -of csv=p=0 "$episode_path" 2>/dev/null \
+    | tr '\n' ' ')"
+fi
+
+if [ -z "$found_langs" ]; then
+  log "cannot determine audio language for '$series_title' ($episode_path) — skipping (fail safe)"
+  exit 0
+fi
+
+# Sonarr keeps its own deterministic API key in config.xml; read it at
+# runtime instead of baking a secret into this deployed script.
+api_key="$(grep -o '<ApiKey>[^<]*</ApiKey>' "$CONFIG_XML" 2>/dev/null | sed -e 's/<[^>]*>//g')"
+if [ -z "$series_id" ] || [ -z "$api_key" ]; then
+  log "missing series id or API key — cannot resolve the required language, skipping (fail safe)"
+  exit 0
+fi
+
+profile_id="$(curl -fsS -m 10 -H "X-Api-Key: $api_key" \
+  "$API/api/v3/series/$series_id" | jq -r '.languageProfileId // empty' 2>/dev/null)"
+
+required_lang=""
+if [ -n "$profile_id" ]; then
+  required_lang="$(curl -fsS -m 10 -H "X-Api-Key: $api_key" \
+    "$API/api/v3/languageprofile/$profile_id" | jq -r '.cutoff.name // empty' 2>/dev/null)"
+fi
+
+if [ -z "$required_lang" ]; then
+  log "could not resolve the required language for series id $series_id — skipping (fail safe)"
+  exit 0
+fi
+
+if printf '%s' "$found_langs" | grep -qi "$required_lang"; then
+  log "OK: '$series_title' audio [$found_langs] includes the required language [$required_lang]"
+  exit 0
+fi
+
+msg="Audio language mismatch: '$series_title' (${episode_path:-$series_title}) imported with [$found_langs], series requires [$required_lang]."
+log "MISMATCH: $msg"
+
+[ "$ACTION" = log ] && exit 0
+
+if [ -n "$NTFY_URL" ]; then
+  curl -fsS -m 15 \
+    -H "Title: Sonarr audio-language mismatch" \
+    -H "Priority: high" -H "Tags: warning,speaking_head" \
+    -d "$msg" "$NTFY_URL" >/dev/null 2>&1 || true
+fi
+
+if [ "$ACTION" = blocklist ]; then
+  download_id="${sonarr_download_id:-}"
+  if [ -n "$download_id" ]; then
+    history_id="$(curl -fsS -m 10 -H "X-Api-Key: $api_key" \
+      "$API/api/v3/history/series?seriesId=$series_id&eventType=grabbed" \
+      | jq -r --arg did "$download_id" \
+        '[.[]? | select(.downloadId == $did)][0].id // empty' 2>/dev/null)"
+    if [ -n "$history_id" ]; then
+      curl -fsS -m 10 -X POST -H "X-Api-Key: $api_key" \
+        "$API/api/v3/history/failed/$history_id" >/dev/null 2>&1 \
+        && log "blocklisted release (history id $history_id) for '$series_title'"
+    else
+      log "could not find the grab history record for download id $download_id — leaving the release un-blocklisted (fail safe)"
+    fi
+  else
+    log "no download id on this event — cannot blocklist, leaving the release alone (fail safe)"
+  fi
+fi
+
+exit 0

@@ -1,0 +1,85 @@
+---
+# Idempotent: GET-then-conditional POST/PUT — a Custom Script connection named
+# sonarr_language_guard_connection_name pointing at the deployed script,
+# firing on Download (import) and Upgrade only. Mirrors the GET-then-PUT
+# pattern in roles/servarr_wiring/tasks/media_management.yml.
+
+- name: Read existing Sonarr connections
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ sonarr_language_guard_sonarr_port }}/api/v3/notification"
+    method: GET
+    headers:
+      X-Api-Key: "{{ sonarr_language_guard_sonarr_api_key }}"
+    status_code: 200
+  register: sonarr_language_guard_notifications
+  changed_when: false
+  no_log: true
+
+- name: Find the existing Audio Language Guard connection
+  ansible.builtin.set_fact:
+    sonarr_language_guard_existing: >-
+      {{ sonarr_language_guard_notifications.json
+         | selectattr('name', 'equalto', sonarr_language_guard_connection_name)
+         | list | first | default({}) }}
+
+- name: Build the desired Custom Script connection body
+  ansible.builtin.set_fact:
+    sonarr_language_guard_desired:
+      name: "{{ sonarr_language_guard_connection_name }}"
+      implementation: CustomScript
+      implementationName: Custom Script
+      configContract: CustomScriptSettings
+      fields:
+        - name: path
+          value: "{{ sonarr_language_guard_bin_dir }}/{{ sonarr_language_guard_script_name }}"
+      tags: []
+      onGrab: false
+      onDownload: true
+      onUpgrade: true
+      onImportComplete: false
+      onRename: false
+      onSeriesAdd: false
+      onSeriesDelete: false
+      onEpisodeFileDelete: false
+      onEpisodeFileDeleteForUpgrade: false
+      onHealthIssue: false
+      includeHealthWarnings: false
+      onHealthRestored: false
+      onApplicationUpdate: false
+      onManualInteractionRequired: false
+
+- name: Create the Audio Language Guard connection
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ sonarr_language_guard_sonarr_port }}/api/v3/notification"
+    method: POST
+    headers:
+      X-Api-Key: "{{ sonarr_language_guard_sonarr_api_key }}"
+    body_format: json
+    body: "{{ sonarr_language_guard_desired }}"
+    status_code: [200, 201]
+  changed_when: true
+  no_log: true
+  when: sonarr_language_guard_existing | length == 0
+
+- name: Update the Audio Language Guard connection
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1:{{ sonarr_language_guard_sonarr_port }}/api/v3/notification/{{
+      sonarr_language_guard_existing.id }}
+    method: PUT
+    headers:
+      X-Api-Key: "{{ sonarr_language_guard_sonarr_api_key }}"
+    body_format: json
+    body: "{{ sonarr_language_guard_desired | combine({'id': sonarr_language_guard_existing.id}) }}"
+    status_code: [200, 202]
+  changed_when: true
+  no_log: true
+  when: >-
+    sonarr_language_guard_existing | length > 0
+    and (
+      (sonarr_language_guard_existing.fields
+        | selectattr('name', 'equalto', 'path') | map(attribute='value') | list | first | default(''))
+        != (sonarr_language_guard_bin_dir ~ '/' ~ sonarr_language_guard_script_name)
+      or not (sonarr_language_guard_existing.onDownload | default(false))
+      or not (sonarr_language_guard_existing.onUpgrade | default(false))
+    )
