@@ -1,5 +1,34 @@
 # Changelog
 
+## [4.7.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.6.0...v4.7.0) (2026-08-04)
+
+
+### Features
+
+* **object-storage:** add scheduled offsite bucket copies ([#1379](https://github.com/dryvist/ansible-proxmox-apps/issues/1379)) ([db60b76](https://github.com/dryvist/ansible-proxmox-apps/commit/db60b76cfceea618a4fa696aa8746697095ca577))
+* **opentofu_cli:** install the OpenTofu CLI on the IaC execution host ([#1368](https://github.com/dryvist/ansible-proxmox-apps/issues/1368)) ([a322266](https://github.com/dryvist/ansible-proxmox-apps/commit/a322266d1ad9293076b0522016837ee6a7052f1e))
+* **sonarr_language_audit:** add ffprobe fallback and log/notify toggle ([#1376](https://github.com/dryvist/ansible-proxmox-apps/issues/1376)) ([5374f08](https://github.com/dryvist/ansible-proxmox-apps/commit/5374f089b0fcce73b1a413c0e480e4cad6a4c5d5))
+* **sonarr_language_audit:** scheduled read-only audio-language audit ([#1375](https://github.com/dryvist/ansible-proxmox-apps/issues/1375)) ([cc9fa5f](https://github.com/dryvist/ansible-proxmox-apps/commit/cc9fa5fa304ccbcd293de5eaf527d4055ebea360))
+* **sonarr:** install mkvtoolnix for media maintenance ([#1373](https://github.com/dryvist/ansible-proxmox-apps/issues/1373)) ([21c56e0](https://github.com/dryvist/ansible-proxmox-apps/commit/21c56e0001fe313c64863d1594424ca3bee9f48b))
+* **state:** back application state with the shared database and consistent SQLite copies ([#1382](https://github.com/dryvist/ansible-proxmox-apps/issues/1382)) ([611270e](https://github.com/dryvist/ansible-proxmox-apps/commit/611270e516c17ddb45acdf29091628a0cd940585))
+* **technitium_dns:** publish idrac-&lt;node&gt; A records from env single source ([#1367](https://github.com/dryvist/ansible-proxmox-apps/issues/1367)) ([1511242](https://github.com/dryvist/ansible-proxmox-apps/commit/1511242d1c0f6585a43f1c97396385c5f5f4476d))
+* **technitium_dns:** reconcile the zone apex to healthy API nodes ([#1366](https://github.com/dryvist/ansible-proxmox-apps/issues/1366)) ([4ab0340](https://github.com/dryvist/ansible-proxmox-apps/commit/4ab0340a193afe73f4d6dfe019460ae781e9c5d7))
+* **telemetry:** report whether a converge consumed a current inventory ([#1383](https://github.com/dryvist/ansible-proxmox-apps/issues/1383)) ([eb4a873](https://github.com/dryvist/ansible-proxmox-apps/commit/eb4a87312d6d3eb1d5678811a57f3b0050ea858e))
+
+
+### Bug Fixes
+
+* **deps:** pin community.proxmox to the proxmox_pct_remote fix commit ([#1369](https://github.com/dryvist/ansible-proxmox-apps/issues/1369)) ([5011f2b](https://github.com/dryvist/ansible-proxmox-apps/commit/5011f2b875d81beba8ea65bbff154060333c713a))
+* **download_vpn:** gate FlareSolverr Chromium libs on manage_services ([#1386](https://github.com/dryvist/ansible-proxmox-apps/issues/1386)) ([df8d15c](https://github.com/dryvist/ansible-proxmox-apps/commit/df8d15ce73d0c0f75cbf039a297590cadc24b1bd))
+* **download_vpn:** self-heal killswitch, indexer/CF-solver restarts, FlareSolverr deps ([#1374](https://github.com/dryvist/ansible-proxmox-apps/issues/1374)) ([42255d0](https://github.com/dryvist/ansible-proxmox-apps/commit/42255d03f05c7d59e468763bbea149a61bf3d482))
+* **haproxy:** stop the health-check timeout cutting idle TCP sessions ([#1384](https://github.com/dryvist/ansible-proxmox-apps/issues/1384)) ([d2b2885](https://github.com/dryvist/ansible-proxmox-apps/commit/d2b28856e1a9da2a680a0b087d0606808ac00b2d))
+* **media:** enforce absence of retired remux tooling on every converge ([#1371](https://github.com/dryvist/ansible-proxmox-apps/issues/1371)) ([f119b03](https://github.com/dryvist/ansible-proxmox-apps/commit/f119b03dfdb4fd15ee71665ff4ce2346387aac9a))
+* **ntfy:** serve base-url as the proxied service FQDN over HTTPS ([#1377](https://github.com/dryvist/ansible-proxmox-apps/issues/1377)) ([0c32ae3](https://github.com/dryvist/ansible-proxmox-apps/commit/0c32ae3ddfb85d1dd816f946aca1b009af071253))
+* **postgres_ai:** declare pgBackRest PITR explicitly for the AI cluster ([#1388](https://github.com/dryvist/ansible-proxmox-apps/issues/1388)) ([d5daed8](https://github.com/dryvist/ansible-proxmox-apps/commit/d5daed8c4466591de9a81037f89d10421a52c2b3))
+* **postgres:** scope the pgBackRest stanza to the cluster, not the host ([#1380](https://github.com/dryvist/ansible-proxmox-apps/issues/1380)) ([5bcf25a](https://github.com/dryvist/ansible-proxmox-apps/commit/5bcf25a674a609b65759624b97207effbc617d78))
+* **sqlite_backup:** stop the verification probe reporting a change ([#1387](https://github.com/dryvist/ansible-proxmox-apps/issues/1387)) ([9861927](https://github.com/dryvist/ansible-proxmox-apps/commit/986192734659f3fc4e1beb5de7ccec65e08017a8))
+* **technitium_dns:** point Traefik-fronted apex records at the ingress VIP ([#1389](https://github.com/dryvist/ansible-proxmox-apps/issues/1389)) ([d4b9a72](https://github.com/dryvist/ansible-proxmox-apps/commit/d4b9a7243285301ebfcfbc04bd6be26ce2b76980))
+
 ## [4.6.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.5.0...v4.6.0) (2026-08-03)
 
 
