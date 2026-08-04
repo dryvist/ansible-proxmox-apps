@@ -1,0 +1,103 @@
+#!/bin/bash
+# {{ ansible_managed }}
+#
+# Reconcile the zone apex A record set to exactly those Proxmox nodes that are
+# currently accepting API connections.
+#
+# WHY THIS EXISTS. The apex is a round-robin whose contract is "any address here
+# grants access to the whole cluster". A plain round-robin breaks that contract
+# the moment one member stops answering: clients keep drawing the dead address
+# and one request in N fails. That is not hypothetical — a decommissioned node
+# stayed in this record set and made every OpenTofu plan fail intermittently
+# with "no route to host", which reads as a broken cluster rather than a stale
+# DNS record.
+#
+# Technitium's own Failover app does this natively and would be preferable, but
+# its download host is unreachable from this network (blocked over both address
+# families), so the same behaviour is reconciled here on a timer.
+set -uo pipefail
+
+ZONE="{{ technitium_dns_zone }}"
+API="{{ technitium_dns_api_url }}"
+PORT="{{ technitium_dns_apex_health_check_port }}"
+TTL="{{ technitium_dns_apex_health_check_ttl }}"
+TIMEOUT="{{ technitium_dns_apex_health_check_timeout }}"
+TARGETS=({{ technitium_dns_apex_health_check_targets | map('quote') | join(' ') }})
+
+log() { echo "[$(date -u +%FT%TZ)] $*"; }
+
+# ponytail: TCP connect to the API port. It is the check that actually matches
+# the failure this guards against (a node that is gone, powered off, or whose
+# pveproxy is dead), and it needs no certificate material on this host. Upgrade
+# path if a half-open node ever matters: HTTPS GET /api2/json/version with the
+# cluster CA pinned via --cacert. Never reach for -k here; an unverified probe
+# would happily call a hostile endpoint healthy.
+probe() {
+    timeout "$TIMEOUT" bash -c "exec 3<>/dev/tcp/$1/$PORT" 2>/dev/null
+}
+
+api_token=$(curl -sS -m 10 -X POST "$API/api/user/login" \
+    -d "user=${TECHNITIUM_DNS_ADMIN_USER:?}" \
+    --data-urlencode "pass=${TECHNITIUM_DNS_ADMIN_PASSWORD:?}" |
+    jq -r '.token // empty')
+if [ -z "$api_token" ]; then
+    log "FATAL: could not authenticate to the DNS API; leaving records untouched"
+    exit 1
+fi
+
+healthy=()
+for target in "${TARGETS[@]}"; do
+    # Resolve each candidate once, then probe the address. Probing the name
+    # would re-enter this same record set for anything living under the zone.
+    addr=$(getent ahostsv4 "$target" 2>/dev/null | awk 'NR==1{print $1}')
+    if [ -z "$addr" ]; then
+        log "skip $target: no A record"
+        continue
+    fi
+    if probe "$addr"; then
+        healthy+=("$addr")
+    else
+        log "unhealthy $target ($addr): no TCP connect on $PORT"
+    fi
+done
+
+# FAIL-SAFE, and it is load-bearing. If every probe fails, the fault is far more
+# likely to be this host's own network path than every node dying at once, and
+# an empty apex would black-hole the endpoint for every client. Degrade to
+# "leave whatever is published" rather than to "publish nothing".
+if [ ${#healthy[@]} -eq 0 ]; then
+    log "ALL probes failed - refusing to empty the apex; leaving records untouched"
+    exit 1
+fi
+
+published=$(curl -sS -m 10 \
+    "$API/api/zones/records/get?token=$api_token&domain=$ZONE&zone=$ZONE&listZone=false" |
+    jq -r '.response.records[]? | select(.type=="A") | .rData.ipAddress' | sort -u)
+
+want=$(printf '%s\n' "${healthy[@]}" | sort -u)
+
+changed=0
+while read -r addr; do
+    [ -z "$addr" ] && continue
+    if ! grep -qxF "$addr" <<<"$published"; then
+        curl -sS -m 10 -X POST "$API/api/zones/records/add?token=$api_token" \
+            -d "domain=$ZONE" -d "zone=$ZONE" -d "type=A" \
+            -d "ipAddress=$addr" -d "ttl=$TTL" >/dev/null
+        log "ADDED $addr (healthy, was not published)"
+        changed=1
+    fi
+done <<<"$want"
+
+while read -r addr; do
+    [ -z "$addr" ] && continue
+    if ! grep -qxF "$addr" <<<"$want"; then
+        curl -sS -m 10 -X POST "$API/api/zones/records/delete?token=$api_token" \
+            -d "domain=$ZONE" -d "zone=$ZONE" -d "type=A" \
+            -d "ipAddress=$addr" >/dev/null
+        log "REMOVED $addr (published, not healthy)"
+        changed=1
+    fi
+done <<<"$published"
+
+[ "$changed" -eq 0 ] && log "no change: $(tr '\n' ' ' <<<"$want")"
+exit 0
