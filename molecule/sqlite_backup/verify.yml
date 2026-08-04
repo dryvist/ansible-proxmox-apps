@@ -20,14 +20,21 @@
         file_type: file
       register: sqlite_backup_produced
 
+    # Asserted as a SET of database names, not a file count. The scenario
+    # converges and then runs idempotence, so the job legitimately runs more
+    # than once and each run adds a timestamped copy. A count encoded "the role
+    # ran exactly once" and fails on the second — while the property worth
+    # guarding is WHICH databases were copied, which the count never stated.
     - name: Assert exactly the two databases were backed up
       vars:
         sqlite_backup_names: >-
           {{ sqlite_backup_produced.files | map(attribute='path') | map('basename') | list }}
+        sqlite_backup_dbs: >-
+          {{ sqlite_backup_names | map('regex_replace', '-[0-9]{8}T[0-9]{6}Z$', '')
+             | unique | sort | list }}
       ansible.builtin.assert:
         that:
-          - sqlite_backup_names | select('match', '^app\.db-') | list | length == 1
-          - sqlite_backup_names | select('match', '^nested\.sqlite3-') | list | length == 1
+          - sqlite_backup_dbs == ['app.db', 'nested.sqlite3']
           # The non-database file must not be copied, and no partial may survive.
           - sqlite_backup_names | select('search', 'config\.xml') | list | length == 0
           - sqlite_backup_names | select('search', '\.partial$') | list | length == 0
