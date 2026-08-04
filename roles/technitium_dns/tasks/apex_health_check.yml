@@ -1,0 +1,51 @@
+---
+# Health-checked zone apex. See templates/technitium-apex-health.sh.j2 for the
+# rationale; in short, a round-robin that keeps publishing a dead member breaks
+# its own contract, and the native Failover app is not reachable from here.
+- name: Ensure health-check dependencies are present
+  ansible.builtin.package:
+    name: "{{ technitium_dns_apex_health_check_packages }}"
+    state: present
+  become: true
+
+- name: Deploy the apex health-check credentials
+  ansible.builtin.template:
+    src: technitium-apex-health.env.j2
+    dest: "{{ technitium_dns_apex_health_check_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  no_log: true
+  notify: Restart apex health timer
+
+- name: Deploy the apex health-check script
+  ansible.builtin.template:
+    src: technitium-apex-health.sh.j2
+    dest: "{{ technitium_dns_apex_health_check_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  notify: Restart apex health timer
+
+- name: Deploy the apex health-check systemd units
+  ansible.builtin.template:
+    src: "technitium-apex-health.{{ item }}.j2"
+    dest: "/etc/systemd/system/technitium-apex-health.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  become: true
+  notify: Restart apex health timer
+
+- name: Enable the apex health-check timer
+  ansible.builtin.systemd_service:
+    name: technitium-apex-health.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
