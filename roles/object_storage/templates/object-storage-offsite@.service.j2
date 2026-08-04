@@ -1,0 +1,41 @@
+{# One instance per bucket; %i is the local bucket name. #}
+[Unit]
+Description=Offsite copy of object-storage bucket %i
+Documentation=man:rclone(1)
+After=network-online.target object-storage.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ object_storage_user }}
+Group={{ object_storage_group }}
+EnvironmentFile={{ object_storage_config_dir }}/offsite-%i.env
+# Both remotes come from the environment file. Point rclone at an empty config
+# so it never reads or writes one, and never needs a writable home.
+Environment=RCLONE_CONFIG=/dev/null
+# `copy`, not `sync`: sync propagates deletions, so an emptied or damaged
+# source bucket would erase the offsite copy on the next run. copy only adds.
+# Retention on the offsite side is that target's own lifecycle policy.
+ExecStart={{ object_storage_install_dir }}/rclone copy \
+  src:${OFFSITE_SRC_BUCKET} dst:${OFFSITE_DST_BUCKET} \
+  --checksum \
+  --transfers {{ object_storage_offsite_transfers }} \
+{% if object_storage_offsite_bandwidth_limit | length > 0 %}
+  --bwlimit {{ object_storage_offsite_bandwidth_limit }} \
+{% endif %}
+  --stats-one-line --stats {{ object_storage_offsite_stats_interval }} \
+  --log-level INFO
+# Deadman ping on success only. A failed or never-scheduled run therefore
+# raises the alert by staying silent — no separate failure path to maintain.
+# `$$` keeps systemd from expanding the variable itself, so the shell reads it
+# from the environment file — an unset value stays an empty string the `test`
+# can see, rather than a word systemd already substituted away.
+ExecStartPost=-/bin/sh -c 'test -n "$${OFFSITE_HEALTHCHECK_URL}" && exec curl -fsS -m 10 "$${OFFSITE_HEALTHCHECK_URL}"'
+TimeoutStartSec={{ object_storage_offsite_timeout }}
+# The copy is background work; it must never starve the store it reads from.
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
