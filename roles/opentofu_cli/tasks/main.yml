@@ -1,0 +1,54 @@
+---
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: "{{ opentofu_cli_keyring_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the OpenTofu release signing key
+  ansible.builtin.get_url:
+    url: "{{ opentofu_cli_release_key_url }}"
+    dest: "{{ opentofu_cli_keyring_dir }}/opentofu.gpg"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the OpenTofu package-host signing key
+  ansible.builtin.get_url:
+    url: "{{ opentofu_cli_repo_key_url }}"
+    dest: "{{ opentofu_cli_keyring_dir }}/opentofu-repo.asc"
+    owner: root
+    group: root
+    mode: "0644"
+
+
+# One-line format on purpose: it is the only sources syntax whose multi-keyring
+# `signed_by` separator is unambiguous, and upstream needs two keyrings.
+- name: Add the OpenTofu apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/opentofu.list
+    content: >-
+      deb [signed-by={{ opentofu_cli_keyring_dir }}/opentofu.gpg,{{
+      opentofu_cli_keyring_dir }}/opentofu-repo.asc]
+      {{ opentofu_cli_repo_uri }} any main
+
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the OpenTofu CLI
+  ansible.builtin.apt:
+    name: tofu
+    state: "{{ opentofu_cli_package_state }}"
+    update_cache: true
+
+- name: Record the installed OpenTofu version
+  ansible.builtin.command: tofu version
+  changed_when: false
+  register: opentofu_cli_version
+
+- name: Show the installed OpenTofu version
+  ansible.builtin.debug:
+    msg: "{{ opentofu_cli_version.stdout_lines | first }}"
