@@ -1,0 +1,54 @@
+---
+# Cribl Edge pipeline configuration — event-reduction defaults.
+#
+# This role owns the Edge syslog pipeline. Reduction happens at the collector
+# so the indexer never stores volume that no query would ever ask for.
+
+cribl_edge_pipelines_config_dir: /opt/cribl/local/edge/pipelines
+cribl_edge_pipelines_user: cribl
+cribl_edge_pipelines_group: cribl
+cribl_edge_pipelines_service_name: cribl-edge
+
+# --- Rollup: service-discovery ALLOW chatter -------------------------------
+#
+# Destination ports whose ALLOW records are pure service-discovery beacons:
+# multicast name resolution, device/media announcement, and port-mapping
+# solicitation. Every one of these is a host repeatedly announcing that it
+# still exists. The useful signal is "this endpoint beaconed N times in the
+# window", never N individual copies of the same beacon.
+#
+# DENY/REJECT records on these same ports are NEVER rolled up — a blocked
+# discovery attempt is an access-control event, not chatter.
+cribl_edge_pipelines_rollup_ports:
+  - 1900 # SSDP / UPnP announcement
+  - 3722 # storage-fabric discovery
+  - 5350 # port-mapping announcement
+  - 5351 # port-mapping solicitation
+  - 5353 # multicast DNS
+  - 10001 # vendor device discovery
+  - 32412 # media-server discovery
+  - 32414 # media-server discovery
+  - 39216 # media-server discovery
+
+# Tumbling window for the rollup. 60s keeps minute-resolution trend and burst
+# detection (a new beaconing endpoint is visible within a minute) while
+# collapsing the per-packet copies underneath it.
+cribl_edge_pipelines_rollup_window: 60s
+
+# Sourcetype the rollup events land under. Deliberately distinct from the raw
+# firewall sourcetype so an aggregate can never be mistaken for a packet
+# record, and so raw-only queries stay honest.
+cribl_edge_pipelines_rollup_sourcetype: "ubiquiti:firewall:rollup"
+
+# --- Suppress: log-forwarder self-chatter ---------------------------------
+#
+# A forwarder that cannot reach its destination reports the failure on every
+# retry, and the retry loop runs continuously. One report per host per window
+# carries the whole signal; the repeats carry none.
+#
+# `allow: 1` means the FIRST occurrence in each window always passes. A host
+# that starts failing is visible immediately, and a host that has never failed
+# before is never masked by another host's suppression state.
+cribl_edge_pipelines_suppress_process: rsyslogd
+cribl_edge_pipelines_suppress_period_sec: 600
+cribl_edge_pipelines_suppress_allow: 1

@@ -2395,6 +2395,128 @@
           - populated stanza does not
           - bare [] and check-mode both take the branch without raising
 
+- name: Render and verify cribl_edge_pipelines syslog pipeline
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror the role defaults (cribl_edge_pipelines/defaults/main.yml).
+    cribl_edge_pipelines_rollup_ports: [1900, 3722, 5350, 5351, 5353, 10001, 32412, 32414, 39216]
+    cribl_edge_pipelines_rollup_window: 60s
+    cribl_edge_pipelines_rollup_sourcetype: "ubiquiti:firewall:rollup"
+    cribl_edge_pipelines_suppress_process: rsyslogd
+    cribl_edge_pipelines_suppress_period_sec: 600
+    cribl_edge_pipelines_suppress_allow: 1
+    _template_dir: "../../roles/cribl_edge_pipelines/templates"
+
+  tasks:
+    - name: Render the syslog pipeline template
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/syslog/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/test_edge_syslog_conf.yml"
+        mode: "0644"
+
+    - name: Read the rendered syslog pipeline
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_edge_syslog_conf.yml"
+      register: _edge_syslog_raw
+
+    - name: Parse the rendered syslog pipeline
+      ansible.builtin.set_fact:
+        _edge_syslog: "{{ _edge_syslog_raw.content | b64decode | from_yaml }}"
+
+    - name: Index the pipeline functions by position
+      ansible.builtin.set_fact:
+        _fn_ids: "{{ _edge_syslog.functions | map(attribute='id') | list }}"
+        _stamp_fn: >-
+          {{ _edge_syslog.functions
+             | selectattr('conf.add', 'defined')
+             | selectattr('filter', 'search', 'fw_action')
+             | first }}
+        _agg_fn: "{{ _edge_syslog.functions | selectattr('id', 'eq', 'aggregation') | first }}"
+        _suppress_fn: "{{ _edge_syslog.functions | selectattr('id', 'eq', 'suppress') | first }}"
+
+    # The reduction stages must run after routing and extraction, or they
+    # filter on fields that do not exist yet and silently match nothing.
+    - name: Assert reduction runs after routing and field extraction
+      ansible.builtin.assert:
+        that:
+          - _fn_ids.index('aggregation') > _fn_ids.index('regex_extract')
+          - _fn_ids.index('suppress') > _fn_ids.index('regex_extract')
+        fail_msg: >-
+          Reduction stages must come after regex_extract; a reduction filter
+          that runs before extraction matches nothing and silently no-ops.
+
+    # The single most dangerous regression: rolling up a blocked packet.
+    - name: Assert only permitted traffic is ever rolled up
+      ansible.builtin.assert:
+        that:
+          - "\"fw_action === 'A'\" in _stamp_fn.filter"
+        fail_msg: >-
+          The rollup stamp filter no longer restricts to the permit verdict.
+          Denied and rejected packets would be aggregated away.
+
+    - name: Assert the rollup only consumes events it stamped itself
+      ansible.builtin.assert:
+        that:
+          - cribl_edge_pipelines_rollup_sourcetype in _agg_fn.filter
+        fail_msg: >-
+          The aggregation filter no longer scopes to the rollup sourcetype;
+          it would collapse unrelated firewall events.
+
+    # An aggregate that loses the field which made it interesting is worse
+    # than the raw event it replaced.
+    - name: Assert the rollup preserves every identifying field
+      ansible.builtin.assert:
+        that:
+          - item in _agg_fn.conf.groupbys
+        fail_msg: >-
+          Rollup groupbys are missing '{{ item }}'. Grouping or alerting on
+          that field would become impossible after reduction.
+        quiet: true
+      loop:
+        - index
+        - sourcetype
+        - source
+        - host
+        - fw_rule
+        - fw_action
+        - fw_proto
+        - fw_src
+        - fw_dport
+
+    - name: Assert every configured rollup port reaches the rendered filter
+      ansible.builtin.assert:
+        that:
+          - (item | string) in _stamp_fn.filter
+        fail_msg: "Rollup port {{ item }} did not render into the stamp filter."
+        quiet: true
+      loop: "{{ cribl_edge_pipelines_rollup_ports }}"
+
+    # Suppression that drops the first occurrence would hide the very event
+    # that says something just started going wrong.
+    - name: Assert suppression always lets the first occurrence through
+      ansible.builtin.assert:
+        that:
+          - _suppress_fn.conf.allow | int >= 1
+          - "'${host}' in _suppress_fn.conf.keyExpr"
+        fail_msg: >-
+          Suppression must allow at least one event per key per window, and
+          must key on host so one host's failures cannot mask another's.
+
+    - name: Cribl Edge syslog pipeline verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          Edge syslog pipeline assertions passed:
+          - reduction runs after routing and extraction
+          - only permitted traffic is rolled up
+          - the rollup consumes only what it stamped
+          - every identifying field survives aggregation
+          - suppression preserves the first occurrence per host
+
 - name: Remove the per-run fixture output directory
   hosts: localhost
   connection: local
