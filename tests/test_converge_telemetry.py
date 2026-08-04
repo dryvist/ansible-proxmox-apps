@@ -204,5 +204,50 @@ class CheckModeContract(unittest.TestCase):
             context.CLIARGS = original
 
 
+class DesiredStateFieldsContract(unittest.TestCase):
+    """The 'was this converge fed a stale inventory?' fields.
+
+    The alert built on them treats their absence as "not checked" and their
+    presence as a real verdict, so the boundary between the two is the whole
+    contract: a run that could not check must publish nothing rather than a
+    default.
+    """
+
+    def converge_event(self, config):
+        events = telemetry.build_events({"alpha": summary()}, config, "site.yml", 0.0)
+        return next(
+            e for e in events if e["sourcetype"] == telemetry.SOURCETYPE_CONVERGE
+        )["event"]
+
+    def test_no_verdict_publishes_no_claim(self):
+        event = self.converge_event(CONFIG)
+        for field in ("desired_state_current", "desired_state_published",
+                      "desired_state_live"):
+            self.assertNotIn(field, event)
+
+    def test_stale_artifact_is_published_as_false(self):
+        config = dict(CONFIG, desired_state_current=False,
+                      desired_state_published="aaa", desired_state_live="bbb")
+        event = self.converge_event(config)
+        self.assertIs(event["desired_state_current"], False)
+        self.assertEqual(event["desired_state_published"], "aaa")
+        self.assertEqual(event["desired_state_live"], "bbb")
+
+    def test_current_artifact_is_published_as_true(self):
+        config = dict(CONFIG, desired_state_current=True,
+                      desired_state_published="aaa", desired_state_live="aaa")
+        self.assertIs(self.converge_event(config)["desired_state_current"], True)
+
+    def test_roster_events_carry_no_verdict(self):
+        # The verdict is a property of a converge, not of inventory membership.
+        # Emitting it on the roster too would double every alert result row.
+        config = dict(CONFIG, desired_state_current=False)
+        events = telemetry.build_events({"alpha": summary()}, config, "site.yml", 0.0)
+        roster = [e for e in events if e["sourcetype"] == telemetry.SOURCETYPE_ROSTER]
+        self.assertTrue(roster)
+        for event in roster:
+            self.assertNotIn("desired_state_current", event["event"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
