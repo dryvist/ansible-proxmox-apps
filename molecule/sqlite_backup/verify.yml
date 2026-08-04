@@ -20,14 +20,17 @@
         file_type: file
       register: sqlite_backup_produced
 
-    - name: Assert exactly the two databases were backed up
+    # Counts are `>= 1`, not `== 1`: the role takes a proof backup on every
+    # converge, and molecule's idempotence stage converges a second time, so
+    # each database legitimately has more than one timestamped copy by now.
+    - name: Assert both databases were backed up and nothing else was
       vars:
         sqlite_backup_names: >-
           {{ sqlite_backup_produced.files | map(attribute='path') | map('basename') | list }}
       ansible.builtin.assert:
         that:
-          - sqlite_backup_names | select('match', '^app\.db-') | list | length == 1
-          - sqlite_backup_names | select('match', '^nested\.sqlite3-') | list | length == 1
+          - sqlite_backup_names | select('match', '^app\.db-') | list | length >= 1
+          - sqlite_backup_names | select('match', '^nested\.sqlite3-') | list | length >= 1
           # The non-database file must not be copied, and no partial may survive.
           - sqlite_backup_names | select('search', 'config\.xml') | list | length == 0
           - sqlite_backup_names | select('search', '\.partial$') | list | length == 0
@@ -35,11 +38,11 @@
           Unexpected backup set: {{ sqlite_backup_names }}
         quiet: true
 
-    - name: Locate the top-level database's backup
+    - name: Locate the newest backup of the top-level database
       ansible.builtin.set_fact:
         sqlite_backup_app_copy: >-
-          {{ (sqlite_backup_produced.files | map(attribute='path')
-              | select('search', '/app\.db-') | list | first) }}
+          {{ (sqlite_backup_produced.files | selectattr('path', 'search', '/app\.db-')
+              | sort(attribute='mtime') | map(attribute='path') | list | last) }}
 
     # The row was committed with a WAL journal active. A plain file copy can
     # omit exactly this; the online backup API folds the WAL in.
