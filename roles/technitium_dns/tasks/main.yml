@@ -265,6 +265,38 @@
 # outage. Non-authoritative apex names already FORWARD to the upstream
 # resolvers (configured above) whether or not any apex zone exists locally, so
 # there is nothing to "clean up" here.
+#
+# CANONICAL ZONE FOR A GUEST HOSTNAME: technitium_dns_zone (the subdomain)
+# only. The per-guest A-record builder above writes exclusively into that
+# zone — it has never written per-guest records into the apex zone. A guest
+# created before this role became subdomain-only kept whatever apex-zone
+# record it already had (frozen there, unmaintained, per the NOTE above);
+# every guest created since has NO apex-zone record, by design. So an
+# apex-zone NXDOMAIN for a guest hostname means only "this guest postdates
+# the migration to a subdomain-only zone" — it is NOT a liveness signal and
+# must never be read as "this guest is down". Any health check, monitor, or
+# runbook resolving a GUEST hostname must query technitium_dns_zone, never
+# the apex.
+#
+# EXCEPTION — the cluster nodes themselves are the opposite: they have NO
+# record in the subdomain zone at all. Their only A-records are the apex
+# round-robin set this role writes below (technitium_dns_proxmox_endpoint_a_records
+# / the Traefik apex fallback), which is a separate write path from the
+# per-guest builder above. For a cluster node name, the apex is the only
+# zone that was ever authoritative — an apex-zone NXDOMAIN there DOES mean
+# the node is missing from that record set, and the subdomain zone has
+# nothing to fall back to.
+#
+# THIRD CASE — a Traefik-fronted SERVICE name's apex record is not merely
+# stale, it is actively wrong: it still holds the direct pre-migration
+# backend address instead of the Traefik VIP its subdomain alias correctly
+# points at, and the old backend no longer terminates TLS there. The apex
+# form of the name therefore resolves, then hangs until timeout — it does
+# not NXDOMAIN, so it reads as "service is down" while both the service and
+# the name are otherwise healthy. Same root cause as the guest case above
+# (this role has never written into the apex zone since narrowing to the
+# subdomain), different symptom because these names predate the migration
+# with a real value instead of no value at all.
 - name: Create authoritative subdomain DNS zone (primary)
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
