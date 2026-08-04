@@ -332,7 +332,10 @@
     ntfy_docker_data_dir: /opt/ntfy
     ntfy_docker_cache_duration: "12h"
     ntfy_docker_attachment_cache_dir: /var/cache/ntfy/attachments
-    ansible_host: "192.168.0.111"
+    # Shape-mirror of the role default: service name + ingress base over HTTPS.
+    # A literal placeholder domain stands in for the environment lookup so the
+    # assertion below is exact rather than dependent on the runner's env.
+    ntfy_docker_base_url: "https://{{ ntfy_docker_container_name }}.example.test"
     _template_dir: "../../roles/ntfy_docker/templates"
 
   tasks:
@@ -393,6 +396,21 @@
           - "'cache-duration' in _ntfy_server"
         fail_msg: >-
           ntfy server.yml.j2 missing expected configuration;
+          rendered content: {{ _ntfy_server }}
+
+    # base-url is what the server hands to clients (emitted links, web-app
+    # origin, web-push subscriptions). A node hostname or a plain-HTTP scheme
+    # renders those unreachable while direct POSTs keep returning 200, so the
+    # breakage is invisible without an explicit assertion. The `http://` guard
+    # is a substring test that `https://` does not satisfy.
+    - name: Assert ntfy base-url is the reverse-proxied FQDN over HTTPS
+      ansible.builtin.assert:
+        that:
+          - "'base-url: \"https://ntfy.example.test\"' in _ntfy_server"
+          - "'http://' not in _ntfy_server"
+        fail_msg: >-
+          ntfy server.yml.j2 base-url must be the service FQDN over HTTPS
+          (never a host address, never plain HTTP);
           rendered content: {{ _ntfy_server }}
 
     - name: Ntfy template rendering PASSED
