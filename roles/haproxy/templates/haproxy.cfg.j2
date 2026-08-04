@@ -61,7 +61,10 @@ backend cribl_s2s_backend
   mode {{ haproxy_mode_tcp }}
   balance {{ haproxy_algorithm }}
   option tcp-check
-  timeout server {{ haproxy_health_check_timeout }}
+  # Same idle-pipe reasoning as ai_backend_* below: the health-check timeout
+  # must not double as the session timeout, or idle senders are cut at 5s.
+  timeout server {{ haproxy_timeout_server }}
+  timeout tunnel {{ haproxy_timeout_tunnel }}
 {% for server in haproxy_ipfix_backend_servers %}
   server {{ server.inventory_hostname }} {{ server.container_ip }}:{{ haproxy_cribl_s2s_port }} check inter {{ haproxy_health_check_interval }}
 {% endfor %}
@@ -103,7 +106,12 @@ backend syslog_backend_{{ backend_port }}
   mode {{ haproxy_mode_tcp }}
   balance {{ haproxy_algorithm }}
   option tcp-check
-  timeout server {{ haproxy_health_check_timeout }}
+  # Senders hold one long-lived connection and go quiet between messages, so
+  # the health-check timeout must not double as the session timeout — a quiet
+  # sender was cut at exactly 5s and reconnected in a loop. Same fix as
+  # ai_backend_* above.
+  timeout server {{ haproxy_timeout_server }}
+  timeout tunnel {{ haproxy_timeout_tunnel }}
 {% for server in haproxy_syslog_backend_servers %}
   server {{ server.inventory_hostname }} {{ server.container_ip }}:{{ backend_port }} check inter {{ haproxy_health_check_interval }}
 {% endfor %}
