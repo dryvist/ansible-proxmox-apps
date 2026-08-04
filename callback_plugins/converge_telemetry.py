@@ -113,6 +113,24 @@ def is_check_mode(config):
     return bool((context.CLIARGS or {}).get("check"))
 
 
+def _desired_state_fields(config):
+    """Fields describing whether the converged-against inventory was current.
+
+    Returns an empty dict when the verdict is absent, so a run that could not
+    check publishes no claim at all. A default of ``True`` here would make the
+    downstream alert silently green for every converge that never ran the check
+    — the same class of silent hold the alert exists to catch.
+    """
+    verdict = (config or {}).get("desired_state_current")
+    if verdict is None:
+        return {}
+    return {
+        "desired_state_current": bool(verdict),
+        "desired_state_published": (config or {}).get("desired_state_published") or "",
+        "desired_state_live": (config or {}).get("desired_state_live") or "",
+    }
+
+
 def build_events(summaries, config, playbook, now):
     """Build the HEC event list for a finished run.
 
@@ -125,6 +143,16 @@ def build_events(summaries, config, playbook, now):
     index = config.get("index") or "ansible"
     git_sha = config.get("git_sha")
     roster = config.get("roster") or []
+
+    # Whether the inventory this run converged against was itself current with
+    # desired state, as reported by the inventory_resolve role. It rides the
+    # per-host event rather than a separate sourcetype because the question it
+    # answers is per-converge: "what this host was converged against was already
+    # out of date". Absent when the role could not check (no store credentials,
+    # or an artifact older than the fingerprint contract) — and absent must stay
+    # absent rather than defaulting to True, or a converge that never checked
+    # would report the artifact current.
+    desired_state = _desired_state_fields(config)
 
     def envelope(host, sourcetype, event):
         return {
@@ -158,6 +186,7 @@ def build_events(summaries, config, playbook, now):
                     "unreachable": summary.get("unreachable", 0),
                     "rescued": summary.get("rescued", 0),
                     "ignored": summary.get("ignored", 0),
+                    **desired_state,
                 },
             )
         )
