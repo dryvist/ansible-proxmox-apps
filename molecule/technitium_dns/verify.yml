@@ -177,7 +177,7 @@
         parse_bmc: >-
           {{ dict(bmc_source | default('', true)
              | split(',') | map('trim') | reject('equalto', '')
-             | map('split', '=') | list) }}
+             | map('regex_replace', '\s*=\s*', '=') | map('split', '=') | list) }}
         bmc_records: >-
           {{ dict(parse_bmc.keys() | map('regex_replace', '^', 'idrac-')
                   | zip(parse_bmc.values()))
@@ -186,14 +186,18 @@
         that:
           - >-
             (bmc_records | map(attribute='name') | list)
-            == (bmc_source | length > 0) | ternary(['idrac-node-a', 'idrac-node-b'], [])
+            == (bmc_source | trim | length > 0) | ternary(['idrac-node-a', 'idrac-node-b'], [])
           - >-
             (bmc_records | map(attribute='ip') | list)
-            == (bmc_source | length > 0) | ternary(['192.0.2.11', '192.0.2.12'], [])
+            == (bmc_source | trim | length > 0) | ternary(['192.0.2.11', '192.0.2.12'], [])
         fail_msg: >-
           BMC parsing produced {{ bmc_records }} for source '{{ bmc_source }}'.
+      # Third case is the operator-spaced spelling; fourth is whitespace-only,
+      # which trims to empty and must contribute no records at all.
       loop:
         - "node-a=192.0.2.11, node-b=192.0.2.12"
         - ""
+        - "node-a = 192.0.2.11 , node-b = 192.0.2.12"
+        - "   "
       loop_control:
         loop_var: bmc_source
