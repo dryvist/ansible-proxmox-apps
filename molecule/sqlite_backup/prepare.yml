@@ -1,0 +1,47 @@
+---
+# Build a stand-in for an app's persistent config directory: a database at the
+# top level, a second one a level down (several apps keep theirs in a
+# subdirectory), and a non-database file that must be left alone.
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    sqlite_backup_test_dir: /opt/molecule-appdata
+
+  tasks:
+    - name: Install the SQLite CLI
+      ansible.builtin.apt:
+        name: sqlite3
+        state: present
+        update_cache: true
+
+    - name: Create the stand-in config directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ sqlite_backup_test_dir }}"
+        - "{{ sqlite_backup_test_dir }}/db"
+
+    - name: Create the databases
+      ansible.builtin.command:
+        argv:
+          - sqlite3
+          - "{{ item }}"
+          - >-
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT);
+            INSERT INTO t (v) VALUES ('committed-before-backup');
+      loop:
+        - "{{ sqlite_backup_test_dir }}/app.db"
+        - "{{ sqlite_backup_test_dir }}/db/nested.sqlite3"
+      changed_when: true
+
+    - name: Create a non-database file that must not be backed up
+      ansible.builtin.copy:
+        content: "<config/>\n"
+        dest: "{{ sqlite_backup_test_dir }}/config.xml"
+        mode: "0644"
