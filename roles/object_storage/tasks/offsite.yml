@@ -1,0 +1,211 @@
+---
+# Offsite copies of the object-storage buckets.
+#
+# Everything this store holds — remote state, the published inventory, the
+# operator-staged artifacts — exists in exactly one place: this guest. A
+# scheduled rclone job copies each listed bucket to an S3-compatible offsite
+# target so losing the guest is not the same as losing the data.
+#
+# COPY, NEVER SYNC. `rclone sync` mirrors deletions, so an emptied source
+# bucket empties the offsite copy on the next run — destroying the copy at
+# exactly the moment it is needed. `copy` only ever adds. The offsite side
+# bounds its own growth with its own lifecycle policy; that is the remote's
+# job, not this timer's.
+#
+# NOT FOR A BUCKET A TOOL ALREADY OWNS. A bucket whose writer maintains its
+# own offsite repo must be copied by that writer, not mirrored out of band —
+# a mirror can silently copy a truncated subset while reporting success, and
+# a second writer that both parties believe is authoritative is worse than
+# one. Buckets in that class declare `offsite_owner` and the assert below
+# refuses them.
+
+- name: Assert the offsite target list is well-formed
+  ansible.builtin.assert:
+    that:
+      - item.name | default('') | length > 0
+      - item.secret_path | default('') | length > 0
+    fail_msg: >-
+      Each object_storage_offsite_buckets entry needs a 'name' (the local
+      bucket) and a 'secret_path' (its offsite credential in the external
+      secrets mount).
+    quiet: true
+  loop: "{{ object_storage_offsite_buckets }}"
+  loop_control:
+    label: "{{ item.name | default('<unnamed>') }}"
+
+- name: Refuse to copy a bucket whose writer owns its own offsite repo
+  ansible.builtin.assert:
+    that:
+      - item.name not in object_storage_offsite_owner_managed
+    fail_msg: >-
+      Bucket '{{ item.name }}' declares offsite_owner — its writer maintains
+      the offsite copy itself. Adding an out-of-band copy here creates a
+      second, drifting writer. Enable the writer's own offsite repo instead.
+    quiet: true
+  loop: "{{ object_storage_offsite_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Assert the offsite credential inputs are present
+  ansible.builtin.assert:
+    that:
+      - object_storage_offsite_bao_addr | default('', true) | length > 0
+      - object_storage_offsite_bao_role_id | default('', true) | length > 0
+      - object_storage_offsite_bao_secret_id | default('', true) | length > 0
+    fail_msg: >-
+      Offsite copies are enabled but the secrets-store address / role id /
+      secret id are missing. They come from the environment, so the usual
+      cause is a converge run outside the secrets wrapper. Load it and re-run,
+      or set object_storage_offsite_enabled to false — but note that with it
+      off, this guest holds the only copy of everything in the store.
+    quiet: true
+  no_log: true
+
+# Install rclone. The aws CLI already present here cannot copy between two
+# different endpoints in one pass; it would have to stage the whole bucket on
+# local disk first. rclone streams source to destination directly. Pinned and
+# checksum-verified, and staged on the controller because this guest has no
+# public egress at converge time (same reason as the server binary above).
+- name: Stage rclone archive on controller
+  ansible.builtin.get_url:
+    url: >-
+      https://downloads.rclone.org/v{{ object_storage_rclone_version }}/rclone-v{{
+      object_storage_rclone_version }}-linux-amd64.zip
+    dest: "/tmp/rclone-v{{ object_storage_rclone_version }}-linux-amd64.zip"
+    checksum: "sha256:{{ object_storage_rclone_zip_sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Extract rclone on controller
+  ansible.builtin.unarchive:
+    src: "/tmp/rclone-v{{ object_storage_rclone_version }}-linux-amd64.zip"
+    dest: /tmp
+    remote_src: true
+    include:
+      - "rclone-v{{ object_storage_rclone_version }}-linux-amd64/rclone"
+    creates: >-
+      /tmp/rclone-v{{ object_storage_rclone_version }}-linux-amd64/rclone
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Copy rclone to target
+  ansible.builtin.copy:
+    src: >-
+      /tmp/rclone-v{{ object_storage_rclone_version }}-linux-amd64/rclone
+    dest: "{{ object_storage_install_dir }}/rclone"
+    owner: root
+    group: root
+    mode: "0755"
+
+# One credential read per bucket. Each bucket has its own offsite bucket and
+# its own scoped write key, so a key that leaks reaches one bucket, not the
+# whole account. The read runs on the controller against the external secrets
+# mount — internet-facing credentials never live on the internal mount.
+- name: Mint a token for the external secrets mount
+  ansible.builtin.uri:
+    url: "{{ object_storage_offsite_bao_addr }}/v1/auth/approle/login"
+    method: POST
+    body_format: json
+    body:
+      role_id: "{{ object_storage_offsite_bao_role_id }}"
+      secret_id: "{{ object_storage_offsite_bao_secret_id }}"
+    status_code: [200]
+  register: object_storage_offsite_login
+  no_log: true
+  delegate_to: localhost
+  become: false
+  # Read-path mint. Without this the dry run fails on an undefined token
+  # instead of validating the config it was asked to check.
+  check_mode: false
+
+- name: Read each offsite credential
+  ansible.builtin.uri:
+    url: "{{ object_storage_offsite_bao_addr }}/v1/{{ item.secret_path }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ object_storage_offsite_login.json.auth.client_token }}"
+    status_code: [200]
+  register: object_storage_offsite_secrets
+  loop: "{{ object_storage_offsite_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  delegate_to: localhost
+  become: false
+  check_mode: false
+
+# Fail at converge time on a missing field rather than installing a timer that
+# refuses every run. A converge failure is visible; a copy job that quietly
+# never succeeds looks exactly like one that has nothing to do.
+- name: Assert each offsite credential is complete
+  ansible.builtin.assert:
+    that:
+      - item.0.json.data.data[item.1] | default('') | length > 0
+    fail_msg: >-
+      The offsite credential for bucket '{{ item.0.item.name }}' has no usable
+      '{{ item.1 }}'. That bucket would have no offsite copy.
+    quiet: true
+  loop: >-
+    {{ object_storage_offsite_secrets.results
+       | product(object_storage_offsite_secret_fields) | list }}
+  loop_control:
+    label: "{{ item.0.item.name }}/{{ item.1 }}"
+  no_log: true
+
+- name: Deploy per-bucket offsite environment files
+  ansible.builtin.template:
+    src: object-storage-offsite.env.j2
+    dest: "{{ object_storage_config_dir }}/offsite-{{ item.item.name }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ object_storage_offsite_secrets.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  vars:
+    offsite_bucket: "{{ item.item.name }}"
+    offsite_secret: "{{ item.json.data.data }}"
+  no_log: true
+  notify: Restart object-storage offsite timers
+
+- name: Deploy the offsite copy unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - object-storage-offsite@.service
+    - object-storage-offsite@.timer
+  notify: Restart object-storage offsite timers
+
+- name: Enable and start one offsite timer per bucket
+  ansible.builtin.systemd:
+    name: "{{ object_storage_offsite_unit }}@{{ item.name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ object_storage_offsite_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remove staging archive from controller
+  ansible.builtin.file:
+    path: "/tmp/rclone-v{{ object_storage_rclone_version }}-linux-amd64.zip"
+    state: absent
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
