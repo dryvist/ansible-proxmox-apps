@@ -5,9 +5,21 @@
 # Every eval is conditional (`index || ...` / `sourcetype || ...`): a sender
 # that already stamped Splunk metadata passes through untouched; everything
 # else gets the index/sourcetype its ingest port owns. The mask function is
-# the same email/IPv4 scrub the force_splunk_meta pipeline applies to the S2S
+# the same email scrub the force_splunk_meta pipeline applies to the S2S
 # stream (matchRegex/replaceExpr schema — regex/replacement keys are invalid
 # and fail function init, silently disabling the whole pipeline).
+#
+# IPv4 IS DELIBERATELY NOT MASKED. It used to be, replacing every dotted quad
+# anywhere in _raw with '*'. Splunk is the single source of truth for logging
+# here, and the whole point of an access log is attribution — with the quad
+# gone, "which client is generating this traffic" is unanswerable. That cost
+# real diagnostic time: the llm-gate access log reached Splunk with
+# remote_ip/client_ip both '*', so 4,103 probe requests/day could not be tied
+# to a source during the 2026-08-05 saturation investigation.
+#
+# Note the rule was never IP-specific — it matched _raw, so it also destroyed
+# subnet references, upstream addresses and any embedded version-like quad.
+# Email masking stays: that is PII with no diagnostic value here.
 functions:
   - id: eval
     filter: "true"
@@ -34,8 +46,6 @@ functions:
     conf:
       rules:
         - matchRegex: '/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g'
-          replaceExpr: "'*'"
-        - matchRegex: '/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/g'
           replaceExpr: "'*'"
       fields:
         - _raw
