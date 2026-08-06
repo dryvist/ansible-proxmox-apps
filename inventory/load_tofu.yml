@@ -385,10 +385,19 @@
     - name: Add VMs to inventory (SSH or WinRM connection)
       ansible.builtin.add_host:
         name: "{{ item.key }}"
+        # windows_group drives a play built entirely from ansible.windows
+        # modules, which only work over WinRM. The `windows` tag alone does not
+        # imply that: ansible_connection defaults to "ssh" in the tofu inventory
+        # (modules/proxmox-stack/variables-vms.tf), so a tagged guest that has
+        # not been given winrm joins the group and then fails every task on a
+        # connection that cannot carry them. Gate on the connection, which is
+        # the thing the play actually requires.
         groups: >-
           {{
             ['vms', 'all'] +
-            (['windows_group'] if 'windows' in (item.value.tags | default([])) else [])
+            (['windows_group']
+             if item.value.ansible_connection | default('ssh') == 'winrm'
+             else [])
           }}
         ansible_host: "{{ item.value.ip }}"
         ansible_connection: "{{ item.value.ansible_connection }}"
