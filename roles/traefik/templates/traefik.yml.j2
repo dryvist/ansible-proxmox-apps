@@ -14,6 +14,23 @@ entryPoints:
           permanent: true
   websecure:
     address: ":443"
+{% if traefik_metrics_enabled %}
+{# Metrics live on their own entryPoint so /metrics is never reachable from the
+   public listener. Nothing routes it to the internet, so it carries no auth
+   middleware by design.
+   Comment markers start at column 0 on purpose: Jinja strips the comment TEXT
+   but keeps the whitespace around it, so an indented comment marker silently
+   merges its leading spaces into the next line and re-nests the block one
+   level deeper — which put these entryPoints under websecure. #}
+  {{ traefik_metrics_entrypoint }}:
+    address: ":{{ traefik_metrics_port }}"
+{% endif %}
+{% if traefik_dashboard_enabled and traefik_dashboard_breakglass_enabled %}
+{# Break-glass dashboard listener. Private port, basicAuth only, no Host rule
+   and no DNS dependency — usable when Authelia is down. #}
+  {{ traefik_dashboard_breakglass_entrypoint }}:
+    address: ":{{ traefik_dashboard_breakglass_port }}"
+{% endif %}
 
 certificatesResolvers:
   letsencrypt:
@@ -29,6 +46,9 @@ certificatesResolvers:
 {% for resolver in traefik_acme_dns_resolvers %}
           - "{{ resolver }}"
 {% endfor %}
+        propagation:
+          disableChecks: {{ traefik_acme_disable_propagation_check | bool | lower }}
+          delayBeforeChecks: "{{ traefik_acme_delay_before_checks }}"
 
 providers:
   file:
@@ -41,6 +61,28 @@ api:
 
 log:
   level: INFO
+
+{% if traefik_metrics_enabled %}
+metrics:
+  prometheus:
+    entryPoint: {{ traefik_metrics_entrypoint }}
+    # Per-router/service series — this is what makes the proxy a per-service
+    # RED source (rate, errors, duration) with no app-side instrumentation.
+    addRoutersLabels: {{ traefik_metrics_add_routers_labels | bool | lower }}
+    addServicesLabels: true
+    addEntryPointsLabels: true
+{% endif %}
+
+{% if traefik_tracing_enabled and (traefik_tracing_otlp_base_url | trim | length > 0) %}
+tracing:
+  serviceName: "{{ traefik_tracing_service_name }}"
+  sampleRate: {{ traefik_tracing_sample_rate }}
+  otlp:
+    http:
+      # Cribl Stream's OTLP/HTTP trace listener, via the otel ingress row.
+      # Telemetry goes through Cribl, never straight to the index.
+      endpoint: "{{ traefik_tracing_otlp_base_url | trim }}/v1/traces"
+{% endif %}
 
 accessLog:
   fields:
