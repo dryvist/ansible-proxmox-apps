@@ -105,3 +105,26 @@ path "secrets-external/data/platform/backblaze-splunk" {
 path "secrets-external/metadata/platform/backblaze-splunk" {
   capabilities = ["read"]
 }
+
+# --- Guest-generated credential publication -----------------------------------
+# Several roles mint a credential create-if-absent and keep the ONLY copy in a
+# guest-local file, so losing the guest loses the secret. For some of these the
+# loss is not merely a password reset — an application encryption key can make
+# previously stored credentials permanently undecryptable, and a rotated
+# framework SECRET_KEY invalidates every session.
+#
+# roles/openbao_secrets/tasks/publish.yml writes those back here. Grants follow
+# the exact-path pattern used above — ENUMERATED, one app per entry, deliberately
+# NOT a secret/data/apps/* wildcard, so a converge can never rewrite an app
+# credential it does not own. `read` is required for the read-modify-write that
+# preserves sibling fields. No `delete`: publishing must never destroy a secret.
+{% for app in openbao_credential_publish_apps %}
+path "{{ openbao_kv_mount }}/data/apps/{{ app }}" {
+  capabilities = ["create", "update", "read"]
+}
+
+path "{{ openbao_kv_mount }}/metadata/apps/{{ app }}" {
+  capabilities = ["read"]
+}
+
+{% endfor %}

@@ -64,12 +64,58 @@ traefik_dashboard_user: admin
 traefik_dashboard_users_file: /etc/traefik/dashboard.htpasswd
 traefik_dashboard_password_file: /etc/traefik/.dashboard_password
 
+# Authelia fronts the dashboard on its public hostname, so the operator signs in
+# with the estate identity instead of a shared generated password.
+traefik_dashboard_sso: true
+
+# BREAK-GLASS. Traefik middleware chains are AND, not OR — chaining authelia and
+# basicAuth on one router would mean an Authelia outage locks you OUT of the
+# proxy dashboard, which is exactly when you need it. So the fallback is a
+# SEPARATE router on its own private entryPoint, carrying only basicAuth. It
+# depends on neither Authelia nor DNS: reach it at https://<traefik-ip>:<port>/.
+# Credentials are the generated pair, which is also published to OpenBao.
+traefik_dashboard_breakglass_enabled: true
+traefik_dashboard_breakglass_port: 8083
+traefik_dashboard_breakglass_entrypoint: dashboardbg
+
 # OAuth authorization codes arrive in the operator's browser. This dedicated
 # exact path uses Traefik's noop service, so no app persists the code; the
 # operator validates the plugin-generated state and submits the code locally.
 traefik_openbao_oauth_callback_enabled: true
 traefik_openbao_oauth_callback_path: /oauth/slack/callback
 traefik_openbao_oauth_callback_priority: 10000
+
+# --- Observability -------------------------------------------------------------
+# Every fronted request passes through this proxy, which makes it the single
+# most valuable telemetry source available. Neither metrics nor tracing were
+# previously configured, so none of it was emitted.
+#
+# Metrics: Prometheus format on a DEDICATED entryPoint, never on websecure. That
+# keeps /metrics off the public listener entirely, so it needs no auth middleware
+# and cannot be reached from outside the management VLAN.
+traefik_metrics_enabled: true
+traefik_metrics_port: 8082
+traefik_metrics_entrypoint: metrics
+# Per-path/method series are the ones worth having: they turn the proxy into a
+# per-service RED (rate/errors/duration) source without any app-side work.
+traefik_metrics_add_routers_labels: true
+
+# Tracing: OTLP/HTTP pushed to the Cribl Stream trace listener, matching the
+# estate rule that telemetry always goes via Cribl rather than direct to Splunk.
+# Endpoint + port are DERIVED (otel ingress row, otel_traces_http constant) so no
+# address is written twice; tracing disables itself if neither resolves.
+traefik_tracing_enabled: true
+traefik_tracing_service_name: traefik
+# Head sampling. 1.0 is fine for homelab request volumes; lower it if Cribl
+# ingest becomes the constraint rather than the question being answered.
+traefik_tracing_sample_rate: 1.0
+# Derived from the otel ingress row exactly the way the authelia middleware
+# derives its forwardAuth address: servers[0] is already a full scheme://host:port
+# base URL, so it is never reassembled from parts. Empty when no otel row exists,
+# which switches tracing off rather than emitting a broken endpoint.
+traefik_tracing_otlp_base_url: >-
+  {{ (traefik_routes | selectattr('name', 'equalto', 'otel') | list | first
+      | default({}, true)).servers | default([], true) | first | default('', true) }}
 
 # --- TLS hardening ------------------------------------------------------------
 traefik_tls_min_version: VersionTLS12
