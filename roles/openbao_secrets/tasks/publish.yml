@@ -33,6 +33,20 @@
       (non-empty) and openbao_secrets_publish_data (non-empty mapping).
     quiet: true
 
+# An empty value must NEVER reach the write. The merge below layers the payload
+# over the stored secret, so publishing key=""  would overwrite a good credential
+# with nothing — the exact loss this task exists to prevent, caused by the task
+# meant to prevent it. Callers used to guard this themselves, which meant every
+# caller could forget; the check belongs here, once.
+- name: Drop empty values from the publish payload
+  ansible.builtin.set_fact:
+    openbao_secrets_publish_effective: >-
+      {{ openbao_secrets_publish_data | dict2items
+         | rejectattr('value', 'none')
+         | rejectattr('value', 'equalto', '')
+         | items2dict }}
+  no_log: true
+
 - name: Publish generated credentials to OpenBao
   delegate_to: localhost
   become: false
@@ -45,7 +59,8 @@
     - name: Decide whether credential publishing is possible
       ansible.builtin.set_fact:
         openbao_secrets_publish_ready: >-
-          {{ (_addr | length > 0)
+          {{ (openbao_secrets_publish_effective | length > 0)
+             and (_addr | length > 0)
              and (openbao_secrets_publish_role_id | length > 0)
              and (openbao_secrets_publish_secret_id | length > 0) }}
 
@@ -59,7 +74,8 @@
           WARNING: '{{ openbao_secrets_publish_app }}' credentials were NOT
           published to OpenBao — the generated secret exists ONLY on the guest
           and is lost if that guest is rebuilt. Reason:
-          {{ 'no reachable OpenBao endpoint' if (_addr | length == 0)
+          {{ 'every value in the payload was empty' if (openbao_secrets_publish_effective | length == 0)
+             else 'no reachable OpenBao endpoint' if (_addr | length == 0)
              else 'publish AppRole credentials missing from the environment' }}.
       when: not (openbao_secrets_publish_ready | bool)
 
@@ -99,14 +115,14 @@
             data:
               data: >-
                 {{ (openbao_secrets_publish_existing.secret | default({}, true))
-                   | combine(openbao_secrets_publish_data) }}
+                   | combine(openbao_secrets_publish_effective) }}
             validate_certs: "{{ openbao_secrets_validate_certs }}"
           no_log: true
 
         - name: Report the publish
           ansible.builtin.debug:
             msg: >-
-              Published {{ openbao_secrets_publish_data | length }} field(s) to
+              Published {{ openbao_secrets_publish_effective | length }} field(s) to
               {{ openbao_secrets_kv_mount }}/{{ _path }}
               {{ openbao_secrets_publish_reason | default('', true) }}
 
