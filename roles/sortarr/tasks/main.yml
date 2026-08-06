@@ -104,6 +104,29 @@
   when: not sortarr_settings_seed_stat.stat.exists
   no_log: true
 
+# Back the key up into OpenBao. It is written once, at seed time, from a value
+# the defaults generate when SORTARR_SECRET_KEY is unset — so unless the
+# environment supplied it, the guest holds the only copy and it cannot be
+# reconstructed. Read from disk rather than from the variable, which is a fresh
+# random value on any run that did not seed.
+- name: Read the deployed Sortarr secret key for publishing
+  ansible.builtin.slurp:
+    src: "{{ sortarr_config_dir }}/secrets/sortarr_secret_key.secret"
+  register: sortarr_secret_key_blob
+  failed_when: false
+  no_log: true
+
+- name: Publish the Sortarr secret key to OpenBao
+  ansible.builtin.include_role:
+    name: openbao_secrets
+    tasks_from: publish.yml
+  vars:
+    openbao_secrets_publish_app: sortarr
+    openbao_secrets_publish_reason: (session signing key)
+    openbao_secrets_publish_data:
+      secret_key: "{{ sortarr_secret_key_blob.content | b64decode | trim }}"
+  when: sortarr_secret_key_blob.content is defined
+
 - name: Seed Sortarr.env config (one-time)
   ansible.builtin.copy:
     content: |
