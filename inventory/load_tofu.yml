@@ -327,9 +327,19 @@
     # Skips cleanly (host stays SSH-shaped but unreachable, same as any other
     # missing credential) when the AppRole envs aren't set — never a hard fail.
     - name: Resolve Windows local Administrator password from OpenBao
+      # `.values()` is load-bearing: tofu_data.vms is a MAPPING (see the
+      # `| dict2items` at the VM inventory task below), so iterating it yields
+      # key STRINGS and selectattr then probes a str for .ansible_connection.
+      # That raises inside a `when:`, which fails the play outright rather than
+      # skipping — it took every converge down, not just the Windows path.
+      # `selectattr('ansible_connection', 'defined')` first, because most VMs
+      # carry no such key at all.
       when:
         - tofu_data.vms is defined
-        - tofu_data.vms | selectattr('ansible_connection', 'equalto', 'winrm') | list | length > 0
+        - >-
+          tofu_data.vms.values() | selectattr('ansible_connection', 'defined')
+          | selectattr('ansible_connection', 'equalto', 'winrm')
+          | list | length > 0
       no_log: true
       block:
         - name: Log in with the ansible AppRole
