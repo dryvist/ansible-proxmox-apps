@@ -54,6 +54,26 @@ traefik_acme_dns_resolvers:
   - "1.1.1.1:53"
   - "8.8.8.8:53"
 
+# SPLIT-HORIZON: the resolvers above are never actually reached. Internal DNS is
+# authoritative for this subdomain and port 53 is intercepted on the way out, so
+# lego's propagation pre-check resolves the challenge name against INTERNAL DNS
+# — which has no _acme-challenge record and correctly answers NXDOMAIN for a name
+# it does not hold. The TXT record itself is written to the public zone and is
+# publicly resolvable; only the pre-check is misled, and it gives up before ever
+# asking the CA to validate. Verified by querying the same names over DoH, which
+# a port-53 redirect cannot intercept.
+#
+# So skip the pre-check and wait a fixed interval instead. The CA still performs
+# its own validation against the real authoritative nameservers, which is the
+# check that actually matters. The delay covers publication latency in the public
+# zone, whose record TTL is far shorter than this.
+#
+# Do NOT "fix" this by pointing `resolvers` somewhere else: the interception is
+# by destination port, so every resolver address behaves identically. The only
+# alternative fix is exempting this host from that interception at the gateway.
+traefik_acme_disable_propagation_check: true
+traefik_acme_delay_before_checks: "60s"
+
 # --- Dashboard (secured, build-time credentials) ------------------------------
 # The Traefik API/dashboard is NEVER exposed insecurely. Its basicAuth reads an
 # htpasswd file the role GENERATES + persists on the host at build time

@@ -1085,6 +1085,11 @@
     traefik_acme_storage: /etc/traefik/acme/acme.json
     traefik_dynamic_dir: /etc/traefik/dynamic
     traefik_acme_dns_resolvers: ["1.1.1.1:53", "8.8.8.8:53"]
+    # Split-horizon: the pre-check resolves the challenge name against internal
+    # DNS, which is authoritative for the subdomain and answers NXDOMAIN. Skip
+    # the client-side check; the CA still validates against the real authority.
+    traefik_acme_disable_propagation_check: true
+    traefik_acme_delay_before_checks: "60s"
     traefik_dashboard_enabled: true
     # basicAuth reads a usersFile the role generates on the host at build time;
     # only the path is in the config — never a credential.
@@ -1230,6 +1235,9 @@
       ansible.builtin.set_fact:
         _traefik_static: "{{ _traefik_static_raw.content | b64decode }}"
         _traefik_static_yaml: "{{ _traefik_static_raw.content | b64decode | from_yaml }}"
+        _traefik_dns_propagation: >-
+          {{ (_traefik_static_raw.content | b64decode | from_yaml)
+             .certificatesResolvers.letsencrypt.acme.dnsChallenge.propagation }}
 
     - name: Assert static config uses Route53 DNS-01 + secured API + TLS hardening
       ansible.builtin.assert:
@@ -1265,6 +1273,12 @@
           - _traefik_static_yaml.tracing.otlp.http.endpoint == "http://192.0.2.30:4318/v1/traces"
           # Break-glass listens on its own private port.
           - _traefik_static_yaml.entryPoints.dashboardbg.address == ":8083"
+          # The DNS-01 propagation pre-check must stay disabled: internal DNS is
+          # authoritative for this subdomain and answers NXDOMAIN for the
+          # challenge name, so the check fails on a record that is in fact
+          # correct and public, and issuance never reaches the CA.
+          - _traefik_dns_propagation.disableChecks
+          - _traefik_dns_propagation.delayBeforeChecks == "60s"
         fail_msg: >-
           traefik.yml.j2 did not enable metrics/tracing, put metrics on a shared
           entryPoint, or failed to derive the OTLP endpoint from the otel row.
