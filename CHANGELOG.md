@@ -1,5 +1,30 @@
 # Changelog
 
+## [4.8.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.7.0...v4.8.0) (2026-08-07)
+
+
+### Features
+
+* **openbao:** add ai-donna AppRole and isolated KV policy ([#1401](https://github.com/dryvist/ansible-proxmox-apps/issues/1401)) ([4e35e18](https://github.com/dryvist/ansible-proxmox-apps/commit/4e35e180928c0f580dd1df18f61acc65704b92dd))
+* **openbao:** add slack-admin read+update KV policy and AppRole ([#1398](https://github.com/dryvist/ansible-proxmox-apps/issues/1398)) ([f420eac](https://github.com/dryvist/ansible-proxmox-apps/commit/f420eac610e72acc0f58383f209c612f99f3c90a))
+* **openbao:** generate per-bucket keys for AI session backups ([#1404](https://github.com/dryvist/ansible-proxmox-apps/issues/1404)) ([f21b2e9](https://github.com/dryvist/ansible-proxmox-apps/commit/f21b2e9078c0a13eab21483d49884107a9df4786))
+* **openbao:** give the AI session backup its own AppRole ([#1406](https://github.com/dryvist/ansible-proxmox-apps/issues/1406)) ([09e3ab4](https://github.com/dryvist/ansible-proxmox-apps/commit/09e3ab4ed322bc9f8ec083375f177c5a3eba8f6c))
+* **syslog:** route the seven AI Docker services to a dedicated syslog family ([#1399](https://github.com/dryvist/ansible-proxmox-apps/issues/1399)) ([a6efbbd](https://github.com/dryvist/ansible-proxmox-apps/commit/a6efbbde11bd02fe5c7a73968c4b11f3b261398c))
+* **traefik:** add metrics and tracing, SSO the dashboard, publish generated credentials ([#1396](https://github.com/dryvist/ansible-proxmox-apps/issues/1396)) ([d6412f6](https://github.com/dryvist/ansible-proxmox-apps/commit/d6412f687c0764ce05f0627b9d65a3f3c8c4bf77))
+* **windows:** baseline role for RDP-enabled Windows VDI guests ([#1397](https://github.com/dryvist/ansible-proxmox-apps/issues/1397)) ([0de868e](https://github.com/dryvist/ansible-proxmox-apps/commit/0de868e7a9e34458200a1c340882ea1121cf49bf))
+
+
+### Bug Fixes
+
+* **authelia:** scope each API bypass to its own path prefix ([#1395](https://github.com/dryvist/ansible-proxmox-apps/issues/1395)) ([0316a90](https://github.com/dryvist/ansible-proxmox-apps/commit/0316a906798b712ef0699696df2cba527f9e3679))
+* **cribl_stream:** classify *_docker AI sources as syslog inputs by suffix ([#1405](https://github.com/dryvist/ansible-proxmox-apps/issues/1405)) ([4ccf4f9](https://github.com/dryvist/ansible-proxmox-apps/commit/4ccf4f9fc5139c8044f9ef10d5fc29b152ec2b6b))
+* **cribl_stream:** stop masking IPv4 out of events bound for Splunk ([e672fdf](https://github.com/dryvist/ansible-proxmox-apps/commit/e672fdf487b07da82b29a805eab7fdff28431449))
+* **cribl_stream:** stop masking IPv4 out of events bound for Splunk ([47c9496](https://github.com/dryvist/ansible-proxmox-apps/commit/47c9496b3831a27b564617edf5c3385b15ac4ddd))
+* **deps:** bump homelab-contracts pin to eb4d69b4 ([#1393](https://github.com/dryvist/ansible-proxmox-apps/issues/1393)) ([5eab1ed](https://github.com/dryvist/ansible-proxmox-apps/commit/5eab1edcb4a608bef1822d51df0a527379e6ea8b))
+* **inventory:** iterate tofu_data.vms values, not its keys ([#1400](https://github.com/dryvist/ansible-proxmox-apps/issues/1400)) ([bd259d2](https://github.com/dryvist/ansible-proxmox-apps/commit/bd259d2d42d2301d2826779695e71656228a9db7))
+* **technitium_dns:** write apex ingress-alias records from every resolver ([#1392](https://github.com/dryvist/ansible-proxmox-apps/issues/1392)) ([b2839a1](https://github.com/dryvist/ansible-proxmox-apps/commit/b2839a1f1d4ebff8f138f939f1ed1c0c2541df46))
+* **windows:** windows_group needs WinRM, and a Private network category ([#1402](https://github.com/dryvist/ansible-proxmox-apps/issues/1402)) ([9167f98](https://github.com/dryvist/ansible-proxmox-apps/commit/9167f98f0affaad32be4b0c624b6c846b7b1f514))
+
 ## [4.7.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.6.0...v4.7.0) (2026-08-04)
 
 
