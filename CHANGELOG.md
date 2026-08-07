@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.8.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.8.0...v4.8.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **cribl_stream:** render the Langfuse destination unconditionally ([#1409](https://github.com/dryvist/ansible-proxmox-apps/issues/1409)) ([ac1db09](https://github.com/dryvist/ansible-proxmox-apps/commit/ac1db09e2d92d670c9775322ec277bd96da35cd8))
+
 ## [4.8.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.7.0...v4.8.0) (2026-08-07)
 
 
