@@ -11,6 +11,7 @@
 #   - cribl/inputs.yml.j2 renders combined syslog listeners (TCP+UDP) for each port
 #   - stream/inputs.yml.j2 renders IPFIX/NetFlow UDP listener on port 2055
 #   - outputs.yml.j2 renders HEC URL with correct splunk host
+#   - cribl_stream outputs/inputs render langfuse_otlp unconditionally
 #
 # Every play sets `ansible_become: false`. group_vars/all.yml sets
 # `ansible_become: true` for managed nodes, and the implicit localhost inherits
@@ -2718,6 +2719,80 @@
           - every bypass rule is scoped to an /api prefix
           - Langfuse is narrowed to /api/public, so /api/auth stays gated
           - entries omitting `resource` keep the previous default
+
+- name: Verify the cribl_stream Langfuse destination renders unconditionally
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../roles/cribl_stream/templates"
+    # The keys are deliberately EMPTY. A gate of the
+    # `{% raw %}{% if ..._langfuse_public_key | length > 0 %}{% endraw %}` shape
+    # — the one that once dropped this destination from a rendered config while
+    # the converge still reported success — makes both blocks below vanish, so
+    # these assertions fail the moment such a gate is reintroduced. The role
+    # aborts on an empty key in real runs; this play sets the vars directly, so
+    # the defaults' `mandatory` never evaluates here.
+    cribl_stream_langfuse_public_key: ""
+    cribl_stream_langfuse_secret_key: ""
+    cribl_stream_langfuse_url: "https://langfuse.example.invalid/api/public/otel"
+    # Remaining vars are fixture scaffolding, not under test.
+    cribl_stream_splunk_hec_url: "https://splunk.example.invalid/services/collector/event"
+    cribl_stream_splunk_hec_token: "fixture-token"
+    cribl_stream_splunk_hec_tls_verify: true
+    cribl_stream_pq_enabled: true
+    cribl_stream_hec_namespace: ""
+    cribl_stream_per_index_indexes: []
+    cribl_stream_netflow_port: 2055
+    cribl_stream_otel_port: 4318
+    cribl_stream_s2s_port: 9997
+    cribl_stream_prometheus_rw_port: 8428
+    cribl_stream_prometheus_rw_api_path: /api/v1/write
+    cribl_stream_ai_log_routing: {}
+    cribl_stream_ai_input_types: {}
+
+  tasks:
+    - name: Render the cribl_stream outputs and inputs templates
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}.yml.j2"
+        dest: "{{ _fixture_dir }}/test_cribl_stream_{{ item }}.yml"
+        mode: "0644"
+      loop:
+        - outputs
+        - inputs
+
+    - name: Read the rendered cribl_stream fixtures
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_cribl_stream_{{ item }}.yml"
+      loop:
+        - outputs
+        - inputs
+      register: _cribl_stream_raw
+
+    - name: Decode the rendered cribl_stream fixtures
+      ansible.builtin.set_fact:
+        _cribl_stream_outputs: "{{ _cribl_stream_raw.results[0].content | b64decode }}"
+        _cribl_stream_inputs: "{{ _cribl_stream_raw.results[1].content | b64decode }}"
+
+    - name: Assert the Langfuse output and its input connection render with empty keys
+      ansible.builtin.assert:
+        that:
+          - "'langfuse_otlp:' in _cribl_stream_outputs"
+          - "'- output: langfuse_otlp' in _cribl_stream_inputs"
+        fail_msg: >-
+          The langfuse_otlp destination or its in_otel connection did not render
+          with empty credentials — a credential-conditional gate has been
+          reintroduced, which silently deletes the destination instead of
+          failing the converge.
+
+    - name: Cribl Stream Langfuse rendering verification PASSED
+      ansible.builtin.debug:
+        msg: >-
+          langfuse_otlp renders in both outputs.yml and inputs.yml regardless of
+          credential presence.
 
 - name: Remove the per-run fixture output directory
   hosts: localhost
