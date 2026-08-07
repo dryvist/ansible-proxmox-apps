@@ -11,6 +11,25 @@
     timeout: "{{ windows_baseline_winrm_wait_timeout }}"
   delegate_to: localhost
 
+# Enabling the rule group is not enough on its own. Windows classifies an
+# unidentified network as Public, and the built-in Remote Desktop (and WinRM)
+# rules for that profile are scoped to LocalSubnet — so the guest listens on
+# 3389 and silently drops every connection from another subnet. The
+# identically-named "-NoScope" rules accept any remote address but apply only
+# to the Domain and Private profiles, so the category is what decides
+# reachability. The answer file sets this at first logon; this enforces it.
+- name: Report any connection profile that is not Private
+  ansible.windows.win_shell: |
+    $wrong = @(Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -ne 'Private' })
+    if ($wrong) { $wrong | ForEach-Object { $_.Name } } else { Write-Output '' }
+  register: windows_baseline_public_profiles
+  changed_when: false
+
+- name: Set every connection profile to Private
+  ansible.windows.win_shell: |
+    Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private
+  when: windows_baseline_public_profiles.stdout | trim | length > 0
+
 - name: Allow incoming RDP connections
   ansible.windows.win_regedit:
     path: HKLM:\System\CurrentControlSet\Control\Terminal Server
@@ -18,7 +37,15 @@
     data: 0
     type: dword
 
+- name: Check whether the Remote Desktop rule group is already enabled
+  ansible.windows.win_shell: |
+    $off = @(Get-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue |
+             Where-Object { -not $_.Enabled })
+    Write-Output $off.Count
+  register: windows_baseline_rdp_rules_off
+  changed_when: false
+
 - name: Enable the Remote Desktop firewall rule group
   ansible.windows.win_shell: >
     netsh advfirewall firewall set rule group="remote desktop" new enable=yes
-  changed_when: true
+  when: windows_baseline_rdp_rules_off.stdout | trim | int > 0
