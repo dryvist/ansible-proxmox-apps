@@ -559,6 +559,10 @@
 # used, a VIP that does not falls back to a real ingress host. Records are never
 # pointed at something unreachable, and the promotion simply happens on the next
 # run once keepalived holds the address.
+#
+# Runs on every resolver, not just the primary: the apex-alias write below now
+# runs on every resolver too, and each one needs its own
+# technitium_dns_ingress_target_ip resolved the same way.
 - name: Probe the ingress VIP before trusting it
   ansible.builtin.wait_for:
     host: "{{ tofu_data['ingress_vip'] }}"
@@ -570,9 +574,7 @@
   # and the guard would never fire. ignore_errors keeps failed=true intact.
   ignore_errors: true
   changed_when: false
-  when:
-    - (tofu_data['ingress_vip'] | default('', true)) | length > 0
-    - technitium_dns_role == 'primary'
+  when: (tofu_data['ingress_vip'] | default('', true)) | length > 0
 
 - name: Report which address the fronted names will resolve to
   ansible.builtin.debug:
@@ -625,8 +627,18 @@
 # already uses correctly — it never deletes a record, so it cannot touch the
 # apex zone's other content (cluster node entries, any other static record).
 # Scoped to exactly technitium_dns_ingress_aliases, the same fronted-service
-# name list the subdomain task above uses, so this self-heals on every primary
+# name list the subdomain task above uses, so this self-heals on every
 # converge without a separate one-off list to maintain.
+#
+# Runs on EVERY resolver, not just the primary: unlike the subdomain zone
+# above (Secondary-type on a secondary, replicated by AXFR), the apex zone has
+# no zone-transfer relationship between resolvers at all — each one holds its
+# own independent Primary-type copy. A primary-only write here would fix one
+# resolver and leave the other answering the stale pre-migration address
+# forever, turning a uniform failure into a split one depending on which
+# resolver a client happens to query. The write is add/overwrite-only from
+# this same shared, derived alias list, so every resolver converges to
+# identical content with no ordering or conflict hazard between them.
 - name: Create Traefik ingress alias apex A records
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
@@ -649,9 +661,13 @@
   failed_when:
     - technitium_dns_ingress_apex_alias_result.json.status | default('') != "ok"
     - "'already exists' not in (technitium_dns_ingress_apex_alias_result.json.errorMessage | default(''))"
+    # A missing apex zone (e.g. a fresh rebuild that hasn't seeded it on this
+    # resolver yet) must NOT abort the play before the rest of the converge
+    # runs, same tolerance as the other apex-domain-adjacent writes below
+    # (Zammad #17136 art.439).
+    - "'no such zone' not in (technitium_dns_ingress_apex_alias_result.json.errorMessage | default('') | lower)"
   no_log: true
   when:
-    - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
     - technitium_dns_ingress_target_ip | length > 0
 

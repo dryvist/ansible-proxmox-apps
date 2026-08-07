@@ -84,6 +84,22 @@ prometheus_stack_blackbox_jobs:
 # (smokeping_prober, irtt, snmp_exporter). Empty until those roles ship.
 prometheus_stack_extra_scrape_configs: ""
 
+# --- Traefik ingress ----------------------------------------------------------
+# Every fronted request passes through the ingress proxy, which makes it the one
+# place that can report rate/errors/duration per service without instrumenting
+# any application. Targets are derived from the same traefik-tagged inventory
+# entries that build traefik_group, so adding an ingress guest adds a scrape
+# target with no edit here. Empty when no such guest exists, which omits the job.
+prometheus_stack_traefik_metrics_port: "{{ ingress_metrics_port | default(8082) }}"
+prometheus_stack_traefik_targets: >-
+  {{ tofu_data['containers'] | default({}) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'traefik')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$',
+           '\1:' ~ (prometheus_stack_traefik_metrics_port | string))
+     | list }}
+
 # Cribl Stream remote_write endpoint. Empty = remote_write block omitted entirely.
 # Set in a private inventory; never commit a real Cribl IP to this public role default.
 prometheus_stack_remote_write_url: ""
@@ -95,6 +111,9 @@ prometheus_stack_remote_write_url: ""
 prometheus_stack_remote_write_keep_jobs:
   - blackbox_.*
   - smokeping
+  # Listed here as well as in scrape_configs — a job absent from this allow-list
+  # is scraped locally and never shipped, which is the gotcha named above.
+  - traefik
 
 # --- probe modules (HOW to probe; targets come from prometheus_stack_blackbox_jobs) ---
 # icmp        — latency/loss to the modem + ISP hops + public anycast

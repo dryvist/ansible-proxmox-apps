@@ -1085,10 +1085,34 @@
     traefik_acme_storage: /etc/traefik/acme/acme.json
     traefik_dynamic_dir: /etc/traefik/dynamic
     traefik_acme_dns_resolvers: ["1.1.1.1:53", "8.8.8.8:53"]
+    # Split-horizon: the pre-check resolves the challenge name against internal
+    # DNS, which is authoritative for the subdomain and answers NXDOMAIN. Skip
+    # the client-side check; the CA still validates against the real authority.
+    traefik_acme_disable_propagation_check: true
+    traefik_acme_delay_before_checks: "60s"
     traefik_dashboard_enabled: true
     # basicAuth reads a usersFile the role generates on the host at build time;
     # only the path is in the config — never a credential.
     traefik_dashboard_users_file: /etc/traefik/dashboard.htpasswd
+    # Authelia fronts the public dashboard; basicAuth survives as break-glass on
+    # its own private entryPoint, because a middleware chain is AND, not OR.
+    traefik_dashboard_sso: true
+    traefik_dashboard_breakglass_enabled: true
+    traefik_dashboard_breakglass_port: 8083
+    traefik_dashboard_breakglass_entrypoint: dashboardbg
+    # Observability. The OTLP base URL is derived from the `otel` ingress row by
+    # the same expression the role defaults use, so the fixture exercises the
+    # derivation rather than hardcoding an endpoint past it.
+    traefik_metrics_enabled: true
+    traefik_metrics_port: 8082
+    traefik_metrics_entrypoint: metrics
+    traefik_metrics_add_routers_labels: true
+    traefik_tracing_enabled: true
+    traefik_tracing_service_name: traefik
+    traefik_tracing_sample_rate: 1.0
+    traefik_tracing_otlp_base_url: >-
+      {{ (traefik_routes | selectattr('name', 'equalto', 'otel') | list | first
+          | default({}, true)).servers | default([], true) | first | default('', true) }}
     traefik_tls_min_version: VersionTLS12
     traefik_openbao_oauth_callback_enabled: true
     traefik_openbao_oauth_callback_path: /oauth/slack/callback
@@ -1113,6 +1137,9 @@
       # The Authelia portal row itself (never sso-gated); its backend url is
       # what the forwardAuth middleware dials.
       - { name: authelia, ip: "192.0.2.14", port: 9091 }
+      # The OTLP trace collector row. Present so the tracing endpoint is derived
+      # from the ingress table rather than written twice.
+      - { name: otel, ip: "192.0.2.30", port: 4318 }
       # Shared host: root dashboard plus an unauthenticated webhook path.
       - { name: hermes-dashboard, hostname: hermes, ip: "192.0.2.15", port: 8080,
           sso: true }
@@ -1207,6 +1234,10 @@
     - name: Decode traefik static config
       ansible.builtin.set_fact:
         _traefik_static: "{{ _traefik_static_raw.content | b64decode }}"
+        _traefik_static_yaml: "{{ _traefik_static_raw.content | b64decode | from_yaml }}"
+        _traefik_dns_propagation: >-
+          {{ (_traefik_static_raw.content | b64decode | from_yaml)
+             .certificatesResolvers.letsencrypt.acme.dnsChallenge.propagation }}
 
     - name: Assert static config uses Route53 DNS-01 + secured API + TLS hardening
       ansible.builtin.assert:
@@ -1224,6 +1255,33 @@
         fail_msg: >-
           traefik.yml.j2 missing the route53 resolver / secured API / TLS floor,
           emitted an email when none was set, or leaked AWS creds into the config.
+
+    # Both of these shipped OFF, silently: the proxy every request passes through
+    # emitted no metrics and no traces. A rendered config that merely parses does
+    # not prove either is on, so assert the blocks themselves — and assert the
+    # metrics entryPoint is its OWN port, since serving /metrics on websecure
+    # would publish it.
+    - name: Assert static config enables metrics and tracing
+      ansible.builtin.assert:
+        that:
+          - _traefik_static_yaml.metrics.prometheus.entryPoint == "metrics"
+          - _traefik_static_yaml.metrics.prometheus.addRoutersLabels
+          - _traefik_static_yaml.entryPoints.metrics.address == ":8082"
+          - _traefik_static_yaml.entryPoints.metrics.address != _traefik_static_yaml.entryPoints.websecure.address
+          - _traefik_static_yaml.tracing.serviceName == "traefik"
+          # Endpoint derived from the otel ingress row, not written twice.
+          - _traefik_static_yaml.tracing.otlp.http.endpoint == "http://192.0.2.30:4318/v1/traces"
+          # Break-glass listens on its own private port.
+          - _traefik_static_yaml.entryPoints.dashboardbg.address == ":8083"
+          # The DNS-01 propagation pre-check must stay disabled: internal DNS is
+          # authoritative for this subdomain and answers NXDOMAIN for the
+          # challenge name, so the check fails on a record that is in fact
+          # correct and public, and issuance never reaches the CA.
+          - _traefik_dns_propagation.disableChecks
+          - _traefik_dns_propagation.delayBeforeChecks == "60s"
+        fail_msg: >-
+          traefik.yml.j2 did not enable metrics/tracing, put metrics on a shared
+          entryPoint, or failed to derive the OTLP endpoint from the otel row.
 
     - name: Render traefik dynamic config to /tmp
       ansible.builtin.template:
@@ -1257,7 +1315,16 @@
           # Wildcard requested via the resolver; dashboard secured by a usersFile
           # (no credential inline — the role generates the file on the host).
           - _traefik_dynamic_yaml.http.routers.plex.tls.certResolver == "letsencrypt"
-          - "'dashboard-auth' in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+          # The public dashboard is Authelia-gated, NOT basicAuth: a chain is AND,
+          # so carrying both would make an Authelia outage lock the operator out
+          # of the proxy dashboard at the moment it is needed.
+          - "'authelia' in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+          - "'dashboard-auth' not in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+          # Break-glass keeps basicAuth, on its own entryPoint, off websecure, so
+          # it depends on neither Authelia nor DNS.
+          - "'dashboard-auth' in _traefik_dynamic_yaml.http.routers['dashboard-breakglass'].middlewares"
+          - "'authelia' not in _traefik_dynamic_yaml.http.routers['dashboard-breakglass'].middlewares"
+          - _traefik_dynamic_yaml.http.routers['dashboard-breakglass'].entryPoints == ["dashboardbg"]
           - >-
             _traefik_dynamic_yaml.http.middlewares['dashboard-auth'].basicAuth.usersFile
             == "/etc/traefik/dashboard.htpasswd"
@@ -1513,11 +1580,14 @@
     cribl_stream_pq_enabled: true
     cribl_stream_prometheus_rw_port: 9201
     cribl_stream_prometheus_rw_api_path: /api/v1/write
-    # Mirror the ai_log_routing-derived defaults (representative subset:
-    # one tcpjson CLI source + one rsyslog-fed syslog-type source).
+    # Mirror the ai_log_routing-derived defaults (representative subset: one
+    # tcpjson CLI source, one rsyslog-fed syslog-type source with an explicit
+    # override, and one *_docker source that must classify as syslog by
+    # suffix alone — no cribl_stream_ai_input_types entry for it below).
     cribl_stream_ai_log_routing:
       claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
       homelab_llm: { port: 10323, index: llm, sourcetype: llamaswap }
+      qdrant_docker: { port: 10347, index: qdrant, sourcetype: "qdrant:app" }
     cribl_stream_ai_input_types:
       homelab_llm: syslog
       openbao_audit: syslog
@@ -1671,7 +1741,11 @@
           - "'in_ai_homelab_llm' in _cribl_stream_inputs"
           - "'type: syslog' in _cribl_stream_inputs"
           - "'tcpPort: 10323' in _cribl_stream_inputs"
-          # Both connect through the ai_stamp pipeline.
+          # *_docker source classifies as syslog by name suffix alone — no
+          # cribl_stream_ai_input_types entry exists for qdrant_docker.
+          - "'in_ai_qdrant_docker' in _cribl_stream_inputs"
+          - "'tcpPort: 10347' in _cribl_stream_inputs"
+          # All three connect through the ai_stamp pipeline.
           - "'pipeline: ai_stamp' in _cribl_stream_inputs"
         fail_msg: >-
           inputs.yml.j2 must render one in_ai_<name> input per ai_log_routing
@@ -1693,6 +1767,23 @@
           ai_stamp conf.yml must keep conditional evals (index || ...) driven by
           __inputId and the same matchRegex/replaceExpr mask schema as
           force_splunk_meta
+
+    - name: Assert neither pipeline masks IPv4 out of events bound for Splunk
+      ansible.builtin.assert:
+        that:
+          - "'25[0-5]' not in _cribl_stream_ai_pipeline"
+          - "'25[0-5]' not in _cribl_stream_meta_pipeline"
+          # The email scrub stays; only the dotted-quad rule was removed.
+          - "'@[a-zA-Z0-9.-]+' in _cribl_stream_ai_pipeline"
+          - "'@[a-zA-Z0-9.-]+' in _cribl_stream_meta_pipeline"
+        fail_msg: >-
+          an IPv4 mask has been reintroduced. Splunk is the single source of
+          truth for logging here and these rules match all of _raw, so they
+          replace every dotted quad in an event — client_ip, remote_ip,
+          upstream addresses and subnet references alike — with '*'. That makes
+          access-log attribution impossible: it is why 4,103 probe requests/day
+          could not be traced to a source on 2026-08-05. Mask PII (email), not
+          the fields the logs exist to answer with.
 
     - name: Assert per-index HEC outputs render for netflow + every AI index
       ansible.builtin.assert:
@@ -2525,6 +2616,108 @@
           - standalone host falls back to its own name (one prefix per host)
           - standby adopts the primary's stanza, not its own hostname
           - config section header, repo1-path, and archive_command all agree
+
+- name: Render and verify the Authelia access-control rules
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    # The role defaults derive several values from tofu_data and the
+    # environment. Only access_control is asserted here, so these are minimal
+    # stand-ins that let the template render offline.
+    tofu_data:
+      domain: example.test
+      constants:
+        service_ports:
+          authelia_portal: 9091
+    authelia_oidc_hmac_secret: x
+    authelia_oidc_jwks_key: x
+    authelia_oidc_hermes_client_id: x
+    authelia_oidc_hermes_redirect_uri: "https://x.example.test/cb"
+
+  tasks:
+    - name: Load the authelia role defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/authelia/defaults/main.yml"
+
+    - name: Render the Authelia configuration
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../roles/authelia/templates/configuration.yml.j2"
+        dest: "{{ render_tmp }}/authelia-configuration.yml"
+        mode: "0600"
+
+    - name: Read back the rendered access-control rules
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/authelia-configuration.yml"
+      register: _authelia_raw
+
+    - name: Parse the rendered configuration
+      ansible.builtin.set_fact:
+        _authelia_rules: >-
+          {{ (_authelia_raw.content | b64decode | from_yaml)['access_control']['rules'] }}
+
+    - name: Assert every bypass rule is scoped to an API prefix, never the whole host
+      ansible.builtin.assert:
+        that:
+          # A bypass entry must never widen to the entire domain. `policy:
+          # bypass` with an unanchored or absent resource would hand the app's
+          # browser UI to anyone, which is the failure this guard exists for.
+          - _authelia_rules
+            | selectattr('policy', 'eq', 'bypass')
+            | rejectattr('resources', 'defined')
+            | list | length == 0
+          - _authelia_rules
+            | selectattr('policy', 'eq', 'bypass')
+            | map(attribute='resources') | flatten
+            | reject('match', '\\^/api') | list | length == 0
+        fail_msg: >-
+          an Authelia bypass rule is missing a resource scope or does not
+          anchor to an /api prefix: {{ _authelia_rules }}
+
+    - name: Assert Langfuse bypasses only /api/public, leaving /api/auth gated
+      ansible.builtin.assert:
+        that:
+          # Regression guard. Langfuse serves NextAuth browser session and
+          # sign-in routes under /api/auth. A blanket ^/api bypass — the value
+          # this template hardcoded for every domain before the resource became
+          # per-entry — would expose them unauthenticated.
+          - _langfuse_rule.resources == ['^/api/public(?:/.*)?$']
+          - "'^/api(?:/.*)?$' not in _langfuse_rule.resources"
+        fail_msg: >-
+          Langfuse bypass is not narrowed to /api/public
+          (got {{ _langfuse_rule.resources }}); /api/auth would be exposed
+      vars:
+        _langfuse_rule: >-
+          {{ _authelia_rules
+             | selectattr('policy', 'eq', 'bypass')
+             | selectattr('domain', 'search', 'langfuse')
+             | first }}
+
+    - name: Assert the default resource still applies to entries that omit it
+      ansible.builtin.assert:
+        that:
+          # Entries without an explicit `resource` must keep the historical
+          # value, so adding the per-entry knob changed no existing behaviour.
+          - _zammad_rule.resources == ['^/api(?:/.*)?$']
+        fail_msg: >-
+          the default bypass resource changed for entries that omit it
+          (got {{ _zammad_rule.resources }})
+      vars:
+        _zammad_rule: >-
+          {{ _authelia_rules
+             | selectattr('policy', 'eq', 'bypass')
+             | selectattr('domain', 'search', 'zammad')
+             | first }}
+
+    - name: Authelia access-control verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          Authelia access-control assertions passed:
+          - every bypass rule is scoped to an /api prefix
+          - Langfuse is narrowed to /api/public, so /api/auth stays gated
+          - entries omitting `resource` keep the previous default
 
 - name: Remove the per-run fixture output directory
   hosts: localhost

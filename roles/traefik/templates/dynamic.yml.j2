@@ -64,6 +64,31 @@ http:
         - websecure
       middlewares:
         - strip-remote-headers
+{# Authelia gates the public dashboard so the operator signs in with the estate
+   identity. If SSO is unavailable (no authelia row in the inventory) this MUST
+   fall back to basicAuth — the dashboard is never left unauthenticated. #}
+{% if sso_enabled and traefik_dashboard_sso %}
+        - authelia
+{% else %}
+        - dashboard-auth
+{% endif %}
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ traefik_base_domain }}"
+            sans:
+              - "*.{{ traefik_base_domain }}"
+{% if traefik_dashboard_breakglass_enabled %}
+{# Break-glass: its own private entryPoint, basicAuth only, no Host rule. This
+   router must NEVER carry the authelia middleware — its whole purpose is to
+   still work when Authelia does not. #}
+    dashboard-breakglass:
+      rule: "PathPrefix(`/`)"
+      service: api@internal
+      entryPoints:
+        - {{ traefik_dashboard_breakglass_entrypoint }}
+      middlewares:
+        - strip-remote-headers
         - dashboard-auth
       tls:
         certResolver: letsencrypt
@@ -71,6 +96,7 @@ http:
           - main: "{{ traefik_base_domain }}"
             sans:
               - "*.{{ traefik_base_domain }}"
+{% endif %}
 {% endif %}
 
   services:

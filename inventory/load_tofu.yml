@@ -321,19 +321,100 @@
         - tofu_data.containers is defined
         - tofu_data.containers | length > 0
 
-    - name: Add VMs to inventory (SSH connection)
+    # Windows VMs (ansible_connection: winrm, published from deployment.json)
+    # need a WinRM password instead of an SSH key. Fetched once here rather
+    # than per-role, mirroring how openbao_secrets fetches other domains.
+    # Skips cleanly (host stays SSH-shaped but unreachable, same as any other
+    # missing credential) when the AppRole envs aren't set — never a hard fail.
+    - name: Resolve Windows local Administrator password from OpenBao
+      # `.values()` is load-bearing: tofu_data.vms is a MAPPING (see the
+      # `| dict2items` at the VM inventory task below), so iterating it yields
+      # key STRINGS and selectattr then probes a str for .ansible_connection.
+      # That raises inside a `when:`, which fails the play outright rather than
+      # skipping — it took every converge down, not just the Windows path.
+      # `selectattr('ansible_connection', 'defined')` first, because most VMs
+      # carry no such key at all.
+      when:
+        - tofu_data.vms is defined
+        - >-
+          tofu_data.vms.values() | selectattr('ansible_connection', 'defined')
+          | selectattr('ansible_connection', 'equalto', 'winrm')
+          | list | length > 0
+      no_log: true
+      block:
+        - name: Log in with the ansible AppRole
+          community.hashi_vault.vault_login:
+            url: "{{ lookup('env', 'BAO_ADDR') }}"
+            auth_method: approle
+            role_id: "{{ lookup('env', 'OPENBAO_APPROLE_ANSIBLE_ROLE_ID') }}"
+            secret_id: "{{ lookup('env', 'OPENBAO_APPROLE_ANSIBLE_SECRET_ID') }}"
+          register: windows_vdi_openbao_login
+          failed_when: false
+
+        - name: Read the win11-vdi local Administrator credential
+          community.hashi_vault.vault_kv2_get:
+            url: "{{ lookup('env', 'BAO_ADDR') }}"
+            auth_method: token
+            token: "{{ windows_vdi_openbao_login.login.auth.client_token }}"
+            engine_mount_point: secret
+            path: platform/windows-vdi/win11-admin
+          register: windows_vdi_admin_secret
+          failed_when: false
+          when: windows_vdi_openbao_login.login is defined
+
+        - name: Store the resolved Windows admin credential
+          ansible.builtin.set_fact:
+            windows_vdi_admin_password: "{{ windows_vdi_admin_secret.secret.password | default('') }}"
+
+        # An empty password here is never benign: it produces a WinRM auth
+        # failure at converge time that reads like a broken guest rather than a
+        # missing grant. Fail where the cause is visible, but only once the
+        # AppRole envs were actually supplied — with no envs at all this is an
+        # offline run and staying soft is the documented behaviour above.
+        - name: Fail when a WinRM host exists but no password could be resolved
+          ansible.builtin.fail:
+            msg: >-
+              Windows guests are published with ansible_connection=winrm but the
+              local Administrator password at
+              secret/platform/windows-vdi/win11-admin could not be read. Check
+              that the ansible AppRole's policy grants read on that exact path.
+          when:
+            - lookup('env', 'OPENBAO_APPROLE_ANSIBLE_ROLE_ID') | length > 0
+            - windows_vdi_admin_password | length == 0
+
+    - name: Add VMs to inventory (SSH or WinRM connection)
       ansible.builtin.add_host:
         name: "{{ item.key }}"
-        groups:
-          - vms
-          - all
+        # windows_group drives a play built entirely from ansible.windows
+        # modules, which only work over WinRM. The `windows` tag alone does not
+        # imply that: ansible_connection defaults to "ssh" in the tofu inventory
+        # (modules/proxmox-stack/variables-vms.tf), so a tagged guest that has
+        # not been given winrm joins the group and then fails every task on a
+        # connection that cannot carry them. Gate on the connection, which is
+        # the thing the play actually requires.
+        groups: >-
+          {{
+            ['vms', 'all'] +
+            (['windows_group']
+             if item.value.ansible_connection | default('ssh') == 'winrm'
+             else [])
+          }}
         ansible_host: "{{ item.value.ip }}"
         ansible_connection: "{{ item.value.ansible_connection }}"
-        ansible_user: debian
-        ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
+        ansible_user: "{{ 'Administrator' if item.value.ansible_connection == 'winrm' else 'debian' }}"
+        ansible_ssh_private_key_file: >-
+          {{ lookup('env', 'PROXMOX_SSH_KEY_PATH')
+             if item.value.ansible_connection == 'ssh' else omit }}
+        ansible_password: >-
+          {{ windows_vdi_admin_password | default(omit)
+             if item.value.ansible_connection == 'winrm' else omit }}
+        ansible_winrm_transport: "{{ 'basic' if item.value.ansible_connection == 'winrm' else omit }}"
+        ansible_winrm_scheme: "{{ 'http' if item.value.ansible_connection == 'winrm' else omit }}"
+        ansible_port: "{{ 5985 if item.value.ansible_connection == 'winrm' else omit }}"
         host_tags: "{{ item.value.tags | default([]) }}"
       loop: "{{ tofu_data.vms | dict2items }}"
       changed_when: false
+      no_log: true
       when:
         - tofu_data.vms is defined
         - tofu_data.vms | length > 0
