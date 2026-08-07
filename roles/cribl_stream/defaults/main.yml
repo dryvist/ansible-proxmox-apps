@@ -44,15 +44,23 @@ cribl_stream_s2s_port: >-
 cribl_stream_otel_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['otel_traces_http'] }}
 
-# Langfuse OTLP destination for the LLM fabric traces. Project keys from
-# Doppler env (pre-provisioned via the langfuse role's LANGFUSE_INIT_*).
-# Rendering of the output + its input connection is gated on the public key
-# being present, so a host without the keys keeps its existing config.
+# Langfuse OTLP destination for the LLM fabric traces. The output and its
+# input connection render unconditionally: a missing key aborts the converge
+# instead of silently dropping the destination from the rendered config.
+# `lookup('env', ...)` returns "" (a *defined* empty string) when the var is
+# unset, which `mandatory` would happily pass through, so `default(undef(),
+# true)` coerces the empty string to undefined first.
 cribl_stream_langfuse_url: >-
   https://langfuse.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
   | mandatory('PROXMOX_SUBDOMAIN required') }}/api/public/otel
-cribl_stream_langfuse_public_key: "{{ lookup('env', 'LANGFUSE_PUBLIC_KEY') | default('', true) }}"
-cribl_stream_langfuse_secret_key: "{{ lookup('env', 'LANGFUSE_SECRET_KEY') | default('', true) }}"
+cribl_stream_langfuse_public_key: >-
+  {{ lookup('env', 'LANGFUSE_PUBLIC_KEY')
+     | default(undef(), true)
+     | mandatory('LANGFUSE_PUBLIC_KEY is required for the langfuse_otlp output') }}
+cribl_stream_langfuse_secret_key: >-
+  {{ lookup('env', 'LANGFUSE_SECRET_KEY')
+     | default(undef(), true)
+     | mandatory('LANGFUSE_SECRET_KEY is required for the langfuse_otlp output') }}
 
 # Splunk HEC output configuration — FQDN, never an IP. HEC goes through
 # the dedicated splunk-hec Traefik ingress on 443: the splunk.<zone> alias
