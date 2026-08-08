@@ -1,14 +1,17 @@
 """Nautobot Job: export the inventory to the S3 artifact bucket (issue #138).
 
-Celery-beat scheduled. Gathers Nautobot's IPAM/DCIM contents via the ORM, shapes
-them into the homelab-contracts ``nautobot-export-v1`` document, validates
-against that schema when present, and uploads the JSON to the S3 state bucket
-with ambient credentials — mirroring ``terraform-proxmox/inventory_publish.tf``
-so every consumer reads the artifact, never live Nautobot, and a full rebuild
-works with Nautobot down.
+Gathers Nautobot's IPAM/DCIM contents via the ORM, shapes them into the
+homelab-contracts ``nautobot-export-v1`` document, validates against that
+schema when present, and uploads the JSON to the S3 state bucket with ambient
+credentials — mirroring ``terraform-proxmox/inventory_publish.tf`` so every
+consumer reads the artifact, never live Nautobot, and a full rebuild works with
+Nautobot down.
 
 ``build_export()`` is the single place the output is shaped, so aligning field
 names with the finalized schema is a one-function change.
+
+The export runs after an ingest, not on a clock. ``_assert_ingest_ordering()``
+enforces that; see its docstring for why a scheduled export is what broke here.
 """
 from __future__ import annotations
 
@@ -19,11 +22,41 @@ from typing import Any, Optional
 import boto3
 from nautobot.apps.jobs import Job, register_jobs
 from nautobot.dcim.models import Device, Interface, Rack
+from nautobot.extras.models import JobResult
 from nautobot.ipam.models import VLAN, IPAddress, Prefix
 from nautobot.virtualization.models import VirtualMachine
 
 SCHEMA_VERSION = "1.1.0"
 DEFAULT_KEY = "nautobot/nautobot_export.json"
+
+# Ingest jobs that write the content this export publishes, identified by
+# MODULE NAME. Any one succeeding counts as "an ingest happened" — they are
+# separate jobs only because they cover separate domains, and a run touching
+# one domain is still a real change worth publishing.
+#
+# Matched via job_model, NOT via JobResult.name. Nautobot writes two different
+# forms into that field for the same job — the Job's Meta name, and
+# "module.ClassName" — depending on how the run was started. A name= filter
+# therefore matches only some of a job's own results, which would freeze the
+# "last export" timestamp and leave this guard passing unconditionally while
+# reporting nothing wrong. Silent degradation is the failure mode the guard
+# exists to prevent, so it must not be built on that field. job_model is a
+# foreign key to the Job record and survives a Meta name change.
+INGEST_JOB_MODULES = (
+    "ssot_virtualization",
+    "ssot_nodes",
+    "ssot_vlans_prefixes",
+    "ssot_ip_addresses",
+    "ssot_dcim",
+)
+
+# This job's own module, used to find the previous export. Derived from
+# __name__ so renaming the file cannot silently desynchronize it.
+EXPORT_JOB_MODULE = __name__.rsplit(".", 1)[-1]
+
+# Models whose rows make up the export. Their newest last_updated is the
+# document's `data_as_of`.
+SOURCE_MODELS = (VLAN, Prefix, IPAddress, Device, Rack, Interface, VirtualMachine)
 
 # Custom-field key holding the Proxmox guest id. Written by the virtualization
 # seed job (ssot_virtualization.py); read here.
@@ -214,6 +247,91 @@ class ExportNautobotToS3(Job):
         description = "Publish the nautobot-export-v1 artifact to the S3 state bucket."
         has_sensitive_variables = False
 
+    def _assert_ingest_ordering(self) -> None:
+        """Refuse to publish when no ingest has succeeded since the last export.
+
+        The export publishes whatever the ingest jobs last wrote. Run it on its
+        own and it will happily republish content of any age, succeeding every
+        time — so its green result carries no information about whether the
+        artifact is current. This guard supplies that missing meaning.
+
+        WHY IT READS JOB RESULTS. Freshness itself must come from the data's own
+        timestamps; "a job ran" never proves "the data is current". This guard
+        does not make that inference. It uses job history in the *negative*
+        direction only: if no ingest has succeeded since the last export, then
+        nothing new can have arrived, so there is nothing to publish. Absence of
+        an ingest proving staleness is sound and needs no clock. Presence of a
+        run proving freshness is the unsound direction, and is not used here.
+
+        WHY NOT COMPARE THE DATA TIMESTAMPS INSTEAD. The trigger is an upstream
+        apply completing, which fires whether or not that apply changed
+        anything. Comparing max(last_updated) alone would therefore refuse on
+        every no-change apply, and a guard that cries wolf gets loosened until
+        it is gone. Ordering is what is actually being asserted, so ordering is
+        what is checked. The data timestamp is still logged, so a detector can
+        watch the one case ordering cannot see: an ingest that reports success
+        while syncing nothing.
+
+        There is deliberately no bypass flag. A skipped export costs one run; a
+        published stale artifact silently misinforms every consumer of it.
+        """
+        last_export = (
+            JobResult.objects.filter(
+                job_model__module_name=EXPORT_JOB_MODULE, status="SUCCESS"
+            )
+            .order_by("-date_done")
+            .values_list("date_done", flat=True)
+            .first()
+        )
+        if last_export is None:
+            # First export on this instance. There is no prior publish to be
+            # newer than, so ordering cannot be violated yet.
+            self.logger.info("No prior successful export — ordering guard passes by default")
+            return
+
+        last_ingest = (
+            JobResult.objects.filter(
+                job_model__module_name__in=INGEST_JOB_MODULES, status="SUCCESS"
+            )
+            .order_by("-date_done")
+            .values_list("date_done", flat=True)
+            .first()
+        )
+        if last_ingest is not None and last_ingest > last_export:
+            self.logger.info(
+                "Ordering guard passes: ingest succeeded %s, after the last export at %s",
+                last_ingest,
+                last_export,
+            )
+            return
+
+        raise RuntimeError(
+            "Refusing to publish: no ingest job has succeeded since the last export "
+            f"(last export {last_export}, last ingest {last_ingest or 'never'}). "
+            "The export is meant to run after an ingest, triggered by the upstream "
+            "apply — not on a schedule. Re-run an ingest job first. Do not work "
+            "around this by scheduling the export."
+        )
+
+    def _data_as_of(self) -> Optional[str]:
+        """Return the newest ``last_updated`` across every exported model.
+
+        This is the honest freshness signal — taken from the rows themselves,
+        not from any job's history. It is published in the document and logged
+        so a detector can alarm on an ingest that succeeds while syncing
+        nothing, which the ordering guard cannot see.
+        """
+        newest = None
+        for model in SOURCE_MODELS:
+            value = (
+                model.objects.order_by("-last_updated")
+                .values_list("last_updated", flat=True)
+                .first()
+            )
+            if value is not None and (newest is None or value > newest):
+                newest = value
+        return newest.isoformat() if newest is not None else None
+
     def _validate(self, document: dict) -> None:
         """Validate against the homelab-contracts schema when it is present."""
         schema_path = os.environ.get("NAUTOBOT_EXPORT_SCHEMA", "")
@@ -255,7 +373,16 @@ class ExportNautobotToS3(Job):
         self.logger.info("Published %d bytes to s3://%s/%s", len(body), bucket, key)
 
     def run(self) -> None:  # noqa: D102 - Nautobot Job entrypoint
+        # Ordering first: a stale run must cost nothing and touch nothing.
+        self._assert_ingest_ordering()
         document = build_export()
+        # Logged, deliberately NOT added to the document. nautobot-export-v1
+        # sets "additionalProperties": false at the root and lists every
+        # producer field in "required", so a new key fails validation and takes
+        # the export down. Putting data_as_of in the artifact is a contract
+        # change — a 1.2.0 bump here and in homelab-contracts upstream — and
+        # belongs in its own PR. The log line is enough for a detector to watch.
+        self.logger.info("Data as of %s", self._data_as_of() or "(no rows)")
         self.logger.info(
             "Built export: %d vlans, %d prefixes, %d ip_addresses, %d devices, "
             "%d racks, %d interfaces, %d virtual_machines",
