@@ -77,6 +77,43 @@
           declaration-first keeps the first-boot load valid, flush-before-
           definition keeps reloads replace-not-merge.
 
+    - name: Assert input chain is default-DROP with the web UIs denied on the tunnel
+      vars:
+        # Matched by shape, not by port number: the web-UI ports come from tofu
+        # constants and are not defined in this playbook's scope.
+        _wg_ui_drop: 'iifname "{{ download_vpn_wg_interface }}" tcp dport'
+        _wg_accept: 'iifname "{{ download_vpn_wg_interface }}" accept'
+      ansible.builtin.assert:
+        that:
+          - "'hook input' in ks"
+          - _wg_ui_drop in ks
+          - _wg_accept in ks
+          # The UI denial must precede the general tunnel accept, or the accept
+          # matches first and the denial is dead code.
+          - ks.index(_wg_ui_drop) < ks.index(_wg_accept)
+          # Ingress needs its own conntrack rule; the output chain's copy does
+          # not apply to this hook.
+          - "'ct state established,related accept' in ks"
+          - "'iif \"lo\" accept' in ks"
+          - "'log prefix \"killswitch-input-drop' in ks"
+        fail_msg: >-
+          Killswitch input chain is wrong: it must be default-drop, deny the
+          web-UI ports on the tunnel BEFORE the general tunnel accept, and
+          carry its own loopback and established/related rules.
+
+    - name: Assert internal-network ingress to the web UIs survives on the LAN NIC
+      ansible.builtin.assert:
+        that:
+          # Cross-subnet admin access is a supported case — a rule scoped to the
+          # guest's own /24 would silently break it.
+          - "'ip saddr 10.0.0.0/8' in ks"
+          - "'ip saddr 172.16.0.0/12' in ks"
+          - "'ip saddr 192.168.0.0/16' in ks"
+          - "'tcp dport 22 accept' in ks"
+        fail_msg: >-
+          The input chain does not admit RFC1918 ingress to the web UIs and SSH
+          on the LAN NIC — cross-subnet access and the SSH recovery path break.
+
     - name: Read the rendered lanroute connmark (mangle) ruleset
       ansible.builtin.slurp:
         src: /etc/nftables.d/download-vpn-lanroute.nft
@@ -212,12 +249,20 @@
           Seeding etiquette regressed: DHT/PeX/LSD must be false,
           MaxRatioAction must be 0, and anonymous mode must be false.
 
+    # Read the floors out of the rendered config: the role defaults are not in
+    # this playbook's variable scope.
     - name: Assert the seeding-time floor
+      vars:
+        _conf: "{{ qbt_conf.content | b64decode }}"
+        _seed: "{{ _conf | regex_search('GlobalMaxSeedingMinutes=([0-9]+)', '\\1') | first }}"
+        _inactive: "{{ _conf | regex_search('GlobalMaxInactiveSeedingMinutes=([0-9]+)', '\\1') | first }}"
       ansible.builtin.assert:
         that:
-          - download_vpn_qbittorrent_max_seeding_minutes | int >= 14400
-          - download_vpn_qbittorrent_max_inactive_seeding_minutes | int >= 14400
-        fail_msg: "A seeding limit is below the 14400-minute floor."
+          - _seed | int >= 14400
+          - _inactive | int >= 14400
+        fail_msg: >-
+          A seeding limit is below the 14400-minute floor
+          (seeding={{ _seed }}, inactive={{ _inactive }}).
 
     # --- 2b. qBittorrent session/queue state persists on /data -------------
     - name: Assert qBittorrent.conf exports a persistent, plain-file torrent backup

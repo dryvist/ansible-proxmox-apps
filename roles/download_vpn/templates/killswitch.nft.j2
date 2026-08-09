@@ -14,6 +14,18 @@
   Everything else is dropped. If wg0 goes down there is no route and no rule
   that permits non-VPN egress, so traffic is cut off instantly.
 
+  INPUT is also default DROP. The permitted ingress is:
+    - loopback (every on-guest caller of the web UIs)
+    - established/related return traffic
+    - the wg0 tunnel, EXCEPT the web-UI ports — inbound peers arrive here on a
+      NAT-PMP-mapped port that changes periodically and so cannot be matched by
+      number, hence accept-the-rest with the UI ports denied above it
+    - web UIs and SSH from RFC1918 sources on the LAN NIC only (cross-subnet is
+      a supported case; see the vpn_lanroute mangle table)
+    - ICMP from RFC1918 on the LAN NIC
+  The web UIs are therefore unreachable from the tunnel side while remaining
+  reachable from the internal network.
+
   The single `inet` table applies to v4 and v6 simultaneously. IPv6 is also
   disabled at the kernel (sysctl) — this ip6 saddr/daddr coverage is the
   belt to that suspenders: even if v6 were re-enabled, only loopback, LAN and
@@ -30,7 +42,48 @@ table inet killswitch
 flush table inet killswitch
 table inet killswitch {
   chain input {
-    type filter hook input priority 0; policy accept;
+    # Default drop. Rule order is load-bearing: the admin-surface denial for the
+    # tunnel MUST precede the general wg0 accept below it.
+    type filter hook input priority 0; policy drop;
+
+    # 1. Loopback. Every on-guest caller of the web UIs uses it.
+    iif "lo" accept
+
+    # 2. Return traffic. The output chain has its own copy; input needs this one
+    #    or every reply to our own egress (incl. the WireGuard handshake, which
+    #    uses an ephemeral source port and no listener) is dropped.
+    ct state established,related accept
+
+    # 3. Web UIs are never reachable from the tunnel side. Must sit ABOVE rule 4.
+    iifname "{{ download_vpn_wg_interface }}" tcp dport { {{ download_vpn_qbittorrent_web_port | int }}, {{ download_vpn_prowlarr_web_port | int }} } drop
+
+    # 4. Inbound peers arrive through the tunnel on the NAT-PMP-mapped port. That
+    #    port is re-negotiated periodically and lives only in qBittorrent's
+    #    runtime state, so it cannot be allowlisted by number — accept the
+    #    remainder of wg0 instead, with rule 3 carving out the UIs.
+    iifname "{{ download_vpn_wg_interface }}" accept
+
+    # 5. Web UIs from the internal network, on the LAN NIC only. RFC1918-wide
+    #    rather than the local /24: cross-subnet clients are a supported case
+    #    (the vpn_lanroute mangle table marks exactly these) and a /24-scoped
+    #    rule would silently break them.
+{% for _net in download_vpn_lanroute_reply_networks %}
+    iifname "{{ download_vpn_lan_interface }}" ip saddr {{ _net }} tcp dport { {{ download_vpn_qbittorrent_web_port | int }}, {{ download_vpn_prowlarr_web_port | int }} } accept
+{% endfor %}
+
+    # 6. SSH from the internal network. Converges reach this guest over pct, not
+    #    SSH, so this is for humans — and it is the recovery path if a later edit
+    #    to this chain is wrong.
+{% for _net in download_vpn_lanroute_reply_networks %}
+    iifname "{{ download_vpn_lan_interface }}" ip saddr {{ _net }} tcp dport 22 accept
+{% endfor %}
+
+    # 7. ICMP from the internal network, so the guest stays diagnosable.
+{% for _net in download_vpn_lanroute_reply_networks %}
+    iifname "{{ download_vpn_lan_interface }}" ip saddr {{ _net }} icmp type { echo-request, destination-unreachable, time-exceeded } accept
+{% endfor %}
+
+    log prefix "killswitch-input-drop: " flags all counter drop
   }
 
   chain forward {
