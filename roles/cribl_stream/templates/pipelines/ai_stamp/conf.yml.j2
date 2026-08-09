@@ -20,9 +20,22 @@
 # syslog header the senders already emit carries the discriminator: rsyslog
 # tags each input distinctly (hermes-file, hermes-kanban, hermes-kanban-board,
 # hermes-profile, plus the unit programname for journal records) and Cribl's
-# syslog input parses that TAG into `appname`. Promoting it is the whole fix.
-# When `appname` is absent the expression yields undefined and `source` stays
-# unset — exactly the pre-existing behaviour, so this cannot regress a sender.
+# syslog input was expected to parse that TAG into `appname`. IT DOES NOT —
+# verified against the live stream after deploying an appname-only version:
+# index and sourcetype still stamped correctly (so the pipeline was running and
+# the config was live, single-instance mode, no commit/deploy step involved),
+# yet every event still reached Splunk with source defaulted to the HEC token
+# name. The input hands the pipeline the WHOLE syslog line as `_raw`, PRI header
+# and all, rather than parsed fields.
+#
+# So the tag is read back out of `_raw`. `appname` is kept as the first choice
+# for any input that does populate it, and the pattern only has to survive the
+# shapes rsyslog actually emits here: an imfile tag with no colon
+# (`hermes-file`, `hermes-profile`, `hermes-kanban-board`) and a journald
+# programname with an optional pid (`hermes-gateway[123]:`). String() keeps a
+# missing `_raw` from throwing — a non-match yields undefined and `source`
+# stays unset, which is the pre-existing behaviour, so this cannot regress a
+# sender that already sets its own source.
 #
 # IPv4 IS DELIBERATELY NOT MASKED. It used to be, replacing every dotted quad
 # anywhere in _raw with '*'. Splunk is the single source of truth for logging
@@ -56,7 +69,9 @@ functions:
 {% endfor %}
             'ai:unknown')
         - name: source
-          value: source || appname
+          value: >-
+            source || appname
+            || (String(_raw).match(/^<\d+>\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9._-]+)/) || [])[1]
   - id: mask
     filter: "true"
     disabled: false
