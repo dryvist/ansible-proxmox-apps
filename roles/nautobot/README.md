@@ -43,7 +43,7 @@ Build a seed bundle without writing to the database, then inspect it:
 ```sh
 ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
   --tags nautobot --limit nautobot_group,localhost \
-  -e nautobot_build_seed=true
+  -e nautobot_run_seed_jobs=false
 ```
 
 Verify seed assembly offline, with no guest involved:
@@ -72,11 +72,18 @@ Enabling flags is **ordered**: `manage_app` → `build_seed` → `run_seed_jobs`
 `run_export`. Seed and export are safe to run as an **observed shadow SSoT**; no
 flag here flips authority.
 
+`build_seed` and `run_seed_jobs` default **on**, and must be changed together.
+Every converge resolves a fresh tofu inventory, so every converge is the ingest
+event. Running the jobs without rebuilding replays the bundle already on the
+guest — the export's ordering guard sees a successful ingest and publishes
+unchanged content, which is the stale-export failure the guard exists to catch.
+Rebuilding without running leaves the fresh bundle unread.
+
 | Flag | Default | What it does | Enable when |
 | --- | --- | --- | --- |
 | `nautobot_manage_app` | `true` | Runs the live layer (install/migrate/services). | Production path (default). |
-| `nautobot_build_seed` | `false` | Assembles `nautobot_seed.json` — a file only, no DB write. | Cutover, via `-e`. |
-| `nautobot_run_seed_jobs` | `false` | DiffSyncs the seed into live Nautobot (additive). | Cutover, after the seed. |
+| `nautobot_build_seed` | `true` | Assembles `nautobot_seed.json` — a file only, no DB write. | Production path (default). |
+| `nautobot_run_seed_jobs` | `true` | DiffSyncs the seed into live Nautobot (additive). | Production path (default). |
 | `nautobot_run_export` | `false` | One-shot publish of the export during the converge. | Optional. |
 | `nautobot_run_discovery` | `false` | SSH-CLI device onboarding (netmiko). | Optional; out of scope. |
 
@@ -136,12 +143,15 @@ cutover deliberately:
    `role: dhcp-pool` and, later, v6 CIDRs) + `NAUTOBOT_EXPORT_S3_BUCKET`. None
    of these is required on its own: the resolved tofu inventory always supplies
    the guest slice, and each absent source just contributes nothing.
-2. `… site.yml -t nautobot -e nautobot_build_seed=true` → writes
-   `nautobot_seed.json` only. **Inspect it.**
-3. Re-run with `-e nautobot_build_seed=true -e nautobot_run_seed_jobs=true` →
-   additive DiffSync populates live Nautobot. Re-runnable safely.
-4. Optionally `-e nautobot_run_export=true` for an immediate publish; otherwise
-   the daily beat schedule publishes.
+2. An ordinary converge now writes `nautobot_seed.json` and DiffSyncs it into
+   live Nautobot — both flags default on. To inspect the bundle before it is
+   read, run once with `-e nautobot_run_seed_jobs=false` and read the file.
+3. Re-run without overrides → additive DiffSync populates live Nautobot.
+   Re-runnable safely.
+4. Optionally `-e nautobot_run_export=true` for an immediate publish. The daily
+   beat schedule also publishes, but only when an ingest has succeeded since the
+   last export — otherwise it fails loudly rather than republishing stale
+   content.
 5. **Observe** the shadow `nautobot_export.json` for one or more cycles.
 6. The **authority-flip** — tofu-proxmox deriving `tofu_inventory.json`
    *from* Nautobot instead of `deployment.json` — is a separate, upstream,

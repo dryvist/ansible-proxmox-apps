@@ -163,10 +163,18 @@ nautobot_env_base:
   NAUTOBOT_EXPORT_S3_KEY: "{{ nautobot_export_s3_key }}"
   NAUTOBOT_EXPORT_SCHEMA: "{{ nautobot_export_schema_file }}"
 
-# Seed-bundle assembly (tasks/seed_bundle.yml). Off by default — the four
-# sources live in sibling repos the controller only has at cutover (WS-E). Paths
-# and the network definitions come from the runtime environment.
-nautobot_build_seed: false
+# Seed-bundle assembly (tasks/seed_bundle.yml). On by default: the resolved tofu
+# inventory is present on every run of this repo and is the ordinary source, so a
+# bundle can always be built. The three sibling-repo sources are independently
+# optional — an absent one warns and contributes nothing, and the seed jobs are
+# additive, so Nautobot retains objects that slice previously supplied.
+#
+# This must stay paired with nautobot_run_seed_jobs. Running the jobs without
+# rebuilding replays whatever bundle is already on the guest: the export's
+# ordering guard sees a successful ingest and publishes, while the content is
+# unchanged. Rebuilding without running leaves the fresh bundle unread. Either
+# half alone reintroduces the stale-export failure the guard exists to catch.
+nautobot_build_seed: true
 nautobot_seed_sops_path: "{{ lookup('env', 'TERRAFORM_PROXMOX_SOPS') | default('', true) }}"
 nautobot_seed_fixed_ips_path: "{{ lookup('env', 'TOFU_UNIFI_FIXED_IPS') | default('', true) }}"
 nautobot_seed_hosts_yml_path: "{{ lookup('env', 'ANSIBLE_PROXMOX_HOSTS') | default('', true) }}"
@@ -190,10 +198,16 @@ nautobot_seed_hosts_group: proxmox
 # cutover gate (issue #138 "Done when"). Same idea as keepalived_manage_services.
 nautobot_manage_app: true
 
-# Run the additive SSoT seed jobs (load nautobot_seed.json into Nautobot) once
-# during the converge — off by default, enabled at cutover after the seed bundle
-# is placed. nautobot_run_export additionally runs the export Job that same pass.
-nautobot_run_seed_jobs: false
+# Run the additive SSoT seed jobs (load nautobot_seed.json into Nautobot) during
+# the converge. On by default so the converge — the event that resolves a fresh
+# tofu inventory — is what ingests it. The jobs are additive and a delete is a
+# no-op, so re-running is safe.
+#
+# The seed jobs are deliberately NOT celery-beat scheduled. Bundle assembly is a
+# controller-side step (seed_bundle.yml), so a scheduled worker run could only
+# replay the on-disk bundle — satisfying the export's ordering guard with
+# unchanged content. Ingest belongs on the converge; see nautobot_build_seed.
+nautobot_run_seed_jobs: true
 nautobot_run_export: false
 
 # --- Automated discovery (nautobot-device-onboarding) -----------------------
