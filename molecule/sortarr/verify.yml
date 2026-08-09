@@ -18,7 +18,6 @@
 
   vars:
     sortarr_data_dir: /opt/sortarr
-    sortarr_image: "ghcr.io/jaredharper1/sortarr:latest"
     sortarr_container_name: sortarr
     # Must match molecule.yml provisioner.env defaults.
     sortarr_expected_sonarr_key: "0123456789abcdef0123456789abcdef"
@@ -42,10 +41,20 @@
         src: "{{ sortarr_data_dir }}/docker-compose.yml"
       register: sortarr_compose
 
+    # Read the image out of the role's own defaults rather than restating it
+    # here. A copy in this file only ever asserts that the copy matches itself,
+    # so changing the image in the role broke this scenario while the role was
+    # correct. Loaded under a name so the rest of the defaults - one of which
+    # derives from inventory data absent under Molecule - stay out of scope.
+    - name: Load the image the role actually declares
+      ansible.builtin.include_vars:
+        file: ../../roles/sortarr/defaults/main.yml
+        name: sortarr_role_defaults
+
     - name: Assert docker-compose.yml references image, port 8787, /data mount
       ansible.builtin.assert:
         that:
-          - "sortarr_image in (sortarr_compose.content | b64decode)"
+          - "sortarr_role_defaults.sortarr_image in (sortarr_compose.content | b64decode)"
           - "sortarr_container_name in (sortarr_compose.content | b64decode)"
           - "'8787:8787' in (sortarr_compose.content | b64decode)"
           - "'/data' in (sortarr_compose.content | b64decode)"
