@@ -1,5 +1,36 @@
 # Changelog
 
+## [4.9.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.8.1...v4.9.0) (2026-08-09)
+
+
+### Features
+
+* **authelia:** register a second OIDC client for Donna's dashboard ([#1421](https://github.com/dryvist/ansible-proxmox-apps/issues/1421)) ([dc75bfe](https://github.com/dryvist/ansible-proxmox-apps/commit/dc75bfecacc719d7b9a558f383409be5bc1fccff))
+* **nautobot:** close inventory group gaps and query dns_name ([#1438](https://github.com/dryvist/ansible-proxmox-apps/issues/1438)) ([381d3f7](https://github.com/dryvist/ansible-proxmox-apps/commit/381d3f70ec01c1b34a17abc225f917c25002eb5c))
+* **nautobot:** gate the S3 export on an ingest having run since the last one ([#1413](https://github.com/dryvist/ansible-proxmox-apps/issues/1413)) ([c1589be](https://github.com/dryvist/ansible-proxmox-apps/commit/c1589becd62291324a6d1d9630685fb527432b92))
+* **openbao:** add scheduled Slack app-config token rotation timer ([#1418](https://github.com/dryvist/ansible-proxmox-apps/issues/1418)) ([ddfa95f](https://github.com/dryvist/ansible-proxmox-apps/commit/ddfa95f0439e1f39f1b5a3a12e4769cd05bf38b2))
+* **openbao:** add slack-ops AppRole for the Slack channel bot token ([#1420](https://github.com/dryvist/ansible-proxmox-apps/issues/1420)) ([1ebb647](https://github.com/dryvist/ansible-proxmox-apps/commit/1ebb647143073d55fe686a2a089aab4bd996a867))
+* **openbao:** grant slack-admin create+read on platform/slack-app-* ([#1417](https://github.com/dryvist/ansible-proxmox-apps/issues/1417)) ([baea93f](https://github.com/dryvist/ansible-proxmox-apps/commit/baea93f8a338ef6194ce3bdf3329332225b91dfd))
+* **servarr_wiring:** enforce freeleech-only + seed criteria on private Prowlarr indexers ([#1429](https://github.com/dryvist/ansible-proxmox-apps/issues/1429)) ([9375e5e](https://github.com/dryvist/ansible-proxmox-apps/commit/9375e5e304ae205c4dbc78fda77a296a226b5093))
+* **validate-media:** extend suite to validate the whole *arr stack ([#1431](https://github.com/dryvist/ansible-proxmox-apps/issues/1431)) ([b9426d1](https://github.com/dryvist/ansible-proxmox-apps/commit/b9426d14a3c47d0a988394665f59de5b46573d5d))
+
+
+### Bug Fixes
+
+* **cribl_stream:** derive source from the raw syslog line ([#1427](https://github.com/dryvist/ansible-proxmox-apps/issues/1427)) ([6576a1c](https://github.com/dryvist/ansible-proxmox-apps/commit/6576a1c2820ed6b19c18b3e143b0808be16f8db0))
+* **cribl_stream:** stamp source from the syslog appname in ai_stamp ([#1422](https://github.com/dryvist/ansible-proxmox-apps/issues/1422)) ([433897d](https://github.com/dryvist/ansible-proxmox-apps/commit/433897ddf63c23c74a687317206cc0141565184f))
+* **download_vpn:** derive LAN interface/IP from interface facts, never the tunnel ([#1426](https://github.com/dryvist/ansible-proxmox-apps/issues/1426)) ([b556039](https://github.com/dryvist/ansible-proxmox-apps/commit/b556039cba482d3d4a6122b8582ca9acfc0ead1d))
+* **download_vpn:** give the challenge solver a writable home ([#1435](https://github.com/dryvist/ansible-proxmox-apps/issues/1435)) ([bc1672f](https://github.com/dryvist/ansible-proxmox-apps/commit/bc1672f5c46c1e3a3a740fcf50630d2aa1862197))
+* **download_vpn:** install xvfb so the challenge solver can start ([#1430](https://github.com/dryvist/ansible-proxmox-apps/issues/1430)) ([db15330](https://github.com/dryvist/ansible-proxmox-apps/commit/db153304a8f173e7d60e2351cca07a55499f1d8d))
+* **download_vpn:** remove qBittorrent seeding capacity caps ([#1425](https://github.com/dryvist/ansible-proxmox-apps/issues/1425)) ([b809283](https://github.com/dryvist/ansible-proxmox-apps/commit/b80928348c83fb1c4de2c2594290a191e508ea64))
+* **download_vpn:** scope WebUI auth bypass to the container subnet ([#1428](https://github.com/dryvist/ansible-proxmox-apps/issues/1428)) ([41388d4](https://github.com/dryvist/ansible-proxmox-apps/commit/41388d4530e0c2b861ee2dded58619143456f54d))
+* **download_vpn:** stop-not-delete share limits, input-chain drop, download-client removal settings ([#1423](https://github.com/dryvist/ansible-proxmox-apps/issues/1423)) ([a8f73a2](https://github.com/dryvist/ansible-proxmox-apps/commit/a8f73a2a87248e8b081e6ffb999d72651fa60acf))
+* **molecule:** assert the image the sortarr role declares, not a copy ([#1436](https://github.com/dryvist/ansible-proxmox-apps/issues/1436)) ([3624f84](https://github.com/dryvist/ansible-proxmox-apps/commit/3624f84dad9b24f526e0dd56cf302c3f469e39de))
+* **openbao:** grant create on slack-admin policy and unexpire its secret_id ([#1416](https://github.com/dryvist/ansible-proxmox-apps/issues/1416)) ([9cd7194](https://github.com/dryvist/ansible-proxmox-apps/commit/9cd7194dcb21bc073825a7c31ee93870dba50db5))
+* **openbao:** remove slack-poc OAuthapp definitions ([#1419](https://github.com/dryvist/ansible-proxmox-apps/issues/1419)) ([186cb9f](https://github.com/dryvist/ansible-proxmox-apps/commit/186cb9f81bdac5ad6b391b04fac9e80c345f7f1d))
+* pin sortarr and configarr images so Renovate can track them ([#1433](https://github.com/dryvist/ansible-proxmox-apps/issues/1433)) ([a450c1c](https://github.com/dryvist/ansible-proxmox-apps/commit/a450c1ca3bda2e98cc30c7213752c14b97dbcd86))
+* **validate-media:** request response content for the qBittorrent version check ([#1432](https://github.com/dryvist/ansible-proxmox-apps/issues/1432)) ([cba2221](https://github.com/dryvist/ansible-proxmox-apps/commit/cba2221b7e6ae1202134a9663e14e95595de4ae8))
+
 ## [4.8.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.8.0...v4.8.1) (2026-08-07)
 
 
