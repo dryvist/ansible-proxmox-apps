@@ -1,0 +1,45 @@
+---
+# Keep seeding after import: don't let the *arr apps tell qBittorrent to
+# remove a torrent (completed or failed) once it's imported. Idempotent
+# GET-then-conditional-PUT, same pattern as media_management.yml.
+
+- name: Read download clients for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/downloadclient"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_dlclient_list
+  changed_when: false
+  no_log: true
+
+# Servarr rejects partial PUTs, so the full existing object is sent back with
+# only the two booleans changed. Loops over every qBittorrent client, not just
+# the first — a second client (e.g. its own category) must not be skipped.
+# An absent field defaults to the removing behaviour so it gets written rather
+# than silently treated as already correct.
+- name: Apply download client settings for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/v3/downloadclient/{{ item.id }}"
+    method: PUT
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body: >-
+      {{ item | combine({
+           'removeCompletedDownloads': servarr_wiring_remove_completed_downloads,
+           'removeFailedDownloads': servarr_wiring_remove_failed_downloads
+         }) }}
+    status_code: [200, 202]
+  loop: >-
+    {{ servarr_wiring_dlclient_list.json
+       | selectattr('implementation', 'equalto', 'QBittorrent') | list }}
+  loop_control:
+    label: "{{ item.name | default(item.id) }}"
+  # Guarded below, so a run is always a real change.
+  changed_when: true
+  no_log: true
+  when: >-
+    (item.removeCompletedDownloads | default(true)) != servarr_wiring_remove_completed_downloads
+    or (item.removeFailedDownloads | default(true)) != servarr_wiring_remove_failed_downloads

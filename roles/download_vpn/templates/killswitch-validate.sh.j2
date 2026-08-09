@@ -195,6 +195,27 @@ for svc in qbittorrent-nox.service download-vpn-natpmp.service prowlarr.service 
   fi
 done
 
+# Disk guard, warn-only. Share limits stop torrents rather than deleting them,
+# so anything that never imports has no automatic reclaim path. Warn well before
+# the volume fills — filling it has previously taken qBittorrent down for days.
+# Deliberately never stops a service: losing the client costs more than the disk,
+# and deciding what to delete is a human call.
+_dg_free_mb="$(df -Pm "{{ download_vpn_data_dir }}" 2>/dev/null | awk 'NR==2 {print $4}')"
+if [[ -n "${_dg_free_mb}" ]] && (( _dg_free_mb < {{ download_vpn_disk_warn_free_mb }} )); then
+  _dg_now="$(date +%s)"
+  _dg_last="$(cat "{{ download_vpn_disk_warn_stamp_file }}" 2>/dev/null || echo 0)"
+  # Rate-limited: this script runs every couple of minutes.
+  if (( _dg_now - _dg_last >= {{ download_vpn_disk_warn_interval_seconds }} )); then
+    echo "${_dg_now}" > "{{ download_vpn_disk_warn_stamp_file }}" 2>/dev/null || true
+    logger -t killswitch-validate \
+      "download-vpn: ${_dg_free_mb}MB free on {{ download_vpn_data_dir }} (warn below {{ download_vpn_disk_warn_free_mb }}MB)"
+    curl -fsS --max-time 8 -H "Title: download-vpn low disk" \
+      -H "Priority: high" -H "Tags: floppy_disk" \
+      -d "download-vpn: ${_dg_free_mb}MB free on {{ download_vpn_data_dir }} (warn below {{ download_vpn_disk_warn_free_mb }}MB). Stopped torrents are kept, not deleted — review what to reclaim." \
+      "${NTFY_URL}" >/dev/null 2>&1 || true
+  fi
+fi
+
 # Healthy: ping the deadman OK endpoint so a stalled validator also pages.
 if [[ -n "${HC_URL}" ]]; then
   curl -fsS --max-time 8 "${HC_URL}" >/dev/null 2>&1 || true
