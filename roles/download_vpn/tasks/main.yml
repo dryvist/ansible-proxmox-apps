@@ -858,6 +858,55 @@
   register: download_vpn_flaresolverr_bin
   when: download_vpn_flaresolverr_enabled
 
+# FlareSolverr has no built-in updater (unlike Sonarr/Radarr/Prowlarr) — it is
+# a plain tarball from GitHub releases. So unlike those apps, staying current
+# here means comparing the running version against upstream's latest release
+# and re-extracting on a mismatch, instead of just installing once.
+- name: Query the running FlareSolverr version
+  ansible.builtin.uri:
+    url: "http://{{ download_vpn_flaresolverr_bind_host }}:{{ download_vpn_flaresolverr_port }}/"
+    method: GET
+    status_code: 200
+  register: download_vpn_flaresolverr_running
+  changed_when: false
+  failed_when: false
+  when:
+    - download_vpn_flaresolverr_enabled
+    - download_vpn_manage_services
+    - download_vpn_flaresolverr_bin.stat.exists | default(false)
+
+- name: Query the latest FlareSolverr release tag
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/FlareSolverr/FlareSolverr/releases/latest"
+    method: GET
+    status_code: 200
+  register: download_vpn_flaresolverr_latest
+  changed_when: false
+  failed_when: false
+  when:
+    - download_vpn_flaresolverr_enabled
+    - download_vpn_manage_services
+    - download_vpn_flaresolverr_bin.stat.exists | default(false)
+
+- name: Determine whether FlareSolverr needs a (re)install
+  ansible.builtin.set_fact:
+    download_vpn_flaresolverr_needs_install: >-
+      {{ not (download_vpn_flaresolverr_bin.stat.exists | default(false))
+         or ((download_vpn_flaresolverr_latest.json.tag_name | default('') | regex_replace('^v', '')) != ''
+             and (download_vpn_flaresolverr_latest.json.tag_name | default('') | regex_replace('^v', ''))
+                 != (download_vpn_flaresolverr_running.json.version | default(''))) }}
+  when: download_vpn_flaresolverr_enabled
+
+- name: Stop FlareSolverr before an in-place upgrade
+  ansible.builtin.systemd:
+    name: flaresolverr.service
+    state: stopped
+  when:
+    - download_vpn_flaresolverr_enabled
+    - download_vpn_manage_services
+    - download_vpn_flaresolverr_bin.stat.exists | default(false)
+    - download_vpn_flaresolverr_needs_install | default(false)
+
 - name: Download + extract FlareSolverr
   ansible.builtin.unarchive:
     src: "{{ download_vpn_flaresolverr_tarball_url }}"
@@ -870,7 +919,7 @@
   when:
     - download_vpn_flaresolverr_enabled
     - download_vpn_manage_services
-    - not (download_vpn_flaresolverr_bin.stat.exists | default(false))
+    - download_vpn_flaresolverr_needs_install | default(false)
 
 - name: Deploy FlareSolverr systemd unit
   ansible.builtin.template:
