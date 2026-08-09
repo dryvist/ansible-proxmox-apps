@@ -56,6 +56,23 @@
           - "'policy drop' in ks"
         fail_msg: "Killswitch output chain is not default-DROP."
 
+    - name: Assert the LAN-derived rules use the real LAN NIC, never the dummy tunnel iface
+      # prepare.yml adds a dummy wg0 carrying a fake (RFC 5737) tunnel address
+      # alongside the real LAN NIC, without touching the default route — so
+      # ansible_default_ipv4 here is still the real NIC. A regression that
+      # derives lan_ip from "any interface with an address" instead of
+      # excluding the tunnel by name would pick up the dummy's address instead.
+      vars:
+        _real_lan_net: "{{ (ansible_default_ipv4.address ~ '/24') | ansible.utils.ipaddr('network/prefix') }}"
+      ansible.builtin.assert:
+        that:
+          - "'198.51.100.5' not in ks"
+          - _real_lan_net.split('/')[0] in ks
+        fail_msg: >-
+          The killswitch ruleset references the dummy tunnel interface's
+          address instead of the real LAN NIC's — the lan_ip derivation
+          regressed.
+
     - name: Assert reload is replace-not-merge (declare < flush < definition)
       vars:
         # The bare declaration line and the definition open share a prefix, so
@@ -143,6 +160,22 @@
           handler re-runs nft -f on every mangle change, and without the
           preamble that merge appends a duplicate connmark rule for the old
           web-UI port instead of replacing the ruleset.
+
+    - name: Read the rendered lanroute systemd unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/download-vpn-lanroute.service
+      register: lanroute_unit
+
+    - name: Assert the lanroute unit's onlink routes use the real LAN gateway, never the dummy tunnel iface
+      vars:
+        lru: "{{ lanroute_unit.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'198.51.100.5' not in lru"
+        fail_msg: >-
+          download-vpn-lanroute.service routes via the dummy tunnel interface's
+          address instead of the real LAN gateway — the exact failure mode an
+          `onlink` route silently blackholes instead of refusing to start.
 
     - name: Assert ONLY the allowed egress rules are present
       ansible.builtin.assert:

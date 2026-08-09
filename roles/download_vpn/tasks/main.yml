@@ -118,27 +118,47 @@
          | select('ansible.utils.ipv4') | list | first
          | default(download_vpn_wg_address.split(',')[0] | trim) }}
 
-# Derive the primary LAN interface — the NIC that actually holds the container's
-# LAN IP — so the leak tests force non-VPN egress out the RIGHT interface even
-# when the NIC is not named eth0. We must NOT use ansible_default_ipv4.interface
-# (that is wg0 once the tunnel is up). Match container_ip against the gathered
-# interface facts; honour an explicit override; fall back to eth0 last so
-# behaviour is identical when the NIC IS eth0.
-- name: Derive the primary LAN interface (the NIC holding the LAN IP)
+# The NIC that actually holds the container's LAN IP — first gathered interface
+# that is neither loopback nor the wg interface and carries an IPv4 address.
+# Feeds both the leak tests and the LAN IP derivation just below.
+- name: Derive the primary LAN interface (the NIC holding the LAN IP, never the tunnel)
   ansible.builtin.set_fact:
     download_vpn_lan_interface: >-
       {{ download_vpn_lan_interface
          if (download_vpn_lan_interface | length > 0)
          else (
            ansible_facts.interfaces
+           | reject('equalto', 'lo')
+           | reject('equalto', download_vpn_wg_interface)
            | map('extract', ansible_facts)
            | selectattr('ipv4', 'defined')
            | selectattr('ipv4.address', 'defined')
-           | selectattr('ipv4.address', 'equalto',
-                        (download_vpn_lan_ip | default(ansible_default_ipv4.address | default(''))))
            | map(attribute='device') | list | first
            | default('eth0', true)
          ) }}
+
+# LAN IP comes from that interface's OWN facts, never ansible_default_ipv4
+# (that's the tunnel once wg0 is up). Everything below — subnet, gateway,
+# killswitch, lanroute — flows from this one value.
+- name: Derive the LAN IP from the LAN interface's own facts (never the tunnel's)
+  ansible.builtin.set_fact:
+    download_vpn_lan_ip: >-
+      {{ ansible_facts[download_vpn_lan_interface].ipv4.address
+         | default(ansible_default_ipv4.address, true) }}
+
+# Fail-fast: everything downstream trusts lan_ip/subnet/gateway blindly. A
+# wrong value here must fail loudly, before the killswitch or lanroute unit
+# ever render, never deploy quietly.
+- name: Guard — the derived LAN IP must belong to the LAN NIC, never the tunnel
+  ansible.builtin.assert:
+    that:
+      - download_vpn_lan_interface != download_vpn_wg_interface
+      - download_vpn_lan_ip == (ansible_facts[download_vpn_lan_interface].ipv4.address | default(''))
+    fail_msg: >-
+      download_vpn_lan_ip ('{{ download_vpn_lan_ip }}') did not come from
+      '{{ download_vpn_lan_interface }}' as expected — refusing to render the
+      killswitch/lanroute with a possibly-tunnel address.
+    quiet: true
 
 - name: Show the derived LAN interface used by the leak tests
   ansible.builtin.debug:
