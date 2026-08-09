@@ -94,15 +94,20 @@ download_vpn_wg_backup_key_path: /etc/wireguard/wg0-backup.key
 # the guest itself is the only truthful source. This also has to be a real
 # address, not a name: an FQDN fed to ipaddr() yields `False`, which renders an
 # invalid nftables rule (`ip daddr False accept`) and fails the killswitch deploy.
-download_vpn_lan_ip: "{{ ansible_default_ipv4.address }}"
+# Empty default => tasks/main.yml (Phase 0) MUST set it from the LAN interface's
+# own facts, never ansible_default_ipv4.address (that's the tunnel once wg0 is
+# up). To pin a value, override download_vpn_lan_interface, not this directly —
+# an override here would be silently clobbered by that derivation.
+download_vpn_lan_ip: ""
 
 download_vpn_lan_subnet: >-
   {{ (download_vpn_lan_ip ~ '/24')
      | ansible.utils.ipaddr('network/prefix') }}
 
 # Primary LAN interface — the NIC that actually holds the container's LAN IP.
-# Used by the leak tests as the "force non-VPN egress" interface. Derived in
-# tasks/main.yml (Phase 0) by matching container_ip against the interface facts,
+# Used by the leak tests as the "force non-VPN egress" interface, and to derive
+# download_vpn_lan_ip above. Derived in tasks/main.yml (Phase 0) from the
+# gathered interface facts themselves (excluding loopback and the wg interface),
 # NOT assumed to be eth0 and NOT ansible_default_ipv4.interface (which is wg0
 # once the tunnel is up). Empty default => the derivation must set it; override
 # only to pin a specific NIC.
