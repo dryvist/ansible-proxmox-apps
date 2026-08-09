@@ -2,10 +2,15 @@
 
 Run via ``nautobot-server shell --interface python``. Creates a daily
 ``ScheduledJob`` bound to the export Job at the hour/minute given in the
-environment. Best-effort and self-guarding: the ScheduledJob ORM surface is
-version-sensitive, so any failure prints a ``SCHEDULE_SKIPPED`` marker with the
-reason rather than aborting the converge — the schedule can be finalized in the
-UI at cutover. Prints ``SCHEDULE_CREATED`` / ``SCHEDULE_EXISTS`` on success.
+environment. The ScheduledJob ORM surface is version-sensitive, so a failure
+prints a ``SCHEDULE_SKIPPED`` marker with the reason instead of raising a
+traceback through the shell.
+
+``SCHEDULE_SKIPPED`` is not a benign outcome. The caller in ``tasks/main.yml``
+asserts on these markers and fails the converge, because a missing schedule
+means the export — and therefore the only thing that publishes this instance's
+inventory — silently stops. Prints ``SCHEDULE_CREATED`` / ``SCHEDULE_REENABLED``
+/ ``SCHEDULE_EXISTS`` on success.
 """
 import os
 
@@ -46,6 +51,17 @@ try:
                     "enabled": True,
                 },
             )
-            print("SCHEDULE_CREATED" if created else "SCHEDULE_EXISTS")
+            if created:
+                print("SCHEDULE_CREATED")
+            elif not obj.enabled:
+                # get_or_create only applies `defaults` when it creates. A
+                # schedule disabled in the UI therefore survived every converge
+                # while this reported SCHEDULE_EXISTS — present, reconciled, and
+                # not running. Reconcile the field the converge claims to own.
+                obj.enabled = True
+                obj.save()
+                print("SCHEDULE_REENABLED")
+            else:
+                print("SCHEDULE_EXISTS")
 except Exception as exc:  # noqa: BLE001 - best-effort; never fail the converge
     print(f"SCHEDULE_SKIPPED {type(exc).__name__}: {exc}")

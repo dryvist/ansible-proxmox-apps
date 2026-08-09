@@ -332,9 +332,35 @@
              'NAUTOBOT_EXPORT_SCHEDULE_HOUR': nautobot_export_schedule_hour | string,
              'NAUTOBOT_EXPORT_SCHEDULE_MINUTE': nautobot_export_schedule_minute | string}) }}
       register: nautobot_schedule
-      changed_when: "'SCHEDULE_CREATED' in nautobot_schedule.stdout"
+      changed_when: >-
+        {{ 'SCHEDULE_CREATED' in nautobot_schedule.stdout
+           or 'SCHEDULE_REENABLED' in nautobot_schedule.stdout }}
       become: true
       become_user: "{{ nautobot_user }}"
+
+    # The export is the only thing that publishes this instance's inventory, and
+    # its ordering guard is what makes a stale artifact loud. Both are inert if
+    # the schedule is absent. Printing SCHEDULE_SKIPPED and letting the converge
+    # continue green lets the export stop publishing with nothing reporting it.
+    # A gate that reports its own failure as success is worse than no gate, so
+    # the converge fails here instead.
+    - name: Assert the export schedule was reconciled
+      ansible.builtin.assert:
+        that:
+          # Both halves are load-bearing. The negative catches a printed
+          # SCHEDULE_SKIPPED; the positive catches empty stdout, which would
+          # otherwise satisfy the negative and pass on no evidence at all.
+          - "'SCHEDULE_SKIPPED' not in nautobot_schedule.stdout"
+          - >-
+            'SCHEDULE_CREATED' in nautobot_schedule.stdout
+            or 'SCHEDULE_REENABLED' in nautobot_schedule.stdout
+            or 'SCHEDULE_EXISTS' in nautobot_schedule.stdout
+        fail_msg: >-
+          The export ScheduledJob was not reconciled: {{
+          nautobot_schedule.stdout | trim | default('(no output)', true) }}.
+          Without it nothing publishes the inventory artifact and the ordering
+          guard cannot fire. Fix the cause — do not skip this task.
+        quiet: true
 
     # Schedule the SSH-CLI discovery sweep (SSOTSyncDevices). Inert unless
     # NAUTOBOT_ONBOARD_TARGETS is set — see the scope note in defaults/main.yml.
