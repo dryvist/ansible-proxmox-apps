@@ -43,7 +43,7 @@ without tying that policy to a particular playback client.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `configarr_manage` | `true` | master on/off |
-| `configarr_image_tag` | `latest` | pin for a frozen version |
+| `configarr_image` | `ghcr.io/raydak-labs/configarr:<tag>` | image + pinned tag |
 | `configarr_sonarr_templates` | quality definition | Recyclarr/TRaSH includes |
 | `configarr_radarr_templates` | quality definition | Recyclarr/TRaSH includes |
 
