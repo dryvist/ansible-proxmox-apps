@@ -9,6 +9,21 @@
 # stream (matchRegex/replaceExpr schema — regex/replacement keys are invalid
 # and fail function init, silently disabling the whole pipeline).
 #
+# SOURCE is stamped from `appname` under the same conditional rule. Splunk
+# field semantics here are: index = the data TYPE, host = the sending device,
+# source = the direct origin of the data. The tcpjson senders (claude/codex/the
+# Mac llm feeds) set `source` themselves to the file they tail, so the
+# conditional leaves them untouched. The three syslog-type inputs
+# (hermes_agent, openbao_audit, homelab_llm) do not, and Splunk's HEC then
+# defaults `source` to the token name — index=hermes carried `http:hermes` on
+# 100% of events, collapsing every distinct producer into one value. The
+# syslog header the senders already emit carries the discriminator: rsyslog
+# tags each input distinctly (hermes-file, hermes-kanban, hermes-kanban-board,
+# hermes-profile, plus the unit programname for journal records) and Cribl's
+# syslog input parses that TAG into `appname`. Promoting it is the whole fix.
+# When `appname` is absent the expression yields undefined and `source` stays
+# unset — exactly the pre-existing behaviour, so this cannot regress a sender.
+#
 # IPv4 IS DELIBERATELY NOT MASKED. It used to be, replacing every dotted quad
 # anywhere in _raw with '*'. Splunk is the single source of truth for logging
 # here, and the whole point of an access log is attribution — with the quad
@@ -40,6 +55,8 @@ functions:
             __inputId.includes('in_ai_{{ name }}') ? '{{ entry.sourcetype }}' :
 {% endfor %}
             'ai:unknown')
+        - name: source
+          value: source || appname
   - id: mask
     filter: "true"
     disabled: false
