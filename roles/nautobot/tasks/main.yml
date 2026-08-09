@@ -398,18 +398,18 @@
     - name: Restart nautobot services before enqueuing jobs
       ansible.builtin.meta: flush_handlers
 
-    # ...then restart the worker UNCONDITIONALLY when a seed/export run is
-    # requested. flush_handlers only fires if a task notified the handler this
-    # converge; when nautobot.env is unchanged the worker keeps its start-time
-    # env, so the export would enqueue onto a stale worker and fail
-    # "NAUTOBOT_EXPORT_S3_BUCKET is not set". An explicit restart guarantees the
-    # worker carries the current env before any job is enqueued. Gated on the
-    # run flag so ordinary converges are untouched.
-    - name: Ensure the worker carries the current env before enqueuing jobs
-      ansible.builtin.systemd:
-        name: nautobot-worker
-        state: restarted
-      when: nautobot_run_seed_jobs | bool
+    # ...and that is the whole mechanism. An unconditional worker restart used
+    # to follow, gated on nautobot_run_seed_jobs "so ordinary converges are
+    # untouched". Now that the flag defaults on, every converge is a seed run,
+    # so that restart would fire every time: permanently `changed`, and able to
+    # kill a scheduled job mid-flight.
+    #
+    # It is not needed. nautobot.env notifies the restart handler, so a changed
+    # env always bounces the worker in the same converge that changed it. A
+    # worker running stale env is therefore a real fault, and run_seed_jobs.py
+    # exits non-zero when any job is skipped, fails or times out — so it now
+    # surfaces as a failed converge instead of being papered over by a restart
+    # on every pass.
 
     # Load the seed bundle into Nautobot by running the additive SSoT DiffSync
     # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. On by
