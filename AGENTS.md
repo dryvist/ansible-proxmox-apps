@@ -278,9 +278,14 @@ sops secrets.enc.yaml
 # Validate pipeline
 doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/validate-pipeline.yml
 
-# Validate media stack (Prowlarr indexer health + Prowlarr->Radarr/Sonarr sync)
+# Validate the whole *arr media stack via its APIs: indexer sync, download
+# client safety flags (never auto-delete), qBittorrent killswitch-adjacent
+# invariants (DHT/PEX/LSD off, narrow auth-bypass whitelist), media-management
+# policy, root-folder <-> Plex library path consistency, and health (read-only,
+# fails loud on any drift; a single failure never masks the rest of the report).
 sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/validate-media.yml'
+# Scope to one app: --tags prowlarr|radarr|sonarr|qbittorrent|flaresolverr|plex|seerr|sortarr|consistency
 # Add --tags deep to actively test each indexer against its tracker (slow, live)
 
 # Re-trigger searches for pending monitored items (Sonarr + Radarr). Standalone,
