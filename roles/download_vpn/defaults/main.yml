@@ -94,15 +94,20 @@ download_vpn_wg_backup_key_path: /etc/wireguard/wg0-backup.key
 # the guest itself is the only truthful source. This also has to be a real
 # address, not a name: an FQDN fed to ipaddr() yields `False`, which renders an
 # invalid nftables rule (`ip daddr False accept`) and fails the killswitch deploy.
-download_vpn_lan_ip: "{{ ansible_default_ipv4.address }}"
+# Empty default => tasks/main.yml (Phase 0) MUST set it from the LAN interface's
+# own facts, never ansible_default_ipv4.address (that's the tunnel once wg0 is
+# up). To pin a value, override download_vpn_lan_interface, not this directly —
+# an override here would be silently clobbered by that derivation.
+download_vpn_lan_ip: ""
 
 download_vpn_lan_subnet: >-
   {{ (download_vpn_lan_ip ~ '/24')
      | ansible.utils.ipaddr('network/prefix') }}
 
 # Primary LAN interface — the NIC that actually holds the container's LAN IP.
-# Used by the leak tests as the "force non-VPN egress" interface. Derived in
-# tasks/main.yml (Phase 0) by matching container_ip against the interface facts,
+# Used by the leak tests as the "force non-VPN egress" interface, and to derive
+# download_vpn_lan_ip above. Derived in tasks/main.yml (Phase 0) from the
+# gathered interface facts themselves (excluding loopback and the wg interface),
 # NOT assumed to be eth0 and NOT ansible_default_ipv4.interface (which is wg0
 # once the tunnel is up). Empty default => the derivation must set it; override
 # only to pin a specific NIC.
@@ -215,15 +220,15 @@ download_vpn_qbittorrent_admin_password: "{{ lookup('env', 'QBITTORRENT_ADMIN_PA
 # WebUI auth bypass for trusted in-network clients — the qBittorrent analogue of
 # the *arr apps' AuthenticationRequired=DisabledForLocalAddresses. Clients whose
 # source IP is in this comma-separated CIDR list skip the login form (and so can
-# never trip qBittorrent's failed-auth IP ban). Defaults to the /16 supernet of
-# the container's own IP — i.e. every VLAN in the homelab (3rd octet = VLAN id),
-# so cross-VLAN clients and Traefik-proxied requests are trusted too. Derived
-# from container_ip, so no CIDR is hardcoded. Narrow to download_vpn_lan_subnet
-# (the container's own /24) for a tighter boundary. Applied via the setPreferences
-# API in tasks/main.yml (not the conf template — qBittorrent would clobber it).
-download_vpn_qbittorrent_auth_whitelist: >-
-  {{ (download_vpn_lan_ip ~ '/16')
-     | ansible.utils.ipaddr('network/prefix') }}
+# never trip qBittorrent's failed-auth IP ban).
+#
+# Scoped to the container's OWN /24, not the /16 supernet: the wider form let
+# every VLAN skip the login form, which is a far larger trusted set than this
+# needs. Off-subnet callers authenticate normally — the API clients that talk to
+# this daemon already carry credentials, so narrowing costs them nothing.
+# Derived, so no CIDR is hardcoded. Applied via the setPreferences API in
+# tasks/main.yml (not the conf template — qBittorrent would clobber it).
+download_vpn_qbittorrent_auth_whitelist: "{{ download_vpn_lan_subnet }}"
 # CRITICAL: bind qBittorrent's traffic to wg0 (interface binding). With the
 # killswitch this is belt-and-suspenders; binding alone closed the 30% leak
 # seen in killswitch-only testing.
@@ -233,11 +238,9 @@ download_vpn_qbittorrent_interface: "{{ download_vpn_wg_interface }}"
 # anonymous_mode: false — private trackers ban anonymous mode (strips passkey
 # announce used for ratio credit). Override true only for public-only setups.
 download_vpn_qbittorrent_anonymous_mode: false
-# Seed-then-clean policy: a completed torrent is removed (with its files) when ANY
-# limit below is hit, so finished downloads don't hoard the shared /data pool.
-# Hardlink-safe — removing a torrent's files drops only the torrent's hardlink; the
-# *arr library copy is a separate hardlink and survives. Limits trigger long after
-# import, so they don't race the importer.
+# Seeding limits. Hitting any of them stops the torrent and keeps its data;
+# reclaiming disk is a deliberate manual step, not an automatic one.
+# The validator's disk guard (below) warns before that costs anything.
 download_vpn_qbittorrent_max_ratio: 10
 # Total seed time before cleanup, in minutes (45 days). -1 disables.
 download_vpn_qbittorrent_max_seeding_minutes: 64800
@@ -245,16 +248,18 @@ download_vpn_qbittorrent_max_seeding_minutes: 64800
 # qBittorrent 4.5+). The "good seeder, drop the dead torrents nobody pulls" lever.
 # -1 disables.
 download_vpn_qbittorrent_max_inactive_seeding_minutes: 20160
-# Action at the limit. ShareLimitAction enum: 0=Stop, 1=Remove, 2=EnableSuperSeeding,
-# 3=RemoveWithContent. 3 reclaims the seed copy; the hardlinked library is untouched.
-download_vpn_qbittorrent_max_ratio_action: 3
+# Action at the limit. ShareLimitAction enum: 0=Stop, 1=Remove,
+# 2=EnableSuperSeeding, 3=RemoveWithContent. Keep 0: this single value governs
+# all three limits above, and stopping is reversible where deleting is not.
+download_vpn_qbittorrent_max_ratio_action: 0
 # 1=require encrypted peers (defeats ISP throttling; expected on private trackers).
 download_vpn_qbittorrent_encryption: 1
-# DHT/PeX/LSD: on for public swarm discovery. Per-torrent private flag disables
-# them automatically for private tracker torrents — safe to keep on globally.
-download_vpn_qbittorrent_dht: true
-download_vpn_qbittorrent_pex: true
-download_vpn_qbittorrent_lsd: true
+# DHT/PeX/LSD off globally: private trackers require the client setting itself
+# to be off, not merely the per-torrent private flag. Public swarms fall back to
+# tracker-only peer discovery.
+download_vpn_qbittorrent_dht: false
+download_vpn_qbittorrent_pex: false
+download_vpn_qbittorrent_lsd: false
 # Upload slot limits: -1 = unlimited. The bandwidth scheduler is the real
 # ceiling; don't throttle via connection counts. qBittorrent will distribute
 # available bandwidth across as many peers as needed.
@@ -282,7 +287,7 @@ download_vpn_qbittorrent_categories:
 # 0 = unlimited.
 download_vpn_qbittorrent_up_limit: 3750000      # 30 Mbps — 24/7 global upload cap
 download_vpn_qbittorrent_dl_limit: 31250000     # 250 Mbps — 24/7 global download cap
-download_vpn_qbittorrent_alt_up_limit: 2500000  # work-hours 20 Mbps upload
+download_vpn_qbittorrent_alt_up_limit: 3750000  # matches 24/7 cap: keep upload unthrottled during work hours
 download_vpn_qbittorrent_alt_dl_limit: 12500000 # work-hours 100 Mbps download
 download_vpn_qbittorrent_scheduler_enabled: true
 # scheduler_days: 0=every day, 1=weekdays (Mon–Fri), 2=weekends, 3–9=Mon..Sun.
@@ -297,10 +302,16 @@ download_vpn_qbittorrent_schedule_to_min: 0
 # --- Concurrency + connection limits -----------------------------------------
 # Concurrency caps (applied via setPreferences). dont_count_slow_torrents keeps
 # idle transfers from consuming active slots so completed items do not block new
-# ones. Raised above the client defaults (5/3/5) for more parallelism.
+# ones.
+#
+# max_active_uploads and max_active_torrents are unlimited: a seeding
+# obligation on a private tracker keeps a torrent active for as long as it
+# takes to satisfy, so a fixed cap eventually stops seeding on the overflow
+# with no visible error. max_active_downloads is the real WAN-protecting
+# knob and stays capped.
 download_vpn_qbittorrent_max_active_downloads: 10
-download_vpn_qbittorrent_max_active_uploads: 20
-download_vpn_qbittorrent_max_active_torrents: 100
+download_vpn_qbittorrent_max_active_uploads: -1
+download_vpn_qbittorrent_max_active_torrents: -1
 download_vpn_qbittorrent_dont_count_slow_torrents: true
 # Connection caps. More global connections improve throughput; per-item kept
 # moderate so a single item cannot monopolize them.
@@ -406,6 +417,15 @@ download_vpn_ntfy_topic: "killswitch"
 # healthchecks.io-style deadman ping URL. Empty => deadman ping skipped (the
 # ntfy alert still fires). Set to the per-check URL from the healthchecks LXC.
 download_vpn_healthcheck_url: "{{ lookup('env', 'DOWNLOAD_VPN_HEALTHCHECK_URL') | default('', true) }}"
+
+# --- Disk guard (validator, warn-only) ---------------------------------------
+# Free-space floor on the data volume. Set above the *arr import-pause floor
+# (servarr_wiring_min_free_space_mb) so the warning arrives before imports stop.
+download_vpn_disk_warn_free_mb: 51200
+# Minimum gap between warnings — the validator runs every couple of minutes.
+download_vpn_disk_warn_interval_seconds: 21600
+# Stamp file for that rate limit. On tmpfs, so a reboot re-arms the warning.
+download_vpn_disk_warn_stamp_file: /run/download-vpn-disk-warn.stamp
 
 # Public-IP probe used by the live egress checks (must return the caller IP).
 download_vpn_ip_probe_url: "https://ifconfig.me"

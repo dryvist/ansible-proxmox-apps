@@ -58,8 +58,18 @@ ExecStartPre=/usr/sbin/nft -f {{ download_vpn_mangle_ruleset_path }}
 #    structurally impossible, not merely policy-gated by the killswitch.
 ExecStartPre=-/usr/bin/env ip rule del fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
 ExecStart=/usr/bin/env ip rule add fwmark {{ download_vpn_lanroute_mark }} table {{ download_vpn_lanroute_table }} priority {{ download_vpn_lanroute_rule_priority }}
+{# `onlink`: the gateway is the LAN router on this NIC by construction, but the
+   guest leases its address by DHCP, so network-online.target can be reached
+   before the lease lands. Without onlink the kernel cannot resolve the nexthop
+   yet and returns "Nexthop has invalid gateway"; the unit is Type=oneshot, so
+   that failure is permanent until something restarts it — observed live, the
+   reply routing stayed uninstalled for over 14 hours with nothing noticing.
+   onlink asserts the nexthop is directly attached and removes the race. Safe
+   only because Phase 0 asserts the gateway derives from the LAN NIC before
+   this renders — onlink on a wrong gateway would blackhole silently instead
+   of failing loud. #}
 {% for net in download_vpn_lanroute_reply_networks %}
-ExecStart=/usr/bin/env ip route replace {{ net }} via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} table {{ download_vpn_lanroute_table }}
+ExecStart=/usr/bin/env ip route replace {{ net }} via {{ download_vpn_lan_gateway }} dev {{ download_vpn_lan_interface }} onlink table {{ download_vpn_lanroute_table }}
 {% endfor %}
 ExecStart=/usr/bin/env ip route replace unreachable default table {{ download_vpn_lanroute_table }}
 

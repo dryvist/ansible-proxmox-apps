@@ -199,8 +199,6 @@ documented once at
 | `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Dedicated GitHub broker App private key | one-time environment |
 | `OPENBAO_GITHUB_DRYVIST_INSTALLATION_ID` | GitHub App installation on `dryvist` | environment |
 | `OPENBAO_GITHUB_PERSONAL_INSTALLATION_ID` | GitHub App installation on the personal account | environment |
-| `SLACK_OPENBAO_CLIENT_ID` | Slack OAuth client ID | Doppler (`iac-conf-mgmt` / `prd`) |
-| `SLACK_OPENBAO_CLIENT_SECRET` | Slack OAuth client secret | Doppler (`iac-conf-mgmt` / `prd`) |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | Doppler |
 | `IDRAC_R410_USER` | R410 iDRAC username | Doppler |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | Doppler |
@@ -280,9 +278,14 @@ sops secrets.enc.yaml
 # Validate pipeline
 doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/validate-pipeline.yml
 
-# Validate media stack (Prowlarr indexer health + Prowlarr->Radarr/Sonarr sync)
+# Validate the whole *arr media stack via its APIs: indexer sync, download
+# client safety flags (never auto-delete), qBittorrent killswitch-adjacent
+# invariants (DHT/PEX/LSD off, narrow auth-bypass whitelist), media-management
+# policy, root-folder <-> Plex library path consistency, and health (read-only,
+# fails loud on any drift; a single failure never masks the rest of the report).
 sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/validate-media.yml'
+# Scope to one app: --tags prowlarr|radarr|sonarr|qbittorrent|flaresolverr|plex|seerr|sortarr|consistency
 # Add --tags deep to actively test each indexer against its tracker (slow, live)
 
 # Re-trigger searches for pending monitored items (Sonarr + Radarr). Standalone,

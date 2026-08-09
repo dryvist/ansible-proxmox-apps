@@ -64,6 +64,10 @@ class VirtualMachine:
     """Fake Nautobot VirtualMachine model."""
 
 
+class JobResult:
+    """Fake Nautobot JobResult model, used by the export ordering guard."""
+
+
 def install_import_stubs() -> None:
     """Install enough modules for importing the Nautobot job file."""
     boto3 = types.ModuleType("boto3")
@@ -87,16 +91,21 @@ def install_import_stubs() -> None:
     virtualization_models = types.ModuleType("nautobot.virtualization.models")
     virtualization_models.VirtualMachine = VirtualMachine
 
+    extras_models = types.ModuleType("nautobot.extras.models")
+    extras_models.JobResult = JobResult
+
     for name in (
         "nautobot",
         "nautobot.apps",
         "nautobot.dcim",
+        "nautobot.extras",
         "nautobot.ipam",
         "nautobot.virtualization",
     ):
         sys.modules[name] = types.ModuleType(name)
     sys.modules["nautobot.apps.jobs"] = jobs
     sys.modules["nautobot.dcim.models"] = dcim_models
+    sys.modules["nautobot.extras.models"] = extras_models
     sys.modules["nautobot.ipam.models"] = ipam_models
     sys.modules["nautobot.virtualization.models"] = virtualization_models
 

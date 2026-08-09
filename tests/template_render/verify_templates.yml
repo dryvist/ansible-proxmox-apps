@@ -1769,6 +1769,35 @@
           __inputId and the same matchRegex/replaceExpr mask schema as
           force_splunk_meta
 
+    - name: Assert ai_stamp derives source for the syslog inputs
+      vars:
+        _ai_evals: >-
+          {{ (_cribl_stream_ai_pipeline | from_yaml).functions[0].conf.add }}
+        _ai_source_eval: >-
+          {{ _ai_evals | selectattr('name', 'equalto', 'source') | list }}
+      ansible.builtin.assert:
+        that:
+          # The syslog-type inputs (hermes_agent, openbao_audit, homelab_llm)
+          # never set source themselves, so Splunk's HEC defaulted it to the
+          # token name and collapsed every producer into one value. The rsyslog
+          # tag is the discriminator; it arrives inside _raw, not as appname.
+          - "_ai_source_eval | length == 1"
+          - "'source || appname' in _ai_source_eval[0].value"
+          # The syslog input hands the pipeline the whole raw line rather than
+          # parsed fields, so the tag must be recovered from _raw. Assert the
+          # fallback is present and still anchored at the PRI header.
+          - "'String(_raw).match(' in _ai_source_eval[0].value"
+          - "'^<' in _ai_source_eval[0].value"
+        fail_msg: >-
+          ai_stamp must stamp source from appname. Without it the syslog-type
+          AI inputs reach Splunk with source defaulted to the HEC token name
+          (index=hermes was 100% 'http:hermes'), so every distinct producer
+          collapses into a single source value. The eval must stay conditional
+          (source first) so tcpjson senders that already set source to the file
+          they tail pass through untouched. appname alone is NOT sufficient:
+          the syslog input does not populate it, which was verified against the
+          live stream, so the _raw fallback is what actually sets source.
+
     - name: Assert neither pipeline masks IPv4 out of events bound for Splunk
       ansible.builtin.assert:
         that:
