@@ -101,18 +101,27 @@
           web-UI ports on the tunnel BEFORE the general tunnel accept, and
           carry its own loopback and established/related rules.
 
+    # Namespaced so it cannot clobber this play's deliberate path overrides
+    # above — include_vars outranks play vars.
+    - name: Load the role defaults for contract assertions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/download_vpn/defaults/main.yml"
+        name: dv_defaults
+
     - name: Assert internal-network ingress to the web UIs survives on the LAN NIC
       ansible.builtin.assert:
         that:
           # Cross-subnet admin access is a supported case — a rule scoped to the
-          # guest's own /24 would silently break it.
-          - "'ip saddr 10.0.0.0/8' in ks"
-          - "'ip saddr 172.16.0.0/12' in ks"
-          - "'ip saddr 192.168.0.0/16' in ks"
+          # guest's own /24 would silently break it. Sourced from the role's own
+          # network list rather than restated here.
+          - >-
+            dv_defaults.download_vpn_lanroute_reply_networks
+            | reject('in', ks) | list | length == 0
           - "'tcp dport 22 accept' in ks"
         fail_msg: >-
-          The input chain does not admit RFC1918 ingress to the web UIs and SSH
-          on the LAN NIC — cross-subnet access and the SSH recovery path break.
+          The input chain does not admit every configured internal network to
+          the web UIs and SSH on the LAN NIC — cross-subnet access and the SSH
+          recovery path break.
 
     - name: Read the rendered lanroute connmark (mangle) ruleset
       ansible.builtin.slurp:
