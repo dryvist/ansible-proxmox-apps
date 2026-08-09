@@ -45,24 +45,40 @@ plugin: networktocode.nautobot.gql_inventory
 # Pull name, primary IP (-> ansible_host), and tags (-> grouping) for both
 # bare-metal devices and virtual machines; Proxmox guests may be modeled as
 # either, so query both and let the tag groups sort them.
+#
+# dns_name comes back alongside the address because Nautobot's IPAddress is the
+# intended writer of DNS intent. Nothing here consumes it yet — the technitium
+# reconcile reads it at the authority flip — but querying it now means the
+# cutover does not also change the inventory query.
 query:
   devices:
     name:
     primary_ip4:
       host:
+      dns_name:
     tags: name
   virtual_machines:
     name:
     primary_ip4:
       host:
+      dns_name:
     tags: name
 
-# Reproduce load_tofu.yml's tag -> group mapping 1:1 (including the aliased
-# names: tag `smtp` -> mailpit_group, `database` -> mssql_group, `dns` ->
-# technitium_dns_group, `vpn` -> download_vpn_group, `ipam` -> phpipam_group,
+# Reproduce load_tofu.yml's tag -> group mapping (including the aliased names:
+# tag `smtp` -> mailpit_group, `database` -> mssql_group, `dns` ->
+# technitium_dns_group, `vpn` -> download_vpn_group, `ipam` -> phpipam_group).
 # Left side is the exact group name a site.yml play targets; right side is the
-# Nautobot tag condition. AI-role groups moved to ansible-proxmox-ai with the
-# roles that target them.
+# Nautobot tag condition.
+#
+# postgres_ai_group and ai_orchestration_group are listed here despite the AI
+# roles having moved to ansible-proxmox-ai: site.yml in THIS repo still targets
+# both (the postgres_ai backup play, and the ai_orchestration_group:n8n_group
+# ingress selector), so omitting them would drop hosts those plays need.
+#
+# Coverage against load_tofu.yml is complete except windows_group — see the gap
+# note below. Verify with:
+#   diff <(ansible-inventory -i inventory/hosts.yml --list --yaml | grep -oE '^  [a-z0-9_]+:') \
+#        <(ansible-inventory -i inventory/nautobot.yml --list --yaml | grep -oE '^  [a-z0-9_]+:')
 #
 # ponytail: assumes `tags: name` exposes the host's `tags` var as a list of tag
 # NAME strings. If the live plugin surfaces tags as a list of dicts instead,
@@ -103,3 +119,22 @@ groups:
   vikunja_group: "'vikunja' in (tags | default([]))"
   zammad_group: "'zammad' in (tags | default([]))"
   static_site_group: "'docs-static' in (tags | default([]))"
+  postgres_ai_group: "'postgres_ai' in (tags | default([]))"
+  ai_orchestration_group: "'ai-orchestration' in (tags | default([]))"
+  authelia_group: "'authelia' in (tags | default([]))"
+
+# KNOWN GAP — windows_group is NOT reproduced here, and cannot be from tags.
+#
+# load_tofu.yml derives it from a guest property rather than a tag:
+#   ['windows_group'] if item.value.ansible_connection == 'winrm'
+# There is no corresponding Nautobot tag, so no `groups` expression over `tags`
+# can recreate it. site.yml targets windows_group, so this file is NOT yet at
+# full parity and must not be made the default inventory until it is.
+#
+# Closing it needs one of, decided before cutover rather than here:
+#   * query `platform: name` and group on the platform being a Windows one —
+#     preferred, since Nautobot already models platform as first-class, but it
+#     requires the seed jobs to populate platform, which they currently do not;
+#   * have ssot_virtualization write a `windows` tag derived from the same
+#     ansible_connection value — cheaper, but encodes a connection detail as a
+#     tag, which is what the platform field exists to avoid.
