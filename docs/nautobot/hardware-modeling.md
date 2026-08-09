@@ -98,9 +98,26 @@ task with `state: present` installs a package only when it is absent — it does
 not upgrade one that is already there. A role that names `nautobot` with no
 version pin therefore installs "latest stable" on the first converge and then
 holds that version indefinitely, so a long-lived instance can be well behind the
-current release while the role looks like it tracks it. Add `state: latest` (and
-accept the idempotence cost) or pin an explicit minimum if a version floor
-matters.
+current release while the role looks like it tracks it.
+
+**Pin the version rather than reaching for `state: latest`.** Pinning fixes two
+problems at once: pip reconciles to the named version instead of accepting any
+installed one, and a dependency-update bot has something to compare and bump. An
+unpinned dependency is invisible to that bot — there is no version to diff — so
+"unpinned" does not mean "tracks upstream", it means "never moves and nothing
+reports it". `state: latest` would upgrade, but it re-resolves on every run,
+which costs idempotence and makes the deployed version a function of when the
+converge happened rather than of anything in version control.
+
+If the update bot uses annotation comments to find versions in files its built-in
+managers do not parse, confirm the annotation actually matches before relying on
+it — check the manager's file pattern and regex against the exact line being
+added. An annotation with the wrong shape is silently inert, which looks
+identical to a dependency that is simply up to date.
+
+**Treat a major upgrade as a scheduled change.** Nautobot majors run database
+migrations. A pin bump across a major should be applied deliberately, with a
+backup taken first, not folded into a routine converge.
 
 ## References
 
