@@ -198,6 +198,27 @@
           - "'Connection\\\\Interface=' ~ download_vpn_wg_interface in (qbt_conf.content | b64decode)"
         fail_msg: "qBittorrent is not bound to wg0."
 
+    # --- 2a. Seeding-etiquette knobs ---------------------------------------
+    - name: Assert peer discovery is tracker-only and share limits stop rather than delete
+      ansible.builtin.assert:
+        that:
+          - "'Session\\\\DHTEnabled=false' in (qbt_conf.content | b64decode)"
+          - "'Session\\\\PeXEnabled=false' in (qbt_conf.content | b64decode)"
+          - "'Session\\\\LSDEnabled=false' in (qbt_conf.content | b64decode)"
+          # ShareLimitAction 0 = Stop.
+          - "'Session\\\\MaxRatioAction=0' in (qbt_conf.content | b64decode)"
+          - "'Session\\\\AnonymousModeEnabled=false' in (qbt_conf.content | b64decode)"
+        fail_msg: >-
+          Seeding etiquette regressed: DHT/PeX/LSD must be false,
+          MaxRatioAction must be 0, and anonymous mode must be false.
+
+    - name: Assert the seeding-time floor
+      ansible.builtin.assert:
+        that:
+          - download_vpn_qbittorrent_max_seeding_minutes | int >= 14400
+          - download_vpn_qbittorrent_max_inactive_seeding_minutes | int >= 14400
+        fail_msg: "A seeding limit is below the 14400-minute floor."
+
     # --- 2b. qBittorrent session/queue state persists on /data -------------
     - name: Assert qBittorrent.conf exports a persistent, plain-file torrent backup
       ansible.builtin.assert:
