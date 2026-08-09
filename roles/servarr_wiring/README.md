@@ -21,8 +21,11 @@ config-as-code tools:
 | Root folders + qBittorrent download clients | devopsarr **`servarr-config`** tofu module (`tofu-proxmox`) |
 | Quality profiles + custom formats + quality definitions | **`configarr`** role (TRaSH-Guides) |
 
-This role no longer POSTs root folders, download clients, or quality profiles —
-removing the overlap keeps each piece of config single-owned.
+This role no longer POSTs root folders or quality profiles — removing the
+overlap keeps each piece of config single-owned. It does own the
+`removeCompletedDownloads` / `removeFailedDownloads` settings on the existing
+qBittorrent download client (see below); it does not create or configure the
+client itself.
 
 ## What it does (all idempotent — GET-then-POST/PUT)
 
@@ -45,6 +48,9 @@ removing the overlap keeps each piece of config single-owned.
 4. **Media management** — sets `copyUsingHardlinks` (zero-copy imports off the
    single `/data` dataset), a recycle bin (soft-delete) and a minimum
    free-space floor on each PVR, via GET-then-conditional-PUT.
+5. **Download client removal settings** — keeps seeding after import by
+   disabling `removeCompletedDownloads` / `removeFailedDownloads` on the
+   existing qBittorrent download client, via GET-then-conditional-PUT.
 
 ## Why `ansible.builtin.uri` and not a community role / Buildarr
 
@@ -97,12 +103,14 @@ all set and fails fast if any are missing.
   (ports from OpenTofu constants), wiring parameters, `servarr_wiring_manage_services`
   toggle (false in Molecule).
 - `tasks/main.yml` — assertion → `api_keys.yml` → `prowlarr_indexers.yml` →
-  `prowlarr_apps.yml` → `media_management.yml`.
+  `prowlarr_apps.yml` → `media_management.yml` → `download_clients.yml`.
 - `tasks/api_keys.yml` — `community.general.xml` sets `<ApiKey>` per app
   (delegated), restart-on-change, wait-for-API.
 - `tasks/prowlarr_indexers.yml` — schema-driven public-indexer add.
 - `tasks/prowlarr_apps.yml` — schema-driven Prowlarr Application add.
 - `tasks/media_management.yml` — per PVR: hardlinks, recycle bin, min free space.
+- `tasks/download_clients.yml` — per PVR: disable removal-on-complete/fail on
+  the existing qBittorrent download client.
 
 ## Secrets
 
