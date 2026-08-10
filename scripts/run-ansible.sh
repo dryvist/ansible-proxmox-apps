@@ -22,8 +22,11 @@ shift
 # own process. Checking it out here means a bare clone converges the whole
 # estate with no preparatory step; `--init` takes the recorded SHA, never a
 # branch tip. Failing loudly beats converging a partial estate silently.
-if [[ -f .gitmodules ]]; then
-  git submodule update --init --recursive
+# Best-effort, not fatal: a checkout without access to the submodule must still
+# be able to run every other playbook. site.yml's media play checks for the
+# checkout itself and fails there, where the consequence is actually media.
+if [[ -f .gitmodules ]] && ! git submodule update --init --recursive; then
+  echo "run-ansible: submodule checkout failed — the media stack will not converge" >&2
 fi
 
 CERT_DIR=""
