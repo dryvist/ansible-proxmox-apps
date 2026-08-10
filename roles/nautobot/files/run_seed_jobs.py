@@ -30,7 +30,9 @@ SSOT_JOBS = [
     "SSoT: Virtualization (Proxmox guests)",
 ]
 # Plain Jobs (no dryrun var) — enqueued without job kwargs.
-PLAIN_JOBS = ["Configure Device Onboarding Targets"]
+# Hardware runs after DCIM: a component installed in a chassis needs that
+# chassis to exist as a Device first, or it is filed as a spare instead.
+PLAIN_JOBS = ["Seed Hardware Inventory", "Configure Device Onboarding Targets"]
 
 SEED_JOBS = SSOT_JOBS + PLAIN_JOBS
 if os.environ.get("NAUTOBOT_RUN_EXPORT", "").lower() in ("1", "true", "yes"):

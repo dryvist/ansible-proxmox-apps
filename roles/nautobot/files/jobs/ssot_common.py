@@ -50,6 +50,8 @@ _EMPTY_BUNDLE: dict[str, list] = {
     "devices": [],
     "nodes": [],
     "virtual_machines": [],
+    "hardware_devices": [],
+    "hardware_modules": [],
 }
 
 
@@ -85,13 +87,20 @@ def ensure_location():
     (device, rack, prefix, vlan, ip address) so those objects can be located.
     """
     from django.contrib.contenttypes.models import ContentType
-    from nautobot.dcim.models import Device, Location, LocationType, Rack
+    from nautobot.dcim.models import Device, Location, LocationType, Module, Rack
     from nautobot.ipam.models import VLAN, IPAddress, Prefix
 
     location_type, _ = LocationType.objects.get_or_create(name=LOCATION_TYPE)
+    # Racks, desks and parts bins are child Locations of `homelab` under this
+    # same type, and Nautobot rejects a same-type parent unless the type says
+    # it nests. Set it here rather than only in `defaults`, because the type
+    # already exists from before spares were modelled.
+    if not location_type.nestable:
+        location_type.nestable = True
+        location_type.validated_save()
     content_types = [
         ContentType.objects.get_for_model(model)
-        for model in (Device, Rack, Prefix, VLAN, IPAddress)
+        for model in (Device, Module, Rack, Prefix, VLAN, IPAddress)
     ]
     location_type.content_types.add(*content_types)
 
@@ -102,25 +111,46 @@ def ensure_location():
     return location
 
 
-def ensure_manufacturer():
-    """Idempotently ensure the ``Generic`` Manufacturer exists."""
+def ensure_manufacturer(name: str = ""):
+    """Idempotently ensure a Manufacturer exists, defaulting to ``Generic``."""
     from nautobot.dcim.models import Manufacturer
 
-    manufacturer, _ = Manufacturer.objects.get_or_create(name=MANUFACTURER)
+    manufacturer, _ = Manufacturer.objects.get_or_create(name=name or MANUFACTURER)
     return manufacturer
 
 
-def ensure_device_type(model_name: str):
-    """Idempotently ensure a DeviceType (by model) under the Generic manufacturer."""
+def ensure_device_type(model_name: str, manufacturer_name: str = ""):
+    """Idempotently ensure a DeviceType (by model) under its manufacturer.
+
+    ``manufacturer_name`` defaults to ``Generic``: the original callers had no
+    make in their source at all, and (manufacturer, model) is unique, so
+    changing the default would strand every DeviceType they already created.
+    """
     from nautobot.dcim.models import DeviceType
 
     device_type, _ = DeviceType.objects.get_or_create(
-        model=model_name, manufacturer=ensure_manufacturer()
+        model=model_name, manufacturer=ensure_manufacturer(manufacturer_name)
     )
     return device_type
 
 
-def ensure_role(name: str, *models) -> None:
+def ensure_module_type(model_name: str, manufacturer_name: str = "", part_number: str = ""):
+    """Idempotently ensure a ModuleType (by manufacturer + model).
+
+    ``part_number`` is only applied when creating: a later blank in the source
+    must not wipe a number already recorded here.
+    """
+    from nautobot.dcim.models import ModuleType
+
+    module_type, _ = ModuleType.objects.get_or_create(
+        model=model_name,
+        manufacturer=ensure_manufacturer(manufacturer_name),
+        defaults={"part_number": part_number or ""},
+    )
+    return module_type
+
+
+def ensure_role(name: str, *models):
     """Idempotently ensure a Role exists and covers the given content-type models."""
     from django.contrib.contenttypes.models import ContentType
     from nautobot.extras.models import Role
@@ -130,6 +160,47 @@ def ensure_role(name: str, *models) -> None:
         role.content_types.add(
             *[ContentType.objects.get_for_model(model) for model in models]
         )
+    return role
+
+
+def ensure_status(name: str, *models):
+    """Return the named Status, granting it the given content types.
+
+    Status is a foreign key on Device and Module, and a shipped Status does not
+    automatically apply to every model — it has to carry that content type or
+    saving raises. Falls back to ``Active`` for a name Nautobot does not ship,
+    so an unexpected source value cannot fail the whole run.
+    """
+    from django.contrib.contenttypes.models import ContentType
+    from nautobot.extras.models import Status
+
+    status = Status.objects.filter(name=name).first() or _active_status()
+    if models:
+        status.content_types.add(
+            *[ContentType.objects.get_for_model(model) for model in models]
+        )
+    return status
+
+
+def ensure_sublocation(name: str):
+    """Idempotently ensure a child Location of ``homelab`` (a rack, desk, or bin).
+
+    Spare hardware has to live somewhere Nautobot can express, and a Module's
+    ``location`` is the field that holds it. These are real places, so they are
+    child Locations rather than tags.
+    """
+    from nautobot.dcim.models import Location
+
+    parent = ensure_location()
+    if not name or name == LOCATION_NAME:
+        return parent
+
+    location, _ = Location.objects.get_or_create(
+        name=name,
+        parent=parent,
+        defaults={"location_type": parent.location_type, "status": _active_status()},
+    )
+    return location
 
 
 def ensure_tag(name: str, *models):
