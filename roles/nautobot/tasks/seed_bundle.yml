@@ -49,6 +49,7 @@
         or (nautobot_seed_fixed_ips_path | length) > 0
         or (nautobot_seed_hosts_yml_path | length) > 0
         or (nautobot_seed_sops_path | length) > 0
+        or (nautobot_seed_hardware_path | length) > 0
     fail_msg: >-
       nautobot_build_seed is true but no seed source is available: the tofu
       inventory resolved no guests and NAUTOBOT_SEED_NETWORKS,
@@ -72,6 +73,9 @@
     - env: ANSIBLE_PROXMOX_HOSTS
       slice: pve node
       missing: "{{ (nautobot_seed_hosts_yml_path | length) == 0 }}"
+    - env: INT_HOMELAB_HARDWARE
+      slice: hardware device and module
+      missing: "{{ (nautobot_seed_hardware_path | length) == 0 }}"
   loop_control:
     label: "{{ item.env }}"
   when: item.missing | bool
@@ -99,6 +103,16 @@
   register: nautobot_seed_fixed_ips_raw
   when: nautobot_seed_fixed_ips_path | length > 0
 
+- name: Read the generated hardware inventory slice
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_hardware_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_hardware_raw
+  when: nautobot_seed_hardware_path | length > 0
+
 - name: Read the ansible-proxmox hosts inventory
   ansible.builtin.slurp:
     src: "{{ nautobot_seed_hosts_yml_path }}"
@@ -122,7 +136,34 @@
     nautobot_seed_hosts: >-
       {{ (nautobot_seed_hosts_raw.content | b64decode | from_yaml)
          if (nautobot_seed_hosts_yml_path | length) > 0 else {} }}
+    nautobot_seed_hardware: >-
+      {{ (nautobot_seed_hardware_raw.content | b64decode | from_yaml)
+         if (nautobot_seed_hardware_path | length) > 0 else {} }}
   no_log: true
+
+# The slice is generated upstream in the shape the seed job consumes, so this
+# is a pass-through, not a transform. Guarding on the key rather than trusting
+# the file: a truncated or wrong-shaped YAML would otherwise reach the job as a
+# valid-looking empty slice, and the job would report "nothing to do".
+- name: Assert the hardware slice carries its arrays
+  ansible.builtin.assert:
+    that:
+      # `is defined` alone does NOT do what this guard is for: a key present
+      # with a null value (`hardware_devices:` with nothing after it, which is
+      # what a truncated render produces) satisfies it, and `default([])`
+      # without boolean=true does not replace None either — so the null would
+      # ride into the bundle. Only load_seed's own `or []` catches it there,
+      # which is an unrelated safety net, not this check working.
+      - nautobot_seed_hardware.hardware_devices is defined
+      - nautobot_seed_hardware.hardware_devices is not none
+      - nautobot_seed_hardware.hardware_modules is defined
+      - nautobot_seed_hardware.hardware_modules is not none
+    fail_msg: >-
+      {{ nautobot_seed_hardware_path }} is missing or null on
+      hardware_devices/hardware_modules. Re-render it with the inventory
+      repo's hardware_to_seed.py.
+    quiet: true
+  when: nautobot_seed_hardware_path | length > 0
 
 # --- Transform into the nautobot_seed.json schema ---------------------------
 # VLANs + prefixes from the provided network definitions
@@ -245,6 +286,9 @@
       devices: "{{ nautobot_seed_devices | default([]) }}"
       nodes: "{{ nautobot_seed_nodes | default([]) }}"
       virtual_machines: "{{ nautobot_seed_virtual_machines | default([]) }}"
+      hardware_devices: "{{ nautobot_seed_hardware.hardware_devices | default([]) }}"
+      hardware_modules: "{{ nautobot_seed_hardware.hardware_modules | default([]) }}"
+      wan_circuits: "{{ nautobot_seed_hardware.wan_circuits | default([]) }}"
   no_log: true
 
 # --- Write the bundle onto the Nautobot LXC ---------------------------------
