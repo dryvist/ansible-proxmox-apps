@@ -1,0 +1,223 @@
+---
+# =============================================================================
+# Phase 1a: DNS Installation
+# Install Technitium DNS server and bootstrap credentials from Doppler.
+# Must run BEFORE record management (Phase 1b).
+# =============================================================================
+
+- name: Install and bootstrap Technitium DNS server
+  hosts: technitium_dns_group
+  become: true
+  gather_facts: false
+  tags:
+    - technitium_install
+    - technitium_dns
+    - dns
+
+  vars:
+    technitium_dns_host: "{{ container_ip | default(ansible_host) }}"
+
+  roles:
+    - role: technitium_install
+
+# =============================================================================
+# Phase 1b: DNS Configuration
+# Technitium DNS must be configured first to enable hostname-based references
+# =============================================================================
+
+- name: Configure Technitium DNS with internal A records
+  hosts: technitium_dns_group
+  become: false
+  gather_facts: false
+  tags:
+    - technitium_dns
+    - dns
+
+  vars:
+    # Each instance configures its OWN Technitium API: the primary authors the
+    # zone + records and allows AXFR; the secondaries create a Secondary zone and
+    # replicate. API host = the instance's own container IP (matches the Phase 1a
+    # install play), so the role runs across the whole HA group.
+    technitium_dns_host: "{{ container_ip | default(ansible_host) }}"
+    # group_vars/all.yml sets `ansible_become: true` (an inventory variable),
+    # which Ansible applies via the connection layer and which overrides the
+    # play-level `become: false` keyword. These tasks only hit HTTP APIs and
+    # never need sudo, so disable become via the inventory variable directly.
+    ansible_become: false
+
+  roles:
+    - role: technitium_dns
+
+# =============================================================================
+# Phase 2: Cribl Edge (syslog processing)
+# Native install in LXC containers - production pipeline
+# =============================================================================
+
+- name: Configure Cribl Edge on LXC containers
+  hosts: cribl_edge
+  become: true
+  gather_facts: true
+  tags:
+    - cribl_edge
+    - cribl
+    - pipeline
+
+  roles:
+    # Shared with ansible-proxmox via the dryvist.homelab collection
+    # (homelab-contracts), hence the FQCN.
+    - role: dryvist.homelab.cribl_edge
+
+# =============================================================================
+# Phase 2b: Cribl Stream (IPFIX/NetFlow processing)
+# Native install in LXC containers - production pipeline
+# =============================================================================
+
+- name: Configure Cribl Stream on LXC containers
+  hosts: cribl_stream_group
+  become: true
+  gather_facts: true
+  tags:
+    - cribl_stream
+    - cribl
+    - pipeline
+
+  roles:
+    - role: cribl_stream
+
+# =============================================================================
+# Phase 2c: Cribl Packs
+# Install .crbl pack assets onto Edge and Stream LXCs after the base
+# Cribl install is up. Runs against the union of both groups; the role
+# detects target via group_names and is a no-op for non-Cribl hosts.
+# =============================================================================
+
+- name: Install Cribl packs
+  hosts: cribl_edge:cribl_stream_group
+  become: true
+  gather_facts: false
+  tags:
+    - cribl_packs
+    - cribl
+    - pipeline
+
+  roles:
+    - role: dryvist.homelab.cribl_packs
+
+# =============================================================================
+# Phase 3: HAProxy Syslog/NetFlow VIP
+# Forwards syslog to Cribl Edge LXCs, IPFIX to Cribl Stream LXCs
+# =============================================================================
+
+- name: Configure HAProxy syslog/netflow VIP
+  hosts: haproxy_group
+  become: true
+  gather_facts: false
+  tags:
+    - haproxy
+    - loadbalancer
+
+  roles:
+    - role: haproxy
+
+# =============================================================================
+# Phase 3b: Per-WAN network-diagnosis probers
+# Telegraf agents (ping/dns/http + DOCSIS SNMP / Starlink gRPC) shipping
+# Splunk-HEC to Cribl Edge -> Splunk netmon index. Runs after Cribl Edge
+# (Phase 2) so the HEC receiver is up.
+# =============================================================================
+
+- name: Configure netmon per-WAN probers
+  hosts: netmon_group
+  become: true
+  gather_facts: false
+  tags:
+    - netmon
+    - monitoring
+    - telegraf
+  roles:
+    - role: netmon
+
+# =============================================================================
+# Phase 3b1: WAN ISP-hop discovery (runs before the monitoring plays)
+# Resolve the live first-N echo-reachable public WAN hops via mtr + ICMP-echo
+# validation and set the host fact wan_hop_discovery_isp_hops, which the
+# prometheus_stack (blackbox icmp) and network_quality (smokeping) target lists
+# fold in. Keeps real WAN IPs out of git: Comcast renumbers the WAN side with no
+# hardware change, and the CGNAT edge answers traceroute but not echo, so the
+# usable ISP-edge hop must be discovered + validated, not hard-coded. Tagged for
+# every monitoring leg so scoped deploys still refresh the fact.
+# =============================================================================
+
+- name: Discover the live WAN ISP path
+  hosts: prometheus_group
+  become: true
+  gather_facts: false
+  tags:
+    - prometheus
+    - blackbox
+    - smokeping
+    - monitoring
+  roles:
+    - role: wan_hop_discovery
+
+# =============================================================================
+# Phase 3b2: Prometheus-native network-quality monitoring
+# Prometheus + blackbox_exporter (active WAN/ISP probing: ICMP/HTTP/TLS/DNS) as a
+# single Docker-in-LXC compose stack (official prom/prometheus + prom/blackbox-
+# exporter images), matching the homelab's container pattern. The two services
+# are merged into one role/compose project (one Docker bootstrap, two services).
+# The prometheus.prometheus collection was dropped: its hardened native-systemd
+# unit fails in non-nested LXCs (226/NAMESPACE). This is the ISP-evidence path now
+# that the Comcast modem is confirmed to expose no DOCSIS data (ICMP-only). Config
+# is variable-driven in the role defaults; the live ISP hop targets are folded in
+# from the wan_hop_discovery play (Phase 3b1) — no WAN IPs in git.
+# =============================================================================
+
+- name: Configure Prometheus-native network monitoring
+  hosts: prometheus_group
+  become: true
+  gather_facts: false
+  tags:
+    - prometheus
+    - blackbox
+    - monitoring
+  roles:
+    - role: prometheus_stack
+
+# =============================================================================
+# Phase 3b3: Network-quality probers (co-located on the prometheus LXC)
+# smokeping_prober (ICMP latency-distribution histograms, scraped by Prometheus).
+# Adds the loss/latency-distribution leg that blackbox's binary probe_success
+# lacks. The scrape job is wired into Prometheus via
+# prometheus_stack_extra_scrape_configs (group_vars). Runs after the
+# prometheus_stack play so the local Prometheus is up to scrape it. (irtt jitter/MOS
+# deferred — no official image.)
+# =============================================================================
+
+- name: Configure network-quality probers
+  hosts: prometheus_group
+  become: true
+  gather_facts: false
+  tags:
+    - smokeping
+    - monitoring
+  roles:
+    - role: network_quality
+
+# =============================================================================
+# Phase 3c: UniFi controller telemetry
+# unpoller + Telegraf (Docker-in-LXC) shipping full UniFi device/port/client/WAN
+# metrics Splunk-HEC to Cribl Edge -> Splunk unifi_metrics index. Runs after
+# Cribl Edge (Phase 2) so the shared HEC receiver is up.
+# =============================================================================
+
+- name: Configure UniFi metrics collector
+  hosts: unifi_metrics_group
+  become: true
+  gather_facts: false
+  tags:
+    - unifi_metrics
+    - monitoring
+    - telegraf
+  roles:
+    - role: unifi_metrics

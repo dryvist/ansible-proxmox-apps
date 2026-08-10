@@ -1,0 +1,90 @@
+---
+- name: Render and verify haproxy templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/haproxy/defaults/main.yml (only vars referenced by haproxy.cfg.j2)
+    haproxy_stats_enabled: true
+    haproxy_stats_port: 8404
+    haproxy_stats_user: admin
+    haproxy_stats_password: "test-stats-placeholder"
+    haproxy_stats_timeout: "30s"
+    haproxy_stats_refresh: "10s"
+    haproxy_algorithm: roundrobin
+    haproxy_mode_tcp: tcp
+    haproxy_mode_http: http
+    haproxy_log_option_tcp: tcplog
+    haproxy_log_option_http: httplog
+    haproxy_ssl_ca_base: /etc/ssl/certs
+    haproxy_ssl_crt_base: /etc/ssl/private
+    haproxy_timeout_connect: 5000
+    haproxy_timeout_client: 60000
+    haproxy_timeout_server: 60000
+    haproxy_timeout_tunnel: 3600000
+    haproxy_health_check_interval: 5000
+    haproxy_http_port: 80
+    haproxy_https_port: 443
+    haproxy_http_redirect_code: 301
+    haproxy_http_forwardfor: true
+    haproxy_syslog_port_mappings:
+      - { frontend: 514, backend: 1514, name: unifi }
+      - { frontend: 515, backend: 1515, name: palo_alto }
+    haproxy_syslog_backend_servers:
+      - inventory_hostname: cribl-edge-01
+        container_ip: 192.168.0.180
+      - inventory_hostname: cribl-edge-02
+        container_ip: 192.168.0.181
+    haproxy_cribl_s2s_port: 10300
+    haproxy_ipfix_backend_servers:
+      - inventory_hostname: cribl-stream-01
+        container_ip: 192.168.0.182
+      - inventory_hostname: cribl-stream-02
+        container_ip: 192.168.0.183
+    # Mirror the ai_log_routing-derived default (two representative entries).
+    haproxy_ai_log_mappings:
+      claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
+      openbao_audit: { port: 10331, index: openbao_audit, sourcetype: "openbao:audit" }
+    # nginx-stream.conf.j2 inputs (mirror role defaults; macos relay enabled =
+    # the family is absent from the fixture's syslog mappings above).
+    haproxy_netflow_port:
+      frontend: 2055
+      backend: 2055
+    haproxy_macos_syslog_port:
+      frontend: 521
+      backend: 1521
+    haproxy_macos_udp_relay_enabled: true
+    _template_dir: "../../../roles/haproxy/templates"
+
+  tasks:
+    # Each concern is its own tasks file under haproxy/ — see that file's
+    # banner comment for what it covers. Order matches the original inline
+    # sections and has no runtime significance beyond readability of diffs.
+    - name: Default path (haproxy_http_enabled=false) + AI ingest frontends
+      ansible.builtin.include_tasks: haproxy/default_path.yml
+
+    - name: Enabled path — single frontend entry
+      ansible.builtin.include_tasks: haproxy/single_frontend.yml
+
+    - name: Enabled path — multi-entry render (CRITICAL port-duplication fix)
+      ansible.builtin.include_tasks: haproxy/multi_frontend.yml
+
+    - name: Render nginx-stream.conf.j2 — UDP LB incl. the macOS syslog relay
+      ansible.builtin.include_tasks: haproxy/nginx_stream.yml
+
+    - name: HAProxy template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          HAProxy template assertions passed:
+          - Default path (haproxy_http_enabled: false): TCP/syslog renders;
+            HTTP/HTTPS Jinja block stays gated off; DRY audit is a true no-op
+          - Single-entry enabled: frontend http_in redirects to HTTPS,
+            frontend https_in terminates TLS via SNI cert, routes by Host
+            header to per-service backend, sets X-Forwarded-Proto;
+            option httplog appears exactly twice (frontends only)
+          - Multi-entry enabled: exactly one bind *:80 and one bind *:443
+            (CRITICAL fix), two crt entries on the SNI bind line, two
+            use_backend ACLs, two per-service backends

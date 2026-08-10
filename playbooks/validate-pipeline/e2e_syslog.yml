@@ -1,0 +1,103 @@
+---
+- name: E2E Data Pipeline Validation (Syslog via Cribl Edge)
+  hosts: cribl_edge[0]
+  become: true
+  gather_facts: true
+  tags:
+    - e2e
+    - data_validation
+
+  vars:
+    constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    # Generate unique test event ID using epoch timestamp
+    e2e_test_event_id: "E2E_VALIDATION_{{ ansible_date_time.epoch }}"
+    # Splunk connection details — FQDN, never an IP (resolves from the
+    # pipeline VLAN; the uri tasks execute on the Edge LXC)
+    splunk_host: "splunk.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+    splunk_port: "{{ constants.service_ports.splunk_mgmt }}"
+    splunk_user: admin
+    # SPLUNK_PASSWORD must be set via Doppler
+    splunk_password: "{{ lookup('env', 'SPLUNK_PASSWORD') }}"
+
+  tasks:
+    - name: Skip E2E data injection in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Verify SPLUNK_PASSWORD is set
+      ansible.builtin.assert:
+        that:
+          - splunk_password | length > 0
+        fail_msg: >-
+          SPLUNK_PASSWORD environment variable must be set.
+          Run with doppler run --
+        quiet: true
+
+    - name: Install netcat for syslog testing
+      ansible.builtin.apt:
+        name: netcat-openbsd
+        state: present
+        update_cache: true
+
+    - name: Send per-family test syslog messages through pipeline
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          echo "<14>{{ ansible_date_time.iso8601 }} ansible-e2e-test: \
+          {{ e2e_test_event_id }}-{{ item.key }}" | \
+          nc -u -w1 localhost {{ item.value.high }}
+        executable: /bin/bash
+      changed_when: false
+      loop: "{{ constants.syslog_port_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Wait for events to propagate through pipeline
+      ansible.builtin.pause:
+        seconds: 10
+        prompt: >-
+          Waiting for test events to propagate through Cribl Edge to Splunk...
+
+    # Pipeline latency assertion: poll up to 120 seconds per family
+    # (retries: 12, delay: 10). Each family must land in ITS index with ITS
+    # sourcetype — the routing contract from constants.syslog_port_map.
+    - name: Query Splunk for each family event in its index (120s timeout each)
+      ansible.builtin.uri:
+        url: >-
+          https://{{ splunk_host }}:{{ splunk_port
+          }}/services/search/jobs
+        method: POST
+        user: "{{ splunk_user }}"
+        password: "{{ splunk_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: form-urlencoded
+        body:
+          search: >-
+            search index={{ item.value.index }}
+            sourcetype="{{ item.value.sourcetype }}"
+            "{{ e2e_test_event_id }}-{{ item.key }}" | head 1
+          output_mode: json
+          exec_mode: oneshot
+      register: splunk_family_result
+      retries: 12
+      delay: 10
+      until: >-
+        splunk_family_result.status == 200 and
+        (splunk_family_result.json.results | default([]) | length > 0)
+      failed_when: >-
+        splunk_family_result.status != 200 or
+        (splunk_family_result.json.results | default([]) | length == 0)
+      loop: "{{ constants.syslog_port_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> index={{ item.value.index }}"
+
+    - name: E2E Data Pipeline PASSED
+      ansible.builtin.debug:
+        msg: |
+          === E2E DATA PIPELINE VALIDATION PASSED ===
+          One event per source family sent to its Cribl Edge backend port
+          Event ID prefix: {{ e2e_test_event_id }}
+          Splunk host: {{ splunk_host }}
+          Families verified: {{ constants.syslog_port_map.keys() | list | join(', ') }}
+          Full pipeline verified: Source -> Cribl Edge LXC -> Splunk HEC -> per-family index

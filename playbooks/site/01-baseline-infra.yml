@@ -1,0 +1,213 @@
+---
+# =============================================================================
+# Phase 0: APT Cache Infrastructure
+# apt-cacher-ng must be deployed BEFORE any roles that install apt packages
+# =============================================================================
+
+- name: Deploy apt-cacher-ng caching proxy
+  hosts: apt_cacher_group
+  become: true
+  gather_facts: true
+  tags:
+    - apt_cacher_ng
+    - apt_proxy
+    - lxc
+  roles:
+    - role: apt_cacher_ng
+
+- name: Configure apt proxy on LXC containers
+  hosts: lxc_containers:!apt_cacher_group:!download_vpn_group
+  become: true
+  gather_facts: false
+  tags:
+    - apt_proxy
+    - lxc
+  tasks:
+    # The cache is an HA pair (tofu node_services generates one instance per
+    # always-on node; all carry the `apt-cache` tag, so apt_cacher_group tracks
+    # them with no inventory change here). apt itself supports only a single
+    # Acquire::http::Proxy value, so instance selection uses apt's native
+    # Proxy-Auto-Detect hook instead: at every apt run the script probes each
+    # instance by FQDN and prints the first live one, or DIRECT so apt fails
+    # open when the whole pool is down. An instance (or its node) going down
+    # therefore costs one probe timeout, never apt itself.
+    - name: Deploy apt proxy autodetect script
+      when: groups['apt_cacher_group'] | default([]) | length > 0
+      vars:
+        _apt_cache_port: >-
+          {{ tofu_data.constants.service_ports.apt_cacher_ng
+             | default(3142) }}
+      ansible.builtin.copy:
+        dest: /usr/local/bin/apt-proxy-detect
+        content: |
+          #!/bin/bash
+          # Managed by Ansible (ansible-proxmox-apps site.yml) — do not edit.
+          # apt Acquire::http::Proxy-Auto-Detect hook: first live cache wins,
+          # DIRECT when none answer (fail open, apt fetches upstream).
+          for host in {% for h in groups['apt_cacher_group'] | sort -%}
+          {{ h }}.{{ tofu_data.domain }} {% endfor %}; do
+            if timeout 2 bash -c "exec 3<>/dev/tcp/${host}/{{ _apt_cache_port }}" 2>/dev/null; then
+              exec 3>&- 2>/dev/null
+              echo "http://${host}:{{ _apt_cache_port }}"
+              exit 0
+            fi
+          done
+          echo DIRECT
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure apt proxy
+      when: groups['apt_cacher_group'] | default([]) | length > 0
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/00proxy
+        content: |
+          Acquire::http::Proxy-Auto-Detect "/usr/local/bin/apt-proxy-detect";
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Remove stale apt proxy configuration
+      when: groups['apt_cacher_group'] | default([]) | length == 0
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/apt.conf.d/00proxy
+        - /usr/local/bin/apt-proxy-detect
+
+
+# =============================================================================
+# Phase 0-zot: Zot OCI Registry
+# Self-hosted pull-through cache (docker.io/ghcr.io/quay.io) and private
+# registry. Deployed early — before any docker app roles — so firewalled
+# docker hosts can pull through it. Pairs with the tofu registry LXC 109.
+# =============================================================================
+
+- name: Deploy Zot registry
+  hosts: registry_group
+  become: true
+  gather_facts: true
+  tags:
+    - zot
+    - registry
+    - lxc
+  roles:
+    - role: zot_registry
+
+- name: Configure Docker registry mirror on LXC containers
+  hosts: lxc_containers:!registry_group
+  become: true
+  gather_facts: false
+  tags:
+    - registry_mirror
+    - docker
+    - lxc
+  handlers:
+    - name: Restart docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+  tasks:
+    # This play is the single owner of /etc/docker/daemon.json on docker LXCs.
+    # roles/idrac_kvm_docker no longer writes the storage-driver here (removed
+    # on a separate branch) to avoid two writers fighting over the same file.
+    - name: Configure Docker registry mirror
+      when:
+        - "'registry' in hostvars"
+        - "'docker' in (host_tags | default([]))"
+      vars:
+        _registry_ip: "{{ hostvars['registry']['container_ip'] }}"
+        _registry_port: >-
+          {{ hostvars['localhost']['tofu_data']
+             ['constants']['service_ports']['registry']
+             | default(5000) }}
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "registry-mirrors": ["http://{{ _registry_ip }}:{{ _registry_port }}"],
+            "insecure-registries": ["{{ _registry_ip }}:{{ _registry_port }}"],
+            "storage-driver": "fuse-overlayfs",
+            "log-driver": "journald"
+          }
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart docker
+
+# =============================================================================
+# Phase 0a: NTP Time Synchronization Baseline
+# Runs after apt-cacher-ng is up and the apt proxy is configured, so LXC
+# containers with outbound-internal firewall (cribl_edge, cribl_stream)
+# can install chrony via the proxy. Establishes accurate time on every
+# managed VM/container before anything that depends on it (TLS handshakes,
+# log timestamps, certificate validation, Splunk _time correlation).
+# Points at the Proxmox hosts (stratum-2 servers managed by ansible-proxmox)
+# when PROXMOX_NTP_SERVERS is set in Doppler; falls back to the Debian
+# public pool when not.
+# =============================================================================
+
+- name: Configure NTP time synchronization baseline
+  hosts: all:!localhost
+  become: true
+  gather_facts: true
+  tags:
+    - ntp
+    - time
+    - baseline
+  roles:
+    - role: ntp
+
+# =============================================================================
+# Phase 0a1b: OpenBao SSH client-CA trust on VMs (ssh-certificate-authority
+# ADR). SSH-reached guests only — LXCs get the same trust from ansible-proxmox
+# (pct push, no SSH chicken-and-egg). Runs after NTP: certificate validity is
+# time-bound and the role preflights clock sync. Pinned-fingerprint fetch,
+# fail-closed; static keys stay as break-glass until the WS4 rotation.
+# =============================================================================
+
+- name: Trust the OpenBao SSH client CA on VMs
+  hosts: vms:splunk_vms:docker_vms
+  become: true
+  gather_facts: true
+  tags:
+    - ssh_ca_trust
+    - baseline
+  roles:
+    - role: ssh_ca_trust
+
+# =============================================================================
+# Phase 0a2: Syslog forwarding to the central pipeline
+# Every infra LXC ships its logs (systemd journal + native services) to the
+# HAProxy syslog VIP -> Cribl Edge -> Splunk (os index). Runs after NTP so log
+# timestamps are accurate. The pipeline (cribl_edge / cribl_stream) and the load
+# balancer (haproxy) are excluded: they RECEIVE this traffic, so forwarding into
+# themselves would loop; their own logs are collected locally by Cribl Edge.
+# =============================================================================
+
+- name: Forward infra LXC logs to the syslog pipeline
+  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group
+  become: true
+  gather_facts: false
+  tags:
+    - syslog_forwarder
+    - logging
+    - baseline
+  roles:
+    - role: syslog_forwarder
+
+# =============================================================================
+# Phase 0b: Object Storage
+# S3-compatible artifact store for Splunk add-ons and other deployment assets
+# =============================================================================
+
+- name: Deploy RustFS object storage
+  hosts: object_storage_group
+  become: true
+  gather_facts: false
+  tags:
+    - object-storage
+    - storage
+  roles:
+    - role: object_storage

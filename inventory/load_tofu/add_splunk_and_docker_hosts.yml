@@ -1,0 +1,38 @@
+---
+- name: Add Splunk VM to inventory (SSH connection)
+  ansible.builtin.add_host:
+    name: splunk
+    groups:
+      - splunk_group
+      - splunk_vms
+      - all
+    ansible_host: "{{ tofu_data.splunk_vm.splunk.ip }}"
+    ansible_connection: "{{ tofu_data.splunk_vm.splunk.ansible_connection }}"
+    ansible_user: debian
+    ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
+    vmid: "{{ tofu_data.splunk_vm.splunk.vmid }}"
+  changed_when: false
+  when: tofu_data.splunk_vm.splunk is defined
+
+# NOTE: Docker VMs (docker-host) are for TESTING/DEV ONLY.
+# Production syslog/netflow pipelines use native Cribl Edge/Stream
+# on LXC containers (cribl_edge, cribl_stream_group).
+# (idrac-kvm is now a Docker-in-LXC, joined to idrac_kvm_group by the LXC task above.)
+- name: Add Docker VMs to inventory (SSH connection — testing/dev only)
+  ansible.builtin.add_host:
+    name: "{{ item.key }}"
+    groups: >-
+      {{
+        ['docker_vms', 'cribl_docker_group', 'all']
+      }}
+    ansible_host: "{{ item.value.ip }}"
+    ansible_connection: "{{ item.value.ansible_connection }}"
+    ansible_user: debian
+    ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_DKR_SSH_KEY_PATH') }}"
+    vmid: "{{ item.value.vmid }}"
+    host_tags: "{{ item.value.tags | default([]) }}"
+  loop: "{{ tofu_data.docker_vms | dict2items }}"
+  changed_when: false
+  when:
+    - tofu_data.docker_vms is defined
+    - tofu_data.docker_vms | length > 0

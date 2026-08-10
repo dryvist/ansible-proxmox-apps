@@ -1,0 +1,90 @@
+---
+# Upstream forwarders for every non-authoritative query (the apex + public
+# names). Encrypted DNS-over-HTTPS (DoH) to Cloudflare + Google so the
+# resolver->upstream hop is never sent in plaintext. The IP in parentheses is
+# the bootstrap endpoint: Technitium dials that address directly instead of
+# resolving the DoH hostname through itself (avoids a chicken-and-egg lookup),
+# while still validating the TLS certificate against the hostname. These DoH
+# URLs and resolver IPs are public constants, not secrets.
+technitium_dns_forwarder_protocol: "Https" # Udp | Tcp | Tls | Https | Quic
+technitium_dns_forwarders:
+  - "https://cloudflare-dns.com/dns-query (1.1.1.1)"
+  - "https://dns.google/dns-query (8.8.8.8)"
+# Do not volunteer the client subnet (EDNS Client Subnet) to upstream resolvers.
+technitium_dns_edns_client_subnet: false
+
+# DNS server settings
+technitium_dns_recursion: true
+technitium_dns_cache_enabled: true
+
+# --- Query-log export to the central syslog pipeline --------------------------
+# Ship every DNS query log to the dns_query syslog family (syslog CNAME ->
+# HAProxy -> Cribl Edge -> Splunk index=dns). Implemented via Technitium's
+# "Log Exporter" DNS app (installed per node from the DNS App Store — apps are
+# per-instance, like API tokens). The app hooks the query-log pipeline and
+# forwards each entry to the syslog target below; no separate "enable query
+# logging" server setting is required once the app is installed and configured.
+technitium_dns_query_log_enabled: true
+# App is installed from the INTERNAL object-storage mirror, never the public
+# Technitium DNS App Store: the resolver containers carry the outbound-internal
+# firewall (RFC1918 only) and cannot reach download.technitium.com — a live
+# `listStoreApps` against them times out. Same air-gap the cribl-edge and
+# technitium_install mirrors already solve. `downloadAndInstall` makes the
+# SERVER fetch this URL, and the object-storage endpoint is internal, so no new
+# firewall rule is needed (outbound-internal already permits it).
+technitium_dns_query_log_app_name: "Log Exporter"
+# Mirror endpoint = the object store's HTTPS S3 ingress (`s3.<subdomain>`),
+# same artifacts bucket + technitium/ prefix the server binary mirrors to.
+# MUST be https, not the raw http://<ip>:<port> endpoint technitium_install
+# uses for controller-side get_url: this URL is handed to the Technitium
+# server's /api/apps/downloadAndInstall, which REJECTS any url not starting
+# with https:// (WebServiceAppsApi.cs). The `s3` Traefik ingress serves the
+# bucket over 443 with a valid wildcard cert the resolver already trusts.
+technitium_dns_query_log_app_mirror_endpoint: >-
+  https://s3.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/artifacts
+# The app has its OWN version stream and is NOT coupled to the server tag. A
+# server upgrade does NOT require an app upgrade: this exact 2.1 build (the
+# official vendor zip mirrored below) was verified running on server 14.3 AND
+# on 15.4 — same zip, app loads, one DNS app class registered. The DNS app API
+# (DnsServerCore.ApplicationCommon) is stable across the 14->15 major, so do
+# not bump this pin just because the server moved.
+#
+# DO NOT hand-build this app from source. It was tried: a locally built 3.0.1
+# (the <Version> in Apps/LogExporterApp/LogExporterApp.csproj at tag v15.4.0)
+# installs and reports status ok, but its assembly fails to load on the server
+# with SecurityException "Invalid assembly public key" thrown out of
+# Technitium's own DnsApplicationAssemblyLoadContext.Load fallback loop. The
+# app then registers ZERO app classes and query-log export silently stops —
+# while /api/apps/list still reports the app as installed, so nothing looks
+# wrong. Only mirror official vendor-built zips here.
+#
+# Because neither download.technitium.com nor go.technitium.com is reachable
+# from this network, a NEW app version can only be pinned once its official zip
+# has been obtained out-of-band and re-seeded into artifacts/technitium/. Until
+# then this pin stays where it is. Renovate cannot track or re-host it.
+technitium_dns_query_log_app_version: "2.1"
+technitium_dns_query_log_app_filename: "LogExporterApp-{{ technitium_dns_query_log_app_version }}.zip"
+technitium_dns_query_log_app_url: >-
+  {{ technitium_dns_query_log_app_mirror_endpoint }}/technitium/{{
+  technitium_dns_query_log_app_filename }}
+# sha256 of the mirrored zip — documents the exact pinned build (the
+# downloadAndInstall API has no checksum param, so this is verified by the
+# operator at seed time, not enforced at install). Update with the version.
+technitium_dns_query_log_app_sha256: "53e84d2c3b8715e5fd59b415b57920bd4845ef8cb38cc935c25bddb89915c7fd"
+# Same stable syslog entry point the syslog_forwarder role uses (the `syslog`
+# CNAME this very role creates -> HAProxy). Never a committed literal.
+technitium_dns_query_log_syslog_host: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+# dns_query standard frontend port from tofu constants; guarded so inventories
+# predating the dns_query family still render (522 is that family's standard).
+technitium_dns_query_log_syslog_port: >-
+  {{ tofu_data.constants.syslog_port_map.dns_query.standard | default(522) }}
+technitium_dns_query_log_syslog_protocol: "TCP"
+# The ONLY block this role manages — merged over the app's own live config
+# (see tasks/query_log.yml), so we never mirror the app's other keys or its
+# version-specific spellings. `enabled` (NOT `enable`) is the real flag; the
+# earlier `enable` shape was silently ignored, so nothing ever shipped.
+technitium_dns_query_log_syslog:
+  address: "{{ technitium_dns_query_log_syslog_host }}"
+  port: "{{ technitium_dns_query_log_syslog_port | int }}"
+  protocol: "{{ technitium_dns_query_log_syslog_protocol }}"
+  enabled: true

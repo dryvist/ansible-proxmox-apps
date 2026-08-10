@@ -1,0 +1,65 @@
+---
+# =========================================================================
+# Phase 10: Search-index rebuild (guarded — expensive, first time only)
+# es_url was just set by the bootstrap above.
+# =========================================================================
+- name: Check whether the search index has already been built
+  ansible.builtin.stat:
+    path: "{{ zammad_root }}/.ansible-searchindex-built"
+  register: zammad_searchindex_marker
+
+- name: Rebuild the Zammad search index (first time only — it is expensive)
+  ansible.builtin.command:
+    cmd: "zammad run rake zammad:searchindex:rebuild"
+  when: not zammad_searchindex_marker.stat.exists
+  changed_when: true
+
+- name: Mark the search index as built
+  ansible.builtin.copy:
+    content: "built by the zammad role\n"
+    dest: "{{ zammad_root }}/.ansible-searchindex-built"
+    owner: "{{ zammad_user }}"
+    group: "{{ zammad_group }}"
+    mode: "0644"
+  when: not zammad_searchindex_marker.stat.exists
+
+# =========================================================================
+# Phase 11: Health
+# =========================================================================
+# Self-healing, because "config correct + process stale" is a trap this role
+# cannot otherwise escape: a converge that rewrote database.yml and then
+# failed before flushing handlers leaves Zammad running with the OLD
+# credentials, and every later converge sees the file already correct,
+# notifies no handler, and never restarts it — so the stale process 500s
+# forever while every file on disk looks right. (Observed 2026-07-17:
+# web started 05:58, database.yml rewritten 07:21, PG::ConnectionBad until
+# a restart.) An unhealthy service therefore earns one restart and a
+# re-check before the converge is allowed to fail.
+- name: Ensure Zammad answers through nginx
+  block:
+    - name: Wait for the Zammad web UI to answer through nginx
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ zammad_web_port }}/"
+        status_code: [200, 301, 302]
+        follow_redirects: none
+      register: zammad_health
+      until: zammad_health.status in [200, 301, 302]
+      retries: "{{ zammad_health_retries | int }}"
+      delay: "{{ zammad_health_delay | int }}"
+      changed_when: false
+  rescue:
+    - name: Restart Zammad — the running process may predate its config
+      ansible.builtin.systemd_service:
+        name: zammad
+        state: restarted
+
+    - name: Wait for the Zammad web UI to answer after the restart
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ zammad_web_port }}/"
+        status_code: [200, 301, 302]
+        follow_redirects: none
+      register: zammad_health_retry
+      until: zammad_health_retry.status in [200, 301, 302]
+      retries: "{{ zammad_health_retries | int }}"
+      delay: "{{ zammad_health_delay | int }}"
+      changed_when: false

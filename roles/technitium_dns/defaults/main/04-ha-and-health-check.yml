@@ -1,0 +1,62 @@
+---
+# --- HA: primary / secondary roles (native AXFR/IXFR zone transfer) -----------
+# The role runs across the whole technitium_dns_group. The PRIMARY authors the
+# zone + records and allows zone transfer (AXFR) to the secondaries; each
+# SECONDARY creates a Secondary zone (master = primary) and skips record writes
+# (records replicate via zone transfer). The primary is the lowest-vmid member
+# of the group (terraform pins technitium-1 to the lowest vmid). All three are
+# derived in tasks when left empty, so a single-node group degenerates to "this
+# host is its own primary" and behavior is UNCHANGED. No IP literal is committed.
+technitium_dns_role: ""            # auto: 'primary' | 'secondary'
+technitium_dns_primary_ip: ""      # auto: lowest-vmid member's container_ip
+technitium_dns_secondary_ips: []   # auto: group member IPs minus the primary
+# Protocol the secondaries use to pull the zone from the primary.
+technitium_dns_zone_transfer_protocol: "Tcp"
+
+# Existing zones discovered from the API at runtime. The default keeps the
+# technitium_dns_apply=false path (molecule/CI) from referencing an undefined
+# register when the discovery API call is skipped.
+technitium_dns_existing_zones: []
+
+# When false, skip every live Technitium API call and run only the fact-building
+# logic. Used by molecule/CI to exercise the role's branching without a live
+# server; always true in production.
+technitium_dns_apply: true
+
+# Timeout for API requests (seconds)
+technitium_dns_api_timeout: 30
+
+# --- Health-checked zone apex -------------------------------------------------
+# The apex round-robin's contract is "any address here grants access to the whole
+# cluster". A static round-robin breaks that contract as soon as one member stops
+# answering — clients keep drawing the dead address and a fraction of requests
+# fail. A timer reconciles the published set to the nodes actually accepting API
+# connections, so an unhealthy node is never handed out.
+#
+# Runs on the PRIMARY only: secondaries receive the result by zone transfer, and
+# two writers reconciling the same record set would fight.
+technitium_dns_apex_health_check_enabled: true
+technitium_dns_apex_health_check_port: 8006
+technitium_dns_apex_health_check_interval: 30
+technitium_dns_apex_health_check_timeout: 3
+# Short by design: the record set is expected to change on node loss, and a long
+# TTL would keep clients pinned to a dead address for the length of the TTL,
+# defeating the health check entirely.
+technitium_dns_apex_health_check_ttl: 60
+technitium_dns_apex_health_check_script: /usr/local/bin/technitium-apex-health
+technitium_dns_apex_health_check_env_file: /etc/default/technitium-apex-health
+technitium_dns_apex_health_check_packages:
+  - curl
+  - jq
+# Candidate nodes, derived from the published OpenTofu inventory rather than
+# listed here, so commissioning or retiring a node in IaC flows through without a
+# second edit. The health check is what makes derivation safe: a node that is
+# declared but not yet serving is simply never published.
+technitium_dns_apex_health_check_targets: >-
+  {{ (tofu_inventory.nodes | default({}))
+     | dict2items
+     | selectattr('value.commissioned', 'defined')
+     | selectattr('value.commissioned')
+     | map(attribute='value.role')
+     | map('regex_replace', '$', '.' ~ technitium_dns_apex_domain)
+     | list }}

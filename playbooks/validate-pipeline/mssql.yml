@@ -1,0 +1,48 @@
+---
+- name: Validate MSSQL Docker Service
+  hosts: mssql_group
+  become: true
+  gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
+  tags:
+    - mssql_docker
+    - validation
+
+  tasks:
+    - name: Gather service facts for MSSQL validation
+      ansible.builtin.service_facts:
+
+    - name: Assert Docker service is running
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services['docker.service'] is defined
+          - >-
+            ansible_facts.services['docker.service'].state == 'running'
+        fail_msg: >-
+          Docker service is not running on {{ inventory_hostname }}
+        quiet: true
+
+    - name: Verify mssql container is running
+      ansible.builtin.command:
+        cmd: docker ps --filter name=mssql --filter status=running --format {% raw %}"{{ .Names }}"{% endraw %}
+      register: mssql_container_check
+      changed_when: false
+      failed_when: "'mssql' not in mssql_container_check.stdout"
+
+    # Port 1433 is the standard SQL Server port. No tofu constant exists yet;
+    # this should move to constants.service_ports.mssql when terraform-proxmox defines it.
+    - name: Wait for MSSQL port 1433
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 1433
+        timeout: 30
+
+    - name: Display MSSQL validation results
+      ansible.builtin.debug:
+        msg: |
+          MSSQL validation passed on {{ inventory_hostname }}:
+          - Docker: running
+          - Container: mssql running
+          - Port 1433: listening

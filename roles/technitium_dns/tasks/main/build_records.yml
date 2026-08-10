@@ -1,0 +1,157 @@
+---
+- name: Build A records from inventory
+  # Iterate over groups['all'] explicitly. Iterating `hostvars | dict2items`
+  # in Ansible 2.19 returns HostVarsVars proxy objects whose attribute
+  # `is defined` checks behave differently from plain dicts and silently
+  # skip every host. Using groups + hostvars[host] is the supported pattern.
+  #
+  # Only guests that HAVE a declared address get a record here, and that is
+  # exactly the network/critical tier (resolvers, ingress, secrets) — their
+  # `container_ip` is a real address because they are the one exception to the
+  # pool-lease default.
+  #
+  # Leased guests are skipped deliberately, not by oversight. Their address is
+  # held solely by the DHCP lease, and the gateway already answers for its own
+  # lease-table clients, so `{hostname}.{apex}` resolves without anything here.
+  # Publishing a record for them would mean writing the same address down a
+  # second time, in a second system, with no way to notice when the two
+  # disagreed — which is the failure this addressing model exists to remove. A
+  # leased guest's `container_ip` is its FQDN, and the filter below drops it.
+  ansible.builtin.set_fact:
+    technitium_dns_a_records: >-
+      {{
+        technitium_dns_a_records | default([]) +
+        [{
+          'name': hostvars[item].hostname,
+          'ip': hostvars[item].container_ip | default(hostvars[item].ansible_host)
+        }]
+      }}
+  loop: "{{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}"
+  when:
+    - hostvars[item].hostname is defined
+    - (hostvars[item].container_ip is defined) or (hostvars[item].ansible_host is defined)
+    # Skip leased guests: a name, not an address, means there is nothing to
+    # publish and the lease table already answers for them.
+    - (hostvars[item].container_ip | default(hostvars[item].ansible_host))
+      is match('^\d{1,3}(\.\d{1,3}){3}$')
+    # Fronted-service names are owned by the Traefik ingress A-records below
+    # (they resolve to Traefik, not the backend host), so skip them here.
+    - hostvars[item].hostname not in (technitium_dns_ingress_aliases | default([]))
+  loop_control:
+    label: "{{ item }}"
+
+# Fail loud, not silent: a builder that skips every host (e.g. the hostname
+# fact missing from the dynamic inventory) yields an empty list and the role
+# would "succeed" while creating nothing. There is always at least one guest
+# (this DNS host itself), so zero records is always a bug.
+- name: Assert the A-record builder produced records
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_a_records | default([]) | length > 0
+    fail_msg: >-
+      The A-record builder produced ZERO records — every inventory host was
+      skipped. Check that inventory/load_tofu.yml set the `hostname` fact and
+      `container_ip`/`ansible_host` on the dynamically-added guests.
+    quiet: true
+
+# Belt-and-braces: the builder's filter should already have dropped every
+# name-valued target, so this can only fire if that filter is weakened. An A
+# record pointing at a hostname is stored happily by Technitium and fails at
+# resolution time, far from the cause — so reject it before any API call.
+- name: Assert every A-record target is an IPv4 address
+  ansible.builtin.assert:
+    that:
+      - >-
+        technitium_dns_a_records | default([])
+        | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+        | list | length == 0
+    fail_msg: >-
+      Guest(s) [{{ technitium_dns_a_records | default([])
+      | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+      | map(attribute='name') | join(', ') }}] reached the writer with a name,
+      not an address. A leased guest must be skipped by the builder above (the
+      lease table answers for it); only network/critical guests, which declare a
+      static address, belong in this zone.
+    quiet: true
+
+- name: Build Proxmox endpoint apex A records
+  ansible.builtin.set_fact:
+    technitium_dns_proxmox_endpoint_a_records: >-
+      {{
+        technitium_dns_proxmox_endpoint_a_records | default([]) +
+        [{ 'domain': technitium_dns_zone, 'ip': item }]
+      }}
+  loop: "{{ technitium_dns_proxmox_endpoint_ips | default([]) }}"
+  loop_control:
+    label: "{{ technitium_dns_zone }} -> {{ item }}"
+
+- name: Assert every Proxmox endpoint A-record target is an IPv4 address
+  ansible.builtin.assert:
+    that:
+      - >-
+        technitium_dns_proxmox_endpoint_a_records | default([])
+        | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+        | list | length == 0
+    fail_msg: >-
+      PROXMOX_IP_ADDRESSES contains non-IPv4 target(s): {{
+      technitium_dns_proxmox_endpoint_a_records | default([])
+      | rejectattr('ip', 'match', '^\d{1,3}(\.\d{1,3}){3}$')
+      | map(attribute='ip') | join(', ') }}.
+    quiet: true
+
+# --- Derive HA topology (primary = lowest-vmid technitium_dns_group member) ---
+# Build a {vmid, ip} list for the group so the primary is the lowest vmid
+# (terraform pins technitium-1 lowest). vmid is int-cast so it sorts numerically.
+# A single-node group yields one member, so that host becomes its own primary
+# and the prior single-node behavior is preserved.
+- name: Build Technitium group member list
+  ansible.builtin.set_fact:
+    technitium_dns_members: >-
+      {{
+        technitium_dns_members | default([]) +
+        [{
+          'vmid': hostvars[item].proxmox_vmid | default(0) | int,
+          'ip': hostvars[item].container_ip | default(hostvars[item].ansible_host)
+        }]
+      }}
+  loop: "{{ groups['technitium_dns_group'] | default([]) | reject('equalto', 'localhost') | list }}"
+  when: (hostvars[item].container_ip is defined) or (hostvars[item].ansible_host is defined)
+  loop_control:
+    label: "{{ item }}"
+
+- name: Resolve Technitium primary IP (lowest vmid)
+  ansible.builtin.set_fact:
+    technitium_dns_primary_ip: >-
+      {{ technitium_dns_primary_ip if (technitium_dns_primary_ip | length > 0)
+         else ((technitium_dns_members | default([]) | sort(attribute='vmid')
+                | map(attribute='ip') | list | first) | default(technitium_dns_host)) }}
+
+- name: Resolve Technitium role and secondary IPs
+  ansible.builtin.set_fact:
+    technitium_dns_role: >-
+      {{ technitium_dns_role if (technitium_dns_role | length > 0)
+         else ('primary' if technitium_dns_host == technitium_dns_primary_ip else 'secondary') }}
+    technitium_dns_secondary_ips: >-
+      {{ technitium_dns_secondary_ips if (technitium_dns_secondary_ips | length > 0)
+         else (technitium_dns_members | default([]) | map(attribute='ip')
+               | reject('equalto', technitium_dns_primary_ip) | list) }}
+
+# Technitium authenticates API calls via `?token=...` query parameter,
+# NOT via an X-Api-Token header. The header is silently ignored and
+# the server responds with "Parameter 'token' missing."
+- name: Check if DNS zone exists
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/list?token={{ technitium_dns_api_token }}"
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_zones_response
+  changed_when: false
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Parse existing zones
+  ansible.builtin.set_fact:
+    technitium_dns_existing_zones: >-
+      {{ technitium_dns_zones_response.json.response.zones | default([]) | map(attribute='name') | list }}
+  when: technitium_dns_apply | bool

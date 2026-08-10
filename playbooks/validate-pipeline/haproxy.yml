@@ -1,0 +1,95 @@
+---
+- name: Validate HAProxy Load Balancer
+  hosts: haproxy_group
+  become: true
+  gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
+  tags:
+    - haproxy
+    - validation
+
+  vars:
+    constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    # Standard app-facing frontends (constants.syslog_port_map.*.standard,
+    # exported by terraform-proxmox) plus high backend ports
+    # (constants.syslog_ports). The default({}) keeps this working against
+    # inventories generated before syslog_port_map existed.
+    haproxy_syslog_check_ports: >-
+      {{ ((constants.syslog_ports.values() | list)
+          + (constants.syslog_port_map | default({}) | dict2items
+             | map(attribute='value.standard') | list))
+         | map('int') | unique | sort }}
+
+  tasks:
+    - name: Gather service facts for HAProxy validation
+      ansible.builtin.service_facts:
+
+    - name: Assert HAProxy service is running
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services['haproxy.service'] is defined
+          - >-
+            ansible_facts.services['haproxy.service'].state == 'running'
+        fail_msg: >-
+          HAProxy service is not running
+        quiet: true
+
+    - name: Check HAProxy configuration validity
+      ansible.builtin.command:
+        cmd: haproxy -c -f /etc/haproxy/haproxy.cfg
+      register: haproxy_config_check
+      changed_when: false
+      failed_when: haproxy_config_check.rc != 0
+
+    - name: Verify syslog TCP ports are listening
+      ansible.builtin.wait_for:
+        port: "{{ item }}"
+        timeout: 5
+      loop: "{{ haproxy_syslog_check_ports }}"
+
+    - name: Capture UDP listeners
+      ansible.builtin.command:
+        cmd: ss -ulnp
+      register: haproxy_udp_listeners
+      changed_when: false
+
+    - name: Verify syslog UDP ports are listening
+      ansible.builtin.assert:
+        that:
+          - "(':' ~ item ~ ' ') in haproxy_udp_listeners.stdout"
+        fail_msg: >-
+          UDP syslog port {{ item }} is not listening on HAProxy
+        quiet: true
+      loop: "{{ haproxy_syslog_check_ports }}"
+
+    - name: Verify netflow UDP port is listening
+      ansible.builtin.assert:
+        that:
+          - "(':' ~ constants.netflow_ports.unifi ~ ' ') in haproxy_udp_listeners.stdout"
+        fail_msg: >-
+          NetFlow UDP port {{ constants.netflow_ports.unifi }} is not
+          listening on HAProxy
+        quiet: true
+
+    - name: Verify stats page is accessible
+      ansible.builtin.wait_for:
+        port: "{{ constants.service_ports.haproxy_stats }}"
+        timeout: 5
+
+    - name: Get HAProxy backend status via stats socket
+      ansible.builtin.command:
+        cmd: >-
+          socat - UNIX-CONNECT:/run/haproxy/admin.sock
+        stdin: "show servers state\n"
+      register: haproxy_backend
+      changed_when: false
+      failed_when: false
+
+    - name: Display HAProxy validation results
+      ansible.builtin.debug:
+        msg: |
+          HAProxy validation passed: config valid, all ports listening
+          Backend status:
+          {{ haproxy_backend.stdout | default('Socket not available') }}

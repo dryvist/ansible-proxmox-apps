@@ -1,0 +1,50 @@
+---
+- name: Validate Cribl Edge Metrics
+  hosts: cribl_edge
+  become: true
+  gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
+  tags:
+    - cribl_edge_metrics
+    - validation
+
+  vars:
+    constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    cribl_edge_metrics_api_token: >-
+      {{ lookup('env', 'CRIBL_EDGE_API_TOKEN') | default('', true) }}
+
+  tasks:
+    - name: Check Cribl Edge metrics API with configured token
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ constants.service_ports.cribl_edge_api
+          }}/api/v1/system/metrics
+        method: GET
+        headers: "{{
+          {'Authorization': 'Bearer ' + cribl_edge_metrics_api_token}
+          if cribl_edge_metrics_api_token | length > 0
+          else omit
+          }}"
+        status_code:
+          - 200
+      register: cribl_metrics
+      failed_when: cribl_metrics.status != 200
+      changed_when: false
+      when: cribl_edge_metrics_api_token | length > 0
+
+    - name: Display Cribl Edge metrics validation result
+      ansible.builtin.debug:
+        msg: |
+          Cribl Edge metrics check passed on {{ inventory_hostname }}: API responded with 200
+          (auth token used: true)
+          status: {{ cribl_metrics.status }}
+      when: cribl_edge_metrics_api_token | length > 0
+
+    - name: Display Cribl Edge metrics skip reason
+      ansible.builtin.debug:
+        msg: |
+          Cribl Edge private metrics check skipped on {{ inventory_hostname }}:
+          CRIBL_EDGE_API_TOKEN is not set. Service health, API reachability,
+          syslog listeners, and data-flow tests still validate this Edge node.
+      when: cribl_edge_metrics_api_token | length == 0
