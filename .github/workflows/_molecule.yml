@@ -75,38 +75,19 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
     strategy:
       fail-fast: false
-      # Concurrency is the only lever that bounds Molecule's load here.
+      # No max-parallel here. The test containers are created through the
+      # bind-mounted docker.sock, so they are SIBLINGS of the runner on the
+      # shared dockerd -- not children of its cgroup -- and the runner's own
+      # cpus/mem_limit does not apply to them. What bounds that shared daemon is
+      # the fleet's runner-slot count (inventory/group_vars/docker_vms.yml), and
+      # it bounds every repo at once.
       #
-      # The test containers are created through the bind-mounted docker.sock,
-      # so they are SIBLINGS of the runner on the shared dockerd -- not children
-      # of its cgroup. The runner's own cpus/mem_limit therefore does not apply
-      # to them, and the host is deliberately oversubscribed, so an unbounded
-      # matrix can starve a scenario mid-run and the container dies.
-      #
-      # Capping concurrency bounds that without capping any single container.
-      # A per-container `memory:` ceiling was tried and reverted: 1536m killed
-      # download_vpn outright while the same scenario passed on develop, and no
-      # measurement existed to justify any particular number. Bound what is
-      # actually shared; do not guess a limit for each consumer of it.
-      # Raised from 2 on measured evidence. The fleet-wide concurrency group
-      # above means at most ONE run's Molecule executes estate-wide, so this
-      # number is the total in flight across the estate, not per-run — there is
-      # no pile-up for it to guard against.
-      #
-      # At 2, six registered runners peaked at TWO concurrent jobs while the
-      # rest queued: a 21-scenario run became ten serialized waves, and jobs
-      # waited ~24m for a slot against ~13m of actual work. That queue is the
-      # whole of the ~60m worst case.
-      #
-      # 4, not 6: leave headroom on the shared daemon rather than saturate it,
-      # and re-measure before going further. Keep this at or below the fleet's
-      # runner-slot count (inventory/group_vars/docker_vms.yml) — above it, the
-      # extra jobs simply queue and the number becomes a comforting fiction.
-      max-parallel: 4
-      # Supplied by the `select` job. The scenario list is NOT duplicated here:
-      # scripts/select_molecule_scenarios.py is the single definition, and it
-      # checks itself against the molecule/ directories on disk, so a new
-      # scenario cannot be added without being registered.
+      # max-parallel bounded ONE run, and the slot count already held it to the
+      # same number, so it never did anything -- while its comment claimed a
+      # fleet guarantee it could not provide. That wrong claim is what sent a
+      # flakiness investigation after per-PR concurrency instead of the real
+      # defect: a cap fragmented across five per-repo registrations, summing to
+      # more slots than the host carried.
       matrix:
         scenario: ${{ fromJson(needs.select.outputs.scenarios) }}
 
