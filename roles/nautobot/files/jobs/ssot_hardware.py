@@ -39,6 +39,45 @@ from ssot_common import (
 HARDWARE_ROLE = "hardware"
 
 
+def _upsert_circuits(job, circuits, dryrun: bool) -> tuple[int, int]:
+    """Upsert Providers, CircuitTypes and Circuits. Returns (created, updated)."""
+    from nautobot.circuits.models import Circuit, CircuitType, Provider
+
+    from ssot_common import ensure_status
+
+    created = updated = 0
+    for row in circuits:
+        if dryrun:
+            exists = Circuit.objects.filter(cid=row["circuit_id"]).exists()
+            created, updated = (created, updated + 1) if exists else (created + 1, updated)
+            continue
+
+        provider, _ = Provider.objects.get_or_create(name=row["provider"])
+        circuit_type, _ = CircuitType.objects.get_or_create(name=row["circuit_type"])
+        _, was_created = Circuit.objects.update_or_create(
+            cid=row["circuit_id"],
+            defaults={
+                "provider": provider,
+                "circuit_type": circuit_type,
+                "status": ensure_status(row["status"], Circuit),
+                "description": row.get("description", "")[:200],
+            },
+        )
+        created, updated = (created + 1, updated) if was_created else (created, updated + 1)
+
+    # Terminations are deliberately not created. A CircuitTermination points at
+    # a Location or a device Interface, and neither is recorded for these
+    # uplinks. Guessing one would put a made-up physical connection into the
+    # record, which is worse than an untermined circuit that is honestly
+    # incomplete.
+    if circuits:
+        job.logger.info(
+            "Circuits carry no terminations: the source records no interface or "
+            "location for them. Add terminations when that data exists."
+        )
+    return created, updated
+
+
 def _module_bay(device, name: str):
     """Idempotently return the named ModuleBay on a Device."""
     from nautobot.dcim.models import ModuleBay
@@ -68,8 +107,9 @@ class SeedHardware(Job):
         seed = load_seed()
         devices = seed["hardware_devices"]
         modules = seed["hardware_modules"]
+        circuits = seed["wan_circuits"]
 
-        if not devices and not modules:
+        if not devices and not modules and not circuits:
             self.logger.warning(
                 "The seed bundle carries no hardware slice. Nothing was changed. "
                 "Set INT_HOMELAB_HARDWARE on the controller if this is unexpected."
@@ -150,10 +190,15 @@ class SeedHardware(Job):
             )
             created, updated = (created + 1, updated) if was_created else (created, updated + 1)
 
+        circuit_created, circuit_updated = _upsert_circuits(self, circuits, dryrun)
+        created += circuit_created
+        updated += circuit_updated
+
         verb = "would create/update" if dryrun else "created/updated"
         summary = (
             f"{verb} {created} new and {updated} existing objects "
-            f"from {len(devices)} device and {len(modules)} module rows "
+            f"from {len(devices)} device, {len(modules)} module and "
+            f"{len(circuits)} circuit rows "
             f"({skipped} chassis rows left to the rack-server seed)"
         )
         self.logger.info(summary)

@@ -65,6 +65,24 @@ it is, and logging that the chassis is missing, keeps the gap visible.
 constraint, so the job sets one and explicitly clears the other on every write
 rather than leaving whichever value happened to be there.
 
+## WAN uplinks: Circuits yes, Cables no
+
+The same slice carries the WAN uplinks, which become `Provider`, `CircuitType`
+and `Circuit` objects. A link the source marks as not yet installed is written
+`Planned`, not `Active` — publishing a circuit that does not exist as live is
+exactly the drift this ingest removes.
+
+Circuits are created **without terminations**. A `CircuitTermination` points at
+a Location or a device Interface, and the source records neither for these
+uplinks. An untermined circuit is honestly incomplete; a guessed termination is
+a made-up physical connection that every later query inherits.
+
+Internal topology (switch-to-host links) is **not** modelled as `Cable` objects
+for the same reason at a larger scale: a Cable terminates on interfaces, and no
+per-device interface inventory exists yet. Creating interfaces purely to hang
+cables on would fabricate the very data the model is supposed to record. Cables
+become possible once interface data exists — not before.
+
 ## Additive, like every other seed
 
 Nothing in this path deletes. A row that disappears from the source leaves its

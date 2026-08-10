@@ -107,6 +107,7 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
         "module_bay": [],
         "module_type": [],
         "location": [Record(name="homelab")],
+        "circuit": [],
     }
 
     def model(name, key):
@@ -124,6 +125,13 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
     for extra in ("DeviceType", "Location", "LocationType", "Manufacturer", "ModuleType", "Rack"):
         setattr(dcim, extra, model(extra, "module_type"))
 
+    circuits_mod = types.ModuleType("nautobot.circuits.models")
+    circuits_mod.Circuit = type(
+        "Circuit", (), {"objects": FakeManager(stores["circuit"], "circuit")}
+    )
+    for extra in ("CircuitType", "Provider"):
+        setattr(circuits_mod, extra, model(extra, "module_type"))
+
     jobs_mod = types.ModuleType("nautobot.apps.jobs")
     jobs_mod.Job = type("Job", (), {"logger": None})
     jobs_mod.BooleanVar = lambda **kw: None
@@ -135,6 +143,8 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
         "nautobot.apps.jobs": jobs_mod,
         "nautobot.dcim": types.ModuleType("nautobot.dcim"),
         "nautobot.dcim.models": dcim,
+        "nautobot.circuits": types.ModuleType("nautobot.circuits"),
+        "nautobot.circuits.models": circuits_mod,
     }.items():
         sys.modules[name] = mod
 
@@ -148,7 +158,14 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
     common.ensure_module_type = lambda m, mfr="", pn="": Record(model=m, manufacturer=mfr)
     common.ensure_role = lambda n, *m: Record(name=n)
     common.ensure_status = lambda n, *m: Record(name=n)
-    common.load_seed = lambda: json.loads(seed_path.read_text(encoding="utf-8"))
+    # Mirrors the real load_seed: every slice defaults to empty, so a document
+    # missing a key behaves the same here as it does on the guest.
+    common.load_seed = lambda: {
+        "hardware_devices": [],
+        "hardware_modules": [],
+        "wan_circuits": [],
+        **json.loads(seed_path.read_text(encoding="utf-8")),
+    }
     sys.modules["ssot_common"] = common
 
     return stores
@@ -274,6 +291,39 @@ def main() -> None:
         {"hardware_devices": [], "hardware_modules": [row("GPU-DRY")]}, [], dryrun=True
     )
     assert not stores["module"], "dryrun must not create objects"
+
+    # WAN circuits: a Planned uplink must not be published Active, and nothing
+    # invents a termination for a link whose endpoint is not recorded.
+    _, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [],
+            "wan_circuits": [
+                {
+                    "circuit_id": "WAN1-XFINITY",
+                    "provider": "Xfinity",
+                    "circuit_type": "Cable",
+                    "priority": 1,
+                    "status": "Active",
+                    "description": "Cable — primary",
+                },
+                {
+                    "circuit_id": "WAN2-STARLINK",
+                    "provider": "Starlink",
+                    "circuit_type": "Satellite",
+                    "priority": 2,
+                    "status": "Planned",
+                    "description": "Satellite — secondary",
+                },
+            ],
+        },
+        [],
+    )
+    by_cid = {c.cid: c for c in stores["circuit"]}
+    assert set(by_cid) == {"WAN1-XFINITY", "WAN2-STARLINK"}
+    assert by_cid["WAN2-STARLINK"].status.name == "Planned", "a planned link must not read live"
+    assert by_cid["WAN1-XFINITY"].status.name == "Active"
+    assert not any(hasattr(c, "termination_a") for c in stores["circuit"])
 
     # An absent slice is a warning and a no-op, not a crash.
     job, stores = run({"hardware_devices": [], "hardware_modules": []}, [])

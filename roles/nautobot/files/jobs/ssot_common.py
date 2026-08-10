@@ -52,6 +52,7 @@ _EMPTY_BUNDLE: dict[str, list] = {
     "virtual_machines": [],
     "hardware_devices": [],
     "hardware_modules": [],
+    "wan_circuits": [],
 }
 
 
