@@ -1,0 +1,82 @@
+---
+# Keep internal networks reachable from a VDI guest that runs a VPN client.
+#
+# A full-tunnel client (FortiClient, and every other one) installs its own
+# default route when it connects. From that moment the guest's REPLY packets to
+# anything off its own subnet leave through the tunnel and never arrive: an
+# established RDP session drops, and every subsequent WinRM converge fails,
+# because inbound still reaches the guest while the return path is gone.
+#
+# A more-specific persistent route per preserved subnet outranks the tunnel's
+# default route — including the two-half variant clients often install instead
+# of a literal default — so those networks stay on the LAN and everything else
+# still goes to the VPN.
+#
+# Deliberately NOT every private range: a corporate network behind the VPN very
+# often overlaps the estate's own private space, and routing that past the
+# tunnel would break the resource the VDI exists to reach. Only the subnets
+# named by vdi_preserved_vlans move.
+
+- name: Fail when the split-tunnel inputs are missing
+  # An empty list here is the silent-no-op shape this repo keeps getting bitten
+  # by: the play goes green, the operator believes the standard is applied, and
+  # the guest drops off the network the next time the VPN connects. A guest in
+  # vdi_group has asked for this standard, so absent inputs are a broken
+  # inventory, not an opt-out.
+  ansible.builtin.assert:
+    that:
+      - vdi_local_routes_destinations | length > 0
+      - vdi_local_routes_gateway | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} is in vdi_group but the published inventory
+      carries no split-tunnel inputs (destinations:
+      {{ vdi_local_routes_destinations | length }}, gateway present:
+      {{ vdi_local_routes_gateway | length > 0 }}). Set vdi_preserved_vlans in
+      deployment.json and re-run the tofu-proxmox workspace so the inventory
+      republishes with vdi_preserved_cidrs and a per-VM gateway.
+
+- name: Pin the preserved subnets to the LAN gateway
+  # Both policy stores, deliberately. ActiveStore takes effect now; only
+  # PersistentStore survives a reboot, and a route that vanishes on the next
+  # restart is worse than none — it works when tested and fails unattended.
+  # A route whose next hop no longer matches the published gateway is replaced
+  # rather than left alongside, so a VLAN renumber converges instead of
+  # accumulating a dead entry that still wins on prefix length.
+  #
+  # win_powershell, not win_shell: win_shell is free-form, so Ansible splits the
+  # script as module arguments and this one does not survive it ("unbalanced
+  # jinja2 block or quotes" — caught by ansible-lint). Passing the values as
+  # typed parameters also keeps Jinja out of the PowerShell entirely.
+  ansible.windows.win_powershell:
+    parameters:
+      Destination: "{{ item }}"
+      Gateway: "{{ vdi_local_routes_gateway }}"
+      Metric: "{{ vdi_local_routes_metric }}"
+    script: |
+      param([string]$Destination, [string]$Gateway, [int]$Metric)
+      $ErrorActionPreference = 'Stop'
+
+      # Resolve the interface that actually reaches the gateway. The gateway sits
+      # on the guest's own subnet, which stays on-link even with the tunnel up,
+      # so this returns the physical NIC rather than the VPN adapter.
+      $ifIndex = (Find-NetRoute -RemoteIPAddress $Gateway -ErrorAction Stop |
+                  Select-Object -First 1).InterfaceIndex
+
+      $changed = $false
+      foreach ($store in 'ActiveStore', 'PersistentStore') {
+        $existing = @(Get-NetRoute -DestinationPrefix $Destination -PolicyStore $store `
+                                   -ErrorAction SilentlyContinue)
+        if ($existing | Where-Object { $_.NextHop -eq $Gateway }) { continue }
+        if ($existing) {
+          $existing | Remove-NetRoute -PolicyStore $store -Confirm:$false
+        }
+        New-NetRoute -DestinationPrefix $Destination -InterfaceIndex $ifIndex `
+                     -NextHop $Gateway -RouteMetric $Metric `
+                     -PolicyStore $store | Out-Null
+        $changed = $true
+      }
+
+      # win_powershell reports changed unless told otherwise, so a converge that
+      # altered nothing would still read as a change on every run.
+      $Ansible.Changed = $changed
+  loop: "{{ vdi_local_routes_destinations }}"
