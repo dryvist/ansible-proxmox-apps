@@ -63,6 +63,33 @@ jobs:
       - name: Verify the export refuses to publish ahead of an ingest
         run: python3 tests/nautobot_export_ordering.py
 
+      # Self-contained (stubs django + nautobot itself), but grouped with the
+      # other two because it covers the same failure class: a converge that
+      # reports success while nothing is actually publishing.
+      - name: Verify the export schedule is reconciled, not just present
+        run: python3 tests/nautobot_schedule_export.py
+
+      # Placement is the part of the hardware seed that fails silently: a
+      # module written with both a location and a parent bay, or one hung off
+      # an invented chassis, still looks like a successful ingest.
+      - name: Verify hardware seed placement (spares, bays, missing chassis)
+        run: python3 tests/nautobot_hardware_seed.py
+
+      # A seed job enqueued the wrong way does not fail the converge loudly —
+      # it reports JOB_ERROR for that one job while the rest go green, which
+      # reads as a successful run that seeded only part of the database.
+      - name: Verify the seed-job enqueue contract (both Nautobot signatures)
+        run: python3 tests/nautobot_run_seed_jobs.py
+
+      # The scenario list drives the Molecule matrix and is no longer duplicated
+      # in the workflow, so it has to stay true to molecule/ on disk. A scenario
+      # on disk but unlisted never runs and nothing says so.
+      - name: Verify the Molecule scenario list matches molecule/
+        run: python3 scripts/select_molecule_scenarios.py --check-disk molecule
+
+      - name: Verify the Molecule scenario selector fails safe
+        run: python3 scripts/select_molecule_scenarios.py --demo
+
   syntax-check:
     name: Syntax Check
     # Self-hosted (pre-baked ansible + collections); fork PRs fall back to a

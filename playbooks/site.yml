@@ -97,7 +97,7 @@
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
     postgres_group:postgres_ai_group:hindsight_group:nautobot_group:zammad_group:vikunja_group:
-    sonarr_group:radarr_group:plex_group:seerr_group:sortarr_group:download_vpn_group:immich_group
+    immich_group
   gather_facts: false
   # `always`: every consumer role resolves its secrets bao-first, so a tagged
   # converge (--tags zammad, --tags nautobot, ...) MUST still run this play —
@@ -218,19 +218,6 @@
         - /etc/apt/apt.conf.d/00proxy
         - /usr/local/bin/apt-proxy-detect
 
-- name: Remove apt proxy from download_vpn (killswitch blocks cross-subnet proxy)
-  hosts: download_vpn_group
-  become: true
-  gather_facts: false
-  tags:
-    - apt_proxy
-    - download_vpn
-    - lxc
-  tasks:
-    - name: Ensure no apt proxy is configured (apt-cacher-ng is in a different /24 than wg0 allows)
-      ansible.builtin.file:
-        path: /etc/apt/apt.conf.d/00proxy
-        state: absent
 
 # =============================================================================
 # Phase 0-zot: Zot OCI Registry
@@ -973,259 +960,6 @@
           vars:
             _isolated_play_name: openbao_voter_health
 
-# =============================================================================
-# Phase 8c: Media stack (pve2)
-# LAN-only Sonarr/Radarr/Plex/Seerr first, then the VPN-locked downloader
-# (qBittorrent + Prowlarr behind Proton WireGuard with a fail-closed nftables
-# killswitch) LAST.
-#
-# ORDERING IS DELIBERATE — RESILIENCE: download_vpn imports its own validate.yml
-# at the end and FAILS its play on any killswitch/leak violation (correct: the
-# tunnel must never leak). Every play below is wrapped in block/rescue for
-# play-level failure isolation (issue #672) — a download_vpn failure does NOT
-# abort the others, and a plain `any_errors_fatal: false` is NOT sufficient for
-# that on its own (it only changes what happens when *some* hosts in a play
-# fail; when the *only* host in a narrow group like download_vpn_group fails,
-# Ansible's executor aborts every remaining play in the run regardless of
-# any_errors_fatal — see tasks/record_isolated_failure.yml). By running
-# download_vpn LAST, Sonarr/Radarr/Plex/Seerr are already converged and serving
-# before the fragile, security-gated downloader is even attempted. qBittorrent is
-# not required for Plex. Do NOT move download_vpn earlier and do NOT weaken its
-# validate.yml; resilience comes from play isolation + ordering, not from making
-# the killswitch check non-fatal.
-# =============================================================================
-
-- name: Configure Sonarr (LAN-only TV PVR)
-  hosts: sonarr_group
-  become: true
-  gather_facts: true
-  tags:
-    - sonarr
-    - media
-  tasks:
-    - name: Converge sonarr (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include sonarr role
-          ansible.builtin.include_role:
-            name: sonarr
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: sonarr
-
-- name: Configure the Sonarr audio-language audit
-  hosts: sonarr_group
-  become: true
-  gather_facts: true
-  tags:
-    - sonarr_language_audit
-    - media
-  tasks:
-    - name: Converge sonarr_language_audit (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include sonarr_language_audit role
-          ansible.builtin.include_role:
-            name: sonarr_language_audit
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: sonarr_language_audit
-
-- name: Configure Radarr (LAN-only movie PVR)
-  hosts: radarr_group
-  become: true
-  gather_facts: true
-  tags:
-    - radarr
-    - media
-  tasks:
-    - name: Converge radarr (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include radarr role
-          ansible.builtin.include_role:
-            name: radarr
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: radarr
-
-- name: Configure Plex Media Server (LAN-only)
-  hosts: plex_group
-  become: true
-  gather_facts: true
-  tags:
-    - plex
-    - media
-  tasks:
-    - name: Converge plex + media_monitor (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include plex role
-          ansible.builtin.include_role:
-            name: plex
-        # Playback visibility: a session probe that alerts on forced transcode
-        # (incident history: Zammad ticket #17040, Media). Carries its own
-        # `media_monitor` tag so `--tags media_monitor` converges just this role
-        # (e.g. to run its absent-cleanup) without re-converging the Plex role.
-        - name: Include media_monitor role
-          ansible.builtin.include_role:
-            name: media_monitor
-          tags:
-            - media_monitor
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: plex
-
-# Seerr request UI (Docker in LXC). Registers Sonarr/Radarr/Plex via its settings
-# API — depends only on those apps being up (from the plays above), not on the
-# Prowlarr/qBittorrent wiring, so it runs before download_vpn/servarr_wiring and
-# stays up even if the VPN downloader fails.
-- name: Configure Seerr request UI
-  hosts: seerr_group
-  become: true
-  gather_facts: true
-  tags:
-    - seerr
-    - media
-  tasks:
-    - name: Converge seerr (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include seerr role
-          ansible.builtin.include_role:
-            name: seerr
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: seerr
-
-# Sortarr insights dashboard (Docker in LXC). Read-only — reads Sonarr/Radarr
-# (and optionally Plex) via their existing API keys; registers nothing back
-# into those apps, so it can run anywhere in this phase.
-- name: Configure Sortarr insights dashboard
-  hosts: sortarr_group
-  become: true
-  gather_facts: true
-  tags:
-    - sortarr
-    - media
-  tasks:
-    - name: Converge sortarr (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include sortarr role
-          ansible.builtin.include_role:
-            name: sortarr
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: sortarr
-
-# VPN-locked downloader runs LAST (see Phase 8c header). Isolated via
-# block/rescue so a killswitch/leak failure here can never abort the media
-# stack converged above.
-- name: Configure VPN-locked downloader (qBittorrent + Prowlarr)
-  hosts: download_vpn_group
-  become: true
-  gather_facts: true
-  tags:
-    - download_vpn
-    - media
-    - vpn
-  tasks:
-    - name: Converge download_vpn (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include download_vpn role
-          ansible.builtin.include_role:
-            name: download_vpn
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: download_vpn
-
-# Online-consistent backups for the apps in this phase that keep their state in
-# SQLite. ONE play over the union of their groups rather than a clause in each:
-# the role is inert wherever sqlite_backup_dirs is unset, so membership is
-# decided by inventory, not by editing this file per app.
-#
-# Runs AFTER the app plays so the databases exist and are in their final shape;
-# the role takes a proof backup during the converge, which would otherwise race
-# a first-run app that has not created its database yet.
-- name: Configure SQLite backups for the media apps
-  hosts: >-
-    sonarr_group:radarr_group:seerr_group:sortarr_group:download_vpn_group
-  become: true
-  gather_facts: true
-  tags:
-    - sqlite_backup
-    - media
-    - backup
-  tasks:
-    - name: Converge sqlite_backup (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include sqlite_backup role
-          ansible.builtin.include_role:
-            name: sqlite_backup
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: sqlite_backup
-
-# Self-wiring: auto-configures the Prowlarr <-> Sonarr/Radarr <-> qBittorrent
-# pipeline via each app's API (deterministic SOPS keys). Runs from the
-# download_vpn coordinator, so it must come AFTER download_vpn; if that play
-# failed, this is skipped for the failed host — the *arr/Plex/Seerr stack above
-# is unaffected.
-- name: Wire the Servarr stack via API (Prowlarr/Sonarr/Radarr/qBittorrent)
-  hosts: download_vpn_group
-  become: true
-  gather_facts: true
-  tags:
-    - servarr_wiring
-    - media
-  tasks:
-    - name: Converge servarr_wiring (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include servarr_wiring role
-          ansible.builtin.include_role:
-            name: servarr_wiring
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: servarr_wiring
-
-# Enforce TRaSH-Guides quality profiles + custom formats on Sonarr/Radarr via
-# the official Configarr container. Runs on docker-host (reaches the *arr LAN
-# and the internet directly, no VPN) AFTER the apps + deterministic keys exist.
-# docker_vms[0]: one docker host is enough, and Configarr is idempotent so it is
-# safe every converge. Owns quality config only — root folders / download
-# clients live in the devopsarr servarr-config tofu module.
-- name: Enforce *arr quality config (Configarr / TRaSH)
-  hosts: docker_vms[0]
-  become: true
-  gather_facts: true
-  tags:
-    - configarr
-    - media
-  tasks:
-    - name: Converge configarr (isolated — failure does not abort downstream plays)
-      block:
-        - name: Include configarr role
-          ansible.builtin.include_role:
-            name: configarr
-      rescue:
-        - name: Record isolated failure and continue
-          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
-          vars:
-            _isolated_play_name: configarr
-
 # Immich photo/video backup (Docker-in-LXC). Standalone — no cross-app API
 # wiring; phone/Mac clients point straight at it. Inert until an LXC is tagged
 # `immich` (empty group => no hosts).
@@ -1464,6 +1198,85 @@
     - web
   roles:
     - role: static_site
+
+# =============================================================================
+# The media stack lives in its own repository and is pinned here as a git
+# submodule. It runs as its own `ansible-playbook` process, not an
+# `import_playbook`: Ansible resolves `group_vars/` against the inventory
+# directory and the CLI-invoked playbook only, so importing that repo's
+# site.yml would silently drop every one of its group_vars and converge the
+# media guests on bare role defaults. A separate process keeps its inventory,
+# ansible.cfg and group_vars intact.
+#
+# This play is what makes the split invisible to anything that drives a full
+# converge: `site.yml` remains the single entry point, and the media stack is
+# reached automatically with no extra step to remember. Keep it that way — if
+# this play is ever removed, the media guests silently stop being converged
+# and nothing reports it.
+#
+# The pin is an immutable SHA recorded by the submodule, the same discipline
+# as the collection pins in requirements.yml: a moving ref would let an
+# unreviewed change in the other repo reach a converge here without a PR.
+# =============================================================================
+
+- name: Converge the media stack from its own repository
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags:
+    - media
+    - servarr
+  vars:
+    _servarr_dir: "{{ playbook_dir }}/../servarr"
+    # group_vars/all.yml sets `ansible_become: true` for every host, and a
+    # connection variable beats the `become:` play keyword — so this has to be
+    # the variable, the same way load_tofu.yml does it. This play only shells
+    # out on the control node; the chained run escalates on the guests itself.
+    ansible_become: false
+  tasks:
+    - name: Converge the media stack (isolated — failure does not abort downstream plays)
+      when: site_converge_servarr | default(true) | bool
+      block:
+        # scripts/run-ansible.sh checks the submodule out at its pinned SHA
+        # before invoking ansible, so a bare clone needs no preparatory step.
+        # Fail here with the reason rather than letting `chdir` report a bare
+        # "directory does not exist" from an empty submodule dir.
+        - name: Confirm the pinned media-stack submodule is checked out
+          ansible.builtin.stat:
+            path: "{{ _servarr_dir }}/playbooks/site.yml"
+          register: _servarr_stat
+          failed_when: not _servarr_stat.stat.exists
+          changed_when: false
+
+        - name: Run the media stack's own site.yml
+          ansible.builtin.command:
+            cmd: >-
+              scripts/fetch-openbao-secrets.sh media --
+              scripts/run-ansible.sh playbooks/site.yml
+              {{ '--check' if ansible_check_mode else '' }}
+            chdir: "{{ _servarr_dir }}"
+          register: _servarr_converge
+          changed_when: true
+          # This play is the only caller, and it already reports the outcome.
+          # `--check` is passed through above rather than skipped, so a dry run
+          # of site.yml stays a dry run all the way down.
+          check_mode: false
+
+        # Without this the chained run is a black box: its per-host recap only
+        # exists inside the child process's stdout.
+        - name: Report the media stack's recap
+          ansible.builtin.debug:
+            msg: "{{ _servarr_converge.stdout_lines[-20:] }}"
+
+      rescue:
+        - name: Surface the media-stack converge output before recording the failure
+          ansible.builtin.debug:
+            msg: "{{ (_servarr_converge | default({})).stdout_lines | default(['no output captured']) }}"
+
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: servarr
 
 - name: Fail the run if any isolated play recorded a failure
   hosts: localhost

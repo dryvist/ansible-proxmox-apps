@@ -12,8 +12,41 @@ permissions:
   contents: read
 
 jobs:
+  # Narrow the matrix to the scenarios a change can actually affect.
+  #
+  # The containers are siblings on a shared, oversubscribed dockerd (see the
+  # concurrency note on `test`), so the number running at once across ALL
+  # in-flight PRs is what starves. max-parallel bounds one run; it cannot bound
+  # the fleet. Running 20 scenarios for a one-role change is the largest
+  # avoidable contributor to that.
+  #
+  # The policy in scripts/select_molecule_scenarios.py fails safe: it narrows
+  # only when every changed path maps to a specific scenario or is
+  # documentation, and returns the full set for anything shared or
+  # unrecognised. Skipping a scenario that should have run is a silent loss of
+  # coverage, which is worse than a slow run.
+  select:
+    name: Select scenarios
+    runs-on: ubuntu-latest
+    outputs:
+      scenarios: ${{ steps.pick.outputs.scenarios }}
+      any: ${{ steps.pick.outputs.any }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Pick the scenarios this change needs
+        id: pick
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: .github/scripts/select-molecule-scenarios.sh
+
   test:
     name: Molecule (${{ matrix.scenario }})
+    needs: select
+    if: needs.select.outputs.any == 'true'
     # Self-hosted (pre-baked toolchain); fork PRs fall back to a hosted runner
     # so fork-author code never runs on the fleet.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
@@ -33,28 +66,12 @@ jobs:
       # measurement existed to justify any particular number. Bound what is
       # actually shared; do not guess a limit for each consumer of it.
       max-parallel: 2
+      # Supplied by the `select` job. The scenario list is NOT duplicated here:
+      # scripts/select_molecule_scenarios.py is the single definition, and it
+      # checks itself against the molecule/ directories on disk, so a new
+      # scenario cannot be added without being registered.
       matrix:
-        scenario:
-          - default
-          - configarr
-          - download_vpn
-          - plex
-          - radarr
-          - seerr
-          - servarr_wiring
-          - sonarr
-          - sonarr_language_audit
-          - sortarr
-          - static_site
-          - technitium_dns
-          - netmon
-          - immich
-          - openbao
-          - keepalived
-          - postgres
-          - nautobot
-          - ssh_ca_trust
-          - sqlite_backup
+        scenario: ${{ fromJson(needs.select.outputs.scenarios) }}
 
     steps:
       - name: Checkout code
@@ -132,25 +149,6 @@ jobs:
           # Only the secrets the scenarios reference (verified against
           # molecule/*/molecule.yml provisioner.env and the exercised roles):
           #   default     -> MSSQL_SA_PASSWORD
-          #   download_vpn-> QBITTORRENT_ADMIN_PASSWORD (Proton WG keys use
-          #                  built-in dummy fallbacks; services not started in CI)
-          #   seerr       -> none (SEERR_API_KEY uses a built-in dummy
-          #                  fallback; container not started in CI)
-          #   servarr_wiring -> none (SONARR/RADARR/PROWLARR_API_KEY use
-          #                  built-in dummy fallbacks; manage_services=false,
-          #                  no live *arr APIs in CI)
-          #   configarr   -> none (SONARR/RADARR_API_KEY dummy fallbacks;
-          #                  container run tagged molecule-notest)
-          #   sonarr/radarr -> none (API keys dummy fallbacks;
-          #                  manage_services=false, no live app in CI)
-          #   sonarr_language_audit -> none (the deployed script reads
-          #                  Sonarr's API key from config.xml at runtime;
-          #                  no secret touches this role at all)
-          #   plex        -> none (claim/library/publish gated on
-          #                  manage_services=false; apt install only)
-          #   sortarr     -> none (SONARR_API_KEY/RADARR_API_KEY/
-          #                  SORTARR_BASIC_AUTH_PASS use built-in dummy
-          #                  fallbacks; container not started in CI)
           #   static_site -> none (role reads no secrets; the fixture site
           #                  is committed alongside the scenario)
           #   technitium_dns -> none (PROXMOX_DOMAIN/SUBDOMAIN +
@@ -161,7 +159,6 @@ jobs:
           #   ssh_ca_trust -> none (activation gate held closed in both
           #                  converge cases; no live OpenBao CA fetch)
           MSSQL_SA_PASSWORD: ${{ steps.doppler.outputs.MSSQL_SA_PASSWORD }}
-          QBITTORRENT_ADMIN_PASSWORD: ${{ steps.doppler.outputs.QBITTORRENT_ADMIN_PASSWORD }}
         run: molecule test -s "$MOLECULE_SCENARIO"
 
   template-render:

@@ -332,9 +332,35 @@
              'NAUTOBOT_EXPORT_SCHEDULE_HOUR': nautobot_export_schedule_hour | string,
              'NAUTOBOT_EXPORT_SCHEDULE_MINUTE': nautobot_export_schedule_minute | string}) }}
       register: nautobot_schedule
-      changed_when: "'SCHEDULE_CREATED' in nautobot_schedule.stdout"
+      changed_when: >-
+        {{ 'SCHEDULE_CREATED' in nautobot_schedule.stdout
+           or 'SCHEDULE_REENABLED' in nautobot_schedule.stdout }}
       become: true
       become_user: "{{ nautobot_user }}"
+
+    # The export is the only thing that publishes this instance's inventory, and
+    # its ordering guard is what makes a stale artifact loud. Both are inert if
+    # the schedule is absent. Printing SCHEDULE_SKIPPED and letting the converge
+    # continue green lets the export stop publishing with nothing reporting it.
+    # A gate that reports its own failure as success is worse than no gate, so
+    # the converge fails here instead.
+    - name: Assert the export schedule was reconciled
+      ansible.builtin.assert:
+        that:
+          # Both halves are load-bearing. The negative catches a printed
+          # SCHEDULE_SKIPPED; the positive catches empty stdout, which would
+          # otherwise satisfy the negative and pass on no evidence at all.
+          - "'SCHEDULE_SKIPPED' not in nautobot_schedule.stdout"
+          - >-
+            'SCHEDULE_CREATED' in nautobot_schedule.stdout
+            or 'SCHEDULE_REENABLED' in nautobot_schedule.stdout
+            or 'SCHEDULE_EXISTS' in nautobot_schedule.stdout
+        fail_msg: >-
+          The export ScheduledJob was not reconciled: {{
+          nautobot_schedule.stdout | trim | default('(no output)', true) }}.
+          Without it nothing publishes the inventory artifact and the ordering
+          guard cannot fire. Fix the cause — do not skip this task.
+        quiet: true
 
     # Schedule the SSH-CLI discovery sweep (SSOTSyncDevices). Inert unless
     # NAUTOBOT_ONBOARD_TARGETS is set — see the scope note in defaults/main.yml.
@@ -372,24 +398,24 @@
     - name: Restart nautobot services before enqueuing jobs
       ansible.builtin.meta: flush_handlers
 
-    # ...then restart the worker UNCONDITIONALLY when a seed/export run is
-    # requested. flush_handlers only fires if a task notified the handler this
-    # converge; when nautobot.env is unchanged the worker keeps its start-time
-    # env, so the export would enqueue onto a stale worker and fail
-    # "NAUTOBOT_EXPORT_S3_BUCKET is not set". An explicit restart guarantees the
-    # worker carries the current env before any job is enqueued. Gated on the
-    # run flag so ordinary converges are untouched.
-    - name: Ensure the worker carries the current env before enqueuing jobs
-      ansible.builtin.systemd:
-        name: nautobot-worker
-        state: restarted
-      when: nautobot_run_seed_jobs | bool
+    # ...and that is the whole mechanism. An unconditional worker restart used
+    # to follow, gated on nautobot_run_seed_jobs "so ordinary converges are
+    # untouched". Now that the flag defaults on, every converge is a seed run,
+    # so that restart would fire every time: permanently `changed`, and able to
+    # kill a scheduled job mid-flight.
+    #
+    # It is not needed. nautobot.env notifies the restart handler, so a changed
+    # env always bounces the worker in the same converge that changed it. A
+    # worker running stale env is therefore a real fault, and run_seed_jobs.py
+    # exits non-zero when any job is skipped, fails or times out — so it now
+    # surfaces as a failed converge instead of being papered over by a restart
+    # on every pass.
 
     # Load the seed bundle into Nautobot by running the additive SSoT DiffSync
-    # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. Off by
-    # default — enable at cutover with -e nautobot_run_seed_jobs=true after the
-    # seed bundle is placed (nautobot_build_seed=true). The jobs are additive
-    # (create/update only), so re-running is safe and idempotent. The worker
+    # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. On by
+    # default, paired with nautobot_build_seed, so every converge ingests the
+    # inventory it just resolved rather than replaying an aging bundle. The jobs
+    # are additive (create/update only), so re-running is safe. The worker
     # executes them with the units' EnvironmentFile, so it already holds the
     # seed-file path + export S3 credentials.
     - name: Run the SSoT seed jobs (and optional export) once

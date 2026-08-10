@@ -36,7 +36,9 @@ UNMODELED_DOMAINS = [
     "static + traffic routes",
     "RADIUS",
     "VPN",
-    "WAN",
+    # WAN uplinks now land as Circuits. Cables and per-device interfaces stay
+    # here on purpose: a Cable terminates on interfaces, and no source
+    # enumerates them, so modelling cables would mean inventing the endpoints.
     "cables",
     "physical device interfaces",
 ]
@@ -104,10 +106,23 @@ def main() -> int:
             "ipam/prefixes",
             "ipam/ip-addresses",
             "dcim/devices",
+            # Modules are counted separately from the two placement cases below
+            # because a total alone hides the failure that matters: everything
+            # landing as a spare because its chassis was missing.
+            "dcim/modules",
+            "dcim/module-types",
+            "circuits/circuits",
+            "circuits/providers",
             "virtualization/virtual-machines",
             "extras/tags",
         )
     }
+    counts["dcim/modules (installed)"] = _get(
+        "/api/dcim/modules/?limit=1&parent_module_bay__isnull=false", url, token
+    ).get("count")
+    counts["dcim/modules (spare)"] = _get(
+        "/api/dcim/modules/?limit=1&parent_module_bay__isnull=true", url, token
+    ).get("count")
 
     missing_guests = sorted(set(src) - set(nb))
     extra_guests = sorted(set(nb) - set(src))
