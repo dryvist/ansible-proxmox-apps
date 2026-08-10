@@ -35,42 +35,42 @@
     label: "{{ item.name }}"
   when: (item.fields | selectattr('name', 'equalto', 'freeleech') | list | length) == 0
 
+# Every setting here is an entry in the `fields` array keyed by name — there is
+# no nested settings object on the indexer. Reading the nested path returned {}
+# for every indexer, so the seed values read as 0: the guard could never be
+# satisfied, this fired on every converge, and the PUT then sent a nested key
+# the API rejects. It failed every run against an indexer already compliant.
 - name: Enforce freeleech-only + seed-criteria floor on private indexers
-  ansible.builtin.uri:
-    url: "http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port }}/api/v1/indexer/{{ item.id }}"
-    method: PUT
-    headers:
-      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
-    body_format: json
-    body: >-
-      {{ item | combine({'fields': _new_fields, 'torrentBaseSettings': _new_tbs}) }}
-    status_code: [200, 202]
-  register: servarr_wiring_pi_put
-  changed_when: true
-  no_log: true
+  ansible.builtin.include_tasks: prowlarr_private_apply.yml
   loop: "{{ servarr_wiring_pi_before.json | selectattr('privacy', 'equalto', 'private') | list }}"
   loop_control:
-    label: "{{ item.name }}"
+    loop_var: _pi
+    label: "{{ _pi.name }}"
   vars:
-    _freeleech_field: "{{ item.fields | selectattr('name', 'equalto', 'freeleech') | list }}"
+    _fields: "{{ _pi.fields | default([]) }}"
+    _tbs: >-
+      {{ dict(_fields | map(attribute='name') | list
+              | map('regex_replace', '^torrentBaseSettings\.', '') | list
+              | zip(_fields | map(attribute='value', default='') | list)) }}
+    _freeleech_field: "{{ _fields | selectattr('name', 'equalto', 'freeleech') | list }}"
     _has_freeleech: "{{ _freeleech_field | length > 0 }}"
-    _new_fields: >-
-      {{ (item.fields | rejectattr('name', 'equalto', 'freeleech') | list)
-         + ([_freeleech_field | first | combine({'value': true})] if _has_freeleech else []) }}
-    _tbs: "{{ item.torrentBaseSettings | default({}) }}"
     _min_ratio: "{{ servarr_wiring_private_indexer_min_seed_ratio | float }}"
     _min_time: "{{ servarr_wiring_private_indexer_min_seed_time_minutes | int }}"
-    _new_tbs: >-
-      {{ _tbs | combine({
-           'seedRatio': [_tbs.seedRatio | default(0) | float, _min_ratio] | max,
-           'seedTime': [_tbs.seedTime | default(0) | int, _min_time] | max,
-           'packSeedTime': [_tbs.packSeedTime | default(0) | int, _min_time] | max
-         }) }}
-  when: >-
-    (_has_freeleech and not ((_freeleech_field | first).value | default(false) | bool))
-    or (_tbs.seedRatio | default(0) | float) < (_min_ratio | float)
-    or (_tbs.seedTime | default(0) | int) < (_min_time | int)
-    or (_tbs.packSeedTime | default(0) | int) < (_min_time | int)
+    # Raise to the floor, never lower: an indexer already seeding beyond policy
+    # keeps its stricter value.
+    _pi_targets: >-
+      {{ {'torrentBaseSettings.seedRatio':
+            [_tbs.seedRatio | default(0) | float, _min_ratio | float] | max,
+          'torrentBaseSettings.seedTime':
+            [_tbs.seedTime | default(0) | int, _min_time | int] | max,
+          'torrentBaseSettings.packSeedTime':
+            [_tbs.packSeedTime | default(0) | int, _min_time | int] | max}
+         | combine({'freeleech': true} if _has_freeleech else {}) }}
+    _pi_needs_change: >-
+      {{ (_has_freeleech and not ((_freeleech_field | first).value | default(false) | bool))
+         or (_tbs.seedRatio | default(0) | float) < (_min_ratio | float)
+         or (_tbs.seedTime | default(0) | int) < (_min_time | int)
+         or (_tbs.packSeedTime | default(0) | int) < (_min_time | int) }}
 
 # Re-fetch so the assertion below checks what Prowlarr actually persisted,
 # not just what we computed and sent.
