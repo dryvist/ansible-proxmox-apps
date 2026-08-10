@@ -2140,6 +2140,12 @@
     postgres_pgbackrest_repo2_retention_full: 4
     postgres_pgbackrest_spool_path: /var/spool/pgbackrest
     postgres_pgbackrest_queue_max: 4GiB
+    # Encryption defaults to off on both repos; the cipher case overrides repo2
+    # locally so the negative assertions below stay meaningful.
+    postgres_pgbackrest_repo1_cipher_type: none
+    postgres_pgbackrest_repo1_cipher_pass: ""
+    postgres_pgbackrest_repo2_cipher_type: none
+    postgres_pgbackrest_repo2_cipher_pass: ""
 
   tasks:
     - name: Render pgbackrest.conf with async archiving enabled
@@ -2194,6 +2200,48 @@
           pgbackrest.conf.j2 no longer emits archive-async, spool-path, and
           archive-push-queue-max together inside [global] when async archiving
           is enabled.
+
+    # Repository encryption. The failure that matters is silence: a cipher that
+    # is configured but renders nothing produces plaintext backups while the
+    # inventory claims they are encrypted. So assert the negative case too —
+    # the default must emit no cipher keys at all, and enabling one repo must
+    # not leak keys into the other, because the two repos are encrypted at
+    # different times (repo2 at creation, repo1 only via a destructive
+    # stanza re-create).
+    - name: Render pgbackrest.conf with repo2 encrypted and repo1 not
+      ansible.builtin.template:
+        src: ../../roles/postgres/templates/pgbackrest.conf.j2
+        dest: "{{ _fixture_dir }}/pgbackrest-cipher.conf"
+        mode: "0600"
+      vars:
+        postgres_pgbackrest_archive_async: false
+        postgres_pgbackrest_repo2_cipher_type: aes-256-cbc
+        postgres_pgbackrest_repo2_cipher_pass: fixture-passphrase
+
+    - name: Read the encrypted-repo2 configuration
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/pgbackrest-cipher.conf"
+      register: _pgbackrest_cipher_raw
+
+    - name: Decode the encrypted-repo2 configuration
+      ansible.builtin.set_fact:
+        _pgbackrest_cipher: "{{ _pgbackrest_cipher_raw.content | b64decode }}"
+
+    - name: Assert cipher keys render per-repo, and not at all by default
+      ansible.builtin.assert:
+        that:
+          - "'repo2-cipher-type=aes-256-cbc' in _pgbackrest_cipher"
+          - "'repo2-cipher-pass=fixture-passphrase' in _pgbackrest_cipher"
+          # repo1 was left at the default, so it must stay plaintext.
+          - "'repo1-cipher-type' not in _pgbackrest_cipher"
+          - "'repo1-cipher-pass' not in _pgbackrest_cipher"
+          # The default render (async fixture above) carries no cipher at all.
+          - "'cipher-type' not in _pgbackrest_sync"
+          - "'cipher-pass' not in _pgbackrest_sync"
+        fail_msg: >-
+          pgbackrest.conf.j2 no longer renders repo cipher keys per-repo. Either
+          an enabled cipher emits nothing (plaintext backups while the inventory
+          claims encryption), or one repo's cipher leaked into the other.
 
     - name: PgBackRest async-archiving render verification PASSED
       ansible.builtin.debug:
