@@ -35,11 +35,12 @@ bao_login() {
     | jq -re '.auth.client_token'
 }
 
-# The permission-set path ignores request bodies, so the minted token carries
-# exactly the stored map and cannot be widened from here.
+# POST, not GET: the github-runner policy grants create/update on this path, so
+# a read would be denied. The permission-set path ignores request bodies, so
+# the minted token carries exactly the stored map and cannot be widened here.
 github_token() {
   local bao_token=$1
-  curl -sf -H "X-Vault-Token: ${bao_token}" \
+  curl -sf -X POST -H "X-Vault-Token: ${bao_token}" \
     "${BAO_ADDR}/v1/${BAO_GITHUB_MOUNT:-github}/token/${BAO_PERMISSION_SET}" \
     | jq -re '.data.token'
 }
