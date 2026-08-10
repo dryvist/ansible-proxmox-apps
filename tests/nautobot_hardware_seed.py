@@ -149,15 +149,32 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
         sys.modules[name] = mod
 
     # ssot_common's scaffolding helpers are exercised against a live Nautobot,
-    # not here; stub them so this test covers the placement logic only.
+    # not here — but every one of them is a get_or_create, so CALLING one is a
+    # write. The stubs record their calls in `scaffolding` so a dry run can be
+    # asserted to make none; without that, a dryrun that creates ModuleTypes,
+    # ModuleBays and Locations looks identical to one that creates nothing.
+    scaffolding: list[str] = []
+    stores["scaffolding"] = scaffolding
+
+    def note(name, value):
+        """Record that a writing helper was called, and return its result."""
+        scaffolding.append(name)
+        return value
+
     common = types.ModuleType("ssot_common")
     common.STATUS_ACTIVE = "Active"
-    common.ensure_location = lambda: Record(name="homelab")
-    common.ensure_sublocation = lambda n: Record(name=n or "homelab")
-    common.ensure_device_type = lambda m, mfr="": Record(model=m, manufacturer=mfr)
-    common.ensure_module_type = lambda m, mfr="", pn="": Record(model=m, manufacturer=mfr)
-    common.ensure_role = lambda n, *m: Record(name=n)
-    common.ensure_status = lambda n, *m: Record(name=n)
+    common.ensure_location = lambda: note("ensure_location", Record(name="homelab"))
+    common.ensure_sublocation = lambda n: note(
+        "ensure_sublocation", Record(name=n or "homelab")
+    )
+    common.ensure_device_type = lambda m, mfr="": note(
+        "ensure_device_type", Record(model=m, manufacturer=mfr)
+    )
+    common.ensure_module_type = lambda m, mfr="", pn="": note(
+        "ensure_module_type", Record(model=m, manufacturer=mfr)
+    )
+    common.ensure_role = lambda n, *m: note("ensure_role", Record(name=n))
+    common.ensure_status = lambda n, *m: note("ensure_status", Record(name=n))
     # Mirrors the real load_seed: every slice defaults to empty, so a document
     # missing a key behaves the same here as it does on the guest.
     common.load_seed = lambda: {
@@ -286,11 +303,36 @@ def main() -> None:
     )
     assert len(stores["device"]) == 1 and stores["device"][0].name == "UNI-UDW"
 
-    # A dry run writes nothing.
+    # A dry run writes NOTHING — not the objects, and not the scaffolding.
+    # Every ensure_* helper is a get_or_create, so calling one during a dry run
+    # creates a ModuleType, a Location or a Role; _module_bay would leave empty
+    # bays on real chassis. Asserting only on the object stores misses all of
+    # that, which is exactly how it got through the first time.
     _, stores = run(
-        {"hardware_devices": [], "hardware_modules": [row("GPU-DRY")]}, [], dryrun=True
+        {
+            "hardware_devices": [row("SRV-NEW", category="Server", location="rack")],
+            "hardware_modules": [row("GPU-DRY"), row("CPU-DRY", installed_in="r540")],
+            "wan_circuits": [
+                {
+                    "circuit_id": "WAN9-TEST",
+                    "provider": "Test",
+                    "circuit_type": "Cable",
+                    "priority": 9,
+                    "status": "Active",
+                    "description": "",
+                }
+            ],
+        },
+        [r540],
+        dryrun=True,
     )
-    assert not stores["module"], "dryrun must not create objects"
+    assert not stores["module"], "dryrun must not create modules"
+    assert stores["device"] == [r540], "dryrun must not create devices"
+    assert not stores["circuit"], "dryrun must not create circuits"
+    assert not stores["module_bay"], "dryrun must not create module bays"
+    assert not stores["scaffolding"], (
+        "dryrun called writing scaffolding helpers: %s" % stores["scaffolding"]
+    )
 
     # WAN circuits: a Planned uplink must not be published Active, and nothing
     # invents a termination for a link whose endpoint is not recorded.

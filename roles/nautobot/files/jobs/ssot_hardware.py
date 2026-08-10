@@ -116,8 +116,13 @@ class SeedHardware(Job):
             )
             return "no hardware slice in the seed bundle"
 
-        ensure_location()
-        hardware_role = ensure_role(HARDWARE_ROLE, Device, Module)
+        # Scaffolding writes too — it creates a Role and flips the LocationType
+        # to nestable — so it is gated with everything else. A dry run that
+        # quietly mutates the schema is not a dry run.
+        hardware_role = None
+        if not dryrun:
+            ensure_location()
+            hardware_role = ensure_role(HARDWARE_ROLE, Device, Module)
 
         created = updated = skipped = 0
 
@@ -134,30 +139,40 @@ class SeedHardware(Job):
                 )
                 continue
 
-            location = ensure_sublocation(row["location"])
-            device_type = ensure_device_type(row["model"] or row["hw_id"], row["manufacturer"])
-            defaults = {
-                "device_type": device_type,
-                "role": hardware_role,
-                "location": location,
-                "status": ensure_status(row["status"], Device),
-                "asset_tag": row["hw_id"],
-            }
+            # Before any ensure_* call: those are get_or_create, so resolving a
+            # DeviceType or a Location on the way to "would create" would write.
             if dryrun:
                 exists = Device.objects.filter(name=row["hw_id"]).exists()
                 created, updated = (created, updated + 1) if exists else (created + 1, updated)
                 continue
+
+            defaults = {
+                "device_type": ensure_device_type(
+                    row["model"] or row["hw_id"], row["manufacturer"]
+                ),
+                "role": hardware_role,
+                "location": ensure_sublocation(row["location"]),
+                "status": ensure_status(row["status"], Device),
+                "asset_tag": row["hw_id"],
+            }
             _, was_created = Device.objects.update_or_create(
                 name=row["hw_id"], defaults=defaults
             )
             created, updated = (created + 1, updated) if was_created else (created, updated + 1)
 
         for row in modules:
-            module_type = ensure_module_type(
-                row["model"] or row["hw_id"], row["manufacturer"], row["part_number"]
-            )
+            # Same reason as the device loop, and it matters more here:
+            # _module_bay() is a get_or_create, so a dry run would leave empty
+            # ModuleBays behind on real chassis.
+            if dryrun:
+                exists = Module.objects.filter(asset_tag=row["hw_id"]).exists()
+                created, updated = (created, updated + 1) if exists else (created + 1, updated)
+                continue
+
             defaults = {
-                "module_type": module_type,
+                "module_type": ensure_module_type(
+                    row["model"] or row["hw_id"], row["manufacturer"], row["part_number"]
+                ),
                 "status": ensure_status(row["status"], Module),
             }
 
@@ -181,10 +196,6 @@ class SeedHardware(Job):
                 defaults["parent_module_bay"] = None
                 defaults["location"] = ensure_sublocation(row["location"])
 
-            if dryrun:
-                exists = Module.objects.filter(asset_tag=row["hw_id"]).exists()
-                created, updated = (created, updated + 1) if exists else (created + 1, updated)
-                continue
             _, was_created = Module.objects.update_or_create(
                 asset_tag=row["hw_id"], defaults=defaults
             )

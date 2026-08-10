@@ -99,8 +99,19 @@ result that is entirely wrong.
 
 ## Verifying an ingest
 
-1. Run the job with its dry-run flag first and read the reported counts. They
-   should match the source row counts split by device/module.
+1. Dry-run first — but note that **a converge cannot do this for you**. The
+   seed runner enqueues plain Jobs without job kwargs, so a converge with the
+   hardware source set commits immediately. The dry-run path is:
+
+   1. converge with the hardware source set **and seed jobs disabled**, so the
+      bundle is placed but nothing runs;
+   2. launch `Seed Hardware Inventory` from the UI with its dry-run box ticked;
+   3. read the counts, then converge normally to commit.
+
+   A dry run writes nothing at all — not the objects, and not the module bays,
+   module types, locations or roles they would need. That is asserted in
+   `tests/nautobot_hardware_seed.py`, because scaffolding helpers are all
+   `get_or_create` and calling one during a "dry" run is a write.
 2. After a committing run, confirm the totals in Nautobot: the count of
    `Device` plus `Module` objects carrying an asset tag should equal the number
    of source rows, less the chassis rows the rack-server seed owns.
