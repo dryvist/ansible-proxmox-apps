@@ -77,7 +77,7 @@ class SeedHardware(Job):
             return "no hardware slice in the seed bundle"
 
         ensure_location()
-        ensure_role(HARDWARE_ROLE, Device, Module)
+        hardware_role = ensure_role(HARDWARE_ROLE, Device, Module)
 
         created = updated = skipped = 0
 
@@ -98,7 +98,7 @@ class SeedHardware(Job):
             device_type = ensure_device_type(row["model"] or row["hw_id"], row["manufacturer"])
             defaults = {
                 "device_type": device_type,
-                "role": ensure_role(HARDWARE_ROLE, Device),
+                "role": hardware_role,
                 "location": location,
                 "status": ensure_status(row["status"], Device),
                 "asset_tag": row["hw_id"],
