@@ -83,8 +83,32 @@ if [[ -n "${v6_defaults}" ]]; then
 fi
 
 # --- D. qBittorrent bound to wg0 --------------------------------------------
+# A stopped client cannot leak, and this check cannot be evaluated against one.
+# Recording "stopped" as a breach does not just add noise, it latches: the
+# breach action stops the client, a stopped client can never be authenticated
+# to, so every subsequent run re-reports it and nothing ever restarts. Observed
+# deadlocking for half an hour, re-alerting every two minutes.
+#
+# That is worse than the condition it guards. A client stopped indefinitely
+# stops seeding everything it holds, and the obligations attached to that data
+# do not pause with it. So this is reported on its own terms — logged and
+# notified, never routed through the breach path that stops services and fails
+# the deadman.
+client_down=0
+if ! systemctl is-active --quiet qbittorrent-nox.service; then
+  client_down=1
+  logger -t killswitch-validate \
+    "download-vpn: qBittorrent is not running — interface binding not evaluated (a stopped client cannot egress)"
+  curl -fsS --max-time 8 -H "Title: download-vpn client stopped" \
+    -H "Priority: default" -H "Tags: warning" \
+    -d "download-vpn: qBittorrent is not running on $(hostname). No leak is possible while it is down, but nothing is seeding either." \
+    "${NTFY_URL}" >/dev/null 2>&1 || true
+fi
+
 cookie="$(mktemp)"
-if curl -fsS -c "${cookie}" \
+if [[ "${client_down}" -eq 1 ]]; then
+  : # not running — nothing to verify, and nothing that can egress
+elif curl -fsS -c "${cookie}" \
       --data-urlencode "username=admin" \
       --data-urlencode "password=${QBITTORRENT_ADMIN_PASSWORD:-}" \
       "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/auth/login" >/dev/null 2>&1; then
