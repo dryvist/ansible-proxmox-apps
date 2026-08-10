@@ -650,6 +650,10 @@
   ansible.builtin.meta: flush_handlers
 
 - name: Wait for the qBittorrent WebUI to answer
+  # Answering once is not the same as being up: the daemon accepts a connection
+  # partway through startup and re-binds shortly after, so this can return 200
+  # and the very next request still be refused. The API writes that follow are
+  # idempotent and carry their own retry for exactly that reason.
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/version"
     status_code: [200, 403]
@@ -688,6 +692,10 @@
          "bypass_auth_subnet_whitelist_enabled":true,
          "bypass_auth_subnet_whitelist":"{{ download_vpn_qbittorrent_auth_whitelist }}"}
     status_code: 200
+  register: download_vpn_qbt_auth_write
+  until: download_vpn_qbt_auth_write.status | default(0) == 200
+  retries: 5
+  delay: 3
   no_log: true
   changed_when: false
   when: download_vpn_manage_services
