@@ -18,6 +18,14 @@ usage() {
 PLAYBOOK="$1"
 shift
 
+# The media stack lives in a pinned submodule that site.yml converges as its
+# own process. Checking it out here means a bare clone converges the whole
+# estate with no preparatory step; `--init` takes the recorded SHA, never a
+# branch tip. Failing loudly beats converging a partial estate silently.
+if [[ -f .gitmodules ]]; then
+  git submodule update --init --recursive
+fi
+
 CERT_DIR=""
 RUNNER_BAO_TOKEN=""
 
