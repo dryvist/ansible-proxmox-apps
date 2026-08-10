@@ -105,30 +105,32 @@ if ! systemctl is-active --quiet qbittorrent-nox.service; then
     "${NTFY_URL}" >/dev/null 2>&1 || true
 fi
 
-cookie="$(mktemp)"
-if [[ "${client_down}" -eq 1 ]]; then
-  : # not running — nothing to verify, and nothing that can egress
-elif curl -fsS -c "${cookie}" \
-      --data-urlencode "username=admin" \
-      --data-urlencode "password=${QBITTORRENT_ADMIN_PASSWORD:-}" \
-      "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/auth/login" >/dev/null 2>&1; then
-  iface="$(curl -fsS -b "${cookie}" \
-    "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences" 2>/dev/null \
-    | grep -o '"current_network_interface":"[^"]*"' | cut -d'"' -f4)"
-  if [[ -z "${iface}" ]]; then
-    # Authenticated but no interface reported: the answer is unknown, and an
-    # unknown binding is not a pass.
-    breaches+=("qBittorrent did not report a network interface"); leak=1
-  elif [[ "${iface}" != "${WG_IF}" ]]; then
-    breaches+=("qBittorrent network interface is '${iface}', expected '${WG_IF}'"); leak=1
+# Read the binding straight off the loopback API. The WebUI is configured with
+# local-host authentication disabled, so a request from this host needs no
+# credential — and gating a leak check on one was the defect that caused the
+# deadlock above. The client is shipped without a stored WebUI password (it is
+# applied later, over this same API), so a validator that logs in first can
+# never succeed on a freshly started client, declares a breach, stops it, and
+# then cannot log in precisely because it stopped it.
+#
+# A security control should not depend on a credential it does not need. If the
+# API answers, the binding is knowable; if it does not, that is handled above.
+if [[ "${client_down}" -eq 0 ]]; then
+  prefs="$(curl -fsS --max-time 10 \
+    "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences" 2>/dev/null || true)"
+  if [[ -z "${prefs}" ]]; then
+    # Running but not answering: the binding is unknown, and an unknown binding
+    # on a live client is not a pass.
+    breaches+=("qBittorrent is running but its API did not answer; interface binding unverified"); leak=1
+  else
+    iface="$(grep -o '"current_network_interface":"[^"]*"' <<<"${prefs}" | cut -d'"' -f4)"
+    if [[ -z "${iface}" ]]; then
+      breaches+=("qBittorrent did not report a network interface"); leak=1
+    elif [[ "${iface}" != "${WG_IF}" ]]; then
+      breaches+=("qBittorrent network interface is '${iface}', expected '${WG_IF}'"); leak=1
+    fi
   fi
-else
-  # Previously this check simply vanished when the login failed, so a wrong
-  # password or a stopped WebUI read as "no breach". A leak check that cannot
-  # fail is worse than no check: it reports safety it never established.
-  breaches+=("could not authenticate to qBittorrent to verify interface binding"); leak=1
 fi
-rm -f "${cookie}"
 
 # --- E/F. live IPv4 egress checks -------------------------------------------
 # E: egress via the tunnel must succeed (we are connected to the VPN).
