@@ -87,9 +87,18 @@ if curl -fsS -c "${cookie}" \
   iface="$(curl -fsS -b "${cookie}" \
     "http://127.0.0.1:{{ download_vpn_qbittorrent_web_port }}/api/v2/app/preferences" 2>/dev/null \
     | grep -o '"current_network_interface":"[^"]*"' | cut -d'"' -f4)"
-  if [[ -n "${iface}" && "${iface}" != "${WG_IF}" ]]; then
+  if [[ -z "${iface}" ]]; then
+    # Authenticated but no interface reported: the answer is unknown, and an
+    # unknown binding is not a pass.
+    breaches+=("qBittorrent did not report a network interface"); leak=1
+  elif [[ "${iface}" != "${WG_IF}" ]]; then
     breaches+=("qBittorrent network interface is '${iface}', expected '${WG_IF}'"); leak=1
   fi
+else
+  # Previously this check simply vanished when the login failed, so a wrong
+  # password or a stopped WebUI read as "no breach". A leak check that cannot
+  # fail is worse than no check: it reports safety it never established.
+  breaches+=("could not authenticate to qBittorrent to verify interface binding"); leak=1
 fi
 rm -f "${cookie}"
 
@@ -99,6 +108,25 @@ vpn_ip="$(curl -fsS --max-time 10 --interface "${WG_IF}" "${IP_PROBE}" 2>/dev/nu
 if [[ -z "${vpn_ip}" ]]; then
   breaches+=("no IPv4 egress via ${WG_IF} (VPN exit unreachable)"); tunnel_down=1
 fi
+{% if download_vpn_declared_exit_ips | length > 0 %}
+# E2: the exit address must be one that has been declared upstream.
+#
+# The address is already in hand from check E and was previously discarded.
+# Automatic failover to the backup peer changes it without anyone acting, at
+# any hour, and an operator push is a notification rather than a control: it
+# keeps running on the new address until somebody reads their phone. Comparing
+# here turns that into a stop within one validator interval.
+declared_ips="{{ download_vpn_declared_exit_ips | join(' ') }}"
+if [[ -n "${vpn_ip}" ]]; then
+  matched=0
+  for d in ${declared_ips}; do
+    [[ "${vpn_ip}" == "${d}" ]] && matched=1 && break
+  done
+  if [[ "${matched}" -eq 0 ]]; then
+    breaches+=("exit address ${vpn_ip} is not among the declared addresses"); leak=1
+  fi
+fi
+{% endif %}
 # F: forced egress bound to the LAN interface must be REFUSED by the killswitch.
 leak_ip="$(curl -fsS --max-time 8 --interface "${LAN_IF}" "${IP_PROBE}" 2>/dev/null || true)"
 if [[ -n "${leak_ip}" ]]; then
