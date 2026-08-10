@@ -398,12 +398,17 @@
         # not been given winrm joins the group and then fails every task on a
         # connection that cannot carry them. Gate on the connection, which is
         # the thing the play actually requires.
+        # vdi_group is tag-driven, not connection-driven, because it is a policy
+        # group: "this guest is a virtual desktop and gets the desktop standard".
+        # windows_group above stays connection-driven because it is a capability
+        # group — its tasks physically cannot run over anything but WinRM.
         groups: >-
           {{
             ['vms', 'all'] +
             (['windows_group']
              if item.value.ansible_connection | default('ssh') == 'winrm'
-             else [])
+             else []) +
+            (['vdi_group'] if 'vdi' in (item.value.tags | default([])) else [])
           }}
         ansible_host: "{{ item.value.ip }}"
         ansible_connection: "{{ item.value.ansible_connection }}"
@@ -418,6 +423,18 @@
         ansible_winrm_scheme: "{{ 'http' if item.value.ansible_connection == 'winrm' else omit }}"
         ansible_port: "{{ 5985 if item.value.ansible_connection == 'winrm' else omit }}"
         host_tags: "{{ item.value.tags | default([]) }}"
+        # Split-tunnel inputs for vdi_local_routes. The gateway is per-guest and
+        # must come from the inventory: a VDI guest runs a VPN client that owns
+        # the default route, so the guest cannot report its own LAN gateway by
+        # the time the routes matter. The destinations are estate-wide.
+        vdi_gateway: "{{ item.value.gateway | default('') }}"
+        vdi_preserved_cidrs: "{{ tofu_data.vdi_preserved_cidrs | default([]) }}"
+        # Whether the desired state expects this guest to be running. Guests only
+        # an operator may power on publish started = false; a play that would
+        # otherwise fail against them as unreachable gates on this instead.
+        # Defaults true so an inventory published before the field existed, or
+        # any guest that never declares it, keeps converging.
+        vm_started: "{{ item.value.started | default(true) }}"
       loop: "{{ tofu_data.vms | dict2items }}"
       changed_when: false
       no_log: true
