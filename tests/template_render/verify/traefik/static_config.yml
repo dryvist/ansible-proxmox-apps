@@ -1,0 +1,63 @@
+---
+- name: Render traefik static config to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/traefik.yml.j2"
+    dest: "{{ _fixture_dir }}/test_traefik.yml"
+    mode: "0640"
+
+- name: Read rendered traefik static config
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_traefik.yml"
+  register: _traefik_static_raw
+
+- name: Decode traefik static config
+  ansible.builtin.set_fact:
+    _traefik_static: "{{ _traefik_static_raw.content | b64decode }}"
+    _traefik_static_yaml: "{{ _traefik_static_raw.content | b64decode | from_yaml }}"
+    _traefik_dns_propagation: >-
+      {{ (_traefik_static_raw.content | b64decode | from_yaml)
+         .certificatesResolvers.letsencrypt.acme.dnsChallenge.propagation }}
+
+- name: Assert static config uses Route53 DNS-01 + secured API + TLS hardening
+  ansible.builtin.assert:
+    that:
+      - "'provider: route53' in _traefik_static"
+      - "'acme-v02.api.letsencrypt.org' in _traefik_static"
+      - "'/etc/traefik/acme/acme.json' in _traefik_static"
+      - "'insecure: false' in _traefik_static"
+      - "'minVersion: VersionTLS12' in _traefik_static"
+      - "'defaultMode: drop' in _traefik_static"
+      # Empty ACME email -> the email line is omitted entirely.
+      - "'email:' not in _traefik_static"
+      # Credentials must NOT appear in the (group-readable) static config.
+      - "'AKIATESTACCESSKEYID00' not in _traefik_static"
+    fail_msg: >-
+      traefik.yml.j2 missing the route53 resolver / secured API / TLS floor,
+      emitted an email when none was set, or leaked AWS creds into the config.
+
+# Both of these shipped OFF, silently: the proxy every request passes through
+# emitted no metrics and no traces. A rendered config that merely parses does
+# not prove either is on, so assert the blocks themselves — and assert the
+# metrics entryPoint is its OWN port, since serving /metrics on websecure
+# would publish it.
+- name: Assert static config enables metrics and tracing
+  ansible.builtin.assert:
+    that:
+      - _traefik_static_yaml.metrics.prometheus.entryPoint == "metrics"
+      - _traefik_static_yaml.metrics.prometheus.addRoutersLabels
+      - _traefik_static_yaml.entryPoints.metrics.address == ":8082"
+      - _traefik_static_yaml.entryPoints.metrics.address != _traefik_static_yaml.entryPoints.websecure.address
+      - _traefik_static_yaml.tracing.serviceName == "traefik"
+      # Endpoint derived from the otel ingress row, not written twice.
+      - _traefik_static_yaml.tracing.otlp.http.endpoint == "http://192.0.2.30:4318/v1/traces"
+      # Break-glass listens on its own private port.
+      - _traefik_static_yaml.entryPoints.dashboardbg.address == ":8083"
+      # The DNS-01 propagation pre-check must stay disabled: internal DNS is
+      # authoritative for this subdomain and answers NXDOMAIN for the
+      # challenge name, so the check fails on a record that is in fact
+      # correct and public, and issuance never reaches the CA.
+      - _traefik_dns_propagation.disableChecks
+      - _traefik_dns_propagation.delayBeforeChecks == "60s"
+    fail_msg: >-
+      traefik.yml.j2 did not enable metrics/tracing, put metrics on a shared
+      entryPoint, or failed to derive the OTLP endpoint from the otel row.

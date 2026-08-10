@@ -1,0 +1,71 @@
+---
+- name: Validate Cribl Stream LXC Containers
+  hosts: cribl_stream_group
+  become: true
+  gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
+  tags:
+    - cribl_stream
+    - validation
+
+  vars:
+    constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+
+  tasks:
+    - name: Gather service facts for Cribl Stream validation
+      ansible.builtin.service_facts:
+
+    - name: Assert Cribl Stream service is running
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services['cribl.service'] is defined
+          - >-
+            ansible_facts.services['cribl.service'].state == 'running'
+        fail_msg: >-
+          Cribl Stream service is not running on {{ inventory_hostname }}
+        quiet: true
+
+    - name: Verify Cribl Stream API health endpoint
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ constants.service_ports.cribl_stream_api
+          }}/api/v1/health
+        method: GET
+        return_content: true
+        status_code: 200
+      register: stream_health
+
+    - name: Verify netflow UDP port is listening on Cribl Stream
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          ss -ulnp | grep ':{{ constants.netflow_ports.unifi }}'
+        executable: /bin/bash
+      register: stream_netflow_udp
+      changed_when: false
+      failed_when: stream_netflow_udp.rc != 0
+
+    - name: Check Cribl Stream config directory exists
+      # Stream runs in single-instance mode and reads local/cribl/ —
+      # unlike Edge, which reads local/edge/.
+      ansible.builtin.stat:
+        path: /opt/cribl/local/cribl
+      register: cribl_stream_config_dir
+
+    - name: Fail if Cribl Stream config directory is missing
+      ansible.builtin.fail:
+        msg: >-
+          Cribl Stream config directory /opt/cribl/local/cribl not found
+          on {{ inventory_hostname }}
+      when: not cribl_stream_config_dir.stat.exists
+
+    - name: Display Cribl Stream validation results
+      ansible.builtin.debug:
+        msg: |
+          Cribl Stream validation passed on {{ inventory_hostname }}:
+          - Service: running
+          - Health API: {{ stream_health.status }}
+          - NetFlow port {{ constants.netflow_ports.unifi }}: listening
+          - Config dir: present

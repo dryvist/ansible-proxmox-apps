@@ -1,0 +1,103 @@
+---
+- name: Render and verify ntfy_docker templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/ntfy_docker/defaults/main.yml
+    ntfy_docker_image: "binwiederhier/ntfy:v2.17.0"
+    ntfy_docker_container_name: ntfy
+    ntfy_docker_http_port: 8080
+    ntfy_docker_data_dir: /opt/ntfy
+    ntfy_docker_cache_duration: "12h"
+    ntfy_docker_attachment_cache_dir: /var/cache/ntfy/attachments
+    # Shape-mirror of the role default: service name + ingress base over HTTPS.
+    # A literal placeholder domain stands in for the environment lookup so the
+    # assertion below is exact rather than dependent on the runner's env.
+    ntfy_docker_base_url: "https://{{ ntfy_docker_container_name }}.example.test"
+    _template_dir: "../../../roles/ntfy_docker/templates"
+
+  tasks:
+    - name: Render ntfy docker-compose.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_compose.yml"
+        mode: "0644"
+
+    - name: Read rendered ntfy docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_ntfy_compose.yml"
+      register: _ntfy_compose_raw
+
+    - name: Decode ntfy compose content
+      ansible.builtin.set_fact:
+        _ntfy_compose: "{{ _ntfy_compose_raw.content | b64decode }}"
+
+    - name: Assert ntfy compose has expected port mapping
+      ansible.builtin.assert:
+        that:
+          - "'8080:80' in _ntfy_compose"
+        fail_msg: >-
+          ntfy docker-compose.yml.j2 missing expected port mapping 8080:80
+
+    - name: Assert ntfy compose has expected image
+      ansible.builtin.assert:
+        that:
+          - "'binwiederhier/ntfy:v2.17.0' in _ntfy_compose"
+        fail_msg: "ntfy docker-compose.yml.j2 does not reference expected image"
+
+    - name: Assert ntfy compose mounts server.yml config
+      ansible.builtin.assert:
+        that:
+          - "'server.yml:ro' in _ntfy_compose"
+        fail_msg: "ntfy docker-compose.yml.j2 missing server.yml config mount"
+
+    - name: Render ntfy server.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/server.yml.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_server.yml"
+        mode: "0644"
+
+    - name: Read rendered ntfy server.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_ntfy_server.yml"
+      register: _ntfy_server_raw
+
+    - name: Decode ntfy server content
+      ansible.builtin.set_fact:
+        _ntfy_server: "{{ _ntfy_server_raw.content | b64decode }}"
+
+    - name: Assert ntfy server.yml has expected configuration
+      ansible.builtin.assert:
+        that:
+          - "'cache-file' in _ntfy_server"
+          - "'listen-http: \":80\"' in _ntfy_server"
+          - "'cache-duration' in _ntfy_server"
+        fail_msg: >-
+          ntfy server.yml.j2 missing expected configuration;
+          rendered content: {{ _ntfy_server }}
+
+    # base-url is what the server hands to clients (emitted links, web-app
+    # origin, web-push subscriptions). A node hostname or a plain-HTTP scheme
+    # renders those unreachable while direct POSTs keep returning 200, so the
+    # breakage is invisible without an explicit assertion. The `http://` guard
+    # is a substring test that `https://` does not satisfy.
+    - name: Assert ntfy base-url is the reverse-proxied FQDN over HTTPS
+      ansible.builtin.assert:
+        that:
+          - "'base-url: \"https://ntfy.example.test\"' in _ntfy_server"
+          - "'http://' not in _ntfy_server"
+        fail_msg: >-
+          ntfy server.yml.j2 base-url must be the service FQDN over HTTPS
+          (never a host address, never plain HTTP);
+          rendered content: {{ _ntfy_server }}
+
+    - name: Ntfy template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          Ntfy template assertions passed:
+          - docker-compose.yml.j2: HTTP port 8080:80, image, config mount
+          - server.yml.j2: cache-file, listen-http, cache-duration

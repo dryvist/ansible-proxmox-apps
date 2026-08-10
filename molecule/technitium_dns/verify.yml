@@ -139,10 +139,24 @@
     # that task, while confirming sibling tasks that must STAY primary-only
     # (the subdomain zone's own equivalents) still have it — proving the
     # extraction isolated the right task rather than matching too broadly.
+    # The whole task tree, not main.yml alone: main.yml is a thin dispatcher
+    # now, and the tasks the assertions below inspect live in the files it
+    # includes. Reading only the dispatcher makes every regex return nothing —
+    # which surfaces as `length` on None rather than as a failed assertion, so
+    # the checks it guards never run at all.
+    - name: Read the technitium task tree
+      ansible.builtin.set_fact:
+        technitium_dns_tasks_source: >-
+          {{ technitium_dns_tasks_source | default('') ~ lookup('file', item) ~ '\n' }}
+      loop: >-
+        {{ (query('fileglob', playbook_dir ~ '/../../roles/technitium_dns/tasks/*.yml')
+            + query('fileglob', playbook_dir ~ '/../../roles/technitium_dns/tasks/main/*.yml'))
+           | sort }}
+      loop_control:
+        label: "{{ item | basename }}"
+
     - name: Assert the apex ingress-alias task dropped the primary-only gate
       vars:
-        technitium_dns_tasks_source: >-
-          {{ lookup('file', playbook_dir ~ '/../../roles/technitium_dns/tasks/main.yml') }}
         technitium_dns_apex_alias_block: >-
           {{ technitium_dns_tasks_source
              | regex_search('(?s)- name: Create Traefik ingress alias apex A records.*?(?=\n- name:|\Z)') }}

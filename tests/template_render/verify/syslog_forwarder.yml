@@ -1,0 +1,100 @@
+---
+# =============================================================================
+# syslog_forwarder — the rsyslog drop-in that forwards every log to the central
+# syslog VIP (-> HAProxy -> Cribl Edge -> Splunk). Render + assert the omfwd rule.
+# =============================================================================
+- name: Render and verify syslog_forwarder template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/syslog_forwarder/defaults/main.yml with scrubbed values.
+    syslog_forwarder_target_host: "syslog.pve.example.com"
+    syslog_forwarder_target_port: 1517
+    syslog_forwarder_protocol: tcp
+    syslog_forwarder_queue_max_disk_space: 256m
+    # Mirror the group_vars wiring: program-specific routes rendered above
+    # the catch-all (traefik -> the proxy family standard frontend).
+    syslog_forwarder_program_routes:
+      - program: traefik
+        port: 523
+    # Mirror the download_vpn_group wiring: tail a file-only logger via imfile.
+    syslog_forwarder_imfile_inputs:
+      - file: /data/.qbittorrent-profile/qBittorrent/data/logs/qbittorrent.log
+        tag: qbittorrent
+    syslog_forwarder_imfile_work_directory: /var/spool/rsyslog
+    _sf_template_dir: "../../../roles/syslog_forwarder/templates"
+
+  tasks:
+    - name: Render the syslog forward rule to /tmp
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/10-forward-cribl.conf.j2"
+        dest: "{{ _fixture_dir }}/test_syslog_forward.conf"
+        mode: "0644"
+
+    - name: Read rendered syslog forward rule
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_syslog_forward.conf"
+      register: _sf_raw
+
+    - name: Decode rendered syslog forward rule
+      ansible.builtin.set_fact:
+        _sf: "{{ _sf_raw.content | b64decode }}"
+
+    - name: Assert all logs forward to the VIP over TCP with a disk-assisted queue
+      ansible.builtin.assert:
+        that:
+          # All facilities/severities, via the omfwd output module.
+          - "'*.*' in _sf"
+          - "'action(type=' in _sf"
+          - "'omfwd' in _sf"
+          # To the stable syslog CNAME on the Linux port, over TCP.
+          - "'syslog.pve.example.com' in _sf"
+          - "'1517' in _sf"
+          - "'protocol' in _sf"
+          - "'tcp' in _sf"
+          # Disk-assisted queue so a receiver outage buffers instead of dropping.
+          - "'queue.filename' in _sf"
+          - "'cribl_fwd' in _sf"
+          - "'256m' in _sf"
+        fail_msg: >-
+          10-forward-cribl.conf.j2 did not render the expected omfwd rule
+          (selector/target/port/protocol/queue).
+
+    - name: Assert program routes render above the catch-all and stop
+      ansible.builtin.assert:
+        that:
+          - "\"if $programname == 'traefik' then {\" in _sf"
+          - "'port=\"523\"' in _sf"
+          - "'queue.filename=\"cribl_fwd_traefik\"' in _sf"
+          - "'stop' in _sf"
+          # Order is load-bearing: the program route must precede the
+          # catch-all *.* rule, or the catch-all consumes the line first.
+          - "_sf.index(\"$programname == 'traefik'\") < _sf.index('*.*')"
+        fail_msg: >-
+          10-forward-cribl.conf.j2 did not render the program route above the
+          catch-all with its own disk queue and a stop.
+
+    - name: Assert imfile input renders for the file-only logger
+      ansible.builtin.assert:
+        that:
+          - "'load=' ~ '\"imfile\"' in _sf"
+          - "'qbittorrent.log' in _sf"
+        fail_msg: imfile input for the file-only logger did not render.
+
+    - name: Assert imfile's global workDirectory renders and precedes the module load
+      ansible.builtin.assert:
+        that:
+          - "'workDirectory=' ~ '\"/var/spool/rsyslog\"' in _sf"
+          - "_sf.index('workDirectory=') < _sf.index('load=' ~ '\"imfile\"')"
+        fail_msg: >-
+          global(workDirectory=...) must render before module(load="imfile") or
+          the standalone config-validate step fails (imfile has no working dir
+          in scope without it).
+
+    - name: Syslog forwarder template rendering PASSED
+      ansible.builtin.debug:
+        msg: "syslog_forwarder: omfwd rule -> syslog.pve.example.com:1517/tcp with disk queue"

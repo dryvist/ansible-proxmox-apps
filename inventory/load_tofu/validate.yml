@@ -1,0 +1,53 @@
+---
+- name: Resolve the published OpenTofu inventory
+  ansible.builtin.include_role:
+    name: dryvist.homelab.inventory_resolve
+  vars:
+    inventory_resolve_required_keys: [constants, nodes, domain]
+
+- name: Validate tofu_data constants structure
+  ansible.builtin.assert:
+    that:
+      - tofu_data is defined
+      - tofu_data.constants is defined
+      - tofu_data.constants.service_ports is defined
+      - tofu_data.constants.syslog_ports is defined
+    fail_msg: |
+      tofu_data.constants is missing or incomplete in tofu_inventory.json.
+
+      Expected tofu_inventory.json (generated from OpenTofu outputs) to include:
+        - tofu_data.constants.service_ports
+        - tofu_data.constants.syslog_ports
+
+      Please ensure OpenTofu outputs (including pipeline_constants) are
+      correctly generated and merged into ansible_inventory — run
+      the tofu-proxmox Terrakube workspace so the inventory is republished
+      to RustFS.
+
+- name: Validate tofu_data carries the node-FQDN derivation inputs
+  ansible.builtin.assert:
+    that:
+      - tofu_data.nodes is defined
+      - tofu_data.domain is defined
+      - tofu_data.domain | length > 0
+    fail_msg: |
+      tofu_data.nodes and/or tofu_data.domain are missing from
+      tofu_inventory.json. Every LXC container's ansible_host is DERIVED as
+      {node-role}.{domain} (the per-node management FQDN) — a missing or
+      empty domain would silently produce a broken host (a bare
+      "{node-role}." with no domain suffix).
+
+      Re-run the tofu-proxmox Terrakube workspace so the inventory is
+      republished with `nodes` and `domain` populated.
+
+- name: Validate Docker VM SSH key path is set when Docker VMs are present
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'PROXMOX_DKR_SSH_KEY_PATH') | length > 0
+    fail_msg: |
+      PROXMOX_DKR_SSH_KEY_PATH environment variable is not set but Docker VM hosts exist.
+      Docker VMs use direct SSH with a dedicated key separate from the Proxmox host key.
+      Store it in Doppler or SOPS (secrets.enc.yaml).
+  when:
+    - tofu_data.docker_vms is defined
+    - tofu_data.docker_vms | length > 0

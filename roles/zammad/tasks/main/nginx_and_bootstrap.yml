@@ -1,0 +1,169 @@
+---
+# =========================================================================
+# Phase 8: nginx reverse proxy
+# =========================================================================
+- name: Deploy the Zammad nginx vhost
+  ansible.builtin.template:
+    src: zammad.nginx.conf.j2
+    dest: /etc/nginx/sites-available/zammad.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the Zammad nginx vhost
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/zammad.conf
+    dest: /etc/nginx/sites-enabled/zammad.conf
+    state: link
+  notify: Reload nginx
+
+- name: Remove the default nginx vhost
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Apply pending restarts before health checks + bootstrap
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the Zammad + nginx services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - zammad
+    - nginx
+
+# =========================================================================
+# Phase 9: Idempotent bootstrap (settings incl. es_url, admin, per-actor
+# AI service accounts + their tokens, Incidents group, P1-P4 severities,
+# Mailpit channel, KB). The ruby prints
+# ZAMMAD_BOOTSTRAP_CHANGED on drift. Runs BEFORE the search-index rebuild so
+# es_url is set first.
+# =========================================================================
+- name: Validate the bootstrap secrets are present
+  ansible.builtin.assert:
+    that:
+      - zammad_admin_password | length > 0
+      - zammad_hermes_api_token | length > 0
+      - zammad_ai_api_token | length > 0
+      # Never let auth_sso be enabled with a blank trusted-IP list:
+      # verify_sso_trusted_ip! treats blank as "skip the check", so an empty
+      # value here silently accepts an SSO assertion from any source.
+      - zammad_sso_trusted_ips | length > 0
+      # When AI is enabled, the router model + bearer must be present: a blank
+      # token would silently 401 against the LiteLLM router (custom_open_ai
+      # treats it as optional, but OUR router requires it).
+      - not (zammad_ai_enabled | bool) or (zammad_ai_model | length > 0)
+      - not (zammad_ai_enabled | bool) or (zammad_ai_provider_token | length > 0)
+    fail_msg: >-
+      ZAMMAD_ADMIN_PASSWORD, ZAMMAD_API_TOKEN and ZAMMAD_AI_API_TOKEN must
+      be set before the first converge (Doppler/SOPS or OpenBao
+      apps/zammad + ai/hermes), and zammad_sso_trusted_ips must be non-empty
+      (a blank value disables Zammad's SSO source check entirely). With
+      zammad_ai_enabled, LLM_ROUTER_MASTER_KEY (OpenBao ai/llm) and a model
+      must also be set for the Zammad AI provider.
+    quiet: true
+  no_log: true
+
+- name: Stage the bootstrap script on the target
+  ansible.builtin.copy:
+    src: zammad_bootstrap.rb
+    dest: "{{ zammad_root }}/ansible_bootstrap.rb"
+    owner: "{{ zammad_user }}"
+    group: "{{ zammad_group }}"
+    mode: "0640"
+
+- name: Run the idempotent Zammad bootstrap
+  ansible.builtin.command:
+    cmd: "zammad run rails r {{ zammad_root }}/ansible_bootstrap.rb"
+  environment:
+    ZAMMAD_FQDN: "{{ zammad_ui_fqdn }}"
+    ZAMMAD_ES_URL: "{{ zammad_es_url }}"
+    ZAMMAD_ADMIN_EMAIL: "{{ zammad_admin_email }}"
+    ZAMMAD_ADMIN_FIRSTNAME: "{{ zammad_admin_firstname }}"
+    ZAMMAD_ADMIN_LASTNAME: "{{ zammad_admin_lastname }}"
+    ZAMMAD_ADMIN_PASSWORD: "{{ zammad_admin_password }}"
+    ZAMMAD_API_TOKEN: "{{ zammad_hermes_api_token }}"
+    ZAMMAD_AI_API_TOKEN: "{{ zammad_ai_api_token }}"
+    ZAMMAD_HERMES_EMAIL: "{{ zammad_hermes_email }}"
+    ZAMMAD_AI_EMAIL: "{{ zammad_ai_email }}"
+    ZAMMAD_SMTP_HOST: "{{ zammad_smtp_host }}"
+    ZAMMAD_SMTP_PORT: "{{ zammad_smtp_port }}"
+    ZAMMAD_NOTIFICATION_SENDER: "{{ zammad_notification_sender }}"
+    ZAMMAD_SSO_LOGIN: "{{ zammad_sso_login }}"
+    ZAMMAD_SSO_EMAIL: "{{ zammad_sso_email }}"
+    ZAMMAD_SSO_FIRSTNAME: "{{ zammad_sso_firstname }}"
+    ZAMMAD_SSO_LASTNAME: "{{ zammad_sso_lastname }}"
+    ZAMMAD_SSO_TRUSTED_IPS: "{{ zammad_sso_trusted_ips }}"
+    ZAMMAD_GROUPS: "{{ zammad_groups | join(',') }}"
+    ZAMMAD_ORGANIZATION: "{{ zammad_organization }}"
+    ZAMMAD_HERMES_ORGANIZATION: "{{ zammad_hermes_organization }}"
+    ZAMMAD_OVERVIEWS: "{{ zammad_overviews | to_json }}"
+    # AI provider ("same brain" — the LiteLLM router). Booleanized to the
+    # literal string the bootstrap checks (`== 'true'`).
+    ZAMMAD_AI_ENABLED: "{{ zammad_ai_enabled | bool | string | lower }}"
+    ZAMMAD_AI_PROVIDER: "{{ zammad_ai_provider_name }}"
+    ZAMMAD_AI_PROVIDER_URL: "{{ zammad_ai_provider_url }}"
+    ZAMMAD_AI_MODEL: "{{ zammad_ai_model }}"
+    ZAMMAD_AI_PROVIDER_TOKEN: "{{ zammad_ai_provider_token }}"
+    ZAMMAD_AI_FEATURES: "{{ zammad_ai_features | join(',') }}"
+    # GitHub issue-linking (opt-in; token minted from the OpenBao github engine)
+    ZAMMAD_CONFIGURE_GITHUB: "{{ zammad_configure_github | bool | ternary('true', 'false') }}"
+    ZAMMAD_GITHUB_ENDPOINT: "{{ zammad_github_endpoint }}"
+    ZAMMAD_GITHUB_API_TOKEN: "{{ zammad_github_api_token }}"
+    # Incident ticket templates + KB docs answers (declarative data as JSON)
+    ZAMMAD_TICKET_TEMPLATES: "{{ zammad_ticket_templates | to_json }}"
+    ZAMMAD_KB_DOCS_CATEGORY: "{{ zammad_kb_docs_category }}"
+    ZAMMAD_KB_ANSWERS: "{{ zammad_kb_answers | to_json }}"
+  register: zammad_bootstrap
+  changed_when: "'ZAMMAD_BOOTSTRAP_CHANGED' in zammad_bootstrap.stdout"
+  no_log: true
+
+# =========================================================================
+# Phase 9b: Incident schema + backdated history (opt-in)
+# Runs after the bootstrap (needs its groups/org/admin) and before the
+# search-index rebuild, so seeded tickets land in the first index build.
+# The two tasks are ordered: the custom fields must exist before the
+# incident seed can set them.
+# =========================================================================
+- name: Seed incident custom fields and backdated incident history
+  when: zammad_seed_incidents | bool
+  # `zammad_seed`: lets the seed run on its own (`--tags zammad_seed`)
+  # against an already-installed Zammad, skipping the apt/package tasks a
+  # full `--tags zammad` converge would drag in. The scripts self-heal
+  # (find-or-create groups/org/admin), so they need no prior role task.
+  tags:
+    - zammad_seed
+  block:
+    - name: Stage the ObjectManager attribute seed on the target
+      ansible.builtin.copy:
+        src: object_manager_attributes.rb
+        dest: "{{ zammad_root }}/ansible_object_manager_attributes.rb"
+        owner: "{{ zammad_user }}"
+        group: "{{ zammad_group }}"
+        mode: "0640"
+
+    - name: Run the idempotent Ticket custom-field seed
+      ansible.builtin.command:
+        cmd: "zammad run rails r {{ zammad_root }}/ansible_object_manager_attributes.rb"
+      register: zammad_attrs_seed
+      changed_when: "'ZAMMAD_ATTRS_CHANGED' in zammad_attrs_seed.stdout"
+
+    - name: Stage the backdated incident seed on the target
+      ansible.builtin.copy:
+        src: zz_incidents.rb
+        dest: "{{ zammad_root }}/ansible_zz_incidents.rb"
+        owner: "{{ zammad_user }}"
+        group: "{{ zammad_group }}"
+        mode: "0640"
+
+    - name: Run the idempotent incident seed
+      ansible.builtin.command:
+        cmd: "zammad run rails r {{ zammad_root }}/ansible_zz_incidents.rb"
+      register: zammad_incidents_seed
+      changed_when: >-
+        {{ 'created #' in zammad_incidents_seed.stdout
+           or 'backfilled' in zammad_incidents_seed.stdout }}

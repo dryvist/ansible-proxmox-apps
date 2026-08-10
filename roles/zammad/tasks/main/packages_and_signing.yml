@@ -1,0 +1,127 @@
+---
+# =========================================================================
+# Phase 1: System packages
+# =========================================================================
+- name: Install Zammad system packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gpg          # apt_repository needs a gpg binary on minimal templates
+      - equivs       # builds the dummy package that satisfies Depends: postgresql
+      - nginx        # reverse proxy in front of the puma/websocket servers
+      - redis-server # colocated, loopback only
+      - acl          # become_user file ops on unprivileged tmp
+    state: present
+    update_cache: true
+
+# =========================================================================
+# Phase 2: Redis — colocated, loopback only (nautobot precedent)
+# =========================================================================
+- name: Bind Redis to loopback only
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^bind "
+    line: "bind {{ zammad_redis_host }} -::1"
+    state: present
+  notify: Restart redis
+
+- name: Enforce Redis protected-mode
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^protected-mode "
+    line: "protected-mode yes"
+    state: present
+  notify: Restart redis
+
+- name: Create Redis systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/redis-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Redis unprivileged-LXC systemd override
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/redis-server.service.d/lxc-override.conf
+    content: |
+      # Managed by Ansible (zammad role).
+      # Debian's Redis unit enables PrivateUsers, which requires user
+      # namespace setup that unprivileged Proxmox LXCs deny.
+      [Service]
+      PrivateUsers=no
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd daemon
+    - Restart redis
+
+- name: Apply Redis overrides before starting Redis
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Redis
+  ansible.builtin.systemd:
+    name: redis-server
+    state: started
+    enabled: true
+
+# =========================================================================
+# Phase 3: Signing keys — controller-staged, sha256-pinned (postgres pattern)
+# LXCs are firewalled outbound-internal-only, so the keys are fetched +
+# checksum-verified on the controller, then copied to the guest. ASCII-armored
+# keys are stored directly as the keyring (apt signed-by accepts .asc).
+# =========================================================================
+- name: Stage the Elasticsearch + Zammad signing keys on the controller
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.staging }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  loop:
+    - url: "{{ zammad_elastic_key_url }}"
+      staging: "{{ zammad_elastic_key_staging_path }}"
+      sha256: "{{ zammad_elastic_key_sha256 }}"
+    - url: "{{ zammad_packager_key_url }}"
+      staging: "{{ zammad_packager_key_staging_path }}"
+      sha256: "{{ zammad_packager_key_sha256 }}"
+  loop_control:
+    label: "{{ item.url }}"
+
+- name: Install the signing keys into dedicated keyrings
+  ansible.builtin.copy:
+    src: "{{ item.staging }}"
+    dest: "{{ item.keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - staging: "{{ zammad_elastic_key_staging_path }}"
+      keyring: "{{ zammad_elastic_keyring }}"
+    - staging: "{{ zammad_packager_key_staging_path }}"
+      keyring: "{{ zammad_packager_keyring }}"
+  loop_control:
+    label: "{{ item.keyring }}"
+
+# =========================================================================
+# Phase 4: apt repositories (Elasticsearch + Zammad)
+# =========================================================================
+- name: Add the Elasticsearch apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ zammad_elastic_repo }}"
+    filename: elastic
+    state: present
+    update_cache: true
+
+- name: Add the Zammad (packager.io) apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ zammad_packager_repo }}"
+    filename: zammad
+    state: present
+    update_cache: true

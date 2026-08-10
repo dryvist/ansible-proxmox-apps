@@ -1,0 +1,112 @@
+---
+# Forward every non-authoritative query (the apex + public names) over encrypted
+# DoH to the configured upstreams, with EDNS Client Subnet disabled so the
+# client subnet is never sent to upstream resolvers. DNSSEC validation stays on.
+# This is a server-level setting, so it runs on EVERY node: each instance is a
+# full resolver — authoritative/secondary for the subdomain, forward the rest.
+- name: Configure upstream forwarders (encrypted DoH)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/settings/set?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      forwarders: "{{ technitium_dns_forwarders | join(',') }}"
+      forwarderProtocol: "{{ technitium_dns_forwarder_protocol }}"
+      eDnsClientSubnet: "{{ technitium_dns_edns_client_subnet | string | lower }}"
+      dnssecValidation: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_forwarders_result
+  changed_when: technitium_dns_forwarders_result.json.status == "ok"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+# NOTE: this role deliberately does NOT delete the apex zone (jacobpevans.com).
+# A prior "remove stale apex Primary zone" task deleted the WHOLE apex zone
+# whenever it existed, on the false premise that (a) a pre-existing apex zone
+# was leftover cruft and (b) the subdomain-zone create would 400 while it
+# existed. Both are wrong: the apex Route53-mirrored zone can hold live records
+# (the pve node A records), and a parent Primary + child Primary coexist fine
+# (this server runs both the apex zone and its child subdomain zone
+# simultaneously
+# today). Deleting the apex was purely destructive and once caused a live
+# outage. Non-authoritative apex names already FORWARD to the upstream
+# resolvers (configured above) whether or not any apex zone exists locally, so
+# there is nothing to "clean up" here.
+#
+# CANONICAL ZONE FOR A GUEST HOSTNAME: technitium_dns_zone (the subdomain)
+# only. The per-guest A-record builder above writes exclusively into that
+# zone — it has never written per-guest records into the apex zone. A guest
+# created before this role became subdomain-only kept whatever apex-zone
+# record it already had (frozen there, unmaintained, per the NOTE above);
+# every guest created since has NO apex-zone record, by design. So an
+# apex-zone NXDOMAIN for a guest hostname means only "this guest postdates
+# the migration to a subdomain-only zone" — it is NOT a liveness signal and
+# must never be read as "this guest is down". Any health check, monitor, or
+# runbook resolving a GUEST hostname must query technitium_dns_zone, never
+# the apex.
+#
+# EXCEPTION — the cluster nodes themselves are the opposite: they have NO
+# record in the subdomain zone at all. Their only A-records are the apex
+# round-robin set this role writes below (technitium_dns_proxmox_endpoint_a_records
+# / the Traefik apex fallback), which is a separate write path from the
+# per-guest builder above. For a cluster node name, the apex is the only
+# zone that was ever authoritative — an apex-zone NXDOMAIN there DOES mean
+# the node is missing from that record set, and the subdomain zone has
+# nothing to fall back to.
+#
+# THIRD CASE — a Traefik-fronted SERVICE name's apex record is not merely
+# stale, it is actively wrong: it still holds the direct pre-migration
+# backend address instead of the Traefik VIP its subdomain alias correctly
+# points at, and the old backend no longer terminates TLS there. The apex
+# form of the name therefore resolves, then hangs until timeout — it does
+# not NXDOMAIN, so it reads as "service is down" while both the service and
+# the name are otherwise healthy. Same root cause as the guest case above
+# (this role has never written into the apex zone since narrowing to the
+# subdomain), different symptom because these names predate the migration
+# with a real value instead of no value at all.
+- name: Create authoritative subdomain DNS zone (primary)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_zone }}"
+      type: "{{ technitium_dns_zone_type }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+    status_code: [200, 400]
+  register: technitium_dns_zone_create
+  changed_when: technitium_dns_zone_create.json.status == "ok"
+  failed_when:
+    - technitium_dns_zone_create.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_zone_create.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_zone not in technitium_dns_existing_zones
+  no_log: true
+
+# Secondaries replicate the zone from the primary via native AXFR/IXFR zone
+# transfer; they create a Secondary zone (master = primary) and skip all record
+# writes below. Only functions once the primary + secondary LXCs exist.
+- name: Create Secondary DNS zone (secondary)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_zone }}"
+      type: "Secondary"
+      primaryNameServerAddresses: "{{ technitium_dns_primary_ip }}"
+      zoneTransferProtocol: "{{ technitium_dns_zone_transfer_protocol }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+    status_code: [200, 400]
+  register: technitium_dns_secondary_zone_create
+  changed_when: technitium_dns_secondary_zone_create.json.status == "ok"
+  when:
+    - technitium_dns_role == 'secondary'
+    - technitium_dns_apply | bool
+    - technitium_dns_zone not in technitium_dns_existing_zones
+  no_log: true

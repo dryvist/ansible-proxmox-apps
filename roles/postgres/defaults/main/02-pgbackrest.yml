@@ -1,0 +1,179 @@
+---
+# =============================================================================
+# Object-storage PITR backups (pgBackRest -> S3). A SECOND, independent tier
+# from the pg_dump layer above: pgBackRest archives WAL continuously
+# (archive_command) and takes scheduled full/incremental base backups to an
+# S3-compatible endpoint (the homelab RustFS instance; the same objects are
+# replicated to Backblaze B2 by an out-of-band job), giving point-in-time
+# recovery that logical dumps cannot. Primary-only, and ON by default — the
+# on-site repo is the standard posture. The role asserts the S3 endpoint and
+# credentials are set, so an enabled host fails the converge loudly instead of
+# looking configured while archiving nothing.
+#
+# Flag name: task #7 asked for `postgres_backup_enabled`, but that is already
+# the pg_dump tier's switch (default true). Repurposing it would silently
+# disable pg_dump, so this tier owns its own flag.
+postgres_pgbackrest_enabled: true
+
+# Force a WAL segment closed on this cadence so an idle cluster still ships
+# archive. Without it PostgreSQL only archives a segment once it fills, so a
+# quiet database can leave the last committed transactions unarchived
+# indefinitely — the recovery-point objective becomes "whenever write volume
+# happens to reach 16 MB", which is not an objective at all. Seconds.
+postgres_archive_timeout: 60
+
+# Stanza + repo layout. A stanza is one pgBackRest view of one PostgreSQL
+# cluster, so it is named for the REPLICATION CLUSTER — the primary's inventory
+# hostname — and every member of that cluster resolves the same name. A standby
+# inherits archive_command from the primary when it is bootstrapped from a base
+# backup, so a host-scoped stanza names one thing in archive_command and another
+# in the config file's section header; the two agree only on the primary. That
+# also survives failover: a promoted standby keeps archiving into the stanza
+# that already holds the cluster's backup history, instead of silently opening a
+# second one and stranding every prior backup.
+#
+# It is NOT derived from postgres_cluster_name: every Debian host names its
+# cluster `main`, so that gave unrelated hosts the same stanza AND the same repo
+# path, colliding them in one shared repo (#1017). With no primary named, the
+# host stands alone and is its own cluster, so it falls back to its own name and
+# that collision stays fixed.
+#
+# The repo path is the in-bucket prefix, so objects land at
+# s3://<bucket>/postgres/<stanza>/... — one prefix per cluster.
+#
+# The bucket name is identical on RustFS and Backblaze B2 — B2's namespace is
+# global, so one globally-unique name satisfies the 1:1 RustFS<->B2 parity rule.
+postgres_pgbackrest_stanza: >-
+  {{ postgres_primary_host
+     if (postgres_primary_host | length > 0)
+     else inventory_hostname }}
+postgres_backup_s3_bucket: dryvist-homelab-backups
+postgres_pgbackrest_repo_path: "/postgres/{{ postgres_pgbackrest_stanza }}"
+
+# S3-compatible endpoint + credentials. Injection-agnostic: the role reads env,
+# never a specific secret backend. RustFS ignores the region but the AWS
+# SDK pgBackRest embeds requires a non-empty value, and they need path-style
+# URIs (bucket in the path, not the hostname).
+postgres_backup_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_S3_ENDPOINT') | default('', true) }}"
+postgres_backup_s3_region: "{{ lookup('env', 'POSTGRES_BACKUP_S3_REGION') | default('us-east-1', true) }}"
+postgres_backup_s3_uri_style: path
+postgres_backup_s3_access_key_id: "{{ lookup('env', 'POSTGRES_BACKUP_S3_ACCESS_KEY_ID') | default('', true) }}"
+postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY') | default('', true) }}"
+
+# Offsite repo (repo2). pgBackRest writes every backup and WAL segment to both
+# repos itself, which is what makes the 1:1 parity rule structural instead of
+# aspirational: there is no out-of-band mirror to drift, truncate, or silently
+# copy a subset (#1027). Restores read it with `--repo=2`, and `check` validates
+# archiving against every configured repo.
+#
+# Do NOT reach for `pgbackrest verify` as the offsite gate: it exits 0 against a
+# repo it cannot read at all, printing only "No usable backup.info file" (#1027).
+#
+# STILL OFF, and this is a credential gap, not a preference. Enabling it without
+# a credential path would point the config at a repo it cannot authenticate to,
+# which is strictly worse than an honest `false`. Three things are missing:
+#
+#   1. A scoped B2 application key pair for the backup bucket. The convention is
+#      one bucket, exactly two keys — <bucket>-ro and <bucket>-rw — and the
+#      writer here takes the -rw one. Neither exists.
+#   2. A home for it. B2 is internet-facing, so it belongs in the
+#      `secrets-external/` mount, never `secret/`.
+#   3. A delivery path. scripts/fetch-openbao-secrets.sh — the thing that turns
+#      a KV entry into the POSTGRES_BACKUP_REPO2_S3_* env vars this role reads —
+#      only ever LISTs and reads `secret/apps/<domain>`. It has no
+#      `secrets-external/` code path at all, so even an existing key could not
+#      reach the converge. That script is the blocking item.
+#
+# Flip this to true in the same change that closes all three, so the assert in
+# tasks/pgbackrest.yml is satisfiable the first time it runs.
+postgres_pgbackrest_repo2_enabled: false
+postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"
+postgres_backup_repo2_s3_bucket: "{{ postgres_backup_s3_bucket }}"
+postgres_backup_repo2_s3_endpoint: "{{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ENDPOINT') | default('', true) }}"
+# Backblaze's S3 endpoint embeds its region (s3.<region>.backblazeb2.com), so
+# derive it rather than making the operator restate it in a second variable.
+postgres_backup_repo2_s3_region: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_REGION')
+     | default(postgres_backup_repo2_s3_endpoint
+               | regex_replace('^s3\.([^.]+)\..*$', '\1'), true) }}
+postgres_backup_repo2_s3_uri_style: path
+postgres_backup_repo2_s3_access_key_id: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_ACCESS_KEY_ID') | default('', true) }}
+postgres_backup_repo2_s3_secret_access_key: >-
+  {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
+postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
+
+# Repository encryption at rest. OFF by default on both repos, and turning it on
+# is NOT a flag flip — read this before changing either value.
+#
+# pgBackRest fixes the cipher at STANZA-CREATE time. It cannot be added to a
+# repository that already holds backups: doing so requires stanza-delete +
+# stanza-create + a full re-backup, which destroys the existing backup history.
+# So repo1 (already populated) and repo2 (not yet created) are deliberately
+# separate variables — an offsite repo can be born encrypted at no cost, while
+# encrypting repo1 in place is a destructive operation someone must choose.
+#
+# THE TRAP, and the reason the passphrase is NOT generated on the guest the way
+# this estate generates most credentials: a cipher passphrase that exists only
+# on the guest makes every backup unreadable the moment the guest is lost —
+# exactly the scenario backups exist for. Encryption converts a confidentiality
+# gap into an availability risk unless the passphrase is stored durably OFF the
+# guest and verified readable BEFORE the first encrypted backup is taken.
+# Sequence: persist and verify the passphrase, then stanza-create, then back up.
+#
+# Injection-agnostic per AGENTS.md: the role reads an env var and does not care
+# which store filled it. Losing this value loses the backups; treat it as
+# permanent, not rotatable — rotation also means a new stanza.
+postgres_pgbackrest_repo1_cipher_type: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO1_CIPHER_TYPE') | default('none', true) }}
+postgres_pgbackrest_repo1_cipher_pass: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO1_CIPHER_PASS') | default('', true) }}
+postgres_pgbackrest_repo2_cipher_type: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO2_CIPHER_TYPE') | default('none', true) }}
+postgres_pgbackrest_repo2_cipher_pass: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO2_CIPHER_PASS') | default('', true) }}
+
+# Asynchronous archiving. NOT optional once a repo lives on the network:
+# synchronous archive-push blocks archive_command on the S3 write, so every
+# segment pays full round-trip latency and a slow repo backs archiving up
+# behind write volume. Async batches and parallelizes the pushes in a
+# background process; the spool holds only its acknowledgement files (zero
+# bytes on success), not WAL, so it lives on local disk and is safe to lose.
+#
+# Async alone does NOT bound pg_wal during a repo outage — segments stay in
+# pg_wal until actually pushed, so an unreachable repo still fills the disk
+# and halts the primary eventually. archive-push-queue-max below is what
+# bounds it: past the limit pgBackRest acks the segment to PostgreSQL and
+# DROPS it (with a warning in the PostgreSQL log). That trades a PITR gap —
+# unrestorable between the drop and the next base backup — for primary
+# availability, which is the estate's stated preference (rebuildable over
+# un-killable). A dropped chain shows up in pgbackrest info as a missing WAL
+# range; the scheduled base backups re-establish recoverability.
+postgres_pgbackrest_archive_async: true
+postgres_pgbackrest_spool_path: /var/spool/pgbackrest
+postgres_pgbackrest_queue_max: 4GiB
+
+# Retention: number of full backups to keep. pgBackRest expires the WAL that
+# predates the oldest retained full automatically, so this one knob bounds both
+# base-backup and WAL storage.
+postgres_pgbackrest_retention_full: 4
+
+# Backup schedule. pgBackRest's standard pattern is a weekly full plus daily
+# incrementals (the first backup is always promoted to full). Each entry deploys
+# a pgbackrest-backup@<type>.timer that triggers pgbackrest-backup@<type>.service.
+postgres_pgbackrest_schedules:
+  - type: full
+    on_calendar: "Sun *-*-* 01:00:00"
+  - type: incr
+    on_calendar: "Mon..Sat *-*-* 01:00:00"
+postgres_pgbackrest_randomized_delay_sec: 900
+
+# PITR restore (explicit invocation only; tags never,pgbackrest_restore). Stops
+# the cluster, restores the repo into PGDATA with --delta, and starts it to
+# replay WAL. Arm with postgres_pgbackrest_restore=true; optionally pin a target
+# with postgres_pgbackrest_restore_target (e.g. an ISO timestamp) and
+# _target_type (time/name/xid/lsn). Point a drill at a scratch cluster/stanza,
+# NEVER the live primary.
+postgres_pgbackrest_restore: false
+postgres_pgbackrest_restore_target: ""
+postgres_pgbackrest_restore_target_type: "time"

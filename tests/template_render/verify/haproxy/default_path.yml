@@ -1,0 +1,69 @@
+---
+# =========================================================================
+# Default path: haproxy_http_enabled=false (existing behavior, no opt-in)
+# =========================================================================
+- name: Render haproxy.cfg.j2 with HTTP disabled
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/haproxy.cfg.j2"
+    dest: "{{ _fixture_dir }}/test_haproxy_disabled.cfg"
+    mode: "0644"
+  vars:
+    haproxy_http_enabled: false
+    haproxy_http_frontends: []
+
+- name: Read rendered haproxy.cfg (disabled)
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_haproxy_disabled.cfg"
+  register: _haproxy_disabled_raw
+
+- name: Decode haproxy.cfg disabled content
+  ansible.builtin.set_fact:
+    _haproxy_disabled: "{{ _haproxy_disabled_raw.content | b64decode }}"
+
+- name: Assert disabled config keeps TCP/syslog frontends and backends (DRY audit no-op)
+  ansible.builtin.assert:
+    that:
+      - "'mode tcp' in _haproxy_disabled"
+      - "'option tcplog' in _haproxy_disabled"
+      - "'timeout connect 5000' in _haproxy_disabled"
+      - "'timeout client 60000' in _haproxy_disabled"
+      - "'ca-base /etc/ssl/certs' in _haproxy_disabled"
+      - "'crt-base /etc/ssl/private' in _haproxy_disabled"
+      - "'frontend syslog_unifi_514' in _haproxy_disabled"
+      - "'bind *:514' in _haproxy_disabled"
+      - "'default_backend syslog_backend_1514' in _haproxy_disabled"
+      - "'backend syslog_backend_1514' in _haproxy_disabled"
+      - "'server cribl-edge-01 192.168.0.180:1514' in _haproxy_disabled"
+      - "'frontend cribl_s2s_10300' in _haproxy_disabled"
+      - "'bind *:10300' in _haproxy_disabled"
+      - "'server cribl-stream-01 192.168.0.182:10300' in _haproxy_disabled"
+    fail_msg: >-
+      DRY audit caused a behavior change with HTTP disabled — TCP/syslog
+      rendering differs from prior literal-baked config.
+
+- name: Assert AI ingest frontends and backends render toward the Stream pair
+  ansible.builtin.assert:
+    that:
+      - "'frontend ai_claude_code_10311' in _haproxy_disabled"
+      - "'bind *:10311' in _haproxy_disabled"
+      - "'default_backend ai_backend_10311' in _haproxy_disabled"
+      - "'backend ai_backend_10311' in _haproxy_disabled"
+      - "'server cribl-stream-01 192.168.0.182:10311' in _haproxy_disabled"
+      - "'server cribl-stream-02 192.168.0.183:10311' in _haproxy_disabled"
+      - "'frontend ai_openbao_audit_10331' in _haproxy_disabled"
+      - "'server cribl-stream-01 192.168.0.182:10331' in _haproxy_disabled"
+    fail_msg: >-
+      haproxy.cfg.j2 did not render an AI ingest frontend/backend pair per
+      ai_log_routing entry pointing at the Cribl Stream servers.
+
+- name: Assert disabled config DOES NOT emit any HTTP/HTTPS frontends or backends
+  ansible.builtin.assert:
+    that:
+      - "'frontend http_in' not in _haproxy_disabled"
+      - "'frontend https_in' not in _haproxy_disabled"
+      - "'http_backend_' not in _haproxy_disabled"
+      - "'use_backend' not in _haproxy_disabled"
+      - "'X-Forwarded-Proto' not in _haproxy_disabled"
+    fail_msg: >-
+      HTTP/HTTPS section leaked into the rendered config even though
+      haproxy_http_enabled was false. The Jinja conditional gate is broken.

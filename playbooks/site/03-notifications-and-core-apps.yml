@@ -1,0 +1,332 @@
+---
+# =============================================================================
+# Phase 4: Notification Services
+# Mailpit SMTP relay and ntfy push notifications
+# =============================================================================
+
+# Independent leaf app plays below are wrapped in block/rescue for
+# play-level failure isolation (issue #672) — see
+# tasks/record_isolated_failure.yml for the mechanism and the end-of-run
+# gate play for how the run's exit code still reflects a failure.
+
+- name: Configure Mailpit SMTP relay
+  hosts: mailpit_group
+  become: true
+  gather_facts: false
+  tags:
+    - mailpit
+    - notifications
+    - smtp
+  tasks:
+    - name: Converge mailpit_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include mailpit_docker role
+          ansible.builtin.include_role:
+            name: mailpit_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: mailpit
+
+- name: Configure ntfy push notification server
+  hosts: ntfy_group
+  become: true
+  gather_facts: false
+  tags:
+    - ntfy
+    - notifications
+    - push
+  tasks:
+    - name: Converge ntfy_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include ntfy_docker role
+          ansible.builtin.include_role:
+            name: ntfy_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: ntfy
+
+- name: Configure self-hosted Healthchecks (deadman watchdog receiver)
+  hosts: healthchecks_group
+  become: true
+  gather_facts: false
+  tags:
+    - healthchecks
+    - monitoring
+    - deadman
+  tasks:
+    - name: Converge healthchecks_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include healthchecks_docker role
+          ansible.builtin.include_role:
+            name: healthchecks_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: healthchecks
+
+# =============================================================================
+# Phase 4b: Keystone SPOF deadman watchdog
+# A timer-driven liveness validator on each keystone host (DNS, Traefik, the
+# syslog/netflow LB) that pings healthchecks + ntfy so a silent keystone failure
+# pages instead of going unnoticed. Runs after ntfy + healthchecks so both alert
+# receivers exist. No-op on hosts with no matching checks.
+# =============================================================================
+
+- name: Deploy keystone SPOF deadman watchdog
+  hosts: technitium_dns_group:traefik_group:haproxy_group:openbao_group
+  become: true
+  gather_facts: false
+  tags:
+    - service_deadman
+    - monitoring
+    - deadman
+    - resiliency
+  tasks:
+    - name: Converge service_deadman (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include service_deadman role
+          ansible.builtin.include_role:
+            name: service_deadman
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: service_deadman
+
+# =============================================================================
+# Phase 5: Microsoft SQL Server
+# Deploy SQL Server 2022 on Docker in LXC container
+# =============================================================================
+
+- name: Configure Microsoft SQL Server
+  hosts: mssql_group
+  become: true
+  gather_facts: false
+  tags:
+    - mssql_docker
+    - database
+  tasks:
+    - name: Converge mssql_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include mssql_docker role
+          ansible.builtin.include_role:
+            name: mssql_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: mssql_docker
+
+# =============================================================================
+# Phase 5b: Shared PostgreSQL + Nautobot IPAM/DCIM (issue #138)
+# Postgres (the shared native DB backend) must converge before Nautobot, which
+# connects to it by FQDN on the data VLAN. Both read their secrets from the
+# openbao_secrets pre-play (apps domain) with an env fallback. gather_facts is
+# on: the postgres role derives the PGDG apt repo from ansible_distribution_release.
+# =============================================================================
+
+- name: Configure shared PostgreSQL
+  hosts: postgres_group
+  become: true
+  gather_facts: true
+  tags:
+    - postgres
+    - database
+  roles:
+    - role: postgres
+
+- name: Configure ai-VLAN PostgreSQL (Hindsight memory cluster)
+  hosts: postgres_ai_group
+  become: true
+  gather_facts: true
+  # serial keeps the converge primary-then-standby: the standby's basebackup
+  # needs a running, already-converged primary.
+  serial: 1
+  tags:
+    - postgres_ai
+    - database
+  roles:
+    - role: postgres
+
+- name: Configure Nautobot IPAM/DCIM
+  hosts: nautobot_group
+  become: true
+  gather_facts: true
+  tags:
+    - nautobot
+  tasks:
+    - name: Converge nautobot (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include nautobot role
+          ansible.builtin.include_role:
+            name: nautobot
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: nautobot
+
+# =============================================================================
+# Phase 7: GitHub Actions Runners
+# CI runners on docker-host VM — isolated from dev/test workloads
+# =============================================================================
+
+- name: Deploy GitHub Actions runners
+  hosts: docker_vms
+  become: true
+  gather_facts: false
+  tags:
+    - github_runner
+    - ci
+  tasks:
+    - name: Converge github_runner (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include github_runner role
+          ansible.builtin.include_role:
+            name: github_runner
+          when: github_runner_admin_token is defined or github_runner_token is defined
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: github_runner
+
+# =============================================================================
+# Phase 7a: Agent Sandbox Egress Boundary
+# Internal `agents` docker network + allowlisting CONNECT proxy on the
+# docker-host VM. Agent containers themselves are launched ad hoc by
+# dryvist/nix-agent-sandbox (`agent run --host`), never by Ansible.
+# =============================================================================
+
+- name: Deploy agent sandbox egress boundary
+  hosts: docker_vms
+  become: true
+  gather_facts: false
+  tags:
+    - agent_sandbox
+  tasks:
+    - name: Converge agent_sandbox (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include agent_sandbox role
+          ansible.builtin.include_role:
+            name: agent_sandbox
+          when: inventory_hostname == agent_sandbox_host | default('docker-host')
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: agent_sandbox
+
+# =============================================================================
+# Phase 7a1: OpenTofu CLI on the IaC execution host
+# LAN-touching OpenTofu operations (init against the remote backend, plan,
+# state ops) run from the iac-platform VM, not a workstation. This installs
+# the tofu binary plus the direnv/jq/doppler tooling the flow needs — never
+# any credential: backend coordinates and the API token come from the
+# operator's environment at call time and are never written to the guest.
+# =============================================================================
+
+- name: Install the OpenTofu CLI on the IaC execution host
+  hosts: docker_vms
+  become: true
+  gather_facts: false
+  tags:
+    - opentofu_cli
+    - iac
+  tasks:
+    - name: Converge opentofu_cli (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include opentofu_cli role
+          ansible.builtin.include_role:
+            name: opentofu_cli
+          when: inventory_hostname == opentofu_cli_host | default('iac-platform')
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: opentofu_cli
+
+# =============================================================================
+# Phase 7b: iDRAC KVM HTML5 Viewer
+# domistyle/idrac6-based viewers (R410 + R710) on dedicated LXC 251.
+# Credentials come from Doppler IDRAC_R*_HOST/USER/PASSWORD env vars.
+# =============================================================================
+
+- name: Deploy iDRAC KVM containers
+  hosts: idrac_kvm_group
+  become: true
+  gather_facts: true
+  tags:
+    - idrac_kvm_docker
+    - idrac
+    - oob
+    - management
+  tasks:
+    - name: Converge idrac_kvm_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include idrac_kvm_docker role
+          ansible.builtin.include_role:
+            name: idrac_kvm_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: idrac_kvm_docker
+
+# =============================================================================
+# Phase 8a-bis: AI Orchestration Layer
+# =============================================================================
+
+- name: Configure n8n workflow automation
+  hosts: n8n_group
+  become: true
+  gather_facts: true
+  tags:
+    - n8n_docker
+    - ai-orchestration
+  tasks:
+    - name: Converge n8n_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include n8n_docker role
+          ansible.builtin.include_role:
+            name: n8n_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: n8n_docker
+
+# =============================================================================
+# Phase 8b: OpenProject Community Edition
+# Project management web app — Docker all-in-one in LXC (bundles postgres,
+# memcached, web, worker). Reachable on container_ip:80 internally; DNS A
+# record (openproject.{domain}) is auto-created by technitium_dns from
+# the hostname + container_ip in inventory.
+# =============================================================================
+
+- name: Configure OpenProject Community Edition
+  hosts: openproject_group
+  become: true
+  gather_facts: false
+  tags:
+    - openproject_docker
+    - projects
+    - collaboration
+  tasks:
+    - name: Converge openproject_docker (isolated — failure does not abort downstream plays)
+      block:
+        - name: Include openproject_docker role
+          ansible.builtin.include_role:
+            name: openproject_docker
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: openproject_docker
+
+# =============================================================================

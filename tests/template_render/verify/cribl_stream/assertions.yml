@@ -1,0 +1,191 @@
+---
+- name: Assert S2S input attaches the force_splunk_meta connection pipeline
+  ansible.builtin.assert:
+    that:
+      - "'type: tcpjson' in _cribl_stream_inputs"
+      - "'port: 10300' in _cribl_stream_inputs"
+      - "'pipeline: force_splunk_meta' in _cribl_stream_inputs"
+    fail_msg: >-
+      inputs.yml.j2 must attach force_splunk_meta to the in_cribl_s2s
+      connection — Cribl Edge skips its destination post-processing for
+      pack-routed events, so unstamped events would fall into Splunk's
+      HEC token defaults (index=main, sourcetype=httpevent)
+
+- name: Assert prometheus_rw input is present on port 9201 with prometheusAPI and prometheus_to_netmon pipeline
+  ansible.builtin.assert:
+    that:
+      - "'type: prometheus_rw' in _cribl_stream_inputs"
+      - "'port: 9201' in _cribl_stream_inputs"
+      - "'prometheusAPI: /api/v1/write' in _cribl_stream_inputs"
+      - "'pipeline: prometheus_to_netmon' in _cribl_stream_inputs"
+    fail_msg: >-
+      inputs.yml.j2 must include a prometheus_rw input on port 9201 with
+      prometheusAPI: /api/v1/write (required by Cribl schema) connected
+      to the prometheus_to_netmon pipeline
+
+- name: Assert OTLP input renders on the otel port with the otel_stamp pipeline
+  ansible.builtin.assert:
+    that:
+      - "'open_telemetry:in_otel' in _cribl_stream_inputs"
+      - "'type: open_telemetry' in _cribl_stream_inputs"
+      - "'port: 4318' in _cribl_stream_inputs"
+      - "'extractSpans: true' in _cribl_stream_inputs"
+      - "'pipeline: otel_stamp' in _cribl_stream_inputs"
+      - "\"index || 'otel_traces'\" in _cribl_stream_otel_pipeline"
+      - "\"sourcetype || 'otel:span'\" in _cribl_stream_otel_pipeline"
+    fail_msg: >-
+      inputs.yml.j2 must include an open_telemetry in_otel listener on the
+      otel port with extractSpans, wired to the otel_stamp pipeline that
+      stamps index=otel_traces / sourcetype=otel:span
+
+- name: Assert the Langfuse OTLP leg renders end to end
+  ansible.builtin.assert:
+    that:
+      - "'output: langfuse_otlp' in _cribl_stream_inputs"
+      - "'pipeline: otel_traces' in _cribl_stream_inputs"
+      - "'langfuse_otlp:' in _cribl_stream_outputs_pi"
+      - "'type: open_telemetry' in _cribl_stream_outputs_pi"
+      - "'otlpVersion: \"1.3.1\"' in _cribl_stream_outputs_pi"
+      - "\"__otlp.type !== 'traces'\" in _cribl_stream_otel_traces"
+    fail_msg: >-
+      the Langfuse leg must render fully when the key vars are set — the
+      in_otel connection fork, the langfuse_otlp OTLP/HTTP output at
+      otlpVersion 1.3.1, and the trace-only drop filter (Langfuse rejects
+      non-trace signals; a missing filter jams the persistent queue)
+
+- name: Assert AI ingest inputs render per routing entry with the right type
+  ansible.builtin.assert:
+    that:
+      # tcpjson CLI source.
+      - "'in_ai_claude_code' in _cribl_stream_inputs"
+      - "'type: tcpjson' in _cribl_stream_inputs"
+      - "'port: 10311' in _cribl_stream_inputs"
+      # rsyslog-fed source renders a syslog-type, TCP-only input.
+      - "'in_ai_homelab_llm' in _cribl_stream_inputs"
+      - "'type: syslog' in _cribl_stream_inputs"
+      - "'tcpPort: 10323' in _cribl_stream_inputs"
+      # *_docker source classifies as syslog by name suffix alone — no
+      # cribl_stream_ai_input_types entry exists for qdrant_docker.
+      - "'in_ai_qdrant_docker' in _cribl_stream_inputs"
+      - "'tcpPort: 10347' in _cribl_stream_inputs"
+      # All three connect through the ai_stamp pipeline.
+      - "'pipeline: ai_stamp' in _cribl_stream_inputs"
+    fail_msg: >-
+      inputs.yml.j2 must render one in_ai_<name> input per ai_log_routing
+      entry (tcpjson by default, syslog-type for rsyslog senders), each
+      connected via the ai_stamp pipeline
+
+- name: Assert ai_stamp pipeline stamps conditionally and parses as YAML
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_ai_pipeline | from_yaml).functions | length == 2"
+      - "'index ||' in _cribl_stream_ai_pipeline"
+      - "'sourcetype ||' in _cribl_stream_ai_pipeline"
+      - "\"__inputId.includes('in_ai_claude_code') ? 'claude'\" in _cribl_stream_ai_pipeline"
+      - "\"__inputId.includes('in_ai_homelab_llm') ? 'llamaswap'\" in _cribl_stream_ai_pipeline"
+      - "'matchRegex' in _cribl_stream_ai_pipeline"
+      - "'replaceExpr' in _cribl_stream_ai_pipeline"
+      - "'regex:' not in _cribl_stream_ai_pipeline"
+    fail_msg: >-
+      ai_stamp conf.yml must keep conditional evals (index || ...) driven by
+      __inputId and the same matchRegex/replaceExpr mask schema as
+      force_splunk_meta
+
+- name: Assert ai_stamp derives source for the syslog inputs
+  vars:
+    _ai_evals: >-
+      {{ (_cribl_stream_ai_pipeline | from_yaml).functions[0].conf.add }}
+    _ai_source_eval: >-
+      {{ _ai_evals | selectattr('name', 'equalto', 'source') | list }}
+  ansible.builtin.assert:
+    that:
+      # The syslog-type inputs (hermes_agent, openbao_audit, homelab_llm)
+      # never set source themselves, so Splunk's HEC defaulted it to the
+      # token name and collapsed every producer into one value. The rsyslog
+      # tag is the discriminator; it arrives inside _raw, not as appname.
+      - "_ai_source_eval | length == 1"
+      - "'source || appname' in _ai_source_eval[0].value"
+      # The syslog input hands the pipeline the whole raw line rather than
+      # parsed fields, so the tag must be recovered from _raw. Assert the
+      # fallback is present and still anchored at the PRI header.
+      - "'String(_raw).match(' in _ai_source_eval[0].value"
+      - "'^<' in _ai_source_eval[0].value"
+    fail_msg: >-
+      ai_stamp must stamp source from appname. Without it the syslog-type
+      AI inputs reach Splunk with source defaulted to the HEC token name
+      (index=hermes was 100% 'http:hermes'), so every distinct producer
+      collapses into a single source value. The eval must stay conditional
+      (source first) so tcpjson senders that already set source to the file
+      they tail pass through untouched. appname alone is NOT sufficient:
+      the syslog input does not populate it, which was verified against the
+      live stream, so the _raw fallback is what actually sets source.
+
+- name: Assert neither pipeline masks IPv4 out of events bound for Splunk
+  ansible.builtin.assert:
+    that:
+      - "'25[0-5]' not in _cribl_stream_ai_pipeline"
+      - "'25[0-5]' not in _cribl_stream_meta_pipeline"
+      # The email scrub stays; only the dotted-quad rule was removed.
+      - "'@[a-zA-Z0-9.-]+' in _cribl_stream_ai_pipeline"
+      - "'@[a-zA-Z0-9.-]+' in _cribl_stream_meta_pipeline"
+    fail_msg: >-
+      an IPv4 mask has been reintroduced. Splunk is the single source of
+      truth for logging here and these rules match all of _raw, so they
+      replace every dotted quad in an event — client_ip, remote_ip,
+      upstream addresses and subnet references alike — with '*'. That makes
+      access-log attribution impossible: it is why 4,103 probe requests/day
+      could not be traced to a source on 2026-08-05. Mask PII (email), not
+      the fields the logs exist to answer with.
+
+- name: Assert per-index HEC outputs render for netflow + every AI index
+  ansible.builtin.assert:
+    that:
+      - "'splunk_hec_netflow' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_claude' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_llm' in _cribl_stream_outputs_pi"
+      # Derived list is unique — no duplicated output ids.
+      - "_cribl_stream_outputs_pi.count('id: splunk_hec_llm') == 1"
+    fail_msg: >-
+      outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
+      splunk_hec_<index> output for netflow plus each unique
+      ai_log_routing index
+
+- name: Assert force_splunk_meta evals are conditional and mask schema is valid
+  ansible.builtin.assert:
+    that:
+      - "'index ||' in _cribl_stream_meta_pipeline"
+      - "'sourcetype ||' in _cribl_stream_meta_pipeline"
+      - "'matchRegex' in _cribl_stream_meta_pipeline"
+      - "'replaceExpr' in _cribl_stream_meta_pipeline"
+      - "'regex:' not in _cribl_stream_meta_pipeline"
+      # Copilot datatypes stamp index=openai — there is no 'copilot' index;
+      # openai is the designated Copilot/OpenAI CLI index (ai_log_routing).
+      - "\"? 'openai'\" in _cribl_stream_meta_pipeline"
+      - "\"? 'copilot'\" not in _cribl_stream_meta_pipeline"
+      # antigravity-cli-* datatypes stamp the colon sourcetype form
+      # (antigravity:cli:transcript / :history), mirroring gemini-cli-;
+      # the general antigravity- branch stays for antigravity-brain etc.
+      - "\"replace('antigravity-cli-','antigravity:cli:')\" in _cribl_stream_meta_pipeline"
+    fail_msg: >-
+      force_splunk_meta must keep conditional evals (index || ...) so
+      Edge-stamped events pass through, and the mask rules must use
+      matchRegex/replaceExpr — regex/replacement keys fail function init
+      and silently disable the whole pipeline
+
+- name: Assert force_splunk_meta renders as parseable YAML
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_meta_pipeline | from_yaml).functions | length == 2"
+    fail_msg: "force_splunk_meta conf.yml must parse as YAML with eval + mask functions"
+
+- name: Assert prometheus_to_netmon stamps index=netmon_metrics and sourcetype=prometheus:metrics
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 1"
+      - "'netmon_metrics' in _cribl_stream_prom_pipeline"
+      - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
+      - "'Number.isFinite' in _cribl_stream_prom_pipeline"
+    fail_msg: >-
+      prometheus_to_netmon pipeline must have exactly one eval function
+      that coerces non-finite metric values and stamps index=netmon_metrics
+      and sourcetype=prometheus:metrics

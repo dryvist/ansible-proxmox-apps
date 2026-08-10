@@ -1,0 +1,46 @@
+---
+# =============================================================================
+# Phase 1: PGDG apt repository
+# =============================================================================
+- name: Install apt prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gpg                # apt_repository needs a gpg binary on minimal templates
+      - sudo               # become_user: postgres de-escalation on minimal templates
+      - python3-psycopg2   # community.postgresql modules connect via psycopg2
+      - acl                # become_user:postgres file ops on unprivileged tmp
+      - rsync              # standby node pulls the backup dir (postgres_standby)
+    state: present
+    update_cache: true
+
+# The key is staged on the controller because the LXC is firewalled
+# outbound-internal-only (same pattern as the openbao role's artifact staging);
+# a guest-side get_url to www.postgresql.org would be dropped.
+- name: Stage the PGDG repository signing key on the controller
+  ansible.builtin.get_url:
+    url: "{{ postgres_pgdg_key_url }}"
+    dest: "{{ postgres_pgdg_key_staging_path }}"
+    checksum: "sha256:{{ postgres_pgdg_key_sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+
+- name: Install the PGDG repository signing key
+  ansible.builtin.copy:
+    src: "{{ postgres_pgdg_key_staging_path }}"
+    dest: "{{ postgres_pgdg_keyring }}"
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Add the PGDG apt repository
+  ansible.builtin.apt_repository:
+    repo: "{{ postgres_pgdg_repo }}"
+    filename: pgdg
+    state: present
+    update_cache: true

@@ -1,0 +1,142 @@
+---
+# Import OpenTofu infrastructure data before running application playbooks
+# This populates the inventory dynamically from tofu_inventory.json
+# Must run with gather_facts: false to avoid Gathering Facts task
+- name: Load OpenTofu infrastructure inventory
+  import_playbook: ../../inventory/load_tofu.yml
+
+# =============================================================================
+# Phase 0-telemetry: publish converge-freshness configuration
+# Hands the `converge_telemetry` callback plugin its tofu-derived endpoint,
+# the inventory roster and the repo git SHA. The callback (not a play) decides
+# per host whether the converge actually succeeded, using Ansible's own
+# end-of-run counters — see callback_plugins/converge_telemetry.py.
+# The HEC token is deliberately NOT published here; the callback reads
+# SPLUNK_HEC_TOKEN itself so the secret never enters run stats.
+# =============================================================================
+
+- name: Publish converge-freshness telemetry configuration
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags:
+    - always
+  vars:
+    ansible_become: false
+    # Every inventory host the run could have converged. localhost is the
+    # control node, never a converge target, so it is excluded from both the
+    # roster and the FQDN map.
+    converge_telemetry_roster: >-
+      {{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}
+    # inventory hostname -> FQDN. `hostname` is set as a real fact on every
+    # guest by inventory/load_tofu.yml, which always runs before this play.
+    converge_telemetry_fqdns: >-
+      {{ dict(converge_telemetry_roster | zip(
+           converge_telemetry_roster
+           | map('extract', hostvars, 'hostname')
+           | map('regex_replace', '$', '.' ~ tofu_data.domain)
+           | list)) }}
+  tasks:
+    - name: Read the repository revision being converged
+      ansible.builtin.command:
+        cmd: git rev-parse HEAD
+        chdir: "{{ playbook_dir }}/../.."
+      register: converge_telemetry_head
+      changed_when: false
+      failed_when: false
+      # Read-only, so it is safe under --check. Without this the task skips in
+      # check mode and git_sha publishes as an empty string.
+      check_mode: false
+
+    - name: Publish converge-freshness configuration for the callback plugin
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          converge_telemetry:
+            # A dry run converges nothing, so the callback must stay silent for
+            # it — publishing a "success" event would refresh the freshness
+            # clock of a host that was never touched. The callback also reads
+            # the CLI --check flag itself; this is the belt to that's braces,
+            # and it is the only signal available to an API-driven run.
+            check_mode: "{{ ansible_check_mode }}"
+            hec_url: >-
+              https://splunk.{{ tofu_data.domain }}:{{
+                tofu_data.constants.service_ports.splunk_hec
+              }}/services/collector/event
+            index: "{{ converge_telemetry_index | default('ansible') }}"
+            verify_tls: "{{ converge_telemetry_verify_tls | default(false) | bool }}"
+            timeout: "{{ converge_telemetry_timeout | default(10) | int }}"
+            git_sha: "{{ converge_telemetry_head.stdout | default('') | trim }}"
+            roster: "{{ converge_telemetry_roster }}"
+            fqdns: "{{ converge_telemetry_fqdns }}"
+            # Was the inventory this run converged against current with desired
+            # state? Set by the inventory_resolve role in load_tofu.yml above,
+            # and OMITTED (not defaulted) when it could not check — the callback
+            # publishes no claim at all in that case, because a converge that
+            # never checked must not report the artifact current.
+            desired_state_current: "{{ tofu_desired_state_current | default(omit) }}"
+            desired_state_published: "{{ tofu_desired_state_published | default(omit) }}"
+            desired_state_live: "{{ tofu_desired_state_live | default(omit) }}"
+
+# Configure application stacks based on OpenTofu infrastructure
+
+# =============================================================================
+# Phase 0-secrets: OpenBao resource-domain secrets pre-fetch
+# Reads each resource-domain's KV subtree (its own least-privilege AppRole)
+# into a per-domain `bao_<domain>_secrets` fact so every consumer role can
+# resolve its secrets bao-first with an env fallback. Runs once on the
+# controller and publishes to the union of every domain's consuming groups;
+# each domain SKIPS CLEANLY when BAO_ADDR or that domain's own role_id/
+# secret_id envs are unset.
+# =============================================================================
+
+- name: Pre-fetch resource-domain secrets from OpenBao
+  hosts: >-
+    ai_orchestration_group:n8n_group:
+    cribl_stream_group:cribl_edge:
+    object_storage_group:
+    netmon_group:prometheus_group:unifi_metrics_group:
+    postgres_group:postgres_ai_group:hindsight_group:nautobot_group:zammad_group:vikunja_group:
+    immich_group
+  gather_facts: false
+  # `always`: every consumer role resolves its secrets bao-first, so a tagged
+  # converge (--tags zammad, --tags nautobot, ...) MUST still run this play —
+  # under the old `openbao_secrets, ai` tags a tagged converge skipped the
+  # fetch and templated empty passwords (zammad database.yml, 2026-07-16).
+  # The role still skips cleanly when BAO_ADDR / a domain's AppRole envs are
+  # unset, so `always` costs nothing in env-less runs.
+  tags:
+    - always
+  # Wrapped in block/rescue for play-level failure isolation (issue #672): a
+  # hard failure on one host in this large combined-group play (e.g. an
+  # undefined var) would otherwise be 100% of that host's "batch" and abort
+  # every remaining play in site.yml, not just this one. See
+  # tasks/record_isolated_failure.yml for the mechanism.
+  tasks:
+    - name: Converge OpenBao secrets pre-fetch (isolated — failure does not abort downstream plays)
+      block:
+        - name: Fetch each resource-domain's KV subtree via its own AppRole
+          ansible.builtin.include_role:
+            name: openbao_secrets
+
+        # Publish each domain's shared, un-prefixed fact at the playbook layer
+        # (like tofu_data in load_tofu.yml). openbao_secrets_by_domain was
+        # computed once on the delegated controller; a domain that was skipped
+        # (BAO_ADDR or that domain's creds unset) is simply absent from the dict,
+        # so `default({})` covers it the same as a host outside this play.
+        - name: Publish each domain's merged secrets to every host in this play
+          ansible.builtin.set_fact:
+            bao_observability_secrets: "{{ openbao_secrets_by_domain['observability'] | default({}) }}"
+            bao_local_cloud_secrets: "{{ openbao_secrets_by_domain['local-cloud'] | default({}) }}"
+            bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
+            bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
+            bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
+            bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
+          vars:
+            openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
+          no_log: true
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: openbao-secrets-prefetch

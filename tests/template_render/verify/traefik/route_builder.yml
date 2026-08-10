@@ -1,0 +1,54 @@
+---
+# Build traefik_routes from the ingress table exactly as
+# roles/traefik/tasks/main.yml does, so this exercises the real route-builder
+# transform (apex fqdn, multi-backend servers list, scheme/sticky/health
+# flags) end-to-end into the template — not a hand-maintained output mirror.
+- name: Build traefik_routes from the fixture ingress table
+  ansible.builtin.set_fact:
+    traefik_routes: >-
+      {{
+        traefik_routes | default([]) + [{
+          'name': item.name,
+          'fqdn': (item.apex | default(false)) | ternary(
+                    traefik_base_domain,
+                    (item.hostname | default(item.name, true)) ~ '.' ~ traefik_base_domain),
+          'path_prefix': item.path_prefix | default('', true),
+          'priority': item.priority | default(0, true),
+          'servers': (item.backends | default([item.ip | default('')]))
+                     | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
+                     | map('regex_replace', '$', ':' ~ (item.port | string))
+                     | list,
+          'scheme': item.scheme | default('http'),
+          'insecure_tls': item.insecure_tls | default(false),
+          'sticky': item.sticky | default(false),
+          'health_check': item.health_check | default(false),
+          'health_check_path': item.health_check_path | default('/'),
+          'health_check_port': item.health_check_port | default(0),
+          'sso': item.sso | default(false)
+        }]
+      }}
+  loop: "{{ traefik_ingress_routes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Assert the builder normalised apex + multi-backend rows correctly
+  ansible.builtin.assert:
+    that:
+      # Single http backend -> one url; fqdn keeps the <name>. prefix.
+      - (traefik_routes | selectattr('name', 'equalto', 'plex') | first).servers == ["http://192.0.2.10:32400"]
+      - (traefik_routes | selectattr('name', 'equalto', 'plex') | first).fqdn == "plex.pve.example.com"
+      # Apex row -> fqdn is the base domain itself + a 3-server pool.
+      - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).fqdn == "pve.example.com"
+      - >-
+        (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).servers
+        == ["https://proxmox1.example.com:8006",
+        "https://proxmox2.example.com:8006", "https://proxmox3.example.com:8006"]
+      - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).sticky | bool
+      - (traefik_routes | selectattr('name', 'equalto', 'proxmox') | first).health_check | bool
+      - >-
+        (traefik_routes | selectattr('name', 'equalto', 'hermes-dashboard') | first).fqdn
+        == "hermes.pve.example.com"
+      - (traefik_routes | selectattr('name', 'equalto', 'hermes') | first).path_prefix == "/webhooks/"
+    fail_msg: >-
+      The route-builder did not normalise the ingress table correctly: apex
+      fqdn, the multi-backend servers list, or the sticky/health flags wrong.

@@ -1,0 +1,71 @@
+---
+# =========================================================================
+# Multi-entry render: verifies the CRITICAL bug fix (no port duplication)
+# =========================================================================
+- name: Render haproxy.cfg.j2 with HTTP enabled and two frontends
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/haproxy.cfg.j2"
+    dest: "{{ _fixture_dir }}/test_haproxy_multi.cfg"
+    mode: "0644"
+  vars:
+    haproxy_http_enabled: true
+    haproxy_http_frontends:
+      - name: webapp
+        server_name: webapp.test.example.com
+        backend_host: 192.168.0.108
+        backend_port: 8080
+        cert_path: /etc/ssl/private/webapp.pem
+      - name: gitea
+        server_name: gitea.test.example.com
+        backend_host: 192.168.0.109
+        backend_port: 3000
+        cert_path: /etc/ssl/private/gitea.pem
+
+- name: Read rendered haproxy.cfg (multi)
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_haproxy_multi.cfg"
+  register: _haproxy_multi_raw
+
+- name: Decode haproxy.cfg multi content
+  ansible.builtin.set_fact:
+    _haproxy_multi: "{{ _haproxy_multi_raw.content | b64decode }}"
+
+- name: Assert multi-entry render does NOT duplicate bind lines (CRITICAL fix)
+  ansible.builtin.assert:
+    that:
+      - "_haproxy_multi.count('bind *:80') == 1"
+      - "_haproxy_multi.count('bind *:443') == 1"
+      - "_haproxy_multi.count('frontend http_in') == 1"
+      - "_haproxy_multi.count('frontend https_in') == 1"
+    fail_msg: >-
+      Multi-entry render duplicated a port bind or frontend. HAProxy would
+      fail to start with "Address already in use". This is exactly the
+      original gemini-code-assist CRITICAL finding and must stay fixed.
+
+- name: Assert multi-entry render lists both certs on the single SNI bind line
+  ansible.builtin.assert:
+    that:
+      - "'crt /etc/ssl/private/webapp.pem' in _haproxy_multi"
+      - "'crt /etc/ssl/private/gitea.pem' in _haproxy_multi"
+    fail_msg: >-
+      Multi-entry render is missing a cert keyword on the SNI bind line.
+
+- name: Assert multi-entry render emits one use_backend ACL per service
+  ansible.builtin.assert:
+    that:
+      - "'use_backend http_backend_webapp if { hdr(host) -i webapp.test.example.com }' in _haproxy_multi"
+      - "'use_backend http_backend_gitea if { hdr(host) -i gitea.test.example.com }' in _haproxy_multi"
+    fail_msg: >-
+      Multi-entry render is missing a use_backend ACL — services would
+      collide on the catch-all and all traffic would route to the first
+      backend.
+
+- name: Assert multi-entry render emits one per-service backend block
+  ansible.builtin.assert:
+    that:
+      - "'backend http_backend_webapp' in _haproxy_multi"
+      - "'backend http_backend_gitea' in _haproxy_multi"
+      - "'server webapp 192.168.0.108:8080 check' in _haproxy_multi"
+      - "'server gitea 192.168.0.109:3000 check' in _haproxy_multi"
+    fail_msg: >-
+      Multi-entry render is missing a per-service backend or its server line.
