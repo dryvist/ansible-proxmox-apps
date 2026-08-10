@@ -1,5 +1,32 @@
 # Changelog
 
+## [4.10.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.9.0...v4.10.0) (2026-08-10)
+
+
+### Features
+
+* **download_vpn:** make the content-boundary controls converge-enforced ([#1443](https://github.com/dryvist/ansible-proxmox-apps/issues/1443)) ([5487aa2](https://github.com/dryvist/ansible-proxmox-apps/commit/5487aa2391d4dd863e9b4d2e83ce56eddcea0563))
+* **nautobot:** ingest the hardware inventory as Devices and Modules ([#1449](https://github.com/dryvist/ansible-proxmox-apps/issues/1449)) ([23e89a6](https://github.com/dryvist/ansible-proxmox-apps/commit/23e89a6a7c10f4b167bfc66d53e3c775ce6c8846))
+* **nautobot:** make inventory ingest event-based and its absence loud ([#1437](https://github.com/dryvist/ansible-proxmox-apps/issues/1437)) ([d17e715](https://github.com/dryvist/ansible-proxmox-apps/commit/d17e7157fe832a8a216e8ebae4c32cb8093c11c8))
+* **servarr:** enable built-in auto-update for the *arr stack ([#1434](https://github.com/dryvist/ansible-proxmox-apps/issues/1434)) ([2ee1262](https://github.com/dryvist/ansible-proxmox-apps/commit/2ee12629f6582c1fbfbcb92fbf09baf637598cec))
+* **site:** converge the media stack from its pinned submodule ([#1461](https://github.com/dryvist/ansible-proxmox-apps/issues/1461)) ([eef88a3](https://github.com/dryvist/ansible-proxmox-apps/commit/eef88a3b43d47c97975aee584192c30cf27b9d62))
+
+
+### Bug Fixes
+
+* **ci:** run only the Molecule scenarios a change can affect ([#1444](https://github.com/dryvist/ansible-proxmox-apps/issues/1444)) ([4ad4f69](https://github.com/dryvist/ansible-proxmox-apps/commit/4ad4f696b1dbdb6da43a16d2d8e00db063ac9542))
+* **download_vpn:** assert the input chain, not just the output chain ([#1451](https://github.com/dryvist/ansible-proxmox-apps/issues/1451)) ([e4eb4d6](https://github.com/dryvist/ansible-proxmox-apps/commit/e4eb4d65e9db62249357d088e900583c350d59bf))
+* **download_vpn:** stop the leak check from latching the client off ([#1456](https://github.com/dryvist/ansible-proxmox-apps/issues/1456)) ([00588a4](https://github.com/dryvist/ansible-proxmox-apps/commit/00588a43fd7490e5e1da48d6abad13c15ac0d299))
+* **download_vpn:** survive the daemon re-binding just after it first answers ([#1454](https://github.com/dryvist/ansible-proxmox-apps/issues/1454)) ([bf30b73](https://github.com/dryvist/ansible-proxmox-apps/commit/bf30b730bb0a52e643f4e27c81ac3322a133d777))
+* **download_vpn:** take the credential out of the leak check, and deploy it first ([#1457](https://github.com/dryvist/ansible-proxmox-apps/issues/1457)) ([b1d80c6](https://github.com/dryvist/ansible-proxmox-apps/commit/b1d80c6bcd5612d4ded14aba21bf6cd76b399c86))
+* **nautobot:** pass job_kwargs so plain seed jobs actually run ([#1462](https://github.com/dryvist/ansible-proxmox-apps/issues/1462)) ([0736c00](https://github.com/dryvist/ansible-proxmox-apps/commit/0736c00959df97b3cbee7f7d20638cdaecbe80cd))
+* **nautobot:** pin the Python packages so the venv tracks upstream ([#1442](https://github.com/dryvist/ansible-proxmox-apps/issues/1442)) ([2d8a26f](https://github.com/dryvist/ansible-proxmox-apps/commit/2d8a26ffcd39dea9535c139c7c1e40ab877c4c8a))
+* **openbao_secrets:** stop the delegated publish escalating on the control node ([#1439](https://github.com/dryvist/ansible-proxmox-apps/issues/1439)) ([f4c26a1](https://github.com/dryvist/ansible-proxmox-apps/commit/f4c26a1e9de4772a2fd52090f41a08b5c7f5e346))
+* **servarr_wiring:** enforce the indexer floor where the settings actually live ([#1453](https://github.com/dryvist/ansible-proxmox-apps/issues/1453)) ([30f4207](https://github.com/dryvist/ansible-proxmox-apps/commit/30f420717e1228df50c7209a07c7c567cb1c4583))
+* **servarr_wiring:** read the enforced settings from the right place, and stop printing credentials ([#1447](https://github.com/dryvist/ansible-proxmox-apps/issues/1447)) ([70c6ef4](https://github.com/dryvist/ansible-proxmox-apps/commit/70c6ef400c413b46b28bc0c33376ab7a94f48925))
+* **sortarr:** stop enrolling an app with no database in SQLite backups ([#1450](https://github.com/dryvist/ansible-proxmox-apps/issues/1450)) ([e1b5f85](https://github.com/dryvist/ansible-proxmox-apps/commit/e1b5f85774524767f42cbd9eedd525c8d07d79c2))
+* **validate-media:** read indexer settings from the right place, and stop printing credentials ([#1448](https://github.com/dryvist/ansible-proxmox-apps/issues/1448)) ([daa335b](https://github.com/dryvist/ansible-proxmox-apps/commit/daa335b469bd5650a66b6a1d163dd57d9cf9ec77))
+
 ## [4.9.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.8.1...v4.9.0) (2026-08-09)
 
 
