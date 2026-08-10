@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.12.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.11.0...v4.12.0) (2026-08-10)
+
+
+### Features
+
+* **postgres:** add per-repo pgBackRest encryption support ([#1474](https://github.com/dryvist/ansible-proxmox-apps/issues/1474)) ([b7a833f](https://github.com/dryvist/ansible-proxmox-apps/commit/b7a833fbc84bd38c92887ae205b7a5adf7679685))
+
+
+### Performance
+
+* **ci:** let Molecule use the runner slots the fleet already has ([#1476](https://github.com/dryvist/ansible-proxmox-apps/issues/1476)) ([5e55e51](https://github.com/dryvist/ansible-proxmox-apps/commit/5e55e510cc82faf569908fd1fab2563bad55b348))
+
 ## [4.11.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.10.0...v4.11.0) (2026-08-10)
 
 
