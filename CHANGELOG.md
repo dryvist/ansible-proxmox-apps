@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.11.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.10.0...v4.11.0) (2026-08-10)
+
+
+### Features
+
+* **openbao:** seed and grant the hermes-ui app secrets ([#1415](https://github.com/dryvist/ansible-proxmox-apps/issues/1415)) ([a9e2c31](https://github.com/dryvist/ansible-proxmox-apps/commit/a9e2c31ad59b58c017aaed7b4cf27ec7ecd0b30a))
+
+
+### Bug Fixes
+
+* **ci:** bound Molecule across the fleet, not just within one run ([#1468](https://github.com/dryvist/ansible-proxmox-apps/issues/1468)) ([611bdd0](https://github.com/dryvist/ansible-proxmox-apps/commit/611bdd0c757a4b095225da3ef464c2b14b65f16c))
+
 ## [4.10.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.9.0...v4.10.0) (2026-08-10)
 
 
