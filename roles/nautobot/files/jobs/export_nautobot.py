@@ -48,6 +48,7 @@ INGEST_JOB_MODULES = (
     "ssot_vlans_prefixes",
     "ssot_ip_addresses",
     "ssot_dcim",
+    "ssot_hardware",
 )
 
 # This job's own module, used to find the previous export. Derived from
