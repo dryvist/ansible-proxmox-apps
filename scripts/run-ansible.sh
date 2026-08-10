@@ -142,7 +142,11 @@ if [[ -n ${BAO_ADDR:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBA
     echo "env and set PROXMOX_SSH_KEY_PATH to deliberately use the static break-glass key." >&2
     exit 1
   fi
+  # Print the window. A converge that outlives its certificate dies with an
+  # UNREACHABLE that reads exactly like a broken host, and the only way to tell
+  # the two apart afterwards is knowing when the cert expired.
   echo "Using a short-lived SSH certificate from the OpenBao CA (automation-ansible)."
+  ssh-keygen -Lf "$CERT_DIR/id-cert.pub" 2>/dev/null | sed -n 's/^ *Valid:/  cert /p'
 elif [[ -z ${PROXMOX_SSH_KEY_PATH:-} ]]; then
   echo "ERROR: no SSH auth available — set BAO_ADDR + OPENBAO_APPROLE_ANSIBLE_* for cert" >&2
   echo "minting, or PROXMOX_SSH_KEY_PATH for the static break-glass key." >&2
