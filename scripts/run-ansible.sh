@@ -107,7 +107,12 @@ mint_ssh_cert() {
       "$BAO_ADDR/v1/auth/approle/login") || return 1
   token=$(printf '%s' "$login" | jq -er '.auth.client_token') || return 1
   RUNNER_BAO_TOKEN=$token
-  signed=$(jq -nc --rawfile pub "$CERT_DIR/id.pub" --arg ttl "${SSH_CERT_TTL:-1h}" \
+  # 2h, matching the automation-ansible signing role's ceiling. At 1h a full
+  # converge outlived its own certificate and every remaining host reported
+  # "Failed to authenticate" — an elapsed credential wearing the costume of a
+  # broken one. A request above the role's ceiling is refused outright, so this
+  # value and openbao_ssh_roles must move together.
+  signed=$(jq -nc --rawfile pub "$CERT_DIR/id.pub" --arg ttl "${SSH_CERT_TTL:-2h}" \
     '{public_key: $pub, ttl: $ttl}' \
     | curl -fsSL --max-time 10 \
       -H @<(printf 'X-Vault-Token: %s\n' "$RUNNER_BAO_TOKEN") --data @- \
