@@ -59,7 +59,9 @@ def _upsert_circuits(job, circuits, dryrun: bool) -> tuple[int, int]:
             defaults={
                 "provider": provider,
                 "circuit_type": circuit_type,
-                "status": ensure_status(row["status"], Circuit),
+                "status": ensure_status(
+                    row["status"], Circuit, logger=job.logger, subject=row["circuit_id"]
+                ),
                 "description": row.get("description", "")[:200],
             },
         )
@@ -152,7 +154,9 @@ class SeedHardware(Job):
                 ),
                 "role": hardware_role,
                 "location": ensure_sublocation(row["location"]),
-                "status": ensure_status(row["status"], Device),
+                "status": ensure_status(
+                    row["status"], Device, logger=self.logger, subject=row["hw_id"]
+                ),
                 "asset_tag": row["hw_id"],
             }
             _, was_created = Device.objects.update_or_create(
@@ -173,7 +177,9 @@ class SeedHardware(Job):
                 "module_type": ensure_module_type(
                     row["model"] or row["hw_id"], row["manufacturer"], row["part_number"]
                 ),
-                "status": ensure_status(row["status"], Module),
+                "status": ensure_status(
+                    row["status"], Module, logger=self.logger, subject=row["hw_id"]
+                ),
             }
 
             parent = row.get("installed_in")

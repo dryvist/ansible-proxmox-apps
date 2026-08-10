@@ -174,7 +174,7 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
         "ensure_module_type", Record(model=m, manufacturer=mfr)
     )
     common.ensure_role = lambda n, *m: note("ensure_role", Record(name=n))
-    common.ensure_status = lambda n, *m: note("ensure_status", Record(name=n))
+    common.ensure_status = lambda n, *m, **kw: note("ensure_status", Record(name=n))
     # Mirrors the real load_seed: every slice defaults to empty, so a document
     # missing a key behaves the same here as it does on the guest.
     common.load_seed = lambda: {
@@ -230,6 +230,69 @@ def row(hw_id, **over):
     }
     base.update(over)
     return base
+
+
+def check_real_ensure_status() -> None:
+    """Exercise the REAL ensure_status, which the job-level stubs hide entirely.
+
+    The stub in install_stubs() echoes back whatever name it is handed, so the
+    circuit test's "Planned stays Planned" assertion passes whether the real
+    lookup works or silently downgrades everything to Active. This runs the
+    actual function: a known name must survive, and an unknown one must fall
+    back AND say so.
+    """
+    shipped = {"Active", "Planned", "Inventory"}
+
+    class Status:
+        """Stand-in for nautobot.extras.models.Status."""
+
+        class objects:  # noqa: N801 - mirrors Django's manager attribute
+            @staticmethod
+            def filter(name=None):
+                return FakeQuerySet([Record(name=name)] if name in shipped else [])
+
+            @staticmethod
+            def get(name=None):
+                return Record(name=name, content_types=Record(add=lambda *a: None))
+
+    extras = types.ModuleType("nautobot.extras.models")
+    extras.Status = Status
+    extras.Role = type("Role", (), {})
+    contenttypes = types.ModuleType("django.contrib.contenttypes.models")
+    contenttypes.ContentType = type("ContentType", (), {})
+    ssot_contrib = types.ModuleType("nautobot_ssot.contrib")
+    ssot_contrib.NautobotModel = type("NautobotModel", (), {})
+
+    for name, mod in {
+        "django": types.ModuleType("django"),
+        "django.contrib": types.ModuleType("django.contrib"),
+        "django.contrib.contenttypes": types.ModuleType("django.contrib.contenttypes"),
+        "django.contrib.contenttypes.models": contenttypes,
+        "nautobot.extras": types.ModuleType("nautobot.extras"),
+        "nautobot.extras.models": extras,
+        "nautobot_ssot": types.ModuleType("nautobot_ssot"),
+        "nautobot_ssot.contrib": ssot_contrib,
+    }.items():
+        sys.modules[name] = mod
+
+    sys.modules.pop("ssot_common", None)
+    spec = importlib.util.spec_from_file_location("ssot_common", JOBS / "ssot_common.py")
+    common = importlib.util.module_from_spec(spec)
+    sys.modules["ssot_common"] = common
+    spec.loader.exec_module(common)
+
+    log = Collector()
+    assert common.ensure_status("Planned", logger=log).name == "Planned"
+    assert not log.warnings, "a shipped status must not warn"
+
+    # The failure this covers: a source value Nautobot does not ship becomes
+    # Active, so a decommissioned object silently reads as live.
+    assert common.ensure_status("Retired-Typo", logger=log, subject="GPU-X").name == "Active"
+    assert log.warnings, "the fallback to Active must not be silent"
+    assert "GPU-X" in log.warnings[0] and "Retired-Typo" in log.warnings[0], log.warnings
+
+    # And it must still work with no logger passed.
+    assert common.ensure_status("Nope").name == "Active"
 
 
 def main() -> None:
@@ -371,6 +434,9 @@ def main() -> None:
     job, stores = run({"hardware_devices": [], "hardware_modules": []}, [])
     assert not stores["module"] and not stores["device"]
     assert any("no hardware slice" in w for w in job.logger.warnings), job.logger.warnings
+
+    # Last: it replaces the stubbed ssot_common with the real module.
+    check_real_ensure_status()
 
     print("nautobot_hardware_seed: OK")
 

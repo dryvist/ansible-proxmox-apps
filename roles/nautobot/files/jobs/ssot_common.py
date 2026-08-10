@@ -164,18 +164,35 @@ def ensure_role(name: str, *models):
     return role
 
 
-def ensure_status(name: str, *models):
+def ensure_status(name: str, *models, logger=None, subject: str = ""):
     """Return the named Status, granting it the given content types.
 
     Status is a foreign key on Device and Module, and a shipped Status does not
     automatically apply to every model — it has to carry that content type or
     saving raises. Falls back to ``Active`` for a name Nautobot does not ship,
-    so an unexpected source value cannot fail the whole run.
+    so one unexpected source value cannot fail a whole run.
+
+    That fallback is LOUD, and has to be. A typo, a case mismatch or a status
+    Nautobot does not ship would otherwise publish a decommissioned or offline
+    object as Active, with the run reporting complete success — the exact
+    "green run, wrong data" outcome the ingest exists to prevent. Pass
+    ``logger`` (and ``subject`` to name the row) from any caller that has one.
     """
     from django.contrib.contenttypes.models import ContentType
     from nautobot.extras.models import Status
 
-    status = Status.objects.filter(name=name).first() or _active_status()
+    status = Status.objects.filter(name=name).first()
+    if status is None:
+        status = _active_status()
+        if logger is not None:
+            logger.warning(
+                "%s: status %r is not a Status Nautobot has, so it was recorded "
+                "as %s. Correct the source, or add the Status — this object now "
+                "reads as live regardless of what the source meant.",
+                subject or "hardware row",
+                name,
+                STATUS_ACTIVE,
+            )
     if models:
         status.content_types.add(
             *[ContentType.objects.get_for_model(model) for model in models]
