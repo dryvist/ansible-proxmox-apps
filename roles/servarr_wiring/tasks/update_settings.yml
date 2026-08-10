@@ -1,0 +1,45 @@
+---
+# Enable each app's own built-in updater. Without this, the install tasks in
+# roles/sonarr, roles/radarr, and roles/download_vpn (Prowlarr) only run their
+# download-and-extract step ONCE — guarded by `when: not <app>_bin.stat.exists`
+# — so the app never moves past whatever version was live at first install.
+# The app's own updater is the mechanism upstream supports for staying current,
+# so this wires it on instead of reimplementing upgrade logic in Ansible.
+# GET-then-conditional-PUT (no-op when already correct), same pattern as
+# media_management.yml.
+
+- name: Read update config for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: "http://{{ _arr_host }}:{{ _arr_port }}/api/{{ _arr_api_version }}/config/host"
+    method: GET
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    status_code: 200
+  register: servarr_wiring_update_config
+  changed_when: false
+  no_log: true
+
+- name: Enable the built-in updater for {{ _arr_name }}
+  ansible.builtin.uri:
+    url: >-
+      http://{{ _arr_host }}:{{ _arr_port }}/api/{{ _arr_api_version }}/config/host/{{
+      servarr_wiring_update_config.json.id }}
+    method: PUT
+    headers:
+      X-Api-Key: "{{ _arr_api_key }}"
+    body_format: json
+    body: >-
+      {{ servarr_wiring_update_config.json | combine({
+           'updateAutomatically': servarr_wiring_update_automatically,
+           'updateMechanism': servarr_wiring_update_mechanism
+         }) }}
+    status_code: [200, 202]
+  register: servarr_wiring_update_put
+  # The task only runs when the live config differs (see `when` below), so a
+  # run is always a real change — no need to duplicate the comparison here.
+  changed_when: true
+  no_log: true
+  when: >-
+    (servarr_wiring_update_config.json.updateAutomatically | default(false))
+    != servarr_wiring_update_automatically
+    or (servarr_wiring_update_config.json.updateMechanism | default('')) != servarr_wiring_update_mechanism
