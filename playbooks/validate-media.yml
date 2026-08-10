@@ -127,30 +127,53 @@
 
         # Safety invariant: private indexers must carry freeleech + seed-floor
         # settings so Prowlarr never pushes a ratio-risking config to the *arr
-        # apps. No private indexer exists today (all are 'public'), so this
-        # loop is a clean no-op now and bites the moment one is added.
+        # apps.
+        #
+        # These live as entries in the indexer's `fields` array, keyed by name
+        # (e.g. "torrentBaseSettings.seedTime") — NOT as a nested
+        # `torrentBaseSettings` object. Reading the nested path silently
+        # produced the default on every indexer, so the check compared 0
+        # against the floor: it could only ever fail, and only ever for the
+        # wrong reason. Flatten the array to a mapping first, and assert
+        # against that.
+        - name: Flatten each indexer's fields into a name/value mapping
+          ansible.builtin.set_fact:
+            validate_media_private_indexers: >-
+              {{ validate_media_prowlarr_indexers.json
+                 | selectattr('privacy', 'defined')
+                 | selectattr('privacy', 'equalto', 'private')
+                 | map('combine', {}) | list }}
+          no_log: true
+
         - name: Assert private indexers carry freeleech + seed-floor settings
           ansible.builtin.assert:
             that:
-              - >-
-                (item.fields | default([])
-                 | selectattr('name', 'equalto', 'freeleech')
-                 | selectattr('value')
-                 | list | length) > 0
-              - (item.torrentBaseSettings.seedTime | default(0)) | int
+              - (_f['freeleech'] | default(false)) | bool
+              - (_f['torrentBaseSettings.seedTime'] | default(0)) | int
                 >= validate_media_private_min_seed_time_minutes
-              - (item.torrentBaseSettings.packSeedTime | default(0)) | int
+              - (_f['torrentBaseSettings.packSeedTime'] | default(0)) | int
                 >= validate_media_private_min_pack_seed_time_minutes
-              - (item.torrentBaseSettings.seedRatio | default(0)) | float
+              - (_f['torrentBaseSettings.seedRatio'] | default(0)) | float
                 >= validate_media_private_min_seed_ratio
             fail_msg: >-
               Private indexer '{{ item.name }}' is missing freeleech or is
               below the configured seed floors — this risks a ratio ban on a
               private tracker.
             quiet: true
-          loop: "{{ validate_media_prowlarr_indexers.json }}"
+          vars:
+            _f: >-
+              {{ dict(item.fields | default([])
+                      | map(attribute='name') | list
+                      | zip(item.fields | default([])
+                            | map(attribute='value', default='') | list)) }}
+          loop: "{{ validate_media_private_indexers }}"
           loop_control:
             label: "{{ item.name }}"
+          # An indexer's fields carry its credentials, and assert prints the
+          # whole loop item on failure — which published the account password
+          # into the run log the first time a private indexer existed. The
+          # fail_msg above names the indexer, which is all the operator needs.
+          no_log: true
           when: (item.privacy | default('public')) == 'private'
 
         - name: Fetch Prowlarr Applications (Sonarr/Radarr sync targets)
