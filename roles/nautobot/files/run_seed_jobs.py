@@ -45,6 +45,23 @@ TIMEOUT = int(os.environ.get("NAUTOBOT_JOB_TIMEOUT", "300"))
 approver = get_user_model().objects.filter(is_superuser=True).order_by("pk").first()
 
 
+def enqueue(job, job_kwargs):
+    """Enqueue a job, tolerating both enqueue_job signatures.
+
+    Nautobot 3.2 takes the job's variables as ONE ``job_kwargs`` mapping and
+    rejects a call that omits it: a plain Job (no variables) enqueued the old
+    way dies with "`job_kwargs` has to be defined". The pre-3.2 form splatted
+    them as real keyword arguments, which 3.2 still accepts but warns about —
+    so the SSoT jobs, which pass ``dryrun``, kept working while every plain Job
+    silently stopped running. Prefer the new form, fall back to the old.
+    """
+    try:
+        return JobResult.enqueue_job(job, approver, job_kwargs=job_kwargs)
+    except TypeError:
+        # Older Nautobot: no job_kwargs parameter at all.
+        return JobResult.enqueue_job(job, approver, **job_kwargs)
+
+
 def run_one(name):
     """Enable, enqueue, and poll a single job by display name. Returns True on
     success so the caller can exit non-zero if any seed job failed — Ansible
@@ -52,7 +69,8 @@ def run_one(name):
 
     SSoT DataSource jobs default to a dry run (compute diffs, commit nothing);
     pass ``dryrun=False`` so the additive sync actually persists. Plain Jobs
-    (export, onboarding setup) have no such var, so they get no job kwargs.
+    (export, onboarding setup) have no such var, so they get an empty mapping —
+    empty, NOT absent; see :func:`enqueue`.
     """
     job = Job.objects.filter(name=name).first()
     if job is None:
@@ -63,7 +81,7 @@ def run_one(name):
         job.save()
     kwargs = {"dryrun": False} if name in SSOT_JOBS else {}
     try:
-        result = JobResult.enqueue_job(job, approver, **kwargs)
+        result = enqueue(job, kwargs)
     except Exception as exc:  # noqa: BLE001 - enqueue signature is version-sensitive
         print("JOB_ERROR", name, "enqueue:%s" % exc)
         return False
