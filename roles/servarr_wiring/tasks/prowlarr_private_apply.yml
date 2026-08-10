@@ -1,0 +1,40 @@
+---
+# Apply the data-steward floor to ONE private indexer.
+#
+# Included per indexer so the field rebuild can be an ordinary accumulating
+# loop. Every setting lives as an entry in the `fields` array keyed by name —
+# there is no nested settings object on the indexer — and entries that are not
+# being raised pass through untouched, so the stored credential round-trips
+# exactly as the API returned it.
+
+- name: Reset the rebuilt field accumulator
+  ansible.builtin.set_fact:
+    servarr_wiring_pi_new_fields: []
+
+- name: Rebuild the indexer's fields, raising only the policy entries
+  ansible.builtin.set_fact:
+    servarr_wiring_pi_new_fields: >-
+      {{ servarr_wiring_pi_new_fields
+         + [item | combine({'value': _pi_targets[item.name]})
+            if item.name in _pi_targets else item] }}
+  loop: "{{ _pi.fields | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  # Field values include the tracker credential.
+  no_log: true
+
+- name: Raise this indexer to the enforced floor
+  ansible.builtin.uri:
+    url: >-
+      http://{{ servarr_wiring_prowlarr_host }}:{{ servarr_wiring_prowlarr_port
+      }}/api/v1/indexer/{{ _pi.id }}
+    method: PUT
+    headers:
+      X-Api-Key: "{{ servarr_wiring_prowlarr_api_key }}"
+    body_format: json
+    body: "{{ _pi | combine({'fields': servarr_wiring_pi_new_fields}) }}"
+    status_code: [200, 202]
+  register: servarr_wiring_pi_put
+  changed_when: true
+  no_log: true
+  when: _pi_needs_change | bool
