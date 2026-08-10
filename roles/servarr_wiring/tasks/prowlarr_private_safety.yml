@@ -102,9 +102,23 @@
   loop: "{{ servarr_wiring_pi_after.json | selectattr('privacy', 'equalto', 'private') | list }}"
   loop_control:
     label: "{{ item.name }}"
+  # An indexer's fields carry its credentials, and assert prints the whole loop
+  # item on failure — which published the account password into the run log the
+  # first time this fired. fail_msg names the indexer, which is what an
+  # operator needs to act.
+  no_log: true
   vars:
     _freeleech_field: "{{ item.fields | selectattr('name', 'equalto', 'freeleech') | list }}"
     _has_freeleech: "{{ _freeleech_field | length > 0 }}"
-    _tbs: "{{ item.torrentBaseSettings | default({}) }}"
+    # The seed settings are entries in the fields array keyed by name, not
+    # members of a nested object. Reading the nested path yielded the default
+    # for every indexer, so the comparison was zero against the floor: it could
+    # only fail, and only for the wrong reason — it reported a correctly wired
+    # indexer as non-compliant, and disclosed its credentials doing so.
+    _tbs: >-
+      {{ dict(item.fields | default([]) | map(attribute='name') | list
+              | map('regex_replace', '^torrentBaseSettings\.', '') | list
+              | zip(item.fields | default([])
+                    | map(attribute='value', default='') | list)) }}
     _min_ratio: "{{ servarr_wiring_private_indexer_min_seed_ratio | float }}"
     _min_time: "{{ servarr_wiring_private_indexer_min_seed_time_minutes | int }}"
