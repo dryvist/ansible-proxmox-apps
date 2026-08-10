@@ -284,6 +284,36 @@ postgres_backup_repo2_s3_secret_access_key: >-
   {{ lookup('env', 'POSTGRES_BACKUP_REPO2_S3_SECRET_ACCESS_KEY') | default('', true) }}
 postgres_pgbackrest_repo2_retention_full: "{{ postgres_pgbackrest_retention_full }}"
 
+# Repository encryption at rest. OFF by default on both repos, and turning it on
+# is NOT a flag flip — read this before changing either value.
+#
+# pgBackRest fixes the cipher at STANZA-CREATE time. It cannot be added to a
+# repository that already holds backups: doing so requires stanza-delete +
+# stanza-create + a full re-backup, which destroys the existing backup history.
+# So repo1 (already populated) and repo2 (not yet created) are deliberately
+# separate variables — an offsite repo can be born encrypted at no cost, while
+# encrypting repo1 in place is a destructive operation someone must choose.
+#
+# THE TRAP, and the reason the passphrase is NOT generated on the guest the way
+# this estate generates most credentials: a cipher passphrase that exists only
+# on the guest makes every backup unreadable the moment the guest is lost —
+# exactly the scenario backups exist for. Encryption converts a confidentiality
+# gap into an availability risk unless the passphrase is stored durably OFF the
+# guest and verified readable BEFORE the first encrypted backup is taken.
+# Sequence: persist and verify the passphrase, then stanza-create, then back up.
+#
+# Injection-agnostic per AGENTS.md: the role reads an env var and does not care
+# which store filled it. Losing this value loses the backups; treat it as
+# permanent, not rotatable — rotation also means a new stanza.
+postgres_pgbackrest_repo1_cipher_type: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO1_CIPHER_TYPE') | default('none', true) }}
+postgres_pgbackrest_repo1_cipher_pass: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO1_CIPHER_PASS') | default('', true) }}
+postgres_pgbackrest_repo2_cipher_type: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO2_CIPHER_TYPE') | default('none', true) }}
+postgres_pgbackrest_repo2_cipher_pass: >-
+  {{ lookup('env', 'POSTGRES_PGBACKREST_REPO2_CIPHER_PASS') | default('', true) }}
+
 # Asynchronous archiving. NOT optional once a repo lives on the network:
 # synchronous archive-push blocks archive_command on the S3 write, so every
 # segment pays full round-trip latency and a slow repo backs archiving up

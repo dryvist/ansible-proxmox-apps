@@ -41,6 +41,28 @@
         quiet: true
       when: postgres_pgbackrest_repo2_enabled | bool
 
+    # A cipher with an empty passphrase is worse than no cipher: pgBackRest
+    # would refuse at stanza-create, and if it did not, every backup written
+    # under it would be unrecoverable. Fail here rather than render a config
+    # that promises encryption it cannot deliver.
+    - name: Assert a cipher passphrase exists wherever a cipher is enabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            postgres_pgbackrest_repo1_cipher_type == 'none'
+            or postgres_pgbackrest_repo1_cipher_pass | length > 0
+          - >-
+            postgres_pgbackrest_repo2_cipher_type == 'none'
+            or postgres_pgbackrest_repo2_cipher_pass | length > 0
+        fail_msg: >-
+          A pgBackRest cipher type is set but its passphrase is empty. Set
+          POSTGRES_PGBACKREST_REPO1_CIPHER_PASS and/or
+          POSTGRES_PGBACKREST_REPO2_CIPHER_PASS. Store the passphrase OFF the
+          guest and confirm it is readable BEFORE the stanza is created — a
+          passphrase that lives only on the guest makes every backup
+          unreadable the moment the guest is lost.
+        quiet: true
+
     - name: Install pgBackRest
       ansible.builtin.apt:
         name: pgbackrest
