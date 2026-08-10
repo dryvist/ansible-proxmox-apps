@@ -29,15 +29,6 @@ import sys
 # .github/workflows/_molecule.yml; verify_matrix_in_sync() checks it.
 SCENARIOS = [
     "default",
-    "configarr",
-    "download_vpn",
-    "plex",
-    "radarr",
-    "seerr",
-    "servarr_wiring",
-    "sonarr",
-    "sonarr_language_audit",
-    "sortarr",
     "static_site",
     "technitium_dns",
     "netmon",
@@ -47,7 +38,6 @@ SCENARIOS = [
     "postgres",
     "nautobot",
     "ssh_ca_trust",
-    "sqlite_backup",
 ]
 
 # Scenarios whose name is not the role they exercise.
@@ -129,14 +119,17 @@ def demo() -> None:
     """Self-check. Asserts the widening cases hardest — they carry the safety."""
     # A single role narrows to its own scenario.
     assert select(["roles/nautobot/tasks/main.yml"]) == ["nautobot"]
-    assert select(["molecule/seerr/converge.yml"]) == ["seerr"]
+    assert select(["molecule/immich/converge.yml"]) == ["immich"]
 
     # The renamed scenario resolves through its override, both directions.
     assert select(["roles/mssql_docker/tasks/main.yml"]) == ["default"]
     assert select(["molecule/default/converge.yml"]) == ["default"]
 
     # Two roles select exactly two scenarios.
-    assert select(["roles/sonarr/x.yml", "roles/radarr/y.yml"]) == ["radarr", "sonarr"]
+    assert select(["roles/netmon/x.yml", "roles/postgres/y.yml"]) == [
+        "netmon",
+        "postgres",
+    ]
 
     # Documentation alone selects nothing to run.
     assert select(["docs/a.md", "README.md"]) == []
@@ -159,7 +152,7 @@ def demo() -> None:
     )
 
     # Docs alongside a role change still narrow.
-    assert select(["docs/x.md", "roles/plex/tasks/main.yml"]) == ["plex"]
+    assert select(["docs/x.md", "roles/immich/tasks/main.yml"]) == ["immich"]
 
     print(f"select_molecule_scenarios: OK ({len(SCENARIOS)} scenarios known)")
 
