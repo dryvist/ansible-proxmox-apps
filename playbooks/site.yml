@@ -1465,6 +1465,85 @@
   roles:
     - role: static_site
 
+# =============================================================================
+# The media stack lives in its own repository and is pinned here as a git
+# submodule. It runs as its own `ansible-playbook` process, not an
+# `import_playbook`: Ansible resolves `group_vars/` against the inventory
+# directory and the CLI-invoked playbook only, so importing that repo's
+# site.yml would silently drop every one of its group_vars and converge the
+# media guests on bare role defaults. A separate process keeps its inventory,
+# ansible.cfg and group_vars intact.
+#
+# This play is what makes the split invisible to anything that drives a full
+# converge: `site.yml` remains the single entry point, and the media stack is
+# reached automatically with no extra step to remember. Keep it that way — if
+# this play is ever removed, the media guests silently stop being converged
+# and nothing reports it.
+#
+# The pin is an immutable SHA recorded by the submodule, the same discipline
+# as the collection pins in requirements.yml: a moving ref would let an
+# unreviewed change in the other repo reach a converge here without a PR.
+# =============================================================================
+
+- name: Converge the media stack from its own repository
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags:
+    - media
+    - servarr
+  vars:
+    _servarr_dir: "{{ playbook_dir }}/../servarr"
+    # group_vars/all.yml sets `ansible_become: true` for every host, and a
+    # connection variable beats the `become:` play keyword — so this has to be
+    # the variable, the same way load_tofu.yml does it. This play only shells
+    # out on the control node; the chained run escalates on the guests itself.
+    ansible_become: false
+  tasks:
+    - name: Converge the media stack (isolated — failure does not abort downstream plays)
+      when: site_converge_servarr | default(true) | bool
+      block:
+        # scripts/run-ansible.sh checks the submodule out at its pinned SHA
+        # before invoking ansible, so a bare clone needs no preparatory step.
+        # Fail here with the reason rather than letting `chdir` report a bare
+        # "directory does not exist" from an empty submodule dir.
+        - name: Confirm the pinned media-stack submodule is checked out
+          ansible.builtin.stat:
+            path: "{{ _servarr_dir }}/playbooks/site.yml"
+          register: _servarr_stat
+          failed_when: not _servarr_stat.stat.exists
+          changed_when: false
+
+        - name: Run the media stack's own site.yml
+          ansible.builtin.command:
+            cmd: >-
+              scripts/fetch-openbao-secrets.sh media --
+              scripts/run-ansible.sh playbooks/site.yml
+              {{ '--check' if ansible_check_mode else '' }}
+            chdir: "{{ _servarr_dir }}"
+          register: _servarr_converge
+          changed_when: true
+          # This play is the only caller, and it already reports the outcome.
+          # `--check` is passed through above rather than skipped, so a dry run
+          # of site.yml stays a dry run all the way down.
+          check_mode: false
+
+        # Without this the chained run is a black box: its per-host recap only
+        # exists inside the child process's stdout.
+        - name: Report the media stack's recap
+          ansible.builtin.debug:
+            msg: "{{ _servarr_converge.stdout_lines[-20:] }}"
+
+      rescue:
+        - name: Surface the media-stack converge output before recording the failure
+          ansible.builtin.debug:
+            msg: "{{ (_servarr_converge | default({})).stdout_lines | default(['no output captured']) }}"
+
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: servarr
+
 - name: Fail the run if any isolated play recorded a failure
   hosts: localhost
   gather_facts: false
