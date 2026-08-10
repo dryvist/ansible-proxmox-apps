@@ -19,6 +19,10 @@
 #      LAN/WAN address and the request only succeeds through wg0).
 #   F. Forced non-VPN IPv4 egress (bound to the LAN interface) is REFUSED.
 #   G. IPv6 egress is refused (curl -6 must fail).
+#   H. A packet carrying the lanroute fwmark never egresses the LAN NIC.
+#   I. Input chain policy is "drop", the admin surfaces are denied on the
+#      tunnel, and the general tunnel accept that admits inbound peers is
+#      still present BELOW that denial.
 set -uo pipefail
 
 WG_IF="{{ download_vpn_wg_interface }}"
@@ -147,6 +151,43 @@ fi
 marked_route="$(ip -4 route get "${ROUTE_PROBE_IP}" mark {{ download_vpn_lanroute_mark }} 2>/dev/null || true)"
 if grep -q "dev ${LAN_IF}" <<<"${marked_route}"; then
   breaches+=("LEAK SURFACE: marked packet to ${ROUTE_PROBE_IP} egresses ${LAN_IF}: ${marked_route}"); leak=1
+fi
+
+# --- I. input chain: locked down, but still open to peers -------------------
+# Deliberately structural rather than a live connect. A packet this guest sends
+# to its own tunnel address is delivered over loopback, so `iif "lo" accept`
+# matches it and the probe succeeds no matter what the tunnel rules say — a
+# check that cannot fail. Reading the ruleset is the honest test.
+#
+# Rule ORDER is the invariant that actually matters. The admin-surface denial
+# must precede the general tunnel accept; inverted, the accept wins and the web
+# UIs are reachable from the tunnel. Dropping the accept entirely is the
+# opposite failure and just as costly: inbound peers arrive through the tunnel
+# on the NAT-PMP-mapped port, so losing it makes this client unconnectable and
+# silently destroys the upload it exists to produce. Assert both directions.
+input_rules="$(nft -a list chain inet killswitch input 2>/dev/null || true)"
+if [[ -z "${input_rules}" ]]; then
+  breaches+=("killswitch input chain is MISSING"); leak=1
+else
+  in_policy="$(awk '/policy/ {gsub(/;/,"",$NF); print $NF; exit}' <<<"${input_rules}")"
+  [[ "${in_policy}" == "drop" ]] || {
+    breaches+=("killswitch input policy is '${in_policy:-unknown}', expected 'drop'"); leak=1; }
+
+  # Handles increase with position, so comparing them compares rule order.
+  deny_handle="$(grep -E "iifname \"${WG_IF}\".*dport.*drop" <<<"${input_rules}" \
+    | grep -oE 'handle [0-9]+' | grep -oE '[0-9]+' | head -1)"
+  accept_handle="$(grep -E "iifname \"${WG_IF}\" accept" <<<"${input_rules}" \
+    | grep -oE 'handle [0-9]+' | grep -oE '[0-9]+' | head -1)"
+
+  if [[ -z "${deny_handle}" ]]; then
+    breaches+=("admin surfaces are NOT denied on ${WG_IF} (web UIs exposed to the tunnel)"); leak=1
+  fi
+  if [[ -z "${accept_handle}" ]]; then
+    breaches+=("no general ${WG_IF} accept: inbound peers cannot reach this client"); leak=1
+  fi
+  if [[ -n "${deny_handle}" && -n "${accept_handle}" && "${deny_handle}" -ge "${accept_handle}" ]]; then
+    breaches+=("rule order inverted on ${WG_IF}: the accept precedes the admin denial, so the web UIs are reachable from the tunnel"); leak=1
+  fi
 fi
 
 # --- verdict ----------------------------------------------------------------
