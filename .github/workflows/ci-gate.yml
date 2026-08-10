@@ -45,32 +45,75 @@ jobs:
       molecule: false
       emit_gate: false
 
+  # The shared `ansible` filter matches '**.yml' deliberately — it also gates
+  # lint, and narrowing it once let a test-only PR merge green having never run
+  # (see the comment on that filter upstream). It is the right filter for LINT
+  # and the wrong one for DEPLOYMENT checks: editing a workflow file made it
+  # true, which ran 5 data-contract jobs and 8 e2e jobs against infrastructure
+  # that had not changed.
+  #
+  # Deployment scope is therefore decided here, rather than by narrowing a
+  # shared filter that five repos depend on. Promotion into main forces it
+  # true — a guaranteed full sweep at that boundary is what makes narrowing
+  # safe everywhere else.
+  scope:
+    name: Detect deploy scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy: >-
+        ${{ steps.filter.outputs.deploy == 'true'
+            || github.event.pull_request.base.ref == 'main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
+        id: filter
+        with:
+          filters: |
+            deploy:
+              - 'roles/**'
+              - 'playbooks/**'
+              - 'inventory/**'
+              - 'tests/**'
+              - 'requirements.yml'
+              - 'requirements-ci.txt'
+
   data-contract:
     name: Data Contract
-    needs: ci
-    if: ${{ needs.ci.outputs.ansible == 'true' }}
+    needs: [ci, scope]
+    if: >-
+      needs.ci.outputs.ansible == 'true' &&
+      needs.scope.outputs.deploy == 'true'
     uses: ./.github/workflows/_data-contract.yml
 
   molecule:
     name: Molecule
     needs: ci
+    # Scenario selection happens inside the called workflow, which derives the
+    # role-to-scenario map from the tree and runs everything on a promotion.
     if: ${{ needs.ci.outputs.molecule == 'true' }}
     uses: ./.github/workflows/_molecule.yml
     secrets: inherit
 
   e2e:
     name: E2E Tests
-    needs: ci
-    # Self-hosted; the shared `ansible` filter covers the meaningful inputs.
+    needs: [ci, scope]
+    # Self-hosted. e2e exercises deployed infrastructure, so it follows the
+    # deploy scope above rather than the lint filter.
     # (PR e2e also runs on its own schedule / workflow_dispatch.)
     if: >-
       needs.ci.outputs.ansible == 'true' &&
+      needs.scope.outputs.deploy == 'true' &&
       vars.E2E_RUNNERS_ENABLED == 'true'
     uses: ./.github/workflows/_e2e-tests.yml
 
   gate:
     name: Merge Gate
-    needs: [ci, data-contract, molecule, e2e]
+    # `scope` is a dependency and is NOT in allowed-skips. It decides whether
+    # the deployment checks run, so a failure there skips them — and a skip the
+    # gate forgives is a green board with nothing having run. The job that
+    # decides what to skip can never itself be skippable.
+    needs: [ci, scope, data-contract, molecule, e2e]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
