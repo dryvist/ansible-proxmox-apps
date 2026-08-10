@@ -30,6 +30,61 @@
           its policy is not 'drop'. Refusing to proceed.
         success_msg: "Killswitch output policy is DROP."
 
+    # --- A2. input chain: locked to the tunnel, still open to peers ---------
+    # `-a` so handles are printed: rule ORDER is the invariant, and handles are
+    # the only way to compare it. Order is asserted in both directions because
+    # each failure is costly and neither is visible from the UI — the denial
+    # above the accept keeps the web UIs off the tunnel, and the accept itself
+    # is what lets inbound peers reach this client at all.
+    - name: Read killswitch input chain with rule handles
+      ansible.builtin.command:
+        cmd: nft -a list chain inet killswitch input
+      register: download_vpn_nft_input
+      changed_when: false
+
+    - name: Assert the input chain drops by default
+      ansible.builtin.assert:
+        that:
+          - "'policy drop' in download_vpn_nft_input.stdout"
+        fail_msg: >-
+          KILLSWITCH NOT ACTIVE: the input chain policy is not 'drop', so
+          anything not explicitly denied is reachable. Refusing to proceed.
+        success_msg: "Killswitch input policy is DROP."
+
+    - name: Assert the admin surfaces are denied on the tunnel, above the peer accept
+      vars:
+        _deny_line: >-
+          {{ download_vpn_nft_input.stdout_lines
+             | select('search', 'iifname "' ~ download_vpn_wg_interface ~ '".*dport.*drop')
+             | list | first | default('') }}
+        _accept_line: >-
+          {{ download_vpn_nft_input.stdout_lines
+             | select('search', 'iifname "' ~ download_vpn_wg_interface ~ '" accept')
+             | list | first | default('') }}
+        _deny_handle: >-
+          {{ (_deny_line | regex_search('handle ([0-9]+)', '\1')
+              | default([0], true) | first) | int }}
+        _accept_handle: >-
+          {{ (_accept_line | regex_search('handle ([0-9]+)', '\1')
+              | default([0], true) | first) | int }}
+      ansible.builtin.assert:
+        that:
+          - _deny_line | length > 0
+          - _accept_line | length > 0
+          # Cast at the point of comparison: these vars render as strings, and
+          # a string compare would call handle 10 "less than" handle 9 — the
+          # order check would then pass on exactly the inverted ruleset it
+          # exists to catch.
+          - (_deny_handle | int) < (_accept_handle | int)
+        fail_msg: >-
+          Tunnel-side input rules are wrong. The web UIs must be denied on
+          {{ download_vpn_wg_interface }} by a rule that PRECEDES the general
+          accept, and that accept must still exist so inbound peers can reach
+          the mapped port. deny="{{ _deny_line }}" accept="{{ _accept_line }}"
+        success_msg: >-
+          Admin surfaces denied on {{ download_vpn_wg_interface }} above the
+          peer accept.
+
     - name: Assert killswitch allows ONLY loopback/LAN/endpoint/wg0
       # No accept rule may reference a non-loopback, non-wg0, non-LAN, non-endpoint
       # destination. We assert the expected allow rules exist and that the chain
