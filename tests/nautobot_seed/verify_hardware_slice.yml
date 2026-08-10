@@ -1,0 +1,118 @@
+---
+# End-to-end check of the hardware slice, offline (no Nautobot, no guest).
+#
+# Usage:
+#   INT_HOMELAB_HARDWARE=/path/to/hardware/inventory.seed.yml \
+#     ansible-playbook tests/nautobot_seed/verify_hardware_slice.yml -c local
+#
+# The rest of the seed tests use synthetic fixtures, which prove the assembly
+# logic but say nothing about whether the REAL generated slice survives it.
+# This runs the actual file end to end and asserts the counts, so a converge
+# cannot be the first time anyone finds out the shape changed.
+#
+# Skips itself when the source is not available, because the file lives in a
+# private repo this one does not depend on.
+
+- name: Verify the real hardware slice assembles into the seed bundle
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    nautobot_seed_hardware_path: "{{ lookup('env', 'INT_HOMELAB_HARDWARE') | default('', true) }}"
+    nautobot_seed_sops_path: ""
+    nautobot_seed_fixed_ips_path: ""
+    nautobot_seed_hosts_yml_path: ""
+    nautobot_seed_networks: []
+    nautobot_seed_racks: []
+    nautobot_seed_hosts_group: proxmox
+    nautobot_user: "{{ omit }}"
+    nautobot_group: "{{ omit }}"
+
+  tasks:
+    - name: Skip when the private hardware slice is not present
+      ansible.builtin.meta: end_play
+      when: >-
+        (nautobot_seed_hardware_path | length) == 0
+        or not (nautobot_seed_hardware_path is exists)
+
+    - name: Assemble a bundle from the real slice alone
+      vars:
+        nautobot_seed_file: "{{ hw_tmp.path }}/nautobot_seed.json"
+      block:
+        - name: No tofu inventory — the hardware source must stand alone
+          ansible.builtin.set_fact:
+            tofu_data: {}
+
+        - name: Create a temp dir for the rendered bundle
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: nautobot-hw
+          register: hw_tmp
+
+        - name: Assemble the seed bundle
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_bundle.yml
+
+        - name: Read the rendered bundle back
+          ansible.builtin.slurp:
+            src: "{{ hw_tmp.path }}/nautobot_seed.json"
+          register: hw_rendered
+
+        - name: Parse the rendered bundle
+          ansible.builtin.set_fact:
+            hw_bundle: "{{ hw_rendered.content | b64decode | from_json }}"
+
+        - name: Every hardware row reached the bundle intact
+          vars:
+            hw_devices: "{{ hw_bundle.hardware_devices }}"
+            hw_modules: "{{ hw_bundle.hardware_modules }}"
+            hw_spares: "{{ hw_modules | rejectattr('installed_in') | list }}"
+            hw_installed: "{{ hw_modules | selectattr('installed_in') | list }}"
+          ansible.builtin.assert:
+            that:
+              # The counts are the point: the source has 110 rows, and a slice
+              # that silently loses some still assembles into a valid bundle.
+              - (hw_devices | length) + (hw_modules | length) == 110
+              - hw_devices | length > 0
+              - hw_spares | length > 0
+              - hw_installed | length > 0
+              - hw_bundle.wan_circuits | length > 0
+              # Every row must carry the fields the seed job keys on. A blank
+              # hw_id would collide on asset_tag and overwrite another object.
+              - hw_devices | rejectattr('hw_id') | list | length == 0
+              - hw_modules | rejectattr('hw_id') | list | length == 0
+              - hw_modules | rejectattr('status') | list | length == 0
+              - hw_bundle.wan_circuits | rejectattr('circuit_id') | list | length == 0
+            fail_msg: >-
+              The real hardware slice did not survive assembly:
+              {{ hw_devices | length }} devices +
+              {{ hw_modules | length }} modules
+              ({{ hw_spares | length }} spare),
+              {{ hw_bundle.wan_circuits | length }} circuits.
+            success_msg: >-
+              {{ hw_devices | length }} devices +
+              {{ hw_modules | length }} modules
+              ({{ hw_spares | length }} spare,
+              {{ hw_installed | length }} installed),
+              {{ hw_bundle.wan_circuits | length }} circuits.
+
+        - name: Asset tags are unique across devices and modules
+          vars:
+            hw_ids: >-
+              {{ (hw_bundle.hardware_devices | map(attribute='hw_id') | list)
+                 + (hw_bundle.hardware_modules | map(attribute='hw_id') | list) }}
+          ansible.builtin.assert:
+            that:
+              - (hw_ids | length) == (hw_ids | unique | length)
+            fail_msg: >-
+              Duplicate hardware IDs would collide on Nautobot's unique
+              asset_tag and silently overwrite each other:
+              {{ hw_ids | length }} ids, {{ hw_ids | unique | length }} distinct.
+            success_msg: "{{ hw_ids | length }} hardware IDs, all distinct."
+      always:
+        - name: Remove the temp dir
+          ansible.builtin.file:
+            path: "{{ hw_tmp.path }}"
+            state: absent
+          when: hw_tmp.path is defined
