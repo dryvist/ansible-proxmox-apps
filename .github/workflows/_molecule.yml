@@ -11,6 +11,29 @@ on:
 permissions:
   contents: read
 
+# Bound Molecule across the whole fleet, not just within one run.
+#
+# `max-parallel` on the matrix below bounds a single workflow run. It cannot
+# bound the sum across concurrent runs, and the test containers are siblings on
+# one shared, oversubscribed Docker daemon (see the note on `test`), so what
+# actually starves is the total in flight across every run at once.
+#
+# A GitHub concurrency group is all-or-one — it cannot express "at most N runs"
+# — so this serializes Molecule fleet-wide, trading queue time for a bound that
+# holds no matter how many runs are open.
+#
+# `cancel-in-progress: false`: a half-finished Molecule run leaves containers
+# behind on the shared daemon, so cancelling to start another adds load rather
+# than freeing it. Superseded runs are already cancelled per-PR by the caller's
+# own group in ci-gate.yml, which releases this one.
+#
+# The group name is deliberately distinct from any caller's group: a caller that
+# shares a reusable workflow's EXACT group deadlocks into an opaque 0-job
+# startup_failure (see the header of ai-pr-care.yml).
+concurrency:
+  group: molecule-fleet-shared-dockerd
+  cancel-in-progress: false
+
 jobs:
   # Narrow the matrix to the scenarios a change can actually affect.
   #
