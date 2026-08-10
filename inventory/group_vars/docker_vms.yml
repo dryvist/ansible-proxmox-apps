@@ -10,33 +10,29 @@ ansible_ssh_private_key_file: >-
 # fail-closed. See inventory/group_vars/vms.yml — same rollout.
 ssh_ca_trust_rollout_enabled: true
 
-# GitHub Actions self-hosted runners — multi-repo configuration
-# Each entry generates a Compose service with its own replicas.
-# docker-host VM (250): 4 CPU, 8GB RAM — per-container limits are ceilings.
-github_runner_repositories:
-  # Molecule scenarios here create privileged systemd containers through the
-  # bind-mounted docker.sock. Those are SIBLINGS on the shared dockerd, not
-  # children of the runner's cgroup, so the runner's cpu/mem ceiling does not
-  # constrain them. On a 4 CPU / 8 GB host, three concurrent scenarios — one of
-  # which runs SQL Server — exhaust it and the kernel kills containers mid-run.
-  # Two bounds the peak; the workflow's max-parallel bounds it within one run.
-  - repo: "dryvist/ansible-proxmox-apps"
-    replicas: 2
-    labels: "self-hosted,Linux,X64,proxmox"
-  # Repo was renamed terraform-proxmox -> tofu-proxmox. The runner-registration
-  # endpoint does not follow GitHub's rename redirect (404s), unlike the rest
-  # of the REST API — so this must carry the current name.
-  - repo: "dryvist/tofu-proxmox"
-    replicas: 1
-    labels: "self-hosted,Linux,X64,proxmox,terraform"
-  - repo: "dryvist/ansible-splunk"
-    replicas: 1
-    labels: "self-hosted,Linux,X64,proxmox"
-  - repo: "dryvist/ansible-proxmox"
-    replicas: 2
-    labels: "self-hosted,Linux,X64,proxmox"
-  # tofu-github triggers remote Terrakube plan/apply (LAN-only platform);
-  # the runner just needs outbound reach to terrakube-api.<domain>.
-  - repo: "dryvist/tofu-github"
-    replicas: 1
-    labels: "self-hosted,Linux,X64,proxmox,terrakube"
+# GitHub Actions self-hosted runners — ONE org-level pool, not per-repo.
+#
+# This replica count IS the fleet cap, and it is the only one. Molecule and E2E
+# test containers are created through the bind-mounted docker.sock, so they are
+# SIBLINGS on the shared dockerd, not children of the runner's cgroup — the
+# runner's own cpu/mem ceiling does not constrain them.
+#
+# Per-repo registrations were the defect this replaced. A repo-scoped runner
+# serves only its own repo, so each repo's cap held while the SUM did not:
+# five repos held seven slots on a host that carried about two, and pushing
+# branches to several repos at once starved scenarios mid-run. One pool is one
+# number, and idle slots are usable by whichever repo needs them.
+#
+# To raise throughput, grow the guest first, then raise this number. Do not
+# raise it to buy speed on an unchanged host — that is the original bug.
+github_runner_org: "dryvist"
+github_runner_replicas: 4
+# Every runner carries the union of every label any consumer job asks for, so
+# any runner can serve any job. A specialised label would recreate the
+# fragmentation the pool exists to remove: `terraform` (tofu-proxmox
+# servarr-config-drift) and `terrakube` (tofu-github).
+github_runner_labels: "self-hosted,Linux,X64,proxmox,terraform,terrakube"
+# The Default group is the sole X64 pool.  Its GitHub-side policy allows all
+# organization repositories and public repositories; keep repository names out
+# of this public inventory.
+github_runner_group: "Default"

@@ -14,35 +14,23 @@
 # Resolve repository list
 # =============================================================================
 
-- name: Resolve runner repository list
-  ansible.builtin.set_fact:
-    _github_runner_repos: >-
-      {{
-        github_runner_repositories
-        if (github_runner_repositories is defined and github_runner_repositories | length > 0)
-        else [{'repo': github_runner_repository}]
-      }}
-
-- name: Validate runner repository list
+# An empty role_id or secret_id renders a container that starts, fails to
+# register, and restarts forever — a fleet that looks deployed and serves no
+# job. Fail the converge instead.
+- name: Validate the org pool is fully specified
   ansible.builtin.assert:
     that:
-      - _github_runner_repos | length > 0
-      - _github_runner_repos | map(attribute='repo') | select('match', '.+/.+') | list | length
-        == _github_runner_repos | length
+      - github_runner_org | length > 0
+      - github_runner_group | length > 0
+      - github_runner_replicas | int > 0
+      - github_runner_bao_addr | length > 0
+      - github_runner_bao_role_id | length > 0
+      - github_runner_bao_secret_id | length > 0
     fail_msg: >-
-      github_runner_repositories must be a non-empty list of dicts with
-      'repo' keys in 'Owner/repo' format.
-
-- name: Validate token usage for multi-repo
-  ansible.builtin.assert:
-    that:
-      - not (_github_runner_repos | length > 1
-        and github_runner_token is defined
-        and github_runner_admin_token is not defined)
-    fail_msg: >-
-      Using a single GITHUB_RUNNER_TOKEN with multiple repositories is not
-      supported. Please use GH_PAT_RUNNER_TOKEN (github_runner_admin_token)
-      for multi-repo setups.
+      The runner pool needs github_runner_org, github_runner_group, a positive
+      github_runner_replicas, and OpenBao secret-zero
+      (BAO_ADDR + OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID/_SECRET_ID in the
+      converge environment). Registration is impossible without all of them.
 
 # =============================================================================
 # Work Directory Setup
@@ -199,11 +187,19 @@
       to serve jobs — wanted runner >= {{ _wanted_runner_version }} with sudo
       present, probe returned: {{ github_runner_image_probe.stdout | trim }}
 
+# remove_orphans is load-bearing on the migration from per-repo services. The
+# old services were named runner_<repo_slug>; the pool's single service is
+# `runner`, so under the same project name every old container is an orphan.
+# The module defaults this to false, and the containers carry
+# `restart: unless-stopped` — so without it they keep running and stay
+# registered alongside the new pool, and the cap this change exists to impose
+# would not hold.
 - name: Deploy GitHub Actions runners via docker compose
   community.docker.docker_compose_v2:
     project_src: "{{ github_runner_work_dir }}"
     project_name: github-runner
     state: present
+    remove_orphans: true
 
 # Content-hash tags accumulate one multi-GB image per build context, where a
 # fixed tag reused the same one. Superseded tags are unreferenced by definition
@@ -233,20 +229,15 @@
   register: github_runner_ps
   changed_when: false
 
-- name: Calculate expected total replicas
-  ansible.builtin.set_fact:
-    github_runner_expected_replicas: >-
-      {{ _github_runner_repos
-         | map(attribute='replicas', default=github_runner_default_replicas)
-         | map('int')
-         | sum }}
-
-- name: Assert all runner replicas are running
+# Equality, not >=. The old >= could not see a surviving per-repo container,
+# and over-count is now the failure that matters: it means the cap is exceeded.
+- name: Assert exactly the pooled replicas are running
   vars:
     _runner_count: "{{ github_runner_ps.stdout_lines | map('from_json') | list | length }}"
   ansible.builtin.assert:
     that:
-      - _runner_count | int >= github_runner_expected_replicas | int
+      - _runner_count | int == github_runner_replicas | int
     fail_msg: >-
-      Expected {{ github_runner_expected_replicas }} runner containers but found
-      {{ _runner_count }}
+      Expected exactly {{ github_runner_replicas }} runner containers but found
+      {{ _runner_count }}. More than that means the fleet cap is not holding —
+      check for surviving per-repo containers from the pre-pool layout.

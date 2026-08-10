@@ -1,28 +1,22 @@
 ---
 services:
-{% for repo_entry in _github_runner_repos %}
-{% set repo_slug = repo_entry.repo.split('/')[1] | regex_replace('[^a-zA-Z0-9]', '_') %}
-{% set replicas = repo_entry.replicas | default(github_runner_default_replicas) %}
-{% set labels = repo_entry.labels | default(github_runner_default_labels) %}
-{% set name_prefix = repo_entry.name_prefix | default(github_runner_default_name_prefix) %}
-{% set cpu_limit = repo_entry.cpu_limit | default(github_runner_default_cpu_limit) %}
-{% set memory_limit = repo_entry.memory_limit | default(github_runner_default_memory_limit) %}
-  runner_{{ repo_slug }}:
+  runner:
     image: "{{ github_runner_image_name }}:{{ github_runner_image_tag }}"
-    cpus: {{ cpu_limit }}
-    mem_limit: "{{ memory_limit }}"
+    cpus: {{ github_runner_cpu_limit }}
+    mem_limit: "{{ github_runner_memory_limit }}"
     environment:
-      GITHUB_REPOSITORY: "{{ repo_entry.repo }}"
-{% if github_runner_admin_token is defined %}
-      GH_TOKEN: "{{ github_runner_admin_token }}"
-{% elif github_runner_token is defined %}
-      RUNNER_TOKEN: "{{ github_runner_token }}"
-{% endif %}
+      GITHUB_ORG: "{{ github_runner_org }}"
+      RUNNER_GROUP: "{{ github_runner_group }}"
+      BAO_ADDR: "{{ github_runner_bao_addr }}"
+      BAO_ROLE_ID: "{{ github_runner_bao_role_id }}"
+      BAO_SECRET_ID: "{{ github_runner_bao_secret_id }}"
+      BAO_PERMISSION_SET: "{{ github_runner_bao_permission_set }}"
+      BAO_GITHUB_MOUNT: "{{ github_runner_bao_github_mount }}"
 {% if github_runner_sops_age_key is defined %}
       SOPS_AGE_KEY: "{{ github_runner_sops_age_key }}"
 {% endif %}
-      RUNNER_LABELS: "{{ labels }}"
-      RUNNER_NAME_PREFIX: "{{ name_prefix }}-{{ repo_slug }}"
+      RUNNER_LABELS: "{{ github_runner_labels }}"
+      RUNNER_NAME_PREFIX: "{{ github_runner_name_prefix }}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     # The runner user must be able to write the bind-mounted host socket; the
@@ -34,10 +28,11 @@ services:
     restart: unless-stopped
     networks:
       - ci_runners
+    # This replica count is the fleet's whole concurrency cap. See
+    # inventory/group_vars/docker_vms.yml for why it is the only one.
     deploy:
-      replicas: {{ replicas }}
+      replicas: {{ github_runner_replicas }}
 
-{% endfor %}
 networks:
   ci_runners:
     name: ci_runners
