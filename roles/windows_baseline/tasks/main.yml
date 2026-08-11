@@ -18,6 +18,58 @@
     # died with "sudo: a password is required" on every Windows host, before
     # any of them was contacted. Task vars outrank group vars, so pin it here.
     ansible_become: false
+  # Never fatal. This task exists to give a freshly built guest time to bring
+  # its listener up; it is not the reachability gate. Because it is delegated,
+  # a timeout is a FAILURE on the control node rather than an unreachable host,
+  # which the play's ignore_unreachable cannot forgive — so a powered-off guest
+  # failed the run instead of dropping out of it. Let the first real WinRM task
+  # decide whether the guest is there.
+  failed_when: false
+
+# The answer file starts WinRM at first logon, which lasts exactly until the
+# first reboot: the service is left on its default start mode and comes back
+# Stopped. Every converge after that reboot then finds the guest unreachable and
+# the management channel simply gone — observed on win11-vdi, which came back
+# from a restart with RDP open and 5985 closed.
+#
+# This task cannot bootstrap itself (it needs the channel it is fixing), so a
+# guest in that state has to be started once out of band. Setting the start mode
+# here is what stops it happening a second time.
+- name: Ensure WinRM runs and starts at boot
+  ansible.windows.win_service:
+    name: WinRM
+    start_mode: auto
+    state: started
+
+# A Windows clone inherits the TEMPLATE's computer name, and nothing in the
+# clone path changes it. The guest then announces that name in its DHCP request,
+# so the gateway's lease table — which is what resolves leased guests across the
+# estate — publishes the template's name and not the guest's. Anything that
+# addresses the guest by its declared hostname then fails to resolve it, and the
+# guest looks absent while it is running perfectly well.
+#
+# This is the root of that whole class of failure, and it belongs here rather
+# than in DNS. Writing an explicit record for the guest instead would put the
+# same address in a second system with nothing to reconcile the two — precisely
+# what roles/technitium_dns/tasks/main/build_records.yml refuses to do. The
+# estate's DNS model is right; the guest was announcing the wrong identity.
+#
+# Deliberately NOT paired with an automatic reboot. A rename only takes effect on
+# restart, and these are desktops with a human logged into them; restarting one
+# to finish a cosmetic-looking change is not a trade this role gets to make. The
+# next reboot completes it, and the task is idempotent until then.
+- name: Set the computer name to the declared hostname
+  ansible.windows.win_hostname:
+    name: "{{ inventory_hostname }}"
+  register: windows_baseline_rename
+
+- name: Report that the rename is pending a restart
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} still announces its old computer name until it is
+      restarted. Until then the lease table — and therefore DNS — keeps serving
+      the previous name, so address this guest by that name or by its address.
+  when: windows_baseline_rename.reboot_required | default(false)
 
 # The build bakes whatever password Packer was given into the answer file. That
 # value is reachable for automation, which authenticates from a secret store,
@@ -44,10 +96,23 @@
     password: "{{ windows_baseline_default_password }}"
     update_password: always
     state: present
+  # no_log hides the whole result, failures included, so this task could only
+  # ever fail as a censored blob with nothing to act on — which is exactly what
+  # it did. Capture it instead and re-raise the module's own message below: the
+  # credential stays hidden, the reason does not.
+  register: windows_baseline_password_result
+  failed_when: false
   no_log: true
   when:
     - windows_baseline_default_password | length > 0
     - windows_baseline_default_password != ansible_password
+
+- name: Fail with the reason the password could not be set
+  ansible.builtin.fail:
+    msg: >-
+      Setting the local administrator password on {{ inventory_hostname }}
+      failed: {{ windows_baseline_password_result.msg | default('no message') }}
+  when: windows_baseline_password_result.failed | default(false)
 
 # Enabling the rule group is not enough on its own. Windows classifies an
 # unidentified network as Public, and the built-in Remote Desktop (and WinRM)
@@ -66,7 +131,11 @@
 - name: Set every connection profile to Private
   ansible.windows.win_shell: |
     Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private
-  when: windows_baseline_public_profiles.stdout | trim | length > 0
+  # `| default('')`: when the host went unreachable earlier in the play, the
+  # registered result is a bare dict with no stdout, and the conditional raises
+  # ("object of type 'dict' has no attribute 'stdout'") instead of skipping —
+  # turning an already-forgiven unreachable guest into a hard failure.
+  when: windows_baseline_public_profiles.stdout | default('') | trim | length > 0
 
 - name: Allow incoming RDP connections
   ansible.windows.win_regedit:
@@ -86,4 +155,4 @@
 - name: Enable the Remote Desktop firewall rule group
   ansible.windows.win_shell: >
     netsh advfirewall firewall set rule group="remote desktop" new enable=yes
-  when: windows_baseline_rdp_rules_off.stdout | trim | int > 0
+  when: windows_baseline_rdp_rules_off.stdout | default('') | trim | int > 0
