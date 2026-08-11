@@ -96,10 +96,23 @@
     password: "{{ windows_baseline_default_password }}"
     update_password: always
     state: present
+  # no_log hides the whole result, failures included, so this task could only
+  # ever fail as a censored blob with nothing to act on — which is exactly what
+  # it did. Capture it instead and re-raise the module's own message below: the
+  # credential stays hidden, the reason does not.
+  register: windows_baseline_password_result
+  failed_when: false
   no_log: true
   when:
     - windows_baseline_default_password | length > 0
     - windows_baseline_default_password != ansible_password
+
+- name: Fail with the reason the password could not be set
+  ansible.builtin.fail:
+    msg: >-
+      Setting the local administrator password on {{ inventory_hostname }}
+      failed: {{ windows_baseline_password_result.msg | default('no message') }}
+  when: windows_baseline_password_result.failed | default(false)
 
 # Enabling the rule group is not enough on its own. Windows classifies an
 # unidentified network as Public, and the built-in Remote Desktop (and WinRM)
