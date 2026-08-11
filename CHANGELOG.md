@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.13.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.13.1...v4.13.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **windows:** make the WinRM converge path work end to end ([#1493](https://github.com/dryvist/ansible-proxmox-apps/issues/1493)) ([20a28b8](https://github.com/dryvist/ansible-proxmox-apps/commit/20a28b89c47f1ee65b8c41def3e0258e7632d1e2))
+
 ## [4.13.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.13.0...v4.13.1) (2026-08-11)
 
 
