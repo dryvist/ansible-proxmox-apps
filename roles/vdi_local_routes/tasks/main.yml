@@ -95,7 +95,17 @@
         # Clear any stale entry for this prefix first: a route to the same
         # destination via a dead next hop still wins on prefix length and would
         # black-hole the traffic this role is protecting.
+        # route.exe writes "Element not found" to STDERR when there is nothing
+        # to delete, and with ErrorActionPreference = Stop PowerShell promotes
+        # any native stderr to a terminating NativeCommandError — so the
+        # clean-up step fails the task in the ordinary case where the route was
+        # simply absent. Nothing to delete is a success here, so drop the
+        # preference for exactly this call.
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         & route delete $network mask $mask 2>&1 | Out-Null
+        $ErrorActionPreference = $prev
+
         $out = & route -p add $network mask $mask $Gateway metric $Metric if $ifIndex 2>&1
         if ($LASTEXITCODE -ne 0) { throw "route -p add failed (rc=$LASTEXITCODE): $out" }
         $changed = $true
