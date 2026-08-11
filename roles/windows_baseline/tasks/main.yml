@@ -19,6 +19,28 @@
     # any of them was contacted. Task vars outrank group vars, so pin it here.
     ansible_become: false
 
+# The build bakes whatever password Packer was given into the answer file. That
+# value is reachable for automation, which authenticates from a secret store,
+# and unusable for a human at an RDP or Proxmox console prompt — the two places
+# copy/paste is unavailable, and the two places a VDI guest is actually used.
+# Converge the account toward the estate default instead.
+#
+# Guarded on a difference rather than run unconditionally: win_user rewrites the
+# password every time it is called, so an unguarded task reports `changed` on
+# every converge and the run stops meaning anything. Both sides are known here
+# (one is what this connection authenticated with), so the comparison is exact
+# and the task is genuinely idempotent.
+- name: Set the local Administrator password to the estate default
+  ansible.windows.win_user:
+    name: "{{ ansible_user }}"
+    password: "{{ windows_baseline_default_password }}"
+    update_password: always
+    state: present
+  no_log: true
+  when:
+    - windows_baseline_default_password | length > 0
+    - windows_baseline_default_password != ansible_password
+
 # Enabling the rule group is not enough on its own. Windows classifies an
 # unidentified network as Public, and the built-in Remote Desktop (and WinRM)
 # rules for that profile are scoped to LocalSubnet — so the guest listens on
