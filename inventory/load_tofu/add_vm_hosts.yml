@@ -41,9 +41,28 @@
       when: windows_vdi_openbao_login.login is defined
       check_mode: false
 
+    # Estate-wide defaults. One object, one key per default, so the next
+    # default (a username, a limit, a retention) is a new key here rather than
+    # a new secret path, a new policy stanza and a new lookup.
+    - name: Read the estate-wide defaults
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ lookup('env', 'BAO_ADDR') }}"
+        auth_method: token
+        token: "{{ windows_vdi_openbao_login.login.auth.client_token }}"
+        engine_mount_point: secret
+        path: platform/defaults
+      register: platform_defaults_secret
+      failed_when: false
+      when: windows_vdi_openbao_login.login is defined
+      check_mode: false
+
     - name: Store the resolved Windows admin credential
       ansible.builtin.set_fact:
         windows_vdi_admin_password: "{{ windows_vdi_admin_secret.secret.password | default('') }}"
+        # Soft on purpose, unlike the credential above. An unreadable defaults
+        # object must not break a converge that only needs to log in — the
+        # consumer skips instead, and says so.
+        platform_defaults: "{{ platform_defaults_secret.secret | default({}) }}"
 
     # An empty password here is never benign: it produces a WinRM auth
     # failure at converge time that reads like a broken guest rather than a
@@ -102,6 +121,11 @@
     # the time the routes matter. The destinations are estate-wide.
     vdi_gateway: "{{ item.value.gateway | default('') }}"
     vdi_preserved_cidrs: "{{ tofu_data.vdi_preserved_cidrs | default([]) }}"
+    # The whole defaults object, not selected keys: a fact set on localhost is
+    # not visible to these hosts, so anything a role needs has to cross here.
+    # Passing the object means the next default reaches its consumer without
+    # touching this file at all.
+    platform_defaults: "{{ platform_defaults | default({}) }}"
   loop: "{{ tofu_data.vms | dict2items }}"
   changed_when: false
   no_log: true
