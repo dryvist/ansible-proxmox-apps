@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.13.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.12.0...v4.13.0) (2026-08-11)
+
+
+### Features
+
+* **defaults:** read estate-wide defaults from the secret store ([#1486](https://github.com/dryvist/ansible-proxmox-apps/issues/1486)) ([6d63525](https://github.com/dryvist/ansible-proxmox-apps/commit/6d635251b0a2df4d67e36c2fc3ec47379c6282ee))
+* **vdi:** keep internal networks reachable when a VDI guest runs a VPN ([#1482](https://github.com/dryvist/ansible-proxmox-apps/issues/1482)) ([8d5789f](https://github.com/dryvist/ansible-proxmox-apps/commit/8d5789f93a738066519cb1a802f3c81aa0806341))
+
+
+### Bug Fixes
+
+* **vdi:** gate the Windows plays on reachability, not on desired-state `started` ([#1484](https://github.com/dryvist/ansible-proxmox-apps/issues/1484)) ([353a0fa](https://github.com/dryvist/ansible-proxmox-apps/commit/353a0fad2b586d9711d25ff6ff30665275bc8dfd))
+* **windows:** stop the delegated WinRM wait from sudoing on the control node ([#1485](https://github.com/dryvist/ansible-proxmox-apps/issues/1485)) ([7886251](https://github.com/dryvist/ansible-proxmox-apps/commit/7886251571a9aacd76b38d7e7b58438b59388046))
+
 ## [4.12.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.11.0...v4.12.0) (2026-08-10)
 
 
