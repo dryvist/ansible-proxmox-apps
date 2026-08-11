@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.13.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.13.0...v4.13.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **openbao:** grant tofu-unifi read on the object-storage credential ([#1494](https://github.com/dryvist/ansible-proxmox-apps/issues/1494)) ([fb4a47f](https://github.com/dryvist/ansible-proxmox-apps/commit/fb4a47f9acd4db9ce9288377e3f47b1e1d188b38))
+
 ## [4.13.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.12.0...v4.13.0) (2026-08-11)
 
 
