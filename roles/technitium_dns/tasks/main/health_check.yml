@@ -1,0 +1,24 @@
+---
+- name: Verify DNS zone is active
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/list?token={{ technitium_dns_api_token }}"
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_final_zones
+  changed_when: false
+  failed_when: >-
+    technitium_dns_zone not in
+    (technitium_dns_final_zones.json.response.zones | default([]) | map(attribute='name') | list)
+  when: technitium_dns_apply | bool
+  no_log: true
+
+# Health-checked apex: reconcile the round-robin to nodes that actually answer.
+# Primary only — secondaries get the result by zone transfer, and two reconcilers
+# writing the same record set would fight each other.
+- name: Configure the health-checked zone apex
+  ansible.builtin.include_tasks: apex_health_check.yml
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_apex_health_check_enabled | bool

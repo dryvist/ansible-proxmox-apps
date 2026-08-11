@@ -1,0 +1,29 @@
+---
+# Push tofu_data onto every dynamically-added host so roles can access
+# tofu_data.constants.* directly without hostvars['localhost'] indirection.
+- name: Propagate tofu_data to all inventory hosts
+  ansible.builtin.set_fact:
+    tofu_data: "{{ tofu_data }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: tofu_data is defined
+
+# add_host CANNOT set a host var literally named `hostname`: it is an alias
+# of add_host's `name` option (aliases: host, hostname) and gets silently
+# consumed instead of becoming a hostvar. Consumers of `hostname`
+# (technitium_dns A-record builder, *_docker site-URL defaults) therefore
+# never saw it — set it as a real per-host fact here instead.
+- name: Set the guest hostname fact on all inventory hosts
+  vars:
+    tofu_guests: >-
+      {{ (tofu_data.containers | default({}))
+         | combine(tofu_data.vms | default({}))
+         | combine(tofu_data.docker_vms | default({}))
+         | combine(tofu_data.splunk_vm | default({})) }}
+  ansible.builtin.set_fact:
+    hostname: "{{ tofu_guests[item].hostname }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: item in tofu_guests

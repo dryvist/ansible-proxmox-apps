@@ -1,0 +1,58 @@
+---
+- name: Render and verify cribl_stream templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/cribl_stream/defaults/main.yml (only vars inputs.yml.j2 uses;
+    # the real defaults derive these from tofu_data constants).
+    cribl_stream_netflow_port: 2055
+    cribl_stream_s2s_port: 10300
+    cribl_stream_otel_port: 4318
+    cribl_stream_pq_enabled: true
+    cribl_stream_prometheus_rw_port: 9201
+    cribl_stream_prometheus_rw_api_path: /api/v1/write
+    # Mirror the ai_log_routing-derived defaults (representative subset: one
+    # tcpjson CLI source, one rsyslog-fed syslog-type source with an explicit
+    # override, and one *_docker source that must classify as syslog by
+    # suffix alone — no cribl_stream_ai_input_types entry for it below).
+    cribl_stream_ai_log_routing:
+      claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
+      homelab_llm: { port: 10323, index: llm, sourcetype: llamaswap }
+      qdrant_docker: { port: 10347, index: qdrant, sourcetype: "qdrant:app" }
+    cribl_stream_ai_input_types:
+      homelab_llm: syslog
+      openbao_audit: syslog
+    cribl_stream_hec_namespace: ""
+    cribl_stream_per_index_indexes: >-
+      {{ (['netflow', 'otel_traces']
+          + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
+         | unique | list }}
+    # Langfuse OTLP leg — keys present, so the gated output + input
+    # connection render (the absent-key path renders nothing to assert).
+    cribl_stream_langfuse_url: "https://langfuse.example.com/api/public/otel"
+    cribl_stream_langfuse_public_key: "PLACEHOLDER_PUBLIC_KEY"
+    cribl_stream_langfuse_secret_key: "PLACEHOLDER_SECRET_KEY"
+    # outputs.yml.j2 stand-ins (per-index render below).
+    cribl_stream_splunk_hec_url: "https://splunk-hec.pve.example.com/services/collector/event"
+    cribl_stream_splunk_hec_token: "test-hec-token-placeholder"
+    cribl_stream_splunk_hec_tls_verify: false
+    _template_dir: "../../../roles/cribl_stream/templates"
+
+  tasks:
+    - name: Render all cribl_stream fixtures and decode their content
+      ansible.builtin.include_tasks: cribl_stream/render_and_decode.yml
+
+    - name: Assert on the rendered inputs/outputs/pipelines
+      ansible.builtin.include_tasks: cribl_stream/assertions.yml
+
+    - name: Cribl Stream template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          cribl_stream template assertions passed:
+          - inputs.yml.j2: tcpjson S2S (10300/force_splunk_meta) + prometheus_rw (9201/prometheus_to_netmon)
+          - force_splunk_meta: conditional evals + valid mask schema (matchRegex/replaceExpr)
+          - prometheus_to_netmon: eval coerces non-finite values + stamps index=netmon_metrics

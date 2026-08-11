@@ -1,0 +1,205 @@
+---
+- name: Get existing A records for zone
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/zones/records/get?token={{
+      technitium_dns_api_token }}&domain={{
+      technitium_dns_zone | urlencode }}&zone={{
+      technitium_dns_zone | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_existing_records
+  changed_when: false
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
+- name: Create A records for infrastructure hosts
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: A
+      ipAddress: "{{ item.ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_a_records }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.ip }}"
+  register: technitium_dns_a_record_result
+  changed_when: technitium_dns_a_record_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_a_record_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_a_record_result.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
+# --- Prune retired guest A records -------------------------------------------
+# The record-add tasks above are add/overwrite-only, so a hostname that is gone
+# for good would keep resolving unless its A record is deleted here.
+# technitium_dns_retired_records lists the bare hostnames to remove (explicit,
+# never inferred — static entries such as node A records must never be pruned).
+# The delete API needs the record's ipAddress, so each name is looked up first
+# and only the A rdata actually present is deleted. A name with no record yields
+# an empty lookup, no delete is issued, and the run reports no change — the prune
+# is idempotent by construction.
+- name: Look up retired guest A records
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/zones/records/get?token={{
+      technitium_dns_api_token }}&domain={{
+      (item ~ '.' ~ technitium_dns_zone) | urlencode }}&zone={{
+      technitium_dns_zone | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_retired_records }}"
+  loop_control:
+    label: "{{ item }}"
+  register: technitium_dns_retired_lookup
+  changed_when: false
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
+# Flatten the per-name lookups into the concrete A records to delete. Each record
+# carries its own fully-qualified `name` and `rData.ipAddress` — the two values
+# the delete API needs. An empty result means every retired name was already
+# absent, so the delete task below loops zero times.
+- name: Build retired A-record deletion list
+  ansible.builtin.set_fact:
+    technitium_dns_retired_deletions: >-
+      {{ technitium_dns_retired_lookup.results | default([])
+         | map(attribute='json.response.records', default=[])
+         | flatten | selectattr('type', 'equalto', 'A') | list }}
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+
+- name: Delete retired guest A records
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/delete?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: A
+      ipAddress: "{{ item.rData.ipAddress }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_retired_deletions | default([]) }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.rData.ipAddress }}"
+  register: technitium_dns_retired_delete_result
+  changed_when: technitium_dns_retired_delete_result.json.status == "ok"
+  failed_when: technitium_dns_retired_delete_result.json.status | default('') != "ok"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
+- name: Create CNAME records for service aliases
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: CNAME
+      cname: "{{ item.target }}.{{ technitium_dns_zone }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_cname_records }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.target }}"
+  register: technitium_dns_cname_result
+  changed_when: technitium_dns_cname_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_cname_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_cname_result.json.errorMessage | default(''))"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
+- name: Create extra CNAME records (verbatim FQDN target)
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item.name }}.{{ technitium_dns_zone }}"
+      zone: "{{ technitium_dns_zone }}"
+      type: CNAME
+      cname: "{{ item.target }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_extra_cname_records | selectattr('target', 'truthy') | list }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.target }}"
+  register: technitium_dns_extra_cname_result
+  changed_when: technitium_dns_extra_cname_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_extra_cname_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_extra_cname_result.json.errorMessage | default(''))"
+    # A missing target zone (e.g. the apex zone on a fresh rebuild) must NOT abort
+    # the play before the critical ingress-alias records run (Zammad #17136 art.439).
+    - "'no such zone' not in (technitium_dns_extra_cname_result.json.errorMessage | default('') | lower)"
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true
+
+# Static host A records that live outside the Proxmox inventory use the same
+# add/overwrite path. This keeps the Mac Studio's canonical hostname in DNS even
+# though it is not a guest managed by load_tofu.yml. Records may optionally
+# target a different zone (for parent-apex names that already exist here).
+- name: Create extra A records (verbatim IPv4 target)
+  vars:
+    technitium_dns_extra_a_record_zone: "{{ item.zone | default(technitium_dns_zone) }}"
+    technitium_dns_extra_a_record_domain: "{{ item.name }}.{{ technitium_dns_extra_a_record_zone }}"
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ technitium_dns_extra_a_record_domain }}"
+      zone: "{{ technitium_dns_extra_a_record_zone }}"
+      type: A
+      ipAddress: "{{ item.ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_extra_a_records | selectattr('ip', 'truthy') | list }}"
+  loop_control:
+    label: "{{ technitium_dns_extra_a_record_domain }} -> {{ item.ip }}"
+  register: technitium_dns_extra_a_result
+  changed_when: technitium_dns_extra_a_result.json.status == "ok"
+  failed_when:
+    - technitium_dns_extra_a_result.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_extra_a_result.json.errorMessage | default(''))"
+    # A missing target zone (e.g. the apex zone on a fresh rebuild) must NOT abort
+    # the play before the critical ingress-alias records run (Zammad #17136 art.439).
+    - "'no such zone' not in (technitium_dns_extra_a_result.json.errorMessage | default('') | lower)"
+  notify: Restart Technitium DNS
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+  no_log: true

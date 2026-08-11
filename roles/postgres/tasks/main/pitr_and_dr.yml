@@ -1,0 +1,54 @@
+---
+# =============================================================================
+# Phase 5b: Object-storage PITR backups (pgBackRest -> S3). Primary-only and
+# flag-gated inside the imported file; also carries the tagged PITR restore.
+# =============================================================================
+- name: Configure object-storage PITR backups
+  ansible.builtin.import_tasks: pgbackrest.yml
+
+# =============================================================================
+# DR restore (explicit invocation only — the Database DR Standard's per-engine
+# restore path). Runs a controller-fetched dump into the named database:
+#   ansible-playbook ... --tags dr_restore \
+#     -e postgres_dr_restore_db=<db> -e postgres_dr_restore_dump=<local path>
+# Point _db at a scratch database for the mandatory restore drill.
+# =============================================================================
+# Var-gated, not just `never`-tagged: the role include's `postgres` tag is
+# inherited by this block, so a plain `--tags postgres` converge still selects
+# it despite `never` — the empty-input skip is what actually keeps it inert.
+- name: DR restore from a logical dump
+  when:
+    - postgres_dr_restore_db | length > 0
+    - postgres_dr_restore_dump | length > 0
+  tags:
+    - never
+    - dr_restore
+  block:
+    - name: Stage the dump on the guest
+      ansible.builtin.copy:
+        src: "{{ postgres_dr_restore_dump }}"
+        dest: /tmp/pg-dr-restore.dump
+        owner: postgres
+        group: postgres
+        mode: "0600"
+
+    - name: Ensure the restore target database exists
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ postgres_dr_restore_db }}"
+        state: present
+
+    - name: Restore the dump (clean, if-exists)
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        cmd: >-
+          pg_restore --clean --if-exists
+          --dbname={{ postgres_dr_restore_db }} /tmp/pg-dr-restore.dump
+      changed_when: true
+
+    - name: Remove the staged dump
+      ansible.builtin.file:
+        path: /tmp/pg-dr-restore.dump
+        state: absent

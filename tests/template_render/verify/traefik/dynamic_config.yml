@@ -1,0 +1,148 @@
+---
+- name: Render traefik dynamic config to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/dynamic.yml.j2"
+    dest: "{{ _fixture_dir }}/test_traefik_dynamic.yml"
+    mode: "0640"
+
+- name: Read rendered traefik dynamic config
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_traefik_dynamic.yml"
+  register: _traefik_dynamic_raw
+
+- name: Decode + parse traefik dynamic config (must be valid YAML)
+  ansible.builtin.set_fact:
+    _traefik_dynamic: "{{ _traefik_dynamic_raw.content | b64decode }}"
+    _traefik_dynamic_yaml: "{{ _traefik_dynamic_raw.content | b64decode | from_yaml }}"
+
+- name: Assert routers front each service with the wildcard cert + apex
+  ansible.builtin.assert:
+    that:
+      - "'Host(`plex.pve.example.com`)' in _traefik_dynamic"
+      - "'http://192.0.2.10:32400' in _traefik_dynamic"
+      - "'*.pve.example.com' in _traefik_dynamic"
+      # The apex router's Host rule is the base domain ITSELF (no <name>. prefix).
+      - _traefik_dynamic_yaml.http.routers.proxmox.rule == "Host(`pve.example.com`)"
+      - _traefik_dynamic_yaml.http.routers['hermes-dashboard'].rule == "Host(`hermes.pve.example.com`)"
+      - >-
+        _traefik_dynamic_yaml.http.routers.hermes.rule
+        == "Host(`hermes.pve.example.com`) && PathPrefix(`/webhooks/`)"
+      - _traefik_dynamic_yaml.http.routers.hermes.priority == 100
+      # Wildcard requested via the resolver; dashboard secured by a usersFile
+      # (no credential inline — the role generates the file on the host).
+      - _traefik_dynamic_yaml.http.routers.plex.tls.certResolver == "letsencrypt"
+      # The public dashboard is Authelia-gated, NOT basicAuth: a chain is AND,
+      # so carrying both would make an Authelia outage lock the operator out
+      # of the proxy dashboard at the moment it is needed.
+      - "'authelia' in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+      - "'dashboard-auth' not in _traefik_dynamic_yaml.http.routers.dashboard.middlewares"
+      # Break-glass keeps basicAuth, on its own entryPoint, off websecure, so
+      # it depends on neither Authelia nor DNS.
+      - "'dashboard-auth' in _traefik_dynamic_yaml.http.routers['dashboard-breakglass'].middlewares"
+      - "'authelia' not in _traefik_dynamic_yaml.http.routers['dashboard-breakglass'].middlewares"
+      - _traefik_dynamic_yaml.http.routers['dashboard-breakglass'].entryPoints == ["dashboardbg"]
+      - >-
+        _traefik_dynamic_yaml.http.middlewares['dashboard-auth'].basicAuth.usersFile
+        == "/etc/traefik/dashboard.htpasswd"
+      - _traefik_dynamic_yaml.http.services.plex.loadBalancer.servers[0].url == "http://192.0.2.10:32400"
+      - >-
+        _traefik_dynamic_yaml.http.routers['openbao-oauth-callback'].rule
+        == "Host(`openbao.pve.example.com`) && Path(`/oauth/slack/callback`)"
+      - _traefik_dynamic_yaml.http.routers['openbao-oauth-callback'].priority == 10000
+      - _traefik_dynamic_yaml.http.routers['openbao-oauth-callback'].service == "noop@internal"
+      - "'middlewares' not in _traefik_dynamic_yaml.http.routers['openbao-oauth-callback']"
+    fail_msg: >-
+      dynamic.yml.j2 missing a router/service, the apex Host rule, the
+      wildcard SAN, or the usersFile-secured dashboard.
+
+- name: Assert the apex service is a sticky, health-checked, 3-node pool
+  ansible.builtin.assert:
+    that:
+      # Load-balanced across all three node UIs, in order.
+      - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.servers | length == 3
+      - >-
+        (_traefik_dynamic_yaml.http.services.proxmox.loadBalancer.servers | map(attribute='url') | list)
+        == ["https://proxmox1.example.com:8006",
+        "https://proxmox2.example.com:8006", "https://proxmox3.example.com:8006"]
+      # Sticky session cookie pins a browser to one node.
+      - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.sticky.cookie.name == "proxmox_lb"
+      - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.sticky.cookie.secure | bool
+      # Health check (https, path /) drops a down node; insecure-backend
+      # transport re-encrypts to the self-signed node certs.
+      - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck.path == "/"
+      - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck.scheme == "https"
+      - _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.serversTransport == "insecure-backend"
+      # A single-backend http service gets neither sticky nor healthCheck.
+      - "'sticky' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+      - "'healthCheck' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+      # health_check_port -> healthCheck.port (mcp probes stats, not proxy);
+      # routes without it must NOT render a port key (proxmox stays portless).
+      - _traefik_dynamic_yaml.http.services.mcp.loadBalancer.healthCheck.path == "/metrics"
+      - _traefik_dynamic_yaml.http.services.mcp.loadBalancer.healthCheck.port == 15020
+      - "'port' not in _traefik_dynamic_yaml.http.services.proxmox.loadBalancer.healthCheck"
+    fail_msg: >-
+      dynamic.yml.j2 apex service wrong: pool size/urls, sticky cookie,
+      healthCheck, or serversTransport not rendered as expected.
+
+- name: Assert the sso flag gates exactly the flagged routers via forwardAuth
+  ansible.builtin.assert:
+    that:
+      # sso: true -> the router carries the authelia middleware.
+      - "'authelia' in _traefik_dynamic_yaml.http.routers.splunk.middlewares"
+      # Unflagged routers (and the portal itself) are NOT gated.
+      - "'authelia' not in _traefik_dynamic_yaml.http.routers.plex.middlewares"
+      - "'authelia' not in _traefik_dynamic_yaml.http.routers.authelia.middlewares"
+      # The middleware dials the portal BACKEND url (never the public FQDN,
+      # which CNAMEs back to Traefik and would loop).
+      - >-
+        _traefik_dynamic_yaml.http.middlewares.authelia.forwardAuth.address
+        == "http://192.0.2.14:9091/api/authz/forward-auth"
+      - "'Remote-User' in _traefik_dynamic_yaml.http.middlewares.authelia.forwardAuth.authResponseHeaders"
+    fail_msg: >-
+      dynamic.yml.j2 sso gating wrong: middleware missing on a flagged
+      router, present on an unflagged one, or the forwardAuth address does
+      not target the portal backend.
+
+# A forged Remote-User must never reach a backend that trusts it (Zammad's
+# auth_sso). Ungated/bypassed routes are the dangerous ones — they never
+# reach Authelia, so only this strip protects them. Ordering matters: the
+# strip has to run BEFORE authelia, or it would erase the identity Authelia
+# just established.
+- name: Assert every router strips client-supplied Remote-* headers, before authelia
+  ansible.builtin.assert:
+    that:
+      - >-
+        _traefik_dynamic_yaml.http.routers.values()
+        | map(attribute='middlewares') | select('defined')
+        | map('first') | unique | list == ['strip-remote-headers']
+      - >-
+        _traefik_dynamic_yaml.http.routers.splunk.middlewares
+        == ['strip-remote-headers', 'authelia']
+      - "'strip-remote-headers' in _traefik_dynamic_yaml.http.routers.plex.middlewares"
+      - "'strip-remote-headers' in _traefik_dynamic_yaml.http.routers.authelia.middlewares"
+      - >-
+        _traefik_dynamic_yaml.http.middlewares['strip-remote-headers'].headers.customRequestHeaders['Remote-User']
+        == ""
+      - >-
+        _traefik_dynamic_yaml.http.middlewares['strip-remote-headers'].headers.customRequestHeaders['Remote-Groups']
+        == ""
+    fail_msg: >-
+      dynamic.yml.j2 header hardening wrong: a router is missing
+      strip-remote-headers, does not run it first, or the middleware does
+      not clear the Remote-* headers. A client could then forge Remote-User
+      on an ungated or /api-bypassed route and be trusted by Zammad.
+
+- name: Assert HTTPS backend gets an https URL + insecure-backend serversTransport
+  ansible.builtin.assert:
+    that:
+      # The https backend keeps its scheme through to the service URL.
+      - _traefik_dynamic_yaml.http.services.splunk.loadBalancer.servers[0].url == "https://192.0.2.12:8000"
+      # Only the insecure_tls routes reference the shared transport...
+      - _traefik_dynamic_yaml.http.services.splunk.loadBalancer.serversTransport == "insecure-backend"
+      - "'serversTransport' not in _traefik_dynamic_yaml.http.services.plex.loadBalancer"
+      # ...and that transport skips verification of the self-signed cert.
+      - _traefik_dynamic_yaml.http.serversTransports['insecure-backend'].insecureSkipVerify | bool
+    fail_msg: >-
+      dynamic.yml.j2 did not honor scheme/insecure_tls: the https backend
+      lost its scheme, the serversTransport was missing or leaked onto an
+      http service, or insecureSkipVerify was not set.

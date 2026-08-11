@@ -1,0 +1,65 @@
+---
+# --- Outbound email via the Mailpit relay (no real mail) ---------------------
+zammad_smtp_host: "mailpit.{{ tofu_data.domain }}"
+zammad_smtp_port: "{{ tofu_data.constants.notification_ports.mailpit_smtp }}"
+zammad_notification_sender: "Zammad <zammad@{{ tofu_data.domain }}>"
+
+# --- apt: controller-staged, sha256-pinned signing keys ----------------------
+# LXCs are firewalled outbound-internal-only and reach these HTTPS repos through
+# the apt-cacher-ng proxy (which allows go/dl.packager.io + artifacts.elastic.co
+# via PassThroughPattern). The signing keys are fetched + checksum-verified on
+# the CONTROLLER, then copied to the guest — same pattern as roles/postgres.
+# ASCII-armored keys are stored directly as the keyring; apt signed-by accepts
+# a .asc keyring, so no dearmor step is needed.
+zammad_packager_key_url: "https://go.packager.io/srv/deb/zammad/zammad/gpg-key.asc"
+zammad_packager_key_staging_path: /tmp/zammad-packager-key.asc
+zammad_packager_keyring: /usr/share/keyrings/zammad.asc
+zammad_packager_key_sha256: "a429c0ce1f0e2304fdcced83d0d541ad57a38c9c315e734f6f0927feef521376"
+# packager.io keys the pool by the numeric release (e.g. `12`), not the codename.
+zammad_packager_repo: >-
+  deb [signed-by={{ zammad_packager_keyring }}]
+  https://go.packager.io/srv/deb/zammad/zammad/stable/debian
+  {{ ansible_distribution_major_version }} main
+
+zammad_elastic_key_url: "https://artifacts.elastic.co/GPG-KEY-elasticsearch"
+zammad_elastic_key_staging_path: /tmp/zammad-elastic-key.asc
+zammad_elastic_keyring: /usr/share/keyrings/elasticsearch.asc
+zammad_elastic_key_sha256: "db52809c5f6b27f9c2bed45cb43e398c659275f3d35305653c6750a0db90f5eb"
+zammad_elastic_repo: >-
+  deb [signed-by={{ zammad_elastic_keyring }}]
+  https://artifacts.elastic.co/packages/{{ zammad_es_apt_channel }}/apt stable main
+
+# HTTP liveness poll for the nginx front after the app is up.
+zammad_api_timeout: 30
+zammad_health_retries: 30
+zammad_health_delay: 10
+
+# --- MCP connection publish -> OpenBao (task #12) ----------------------------
+# Publish the shared Zammad MCP connection (URL + Hermes API token) to OpenBao
+# secret/ai/mcp/zammad for doppler-mcp to inject into the Zammad MCP server.
+# Inert by default — the converge enables it with
+# -e '{"zammad_token_publish_openbao": true}' once a write-capable OpenBao
+# AppRole (BAO_ADDR/BAO_TOKEN) is in the CONTROLLER environment.
+zammad_token_publish_openbao: false
+
+# --- Incident schema + backdated history seed --------------------------------
+# Adds the Ticket custom fields incident tracking needs (incident_start/end,
+# affected_services, root_cause, detection_method, source_issue) and seeds the
+# backdated incident history. Zammad's REST API ignores created_at on create,
+# so the seed is a rails runner using update_column — the same escape hatch
+# zammad_bootstrap.rb already uses for API tokens.
+# Inert by default — the operator enables it with
+# -e '{"zammad_seed_incidents": true}' to backfill history. Both scripts are
+# idempotent (find-or-create; existing tickets get changed fields backfilled).
+zammad_seed_incidents: false
+
+zammad_token_openbao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+zammad_token_openbao_token: "{{ lookup('env', 'BAO_TOKEN') | default('', true) }}"
+zammad_token_openbao_mount: "secret"
+zammad_token_openbao_path: "ai/mcp/zammad"
+zammad_url_openbao_key: "ZAMMAD_MCP_URL"
+zammad_token_openbao_key: "ZAMMAD_MCP_TOKEN"
+# MCP connection URL — the Zammad API base. The MCP server needs /api/v1 IN the
+# URL value (nix-ai catalog finding). Reuses the role's own ingress FQDN so it
+# can't drift from the host Zammad advertises for links.
+zammad_mcp_url: "https://{{ zammad_ui_fqdn }}/api/v1"

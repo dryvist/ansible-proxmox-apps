@@ -1,0 +1,195 @@
+---
+- name: Render and verify cribl_docker_stack templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror the role defaults (cribl_docker_stack/defaults/main.yml).
+    # Role default is `cribl/cribl:latest`; this fixture tracks the same tag
+    # so the test never silently freezes on an old version. The previous
+    # hand-pin (`cribl/cribl:4.10.1`) is what motivated this — by the time
+    # it was noticed, it had drifted 8 minor versions behind the role
+    # default and was no longer testing what the role actually deploys.
+    cribl_docker_stack_image: "cribl/cribl:latest"
+    cribl_docker_stack_edge_replicas: 2
+    cribl_docker_stack_edge_cpu_limit: "1"
+    cribl_docker_stack_edge_memory_limit: "1024M"
+    cribl_docker_stack_edge_cpu_reservation: "0.5"
+    cribl_docker_stack_edge_memory_reservation: "256M"
+    cribl_docker_stack_stream_replicas: 1
+    cribl_docker_stack_stream_cpu_limit: "1"
+    cribl_docker_stack_stream_memory_limit: "1024M"
+    cribl_docker_stack_stream_cpu_reservation: "0.5"
+    cribl_docker_stack_stream_memory_reservation: "256M"
+    cribl_docker_stack_syslog_ports:
+      - 1514
+      - 1515
+      - 1516
+      - 1517
+      - 1518
+    cribl_docker_stack_netflow_port: 2055
+    cribl_docker_stack_edge_web_port: 9000
+    cribl_docker_stack_stream_web_port: 9100
+    cribl_docker_stack_healthcheck_interval: "60s"
+    cribl_docker_stack_healthcheck_timeout: "30s"
+    cribl_docker_stack_healthcheck_retries: 5
+    cribl_docker_stack_healthcheck_start_period: "120s"
+    cribl_docker_stack_config_dir: /opt/cribl/config
+    # Test values for HEC output — splunk host and token
+    cribl_docker_stack_splunk_host: "192.168.0.200"
+    cribl_docker_stack_hec_url: "https://192.168.0.200:8088"
+    cribl_docker_stack_hec_token: "test-hec-token-12345"
+    cribl_docker_stack_hec_tls_verify: false
+    # Template source root — relative to playbook location, role is at repo root
+    _template_dir: "../../../roles/cribl_docker_stack/templates"
+
+  tasks:
+    # -------------------------------------------------------------------------
+    # docker-stack.yml.j2
+    # -------------------------------------------------------------------------
+    - name: Render docker-stack.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-stack.yml.j2"
+        dest: "{{ _fixture_dir }}/test_docker_stack.yml"
+        mode: "0644"
+
+    - name: Read rendered docker-stack.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_docker_stack.yml"
+      register: _docker_stack_raw
+
+    - name: Decode docker-stack content
+      ansible.builtin.set_fact:
+        _docker_stack: "{{ _docker_stack_raw.content | b64decode }}"
+
+    - name: Assert docker-stack publishes each syslog port (TCP)
+      ansible.builtin.assert:
+        that:
+          - "('published: ' ~ item ~ '\n        protocol: tcp') in _docker_stack"
+        fail_msg: "docker-stack.yml.j2 is missing TCP publish for syslog port {{ item }}"
+      loop: "{{ cribl_docker_stack_syslog_ports }}"
+
+    - name: Assert docker-stack publishes each syslog port (UDP)
+      ansible.builtin.assert:
+        that:
+          - "('published: ' ~ item ~ '\n        protocol: udp') in _docker_stack"
+        fail_msg: "docker-stack.yml.j2 is missing UDP publish for syslog port {{ item }}"
+      loop: "{{ cribl_docker_stack_syslog_ports }}"
+
+    - name: Assert docker-stack publishes netflow port 2055 (UDP)
+      ansible.builtin.assert:
+        that:
+          - "('published: 2055\n        protocol: udp') in _docker_stack"
+        fail_msg: "docker-stack.yml.j2 is missing netflow port 2055 UDP publish"
+
+    - name: Assert docker-stack references cribl image
+      ansible.builtin.assert:
+        that:
+          - "'image: ' ~ cribl_docker_stack_image in _docker_stack"
+        fail_msg: "docker-stack.yml.j2 does not reference expected image {{ cribl_docker_stack_image }}"
+
+    # -------------------------------------------------------------------------
+    # inputs.yml.j2
+    # -------------------------------------------------------------------------
+    - name: Render inputs.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/cribl/inputs.yml.j2"
+        dest: "{{ _fixture_dir }}/test_inputs.yml"
+        mode: "0644"
+
+    - name: Read rendered inputs.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_inputs.yml"
+      register: _inputs_raw
+
+    - name: Decode inputs content
+      ansible.builtin.set_fact:
+        _inputs: "{{ _inputs_raw.content | b64decode }}"
+
+    - name: Assert inputs.yml has combined syslog listener for each port
+      ansible.builtin.assert:
+        that:
+          - "'in_syslog_' ~ item in _inputs"
+          - "'tcpPort: ' ~ item in _inputs"
+          - "'udpPort: ' ~ item in _inputs"
+        fail_msg: "inputs.yml.j2 is missing syslog listener for port {{ item }}"
+      loop: "{{ cribl_docker_stack_syslog_ports }}"
+
+    # -------------------------------------------------------------------------
+    # stream/inputs.yml.j2 (IPFIX/NetFlow handled by Cribl Stream, not Edge)
+    # -------------------------------------------------------------------------
+    - name: Render stream/inputs.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/stream/inputs.yml.j2"
+        dest: "{{ _fixture_dir }}/test_stream_inputs.yml"
+        mode: "0644"
+
+    - name: Read rendered stream/inputs.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_stream_inputs.yml"
+      register: _stream_inputs_raw
+
+    - name: Decode stream inputs content
+      ansible.builtin.set_fact:
+        _stream_inputs: "{{ _stream_inputs_raw.content | b64decode }}"
+
+    - name: Assert stream/inputs.yml has IPFIX/NetFlow UDP listener on port 2055
+      ansible.builtin.assert:
+        that:
+          - "'in_ipfix' in _stream_inputs"
+          - "'port: 2055' in _stream_inputs"
+          - "'type: netflow' in _stream_inputs"
+        fail_msg: "stream/inputs.yml.j2 is missing IPFIX/NetFlow UDP listener on port 2055"
+
+    # -------------------------------------------------------------------------
+    # outputs.yml.j2
+    # -------------------------------------------------------------------------
+    - name: Render outputs.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/cribl/outputs.yml.j2"
+        dest: "{{ _fixture_dir }}/test_outputs.yml"
+        mode: "0644"
+
+    - name: Read rendered outputs.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_outputs.yml"
+      register: _outputs_raw
+
+    - name: Decode outputs content
+      ansible.builtin.set_fact:
+        _outputs: "{{ _outputs_raw.content | b64decode }}"
+
+    - name: Assert outputs.yml HEC URL points to correct splunk host
+      ansible.builtin.assert:
+        that:
+          - "'https://192.168.0.200:8088' in _outputs"
+        fail_msg: >-
+          outputs.yml.j2 HEC URL does not point to 192.168.0.200:8088;
+          rendered content: {{ _outputs }}
+
+    - name: Assert outputs.yml includes splunk_hec output type
+      ansible.builtin.assert:
+        that:
+          - "'type: splunk_hec' in _outputs"
+        fail_msg: "outputs.yml.j2 does not define a splunk_hec output"
+
+    - name: Assert outputs.yml includes HEC token
+      ansible.builtin.assert:
+        that:
+          - "cribl_docker_stack_hec_token in _outputs"
+        fail_msg: "outputs.yml.j2 does not include HEC token"
+
+    # -------------------------------------------------------------------------
+    # Summary
+    # -------------------------------------------------------------------------
+    - name: Template rendering verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          All template rendering assertions passed:
+          - docker-stack.yml.j2: syslog ports 1514-1518 published (TCP+UDP), netflow 2055 (UDP)
+          - cribl/inputs.yml.j2: combined syslog listeners (TCP+UDP) for ports 1514-1518
+          - stream/inputs.yml.j2: IPFIX/NetFlow on port 2055
+          - outputs.yml.j2: HEC URL -> https://192.168.0.200:8088, type: splunk_hec

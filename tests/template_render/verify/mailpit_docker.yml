@@ -1,0 +1,65 @@
+---
+- name: Render and verify mailpit_docker templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/mailpit_docker/defaults/main.yml
+    mailpit_docker_image: "axllent/mailpit:v1.29.2"
+    mailpit_docker_container_name: mailpit
+    mailpit_docker_smtp_port: 1025
+    mailpit_docker_web_port: 8025
+    mailpit_docker_data_dir: /opt/mailpit
+    mailpit_docker_relay_starttls: true
+    mailpit_docker_relay_all: false
+    mailpit_docker_relay_host: "smtp.test.example.com"
+    mailpit_docker_relay_port: "587"
+    mailpit_docker_relay_username: "testuser"
+    mailpit_docker_relay_password: "test-placeholder"
+    _template_dir: "../../../roles/mailpit_docker/templates"
+
+  tasks:
+    - name: Render mailpit docker-compose.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _fixture_dir }}/test_mailpit_compose.yml"
+        mode: "0644"
+
+    - name: Read rendered mailpit docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_mailpit_compose.yml"
+      register: _mailpit_compose_raw
+
+    - name: Decode mailpit compose content
+      ansible.builtin.set_fact:
+        _mailpit_compose: "{{ _mailpit_compose_raw.content | b64decode }}"
+
+    - name: Assert mailpit compose has expected ports
+      ansible.builtin.assert:
+        that:
+          - "'1025:1025' in _mailpit_compose"
+          - "'8025:8025' in _mailpit_compose"
+        fail_msg: >-
+          mailpit docker-compose.yml.j2 missing expected port mappings
+
+    - name: Assert mailpit compose has expected image
+      ansible.builtin.assert:
+        that:
+          - "'axllent/mailpit:v1.29.2' in _mailpit_compose"
+        fail_msg: "mailpit docker-compose.yml.j2 does not reference expected image"
+
+    - name: Assert mailpit compose has relay env vars
+      ansible.builtin.assert:
+        that:
+          - "'MP_SMTP_RELAY_HOST' in _mailpit_compose"
+          - "'MP_SMTP_RELAY_STARTTLS' in _mailpit_compose"
+        fail_msg: "mailpit docker-compose.yml.j2 missing relay environment variables"
+
+    - name: Mailpit template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          Mailpit template assertions passed:
+          - docker-compose.yml.j2: SMTP port 1025, web port 8025, image, relay env vars

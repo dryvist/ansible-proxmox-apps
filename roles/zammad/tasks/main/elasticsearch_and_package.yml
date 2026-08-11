@@ -1,0 +1,192 @@
+---
+# =========================================================================
+# Phase 5: Elasticsearch — single node, loopback, before Zammad
+# =========================================================================
+- name: Install Elasticsearch
+  ansible.builtin.apt:
+    name: "{{ zammad_es_package }}"
+    state: present
+    update_cache: true
+
+- name: Configure Elasticsearch (single node, loopback, security off)
+  ansible.builtin.template:
+    src: elasticsearch.yml.j2
+    dest: /etc/elasticsearch/elasticsearch.yml
+    owner: root
+    group: elasticsearch
+    mode: "0660"
+  notify: Restart elasticsearch
+
+# The deb postinst auto-configures xpack security and stores transport-SSL
+# secure passwords in the ES keystore. With security disabled in the config
+# above, ES refuses to boot while those keystore entries remain ("invalid
+# configuration for xpack.security.transport.ssl"), so strip them.
+- name: List Elasticsearch keystore entries
+  ansible.builtin.command:
+    cmd: /usr/share/elasticsearch/bin/elasticsearch-keystore list
+  register: zammad_es_keystore
+  changed_when: false
+
+- name: Remove the auto-configured transport-SSL secure passwords
+  ansible.builtin.command:
+    cmd: >-
+      /usr/share/elasticsearch/bin/elasticsearch-keystore remove {{ item }}
+  loop:
+    - xpack.security.transport.ssl.keystore.secure_password
+    - xpack.security.transport.ssl.truststore.secure_password
+    - xpack.security.http.ssl.keystore.secure_password
+  when: item in zammad_es_keystore.stdout_lines
+  # The presence guard above makes this run only when there is something
+  # to remove, so a run always mutates the keystore.
+  changed_when: true
+  notify: Restart elasticsearch
+
+- name: Pin the Elasticsearch heap
+  ansible.builtin.template:
+    src: jvm-heap.options.j2
+    dest: /etc/elasticsearch/jvm.options.d/heap.options
+    owner: root
+    group: elasticsearch
+    mode: "0660"
+  notify: Restart elasticsearch
+
+- name: Apply Elasticsearch config before starting it
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Elasticsearch
+  ansible.builtin.systemd:
+    name: elasticsearch
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for Elasticsearch to answer
+  ansible.builtin.uri:
+    url: "{{ zammad_es_url }}"
+    status_code: [200]
+  register: zammad_es_health
+  until: zammad_es_health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# =========================================================================
+# Phase 6: equivs dummy — satisfy `Depends: postgresql` without a local server
+# =========================================================================
+- name: Check whether the postgresql-dummy equivs package is installed
+  ansible.builtin.command:
+    cmd: "dpkg-query -W -f='${db:Status-Status}' zammad-postgresql-dummy"
+  register: zammad_pg_dummy
+  failed_when: false
+  changed_when: false
+
+- name: Build and install the postgresql-dummy equivs package
+  when: zammad_pg_dummy.stdout != 'installed'
+  block:
+    - name: Template the equivs control file
+      ansible.builtin.template:
+        src: zammad-postgresql-dummy.control.j2
+        dest: /tmp/zammad-postgresql-dummy.control
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Build the dummy package with equivs
+      ansible.builtin.command:
+        cmd: equivs-build /tmp/zammad-postgresql-dummy.control
+        chdir: /tmp
+        creates: /tmp/zammad-postgresql-dummy_1.0_all.deb
+
+    - name: Install the dummy package (satisfies the postgresql dependency)
+      ansible.builtin.apt:
+        deb: /tmp/zammad-postgresql-dummy_1.0_all.deb
+        state: present
+
+# =========================================================================
+# Phase 7: Zammad package — download-only + unpack + template DB + configure
+# =========================================================================
+- name: Check whether the zammad package is fully configured
+  ansible.builtin.command:
+    cmd: "dpkg-query -W -f='${db:Status-Status}' zammad"
+  register: zammad_pkg
+  failed_when: false
+  changed_when: false
+
+- name: Set the zammad-configured fact
+  ansible.builtin.set_fact:
+    zammad_configured: "{{ zammad_pkg.stdout == 'installed' }}"
+
+- name: Download + unpack the zammad package without running its postinst
+  when: not zammad_configured
+  block:
+    # noqa command-instead-of-module: the ansible.builtin.apt module has no
+    # download-only mode, and installing normally would run the postinst
+    # before database.yml is templated — which takes the create-local-DB
+    # branch and fails (no local Postgres). Download only here, then unpack
+    # + template + configure below.
+    - name: Download the zammad package (and deps) into the apt cache  # noqa: command-instead-of-module
+      ansible.builtin.command: apt-get -y install --download-only zammad
+      register: zammad_download
+      changed_when: "'newly installed' in zammad_download.stdout or 'Get:' in zammad_download.stdout"
+
+    - name: Locate the downloaded zammad .deb
+      ansible.builtin.find:
+        paths: /var/cache/apt/archives
+        patterns: "zammad_*.deb"
+      register: zammad_deb
+
+    - name: Fail if the zammad .deb was not downloaded
+      ansible.builtin.assert:
+        that: zammad_deb.files | length > 0
+        fail_msg: "zammad .deb not found in the apt cache after download-only."
+
+    - name: Unpack zammad (creates /opt/zammad; runs NO postinst)
+      ansible.builtin.command:
+        cmd: "dpkg --unpack {{ (zammad_deb.files | sort(attribute='path') | last).path }}"
+      changed_when: true
+
+- name: Template Zammad's database.yml (points at the shared external Postgres)
+  ansible.builtin.template:
+    src: database.yml.j2
+    dest: "{{ zammad_root }}/config/database.yml"
+    owner: "{{ zammad_user }}"
+    group: "{{ zammad_group }}"
+    mode: "0600"
+  register: zammad_dbyml
+  no_log: true
+
+# dpkg --unpack skipped apt's dependency resolution, so zammad's REAL
+# runtime deps (libpq5, libxslt1.1, curl, ...) may be missing and a bare
+# `dpkg --configure` fails. `apt-get -f install` pulls exactly the missing
+# deps and configures the unpacked package (running the postinst, which
+# migrates against the external DB); the equivs dummy keeps the
+# `postgresql` dep satisfied without a local cluster.
+- name: Configure zammad (resolve deps + run the postinst against the external DB)
+  ansible.builtin.apt:
+    state: fixed
+  when: not zammad_configured
+
+# The postinst's own "Updating db" step does not reliably build the schema
+# on an EMPTY external database (observed: configure succeeds, 496
+# migrations still pending, db:seed then aborts on the missing schema) —
+# migrate explicitly before seeding.
+- name: Build the Zammad schema (first configure only)
+  ansible.builtin.command:
+    cmd: "zammad run rake db:migrate"
+  when: not zammad_configured
+  changed_when: true
+
+- name: Seed the Zammad database (first configure only; seeds are create-if-missing)
+  ansible.builtin.command:
+    cmd: "zammad run rake db:seed"
+  when: not zammad_configured
+  changed_when: true
+
+- name: Migrate the Zammad schema after a database.yml change (already-configured hosts)
+  ansible.builtin.command:
+    cmd: "zammad run rake db:migrate"
+  when:
+    - zammad_configured
+    - zammad_dbyml is changed
+  changed_when: true
+  notify: Restart zammad

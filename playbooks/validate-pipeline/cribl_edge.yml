@@ -1,0 +1,80 @@
+---
+- name: Validate Cribl Edge LXC Containers
+  hosts: cribl_edge
+  become: true
+  gather_facts: false
+  # Read-only validation — run for real even under --check
+  check_mode: false
+  tags:
+    - cribl_edge
+    - validation
+
+  vars:
+    constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
+    # Edge receives backend/high syslog ports from HAProxy. The app-facing
+    # standard ports live on HAProxy, not on Cribl Edge.
+    cribl_edge_syslog_check_ports: >-
+      {{ ((constants.syslog_port_map | default({}) | dict2items
+           | map(attribute='value.high') | list)
+          if ((constants.syslog_port_map | default({})) | length > 0)
+          else (constants.syslog_ports | default({}) | dict2items
+                | rejectattr('key', 'equalto', 'default')
+                | map(attribute='value') | list))
+         | map('int') | unique | sort }}
+
+  tasks:
+    - name: Gather service facts for Cribl Edge validation
+      ansible.builtin.service_facts:
+
+    - name: Assert Cribl Edge service is running
+      # `cribl boot-start enable` after `cribl mode-edge` creates the unit
+      # as `cribl-edge.service`, not `cribl.service`. Must match the role
+      # default `cribl_edge_service_name: cribl-edge` (fixed in PR #175).
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services['cribl-edge.service'] is defined
+          - >-
+            ansible_facts.services['cribl-edge.service'].state == 'running'
+        fail_msg: >-
+          Cribl Edge service is not running on {{ inventory_hostname }}
+        quiet: true
+
+    - name: Verify Cribl Edge API health endpoint
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ constants.service_ports.cribl_edge_api
+          }}/api/v1/health
+        method: GET
+        return_content: true
+        status_code: 200
+      register: edge_health
+
+    - name: Verify syslog ports are listening on Cribl Edge
+      ansible.builtin.wait_for:
+        port: "{{ item }}"
+        timeout: 5
+      loop: "{{ cribl_edge_syslog_check_ports }}"
+
+    - name: Check Cribl Edge config directory exists
+      # Edge mode (`cribl mode-edge`) loads config from local/edge/, not
+      # local/cribl/ — must match where roles/cribl_edge deploys.
+      ansible.builtin.stat:
+        path: /opt/cribl/local/edge
+      register: cribl_edge_config_dir
+
+    - name: Fail if Cribl Edge config directory is missing
+      ansible.builtin.fail:
+        msg: >-
+          Cribl Edge config directory /opt/cribl/local/edge not found
+          on {{ inventory_hostname }}
+      when: not cribl_edge_config_dir.stat.exists
+
+    - name: Display Cribl Edge validation results
+      ansible.builtin.debug:
+        msg: |
+          Cribl Edge validation passed on {{ inventory_hostname }}:
+          - Service: running
+          - Health API: {{ edge_health.status }}
+          - Syslog backend ports: {{ cribl_edge_syslog_check_ports | join(', ') }}
+          - Config dir: present
