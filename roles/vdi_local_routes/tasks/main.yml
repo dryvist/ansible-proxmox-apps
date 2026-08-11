@@ -86,9 +86,17 @@
       $live = @(Get-NetRoute -DestinationPrefix $Destination -PolicyStore ActiveStore `
                              -ErrorAction SilentlyContinue |
                 Where-Object { $_.NextHop -eq $Gateway })
-      $persistKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\PersistentRoutes'
-      $persisted = @((Get-Item $persistKey -ErrorAction SilentlyContinue).Property |
-                     Where-Object { $_ -like "$network,$mask,$Gateway,*" })
+      # Check the POLICY STORE, not the legacy
+      # Tcpip\Parameters\PersistentRoutes registry key. `route -p add` on this
+      # build records the route in PersistentStore and leaves that key empty, so
+      # testing the registry finds nothing every time and the task re-adds an
+      # already-correct route and reports changed on every converge — verified
+      # against the live guest, where the routes were present in the store while
+      # the key held nothing at all.
+      $persisted = @(Get-NetRoute -DestinationPrefix $Destination `
+                                  -PolicyStore PersistentStore `
+                                  -ErrorAction SilentlyContinue |
+                     Where-Object { $_.NextHop -eq $Gateway })
 
       $changed = $false
       if (-not $live -or -not $persisted) {
