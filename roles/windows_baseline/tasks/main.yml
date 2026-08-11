@@ -19,6 +19,36 @@
     # any of them was contacted. Task vars outrank group vars, so pin it here.
     ansible_become: false
 
+# A Windows clone inherits the TEMPLATE's computer name, and nothing in the
+# clone path changes it. The guest then announces that name in its DHCP request,
+# so the gateway's lease table — which is what resolves leased guests across the
+# estate — publishes the template's name and not the guest's. Anything that
+# addresses the guest by its declared hostname then fails to resolve it, and the
+# guest looks absent while it is running perfectly well.
+#
+# This is the root of that whole class of failure, and it belongs here rather
+# than in DNS. Writing an explicit record for the guest instead would put the
+# same address in a second system with nothing to reconcile the two — precisely
+# what roles/technitium_dns/tasks/main/build_records.yml refuses to do. The
+# estate's DNS model is right; the guest was announcing the wrong identity.
+#
+# Deliberately NOT paired with an automatic reboot. A rename only takes effect on
+# restart, and these are desktops with a human logged into them; restarting one
+# to finish a cosmetic-looking change is not a trade this role gets to make. The
+# next reboot completes it, and the task is idempotent until then.
+- name: Set the computer name to the declared hostname
+  ansible.windows.win_hostname:
+    name: "{{ inventory_hostname }}"
+  register: windows_baseline_rename
+
+- name: Report that the rename is pending a restart
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} still announces its old computer name until it is
+      restarted. Until then the lease table — and therefore DNS — keeps serving
+      the previous name, so address this guest by that name or by its address.
+  when: windows_baseline_rename.reboot_required | default(false)
+
 # The build bakes whatever password Packer was given into the answer file. That
 # value is reachable for automation, which authenticates from a secret store,
 # and unusable for a human at an RDP or Proxmox console prompt — the two places

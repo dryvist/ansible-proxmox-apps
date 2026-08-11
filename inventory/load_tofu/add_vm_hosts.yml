@@ -102,7 +102,25 @@
          else []) +
         (['vdi_group'] if 'vdi' in (item.value.tags | default([])) else [])
       }}
-    ansible_host: "{{ item.value.ip }}"
+    # Normally the published address. The override exists for ONE situation: a
+    # guest that announces a name other than its declared hostname, so the
+    # lease table — and therefore DNS — publishes the wrong name and the guest
+    # is unreachable at the name the inventory calls it.
+    #
+    # A freshly cloned Windows guest is always in that state: it inherits the
+    # template's computer name and announces that in its DHCP request until
+    # something renames it. roles/windows_baseline does the rename, but it has
+    # to reach the guest first, and it cannot reach it at a name that does not
+    # resolve. This breaks that circle for exactly one converge.
+    #
+    # Keyed per guest deliberately. A bare `-e ansible_host=...` applies to
+    # EVERY host in the run, and `--limit` silently matches nothing here because
+    # these hosts are add_host'd rather than coming from a static inventory — so
+    # the obvious form would point every other guest at this one and converge
+    # the wrong machine under the wrong identity.
+    #
+    #   -e '{"vm_host_overrides": {"win11-vdi": "win11-tmpl"}}'
+    ansible_host: "{{ (vm_host_overrides | default({}))[item.key] | default(item.value.ip) }}"
     ansible_connection: "{{ item.value.ansible_connection }}"
     ansible_user: "{{ 'Administrator' if item.value.ansible_connection == 'winrm' else 'debian' }}"
     ansible_ssh_private_key_file: >-
