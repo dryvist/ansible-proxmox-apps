@@ -58,7 +58,23 @@
 
     - name: Store the resolved Windows admin credential
       ansible.builtin.set_fact:
-        windows_vdi_admin_password: "{{ windows_vdi_admin_secret.secret.password | default('') }}"
+        # The estate default first, the per-guest build credential second.
+        #
+        # These are two different values today and the order matters. The build
+        # credential is what Packer bakes into the answer file, so it is what a
+        # guest answers to until it has been converged once; roles/windows_baseline
+        # then sets the account to the estate default, and from that moment the
+        # build credential is rejected. A converged guest therefore authenticates
+        # with the default and only a never-converged one falls back — which is
+        # the precedence a guest moves through in one direction and never back.
+        #
+        # The end state is one credential: point the Packer build at the same
+        # defaults object and this fallback, the second secret and its grants all
+        # go away. Until that lands, dropping the fallback would lock automation
+        # out of any freshly built guest.
+        windows_vdi_admin_password: >-
+          {{ platform_defaults_secret.secret.admin_password
+             | default(windows_vdi_admin_secret.secret.password | default(''), true) }}
         # Soft on purpose, unlike the credential above. An unreadable defaults
         # object must not break a converge that only needs to log in — the
         # consumer skips instead, and says so.
@@ -72,10 +88,11 @@
     - name: Fail when a WinRM host exists but no password could be resolved
       ansible.builtin.fail:
         msg: >-
-          Windows guests are published with ansible_connection=winrm but the
-          local Administrator password at
-          secret/platform/windows-vdi/win11-admin could not be read. Check
-          that the ansible AppRole's policy grants read on that exact path.
+          Windows guests are published with ansible_connection=winrm but no
+          local Administrator password could be read: neither the estate
+          default at secret/platform/defaults nor the build credential at
+          secret/platform/windows-vdi/win11-admin resolved. Check that the
+          ansible AppRole's policy grants read on those exact paths.
       when:
         - lookup('env', 'OPENBAO_APPROLE_ANSIBLE_ROLE_ID') | length > 0
         - windows_vdi_admin_password | length == 0
