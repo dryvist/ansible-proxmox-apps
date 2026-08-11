@@ -62,6 +62,15 @@
       $ifIndex = (Find-NetRoute -RemoteIPAddress $Gateway -ErrorAction Stop |
                   Select-Object -First 1).InterfaceIndex
 
+      # PersistentStore identifies an interface by ALIAS, not index, and rejects
+      # -InterfaceIndex outright: "Invalid parameter PolicyStore
+      # PersistentStore" (Windows System Error 87). The index form succeeds
+      # against ActiveStore, so an index-only script writes the live route and
+      # then fails on the persistent one — the route works until the next
+      # reboot and silently disappears, which is the exact failure this role
+      # exists to prevent. Resolve the alias once and address both stores by it.
+      $ifAlias = (Get-NetAdapter -InterfaceIndex $ifIndex -ErrorAction Stop).Name
+
       $changed = $false
       foreach ($store in 'ActiveStore', 'PersistentStore') {
         $existing = @(Get-NetRoute -DestinationPrefix $Destination -PolicyStore $store `
@@ -70,7 +79,7 @@
         if ($existing) {
           $existing | Remove-NetRoute -PolicyStore $store -Confirm:$false
         }
-        New-NetRoute -DestinationPrefix $Destination -InterfaceIndex $ifIndex `
+        New-NetRoute -DestinationPrefix $Destination -InterfaceAlias $ifAlias `
                      -NextHop $Gateway -RouteMetric $Metric `
                      -PolicyStore $store | Out-Null
         $changed = $true
