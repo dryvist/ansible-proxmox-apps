@@ -9,8 +9,10 @@ Full docs live under `docs/agents/`, one topic per page:
 - [Repo ownership and pipeline data flow](docs/agents/repo-ownership.md) —
   what this repo owns (Cribl, HAProxy, DNS, Authelia, notification services,
   the media stack, ...), the syslog/netflow pipeline, and prod-vs-test rules.
-- [Inventory](docs/agents/inventory.md) — how `load_tofu.yml` resolves the
-  dynamic inventory, its groups, and every environment variable a role reads.
+- [Inventory](docs/agents/inventory.md) — Nautobot as the system of record for
+  infrastructure inventory (policy; nothing reads it yet), how `load_tofu.yml`
+  resolves the dynamic inventory today, its groups, and every environment
+  variable a role reads.
 - [Secrets management](docs/agents/secrets.md) — Doppler/SOPS runtime
   injection and the OpenBao plugins-first rule.
 - [Commands and testing](docs/agents/commands-and-testing.md) — every

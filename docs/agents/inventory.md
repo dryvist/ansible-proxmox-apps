@@ -1,5 +1,22 @@
 # Inventory
 
+## System of record
+
+**Nautobot is the system of record for infrastructure inventory** — device
+identity, hardware (serials, asset tags, models), interfaces and MAC
+addresses, IP addresses and their DNS names, rack and power topology, and
+location. No dynamic (or possibly-dynamic) configuration may live outside it.
+Every other system references Nautobot instead of keeping its own copy, and
+docs point at it rather than restating its contents.
+
+**Direction, not current behaviour.** No playbook here reads Nautobot yet —
+the resolution described below is still what runs, and closing that gap is the
+work. Absorption status and the (separately gated, not started) authority flip:
+[`docs/nautobot/`](../nautobot/phase1-absorption-status.md). Until the flip is
+open, do not add a *new* copy of a fact Nautobot models.
+
+## Resolution today
+
 Inventory is loaded dynamically via `load_tofu.yml`, which resolves its
 source in priority order: `TOFU_INVENTORY_PATH` (explicit pin) → the
 **RustFS published artifact** (written natively by the tofu-proxmox Terrakube
