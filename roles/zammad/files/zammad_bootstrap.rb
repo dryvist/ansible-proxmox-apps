@@ -73,6 +73,32 @@ end
   'auth_sso_trusted_ips' => sso_ips.split(',').map(&:strip).reject(&:empty?).join(','),
 }.each { |k, v| changed = true if set_setting(k, v) }
 
+# --- Declared settings (data-driven, from zammad_settings) -------------------
+# Every Setting the role owns beyond the core block above arrives as ONE JSON
+# object, so adding a knob is a defaults/group_vars edit and never a change
+# here. Values are applied verbatim, so the YAML carries Zammad's own types
+# (Integer, Array, String). Nothing in this path deletes data.
+JSON.parse(ENV['ZAMMAD_SETTINGS'] || '{}').each do |name, value|
+  changed = true if set_setting(name, value)
+end
+
+# --- Retention: keep the history, stop the sweepers --------------------------
+# Zammad ships Scheduler rows that DELETE historical rows on a timer (activity
+# stream entries, HTTP request logs). Traceability is worth more than the disk
+# they reclaim here, so the named jobs are deactivated. Only the `active` flag
+# is touched — no job is removed, and re-enabling one is a defaults edit.
+JSON.parse(ENV['ZAMMAD_DISABLED_SCHEDULERS'] || '[]').each do |job_name|
+  job = Scheduler.find_by(name: job_name)
+  if job.nil?
+    warn "WARN: scheduler #{job_name.inspect} not found — skipping (name drift?)"
+    next
+  end
+  next unless job.active
+
+  job.update!(active: false)
+  changed = true
+end
+
 # --- GitHub issue-linking (opt-in) -------------------------------------------
 # Enabled only when ZAMMAD_CONFIGURE_GITHUB=true AND a token is present. The
 # token is minted per converge from the OpenBao github engine (github/token/
