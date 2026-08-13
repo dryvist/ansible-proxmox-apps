@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.14.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.13.2...v4.14.0) (2026-08-13)
+
+
+### Features
+
+* **zammad:** declare settings and scheduler state in the role ([f53603f](https://github.com/dryvist/ansible-proxmox-apps/commit/f53603f12c3fb7ee7855f23b7a64876d6f452fe1))
+* **zammad:** declare settings and scheduler state in the role ([#1504](https://github.com/dryvist/ansible-proxmox-apps/issues/1504)) ([817e6f1](https://github.com/dryvist/ansible-proxmox-apps/commit/817e6f116ff77686f3ee4abbd1742f2d6fa0111c))
+
 ## [4.13.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.13.1...v4.13.2) (2026-08-11)
 
 
