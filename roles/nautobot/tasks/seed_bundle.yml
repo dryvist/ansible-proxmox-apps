@@ -2,7 +2,7 @@
 # Controller-side seed-bundle assembly (issue #138). Reads each available
 # source, transforms it into its slice of the nautobot_seed.json schema, and
 # writes the bundle onto the Nautobot LXC (0600, never committed). Gated by
-# nautobot_build_seed (default false). The SSoT seed jobs then DiffSync this
+# nautobot_build_seed (default true). The SSoT seed jobs then DiffSync this
 # bundle into Nautobot.
 #
 # Sources are independent: the resolved tofu inventory is present on every run,
@@ -228,12 +228,16 @@
 # lookup template when DHCP-first); ssot_nodes does not key on it (Device
 # Onboarding binds the real management IP), so it is informational only.
 #
-# `commissioned` comes from the desired-state object rather than a second copy
-# in this repo, and is looked up by the LIVE node name — `proxmox_node_name`,
-# falling back to the inventory host key only where that variable is absent.
-# The inventory keys are being renamed while the desired-state object keeps the
-# live names, so keying on the inventory key would quietly stop matching and
-# default every node back to commissioned.
+# The node's desired-state entry is looked up by the LIVE node name —
+# `proxmox_node_name`, falling back to the inventory host key only where that
+# variable is absent. The inventory keys are being renamed while the
+# desired-state object keeps the live names, so keying on the inventory key
+# would quietly stop matching.
+#
+# That one entry supplies both `commissioned` (rather than a second copy of the
+# flag in this repo) and `name`: the consumer matches its records by name alone,
+# and some records exist under a name that is neither the inventory key nor the
+# live node name, so `nautobot_device_name` overrides when set.
 - name: Start from an empty node list
   ansible.builtin.set_fact:
     nautobot_seed_nodes: []
@@ -242,15 +246,16 @@
   vars:
     nautobot_seed_tofu_nodes: >-
       {{ (hostvars['localhost'].tofu_data | default({}, true)).nodes | default({}, true) }}
+    nautobot_seed_tofu_node: >-
+      {{ nautobot_seed_tofu_nodes[item.value.proxmox_node_name | default(item.key, true)]
+         | default({}, true) }}
   ansible.builtin.set_fact:
     nautobot_seed_nodes: >-
       {{ nautobot_seed_nodes + [{
-           'name': item.key,
+           'name': nautobot_seed_tofu_node.nautobot_device_name | default(item.key, true),
            'role': 'pve-node',
            'mgmt_ip': item.value.ansible_host | default(none),
-           'commissioned': (nautobot_seed_tofu_nodes[
-                              item.value.proxmox_node_name | default(item.key, true)]
-                            | default({}, true)).commissioned | default(true)
+           'commissioned': nautobot_seed_tofu_node.commissioned | default(true)
          }] }}
   loop: >-
     {{ (((nautobot_seed_hosts.all | default({})).children | default({}))[nautobot_seed_hosts_group]
