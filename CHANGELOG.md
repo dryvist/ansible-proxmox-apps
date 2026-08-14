@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.14.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.1...v4.14.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **nautobot:** emit the seed node name from the desired state ([#1513](https://github.com/dryvist/ansible-proxmox-apps/issues/1513)) ([7dce547](https://github.com/dryvist/ansible-proxmox-apps/commit/7dce547a33d418ddb853866623690f607de13b53))
+* **nautobot:** read node commissioning from the desired-state object ([#1512](https://github.com/dryvist/ansible-proxmox-apps/issues/1512)) ([d6edd27](https://github.com/dryvist/ansible-proxmox-apps/commit/d6edd2747bdee362040b226c0026deb52b904abb))
+
 ## [4.14.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.0...v4.14.1) (2026-08-14)
 
 
