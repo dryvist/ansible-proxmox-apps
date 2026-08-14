@@ -11,8 +11,9 @@
 # Asserts that each source contributes independently:
 #   - tofu inventory alone builds the virtual_machines slice
 #   - the sibling-repo sources stay absent without failing the run
-#   - the nodes slice takes `commissioned` from the desired-state object, keyed
-#     by the live node name rather than the inventory host key
+#   - the nodes slice takes `commissioned` and the emitted `name` from the
+#     desired-state object, keyed by the live node name rather than the
+#     inventory host key
 #   - an all-sources-absent run fails loudly instead of writing an empty bundle
 #
 # The bundle is written to a temp path, never to a real Nautobot guest.
@@ -148,10 +149,11 @@
     # The desired-state object is keyed by LIVE node name; the hosts inventory
     # is keyed by inventory host name, and the two are diverging as the
     # inventory keys get renamed. `inv-a` below is the trap: the desired-state
-    # object carries BOTH a live-name entry (uncommissioned) and a decoy entry
-    # under the inventory key (commissioned), so a lookup by the wrong key
-    # reads as commissioned and this test fails.
-    - name: The nodes slice reads commissioned from the desired state by live node name
+    # object carries BOTH a live-name entry (uncommissioned, renaming the node
+    # to `dev-a`) and a decoy entry under the inventory key (commissioned,
+    # renaming to `decoy-a`), so a lookup by the wrong key reads as commissioned
+    # and emits the wrong name, failing this test either way.
+    - name: The nodes slice reads commissioned and name from the desired state by live node name
       vars:
         nautobot_seed_hosts_yml_path: "{{ nodes_tmp.path }}/hosts.yml"
         nautobot_seed_file: "{{ nodes_tmp.path }}/nautobot_seed.json"
@@ -168,10 +170,13 @@
               nodes:
                 live-a:
                   commissioned: false
+                  nautobot_device_name: dev-a
                 inv-a:
                   commissioned: true
+                  nautobot_device_name: decoy-a
                 live-b:
                   commissioned: true
+                  nautobot_device_name: null
 
         - name: Write a hosts inventory whose keys differ from the live node names
           ansible.builtin.copy:
@@ -200,7 +205,7 @@
             nodes_bundle: >-
               {{ lookup('ansible.builtin.file', nodes_tmp.path ~ '/nautobot_seed.json') | from_json }}
 
-        - name: Commissioning follows the desired state, and the rest of the node fields survive
+        - name: Commissioning and name follow the desired state, and the rest of the node fields survive
           vars:
             nodes_by_name: >-
               {{ dict(nodes_bundle.nodes | map(attribute='name')
@@ -208,18 +213,28 @@
           ansible.builtin.assert:
             that:
               - nodes_bundle.nodes | length == 3
+              # nautobot_device_name on the live-name entry wins over both the
+              # inventory key and the decoy entry's name.
+              - "'dev-a' in nodes_by_name"
+              - "'inv-a' not in nodes_by_name"
+              - "'decoy-a' not in nodes_by_name"
               # Live name says uncommissioned; the inventory-key decoy says the
               # opposite, so `false` here proves the live-name lookup.
-              - nodes_by_name['inv-a'].commissioned == false
+              - nodes_by_name['dev-a'].commissioned == false
+              - nodes_by_name['dev-a'].role == 'pve-node'
+              - nodes_by_name['dev-a'].mgmt_ip == '192.0.2.21'
+              # Entry present but nautobot_device_name unset: the inventory key
+              # is the name, and the other fields are unaffected.
               - nodes_by_name['inv-b'].commissioned == true
-              # Absent from the desired-state nodes map: default to commissioned.
+              - nodes_by_name['inv-b'].role == 'pve-node'
+              - nodes_by_name['inv-b'].mgmt_ip == '192.0.2.22'
+              # Absent from the desired-state nodes map: inventory key, and
+              # default to commissioned.
               - nodes_by_name['inv-c'].commissioned == true
-              - nodes_by_name['inv-a'].name == 'inv-a'
-              - nodes_by_name['inv-a'].role == 'pve-node'
-              - nodes_by_name['inv-a'].mgmt_ip == '192.0.2.21'
+              - nodes_by_name['inv-c'].mgmt_ip == '192.0.2.23'
             fail_msg: >-
-              The nodes slice did not take commissioned from the desired-state
-              object keyed by the live node name.
+              The nodes slice did not take commissioned and name from the
+              desired-state object keyed by the live node name.
             quiet: true
       always:
         - name: Remove the nodes temp dir
