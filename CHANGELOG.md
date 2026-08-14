@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.14.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.0...v4.14.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **nautobot:** stop the node seed overwriting curated device facts ([#1508](https://github.com/dryvist/ansible-proxmox-apps/issues/1508)) ([8ed60d4](https://github.com/dryvist/ansible-proxmox-apps/commit/8ed60d4c311ccd7aa7b561b8a77a08a2b9538c49))
+
 ## [4.14.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.13.2...v4.14.0) (2026-08-13)
 
 
