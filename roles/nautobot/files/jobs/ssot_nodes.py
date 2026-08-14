@@ -3,7 +3,13 @@
 Source of truth: the ``nodes`` array of the seed bundle (from ``ansible-proxmox``
 ``hosts.yml``). DiffSyncs the commissioned pve nodes into Nautobot Devices with
 role ``pve-node`` and a ``pve-node`` DeviceType under the Generic manufacturer.
-Uncommissioned nodes are skipped.
+
+Uncommissioned nodes are skipped, but note that the bundle currently stamps
+every node ``commissioned: true`` — it does not read ``pve_node_commissioned``,
+which tracks storage commissioning rather than whether the node exists. So the
+skip is a guard for a value nothing produces yet, not an active filter: every
+node in the inventory group reaches Nautobot today. Do not reason from it that
+a particular node is exempt from this job.
 
 Live-validation notes: like the DCIM job, DeviceType/Role are ensured via the
 ORM before the DiffSync run; mgmt-IP-to-interface binding is deferred to Device
