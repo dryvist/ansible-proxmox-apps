@@ -227,13 +227,36 @@
 # key), so read that nested path. mgmt_ip carries ansible_host verbatim (a
 # lookup template when DHCP-first); ssot_nodes does not key on it (Device
 # Onboarding binds the real management IP), so it is informational only.
+#
+# `commissioned` comes from the desired-state object rather than a second copy
+# in this repo, and is looked up by the LIVE node name — `proxmox_node_name`,
+# falling back to the inventory host key only where that variable is absent.
+# The inventory keys are being renamed while the desired-state object keeps the
+# live names, so keying on the inventory key would quietly stop matching and
+# default every node back to commissioned.
+- name: Start from an empty node list
+  ansible.builtin.set_fact:
+    nautobot_seed_nodes: []
+
 - name: Build nodes from the hosts inventory
+  vars:
+    nautobot_seed_tofu_nodes: >-
+      {{ (hostvars['localhost'].tofu_data | default({}, true)).nodes | default({}, true) }}
   ansible.builtin.set_fact:
     nautobot_seed_nodes: >-
-      {{ (((nautobot_seed_hosts.all | default({})).children | default({}))[nautobot_seed_hosts_group]
-          | default({})).hosts | default({}) | dict2items
-         | community.general.json_query('[].{name: key, role: `pve-node`,
-             mgmt_ip: value.ansible_host, commissioned: `true`}') }}
+      {{ nautobot_seed_nodes + [{
+           'name': item.key,
+           'role': 'pve-node',
+           'mgmt_ip': item.value.ansible_host | default(none),
+           'commissioned': (nautobot_seed_tofu_nodes[
+                              item.value.proxmox_node_name | default(item.key, true)]
+                            | default({}, true)).commissioned | default(true)
+         }] }}
+  loop: >-
+    {{ (((nautobot_seed_hosts.all | default({})).children | default({}))[nautobot_seed_hosts_group]
+        | default({})).hosts | default({}) | dict2items }}
+  loop_control:
+    label: "{{ item.key }}"
   no_log: true
 
 # Virtual machines from the guest map merged above (issue #138). Role is the
