@@ -28,6 +28,8 @@ from ssot_common import (
 
 NODE_ROLE = "pve-node"
 NODE_DEVICE_TYPE = "pve-node"
+# Seeded only when Nautobot has no Device for the node yet; see NodesSourceAdapter.load.
+DEFAULT_LOCATION = "homelab"
 
 
 class NodeDeviceModel(AdditiveNautobotModel):
@@ -77,19 +79,47 @@ class NodesSourceAdapter(Adapter):
         self.job = job
 
     def load(self) -> None:
-        """Populate node Device models from the seed bundle (commissioned only)."""
+        """Populate node Device models from the seed bundle (commissioned only).
+
+        `device_type` and `location` are seeded ONLY for a node Nautobot does not
+        already have. Where a Device already exists, its current values are
+        carried into the source model so the diff is empty for those fields.
+
+        This job knows a node's NAME, not its hardware. Emitting the placeholder
+        type and the default location unconditionally makes them managed
+        attributes, so DiffSync would "correct" curated values back down to
+        them — turning a real chassis model into the literal placeholder and
+        moving the device to the default location. That is silent data loss in
+        the system of record, and it is triggered by an ordinary rename, since
+        these models are identified by name alone.
+
+        Status stays managed: a node the seed calls commissioned is expected to
+        be active, and that is an assertion this job is entitled to make.
+        """
         seed = load_seed()
         ensure_device_type(NODE_DEVICE_TYPE)
         ensure_role(NODE_ROLE, Device)
+        curated = {
+            device.name: device
+            for device in Device.objects.filter(role__name=NODE_ROLE).select_related(
+                "device_type", "location"
+            )
+        }
         for node in seed["nodes"]:
             if not node.get("commissioned", True):
                 continue
+            name = str(node["name"])
+            existing = curated.get(name)
             self.add(
                 self.device(
-                    name=str(node["name"]),
+                    name=name,
                     role__name=NODE_ROLE,
-                    device_type__model=NODE_DEVICE_TYPE,
-                    location__name="homelab",
+                    device_type__model=(
+                        existing.device_type.model if existing else NODE_DEVICE_TYPE
+                    ),
+                    location__name=(
+                        existing.location.name if existing else DEFAULT_LOCATION
+                    ),
                     status__name=STATUS_ACTIVE,
                 )
             )
