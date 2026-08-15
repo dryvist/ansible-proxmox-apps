@@ -149,6 +149,52 @@
     label: "{{ item.item.path }}"
 
 # =============================================================================
+# 4b. Make redis startable in an unprivileged LXC, before the installer needs it
+# =============================================================================
+
+- name: Ensure the redis-server drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/redis-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Allow redis to start without nested user namespacing
+  # Measured on the live guest, and NOT catchable by the molecule scenario:
+  # Debian 13's redis-server.service sets `PrivateUsers=true`, which needs a
+  # nested user namespace. Inside an unprivileged LXC without the `nesting`
+  # feature that is denied, so the unit dies with 217/USER and the borrowed
+  # installer aborts at `systemctl enable -q --now redis-server`.
+  #
+  # Upstream never hits this because build.func creates its containers with
+  # nesting enabled. Ours derives nesting only from the `docker` tag
+  # (modules/proxmox-container/locals.tf), and `features` is in the container's
+  # ignore_changes, so it is effectively set-once at creation.
+  #
+  # Disabling PrivateUsers for this one unit is the narrower change. The
+  # alternative — turning on container-wide `nesting` — grants nested
+  # namespacing to everything in the guest to fix one service. The container is
+  # already unprivileged and user-namespaced by the host (uid 0 maps to 100000),
+  # so what is lost here is a second, inner namespace around redis, not the
+  # isolation boundary that matters.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/redis-server.service.d/10-lxc-privateusers.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible-proxmox-apps (role: homarr).
+      # PrivateUsers requires a nested user namespace, which an unprivileged
+      # LXC without the nesting feature cannot provide (systemd 217/USER).
+      [Service]
+      PrivateUsers=false
+  notify: Reload systemd and clear failed units
+
+- name: Apply the drop-in before the installer enables redis
+  ansible.builtin.meta: flush_handlers
+
+# =============================================================================
 # 5. Run the borrowed installer, exactly once
 # =============================================================================
 
@@ -202,6 +248,18 @@
   # No changed_when: `creates` already reports unchanged when it short-circuits
   # and changed when it actually runs, which is exactly the desired semantics.
   # A hand-written changed_when here only got it wrong.
+
+- name: Stamp the install as complete
+  # Only reachable when the task above exited 0, because a non-zero exit fails
+  # the play. That is what makes this a trustworthy `creates:` guard.
+  ansible.builtin.file:
+    path: "{{ homarr_installed_marker }}"
+    state: touch
+    owner: root
+    group: root
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
 
 # =============================================================================
 # 6-7. Take ownership back from the installer
