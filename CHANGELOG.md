@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.15.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.15.0...v4.15.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* **nautobot:** declare the export bucket and refuse to render it empty ([#1530](https://github.com/dryvist/ansible-proxmox-apps/issues/1530)) ([03112ab](https://github.com/dryvist/ansible-proxmox-apps/commit/03112abd52b8023c2c5cf59c8a47e93711610b01))
+
 ## [4.15.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.3...v4.15.0) (2026-08-15)
 
 
