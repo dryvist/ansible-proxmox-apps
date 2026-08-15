@@ -220,3 +220,69 @@
       delay: 6
       until: homarr_page.status in [200, 302, 307]
       changed_when: false
+
+    # --- The configure half -------------------------------------------------
+    - name: Read the managed environment file
+      ansible.builtin.slurp:
+        src: "{{ homarr_env_file }}"
+      register: homarr_verify_env
+
+    - name: Assert Ansible owns the environment file and credentials stay enabled
+      vars:
+        _env: "{{ homarr_verify_env.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'Ansible managed' in _env"
+          # `credentials` must survive even once OIDC is added: user.initUser
+          # calls throwIfCredentialsDisabled(), so an OIDC-only instance cannot
+          # be bootstrapped without a human at a browser.
+          - "'credentials' in (_env | regex_search(\"AUTH_PROVIDERS='([^']+)'\", '\\1') | first)"
+          # 64 hex characters. A short or absent key means the template minted
+          # something malformed, which would only surface much later as
+          # undecryptable integration secrets.
+          - (_env | regex_search("SECRET_ENCRYPTION_KEY='([0-9a-f]{64})'")) is not none
+        fail_msg: "the environment file is not Ansible-owned or is malformed"
+
+    - name: Assert the encryption key is stable across converges
+      # The role converged twice by this point (converge + idempotence). If the
+      # key moved, every stored integration secret would already be lost — and
+      # the app would keep starting cleanly, which is what makes this worth an
+      # explicit assertion rather than trusting the template.
+      vars:
+        _key: "{{ homarr_verify_env.content | b64decode
+                  | regex_search(\"SECRET_ENCRYPTION_KEY='([^']+)'\", '\\1') | first }}"
+      ansible.builtin.assert:
+        that:
+          - _key == (hostvars[inventory_hostname].homarr_effective_encryption_key | default(_key))
+        fail_msg: "SECRET_ENCRYPTION_KEY changed between converges"
+
+    # --- The bootstrap the live guest can no longer exercise ----------------
+    - name: Read the onboarding and API-key state
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c "import sqlite3,json;
+          c=sqlite3.connect('file:{{ homarr_db_url }}?mode=ro',uri=True);
+          print(json.dumps({
+            'onboarding': list(c.execute('select step from onboarding'))[0][0],
+            'users': list(c.execute('select count(*) from user'))[0][0],
+            'keys': list(c.execute('select count(*) from apiKey'))[0][0],
+            'integrations': list(c.execute('select count(*) from integration'))[0][0]}))"
+      register: homarr_verify_db
+      changed_when: false
+
+    - name: Assert onboarding completed and exactly one API key was minted
+      vars:
+        _db: "{{ homarr_verify_db.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _db.onboarding == 'finish'
+          - _db.users >= 1
+          # Exactly one: the converger reuses a working key and only mints when
+          # there is none. Two keys after two converges would mean it re-mints
+          # every run, quietly accumulating credentials.
+          - _db.keys == 1
+          # No integration is declared in this scenario, and Homarr refuses to
+          # persist one that fails its connection test — so anything here means
+          # something was written without being verified.
+          - _db.integrations == 0
+        fail_msg: "bootstrap state is wrong: {{ _db }}"

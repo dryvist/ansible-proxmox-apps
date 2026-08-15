@@ -1,0 +1,73 @@
+---
+# Converge Homarr's API key and integrations. Everything here addresses the
+# guest DIRECTLY (homarr_api_base) — never the Traefik vhost, whose SSO gate
+# answers an HTML login page that Homarr's own integration test then fails to
+# parse as JSON. That is precisely how this instance ended up with zero
+# integrations despite the UI reporting nothing useful.
+
+- name: Deploy the Homarr API converger
+  ansible.builtin.copy:
+    src: homarr_api.py
+    dest: /usr/local/sbin/homarr-api
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Decide the admin password to converge on
+  ansible.builtin.set_fact:
+    homarr_effective_admin_password: >-
+      {{ homarr_admin_password
+         or (lookup('community.general.random_string',
+                    length=40, special=false) ) }}
+  no_log: true
+
+- name: Converge the API key and every integration
+  # The spec goes in on stdin so no credential is ever written to disk or to a
+  # command line. Integrations whose secret did not resolve are skipped by the
+  # converger and named in its output — failing the whole play because one
+  # unrelated app's key is missing would be worse than converging the rest.
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/homarr-api
+    stdin: "{{ homarr_api_spec | to_json }}"
+  vars:
+    homarr_api_spec:
+      api_base: "{{ homarr_api_base }}"
+      admin_username: "{{ homarr_admin_username }}"
+      admin_password: "{{ homarr_effective_admin_password }}"
+      db_path: "{{ homarr_db_url }}"
+      bcrypt_module: "{{ homarr_install_dir }}/node_modules/bcrypt"
+      api_key: "{{ homarr_api_key }}"
+      api_key_file: "{{ homarr_api_key_file }}"
+      force_secret_sync: "{{ homarr_force_secret_sync }}"
+      integrations: "{{ homarr_integrations + homarr_proxmox_integration }}"
+  register: homarr_api_result
+  # `no_log` is required here — the spec on stdin carries every credential —
+  # but it also censors the failure, which turns any bug into "Module failed"
+  # with no cause. So this task never fails on its own; the next one reports
+  # the reason. The converger writes only diagnostics to stderr, never secrets,
+  # which is what makes surfacing it safe.
+  failed_when: false
+  changed_when:
+    - homarr_api_result.rc == 0
+    - (homarr_api_result.stdout | from_json).changed | bool
+  no_log: true
+
+- name: Surface a converger failure with its reason
+  ansible.builtin.fail:
+    msg: "homarr-api failed (rc={{ homarr_api_result.rc }}): {{ homarr_api_result.stderr | default('no stderr') }}"
+  when: homarr_api_result.rc != 0
+
+- name: Report what the converger did
+  ansible.builtin.debug:
+    msg: "{{ (homarr_api_result.stdout | from_json).actions }}"
+
+- name: Publish the Homarr admin password and API key to OpenBao
+  ansible.builtin.include_role:
+    name: openbao_secrets
+    tasks_from: publish.yml
+  vars:
+    openbao_secrets_publish_app: homarr
+    openbao_secrets_publish_reason: (admin service account + API key)
+    openbao_secrets_publish_data:
+      homarr_admin_password: "{{ homarr_effective_admin_password }}"
+      homarr_api_key: "{{ (homarr_api_result.stdout | from_json).api_key }}"
