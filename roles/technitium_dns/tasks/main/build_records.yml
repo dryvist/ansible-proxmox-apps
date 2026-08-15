@@ -168,6 +168,62 @@
          else (technitium_dns_members | default([]) | map(attribute='ip')
                | reject('equalto', technitium_dns_primary_ip) | list) }}
 
+# Re-derive the ADDRESSES from the live roles, now that every member has
+# published its own.
+#
+# THE BUG THIS EXISTS FOR. Correcting technitium_dns_role from the live zone
+# type was not enough: technitium_dns_primary_ip above is still the lowest-vmid
+# guess, and technitium_dns_secondary_ips is "every member except that guess".
+# When the guess names the real SECONDARY, the "secondaries" list comes out
+# holding the PRIMARY'S OWN address — and the AXFR authorisation task in
+# ingress_and_apex.yml then writes a transfer ACL permitting the primary to
+# transfer from itself while refusing the actual secondary. Every transfer is
+# denied, the secondary keeps serving its last successful copy for the whole
+# expiry window (a week here), and NOTHING reports an error: the primary sees a
+# healthy zone, the converge exits 0, and only the secondary's `syncFailed` flag
+# says otherwise. That is the same silent-divergence failure the SOA guard in
+# health_check.yml exists to catch, arriving by a different route.
+#
+# Ansible completes a task across every host in the play before starting the
+# next, so by this point each member's technitium_dns_role is readable from
+# hostvars. Fall back to the values above when nothing is resolvable — a
+# single-host run (--limit) cannot see its peers, and must not blank the ACL.
+# Addresses come from `container_ip`/`ansible_host` — the same source the member
+# list above uses — NOT from technitium_dns_host. technitium_dns_host is a
+# PLAY-level var, and play vars are not reliably readable out of hostvars for
+# OTHER hosts, so filtering on it silently yielded an empty peer list and this
+# whole task fell through to the broken heuristic values it exists to replace.
+- name: Map each member's live role to its address
+  ansible.builtin.set_fact:
+    technitium_dns_role_map: >-
+      {{ (technitium_dns_role_map | default([])) + [{
+           'role': hostvars[item].technitium_dns_role | default(''),
+           'ip': hostvars[item].container_ip
+                 | default(hostvars[item].ansible_host | default(''), true)
+         }] }}
+  loop: >-
+    {{ groups['technitium_dns_group'] | default([])
+       | reject('equalto', 'localhost') | select('in', hostvars) | list }}
+  loop_control:
+    label: "{{ item }}"
+
+- name: Re-derive primary/secondary addresses from the live roles
+  vars:
+    _live_primaries: >-
+      {{ technitium_dns_role_map | default([])
+         | selectattr('role', 'equalto', 'primary')
+         | map(attribute='ip') | reject('equalto', '') | list }}
+    _live_secondaries: >-
+      {{ technitium_dns_role_map | default([])
+         | selectattr('role', 'equalto', 'secondary')
+         | map(attribute='ip') | reject('equalto', '') | list }}
+  ansible.builtin.set_fact:
+    technitium_dns_primary_ip: >-
+      {{ _live_primaries | first | default(technitium_dns_primary_ip, true) }}
+    technitium_dns_secondary_ips: >-
+      {{ _live_secondaries if (_live_secondaries | length > 0)
+         else technitium_dns_secondary_ips }}
+
 # Technitium authenticates API calls via `?token=...` query parameter,
 # NOT via an X-Api-Token header. The header is silently ignored and
 # the server responds with "Parameter 'token' missing."
