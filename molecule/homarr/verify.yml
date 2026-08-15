@@ -139,6 +139,26 @@
       vars:
         updater: "{{ homarr_updater.content | b64decode }}"
 
+    # --- redis can start in an unprivileged LXC ---------------------------
+    - name: Read the redis LXC drop-in
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/redis-server.service.d/10-lxc-privateusers.conf
+      register: homarr_redis_dropin
+
+    - name: Assert PrivateUsers is disabled for redis
+      # This scenario runs in a PRIVILEGED docker container, so redis starts
+      # here with or without the drop-in — the failure this guards against is
+      # structurally invisible to the fixture, and was only found on a real
+      # unprivileged LXC (systemd 217/USER, "Failed to set up user
+      # namespacing"). Assert the drop-in's presence rather than pretending the
+      # runtime behaviour was tested.
+      ansible.builtin.assert:
+        that:
+          - "'PrivateUsers=false' in (homarr_redis_dropin.content | b64decode)"
+        fail_msg: >-
+          The redis PrivateUsers drop-in is missing; redis will fail 217/USER
+          on any unprivileged LXC without the nesting feature.
+
     # --- Root SSH login was not enabled -----------------------------------
     - name: Stat sshd_config
       ansible.builtin.stat:
