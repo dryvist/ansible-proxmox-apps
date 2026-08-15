@@ -111,6 +111,34 @@ class NodesSourceAdapter(Adapter):
                 "device_type", "location"
             )
         }
+        seed_names = {
+            str(node["name"])
+            for node in seed["nodes"]
+            if node.get("commissioned", True)
+        }
+        # Refuse a rename. These models are identified by NAME alone and
+        # `delete` is a deliberate no-op, so a name change is not a move: the
+        # new name is created and the old Device is left orphaned beside it,
+        # silently, at rc=0. Nothing later cleans it up.
+        #
+        # The signature is specific — some seed names would be created AND some
+        # existing Devices would be left unmatched. A genuinely new node only
+        # produces the first, and a removed node only the second, so neither is
+        # blocked here.
+        would_create = seed_names - curated.keys()
+        would_strand = curated.keys() - seed_names
+        if curated and would_create and would_strand:
+            raise ValueError(
+                "Refusing to seed: this looks like a node rename, which this job "
+                "cannot perform. It would CREATE "
+                f"{sorted(would_create)} while leaving {sorted(would_strand)} "
+                "orphaned, because these devices are identified by name alone "
+                "and delete is a no-op. Rename the device in the system of "
+                "record first so the names match, then re-run. If a node was "
+                "genuinely added and another genuinely removed in the same "
+                "change, split them into separate runs."
+            )
+
         for node in seed["nodes"]:
             if not node.get("commissioned", True):
                 continue

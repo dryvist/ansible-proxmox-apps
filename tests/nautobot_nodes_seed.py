@@ -182,6 +182,59 @@ def test_uncommissioned_node_is_skipped() -> None:
     assert emitted == {}, emitted
 
 
+def _curated(*names: str) -> list[Record]:
+    """Existing node-role Devices, one per supplied name."""
+    return [
+        Record(
+            name=name,
+            device_type=Record(model="PowerEdge"),
+            location=Record(name="server room"),
+            role=Record(name="pve-node"),
+        )
+        for name in names
+    ]
+
+
+def test_rename_is_refused() -> None:
+    """A rename creates the new name and orphans the old one, so it is refused.
+
+    This is the destructive case these models cannot express: they are keyed on
+    name alone and delete is a no-op, so DiffSync turns a rename into a create
+    plus a stranded Device, silently, at rc=0.
+    """
+    devices = _curated("node-old-name", "node-unchanged")
+    nodes = [
+        {"name": "node-new-name", "commissioned": True},
+        {"name": "node-unchanged", "commissioned": True},
+    ]
+    try:
+        _emit(devices, nodes)
+    except ValueError as exc:
+        message = str(exc)
+        assert "node-new-name" in message, message
+        assert "node-old-name" in message, message
+    else:
+        raise AssertionError("a rename must be refused, not seeded")
+
+
+def test_pure_addition_and_pure_removal_are_allowed() -> None:
+    """Adding a node, or removing one, is not a rename and must still seed.
+
+    Only the combination — something created AND something stranded — is the
+    rename signature, so neither of these may trip the guard.
+    """
+    added = _emit(_curated("node-existing"), [
+        {"name": "node-existing", "commissioned": True},
+        {"name": "node-additional", "commissioned": True},
+    ])
+    assert set(added) == {"node-existing", "node-additional"}, added
+
+    removed = _emit(_curated("node-existing", "node-retired"), [
+        {"name": "node-existing", "commissioned": True},
+    ])
+    assert set(removed) == {"node-existing"}, removed
+
+
 if __name__ == "__main__":
     ran = 0
     for name, fn in sorted(globals().items()):
@@ -190,4 +243,4 @@ if __name__ == "__main__":
             ran += 1
             print(f"PASS {name}")
     print(f"\n{ran} assertions groups passed")
-    assert ran == 3, f"expected 3 tests, ran {ran}"
+    assert ran == 5, f"expected 5 tests, ran {ran}"
