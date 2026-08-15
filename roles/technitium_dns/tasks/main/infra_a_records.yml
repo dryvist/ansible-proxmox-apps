@@ -35,13 +35,56 @@
     label: "{{ item.name }} -> {{ item.ip }}"
   register: technitium_dns_a_record_result
   changed_when: technitium_dns_a_record_result.json.status == "ok"
-  failed_when:
-    - technitium_dns_a_record_result.json.status | default('') != "ok"
-    - "'already exists' not in (technitium_dns_a_record_result.json.errorMessage | default(''))"
+  # Deliberately never fails here. The guard below decides, so that the REASON
+  # survives no_log — see its comment.
+  failed_when: false
   when:
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
   no_log: true
+
+# `no_log: true` on the loop above hides the API's own errorMessage, so 23
+# simultaneous failures printed as 23 identical "(censored due to no_log)"
+# lines with no reason (Zammad #17246). The record content is the secret, not
+# the error string, so surface ONLY the distinct error strings and the counts.
+# Diagnosing this from inside the run must not require reading the zone data.
+- name: Assert the infrastructure A records were actually written
+  vars:
+    _results: "{{ technitium_dns_a_record_result.results | default([]) }}"
+    _failed: >-
+      {{ _results | rejectattr('skipped', 'defined')
+         | selectattr('json.status', 'defined')
+         | rejectattr('json.status', 'equalto', 'ok')
+         | rejectattr('json.errorMessage', 'search', 'already exists')
+         | list }}
+    _written: >-
+      {{ _results | rejectattr('skipped', 'defined')
+         | selectattr('json.status', 'defined')
+         | selectattr('json.status', 'equalto', 'ok') | list | length }}
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - _failed | length == 0
+      # A run that publishes NOTHING must never be green. Every write failing,
+      # or every write being skipped on the node that believes it is primary,
+      # is the silent-total-no-op that let this estate serve stale DNS for
+      # weeks while each converge reported success.
+      - _written | int > 0
+    fail_msg: >-
+      Infrastructure A-record publication FAILED on {{ inventory_hostname }}
+      (live zone type: {{ technitium_dns_live_zone_type | default('unknown') }}).
+      wrote={{ _written }} failed={{ _failed | length }}
+      of {{ technitium_dns_a_records | length }} declared records.
+      Distinct API errors: {{ _failed | map(attribute='json.errorMessage')
+                              | map('default', '(none)') | unique | list | join(' | ') }}.
+      If the errors mention the zone not being primary, this node holds a
+      SECONDARY zone and must not be writing records at all — the role's
+      designation disagrees with the live server.
+    success_msg: >-
+      Published {{ _written }} infrastructure A records.
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
 
 # --- Prune retired guest A records -------------------------------------------
 # The record-add tasks above are add/overwrite-only, so a hostname that is gone

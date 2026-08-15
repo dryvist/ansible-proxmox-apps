@@ -28,6 +28,23 @@
   changed_when: false
   when: (tofu_data['ingress_vip'] | default('', true)) | length > 0
 
+# Same treatment as the VIP: the fallback candidate is whichever ingress host
+# sorts lowest, which is not the same as one that serves ingress. A freshly
+# created instance occupies that slot while still empty, and publishing it would
+# blackhole every fronted name in the estate.
+- name: Probe the ingress_hosts fallback before trusting it
+  ansible.builtin.wait_for:
+    host: "{{ technitium_dns_ingress_fallback_ip }}"
+    port: "{{ technitium_dns_ingress_probe_port }}"
+    timeout: "{{ technitium_dns_ingress_probe_timeout }}"
+  register: technitium_dns_ingress_fallback_probe
+  # ignore_errors, not failed_when: false — failed_when rewrites `failed` to
+  # false, so a timed-out probe would read as "answered" and the guard would
+  # never fire.
+  ignore_errors: true
+  changed_when: false
+  when: technitium_dns_ingress_fallback_ip | length > 0
+
 - name: Report which address the fronted names will resolve to
   ansible.builtin.debug:
     msg: >-

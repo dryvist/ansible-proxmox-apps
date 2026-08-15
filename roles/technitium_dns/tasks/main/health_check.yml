@@ -13,6 +13,92 @@
   when: technitium_dns_apply | bool
   no_log: true
 
+# --- Zone-transfer freshness guard -------------------------------------------
+# THE FAILURE THIS EXISTS FOR (Zammad #17246): a secondary only accepts a
+# transfer when the primary's serial is GREATER than its own. Rebuilding the
+# primary's zone RESETS its serial to a low number, so a secondary carrying a
+# higher serial from a previous era concludes it is already current and NEVER
+# TRANSFERS AGAIN — silently, forever. On this estate that left a resolver
+# serving a months-frozen copy in which every fronted name pointed at an
+# address owned by no guest, while every converge exited green.
+#
+# Nothing about that is visible from the primary's side, and a secondary
+# reports no error: it simply has nothing to do. So compare the serials.
+#
+# This guard is DETECTION, not prevention — the trap returns on the next
+# primary rebuild. The durable fix is a monotonic serial floor on the primary,
+# tracked separately. Until then, this converts a silent permanent divergence
+# into a loud one.
+- name: Read this node's zone SOA serial
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/zones/records/get?token={{
+      technitium_dns_api_token }}&domain={{ technitium_dns_zone | urlencode
+      }}&zone={{ technitium_dns_zone | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_soa_read
+  changed_when: false
+  failed_when: false
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Record this node's SOA serial
+  ansible.builtin.set_fact:
+    technitium_dns_soa_serial: >-
+      {{ (technitium_dns_soa_read.json.response.records | default([]))
+         | selectattr('type', 'equalto', 'SOA')
+         | map(attribute='rData.serial') | first | default(0) | int }}
+  when: technitium_dns_apply | bool
+
+# Ansible runs a task across every host in the play before moving on, so by this
+# point each member has published its own serial as a fact and the primary's is
+# readable from hostvars.
+- name: Resolve the primary's SOA serial from its own fact
+  vars:
+    # `max` raises on an empty sequence, so the list is materialised and length-
+    # checked rather than piped straight into it. Zero means "no primary
+    # reported a serial", which the guard below treats as "cannot judge".
+    _primary_serials: >-
+      {{ groups['technitium_dns_group'] | default([])
+         | reject('equalto', 'localhost')
+         | select('in', hostvars)
+         | map('extract', hostvars)
+         | selectattr('technitium_dns_role', 'defined')
+         | selectattr('technitium_dns_role', 'equalto', 'primary')
+         | selectattr('technitium_dns_soa_serial', 'defined')
+         | map(attribute='technitium_dns_soa_serial')
+         | map('int') | list }}
+  ansible.builtin.set_fact:
+    technitium_dns_peer_primary_serial: >-
+      {{ (_primary_serials | max) if (_primary_serials | length > 0) else 0 }}
+  when: technitium_dns_apply | bool
+
+- name: Assert every secondary can still receive a zone transfer
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - technitium_dns_soa_serial | int <= technitium_dns_peer_primary_serial | int
+    fail_msg: >-
+      ZONE TRANSFER IS DEAD on {{ inventory_hostname }}. This secondary's SOA
+      serial ({{ technitium_dns_soa_serial }}) is HIGHER than the primary's
+      ({{ technitium_dns_peer_primary_serial }}), so it will never accept
+      another transfer and is serving a frozen copy of the zone. Nothing else
+      reports this — the converge stays green and the resolver keeps answering
+      confidently with stale records.
+      Cause: the primary's zone was recreated, which reset its serial.
+      Fix: delete this node's Secondary zone and recreate it with the primary
+      as master, which forces a full AXFR regardless of serial. The role cannot
+      do it — zone creation is skipped when the zone already exists.
+    success_msg: >-
+      Zone transfer is viable (secondary serial {{ technitium_dns_soa_serial }}
+      <= primary {{ technitium_dns_peer_primary_serial }}).
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_role == 'secondary'
+    - technitium_dns_peer_primary_serial | default(0) | int > 0
+
 # Health-checked apex: reconcile the round-robin to nodes that actually answer.
 # Primary only — secondaries get the result by zone transfer, and two reconcilers
 # writing the same record set would fight each other.
