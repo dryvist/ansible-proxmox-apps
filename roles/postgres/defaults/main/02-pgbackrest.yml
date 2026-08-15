@@ -71,20 +71,22 @@ postgres_backup_s3_secret_access_key: "{{ lookup('env', 'POSTGRES_BACKUP_S3_SECR
 #
 # STILL OFF, and this is a credential gap, not a preference. Enabling it without
 # a credential path would point the config at a repo it cannot authenticate to,
-# which is strictly worse than an honest `false`. Three things are missing:
+# which is strictly worse than an honest `false`. Three things were missing;
+# item 3 is DONE, 1-2 remain:
 #
 #   1. A scoped B2 application key pair for the backup bucket. The convention is
 #      one bucket, exactly two keys — <bucket>-ro and <bucket>-rw — and the
-#      writer here takes the -rw one. Neither exists.
+#      writer here takes the -rw one. Neither exists yet — minting a live B2
+#      credential is a human-wrapped write action (see openbao-secrets skill),
+#      not something a converge or an agent session does unattended.
 #   2. A home for it. B2 is internet-facing, so it belongs in the
-#      `secrets-external/` mount, never `secret/`.
-#   3. A delivery path. scripts/fetch-openbao-secrets.sh — the thing that turns
-#      a KV entry into the POSTGRES_BACKUP_REPO2_S3_* env vars this role reads —
-#      only ever LISTs and reads `secret/apps/<domain>`. It has no
-#      `secrets-external/` code path at all, so even an existing key could not
-#      reach the converge. That script is the blocking item.
+#      `secrets-external/` mount, never `secret/`. Depends on 1.
+#   3. DONE — scripts/fetch-openbao-secrets.sh now reads OPENBAO_SECRETS_MOUNT
+#      (default `secret`, set to `secrets-external` for this domain) so it can
+#      reach a secrets-external/apps/<domain> entry once one exists. It
+#      previously only ever read `secret/apps/<domain>` at all.
 #
-# Flip this to true in the same change that closes all three, so the assert in
+# Flip this to true only once 1-2 also land, so the assert in
 # tasks/pgbackrest.yml is satisfiable the first time it runs.
 postgres_pgbackrest_repo2_enabled: false
 postgres_pgbackrest_repo2_path: "{{ postgres_pgbackrest_repo_path }}"

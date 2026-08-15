@@ -27,11 +27,22 @@
 #   BAO_ADDR                      - OpenBao API endpoint
 #   <DOMAIN>_VAULT_ROLE_ID        - AppRole role_id for this domain
 #   <DOMAIN>_VAULT_SECRET_ID      - AppRole secret_id for this domain
+#   OPENBAO_SECRETS_MOUNT         - KV mount to read from (default: secret)
 # <DOMAIN> is the domain name, uppercased, hyphens turned to underscores
 # (e.g. "media" -> MEDIA) — matching the naming the ansible-proxmox-apps
 # roles/openbao_secrets role already uses for the same AppRoles.
 #
-# Discovers this domain's secret paths by LISTing secret/metadata/apps/<domain>
+# MOUNT SELECTION: `secret` (internal, default) covers services with no
+# internet exposure. `secrets-external` covers internet-hosted SaaS
+# credentials (Backblaze, GitHub, etc.) — a leak there is exploitable by
+# anyone from anywhere, so it lives in its own mount rather than a path
+# prefix under `secret`, which would give no separate policy boundary. Select
+# it by setting OPENBAO_SECRETS_MOUNT=secrets-external before invoking; never
+# hardcode which domains use which mount here — that decision belongs to
+# whoever wires up the caller, and a wildcard must never be granted across
+# the external mount regardless.
+#
+# Discovers this domain's secret paths by LISTing <mount>/metadata/apps/<domain>
 # (the media AppRole's policy already grants read+list on that subtree) rather
 # than hardcoding a path list here — one fewer thing to keep in sync as new
 # app KV entries are added under a domain.
@@ -52,6 +63,8 @@ shift
 [[ ${1:-} == "--" ]] || usage
 shift
 [[ $# -lt 1 ]] && usage
+
+mount="${OPENBAO_SECRETS_MOUNT:-secret}"
 
 domain_env="${domain^^}"
 domain_env="${domain_env//-/_}"
@@ -80,23 +93,23 @@ if [[ -z "$client_token" ]]; then
 fi
 
 list_resp=$(curl -sS -m 10 -H "X-Vault-Token: $client_token" -X LIST \
-  "$BAO_ADDR/v1/secret/metadata/apps/$domain")
+  "$BAO_ADDR/v1/$mount/metadata/apps/$domain")
 if jq -e '.errors | select(. != null and length > 0)' <<< "$list_resp" >/dev/null; then
-  echo "fetch-openbao-secrets.sh: failed to list secrets under apps/$domain: $(jq -r '.errors | join(", ")' <<< "$list_resp")" >&2
+  echo "fetch-openbao-secrets.sh: failed to list secrets under $mount/apps/$domain: $(jq -r '.errors | join(", ")' <<< "$list_resp")" >&2
   exit 1
 fi
 mapfile -t keys < <(jq -r '.data.keys[]? // empty' <<< "$list_resp")
 unset list_resp
 
 if [[ ${#keys[@]} -eq 0 ]]; then
-  echo "fetch-openbao-secrets.sh: no secrets found under apps/$domain — continuing with the existing environment unchanged." >&2
+  echo "fetch-openbao-secrets.sh: no secrets found under $mount/apps/$domain — continuing with the existing environment unchanged." >&2
 fi
 
 for key in "${keys[@]}"; do
   data_resp=$(curl -sS -m 10 -H "X-Vault-Token: $client_token" \
-    "$BAO_ADDR/v1/secret/data/apps/$domain/$key")
+    "$BAO_ADDR/v1/$mount/data/apps/$domain/$key")
   if ! jq -e '.data.data' <<< "$data_resp" >/dev/null; then
-    echo "fetch-openbao-secrets.sh: failed to read secret '$key' under apps/$domain" >&2
+    echo "fetch-openbao-secrets.sh: failed to read secret '$key' under $mount/apps/$domain" >&2
     exit 1
   fi
   # Export every field in this KV entry as its own env var (field names are
