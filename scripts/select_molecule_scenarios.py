@@ -38,6 +38,7 @@ SCENARIOS = [
     "postgres",
     "nautobot",
     "ssh_ca_trust",
+    "homarr",
 ]
 
 # Scenarios whose name is not the role they exercise.
