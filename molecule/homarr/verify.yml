@@ -270,7 +270,7 @@
           print(json.dumps({
             'onboarding': list(c.execute('select step from onboarding'))[0][0],
             'users': list(c.execute('select count(*) from user'))[0][0],
-            'keys': list(c.execute('select count(*) from apiKey'))[0][0],
+            'api_keys': list(c.execute('select count(*) from apiKey'))[0][0],
             'integrations': list(c.execute('select count(*) from integration'))[0][0]}))"
       register: homarr_verify_db
       changed_when: false
@@ -279,15 +279,19 @@
       vars:
         _db: "{{ homarr_verify_db.stdout | from_json }}"
       ansible.builtin.assert:
+        # Bracket access throughout, and the count is `api_keys` rather than
+        # `keys`: dotted access on a dict resolves `_db.keys` to Python's own
+        # `.keys` METHOD, so `_db.keys == 1` compares a bound method to an
+        # integer and is False no matter what the database holds.
         that:
-          - _db.onboarding == 'finish'
-          - _db.users >= 1
+          - _db['onboarding'] == 'finish'
+          - _db['users'] >= 1
           # Exactly one: the converger reuses a working key and only mints when
           # there is none. Two keys after two converges would mean it re-mints
           # every run, quietly accumulating credentials.
-          - _db.keys == 1
+          - _db['api_keys'] == 1
           # No integration is declared in this scenario, and Homarr refuses to
           # persist one that fails its connection test — so anything here means
           # something was written without being verified.
-          - _db.integrations == 0
+          - _db['integrations'] == 0
         fail_msg: "bootstrap state is wrong: {{ _db }}"
