@@ -126,11 +126,43 @@
          else ((technitium_dns_members | default([]) | sort(attribute='vmid')
                 | map(attribute='ip') | list | first) | default(technitium_dns_host)) }}
 
+# The LIVE zone type is the only honest answer to "is this node the primary?".
+# The vmid heuristic below is a BOOTSTRAP rule, not a source of truth: it picks
+# the lowest-vmid member, which on this estate designated the SECONDARY as
+# primary and the PRIMARY as secondary. Every record write then failed on one
+# host and was skipped on the other, and the run still exited green (Zammad
+# #17246). Ask the server what it actually holds.
+- name: Read this node's live zone type (authoritative over any heuristic)
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/zones/list?token={{ technitium_dns_api_token }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_zone_list
+  changed_when: false
+  failed_when: false
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Derive this node's live zone type
+  ansible.builtin.set_fact:
+    technitium_dns_live_zone_type: >-
+      {{ (technitium_dns_zone_list.json.response.zones | default([]))
+         | selectattr('name', 'equalto', technitium_dns_zone)
+         | map(attribute='type') | first | default('') }}
+
 - name: Resolve Technitium role and secondary IPs
   ansible.builtin.set_fact:
+    # Precedence: an explicit override, then the LIVE zone type, then the
+    # bootstrap heuristic for a zone that does not exist yet.
     technitium_dns_role: >-
       {{ technitium_dns_role if (technitium_dns_role | length > 0)
-         else ('primary' if technitium_dns_host == technitium_dns_primary_ip else 'secondary') }}
+         else ('primary' if technitium_dns_live_zone_type == 'Primary'
+               else ('secondary' if technitium_dns_live_zone_type | length > 0
+                     else ('primary' if technitium_dns_host == technitium_dns_primary_ip
+                           else 'secondary'))) }}
     technitium_dns_secondary_ips: >-
       {{ technitium_dns_secondary_ips if (technitium_dns_secondary_ips | length > 0)
          else (technitium_dns_members | default([]) | map(attribute='ip')
@@ -140,6 +172,7 @@
 # NOT via an X-Api-Token header. The header is silently ignored and
 # the server responds with "Parameter 'token' missing."
 - name: Check if DNS zone exists
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/list?token={{ technitium_dns_api_token }}"
     method: GET

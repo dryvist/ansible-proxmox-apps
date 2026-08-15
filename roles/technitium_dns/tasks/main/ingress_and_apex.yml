@@ -28,6 +28,23 @@
   changed_when: false
   when: (tofu_data['ingress_vip'] | default('', true)) | length > 0
 
+# Same treatment as the VIP: the fallback candidate is whichever ingress host
+# sorts lowest, which is not the same as one that serves ingress. A freshly
+# created instance occupies that slot while still empty, and publishing it would
+# blackhole every fronted name in the estate.
+- name: Probe the ingress_hosts fallback before trusting it
+  ansible.builtin.wait_for:
+    host: "{{ technitium_dns_ingress_fallback_ip }}"
+    port: "{{ technitium_dns_ingress_probe_port }}"
+    timeout: "{{ technitium_dns_ingress_probe_timeout }}"
+  register: technitium_dns_ingress_fallback_probe
+  # ignore_errors, not failed_when: false — failed_when rewrites `failed` to
+  # false, so a timed-out probe would read as "answered" and the guard would
+  # never fire.
+  ignore_errors: true
+  changed_when: false
+  when: technitium_dns_ingress_fallback_ip | length > 0
+
 - name: Report which address the fronted names will resolve to
   ansible.builtin.debug:
     msg: >-
@@ -41,6 +58,7 @@
 # A/CNAME coexistence issues and to cleanly overwrite any prior host record.
 # Skipped entirely until an ingress target resolves.
 - name: Create Traefik ingress alias A records
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
     method: POST
@@ -92,6 +110,7 @@
 # this same shared, derived alias list, so every resolver converges to
 # identical content with no ordering or conflict hazard between them.
 - name: Create Traefik ingress alias apex A records
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
     method: POST
@@ -128,6 +147,7 @@
 # apex A set first so the authoritative answer exactly matches the desired node
 # list, then add one A record per endpoint.
 - name: Delete existing Proxmox endpoint apex A records
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/delete?token={{ technitium_dns_api_token }}"
     method: POST
@@ -156,6 +176,7 @@
     - technitium_dns_apply | bool
 
 - name: Create Proxmox endpoint apex A records
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
     method: POST
@@ -186,6 +207,7 @@
 # aliases above, so the bare apex https://<subdomain> reaches Traefik's backend
 # pool over TLS. domain == the zone name writes the A record AT the zone apex.
 - name: Create Traefik apex A record (zone root -> Traefik)
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
     method: POST
@@ -217,6 +239,7 @@
 # restricts transfer to exactly the secondary IPs (default-deny otherwise).
 # No-op for a single-node group (no secondaries).
 - name: Allow AXFR zone transfer to secondaries (primary)
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/zones/options/set?token={{ technitium_dns_api_token }}"
     method: POST
