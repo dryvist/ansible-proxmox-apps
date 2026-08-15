@@ -93,3 +93,125 @@ homarr_installed_marker: "{{ homarr_cs_pinned_dir }}/.homarr-install-complete"
 # before it starts (a side effect of the installer's `update_os()`), then
 # fetches and unpacks a prebuilt Node bundle.
 homarr_install_timeout: 1800
+
+# --- Environment file ---------------------------------------------------------
+homarr_db_driver: better-sqlite3
+homarr_db_dialect: sqlite
+homarr_db_url: "{{ homarr_data_dir }}/db.sqlite"
+
+# `credentials` is not optional — see the note in homarr.env.j2. OIDC is added
+# alongside it, never instead of it.
+homarr_auth_providers: "{{ 'credentials,oidc' if homarr_oidc_enabled else 'credentials' }}"
+
+homarr_oidc_enabled: false
+homarr_oidc_client_id: homarr
+homarr_oidc_client_name: Authelia
+homarr_oidc_auto_login: false
+homarr_oidc_issuer: ""
+homarr_oidc_client_secret: ""
+
+# --- API surface --------------------------------------------------------------
+# Ansible talks to Homarr DIRECTLY, never through the Traefik vhost. The fronted
+# name is Authelia-gated and answers a 302 with an HTML login page, which is
+# exactly the failure that left this instance with zero integrations: Homarr's
+# own integration test parsed that HTML as JSON and refused to save.
+homarr_api_base: "http://{{ inventory_hostname }}.{{ tofu_data.domain }}:{{ homarr_port }}"
+
+# All four are resolved bao-first in inventory/group_vars/homarr_group.yml.
+# Empty here means "not yet in OpenBao" — the role generates and publishes.
+homarr_admin_username: admin
+homarr_admin_password: ""
+homarr_api_key: ""
+homarr_encryption_key: ""
+
+# Local fallback home for the API key. OpenBao is the canonical store, but a
+# converge that cannot reach it must not mint a fresh key every run: Homarr
+# keys never expire and it keeps every one, so that is silent credential
+# accumulation rather than a cosmetic idempotence wart.
+homarr_api_key_file: /etc/homarr/api-key
+homarr_admin_password_file: /etc/homarr/admin-password
+
+# Back up the app-issued credentials to OpenBao. Requires this app to appear in
+# the converge AppRole's enumerated publish grant; without it the write is
+# refused and the play fails, which is the intended signal rather than a silent
+# skip. Set false only to converge deliberately ahead of that grant.
+homarr_publish_credentials: true
+
+# Integration secrets are write-only: Homarr's API never returns them, so a
+# rotated credential is invisible to a diff and will not resync on its own.
+# Set this to push every secret again after a rotation.
+homarr_force_secret_sync: false
+
+# --- Integrations -------------------------------------------------------------
+# Every URL here is a direct guest FQDN:port. Never a `*.pve.` name.
+#
+# `kind` and the `secrets[].kind` values are Homarr's own vocabulary
+# (packages/validation/src/integration.ts). Homarr connection-TESTS on create
+# and update and refuses to persist a failing one, so a row existing is proof
+# the credential works — that server-side test is the verification, and this
+# role deliberately adds no second health check of its own.
+#
+# Excluded on purpose, so their absence reads as a decision and not an
+# oversight: prowlarr / qbittorrent (the download-vpn guest refuses connections
+# on its admin ports from every host tested — a pre-existing fault, tracked
+# separately) and Home Assistant (reachable, but no long-lived token is managed
+# anywhere in the estate yet).
+homarr_integrations:
+  - name: Sonarr
+    kind: sonarr
+    url: "http://sonarr.{{ tofu_data.domain }}:{{ tofu_data.constants.media_ports.sonarr_web }}"
+    secrets:
+      - kind: apiKey
+        value: "{{ homarr_sonarr_api_key }}"
+  - name: Radarr
+    kind: radarr
+    url: "http://radarr.{{ tofu_data.domain }}:{{ tofu_data.constants.media_ports.radarr_web }}"
+    secrets:
+      - kind: apiKey
+        value: "{{ homarr_radarr_api_key }}"
+  - name: Jellyseerr
+    kind: jellyseerr
+    url: "http://seerr.{{ tofu_data.domain }}:{{ tofu_data.constants.media_ports.seerr_web }}"
+    secrets:
+      - kind: apiKey
+        value: "{{ homarr_seerr_api_key }}"
+  - name: Plex
+    kind: plex
+    url: "http://plex.{{ tofu_data.domain }}:{{ tofu_data.constants.media_ports.plex_web }}"
+    secrets:
+      - kind: apiKey
+        value: "{{ homarr_plex_token }}"
+
+# Proxmox is appended only when a token is available. It is a SEPARATE,
+# audit-scoped token — never the Terraform provider's write-capable credential,
+# because Homarr copies every secret it is handed into its own SQLite.
+#
+# The endpoint is derived, never a pinned node name. `ansible_host` for an LXC
+# is already its own node's management FQDN ({node-role}.{domain}, see
+# inventory/load_tofu/add_lxc_hosts.yml), and any cluster member answers for the
+# whole cluster — so this follows the guest if it is ever migrated.
+homarr_proxmox_endpoint: >-
+  https://{{ ansible_host }}:{{ tofu_data.constants.service_ports.proxmox_web }}
+homarr_proxmox_token_id: ""
+homarr_proxmox_token_secret: ""
+homarr_proxmox_realm: pam
+
+# Appended to homarr_integrations only when a token exists, so the estate does
+# not carry a permanently-skipped entry just to hold a place.
+homarr_proxmox_integration: >-
+  {{ (
+      []
+      if not homarr_proxmox_token_secret
+      else [
+          {
+              'name': 'Proxmox',
+              'kind': 'proxmox',
+              'url': homarr_proxmox_endpoint,
+              'secrets': [
+                  {'kind': 'tokenId', 'value': homarr_proxmox_token_id},
+                  {'kind': 'personalAccessToken', 'value': homarr_proxmox_token_secret},
+                  {'kind': 'realm', 'value': homarr_proxmox_realm},
+              ],
+          }
+      ]
+  ) }}

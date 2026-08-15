@@ -15,6 +15,9 @@
     homarr_cs_tag: "2026-08-14"
     homarr_cs_pinned_dir: "/opt/community-scripts/2026-08-14"
     homarr_port: 7575
+    homarr_env_file: /opt/homarr.env
+    homarr_db_url: /opt/homarr_db/db.sqlite
+    homarr_api_key_file: /etc/homarr/api-key
 
   tasks:
     # --- The pin is real, on disk ----------------------------------------
@@ -220,3 +223,75 @@
       delay: 6
       until: homarr_page.status in [200, 302, 307]
       changed_when: false
+
+    # --- The configure half -------------------------------------------------
+    - name: Read the managed environment file
+      ansible.builtin.slurp:
+        src: "{{ homarr_env_file }}"
+      register: homarr_verify_env
+
+    - name: Assert Ansible owns the environment file and credentials stay enabled
+      vars:
+        _env: "{{ homarr_verify_env.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'Ansible managed' in _env"
+          # `credentials` must survive even once OIDC is added: user.initUser
+          # calls throwIfCredentialsDisabled(), so an OIDC-only instance cannot
+          # be bootstrapped without a human at a browser.
+          - (_env | regex_search("AUTH_PROVIDERS='[^']*credentials")) is not none
+          # 64 hex characters. A short or absent key means the template minted
+          # something malformed, which would only surface much later as
+          # undecryptable integration secrets.
+          - (_env | regex_search("SECRET_ENCRYPTION_KEY='[0-9a-f]{64}'")) is not none
+        fail_msg: "the environment file is not Ansible-owned or is malformed"
+
+    # Stability of SECRET_ENCRYPTION_KEY across converges is already proven by
+    # the idempotence run that precedes this play: a changed key means a changed
+    # env file, and the template task would have reported changed. Asserting it
+    # again here would only compare the value to itself.
+
+    - name: Assert the API key was persisted for reuse
+      # Without this file, a converge that cannot reach OpenBao mints a fresh
+      # key every run. Homarr keys never expire and it keeps every one, so the
+      # symptom is accumulating credentials rather than a failing run.
+      ansible.builtin.stat:
+        path: "{{ homarr_api_key_file }}"
+      register: homarr_verify_keyfile
+      failed_when:
+        - not homarr_verify_keyfile.stat.exists or homarr_verify_keyfile.stat.mode != '0600'
+
+    # --- The bootstrap the live guest can no longer exercise ----------------
+    - name: Read the onboarding and API-key state
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c "import sqlite3,json;
+          c=sqlite3.connect('file:{{ homarr_db_url }}?mode=ro',uri=True);
+          print(json.dumps({
+            'onboarding': list(c.execute('select step from onboarding'))[0][0],
+            'users': list(c.execute('select count(*) from user'))[0][0],
+            'api_keys': list(c.execute('select count(*) from apiKey'))[0][0],
+            'integrations': list(c.execute('select count(*) from integration'))[0][0]}))"
+      register: homarr_verify_db
+      changed_when: false
+
+    - name: Assert onboarding completed and exactly one API key was minted
+      vars:
+        _db: "{{ homarr_verify_db.stdout | from_json }}"
+      ansible.builtin.assert:
+        # Bracket access throughout, and the count is `api_keys` rather than
+        # `keys`: dotted access on a dict resolves `_db.keys` to Python's own
+        # `.keys` METHOD, so `_db.keys == 1` compares a bound method to an
+        # integer and is False no matter what the database holds.
+        that:
+          - _db['onboarding'] == 'finish'
+          - _db['users'] >= 1
+          # Exactly one: the converger reuses a working key and only mints when
+          # there is none. Two keys after two converges would mean it re-mints
+          # every run, quietly accumulating credentials.
+          - _db['api_keys'] == 1
+          # No integration is declared in this scenario, and Homarr refuses to
+          # persist one that fails its connection test — so anything here means
+          # something was written without being verified.
+          - _db['integrations'] == 0
+        fail_msg: "bootstrap state is wrong: {{ _db }}"
