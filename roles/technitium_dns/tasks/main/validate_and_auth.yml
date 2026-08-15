@@ -49,7 +49,30 @@
 # node's API with the shared admin password (technitium_install sets it identically
 # on every member) to obtain this node's OWN session token, and use it for every
 # API call below. Skipped under technitium_dns_apply=false (molecule/CI, no live API).
+#
+# WHY EVERY API TASK IN THIS ROLE IS DELEGATED TO THE CONTROLLER.
+# technitium_dns_api_url is http://{{ technitium_dns_host }}:5380 — a NETWORK
+# address. Running these tasks on the target meant entering the container over
+# pct_remote only to turn around and open a network connection back to that same
+# container's own IP. The container is not a privileged vantage point for its own
+# API; it is just an extra hop, and it cost one SSH channel PER RECORD. The
+# A-record loop alone is ~60 of them, and the paramiko-based pct_remote
+# connection reset partway through every time, leaving the zone half-written and
+# the run unreachable rather than failed.
+#
+# Delegating removes the hop entirely: same URL, same API, same credentials,
+# one fewer failure mode. The task still evaluates the INVENTORY host's
+# variables, so each member is configured through its own endpoint exactly as
+# before — delegation changes where the HTTP call originates, not which host it
+# is about.
+#
+# This is NOT the "delegate_to: localhost tests the controller, not the target"
+# anti-pattern. That rule is about PROBES, where the point is to observe from the
+# target's own position — and the two wait_for probes in ingress_and_apex.yml are
+# deliberately left undelegated for exactly that reason. These are API writes
+# whose subject IS the remote endpoint, so the controller is the correct origin.
 - name: Authenticate to this node's Technitium API (per-host session token)
+  delegate_to: localhost
   ansible.builtin.uri:
     url: "{{ technitium_dns_api_url }}/api/user/login"
     method: POST
