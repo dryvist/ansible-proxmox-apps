@@ -27,11 +27,24 @@ technitium_dns_ingress_host: traefik
 # The ingress_hosts fallback also removes the dependency on a hard-coded
 # inventory hostname, which stops being correct once ingress instances are
 # generated per node.
+#
+# THE FALLBACK IS PROBED TOO, for the same reason the VIP is. `ingress_hosts` is
+# sorted by address, so the first entry is whichever instance sorts lowest — not
+# necessarily one that serves anything. A newly created second ingress container
+# takes that slot while it is still an empty guest, and publishing it would point
+# every fronted A record in the estate at a container with no proxy on it. An
+# unprobed fallback is the same defect the VIP probe exists to prevent, one line
+# lower down.
+technitium_dns_ingress_fallback_ip: >-
+  {{ tofu_data['ingress_hosts'] | default([]) | first | default('', true) }}
 technitium_dns_ingress_target_ip: >-
   {{ (tofu_data['ingress_vip'] | default('', true))
      if ((tofu_data['ingress_vip'] | default('', true)) | length > 0
          and not (technitium_dns_vip_probe.failed | default(true)))
-     else ((tofu_data['ingress_hosts'] | default([]) | first | default('', true))
+     else ((technitium_dns_ingress_fallback_ip
+            if (technitium_dns_ingress_fallback_ip | length > 0
+                and not (technitium_dns_ingress_fallback_probe.failed | default(true)))
+            else '')
            | default(hostvars[technitium_dns_ingress_host].container_ip | default(''), true)) }}
 
 # Probe applied to the VIP before it is published. Port 443 is the ingress
