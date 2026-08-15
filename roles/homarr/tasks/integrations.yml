@@ -13,12 +13,40 @@
     group: root
     mode: '0750'
 
+# Three sources, in order: OpenBao, a 0600 file on the guest, then generate.
+# The file is what makes this idempotent when OpenBao cannot be read — without
+# it the role would mint a new password and reset the local admin on EVERY
+# converge, which is both noisy and a moving credential.
+- name: Read any persisted admin password
+  ansible.builtin.slurp:
+    src: "{{ homarr_admin_password_file }}"
+  register: homarr_admin_pw_stored
+  failed_when: false
+  no_log: true
+
 - name: Decide the admin password to converge on
   ansible.builtin.set_fact:
     homarr_effective_admin_password: >-
       {{ homarr_admin_password
-         or (lookup('community.general.random_string',
-                    length=40, special=false) ) }}
+         or (homarr_admin_pw_stored.content | default('') | b64decode | trim)
+         or lookup('community.general.random_string', length=40, special=false) }}
+  no_log: true
+
+- name: Ensure the credential directory exists
+  ansible.builtin.file:
+    path: "{{ homarr_admin_password_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Persist the admin password for the next converge
+  ansible.builtin.copy:
+    content: "{{ homarr_effective_admin_password }}\n"
+    dest: "{{ homarr_admin_password_file }}"
+    owner: root
+    group: root
+    mode: '0600'
   no_log: true
 
 - name: Converge the API key and every integration
@@ -71,3 +99,4 @@
     openbao_secrets_publish_data:
       homarr_admin_password: "{{ homarr_effective_admin_password }}"
       homarr_api_key: "{{ (homarr_api_result.stdout | from_json).api_key }}"
+  when: homarr_publish_credentials | bool
