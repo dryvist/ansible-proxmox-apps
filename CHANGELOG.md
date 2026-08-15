@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.15.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.15.1...v4.15.2) (2026-08-15)
+
+
+### Bug Fixes
+
+* **nautobot:** refuse to seed a node rename instead of duplicating the device ([#1534](https://github.com/dryvist/ansible-proxmox-apps/issues/1534)) ([fa2ef4d](https://github.com/dryvist/ansible-proxmox-apps/commit/fa2ef4d6f1faa29f624b8400bc68891d1be1e128))
+
 ## [4.15.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.15.0...v4.15.1) (2026-08-15)
 
 
