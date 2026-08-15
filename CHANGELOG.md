@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.16.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.15.2...v4.16.0) (2026-08-15)
+
+
+### Features
+
+* **pgbackrest:** add a secrets-external mount path to fetch-openbao-secrets.sh ([#1529](https://github.com/dryvist/ansible-proxmox-apps/issues/1529)) ([6e4184f](https://github.com/dryvist/ansible-proxmox-apps/commit/6e4184f1cbb1d60e3f2b48996ce03bcbf31aa624))
+
 ## [4.15.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.15.1...v4.15.2) (2026-08-15)
 
 
