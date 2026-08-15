@@ -235,6 +235,28 @@
     # Points at the ingress VIP when published, else the single Traefik LXC's IP.
     - technitium_dns_ingress_target_ip | length > 0
 
+# A transfer ACL that lists the primary's own address authorises nobody: the
+# primary does not transfer from itself, so every real secondary is refused and
+# the zone silently stops replicating. This is default-deny, so a wrong ACL is
+# indistinguishable from a correct one until a secondary reports syncFailed —
+# which the primary never sees. Refuse to write an ACL that cannot work.
+- name: Assert the AXFR ACL authorises a real secondary
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - technitium_dns_host not in technitium_dns_secondary_ips
+    fail_msg: >-
+      The AXFR ACL about to be written on {{ inventory_hostname }} contains this
+      host's OWN address ({{ technitium_dns_host }}), so no secondary would be
+      permitted to transfer and the zone would stop replicating silently.
+      Cause: the secondary list was derived from a primary guess that named the
+      wrong member. secondary_ips={{ technitium_dns_secondary_ips | join(',') }}
+      primary_ip={{ technitium_dns_primary_ip }}
+  when:
+    - technitium_dns_role == 'primary'
+    - technitium_dns_apply | bool
+    - technitium_dns_secondary_ips | length > 0
+
 # Authorize the secondaries to pull the zone via AXFR. UseSpecifiedNetworkACL
 # restricts transfer to exactly the secondary IPs (default-deny otherwise).
 # No-op for a single-node group (no secondaries).

@@ -1,0 +1,95 @@
+---
+# Homarr — deployed by borrowing the community-scripts INSTALL step only.
+#
+# This is the pilot for the community-scripts adoption boundary recorded in the
+# private docs ADR "Proxmox community-scripts — borrow the install step, nothing
+# above it". Read that before widening this pattern to another app.
+#
+# What we borrow: `install/homarr-install.sh`, which knows the Node build, the
+# redis/nginx layout, and the systemd units. What we do NOT borrow: `ct/*.sh`
+# (its second line sources a 7,312-line build.func from the `main` branch and
+# runs it as root on the hypervisor — unpinnable by construction), and the
+# in-container `/usr/bin/update` the installer leaves behind, which is a
+# `curl | bash` of that same unpinned branch. Task 7 removes it.
+
+# --- The pin -----------------------------------------------------------------
+# Upstream tags one release per day. Pinning the tag is necessary but NOT
+# sufficient on its own: a tag can be moved, so every artifact also carries a
+# sha256 below. A run that fetches without verifying is a false green.
+#
+# IMPORTANT on bumping: the pin covers the RECIPE, not the ARTIFACT. The script
+# still resolves the Homarr version from upstream at run time
+# (`fetch_and_deploy_gh_release ... "latest"`) and reads its Node major from
+# homarr's `dev` branch. So a tag bump does not pin what gets installed, and
+# this role must never be the pattern for anything that carries a real
+# artifact-level pin today — see `technitium_install`, which deliberately
+# mirrors and checksums its own tarball for exactly that reason.
+#
+# On every bump: re-fetch all five files, recompute every sha256 here, and diff
+# `install/homarr-install.sh` against the previous tag before merging. That diff
+# IS the review — it is the whole point of pinning.
+# renovate: datasource=github-tags depName=community-scripts/ProxmoxVE
+homarr_cs_tag: "2026-08-14"
+
+homarr_cs_upstream_base: "https://raw.githubusercontent.com/community-scripts/ProxmoxVE/{{ homarr_cs_tag }}"
+
+# Where the pinned copies land in the guest. The installer's helpers fetch each
+# other at run time, so they must all be present locally before it starts.
+homarr_cs_pinned_dir: "/opt/community-scripts/{{ homarr_cs_tag }}"
+
+# Every file the installer reaches for, and its digest at the pinned tag.
+#
+# Four `.func` files, not one. `install.func` is the entry point, but it
+# bootstraps `core.func` and `error_handler.func` from a hardcoded
+# `.../ProxmoxVE/main/misc` base, and `update_os()` pulls `tools.func` from the
+# same place. Fetching only the entry point would leave three unpinned network
+# reads inside a root shell. Task 3 rewrites that base to point here.
+#
+# The list is split because two of the five are patched after download, and a
+# patched file no longer matches its declared digest — so `get_url` would fetch
+# it again on every run, the patch would re-apply, and the role would never be
+# idempotent. Fetched copies are therefore never mutated: the patched pair is
+# downloaded to `<path>.upstream` and the working copy is derived from it.
+homarr_cs_artifacts:
+  - path: misc/error_handler.func
+    sha256: 2bf0af36fa79f176a0a326974e1c96d9e7130d047f12bdf19c05481fb1bfedc2
+  - path: misc/tools.func
+    sha256: 57db1f715fe9e6701516583585cf09a07cc2ca0acab782323805f1b8c4f32add
+  - path: install/homarr-install.sh
+    sha256: aa0be48698dca308f9256b70d12dcab08f7dbea3ab239ee2df390c660e952f7e
+
+# Fetched to `<path>.upstream`, then derived into `<path>` with the upstream
+# `main`-branch reads rewritten to the local pinned copies, and — for
+# install.func — the ICMP-and-TTY preflight neutralised.
+homarr_cs_patched_artifacts:
+  - path: misc/install.func
+    sha256: b6c0e7ae09c0610eb5f9be78fa47b9194b232bea3175694f01c766998b22ed10
+  - path: misc/core.func
+    sha256: 412a1a646752595a76b176268331789cb481460d1d7afcb95a8b9803e469f516
+
+# --- Runtime -----------------------------------------------------------------
+homarr_install_dir: /opt/homarr
+homarr_env_file: /opt/homarr.env
+homarr_data_dir: /opt/homarr_db
+homarr_service_name: homarr
+homarr_port: 7575
+
+# Marker proving the borrowed installer ran TO COMPLETION. The install is a
+# one-shot bootstrap, not a reconciler — re-running it re-resolves "latest" and
+# would silently move the app version, which is the failure mode this whole role
+# is designed to make visible rather than routine.
+#
+# This is our own stamp, written only after the installer exits 0, and NOT a
+# file the installer itself creates. Using one of those is a trap: the first
+# live run died at `systemctl enable redis-server`, which happens *after*
+# `chmod +x /opt/homarr/run.sh` — so a marker of `run.sh` would have made a
+# half-finished install look complete and skipped forever.
+#
+# The tag is in the path so a pin bump re-runs the install rather than silently
+# leaving the old build in place.
+homarr_installed_marker: "{{ homarr_cs_pinned_dir }}/.homarr-install-complete"
+
+# Seconds to allow for the borrowed install. It runs a full `apt dist-upgrade`
+# before it starts (a side effect of the installer's `update_os()`), then
+# fetches and unpacks a prebuilt Node bundle.
+homarr_install_timeout: 1800

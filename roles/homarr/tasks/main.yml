@@ -1,0 +1,313 @@
+---
+# Homarr via the community-scripts install layer, pinned and offline-sourced.
+#
+# Order matters: every helper the installer sources must be on disk BEFORE the
+# base URL is rewritten, and the base URL must be rewritten BEFORE the installer
+# runs. Otherwise the "pinned" install quietly reaches the internet for three of
+# its four helpers.
+
+# =============================================================================
+# 0. Supply what the borrowed installer assumes it already has
+# =============================================================================
+
+- name: Install the prerequisites the borrowed installer does not install itself
+  # Measured: without gnupg the install dies at `setup_nodejs` with rc=250 and
+  # the misleading message "Failed to import NodeSource GPG key" — the key
+  # downloads fine, but `gpg --dearmor` is missing. `file` is used by the same
+  # helper to auto-detect the key format.
+  #
+  # These are normally seeded by `build.func` when upstream creates the
+  # container itself. Borrowing only the install/ half means the caller owns
+  # that seeding — one more thing the community layer does not hand over.
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - file
+      - gnupg
+      - jq
+      - sudo
+      - tar
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# =============================================================================
+# 1-2. Fetch the pinned artifacts
+# =============================================================================
+
+- name: Create the pinned community-scripts directory
+  ansible.builtin.file:
+    path: "{{ homarr_cs_pinned_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - misc
+    - install
+
+- name: Fetch the pinned community-scripts artifacts used verbatim
+  # `checksum:` is the load-bearing part, not the tag in the URL. get_url fails
+  # the task on a mismatch, so a moved tag stops the converge instead of
+  # installing something nobody reviewed.
+  ansible.builtin.get_url:
+    url: "{{ homarr_cs_upstream_base }}/{{ item.path }}"
+    dest: "{{ homarr_cs_pinned_dir }}/{{ item.path }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ homarr_cs_artifacts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Fetch the pinned artifacts that need patching, unmodified
+  ansible.builtin.get_url:
+    url: "{{ homarr_cs_upstream_base }}/{{ item.path }}"
+    dest: "{{ homarr_cs_pinned_dir }}/{{ item.path }}.upstream"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ homarr_cs_patched_artifacts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# =============================================================================
+# 3-4. Derive the working helpers: no upstream reads, no interactive preflight
+# =============================================================================
+
+- name: Assert the endpoints the borrowed installer actually needs are reachable
+  # This is the check, and it must come before the patch below removes
+  # upstream's own preflight. Something has to assert connectivity, or the
+  # install fails deep inside a half-finished apt transaction instead of here.
+  #
+  # These are what the installer genuinely depends on: the GitHub API and
+  # release CDN, which `fetch_and_deploy_gh_release` uses to resolve and pull
+  # the Homarr build. Note it resolves "latest" — pinning this role's tag does
+  # not pin what lands here. That is recorded in the ADR, not hidden.
+  #
+  # 404 is accepted deliberately. The release CDN has no root document, so it
+  # answers 404 there — which still proves DNS, TCP and TLS to that host, which
+  # is the whole question. A connectivity failure surfaces as a timeout or a
+  # transport error, not as a status code.
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    method: HEAD
+    status_code: [200, 301, 302, 404]
+    timeout: 15
+  loop:
+    - https://api.github.com/
+    - https://objects.githubusercontent.com/
+  changed_when: false
+
+- name: Read the unmodified upstream helpers
+  ansible.builtin.slurp:
+    src: "{{ homarr_cs_pinned_dir }}/{{ item.path }}.upstream"
+  loop: "{{ homarr_cs_patched_artifacts }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: homarr_cs_upstream_content
+
+- name: Write the patched helpers
+  # Two substitutions, both load-bearing:
+  #
+  # 1. Every `.../ProxmoxVE/main/...` read becomes a `file://` read of the
+  #    pinned copies. That covers install.func's `_FUNC_BASE` bootstrap of
+  #    core.func + error_handler.func, its tools.func pull inside update_os,
+  #    and core.func's cosmetic header fetch. curl reads file:// URLs, so the
+  #    helpers load unchanged apart from where they come from. It also rewrites
+  #    the `/usr/bin/update` line customize() writes into a path we
+  #    deliberately never populate, so the unpinned self-updater cannot work
+  #    even if task 7 were skipped.
+  #
+  # 2. `network_check()` returns immediately. Measured: left in place, the
+  #    install exits 122 in under two seconds. It pings 1.1.1.1 / 8.8.8.8 /
+  #    9.9.9.9 and, when both IPv4 and IPv6 fail, prompts with
+  #    `read ... </dev/tty`. Under Ansible there is no controlling terminal, so
+  #    the read errors, the empty answer counts as "no", and it exits. Neither
+  #    half survives contact with this estate: the firewall is default-deny, so
+  #    an app-VLAN guest has no reason to ping public resolvers, and no
+  #    converge ever has a TTY. This is not routing around a failing check —
+  #    the task above replaces it with the reachability that actually matters,
+  #    over the protocol the installer really uses. The pattern only appears in
+  #    install.func; applying it to core.func is a no-op.
+  ansible.builtin.copy:
+    dest: "{{ homarr_cs_pinned_dir }}/{{ item.item.path }}"
+    content: >-
+      {{ (item.content | b64decode)
+         | regex_replace('https://raw\.githubusercontent\.com/community-scripts/ProxmoxVE/main',
+                         'file://' ~ homarr_cs_pinned_dir)
+         | regex_replace('(?m)^network_check\(\) \{$',
+                         "network_check() {\n  return 0 # neutralised by ansible-proxmox-apps (role: homarr)") }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ homarr_cs_upstream_content.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# =============================================================================
+# 4b. Make redis startable in an unprivileged LXC, before the installer needs it
+# =============================================================================
+
+- name: Ensure the redis-server drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/redis-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Allow redis to start without nested user namespacing
+  # Measured on the live guest, and NOT catchable by the molecule scenario:
+  # Debian 13's redis-server.service sets `PrivateUsers=true`, which needs a
+  # nested user namespace. Inside an unprivileged LXC without the `nesting`
+  # feature that is denied, so the unit dies with 217/USER and the borrowed
+  # installer aborts at `systemctl enable -q --now redis-server`.
+  #
+  # Upstream never hits this because build.func creates its containers with
+  # nesting enabled. Ours derives nesting only from the `docker` tag
+  # (modules/proxmox-container/locals.tf), and `features` is in the container's
+  # ignore_changes, so it is effectively set-once at creation.
+  #
+  # Disabling PrivateUsers for this one unit is the narrower change. The
+  # alternative — turning on container-wide `nesting` — grants nested
+  # namespacing to everything in the guest to fix one service. The container is
+  # already unprivileged and user-namespaced by the host (uid 0 maps to 100000),
+  # so what is lost here is a second, inner namespace around redis, not the
+  # isolation boundary that matters.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/redis-server.service.d/10-lxc-privateusers.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible-proxmox-apps (role: homarr).
+      # PrivateUsers requires a nested user namespace, which an unprivileged
+      # LXC without the nesting feature cannot provide (systemd 217/USER).
+      [Service]
+      PrivateUsers=false
+  notify: Reload systemd and clear failed units
+
+- name: Apply the drop-in before the installer enables redis
+  ansible.builtin.meta: flush_handlers
+
+# =============================================================================
+# 5. Run the borrowed installer, exactly once
+# =============================================================================
+
+- name: Install Homarr via the pinned community-scripts installer
+  # FUNCTIONS_FILE_PATH carries the CONTENT of install.func, not a path — the
+  # install script does `source /dev/stdin <<<"$FUNCTIONS_FILE_PATH"`. That
+  # env-var indirection is the only reason this path can be pinned at all; the
+  # ct/ scripts hardcode a URL instead.
+  #
+  # PASSWORD is set non-empty on purpose. The installer's customize() adds a
+  # root autologin override to the container console when it is empty, which is
+  # not something we want on a guest whose access model is the SSH CA.
+  #
+  # DIAGNOSTICS=no suppresses upstream's telemetry ping.
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      export FUNCTIONS_FILE_PATH="$(cat {{ homarr_cs_pinned_dir }}/misc/install.func)";
+      bash {{ homarr_cs_pinned_dir }}/install/homarr-install.sh
+    creates: "{{ homarr_installed_marker }}"
+  environment:
+    # Everything below is part of the contract build.func would normally have
+    # exported before calling the install script. Borrowing only the install/
+    # half means reproducing that contract by hand, and the helpers run under
+    # `set -u`, so a missing one aborts mid-install rather than degrading.
+    #
+    # APPLICATION is the display name motd_ssh() writes into the login banner;
+    # unset, the install dies at install.func line 492.
+    # `app` is what customize() interpolates into /usr/bin/update. That updater
+    # is replaced immediately after, but the variable still has to exist.
+    APPLICATION: Homarr
+    app: homarr
+    # SSH_ROOT=no is a security decision, not a default. With "yes", motd_ssh()
+    # rewrites sshd_config to PermitRootLogin yes and restarts sshd — which
+    # would quietly undo the SSH CA access model on this guest.
+    SSH_ROOT: "no"
+    # Empty, but it must EXIST. customize() guards on `[[ -n "${SSH_AUTHORIZED_KEY}" ]]`,
+    # and under `set -u` that test itself aborts when the variable is unset —
+    # the guard does not protect you, it is the thing that fails. Keys on this
+    # guest come from the SSH CA, so the value stays empty.
+    SSH_AUTHORIZED_KEY: ""
+    # PASSWORD non-empty keeps customize() from adding a root autologin getty
+    # to the container console.
+    PASSWORD: managed-by-ansible
+    DIAGNOSTICS: "no"
+    tz: "{{ ansible_date_time.tz | default('UTC') }}"
+    DEBIAN_FRONTEND: noninteractive
+  args:
+    executable: /bin/bash
+  timeout: "{{ homarr_install_timeout }}"
+  # No changed_when: `creates` already reports unchanged when it short-circuits
+  # and changed when it actually runs, which is exactly the desired semantics.
+  # A hand-written changed_when here only got it wrong.
+
+- name: Stamp the install as complete
+  # Only reachable when the task above exited 0, because a non-zero exit fails
+  # the play. That is what makes this a trustworthy `creates:` guard.
+  ansible.builtin.file:
+    path: "{{ homarr_installed_marker }}"
+    state: touch
+    owner: root
+    group: root
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
+
+# =============================================================================
+# 6-7. Take ownership back from the installer
+# =============================================================================
+
+- name: Replace the installer's unpinned self-updater
+  # customize() writes /usr/bin/update as a curl|bash of the ct/ script on the
+  # `main` branch. Leaving it in place would hand any root shell a one-word way
+  # to pull and execute unreviewed code, and to move the app version outside
+  # any change record. Ansible owns updates here.
+  ansible.builtin.copy:
+    dest: /usr/bin/update
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      echo "Managed by ansible-proxmox-apps (role: homarr)." >&2
+      echo "Bump homarr_cs_tag, re-checksum, review the diff, then converge." >&2
+      exit 1
+
+- name: Ensure Homarr and redis are enabled and running
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - redis-server
+    - "{{ homarr_service_name }}"
+
+# =============================================================================
+# 8. Prove it actually serves
+# =============================================================================
+
+- name: Wait for the Homarr port to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ homarr_port }}"
+    timeout: 180
+
+- name: Verify Homarr answers over HTTP
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ homarr_port }}/"
+    method: GET
+    status_code: [200, 302, 307]
+  register: homarr_health
+  retries: 10
+  delay: 6
+  until: homarr_health.status in [200, 302, 307]
+  changed_when: false

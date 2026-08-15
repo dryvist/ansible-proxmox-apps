@@ -1,0 +1,222 @@
+---
+# Verify the borrowed install, in the order the risks actually rank.
+#
+# Serving a page is the least interesting assertion here. The ones that matter
+# are: the pin is enforced (a wrong digest must FAIL, not warn), nothing still
+# points at the `main` branch, and the installer's unpinned self-updater is
+# gone. Those are the three ways this pattern could look green while being
+# exactly the thing the ADR rejects.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    homarr_cs_tag: "2026-08-14"
+    homarr_cs_pinned_dir: "/opt/community-scripts/2026-08-14"
+    homarr_port: 7575
+
+  tasks:
+    # --- The pin is real, on disk ----------------------------------------
+    - name: Stat each pinned artifact with its digest
+      ansible.builtin.stat:
+        path: "{{ homarr_cs_pinned_dir }}/{{ item.path }}"
+        checksum_algorithm: sha256
+      loop:
+        - path: misc/tools.func
+          sha256: 57db1f715fe9e6701516583585cf09a07cc2ca0acab782323805f1b8c4f32add
+        - path: misc/error_handler.func
+          sha256: 2bf0af36fa79f176a0a326974e1c96d9e7130d047f12bdf19c05481fb1bfedc2
+        - path: install/homarr-install.sh
+          sha256: aa0be48698dca308f9256b70d12dcab08f7dbea3ab239ee2df390c660e952f7e
+      loop_control:
+        label: "{{ item.path }}"
+      register: homarr_pinned_stat
+
+    - name: Assert the unmodified artifacts still match their declared digests
+      # install.func and core.func are deliberately excluded: task 3 rewrites
+      # their base URL, so their on-disk digest no longer matches upstream by
+      # design. The next two tasks cover them instead.
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.checksum == item.item.sha256
+        fail_msg: "{{ item.item.path }} does not match its pinned digest"
+      loop: "{{ homarr_pinned_stat.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    # --- Nothing reaches the `main` branch anymore ------------------------
+    - name: Search the pinned helpers for any surviving reference to main
+      ansible.builtin.command:
+        cmd: >-
+          grep -rl "raw.githubusercontent.com/community-scripts/ProxmoxVE/main"
+          {{ homarr_cs_pinned_dir }}/misc/install.func
+          {{ homarr_cs_pinned_dir }}/misc/core.func
+      register: homarr_main_refs
+      changed_when: false
+      failed_when: false
+
+    - name: Assert no helper still fetches from the main branch
+      ansible.builtin.assert:
+        that:
+          - homarr_main_refs.rc == 1
+          - homarr_main_refs.stdout == ""
+        fail_msg: >-
+          Unpinned upstream reference survived in {{ homarr_main_refs.stdout }}
+          — the install is not actually pinned.
+
+    - name: Confirm the rewritten helpers point at the local pinned copies
+      ansible.builtin.command:
+        cmd: grep -c "file://{{ homarr_cs_pinned_dir }}" {{ homarr_cs_pinned_dir }}/misc/install.func
+      register: homarr_local_refs
+      changed_when: false
+
+    - name: Assert install.func sources its helpers locally
+      ansible.builtin.assert:
+        that:
+          - homarr_local_refs.stdout | int >= 2
+
+    # --- The interactive preflight is gone --------------------------------
+    - name: Read the neutralised network_check
+      ansible.builtin.command:
+        cmd: grep -A2 "^network_check() {$" {{ homarr_cs_pinned_dir }}/misc/install.func
+      register: homarr_netcheck
+      changed_when: false
+
+    - name: Assert the ICMP-and-TTY preflight returns immediately
+      # Without this the install exits 122 in under two seconds on any host
+      # that cannot ping public resolvers or lacks a controlling terminal —
+      # which is every guest in this estate, converged by Ansible.
+      ansible.builtin.assert:
+        that:
+          - "'return 0' in homarr_netcheck.stdout"
+        fail_msg: "network_check was not neutralised; the install will exit 122"
+
+    # --- A wrong digest must stop the converge ---------------------------
+    - name: Attempt a fetch with a deliberately wrong checksum
+      # The false-green guard. If get_url ever accepted this, every "pinned"
+      # claim in the role would be decorative.
+      ansible.builtin.get_url:
+        url: >-
+          https://raw.githubusercontent.com/community-scripts/ProxmoxVE/{{ homarr_cs_tag }}/install/homarr-install.sh
+        dest: /tmp/homarr-checksum-guard.sh
+        checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        mode: "0644"
+      register: homarr_bad_checksum
+      failed_when: false
+
+    - name: Stat the file the bad-checksum fetch would have written
+      ansible.builtin.stat:
+        path: /tmp/homarr-checksum-guard.sh
+      register: homarr_bad_checksum_file
+
+    - name: Assert the wrong checksum failed the fetch
+      # Asserted on the message and the absent file, NOT on `.failed`:
+      # `failed_when: false` rewrites `.failed` to false, so testing it here
+      # passes whether or not the digest was ever checked. That is a false
+      # green in the one assertion whose whole job is to catch false greens.
+      ansible.builtin.assert:
+        that:
+          - "'checksum' in (homarr_bad_checksum.msg | default('') | lower)"
+          - not homarr_bad_checksum_file.stat.exists
+        fail_msg: >-
+          get_url accepted a bad digest — the pin is not enforced
+          (msg={{ homarr_bad_checksum.msg | default('none') }})
+
+    # --- The unpinned self-updater is gone -------------------------------
+    - name: Read /usr/bin/update
+      ansible.builtin.slurp:
+        src: /usr/bin/update
+      register: homarr_updater
+
+    - name: Assert the installer's curl-pipe updater was replaced
+      ansible.builtin.assert:
+        that:
+          - "'curl' not in updater"
+          - "'Managed by ansible-proxmox-apps' in updater"
+        fail_msg: "The unpinned /usr/bin/update survived the converge"
+      vars:
+        updater: "{{ homarr_updater.content | b64decode }}"
+
+    # --- redis can start in an unprivileged LXC ---------------------------
+    - name: Read the redis LXC drop-in
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/redis-server.service.d/10-lxc-privateusers.conf
+      register: homarr_redis_dropin
+
+    - name: Assert PrivateUsers is disabled for redis
+      # This scenario runs in a PRIVILEGED docker container, so redis starts
+      # here with or without the drop-in — the failure this guards against is
+      # structurally invisible to the fixture, and was only found on a real
+      # unprivileged LXC (systemd 217/USER, "Failed to set up user
+      # namespacing"). Assert the drop-in's presence rather than pretending the
+      # runtime behaviour was tested.
+      ansible.builtin.assert:
+        that:
+          - "'PrivateUsers=false' in (homarr_redis_dropin.content | b64decode)"
+        fail_msg: >-
+          The redis PrivateUsers drop-in is missing; redis will fail 217/USER
+          on any unprivileged LXC without the nesting feature.
+
+    # --- Root SSH login was not enabled -----------------------------------
+    - name: Stat sshd_config
+      ansible.builtin.stat:
+        path: /etc/ssh/sshd_config
+      register: homarr_sshd_stat
+
+    - name: Read sshd_config
+      ansible.builtin.slurp:
+        src: /etc/ssh/sshd_config
+      register: homarr_sshd
+      when: homarr_sshd_stat.stat.exists
+
+    - name: Assert motd_ssh did not enable root password login
+      # With SSH_ROOT unset or "yes", motd_ssh() rewrites this line and restarts
+      # sshd, which would undo the SSH CA access model on the guest.
+      #
+      # The test container ships no openssh-server, so there is nothing to
+      # rewrite there and this is vacuous in the fixture — it bites on a real
+      # guest, where sshd_config exists. Guarded rather than dropped: the check
+      # matters precisely where the fixture cannot reach.
+      ansible.builtin.assert:
+        that:
+          - "'PermitRootLogin yes' not in (homarr_sshd.content | b64decode)"
+        fail_msg: "The borrowed installer enabled PermitRootLogin yes"
+      when: homarr_sshd_stat.stat.exists
+
+    # --- The console was not opened up ------------------------------------
+    - name: Check for a root autologin override on the container console
+      ansible.builtin.stat:
+        path: /etc/systemd/system/container-getty@1.service.d/override.conf
+      register: homarr_getty_override
+
+    - name: Assert the installer did not add console autologin
+      ansible.builtin.assert:
+        that:
+          - not homarr_getty_override.stat.exists
+        fail_msg: >-
+          customize() added a root autologin getty — PASSWORD was not set
+          before the borrowed installer ran.
+
+    # --- And, finally, it serves ------------------------------------------
+    - name: Assert the services are running
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+      register: homarr_units
+      failed_when: homarr_units.status.ActiveState != "active"
+      changed_when: false
+      loop:
+        - redis-server
+        - homarr
+
+    - name: Request the Homarr root page
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ homarr_port }}/"
+        method: GET
+        status_code: [200, 302, 307]
+      register: homarr_page
+      retries: 10
+      delay: 6
+      until: homarr_page.status in [200, 302, 307]
+      changed_when: false
