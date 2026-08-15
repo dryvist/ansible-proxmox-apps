@@ -7,152 +7,13 @@
 #     HTTP health. Skipped by molecule; validated live at cutover.
 
 # =============================================================================
-# Phase 1: System packages + user + directories
+# Phases 1-3: system, Redis, SECRET_KEY  (see the included files)
 # =============================================================================
-- name: Install Nautobot system packages
-  ansible.builtin.apt:
-    name: "{{ nautobot_system_packages }}"
-    state: present
-    update_cache: true
+- name: Install system packages, the service user, its directories and Redis
+  ansible.builtin.include_tasks: system_and_redis.yml
 
-- name: Create the nautobot system group
-  ansible.builtin.group:
-    name: "{{ nautobot_group }}"
-    system: true
-
-- name: Create the nautobot system user
-  ansible.builtin.user:
-    name: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    system: true
-    shell: /usr/sbin/nologin
-    home: "{{ nautobot_root }}"
-    create_home: true
-
-- name: Create Nautobot directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    mode: "0755"
-  loop:
-    - "{{ nautobot_root }}"
-    - "{{ nautobot_jobs_root }}"
-    - "{{ nautobot_export_schema_dir }}"
-    - "{{ nautobot_root }}/static"
-
-# =============================================================================
-# Phase 2: Redis — colocated, loopback only
-# =============================================================================
-- name: Bind Redis to loopback only
-  ansible.builtin.lineinfile:
-    path: /etc/redis/redis.conf
-    regexp: "^bind "
-    line: "bind {{ nautobot_redis_host }} -::1"
-    state: present
-  notify: Restart redis
-
-- name: Enforce Redis protected-mode
-  ansible.builtin.lineinfile:
-    path: /etc/redis/redis.conf
-    regexp: "^protected-mode "
-    line: "protected-mode yes"
-    state: present
-  notify: Restart redis
-
-- name: Create Redis systemd override directory
-  ansible.builtin.file:
-    path: /etc/systemd/system/redis-server.service.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Deploy Redis unprivileged-LXC systemd override
-  ansible.builtin.copy:
-    dest: /etc/systemd/system/redis-server.service.d/lxc-override.conf
-    content: |
-      # Managed by Ansible (nautobot role).
-      # Debian's Redis unit enables PrivateUsers, which requires user namespace
-      # setup that unprivileged Proxmox LXCs deny.
-      [Service]
-      PrivateUsers=no
-    owner: root
-    group: root
-    mode: "0644"
-  notify:
-    - Reload systemd daemon
-    - Restart redis
-
-- name: Apply Redis systemd override before starting Redis
-  ansible.builtin.meta: flush_handlers
-
-- name: Enable and start Redis
-  ansible.builtin.systemd:
-    name: redis-server
-    state: started
-    enabled: true
-
-# =============================================================================
-# Phase 3: SECRET_KEY — bao-first, else generate-once and persist
-# =============================================================================
-- name: Decide whether a SECRET_KEY was supplied (bao/env)
-  ansible.builtin.set_fact:
-    nautobot_secret_key_supplied: "{{ (nautobot_secret_key | default('', true) | length) > 0 }}"
-
-- name: Persist the supplied SECRET_KEY
-  ansible.builtin.copy:
-    content: "{{ nautobot_secret_key }}"
-    dest: "{{ nautobot_secret_key_file }}"
-    owner: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    mode: "0600"
-  no_log: true
-  when: nautobot_secret_key_supplied
-
-- name: Stat the persisted SECRET_KEY
-  ansible.builtin.stat:
-    path: "{{ nautobot_secret_key_file }}"
-  register: nautobot_secret_key_stat
-
-- name: Generate a SECRET_KEY once when none supplied and none persisted
-  ansible.builtin.copy:
-    content: "{{ lookup('community.general.random_string', length=64, special=false) }}"
-    dest: "{{ nautobot_secret_key_file }}"
-    owner: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    mode: "0600"
-  no_log: true
-  when:
-    - not nautobot_secret_key_supplied
-    - not nautobot_secret_key_stat.stat.exists
-
-- name: Read the effective SECRET_KEY
-  ansible.builtin.slurp:
-    src: "{{ nautobot_secret_key_file }}"
-  register: nautobot_secret_key_slurp
-  no_log: true
-
-- name: Publish the effective SECRET_KEY fact
-  ansible.builtin.set_fact:
-    nautobot_effective_secret_key: "{{ nautobot_secret_key_slurp.content | b64decode | trim }}"
-  no_log: true
-
-# Back the key up into OpenBao. When it was generated here rather than supplied,
-# the guest holds the only copy — and a rotated Django SECRET_KEY invalidates
-# every session and every signed value. The field name is the bare `secret_key`
-# that inventory/group_vars/nautobot_group.yml already reads, so publishing
-# closes the loop: the next converge resolves it bao-first instead.
-- name: Publish the Nautobot SECRET_KEY to OpenBao
-  ansible.builtin.include_role:
-    name: openbao_secrets
-    tasks_from: publish.yml
-  vars:
-    openbao_secrets_publish_app: nautobot
-    openbao_secrets_publish_reason: (Django SECRET_KEY)
-    openbao_secrets_publish_data:
-      secret_key: "{{ nautobot_effective_secret_key }}"
+- name: Resolve, persist and publish the SECRET_KEY
+  ansible.builtin.include_tasks: secret_key.yml
 
 # =============================================================================
 # Phase 4: Python venv + Nautobot install (heavy — gated)
@@ -203,6 +64,37 @@
     group: "{{ nautobot_group }}"
     mode: "0644"
   notify: Restart nautobot services
+
+# Guard the one value that breaks silently. An empty bucket templates into the
+# EnvironmentFile exactly like a real one, so the converge stays green and the
+# failure surfaces only in the next scheduled export's own log, while the last
+# published object keeps answering every consumer. Fail at the write instead.
+- name: Refuse to render an environment file with no export bucket
+  ansible.builtin.assert:
+    that:
+      - nautobot_export_s3_bucket | default('', true) | trim | length > 0
+    fail_msg: >-
+      nautobot_export_s3_bucket resolved to empty, so the scheduled export to
+      s3://<bucket>/{{ nautobot_export_s3_key }} would be written with no
+      bucket and fail on every run while the previously published object stayed
+      in place. Set NAUTOBOT_EXPORT_S3_BUCKET, or leave it unset to take the
+      declared default (nautobot_export_s3_bucket_default).
+    success_msg: "Export bucket resolved: {{ nautobot_export_s3_bucket }}"
+    quiet: true
+
+# A half-configured S3 target is worse than an unconfigured one: with an
+# endpoint but no keys, boto3 silently falls back to ambient AWS credentials and
+# publishes somewhere nobody is looking.
+- name: Refuse a half-configured export credential set
+  ansible.builtin.assert:
+    that:
+      - (nautobot_export_s3_access_key | default('', true) | length > 0)
+        == (nautobot_export_s3_secret_key | default('', true) | length > 0)
+    fail_msg: >-
+      Exactly one of NAUTOBOT_EXPORT_S3_ACCESS_KEY / _SECRET_KEY is set. Set
+      both to publish with the export's own key, or neither to fall back to
+      ambient credentials — never one.
+    quiet: true
 
 - name: Render the root-only environment file
   ansible.builtin.template:
