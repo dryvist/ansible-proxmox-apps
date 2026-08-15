@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.14.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.2...v4.14.3) (2026-08-15)
+
+
+### Bug Fixes
+
+* **technitium_dns:** derive zone authority from the live server and stop silent no-op runs ([#1517](https://github.com/dryvist/ansible-proxmox-apps/issues/1517)) ([0e70354](https://github.com/dryvist/ansible-proxmox-apps/commit/0e7035410cdda098046097a78b8bf87dae9ab30d))
+
 ## [4.14.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.1...v4.14.2) (2026-08-14)
 
 
