@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.15.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.3...v4.15.0) (2026-08-15)
+
+
+### Features
+
+* **homarr:** install Homarr from a pinned community-scripts installer ([#1519](https://github.com/dryvist/ansible-proxmox-apps/issues/1519)) ([1e8b37e](https://github.com/dryvist/ansible-proxmox-apps/commit/1e8b37e5f0c0b8e7078e1059afccdaf1b1296ae0))
+
+
+### Bug Fixes
+
+* **homarr:** let redis start in an unprivileged LXC, and stamp the install honestly ([#1523](https://github.com/dryvist/ansible-proxmox-apps/issues/1523)) ([52fe25b](https://github.com/dryvist/ansible-proxmox-apps/commit/52fe25b742d1f4e73fdd96ce808f3e02c6adfca9))
+* **technitium_dns:** derive the AXFR allow-list from live roles, not the vmid guess ([#1522](https://github.com/dryvist/ansible-proxmox-apps/issues/1522)) ([ed0b7b5](https://github.com/dryvist/ansible-proxmox-apps/commit/ed0b7b521b6d82e742845805986eedea6de7b62f))
+
 ## [4.14.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.14.2...v4.14.3) (2026-08-15)
 
 
