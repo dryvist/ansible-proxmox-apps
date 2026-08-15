@@ -204,6 +204,37 @@
     mode: "0644"
   notify: Restart nautobot services
 
+# Guard the one value that breaks silently. An empty bucket templates into the
+# EnvironmentFile exactly like a real one, so the converge stays green and the
+# failure surfaces only in the next scheduled export's own log, while the last
+# published object keeps answering every consumer. Fail at the write instead.
+- name: Refuse to render an environment file with no export bucket
+  ansible.builtin.assert:
+    that:
+      - nautobot_export_s3_bucket | default('', true) | trim | length > 0
+    fail_msg: >-
+      nautobot_export_s3_bucket resolved to empty, so the scheduled export to
+      s3://<bucket>/{{ nautobot_export_s3_key }} would be written with no
+      bucket and fail on every run while the previously published object stayed
+      in place. Set NAUTOBOT_EXPORT_S3_BUCKET, or leave it unset to take the
+      declared default (nautobot_export_s3_bucket_default).
+    success_msg: "Export bucket resolved: {{ nautobot_export_s3_bucket }}"
+    quiet: true
+
+# A half-configured S3 target is worse than an unconfigured one: with an
+# endpoint but no keys, boto3 silently falls back to ambient AWS credentials and
+# publishes somewhere nobody is looking.
+- name: Refuse a half-configured export credential set
+  ansible.builtin.assert:
+    that:
+      - (nautobot_export_s3_access_key | default('', true) | length > 0)
+        == (nautobot_export_s3_secret_key | default('', true) | length > 0)
+    fail_msg: >-
+      Exactly one of NAUTOBOT_EXPORT_S3_ACCESS_KEY / _SECRET_KEY is set. Set
+      both to publish with the export's own key, or neither to fall back to
+      ambient credentials — never one.
+    quiet: true
+
 - name: Render the root-only environment file
   ansible.builtin.template:
     src: nautobot.env.j2
