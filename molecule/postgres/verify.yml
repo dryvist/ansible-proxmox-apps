@@ -146,3 +146,27 @@
           slots present: {{ slot_names }}
       vars:
         slot_names: "{{ postgres_slots_after.query_result | map(attribute='slot_name') | list }}"
+
+    - name: Read root's authorized_keys
+      ansible.builtin.slurp:
+        src: /root/.ssh/authorized_keys
+      register: postgres_root_authorized_keys
+
+    # The pull key is a standing credential on every database guest, so the
+    # restriction is the whole of its safety. Without key_options the same key
+    # is an unrestricted root shell; that renders as a line STARTING with the
+    # key type, which is what the first assertion catches.
+    - name: Assert the standby puller's key is installed under a forced command
+      ansible.builtin.assert:
+        that:
+          - "not (authorized_keys_text is search('(?m)^ssh-ed25519 '))"
+          - "'restrict,command=\"rrsync -ro ' ~ backup_dir ~ '\"' in authorized_keys_text"
+          - "'postgres-standby-pull' in authorized_keys_text"
+        fail_msg: >-
+          the standby puller's key is missing or UNRESTRICTED in
+          /root/.ssh/authorized_keys
+      vars:
+        authorized_keys_text: "{{ postgres_root_authorized_keys.content | b64decode }}"
+        # Spelled out rather than read from postgres_backup_dir: a verify play
+        # does not include the role, so its defaults are not in scope here.
+        backup_dir: /var/lib/postgresql/backups

@@ -1,52 +1,14 @@
 ---
-# Converge this role from `develop` only. The image is built from the checkout
-# you run from, so converging from `main` ships whatever runner version and
-# packages `main` still carries — that has already downgraded a live fleet to a
-# runner too old for `using: node24` actions.
-#
-# The guards below cannot enforce this on their own: they check the built image
-# against that same checkout's Dockerfile, so a converge from a stale branch is
-# self-consistent and passes the version check. Today's `main` happens to be
-# caught, by the sudo guard rather than the version one. The rule is what
-# actually protects the fleet.
-#
-# =============================================================================
-# Resolve repository list
-# =============================================================================
-
-- name: Resolve runner repository list
-  ansible.builtin.set_fact:
-    _github_runner_repos: >-
-      {{
-        github_runner_repositories
-        if (github_runner_repositories is defined and github_runner_repositories | length > 0)
-        else [{'repo': github_runner_repository}]
-      }}
-
-- name: Validate runner repository list
+- name: Validate the native organization runner pool
   ansible.builtin.assert:
     that:
-      - _github_runner_repos | length > 0
-      - _github_runner_repos | map(attribute='repo') | select('match', '.+/.+') | list | length
-        == _github_runner_repos | length
+      - github_runner_org | length > 0
+      - github_runner_group | length > 0
+      - github_runner_replicas | int > 0
+      - github_runner_access_token | length > 0
     fail_msg: >-
-      github_runner_repositories must be a non-empty list of dicts with
-      'repo' keys in 'Owner/repo' format.
-
-- name: Validate token usage for multi-repo
-  ansible.builtin.assert:
-    that:
-      - not (_github_runner_repos | length > 1
-        and github_runner_token is defined
-        and github_runner_admin_token is not defined)
-    fail_msg: >-
-      Using a single GITHUB_RUNNER_TOKEN with multiple repositories is not
-      supported. Please use GH_PAT_RUNNER_TOKEN (github_runner_admin_token)
-      for multi-repo setups.
-
-# =============================================================================
-# Work Directory Setup
-# =============================================================================
+      The runner pool needs an organization, runner group, positive replica
+      count, and GH_PAT_RUNNER_TOKEN in the converge environment.
 
 - name: Create GitHub runner work directory
   ansible.builtin.file:
@@ -56,45 +18,7 @@
     group: root
     mode: "0755"
 
-# =============================================================================
-# Build Files
-# =============================================================================
-
-- name: Copy build files
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ github_runner_work_dir }}/{{ item.dest | default(item.src) }}"
-    owner: root
-    group: root
-    mode: "{{ item.mode }}"
-  loop:
-    - { src: Dockerfile, mode: "0644" }
-    - { src: entrypoint.sh, mode: "0755" }
-    # Repo-root requirements.yml is copied into the build context so the
-    # Dockerfile can pre-bake the pinned Galaxy content; it lives outside the
-    # role's files/ search path, so the src needs an explicit path and the
-    # dest its plain basename.
-    - src: "{{ playbook_dir }}/../requirements.yml"
-      dest: requirements.yml
-      mode: "0644"
-
-# Tag the image by the content that produced it, so "which image is this host
-# running" is answerable from the tag alone. A rebuild yields a new tag, which
-# changes the rendered compose file, which is what makes compose recreate the
-# containers — the drift that a fixed tag made undetectable and unrepairable.
-- name: Derive the image tag from the build-context content hash
-  ansible.builtin.set_fact:
-    github_runner_image_tag: >-
-      {{ ((lookup('file', role_path ~ '/files/Dockerfile')
-           ~ lookup('file', role_path ~ '/files/entrypoint.sh')
-           ~ lookup('file', playbook_dir ~ '/../requirements.yml'))
-          | hash('sha1'))[:12] }}
-
-# =============================================================================
-# Docker Compose Deployment
-# =============================================================================
-
-- name: Look up the host docker group GID (for the socket group_add)
+- name: Look up the host docker group GID
   ansible.builtin.getent:
     database: group
     key: docker
@@ -103,27 +27,18 @@
   ansible.builtin.set_fact:
     github_runner_docker_gid: "{{ getent_group.docker[1] }}"
 
-- name: Stat the docker socket the runners bind-mount
+- name: Stat the Docker socket
   ansible.builtin.stat:
     path: /var/run/docker.sock
   register: github_runner_docker_sock
 
-# group_add has to match the socket's owning GID, not merely the GID of a group
-# named "docker" — they diverge on a host where the socket is group-owned by
-# something else, and the runners then fail with "Unable to contact the Docker
-# daemon" only once a job tries to use it.
-- name: Assert the group_add GID matches the docker socket's group
+- name: Validate runner Docker socket access
   ansible.builtin.assert:
     that:
       - github_runner_docker_sock.stat.exists
       - github_runner_docker_sock.stat.gid | int == github_runner_docker_gid | int
-    fail_msg: >-
-      /var/run/docker.sock on {{ inventory_hostname }} is group-owned by GID
-      {{ github_runner_docker_sock.stat.gid | default('<no socket>') }}, but the
-      docker group is GID {{ github_runner_docker_gid }}. Runners would start and
-      then fail to reach the daemon.
 
-- name: Deploy docker-compose template
+- name: Deploy native runner compose configuration
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ github_runner_work_dir }}/docker-compose.yml"
@@ -131,122 +46,25 @@
     group: root
     mode: "0600"
   no_log: true
-  register: github_runner_compose
 
-# =============================================================================
-# Python venv for Ansible Docker modules
-# =============================================================================
-
-- name: Install Python venv and pip for dependencies
-  ansible.builtin.apt:
-    name:
-      - python3-pip
-      - python3-venv
-      - python3-full
-    state: present
-    update_cache: true
-
-- name: Create virtualenv for Ansible Python dependencies
-  ansible.builtin.pip:
-    name:
-      - docker
-    state: present
-    virtualenv: /opt/ansible-venv
-    virtualenv_command: python3 -m venv
-
-- name: Set Python interpreter to use venv for subsequent tasks
-  ansible.builtin.set_fact:
-    ansible_python_interpreter: /opt/ansible-venv/bin/python
-
-# No force_source: the tag IS the build context's hash, so an existing tag can
-# only be the image this context produces, and a changed context asks for a tag
-# that does not exist yet. Keying the rebuild off "did the file copy change"
-# instead left a host with a current Dockerfile and a stale image permanently
-# unable to repair itself — the copy reported unchanged, so nothing rebuilt.
-- name: Build runner image
-  community.docker.docker_image:
-    name: "{{ github_runner_image_name }}"
-    tag: "{{ github_runner_image_tag }}"
-    source: build
-    build:
-      path: "{{ github_runner_work_dir }}"
-      pull: true
-
-# A runner that starts fine but lacks what jobs need fails much later, inside an
-# unrelated job, as someone else's bug. Both states below were observed live:
-# an image without sudo, and an image whose bundled runner predated the
-# Dockerfile's RUNNER_VERSION (too old for `using: node24` actions).
-- name: Probe the built image for what CI jobs require of it
-  ansible.builtin.command:
-    cmd: >-
-      docker run --rm --entrypoint sh
-      {{ github_runner_image_name }}:{{ github_runner_image_tag }}
-      -c 'command -v sudo >/dev/null || echo MISSING_SUDO; ./bin/Runner.Listener --version'
-  register: github_runner_image_probe
-  changed_when: false
-
-- name: Assert the built image satisfies its own requirements
-  vars:
-    _wanted_runner_version: >-
-      {{ (lookup('file', role_path ~ '/files/Dockerfile')
-          | regex_search('RUNNER_VERSION=([0-9.]+)', '\1') | first) }}
-  ansible.builtin.assert:
-    that:
-      - "'MISSING_SUDO' not in github_runner_image_probe.stdout"
-      - github_runner_image_probe.stdout_lines | last is version(_wanted_runner_version, '>=')
-    fail_msg: >-
-      Image {{ github_runner_image_name }}:{{ github_runner_image_tag }} is not fit
-      to serve jobs — wanted runner >= {{ _wanted_runner_version }} with sudo
-      present, probe returned: {{ github_runner_image_probe.stdout | trim }}
-
-- name: Deploy GitHub Actions runners via docker compose
+- name: Pull and converge native GitHub Actions runners
   community.docker.docker_compose_v2:
     project_src: "{{ github_runner_work_dir }}"
     project_name: github-runner
     state: present
+    pull: always
+    remove_orphans: true
 
-# Content-hash tags accumulate one multi-GB image per build context, where a
-# fixed tag reused the same one. Superseded tags are unreferenced by definition
-# once compose is on the current tag. GC never fails the converge — an image
-# still pinned by some stopped container is a reason to skip it, not to abort a
-# deploy that already succeeded.
-- name: Drop superseded runner image tags
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      docker image ls "{{ github_runner_image_name }}" \
-        | awk 'NR > 1 && $2 != "{{ github_runner_image_tag }}" {print $1 ":" $2}' \
-        | xargs -r docker image rm
-    executable: /bin/bash
-  register: github_runner_image_gc
-  changed_when: github_runner_image_gc.stdout | length > 0
-  failed_when: false
-
-# =============================================================================
-# Health Check
-# =============================================================================
-
-- name: Verify runner containers are running
+- name: Verify exactly the pooled runner replicas are running
   ansible.builtin.command:
     cmd: docker compose -p github-runner ps --format json
     chdir: "{{ github_runner_work_dir }}"
   register: github_runner_ps
   changed_when: false
 
-- name: Calculate expected total replicas
-  ansible.builtin.set_fact:
-    github_runner_expected_replicas: >-
-      {{ _github_runner_repos
-         | map(attribute='replicas', default=github_runner_default_replicas)
-         | map('int')
-         | sum }}
-
-- name: Assert all runner replicas are running
+- name: Assert runner replica count
   vars:
     _runner_count: "{{ github_runner_ps.stdout_lines | map('from_json') | list | length }}"
   ansible.builtin.assert:
     that:
-      - _runner_count | int >= github_runner_expected_replicas | int
-    fail_msg: >-
-      Expected {{ github_runner_expected_replicas }} runner containers but found
-      {{ _runner_count }}
+      - _runner_count | int == github_runner_replicas | int

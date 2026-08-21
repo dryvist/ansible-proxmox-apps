@@ -45,6 +45,19 @@ ansible-lint
 > dynamic inventory via `add_host`. Running with `--limit <group>` but **not**
 > `localhost` silently skips the loader, so no hosts are added and every play
 > reports "no hosts matched". Always use `--limit <group>,localhost`.
+>
+> **`scripts/run-ansible.sh` wraps `ansible-playbook` with a stale-checkout
+> guard — the commands above call `ansible-playbook` directly and skip it.**
+> The guard refuses to converge from a checkout behind its tracked branch (a
+> stale checkout deploys old content and still exits 0 with a green play
+> recap); `ALLOW_STALE_CHECKOUT=1` is the deliberate escape hatch for a
+> pinned replay. It does **not** cover every stale-checkout case: a detached
+> HEAD (CI's PR checkout, or a manual `git checkout <sha>`) has no tracked
+> branch to compare against, so the guard skips the check there rather than
+> failing — it does not, and structurally cannot, detect staleness on a
+> detached checkout. Use `doppler run -- scripts/run-ansible.sh
+> playbooks/site.yml ...` in place of the direct `ansible-playbook` calls
+> above when checkout freshness matters.
 
 ## Execution Performance & Optimization
 
