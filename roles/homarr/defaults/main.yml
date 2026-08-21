@@ -101,14 +101,26 @@ homarr_db_url: "{{ homarr_data_dir }}/db.sqlite"
 
 # `credentials` is not optional — see the note in homarr.env.j2. OIDC is added
 # alongside it, never instead of it.
-homarr_auth_providers: "{{ 'credentials,oidc' if homarr_oidc_enabled else 'credentials' }}"
+homarr_auth_providers: "{{ 'credentials,oidc' if homarr_oidc_enabled | bool else 'credentials' }}"
 
-homarr_oidc_enabled: false
+# Derived, never hardcoded true: OIDC is offered only once a client secret
+# actually exists. Hardcoding true made every environment without the secret
+# (Molecule above all) start Homarr advertising an `oidc` provider pointed at a
+# non-existent issuer with an empty secret, which 500s its onboarding flow.
+# Production gets the secret from OpenBao via inventory/group_vars, so this
+# evaluates true there and false everywhere else, with no separate switch.
+homarr_oidc_enabled: "{{ homarr_oidc_client_secret | length > 0 }}"
 homarr_oidc_client_id: homarr
 homarr_oidc_client_name: Authelia
 homarr_oidc_auto_login: false
 homarr_oidc_issuer: ""
 homarr_oidc_client_secret: ""
+# Authelia's own documented Homarr integration flags that Homarr's OIDC client
+# does not support signed userinfo/token responses and requires this escape
+# hatch — https://www.authelia.com/integration/openid-connect/clients/homarr/.
+# Matches access_token_signed_response_alg/userinfo_signed_response_alg: none
+# on the Authelia client side (ansible-proxmox-apps roles/authelia).
+homarr_oidc_force_userinfo: true
 
 # --- API surface --------------------------------------------------------------
 # Ansible talks to Homarr DIRECTLY, never through the Traefik vhost. The fronted
