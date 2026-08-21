@@ -1,5 +1,38 @@
 # Changelog
 
+## [4.17.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.16.0...v4.17.0) (2026-08-21)
+
+
+### Features
+
+* **authelia:** register Homarr and Langfuse OIDC clients ([#1554](https://github.com/dryvist/ansible-proxmox-apps/issues/1554)) ([0c1b075](https://github.com/dryvist/ansible-proxmox-apps/commit/0c1b075750da8e26b6292366caf78647c05dbe89))
+* **homarr:** configure integrations from OpenBao over the Homarr API ([#1539](https://github.com/dryvist/ansible-proxmox-apps/issues/1539)) ([2a974a1](https://github.com/dryvist/ansible-proxmox-apps/commit/2a974a151d6586997fa5d9032322467404969c39))
+* **homarr:** enable Authelia OIDC login ([#1555](https://github.com/dryvist/ansible-proxmox-apps/issues/1555)) ([522c636](https://github.com/dryvist/ansible-proxmox-apps/commit/522c6360539fb0554ad031f782d5bd0f00f696b2))
+* **openbao:** grant LiteLLM provider credential leaves ([5d64c48](https://github.com/dryvist/ansible-proxmox-apps/commit/5d64c48cef116430c89b517fedb5c84e5c10967f))
+* **openbao:** grant LiteLLM provider credential leaves ([7f45cbf](https://github.com/dryvist/ansible-proxmox-apps/commit/7f45cbff48c8805192bb36aa0322e0560c46201d))
+* **postgres:** confine the standby puller's key to a read-only rsync ([2015859](https://github.com/dryvist/ansible-proxmox-apps/commit/2015859f49faa7e2fd3ecfbf2e44b43aab5be2b3))
+* **zammad:** declare ticket_number_increment with a 7-digit minimum ([7fbf37f](https://github.com/dryvist/ansible-proxmox-apps/commit/7fbf37f04cda6fc8d2cc1f36baf00490eb31ac4f))
+* **zammad:** declare ticket_number_increment with a 7-digit minimum ([fdb30a7](https://github.com/dryvist/ansible-proxmox-apps/commit/fdb30a7e2306a3ee466eb8333e6e54b73e7e6661))
+
+
+### Bug Fixes
+
+* **cribl_stream:** restore cribl_stream_splunk_hec_tls default ([ced3364](https://github.com/dryvist/ansible-proxmox-apps/commit/ced3364df51f434b2f41522446fb2cf8232c0295))
+* **dns:** front splunk web UI through the shared ingress VIP ([e1d665a](https://github.com/dryvist/ansible-proxmox-apps/commit/e1d665ad3368d926b4f3916c1590a75173311262))
+* **dns:** front splunk web UI through the shared ingress VIP ([063bb50](https://github.com/dryvist/ansible-proxmox-apps/commit/063bb50248b3dfa228defb97dd8ff0f1f54bbe4e))
+* **github_runner:** read injected token at play boundary ([#1562](https://github.com/dryvist/ansible-proxmox-apps/issues/1562)) ([f48c034](https://github.com/dryvist/ansible-proxmox-apps/commit/f48c034017095295aef796ff0fe8a7812839ddd0))
+* **inventory:** restore litellm's dedicated syslog route for llm_router_group ([#1544](https://github.com/dryvist/ansible-proxmox-apps/issues/1544)) ([ed248a2](https://github.com/dryvist/ansible-proxmox-apps/commit/ed248a2f3903f545bfd24fba6476525002115100))
+* **molecule:** derive expected policy names outside the assert conditional ([#1558](https://github.com/dryvist/ansible-proxmox-apps/issues/1558)) ([8d5e9eb](https://github.com/dryvist/ansible-proxmox-apps/commit/8d5e9ebd2717ee745fd0918a7d30e1cf82871870))
+* **scripts,inventory:** port converge guards; add llm_router_group tag mapping ([#1545](https://github.com/dryvist/ansible-proxmox-apps/issues/1545)) ([a130ef8](https://github.com/dryvist/ansible-proxmox-apps/commit/a130ef8fec7cdd4fe2197014797233d3b280b0ec))
+* **scripts:** refuse a converge from a dirty working tree ([#1547](https://github.com/dryvist/ansible-proxmox-apps/issues/1547)) ([b4da140](https://github.com/dryvist/ansible-proxmox-apps/commit/b4da1409387fbedd59f6458b9f6efc104c14b367))
+* use Langfuse v4 OTLP endpoint ([6023fbd](https://github.com/dryvist/ansible-proxmox-apps/commit/6023fbdd0a87cd0954aa5a6033dc0c0275b0447e))
+* use Langfuse v4 OTLP trace endpoint ([2c996c6](https://github.com/dryvist/ansible-proxmox-apps/commit/2c996c68dfc48fd35146ab67a8c04827d8a47358))
+
+
+### Performance
+
+* **ci:** run the checks a change needs ([#1470](https://github.com/dryvist/ansible-proxmox-apps/issues/1470)) ([ee06451](https://github.com/dryvist/ansible-proxmox-apps/commit/ee06451f8d1c78af16bb731943bda946c315579d))
+
 ## [4.16.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.15.2...v4.16.0) (2026-08-15)
 
 
