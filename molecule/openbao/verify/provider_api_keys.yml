@@ -4,9 +4,7 @@
   ansible.builtin.assert:
     that:
       - openbao_ai_api_key_providers == expected_api_key_providers
-      - openbao_ai_api_key_policy_names
-        == (expected_api_key_providers
-            | map('regex_replace', '^(.+)$', 'ai-api-key-\1') | list)
+      - openbao_ai_api_key_policy_names == expected_policy_names
       - openbao_ai_api_key_policies | length == expected_api_key_providers | length
       - >-
         (openbao_approles
@@ -15,6 +13,16 @@
         == [openbao_local_llm_policy_name] + openbao_ai_api_key_policy_names
     fail_msg: Provider API-key policy composition drifted from its inventory.
   vars:
+    # Derived here in `vars:` rather than inline in `that:` ON PURPOSE. A bare
+    # Jinja conditional (assert.that / when:) compiles via a path that decodes
+    # the single-quoted literal 'ai-api-key-\1' as a Python OCTAL escape, so
+    # `\1` becomes chr(1) before regex_replace ever sees it and every element
+    # collapses to the same "ai-api-key-\x01". The identical expression inside
+    # a `{{ }}` template renders correctly. Keep the regex_replace out of the
+    # conditional so this compares two already-native lists.
+    expected_policy_names: >-
+      {{ expected_api_key_providers
+         | map('regex_replace', '^(.+)$', 'ai-api-key-\1') | list }}
     expected_api_key_providers:
       - openrouter
       - gemini
