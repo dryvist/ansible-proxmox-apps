@@ -9,37 +9,37 @@ github_runner_work_dir: "/opt/github-runner"
 # var only to pin a known-good build during an incident.
 
 # ---------------------------------------------------------------------------
-# Multi-repo runner list (preferred)
-# Each entry: { repo, replicas, labels, name_prefix, cpu_limit, memory_limit }
-# Omitted keys fall back to the github_runner_default_* values below.
+# One org-level pool. Set these per host group (see docker_vms.yml), not here.
 # ---------------------------------------------------------------------------
-# github_runner_repositories:
-#   - repo: "Owner/repo-name"
-#     replicas: 2
-#     labels: "self-hosted,Linux,X64,proxmox"
+github_runner_org: ""
+github_runner_group: ""
+github_runner_replicas: 1
+github_runner_labels: "self-hosted,Linux,X64,proxmox"
+github_runner_name_prefix: "proxmox-runner"
+# Ceilings on the runner container itself. They do NOT bound the test
+# containers it starts through docker.sock — those are siblings on the shared
+# daemon. What bounds those is github_runner_replicas.
+github_runner_cpu_limit: "1.0"
+github_runner_memory_limit: "2g"
 
-# Legacy single-repo mode — auto-converted to a one-entry list at runtime.
-# Ignored when github_runner_repositories is defined.
-github_runner_repository: ""
-
-# Defaults applied when per-repo overrides are omitted
-github_runner_default_replicas: 1
-github_runner_default_labels: "self-hosted,Linux,X64,proxmox"
-github_runner_default_name_prefix: "proxmox-runner"
-github_runner_default_cpu_limit: "1.0"
-github_runner_default_memory_limit: "2g"
-
-# Admin PAT (fine-grained, Administration: Read & Write).
-# Stored in Doppler project gh-workflow-tokens; injected via chained
-# `doppler run -p gh-workflow-tokens -c prd --` at deploy time.
-# Each runner container uses this to auto-generate ephemeral registration
-# tokens at startup — no manual token rotation needed.
-github_runner_admin_token: "{{ lookup('env', 'GH_PAT_RUNNER_TOKEN') | default(omit, true) }}"
+# OpenBao secret-zero for the github-runner AppRole. The container exchanges
+# these for a short-lived token, mints a GitHub App installation token limited
+# to organization_self_hosted_runners:write, and asks GitHub for a
+# registration token — at every start, because registration tokens expire in
+# an hour and these containers restart.
+#
+# This replaced a long-lived fine-grained PAT held in the container env. The
+# AppRole is revocable, audited, and cannot read repository content; the PAT
+# was none of those. Do not reintroduce a PAT path as a fallback — a fallback
+# that works is the credential everyone ends up on.
+github_runner_bao_addr: "{{ lookup('env', 'BAO_ADDR') | default(lookup('env', 'VAULT_ADDR'), true) }}"
+github_runner_bao_role_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID') | default('', true) }}
+github_runner_bao_secret_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_GITHUB_RUNNER_SECRET_ID') | default('', true) }}
+github_runner_bao_permission_set: "runner-register-dryvist"
+github_runner_bao_github_mount: "github"
 
 # SOPS age private key (raw key content, not path).
 # Passed into runner containers so E2E tests can decrypt secrets.enc.yaml.
 github_runner_sops_age_key: "{{ lookup('env', 'SOPS_AGE_KEY') | default(omit, true) }}"
-
-# Legacy registration token (deprecated — use admin token instead).
-# Kept for backward compatibility; expires in 1h and is single-repo.
-github_runner_token: "{{ lookup('env', 'GITHUB_RUNNER_TOKEN') | default(omit, true) }}"

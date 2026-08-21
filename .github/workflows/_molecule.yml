@@ -11,104 +11,67 @@ on:
 permissions:
   contents: read
 
-# Bound Molecule across the whole fleet, not just within one run.
-#
-# `max-parallel` on the matrix below bounds a single workflow run. It cannot
-# bound the sum across concurrent runs, and the test containers are siblings on
-# one shared, oversubscribed Docker daemon (see the note on `test`), so what
-# actually starves is the total in flight across every run at once.
-#
-# A GitHub concurrency group is all-or-one — it cannot express "at most N runs"
-# — so this serializes Molecule fleet-wide, trading queue time for a bound that
-# holds no matter how many runs are open.
-#
-# `cancel-in-progress: false`: a half-finished Molecule run leaves containers
-# behind on the shared daemon, so cancelling to start another adds load rather
-# than freeing it. Superseded runs are already cancelled per-PR by the caller's
-# own group in ci-gate.yml, which releases this one.
-#
-# The group name is deliberately distinct from any caller's group: a caller that
-# shares a reusable workflow's EXACT group deadlocks into an opaque 0-job
-# startup_failure (see the header of ai-pr-care.yml).
-concurrency:
-  group: molecule-fleet-shared-dockerd
-  cancel-in-progress: false
-
 jobs:
-  # Narrow the matrix to the scenarios a change can actually affect.
-  #
-  # The containers are siblings on a shared, oversubscribed dockerd (see the
-  # concurrency note on `test`), so the number running at once across ALL
-  # in-flight PRs is what starves. max-parallel bounds one run; it cannot bound
-  # the fleet. Running 20 scenarios for a one-role change is the largest
-  # avoidable contributor to that.
-  #
-  # The policy in scripts/select_molecule_scenarios.py fails safe: it narrows
-  # only when every changed path maps to a specific scenario or is
-  # documentation, and returns the full set for anything shared or
-  # unrecognised. Skipping a scenario that should have run is a silent loss of
-  # coverage, which is worse than a slow run.
-  select:
+  # Which scenarios does this change actually need? Hosted, cheap, and off the
+  # fleet — deciding what to run must never queue behind the thing it decides.
+  scenarios:
     name: Select scenarios
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      scenarios: ${{ steps.pick.outputs.scenarios }}
-      any: ${{ steps.pick.outputs.any }}
+      list: ${{ steps.select.outputs.list }}
+      reason: ${{ steps.select.outputs.reason }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # The selection diffs against the merge base, which shallow history
+          # cannot resolve.
           fetch-depth: 0
+      # Fail loudly if the parser stops resolving roles. A silently-broken
+      # parser selects `default` alone: green, fast, and testing almost nothing.
+      - name: Verify the selector still resolves roles
+        run: python3 .github/scripts/select-molecule-scenarios.py --self-check
 
-      - name: Pick the scenarios this change needs
-        id: pick
+      - name: Select scenarios
+        id: select
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: .github/scripts/select-molecule-scenarios.sh
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PRODUCTION_BRANCH: main
+        run: python3 .github/scripts/select-molecule-scenarios.py
 
   test:
     name: Molecule (${{ matrix.scenario }})
-    needs: select
-    if: needs.select.outputs.any == 'true'
+    needs: scenarios
     # Self-hosted (pre-baked toolchain); fork PRs fall back to a hosted runner
     # so fork-author code never runs on the fleet.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
-      # Concurrency is the only lever that bounds Molecule's load here.
+      # No max-parallel here. The test containers are created through the
+      # bind-mounted docker.sock, so they are SIBLINGS of the runner on the
+      # shared dockerd -- not children of its cgroup -- and the runner's own
+      # cpus/mem_limit does not apply to them. What bounds that shared daemon is
+      # the fleet's runner-slot count (inventory/group_vars/docker_vms.yml), and
+      # it bounds every repo at once.
       #
-      # The test containers are created through the bind-mounted docker.sock,
-      # so they are SIBLINGS of the runner on the shared dockerd -- not children
-      # of its cgroup. The runner's own cpus/mem_limit therefore does not apply
-      # to them, and the host is deliberately oversubscribed, so an unbounded
-      # matrix can starve a scenario mid-run and the container dies.
+      # max-parallel bounded ONE run, and the slot count already held it to the
+      # same number, so it never did anything -- while its comment claimed a
+      # fleet guarantee it could not provide. That wrong claim is what sent a
+      # flakiness investigation after per-PR concurrency instead of the real
+      # defect: a cap fragmented across five per-repo registrations, summing to
+      # more slots than the host carried.
       #
-      # Capping concurrency bounds that without capping any single container.
-      # A per-container `memory:` ceiling was tried and reverted: 1536m killed
-      # download_vpn outright while the same scenario passed on develop, and no
-      # measurement existed to justify any particular number. Bound what is
-      # actually shared; do not guess a limit for each consumer of it.
-      # Raised from 2 on measured evidence. The fleet-wide concurrency group
-      # above means at most ONE run's Molecule executes estate-wide, so this
-      # number is the total in flight across the estate, not per-run — there is
-      # no pile-up for it to guard against.
-      #
-      # At 2, six registered runners peaked at TWO concurrent jobs while the
-      # rest queued: a 21-scenario run became ten serialized waves, and jobs
-      # waited ~24m for a slot against ~13m of actual work. That queue is the
-      # whole of the ~60m worst case.
-      #
-      # 4, not 6: leave headroom on the shared daemon rather than saturate it,
-      # and re-measure before going further. Keep this at or below the fleet's
-      # runner-slot count (inventory/group_vars/docker_vms.yml) — above it, the
-      # extra jobs simply queue and the number becomes a comforting fiction.
-      max-parallel: 4
-      # Supplied by the `select` job. The scenario list is NOT duplicated here:
-      # scripts/select_molecule_scenarios.py is the single definition, and it
-      # checks itself against the molecule/ directories on disk, so a new
-      # scenario cannot be added without being registered.
+      # The scenario list is chosen per change, not listed here. A hardcoded
+      # list ran all twenty on every pull request, and would have drifted from
+      # the scenarios that actually exist. `select-molecule-scenarios.py`
+      # explains the rules and writes its choice to the step summary, so a
+      # narrowed run says what it skipped and why.
       matrix:
-        scenario: ${{ fromJson(needs.select.outputs.scenarios) }}
+        scenario: ${{ fromJSON(needs.scenarios.outputs.list) }}
 
     steps:
       - name: Checkout code
@@ -186,6 +149,25 @@ jobs:
           # Only the secrets the scenarios reference (verified against
           # molecule/*/molecule.yml provisioner.env and the exercised roles):
           #   default     -> MSSQL_SA_PASSWORD
+          #   download_vpn-> QBITTORRENT_ADMIN_PASSWORD (Proton WG keys use
+          #                  built-in dummy fallbacks; services not started in CI)
+          #   seerr       -> none (SEERR_API_KEY uses a built-in dummy
+          #                  fallback; container not started in CI)
+          #   servarr_wiring -> none (SONARR/RADARR/PROWLARR_API_KEY use
+          #                  built-in dummy fallbacks; manage_services=false,
+          #                  no live *arr APIs in CI)
+          #   configarr   -> none (SONARR/RADARR_API_KEY dummy fallbacks;
+          #                  container run tagged molecule-notest)
+          #   sonarr/radarr -> none (API keys dummy fallbacks;
+          #                  manage_services=false, no live app in CI)
+          #   sonarr_language_audit -> none (the deployed script reads
+          #                  Sonarr's API key from config.xml at runtime;
+          #                  no secret touches this role at all)
+          #   plex        -> none (claim/library/publish gated on
+          #                  manage_services=false; apt install only)
+          #   sortarr     -> none (SONARR_API_KEY/RADARR_API_KEY/
+          #                  SORTARR_BASIC_AUTH_PASS use built-in dummy
+          #                  fallbacks; container not started in CI)
           #   static_site -> none (role reads no secrets; the fixture site
           #                  is committed alongside the scenario)
           #   technitium_dns -> none (PROXMOX_DOMAIN/SUBDOMAIN +
@@ -195,18 +177,14 @@ jobs:
           #                  service + bootstrap gated off under Docker)
           #   ssh_ca_trust -> none (activation gate held closed in both
           #                  converge cases; no live OpenBao CA fetch)
-          #   homarr      -> none (the role reads no secrets; Homarr's
-          #                  encryption key is generated in the guest by the
-          #                  pinned installer). Needs outbound internet: the
-          #                  borrowed installer resolves the app release at
-          #                  run time, which the scenario asserts rather than
-          #                  hides.
           MSSQL_SA_PASSWORD: ${{ steps.doppler.outputs.MSSQL_SA_PASSWORD }}
+          QBITTORRENT_ADMIN_PASSWORD: ${{ steps.doppler.outputs.QBITTORRENT_ADMIN_PASSWORD }}
         run: molecule test -s "$MOLECULE_SCENARIO"
 
   template-render:
     name: Template Rendering Tests
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -254,6 +232,7 @@ jobs:
     # the pre-baked self-hosted image does not carry (and cannot gain via pip —
     # its system python is PEP-668 externally managed).
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
