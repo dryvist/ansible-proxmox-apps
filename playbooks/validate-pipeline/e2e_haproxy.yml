@@ -12,13 +12,11 @@
     constants: "{{ hostvars['localhost']['tofu_data']['constants'] }}"
     # Generate unique test event ID using epoch timestamp
     e2e_test_event_id: "E2E_HAPROXY_{{ ansible_date_time.epoch }}"
-    # Splunk connection details (no hardcoded fallback)
-    # FQDN, never an IP — both names resolve from the pipeline VLAN where
-    # these tasks execute. syslog.<subdomain> is the stable client-facing
-    # entry point for the HAProxy syslog frontends.
-    splunk_host: "splunk.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+    # Splunk mgmt REST API — the one shared splunk_mgmt_base_url
+    # (inventory/group_vars/all.yml), never reconstructed here.
+    # syslog.<subdomain> is the stable client-facing entry point for the
+    # HAProxy syslog frontends (separate concern, still FQDN-derived).
     syslog_entrypoint: "syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
-    splunk_port: "{{ constants.service_ports.splunk_mgmt }}"
     splunk_user: admin
     # SPLUNK_PASSWORD must be set via Doppler
     splunk_password: "{{ lookup('env', 'SPLUNK_PASSWORD') }}"
@@ -66,9 +64,7 @@
     # (retries: 12, delay: 10) — each family in ITS index with ITS sourcetype.
     - name: Query Splunk for each HAProxy family event in its index (120s timeout each)
       ansible.builtin.uri:
-        url: >-
-          https://{{ splunk_host }}:{{ splunk_port
-          }}/services/search/jobs
+        url: "{{ splunk_mgmt_base_url }}/services/search/jobs"
         method: POST
         user: "{{ splunk_user }}"
         password: "{{ splunk_password }}"
@@ -101,6 +97,6 @@
           === E2E HAPROXY PIPELINE VALIDATION PASSED ===
           One event per source family sent to {{ syslog_entrypoint }} standard frontends
           Event ID prefix: {{ e2e_test_event_id }}
-          Splunk host: {{ splunk_host }}
+          Splunk host: {{ splunk_mgmt_base_url }}
           Families verified: {{ constants.syslog_port_map.keys() | list | join(', ') }}
           Full path verified: Source -> HAProxy -> Cribl Edge LXC -> Splunk HEC -> per-family index
