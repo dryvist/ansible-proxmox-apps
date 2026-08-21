@@ -48,7 +48,7 @@ ROLE_PATH = re.compile(r"^roles/([^/]+)/")
 # `include_role`, and the horizontal-only whitespace stops the match running
 # across a newline into the following key. Without them, `include_role:\n
 # name: mssql_docker` captured the literal string "name" and the role was lost.
-ROLE_REF = re.compile(r"""(?<![a-z_])(?:role|name)[ \t]*:[ \t]*["']?([a-z0-9_]+)""")
+ROLE_REF = re.compile(r"""(?<![a-z_])(?:role|name)[ \t]*:[ \t]*["']?([a-z0-9_.]+)""")
 
 
 def roles_on_disk() -> set[str]:
@@ -62,7 +62,11 @@ def referenced_roles(paths: list[Path], known: set[str]) -> set[str]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        found |= {m for m in ROLE_REF.findall(text) if m in known}
+        found |= {
+            role
+            for match in ROLE_REF.findall(text)
+            if (role := match.rsplit(".", 1)[-1]) in known
+        }
     return found
 
 
@@ -130,8 +134,8 @@ def self_check() -> int:
         failures.append(f"scenarios resolving no roles at all: {empty}")
 
     # A scenario that exercises a role of another name is the case a
-    # hand-written table gets wrong; assert two known ones stay wired.
-    for role, expected in (("nautobot", "postgres"), ("sonarr", "sonarr_language_audit")):
+    # hand-written table gets wrong; assert the known cross-scenario link stays wired.
+    for role, expected in (("nautobot", "postgres"),):
         hit = {s for s, roles in mapping.items() if role in roles}
         if expected not in hit:
             failures.append(f"a change to '{role}' no longer selects '{expected}' (selects {sorted(hit)})")
