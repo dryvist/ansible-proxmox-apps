@@ -1,6 +1,7 @@
 ---
-# Dedicated ai-VLAN native PostgreSQL cluster backing the Hindsight
-# agent-memory service — separate from the shared-apps cluster
+# Dedicated ai-VLAN native PostgreSQL cluster backing the ai-VLAN stateful
+# services — the Hindsight agent-memory service and the LiteLLM router's
+# learned routing state — separate from the shared-apps cluster
 # (postgres_group) because the memory plane must live entirely on the ai
 # VLAN. Same postgres role, same multi-tier DR standard: nightly pg_dump on
 # the persistent mount, standby-node archive pull via its own
@@ -54,3 +55,17 @@ postgres_managed_databases:
          | default(lookup('env', 'HINDSIGHT_DB_PASSWORD'), true) }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
     extensions: [vector]
+  # LiteLLM router state. The Adaptive Router learns a quality estimate per
+  # model x request-type and loads it at startup; with no database it still
+  # serves, it just forgets on every restart and silently reverts to
+  # cold-start priors. Consumers are the three llm-router guests on this same
+  # ai VLAN, so the client_cidr is identical to Hindsight's. No extensions —
+  # LiteLLM's prisma schema needs no pgvector. It shares this cluster rather
+  # than getting its own: a low-volume metadata store does not justify a third
+  # Postgres pair, and this one already carries the full DR standard.
+  - name: litellm
+    user: litellm
+    password: >-
+      {{ bao_apps_secrets.llm_router_db_password
+         | default(lookup('env', 'LLM_ROUTER_DB_PASSWORD'), true) }}
+    client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
