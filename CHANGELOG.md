@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.17.0...v4.18.0) (2026-08-22)
+
+
+### Features
+
+* **openbao:** add standing operator master-admin AppRole ([8afd59e](https://github.com/dryvist/ansible-proxmox-apps/commit/8afd59e59666a1355735f3b6b0a2a8292ee9cf1f))
+* **openbao:** add standing operator master-admin AppRole ([3d4dcdf](https://github.com/dryvist/ansible-proxmox-apps/commit/3d4dcdf6a4c218d7884ffc1c15777776956a0fa7))
+* **openbao:** grant the converge AppRole a read on the NAS account secret ([#1572](https://github.com/dryvist/ansible-proxmox-apps/issues/1572)) ([161153f](https://github.com/dryvist/ansible-proxmox-apps/commit/161153f47e03fd406cb57b63fe8acdce5729b158))
+* **postgres:** add the litellm database to the ai-VLAN cluster ([#1570](https://github.com/dryvist/ansible-proxmox-apps/issues/1570)) ([811f83b](https://github.com/dryvist/ansible-proxmox-apps/commit/811f83b4f38cbd26642611a9602065992070c6fc))
+
 ## [4.17.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.16.0...v4.17.0) (2026-08-21)
 
 
