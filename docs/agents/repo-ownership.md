@@ -30,7 +30,7 @@
   host `ipmitool`, Docker on dedicated VM 251). A Mac-only OrbStack exploratory
   variant lives at `orbstack-kubernetes/docker/idrac-webtop` (webtop +
   OpenWebStart + self-signed jar wrapper) and is not used in production.
-- **Media stack** (pve2): `download_vpn` (qBittorrent-nox + Prowlarr behind
+- **Media stack**: `download_vpn` (qBittorrent-nox + Prowlarr behind
   Proton WireGuard with a fail-closed dual-stack nftables killswitch, NAT-PMP
   port forwarding, and three layers of continuous killswitch validation), plus
   LAN-only `sonarr`, `radarr`, `plex` (install + idempotent non-fatal claim +
