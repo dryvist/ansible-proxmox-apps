@@ -162,6 +162,41 @@ def check_manufacturer_never_placeholder(drives_mod) -> None:
     assert name("HGST", "HUS726060ALE610") == "HGST"
 
 
+def check_not_null_fields(drives_mod) -> None:
+    """Absent text values must be "", never None, and discovered must be set.
+
+    `part_id`, `serial` and `description` map to CharFields that are
+    `blank=True` but **NOT NULL**. Passing None raises IntegrityError mid-sync
+    and aborts the whole run — and it lands on exactly the drives whose serial
+    this job deliberately refuses to fabricate, so the correct-by-design case
+    is the one that breaks.
+
+    `discovered` must be an attribute: it defaults False on the model while
+    get_queryset() filters on True, so leaving it unset writes rows the adapter
+    cannot see. Every later run then re-creates them and collides on the
+    (device, name) unique constraint, while the rows sit there invisible.
+    """
+    model = drives_mod.DriveInventoryItem
+    hints = getattr(model, "__annotations__", {})
+
+    for field in ("part_id", "serial", "description"):
+        default = getattr(model, field, None)
+        assert default == "", (
+            f"{field} defaults to {default!r}; it maps to a NOT NULL column, so "
+            'an absent value must be "" — None aborts the sync with IntegrityError'
+        )
+        assert "Optional" not in str(hints.get(field, "")), (
+            f"{field} is typed Optional, which invites None into a NOT NULL column"
+        )
+
+    assert "discovered" in model._attributes, (
+        "discovered is not a synced attribute — rows would be written with "
+        "discovered=False, invisible to get_queryset(), and every rerun would "
+        "collide on (device, name)"
+    )
+    assert getattr(model, "discovered", None) is True, "discovered must default True"
+
+
 def check_post_run_verifies(drives_mod) -> None:
     """The job must fail when the rows it reported creating are not there."""
     assert hasattr(drives_mod.SyncDrivesFromSeed, "post_run"), (
@@ -220,6 +255,7 @@ if __name__ == "__main__":
     check_refuses_empty_source(job_mod, None)
     check_serial_rule(job_mod)
     check_manufacturer_never_placeholder(job_mod)
+    check_not_null_fields(job_mod)
     check_post_run_verifies(job_mod)
 
-    print("nautobot drive sync: OK (4 gate, 2 empty-source, 6 serial, 9 manufacturer, post_run verified)")
+    print("nautobot drive sync: OK (4 gate, 2 empty-source, 6 serial, 9 manufacturer, 7 not-null, post_run verified)")
