@@ -20,6 +20,7 @@ restated here — one stub set, one place to fix when Nautobot moves.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -62,6 +63,7 @@ def install_job_stubs() -> None:
     common = types.ModuleType("ssot_common")
     common.ensure_manufacturer = lambda *a, **k: None
     common.load_seed = lambda: {"drives": []}
+    common.MANUFACTURER = "Generic"
 
     for name, mod in {
         "diffsync": diffsync,
@@ -126,6 +128,50 @@ def check_serial_rule(drives_mod) -> None:
     assert not same("EXAMPLESERIAL1", "5000cca25dc1b2a3"), "distinct values must not match"
 
 
+def check_manufacturer_never_placeholder(drives_mod) -> None:
+    """A manufacturer name must always be one that can exist.
+
+    contrib resolves ``manufacturer__name`` to a real Manufacturer and raises
+    ObjectNotCreated when it is absent — and nautobot_ssot records that as a
+    per-object error while still finishing the job SUCCESS. So an invented name
+    costs the whole record silently.
+
+    Proxmox reports a LITERAL "unknown" in `vendor` for NVMe, not an empty
+    string, so `vendor or fallback` keeps it. That lost all 19 drives on the
+    first live run, with a clean-looking sync and an empty table.
+    """
+    name = drives_mod._manufacturer_name
+    generic = drives_mod.GENERIC_MANUFACTURER
+
+    # The exact live failure.
+    assert name("unknown", "Samsung SSD 990 EVO Plus 4TB") != "unknown", (
+        "a literal 'unknown' vendor is still being used as a Manufacturer name"
+    )
+    # Falls back to the model's leading word, which is a real make.
+    assert name("unknown", "Samsung SSD 990 EVO Plus 4TB") == "Samsung", name(
+        "unknown", "Samsung SSD 990 EVO Plus 4TB"
+    )
+    # No vendor and no usable model -> the honest generic, never empty.
+    for placeholder in ("", "  ", "-", "N/A", "none", "NULL", "?"):
+        got = name(placeholder, "")
+        assert got == generic, f"{placeholder!r} -> {got!r}, expected {generic!r}"
+        assert got, "an empty manufacturer name cannot resolve to an object"
+
+    # A real vendor must survive untouched — without this, a fix that always
+    # returned the generic would pass every assertion above.
+    assert name("HGST", "HUS726060ALE610") == "HGST"
+
+
+def check_post_run_verifies(drives_mod) -> None:
+    """The job must fail when the rows it reported creating are not there."""
+    assert hasattr(drives_mod.SyncDrivesFromSeed, "post_run"), (
+        "no post_run verification — nautobot_ssot reports SUCCESS even when "
+        "every create raised, so the job must check the rows landed."
+    )
+    source = inspect.getsource(drives_mod.SyncDrivesFromSeed.post_run)
+    assert "raise" in source, "post_run must FAIL, not just log, on a short count"
+
+
 def check_runner_gate() -> None:
     """The runner enrols the drive job only when the bundle carries drives."""
     original = os.environ.get("NAUTOBOT_SEED_FILE")
@@ -173,5 +219,7 @@ if __name__ == "__main__":
     check_refuses_empty_source(job_mod, [])
     check_refuses_empty_source(job_mod, None)
     check_serial_rule(job_mod)
+    check_manufacturer_never_placeholder(job_mod)
+    check_post_run_verifies(job_mod)
 
-    print("nautobot drive sync: OK (4 gate cases, 2 empty-source refusals, 6 serial cases)")
+    print("nautobot drive sync: OK (4 gate, 2 empty-source, 6 serial, 9 manufacturer, post_run verified)")

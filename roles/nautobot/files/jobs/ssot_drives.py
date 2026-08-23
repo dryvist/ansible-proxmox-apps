@@ -71,6 +71,7 @@ from nautobot.dcim.models import Device, InventoryItem
 from nautobot_ssot.contrib import NautobotAdapter, NautobotModel
 from nautobot_ssot.jobs.base import DataSource
 
+from ssot_common import MANUFACTURER as GENERIC_MANUFACTURER
 from ssot_common import ensure_manufacturer, load_seed
 
 # Proxmox reports these in `used` for a disk that belongs to a ZFS pool. A boot
@@ -83,6 +84,13 @@ _ZFS_USED = {"ZFS", "zfs_member"}
 # per boot but NOT across reboots, so it must never be the identifier; the drive
 # identity is its serial or, failing that, its WWN.
 _UNKNOWN = "unknown"
+
+# Proxmox reports a LITERAL "unknown" in `vendor` for NVMe, not an empty string,
+# so a plain `vendor or fallback` keeps it and Nautobot is then asked for a
+# Manufacturer named "unknown" that does not exist. Every create then fails with
+# ObjectNotCreated -- and the job still reports SUCCESS, so it reads as a clean
+# sync that wrote nothing. Observed: 19 of 19 creates lost exactly this way.
+_VENDOR_PLACEHOLDERS = {"", "-", "n/a", "na", "none", "null", "unknown", "?"}
 
 
 class DriveInventoryItem(NautobotModel):
@@ -188,13 +196,19 @@ class DrivesSeedAdapter(Adapter):
         if used in _ZFS_USED:
             description += " — ZFS pool member"
 
+        # Resolve the manufacturer to a name that EXISTS. contrib looks the
+        # Manufacturer up by name and raises ObjectNotCreated when it is absent,
+        # so inventing a name here loses the record.
+        manufacturer = _manufacturer_name(vendor, model)
+        ensure_manufacturer(manufacturer)
+
         self.add(
             self.drive(
                 device__name=node,
                 # Namespaced so get_queryset can scope to this job's objects
                 # without a tag, and stable across reboots unlike devpath.
                 name=f"Drive {identity}",
-                manufacturer__name=vendor or _vendor_from_model(model),
+                manufacturer__name=manufacturer,
                 part_id=model or None,
                 serial=serial or None,
                 description=description[:255],
@@ -221,6 +235,19 @@ def _vendor_from_model(model: str) -> Optional[str]:
         return None
     first = model.split()[0].split("_")[0]
     return first.title() if first.isalpha() else None
+
+
+def _manufacturer_name(vendor: str, model: str) -> str:
+    """The Manufacturer name to file this drive under. Never a placeholder.
+
+    ``GENERIC_MANUFACTURER`` is the deliberate fallback rather than leaving the
+    field empty: contrib resolves ``manufacturer__name`` to a real object, so an
+    absent or invented name costs the whole record. "Generic" is honest about
+    not knowing, and it already exists.
+    """
+    if vendor.strip().lower() not in _VENDOR_PLACEHOLDERS:
+        return vendor.strip()
+    return _vendor_from_model(model) or GENERIC_MANUFACTURER
 
 
 class SyncDrivesFromSeed(DataSource):
@@ -259,6 +286,37 @@ class SyncDrivesFromSeed(DataSource):
         """Load the drives Nautobot already has."""
         self.target_adapter = DrivesNautobotAdapter(job=self)
         self.target_adapter.load()
+
+    def post_run(self) -> None:
+        """Fail the job when the sync did not actually land the records.
+
+        WHY THIS EXISTS: nautobot_ssot logs a per-object ``[error]`` when a
+        create raises and then finishes the job as **SUCCESS** anyway. Observed
+        live: all 19 creates failed with ObjectNotCreated, the diff summary
+        cheerfully read ``{'create': 19}``, the job reported SUCCESS, and the
+        table stayed empty. Nothing in the run said otherwise -- the only way to
+        notice was to query the database by hand.
+
+        A sync job whose whole purpose is to persist rows must therefore check
+        that the rows are there. Counting is enough: the source is the estate's
+        drives, and after a successful sync the target must hold at least as
+        many. Fewer means creates were dropped, whatever the status said.
+        """
+        expected = len(list(self.source_adapter.get_all("drive")))
+
+        # Re-read rather than reuse the pre-sync target adapter, which still
+        # holds the old contents and would happily confirm its own staleness.
+        actual = DriveInventoryItem.get_queryset().count()
+
+        if actual < expected:
+            raise ValueError(
+                f"The drive sync reported success but Nautobot holds {actual} "
+                f"discovered drives against {expected} from the source. Creates "
+                "were dropped -- check the job log for ObjectNotCreated, which "
+                "nautobot_ssot records as a per-object error without failing "
+                "the job."
+            )
+        self.logger.info("Verified %s discovered drives are present.", actual)
 
 
 register_jobs(SyncDrivesFromSeed)
