@@ -60,6 +60,11 @@
     nautobot_seed_fixed_ips_path: ""
     nautobot_seed_hosts_yml_path: ""
     nautobot_seed_hardware_path: ""
+    # Absent, like the other sibling sources — which for drives is not merely
+    # "contributes nothing": the drive sync DELETES what it stops seeing, so an
+    # absent path must leave the slice empty AND leave the job unenrolled,
+    # rather than publish an empty slice. Asserted below.
+    nautobot_seed_drives_path: ""
     nautobot_seed_networks: []
     nautobot_seed_racks: []
     nautobot_seed_hosts_group: proxmox
@@ -134,10 +139,26 @@
               - seed_bundle.reservations | length == 0
               - seed_bundle.vlans | length == 0
               - seed_bundle.prefixes | length == 0
+              - seed_bundle.drives | length == 0
               - seed_bundle.schema_version == '1.0.0'
             fail_msg: >-
               An absent source must yield an empty slice, not a missing key —
               ssot_common.load_seed keys off these names.
+            quiet: true
+
+        # `drives` is the one slice whose emptiness is dangerous rather than
+        # inert: its sync deletes what it stops seeing. An absent path must
+        # still produce the KEY (so load_seed does not invent it) while the
+        # runner leaves the job unenrolled — the two together are what make an
+        # ungathered estate converge quietly instead of wiping the inventory.
+        - name: The drives key exists even with no source
+          ansible.builtin.assert:
+            that:
+              - "'drives' in seed_bundle"
+            fail_msg: >-
+              The bundle has no `drives` key at all. load_seed would default it,
+              but the bundle is the contract and a missing key hides whether the
+              gathering role ran.
             quiet: true
       always:
         - name: Remove the temp dir
