@@ -49,6 +49,7 @@ INGEST_JOB_MODULES = (
     "ssot_ip_addresses",
     "ssot_dcim",
     "ssot_hardware",
+    "ssot_drives",
 )
 
 # This job's own module, used to find the previous export. Derived from
