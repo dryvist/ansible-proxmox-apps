@@ -38,6 +38,20 @@ SEED_JOBS = SSOT_JOBS + PLAIN_JOBS
 if os.environ.get("NAUTOBOT_RUN_EXPORT", "").lower() in ("1", "true", "yes"):
     SEED_JOBS.append("Export Nautobot Inventory to S3")
 
+# Drive discovery talks to the live Proxmox API, so it only joins the run once
+# credentials exist. Enrolling it unconditionally would fail every converge on
+# an estate that has not configured them — and the job itself refuses to run
+# unconfigured rather than sync an empty source against a delete-capable
+# target, which would wipe the drive inventory. It stays registered and
+# runnable from the Nautobot UI either way.
+#
+# Appended AFTER the SSoT list on purpose: a drive is an InventoryItem on its
+# node's Device, so "Seed Proxmox Node Facts" has to have created that Device
+# first, exactly as Hardware runs after DCIM above.
+if os.environ.get("PROXMOX_API_URL", "").strip():
+    SSOT_JOBS.append("Sync Drive Inventory from Proxmox")
+    SEED_JOBS.append("Sync Drive Inventory from Proxmox")
+
 # Celery terminal states (Nautobot JobResult.status mirrors these).
 TERMINAL = {"SUCCESS", "FAILURE", "REVOKED"}
 TIMEOUT = int(os.environ.get("NAUTOBOT_JOB_TIMEOUT", "300"))
