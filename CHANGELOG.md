@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.19.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.18.0...v4.19.0) (2026-08-23)
+
+
+### Features
+
+* **openbao:** add llm-router-write single-secret writer identity ([#1577](https://github.com/dryvist/ansible-proxmox-apps/issues/1577)) ([b46cc9c](https://github.com/dryvist/ansible-proxmox-apps/commit/b46cc9cb3cbcc7a4edc366ac2dfa945840d03817))
+* **openbao:** say so when provisioning is skipped for want of a token ([#1576](https://github.com/dryvist/ansible-proxmox-apps/issues/1576)) ([3dbcdc2](https://github.com/dryvist/ansible-proxmox-apps/commit/3dbcdc27848c4813801e49f2e366571d33109a8b))
+
 ## [4.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.17.0...v4.18.0) (2026-08-22)
 
 
