@@ -223,6 +223,43 @@ def check_real_ensure_status() -> None:
     assert common.ensure_status("Nope").name == "Active"
 
 
+def check_dmi_placeholders_are_not_serials() -> None:
+    """A DMI default must never become a device's identity.
+
+    These are more dangerous than "n/a": they LOOK like data, dmidecode returns
+    them confidently, and they are IDENTICAL across every board of that make —
+    so writing them gives several devices the same "serial", which then reads as
+    a real duplicate rather than as missing data.
+
+    Verified live on this estate: the workstation-class nodes report exactly
+    "System Serial Number" and "Default string" while the rack servers return
+    real service tags.
+    """
+    job = load_job()
+    serial = job._serial
+
+    for placeholder in (
+        "System Serial Number",
+        "Default string",
+        "To Be Filled By O.E.M.",
+        "Not Specified",
+        "  default string  ",
+        "UNKNOWN",
+        "n/a",
+        "",
+    ):
+        got = serial({"serial": placeholder})
+        assert got == "", f"{placeholder!r} survived as a serial: {got!r}"
+
+    # Must-not-strip controls. Without these, a filter that returned "" for
+    # everything would pass every assertion above.
+    for real in ("8SGS8N2", "774KVH1", "S7U8NJ0Y401782M"):
+        assert serial({"serial": real}) == real, f"real serial {real!r} was discarded"
+
+    # Whitespace is trimmed, not treated as content.
+    assert serial({"serial": "  8SGS8N2  "}) == "8SGS8N2"
+
+
 def main() -> None:
     """Run every assertion."""
     r540 = Record(name="r540")
@@ -366,7 +403,9 @@ def main() -> None:
     # Last: it replaces the stubbed ssot_common with the real module.
     check_real_ensure_status()
 
-    print("nautobot_hardware_seed: OK")
+    check_dmi_placeholders_are_not_serials()
+
+    print("nautobot_hardware_seed: OK (incl. DMI placeholder serials)")
 
 
 if __name__ == "__main__":
