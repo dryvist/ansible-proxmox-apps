@@ -1,0 +1,194 @@
+---
+# Seed-bundle stage 1 of 2: READ and VALIDATE the sources.
+#
+# Split from seed_transform.yml so an agent changing one source does not have to
+# read the whole schema transform to find it. Nothing here shapes the bundle; it
+# only resolves each source into a parsed fact plus the guards that say whether
+# that fact can be trusted.
+#
+# Sources are independent: the resolved tofu inventory is present on every run,
+# while the sibling-repo sources reach the controller only at cutover. Any
+# subset produces a valid bundle covering just those slices.
+#
+# Source shapes: rack_servers (SOPS-encrypted in terraform-proxmox) is known —
+# chassis/bmc_ip/bmc_mac/service_tag/mgmt_ip, keyed by node name. VLAN/prefix
+# definitions come from a provided JSON var. The fixed-ips.json (tofu-unifi) and
+# hosts.yml (ansible-proxmox) mappings are documented ASSUMPTIONS about those
+# shapes, isolated here so confirming them is a one-place edit.
+#
+# Every source is independently optional and contributes only its own slice.
+# The seed jobs are additive and tolerate an absent slice (ssot_common.load_seed
+# defaults each key to an empty array), so a partial bundle never deletes what
+# another source owns. The ONE exception is `drives`, which feeds a sync that
+# deletes — see the assert below.
+- name: Merge every tofu guest kind into one map
+  vars:
+    nautobot_seed_tofu: "{{ hostvars['localhost'].tofu_data | default({}, true) }}"
+  ansible.builtin.set_fact:
+    nautobot_seed_guests: >-
+      {{ (nautobot_seed_tofu.containers | default({}, true))
+         | combine(nautobot_seed_tofu.vms | default({}, true))
+         | combine(nautobot_seed_tofu.docker_vms | default({}, true))
+         | combine(nautobot_seed_tofu.splunk_vm | default({}, true)) }}
+
+# Fail only when no source at all would contribute. That writes an empty bundle
+# over whatever is already on the guest, which is always an operator mistake.
+- name: Assert at least one seed source is available
+  ansible.builtin.assert:
+    that:
+      - >-
+        (nautobot_seed_guests | length) > 0
+        or (nautobot_seed_networks | length) > 0
+        or (nautobot_seed_fixed_ips_path | length) > 0
+        or (nautobot_seed_hosts_yml_path | length) > 0
+        or (nautobot_seed_sops_path | length) > 0
+        or (nautobot_seed_hardware_path | length) > 0
+    fail_msg: >-
+      nautobot_build_seed is true but no seed source is available: the tofu
+      inventory resolved no guests and NAUTOBOT_SEED_NETWORKS,
+      TOFU_UNIFI_FIXED_IPS, ANSIBLE_PROXMOX_HOSTS and TERRAFORM_PROXMOX_SOPS
+      are all unset. The bundle would be empty.
+    quiet: true
+
+# Warn per absent source so a thin bundle is never silent.
+- name: Warn when an optional seed source is absent
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.env }} is unset — the {{ item.slice }} seed contributes nothing
+      this run; existing Nautobot objects of that kind are retained.
+  loop:
+    - env: TERRAFORM_PROXMOX_SOPS
+      slice: DCIM device
+      missing: "{{ (nautobot_seed_sops_path | length) == 0 }}"
+    - env: TOFU_UNIFI_FIXED_IPS
+      slice: IP reservation
+      missing: "{{ (nautobot_seed_fixed_ips_path | length) == 0 }}"
+    - env: ANSIBLE_PROXMOX_HOSTS
+      slice: pve node
+      missing: "{{ (nautobot_seed_hosts_yml_path | length) == 0 }}"
+    - env: INT_HOMELAB_HARDWARE
+      slice: hardware device and module
+      missing: "{{ (nautobot_seed_hardware_path | length) == 0 }}"
+    - env: ANSIBLE_PROXMOX_DRIVES
+      slice: physical drive
+      missing: "{{ (nautobot_seed_drives_path | length) == 0 }}"
+  loop_control:
+    label: "{{ item.env }}"
+  when: item.missing | bool
+
+# --- Read + decrypt the sources on the controller --------------------------
+- name: Decrypt rack_servers from the terraform-proxmox SOPS file
+  ansible.builtin.command:
+    cmd: "sops -d {{ nautobot_seed_sops_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  changed_when: false
+  register: nautobot_seed_sops_raw
+  when: nautobot_seed_sops_path | length > 0
+  no_log: true
+
+- name: Read the tofu-unifi fixed-IP reservations
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_fixed_ips_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_fixed_ips_raw
+  when: nautobot_seed_fixed_ips_path | length > 0
+
+- name: Read the generated hardware inventory slice
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_hardware_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_hardware_raw
+  when: nautobot_seed_hardware_path | length > 0
+
+- name: Read the ansible-proxmox physical drive inventory
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_drives_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_drives_raw
+  when: nautobot_seed_drives_path | length > 0
+
+- name: Read the ansible-proxmox hosts inventory
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_hosts_yml_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_hosts_raw
+  when: nautobot_seed_hosts_yml_path | length > 0
+
+# Each parse is gated on the same path variable that gated its read, so an
+# absent source yields an empty document without ever touching the register a
+# skipped task left behind.
+- name: Parse the sources
+  ansible.builtin.set_fact:
+    nautobot_seed_rack_servers: >-
+      {{ (nautobot_seed_sops_raw.stdout | default('{}', true) | from_json).rack_servers | default({}) }}
+    nautobot_seed_fixed_ips: >-
+      {{ (nautobot_seed_fixed_ips_raw.content | b64decode | from_json)
+         if (nautobot_seed_fixed_ips_path | length) > 0 else {} }}
+    nautobot_seed_hosts: >-
+      {{ (nautobot_seed_hosts_raw.content | b64decode | from_yaml)
+         if (nautobot_seed_hosts_yml_path | length) > 0 else {} }}
+    nautobot_seed_hardware: >-
+      {{ (nautobot_seed_hardware_raw.content | b64decode | from_yaml)
+         if (nautobot_seed_hardware_path | length) > 0 else {} }}
+    # Pass-through: pve_disk_inventory already emits the shape the job consumes.
+    nautobot_seed_drives: >-
+      {{ ((nautobot_seed_drives_raw.content | b64decode | from_json).drives | default([], true))
+         if (nautobot_seed_drives_path | length) > 0 else [] }}
+  no_log: true
+
+# Unlike every other slice, an empty `drives` slice is DESTRUCTIVE downstream:
+# that sync deletes drives it stops seeing, so publishing an empty one would
+# remove the whole drive inventory. An absent path is fine — it contributes
+# nothing and the job is skipped — but a path that was given and yielded nothing
+# means the artifact is stale, truncated or wrong-shaped, and must not ride into
+# the bundle looking like "this estate has no disks".
+- name: Assert the drive artifact carries drives when one was supplied
+  ansible.builtin.assert:
+    that:
+      - (nautobot_seed_drives | length) > 0
+    fail_msg: >-
+      {{ nautobot_seed_drives_path }} yielded no drives. Refusing to publish an
+      empty slice: the drive sync removes what it stops seeing, so this would
+      delete the existing inventory. Re-run the pve_disk_inventory role in
+      ansible-proxmox, which itself fails when a node reports no drives.
+    quiet: true
+  when: nautobot_seed_drives_path | length > 0
+
+# The slice is generated upstream in the shape the seed job consumes, so this
+# is a pass-through, not a transform. Guarding on the key rather than trusting
+# the file: a truncated or wrong-shaped YAML would otherwise reach the job as a
+# valid-looking empty slice, and the job would report "nothing to do".
+- name: Assert the hardware slice carries its arrays
+  ansible.builtin.assert:
+    that:
+      # `is defined` alone does NOT do what this guard is for: a key present
+      # with a null value (`hardware_devices:` with nothing after it, which is
+      # what a truncated render produces) satisfies it, and `default([])`
+      # without boolean=true does not replace None either — so the null would
+      # ride into the bundle. Only load_seed's own `or []` catches it there,
+      # which is an unrelated safety net, not this check working.
+      - nautobot_seed_hardware.hardware_devices is defined
+      - nautobot_seed_hardware.hardware_devices is not none
+      - nautobot_seed_hardware.hardware_modules is defined
+      - nautobot_seed_hardware.hardware_modules is not none
+    fail_msg: >-
+      {{ nautobot_seed_hardware_path }} is missing or null on
+      hardware_devices/hardware_modules. Re-render it with the inventory
+      repo's hardware_to_seed.py.
+    quiet: true
+  when: nautobot_seed_hardware_path | length > 0
