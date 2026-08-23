@@ -42,7 +42,31 @@ HARDWARE_ROLE = "hardware"
 # placeholder dashes people type into markdown tables all have to collapse to
 # "no serial known" — otherwise a literal "—" becomes a device's identity and
 # looks exactly like a real one forever after.
-_SERIAL_PLACEHOLDERS = {"", "-", "--", "—", "n/a", "na", "none", "unknown", "tbd", "?"}
+_SERIAL_PLACEHOLDERS = {
+    "",
+    "-",
+    "--",
+    "—",
+    "n/a",
+    "na",
+    "none",
+    "unknown",
+    "tbd",
+    "?",
+    # DMI defaults from boards whose serial was never programmed. These are the
+    # dangerous ones: unlike "n/a" they LOOK like data, they are identical
+    # across every board of that make, and dmidecode returns them confidently.
+    # Verified live on this estate's two workstation-class nodes, which report
+    # exactly these while the rack servers return real service tags.
+    "system serial number",
+    "default string",
+    "to be filled by o.e.m.",
+    "to be filled by oem",
+    "not specified",
+    "not applicable",
+    "0123456789",
+    "00000000",
+}
 
 
 def _serial(row) -> str:
