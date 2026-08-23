@@ -76,6 +76,9 @@
     - env: INT_HOMELAB_HARDWARE
       slice: hardware device and module
       missing: "{{ (nautobot_seed_hardware_path | length) == 0 }}"
+    - env: ANSIBLE_PROXMOX_DRIVES
+      slice: physical drive
+      missing: "{{ (nautobot_seed_drives_path | length) == 0 }}"
   loop_control:
     label: "{{ item.env }}"
   when: item.missing | bool
@@ -113,6 +116,16 @@
   register: nautobot_seed_hardware_raw
   when: nautobot_seed_hardware_path | length > 0
 
+- name: Read the ansible-proxmox physical drive inventory
+  ansible.builtin.slurp:
+    src: "{{ nautobot_seed_drives_path }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  register: nautobot_seed_drives_raw
+  when: nautobot_seed_drives_path | length > 0
+
 - name: Read the ansible-proxmox hosts inventory
   ansible.builtin.slurp:
     src: "{{ nautobot_seed_hosts_yml_path }}"
@@ -139,7 +152,29 @@
     nautobot_seed_hardware: >-
       {{ (nautobot_seed_hardware_raw.content | b64decode | from_yaml)
          if (nautobot_seed_hardware_path | length) > 0 else {} }}
+    # Pass-through: pve_disk_inventory already emits the shape the job consumes.
+    nautobot_seed_drives: >-
+      {{ ((nautobot_seed_drives_raw.content | b64decode | from_json).drives | default([], true))
+         if (nautobot_seed_drives_path | length) > 0 else [] }}
   no_log: true
+
+# Unlike every other slice, an empty `drives` slice is DESTRUCTIVE downstream:
+# that sync deletes drives it stops seeing, so publishing an empty one would
+# remove the whole drive inventory. An absent path is fine — it contributes
+# nothing and the job is skipped — but a path that was given and yielded nothing
+# means the artifact is stale, truncated or wrong-shaped, and must not ride into
+# the bundle looking like "this estate has no disks".
+- name: Assert the drive artifact carries drives when one was supplied
+  ansible.builtin.assert:
+    that:
+      - (nautobot_seed_drives | length) > 0
+    fail_msg: >-
+      {{ nautobot_seed_drives_path }} yielded no drives. Refusing to publish an
+      empty slice: the drive sync removes what it stops seeing, so this would
+      delete the existing inventory. Re-run the pve_disk_inventory role in
+      ansible-proxmox, which itself fails when a node reports no drives.
+    quiet: true
+  when: nautobot_seed_drives_path | length > 0
 
 # The slice is generated upstream in the shape the seed job consumes, so this
 # is a pass-through, not a transform. Guarding on the key rather than trusting
@@ -317,6 +352,7 @@
       hardware_devices: "{{ nautobot_seed_hardware.hardware_devices | default([]) }}"
       hardware_modules: "{{ nautobot_seed_hardware.hardware_modules | default([]) }}"
       wan_circuits: "{{ nautobot_seed_hardware.wan_circuits | default([]) }}"
+      drives: "{{ nautobot_seed_drives | default([]) }}"
   no_log: true
 
 # --- Write the bundle onto the Nautobot LXC ---------------------------------
