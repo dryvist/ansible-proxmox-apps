@@ -14,6 +14,7 @@ raises, so one job's quirk cannot abort the converge. Markers:
 ``JOB_DONE <name> <status>`` / ``JOB_SKIPPED <name> <reason>`` /
 ``JOB_ERROR <name> <detail>`` / ``JOB_TIMEOUT <name>``.
 """
+import json
 import os
 import sys
 import time
@@ -38,17 +39,33 @@ SEED_JOBS = SSOT_JOBS + PLAIN_JOBS
 if os.environ.get("NAUTOBOT_RUN_EXPORT", "").lower() in ("1", "true", "yes"):
     SEED_JOBS.append("Export Nautobot Inventory to S3")
 
-# Drive discovery talks to the live Proxmox API, so it only joins the run once
-# credentials exist. Enrolling it unconditionally would fail every converge on
-# an estate that has not configured them — and the job itself refuses to run
-# unconfigured rather than sync an empty source against a delete-capable
-# target, which would wipe the drive inventory. It stays registered and
-# runnable from the Nautobot UI either way.
+# Drive sync only joins the run when the bundle actually carries drives. Unlike
+# every other seed job this one DELETES what it stops seeing, so running it
+# against a bundle with no `drives` slice would remove the whole drive inventory
+# — and an absent slice is the ordinary state on an estate that has not run
+# ansible-proxmox's pve_disk_inventory role yet.
+#
+# The job itself ALSO refuses an empty slice, which is not redundant: this gate
+# keeps a converge quiet, while that one stops a hand-run from the Nautobot UI.
+# Skipping here and failing there are the right behaviours for their contexts.
 #
 # Appended AFTER the SSoT list on purpose: a drive is an InventoryItem on its
 # node's Device, so "Seed Proxmox Node Facts" has to have created that Device
 # first, exactly as Hardware runs after DCIM above.
-if os.environ.get("PROXMOX_API_URL", "").strip():
+def _bundle_has_drives() -> bool:
+    """True when the seed bundle carries at least one drive row."""
+    root = os.environ.get("NAUTOBOT_ROOT", "/opt/nautobot")
+    path = os.environ.get("NAUTOBOT_SEED_FILE", os.path.join(root, "nautobot_seed.json"))
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return bool(json.load(handle).get("drives"))
+    except (OSError, ValueError):
+        # An unreadable bundle is the seed jobs' problem to report, not this
+        # gate's — every other job is about to fail loudly on it anyway.
+        return False
+
+
+if _bundle_has_drives():
     SSOT_JOBS.append("Sync Drive Inventory from Proxmox")
     SEED_JOBS.append("Sync Drive Inventory from Proxmox")
 

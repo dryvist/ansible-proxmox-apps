@@ -53,6 +53,11 @@ _EMPTY_BUNDLE: dict[str, list] = {
     "hardware_devices": [],
     "hardware_modules": [],
     "wan_circuits": [],
+    # Physical drives, gathered per node by ansible-proxmox's pve_disk_inventory
+    # role. Unlike every other slice here this one feeds a sync that DELETES, so
+    # its consumer must refuse an empty slice rather than treat it as "nothing to
+    # do" -- see ssot_drives.
+    "drives": [],
 }
 
 
