@@ -111,14 +111,25 @@ class DriveInventoryItem(NautobotModel):
     _model = InventoryItem
     _modelname = "drive"
     _identifiers = ("device__name", "name")
-    _attributes = ("manufacturer__name", "part_id", "serial", "description")
+    # `discovered` is an ATTRIBUTE, not a side effect: it defaults to False on
+    # the model, and get_queryset() above filters on it. Leaving it unset writes
+    # rows the target adapter cannot see, so every later run re-creates them and
+    # collides on the (device, name) unique constraint — while the rows sit
+    # there, invisible, looking like nothing was written at all.
+    _attributes = ("manufacturer__name", "part_id", "serial", "description", "discovered")
 
     device__name: str
     name: str
-    manufacturer__name: Optional[str] = None
-    part_id: Optional[str] = None
-    serial: Optional[str] = None
-    description: Optional[str] = None
+    # These map to CharFields that are `blank=True` but **NOT NULL**. Passing
+    # None raises IntegrityError mid-sync, which aborts the whole run — and it
+    # lands on exactly the drives whose serial this job deliberately refuses to
+    # fabricate, so the correct-by-design case was the one that broke. Empty
+    # string is the model's own "absent", so use it.
+    manufacturer__name: Optional[str] = None  # FK: nullable, so None is valid here
+    part_id: str = ""
+    serial: str = ""
+    description: str = ""
+    discovered: bool = True
 
 
 class DrivesNautobotAdapter(NautobotAdapter):
@@ -209,9 +220,11 @@ class DrivesSeedAdapter(Adapter):
                 # without a tag, and stable across reboots unlike devpath.
                 name=f"Drive {identity}",
                 manufacturer__name=manufacturer,
-                part_id=model or None,
-                serial=serial or None,
+                # Empty string, never None: these columns are NOT NULL.
+                part_id=model,
+                serial=serial,
                 description=description[:255],
+                discovered=True,
             )
         )
 
