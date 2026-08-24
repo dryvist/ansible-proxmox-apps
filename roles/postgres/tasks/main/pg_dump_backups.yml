@@ -62,7 +62,9 @@
 # `VAR=x doppler run -- ...` does not override a Doppler-managed variable —
 # Doppler's injected value wins over the caller's export, silently — so an
 # export is ignored and whatever the secret holds is authorized instead, at
-# rc=0 with changed=true. An extra var outranks the env lookup below.
+# rc=0 with changed=true. The default binding no longer reads any env var
+# (it fed the stale pve2 puller key on every converge); an extra var is the
+# only resolution path.
 - name: Install rsync for the standby puller's forced command
   ansible.builtin.apt:
     name: rsync
@@ -79,5 +81,20 @@
     # directory. An absolute path would be prefixed with it and match nothing.
     key_options: 'restrict,command="rrsync -ro {{ postgres_backup_dir }}"'
   when: postgres_standby_pull_pubkeys | length > 0
+  tags:
+    - postgres_standby_trust
+
+# Declared state includes the absence: the decommissioned pve2 puller's key
+# (forced rrsync command, comment root@pve2) was re-authorised by every
+# converge while the env binding above still fed the stale Doppler secret
+# (Zammad #17250). Not gated on pubkeys — this scrubs even when no puller is
+# being trusted, and matches only that puller's line so human and current
+# puller keys are untouched. The current pullers' keys carry the
+# postgres-standby-pull comment instead.
+- name: Remove trust for the decommissioned pve2 backup puller
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    regexp: 'rrsync -ro .*\broot@pve2$'
+    state: absent
   tags:
     - postgres_standby_trust
