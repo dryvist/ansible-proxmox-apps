@@ -12,8 +12,11 @@ this job, which is what keeps a deliberately decommissioned Device from being
 flipped back to Active by the managed ``status__name`` attribute.
 
 Live-validation notes: like the DCIM job, DeviceType/Role are ensured via the
-ORM before the DiffSync run; mgmt-IP-to-interface binding is deferred to Device
-Onboarding.
+ORM before the DiffSync run. Management-IP binding is done HERE, in an additive
+ORM phase -- see SeedNodes._bind_primary_ips. An earlier revision deferred it to
+Device Onboarding, which never covered these devices: SSOTSyncDevices sweeps
+SSH-CLI network platforms and Proxmox is explicitly out of scope for it, so
+primary_ip4 stayed null on every node indefinitely with nothing erroring.
 """
 from __future__ import annotations
 
@@ -36,6 +39,9 @@ NODE_ROLE = "pve-node"
 NODE_DEVICE_TYPE = "pve-node"
 # Seeded only when Nautobot has no Device for the node yet; see NodesSourceAdapter.load.
 DEFAULT_LOCATION = "homelab"
+# Name of the management Interface this job binds the node address to. "BMC" is
+# taken by the DCIM job for out-of-band interfaces; this is the in-band one.
+MGMT_INTERFACE_NAME = "mgmt"
 
 
 class NodeDeviceModel(AdditiveNautobotModel):
@@ -179,6 +185,91 @@ class SeedNodes(DataSource):
         """Load the Nautobot target adapter."""
         self.target_adapter = NodesNautobotAdapter(job=self)
         self.target_adapter.load()
+
+    def run(self, *args, **kwargs):  # noqa: D102 - see _bind_primary_ips
+        """Run the additive node sync, then bind each node's management IP."""
+        super().run(*args, **kwargs)
+        self._bind_primary_ips()
+
+    def _bind_primary_ips(self) -> None:
+        """Ensure a mgmt interface + assigned IPAddress + primary_ip4 per node.
+
+        ORM (not DiffSync): the interface assignment and the primary-IP FK are
+        the generic-FK path DiffSync defers, exactly as
+        ``ssot_virtualization.py::_bind_primary_ips`` does for guests.
+
+        This job's docstring used to say mgmt-IP binding was "deferred to Device
+        Onboarding". It is not, and never was: ``schedule_discovery.py`` states
+        that SSOTSyncDevices sweeps SSH-CLI (netmiko) network platforms and that
+        "Proxmox / iDRAC / UniFi discovery via native APIs is a tracked
+        follow-up, not this job." Proxmox nodes are out of scope for it by
+        design, so nothing was ever going to set primary_ip4 for them and every
+        pve Device sat with it null.
+
+        The address is NOT invented here and no address is added to the desired
+        state. It is matched against the IPAddress objects
+        ``ssot_ip_addresses.py`` already seeds from the fixed-IP reservations,
+        by ``dns_name``. That keeps the estate's "no literal IPs" rule intact:
+        the only thing this job knows is a NAME.
+        """
+        from nautobot.dcim.models import Interface
+        from nautobot.extras.models import Status
+        from nautobot.ipam.models import IPAddress, IPAddressToInterface
+
+        status = Status.objects.get(name=STATUS_ACTIVE)
+        seed = load_seed()
+        commissioned = [n for n in seed["nodes"] if n.get("commissioned", True)]
+        bound = 0
+
+        for node in commissioned:
+            # The record's name, which may differ from the key -- the same field
+            # the source adapter uses. Matching on the wrong one is how a rename
+            # strands a Device beside a duplicate.
+            name = str(node.get("nautobot_device_name") or node.get("name") or "")
+            if not name:
+                continue
+            device = Device.objects.filter(name=name).first()
+            if device is None:  # not created (e.g. dry run) -- nothing to bind
+                continue
+            ip_address = IPAddress.objects.filter(dns_name=name).first()
+            if ip_address is None:
+                # Loud per node: a commissioned node with no seeded reservation
+                # is a real gap, not a shrug. Silence here is what let this sit
+                # broken indefinitely in the first place.
+                self.logger.warning(
+                    "No seeded IPAddress with dns_name=%s; %s keeps primary_ip4 "
+                    "unset. Add a fixed-IP reservation carrying that dns_name.",
+                    name,
+                    name,
+                )
+                continue
+            interface, _ = Interface.objects.get_or_create(
+                device=device,
+                name=MGMT_INTERFACE_NAME,
+                defaults={"type": "other", "mgmt_only": True, "status": status},
+            )
+            IPAddressToInterface.objects.get_or_create(
+                ip_address=ip_address, interface=interface
+            )
+            if device.primary_ip4_id != ip_address.id:
+                device.primary_ip4 = ip_address
+                device.validated_save()
+            bound += 1
+
+        # A per-node warning is invisible in a green run, so assert the SET.
+        # Zero matches across every commissioned node is not "nothing to do" --
+        # it is the signature of the reservation dns_names and the Device names
+        # having drifted apart, and it must fail rather than report success.
+        # Mirrors load_tofu.yml's "Assert the node_storage lookup matched at
+        # least one host", which exists for exactly this failure shape.
+        if commissioned and Device.objects.filter(role__name=NODE_ROLE).exists() and not bound:
+            raise ValueError(
+                f"Bound primary_ip4 for 0 of {len(commissioned)} commissioned "
+                "nodes. Every lookup missed, which means the seeded reservation "
+                "dns_names and the Nautobot Device names have drifted apart -- "
+                "not that there was nothing to do. Reconcile the names (see "
+                "`nautobot_device_name`) rather than letting this pass green."
+            )
 
 
 register_jobs(SeedNodes)
