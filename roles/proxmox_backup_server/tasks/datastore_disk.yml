@@ -1,0 +1,127 @@
+---
+# =============================================================================
+# Dedicated datastore disk
+# =============================================================================
+# The datastore gets its own filesystem. Without one it lands on the boot
+# filesystem, and the failure is silent in the worst way: every task in this
+# role succeeds, `datastore list` shows the store on the declared path, and
+# backups run green until the boot disk fills — at which point the backup
+# tier and the guest fail together. The large disk sits untouched throughout.
+#
+# The device is addressed by its /dev/disk/by-id path. Kernel names (/dev/sdb)
+# are assigned in discovery order and are not stable across reboots — a mkfs
+# against the wrong one destroys the boot disk.
+#
+# The filesystem is written to the whole device, with no partition table. A
+# single-purpose data disk gains nothing from one, and it makes "does this
+# device already carry something" a single blkid question instead of a
+# partition-table-plus-partition walk.
+
+- name: Validate the datastore device is declared
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_server_datastore_device is defined
+      - proxmox_backup_server_datastore_device | length > 0
+      - proxmox_backup_server_datastore_device is match('^/dev/disk/by-(id|uuid|path)/')
+    fail_msg: >-
+      proxmox_backup_server_datastore_device must name this guest's datastore
+      disk by a stable /dev/disk/by-id (or by-uuid, by-path) path. Kernel names
+      are not stable across reboots and this role formats what it points at.
+
+- name: Resolve the datastore device
+  ansible.builtin.stat:
+    path: "{{ proxmox_backup_server_datastore_device }}"
+    follow: true
+  register: proxmox_backup_server_datastore_dev
+
+- name: Assert the datastore device is present
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_server_datastore_dev.stat.exists
+      - proxmox_backup_server_datastore_dev.stat.isblk
+    fail_msg: >-
+      {{ proxmox_backup_server_datastore_device }} does not resolve to a block
+      device on this host. Attach the datastore disk to the guest before
+      converging; nothing here formats a device it cannot identify.
+
+- name: Read existing signatures on the datastore device
+  ansible.builtin.command:
+    cmd: "blkid -p -o export {{ proxmox_backup_server_datastore_device }}"
+  register: proxmox_backup_server_datastore_blkid
+  changed_when: false
+  # blkid exits 2 when it finds no signature at all — the expected state for a
+  # never-used disk. Any other non-zero is a real error.
+  failed_when: proxmox_backup_server_datastore_blkid.rc not in [0, 2]
+
+- name: Refuse to format a device that already carries data
+  vars:
+    _signatures: "{{ proxmox_backup_server_datastore_blkid.stdout | default('') }}"
+  ansible.builtin.assert:
+    that:
+      - _signatures is not search('^PTTYPE=', multiline=True)
+      - >-
+        _signatures is not search('^TYPE=', multiline=True)
+        or _signatures is search('^TYPE=' ~ proxmox_backup_server_datastore_fstype ~ '$',
+        multiline=True)
+    fail_msg: >-
+      {{ proxmox_backup_server_datastore_device }} already carries a partition
+      table, or a filesystem that is not
+      {{ proxmox_backup_server_datastore_fstype }}. Refusing to touch it.
+      Signatures found:
+      {{ proxmox_backup_server_datastore_blkid.stdout_lines | default([]) | join(' ') }}
+
+- name: Create the datastore filesystem
+  community.general.filesystem:
+    dev: "{{ proxmox_backup_server_datastore_device }}"
+    fstype: "{{ proxmox_backup_server_datastore_fstype }}"
+    # `force` is deliberately absent. The module is a no-op when the requested
+    # filesystem is already present, and errors rather than overwriting a
+    # different one.
+
+- name: Read the datastore filesystem UUID
+  ansible.builtin.command:
+    cmd: "blkid -s UUID -o value {{ proxmox_backup_server_datastore_device }}"
+  register: proxmox_backup_server_datastore_uuid
+  changed_when: false
+
+# Mounted before the directory's ownership is set, so the chown lands on the
+# datastore filesystem rather than on the boot-disk directory underneath it.
+- name: Mount the datastore disk at the datastore path
+  ansible.posix.mount:
+    path: "{{ proxmox_backup_server_datastore_path }}"
+    src: "UUID={{ proxmox_backup_server_datastore_uuid.stdout }}"
+    fstype: "{{ proxmox_backup_server_datastore_fstype }}"
+    opts: defaults
+    state: mounted
+
+# =============================================================================
+# Converge-time guard
+# =============================================================================
+# This runs on EVERY converge, not only on the first. Without it the mount
+# regresses silently on the next rebuild and the role keeps reporting success
+# while backups accumulate on the boot disk.
+
+- name: Read the filesystems backing / and the datastore path
+  ansible.builtin.command:
+    cmd: "findmnt -no SOURCE --target {{ item }}"
+  loop:
+    - /
+    - "{{ proxmox_backup_server_datastore_path }}"
+  register: proxmox_backup_server_fs_sources
+  changed_when: false
+
+- name: Assert the datastore is not on the root filesystem
+  vars:
+    _root_fs: "{{ proxmox_backup_server_fs_sources.results[0].stdout | trim }}"
+    _store_fs: "{{ proxmox_backup_server_fs_sources.results[1].stdout | trim }}"
+  ansible.builtin.assert:
+    that:
+      - _store_fs != _root_fs
+    fail_msg: >-
+      The datastore path {{ proxmox_backup_server_datastore_path }} is on the
+      root filesystem ({{ _root_fs }}). Backups would fill the boot disk and
+      take the backup tier down with the guest, while the datastore disk sits
+      unused. The datastore disk mount has regressed — check the fstab entry
+      for {{ proxmox_backup_server_datastore_path }}.
+    success_msg: >-
+      The datastore is on {{ _store_fs }}, separate from / ({{ _root_fs }}).
