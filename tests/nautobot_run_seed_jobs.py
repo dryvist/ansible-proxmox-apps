@@ -45,8 +45,13 @@ class Recorder:
         return types.SimpleNamespace(status="SUCCESS", refresh_from_db=lambda: None)
 
 
-def load(recorder):
-    """Import run_seed_jobs.py with django/nautobot stubbed out."""
+def load(recorder, *, registered: bool = False):
+    """Import run_seed_jobs.py with django/nautobot stubbed out.
+
+    ``registered=True`` makes every job resolve to an enabled Job, so the
+    module body actually runs the seed loop — that is the only way to observe
+    the process exit code, exposed as ``module.TEST_EXIT_CODE``.
+    """
     auth = types.ModuleType("django.contrib.auth")
     auth.get_user_model = lambda: types.SimpleNamespace(
         objects=types.SimpleNamespace(
@@ -59,11 +64,12 @@ def load(recorder):
     # JOB_SKIPPED and exits 1 — caught below. This test drives `enqueue`
     # directly; the module-level run is only incidental to importing it.
     extras = types.ModuleType("nautobot.extras.models")
+    job = types.SimpleNamespace(enabled=True, save=lambda: None) if registered else None
     extras.Job = type(
         "Job",
         (),
         {"objects": types.SimpleNamespace(
-            filter=lambda **kw: types.SimpleNamespace(first=lambda: None)
+            filter=lambda **kw: types.SimpleNamespace(first=lambda: job)
         )},
     )
     extras.JobResult = recorder
@@ -85,10 +91,12 @@ def load(recorder):
     # The module body ends in `sys.exit(1)` when a job fails; it never reaches
     # that here because SEED_JOBS resolution is what we are bypassing. Guard
     # anyway so an import cannot kill the test process.
+    exit_code = 0
     try:
         spec.loader.exec_module(module)
-    except SystemExit:
-        pass
+    except SystemExit as exc:
+        exit_code = exc.code or 0
+    module.TEST_EXIT_CODE = exit_code
     return module
 
 
@@ -130,7 +138,10 @@ def main() -> None:
     # of the two kinds, or it silently gets the wrong kwargs.
     rec = Recorder(modern=True)
     mod = load(rec)
-    assert set(mod.SEED_JOBS) >= set(mod.SSOT_JOBS) | set(mod.PLAIN_JOBS)
+    # Every job the runner enqueues must be classified, so it gets the right
+    # kwargs. Not the reverse: a slice-backed job is dropped from SEED_JOBS
+    # when its slice is empty, while staying classified in SSOT_JOBS.
+    assert set(mod.SSOT_JOBS) | set(mod.PLAIN_JOBS) >= set(mod.SEED_JOBS)
     assert not (set(mod.SSOT_JOBS) & set(mod.PLAIN_JOBS)), "a job cannot be both kinds"
     assert "Seed Hardware Inventory" in mod.PLAIN_JOBS
 
