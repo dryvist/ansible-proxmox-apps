@@ -1,0 +1,154 @@
+---
+# Verify the converged host: the repository wiring, the signing key, the
+# installed package, the running daemons, and the datastore — the last one read
+# back out of `proxmox-backup-manager` rather than off the filesystem, so the
+# assertion fails if the role created a directory but never declared it.
+#
+# Two negative controls run alongside: the subscription-gated enterprise
+# component must appear nowhere under /etc/apt, and the repository entry must
+# carry a signed-by keyring rather than being trusted unconditionally.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    pbs_verify_datastore_name: molecule
+    pbs_verify_datastore_path: /srv/molecule-datastore
+    pbs_verify_keyring: /etc/apt/keyrings/proxmox-release.gpg
+
+  tasks:
+    # --- Repository wiring -------------------------------------------------
+    - name: Read the rendered apt source
+      ansible.builtin.slurp:
+        src: /etc/apt/sources.list.d/proxmox-backup-server.list
+      register: pbs_verify_source
+
+    - name: Assert the source names the community component and a signing key
+      ansible.builtin.assert:
+        that:
+          - "'http://download.proxmox.com/debian/pbs' in source"
+          - "'bookworm' in source"
+          - "'pbs-no-subscription' in source"
+          - "'signed-by=' + pbs_verify_keyring in source"
+          # NEGATIVE: the enterprise component is subscription-gated and would
+          # break every apt update on this host.
+          - "'pbs-enterprise' not in source"
+          - "'enterprise.proxmox.com' not in source"
+        fail_msg: "Rendered apt source is wrong:\n{{ source }}"
+      vars:
+        source: "{{ pbs_verify_source.content | b64decode }}"
+
+    # --- NEGATIVE: no enterprise entry anywhere in apt's configuration ------
+    - name: Search every apt source for an enterprise entry
+      ansible.builtin.find:
+        paths: /etc/apt
+        patterns:
+          - "*.list"
+          - "*.sources"
+        recurse: true
+        contains: ".*(pbs-enterprise|enterprise\\.proxmox\\.com).*"
+      register: pbs_verify_enterprise
+
+    - name: Assert no apt source enables the enterprise component
+      ansible.builtin.assert:
+        that: pbs_verify_enterprise.files | length == 0
+        fail_msg: >-
+          Enterprise component configured in:
+          {{ pbs_verify_enterprise.files | map(attribute='path') | list }}.
+
+    # --- Signing key -------------------------------------------------------
+    - name: Stat the release keyring
+      ansible.builtin.stat:
+        path: "{{ pbs_verify_keyring }}"
+      register: pbs_verify_keyring_stat
+
+    - name: Assert the keyring is a regular world-readable file
+      ansible.builtin.assert:
+        that:
+          - pbs_verify_keyring_stat.stat.exists
+          - pbs_verify_keyring_stat.stat.isreg
+          - pbs_verify_keyring_stat.stat.mode == '0644'
+        fail_msg: "Keyring wrong: {{ pbs_verify_keyring_stat.stat }}."
+
+    - name: Read the keyring with gpg
+      ansible.builtin.command: gpg --no-default-keyring --show-keys {{ pbs_verify_keyring }}
+      register: pbs_verify_gpg
+      changed_when: false
+
+    - name: Assert the keyring really holds the vendor release key
+      ansible.builtin.assert:
+        that:
+          - pbs_verify_gpg.rc == 0
+          - "'Proxmox' in pbs_verify_gpg.stdout"
+        fail_msg: >-
+          Keyring is not a usable Proxmox key: rc={{ pbs_verify_gpg.rc }},
+          out={{ pbs_verify_gpg.stdout }}.
+
+    # --- Package and services ---------------------------------------------
+    - name: Collect package facts
+      ansible.builtin.package_facts:
+
+    - name: Assert the server package is installed
+      ansible.builtin.assert:
+        that: "'proxmox-backup-server' in ansible_facts.packages"
+        fail_msg: proxmox-backup-server is not installed.
+
+    - name: Collect service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert both daemons are running and enabled at boot
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['proxmox-backup.service'].state == 'running'
+          - ansible_facts.services['proxmox-backup.service'].status == 'enabled'
+          - ansible_facts.services['proxmox-backup-proxy.service'].state == 'running'
+          - ansible_facts.services['proxmox-backup-proxy.service'].status == 'enabled'
+        fail_msg: >-
+          Daemon state wrong:
+          {{ ansible_facts.services['proxmox-backup.service'] | default('absent') }} /
+          {{ ansible_facts.services['proxmox-backup-proxy.service'] | default('absent') }}.
+
+    # --- Datastore ---------------------------------------------------------
+    - name: Stat the datastore directory
+      ansible.builtin.stat:
+        path: "{{ pbs_verify_datastore_path }}"
+      register: pbs_verify_datastore_dir
+
+    - name: Assert the datastore directory belongs to the backup account
+      ansible.builtin.assert:
+        that:
+          - pbs_verify_datastore_dir.stat.isdir
+          - pbs_verify_datastore_dir.stat.pw_name == 'backup'
+          - pbs_verify_datastore_dir.stat.gr_name == 'backup'
+          - pbs_verify_datastore_dir.stat.mode == '0755'
+        fail_msg: "Datastore directory wrong: {{ pbs_verify_datastore_dir.stat }}."
+
+    # Read the datastore back out of PBS itself. A directory alone proves
+    # nothing — this fails if the role made the path but never declared it.
+    - name: Ask PBS for its configured datastores
+      ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
+      register: pbs_verify_datastores
+      changed_when: false
+
+    - name: Assert PBS knows the datastore on the declared path
+      ansible.builtin.assert:
+        that:
+          - pbs_verify_datastore_name in (declared | map(attribute='name') | list)
+          - (declared | selectattr('name', 'eq', pbs_verify_datastore_name)
+             | map(attribute='path') | first) == pbs_verify_datastore_path
+        fail_msg: "PBS datastores are {{ declared }}."
+      vars:
+        declared: "{{ pbs_verify_datastores.stdout | from_json }}"
+
+    - name: Stat the chunk store PBS creates inside the datastore
+      ansible.builtin.stat:
+        path: "{{ pbs_verify_datastore_path }}/.chunks"
+      register: pbs_verify_chunks
+
+    - name: Assert PBS initialised the datastore on disk
+      ansible.builtin.assert:
+        that: pbs_verify_chunks.stat.isdir | default(false)
+        fail_msg: >-
+          {{ pbs_verify_datastore_path }}/.chunks is missing — the datastore was
+          never initialised.

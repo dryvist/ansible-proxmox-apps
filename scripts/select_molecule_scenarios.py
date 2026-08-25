@@ -39,6 +39,7 @@ SCENARIOS = [
     "nautobot",
     "ssh_ca_trust",
     "homarr",
+    "proxmox_backup_server",
 ]
 
 # Scenarios whose name is not the role they exercise.
