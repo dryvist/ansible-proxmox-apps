@@ -1,0 +1,194 @@
+---
+# =============================================================================
+# Dedicated Docker data disk
+# =============================================================================
+# The CI guests carry a second block device for /var/lib/docker. Without it the
+# image and build cache share the boot filesystem and fill it, and every job on
+# the host then fails with ENOSPC regardless of what it was testing.
+#
+# The device is addressed by its /dev/disk/by-id path. Kernel names (/dev/sdb)
+# are assigned in discovery order and are not stable across reboots — a mkfs
+# against the wrong one destroys the boot disk.
+#
+# The filesystem is written to the whole device, with no partition table. A
+# single-purpose data disk gains nothing from one, and it makes "does this
+# device already carry something" a single blkid question instead of a
+# partition-table-plus-partition walk.
+
+- name: Validate the Docker data device is declared
+  ansible.builtin.assert:
+    that:
+      - github_runner_data_device is defined
+      - github_runner_data_device | length > 0
+      - github_runner_data_device is match('^/dev/disk/by-(id|uuid|path)/')
+    fail_msg: >-
+      github_runner_data_device must name this guest's Docker data disk by a
+      stable /dev/disk/by-id (or by-uuid, by-path) path. Kernel names are not
+      stable across reboots.
+
+- name: Resolve the Docker data device
+  ansible.builtin.stat:
+    path: "{{ github_runner_data_device }}"
+    follow: true
+  register: github_runner_data_dev
+
+- name: Assert the Docker data device is present
+  ansible.builtin.assert:
+    that:
+      - github_runner_data_dev.stat.exists
+      - github_runner_data_dev.stat.isblk
+    fail_msg: >-
+      {{ github_runner_data_device }} does not resolve to a block device on
+      this host. Attach the data disk to the guest before converging; nothing
+      here formats a device it cannot identify.
+
+- name: Read existing signatures on the Docker data device
+  ansible.builtin.command:
+    cmd: "blkid -p -o export {{ github_runner_data_device }}"
+  register: github_runner_data_blkid
+  changed_when: false
+  # blkid exits 2 when it finds no signature at all — the expected state for a
+  # never-used disk. Any other non-zero is a real error.
+  failed_when: github_runner_data_blkid.rc not in [0, 2]
+
+- name: Refuse to format a device that already carries data
+  vars:
+    _signatures: "{{ github_runner_data_blkid.stdout | default('') }}"
+  ansible.builtin.assert:
+    that:
+      - _signatures is not search('^PTTYPE=', multiline=True)
+      - >-
+        _signatures is not search('^TYPE=', multiline=True)
+        or _signatures is search('^TYPE=' ~ github_runner_data_fstype ~ '$',
+        multiline=True)
+    fail_msg: >-
+      {{ github_runner_data_device }} already carries a partition table, or a
+      filesystem that is not {{ github_runner_data_fstype }}. Refusing to touch
+      it. Signatures found: {{ github_runner_data_blkid.stdout_lines | default([]) | join(' ') }}
+
+- name: Create the Docker data filesystem
+  community.general.filesystem:
+    dev: "{{ github_runner_data_device }}"
+    fstype: "{{ github_runner_data_fstype }}"
+    # `force` is deliberately absent. The module is a no-op when the requested
+    # filesystem is already present, and errors rather than overwriting a
+    # different one.
+
+- name: Read the Docker data filesystem UUID
+  ansible.builtin.command:
+    cmd: "blkid -s UUID -o value {{ github_runner_data_device }}"
+  register: github_runner_data_uuid
+  changed_when: false
+
+- name: Check whether /var/lib/docker already has its own filesystem
+  ansible.builtin.command:
+    cmd: findmnt -no SOURCE /var/lib/docker
+  register: github_runner_docker_mount
+  changed_when: false
+  failed_when: false
+
+# ---------------------------------------------------------------------------
+# One-shot migration of an existing /var/lib/docker off the boot disk.
+#
+# WHY A MOUNT AT /var/lib/docker RATHER THAN Docker's `data-root`:
+# the mount leaves Docker's own configuration at its default, so exactly one
+# thing has to survive a rebuild — the fstab entry. `data-root` needs BOTH a
+# daemon.json that survives and the mount that backs it, and the docker_engine
+# role here only writes daemon.json when a flag is set, so a data-root would
+# have to take ownership of that file away from it. One thing to survive
+# instead of two is the more honest choice, and the converge-time assertion
+# below catches either one regressing.
+# ---------------------------------------------------------------------------
+
+- name: Migrate an existing /var/lib/docker onto the data disk
+  when: github_runner_docker_mount.rc != 0
+  block:
+    - name: Stop Docker for the data-disk migration
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - docker.service
+        - docker.socket
+
+    - name: Mount the data filesystem at a staging path
+      ansible.posix.mount:
+        path: /mnt/docker-data
+        src: "UUID={{ github_runner_data_uuid.stdout }}"
+        fstype: "{{ github_runner_data_fstype }}"
+        state: ephemeral
+
+    - name: Copy the existing Docker tree onto the data disk
+      ansible.builtin.command:
+        cmd: cp -a /var/lib/docker/. /mnt/docker-data/
+        creates: /mnt/docker-data/image
+
+    - name: Unmount the staging path
+      ansible.posix.mount:
+        path: /mnt/docker-data
+        state: absent
+
+    - name: Set the pre-migration tree aside
+      ansible.builtin.command:
+        cmd: mv /var/lib/docker /var/lib/docker.pre-datadisk
+        creates: /var/lib/docker.pre-datadisk
+
+- name: Mount the Docker data disk at /var/lib/docker
+  ansible.posix.mount:
+    path: /var/lib/docker
+    src: "UUID={{ github_runner_data_uuid.stdout }}"
+    fstype: "{{ github_runner_data_fstype }}"
+    opts: defaults
+    state: mounted
+
+- name: Ensure Docker is running on the data disk
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+# =============================================================================
+# Converge-time guard
+# =============================================================================
+# This runs on EVERY converge, not only during the migration. Without it the
+# change regresses silently on the next rebuild, and the only symptom is an
+# ENOSPC failure in an unrelated job.
+
+- name: Read the filesystems backing / and /var/lib/docker
+  ansible.builtin.command:
+    cmd: "findmnt -no SOURCE --target {{ item }}"
+  loop:
+    - /
+    - /var/lib/docker
+  register: github_runner_fs_sources
+  changed_when: false
+
+- name: Assert /var/lib/docker is not on the root filesystem
+  vars:
+    _root_fs: "{{ github_runner_fs_sources.results[0].stdout | trim }}"
+    _docker_fs: "{{ github_runner_fs_sources.results[1].stdout | trim }}"
+  ansible.builtin.assert:
+    that:
+      - _docker_fs != _root_fs
+    fail_msg: >-
+      /var/lib/docker is on the root filesystem ({{ _root_fs }}). The Docker
+      image and build cache will fill the boot disk and every job on this
+      runner will fail with ENOSPC. The data disk mount has regressed — check
+      the fstab entry for /var/lib/docker.
+    success_msg: >-
+      /var/lib/docker is on {{ _docker_fs }}, separate from / ({{ _root_fs }}).
+
+# Reclaim the boot disk only once the mount is proven, never before.
+- name: Reclaim the boot disk after a successful migration
+  when: github_runner_docker_mount.rc != 0
+  block:
+    - name: Remove the pre-migration Docker tree from the boot disk
+      ansible.builtin.file:
+        path: /var/lib/docker.pre-datadisk
+        state: absent
+
+    - name: Prune dangling Docker data
+      ansible.builtin.command:
+        cmd: docker system prune --force
+      register: github_runner_prune
+      changed_when: "'Total reclaimed space: 0B' not in github_runner_prune.stdout"
