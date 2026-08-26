@@ -12,3 +12,62 @@
 
     - name: Gather facts
       ansible.builtin.setup:
+
+    # ---------------------------------------------------------------------
+    # A stand-in datastore disk.
+    #
+    # The role refuses any device path that is not under /dev/disk/by-*,
+    # because a kernel name moves between reboots and the role writes a
+    # filesystem to whatever it is given. That rule is worth keeping strict,
+    # so the scenario satisfies it rather than relaxing it: a sparse file is
+    # attached to a loop device, and a by-id symlink is created to point at
+    # it. What the role then sees is indistinguishable from a real data disk.
+    - name: Install loop-device tooling
+      ansible.builtin.apt:
+        name:
+          - util-linux
+          - e2fsprogs
+        state: present
+        update_cache: true
+
+    # 4G, and the size is load-bearing rather than arbitrary. Creating a PBS
+    # datastore lays out 65536 chunk DIRECTORIES, and each one costs an inode.
+    # ext4's default allocation is one inode per 16K, so a 512M filesystem gets
+    # 32768 of them -- less than half what the chunk store needs, and creation
+    # dies part-way with the disk reporting plenty of free space. The file is
+    # sparse, so the larger size costs nothing until it is written to.
+    - name: Create the backing file for the stand-in datastore disk
+      ansible.builtin.command:
+        cmd: truncate -s 4G /var/tmp/molecule-datastore.img
+        creates: /var/tmp/molecule-datastore.img
+
+    - name: Attach the backing file to a loop device
+      ansible.builtin.shell:
+        # pipefail: without it a losetup failure is masked by the exit status
+        # of cut, and the play would carry on with an empty device path.
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          existing=$(losetup -j /var/tmp/molecule-datastore.img | cut -d: -f1)
+          if [ -n "$existing" ]; then
+            printf '%s' "$existing"
+          else
+            losetup --find --show /var/tmp/molecule-datastore.img | tr -d '\n'
+          fi
+      register: molecule_loop_dev
+      changed_when: false
+
+    - name: Create the by-id directory
+      ansible.builtin.file:
+        path: /dev/disk/by-id
+        state: directory
+        mode: "0755"
+
+    # A symlink, matching how udev presents a real disk, so the role's
+    # `follow: true` stat resolves to the block device behind it.
+    - name: Publish the loop device under a by-id path
+      ansible.builtin.file:
+        src: "{{ molecule_loop_dev.stdout | trim }}"
+        dest: /dev/disk/by-id/molecule-datastore
+        state: link
+        force: true

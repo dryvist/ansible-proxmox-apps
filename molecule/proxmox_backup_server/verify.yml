@@ -152,3 +152,50 @@
         fail_msg: >-
           {{ pbs_verify_datastore_path }}/.chunks is missing — the datastore was
           never initialised.
+
+    # --- Datastore disk ----------------------------------------------------
+    # The defect this guards against is silent: the role can create the
+    # directory, declare the datastore, and report success with everything
+    # sitting on the boot filesystem while the datastore disk stays untouched.
+    # Asserting the datastore has its OWN filesystem is what distinguishes a
+    # working backup tier from one that fills the boot disk and takes the
+    # guest down with it.
+    - name: Read the filesystems backing / and the datastore path
+      ansible.builtin.command:
+        cmd: "findmnt -no SOURCE --target {{ item }}"
+      loop:
+        - /
+        - "{{ pbs_verify_datastore_path }}"
+      register: pbs_verify_fs
+      changed_when: false
+
+    - name: Assert the datastore is on its own filesystem, not the root one
+      vars:
+        _root_fs: "{{ pbs_verify_fs.results[0].stdout | trim }}"
+        _store_fs: "{{ pbs_verify_fs.results[1].stdout | trim }}"
+      ansible.builtin.assert:
+        that:
+          - _store_fs != _root_fs
+          - _store_fs | length > 0
+        fail_msg: >-
+          {{ pbs_verify_datastore_path }} resolves to {{ _root_fs }}, the same
+          filesystem as /. The datastore disk was never mounted.
+
+    - name: Read the fstab entry for the datastore path
+      ansible.builtin.command:
+        cmd: "findmnt -no SOURCE --fstab --target {{ pbs_verify_datastore_path }}"
+      register: pbs_verify_fstab
+      changed_when: false
+      failed_when: false
+
+    # Durability: a mount that is not in fstab is gone after the next reboot,
+    # and the role would then quietly resume writing to the boot disk.
+    - name: Assert the datastore mount is persistent and addressed by UUID
+      ansible.builtin.assert:
+        that:
+          - pbs_verify_fstab.rc == 0
+          - pbs_verify_fstab.stdout is search('^UUID=')
+        fail_msg: >-
+          No UUID-based fstab entry for {{ pbs_verify_datastore_path }}
+          (rc={{ pbs_verify_fstab.rc }}, source={{ pbs_verify_fstab.stdout }}).
+          The mount would not survive a reboot.

@@ -28,6 +28,14 @@
       Proxmox Backup Server is published for amd64 only; this host is
       {{ ansible_architecture }}.
 
+# Done before any package work: a missing or unsafe datastore device should
+# fail the play before apt is touched, not after PBS is installed. The mount
+# also has to exist before the datastore directory is created and chowned, so
+# the ownership lands on the datastore disk rather than on the boot-disk
+# directory it would otherwise sit under.
+- name: Give the datastore its own filesystem
+  ansible.builtin.include_tasks: datastore_disk.yml
+
 - name: Install apt transport prerequisites
   ansible.builtin.apt:
     name:
@@ -138,8 +146,8 @@
         proxmox_backup_server_datastore_name in
         (proxmox_backup_server_datastore_recheck.stdout | default('[]') | from_json
          | map(attribute='name') | list)
-      retries: 12
-      delay: 5
+      retries: "{{ proxmox_backup_server_datastore_create_retries }}"
+      delay: "{{ proxmox_backup_server_datastore_create_delay }}"
 
     - name: Assert the datastore now exists on the declared path
       ansible.builtin.assert:
