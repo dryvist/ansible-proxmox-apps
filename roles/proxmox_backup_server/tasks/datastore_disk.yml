@@ -109,6 +109,10 @@
     - "{{ proxmox_backup_server_datastore_path }}"
   register: proxmox_backup_server_fs_sources
   changed_when: false
+  # failed_when: false so a missing datastore path reaches the assertion below
+  # and is reported as what it is, rather than surfacing as a bare non-zero
+  # exit from findmnt that names neither the path nor the reason.
+  failed_when: false
 
 - name: Assert the datastore is not on the root filesystem
   vars:
@@ -116,10 +120,13 @@
     _store_fs: "{{ proxmox_backup_server_fs_sources.results[1].stdout | trim }}"
   ansible.builtin.assert:
     that:
+      - _store_fs | length > 0
       - _store_fs != _root_fs
     fail_msg: >-
-      The datastore path {{ proxmox_backup_server_datastore_path }} is on the
-      root filesystem ({{ _root_fs }}). Backups would fill the boot disk and
+      The datastore path {{ proxmox_backup_server_datastore_path }} is not on a
+      filesystem of its own
+      ({{ _store_fs | default('no filesystem resolved — the path does not exist',
+      true) }}; / is on {{ _root_fs }}). Backups would fill the boot disk and
       take the backup tier down with the guest, while the datastore disk sits
       unused. The datastore disk mount has regressed — check the fstab entry
       for {{ proxmox_backup_server_datastore_path }}.
