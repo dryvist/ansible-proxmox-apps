@@ -19,9 +19,9 @@
 
 - name: Build the dashboard catalog from the ingress table
   ansible.builtin.set_fact:
-    dashboard_catalog: >-
+    dashboard_catalog_services: >-
       {{
-        dashboard_catalog | default([]) + [{
+        dashboard_catalog_services | default([]) + [{
           'name': item.name,
           'group': item.group | default('other', true),
           'sso': item.sso | default(true),
@@ -45,22 +45,24 @@
     # backend is a fine liveness target, and rows with neither get no probe
     # rather than a fabricated one.
     _probe_host: "{{ item.ip | default((item.backends | default([]))[0] | default(''), true) }}"
+    _probe_scheme: "{{ item.scheme | default('http') }}"
+    _probe_port: "{{ item.port | default('') | string }}"
     _probe_url: >-
       {{ (_probe_host | length > 0)
-         | ternary((item.scheme | default('http')) ~ '://' ~ _probe_host ~ ':' ~ (item.port | default('') | string), '') }}
+         | ternary(_probe_scheme ~ '://' ~ _probe_host ~ ':' ~ _probe_port, '') }}
   loop: "{{ dashboard_catalog_ingress | rejectattr('name', 'in', dashboard_catalog_exclude) | list }}"
   loop_control:
     label: "{{ item.name }} [{{ item.group | default('other', true) }}]"
 
 - name: Order the catalog by group, then name
   ansible.builtin.set_fact:
-    dashboard_catalog: >-
-      {{ dashboard_catalog
+    dashboard_catalog_services: >-
+      {{ dashboard_catalog_services
          | sort(attribute='name')
          | sort(attribute='group') }}
 
 - name: Report the catalog the boards will render
   ansible.builtin.debug:
     msg: >-
-      {{ dashboard_catalog | length }} services across
-      {{ dashboard_catalog | map(attribute='group') | unique | sort | list }}
+      {{ dashboard_catalog_services | length }} services across
+      {{ dashboard_catalog_services | map(attribute='group') | unique | sort | list }}

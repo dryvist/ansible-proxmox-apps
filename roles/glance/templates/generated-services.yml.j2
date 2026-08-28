@@ -1,0 +1,36 @@
+{{ ansible_managed | comment }}
+# Rendered from the shared catalog (roles/dashboard_catalog_services). Kept in its OWN file, included by
+# glance.yml, so hand-written pages and widgets there survive a re-render — a
+# generated block inside the main config would overwrite them.
+#
+# Every link is the clean portless HTTPS URL, so each click passes through
+# Traefik and its Authelia gate.
+{% set _ordered = dashboard_catalog_group_order
+     + (dashboard_catalog_services | map(attribute='group') | unique | reject('in', dashboard_catalog_group_order) | sort | list) %}
+- name: Services
+  columns:
+    - size: full
+      widgets:
+{% for group in _ordered if dashboard_catalog_services | selectattr('group', 'equalto', group) | list | length > 0 %}
+        - type: {{ glance_monitor_enabled | bool | ternary('monitor', 'bookmarks') }}
+          title: {{ group }}
+{% if glance_monitor_enabled | bool %}
+          sites:
+{% for svc in dashboard_catalog_services if svc.group == group %}
+            - title: {{ svc.name }}
+              url: {{ svc.url }}
+{% if svc.probe_url | length > 0 %}
+              # check-url is the GUEST address: this probe is unauthenticated,
+              # and against the gated URL every service would read as down.
+              check-url: {{ svc.probe_url }}
+{% endif %}
+{% endfor %}
+{% else %}
+          groups:
+            - links:
+{% for svc in dashboard_catalog_services if svc.group == group %}
+                - title: {{ svc.name }}
+                  url: {{ svc.url }}
+{% endfor %}
+{% endif %}
+{% endfor %}

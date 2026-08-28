@@ -13,7 +13,7 @@
   hosts: localhost
   gather_facts: false
   vars:
-    _role_dir: "{{ playbook_dir }}/../../roles/dashboard_catalog"
+    _role_dir: "{{ playbook_dir }}/../../roles/dashboard_catalog_services"
     dashboard_catalog_base_domain: "pve.example.test"
     tofu_data:
       ingress:
@@ -59,8 +59,8 @@
       ansible.builtin.assert:
         quiet: true
         that:
-          - "'homarr' not in (dashboard_catalog | map(attribute='name') | list)"
-          - dashboard_catalog | length == 4
+          - "'homarr' not in (dashboard_catalog_services | map(attribute='name') | list)"
+          - dashboard_catalog_services | length == 4
         fail_msg: "The exclude list is not applied — a board would list itself."
         success_msg: "Excluded routes stay off the boards."
 
@@ -68,8 +68,8 @@
       ansible.builtin.assert:
         quiet: true
         that:
-          - dashboard_catalog | selectattr('url', 'search', ':[0-9]+') | list | length == 0
-          - dashboard_catalog | rejectattr('url', 'match', '^https://') | list | length == 0
+          - dashboard_catalog_services | selectattr('url', 'search', ':[0-9]+') | list | length == 0
+          - dashboard_catalog_services | rejectattr('url', 'match', '^https://') | list | length == 0
         fail_msg: >-
           A catalog link carries a port or is not HTTPS. A ported link bypasses
           Traefik and therefore Authelia — the whole point of the clean URL.
@@ -86,7 +86,7 @@
           publishes a link to a host that does not exist.
         success_msg: "hostname wins over name, as in the traefik role."
       vars:
-        _by_name: "{{ dict(dashboard_catalog | map(attribute='name') | zip(dashboard_catalog)) }}"
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
 
     - name: An apex route resolves to the base domain itself
       ansible.builtin.assert:
@@ -96,7 +96,7 @@
         fail_msg: "An apex row was given a label under the base domain."
         success_msg: "Apex rows resolve to the base domain."
       vars:
-        _by_name: "{{ dict(dashboard_catalog | map(attribute='name') | zip(dashboard_catalog)) }}"
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
 
     # The distinction the whole probe design rests on.
     - name: Probes address the guest directly, never the public URL
@@ -105,19 +105,19 @@
         that:
           - _by_name['vikunja'].probe_url == 'http://10.0.0.10:3456'
           - _by_name['openbao'].probe_url == 'http://10.0.0.30:8200'
-          - dashboard_catalog | selectattr('probe_url', 'search', 'pve.example.test') | list | length <= 1
+          - dashboard_catalog_services | selectattr('probe_url', 'search', 'pve.example.test') | list | length <= 1
         fail_msg: >-
           A probe points at the public hostname. It issues an unauthenticated
           HEAD, so Authelia answers with a login page and EVERY service reports
           down while the converge stays green.
         success_msg: "Probes hit the guest; links hit the vhost."
       vars:
-        _by_name: "{{ dict(dashboard_catalog | map(attribute='name') | zip(dashboard_catalog)) }}"
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
 
     - name: Every entry carries a group
       ansible.builtin.assert:
         quiet: true
         that:
-          - dashboard_catalog | rejectattr('group') | list | length == 0
+          - dashboard_catalog_services | rejectattr('group') | list | length == 0
         fail_msg: "An entry has no group — it would land in no section on any board."
         success_msg: "Every entry is grouped."
