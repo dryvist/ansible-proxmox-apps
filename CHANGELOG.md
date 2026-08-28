@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.22.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.21.0...v4.22.0) (2026-08-28)
+
+
+### Features
+
+* **dashboards:** split Glance by audience and drop the exclude list ([#1614](https://github.com/dryvist/ansible-proxmox-apps/issues/1614)) ([7628491](https://github.com/dryvist/ansible-proxmox-apps/commit/76284918c31b3547dbbeb724cf0012cecde13f07))
+
+
+### Bug Fixes
+
+* **homepage:** build and run on a pinned Node 24 with a pinned bun prefix ([#1615](https://github.com/dryvist/ansible-proxmox-apps/issues/1615)) ([f01490d](https://github.com/dryvist/ansible-proxmox-apps/commit/f01490d5d13aefc8190e2f807c1b0ddfd99dd67e))
+* **homepage:** build and run on a pinned Node 24, not Debian's Node 20 ([fe154f3](https://github.com/dryvist/ansible-proxmox-apps/commit/fe154f34c7848fc53839526a3a847a323e702a9d))
+* **homepage:** build with pnpm installed by bun, not corepack ([#1613](https://github.com/dryvist/ansible-proxmox-apps/issues/1613)) ([b6503de](https://github.com/dryvist/ansible-proxmox-apps/commit/b6503dedcd5eb005d88ba4c3147cccb1f0d983a0))
+* **homepage:** pin bun's global prefix so the build finds pnpm ([54917aa](https://github.com/dryvist/ansible-proxmox-apps/commit/54917aa176df65c6769598e23918c91b158c3258))
+* **homepage:** run the vendor image instead of building from source ([#1616](https://github.com/dryvist/ansible-proxmox-apps/issues/1616)) ([27c5133](https://github.com/dryvist/ansible-proxmox-apps/commit/27c5133fa1dbd773815e19c9ca5740c58bd6f4a5))
+
 ## [4.21.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.20.0...v4.21.0) (2026-08-28)
 
 
