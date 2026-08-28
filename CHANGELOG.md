@@ -1,5 +1,30 @@
 # Changelog
 
+## [4.20.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.19.0...v4.20.0) (2026-08-28)
+
+
+### Features
+
+* **github_runner:** host /var/lib/docker on a dedicated data disk ([#1593](https://github.com/dryvist/ansible-proxmox-apps/issues/1593)) ([f82f666](https://github.com/dryvist/ansible-proxmox-apps/commit/f82f66661dada479c5f3687155666b9ea2afcf64))
+* **github_runner:** run the runner fleet in ephemeral mode ([#1595](https://github.com/dryvist/ansible-proxmox-apps/issues/1595)) ([18d077c](https://github.com/dryvist/ansible-proxmox-apps/commit/18d077c9cdd3513f2355feee12320d83291ad393))
+* **nautobot:** bind each node's management IP ([#1591](https://github.com/dryvist/ansible-proxmox-apps/issues/1591)) ([43b70af](https://github.com/dryvist/ansible-proxmox-apps/commit/43b70afa2530f74a56e68fbb092072d13187e47c))
+* **nautobot:** discover drive serials from the live nodes ([#1582](https://github.com/dryvist/ansible-proxmox-apps/issues/1582)) ([9f53b33](https://github.com/dryvist/ansible-proxmox-apps/commit/9f53b334b03e66db260c72114ad86409c9c49836))
+* **nautobot:** sync VM vcpus, memory and disk from the published inventory ([#1587](https://github.com/dryvist/ansible-proxmox-apps/issues/1587)) ([8b779e7](https://github.com/dryvist/ansible-proxmox-apps/commit/8b779e7bd9dd67ab82b6876110cafb66ee452fa9))
+* **proxmox_backup_server:** host the datastore on its own filesystem ([#1596](https://github.com/dryvist/ansible-proxmox-apps/issues/1596)) ([73f07a8](https://github.com/dryvist/ansible-proxmox-apps/commit/73f07a8abc481c0216fbc1a22fbe60ee30f068e5))
+* **proxmox_backup_server:** install PBS from the community repository ([#1594](https://github.com/dryvist/ansible-proxmox-apps/issues/1594)) ([777e292](https://github.com/dryvist/ansible-proxmox-apps/commit/777e292212344f37695db8b872bb8bc6b97688c7))
+* **zammad:** add svc-splunk service account and its own API token ([#1579](https://github.com/dryvist/ansible-proxmox-apps/issues/1579)) ([253c7a7](https://github.com/dryvist/ansible-proxmox-apps/commit/253c7a79a6f99190da80870a77b3e19e71242d2e))
+
+
+### Bug Fixes
+
+* **nautobot:** drive sync lost all 19 records while reporting SUCCESS ([#1584](https://github.com/dryvist/ansible-proxmox-apps/issues/1584)) ([62e54df](https://github.com/dryvist/ansible-proxmox-apps/commit/62e54df57ce5244072c9861e8545b278385e6f72))
+* **nautobot:** drop a seed job whose bundle slice is empty ([#1592](https://github.com/dryvist/ansible-proxmox-apps/issues/1592)) ([9fcb57c](https://github.com/dryvist/ansible-proxmox-apps/commit/9fcb57cec7a29ced6eb515fbfd705071021aeb84))
+* **nautobot:** treat unprogrammed DMI defaults as absent serials ([d91c3f9](https://github.com/dryvist/ansible-proxmox-apps/commit/d91c3f941a01ce0f71b8e6b4ea86929b48dbd490))
+* **nautobot:** treat unprogrammed DMI defaults as absent serials ([93c9209](https://github.com/dryvist/ansible-proxmox-apps/commit/93c9209260446dbead1836df740447b66339922a))
+* **nautobot:** write "" not None to NOT NULL columns, and set discovered ([#1585](https://github.com/dryvist/ansible-proxmox-apps/issues/1585)) ([2a40906](https://github.com/dryvist/ansible-proxmox-apps/commit/2a409069bf91516ae5cda63ccfbedc648b7a2b17))
+* **postgres:** stop re-authorizing decommissioned puller key on database guests ([97ae528](https://github.com/dryvist/ansible-proxmox-apps/commit/97ae5289126a7f11ad14bdd460c3066dd57ea09b))
+* **postgres:** stop re-authorizing decommissioned pve2 puller key ([1936de9](https://github.com/dryvist/ansible-proxmox-apps/commit/1936de9ba1028f40b430f31964f168d94b891cc9))
+
 ## [4.19.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.18.0...v4.19.0) (2026-08-23)
 
 
