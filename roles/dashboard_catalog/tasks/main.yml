@@ -1,0 +1,82 @@
+---
+# Export `dashboard_catalog` — one entry per fronted service — for the board
+# roles to render. See defaults/main.yml for why this is built exactly once.
+#
+# The accumulate-in-a-loop shape mirrors the traefik role's own route
+# normalisation, which is the proven idiom in this repo for turning the ingress
+# table into a rendered structure.
+
+- name: Assert the ingress table and the base domain both resolved
+  ansible.builtin.assert:
+    that:
+      - dashboard_catalog_ingress | length > 0
+      - dashboard_catalog_base_domain | trim | length > 0
+    fail_msg: >-
+      No ingress routes, or PROXMOX_SUBDOMAIN is unset. Rendering a board from
+      an empty catalog SUCCEEDS and publishes an empty dashboard, which is
+      indistinguishable from a healthy converge — fail here instead.
+    quiet: true
+
+- name: Build the dashboard catalog from the ingress table
+  ansible.builtin.set_fact:
+    dashboard_catalog_services: >-
+      {{
+        dashboard_catalog_services | default([]) + [{
+          'name': item.name,
+          'group': item.group | default('other', true),
+          'sso': item.sso | default(true),
+          'fqdn': _fqdn,
+          'url': 'https://' ~ _fqdn,
+          'probe_url': _probe_url,
+        }]
+      }}
+  vars:
+    _host: "{{ item.hostname | default(item.name, true) }}"
+    _fqdn: >-
+      {{ dashboard_catalog_base_domain if (item.apex | default(false))
+         else (_host ~ '.' ~ dashboard_catalog_base_domain) }}
+    # Status widgets issue an UNAUTHENTICATED HEAD. Pointed at the public URL
+    # they are answered by Authelia's HTML login page and every service reads as
+    # down, so a probe addresses the guest directly. This is the same reason the
+    # homarr role talks to homarr_api_base rather than its own vhost. A probe is
+    # never a link: nothing a person clicks goes here.
+    #
+    # Pool-backed rows carry `backends` instead of a single `ip`; the first
+    # backend is a fine liveness target, and rows with neither get no probe
+    # rather than a fabricated one.
+    _probe_host: "{{ item.ip | default((item.backends | default([]))[0] | default(''), true) }}"
+    _probe_scheme: "{{ item.scheme | default('http') }}"
+    _probe_port: "{{ item.port | default('') | string }}"
+    _probe_url: >-
+      {{ (_probe_host | length > 0)
+         | ternary(_probe_scheme ~ '://' ~ _probe_host ~ ':' ~ _probe_port, '') }}
+  loop: "{{ dashboard_catalog_ingress | rejectattr('name', 'in', dashboard_catalog_exclude) | list }}"
+  loop_control:
+    label: "{{ item.name }} [{{ item.group | default('other', true) }}]"
+
+- name: Order the catalog by group, then name
+  ansible.builtin.set_fact:
+    dashboard_catalog_services: >-
+      {{ dashboard_catalog_services
+         | sort(attribute='name')
+         | sort(attribute='group') }}
+
+# EVERY default of this role that a board role consumes must be re-exported as
+# a fact. A role default is in scope only inside its own role, so a board role
+# rendering a template that names one fails with "... is undefined".
+#
+# Export the whole class, not the one variable a failure happens to name: the
+# first fix here covered only group_order, and the next converge failed on
+# base_domain for exactly the same reason. These three are what
+# `grep -rhoE 'dashboard_catalog_[a-z_]+' roles/{homepage,glance,homarr}`
+# returns; services is already a fact from the set_fact above.
+- name: Export the catalog's own settings as facts for the board roles
+  ansible.builtin.set_fact:
+    dashboard_catalog_group_order: "{{ dashboard_catalog_group_order }}"
+    dashboard_catalog_base_domain: "{{ dashboard_catalog_base_domain }}"
+
+- name: Report the catalog the boards will render
+  ansible.builtin.debug:
+    msg: >-
+      {{ dashboard_catalog_services | length }} services across
+      {{ dashboard_catalog_services | map(attribute='group') | unique | sort | list }}

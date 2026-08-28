@@ -1,0 +1,111 @@
+---
+# Glance: checksum-verified release binary, config rendered from the shared
+# catalog, run under systemd.
+
+- name: Build the shared service catalog
+  ansible.builtin.include_role:
+    name: dashboard_catalog
+
+- name: Create the glance system user
+  ansible.builtin.user:
+    name: "{{ glance_user }}"
+    home: "{{ glance_home }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+
+- name: Create the glance config directory
+  ansible.builtin.file:
+    path: "{{ glance_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ glance_user }}"
+    mode: "0750"
+
+- name: Create the unpack staging directory
+  ansible.builtin.file:
+    path: "{{ glance_dist_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The checksum is enforced HERE, by get_url, against the downloaded TARBALL —
+# which is what glance_release_sha256 is the digest of. A mismatch (moved tag,
+# substituted artifact, MITM) fails the fetch before anything is unpacked.
+#
+# Doing it this way rather than unarchive's remote_src is deliberate: unarchive
+# has no checksum option, so fetching straight from the URL would install an
+# unverified binary while a checksum variable sat nearby looking like a control.
+- name: Fetch the pinned glance release (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ glance_release_url }}"
+    dest: "{{ glance_home }}/glance-{{ glance_version }}.tar.gz"
+    checksum: "sha256:{{ glance_release_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: glance_fetch
+
+# Unpacked into a VERSION-SCOPED directory, guarded by creates. That makes a
+# re-run a no-op and a version bump a fresh unpack, without keying off the
+# fetch's changed flag — which would also skip the unpack whenever the tarball
+# was already cached but the binary had been removed.
+- name: Unpack the verified archive
+  ansible.builtin.unarchive:
+    src: "{{ glance_home }}/glance-{{ glance_version }}.tar.gz"
+    dest: "{{ glance_dist_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+    creates: "{{ glance_dist_dir }}/glance"
+
+- name: Install the glance binary
+  ansible.builtin.copy:
+    src: "{{ glance_dist_dir }}/glance"
+    dest: "{{ glance_bin }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart glance
+
+- name: Render the glance config
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ glance_config_dir }}/{{ item.dest }}"
+    owner: root
+    group: "{{ glance_user }}"
+    mode: "0640"
+  loop:
+    - {src: glance.yml.j2, dest: glance.yml}
+    - {src: generated-services.yml.j2, dest: generated-services.yml}
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: Restart glance
+
+- name: Install the glance unit
+  ansible.builtin.template:
+    src: glance.service.j2
+    dest: /etc/systemd/system/glance.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart glance
+
+- name: Enable and start glance
+  ansible.builtin.systemd_service:
+    name: glance
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# A board rendered from an empty catalog converges green and publishes an empty
+# page. Assert the artifact carries links rather than trusting the render.
+- name: Verify the rendered board is not empty
+  ansible.builtin.command:
+    cmd: "grep -c 'url:' {{ glance_config_dir }}/generated-services.yml"
+  register: glance_url_count
+  changed_when: false
+  failed_when: glance_url_count.stdout | int < 1

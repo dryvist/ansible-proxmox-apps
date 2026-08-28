@@ -1,0 +1,138 @@
+---
+# Renders each board's real templates and parses the output.
+#
+# WHY: a template that renders malformed YAML still converges green — the file
+# lands, the service restarts, and the board is broken in the browser. Nothing
+# upstream of the browser notices. So parse the artifact, and check the two
+# properties that matter: every link is portless HTTPS, and no probe address
+# leaks into a link.
+#
+# Run (from the REPO ROOT):
+#   ansible-playbook tests/dashboard_catalog/test_board_render.yml -i localhost, -c local
+- name: Verify the rendered board configs
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dashboard_catalog_base_domain: "pve.example.test"
+    homepage_site_monitor_enabled: false
+    glance_monitor_enabled: false
+    glance_host: "0.0.0.0"
+    glance_port: 8080
+    homepage_title: "Homelab"
+    tofu_data:
+      # The board roles read their listen ports from the published constants
+      # via `mandatory`, so the fixture must carry them or a unit template
+      # fails here for a reason unrelated to what this suite tests.
+      constants:
+        service_ports:
+          homepage_web: 3000
+          glance_web: 8080
+      ingress:
+        - {name: vikunja, group: apps, ip: "10.0.0.10", port: 3456, sso: true}
+        - {name: hermes-agent, hostname: hermes, group: ai, ip: "10.0.0.20", port: 8080, sso: true}
+        - {name: plex, group: media_svc, ip: "10.0.0.50", port: 32400, sso: false}
+  tasks:
+    # In a converge `tofu_data` is a host FACT (load_tofu propagates it), not a
+    # play var. Promote it so the second play sees it the same way a board role
+    # does — the fixture above is only the source value.
+    - name: Promote the fixture inventory to a fact, as load_tofu does
+      ansible.builtin.set_fact:
+        tofu_data: "{{ tofu_data }}"
+
+    - name: Build the catalog
+      ansible.builtin.include_role:
+        name: dashboard_catalog
+
+    - name: Render and parse Homepage services.yaml
+      ansible.builtin.set_fact:
+        _homepage_services: >-
+          {{ lookup('template', playbook_dir ~ '/../../roles/homepage/templates/services.yaml.j2') | from_yaml }}
+
+    - name: Render and parse Homepage settings.yaml
+      ansible.builtin.set_fact:
+        _homepage_settings: >-
+          {{ lookup('template', playbook_dir ~ '/../../roles/homepage/templates/settings.yaml.j2') | from_yaml }}
+
+    - name: Render and parse the Glance generated page
+      ansible.builtin.set_fact:
+        _glance_page: >-
+          {{ lookup('template', playbook_dir ~ '/../../roles/glance/templates/generated-services.yml.j2') | from_yaml }}
+
+    - name: Every board parses and lists every catalogued service
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _homepage_services | length == 3
+          - _homepage_settings.layout.keys() | list | length == 3
+          - _glance_page | length == 1
+          - _glance_hrefs | length == 3
+        fail_msg: >-
+          A board rendered but does not carry every service. An incomplete board
+          converges green and simply omits things in the browser.
+        success_msg: "All three boards render every catalogued service."
+      vars:
+        _glance_hrefs: >-
+          {{ _glance_page[0].columns[0].widgets
+             | map(attribute='groups') | flatten
+             | map(attribute='links') | flatten | list }}
+
+    - name: No rendered link carries a port or a guest address
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _all_links | select('search', ':[0-9]+') | list | length == 0
+          - _all_links | select('search', '10\\.0\\.0\\.') | list | length == 0
+          - _all_links | reject('match', '^https://') | list | length == 0
+        fail_msg: >-
+          A rendered link carries a port or a raw guest address, so the click
+          bypasses Traefik and therefore Authelia — the entire point of the
+          clean URL. Rendered links were: {{ _all_links }}
+        success_msg: "Every rendered link across all boards is portless HTTPS."
+      vars:
+        _homepage_links: >-
+          {{ _homepage_services | map('dict2items') | flatten
+             | map(attribute='value') | flatten
+             | map('dict2items') | flatten
+             | map(attribute='value') | map(attribute='href') | list }}
+        _glance_links: >-
+          {{ _glance_page[0].columns[0].widgets
+             | map(attribute='groups') | flatten
+             | map(attribute='links') | flatten
+             | map(attribute='url') | list }}
+        _all_links: "{{ _homepage_links + _glance_links }}"
+
+# A SECOND PLAY, deliberately. Play vars and role defaults from the play above
+# do NOT carry here; only what dashboard_catalog exported with set_fact does.
+# That is exactly the boundary a board role sits behind during a converge, so
+# an unexported catalog default fails here the way it failed on the estate.
+#
+# Modelling it inside the first play is what let the bug through twice: there
+# `dashboard_catalog_base_domain` was a play var, in scope everywhere, so no
+# assertion could ever have caught it going unexported.
+- name: Every board template renders behind the role-scope boundary
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # A board role's OWN defaults are legitimately in scope for its own
+    # templates during a converge. dashboard_catalog's are NOT bound here —
+    # that scope is precisely what is under test.
+    - name: Bind each board role's own defaults, never the catalog's
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/{{ item }}/defaults/main.yml"
+      loop:
+        - homepage
+        - glance
+
+    - name: Render every template each board role ships
+      ansible.builtin.debug:
+        msg: "{{ item }}: {{ lookup('template', playbook_dir ~ '/../../roles/' ~ item) | length }} chars"
+      loop:
+        - homepage/templates/homepage.service.j2
+        - homepage/templates/services.yaml.j2
+        - homepage/templates/settings.yaml.j2
+        - homepage/templates/widgets.yaml.j2
+        - glance/templates/glance.service.j2
+        - glance/templates/glance.yml.j2
+        - glance/templates/generated-services.yml.j2
+      loop_control:
+        label: "{{ item }}"

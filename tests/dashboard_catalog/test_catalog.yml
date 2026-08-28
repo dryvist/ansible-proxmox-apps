@@ -1,0 +1,123 @@
+---
+# Pins the contract the three estate boards share.
+#
+# WHY these are tests: every failure here is silent. A board rendered from an
+# empty or mis-shaped catalog converges green and publishes a dashboard that is
+# simply wrong — empty, or full of links that resolve nowhere, or full of status
+# dots that all read "down" because the probe hit an SSO login page. None of
+# that fails a converge.
+#
+# Run (from the REPO ROOT):
+#   ansible-playbook tests/dashboard_catalog/test_catalog.yml -i localhost, -c local
+- name: Verify the shared dashboard catalog
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _role_dir: "{{ playbook_dir }}/../../roles/dashboard_catalog_services"
+    dashboard_catalog_base_domain: "pve.example.test"
+    tofu_data:
+      ingress:
+        # A normal container-backed browser service.
+        - name: vikunja
+          group: apps
+          ip: "10.0.0.10"
+          port: 3456
+          sso: true
+        # Hostname differs from the route name — the case that broke Hermes
+        # OIDC when a route was renamed.
+        - name: hermes-agent
+          hostname: hermes
+          group: ai
+          ip: "10.0.0.20"
+          port: 8080
+          sso: true
+        # Pool-backed: no `ip`, several `backends`.
+        - name: openbao
+          group: mgmt
+          backends: ["10.0.0.30", "10.0.0.31"]
+          port: 8200
+          sso: false
+        # Apex row — fqdn is the base domain itself, not a label under it.
+        - name: proxmox
+          apex: true
+          group: mgmt
+          backends: ["node1.pve.example.test"]
+          port: 8006
+          scheme: https
+          sso: false
+        # A board must never list itself.
+        - name: homarr
+          group: apps
+          ip: "10.0.0.40"
+          port: 7575
+  tasks:
+    - name: Build the catalog
+      ansible.builtin.include_role:
+        name: dashboard_catalog
+
+    - name: Boards and machine surfaces are excluded
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'homarr' not in (dashboard_catalog_services | map(attribute='name') | list)"
+          - dashboard_catalog_services | length == 4
+        fail_msg: "The exclude list is not applied — a board would list itself."
+        success_msg: "Excluded routes stay off the boards."
+
+    - name: Every link is a clean HTTPS URL with no port
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - dashboard_catalog_services | selectattr('url', 'search', ':[0-9]+') | list | length == 0
+          - dashboard_catalog_services | rejectattr('url', 'match', '^https://') | list | length == 0
+        fail_msg: >-
+          A catalog link carries a port or is not HTTPS. A ported link bypasses
+          Traefik and therefore Authelia — the whole point of the clean URL.
+        success_msg: "Every link is portless HTTPS."
+
+    - name: A route whose hostname differs from its name uses the HOSTNAME
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _by_name['hermes-agent'].fqdn == 'hermes.pve.example.test'
+          - _by_name['vikunja'].fqdn == 'vikunja.pve.example.test'
+        fail_msg: >-
+          fqdn was composed from the route name instead of its hostname. That
+          publishes a link to a host that does not exist.
+        success_msg: "hostname wins over name, as in the traefik role."
+      vars:
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
+
+    - name: An apex route resolves to the base domain itself
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _by_name['proxmox'].fqdn == 'pve.example.test'
+        fail_msg: "An apex row was given a label under the base domain."
+        success_msg: "Apex rows resolve to the base domain."
+      vars:
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
+
+    # The distinction the whole probe design rests on.
+    - name: Probes address the guest directly, never the public URL
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _by_name['vikunja'].probe_url == 'http://10.0.0.10:3456'
+          - _by_name['openbao'].probe_url == 'http://10.0.0.30:8200'
+          - dashboard_catalog_services | selectattr('probe_url', 'search', 'pve.example.test') | list | length <= 1
+        fail_msg: >-
+          A probe points at the public hostname. It issues an unauthenticated
+          HEAD, so Authelia answers with a login page and EVERY service reports
+          down while the converge stays green.
+        success_msg: "Probes hit the guest; links hit the vhost."
+      vars:
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
+
+    - name: Every entry carries a group
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - dashboard_catalog_services | rejectattr('group') | list | length == 0
+        fail_msg: "An entry has no group — it would land in no section on any board."
+        success_msg: "Every entry is grouped."
