@@ -1,22 +1,40 @@
 {{ ansible_managed | comment }}
-# Rendered from the shared catalog (roles/dashboard_catalog_services). Kept in its OWN file, included by
-# glance.yml, so hand-written pages and widgets there survive a re-render — a
-# generated block inside the main config would overwrite them.
+# Rendered from the shared catalog (dashboard_catalog_services). Kept in its OWN
+# file, included by glance.yml, so hand-written pages and widgets there survive
+# a re-render — a generated block inside the main config would overwrite them.
 #
 # Every link is the clean portless HTTPS URL, so each click passes through
 # Traefik and its Authelia gate.
-{% set _ordered = dashboard_catalog_group_order
-     + (dashboard_catalog_services | map(attribute='group') | unique | reject('in', dashboard_catalog_group_order) | sort | list) %}
-- name: Services
-  columns:
-    - size: full
+#
+# LAYOUT — four levels, all driven by tofu tags, nothing hand-listed:
+#   column  -> audience: the wide left column is what a PERSON opens, the
+#              narrow right column is machine endpoints (svc.ui, from tofu).
+#   widget  -> group: the service's VLAN-derived category.
+#   group   -> section: an optional sub-block inside a category, so one guest's
+#              many routes (Hermes publishes five per agent) read together
+#              instead of scattering alphabetically.
+#   link    -> the service, with its one-line description beside it.
+#
+# A service reaches this board by having a Traefik route. There is no exclude
+# list: everything fronted is shown, and `ui` only decides WHICH column.
+{% macro service_column(services, size, monitor) %}
+{#- Ordered categories first, then any that the order list does not name. -#}
+{% set _groups = dashboard_catalog_group_order
+     + (services | map(attribute='group') | unique
+        | reject('in', dashboard_catalog_group_order) | sort | list) %}
+    - size: {{ size }}
       widgets:
-{% for group in _ordered if dashboard_catalog_services | selectattr('group', 'equalto', group) | list | length > 0 %}
-        - type: {{ glance_monitor_enabled | bool | ternary('monitor', 'bookmarks') }}
+{% for group in _groups %}
+{% set _in_group = services | selectattr('group', 'equalto', group) | list %}
+{% if _in_group | length > 0 %}
+{#- Sections sort first (named sub-blocks), then the ungrouped remainder. -#}
+{% set _sections = _in_group | selectattr('section') | map(attribute='section') | unique | sort | list %}
+{% set _loose = _in_group | rejectattr('section') | list %}
+        - type: {{ monitor | ternary('monitor', 'bookmarks') }}
           title: {{ group }}
-{% if glance_monitor_enabled | bool %}
+{% if monitor %}
           sites:
-{% for svc in dashboard_catalog_services if svc.group == group %}
+{% for svc in _in_group %}
             - title: {{ svc.name }}
               url: {{ svc.url }}
 {% if svc.probe_url | length > 0 %}
@@ -27,10 +45,36 @@
 {% endfor %}
 {% else %}
           groups:
-            - links:
-{% for svc in dashboard_catalog_services if svc.group == group %}
+{% for section in _sections %}
+            - title: {{ section }}
+              links:
+{% for svc in _in_group if svc.section == section %}
                 - title: {{ svc.name }}
                   url: {{ svc.url }}
-{% endfor %}
+{% if svc.desc | length > 0 %}
+                  description: {{ svc.desc }}
 {% endif %}
 {% endfor %}
+{% endfor %}
+{% if _loose | length > 0 %}
+            - links:
+{% for svc in _loose %}
+                - title: {{ svc.name }}
+                  url: {{ svc.url }}
+{% if svc.desc | length > 0 %}
+                  description: {{ svc.desc }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endmacro %}
+{% set _ui = dashboard_catalog_services | selectattr('ui') | list %}
+{% set _api = dashboard_catalog_services | rejectattr('ui') | list %}
+- name: Services
+  columns:
+{{ service_column(_ui, 'full', glance_monitor_enabled | bool) }}
+{%- if _api | length > 0 %}
+{{ service_column(_api, 'small', false) }}
+{%- endif %}

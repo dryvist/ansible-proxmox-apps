@@ -27,10 +27,21 @@
         service_ports:
           homepage_web: 3000
           glance_web: 8080
+      # Probe addresses are RFC 5737 documentation addresses, never estate ones.
+      #
+      # `ui`, `section` and `desc` come from tofu's ingress audience tagging.
+      # vikunja is deliberately sso:false AND ui:true — audience is not the auth
+      # gate, and a fixture where the two always agreed could not tell them
+      # apart, so a board that keyed the column off `sso` would still pass.
       ingress:
-        - {name: vikunja, group: apps, ip: "10.0.0.10", port: 3456, sso: true}
-        - {name: hermes-agent, hostname: hermes, group: ai, ip: "10.0.0.20", port: 8080, sso: true}
-        - {name: plex, group: media_svc, ip: "10.0.0.50", port: 32400, sso: false}
+        - {name: vikunja, group: apps, ip: "192.0.2.10", port: 3456, sso: false,
+           ui: true, desc: "Task and Kanban tracking"}
+        - {name: hermes-agent, hostname: hermes, group: ai, ip: "192.0.2.20", port: 8080,
+           sso: true, ui: true, section: Hermes, desc: "hermes-agent — agent dashboard"}
+        - {name: hermes-agent-api, group: ai, ip: "192.0.2.21", port: 8081,
+           sso: true, ui: false, section: Hermes, desc: "hermes-agent — job submission API"}
+        - {name: plex, group: media_svc, ip: "192.0.2.50", port: 32400, sso: false,
+           ui: true, desc: "Media library"}
   tasks:
     # In a converge `tofu_data` is a host FACT (load_tofu propagates it), not a
     # play var. Promote it so the second play sees it the same way a board role
@@ -58,6 +69,24 @@
         _glance_page: >-
           {{ lookup('template', playbook_dir ~ '/../../roles/glance/templates/generated-services.yml.j2') | from_yaml }}
 
+    # Flatten each Glance column once. Column 0 is the human board, column 1 the
+    # machine endpoints; every assertion below reads these rather than repeating
+    # a four-deep map chain that would drift between checks.
+    - name: Flatten the rendered Glance columns
+      ansible.builtin.set_fact:
+        _glance_ui_links: >-
+          {{ _glance_page[0].columns[0].widgets
+             | map(attribute='groups') | flatten
+             | map(attribute='links') | flatten | list }}
+        _glance_api_links: >-
+          {{ _glance_page[0].columns[1].widgets
+             | map(attribute='groups') | flatten
+             | map(attribute='links') | flatten | list }}
+        _glance_all_links: >-
+          {{ (_glance_page[0].columns | map(attribute='widgets') | flatten
+              | map(attribute='groups') | flatten
+              | map(attribute='links') | flatten | list) }}
+
     - name: Every board parses and lists every catalogued service
       ansible.builtin.assert:
         quiet: true
@@ -65,23 +94,57 @@
           - _homepage_services | length == 3
           - _homepage_settings.layout.keys() | list | length == 3
           - _glance_page | length == 1
-          - _glance_hrefs | length == 3
+          - _glance_all_links | length == 4
         fail_msg: >-
           A board rendered but does not carry every service. An incomplete board
-          converges green and simply omits things in the browser.
+          converges green and simply omits things in the browser — which is
+          exactly how the estate's other dashboard went missing from the boards.
         success_msg: "All three boards render every catalogued service."
+
+    # The split is the whole point of the audience tagging: a person opens the
+    # left column, machine endpoints sit out of the way on the right. Assert
+    # BOTH sides — a template that dropped the right column entirely would
+    # still satisfy "the left column has the UIs".
+    - name: Glance splits the catalogue by audience, not by auth gate
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _glance_page[0].columns | length == 2
+          - _glance_page[0].columns[0].size == 'full'
+          - _glance_page[0].columns[1].size == 'small'
+          - _ui_names == ['vikunja', 'hermes-agent', 'plex']
+          - _api_names == ['hermes-agent-api']
+        fail_msg: >-
+          Glance did not split by `ui`. Got UI column {{ _ui_names }} and
+          machine column {{ _api_names }}. Note vikunja is sso:false and MUST
+          still be in the UI column — keying off `sso` is the wrong tag.
+        success_msg: "Glance renders the UI column and the machine column from `ui`."
       vars:
-        _glance_hrefs: >-
+        _ui_names: "{{ _glance_ui_links | map(attribute='title') | list }}"
+        _api_names: "{{ _glance_api_links | map(attribute='title') | list }}"
+
+    - name: Hermes routes collapse into one section, each link described
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _ai_widget.groups | selectattr('title', 'defined')
+            | map(attribute='title') | list == ['Hermes']
+          - _glance_all_links | rejectattr('description', 'defined') | list | length == 0
+        fail_msg: >-
+          Hermes did not collapse into a section, or a link rendered without its
+          one-line description. Sections: {{ _ai_widget.groups }}
+        success_msg: "Sections group as tagged and every link carries a description."
+      vars:
+        _ai_widget: >-
           {{ _glance_page[0].columns[0].widgets
-             | map(attribute='groups') | flatten
-             | map(attribute='links') | flatten | list }}
+             | selectattr('title', 'equalto', 'ai') | first }}
 
     - name: No rendered link carries a port or a guest address
       ansible.builtin.assert:
         quiet: true
         that:
           - _all_links | select('search', ':[0-9]+') | list | length == 0
-          - _all_links | select('search', '10\\.0\\.0\\.') | list | length == 0
+          - _all_links | select('search', '192\\.0\\.2\\.') | list | length == 0
           - _all_links | reject('match', '^https://') | list | length == 0
         fail_msg: >-
           A rendered link carries a port or a raw guest address, so the click
@@ -94,11 +157,7 @@
              | map(attribute='value') | flatten
              | map('dict2items') | flatten
              | map(attribute='value') | map(attribute='href') | list }}
-        _glance_links: >-
-          {{ _glance_page[0].columns[0].widgets
-             | map(attribute='groups') | flatten
-             | map(attribute='links') | flatten
-             | map(attribute='url') | list }}
+        _glance_links: "{{ _glance_all_links | map(attribute='url') | list }}"
         _all_links: "{{ _homepage_links + _glance_links }}"
 
 # A SECOND PLAY, deliberately. Play vars and role defaults from the play above
