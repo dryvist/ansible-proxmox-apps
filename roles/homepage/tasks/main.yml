@@ -1,0 +1,99 @@
+---
+# Homepage: build from source at a pinned tag, render config from the shared
+# catalog, run under systemd. See defaults/main.yml for why source and not a
+# release binary.
+
+- name: Build the shared service catalog
+  ansible.builtin.include_role:
+    name: dashboard_catalog
+
+- name: Install build and runtime prerequisites
+  ansible.builtin.apt:
+    name:
+      - git
+      - nodejs
+      - npm
+      - ca-certificates
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the homepage system user
+  ansible.builtin.user:
+    name: "{{ homepage_user }}"
+    home: "{{ homepage_home }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ homepage_config_dir }}"
+    state: directory
+    owner: "{{ homepage_user }}"
+    group: "{{ homepage_user }}"
+    mode: "0750"
+
+# The checkout's tag is real state and a converge moves it. A `creates:` guard
+# would bind the pin only on a guest's first install and let the app own its
+# version afterwards — the drift that left the Hermes agents two releases behind
+# their own pin.
+- name: Pin the homepage checkout to its release tag
+  ansible.builtin.git:
+    repo: "{{ homepage_repo_url }}"
+    dest: "{{ homepage_install_dir }}"
+    version: "{{ homepage_version }}"
+    depth: 1
+    force: true
+  register: homepage_checkout
+
+# Only when the checkout actually moved: the build is the expensive half, and
+# `force` above makes the git task report changed on every run, so comparing the
+# commit before/after is the precise signal (same reasoning as hermes_agent).
+- name: Build homepage when the checkout moved
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+    chdir: "{{ homepage_install_dir }}"
+  loop:
+    - npm ci
+    - npm run build
+  changed_when: true
+  when: homepage_checkout.before != homepage_checkout.after
+
+- name: Render the generated config
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ homepage_config_dir }}/{{ item }}"
+    owner: "{{ homepage_user }}"
+    group: "{{ homepage_user }}"
+    mode: "0640"
+  loop:
+    - services.yaml
+    - settings.yaml
+    - widgets.yaml
+  notify: Restart homepage
+
+- name: Install the homepage unit
+  ansible.builtin.template:
+    src: homepage.service.j2
+    dest: /etc/systemd/system/homepage.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart homepage
+
+- name: Enable and start homepage
+  ansible.builtin.systemd_service:
+    name: homepage
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# A rendered board that lists nothing converges green and looks healthy. Assert
+# the artifact actually carries services rather than trusting the render.
+- name: Verify the rendered board is not empty
+  ansible.builtin.command:
+    cmd: "grep -c 'href:' {{ homepage_config_dir }}/services.yaml"
+  register: homepage_href_count
+  changed_when: false
+  failed_when: homepage_href_count.stdout | int < 1

@@ -1,0 +1,22 @@
+{{ ansible_managed | comment }}
+# Rendered from the shared catalog (roles/dashboard_catalog_services), built in
+# turn from the tofu-owned ingress table. Do not hand-edit: a service belongs
+# here by having a Traefik route, and an edit is lost on the next converge.
+#
+# Every href is the clean portless HTTPS URL, so each click passes through
+# Traefik and its Authelia gate.
+{% set _ordered = dashboard_catalog_group_order
+     + (dashboard_catalog_services | map(attribute='group') | unique | reject('in', dashboard_catalog_group_order) | sort | list) %}
+{% for group in _ordered if dashboard_catalog_services | selectattr('group', 'equalto', group) | list | length > 0 %}
+- {{ group }}:
+{% for svc in dashboard_catalog_services if svc.group == group %}
+    - {{ svc.name }}:
+        href: {{ svc.url }}
+{% if homepage_site_monitor_enabled | bool and svc.probe_url | length > 0 %}
+        # The GUEST address, never the public URL: this check is an
+        # unauthenticated HEAD, which the SSO gate answers with a login page —
+        # every service would read as down while the converge stayed green.
+        siteMonitor: {{ svc.probe_url }}
+{% endif %}
+{% endfor %}
+{% endfor %}
