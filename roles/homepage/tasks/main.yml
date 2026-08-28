@@ -12,11 +12,35 @@
     name:
       - git
       - nodejs
-      - npm
       - ca-certificates
+      - unzip
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+- name: Fetch the pinned bun release (checksum-verified)
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/oven-sh/bun/releases/download/{{ homepage_bun_version }}/bun-linux-x64.zip
+    dest: /tmp/bun-{{ homepage_bun_version }}.zip
+    checksum: "sha256:{{ homepage_bun_sha256 }}"
+    mode: "0644"
+
+- name: Unpack the verified bun archive
+  ansible.builtin.unarchive:
+    src: /tmp/bun-{{ homepage_bun_version }}.zip
+    dest: /tmp
+    remote_src: true
+    creates: /tmp/bun-linux-x64/bun
+
+- name: Place bun on PATH
+  ansible.builtin.copy:
+    src: /tmp/bun-linux-x64/bun
+    dest: "{{ homepage_bun_install_root }}/bin/bun"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: Create the homepage system user
   ansible.builtin.user:
@@ -63,12 +87,15 @@
     cmd: "{{ item }}"
     chdir: "{{ homepage_install_dir }}"
   loop:
-    # pnpm, not npm: upstream ships ONLY pnpm-lock.yaml (no package-lock.json),
-    # so `npm ci` fails outright with EUSAGE. corepack ships with the nodejs
-    # package and materialises pnpm without a second package to pin.
-    - corepack enable pnpm
-    - pnpm install --frozen-lockfile
-    - pnpm run build
+    # pnpm specifically, and NOT via corepack. Upstream enforces its package
+    # manager with a `npx only-allow pnpm` preinstall, so npm and bun are both
+    # refused outright — this is upstream's constraint, not a preference.
+    # Debian's bundled corepack is too old for current pnpm and dies with
+    # ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, so bun installs pnpm instead:
+    # bun is the estate's JavaScript default and the one we control.
+    - "{{ homepage_bun_install_root }}/bin/bun add --global pnpm"
+    - "{{ homepage_bun_install_root }}/bin/pnpm install --frozen-lockfile"
+    - "{{ homepage_bun_install_root }}/bin/pnpm run build"
   changed_when: true
   when: >-
     homepage_checkout.before != homepage_checkout.after
