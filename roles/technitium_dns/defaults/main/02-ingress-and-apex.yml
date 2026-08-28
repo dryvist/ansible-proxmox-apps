@@ -70,9 +70,16 @@ technitium_dns_ingress_alias_exclude: []
 # empty alias list, which then lets the inventory A-record builder overwrite every
 # fronted name with a direct host IP (regression from #1182, cause of the #17136
 # rebuild NXDOMAIN gap).
+# `hostname`, NOT `name`: a route's name is its key in the tofu table, while the
+# host Traefik actually routes on is `hostname | default(name)` — the same
+# composition the traefik role and the dashboard catalog use. They differ
+# whenever a route overrides its hostname, and publishing the name instead left
+# the real host with NO record while creating one nothing serves. Observed on
+# the hermes-agent routes, whose hostname is `hermes`: hermes-agent-webui
+# resolved and 404'd, hermes-webui did not resolve at all.
 technitium_dns_ingress_aliases: >-
   {{ tofu_data.ingress | default([]) | rejectattr('apex', 'defined')
-     | map(attribute='name') | map('default', '', true) | reject('equalto', '')
+     | map(attribute='hostname') | map('default', '', true) | reject('equalto', '')
      | reject('in', technitium_dns_ingress_alias_exclude)
      | list | unique }}
 # Apex ingress rows: a fronted service that lives at the subdomain zone root
