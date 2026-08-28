@@ -1,0 +1,164 @@
+---
+# proxmox_backup_server — install Proxmox Backup Server on a plain Debian guest
+# from the community `pbs-no-subscription` component, and declare one datastore
+# on a caller-supplied path.
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    filter:
+      - ansible_distribution*
+      - ansible_architecture
+
+- name: Assert the datastore is declared
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_server_datastore_name | length > 0
+      - proxmox_backup_server_datastore_path | length > 0
+      - proxmox_backup_server_datastore_path is match('/')
+    fail_msg: >-
+      proxmox_backup_server_datastore_name and
+      proxmox_backup_server_datastore_path (absolute) are both required.
+
+# The vendor ships amd64 only. Failing here beats a mystery "package not
+# found" from apt three tasks later.
+- name: Assert the host architecture is one the vendor publishes
+  ansible.builtin.assert:
+    that: ansible_architecture == 'x86_64'
+    fail_msg: >-
+      Proxmox Backup Server is published for amd64 only; this host is
+      {{ ansible_architecture }}.
+
+# Done before any package work: a missing or unsafe datastore device should
+# fail the play before apt is touched, not after PBS is installed. The mount
+# also has to exist before the datastore directory is created and chowned, so
+# the ownership lands on the datastore disk rather than on the boot-disk
+# directory it would otherwise sit under.
+- name: Give the datastore its own filesystem
+  ansible.builtin.include_tasks: datastore_disk.yml
+
+- name: Install apt transport prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: "{{ proxmox_backup_server_keyring_path | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Add the Proxmox release key
+  ansible.builtin.get_url:
+    url: "{{ proxmox_backup_server_release_key_url }}"
+    dest: "{{ proxmox_backup_server_keyring_path }}"
+    mode: "0644"
+
+- name: Add the Proxmox Backup Server no-subscription repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ proxmox_backup_server_keyring_path }}]
+      {{ proxmox_backup_server_repo_url }}
+      {{ proxmox_backup_server_repo_suite }}
+      {{ proxmox_backup_server_repo_component }}
+    state: present
+    filename: proxmox-backup-server
+
+- name: Install Proxmox Backup Server
+  ansible.builtin.apt:
+    name: proxmox-backup-server
+    state: present
+    update_cache: true
+
+# The package ships /etc/apt/sources.list.d/pbs-enterprise.list ENABLED as one
+# of its own conffiles. Without a subscription that repository answers 401, and
+# every subsequent `apt update` on the host fails outright — including the next
+# converge. Removing it is part of installing the community build, not an
+# optional tidy-up.
+- name: Remove the vendor-shipped enterprise repository
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
+
+- name: Start and enable the Proxmox Backup Server services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - proxmox-backup.service
+    - proxmox-backup-proxy.service
+
+- name: Create the datastore directory
+  ansible.builtin.file:
+    path: "{{ proxmox_backup_server_datastore_path }}"
+    state: directory
+    owner: "{{ proxmox_backup_server_user }}"
+    group: "{{ proxmox_backup_server_group }}"
+    mode: "0755"
+
+- name: List the configured datastores
+  ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
+  register: proxmox_backup_server_datastore_list
+  changed_when: false
+
+# `proxmox-backup-manager datastore create` spawns a worker task and polls it.
+# The poll is racy: it can return "task failed (status unknown)" with rc 255
+# while the worker's own log records TASK OK and the chunk store is fully
+# built (observed here — 65536 chunk directories present, `datastore list`
+# showing the store, on a run the CLI called a failure).
+#
+# So the exit code is not trustworthy either way, and the block below does not
+# rely on it: creation is followed by a fresh read of the datastore list and an
+# assertion against that. A real failure still fails the play, on ground truth
+# rather than on the CLI's opinion.
+- name: Declare the datastore
+  when: >-
+    proxmox_backup_server_datastore_name not in
+    (proxmox_backup_server_datastore_list.stdout | from_json
+     | map(attribute='name') | list)
+  block:
+    - name: Create the datastore
+      ansible.builtin.command:
+        argv:
+          - proxmox-backup-manager
+          - datastore
+          - create
+          - "{{ proxmox_backup_server_datastore_name }}"
+          - "{{ proxmox_backup_server_datastore_path }}"
+      register: proxmox_backup_server_create
+      changed_when: true
+      failed_when: false
+
+    # The list is briefly stale after the worker task finishes — observed
+    # returning [] for a store whose chunk directories were already all
+    # present, then showing it moments later. Retry rather than read once;
+    # `failed_when: false` keeps the assertion below as the thing that
+    # reports the failure, with the command output attached.
+    - name: Re-read the datastores after creation
+      ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
+      register: proxmox_backup_server_datastore_recheck
+      changed_when: false
+      failed_when: false
+      until: >-
+        proxmox_backup_server_datastore_name in
+        (proxmox_backup_server_datastore_recheck.stdout | default('[]') | from_json
+         | map(attribute='name') | list)
+      retries: "{{ proxmox_backup_server_datastore_create_retries }}"
+      delay: "{{ proxmox_backup_server_datastore_create_delay }}"
+
+    - name: Assert the datastore now exists on the declared path
+      ansible.builtin.assert:
+        that:
+          - proxmox_backup_server_datastore_name in (declared | map(attribute='name') | list)
+          - (declared | selectattr('name', 'eq', proxmox_backup_server_datastore_name)
+             | map(attribute='path') | first) == proxmox_backup_server_datastore_path
+        fail_msg: >-
+          Datastore creation failed. Configured datastores: {{ declared }}.
+          Command rc={{ proxmox_backup_server_create.rc }},
+          stdout={{ proxmox_backup_server_create.stdout }},
+          stderr={{ proxmox_backup_server_create.stderr }}.
+      vars:
+        declared: "{{ proxmox_backup_server_datastore_recheck.stdout | from_json }}"

@@ -27,6 +27,8 @@ api_token    = env!('ZAMMAD_API_TOKEN')
 ai_api_token = env!('ZAMMAD_AI_API_TOKEN')
 hermes_email = env!('ZAMMAD_HERMES_EMAIL')
 ai_email     = env!('ZAMMAD_AI_EMAIL')
+splunk_email = env!('ZAMMAD_SPLUNK_EMAIL')
+splunk_api_token = env!('ZAMMAD_SPLUNK_API_TOKEN')
 smtp_host   = env!('ZAMMAD_SMTP_HOST')
 smtp_port   = env!('ZAMMAD_SMTP_PORT').to_i
 sender      = env!('ZAMMAD_NOTIFICATION_SENDER')
@@ -170,9 +172,15 @@ agent_role = [Role.find_by!(name: 'Agent')]
 # every Hermes-filed ticket into the dedicated Hermes org (blast-radius
 # isolation for a 24/7 autonomous filer).
 hermes_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
+# svc-splunk also carries Customer, for the same reason hermes does: the Splunk
+# alert action omits the customer field, so Zammad makes the token's user the
+# ticket customer. That keeps Splunk-opened incidents attributable to Splunk
+# without the action having to invent or provision a customer.
+splunk_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 service_users = [
   [hermes_email, 'Hermes', 'Agent', hermes_roles],
   [ai_email, 'AI', 'Assistant', agent_role],
+  [splunk_email, 'Splunk', 'Alerting', splunk_roles],
 ].map do |email, first, last, desired_roles|
   u = User.find_by(email: email.downcase)
   if u.nil?
@@ -231,6 +239,12 @@ if hermes_org_name && !hermes_org_name.empty?
 end
 
 # --- Incident groups (create-or-find; admin + service users get full access) -
+# Deliberately broad, including for svc-splunk: do NOT narrow this to the one
+# group Splunk alerts default to. `action.zammad.param.group` is a per-search
+# override, so a narrow grant 403s the first time a detector points elsewhere,
+# and that failure surfaces as an incident that was never opened -- silent alert
+# loss, discovered during the outage it should have reported. Least privilege is
+# enforced on the token's scopes instead (see splunk_prefs below).
 groups.each do |gname|
   group = Group.find_by(name: gname)
   if group.nil?
@@ -260,11 +274,21 @@ end
 #      so the value is re-asserted LAST, after any update!.
 #   2. An api token with empty preferences has NO permission scopes and every
 #      HTTP request is rejected "Authentication required".
-token_prefs = { 'permission' => %w[ticket.agent knowledge_base.editor] }
+#   3. Scopes ride the TOKEN's preferences, not the user's roles -- which is the
+#      real mechanism behind "this credential 401s on create". A token whose
+#      preferences omit a scope is rejected however privileged its user is, so
+#      least privilege is set here rather than by trimming roles.
+agent_prefs = { 'permission' => %w[ticket.agent knowledge_base.editor] }
+# svc-splunk creates tickets, appends articles, and searches by title for the
+# dedup lookup. ticket.agent is the smallest permission that covers all three --
+# Zammad has no finer split -- and knowledge_base.editor is withheld because the
+# alert action has no use for it.
+splunk_prefs = { 'permission' => %w[ticket.agent] }
 [
-  ['hermes', service_users[0], api_token],
-  ['ai', service_users[1], ai_api_token],
-].each do |name, user, value|
+  ['hermes', service_users[0], api_token, agent_prefs],
+  ['ai', service_users[1], ai_api_token, agent_prefs],
+  ['splunk', service_users[2], splunk_api_token, splunk_prefs],
+].each do |name, user, value, token_prefs|
   t = Token.find_by(action: 'api', name: name)
   if t.nil?
     t = Token.create!(action: 'api', name: name, persistent: true,

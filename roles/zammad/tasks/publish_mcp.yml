@@ -8,12 +8,16 @@
 # Token.create!(... token: ZAMMAD_API_TOKEN) with a value supplied from OpenBao,
 # so there is nothing to mint here; the token is already in hand as
 # zammad_hermes_api_token.
+#
+# Included once per consumer: the caller supplies zammad_token_openbao_path,
+# the two key names, and zammad_publish_token. Nothing here is Hermes-specific
+# any more -- svc-splunk publishes through this same file to ai/mcp/splunk.
 # ponytail: reuses the existing admin 'hermes' api token as the MCP token
 # (promote-existing-credential rule — a 2nd consumer of a token that already
 # exists). Upgrade path for MCP least-privilege: a dedicated svc-mcp Zammad user
 # + its own Token.create! in zammad_bootstrap.rb, published to this same field.
 
-- name: Assert OpenBao write credentials are present for the MCP publish
+- name: Assert OpenBao write credentials are present to publish {{ zammad_token_openbao_path }}
   ansible.builtin.assert:
     that:
       - zammad_token_openbao_addr | length > 0
@@ -41,7 +45,7 @@
 
 # KV v2 replaces the whole secret, so merge the canonical fields over current
 # data to preserve siblings. Delta-guarded so a converge with no change no-ops.
-- name: Publish the Zammad MCP connection to OpenBao
+- name: Publish the connection to OpenBao at {{ zammad_token_openbao_path }}
   ansible.builtin.uri:
     url: "{{ zammad_token_openbao_addr }}/v1/{{ zammad_token_openbao_mount }}/data/{{ zammad_token_openbao_path }}"
     method: POST
@@ -53,7 +57,7 @@
         {{ (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {})
            | combine({
                zammad_url_openbao_key: zammad_mcp_url,
-               zammad_token_openbao_key: zammad_hermes_api_token
+               zammad_token_openbao_key: zammad_publish_token
              }) }}
     validate_certs: false
     status_code: [200, 204]
@@ -66,5 +70,5 @@
     (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_url_openbao_key)
       != zammad_mcp_url
     or (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_token_openbao_key)
-      != zammad_hermes_api_token
+      != zammad_publish_token
   no_log: true

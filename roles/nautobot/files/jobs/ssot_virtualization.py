@@ -20,6 +20,8 @@ VMInterface / IPAddressToInterface target current 2.x.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from diffsync import Adapter
 from nautobot.apps.jobs import register_jobs
 from nautobot.virtualization.models import VirtualMachine
@@ -82,18 +84,49 @@ def ensure_cluster(name: str):
     return cluster
 
 
+def _positive_int(value) -> Optional[int]:
+    """Return a positive int, or None for anything that is not one.
+
+    Guards the difference between "not published" and "published as zero".
+    Nautobot renders 0 as a real value, so a guest would read as having no CPU
+    or no disk — worse than blank, because blank is visibly unknown.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
 class VirtualMachineModel(AdditiveNautobotModel):
     """DiffSync model mirroring a Nautobot VirtualMachine."""
 
     _model = VirtualMachine
     _modelname = "virtual_machine"
     _identifiers = ("name",)
-    _attributes = ("cluster__name", "status__name", "role__name")
+    # vcpus/memory/disk are Nautobot's OWN fields for this, so leaving them out
+    # of _attributes is what kept every guest reading null — the golden rule
+    # binds here. They are Optional because the sizing rides the published
+    # inventory, and a guest published before that carried it has none; None
+    # leaves the field untouched rather than writing a confident 0.
+    _attributes = (
+        "cluster__name",
+        "status__name",
+        "role__name",
+        "vcpus",
+        "memory",
+        "disk",
+    )
 
     name: str
     cluster__name: str
     status__name: str
     role__name: str
+    # Nautobot units: memory is MB, disk is GB — the same units the inventory
+    # publishes, so nothing is rescaled on the way in. vcpus is a count.
+    vcpus: Optional[int] = None
+    memory: Optional[int] = None
+    disk: Optional[int] = None
 
 
 class VirtualizationNautobotAdapter(NautobotAdapter):
@@ -131,6 +164,12 @@ class VirtualizationSourceAdapter(Adapter):
                     cluster__name=cluster,
                     status__name=STATUS_ACTIVE,
                     role__name=role,
+                    # None, never 0, when the inventory carries no sizing: an
+                    # absent field is honestly unknown, a 0 records the guest as
+                    # having no CPU/memory/disk and looks authoritative.
+                    vcpus=_positive_int(guest.get("cpu_cores")),
+                    memory=_positive_int(guest.get("memory_mb")),
+                    disk=_positive_int(guest.get("disk_gb")),
                 )
             )
 

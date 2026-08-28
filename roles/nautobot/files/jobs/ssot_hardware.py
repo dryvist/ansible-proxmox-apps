@@ -38,6 +38,42 @@ from ssot_common import (
 
 HARDWARE_ROLE = "hardware"
 
+# Nautobot's `serial` is a plain CharField, so any of None, "", "  " and the
+# placeholder dashes people type into markdown tables all have to collapse to
+# "no serial known" — otherwise a literal "—" becomes a device's identity and
+# looks exactly like a real one forever after.
+_SERIAL_PLACEHOLDERS = {
+    "",
+    "-",
+    "--",
+    "—",
+    "n/a",
+    "na",
+    "none",
+    "unknown",
+    "tbd",
+    "?",
+    # DMI defaults from boards whose serial was never programmed. These are the
+    # dangerous ones: unlike "n/a" they LOOK like data, they are identical
+    # across every board of that make, and dmidecode returns them confidently.
+    # Verified live on this estate's two workstation-class nodes, which report
+    # exactly these while the rack servers return real service tags.
+    "system serial number",
+    "default string",
+    "to be filled by o.e.m.",
+    "to be filled by oem",
+    "not specified",
+    "not applicable",
+    "0123456789",
+    "00000000",
+}
+
+
+def _serial(row) -> str:
+    """The row's serial, or "" when it carries nothing usable."""
+    value = str(row.get("serial") or "").strip()
+    return "" if value.lower() in _SERIAL_PLACEHOLDERS else value
+
 
 def _upsert_circuits(job, circuits, dryrun: bool) -> tuple[int, int]:
     """Upsert Providers, CircuitTypes and Circuits. Returns (created, updated)."""
@@ -158,6 +194,11 @@ class SeedHardware(Job):
                     row["status"], Device, logger=self.logger, subject=row["hw_id"]
                 ),
                 "asset_tag": row["hw_id"],
+                # Absent in the source is NOT "clear what is there": a row that
+                # carries no serial must leave an existing one alone, because a
+                # discovered serial is better evidence than a hand-written table
+                # that omitted it. Only a non-empty value overwrites.
+                **({"serial": _serial(row)} if _serial(row) else {}),
             }
             _, was_created = Device.objects.update_or_create(
                 name=row["hw_id"], defaults=defaults
@@ -180,6 +221,9 @@ class SeedHardware(Job):
                 "status": ensure_status(
                     row["status"], Module, logger=self.logger, subject=row["hw_id"]
                 ),
+                # See the Device loop: omit rather than blank, so a source row
+                # without a serial never erases a discovered one.
+                **({"serial": _serial(row)} if _serial(row) else {}),
             }
 
             parent = row.get("installed_in")

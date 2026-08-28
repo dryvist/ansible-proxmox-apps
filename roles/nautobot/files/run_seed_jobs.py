@@ -14,6 +14,7 @@ raises, so one job's quirk cannot abort the converge. Markers:
 ``JOB_DONE <name> <status>`` / ``JOB_SKIPPED <name> <reason>`` /
 ``JOB_ERROR <name> <detail>`` / ``JOB_TIMEOUT <name>``.
 """
+import json
 import os
 import sys
 import time
@@ -37,6 +38,60 @@ PLAIN_JOBS = ["Seed Hardware Inventory", "Configure Device Onboarding Targets"]
 SEED_JOBS = SSOT_JOBS + PLAIN_JOBS
 if os.environ.get("NAUTOBOT_RUN_EXPORT", "").lower() in ("1", "true", "yes"):
     SEED_JOBS.append("Export Nautobot Inventory to S3")
+
+# A seed slice may legitimately be absent: seed_sources.yml supports a partial
+# bundle and promises that "existing Nautobot objects of that kind are retained".
+# That promise has to be STRUCTURAL. Running a job against an empty source loads
+# an empty source adapter, and DiffSync then computes a diff that is all
+# `delete` — retention today rests only on delete being a no-op on these models,
+# so adding one model without that no-op silently wipes its slice.
+#
+# So a job whose slice carries no rows is dropped from the run entirely. The
+# drive sync is the sharpest case (it is the one seed job that DOES delete), but
+# the rule is the same for every slice-backed job.
+#
+# Dropped here, BEFORE the loop, never through run_one(): its JOB_SKIPPED path
+# returns False, which would fail the converge and break the very partial-bundle
+# mode this protects.
+#
+# The drive sync also refuses an empty slice inside the job itself, which is not
+# redundant: this gate keeps a converge quiet, that one stops a hand-run from
+# the Nautobot UI.
+SLICE_JOBS = {
+    "nodes": "Seed Proxmox Node Facts",
+    "reservations": "Seed IP Addresses and Reservations",
+    "devices": "Seed DCIM Racks and Devices",
+    "drives": "Sync Drive Inventory from Proxmox",
+}
+
+# Appended AFTER the SSoT list on purpose: a drive is an InventoryItem on its
+# node's Device, so "Seed Proxmox Node Facts" has to have created that Device
+# first, exactly as Hardware runs after DCIM above.
+SSOT_JOBS.append(SLICE_JOBS["drives"])
+SEED_JOBS.append(SLICE_JOBS["drives"])
+
+
+def _populated_slices() -> set:
+    """Names of the SLICE_JOBS slices the seed bundle actually carries rows for.
+
+    An unreadable bundle yields none, so every slice-backed job is dropped; the
+    jobs that are not slice-backed still run and fail loudly on it.
+    """
+    root = os.environ.get("NAUTOBOT_ROOT", "/opt/nautobot")
+    path = os.environ.get("NAUTOBOT_SEED_FILE", os.path.join(root, "nautobot_seed.json"))
+    try:
+        with open(path, encoding="utf-8") as handle:
+            bundle = json.load(handle)
+    except (OSError, ValueError):
+        return set()
+    return {name for name in SLICE_JOBS if bundle.get(name)}
+
+
+_populated = _populated_slices()
+for _slice, _job in SLICE_JOBS.items():
+    if _slice not in _populated and _job in SEED_JOBS:
+        SEED_JOBS.remove(_job)
+        print("JOB_SKIPPED", _job, "empty-source")
 
 # Celery terminal states (Nautobot JobResult.status mirrors these).
 TERMINAL = {"SUCCESS", "FAILURE", "REVOKED"}
