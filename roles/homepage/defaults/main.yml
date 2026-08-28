@@ -7,27 +7,28 @@
 # byte comparison — which is why this role needs no API converger the way the
 # homarr role does.
 #
-# INSTALLED FROM SOURCE, deliberately. Upstream publishes NO release binaries
-# (verified against the releases API: source only), so the choice is a source
-# build or the vendor image. A source build keeps this a system container like
-# the rest of the estate instead of pulling a container runtime onto the guest
-# for one dashboard.
+# Runs the vendor image, not a source build. Upstream publishes no release
+# binary, and building the Next.js app on the guest needs a pinned Node, pnpm
+# and ~2 GB of build RAM this 1-core/512 MB guest does not have — it OOM'd.
+# The image already contains all of that, and the estate has nine other
+# *_docker roles on the same docker_engine bootstrap.
 
-homepage_user: homepage
-homepage_home: /var/lib/homepage
-homepage_config_dir: /var/lib/homepage/config
-homepage_install_dir: /opt/homepage
+# renovate: datasource=docker depName=ghcr.io/gethomepage/homepage
+homepage_image: "ghcr.io/gethomepage/homepage:v2.1.2"
+homepage_container_name: homepage
+homepage_data_dir: /opt/homepage
+homepage_config_dir: "{{ homepage_data_dir }}/config"
 
-# Pinned to a release TAG and moved on every converge — the checkout's tag is
-# real state, not a first-install seed.
-# renovate: datasource=github-releases depName=gethomepage/homepage
-homepage_version: "v2.1.2"
-homepage_repo_url: "https://github.com/gethomepage/homepage.git"
-
-homepage_host: 0.0.0.0
 homepage_port: >-
   {{ tofu_data.constants.service_ports.homepage_web
      | mandatory('tofu_data.constants.service_ports.homepage_web missing — regenerate the published inventory') }}
+
+# Required since upstream v1.0: homepage rejects any request whose Host header
+# is not listed, so without the public vhost every proxied request 400s while
+# the container stays healthy. localhost:3000 is always allowed implicitly; the
+# guest's own name is added so a direct probe works too. Never "*".
+homepage_allowed_hosts: >-
+  homepage.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }},{{ inventory_hostname }}:{{ homepage_port | trim }}
 
 homepage_title: "Homelab"
 
