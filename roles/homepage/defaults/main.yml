@@ -7,51 +7,28 @@
 # byte comparison — which is why this role needs no API converger the way the
 # homarr role does.
 #
-# INSTALLED FROM SOURCE, deliberately. Upstream publishes NO release binaries
-# (verified against the releases API: source only), so the choice is a source
-# build or the vendor image. A source build keeps this a system container like
-# the rest of the estate instead of pulling a container runtime onto the guest
-# for one dashboard.
+# Runs the vendor image, not a source build. Upstream publishes no release
+# binary, and building the Next.js app on the guest needs a pinned Node, pnpm
+# and ~2 GB of build RAM this 1-core/512 MB guest does not have — it OOM'd.
+# The image already contains all of that, and the estate has nine other
+# *_docker roles on the same docker_engine bootstrap.
 
-# bun is the estate's JavaScript default; here it exists to install pnpm, which
-# upstream's `only-allow pnpm` preinstall makes mandatory for the build itself.
-# Fetched as a pinned, checksum-verified release binary — the same shape the
-# glance role uses.
-homepage_bun_install_root: /usr/local
-# renovate: datasource=github-releases depName=oven-sh/bun
-homepage_bun_version: "bun-v1.4.0"
-homepage_bun_sha256: "2d03fb5fb83ac8b567aca0a281b2ce1a1a19d488f56c2968d88c3f25e92fe452"
+# renovate: datasource=docker depName=ghcr.io/gethomepage/homepage
+homepage_image: "ghcr.io/gethomepage/homepage:v2.1.2"
+homepage_container_name: homepage
+homepage_data_dir: /opt/homepage
+homepage_config_dir: "{{ homepage_data_dir }}/config"
 
-# A PINNED Node runtime, because Debian's is too old for the toolchain.
-# Current pnpm requires Node >= 22.13 and imports `node:sqlite`, which did not
-# exist before 22.5 — on Debian's Node 20 every pnpm invocation dies with
-# ERR_UNKNOWN_BUILTIN_MODULE before it does any work. bun cannot substitute
-# here: upstream's `only-allow pnpm` preinstall refuses it, and bun 1.4 has no
-# `node:sqlite` either.
-#
-# Installed to a VERSION-SCOPED prefix and put on PATH for the build and the
-# unit only, so the system's own node package is left alone. A bump installs
-# alongside rather than over.
-# renovate: datasource=node-version depName=node
-homepage_node_version: "v24.20.0"
-homepage_node_sha256: "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"
-homepage_node_prefix: "/opt/node-{{ homepage_node_version }}"
-
-homepage_user: homepage
-homepage_home: /var/lib/homepage
-homepage_config_dir: /var/lib/homepage/config
-homepage_install_dir: /opt/homepage
-
-# Pinned to a release TAG and moved on every converge — the checkout's tag is
-# real state, not a first-install seed.
-# renovate: datasource=github-releases depName=gethomepage/homepage
-homepage_version: "v2.1.2"
-homepage_repo_url: "https://github.com/gethomepage/homepage.git"
-
-homepage_host: 0.0.0.0
 homepage_port: >-
   {{ tofu_data.constants.service_ports.homepage_web
      | mandatory('tofu_data.constants.service_ports.homepage_web missing — regenerate the published inventory') }}
+
+# Required since upstream v1.0: homepage rejects any request whose Host header
+# is not listed, so without the public vhost every proxied request 400s while
+# the container stays healthy. localhost:3000 is always allowed implicitly; the
+# guest's own name is added so a direct probe works too. Never "*".
+homepage_allowed_hosts: >-
+  homepage.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }},{{ inventory_hostname }}:{{ homepage_port | trim }}
 
 homepage_title: "Homelab"
 
