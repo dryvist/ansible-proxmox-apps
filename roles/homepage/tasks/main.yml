@@ -47,9 +47,17 @@
     force: true
   register: homepage_checkout
 
-# Only when the checkout actually moved: the build is the expensive half, and
-# `force` above makes the git task report changed on every run, so comparing the
-# commit before/after is the precise signal (same reasoning as hermes_agent).
+# Gate on the ARTIFACT, not only on the checkout moving. A converge whose build
+# failed leaves the checkout already at the target commit, so before == after on
+# the next run, the build is skipped, and the service starts against an empty
+# node_modules — `sh: 1: next: not found`, restarting forever while the converge
+# reports changed=0. Rebuilding whenever the build output is absent makes the
+# role self-healing and still skips the expensive step on a healthy host.
+- name: Check whether a usable build already exists
+  ansible.builtin.stat:
+    path: "{{ homepage_install_dir }}/.next/BUILD_ID"
+  register: homepage_build_artifact
+
 - name: Build homepage when the checkout moved
   ansible.builtin.command:
     cmd: "{{ item }}"
@@ -62,7 +70,9 @@
     - pnpm install --frozen-lockfile
     - pnpm run build
   changed_when: true
-  when: homepage_checkout.before != homepage_checkout.after
+  when: >-
+    homepage_checkout.before != homepage_checkout.after
+    or not homepage_build_artifact.stat.exists
 
 - name: Render the generated config
   ansible.builtin.template:
