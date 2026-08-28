@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.21.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.20.0...v4.21.0) (2026-08-28)
+
+
+### Features
+
+* **dashboards:** auto-populated Homepage and Glance boards from the ingress table ([#1604](https://github.com/dryvist/ansible-proxmox-apps/issues/1604)) ([e363d4c](https://github.com/dryvist/ansible-proxmox-apps/commit/e363d4c04055638125a9b7f82062fd4d7d35163b))
+* **dashboards:** converge the Homepage and Glance boards from site.yml ([#1606](https://github.com/dryvist/ansible-proxmox-apps/issues/1606)) ([e70dc0b](https://github.com/dryvist/ansible-proxmox-apps/commit/e70dc0b9e07320a457ddbf3a3687e8b3297ad8f3))
+
+
+### Bug Fixes
+
+* **dashboards:** export every catalog default the boards consume ([#1608](https://github.com/dryvist/ansible-proxmox-apps/issues/1608)) ([79b4084](https://github.com/dryvist/ansible-proxmox-apps/commit/79b4084af87e382f2d81f2dcaeabc0a6d364f54c))
+* **dashboards:** export the group order and build homepage with pnpm ([#1607](https://github.com/dryvist/ansible-proxmox-apps/issues/1607)) ([956b82f](https://github.com/dryvist/ansible-proxmox-apps/commit/956b82fb0f583e2267da4b0affe6a29ff0e07d8a))
+
 ## [4.20.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.19.0...v4.20.0) (2026-08-28)
 
 
