@@ -11,12 +11,39 @@
   ansible.builtin.apt:
     name:
       - git
-      - nodejs
       - ca-certificates
       - unzip
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# Deliberately NOT the distro `nodejs` package: it is Node 20, and the
+# toolchain needs >= 22.13. Supplying the runtime here rather than leaving both
+# on the guest also removes the ambiguity of which node a command resolves to.
+- name: Fetch the pinned Node runtime (checksum-verified)
+  ansible.builtin.get_url:
+    url: >-
+      https://nodejs.org/dist/{{ homepage_node_version
+      }}/node-{{ homepage_node_version }}-linux-x64.tar.xz
+    dest: /tmp/node-{{ homepage_node_version }}.tar.xz
+    checksum: "sha256:{{ homepage_node_sha256 }}"
+    mode: "0644"
+
+- name: Create the Node prefix
+  ansible.builtin.file:
+    path: "{{ homepage_node_prefix }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Unpack the Node runtime
+  ansible.builtin.unarchive:
+    src: /tmp/node-{{ homepage_node_version }}.tar.xz
+    dest: "{{ homepage_node_prefix }}"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+    creates: "{{ homepage_node_prefix }}/bin/node"
 
 - name: Fetch the pinned bun release (checksum-verified)
   ansible.builtin.get_url:
@@ -102,8 +129,12 @@
   # Ansible surfaces a missing executable as rc=2 with EMPTY stdout and stderr,
   # which reads like a silent tool failure rather than a wrong path — so pin
   # the prefix rather than trusting the default to match.
+  #
+  # PATH puts the pinned Node first: pnpm runs on whatever node it resolves,
+  # and on Debian's Node 20 it aborts on `node:sqlite` before doing any work.
   environment:
     BUN_INSTALL: "{{ homepage_bun_install_root }}"
+    PATH: "{{ homepage_node_prefix }}/bin:{{ homepage_bun_install_root }}/bin:/usr/bin:/bin"
   changed_when: true
   when: >-
     homepage_checkout.before != homepage_checkout.after
