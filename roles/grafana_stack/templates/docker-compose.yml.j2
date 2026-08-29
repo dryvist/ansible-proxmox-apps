@@ -1,0 +1,43 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Single compose project, two services, both on host networking:
+##   - victoriametrics: Prometheus remote_write receiver for the stream
+##     pipeline (cross-VLAN) + Grafana datasource on 127.0.0.1. Data persists
+##     in a named volume across recreates.
+##   - grafana: Traefik-fronted UI; provisioning is read-only mounts so the
+##     UI carries no hand-built state and rebuilds clean.
+services:
+  victoriametrics:
+    image: {{ grafana_stack_vm_image }}
+    container_name: {{ grafana_stack_vm_container_name }}
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - "-httpListenAddr=:{{ grafana_stack_vm_port }}"
+      - "-retentionPeriod={{ grafana_stack_vm_retention }}"
+{% for flag in grafana_stack_vm_extra_flags %}
+      - "{{ flag }}"
+{% endfor %}
+    volumes:
+      - vm-data:/victoria-metrics-data
+
+  grafana:
+    image: {{ grafana_stack_image }}
+    container_name: {{ grafana_stack_container_name }}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      GF_SERVER_HTTP_PORT: "{{ grafana_stack_port }}"
+      GF_SERVER_ROOT_URL: "{{ grafana_stack_root_url }}"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /etc/grafana/admin-password
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - {{ grafana_stack_admin_password_file }}:/etc/grafana/admin-password:ro
+      - {{ grafana_stack_data_dir }}/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - {{ grafana_stack_data_dir }}/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - {{ grafana_stack_data_dir }}/dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  vm-data:
+  grafana-data:
