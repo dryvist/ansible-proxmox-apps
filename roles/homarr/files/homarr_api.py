@@ -13,7 +13,7 @@ result leaves on stdout.
 Contract
   stdin : {"api_base","admin_username","admin_password","db_path",
            "bcrypt_module","api_key","api_key_file","force_secret_sync",
-           "integrations":[...]}
+           "integrations":[...], "board":{"name","apps":[{"name","url",...}]}}
   stdout: {"changed":bool,"actions":[str],"api_key":str}
   Exit non-zero on any failure. Homarr connection-TESTS an integration before
   it will persist it, so a bad credential surfaces here as a create failure
@@ -187,6 +187,77 @@ ONBOARDING_STEPS = (
 )
 
 
+def sync_board(api, api_key, board_name, apps):
+    """Sync one bookmark tile per catalog service onto a board.
+
+    Two diffs, both by NAME/id — Homarr's `app.create` and `board.addItem`
+    always insert, so calling either undiffed doubles every tile on every
+    converge. `apps` entries are dashboard_catalog rows as-is (name/url/desc),
+    passed through unrenamed rather than reshaped in Jinja first.
+    """
+    actions = []
+    changed = False
+
+    existing_apps = {a["name"]: a for a in api.trpc("app.all", api_key=api_key)}
+    app_ids = {}
+    for want in apps:
+        have = existing_apps.get(want["name"])
+        if have is None:
+            created = api.trpc("app.create", {
+                "name": want["name"],
+                "href": want["url"],
+                "iconUrl": "",
+                "description": want.get("desc") or None,
+            }, api_key=api_key)
+            app_ids[want["name"]] = created["id"]
+            actions.append(f"created app {want['name']}")
+            changed = True
+        else:
+            app_ids[want["name"]] = have["id"]
+            if have.get("href") != want["url"]:
+                api.trpc("app.update", {
+                    "id": have["id"],
+                    "name": want["name"],
+                    "href": want["url"],
+                    "iconUrl": have.get("iconUrl") or "",
+                    "description": want.get("desc") or None,
+                }, api_key=api_key)
+                actions.append(f"updated app {want['name']}")
+                changed = True
+
+    try:
+        board = api.trpc("board.getBoardByName", {"name": board_name}, api_key=api_key)
+    except HomarrError:
+        board = None
+    if not board:
+        actions.append(f"board {board_name!r} does not exist — skipped tile placement")
+        return actions, changed
+
+    # Items already on the board, by the app id each one links to. Homarr
+    # nests that link under item["integrations"], one entry per linked app.
+    on_board = set()
+    for item in board.get("items", []) or []:
+        for integ in item.get("integrations") or []:
+            aid = integ.get("id") if isinstance(integ, dict) else integ
+            if aid:
+                on_board.add(aid)
+
+    for want in apps:
+        app_id = app_ids[want["name"]]
+        if app_id in on_board:
+            continue
+        # Auto-places into the board's first open section — no layout math.
+        api.trpc("board.addItem", {
+            "boardId": board["id"],
+            "kind": "app",
+            "integrationIds": [app_id],
+        }, api_key=api_key)
+        actions.append(f"added board tile: {want['name']}")
+        changed = True
+
+    return actions, changed
+
+
 def main():
     spec = json.load(sys.stdin)
     api = Homarr(spec["api_base"])
@@ -285,6 +356,15 @@ def main():
         }, api_key=api_key)
         actions.append(f"updated {want['name']}" + ("" if drifted else " (forced secret sync)"))
         changed = True
+
+    board = spec.get("board") or {}
+    board_apps = board.get("apps") or []
+    if board_apps:
+        board_actions, board_changed = sync_board(
+            api, api_key, board.get("name", "default"), board_apps
+        )
+        actions.extend(board_actions)
+        changed = changed or board_changed
 
     json.dump({"changed": changed, "actions": actions, "api_key": api_key}, sys.stdout)
 
