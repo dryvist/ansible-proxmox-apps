@@ -46,7 +46,7 @@ class FakeApi:
             return self.board
         if procedure == "board.addItem":
             self.board["items"].append(
-                {"integrations": [{"id": payload["integrationIds"][0]}]}
+                {"kind": payload["kind"], "options": payload["options"]}
             )
             return {"itemId": self._new_id()}
         raise AssertionError(f"unexpected procedure: {procedure}")
@@ -67,7 +67,7 @@ def test_new_app_is_created_and_placed():
 
 def test_unchanged_app_already_on_board_is_a_pure_noop():
     existing = {"id": "app1", "name": "Sonarr", "href": "https://sonarr.example.test"}
-    board = {"id": "b1", "items": [{"integrations": [{"id": "app1"}]}]}
+    board = {"id": "b1", "items": [{"kind": "app", "options": {"appId": "app1"}}]}
     api = FakeApi(apps=[existing], board=board)
     apps = [{"name": "Sonarr", "url": "https://sonarr.example.test", "desc": "TV"}]
 
@@ -80,7 +80,7 @@ def test_unchanged_app_already_on_board_is_a_pure_noop():
 
 def test_drifted_href_updates_without_re_adding_the_tile():
     existing = {"id": "app1", "name": "Sonarr", "href": "https://old.example.test"}
-    board = {"id": "b1", "items": [{"integrations": [{"id": "app1"}]}]}
+    board = {"id": "b1", "items": [{"kind": "app", "options": {"appId": "app1"}}]}
     api = FakeApi(apps=[existing], board=board)
     apps = [{"name": "Sonarr", "url": "https://sonarr.example.test", "desc": "TV"}]
 

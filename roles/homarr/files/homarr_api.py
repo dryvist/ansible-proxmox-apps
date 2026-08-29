@@ -194,6 +194,12 @@ def sync_board(api, api_key, board_name, apps):
     always insert, so calling either undiffed doubles every tile on every
     converge. `apps` entries are dashboard_catalog rows as-is (name/url/desc),
     passed through unrenamed rather than reshaped in Jinja first.
+
+    A board tile (widget kind "app") points at an `app` row through its own
+    `options.appId` field, NOT through `board.addItem`'s `integrationIds` —
+    that field links to the separate `integration` table (Sonarr, Radarr, the
+    kind already converged above) and `addItem` 400s if given an id it cannot
+    find there. A plain bookmark tile carries no integration at all.
     """
     actions = []
     changed = False
@@ -233,14 +239,13 @@ def sync_board(api, api_key, board_name, apps):
         actions.append(f"board {board_name!r} does not exist — skipped tile placement")
         return actions, changed
 
-    # Items already on the board, by the app id each one links to. Homarr
-    # nests that link under item["integrations"], one entry per linked app.
-    on_board = set()
-    for item in board.get("items", []) or []:
-        for integ in item.get("integrations") or []:
-            aid = integ.get("id") if isinstance(integ, dict) else integ
-            if aid:
-                on_board.add(aid)
+    # Apps already tiled on this board: every "app"-kind item's own
+    # options.appId, per the shape board.getBoardByName actually returns.
+    on_board = {
+        item["options"]["appId"]
+        for item in (board.get("items") or [])
+        if item.get("kind") == "app" and (item.get("options") or {}).get("appId")
+    }
 
     for want in apps:
         app_id = app_ids[want["name"]]
@@ -250,7 +255,7 @@ def sync_board(api, api_key, board_name, apps):
         api.trpc("board.addItem", {
             "boardId": board["id"],
             "kind": "app",
-            "integrationIds": [app_id],
+            "options": {"appId": app_id},
         }, api_key=api_key)
         actions.append(f"added board tile: {want['name']}")
         changed = True
