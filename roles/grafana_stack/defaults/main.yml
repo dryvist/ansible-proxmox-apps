@@ -1,0 +1,46 @@
+---
+# grafana_stack — Grafana OSS + VictoriaMetrics single-node as ONE Docker-in-LXC
+# compose stack (one project, two services, both host networking). The AI
+# coding-agent observability backend: the stream pipeline remote_writes agent
+# metrics into VictoriaMetrics; Grafana renders the provisioned dashboards.
+# Contract: terraform-proxmox docs/AI_OBSERVABILITY.md.
+#
+# NOTE: all role vars carry the grafana_stack_ prefix
+# (ansible-lint var-naming[no-role-prefix]).
+
+# --- container images (pinned; bump via Renovate or manual review) ---
+grafana_stack_image: "grafana/grafana-oss:12.4.3"
+grafana_stack_container_name: grafana
+grafana_stack_vm_image: "victoriametrics/victoria-metrics:v1.150.0"
+grafana_stack_vm_container_name: victoriametrics
+
+grafana_stack_data_dir: /opt/grafana-stack
+
+# Listen ports — from the tofu constants when available, else upstream defaults.
+grafana_stack_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['grafana_web']
+     | default(3000) }}
+grafana_stack_vm_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['victoriametrics']
+     | default(8428) }}
+
+# Long-retention TSDB for subscription-trend dashboards; usePrometheusNaming
+# normalizes OTLP-originated metric names to the Prometheus form the public
+# Claude Code dashboards query.
+grafana_stack_vm_retention: "2y"
+grafana_stack_vm_extra_flags:
+  - "-opentelemetry.usePrometheusNaming"
+
+# Grafana is reached through the Authelia-gated Traefik vhost; root_url makes
+# redirects and rendered links carry the fronted name instead of the guest.
+grafana_stack_root_url: "https://grafana.{{ tofu_data.domain }}"
+
+# Admin credential: empty here means "generate on first converge and persist"
+# (same decide/persist pattern as the homarr role). The persisted file is owned
+# by the container's grafana uid so GF_SECURITY_ADMIN_PASSWORD__FILE can read
+# it. Grafana only honors it at first init; later changes go through the UI/API.
+grafana_stack_admin_password: ""
+grafana_stack_admin_password_file: "{{ grafana_stack_data_dir }}/admin-password"
+# Upstream grafana-oss image runs as this fixed uid; host networking + no
+# userns remap means the same uid owns the file on the LXC.
+grafana_stack_grafana_uid: "472"

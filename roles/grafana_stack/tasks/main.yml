@@ -1,0 +1,170 @@
+---
+# grafana_stack — Grafana OSS + VictoriaMetrics as ONE Docker-in-LXC compose
+# stack. One Docker bootstrap (docker_engine meta dependency), one compose
+# project, two services, both host networking: VictoriaMetrics must accept
+# remote_write from the stream pipeline across VLANs, Grafana queries it on
+# 127.0.0.1 and is fronted by Traefik.
+#
+# daemon.json is intentionally NOT written here — the registry-mirror play in
+# site.yml is the single owner of /etc/docker/daemon.json on docker LXCs.
+
+# =============================================================================
+# Directories + admin credential
+# =============================================================================
+
+- name: Create grafana stack directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ grafana_stack_data_dir }}"
+    - "{{ grafana_stack_data_dir }}/provisioning/datasources"
+    - "{{ grafana_stack_data_dir }}/provisioning/dashboards"
+    - "{{ grafana_stack_data_dir }}/dashboards"
+
+# Same decide/persist pattern as the homarr role: an inventory-supplied value
+# wins, else the previously persisted one, else generate. Grafana honors the
+# file only at first init, so regeneration on a fresh guest is the only time
+# the value actually changes.
+- name: Read any persisted admin password
+  ansible.builtin.slurp:
+    src: "{{ grafana_stack_admin_password_file }}"
+  register: grafana_stack_admin_pw_stored
+  failed_when: false
+  no_log: true
+
+- name: Decide the admin password to converge on
+  ansible.builtin.set_fact:
+    grafana_stack_effective_admin_password: >-
+      {{ grafana_stack_admin_password
+         or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim)
+         or lookup('community.general.random_string', length=40, special=false) }}
+  no_log: true
+
+- name: Persist the admin password for first init and the next converge
+  ansible.builtin.copy:
+    content: "{{ grafana_stack_effective_admin_password }}\n"
+    dest: "{{ grafana_stack_admin_password_file }}"
+    owner: "{{ grafana_stack_grafana_uid }}"
+    group: root
+    mode: "0400"
+  no_log: true
+
+# =============================================================================
+# Provisioning + dashboards + compose (all changes restart the stack)
+# =============================================================================
+
+- name: Render grafana datasource provisioning
+  ansible.builtin.template:
+    src: datasource.yml.j2
+    dest: "{{ grafana_stack_data_dir }}/provisioning/datasources/victoriametrics.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Render grafana dashboard provider
+  ansible.builtin.template:
+    src: dashboards-provider.yml.j2
+    dest: "{{ grafana_stack_data_dir }}/provisioning/dashboards/grafana-stack.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Deploy provisioned dashboards
+  ansible.builtin.copy:
+    src: dashboards/
+    dest: "{{ grafana_stack_data_dir }}/dashboards/"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Deploy grafana stack docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ grafana_stack_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Deploy and verify the grafana stack
+  block:
+    - name: Deploy the grafana stack via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ grafana_stack_data_dir }}"
+        state: present
+
+    # =========================================================================
+    # Health checks — prove both containers run and both serve, not just
+    # "compose exited 0".
+    # =========================================================================
+    - name: Verify both stack containers are running
+      ansible.builtin.command: >-
+        docker ps -q --filter name={{ item }} --filter status=running
+      register: grafana_stack_running
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: grafana_stack_running.stdout != ''
+      loop:
+        - "{{ grafana_stack_container_name }}"
+        - "{{ grafana_stack_vm_container_name }}"
+
+    - name: Verify VictoriaMetrics answers /health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ grafana_stack_vm_port }}/health"
+        status_code: 200
+      register: grafana_stack_vm_health
+      retries: 12
+      delay: 5
+      until: grafana_stack_vm_health.status | default(0) == 200
+      changed_when: false
+
+    - name: Verify grafana answers /api/health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ grafana_stack_port }}/api/health"
+        status_code: 200
+      register: grafana_stack_health
+      retries: 12
+      delay: 5
+      until: grafana_stack_health.status | default(0) == 200
+      changed_when: false
+
+    # End-to-end: Grafana must actually reach VictoriaMetrics through the
+    # provisioned datasource, not just serve its own UI.
+    - name: Verify the provisioned datasource resolves in grafana
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ grafana_stack_port }}/api/datasources/uid/victoriametrics"
+        user: admin
+        password: "{{ grafana_stack_effective_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+      retries: 6
+      delay: 5
+      register: grafana_stack_ds
+      until: grafana_stack_ds.status | default(0) == 200
+      changed_when: false
+      no_log: true
+
+  rescue:
+    - name: Capture stack diagnostics on failure
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "docker ps -a"
+        - "docker logs --tail 50 {{ grafana_stack_container_name }}"
+        - "docker logs --tail 50 {{ grafana_stack_vm_container_name }}"
+      register: grafana_stack_diag
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with stack diagnostics
+      ansible.builtin.fail:
+        msg: |-
+          grafana stack failed to deploy/verify on {{ inventory_hostname }}.
+          {{ grafana_stack_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
