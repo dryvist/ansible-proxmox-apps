@@ -36,6 +36,16 @@ class HomarrError(RuntimeError):
     pass
 
 
+# Homarr's app schema requires a non-empty iconUrl (zod min(1)) — a plain
+# bookmark tile with no icon opinion still needs SOME string. A tiny inline
+# SVG avoids depending on an external icon host or Homarr's own icon search
+# resolving a match for every service name.
+DEFAULT_ICON_URL = (
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+    "viewBox='0 0 24 24'%3E%3C/svg%3E"
+)
+
+
 class Homarr:
     def __init__(self, base):
         self.base = base.rstrip("/")
@@ -208,26 +218,35 @@ def sync_board(api, api_key, board_name, apps):
     app_ids = {}
     for want in apps:
         have = existing_apps.get(want["name"])
+        # description is an OPTIONAL field (string | undefined) in Homarr's
+        # zod schema, not nullable — JSON has no "undefined", so sending an
+        # explicit null on an empty desc fails as invalid_union. Omit the key
+        # entirely instead.
+        desc = want.get("desc") or ""
         if have is None:
-            created = api.trpc("app.create", {
+            payload = {
                 "name": want["name"],
                 "href": want["url"],
-                "iconUrl": "",
-                "description": want.get("desc") or None,
-            }, api_key=api_key)
+                "iconUrl": DEFAULT_ICON_URL,
+            }
+            if desc:
+                payload["description"] = desc
+            created = api.trpc("app.create", payload, api_key=api_key)
             app_ids[want["name"]] = created["id"]
             actions.append(f"created app {want['name']}")
             changed = True
         else:
             app_ids[want["name"]] = have["id"]
             if have.get("href") != want["url"]:
-                api.trpc("app.update", {
+                payload = {
                     "id": have["id"],
                     "name": want["name"],
                     "href": want["url"],
-                    "iconUrl": have.get("iconUrl") or "",
-                    "description": want.get("desc") or None,
-                }, api_key=api_key)
+                    "iconUrl": have.get("iconUrl") or DEFAULT_ICON_URL,
+                }
+                if desc:
+                    payload["description"] = desc
+                api.trpc("app.update", payload, api_key=api_key)
                 actions.append(f"updated app {want['name']}")
                 changed = True
 

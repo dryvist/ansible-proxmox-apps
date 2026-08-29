@@ -31,6 +31,22 @@ class FakeApi:
 
     def trpc(self, procedure, payload=None, api_key=None):
         self.calls.append((procedure, payload))
+        if procedure in ("app.create", "app.update"):
+            # Mirrors Homarr's REAL zod schema constraints, which is what a
+            # prior version of this test's fake API did not do — it accepted
+            # any payload shape and so never caught the two actual HTTP 400s
+            # a live converge hit: an empty iconUrl (min(1) on a required
+            # field) and an explicit `description: null` (the field is
+            # optional/undefined, not nullable; JSON has no undefined, so a
+            # null must be an OMITTED key instead).
+            if not payload.get("iconUrl"):
+                raise homarr_api.HomarrError(
+                    f"{procedure} -> HTTP 400: iconUrl too_small"
+                )
+            if "description" in payload and payload["description"] is None:
+                raise homarr_api.HomarrError(
+                    f"{procedure} -> HTTP 400: description invalid_union"
+                )
         if procedure == "app.all":
             return list(self.apps.values())
         if procedure == "app.create":
