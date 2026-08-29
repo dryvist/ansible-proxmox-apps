@@ -46,6 +46,24 @@ DEFAULT_ICON_URL = (
 )
 
 
+def _app_payload(want, icon_url):
+    """Build an app body for Homarr's appManageSchema.
+
+    Every field there is `.nullable()` but NOT `.optional()`, so a missing key
+    is a validation error, not a default: name/description/iconUrl fail as
+    invalid_type, and href/pingUrl as invalid_union (they are
+    `.or(z.literal(""))` unions). Send all five explicitly, null rather than
+    omitted, or app.create 400s.
+    """
+    return {
+        "name": want["name"],
+        "description": want.get("desc") or None,
+        "iconUrl": icon_url,
+        "href": want["url"],
+        "pingUrl": None,
+    }
+
+
 class Homarr:
     def __init__(self, base):
         self.base = base.rstrip("/")
@@ -218,34 +236,18 @@ def sync_board(api, api_key, board_name, apps):
     app_ids = {}
     for want in apps:
         have = existing_apps.get(want["name"])
-        # description is an OPTIONAL field (string | undefined) in Homarr's
-        # zod schema, not nullable — JSON has no "undefined", so sending an
-        # explicit null on an empty desc fails as invalid_union. Omit the key
-        # entirely instead.
-        desc = want.get("desc") or ""
         if have is None:
-            payload = {
-                "name": want["name"],
-                "href": want["url"],
-                "iconUrl": DEFAULT_ICON_URL,
-            }
-            if desc:
-                payload["description"] = desc
-            created = api.trpc("app.create", payload, api_key=api_key)
+            created = api.trpc(
+                "app.create", _app_payload(want, DEFAULT_ICON_URL), api_key=api_key
+            )
             app_ids[want["name"]] = created["id"]
             actions.append(f"created app {want['name']}")
             changed = True
         else:
             app_ids[want["name"]] = have["id"]
             if have.get("href") != want["url"]:
-                payload = {
-                    "id": have["id"],
-                    "name": want["name"],
-                    "href": want["url"],
-                    "iconUrl": have.get("iconUrl") or DEFAULT_ICON_URL,
-                }
-                if desc:
-                    payload["description"] = desc
+                payload = _app_payload(want, have.get("iconUrl") or DEFAULT_ICON_URL)
+                payload["id"] = have["id"]  # appEditSchema = appManageSchema & {id}
                 api.trpc("app.update", payload, api_key=api_key)
                 actions.append(f"updated app {want['name']}")
                 changed = True

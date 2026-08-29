@@ -32,20 +32,19 @@ class FakeApi:
     def trpc(self, procedure, payload=None, api_key=None):
         self.calls.append((procedure, payload))
         if procedure in ("app.create", "app.update"):
-            # Mirrors Homarr's REAL zod schema constraints, which is what a
-            # prior version of this test's fake API did not do — it accepted
-            # any payload shape and so never caught the two actual HTTP 400s
-            # a live converge hit: an empty iconUrl (min(1) on a required
-            # field) and an explicit `description: null` (the field is
-            # optional/undefined, not nullable; JSON has no undefined, so a
-            # null must be an OMITTED key instead).
+            # Mirrors Homarr's real appManageSchema. Every field there is
+            # `.nullable()` but NOT `.optional()`, so an OMITTED key is a
+            # validation error even when the value would legitimately be null
+            # — the exact defect a laxer fake let through to CI twice. null is
+            # fine; absent is not.
+            for field in ("name", "description", "iconUrl", "href", "pingUrl"):
+                if field not in payload:
+                    raise homarr_api.HomarrError(
+                        f"{procedure} -> HTTP 400: {field} received undefined"
+                    )
             if not payload.get("iconUrl"):
                 raise homarr_api.HomarrError(
                     f"{procedure} -> HTTP 400: iconUrl too_small"
-                )
-            if "description" in payload and payload["description"] is None:
-                raise homarr_api.HomarrError(
-                    f"{procedure} -> HTTP 400: description invalid_union"
                 )
         if procedure == "app.all":
             return list(self.apps.values())
