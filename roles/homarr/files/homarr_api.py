@@ -36,10 +36,8 @@ class HomarrError(RuntimeError):
     pass
 
 
-# Homarr's app schema requires a non-empty iconUrl (zod min(1)) — a plain
-# bookmark tile with no icon opinion still needs SOME string. A tiny inline
-# SVG avoids depending on an external icon host or Homarr's own icon search
-# resolving a match for every service name.
+# iconUrl is zod min(1), so a bookmark tile with no icon still needs SOME
+# string. An inline SVG avoids depending on an external icon host.
 DEFAULT_ICON_URL = (
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
     "viewBox='0 0 24 24'%3E%3C/svg%3E"
@@ -49,11 +47,10 @@ DEFAULT_ICON_URL = (
 def _app_payload(want, icon_url):
     """Build an app body for Homarr's appManageSchema.
 
-    Every field there is `.nullable()` but NOT `.optional()`, so a missing key
-    is a validation error, not a default: name/description/iconUrl fail as
-    invalid_type, and href/pingUrl as invalid_union (they are
-    `.or(z.literal(""))` unions). Send all five explicitly, null rather than
-    omitted, or app.create 400s.
+    Every field is `.nullable()` but NOT `.optional()`, so an omitted key is a
+    validation error rather than a default — invalid_type for name/description/
+    iconUrl, invalid_union for the href/pingUrl unions. Send all five, null
+    rather than absent.
     """
     return {
         "name": want["name"],
@@ -83,11 +80,10 @@ class Homarr:
         """Call a tRPC procedure. Homarr sets a superjson transformer, so every
         body and every response is wrapped in a top-level "json" key.
 
-        `query=True` marks a tRPC *query* rather than a mutation. tRPC serves
-        queries over GET and rejects a POST, so an input-bearing query must
-        carry its argument in the `input` query string instead of a body. A
-        query taking no input needs no flag — it already goes out as a GET
-        here, since urllib sends GET whenever there is no body.
+        `query=True` marks a tRPC query: those are served over GET and reject
+        a POST, so an input-bearing one passes its argument in the `input`
+        query string. A query with no input needs no flag — urllib already
+        sends GET when there is no body.
         """
         url = f"{self.base}/api/trpc/{procedure}"
         headers = {"Content-Type": "application/json"}
@@ -228,16 +224,13 @@ ONBOARDING_STEPS = (
 def sync_board(api, api_key, board_name, apps):
     """Sync one bookmark tile per catalog service onto a board.
 
-    Two diffs, both by NAME/id — Homarr's `app.create` and `board.addItem`
-    always insert, so calling either undiffed doubles every tile on every
-    converge. `apps` entries are dashboard_catalog rows as-is (name/url/desc),
-    passed through unrenamed rather than reshaped in Jinja first.
+    Two diffs, both by name/id — `app.create` and `board.addItem` always
+    insert, so undiffed calls double every tile each converge. `apps` entries
+    are dashboard_catalog rows as-is.
 
-    A board tile (widget kind "app") points at an `app` row through its own
-    `options.appId` field, NOT through `board.addItem`'s `integrationIds` —
-    that field links to the separate `integration` table (Sonarr, Radarr, the
-    kind already converged above) and `addItem` 400s if given an id it cannot
-    find there. A plain bookmark tile carries no integration at all.
+    An "app" tile points at its app row via `options.appId`, NOT via
+    `addItem`'s `integrationIds` — that links to the separate `integration`
+    table and 400s on an id absent from it. A bookmark carries no integration.
     """
     actions = []
     changed = False
