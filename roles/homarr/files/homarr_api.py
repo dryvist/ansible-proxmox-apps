@@ -79,9 +79,16 @@ class Homarr:
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", "replace")
 
-    def trpc(self, procedure, payload=None, api_key=None):
+    def trpc(self, procedure, payload=None, api_key=None, query=False):
         """Call a tRPC procedure. Homarr sets a superjson transformer, so every
-        body and every response is wrapped in a top-level "json" key."""
+        body and every response is wrapped in a top-level "json" key.
+
+        `query=True` marks a tRPC *query* rather than a mutation. tRPC serves
+        queries over GET and rejects a POST, so an input-bearing query must
+        carry its argument in the `input` query string instead of a body. A
+        query taking no input needs no flag — it already goes out as a GET
+        here, since urllib sends GET whenever there is no body.
+        """
         url = f"{self.base}/api/trpc/{procedure}"
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -90,7 +97,10 @@ class Homarr:
             headers["ApiKey"] = api_key
         data = None
         if payload is not None:
-            data = json.dumps({"json": payload}).encode()
+            if query:
+                url += "?input=" + urllib.parse.quote(json.dumps({"json": payload}))
+            else:
+                data = json.dumps({"json": payload}).encode()
         status, body = self._open(
             urllib.request.Request(url, data=data, headers=headers)
         )
@@ -253,9 +263,17 @@ def sync_board(api, api_key, board_name, apps):
                 changed = True
 
     try:
-        board = api.trpc("board.getBoardByName", {"name": board_name}, api_key=api_key)
+        board = api.trpc(
+            "board.getBoardByName", {"name": board_name}, api_key=api_key, query=True
+        )
     except HomarrError:
-        board = None
+        # Homarr seeds its first board under a name we do not choose, so fall
+        # back to whatever it actually serves as home rather than guessing one.
+        try:
+            board = api.trpc("board.getHomeBoard", api_key=api_key)
+            actions.append(f"board {board_name!r} not found — used the home board")
+        except HomarrError:
+            board = None
     if not board:
         actions.append(f"board {board_name!r} does not exist — skipped tile placement")
         return actions, changed

@@ -29,7 +29,7 @@ class FakeApi:
         self._next_id += 1
         return f"id{self._next_id}"
 
-    def trpc(self, procedure, payload=None, api_key=None):
+    def trpc(self, procedure, payload=None, api_key=None, query=False):
         self.calls.append((procedure, payload))
         if procedure in ("app.create", "app.update"):
             # Mirrors Homarr's real appManageSchema. Every field there is
@@ -55,7 +55,12 @@ class FakeApi:
         if procedure == "app.update":
             self.apps[payload["name"]].update(payload)
             return None
-        if procedure == "board.getBoardByName":
+        if procedure in ("board.getBoardByName", "board.getHomeBoard"):
+            # getBoardByName is a tRPC *query* with input, so sync_board must
+            # ask for it as a GET; a POST is rejected. Assert the flag here,
+            # since the wrong method looked exactly like a missing board.
+            if procedure == "board.getBoardByName" and not query:
+                raise AssertionError("getBoardByName is a query — must pass query=True")
             if self.board is None:
                 raise homarr_api.HomarrError("NOT_FOUND")
             return self.board
