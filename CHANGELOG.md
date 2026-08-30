@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.24.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.23.0...v4.24.0) (2026-08-30)
+
+
+### Features
+
+* **grafana_stack:** add four AI-usage dashboards and their collector ([#1626](https://github.com/dryvist/ansible-proxmox-apps/issues/1626)) ([2367f2a](https://github.com/dryvist/ansible-proxmox-apps/commit/2367f2a0801f0790567c7cecc85e007162d4bec4))
+
 ## [4.23.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.22.0...v4.23.0) (2026-08-30)
 
 
