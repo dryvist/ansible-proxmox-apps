@@ -1,0 +1,44 @@
+---
+# Ad-hoc verification: did Grafana actually LOAD the provisioned dashboards?
+#
+# Deploying dashboard files and Grafana parsing them are different outcomes. A
+# malformed board is skipped with a log line, and the API simply does not list
+# it — so a converge reporting `changed` on the file copy proves nothing about
+# whether the dashboard exists in Grafana.
+#
+# Not part of site.yml. Run directly:
+#   ansible-playbook -i inventory/hosts.yml playbooks/verify-grafana-dashboards.yml
+- name: Load infrastructure inventory
+  import_playbook: site/00-load-and-telemetry.yml
+
+- name: Verify provisioned dashboards are loaded
+  hosts: grafana_group
+  become: true
+  gather_facts: false
+  # The password path is a role default, and this play does not run the role.
+  vars_files:
+    - ../roles/grafana_stack/defaults/main.yml
+  tasks:
+    - name: Read the persisted admin password
+      ansible.builtin.slurp:
+        src: "{{ grafana_stack_admin_password_file }}"
+      register: _pw
+      no_log: true
+
+    - name: List what Grafana has loaded
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:3000/api/search?type=dash-db"
+        user: admin
+        password: "{{ (_pw.content | b64decode | trim) if _pw.content is defined else '' }}"
+        force_basic_auth: true
+        return_content: true
+      register: _boards
+      no_log: true
+      failed_when: _boards.status != 200
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          status={{ _boards.status }}
+          count={{ _boards.json | length }}
+          loaded={{ _boards.json | map(attribute='title') | list | sort }}
