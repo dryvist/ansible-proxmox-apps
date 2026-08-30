@@ -103,16 +103,24 @@
     - not (openbao_reconcile_login.skipped | default(false))
     - (openbao_reconcile_login.login | default({})).auth is defined
 
-- name: WARN — the reconcile identity was configured but could not authenticate
-  ansible.builtin.debug:
+# Secret-zero presence IS the discriminator, so no marker file is needed:
+#   creds absent  -> never bootstrapped        -> skip loudly (debug, below)
+#   creds present -> login MUST succeed        -> anything else is a regression
+# Failing red here is the point. A warn-and-continue leaves RBAC silently
+# unreconciled while the recap still reads failed=0 — the exact false green
+# this whole path exists to remove.
+- name: FAIL — the reconcile identity was configured but could not authenticate
+  ansible.builtin.fail:
     msg: >-
       OpenBao reconcile login FAILED on {{ inventory_hostname }}. Secret-zero
       for the openbao-reconcile AppRole is present in the environment but the
-      login did not return a token, so RBAC was NOT reconciled on this run.
-      Most likely the AppRole does not exist yet on this cluster (it is created
-      only by a privileged run) or its secret_id has been rotated. Re-run once
-      with OPENBAO_PROVISIONING_TOKEN to create it, then routine converges
-      reconcile on their own.
+      login did not return a token, so RBAC would NOT have been reconciled.
+      Because the credentials ARE published, this is a regression, not a
+      bootstrap gap: the AppRole was deleted, or its secret_id was rotated
+      without republishing. Re-issue it (a privileged run recreates the role)
+      and republish role_id/secret_id, or unset
+      OPENBAO_APPROLE_OPENBAO_RECONCILE_{ROLE,SECRET}_ID to deliberately fall
+      back to the loud skip.
   when:
     - openbao_reconcile_login is defined
     - not (openbao_reconcile_login.skipped | default(false))
