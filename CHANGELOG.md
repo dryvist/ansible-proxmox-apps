@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.25.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.24.0...v4.25.0) (2026-08-30)
+
+
+### Features
+
+* **playbooks:** verify Grafana actually loaded the provisioned dashboards ([#1628](https://github.com/dryvist/ansible-proxmox-apps/issues/1628)) ([150c3cc](https://github.com/dryvist/ansible-proxmox-apps/commit/150c3cc1f1f9873c47eafd9954797d347c56bdae))
+
 ## [4.24.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.23.0...v4.24.0) (2026-08-30)
 
 
