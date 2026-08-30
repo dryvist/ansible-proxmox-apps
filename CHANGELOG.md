@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.23.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.22.0...v4.23.0) (2026-08-30)
+
+
+### Features
+
+* **grafana:** add grafana_stack role (Grafana + VictoriaMetrics compose stack) ([#1621](https://github.com/dryvist/ansible-proxmox-apps/issues/1621)) ([0e71012](https://github.com/dryvist/ansible-proxmox-apps/commit/0e710126d4daf1bef685acbee747a04db044a452))
+* **homarr:** converge board tiles from the shared dashboard catalog ([a0932fc](https://github.com/dryvist/ansible-proxmox-apps/commit/a0932fc14fd793bcd80df4cb58961019985e2cac))
+
 ## [4.22.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.21.0...v4.22.0) (2026-08-28)
 
 
