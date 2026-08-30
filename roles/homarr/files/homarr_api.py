@@ -13,7 +13,7 @@ result leaves on stdout.
 Contract
   stdin : {"api_base","admin_username","admin_password","db_path",
            "bcrypt_module","api_key","api_key_file","force_secret_sync",
-           "integrations":[...]}
+           "integrations":[...], "board":{"name","apps":[{"name","url",...}]}}
   stdout: {"changed":bool,"actions":[str],"api_key":str}
   Exit non-zero on any failure. Homarr connection-TESTS an integration before
   it will persist it, so a bad credential surfaces here as a create failure
@@ -36,6 +36,31 @@ class HomarrError(RuntimeError):
     pass
 
 
+# iconUrl is zod min(1), so a bookmark tile with no icon still needs SOME
+# string. An inline SVG avoids depending on an external icon host.
+DEFAULT_ICON_URL = (
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+    "viewBox='0 0 24 24'%3E%3C/svg%3E"
+)
+
+
+def _app_payload(want, icon_url):
+    """Build an app body for Homarr's appManageSchema.
+
+    Every field is `.nullable()` but NOT `.optional()`, so an omitted key is a
+    validation error rather than a default — invalid_type for name/description/
+    iconUrl, invalid_union for the href/pingUrl unions. Send all five, null
+    rather than absent.
+    """
+    return {
+        "name": want["name"],
+        "description": want.get("desc") or None,
+        "iconUrl": icon_url,
+        "href": want["url"],
+        "pingUrl": None,
+    }
+
+
 class Homarr:
     def __init__(self, base):
         self.base = base.rstrip("/")
@@ -51,9 +76,15 @@ class Homarr:
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", "replace")
 
-    def trpc(self, procedure, payload=None, api_key=None):
+    def trpc(self, procedure, payload=None, api_key=None, query=False):
         """Call a tRPC procedure. Homarr sets a superjson transformer, so every
-        body and every response is wrapped in a top-level "json" key."""
+        body and every response is wrapped in a top-level "json" key.
+
+        `query=True` marks a tRPC query: those are served over GET and reject
+        a POST, so an input-bearing one passes its argument in the `input`
+        query string. A query with no input needs no flag — urllib already
+        sends GET when there is no body.
+        """
         url = f"{self.base}/api/trpc/{procedure}"
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -62,7 +93,10 @@ class Homarr:
             headers["ApiKey"] = api_key
         data = None
         if payload is not None:
-            data = json.dumps({"json": payload}).encode()
+            if query:
+                url += "?input=" + urllib.parse.quote(json.dumps({"json": payload}))
+            else:
+                data = json.dumps({"json": payload}).encode()
         status, body = self._open(
             urllib.request.Request(url, data=data, headers=headers)
         )
@@ -187,6 +221,80 @@ ONBOARDING_STEPS = (
 )
 
 
+def sync_board(api, api_key, board_name, apps):
+    """Sync one bookmark tile per catalog service onto a board.
+
+    Two diffs, both by name/id — `app.create` and `board.addItem` always
+    insert, so undiffed calls double every tile each converge. `apps` entries
+    are dashboard_catalog rows as-is.
+
+    An "app" tile points at its app row via `options.appId`, NOT via
+    `addItem`'s `integrationIds` — that links to the separate `integration`
+    table and 400s on an id absent from it. A bookmark carries no integration.
+    """
+    actions = []
+    changed = False
+
+    existing_apps = {a["name"]: a for a in api.trpc("app.all", api_key=api_key)}
+    app_ids = {}
+    for want in apps:
+        have = existing_apps.get(want["name"])
+        if have is None:
+            created = api.trpc(
+                "app.create", _app_payload(want, DEFAULT_ICON_URL), api_key=api_key
+            )
+            app_ids[want["name"]] = created["id"]
+            actions.append(f"created app {want['name']}")
+            changed = True
+        else:
+            app_ids[want["name"]] = have["id"]
+            if have.get("href") != want["url"]:
+                payload = _app_payload(want, have.get("iconUrl") or DEFAULT_ICON_URL)
+                payload["id"] = have["id"]  # appEditSchema = appManageSchema & {id}
+                api.trpc("app.update", payload, api_key=api_key)
+                actions.append(f"updated app {want['name']}")
+                changed = True
+
+    try:
+        board = api.trpc(
+            "board.getBoardByName", {"name": board_name}, api_key=api_key, query=True
+        )
+    except HomarrError:
+        # Homarr seeds its first board under a name we do not choose, so fall
+        # back to whatever it actually serves as home rather than guessing one.
+        try:
+            board = api.trpc("board.getHomeBoard", api_key=api_key)
+            actions.append(f"board {board_name!r} not found — used the home board")
+        except HomarrError:
+            board = None
+    if not board:
+        actions.append(f"board {board_name!r} does not exist — skipped tile placement")
+        return actions, changed
+
+    # Apps already tiled on this board: every "app"-kind item's own
+    # options.appId, per the shape board.getBoardByName actually returns.
+    on_board = {
+        item["options"]["appId"]
+        for item in (board.get("items") or [])
+        if item.get("kind") == "app" and (item.get("options") or {}).get("appId")
+    }
+
+    for want in apps:
+        app_id = app_ids[want["name"]]
+        if app_id in on_board:
+            continue
+        # Auto-places into the board's first open section — no layout math.
+        api.trpc("board.addItem", {
+            "boardId": board["id"],
+            "kind": "app",
+            "options": {"appId": app_id},
+        }, api_key=api_key)
+        actions.append(f"added board tile: {want['name']}")
+        changed = True
+
+    return actions, changed
+
+
 def main():
     spec = json.load(sys.stdin)
     api = Homarr(spec["api_base"])
@@ -285,6 +393,15 @@ def main():
         }, api_key=api_key)
         actions.append(f"updated {want['name']}" + ("" if drifted else " (forced secret sync)"))
         changed = True
+
+    board = spec.get("board") or {}
+    board_apps = board.get("apps") or []
+    if board_apps:
+        board_actions, board_changed = sync_board(
+            api, api_key, board.get("name", "default"), board_apps
+        )
+        actions.extend(board_actions)
+        changed = changed or board_changed
 
     json.dump({"changed": changed, "actions": actions, "api_key": api_key}, sys.stdout)
 
