@@ -67,18 +67,25 @@ and its lease-table name.
 
 App configuration references services **by name, never by address**:
 
+Every service FQDN has **one shape** — `<name>.{{ ingress_domain }}`. Only
+the name differs between two service URLs.
+
 - **Traefik-fronted service** (has a row in the upstream ingress table):
-  `https://<name>.{{ tofu_data.domain }}` — port 443, TLS via the wildcard
+  `https://<name>.{{ ingress_domain }}` — port 443, TLS via the wildcard
   cert. The name resolves to the ingress; the backend address is Traefik's
-  concern, not the consumer's.
-- **Non-fronted guest**: `<hostname>.{{ tofu_data.domain }}` plus the port
-  from `tofu_data.constants`. For a network/critical guest that name is an A
-  record Technitium builds from the inventory; for a leased guest it is answered
-  by the gateway out of its own DHCP lease table. The consumer cannot tell the
-  difference, which is the point.
-- `{{ tofu_data.domain }}` is the **single domain source of truth**
-  (published by tofu-proxmox, validated non-empty by
-  `inventory/load_tofu.yml`). Never repeat a literal domain per role.
+  concern, not the consumer's. Do **not** pin the app's native port: the
+  ingress listens on 443 and serves nothing on it.
+- **Non-fronted guest**: `<hostname>.{{ ingress_domain }}` plus the port from
+  `tofu_data.constants`. Same zone — with no route fronting the name, it
+  resolves to the guest itself. The consumer cannot tell the difference from a
+  fronted one, which is the point.
+- `{{ ingress_domain }}` (`inventory/group_vars/all.yml`) is the **single
+  domain source of truth for service URLs**. Never repeat a literal domain per
+  role, and never build a service URL from `{{ tofu_data.domain }}`: that is
+  the apex, reserved for the Proxmox nodes themselves. A fronted name built
+  from the apex resolves to the bare guest or to nothing, bypassing TLS and the
+  auth gate, and no layer reports an error. `tests/test_fronted_urls_use_ingress_domain.py`
+  guards the endpoints that shipped broken this way.
 - Hostnames **match the app/role/stanza name**. Never invent a third name.
 
 The bring-up order guarantees names work before any role converges. For a
