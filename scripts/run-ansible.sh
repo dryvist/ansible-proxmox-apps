@@ -202,12 +202,27 @@ for a in "$@"; do
 done
 NON_LOCALHOST_LIMIT=$(tr ',' '\n' <<<"$LIMIT_VAL" | grep -vx 'localhost' | grep -v '^$' || true)
 if [[ -n $NON_LOCALHOST_LIMIT ]]; then
-  RECAP_HOSTS=$(awk '/^PLAY RECAP/{f=1;next} f && NF{print $1}' "$LOG_FILE")
-  NON_LOCALHOST_RECAP=$(grep -vx 'localhost' <<<"$RECAP_HOSTS" || true)
-  if [[ -z $NON_LOCALHOST_RECAP ]]; then
-    echo "ERROR: --limit ($LIMIT_VAL) asked for hosts beyond localhost, but the play recap shows only localhost — this run did nothing." >&2
-    echo "Check the group name against the inventory loader that actually populates it (it may live in a different repo)." >&2
-    STATUS=1
+  # An ABSENT recap and a recap listing only localhost are different facts, and
+  # conflating them is how this guard told an operator "this run did nothing"
+  # about a run that had already written 60 policies to OpenBao before being
+  # interrupted 20 minutes later. Ansible prints PLAY RECAP only on a normal
+  # end of run, so a Ctrl-C, a timeout, or a crash leaves none at all -- which
+  # the old awk reported as an empty host list, indistinguishable from the
+  # matched-nothing case this guard exists to catch.
+  if ! grep -q '^PLAY RECAP' "$LOG_FILE"; then
+    echo "ERROR: the run ended before Ansible printed a play recap — it was interrupted or crashed." >&2
+    echo "This says NOTHING about how much work it completed first; read the log before concluding it did nothing." >&2
+    echo "Run log: $LOG_FILE" >&2
+    STATUS=${STATUS:-1}
+    [[ $STATUS -eq 0 ]] && STATUS=1
+  else
+    RECAP_HOSTS=$(awk '/^PLAY RECAP/{f=1;next} f && NF{print $1}' "$LOG_FILE")
+    NON_LOCALHOST_RECAP=$(grep -vx 'localhost' <<<"$RECAP_HOSTS" || true)
+    if [[ -z $NON_LOCALHOST_RECAP ]]; then
+      echo "ERROR: --limit ($LIMIT_VAL) asked for hosts beyond localhost, but the play recap shows only localhost — this run did nothing." >&2
+      echo "Check the group name against the inventory loader that actually populates it (it may live in a different repo)." >&2
+      STATUS=1
+    fi
   fi
 fi
 
