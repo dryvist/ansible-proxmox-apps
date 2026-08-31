@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.25.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.25.1...v4.25.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **ntp:** support check mode virt detection ([#751](https://github.com/dryvist/ansible-proxmox-apps/issues/751)) ([#1643](https://github.com/dryvist/ansible-proxmox-apps/issues/1643)) ([acb761d](https://github.com/dryvist/ansible-proxmox-apps/commit/acb761ddc2b5288569d9a6dcf8b441de177769ac))
+* **openbao:** gate RBAC reconciliation on real, server-reported capability ([#1641](https://github.com/dryvist/ansible-proxmox-apps/issues/1641)) ([0b1f112](https://github.com/dryvist/ansible-proxmox-apps/commit/0b1f11203ecbeea5e6dc8d5295e7699d980af305))
+* **renovate:** annotate the two git-pinned collections so Renovate tracks them ([#1646](https://github.com/dryvist/ansible-proxmox-apps/issues/1646)) ([c136f2d](https://github.com/dryvist/ansible-proxmox-apps/commit/c136f2dd250bed9b463198cdf293eea06ae5befa))
+
 ## [4.25.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.25.0...v4.25.1) (2026-08-31)
 
 
