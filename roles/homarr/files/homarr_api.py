@@ -295,6 +295,67 @@ def sync_board(api, api_key, board_name, apps):
     return actions, changed
 
 
+def sync_integrations(api, api_key, integrations, force_secret_sync=False):
+    """Create or update each wanted integration. Returns (actions, changed)."""
+    actions, changed = [], False
+    existing = {row["name"]: row for row in api.trpc("integration.all", api_key=api_key)}
+
+    # An integration whose credential did not resolve is skipped, loudly. Homarr
+    # would reject it anyway (it connection-tests before persisting), and taking
+    # the whole converge down because one unrelated app's key is missing helps
+    # nobody. Skipping SILENTLY would be worse still — that is how a dashboard
+    # ends up quietly missing half its tiles.
+    wanted, skipped = [], []
+    for want in integrations:
+        if any(not (s.get("value") or "").strip() for s in want.get("secrets", [])):
+            skipped.append(want["name"])
+        else:
+            wanted.append(want)
+    if skipped:
+        actions.append("skipped (no credential resolved): " + ", ".join(sorted(skipped)))
+
+    for want in wanted:
+        have = existing.get(want["name"])
+        if have is None:
+            api.trpc("integration.create", {
+                "name": want["name"],
+                "kind": want["kind"],
+                "url": want["url"],
+                "secrets": want["secrets"],
+                "attemptSearchEngineCreation": False,
+            }, api_key=api_key)
+            actions.append(f"created {want['name']}")
+            changed = True
+            continue
+
+        drifted = have.get("url") != want["url"] or have.get("kind") != want["kind"]
+        if not (drifted or force_secret_sync):
+            continue
+        # Secrets are write-only — the API never returns them, so a rotated
+        # credential is invisible here and only syncs when explicitly asked.
+        #
+        # appId is `.nullable()` but NOT `.optional()` in integrationUpdateSchema,
+        # and update writes it straight into the row's `set` clause. Omitting it
+        # is a zod 400 ("expected string, received undefined"); sending null
+        # unlinks whatever app the integration points at. integration.all does
+        # not carry appId — only integration.byId does — so read it back and
+        # pass it through unchanged.
+        linked_app = api.trpc(
+            "integration.byId", {"id": have["id"]}, api_key=api_key, query=True
+        ).get("app")
+        api.trpc("integration.update", {
+            "id": have["id"],
+            "name": want["name"],
+            "url": want["url"],
+            "secrets": want["secrets"],
+            "appId": (linked_app or {}).get("id"),
+        }, api_key=api_key)
+        actions.append(f"updated {want['name']}" + ("" if drifted else " (forced secret sync)"))
+        changed = True
+
+    return actions, changed
+
+
 def main():
     spec = json.load(sys.stdin)
     api = Homarr(spec["api_base"])
@@ -350,49 +411,11 @@ def main():
     if key_file:
         write_secret_file(key_file, api_key)
 
-    existing = {row["name"]: row for row in api.trpc("integration.all", api_key=api_key)}
-
-    # An integration whose credential did not resolve is skipped, loudly. Homarr
-    # would reject it anyway (it connection-tests before persisting), and taking
-    # the whole converge down because one unrelated app's key is missing helps
-    # nobody. Skipping SILENTLY would be worse still — that is how a dashboard
-    # ends up quietly missing half its tiles.
-    wanted, skipped = [], []
-    for want in spec["integrations"]:
-        if any(not (s.get("value") or "").strip() for s in want.get("secrets", [])):
-            skipped.append(want["name"])
-        else:
-            wanted.append(want)
-    if skipped:
-        actions.append("skipped (no credential resolved): " + ", ".join(sorted(skipped)))
-
-    for want in wanted:
-        have = existing.get(want["name"])
-        if have is None:
-            api.trpc("integration.create", {
-                "name": want["name"],
-                "kind": want["kind"],
-                "url": want["url"],
-                "secrets": want["secrets"],
-                "attemptSearchEngineCreation": False,
-            }, api_key=api_key)
-            actions.append(f"created {want['name']}")
-            changed = True
-            continue
-
-        drifted = have.get("url") != want["url"] or have.get("kind") != want["kind"]
-        if not (drifted or spec.get("force_secret_sync")):
-            continue
-        # Secrets are write-only — the API never returns them, so a rotated
-        # credential is invisible here and only syncs when explicitly asked.
-        api.trpc("integration.update", {
-            "id": have["id"],
-            "name": want["name"],
-            "url": want["url"],
-            "secrets": want["secrets"],
-        }, api_key=api_key)
-        actions.append(f"updated {want['name']}" + ("" if drifted else " (forced secret sync)"))
-        changed = True
+    int_actions, int_changed = sync_integrations(
+        api, api_key, spec["integrations"], spec.get("force_secret_sync")
+    )
+    actions.extend(int_actions)
+    changed = changed or int_changed
 
     board = spec.get("board") or {}
     board_apps = board.get("apps") or []
