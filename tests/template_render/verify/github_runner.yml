@@ -1,0 +1,127 @@
+---
+# The runner fleet's disk behaviour is decided entirely by two lines of
+# template: `docker run --rm` in the unit, and EPHEMERAL in the env file. Get
+# either wrong and nothing fails -- runners register, jobs pass, and the host's
+# boot disk fills over days until sshd itself cannot write. That happened on two
+# guests: single containers reaching 54GB, 25GB and 23GB of writable layer,
+# 99G disks at 0 bytes free.
+#
+# Both lines are asserted here because they are load-bearing together and
+# neither is self-evident from reading the unit:
+#   * EPHEMERAL without --rm is the ORIGINAL BUG. The runner exits per job and
+#     re-registers, but a restart reuses the SAME container, so the writable
+#     layer is never discarded. It looks correct and grows forever.
+#   * --rm without EPHEMERAL leaves a long-lived runner that never exits, so
+#     the layer is never discarded either.
+- name: Render and verify github_runner templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/github_runner/templates"
+    # Mirror roles/github_runner/defaults/main.yml, plus the facts the role
+    # sets at converge time.
+    github_runner_image: "myoung34/github-runner:ubuntu-noble"
+    github_runner_container_prefix: "github-runner"
+    github_runner_name_prefix: "proxmox-runner"
+    github_runner_network: ci_runners
+    github_runner_env_file: /etc/github-runner/runner.env
+    github_runner_stop_timeout: 120
+    github_runner_cpu_limit: "1.0"
+    github_runner_memory_limit: "2g"
+    github_runner_docker_gid: 992
+    github_runner_org: example-org
+    github_runner_group: example-group
+    github_runner_labels: "self-hosted,Linux,X64,proxmox"
+    github_runner_access_token: "test-token-not-a-real-credential"
+    github_runner_replicas: 3
+
+  tasks:
+    - name: Render the runner systemd unit
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/github-runner@.service.j2"
+        dest: "{{ _fixture_dir }}/test_github-runner@.service"
+        mode: "0644"
+
+    - name: Render the runner environment file
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/runner.env.j2"
+        dest: "{{ _fixture_dir }}/test_runner.env"
+        mode: "0600"
+
+    - name: Read the rendered unit and environment file
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      register: _runner_raw
+      loop:
+        - test_github-runner@.service
+        - test_runner.env
+
+    - name: Decode the rendered files
+      ansible.builtin.set_fact:
+        _unit_raw: "{{ _runner_raw.results[0].content | b64decode }}"
+        _env_raw: "{{ _runner_raw.results[1].content | b64decode }}"
+
+    # Assert on DIRECTIVE LINES ONLY, as a list. Two traps informed this:
+    #   * Both files explain themselves at length and those comments name the
+    #     very flags asserted below, so a search over the whole file matches the
+    #     PROSE and passes with the flag absent from the command. Caught by
+    #     deleting `--rm` from the unit and watching this suite stay green.
+    #   * A list avoids re-joining with "\n", which inside a folded YAML scalar
+    #     is a literal backslash-n, not a newline -- that silently broke every
+    #     multiline-anchored regex here on the first attempt.
+    - name: Reduce both files to their directive lines
+      ansible.builtin.set_fact:
+        _unit: "{{ _unit_raw.splitlines() | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+        _env: "{{ _env_raw.splitlines() | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+
+    - name: Assert the container is discarded when it exits
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', 'docker run') | length > 0
+          - _unit | select('search', '(^|\\s)--rm(\\s|$)') | length > 0
+        fail_msg: >-
+          The runner unit does not start its container with `docker run --rm`.
+          Without it the container's writable layer survives every job and the
+          host's disk fills until the guest dies. This is the exact defect that
+          took two guests down.
+
+    - name: Assert the runner serves one job per container
+      ansible.builtin.assert:
+        that:
+          - "'EPHEMERAL=true' in _env"
+        fail_msg: >-
+          EPHEMERAL is not true, so the runner never exits after a job and the
+          --rm above never fires. The two settings only bound disk growth
+          together.
+
+    - name: Assert nothing reintroduces a restart policy on the container
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', '--restart') | length == 0
+        fail_msg: >-
+          The unit passes --restart to `docker run`. A Docker restart policy
+          restarts the SAME container, which is incompatible with --rm and
+          reinstates the unbounded writable layer. systemd's own Restart=
+          supplies the next container.
+
+    - name: Assert systemd supplies the next container after every job
+      ansible.builtin.assert:
+        that:
+          - "'Restart=always' in _unit"
+        fail_msg: >-
+          An ephemeral runner exits 0 after its job, so Restart=on-failure (or
+          no Restart=) drains the pool one job at a time with no error anywhere
+          -- jobs simply start queueing.
+
+    - name: Assert the env file is not quoted
+      ansible.builtin.assert:
+        that:
+          - _env | select('search', '^[A-Z_]+="') | length == 0
+        fail_msg: >-
+          A value in the env file is quoted. `docker run --env-file` parses
+          KEY=VALUE literally, so the quote characters become part of the value
+          and the token or org name silently arrives wrong.
