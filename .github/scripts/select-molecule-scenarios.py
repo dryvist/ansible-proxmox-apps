@@ -40,7 +40,8 @@ ROLE_DIR = REPO / "roles"
 # Changes here can affect any scenario, so they select all of them.
 SHARED = re.compile(
     r"^(inventory/|playbooks/|requirements\.yml$|requirements-ci\.txt$"
-    r"|\.github/workflows/_molecule\.yml$|\.github/scripts/select-molecule-scenarios\.py$)"
+    r"|\.github/workflows/(?:ci-gate|_molecule)\.yml$"
+    r"|\.github/scripts/select-molecule-scenarios\.py$)"
 )
 ROLE_PATH = re.compile(r"^roles/([^/]+)/")
 SCENARIO_PATH = re.compile(r"^molecule/([^/]+)/")
@@ -202,6 +203,9 @@ def self_check() -> int:
     selected, unrecognised = changed_scenarios(["molecule/not-a-scenario/config.yml"], set(mapping))
     if selected or unrecognised != ["molecule/not-a-scenario/config.yml"]:
         failures.append("an unrecognised molecule path no longer widens the matrix")
+
+    if not SHARED.match(".github/workflows/ci-gate.yml"):
+        failures.append("the Molecule gate workflow no longer widens the matrix")
 
     selected, unrecognised = changed_roles(["roles/no-longer-present/tasks/main.yml"], known)
     if selected or unrecognised != {"no-longer-present"}:
