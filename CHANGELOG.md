@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.27.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.27.0...v4.27.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **ci:** select changed Molecule scenarios ([#1673](https://github.com/dryvist/ansible-proxmox-apps/issues/1673)) ([a7e81cc](https://github.com/dryvist/ansible-proxmox-apps/commit/a7e81cc1db2fcdf2d154af766e630f1d013d4eee))
+* **github_runner:** bound runner disk growth and guard where the data lands ([#1679](https://github.com/dryvist/ansible-proxmox-apps/issues/1679)) ([6c0dde9](https://github.com/dryvist/ansible-proxmox-apps/commit/6c0dde9641e5beda705fe4d2b9d15c68b8c5aa3e))
+* **homarr:** send appId on integration.update, and run the diff suites in CI ([#1676](https://github.com/dryvist/ansible-proxmox-apps/issues/1676)) ([5fd5e86](https://github.com/dryvist/ansible-proxmox-apps/commit/5fd5e8611a1d21731d6b4baab1c5ada014e16f5d))
+
 ## [4.27.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.26.0...v4.27.0) (2026-08-31)
 
 
