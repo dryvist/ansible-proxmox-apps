@@ -97,6 +97,43 @@
       undefined and lets the group_vars env fallback resolve to an empty string.
     quiet: true
 
+# Fetched, not vendored: the JSON is large and machine-generated, so a diff of
+# it reviews nothing. The pin lives in the variable instead, where it IS
+# reviewable. `force: true` re-downloads every run so that a revision bump is
+# what changes the file — with force omitted, get_url skips when the file
+# exists and a bumped pin would silently never deploy.
+#
+# Skipped entirely when no Prometheus datasource was provisioned: these
+# dashboards query it, and deploying them without it produces empty panels that
+# look like a data problem rather than a configuration one.
+- name: Fetch pinned community dashboards from grafana.com
+  ansible.builtin.get_url:
+    url: "https://grafana.com/api/dashboards/{{ item.id }}/revisions/{{ item.revision }}/download"
+    dest: "{{ grafana_stack_data_dir }}/dashboards/{{ item.file }}"
+    force: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ grafana_stack_community_dashboards }}"
+  loop_control:
+    label: "{{ item.id }} rev{{ item.revision }} -> {{ item.file }}"
+  when: grafana_stack_prometheus_url | trim | length > 0
+  notify: Restart grafana stack
+
+- name: Point the community dashboards at the provisioned datasource
+  ansible.builtin.replace:
+    path: "{{ grafana_stack_data_dir }}/dashboards/{{ item.file }}"
+    # Any DS_* placeholder, not just DS_PROMETHEUS: dashboards name these
+    # freely (7587 ships ${DS_SIGNCL-PROMETHEUS}), and a name-specific pattern
+    # silently leaves those panels pointing at a datasource that never resolves.
+    regexp: '\$\{DS_[^}]+\}'
+    replace: "{{ grafana_stack_community_datasource_uid }}"
+  loop: "{{ grafana_stack_community_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  when: grafana_stack_prometheus_url | trim | length > 0
+  notify: Restart grafana stack
+
 - name: Deploy grafana stack docker-compose template
   ansible.builtin.template:
     src: docker-compose.yml.j2
