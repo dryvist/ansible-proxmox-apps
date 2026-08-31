@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.25.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.25.0...v4.25.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **openbao:** delegate the reconcile login to the controller ([cc6dc15](https://github.com/dryvist/ansible-proxmox-apps/commit/cc6dc159381c370820ab1c9c2cabed3c5cf8118d))
+* **openbao:** gate SSH-engine and auth-method bootstrap out of reconcile mode ([#1638](https://github.com/dryvist/ansible-proxmox-apps/issues/1638)) ([b25b6fa](https://github.com/dryvist/ansible-proxmox-apps/commit/b25b6fab173f0cd4968332a04134850df0456bcf))
+* **openbao:** reconcile declared RBAC without an operator token ([7870545](https://github.com/dryvist/ansible-proxmox-apps/commit/7870545652050e5a7edd96b4a2038e6afccedec3))
+* **openbao:** skip plugin-registering engines in reconcile mode ([#1637](https://github.com/dryvist/ansible-proxmox-apps/issues/1637)) ([acf5ef3](https://github.com/dryvist/ansible-proxmox-apps/commit/acf5ef3f2e7ffbd16393815ba1fde9174cdcdad1))
+
+
+### Performance
+
+* **ansible:** profile tasks and stop batching the openbao group ([#1636](https://github.com/dryvist/ansible-proxmox-apps/issues/1636)) ([cb2c660](https://github.com/dryvist/ansible-proxmox-apps/commit/cb2c6601457528dfe67932efb6f4bbc43b86f1e4))
+
 ## [4.25.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.24.0...v4.25.0) (2026-08-30)
 
 
