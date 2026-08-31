@@ -258,21 +258,15 @@ def build_task_events(tasks, config, playbook, now):
     return events
 
 
-def build_interrupted_event(config, playbook, tasks, now):
-    """One marker event for a run that ended without Ansible's stats callback.
+def build_interrupted_event(config, playbook, now):
+    """One marker saying the run never finished.
 
-    ``v2_playbook_on_stats`` fires only on a NORMAL end of run. A converge
-    killed by Ctrl-C, a timeout, or a wrapper that gives up therefore published
-    NOTHING AT ALL -- and those are precisely the runs worth seeing. Three
-    converges were killed mid-flight before this existed and left no trace in
-    the observability platform; the only record was a local log file.
-
-    Deliberately NOT a per-host freshness event. An interrupted run did not
-    converge its hosts, so emitting the usual ``ansible:converge`` events would
-    refresh the >7-day staleness clock for hosts that were never touched -- the
-    same silent-green failure the roster events exist to catch. This carries
-    only run-level facts plus where the run got to, and the task events
-    published alongside it carry the timing.
+    ``v2_playbook_on_stats`` fires only on a normal end of run, so a converge
+    killed by Ctrl-C or a wrapper timeout published nothing at all -- and those
+    are the runs worth seeing. Deliberately NOT a per-host freshness event: the
+    run converged nothing, so publishing one would refresh the >7-day staleness
+    clock for hosts never touched. Where it got to is already in the task
+    events published alongside this one.
     """
     return {
         "time": now,
@@ -285,11 +279,6 @@ def build_interrupted_event(config, playbook, tasks, now):
             "repo": SOURCE,
             "git_sha": config.get("git_sha"),
             "status": "interrupted",
-            "tasks_completed": len(tasks),
-            "last_task": tasks[-1]["name"] if tasks else None,
-            "duration_seconds": (
-                round(now - tasks[0]["started"], 3) if tasks else 0.0
-            ),
         },
     }
 
@@ -357,12 +346,9 @@ class CallbackModule(CallbackBase):
     def _capture_config(self, result):
         """Take the configuration off the ``set_stats`` task's own result.
 
-        The converging playbook publishes it in the FIRST play of site.yml, but
-        it only reaches the ``stats`` object at end of run -- so reading it
-        there (the original design) meant an interrupted run had no endpoint to
-        publish to and stayed silent. ``set_stats`` returns its payload in the
-        task result, so the same configuration is available the instant that
-        task succeeds, roughly 40 minutes earlier on a full converge.
+        It reaches the ``stats`` object only at end of run, so reading it there
+        left an interrupted run with no endpoint to publish to. The same dict
+        is in the task result, available ~40 minutes earlier on a converge.
         """
         stats = (result._result or {}).get("ansible_stats") or {}
         config = (stats.get("data") or {}).get(STATS_KEY)
@@ -489,7 +475,7 @@ class CallbackModule(CallbackBase):
             now = time.time()
             events = build_task_events(self._tasks, config, self._playbook_name, now)
             events.append(
-                build_interrupted_event(config, self._playbook_name, self._tasks, now)
+                build_interrupted_event(config, self._playbook_name, now)
             )
             self._post(url, token, events, config)
         except Exception:  # noqa: BLE001 - never raise from an exit hook
