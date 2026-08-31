@@ -57,7 +57,7 @@ FRONTED_ROLE_DEFAULTS = (
     ("roles/service_deadman/defaults/main.yml", "https://ntfy."),
     # Homarr's integration URLs. Only the https:// ones are checked -- Jellyseerr
     # deliberately still uses an http:// guest address (it cannot take an API
-    # bypass; see roles/authelia/defaults/main.yml), and the marker below does
+    # bypass; see roles/authelia/defaults/main/00-core.yml), and the marker below does
     # not match it, so this stays an assertion about the fronted URLs only.
     ("roles/homarr/defaults/main.yml", "https://"),
 )
