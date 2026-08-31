@@ -141,11 +141,102 @@
     opts: defaults
     state: mounted
 
-- name: Ensure Docker is running on the data disk
+# ---------------------------------------------------------------------------
+# containerd's own root, which is NOT under Docker's.
+#
+# Modern Docker defaults to the containerd snapshotter
+# (`driver-type: io.containerd.snapshotter.v1`). Under it, image layers and
+# every container's writable layer live in /var/lib/containerd, NOT in
+# /var/lib/docker — so mounting the data disk at /var/lib/docker moves almost
+# nothing. Observed on two guests: a dedicated 100G data disk sat at 935M / 1%
+# used while 90G of snapshots filled the 99G boot disk and took the host down,
+# with the old guard passing the whole time because the mount it checked was
+# real and correct.
+#
+# Bind-mounting it into the data disk keeps the "one filesystem, addressed by a
+# surviving fstab entry" shape the block above chose deliberately, and works
+# whichever snapshotter is active.
+# ---------------------------------------------------------------------------
+
+- name: Read the filesystem backing /
+  ansible.builtin.command:
+    cmd: findmnt -no SOURCE --target /
+  register: github_runner_root_fs
+  changed_when: false
+
+- name: Set the root filesystem fact
+  ansible.builtin.set_fact:
+    github_runner_fs_root_source: "{{ github_runner_root_fs.stdout | trim }}"
+
+- name: Create the containerd directory on the data disk
+  ansible.builtin.file:
+    path: /var/lib/docker/containerd
+    state: directory
+    owner: root
+    group: root
+    mode: "0711"
+
+- name: Check whether /var/lib/containerd is already redirected
+  ansible.builtin.command:
+    cmd: findmnt -no SOURCE --target /var/lib/containerd
+  register: github_runner_containerd_mount
+  changed_when: false
+  failed_when: false
+
+- name: Migrate an existing /var/lib/containerd onto the data disk
+  when: >-
+    github_runner_containerd_mount.stdout | trim
+    == github_runner_fs_root_source | default('', true) | trim
+    or github_runner_containerd_mount.rc != 0
+  block:
+    - name: Stop Docker and containerd for the migration
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - docker.service
+        - docker.socket
+        - containerd.service
+
+    - name: Copy the existing containerd tree onto the data disk
+      ansible.builtin.command:
+        cmd: cp -a /var/lib/containerd/. /var/lib/docker/containerd/
+      register: github_runner_containerd_copy
+      changed_when: true
+      # An empty or absent source is the fresh-guest case, not a failure.
+      failed_when: >-
+        github_runner_containerd_copy.rc != 0
+        and 'No such file or directory' not in github_runner_containerd_copy.stderr
+
+    - name: Set the pre-migration containerd tree aside
+      ansible.builtin.command:
+        cmd: mv /var/lib/containerd /var/lib/containerd.pre-datadisk
+        creates: /var/lib/containerd.pre-datadisk
+
+    - name: Recreate the containerd mount point
+      ansible.builtin.file:
+        path: /var/lib/containerd
+        state: directory
+        owner: root
+        group: root
+        mode: "0711"
+
+- name: Bind /var/lib/containerd onto the data disk
+  ansible.posix.mount:
+    path: /var/lib/containerd
+    src: /var/lib/docker/containerd
+    fstype: none
+    opts: bind
+    state: mounted
+
+- name: Ensure Docker and containerd are running on the data disk
   ansible.builtin.systemd:
-    name: docker
+    name: "{{ item }}"
     state: started
     enabled: true
+  loop:
+    - containerd
+    - docker
 
 # =============================================================================
 # Converge-time guard
@@ -154,38 +245,70 @@
 # change regresses silently on the next rebuild, and the only symptom is an
 # ENOSPC failure in an unrelated job.
 
-- name: Read the filesystems backing / and /var/lib/docker
+- name: Read the filesystems backing / and every Docker data path
   ansible.builtin.command:
     cmd: "findmnt -no SOURCE --target {{ item }}"
-  loop:
-    - /
-    - /var/lib/docker
+  loop: "{{ ['/'] + github_runner_data_paths }}"
   register: github_runner_fs_sources
   changed_when: false
 
-- name: Assert /var/lib/docker is not on the root filesystem
+- name: Assert no Docker data path is on the root filesystem
   vars:
     _root_fs: "{{ github_runner_fs_sources.results[0].stdout | trim }}"
-    _docker_fs: "{{ github_runner_fs_sources.results[1].stdout | trim }}"
+    _offenders: >-
+      {{ github_runner_fs_sources.results[1:]
+         | selectattr('stdout', 'search', '^' ~ _root_fs ~ '$')
+         | map(attribute='item') | list }}
   ansible.builtin.assert:
     that:
-      - _docker_fs != _root_fs
+      - _offenders | length == 0
     fail_msg: >-
-      /var/lib/docker is on the root filesystem ({{ _root_fs }}). The Docker
-      image and build cache will fill the boot disk and every job on this
-      runner will fail with ENOSPC. The data disk mount has regressed — check
-      the fstab entry for /var/lib/docker.
+      {{ _offenders | join(', ') }} {{ 'is' if _offenders | length == 1 else 'are' }}
+      on the root filesystem ({{ _root_fs }}). Docker's image and container data
+      will fill the boot disk and every job on this runner will fail with ENOSPC
+      — as will anything else on the guest, including sshd. Check the fstab
+      entries for {{ github_runner_data_paths | join(' and ') }}.
     success_msg: >-
-      /var/lib/docker is on {{ _docker_fs }}, separate from / ({{ _root_fs }}).
+      Every Docker data path ({{ github_runner_data_paths | join(', ') }}) is
+      off the root filesystem ({{ _root_fs }}).
 
-# Reclaim the boot disk only once the mount is proven, never before.
+# The mount above proves where the directories live. It does not prove Docker
+# is USING them: `data-root` in a daemon.json, or a storage driver whose data
+# lives somewhere else entirely, both move the bytes without moving the mount.
+# Ask the daemon directly.
+- name: Read Docker's own data root
+  ansible.builtin.command:
+    cmd: docker info --format '{{ "{{" }}.DockerRootDir{{ "}}" }}'
+  register: github_runner_docker_root
+  changed_when: false
+
+- name: Assert Docker's reported data root is a path this role placed off the boot disk
+  vars:
+    _reported: "{{ github_runner_docker_root.stdout | trim }}"
+  ansible.builtin.assert:
+    that:
+      - _reported is search('^' ~ (github_runner_data_paths | first))
+    fail_msg: >-
+      Docker reports its data root as {{ _reported }}, which is not
+      {{ github_runner_data_paths | first }}. The mounts this role manages are
+      then guarding a directory the daemon does not write to, and the boot disk
+      will fill anyway. A daemon.json `data-root` is the usual cause.
+
+# Reclaim the boot disk only once the mounts are proven, never before. Either
+# migration can happen without the other: a guest converged before the
+# containerd bind mount existed already has /var/lib/docker on the data disk.
 - name: Reclaim the boot disk after a successful migration
-  when: github_runner_docker_mount.rc != 0
+  when: >-
+    github_runner_docker_mount.rc != 0
+    or github_runner_containerd_mount.rc != 0
   block:
-    - name: Remove the pre-migration Docker tree from the boot disk
+    - name: Remove the pre-migration trees from the boot disk
       ansible.builtin.file:
-        path: /var/lib/docker.pre-datadisk
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /var/lib/docker.pre-datadisk
+        - /var/lib/containerd.pre-datadisk
 
     - name: Prune dangling Docker data
       ansible.builtin.command:

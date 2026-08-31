@@ -1,0 +1,55 @@
+{{ ansible_managed | comment }}
+# One systemd instance per pooled runner: github-runner@1 .. @{{ github_runner_replicas }}.
+#
+# WHY NOT docker compose, WHICH THIS REPLACED:
+# the compose service set EPHEMERAL=true with `restart: unless-stopped`. A
+# restart policy restarts the SAME container, so its writable layer was never
+# discarded -- EPHEMERAL gives a fresh REGISTRATION, not a fresh FILESYSTEM.
+# Every job's checkout, tool cache and build output accumulated in one layer
+# for the container's whole life. Measured before this change: 54GB, 17.8GB and
+# 14.7GB in three containers on one host, which filled a 99G boot disk to 0
+# bytes free and took the guest down -- sshd included. `docker system df`
+# reported 99% of container space as reclaimable, which is what "nothing ever
+# resets this" looks like from the outside.
+#
+# `docker run --rm` discards the writable layer when the container exits, and
+# an ephemeral runner exits after exactly one job. That makes disk growth
+# bounded by a single job rather than by uptime, with no cleanup timer to fail
+# silently. systemd's Restart= supplies the next container.
+
+[Unit]
+Description=Ephemeral GitHub Actions runner %i
+After=docker.service
+Requires=docker.service
+# A runner is worthless without the daemon; do not spin restarting if it dies.
+PartOf=docker.service
+
+[Service]
+Type=exec
+# A prior container of this name can survive an ungraceful stop (SIGKILL, host
+# reset), and `docker run --name` then fails with a name conflict forever.
+# `-` so a clean start is not a failure.
+ExecStartPre=-/usr/bin/docker rm -f {{ github_runner_container_prefix }}-%i
+ExecStart=/usr/bin/docker run \
+    --rm \
+    --name {{ github_runner_container_prefix }}-%i \
+    --env-file {{ github_runner_env_file }} \
+    --cpus {{ github_runner_cpu_limit }} \
+    --memory {{ github_runner_memory_limit }} \
+    --group-add {{ github_runner_docker_gid }} \
+    --network {{ github_runner_network }} \
+    --volume /var/run/docker.sock:/var/run/docker.sock \
+    --env RUNNER_NAME={{ github_runner_name_prefix }}-%i \
+    {{ github_runner_image }}
+# `docker run` forwards the container's exit status. An ephemeral runner exits
+# 0 after its job, so `always` -- not `on-failure` -- is what starts the next
+# one. RestartSec keeps a crash-looping image from hammering the API.
+Restart=always
+RestartSec=10s
+# Stop means stop: without this, systemd's SIGTERM reaches `docker run` but the
+# container can outlive it and hold the runner registration.
+ExecStop=/usr/bin/docker stop --time {{ github_runner_stop_timeout }} {{ github_runner_container_prefix }}-%i
+TimeoutStopSec={{ github_runner_stop_timeout + 30 }}
+
+[Install]
+WantedBy=multi-user.target
