@@ -49,13 +49,13 @@ over:
 
 | Published value | Derived from |
 | --- | --- |
-| `hec_url` | `splunk.{{ tofu_data.domain }}` + `tofu_data.constants.service_ports.splunk_hec` |
+| `hec_url` | `splunk_hec_base_url` (group_vars/all.yml) + `/services/collector/event` |
 | `index` | `converge_telemetry_index` (default `ansible`) |
 | `verify_tls` | `converge_telemetry_verify_tls` (default `false`, self-signed lab cert) |
 | `timeout` | `converge_telemetry_timeout` (default `10`) |
 | `git_sha` | `git rev-parse HEAD` in the converging worktree |
 | `roster` | every inventory host except `localhost` |
-| `fqdns` | inventory hostname -> `hostname` fact + `tofu_data.domain` |
+| `fqdns` | inventory hostname -> `hostname` fact + `tofu_data.domain` (guest FQDNs, not a fronted URL) |
 | `check_mode` | `ansible_check_mode` — see below |
 
 No IP or port literal appears anywhere in the implementation
