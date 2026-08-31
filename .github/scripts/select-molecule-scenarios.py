@@ -14,7 +14,8 @@ Selection rules, in order:
     what makes narrowing safe everywhere else.
   * a shared input changed (inventory, playbooks, requirements, this script,
     the workflow) -> every scenario, because those genuinely affect all of them.
-  * otherwise -> every scenario that references a changed role, plus `default`.
+  * otherwise -> every scenario that references a changed role or whose
+    directory changed, plus `default`.
 
 A role with no scenario referencing it selects `default` alone. That is honest:
 no scenario exercises it, so running the rest would test nothing about it. The
@@ -29,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+from html import escape
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -41,6 +43,7 @@ SHARED = re.compile(
     r"|\.github/workflows/_molecule\.yml$|\.github/scripts/select-molecule-scenarios\.py$)"
 )
 ROLE_PATH = re.compile(r"^roles/([^/]+)/")
+SCENARIO_PATH = re.compile(r"^molecule/([^/]+)/")
 # `role: foo`, `- name: foo`, and the `name:` under include_role/import_role.
 #
 # Both guards are load-bearing and were added after this misparsed every
@@ -94,26 +97,76 @@ def scenario_roles(known: set[str]) -> dict[str, set[str]]:
 
 def changed_files(base_sha: str) -> list[str]:
     out = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_sha}...HEAD"],
+        ["git", "diff", "--name-only", "-z", f"{base_sha}...HEAD"],
         capture_output=True,
-        text=True,
         check=True,
     ).stdout
-    return [line for line in out.splitlines() if line]
+    return diff_paths(out)
+
+
+def diff_paths(output: bytes) -> list[str]:
+    return [os.fsdecode(path) for path in output.split(b"\0") if path]
+
+
+def changed_scenarios(paths: list[str], available: set[str]) -> tuple[set[str], list[str]]:
+    selected: set[str] = set()
+    unrecognised: list[str] = []
+    for path in paths:
+        if not path.startswith("molecule/"):
+            continue
+        match = SCENARIO_PATH.match(path)
+        if match and match.group(1) in available:
+            selected.add(match.group(1))
+        else:
+            unrecognised.append(path)
+    return selected, unrecognised
+
+
+def changed_roles(paths: list[str], available: set[str]) -> tuple[set[str], set[str]]:
+    selected: set[str] = set()
+    unrecognised: set[str] = set()
+    for path in paths:
+        match = ROLE_PATH.match(path)
+        if not match:
+            continue
+        if match.group(1) in available:
+            selected.add(match.group(1))
+        else:
+            unrecognised.add(match.group(1))
+    return selected, unrecognised
+
+
+def output_line(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)[1:-1]
+
+
+def summary_value(value: str) -> str:
+    return escape(output_line(value))
+
+
+def output_records(scenarios: list[str], reason: str) -> tuple[str, str, str]:
+    payload = json.dumps(sorted(set(scenarios)))
+    reason = output_line(reason)
+    return payload, reason, f"list={payload}\nreason={reason}\n"
+
+
+def summary_records(scenarios: list[str], reason: str) -> str:
+    return (
+        f"### Molecule selection\n\n<code>{summary_value(reason)}</code>\n\n"
+        f"Running {len(set(scenarios))} scenario(s): "
+        f"<code>{', '.join(summary_value(s) for s in sorted(set(scenarios)))}</code>\n"
+    )
 
 
 def emit(scenarios: list[str], reason: str) -> None:
-    payload = json.dumps(sorted(set(scenarios)))
+    payload, output_reason, records = output_records(scenarios, reason)
     if out := os.environ.get("GITHUB_OUTPUT"):
         with open(out, "a", encoding="utf-8") as fh:
-            fh.write(f"list={payload}\n")
-            fh.write(f"reason={reason}\n")
+            fh.write(records)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(f"### Molecule selection\n\n{reason}\n\n")
-            fh.write(f"Running {len(set(scenarios))} scenario(s): "
-                     f"`{'`, `'.join(sorted(set(scenarios)))}`\n")
-    print(f"{reason}: {payload}")
+            fh.write(summary_records(scenarios, reason))
+    print(f"{output_reason}: {payload}")
 
 
 def self_check() -> int:
@@ -139,6 +192,38 @@ def self_check() -> int:
         hit = {s for s, roles in mapping.items() if role in roles}
         if expected not in hit:
             failures.append(f"a change to '{role}' no longer selects '{expected}' (selects {sorted(hit)})")
+
+    selected, unrecognised = changed_scenarios(
+        ["molecule/immich/converge.yml"], set(mapping)
+    )
+    if selected != {"immich"} or unrecognised:
+        failures.append("a changed scenario directory no longer selects that scenario")
+
+    selected, unrecognised = changed_scenarios(["molecule/not-a-scenario/config.yml"], set(mapping))
+    if selected or unrecognised != ["molecule/not-a-scenario/config.yml"]:
+        failures.append("an unrecognised molecule path no longer widens the matrix")
+
+    selected, unrecognised = changed_roles(["roles/no-longer-present/tasks/main.yml"], known)
+    if selected or unrecognised != {"no-longer-present"}:
+        failures.append("an unrecognised role path no longer widens the matrix")
+
+    control_path = "molecule/evil\n\r\x1bscenario/converge.yml"
+    if diff_paths((control_path + "\0").encode()) != [control_path]:
+        failures.append("NUL-delimited changed paths no longer preserve control characters")
+    selected, unrecognised = changed_scenarios([control_path], set(mapping))
+    if selected or unrecognised != [control_path]:
+        failures.append("a control-character Molecule path no longer widens the matrix")
+    _, _, records = output_records(["default"], f"unrecognised path `{control_path}`")
+    if records.count("\n") != 2 or r"\n" not in records or r"\r" not in records or r"\u001b" not in records:
+        failures.append("control characters no longer stay on one output line")
+    malicious_summary = "evil\n### Injected <a href='https://example.invalid'>link</a>"
+    safe_summary = summary_value(malicious_summary)
+    if "\n" in safe_summary or "<a" in safe_summary or "&lt;a" not in safe_summary:
+        failures.append("scenario names no longer stay safe in the step summary")
+    malicious_reason = "molecule/x`) [attacker](https://example.invalid) (`/converge.yml </code> **bold**"
+    summary = summary_records([malicious_summary], malicious_reason)
+    if summary.count("\n") != 5 or "\n### Injected" in summary or "<a" in summary or summary.count("<code>") != 2 or summary.count("</code>") != 2:
+        failures.append("step summary records no longer stay structurally safe")
 
     for line in failures:
         print(f"FAIL: {line}", file=sys.stderr)
@@ -172,16 +257,31 @@ def main() -> int:
         emit(all_scenarios, f"full matrix: shared input changed (`{shared_hits[0]}`)")
         return 0
 
+    scenario_hits, unknown_scenario_hits = changed_scenarios(changed, set(all_scenarios))
+    if unknown_scenario_hits:
+        emit(all_scenarios, f"full matrix: unrecognised Molecule path changed (`{unknown_scenario_hits[0]}`)")
+        return 0
+
     known = roles_on_disk()
-    touched = {m.group(1) for f in changed if (m := ROLE_PATH.match(f))} & known
-    if not touched:
+    touched, unknown_roles = changed_roles(changed, known)
+    if unknown_roles:
+        emit(all_scenarios, f"full matrix: unrecognised role changed (`{sorted(unknown_roles)[0]}`)")
+        return 0
+    if not touched and not scenario_hits:
         emit(["default"], "no role changed; running `default` only")
         return 0
 
-    mapping = scenario_roles(known)
-    selected = {s for s, roles in mapping.items() if roles & touched}
+    selected = set(scenario_hits)
+    if touched:
+        mapping = scenario_roles(known)
+        selected |= {s for s, roles in mapping.items() if roles & touched}
     selected.add("default")
-    emit(sorted(selected), f"roles changed: `{'`, `'.join(sorted(touched))}`")
+    details = []
+    if touched:
+        details.append(f"roles changed: `{'`, `'.join(sorted(touched))}`")
+    if scenario_hits:
+        details.append(f"scenarios changed: `{'`, `'.join(sorted(scenario_hits))}`")
+    emit(sorted(selected), "; ".join(details))
     return 0
 
 
