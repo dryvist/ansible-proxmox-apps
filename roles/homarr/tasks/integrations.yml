@@ -5,13 +5,36 @@
 # parse as JSON. That is precisely how this instance ended up with zero
 # integrations despite the UI reporting nothing useful.
 
-- name: Deploy the Homarr API converger
-  ansible.builtin.copy:
-    src: homarr_api.py
-    dest: /usr/local/sbin/homarr-api
+# Two files, one directory: homarr_api.py imports homarr_trpc from beside
+# itself via Python's own sys.path[0]. That needs no packaging and no
+# PYTHONPATH, but it does mean they cannot be split across directories --
+# hence a dedicated libexec dir rather than /usr/local/sbin.
+- name: Ensure the Homarr converger directory exists
+  ansible.builtin.file:
+    path: /usr/local/libexec/homarr
+    state: directory
     owner: root
     group: root
     mode: '0750'
+
+- name: Deploy the Homarr API converger
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/libexec/homarr/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: homarr_api.py, dest: homarr-api, mode: '0750'}
+    - {src: homarr_trpc.py, dest: homarr_trpc.py, mode: '0640'}
+
+# The converger used to live here as a single file. Left behind it would be a
+# second, stale copy of a credential-handling script that still runs if anything
+# invokes it by the old path.
+- name: Remove the pre-split converger
+  ansible.builtin.file:
+    path: /usr/local/sbin/homarr-api
+    state: absent
 
 # Three sources, in order: OpenBao, a 0600 file on the guest, then generate.
 # The file is what makes this idempotent when OpenBao cannot be read — without
@@ -55,7 +78,7 @@
   # converger and named in its output — failing the whole play because one
   # unrelated app's key is missing would be worse than converging the rest.
   ansible.builtin.command:
-    cmd: /usr/local/sbin/homarr-api
+    cmd: /usr/local/libexec/homarr/homarr-api
     stdin: "{{ homarr_api_spec | to_json }}"
   vars:
     homarr_api_spec:

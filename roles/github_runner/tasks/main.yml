@@ -16,6 +16,11 @@
 - name: Place /var/lib/docker on the dedicated data disk
   ansible.builtin.include_tasks: data_disk.yml
 
+- name: Check for a legacy compose-managed fleet
+  ansible.builtin.stat:
+    path: "{{ github_runner_work_dir }}/docker-compose.yml"
+  register: github_runner_compose_stat
+
 - name: Create GitHub runner work directory
   ansible.builtin.file:
     path: "{{ github_runner_work_dir }}"
@@ -44,36 +49,118 @@
       - github_runner_docker_sock.stat.exists
       - github_runner_docker_sock.stat.gid | int == github_runner_docker_gid | int
 
-- name: Deploy native runner compose configuration
+# ---------------------------------------------------------------------------
+# The compose project this replaced. Left running it would be a second fleet
+# racing the systemd one for the same runner group, and its containers are
+# exactly the ones whose writable layers filled the boot disk.
+# ---------------------------------------------------------------------------
+- name: Retire the compose-managed runner fleet
+  community.docker.docker_compose_v2:
+    project_src: "{{ github_runner_work_dir }}"
+    project_name: github-runner
+    state: absent
+    remove_orphans: true
+  when: github_runner_legacy_compose.stat.exists
+  vars:
+    github_runner_legacy_compose: "{{ github_runner_compose_stat }}"
+
+- name: Remove the retired compose file
+  ansible.builtin.file:
+    path: "{{ github_runner_work_dir }}/docker-compose.yml"
+    state: absent
+
+# compose created this network as part of the project. Nothing does now.
+- name: Ensure the runner network exists
+  community.docker.docker_network:
+    name: "{{ github_runner_network }}"
+    driver: bridge
+    driver_options:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+- name: Create the runner environment directory
+  ansible.builtin.file:
+    path: "{{ github_runner_env_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy the runner environment file
   ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ github_runner_work_dir }}/docker-compose.yml"
+    src: runner.env.j2
+    dest: "{{ github_runner_env_file }}"
     owner: root
     group: root
     mode: "0600"
   no_log: true
+  notify: Restart github runners
 
-- name: Pull and converge native GitHub Actions runners
-  community.docker.docker_compose_v2:
-    project_src: "{{ github_runner_work_dir }}"
-    project_name: github-runner
-    state: present
-    pull: always
-    remove_orphans: true
+- name: Deploy the runner systemd unit
+  ansible.builtin.template:
+    src: github-runner@.service.j2
+    dest: /etc/systemd/system/github-runner@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart github runners
 
-- name: Verify exactly the pooled runner replicas are running
-  ansible.builtin.command:
-    # --all keeps the count stable across the ephemeral lifecycle: each
-    # replica briefly reports exited between finishing one job and its next
-    # registration, and the default listing would drop it mid-cycle.
-    cmd: docker compose -p github-runner ps --all --format json
-    chdir: "{{ github_runner_work_dir }}"
-  register: github_runner_ps
-  changed_when: false
+- name: Pull the runner image
+  community.docker.docker_image:
+    name: "{{ github_runner_image }}"
+    source: pull
+    force_source: true
 
-- name: Assert runner replica count
+- name: Name the units this replica count wants
+  ansible.builtin.set_fact:
+    github_runner_wanted_units: >-
+      {{ range(1, github_runner_replicas | int + 1)
+         | map('regex_replace', '^', 'github-runner@')
+         | map('regex_replace', '$', '.service') | list }}
+
+- name: Enable and start the pooled runners
+  ansible.builtin.systemd:
+    name: "github-runner@{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+
+# A replica removed from the pool must be stopped, not merely un-enabled: the
+# unit template still exists, so the container would keep serving jobs.
+- name: Read the installed services
+  ansible.builtin.service_facts:
+
+- name: Stop runners above the configured replica count
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: >-
+    {{ ansible_facts.services | select('match', '^github-runner@\\d+\\.service$')
+       | difference(github_runner_wanted_units) | list }}
+
+# Re-read after the changes above so the assertion sees current state rather
+# than the snapshot taken before the pool was started.
+- name: Re-read the installed services
+  ansible.builtin.service_facts:
+
+- name: Assert every pooled runner unit is running
   vars:
-    _runner_count: "{{ github_runner_ps.stdout_lines | map('from_json') | list | length }}"
+    # `activating` counts: systemd reports it while `docker run` is pulling the
+    # image or the runner is registering, which a converge passes through
+    # normally. Anything else -- failed, inactive, absent -- is a real fault.
+    _bad: >-
+      {{ github_runner_wanted_units
+         | reject('in', ansible_facts.services
+                        | dict2items
+                        | selectattr('value.state', 'in', ['running', 'activating'])
+                        | map(attribute='key') | list)
+         | list }}
   ansible.builtin.assert:
     that:
-      - _runner_count | int == github_runner_replicas | int
+      - _bad | length == 0
+    fail_msg: >-
+      Runner unit(s) not running: {{ _bad | join(', ') }}. Check
+      `journalctl -u github-runner@N` on the host; a failed `docker run` here
+      means the pool is smaller than {{ github_runner_replicas }} and jobs will
+      queue without any other symptom.
