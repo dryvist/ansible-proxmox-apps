@@ -251,6 +251,39 @@ class RunAnsibleGuardContract(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("this run did nothing", result.stderr)
 
+    def test_interrupted_run_is_not_reported_as_having_done_nothing(self):
+        # An ABSENT recap is a different fact from a recap listing no
+        # non-localhost host, and the guard used to conflate them: Ansible
+        # prints PLAY RECAP only on a NORMAL end of run, so a Ctrl-C or a
+        # timeout leaves none at all. That told an operator "this run did
+        # nothing" about a converge that had already written 60 policies to
+        # OpenBao before being interrupted 20 minutes later — the same
+        # denied-reads-as-absent shape this repo keeps hitting.
+        # No recap file is written at all here.
+        result = self._run("--limit", "openbao_group,localhost")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("interrupted or crashed", result.stderr)
+        self.assertNotIn(
+            "this run did nothing",
+            result.stderr,
+            "an interrupted run's completed work is unknown, not zero",
+        )
+
+    def test_recap_failure_overrides_a_zero_exit_code(self):
+        # site.yml isolates play failures in block/rescue, so ansible-playbook
+        # exits 0 while the recap still reports failed= on a host. The exit
+        # code alone is not a converge verdict.
+        self.recap_file.write_text(
+            "PLAY RECAP ****************************************************\n"
+            "localhost : ok=1 changed=0 unreachable=0 failed=0\n"
+            "splunk : ok=5 changed=1 unreachable=0 failed=1\n",
+            encoding="utf-8",
+        )
+        result = self._run("--limit", "localhost,splunk")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("failed/unreachable", result.stderr)
+        self.assertIn("splunk", result.stderr)
+
     def test_limit_beyond_localhost_with_matching_host_converges(self):
         self._write_recap("localhost", "splunk")
         result = self._run("--limit", "localhost,splunk")
