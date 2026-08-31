@@ -15,12 +15,17 @@ The fake below enforces the real schema in both directions.
 """
 
 import importlib.util
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location(
-    "homarr_api", ROOT / "roles/homarr/files/homarr_api.py"
-)
+# homarr_api imports its sibling homarr_trpc the same way it does on the guest:
+# from its own directory, via sys.path[0]. Loading it by file path bypasses that,
+# so put the directory on sys.path explicitly.
+FILES = ROOT / "roles/homarr/files"
+if str(FILES) not in sys.path:
+    sys.path.insert(0, str(FILES))
+SPEC = importlib.util.spec_from_file_location("homarr_api", FILES / "homarr_api.py")
 homarr_api = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(homarr_api)
 
