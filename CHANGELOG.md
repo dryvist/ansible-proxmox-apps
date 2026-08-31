@@ -1,5 +1,31 @@
 # Changelog
 
+## [4.26.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.25.2...v4.26.0) (2026-08-31)
+
+
+### Features
+
+* **authelia:** add run-UI and federated OIDC clients, reconcile operator groups ([#1651](https://github.com/dryvist/ansible-proxmox-apps/issues/1651)) ([16f50cb](https://github.com/dryvist/ansible-proxmox-apps/commit/16f50cbf263fd3cebdcd16ca2225282053b5fe17))
+* **grafana:** sign in through Authelia SSO ([#1655](https://github.com/dryvist/ansible-proxmox-apps/issues/1655)) ([9cf9e60](https://github.com/dryvist/ansible-proxmox-apps/commit/9cf9e60081821a283fa22c205ab11b6a502a057b))
+* **openbao:** declare a read-only AppRole for the IaC platform deploy ([9fae29b](https://github.com/dryvist/ansible-proxmox-apps/commit/9fae29b88b8b343f09c236e40ad2fe7b30b9973c))
+* **openbao:** declare a read-only AppRole for the IaC platform deploy ([#1657](https://github.com/dryvist/ansible-proxmox-apps/issues/1657)) ([993972c](https://github.com/dryvist/ansible-proxmox-apps/commit/993972cc7f6a9c4a55b6d59c9ffe170901f5216a))
+* **telemetry:** ship per-task converge timing to the observability platform ([#1650](https://github.com/dryvist/ansible-proxmox-apps/issues/1650)) ([5ba5e5e](https://github.com/dryvist/ansible-proxmox-apps/commit/5ba5e5eb9d9755a89acb1a935327ade4c222a959))
+
+
+### Bug Fixes
+
+* **authelia:** strip the Digest prefix so OIDC client secrets are hashes, not plaintext ([#1660](https://github.com/dryvist/ansible-proxmox-apps/issues/1660)) ([dc363fe](https://github.com/dryvist/ansible-proxmox-apps/commit/dc363fe09009b87b7da851d1654f93dfd36891b6))
+* **openbao:** a denied AppRole existence check is not an absent AppRole ([dc5e24d](https://github.com/dryvist/ansible-proxmox-apps/commit/dc5e24d04a0e85ddc304e62fbbb9e44d9561fb0d))
+* **openbao:** build the capability probe's paths without a regex backreference ([ab59134](https://github.com/dryvist/ansible-proxmox-apps/commit/ab59134eef0c578e4093cd652e2be1478c4ea0b0))
+* **openbao:** fail the capability gate on a short probe answer, not only an empty one ([5caec43](https://github.com/dryvist/ansible-proxmox-apps/commit/5caec43168642fc4f35875d49b730ecb326b3fe4))
+* **openbao:** read capabilities from both response locations, and separate an empty probe from a denial ([#1653](https://github.com/dryvist/ansible-proxmox-apps/issues/1653)) ([ad88199](https://github.com/dryvist/ansible-proxmox-apps/commit/ad88199b790f8a17c57bf88bb8810802ebed35ca))
+* **telemetry:** report an interrupted converge instead of nothing ([#1652](https://github.com/dryvist/ansible-proxmox-apps/issues/1652)) ([784405d](https://github.com/dryvist/ansible-proxmox-apps/commit/784405dd6ad86f963cff3a2835fbd933fd806a23))
+
+
+### Performance
+
+* **openbao:** render RBAC policies on the controller, not the target ([#1649](https://github.com/dryvist/ansible-proxmox-apps/issues/1649)) ([638c5ab](https://github.com/dryvist/ansible-proxmox-apps/commit/638c5abc75b05037e81b1ee2a561aed4792e7caa))
+
 ## [4.25.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.25.1...v4.25.2) (2026-08-31)
 
 
