@@ -222,5 +222,17 @@ if [[ -n $NON_LOCALHOST_LIMIT ]]; then
   fi
 fi
 
+# site.yml isolates play failures in block/rescue, so ansible-playbook exits 0
+# while the recap still reports failed= on a host. The exit code alone is not a
+# converge verdict; the recap is. Applies to every run, not only a --limit one.
+if grep -q '^PLAY RECAP' "$LOG_FILE"; then
+  FAILED_HOSTS=$(awk '/^PLAY RECAP/{f=1;next} f && NF && (/failed=[1-9]/ || /unreachable=[1-9]/){print $1}' "$LOG_FILE")
+  if [[ -n $FAILED_HOSTS ]]; then
+    echo "ERROR: the play recap reports failed/unreachable hosts (ansible exited $STATUS):" >&2
+    sed 's/^/  /' <<<"$FAILED_HOSTS" >&2
+    STATUS=1
+  fi
+fi
+
 echo "Run log: $LOG_FILE"
 exit "$STATUS"

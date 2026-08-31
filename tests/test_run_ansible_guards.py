@@ -269,6 +269,21 @@ class RunAnsibleGuardContract(unittest.TestCase):
             "an interrupted run's completed work is unknown, not zero",
         )
 
+    def test_recap_failure_overrides_a_zero_exit_code(self):
+        # site.yml isolates play failures in block/rescue, so ansible-playbook
+        # exits 0 while the recap still reports failed= on a host. The exit
+        # code alone is not a converge verdict.
+        self.recap_file.write_text(
+            "PLAY RECAP ****************************************************\n"
+            "localhost : ok=1 changed=0 unreachable=0 failed=0\n"
+            "splunk : ok=5 changed=1 unreachable=0 failed=1\n",
+            encoding="utf-8",
+        )
+        result = self._run("--limit", "localhost,splunk")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("failed/unreachable", result.stderr)
+        self.assertIn("splunk", result.stderr)
+
     def test_limit_beyond_localhost_with_matching_host_converges(self):
         self._write_recap("localhost", "splunk")
         result = self._run("--limit", "localhost,splunk")
