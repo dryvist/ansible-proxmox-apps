@@ -1,0 +1,76 @@
+---
+# The PVE host-metrics scrape targets are built in
+# inventory/group_vars/prometheus_group.yml, not in a role template, so this
+# play loads that REAL file with vars_files and renders it against a fixture
+# nodes map. Restating the expression here instead would produce a test that
+# cannot fail the way the file fails — the expression under test has to be the
+# one that ships.
+#
+# Two regressions are pinned:
+#   1. The target host is the nodes-map KEY (the Proxmox node_name, which DNS
+#      publishes), never `role` — `role` is a label with no DNS record, so a
+#      target built from it never resolves and the job sits permanently down.
+#   2. A node that omits `commissioned` is INCLUDED. The tofu schema declares
+#      `commissioned = optional(bool, true)`, so defaulting it to false here
+#      silently drops nodes.
+- name: Verify the PVE node_exporter scrape targets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    # The group_vars expression reads hostvars['localhost']['tofu_data'], and
+    # play vars do NOT appear in hostvars — only facts do — so the fixture has
+    # to be a set_fact (below). That fact then persists for the rest of the
+    # run and outranks the play vars later plays declare, and `meta:
+    # clear_facts` does not clear it for the implicit localhost. Hence this
+    # play is imported LAST in verify_templates.yml; see the note there.
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          node_exporter: 9100
+      nodes:
+        node-beta:
+          role: node-2
+        node-alpha:
+          role: node-1
+          commissioned: true
+        node-gamma:
+          role: node-3
+          commissioned: false
+
+  vars_files:
+    # Relative to THIS file, not playbook_dir: vars_files is resolved at
+    # play-parse time, before playbook_dir points at the entrypoint, so the
+    # "{{ playbook_dir }}/../.." convention used for task-time template
+    # lookups elsewhere in this suite silently yields no vars here.
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+
+    - name: Resolve the rendered targets
+      ansible.builtin.set_fact:
+        _targets: "{{ pve_node_exporter_scrape_targets }}"
+
+    - name: Assert targets use the node_name key, honour commissioned, and sort
+      ansible.builtin.assert:
+        that:
+          - _targets | length == 2
+          - "'node-alpha.test.example:9100' in _targets"
+          - "'node-beta.test.example:9100' in _targets"
+          - "_targets | select('search', '^node-[123]\\.') | list | length == 0"
+          - "'node-gamma.test.example:9100' not in _targets"
+        fail_msg: >-
+          pve_node_exporter_scrape_targets must build each target from the
+          nodes-map key (the Proxmox node_name that DNS publishes), include a
+          node that omits `commissioned`, and exclude commissioned=false.
+          Rendered instead: {{ _targets }}
+
+    - name: PVE node_exporter scrape targets PASSED
+      ansible.builtin.debug:
+        msg: "pve_node_exporter targets render from node_name and honour commissioned: {{ _targets }}"

@@ -55,3 +55,58 @@ grafana_stack_grafana_uid: "472"
 # for the bao-first/env-fallback read, same shape as homarr_group.yml.
 grafana_stack_oidc_client_id: "{{ grafana_hostname }}"
 grafana_stack_oidc_issuer: "https://{{ authelia_hostname }}.{{ ingress_domain }}"
+
+# --- Infrastructure metrics datasource --------------------------------------
+# This stack's VictoriaMetrics is the AI-agent observability backend, fed by
+# OTLP and a remote_write. Infrastructure metrics — node_exporter on every PVE
+# node, the blackbox probes, Traefik RED — live in the SEPARATE prometheus_stack
+# guest, which retains them locally. With no datasource pointed there, an
+# imported community dashboard reports a successful import and renders empty
+# panels: the failure is invisible at the point you would look for it.
+#
+# The address is derived from the tofu inventory exactly as prometheus_stack
+# derives its own Traefik targets — a container carrying the `prometheus` tag,
+# never a literal. Empty when no such container exists, which omits the
+# datasource rather than provisioning one that cannot resolve.
+grafana_stack_prometheus_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['prometheus_web']
+     | default(9090) }}
+grafana_stack_prometheus_host: >-
+  {{ (tofu_data['containers'] | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'prometheus')
+      | map(attribute='value.ip', default='') | reject('equalto', '')
+      | list | first) | default('', true) }}
+grafana_stack_prometheus_url: >-
+  {{ ('http://' ~ (grafana_stack_prometheus_host | trim) ~ ':'
+      ~ (grafana_stack_prometheus_port | trim))
+     if (grafana_stack_prometheus_host | trim | length > 0) else '' }}
+
+# Community dashboards fetched from grafana.com by ID at a PINNED revision.
+# Only dashboards whose metrics are already scraped are listed — importing one
+# with no matching exporter yields a dashboard of empty panels that reports a
+# successful import, which is worse than not having it.
+#
+# `revision` is pinned deliberately: "latest" would let an upstream edit change
+# what is deployed with no diff and no review. Bump it consciously; renovate can
+# track these the same way it tracks image pins.
+#
+# Popularity is the selection criterion the operator asked for, measured by
+# grafana.com download count rather than impression (checked 2026-08-31):
+#   1860  143.3M  Node Exporter Full        <- the de facto standard
+#   13659  51.4M  Blackbox Exporter (HTTP prober)
+#    7587  18.3M  Prometheus Blackbox Exporter
+#   17346   2.1M  Traefik Official Standalone
+# Note 14523 "Blackbox Exporter Node" is frequently suggested but has only ~3k
+# downloads; 13659 and 7587 are the ones the community actually uses.
+grafana_stack_community_dashboards:
+  - {id: 1860, revision: 45, file: node-exporter-full.json}
+  - {id: 13659, revision: 1, file: blackbox-http-prober.json}
+  - {id: 7587, revision: 3, file: blackbox-exporter.json}
+  - {id: 17346, revision: 9, file: traefik-official.json}
+
+# Community dashboards ship a `${DS_PROMETHEUS}` input placeholder for the UI
+# import wizard. File provisioning has no wizard, so the placeholder is replaced
+# with the datasource uid provisioned above or every panel queries a datasource
+# that does not exist.
+grafana_stack_community_datasource_uid: prometheus
