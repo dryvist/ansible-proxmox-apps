@@ -57,6 +57,7 @@ DOCUMENTATION = """
 """
 
 import json
+import atexit
 import time
 
 from ansible import context
@@ -74,6 +75,7 @@ CHECK_MODE_KEY = "check_mode"
 SOURCETYPE_CONVERGE = "ansible:converge"
 SOURCETYPE_ROSTER = "ansible:converge:roster"
 SOURCETYPE_TASK = "ansible:converge:task"
+SOURCETYPE_INTERRUPTED = "ansible:converge:interrupted"
 SOURCE = "ansible-proxmox-apps"
 
 
@@ -256,6 +258,42 @@ def build_task_events(tasks, config, playbook, now):
     return events
 
 
+def build_interrupted_event(config, playbook, tasks, now):
+    """One marker event for a run that ended without Ansible's stats callback.
+
+    ``v2_playbook_on_stats`` fires only on a NORMAL end of run. A converge
+    killed by Ctrl-C, a timeout, or a wrapper that gives up therefore published
+    NOTHING AT ALL -- and those are precisely the runs worth seeing. Three
+    converges were killed mid-flight before this existed and left no trace in
+    the observability platform; the only record was a local log file.
+
+    Deliberately NOT a per-host freshness event. An interrupted run did not
+    converge its hosts, so emitting the usual ``ansible:converge`` events would
+    refresh the >7-day staleness clock for hosts that were never touched -- the
+    same silent-green failure the roster events exist to catch. This carries
+    only run-level facts plus where the run got to, and the task events
+    published alongside it carry the timing.
+    """
+    return {
+        "time": now,
+        "host": config.get("controller") or "controller",
+        "source": SOURCE,
+        "sourcetype": SOURCETYPE_INTERRUPTED,
+        "index": config.get("index") or "ansible",
+        "event": {
+            "playbook": playbook,
+            "repo": SOURCE,
+            "git_sha": config.get("git_sha"),
+            "status": "interrupted",
+            "tasks_completed": len(tasks),
+            "last_task": tasks[-1]["name"] if tasks else None,
+            "duration_seconds": (
+                round(now - tasks[0]["started"], 3) if tasks else 0.0
+            ),
+        },
+    }
+
+
 def encode_batch(events):
     """Encode events as the concatenated-JSON body Splunk HEC expects."""
     return "".join(json.dumps(event, sort_keys=True) for event in events)
@@ -274,6 +312,13 @@ class CallbackModule(CallbackBase):
         # starts (or at stats), which is how profile_tasks measures too.
         self._tasks = []
         self._open = None
+        # Captured from the set_stats task as it runs, NOT at stats time --
+        # see _capture_config. None until the converging playbook publishes it.
+        self._config = None
+        # Set the moment the normal stats path is entered, so the exit hook can
+        # never double-publish a run that ended cleanly.
+        self._emitted = False
+        atexit.register(self._on_interpreter_exit)
 
     def _close_open_task(self):
         if self._open is None:
@@ -309,7 +354,23 @@ class CallbackModule(CallbackBase):
         if key:
             self._open[key] += 1
 
+    def _capture_config(self, result):
+        """Take the configuration off the ``set_stats`` task's own result.
+
+        The converging playbook publishes it in the FIRST play of site.yml, but
+        it only reaches the ``stats`` object at end of run -- so reading it
+        there (the original design) meant an interrupted run had no endpoint to
+        publish to and stayed silent. ``set_stats`` returns its payload in the
+        task result, so the same configuration is available the instant that
+        task succeeds, roughly 40 minutes earlier on a full converge.
+        """
+        stats = (result._result or {}).get("ansible_stats") or {}
+        config = (stats.get("data") or {}).get(STATS_KEY)
+        if config:
+            self._config = config
+
     def v2_runner_on_ok(self, result):
+        self._capture_config(result)
         self._count(result, "changed" if result._result.get("changed") else None)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
@@ -325,6 +386,10 @@ class CallbackModule(CallbackBase):
         self._playbook_name = playbook._file_name.rsplit("/", 1)[-1]
 
     def v2_playbook_on_stats(self, stats):
+        # Claimed BEFORE emitting, not after: if _emit raises, the run still
+        # ended normally and the exit hook must not publish an "interrupted"
+        # marker on top of a real end-of-run.
+        self._emitted = True
         try:
             self._emit(stats)
         except Exception as exc:  # noqa: BLE001 - telemetry must never fail a run
@@ -336,7 +401,9 @@ class CallbackModule(CallbackBase):
         if not self.get_option("enabled"):
             return
 
-        config = (getattr(stats, "custom", None) or {}).get("_run", {}).get(STATS_KEY)
+        config = self._config or (
+            (getattr(stats, "custom", None) or {}).get("_run", {}).get(STATS_KEY)
+        )
         if not config:
             # Not a converge run (no playbook published the configuration).
             return
@@ -370,6 +437,13 @@ class CallbackModule(CallbackBase):
         if not events:
             return
 
+        self._post(url, token, events, config)
+        self._display.display(
+            "converge_telemetry: published %d event(s) (%d task timing(s))"
+            % (len(events), len(self._tasks))
+        )
+
+    def _post(self, url, token, events, config):
         self._display.vvv("converge_telemetry: posting %d event(s) to %s" % (len(events), url))
         open_url(
             url,
@@ -382,7 +456,41 @@ class CallbackModule(CallbackBase):
             validate_certs=bool(config.get("verify_tls", False)),
             timeout=int(config.get("timeout", 10)),
         )
-        self._display.display(
-            "converge_telemetry: published %d event(s) (%d task timing(s))"
-            % (len(events), len(self._tasks))
-        )
+
+    def _on_interpreter_exit(self):
+        """Publish what we know when the run never reached ``on_stats``.
+
+        Ctrl-C, a wrapper timeout, or any non-zero bail leaves Ansible's stats
+        callback unfired. Everything here is best-effort and must never raise:
+        the process is already on its way out, and a traceback from an atexit
+        hook would be the last thing printed, burying the real cause.
+
+        SIGKILL cannot be caught, so a hard kill still publishes nothing. That
+        is a genuine limit, not a case this handles.
+        """
+        try:
+            if self._emitted:
+                return
+            if not self.get_option("enabled"):
+                return
+            config = self._config
+            if not config:
+                # Not a converge run, or it died before the first play's
+                # set_stats -- there is no endpoint to publish to.
+                return
+            if is_check_mode(config):
+                return
+            url = config.get("hec_url")
+            token = self.get_option("hec_token")
+            if not url or not token:
+                return
+
+            self._close_open_task()
+            now = time.time()
+            events = build_task_events(self._tasks, config, self._playbook_name, now)
+            events.append(
+                build_interrupted_event(config, self._playbook_name, self._tasks, now)
+            )
+            self._post(url, token, events, config)
+        except Exception:  # noqa: BLE001 - never raise from an exit hook
+            pass
