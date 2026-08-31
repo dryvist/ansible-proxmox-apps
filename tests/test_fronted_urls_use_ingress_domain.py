@@ -24,11 +24,13 @@ That is not hypothetical. Both endpoints checked here shipped broken:
     path that fails silently removes the signal that would have reported it.
 
 The check is deliberately a fixed list of names rather than "no URL anywhere may
-use the apex". The apex is *correct* for a direct-to-guest consumer on a
-non-HTTP port -- Postgres on 5432, Mailpit on SMTP -- because the ingress VIP
-listens on 443 and serves nothing on those ports. A blanket rule would flag
-those, and a check that fails for reasons outside its own subject is a check
-someone switches off.
+use the apex". Some apex uses are correct: email addresses, the PVE nodes
+themselves, and a consumer reaching a service the ingress cannot carry at all --
+Mailpit over SMTP, since there is no TCP entrypoint for it. (A non-fronted guest
+is NOT such a case: it resolves to the same address under either zone, so it
+should use the ingress form like everything else.) A blanket rule would flag the
+legitimate ones, and a check that fails for reasons outside its own subject is a
+check someone switches off.
 
 To extend: add the variable to FRONTED_VARS, or the role default file to
 FRONTED_ROLE_DEFAULTS. Anything whose URL has no port suffix and is served by
@@ -53,6 +55,11 @@ FRONTED_VARS = (
 FRONTED_ROLE_DEFAULTS = (
     ("roles/openbao/defaults/main/09-snapshots-and-rotation.yml", "https://ntfy."),
     ("roles/service_deadman/defaults/main.yml", "https://ntfy."),
+    # Homarr's integration URLs. Only the https:// ones are checked -- Jellyseerr
+    # deliberately still uses an http:// guest address (it cannot take an API
+    # bypass; see roles/authelia/defaults/main.yml), and the marker below does
+    # not match it, so this stays an assertion about the fronted URLs only.
+    ("roles/homarr/defaults/main.yml", "https://"),
 )
 
 APEX = "tofu_data.domain"
