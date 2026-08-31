@@ -73,6 +73,7 @@ CHECK_MODE_KEY = "check_mode"
 
 SOURCETYPE_CONVERGE = "ansible:converge"
 SOURCETYPE_ROSTER = "ansible:converge:roster"
+SOURCETYPE_TASK = "ansible:converge:task"
 SOURCE = "ansible-proxmox-apps"
 
 
@@ -210,6 +211,51 @@ def build_events(summaries, config, playbook, now):
     return events
 
 
+def build_task_events(tasks, config, playbook, now):
+    """Build one event per executed task, carrying its wall-clock duration.
+
+    Per-task timing was previously visible ONLY in `profile_tasks` stdout, which
+    is written to a local run log and shipped nowhere. So "which task is slow"
+    could not be answered from the observability platform at all -- it required
+    reading a log file off the machine that happened to run the converge. That
+    is how a single task burning 776 seconds (12.9 min of a 40-min converge)
+    stayed unnoticed: nothing was measuring it where anyone would look.
+
+    One event per task rather than per task-and-host: this mirrors what
+    `profile_tasks` reports (wall clock for the whole task across every host it
+    fanned out to), which is the number that actually explains converge
+    duration. Per-host granularity would multiply event volume by the roster
+    size to answer a question nobody was asking.
+    """
+    index = config.get("index") or "ansible"
+    git_sha = config.get("git_sha")
+
+    events = []
+    for task in tasks:
+        events.append(
+            {
+                "time": task["ended"],
+                "host": config.get("controller") or "controller",
+                "source": SOURCE,
+                "sourcetype": SOURCETYPE_TASK,
+                "index": index,
+                "event": {
+                    "playbook": playbook,
+                    "repo": SOURCE,
+                    "git_sha": git_sha,
+                    "task": task["name"],
+                    "role": task["role"],
+                    "action": task["action"],
+                    "duration_seconds": round(task["duration"], 3),
+                    "hosts": task["hosts"],
+                    "changed": task["changed"],
+                    "failed": task["failed"],
+                },
+            }
+        )
+    return events
+
+
 def encode_batch(events):
     """Encode events as the concatenated-JSON body Splunk HEC expects."""
     return "".join(json.dumps(event, sort_keys=True) for event in events)
@@ -224,6 +270,56 @@ class CallbackModule(CallbackBase):
     def __init__(self, *args, **kwargs):
         super(CallbackModule, self).__init__(*args, **kwargs)
         self._playbook_name = "unknown"
+        # Closed-out tasks, oldest first. A task is closed when the NEXT one
+        # starts (or at stats), which is how profile_tasks measures too.
+        self._tasks = []
+        self._open = None
+
+    def _close_open_task(self):
+        if self._open is None:
+            return
+        self._open["ended"] = time.time()
+        self._open["duration"] = self._open["ended"] - self._open["started"]
+        self._tasks.append(self._open)
+        self._open = None
+
+    def v2_playbook_on_task_start(self, task, is_conditional=False):
+        self._close_open_task()
+        self._open = {
+            "name": task.get_name(),
+            "role": str(task._role) if task._role else None,
+            "action": task.action,
+            "started": time.time(),
+            "ended": None,
+            "duration": 0.0,
+            "hosts": 0,
+            "changed": 0,
+            "failed": 0,
+        }
+
+    # Ansible routes handler tasks through their own callback; without this a
+    # handler's runtime is silently attributed to whatever task preceded it.
+    def v2_playbook_on_handler_task_start(self, task):
+        self.v2_playbook_on_task_start(task)
+
+    def _count(self, result, key=None):
+        if self._open is None:
+            return
+        self._open["hosts"] += 1
+        if key:
+            self._open[key] += 1
+
+    def v2_runner_on_ok(self, result):
+        self._count(result, "changed" if result._result.get("changed") else None)
+
+    def v2_runner_on_failed(self, result, ignore_errors=False):
+        self._count(result, None if ignore_errors else "failed")
+
+    def v2_runner_on_unreachable(self, result):
+        self._count(result, "failed")
+
+    def v2_runner_on_skipped(self, result):
+        self._count(result)
 
     def v2_playbook_on_start(self, playbook):
         self._playbook_name = playbook._file_name.rsplit("/", 1)[-1]
@@ -263,8 +359,14 @@ class CallbackModule(CallbackBase):
             )
             return
 
+        self._close_open_task()
+
         summaries = {host: stats.summarize(host) for host in stats.processed}
-        events = build_events(summaries, config, self._playbook_name, time.time())
+        now = time.time()
+        events = build_events(summaries, config, self._playbook_name, now)
+        events.extend(
+            build_task_events(self._tasks, config, self._playbook_name, now)
+        )
         if not events:
             return
 
@@ -281,5 +383,6 @@ class CallbackModule(CallbackBase):
             timeout=int(config.get("timeout", 10)),
         )
         self._display.display(
-            "converge_telemetry: published %d converge-freshness event(s)" % len(events)
+            "converge_telemetry: published %d event(s) (%d task timing(s))"
+            % (len(events), len(self._tasks))
         )
