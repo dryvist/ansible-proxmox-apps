@@ -57,6 +57,9 @@ DOCUMENTATION = """
 """
 
 import json
+import atexit
+import importlib.util
+import os
 import time
 
 from ansible import context
@@ -66,199 +69,27 @@ from ansible.plugins.callback import CallbackBase
 
 #: Key the converging playbook uses with ``set_stats`` to hand this plugin its
 #: tofu-derived configuration (endpoint, index, host FQDN map, git SHA).
-STATS_KEY = "converge_telemetry"
+#: The event builders live next door so each file stays inside the per-file
+#: token budget. callback_plugins is not on sys.path, so load by path.
+_EVENTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "converge_telemetry_events.py")
+_spec = importlib.util.spec_from_file_location("converge_telemetry_events", _EVENTS_PATH)
+_events = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_events)
 
-#: Key inside that configuration carrying the playbook's own view of check mode.
-CHECK_MODE_KEY = "check_mode"
-
-SOURCETYPE_CONVERGE = "ansible:converge"
-SOURCETYPE_ROSTER = "ansible:converge:roster"
-SOURCETYPE_TASK = "ansible:converge:task"
-SOURCE = "ansible-proxmox-apps"
-
-
-def host_status(summary):
-    """Return ``success`` only when Ansible itself recorded a clean host run.
-
-    ``rescued`` counts as a failure on purpose: every ``rescue`` block in this
-    repository exists solely to record an isolated play failure
-    (playbooks/tasks/record_isolated_failure.yml), so a rescued host did not
-    converge cleanly even though its ``failures`` counter is zero.
-    """
-    for counter in ("failures", "unreachable", "rescued"):
-        if summary.get(counter, 0):
-            return "failed"
-    return "success"
-
-
-def is_check_mode(config):
-    """Return True when this run must not publish converge freshness.
-
-    A check run touches nothing on the targets, so an event from one would
-    refresh the freshness clock for a host that never converged — silently
-    defeating the >7-day staleness alert this telemetry feeds.
-
-    Two independent signals, either of which is sufficient:
-
-    * ``config[CHECK_MODE_KEY]`` — the converging playbook's own
-      ``ansible_check_mode``, handed over with the rest of the configuration
-      via ``set_stats``. Authoritative and available however the run was
-      launched.
-    * ``context.CLIARGS['check']`` — the ``--check`` flag as parsed by the CLI.
-      This is how ansible-core's own ``default`` callback reads check mode.
-      Empty for API-driven runs (``ansible-runner`` and friends), which is why
-      the ``set_stats`` signal above exists as well.
-    """
-    if (config or {}).get(CHECK_MODE_KEY):
-        return True
-    return bool((context.CLIARGS or {}).get("check"))
-
-
-def _desired_state_fields(config):
-    """Fields describing whether the converged-against inventory was current.
-
-    Returns an empty dict when the verdict is absent, so a run that could not
-    check publishes no claim at all. A default of ``True`` here would make the
-    downstream alert silently green for every converge that never ran the check
-    — the same class of silent hold the alert exists to catch.
-    """
-    verdict = (config or {}).get("desired_state_current")
-    if verdict is None:
-        return {}
-    return {
-        "desired_state_current": bool(verdict),
-        "desired_state_published": (config or {}).get("desired_state_published") or "",
-        "desired_state_live": (config or {}).get("desired_state_live") or "",
-    }
-
-
-def build_events(summaries, config, playbook, now):
-    """Build the HEC event list for a finished run.
-
-    :param summaries: mapping of inventory hostname -> Ansible stats summary
-    :param config: the ``converge_telemetry`` dict published via ``set_stats``
-    :param playbook: basename of the playbook that ran
-    :param now: event timestamp (epoch seconds)
-    """
-    fqdns = config.get("fqdns") or {}
-    index = config.get("index") or "ansible"
-    git_sha = config.get("git_sha")
-    roster = config.get("roster") or []
-
-    # Whether the inventory this run converged against was itself current with
-    # desired state, as reported by the inventory_resolve role. It rides the
-    # per-host event rather than a separate sourcetype because the question it
-    # answers is per-converge: "what this host was converged against was already
-    # out of date". Absent when the role could not check (no store credentials,
-    # or an artifact older than the fingerprint contract) — and absent must stay
-    # absent rather than defaulting to True, or a converge that never checked
-    # would report the artifact current.
-    desired_state = _desired_state_fields(config)
-
-    def envelope(host, sourcetype, event):
-        return {
-            "time": now,
-            "host": host,
-            "source": SOURCE,
-            "sourcetype": sourcetype,
-            "index": index,
-            "event": event,
-        }
-
-    events = []
-    for hostname in sorted(summaries):
-        summary = summaries[hostname]
-        fqdn = fqdns.get(hostname, hostname)
-        events.append(
-            envelope(
-                fqdn,
-                SOURCETYPE_CONVERGE,
-                {
-                    "status": host_status(summary),
-                    "host": fqdn,
-                    "inventory_hostname": hostname,
-                    "playbook": playbook,
-                    "repo": SOURCE,
-                    "git_sha": git_sha,
-                    "ok": summary.get("ok", 0),
-                    "changed": summary.get("changed", 0),
-                    "skipped": summary.get("skipped", 0),
-                    "failures": summary.get("failures", 0),
-                    "unreachable": summary.get("unreachable", 0),
-                    "rescued": summary.get("rescued", 0),
-                    "ignored": summary.get("ignored", 0),
-                    **desired_state,
-                },
-            )
-        )
-
-    for hostname in sorted(roster):
-        fqdn = fqdns.get(hostname, hostname)
-        events.append(
-            envelope(
-                fqdn,
-                SOURCETYPE_ROSTER,
-                {
-                    "host": fqdn,
-                    "inventory_hostname": hostname,
-                    "playbook": playbook,
-                    "repo": SOURCE,
-                    "git_sha": git_sha,
-                },
-            )
-        )
-
-    return events
-
-
-def build_task_events(tasks, config, playbook, now):
-    """Build one event per executed task, carrying its wall-clock duration.
-
-    Per-task timing was previously visible ONLY in `profile_tasks` stdout, which
-    is written to a local run log and shipped nowhere. So "which task is slow"
-    could not be answered from the observability platform at all -- it required
-    reading a log file off the machine that happened to run the converge. That
-    is how a single task burning 776 seconds (12.9 min of a 40-min converge)
-    stayed unnoticed: nothing was measuring it where anyone would look.
-
-    One event per task rather than per task-and-host: this mirrors what
-    `profile_tasks` reports (wall clock for the whole task across every host it
-    fanned out to), which is the number that actually explains converge
-    duration. Per-host granularity would multiply event volume by the roster
-    size to answer a question nobody was asking.
-    """
-    index = config.get("index") or "ansible"
-    git_sha = config.get("git_sha")
-
-    events = []
-    for task in tasks:
-        events.append(
-            {
-                "time": task["ended"],
-                "host": config.get("controller") or "controller",
-                "source": SOURCE,
-                "sourcetype": SOURCETYPE_TASK,
-                "index": index,
-                "event": {
-                    "playbook": playbook,
-                    "repo": SOURCE,
-                    "git_sha": git_sha,
-                    "task": task["name"],
-                    "role": task["role"],
-                    "action": task["action"],
-                    "duration_seconds": round(task["duration"], 3),
-                    "hosts": task["hosts"],
-                    "changed": task["changed"],
-                    "failed": task["failed"],
-                },
-            }
-        )
-    return events
-
-
-def encode_batch(events):
-    """Encode events as the concatenated-JSON body Splunk HEC expects."""
-    return "".join(json.dumps(event, sort_keys=True) for event in events)
+STATS_KEY = _events.STATS_KEY
+CHECK_MODE_KEY = _events.CHECK_MODE_KEY
+SOURCETYPE_CONVERGE = _events.SOURCETYPE_CONVERGE
+SOURCETYPE_ROSTER = _events.SOURCETYPE_ROSTER
+SOURCETYPE_TASK = _events.SOURCETYPE_TASK
+SOURCETYPE_INTERRUPTED = _events.SOURCETYPE_INTERRUPTED
+SOURCE = _events.SOURCE
+host_status = _events.host_status
+is_check_mode = _events.is_check_mode
+build_events = _events.build_events
+build_task_events = _events.build_task_events
+build_interrupted_event = _events.build_interrupted_event
+encode_batch = _events.encode_batch
 
 
 class CallbackModule(CallbackBase):
@@ -274,6 +105,13 @@ class CallbackModule(CallbackBase):
         # starts (or at stats), which is how profile_tasks measures too.
         self._tasks = []
         self._open = None
+        # Captured from the set_stats task as it runs, NOT at stats time --
+        # see _capture_config. None until the converging playbook publishes it.
+        self._config = None
+        # Set the moment the normal stats path is entered, so the exit hook can
+        # never double-publish a run that ended cleanly.
+        self._emitted = False
+        atexit.register(self._on_interpreter_exit)
 
     def _close_open_task(self):
         if self._open is None:
@@ -309,7 +147,20 @@ class CallbackModule(CallbackBase):
         if key:
             self._open[key] += 1
 
+    def _capture_config(self, result):
+        """Take the configuration off the ``set_stats`` task's own result.
+
+        It reaches the ``stats`` object only at end of run, so reading it there
+        left an interrupted run with no endpoint to publish to. The same dict
+        is in the task result, available ~40 minutes earlier on a converge.
+        """
+        stats = (result._result or {}).get("ansible_stats") or {}
+        config = (stats.get("data") or {}).get(STATS_KEY)
+        if config:
+            self._config = config
+
     def v2_runner_on_ok(self, result):
+        self._capture_config(result)
         self._count(result, "changed" if result._result.get("changed") else None)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
@@ -325,6 +176,10 @@ class CallbackModule(CallbackBase):
         self._playbook_name = playbook._file_name.rsplit("/", 1)[-1]
 
     def v2_playbook_on_stats(self, stats):
+        # Claimed BEFORE emitting, not after: if _emit raises, the run still
+        # ended normally and the exit hook must not publish an "interrupted"
+        # marker on top of a real end-of-run.
+        self._emitted = True
         try:
             self._emit(stats)
         except Exception as exc:  # noqa: BLE001 - telemetry must never fail a run
@@ -336,7 +191,9 @@ class CallbackModule(CallbackBase):
         if not self.get_option("enabled"):
             return
 
-        config = (getattr(stats, "custom", None) or {}).get("_run", {}).get(STATS_KEY)
+        config = self._config or (
+            (getattr(stats, "custom", None) or {}).get("_run", {}).get(STATS_KEY)
+        )
         if not config:
             # Not a converge run (no playbook published the configuration).
             return
@@ -370,6 +227,13 @@ class CallbackModule(CallbackBase):
         if not events:
             return
 
+        self._post(url, token, events, config)
+        self._display.display(
+            "converge_telemetry: published %d event(s) (%d task timing(s))"
+            % (len(events), len(self._tasks))
+        )
+
+    def _post(self, url, token, events, config):
         self._display.vvv("converge_telemetry: posting %d event(s) to %s" % (len(events), url))
         open_url(
             url,
@@ -382,7 +246,41 @@ class CallbackModule(CallbackBase):
             validate_certs=bool(config.get("verify_tls", False)),
             timeout=int(config.get("timeout", 10)),
         )
-        self._display.display(
-            "converge_telemetry: published %d event(s) (%d task timing(s))"
-            % (len(events), len(self._tasks))
-        )
+
+    def _on_interpreter_exit(self):
+        """Publish what we know when the run never reached ``on_stats``.
+
+        Ctrl-C, a wrapper timeout, or any non-zero bail leaves Ansible's stats
+        callback unfired. Everything here is best-effort and must never raise:
+        the process is already on its way out, and a traceback from an atexit
+        hook would be the last thing printed, burying the real cause.
+
+        SIGKILL cannot be caught, so a hard kill still publishes nothing. That
+        is a genuine limit, not a case this handles.
+        """
+        try:
+            if self._emitted:
+                return
+            if not self.get_option("enabled"):
+                return
+            config = self._config
+            if not config:
+                # Not a converge run, or it died before the first play's
+                # set_stats -- there is no endpoint to publish to.
+                return
+            if is_check_mode(config):
+                return
+            url = config.get("hec_url")
+            token = self.get_option("hec_token")
+            if not url or not token:
+                return
+
+            self._close_open_task()
+            now = time.time()
+            events = build_task_events(self._tasks, config, self._playbook_name, now)
+            events.append(
+                build_interrupted_event(config, self._playbook_name, now)
+            )
+            self._post(url, token, events, config)
+        except Exception:  # noqa: BLE001 - never raise from an exit hook
+            pass
