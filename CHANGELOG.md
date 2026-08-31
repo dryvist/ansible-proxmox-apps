@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.27.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.26.0...v4.27.0) (2026-08-31)
+
+
+### Features
+
+* **grafana:** add an infra-metrics datasource and pinned community dashboards ([#1662](https://github.com/dryvist/ansible-proxmox-apps/issues/1662)) ([2147de8](https://github.com/dryvist/ansible-proxmox-apps/commit/2147de85e10e47a8fd805d24ede5b2657ff7e5bb))
+
+
+### Bug Fixes
+
+* **inventory:** build fronted service URLs from the ingress zone ([#1666](https://github.com/dryvist/ansible-proxmox-apps/issues/1666)) ([66e8519](https://github.com/dryvist/ansible-proxmox-apps/commit/66e851929fc6b1a824c84becc527df0ce2930818))
+* **inventory:** reject conflicting Cribl roles ([#1296](https://github.com/dryvist/ansible-proxmox-apps/issues/1296)) ([#1645](https://github.com/dryvist/ansible-proxmox-apps/issues/1645)) ([5a906a0](https://github.com/dryvist/ansible-proxmox-apps/commit/5a906a042a872ea838aef30da054dad303fd848b))
+* **openbao:** make the RBAC policy write actually idempotent ([#1665](https://github.com/dryvist/ansible-proxmox-apps/issues/1665)) ([86aea67](https://github.com/dryvist/ansible-proxmox-apps/commit/86aea677eb41d685fce020134001515928c2bc42))
+* **prometheus:** build node_exporter targets from node_name, not role ([#1670](https://github.com/dryvist/ansible-proxmox-apps/issues/1670)) ([fe0b7c2](https://github.com/dryvist/ansible-proxmox-apps/commit/fe0b7c2eefbde370226549f3a75add9fa2d76d88))
+
 ## [4.26.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.25.2...v4.26.0) (2026-08-31)
 
 
