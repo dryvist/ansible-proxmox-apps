@@ -80,10 +80,20 @@ def _render(expr, variables, wrap=True):
 
 
 def _all(conds, variables):
-    """Render a `failed_when` / `when` list. Ansible ANDs the elements."""
+    """Render a `failed_when` / `when` list. Ansible ANDs the elements.
+
+    A bare YAML boolean is passed through rather than templated. That keeps the
+    negative control honest: with the pre-fix `failed_when: false` this returns
+    False, so the DENIED assertions fail (the real detection) while the absent
+    and success assertions still pass -- absence was always tolerated correctly,
+    and it is only the denial that was conflated with it. Templating the boolean
+    instead would raise, turning every case red and hiding which one changed.
+    """
     if not isinstance(conds, list):
         conds = [conds]
-    return all(bool(_render(c, variables)) for c in conds)
+    return all(
+        c if isinstance(c, bool) else bool(_render(c, variables)) for c in conds
+    )
 
 
 def _cli(rc, stderr, stdout="{}"):
