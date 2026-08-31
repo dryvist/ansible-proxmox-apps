@@ -50,7 +50,9 @@ def resolve_caps(stdout):
     templar = Templar(loader=DataLoader())
     templar.available_variables = {
         "openbao_policy_capabilities": {"stdout": stdout, "rc": 0},
-        **task.get("vars", {}),
+        # the task's own sibling vars, as Ansible would resolve them
+        **{k: trust_as_template(v) if isinstance(v, str) else v
+           for k, v in task.get("vars", {}).items()},
     }
     # ansible-core 2.19+ only templates strings explicitly marked trusted.
     return templar.template(
@@ -88,8 +90,27 @@ class CapabilityResolution(unittest.TestCase):
 
     def test_envelope_keys_are_never_mistaken_for_paths(self):
         body = json.dumps(dict(ENVELOPE, data=PATHS))
-        self.assertNotIn("request_id", resolve_caps(body))
-        self.assertNotIn("warnings", resolve_caps(body))
+        self.assertEqual(resolve_caps(body), PATHS)
+
+    def test_non_path_response_fields_cannot_collide_with_a_policy_name(self):
+        # The response also carries capabilities/mount_* fields, and future
+        # ones would join them. A stray key surviving resolution is compared
+        # against declared policy NAMES later (the prefix is stripped there,
+        # not filtered), so a collision would mark a policy writable that is
+        # not -- a false green in the guard built to prevent one.
+        noise = {
+            "capabilities": CAPS,
+            "mount_type": "system",
+            "mount_class": "secret",
+            "some_future_field": CAPS,
+        }
+        body = json.dumps(dict(ENVELOPE, data=PATHS, **noise))
+        self.assertEqual(resolve_caps(body), PATHS)
+
+    def test_an_envelope_only_response_resolves_empty(self):
+        # Must reach the "probe returned nothing usable" arm, never be read as
+        # a denial of everything.
+        self.assertEqual(resolve_caps(json.dumps(ENVELOPE)), {})
 
 
 class UnwritableVerdict(unittest.TestCase):
