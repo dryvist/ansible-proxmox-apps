@@ -1,11 +1,15 @@
 ---
-# Workflow engine — bao-first secrets (apps domain) with an env fallback,
-# mirroring vikunja_group.yml / zammad_group.yml.
+# Workflow engine — OpenBao-sourced secrets (apps domain). OpenBao is the only source: each secret ends in
+# `| default(undef(), true) | mandatory(...)`, so an absent or empty value
+# aborts the play instead of being rendered over a live credential.
+# Mirrors vikunja_group.yml / zammad_group.yml.
 #
 # Both fields are app-namespaced (n8n_*) so the flat merge into bao_apps_secrets
-# never collides with a sibling app's bare field name. On hosts where the apps
-# domain was not fetched (BAO_ADDR or the apps role_id/secret_id unset)
-# bao_apps_secrets is {} and the env fallback resolves instead.
+# never collides with a sibling app's bare field name.
+#
+# The encryption key is the ONE exception to the no-fallback rule: empty is a
+# supported state there (the role reads the guest's existing key file and
+# asserts a non-empty result), so it keeps its env fallback.
 
 # Login for this app's role on the shared cluster. It MUST match the postgres
 # side (postgres_managed_databases reads the same bao_apps_secrets.n8n_db_password),
@@ -13,7 +17,8 @@
 # store, never hand-typed.
 n8n_docker_db_password: >-
   {{ bao_apps_secrets.n8n_db_password
-     | default(lookup('env', 'N8N_DB_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('N8N_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # The credential-encryption key. PROMOTED into the secret store, never
 # generated: it is the only thing that can decrypt the credentials already

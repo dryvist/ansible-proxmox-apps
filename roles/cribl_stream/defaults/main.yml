@@ -123,3 +123,115 @@ cribl_stream_prometheus_rw_port: 9201
 # API path Cribl listens on for Prometheus remote_write POST requests.
 # Must match the path in prometheus_stack_remote_write_url (/api/v1/write).
 cribl_stream_prometheus_rw_api_path: /api/v1/write
+
+# --- Langfuse leg: enrichment, noise removal, redaction ----------------------
+# Everything below is DATA the otel_traces pipeline template loops over, not
+# logic embedded in the template. Adding a span name, a noisy attribute or a
+# redaction pattern is a one-line change here with no template edit, and the
+# same lists are what the render test asserts against.
+
+# Attribute-name precedence for each Langfuse field. The template renders these
+# as `attributes['a'] || attributes['b'] || undefined`, so order is precedence
+# and an empty list yields an unset field rather than a fabricated one.
+#
+# These attributes are ALREADY emitted today — the coding-agent CLI sends
+# user.id and session.id on every span. Nothing downstream ever read them, so
+# every trace lands with a null user and no session. This is a mapping gap, not
+# a collection gap.
+cribl_stream_otel_user_id_sources:
+  - user.id                          # coding-agent CLI (hashed account id)
+  - metadata.user_api_key_user_id    # LLM proxy, once virtual keys are issued
+  - user.email
+# Session ids are NEVER synthesized. A collector-derived session (a time-window
+# hash, say) invents boundaries that do not exist, merges unrelated activity
+# from one principal, and sends late-arriving spans into a different session
+# than their siblings. Absent is correct when unknown.
+cribl_stream_otel_session_id_sources:
+  - session.id
+# Fallback chain for the trace label; a third of spans arrive with an empty
+# name and render as a blank, unclickable row.
+cribl_stream_otel_trace_name_sources:
+  - gen_ai.operation.name
+  - http.route
+  - service.name
+cribl_stream_otel_trace_name_fallback: unnamed-span
+# Attributes promoted to trace tags — this is what makes the live dashboard
+# filterable. Empty members are dropped so a missing attribute never becomes a
+# blank facet.
+cribl_stream_otel_tag_sources:
+  - service.name
+  - host.name
+  - gen_ai.system
+  - model
+cribl_stream_otel_default_environment: homelab
+
+# Token-usage aliases: emitters disagree on attribute names and the backend
+# reads the OpenTelemetry GenAI semantic convention. Without this mapping every
+# generation shows zero usage and cost panels stay empty even though the
+# numbers arrived. Key = canonical target, value = emitter-specific source.
+cribl_stream_otel_usage_aliases:
+  gen_ai.usage.input_tokens: input_tokens
+  gen_ai.usage.output_tokens: output_tokens
+# Extra attributes copied into trace metadata, keyed by the metadata name.
+cribl_stream_otel_metadata_passthrough:
+  agent_id: agent_id
+  cache_read_tokens: cache_read_tokens
+  cache_creation_tokens: cache_creation_tokens
+
+# Span names dropped from the LANGFUSE leg only — they continue to Splunk via
+# otel_stamp, so latency and failure evidence survives. These are MCP-server
+# plumbing (connection setup, transport workers, rollout persistence, plugin
+# discovery): no model, no tokens, no message content, and roughly a fifth of
+# ingest volume crowding out real generations in every list view.
+cribl_stream_otel_drop_span_names:
+  - auth
+  - transport_worker
+  - persist_rollout_items
+  - recommended_plugins_mode_for_config
+  - realtime_conversation.running_state
+  - handle_tool_call_with_source
+
+# Always-empty attributes the LLM proxy emits on every span (~20 per span):
+# noise in the attribute inspector and dead weight in every payload.
+cribl_stream_otel_noise_attributes:
+  - metadata.spend_logs_metadata
+  - metadata.requester_metadata
+  - metadata.prompt_management_metadata
+  - metadata.applied_guardrails
+  - metadata.mcp_tool_call_metadata
+  - metadata.vector_store_request_metadata
+  - metadata.routing_decision
+  - metadata.requester_custom_headers
+  - metadata.cold_storage_object_key
+  - metadata.user_api_key_auth_metadata
+# Dropped outright: multi-KB Python tracebacks on every failed call, the single
+# largest field on this leg, and they can carry prompt fragments, filesystem
+# paths and credentials. Splunk keeps the full trace.
+cribl_stream_otel_drop_attributes:
+  - error.stack_trace
+
+# Credential redaction. Server-side masking is a licensed feature of the
+# backend, so masking belongs in the pipeline — this is the correct free-tier
+# placement, not a workaround. It must be in place BEFORE message-content
+# capture is enabled at the emitters.
+#
+# Schema note (same trap as force_splunk_meta): matchRegex/replaceExpr with a
+# regex LITERAL. The regex/replacement keys are invalid and make the whole
+# pipeline fail to load — taking the entire Langfuse leg down, not just the
+# masking.
+cribl_stream_otel_redaction_rules:
+  - matchRegex: '/sk-[A-Za-z0-9_-]{16,}/g'
+    replaceExpr: "'sk-REDACTED'"
+  - matchRegex: '/pk-lf-[A-Za-z0-9-]{8,}/g'
+    replaceExpr: "'pk-lf-REDACTED'"
+  - matchRegex: '/Bearer\s+[A-Za-z0-9._~+\/-]{12,}/g'
+    replaceExpr: "'Bearer REDACTED'"
+  - matchRegex: '/AKIA[0-9A-Z]{16}/g'
+    replaceExpr: "'AKIA-REDACTED'"
+  - matchRegex: '/hvs\.[A-Za-z0-9._-]{16,}/g'
+    replaceExpr: "'hvs.REDACTED'"
+# Span attribute KEYS themselves contain dots (gen_ai.prompt, error.message),
+# so an explicit field path is ambiguous and would silently mask nothing. The
+# wildcard covers prompt, completion and error text wherever an emitter puts it.
+cribl_stream_otel_redaction_fields:
+  - 'attributes.*'

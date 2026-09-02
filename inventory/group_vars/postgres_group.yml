@@ -1,6 +1,6 @@
 ---
 # Shared native PostgreSQL (issue #138) — backs Nautobot now, Vikunja/EspoCRM
-# later. Secrets resolve bao-first (apps domain) with an env fallback; the
+# later. Secrets resolve from OpenBao (apps domain), with no env fallback; the
 # listener is narrowed to the guest's live data-VLAN address.
 
 # listen_addresses is intentionally NOT overridden here — see the role
@@ -18,8 +18,8 @@
 # produced two primaries.
 postgres_primary_host: "{{ postgres_apps_primary_host }}"
 
-# Databases on this shared cluster. Each password is bao-first
-# (secret/apps/<app>) with an env fallback; each client_cidr is the app LXC's
+# Databases on this shared cluster. Each password comes from OpenBao
+# (secret/apps/<app>) and is mandatory; each client_cidr is the app LXC's
 # subnet sourced from the runtime secret store (NETWORK_CIDR_APPS) — the only
 # place a CIDR literal is legitimate (pg_hba cannot take an FQDN) and even then
 # it is env-derived, not hard-coded.
@@ -28,19 +28,22 @@ postgres_managed_databases:
     user: nautobot
     password: >-
       {{ bao_apps_secrets.db_password
-         | default(lookup('env', 'NAUTOBOT_DB_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('NAUTOBOT_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_APPS') | default('', true) }}"
   - name: vikunja
     user: vikunja
     password: >-
       {{ bao_apps_secrets.vikunja_db_password
-         | default(lookup('env', 'VIKUNJA_DB_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('VIKUNJA_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_APPS') | default('', true) }}"
   - name: zammad
     user: zammad
     password: >-
       {{ bao_apps_secrets.zammad_db_password
-         | default(lookup('env', 'ZAMMAD_DB_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('ZAMMAD_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_APPS') | default('', true) }}"
   # Workflow engine. Its guest sits on the ai subnet rather than the apps one,
   # so its client_cidr differs from its siblings above — still env-derived, and
@@ -52,5 +55,6 @@ postgres_managed_databases:
     user: n8n
     password: >-
       {{ bao_apps_secrets.n8n_db_password
-         | default(lookup('env', 'N8N_DB_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('N8N_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
