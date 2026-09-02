@@ -28,11 +28,12 @@ postgres_primary_host: postgres-ai-1
 # `replication slot "standby_postgres_ai_2" does not exist`.
 postgres_cluster_group: postgres_ai_group
 
-# Replication credential — bao-first (apps/hindsight, generated at source),
-# same env-fallback shape as the shared cluster's replication_password.
+# Replication credential — from OpenBao (apps/hindsight, generated at source),
+# same mandatory shape as the shared cluster's replication_password.
 postgres_replication_password: >-
   {{ bao_apps_secrets.hindsight_replication_password
-     | default(lookup('env', 'HINDSIGHT_REPLICATION_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('HINDSIGHT_REPLICATION_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # CIDR the primary accepts replication connections from (the standby lives
 # on the same ai VLAN). Env-derived — pg_hba needs a CIDR, not an FQDN.
@@ -42,8 +43,8 @@ postgres_replication_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', tr
 # default (roles/postgres/defaults/main.yml) for why this cluster listens on
 # the wildcard instead of the guest's discovered address.
 
-# Databases on this cluster. Credential is bao-first (apps/hindsight,
-# generated at source); client_cidr is the ai VLAN — the Hindsight API
+# Databases on this cluster. Credential comes from OpenBao (apps/hindsight,
+# generated at source) and is mandatory; client_cidr is the ai VLAN — the Hindsight API
 # replicas are the only consumers, and this is the one legitimate place for
 # an (env-derived) CIDR since pg_hba cannot take an FQDN. pgvector ships as
 # a PGDG package via extensions:[vector].
@@ -52,7 +53,8 @@ postgres_managed_databases:
     user: hindsight
     password: >-
       {{ bao_apps_secrets.hindsight_db_password
-         | default(lookup('env', 'HINDSIGHT_DB_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('HINDSIGHT_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
     extensions: [vector]
   # LiteLLM router state. The Adaptive Router learns a quality estimate per
@@ -67,5 +69,6 @@ postgres_managed_databases:
     user: litellm
     password: >-
       {{ bao_apps_secrets.llm_router_db_password
-         | default(lookup('env', 'LLM_ROUTER_DB_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('LLM_ROUTER_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
