@@ -39,9 +39,12 @@ a policy can't read:
   `tofu-proxmox` `docs/SECRETS_HIERARCHY.md` for the full RBAC table.
 - **Seeding**: `roles/openbao` seeds **no** values; it creates only the mount,
   policies, and AppRoles. So a domain's paths yield keys only once a writer
-  populates them. A not-yet-seeded path contributes no fields and is
-  tolerated; a path that errors (403 Forbidden, seal, transport) fails the
-  play naming the path.
+  populates them. A path that errors fails the play naming it — including a
+  404, because an undeclared-but-expected key is a real defect. The one
+  exception is a path given the mapping form with `optional: true`, whose 404
+  is skipped with a visible warning; a 403 (wrong credential, not an absent
+  secret) always fails. Login and reads run with `check_mode: false`, so a
+  `--check` run resolves real values instead of blanks.
 
 ## Installation
 

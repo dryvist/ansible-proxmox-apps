@@ -6,7 +6,8 @@
 # unset, unless the domain is named in `openbao_secrets_optional_domains` —
 # the documented opt-out that lets an operator migrate one domain at a time.
 # Skipping silently is what let a whole domain resolve to {} and every consumer
-# render an empty credential.
+# render an empty credential. Per PATH, a 404 fails too unless that path is
+# declared `optional: true` in its mapping form; a 403 always fails.
 
 - name: Resolve role_id/secret_id from env for {{ openbao_domain.name }}
   ansible.builtin.set_fact:
@@ -61,52 +62,43 @@
         secret_id: "{{ openbao_secrets_domain_secret_id }}"
         validate_certs: "{{ openbao_secrets_validate_certs }}"
       register: openbao_secrets_domain_login
+      # Reads only. vault_login declares check-mode support but short-circuits
+      # to a null client_token, which makes every downstream read fail and every
+      # domain merge empty — a --check run then looks exactly like a missing
+      # credential. Running it for real under --check costs nothing (no state
+      # changes) and lets templates diff against real values.
+      check_mode: false
 
-    # Absence is tolerated, errors are not. A not-yet-seeded path fails the
-    # module with "Invalid or missing path" and legitimately contributes no
-    # fields; ANY other failure (403 Forbidden from a policy that does not grant
-    # the path, a sealed node, a transport error) used to be swallowed by a
-    # blanket `failed_when: false` and left the consumer with an empty value.
-    - name: Read this domain's KV paths for {{ openbao_domain.name }}
-      block:
-        - name: Read each KV path, tolerating not-yet-seeded ones, for {{ openbao_domain.name }}
-          community.hashi_vault.vault_kv2_get:
-            url: "{{ hostvars['localhost'].openbao_secrets_active_addr | default(openbao_secrets_bao_addr, true) }}"
-            auth_method: token
-            token: "{{ openbao_secrets_domain_login.login.auth.client_token }}"
-            engine_mount_point: "{{ openbao_secrets_kv_mount }}"
-            path: "{{ item }}"
-            validate_certs: "{{ openbao_secrets_validate_certs }}"
-          loop: "{{ openbao_domain.paths }}"
-          register: openbao_secrets_domain_reads
-          failed_when: msg is defined and 'Invalid or missing path' not in msg
-      rescue:
-        # The read is no_log (its result carries the secret), so the module's own
-        # abort message is censored. Re-raise it here naming only the path and
-        # the module's error text — neither contains secret material — so the
-        # failure says which path and why instead of "output has been hidden".
-        - name: Report which KV paths could not be read for {{ openbao_domain.name }}
-          ansible.builtin.fail:
-            msg: >-
-              OpenBao read FAILED for the {{ openbao_domain.name }} domain on
-              path(s) {{ _openbao_failed_paths }}: {{ _openbao_failed_msgs }}.
-              A 'Forbidden' here means this domain's policy does not grant the
-              path; fix the policy or the path list. Refusing to continue with
-              a partially-read domain.
-          vars:
-            # The chain is repeated rather than shared through an intermediate
-            # var: an intermediate holding a list of result dicts round-trips
-            # through string templating, and only these two flat string lists
-            # are safe to render.
-            _openbao_failed_paths: >-
-              {{ openbao_secrets_domain_reads.results | default([])
-                 | selectattr('failed', 'defined') | selectattr('failed')
-                 | map(attribute='item') | list }}
-            _openbao_failed_msgs: >-
-              {{ openbao_secrets_domain_reads.results | default([])
-                 | selectattr('failed', 'defined') | selectattr('failed')
-                 | map(attribute='msg') | list }}
-          no_log: false
+    # `failed_when: false` here no longer SWALLOWS anything — every error is
+    # re-raised by the explicit gate immediately below, which is what lets one
+    # bad path be classified instead of aborting the loop at the first one. Do
+    # NOT read it as the old tolerate-everything behaviour.
+    #
+    # It has to be done this way: a bare `msg` is NOT injected as a variable
+    # into a per-item `failed_when` on ansible-core 2.21 (verified — a
+    # `failed_when: msg is defined` on a task that really did fail evaluates
+    # FALSE and the task reports ok), so the classification is only reliable
+    # against the REGISTERED results.
+    - name: Read each KV path for {{ openbao_domain.name }}
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ hostvars['localhost'].openbao_secrets_active_addr | default(openbao_secrets_bao_addr, true) }}"
+        auth_method: token
+        token: "{{ openbao_secrets_domain_login.login.auth.client_token }}"
+        engine_mount_point: >-
+          {{ item.mount if item is mapping else openbao_secrets_kv_mount }}
+        path: "{{ item.path if item is mapping else item }}"
+        validate_certs: "{{ openbao_secrets_validate_certs }}"
+      loop: "{{ openbao_domain.paths }}"
+      register: openbao_secrets_domain_reads
+      # Reads only — see the vault_login note above. publish.yml WRITES and
+      # deliberately keeps honouring check mode.
+      check_mode: false
+      failed_when: false
+
+    # Classify the read results. Factored into its own file so the gate can be
+    # exercised against synthetic results without a live OpenBao.
+    - name: Classify the KV read results for {{ openbao_domain.name }}
+      ansible.builtin.include_tasks: classify_reads.yml
 
     - name: Merge readable paths into one dict for {{ openbao_domain.name }}
       ansible.builtin.set_fact:
