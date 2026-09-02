@@ -1,15 +1,38 @@
 ---
-- name: Warn when the ai-runner AppRole secret_id has no CIDR binding
-  ansible.builtin.debug:
-    msg: >-
-      OPENBAO_AI_RUNNER_SECRET_ID_CIDR is unset — the ai-runner AppRole's
-      secret_id will be accepted from ANY source address. Documented residual:
-      compensated by the runner guest's restrictive egress firewall profile
-      (tofu-proxmox ai-github tag). Set the env var (iac secret store) to bind
-      the secret_id to the runner guest's reservation CIDR.
+# --- CIDR binding: fail on an empty class rather than create an unbound role --
+# Every declared AppRole resolves to a named CIDR class (see
+# 08-admin-and-ttls.yml). A class whose CIDRs were never supplied would silently
+# produce exactly the unbound, redeemable-from-anywhere secret_id the binding
+# exists to prevent — and it would look like a clean converge. So the classes
+# actually in use are asserted before anything is written.
+- name: Assert every CIDR class in use has been supplied
+  ansible.builtin.assert:
+    that:
+      - openbao_approle_unsupplied_cidr_classes | length == 0
+    fail_msg: >-
+      CIDR classes {{ openbao_approle_unsupplied_cidr_classes | join(', ') }}
+      are used by declared AppRoles but their variables are empty, so those
+      secret_ids would be redeemable from ANY source address.
+      Supply them via env (OPENBAO_MANAGEMENT_CIDRS / OPENBAO_WORKSTATION_CIDRS /
+      OPENBAO_CI_CIDRS, comma-separated) from the iac secret store. To bootstrap
+      a cluster before the CIDRs are known, set
+      OPENBAO_APPROLE_ALLOW_UNBOUND_CIDRS to accept unbound roles explicitly.
+    quiet: true
   when:
     - openbao_bootstrap_token is defined
-    - openbao_ai_runner_secret_id_cidr | length == 0
+    - not (openbao_approle_allow_unbound_cidrs | bool)
+
+- name: Warn loudly about every AppRole that will be created without a CIDR bind
+  ansible.builtin.debug:
+    msg: >-
+      OPENBAO_APPROLE_ALLOW_UNBOUND_CIDRS is set and these CIDR classes are
+      empty: {{ openbao_approle_unsupplied_cidr_classes | join(', ') }}.
+      Their AppRoles' secret_ids will be accepted from ANY source address.
+      This is an accepted-risk bootstrap mode, not a steady state — supply the
+      CIDRs and re-converge.
+  when:
+    - openbao_bootstrap_token is defined
+    - openbao_approle_allow_unbound_cidrs | bool
 
 - name: Check whether each AppRole already exists
   ansible.builtin.command:
@@ -59,17 +82,42 @@
     - openbao_bootstrap_token is defined
     - _denied | length > 0
 
+# Resolution order for each bound, most specific first:
+#   1. the role's own declaration in openbao_base_approles (most visible)
+#   2. the per-role override map in 08-admin-and-ttls.yml
+#   3. the global default
+# `vars:` is evaluated per loop item, so `item` is in scope here and the command
+# stays readable instead of carrying three nested defaults inline.
 - name: Create the missing AppRoles bound to their policy
+  vars:
+    approle_cidr_class: "{{ openbao_approle_cidr_class_map[item.0.name] }}"
+    # An explicitly declared but EMPTY secret_id_bound_cidrs (ai-runner, whose
+    # value is env-delivered) falls back to its class rather than to unbound.
+    approle_bound_cidrs: >-
+      {{ item.0.secret_id_bound_cidrs | default('', true)
+         or openbao_approle_cidr_classes[approle_cidr_class] }}
+    approle_secret_id_ttl: >-
+      {{ item.0.secret_id_ttl
+         | default(openbao_approle_secret_id_ttl_overrides[item.0.name]
+                   | default(openbao_approle_secret_id_ttl)) }}
+    # `in` rather than `default()`: an override of 0 is a real value, and
+    # `default()` with a boolean-true second argument would discard it.
+    approle_secret_id_num_uses: >-
+      {{ item.0.secret_id_num_uses
+         | default(openbao_approle_secret_id_num_uses_overrides[item.0.name]
+                   if item.0.name in openbao_approle_secret_id_num_uses_overrides
+                   else openbao_approle_secret_id_num_uses) }}
   ansible.builtin.command:
     cmd: >-
       bao write auth/approle/role/{{ item.0.name }}
       token_policies={{ (item.0.token_policies | default([item.0.policy])) | join(',') }}
       token_ttl={{ item.0.token_ttl | default(openbao_approle_token_ttl) }}
       token_max_ttl={{ item.0.token_max_ttl | default(openbao_approle_token_max_ttl) }}
-      secret_id_ttl={{ item.0.secret_id_ttl | default('0') }}
-      secret_id_num_uses={{ item.0.secret_id_num_uses | default('0') }}
-      {{ ('secret_id_bound_cidrs=' ~ item.0.secret_id_bound_cidrs)
-         if (item.0.secret_id_bound_cidrs | default('') | length > 0) else '' }}
+      secret_id_ttl={{ approle_secret_id_ttl }}
+      secret_id_num_uses={{ approle_secret_id_num_uses }}
+      {{ ('secret_id_bound_cidrs=' ~ approle_bound_cidrs ~
+          ' token_bound_cidrs=' ~ approle_bound_cidrs)
+         if (approle_bound_cidrs | length > 0) else '' }}
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
     BAO_TOKEN: "{{ openbao_bootstrap_token }}"
@@ -147,9 +195,37 @@
 # skipping here (and in the break-glass write below) keeps a skipped result in
 # .results at this index so the positional zip in the break-glass write stays
 # aligned, exactly like an already-existing role is skipped.
+#
+# The mint passes the role's ttl/num_uses EXPLICITLY rather than relying on the
+# role's own defaults. The drop file this produces is an unpublished credential
+# sitting on a controller's disk until an operator moves it into the store and
+# deletes it; when the role was created with secret_id_ttl=0 that file was a
+# credential that never expired, so a forgotten one stayed live forever. Naming
+# the bounds at the mint also makes them correct for a role that already exists
+# on the cluster with looser bounds.
+#
+# SKIPPED IN RECONCILE MODE. Minting now belongs to approle-issuer, not to
+# openbao-reconcile, so the reconcile identity holds no secret-id grant and this
+# would 403. A reconcile run may CREATE a newly declared role with the right
+# bounds; issuing its first credential is a separate, deliberate act. The
+# instruction task below names any role left in that state — an unattended run
+# must not leave a credential-less role reported as a clean converge.
 - name: Generate newly-created AppRole secret_ids
+  vars:
+    approle_secret_id_ttl: >-
+      {{ item.0.secret_id_ttl
+         | default(openbao_approle_secret_id_ttl_overrides[item.0.name]
+                   | default(openbao_approle_secret_id_ttl)) }}
+    approle_secret_id_num_uses: >-
+      {{ item.0.secret_id_num_uses
+         | default(openbao_approle_secret_id_num_uses_overrides[item.0.name]
+                   if item.0.name in openbao_approle_secret_id_num_uses_overrides
+                   else openbao_approle_secret_id_num_uses) }}
   ansible.builtin.command:
-    cmd: "bao write -f -format=json auth/approle/role/{{ item.0.name }}/secret-id"
+    cmd: >-
+      bao write -format=json auth/approle/role/{{ item.0.name }}/secret-id
+      ttl={{ approle_secret_id_ttl }}
+      num_uses={{ approle_secret_id_num_uses }}
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
     BAO_TOKEN: "{{ openbao_bootstrap_token }}"
@@ -163,6 +239,7 @@
     - openbao_bootstrap_token is defined
     - (item.1.rc | default(0)) != 0
     - item.0.manage_secret_id | default(true)
+    - not (openbao_reconcile_mode | default(false))
 
 - name: Write each newly-created AppRole's break-glass material to controller (0600)
   ansible.builtin.copy:
@@ -193,6 +270,7 @@
     - openbao_bootstrap_token is defined
     - (item.0.1.rc | default(0)) != 0
     - item.0.0.manage_secret_id | default(true)
+    - not (openbao_reconcile_mode | default(false))
 
 # Derive the list of names actually created THIS run (for the instruction
 # message below) from the role_id-read results: Ansible preserves `item` on
@@ -209,6 +287,23 @@
          | list }}
   when: openbao_bootstrap_token is defined
 
+- name: INSTRUCT — a reconcile run created AppRoles but cannot issue credentials
+  ansible.builtin.debug:
+    msg: >-
+      ============================================================
+      Created on this reconcile run, WITHOUT a secret_id:
+      {{ (openbao_new_approle_names | default([])) | join(', ') }}.
+      Minting belongs to approle-issuer, not to the reconcile identity, so
+      these roles exist with the right bounds but hold no usable credential
+      yet. Issue each one deliberately (approle-issuer, or a run with
+      OPENBAO_PROVISIONING_TOKEN) and publish it. Until then any consumer of
+      these roles fails to authenticate — this is a known gap, not a clean run.
+      ============================================================
+  when:
+    - openbao_bootstrap_token is defined
+    - openbao_reconcile_mode | default(false)
+    - (openbao_new_approle_names | default([])) | length > 0
+
 - name: INSTRUCT — publish each new AppRole's creds to Doppler tier-0, then delete
   ansible.builtin.debug:
     msg: >-
@@ -216,7 +311,11 @@
       New AppRoles created: {{ (openbao_new_approle_names | default([])) | join(', ') }}.
       Each role_id + secret_id was written to a 0600 file on this
       controller: {{ openbao_approle_file_prefix }}-<role>-{{ inventory_hostname }}.json
-      (gitignored). Publish each to Doppler tier-0, consumed as ambient
+      (gitignored). Each secret_id now EXPIRES ({{ openbao_approle_secret_id_ttl }}
+      by default) and is redemption-capped, so a drop file left behind stops
+      being a working credential instead of staying live forever — but publish
+      promptly or the credential expires before it is used.
+      Publish each to Doppler tier-0, consumed as ambient
       env under `doppler run` (see terraform-proxmox
       docs/SECRETS_HIERARCHY.md), except:
         - `public` -> ships ambiently, needs no secret-zero (it's the
@@ -229,3 +328,4 @@
   when:
     - openbao_bootstrap_token is defined
     - (openbao_new_approle_names | default([])) | length > 0
+    - not (openbao_reconcile_mode | default(false))

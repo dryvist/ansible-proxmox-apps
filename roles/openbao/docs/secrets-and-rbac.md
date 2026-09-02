@@ -152,10 +152,28 @@ secrets-engine paths and are returned through a short-lived OpenBao token.
 
 **Secret-zero model**: each AppRole's `role_id`/`secret_id` is published to
 Doppler tier-0 and reaches its consumer as ambient environment under
-`doppler run` — access to Doppler tier-0 is the entire access boundary, not
-the AppRole's own TTL (`secret_id_ttl=0` is intentional here, not an
-oversight). The one exception is `public`: it needs no secret-zero at all,
-since it only unlocks non-exploitable facts.
+`doppler run`. Access to Doppler tier-0 is the primary access boundary, but it
+is no longer the only one: a `secret_id` also carries a finite lifetime and a
+redemption cap, and is bound to the network segment its holder is supposed to
+sit on.
+
+`secret_id_ttl: 0` used to be the standing default and was described here as
+intentional. It was not defensible: it made every published credential
+permanent, so any copy that escaped Doppler — a drop file left on a controller,
+a value in a shell history — stayed a working credential until somebody noticed.
+Nothing rotated them, so "rotate manually" never happened. The defaults are now
+finite (`openbao_approle_secret_id_ttl`, `openbao_approle_secret_id_num_uses`
+in `defaults/main/08-admin-and-ttls.yml`), with per-role overrides and a
+documented reason required for any remaining `0`.
+
+Source binding uses named CIDR classes (`machine` / `workstation` / `ci`), whose
+values arrive by environment and are never committed. A class that a declared
+role uses but which was never supplied **fails the converge** rather than
+quietly creating the unbound role the binding exists to prevent.
+
+The one exception throughout is `public`: it needs no secret-zero, no
+redemption cap and no source binding, since it only unlocks non-exploitable
+facts.
 
 The policy/AppRole set is driven by `openbao_policies` / `openbao_approles` in
 `defaults/main.yml` — add a row to grow the RBAC surface (a new policy template
