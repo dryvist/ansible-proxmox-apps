@@ -189,3 +189,83 @@
       prometheus_to_netmon pipeline must have exactly one eval function
       that coerces non-finite metric values and stamps index=netmon_metrics
       and sourcetype=prometheus:metrics
+
+- name: Assert otel_traces parses as YAML and keeps the trace-only drop first
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 7"
+      - "(_cribl_stream_otel_traces | from_yaml).functions[0].id == 'drop'"
+      - "(_cribl_stream_otel_traces | from_yaml).output == 'langfuse_otlp'"
+    fail_msg: >-
+      otel_traces conf.yml must parse as YAML with the full enrichment chain
+      and MUST still drop non-trace signals first — the Langfuse destination
+      ingests traces only, and a metric or log on this leg jams the
+      persistent queue until real spans stop flowing
+
+- name: Assert otel_traces maps emitter identity onto the Langfuse attribute contract
+  ansible.builtin.assert:
+    that:
+      - "\"attributes['langfuse.user.id']\" in _cribl_stream_otel_traces"
+      - "\"attributes['langfuse.session.id']\" in _cribl_stream_otel_traces"
+      - "\"attributes['langfuse.trace.name']\" in _cribl_stream_otel_traces"
+      - "\"attributes['langfuse.trace.tags']\" in _cribl_stream_otel_traces"
+      - "\"attributes['langfuse.environment']\" in _cribl_stream_otel_traces"
+      - "\"attributes['user.id']\" in _cribl_stream_otel_traces"
+      - "\"attributes['session.id']\" in _cribl_stream_otel_traces"
+    fail_msg: >-
+      otel_traces must map the identity attributes emitters already send
+      (user.id, session.id) onto the langfuse.*-prefixed attributes the
+      backend actually reads. Without this mapping every trace lands with a
+      null user, no session and an empty tag list — the data arrives and is
+      then thrown away at the last hop.
+
+- name: Assert otel_traces never synthesizes a session id
+  ansible.builtin.assert:
+    that:
+      - "'Date.now' not in _cribl_stream_otel_traces"
+      - "'activity_window' not in (_cribl_stream_otel_traces | regex_replace('#.*', ''))"
+    fail_msg: >-
+      session ids must come from the emitter or stay absent. A
+      collector-derived session (time-window hash or similar) invents
+      boundaries that do not exist, merges unrelated activity from one
+      principal, and sends late-arriving spans into a different session
+      than their siblings.
+
+- name: Assert otel_traces normalizes token usage to the GenAI semantic convention
+  ansible.builtin.assert:
+    that:
+      - "\"attributes['gen_ai.usage.input_tokens']\" in _cribl_stream_otel_traces"
+      - "\"attributes['gen_ai.usage.output_tokens']\" in _cribl_stream_otel_traces"
+      - "\"attributes['input_tokens']\" in _cribl_stream_otel_traces"
+    fail_msg: >-
+      coding-agent CLIs emit bare input_tokens/output_tokens; the backend
+      reads gen_ai.usage.*. Without the mapping every generation shows zero
+      usage and cost panels stay empty even though the numbers arrived.
+
+- name: Assert otel_traces drops non-LLM MCP-server plumbing from the Langfuse leg only
+  ansible.builtin.assert:
+    that:
+      - "'transport_worker' in _cribl_stream_otel_traces"
+      - "'persist_rollout_items' in _cribl_stream_otel_traces"
+      - "'transport_worker' not in _cribl_stream_otel_pipeline"
+    fail_msg: >-
+      MCP-server internals (auth, transport_worker, rollout persistence)
+      carry no model, tokens or content and crowd out real generations.
+      They must be dropped on the Langfuse leg and RETAINED on the Splunk
+      leg (otel_stamp), so failure and latency evidence survives.
+
+- name: Assert otel_traces redaction uses the valid mask schema
+  ansible.builtin.assert:
+    that:
+      - "'matchRegex:' in _cribl_stream_otel_traces"
+      - "'replaceExpr:' in _cribl_stream_otel_traces"
+      - "'regex:' not in _cribl_stream_otel_traces"
+      - "'replacement:' not in _cribl_stream_otel_traces"
+      - "'sk-REDACTED' in _cribl_stream_otel_traces"
+    fail_msg: >-
+      mask rules must use matchRegex/replaceExpr — the regex/replacement
+      keys are invalid and make the entire pipeline fail to load, which
+      would take the whole Langfuse leg down rather than just the masking.
+      Redaction must be in place BEFORE message-content capture is enabled
+      at the emitters, since server-side masking is a licensed backend
+      feature and is not available to us.
