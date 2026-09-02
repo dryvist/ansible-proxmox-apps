@@ -39,6 +39,7 @@ names verified against the live services:
 | `traefik_group` | `traefik.service` | unit active **and** TCP 443 accepts a connection |
 | `haproxy_group` | `haproxy.service` | unit active (TCP VIP) |
 | `haproxy_group` | `nginx.service` | unit active (UDP syslog/netflow LB) |
+| `docker_vms` | `github-runner@N.service` (pool) | every configured replica unit active |
 
 ## Healthchecks URLs
 
@@ -53,6 +54,7 @@ keystone in the healthchecks LXC and export its ping URL:
 | traefik | `DEADMAN_HC_URL_TRAEFIK` |
 | haproxy-vip | `DEADMAN_HC_URL_HAPROXY` |
 | nginx-syslog-lb | `DEADMAN_HC_URL_NGINX` |
+| github-runner-pool | `DEADMAN_HC_URL_GITHUB_RUNNER` |
 
 ntfy alerts always fire (no provisioning needed) via the repo's ntfy LXC.
 
