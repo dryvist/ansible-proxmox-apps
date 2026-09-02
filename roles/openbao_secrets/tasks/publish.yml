@@ -98,7 +98,10 @@
           no_log: true
 
         # Read-before-write so a single-field publish cannot drop sibling keys.
-        # A 404 (path not yet seeded) is expected and must not fail the run.
+        # A 404 (path not yet seeded) is expected and must not fail the run —
+        # and is the ONLY tolerated outcome. A blanket `failed_when: false` here
+        # also swallowed a 403, whose empty read then merged into a write that
+        # dropped every sibling field.
         - name: Read the existing secret so the write merges rather than clobbers
           community.hashi_vault.vault_kv2_get:
             url: "{{ _addr }}"
@@ -108,7 +111,7 @@
             path: "{{ _path }}"
             validate_certs: "{{ openbao_secrets_validate_certs }}"
           register: openbao_secrets_publish_existing
-          failed_when: false
+          failed_when: msg is defined and 'Invalid or missing path' not in msg
           no_log: true
 
         - name: Merge the new fields over the existing secret and write it back
@@ -147,5 +150,17 @@
           when:
             - openbao_secrets_publish_login is defined
             - openbao_secrets_publish_login.login is defined
-          failed_when: false
+          register: openbao_secrets_publish_revoke
+          # Not a read-before-write 404, so no blanket tolerance: a failed
+          # revoke is reported. It stays non-fatal because this runs in
+          # `always` — failing here would mask the real error of the block it
+          # is cleaning up, and the token expires on its own TTL regardless.
+          ignore_errors: true
           no_log: true
+
+        - name: Warn that the publish token was not revoked
+          ansible.builtin.debug:
+            msg: >-
+              WARNING: revoking the publish token failed; it stays valid until
+              its TTL expires. This did not affect the write above.
+          when: openbao_secrets_publish_revoke is failed
