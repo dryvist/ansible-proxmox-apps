@@ -107,7 +107,10 @@ inputs:
     # every event ("Event had no scope_metrics or __criblMetrics").
     extractSpans: true
     extractMetrics: false
-    extractLogs: false
+    # Log records become first-class events too: the api_request event is the
+    # only per-request token record the producers emit. Each leg below filters
+    # to its own signal, so turning this on adds nothing to the trace legs.
+    extractLogs: true
     sendToRoutes: false
     connections:
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
@@ -123,4 +126,12 @@ inputs:
       # its queue up on anything else). Splunk leg above is unchanged.
       - output: langfuse_otlp
         pipeline: otel_traces
+      # Third leg: OTLP log records only, stamped for the ai_usage index.
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      - output: splunk_hec_ai_usage
+        pipeline: otel_logs
+{% else %}
+      - output: splunk_hec
+        pipeline: otel_logs
+{% endif %}
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
