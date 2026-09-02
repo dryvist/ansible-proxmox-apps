@@ -330,6 +330,43 @@
           splunk={{ hostvars['splunk'].hostname | default('(undefined)') }},
           docker-host={{ hostvars['docker-host'].hostname | default('(undefined)') }}
 
+    # Two VM guests carried ssh_ca_trust_rollout_enabled: true for weeks with
+    # no SSH_KNOWN_HOSTS pin and no converge ever reaching them — nothing
+    # caught it. This is the check that would have: for every VM the
+    # inventory says opts into the CA rollout, assert its connection address
+    # (the same ansible_host add_host sets, FQDN or IP) has a pin. Reads the
+    # materialised known_hosts FILE (a fixture in CI; point
+    # SSH_KNOWN_HOSTS_FILE at the real file for a live check) — never the
+    # secret value itself.
+    - name: Read the SSH known_hosts file used for CA-rollout coverage
+      ansible.builtin.set_fact:
+        ssh_known_hosts_coverage_content: >-
+          {{ lookup('file',
+             lookup('env', 'SSH_KNOWN_HOSTS_FILE')
+             | default(playbook_dir ~ '/ssh_known_hosts_fixture.txt', true)) }}
+
+    - name: Compute the CA-rollout VM address list
+      ansible.builtin.set_fact:
+        ssh_ca_rollout_addresses: >-
+          {{ ((groups['vms'] | default([]))
+              + (groups['splunk_vms'] | default([]))
+              + (groups['docker_vms'] | default([])))
+             | unique
+             | map('extract', hostvars)
+             | selectattr('ssh_ca_trust_rollout_enabled', 'true')
+             | map(attribute='ansible_host')
+             | list }}
+
+    - name: Assert every CA-rollout VM address has a known_hosts pin
+      ansible.builtin.assert:
+        that:
+          - item in ssh_known_hosts_coverage_content
+        fail_msg: >-
+          {{ item }} carries ssh_ca_trust_rollout_enabled but has no
+          SSH_KNOWN_HOSTS pin — CA trust can never bootstrap on it
+          non-interactively.
+      loop: "{{ ssh_ca_rollout_addresses }}"
+
     - name: Display group membership summary
       ansible.builtin.debug:
         msg: |
