@@ -1,5 +1,5 @@
 ---
-- name: Verify the cribl_stream Langfuse destination renders unconditionally
+- name: Verify the cribl_stream Phoenix destination renders unconditionally
   hosts: localhost
   connection: local
   gather_facts: false
@@ -8,19 +8,17 @@
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
     _template_dir: "../../../roles/cribl_stream/templates"
-    # The keys are deliberately EMPTY. A gate of the
-    # `{% raw %}{% if ..._langfuse_public_key | length > 0 %}{% endraw %}` shape
-    # — the one that once dropped this destination from a rendered config while
-    # the converge still reported success — makes both blocks below vanish, so
-    # these assertions fail the moment such a gate is reintroduced. The role
-    # aborts on an empty key in real runs; this play sets the vars directly, so
-    # the defaults' `mandatory` never evaluates here.
-    cribl_stream_langfuse_public_key: ""
-    cribl_stream_langfuse_secret_key: ""
-    cribl_stream_langfuse_url: "https://langfuse.example.invalid/api/public/otel"
-    # Phoenix vars are fixture scaffolding here (asserted by their own play).
-    cribl_stream_phoenix_api_key: "fixture"
+    # The key is deliberately EMPTY — same contract as cribl_stream_langfuse.yml:
+    # a `{% raw %}{% if ..._phoenix_api_key | length > 0 %}{% endraw %}` gate
+    # would silently delete the destination instead of failing the converge,
+    # so both blocks below must render with no credential at all. This play
+    # sets the vars directly, so the defaults' `mandatory` never evaluates.
+    cribl_stream_phoenix_api_key: ""
     cribl_stream_phoenix_url: "https://phoenix.example.invalid/v1/traces"
+    # Langfuse vars are fixture scaffolding here (asserted by their own play).
+    cribl_stream_langfuse_public_key: "fixture"
+    cribl_stream_langfuse_secret_key: "fixture"
+    cribl_stream_langfuse_url: "https://langfuse.example.invalid/api/public/otel"
     # Remaining vars are fixture scaffolding, not under test.
     cribl_stream_splunk_hec_url: "https://splunk.example.invalid/services/collector/event"
     cribl_stream_splunk_hec_token: "fixture-token"
@@ -33,7 +31,6 @@
     cribl_stream_s2s_port: 9997
     cribl_stream_prometheus_rw_port: 8428
     cribl_stream_prometheus_rw_api_path: /api/v1/write
-    cribl_stream_victoriametrics_rw_url: "http://grafana.example.invalid:8428/api/v1/write"
     cribl_stream_ai_log_routing: {}
     cribl_stream_ai_input_types: {}
 
@@ -60,19 +57,21 @@
         _cribl_stream_outputs: "{{ _cribl_stream_raw.results[0].content | b64decode }}"
         _cribl_stream_inputs: "{{ _cribl_stream_raw.results[1].content | b64decode }}"
 
-    - name: Assert the Langfuse output and its input connection render with empty keys
+    - name: Assert the Phoenix output and its input connection render with an empty key
       ansible.builtin.assert:
         that:
-          - "'langfuse_otlp:' in _cribl_stream_outputs"
-          - "'- output: langfuse_otlp' in _cribl_stream_inputs"
+          - "'phoenix_otlp:' in _cribl_stream_outputs"
+          - "'authType: token' in _cribl_stream_outputs"
+          - "'- output: phoenix_otlp' in _cribl_stream_inputs"
+          - "'pipeline: otel_traces_phoenix' in _cribl_stream_inputs"
         fail_msg: >-
-          The langfuse_otlp destination or its in_otel connection did not render
-          with empty credentials — a credential-conditional gate has been
+          The phoenix_otlp destination or its in_otel connection did not render
+          with an empty credential — a credential-conditional gate has been
           reintroduced, which silently deletes the destination instead of
           failing the converge.
 
-    - name: Cribl Stream Langfuse rendering verification PASSED
+    - name: Cribl Stream Phoenix rendering verification PASSED
       ansible.builtin.debug:
         msg: >-
-          langfuse_otlp renders in both outputs.yml and inputs.yml regardless of
+          phoenix_otlp renders in both outputs.yml and inputs.yml regardless of
           credential presence.
