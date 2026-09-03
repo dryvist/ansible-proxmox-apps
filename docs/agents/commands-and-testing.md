@@ -2,6 +2,9 @@
 
 ## Commands
 
+> **Primary Execution Plane: Semaphore**
+> Routine execution (site converge, validation pipelines, drift reports) is handled centrally by **Semaphore**. The commands below are for local development, break-glass recovery, or testing only. When deploying changes in production, trigger the appropriate Semaphore job via its UI or API.
+
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS)
 doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml
