@@ -1,0 +1,131 @@
+---
+# The per-array non-empty guard on the assembled seed bundle (Vikunja 1754).
+#
+# seed_sources.yml already refuses a run where NO source contributes, but that
+# check is an OR across every source: one available source satisfies it while a
+# different slice is still empty. The observed failure took exactly that path —
+# the hosts inventory resolved to nothing because its path variable was unset,
+# `nodes` assembled as [], and the bundle shipped. DiffSync read the empty array
+# as "this class has no members" and proposed deleting every node Device, while
+# the converge reported SUCCESS.
+#
+# Includes the ROLE's own guard rather than restating its expression, so a drift
+# in the role fails here instead of passing against a stale copy.
+#
+# Usage:
+#   ansible-playbook tests/nautobot_seed/verify_empty_array_guard.yml -c local
+
+- name: Verify the nautobot seed empty-array guard
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # See verify_seed_bundle.yml: the connection variable wins over the play
+    # keyword, and this play only sets facts.
+    ansible_become: false
+    nautobot_seed_core_arrays: [nodes, devices, virtual_machines]
+    nautobot_seed_allow_empty: []
+
+  tasks:
+    - name: Run the guard against a fully populated bundle
+      ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_guard.yml
+      vars:
+        nautobot_seed_bundle:
+          nodes: [{name: node-a}]
+          devices: [{name: device-a}]
+          virtual_machines: [{name: vm-a}]
+          reservations: []
+
+    - name: Assert a populated bundle passes and an empty non-core array is ignored
+      ansible.builtin.assert:
+        that:
+          - nautobot_seed_empty_arrays == []
+        fail_msg: >-
+          a populated bundle was rejected: {{ nautobot_seed_empty_arrays }}
+        success_msg: >-
+          every core array carries members, and an empty array outside the core
+          list is not the guard's business.
+
+    # The regression itself. Before the guard this bundle was written, and the
+    # sync deleted every Device.
+    - name: Assert an empty core array stops the run and names the class
+      block:
+        - name: Run the guard against a bundle whose nodes assembled empty
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_guard.yml
+          vars:
+            nautobot_seed_bundle:
+              nodes: []
+              devices: [{name: device-a}]
+              virtual_machines: [{name: vm-a}]
+
+        - name: Report that the empty core array was accepted
+          ansible.builtin.fail:
+            msg: >-
+              the guard accepted a bundle with an empty `nodes` array — writing
+              it deletes every node Device while reporting success.
+      rescue:
+        - name: Confirm the failure named the empty class
+          ansible.builtin.assert:
+            that:
+              - "'nodes' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              the run failed, but not with the guard's message:
+              {{ ansible_failed_result.msg | default('') }}
+            success_msg: >-
+              an empty core array is fatal and the message names the class.
+
+    # A core array absent altogether reaches the sync as an absent class, which
+    # is the same deletion by a different route.
+    - name: Assert a missing core array is treated as empty
+      block:
+        - name: Run the guard against a bundle missing devices entirely
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_guard.yml
+          vars:
+            nautobot_seed_bundle:
+              nodes: [{name: node-a}]
+              virtual_machines: [{name: vm-a}]
+
+        - name: Report that the missing core array was accepted
+          ansible.builtin.fail:
+            msg: >-
+              the guard accepted a bundle with no `devices` key at all.
+      rescue:
+        - name: Confirm the failure named the missing class
+          ansible.builtin.assert:
+            that:
+              - "'devices' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              failed for a different reason:
+              {{ ansible_failed_result.msg | default('') }}
+            success_msg: >-
+              a core array missing from the bundle is caught by the same guard.
+
+    # The escape hatch names one class; it must not switch the guard off.
+    - name: Assert nautobot_seed_allow_empty exempts only the class it names
+      block:
+        - name: Run the guard with nodes exempted but devices still empty
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_guard.yml
+          vars:
+            nautobot_seed_allow_empty: [nodes]
+            nautobot_seed_bundle:
+              nodes: []
+              devices: []
+              virtual_machines: [{name: vm-a}]
+
+        - name: Report that the exemption leaked to another class
+          ansible.builtin.fail:
+            msg: >-
+              exempting `nodes` also let an empty `devices` through — the escape
+              hatch is behaving as a global off switch.
+      rescue:
+        - name: Confirm only the un-exempted class was reported
+          ansible.builtin.assert:
+            that:
+              - "'devices' in (ansible_failed_result.msg | default(''))"
+              - "'nodes' not in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              wrong classes reported:
+              {{ ansible_failed_result.msg | default('') }}
+            success_msg: >-
+              the exemption covers exactly the class it names.
