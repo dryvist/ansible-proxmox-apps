@@ -206,7 +206,7 @@
 - name: Assert otel_traces parses as YAML and keeps the trace-only drop first
   ansible.builtin.assert:
     that:
-      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 7"
+      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 8"
       - "(_cribl_stream_otel_traces | from_yaml).functions[0].id == 'drop'"
       - "(_cribl_stream_otel_traces | from_yaml).output == 'langfuse_otlp'"
     fail_msg: >-
@@ -214,6 +214,21 @@
       and MUST still drop non-trace signals first — the Langfuse destination
       ingests traces only, and a metric or log on this leg jams the
       persistent queue until real spans stop flowing
+
+- name: Assert otel_traces strips valueless attributes before the output
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_otel_traces | from_yaml).functions[-1].id == 'eval'"
+      - "\"Object.fromEntries\" in _cribl_stream_otel_traces"
+      - "\"v !== undefined\" in _cribl_stream_otel_traces"
+    fail_msg: >-
+      otel_traces must strip any attribute whose value is undefined or null
+      as its LAST function, after every enrichment step's `x || undefined`
+      has had a chance to run. The Langfuse worker throws
+      "Cannot read properties of undefined (reading 'stringValue')" and
+      drops the whole span on the shape those produce when a source is
+      absent — proven live with hand-built OTLP payloads to the real
+      endpoint (2026-09-03).
 
 - name: Assert otel_traces maps emitter identity onto the Langfuse attribute contract
   ansible.builtin.assert:
