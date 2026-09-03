@@ -121,12 +121,15 @@
     cribl_stream_outputs_live_ids: >-
       {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
           | default({}, true)).get('outputs', {}).keys() | list }}
-    # The Langfuse endpoint is managed here too, and the comparison above never
-    # saw it: a changed URL left outputs.yml stale until some OTHER field
-    # drifted, so trace delivery ran against the old value for weeks.
-    cribl_stream_langfuse_live_endpoint: >-
+    # The OTLP legs' live settings, so a rotated key or a moved endpoint
+    # counts as drift too — presence alone left a re-seeded PHOENIX_INGEST_API_KEY
+    # or LANGFUSE_* pair unapplied until some unrelated field changed.
+    cribl_stream_langfuse_live: >-
       {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
-          | default({}, true)).get('outputs', {}).get('langfuse_otlp', {}).get('endpoint', '') }}
+          | default({}, true)).get('outputs', {}).get('langfuse_otlp', {}) }}
+    cribl_stream_phoenix_live: >-
+      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+          | default({}, true)).get('outputs', {}).get('phoenix_otlp', {}) }}
   no_log: true
 
 - name: Deploy Cribl Stream outputs configuration
@@ -152,8 +155,12 @@
                | map('regex_replace', '^', 'splunk_hec_') | list)
               | difference(cribl_stream_outputs_live_ids) | length > 0)
       or 'langfuse_otlp' not in cribl_stream_outputs_live_ids
-      or cribl_stream_langfuse_live_endpoint != cribl_stream_langfuse_url
+      or cribl_stream_langfuse_live.get('endpoint', '') != cribl_stream_langfuse_url
+      or cribl_stream_langfuse_live.get('username', '') != cribl_stream_langfuse_public_key
+      or cribl_stream_langfuse_live.get('password', '') != cribl_stream_langfuse_secret_key
       or 'phoenix_otlp' not in cribl_stream_outputs_live_ids
+      or cribl_stream_phoenix_live.get('endpoint', '') != cribl_stream_phoenix_url
+      or cribl_stream_phoenix_live.get('token', '') != cribl_stream_phoenix_api_key
 
 - name: Deploy IPFIX pipeline configuration
   ansible.builtin.template:
