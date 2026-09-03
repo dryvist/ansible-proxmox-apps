@@ -57,6 +57,46 @@
   loop_control:
     label: "{{ item.name }} [{{ item.group | default('other', true) }}]"
 
+- name: Ensure Traefik dashboard is present in catalog
+  ansible.builtin.set_fact:
+    dashboard_catalog_services: >-
+      {{
+        dashboard_catalog_services | default([]) + [{
+          'name': 'traefik',
+          'group': 'mgmt',
+          'sso': true,
+          'ui': true,
+          'section': none,
+          'desc': 'Traefik ingress reverse-proxy dashboard',
+          'fqdn': 'traefik.' ~ dashboard_catalog_base_domain,
+          'url': 'https://traefik.' ~ dashboard_catalog_base_domain,
+          'probe_url': '',
+        }]
+  when:
+    - dashboard_catalog_synthesize_traefik | default(false) | bool
+    - (dashboard_catalog_services | default([]) | selectattr('name', 'equalto', 'traefik') | list | length) == 0
+
+- name: Append static infrastructure links to the catalog
+  ansible.builtin.set_fact:
+    dashboard_catalog_services: >-
+      {{
+        dashboard_catalog_services + [{
+          'name': item.name,
+          'group': item.group | default('infra', true),
+          'sso': item.sso | default(false),
+          'ui': item.ui | default(true),
+          'section': item.section | default(none),
+          'desc': item.desc | default('', true),
+          'fqdn': item.hostname | default(item.name, true) ~ '.' ~ dashboard_catalog_base_domain,
+          'url': 'https://' ~ (item.hostname | default(item.name, true) ~ '.' ~ dashboard_catalog_base_domain),
+          'probe_url': '',
+        }]
+      }}
+  loop: "{{ dashboard_catalog_infrastructure_links | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: (dashboard_catalog_services | default([]) | selectattr('name', 'equalto', item.name) | list | length) == 0
+
 - name: Order the catalog by group, then name
   ansible.builtin.set_fact:
     dashboard_catalog_services: >-
