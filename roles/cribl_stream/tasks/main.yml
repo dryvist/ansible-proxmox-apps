@@ -119,6 +119,12 @@
     cribl_stream_outputs_live_ids: >-
       {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
           | default({}, true)).get('outputs', {}).keys() | list }}
+    # The Langfuse endpoint is managed here too, and the comparison above never
+    # saw it: a changed URL left outputs.yml stale until some OTHER field
+    # drifted, so trace delivery ran against the old value for weeks.
+    cribl_stream_langfuse_live_endpoint: >-
+      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+          | default({}, true)).get('outputs', {}).get('langfuse_otlp', {}).get('endpoint', '') }}
   no_log: true
 
 - name: Deploy Cribl Stream outputs configuration
@@ -144,6 +150,7 @@
                | map('regex_replace', '^', 'splunk_hec_') | list)
               | difference(cribl_stream_outputs_live_ids) | length > 0)
       or 'langfuse_otlp' not in cribl_stream_outputs_live_ids
+      or cribl_stream_langfuse_live_endpoint != cribl_stream_langfuse_url
 
 - name: Deploy IPFIX pipeline configuration
   ansible.builtin.template:
