@@ -19,6 +19,7 @@
 #   5. guarantee a trace name   (a third of spans arrive unnamed)
 #   6. trim noise               (always-empty attrs, multi-KB stack traces)
 #   7. redact credentials       (before content capture is ever enabled)
+#   8. drop valueless attrs     (backend worker throws on a value-less attr)
 
 output: langfuse_otlp
 streamtags: []
@@ -112,3 +113,22 @@ functions:
 {% for field in cribl_stream_otel_redaction_fields %}
         - '{{ field }}'
 {% endfor %}
+
+  # 8. Every step above sets an attribute with `x || undefined` when its
+  # source is absent, which the OTLP exporter serializes as an attribute with
+  # no value member at all. The Langfuse worker throws
+  # "Cannot read properties of undefined (reading 'stringValue')" on that
+  # exact shape and drops the whole span after the web tier already returned
+  # 200 -- confirmed live with four hand-built payloads to the real endpoint
+  # (plain string, array, and empty-object values all stored; a value-less
+  # key alone reproduced the crash and never stored). Strip them here rather
+  # than at every `|| undefined` site, so a source added later is covered too.
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: "attributes"
+          value: >-
+            Object.fromEntries(Object.entries(attributes)
+              .filter(([, v]) => v !== undefined && v !== null))
