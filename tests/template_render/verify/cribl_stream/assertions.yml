@@ -66,6 +66,22 @@
       DEFAULT and not on a rendered fixture (the fixture restates the URL,
       so it cannot see a bad default).
 
+- name: Assert otel_traces strips attributes left without a value
+  ansible.builtin.assert:
+    that:
+      - "'Object.entries(attributes).filter' in _cribl_stream_otel_traces"
+      - >-
+        _cribl_stream_otel_traces.index('Object.entries(attributes).filter')
+        < _cribl_stream_otel_traces.index('id: mask')
+    fail_msg: >-
+      the enrichment chain must drop attributes whose value came out
+      undefined, before the mask function. Each `|| undefined` emits the
+      attribute key with no value, which the OTLP destination serializes
+      with no "value" member; the backend's ingestion worker reads
+      value.stringValue on it, throws, and fails the whole batch. The POST
+      still returns 200 because that happens in the async worker, so the
+      destination reports success while every span is silently discarded.
+
 - name: Assert AI ingest inputs render per routing entry with the right type
   ansible.builtin.assert:
     that:
@@ -206,7 +222,7 @@
 - name: Assert otel_traces parses as YAML and keeps the trace-only drop first
   ansible.builtin.assert:
     that:
-      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 7"
+      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 8"
       - "(_cribl_stream_otel_traces | from_yaml).functions[0].id == 'drop'"
       - "(_cribl_stream_otel_traces | from_yaml).output == 'langfuse_otlp'"
     fail_msg: >-

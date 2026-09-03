@@ -18,7 +18,8 @@
 #   4. normalize usage/metadata (emitters disagree on attribute names)
 #   5. guarantee a trace name   (a third of spans arrive unnamed)
 #   6. trim noise               (always-empty attrs, multi-KB stack traces)
-#   7. redact credentials       (before content capture is ever enabled)
+#   7. drop valueless attrs     (a keyless value crashes the backend worker)
+#   8. redact credentials       (before content capture is ever enabled)
 
 output: langfuse_otlp
 streamtags: []
@@ -98,7 +99,30 @@ functions:
         - "attributes['{{ attr }}']"
 {% endfor %}
 
-  # 7. Credential redaction - see defaults/main.yml for the schema trap.
+  # 7. Drop attributes that ended up with no value.
+  #
+  # Every `|| undefined` above emits the attribute KEY with an undefined
+  # value, and the OTLP destination serializes that as {"key": "..."} with no
+  # `value` member at all. The backend's ingestion worker reads
+  # attribute.value.stringValue on that and dies with
+  # "Cannot read properties of undefined (reading 'stringValue')", failing the
+  # whole batch. The HTTP POST still returns 200 because the crash happens in
+  # the async worker, so the destination reports success while nothing is
+  # stored - the span is destroyed with no error on this side.
+  #
+  # Filtering once here rather than making each `|| undefined` conditional
+  # keeps it correct for attributes added later; Cribl's eval has no
+  # per-field conditional add. Absent stays absent, which is the intent -
+  # an unknown session id must not be synthesized.
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: "attributes"
+          value: "Object.fromEntries(Object.entries(attributes).filter(([k, v]) => v !== undefined && v !== null))"
+
+  # 8. Credential redaction - see defaults/main.yml for the schema trap.
   - id: mask
     filter: "true"
     disabled: false
