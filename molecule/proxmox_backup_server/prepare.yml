@@ -41,6 +41,11 @@
         cmd: truncate -s 4G /var/tmp/molecule-datastore.img
         creates: /var/tmp/molecule-datastore.img
 
+    # `losetup --find --show` intermittently fails with "No such file or
+    # directory" against the backing file the previous task just created —
+    # a loop-control/udev race inside the ephemeral container, not a missing
+    # file. A short retry absorbs it; it never took more than one retry in
+    # observed failures.
     - name: Attach the backing file to a loop device
       ansible.builtin.shell:
         # pipefail: without it a losetup failure is masked by the exit status
@@ -52,7 +57,15 @@
           if [ -n "$existing" ]; then
             printf '%s' "$existing"
           else
-            losetup --find --show /var/tmp/molecule-datastore.img | tr -d '\n'
+            for attempt in 1 2 3 4 5; do
+              if dev=$(losetup --find --show /var/tmp/molecule-datastore.img 2>/dev/null); then
+                printf '%s' "$dev"
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "losetup: no free loop device attached after 5 attempts" >&2
+            exit 1
           fi
       register: molecule_loop_dev
       changed_when: false
