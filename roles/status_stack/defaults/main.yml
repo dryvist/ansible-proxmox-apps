@@ -1,0 +1,80 @@
+---
+# status_stack — Gatus + Uptime Kuma as ONE Docker-in-LXC compose project on
+# the tofu `status` guest. Gatus is the catalog / OIDC synthetics SoR; Uptime
+# Kuma is the keystone operator status page. Both Authelia-gated at Traefik.
+
+# renovate: datasource=docker depName=ghcr.io/twin/gatus
+status_stack_gatus_image: "ghcr.io/twin/gatus:v5.17.0"
+status_stack_gatus_container_name: gatus
+
+# renovate: datasource=docker depName=louislam/uptime-kuma
+status_stack_kuma_image: "louislam/uptime-kuma:1.23.16"
+status_stack_kuma_container_name: uptime-kuma
+
+status_stack_data_dir: /opt/status-stack
+
+status_stack_gatus_port: >-
+  {{ tofu_data.constants.service_ports.gatus_web
+     | mandatory('tofu_data.constants.service_ports.gatus_web missing — regenerate the published inventory') }}
+status_stack_kuma_port: >-
+  {{ tofu_data.constants.service_ports.uptime_kuma_web
+     | mandatory('tofu_data.constants.service_ports.uptime_kuma_web missing — regenerate the published inventory') }}
+
+# Universal cadence — every endpoint / monitor defaults to 60s.
+status_stack_interval: "60s"
+
+# Authelia OAuth error markers that must NEVER appear in a followed response
+# body (Hermes-style invalid_client). Plain substring patterns for Gatus pat().
+status_stack_authelia_error_patterns:
+  - "invalid_client"
+  - "Client authentication failed"
+  - "OAuth 2.0 Client does not exist"
+
+# OIDC client registration probes — client_id + redirect_uri pairs already
+# declared in the authelia role. No secrets; authorize URL only.
+status_stack_authelia_public_url: "https://authelia.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+status_stack_oidc_clients:
+  - name: hermes-dashboard
+    client_id: "{{ authelia_oidc_hermes_client_id | default('hermes-dashboard') }}"
+    redirect_uri: "{{ authelia_oidc_hermes_redirect_uri | default('https://hermes.' ~ lookup('env', 'PROXMOX_SUBDOMAIN') ~ '/auth/callback') }}"
+  - name: hermes-donna-dashboard
+    client_id: "{{ authelia_oidc_donna_client_id | default('hermes-donna-dashboard') }}"
+    redirect_uri: "{{ authelia_oidc_donna_redirect_uri | default('https://hermes-donna.' ~ lookup('env', 'PROXMOX_SUBDOMAIN') ~ '/auth/callback') }}"
+  - name: homarr
+    client_id: "{{ authelia_oidc_homarr_client_id | default('homarr') }}"
+    redirect_uri: "{{ authelia_oidc_homarr_redirect_uri | default('https://homarr.' ~ lookup('env', 'PROXMOX_SUBDOMAIN') ~ '/api/auth/callback/oidc') }}"
+  - name: grafana
+    client_id: "{{ authelia_oidc_grafana_client_id | default('grafana') }}"
+    redirect_uri: "{{ authelia_oidc_grafana_redirect_uri | default('https://grafana.' ~ lookup('env', 'PROXMOX_SUBDOMAIN') ~ '/login/generic_oauth') }}"
+  - name: langfuse
+    client_id: "{{ authelia_oidc_langfuse_client_id | default('langfuse') }}"
+    redirect_uri: "{{ authelia_oidc_langfuse_redirect_uri | default('https://langfuse.' ~ lookup('env', 'PROXMOX_SUBDOMAIN') ~ '/api/auth/callback/custom') }}"
+  - name: semaphore
+    client_id: "{{ authelia_oidc_semaphore_client_id | default('semaphore') }}"
+    redirect_uri: "{{ authelia_oidc_semaphore_redirect_uri | default('https://semaphore.' ~ lookup('env', 'PROXMOX_SUBDOMAIN') ~ '/api/auth/oidc/authelia/redirect') }}"
+
+# Keystone HTTP monitors for Uptime Kuma (bootstrap script). Not the full
+# catalog — that is Gatus. Auth headers only when straightforward.
+status_stack_kuma_keystones:
+  - name: Traefik HTTPS
+    url: "https://traefik.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+  - name: Authelia
+    url: "https://authelia.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+  - name: Gatus
+    url: "https://gatus.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+  - name: Prometheus
+    url: "https://prometheus.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+  - name: OpenBao
+    url: "https://openbao.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+  - name: Healthchecks
+    url: "https://healthchecks.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+
+# Uptime Kuma admin (generate-once + OpenBao publish when wired).
+status_stack_kuma_admin_username: admin
+status_stack_kuma_admin_password: ""
+status_stack_kuma_admin_password_file: "{{ status_stack_data_dir }}/.kuma_admin_password"
+
+# Optional API-key overlays for Gatus (name must match catalog service name).
+# Empty by default — populate from inventory when Homarr/OpenBao secrets are
+# already available. Each entry: {name, url, headers:{Header: value}}
+status_stack_authenticated_endpoints: []

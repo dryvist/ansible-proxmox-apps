@@ -1,0 +1,73 @@
+{{ ansible_managed | comment }}
+# Gatus — estate catalog synthetics + OIDC client registration probes.
+# Interval is {{ status_stack_interval }} for every endpoint.
+#
+# Catalog URLs follow redirects. Authelia OAuth error pages (invalid_client)
+# fail the body conditions even when HTTP status is 200/302. Gateway timeouts
+# (504) fail the status condition.
+
+metrics: true
+storage:
+  type: memory
+
+endpoints:
+{% for svc in dashboard_catalog_services | default([]) %}
+  - name: {{ svc.name }}
+    group: catalog-{{ svc.group | default('other') }}
+    url: "{{ svc.url }}"
+    interval: {{ status_stack_interval }}
+    client:
+      timeout: 15s
+      ignore-redirect: false
+    conditions:
+      - "[STATUS] < 500"
+      - "[STATUS] != 504"
+{% for pat in status_stack_authelia_error_patterns %}
+      - "[BODY] != pat(*{{ pat }}*)"
+{% endfor %}
+{% endfor %}
+{% for ep in status_stack_authenticated_endpoints | default([]) %}
+  - name: {{ ep.name }}-authed
+    group: catalog-authed
+    url: "{{ ep.url }}"
+    interval: {{ status_stack_interval }}
+    headers:
+{% for hk, hv in (ep.headers | default({})).items() %}
+      {{ hk }}: "{{ hv }}"
+{% endfor %}
+    client:
+      timeout: 15s
+      ignore-redirect: false
+    conditions:
+      - "[STATUS] < 400"
+{% endfor %}
+{% for ks in status_stack_kuma_keystones | default([]) %}
+  - name: keystone-{{ ks.name | regex_replace('[^A-Za-z0-9._-]', '-') }}
+    group: keystone
+    url: "{{ ks.url }}"
+    interval: {{ status_stack_interval }}
+    client:
+      timeout: 15s
+      ignore-redirect: false
+    conditions:
+      - "[STATUS] < 500"
+      - "[STATUS] != 504"
+{% for pat in status_stack_authelia_error_patterns %}
+      - "[BODY] != pat(*{{ pat }}*)"
+{% endfor %}
+{% endfor %}
+{% for oidc in status_stack_oidc_clients | default([]) %}
+  - name: oidc-{{ oidc.name }}
+    group: oidc-clients
+    url: >-
+      {{ status_stack_authelia_public_url }}/api/oidc/authorization?response_type=code&scope=openid&client_id={{ oidc.client_id | urlencode }}&redirect_uri={{ oidc.redirect_uri | urlencode }}
+    interval: {{ status_stack_interval }}
+    client:
+      timeout: 15s
+      ignore-redirect: false
+    conditions:
+      - "[STATUS] < 500"
+{% for pat in status_stack_authelia_error_patterns %}
+      - "[BODY] != pat(*{{ pat }}*)"
+{% endfor %}
+{% endfor %}
