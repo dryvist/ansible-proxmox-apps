@@ -30,6 +30,26 @@
         state: present
         update_cache: true
 
+    # These containers run privileged, sharing the runner HOST's dockerd —
+    # `/dev` and the loop subsystem are the host's, not namespaced. Nothing in
+    # this scenario's destroy/cleanup ever called `losetup -d`, so every past
+    # run leaked one loop device still bound to that run's now-deleted
+    # container filesystem (a dead inode a loop device can hold open
+    # indefinitely). Confirmed live on the runner: `losetup -a` showed 11
+    # devices, all pointed at this same path, none of them this container's
+    # (which has never attached one yet). Enough of those and `losetup -f`
+    # has nothing free to hand out. Sweep them before creating a new one —
+    # self-healing regardless of how many earlier runs leaked.
+    - name: Detach loop devices leaked by earlier scenario runs
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          losetup -a | awk -F: '/molecule-datastore\.img/ {print $1}' \
+            | xargs -r -n1 losetup -d
+      changed_when: false
+      failed_when: false
+
     # 4G, and the size is load-bearing rather than arbitrary. Creating a PBS
     # datastore lays out 65536 chunk DIRECTORIES, and each one costs an inode.
     # ext4's default allocation is one inode per 16K, so a 512M filesystem gets
@@ -41,32 +61,9 @@
         cmd: truncate -s 4G /var/tmp/molecule-datastore.img
         creates: /var/tmp/molecule-datastore.img
 
-    # `losetup --find --show` intermittently fails with "No such file or
-    # directory" against the backing file the previous task just created —
-    # a loop-control/udev race inside the ephemeral container, not a missing
-    # file. A short retry absorbs it; it never took more than one retry in
-    # observed failures.
     - name: Attach the backing file to a loop device
-      ansible.builtin.shell:
-        # pipefail: without it a losetup failure is masked by the exit status
-        # of cut, and the play would carry on with an empty device path.
-        executable: /bin/bash
-        cmd: |
-          set -euo pipefail
-          existing=$(losetup -j /var/tmp/molecule-datastore.img | cut -d: -f1)
-          if [ -n "$existing" ]; then
-            printf '%s' "$existing"
-          else
-            for attempt in 1 2 3 4 5; do
-              if dev=$(losetup --find --show /var/tmp/molecule-datastore.img 2>/dev/null); then
-                printf '%s' "$dev"
-                exit 0
-              fi
-              sleep 1
-            done
-            echo "losetup: no free loop device attached after 5 attempts" >&2
-            exit 1
-          fi
+      ansible.builtin.command:
+        cmd: losetup --find --show /var/tmp/molecule-datastore.img
       register: molecule_loop_dev
       changed_when: false
 
