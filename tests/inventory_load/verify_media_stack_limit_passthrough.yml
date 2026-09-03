@@ -1,0 +1,39 @@
+---
+# A scoped parent used to run playbooks/site/05-media-and-gate.yml's child
+# invocation with NO --limit/--tags forwarded — every scoped converge
+# silently triggered a full, unscoped media-stack run. Exercises the same
+# task file the real play uses (playbooks/tasks/compute_servarr_extra_args.yml)
+# via its override vars (ansible_limit/ansible_run_tags are magic vars and
+# cannot be shadowed by a task-level `vars:`), so the two can never drift.
+- name: Assert media-stack extra-args passthrough for a scoped run
+  vars:
+    servarr_limit_override: "docker-host,localhost"
+    servarr_tags_override: ["github_runner"]
+  block:
+    - name: Compute extra args for the scoped-run fixture
+      ansible.builtin.import_tasks: ../../playbooks/tasks/compute_servarr_extra_args.yml
+
+    - name: Assert both --limit and --tags were forwarded
+      ansible.builtin.assert:
+        that:
+          - "'--limit docker-host,localhost' in _servarr_extra_args"
+          - "'--tags github_runner' in _servarr_extra_args"
+        fail_msg: >-
+          A scoped parent run must forward its --limit/--tags to the
+          media-stack child. Got: {{ _servarr_extra_args }}
+
+- name: Assert media-stack extra-args passthrough for an unscoped run
+  vars:
+    servarr_limit_override: ""
+    servarr_tags_override: ["all"]
+  block:
+    - name: Compute extra args for the unscoped-run fixture
+      ansible.builtin.import_tasks: ../../playbooks/tasks/compute_servarr_extra_args.yml
+
+    - name: Assert nothing was forwarded
+      ansible.builtin.assert:
+        that:
+          - _servarr_extra_args | trim | length == 0
+        fail_msg: >-
+          An unscoped parent run must not forward a --limit/--tags. Got:
+          {{ _servarr_extra_args }}
