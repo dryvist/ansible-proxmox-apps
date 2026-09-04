@@ -24,7 +24,28 @@ openbao_base_approles:
   # consumer inventory) plus its own delta, and signs SSH certificates under
   # ssh-sign-automation-semaphore rather than ...-ansible, so the principal on
   # the wire says which caller ran the converge.
+  #
+  # secret_id_ttl 0 / num_uses 0, deliberately, with the reason the convention
+  # in 08-admin-and-ttls.yml requires: this secret_id is not held by a loop that
+  # can re-mint it. It is written once into the execution plane's stored
+  # environment and read from there on every unattended run, so both machine
+  # defaults expire a credential nothing will replace — the 24h TTL kills it
+  # after a day, and the 30-redemption cap after roughly a day of runs. Either
+  # one turns every scheduled template into a failure whose message is an
+  # expired login rather than the thing that actually broke, which is worse
+  # than the bound is good. Re-minting happens on deploy, not on a timer.
+  #
+  # This is a real tradeoff, not a free one, and it is worth naming plainly: an
+  # unexpiring secret_id sitting in the execution plane's database is exactly
+  # the weaker-trust shape semaphore-policy.hcl.j2 gives as the reason this
+  # identity is separate from ansible-converge in the first place. What bounds
+  # it is the grant, not the lifetime — the attached policies are enumerated
+  # read on named paths. It takes the default `machine` CIDR class, so it also
+  # picks up a source bind wherever this environment supplies those CIDRs.
+  # Give it a lifetime back the moment something re-mints on a schedule.
   - name: "{{ openbao_semaphore_approle_name }}"
+    secret_id_ttl: 0
+    secret_id_num_uses: 0
     token_policies: >-
       {{ [openbao_ansible_converge_policy_name, openbao_semaphore_policy_name,
           openbao_config_write_policy_name]
