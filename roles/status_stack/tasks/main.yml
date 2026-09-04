@@ -98,32 +98,25 @@
   delay: 3
   until: status_stack_gatus_health.status | default(0) == 200
 
-- name: Install Uptime Kuma bootstrap helper
-  ansible.builtin.copy:
-    src: kuma_bootstrap.py
-    dest: "{{ status_stack_data_dir }}/kuma_bootstrap.py"
-    owner: root
-    group: root
-    mode: "0755"
+# Uptime Kuma's own first-run HTTP endpoint — no collection, no sidecar, no
+# monitor sync. Gatus is the synthetics SoR; Kuma is the operator status UI.
+- name: Probe whether Uptime Kuma still needs initial setup
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ status_stack_kuma_port | trim }}/api/entry-page"
+    return_content: true
+  register: status_stack_kuma_entry
+  retries: 10
+  delay: 3
+  until: status_stack_kuma_entry.status | default(0) == 200
 
-- name: Bootstrap Uptime Kuma admin and keystone monitors
-  ansible.builtin.command:
-    argv:
-      - python3
-      - "{{ status_stack_data_dir }}/kuma_bootstrap.py"
-  args:
-    stdin: >-
-      {{
-        {
-          'base_url': 'http://127.0.0.1:' ~ (status_stack_kuma_port | trim),
-          'username': status_stack_kuma_admin_username,
-          'password': status_stack_effective_kuma_password,
-          'interval_seconds': 60,
-          'monitors': status_stack_kuma_keystones,
-        } | to_json
-      }}
-  register: status_stack_kuma_bootstrap
-  changed_when: >-
-    (status_stack_kuma_bootstrap.stdout | default('') | from_json).changed | default(false)
-  failed_when: status_stack_kuma_bootstrap.rc != 0
+- name: Create Uptime Kuma initial admin
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ status_stack_kuma_port | trim }}/setup"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ status_stack_kuma_admin_username }}"
+      password: "{{ status_stack_effective_kuma_password }}"
+    status_code: [200, 201]
+  when: status_stack_kuma_entry.json.needSetup | default(false) | bool
   no_log: true

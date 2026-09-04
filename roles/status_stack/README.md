@@ -1,22 +1,16 @@
 # status_stack
 
-Gatus (catalog + OIDC synthetics) and Uptime Kuma (keystone status page) as one
-Docker-in-LXC compose project on the tofu `status` guest.
+Gatus (catalog + OIDC + keystone synthetics) and Uptime Kuma (operator status
+UI) as one Docker-in-LXC compose project on the tofu `status` guest.
 
-## Cadence
+## Split
 
-Every Gatus endpoint defaults to `60s`. Uptime Kuma keystone monitors use the
-same interval when the Socket.IO bootstrap client is available.
-
-## What Gatus checks
-
-1. **Catalog URLs** — every `dashboard_catalog` public HTTPS URL, follow
-   redirects. `504` and Authelia OAuth error bodies (`invalid_client`, etc.) are
-   unhealthy.
-2. **Keystones** — Traefik, Authelia, Gatus, Prometheus, OpenBao, Healthchecks
-   (same set as Uptime Kuma).
-3. **OIDC client registration** — Authelia authorize URL per known `client_id`
-   from the authelia role defaults (no login, no client secret).
+- **Gatus** is the IaC synthetics source of record (catalog URLs, keystones,
+  OIDC client probes) at `60s`, scraped by Prometheus.
+- **Uptime Kuma** is the status UI. Ansible only creates the first admin via
+  Kuma's own `/setup` endpoint. Monitors are not synced from Ansible — there
+  is no maintained first-party API module worth depending on, and Gatus already
+  covers the same keystones.
 
 ## Auth overlays
 
