@@ -30,6 +30,23 @@ Type=exec
 # reset), and `docker run --name` then fails with a name conflict forever.
 # `-` so a clean start is not a failure.
 ExecStartPre=-/usr/bin/docker rm -f {{ github_runner_container_prefix }}-%i
+# RUNNER_NAME_PREFIX below, never RUNNER_NAME. The image appends a random
+# suffix to a prefix, but an explicit RUNNER_NAME is used verbatim -- and a
+# FIXED name is unusable for an EPHEMERAL runner. GitHub tears down the
+# registration after every job and releases the listener session a minute or
+# two later, asynchronously. The replacement container starts in RestartSec and
+# re-registers the same name while the outgoing session is still held, so it
+# gets `A session for this runner already exists` -> Conflict, retries for
+# ~2 minutes, then exits when the server garbage-collects the registration
+# underneath it. systemd starts another one straight into the same race.
+#
+# Each cycle leaves a fresh session draining behind it, so the pool degrades
+# from intermittent to permanently wedged: the runners stay "up" while never
+# reaching `Listening for Jobs`, and every job targeting these labels queues
+# with no runner assigned until GitHub's hard 24h ceiling cancels it.
+#
+# A unique name per incarnation cannot collide -- which is the image's own
+# default, and what the variable was always named for.
 ExecStart=/usr/bin/docker run \
     --rm \
     --name {{ github_runner_container_prefix }}-%i \
@@ -39,12 +56,17 @@ ExecStart=/usr/bin/docker run \
     --group-add {{ github_runner_docker_gid }} \
     --network {{ github_runner_network }} \
     --volume /var/run/docker.sock:/var/run/docker.sock \
-    --env RUNNER_NAME={{ github_runner_name_prefix }}-%i \
+    --env RUNNER_NAME_PREFIX={{ github_runner_name_prefix }}-%i \
     {{ github_runner_image }}
 # `docker run` forwards the container's exit status. An ephemeral runner exits
-# 0 after its job, so `always` -- not `on-failure` -- is what starts the next
-# one. RestartSec keeps a crash-looping image from hammering the API.
+# NON-ZERO after a completed job (observed: status=1/FAILURE immediately after
+# `Job ... completed with result: Succeeded`), so `always` -- not `on-failure`
+# -- is what starts the next one. The exit code carries no signal here; do not
+# gate the restart on it.
 Restart=always
+# Only crash-loop protection. It is deliberately NOT the mechanism that avoids
+# a session collision -- the unique runner name above is. Do not tune this to
+# "wait out" a session; that trades throughput for a race it cannot close.
 RestartSec=10s
 # Stop means stop: without this, systemd's SIGTERM reaches `docker run` but the
 # container can outlive it and hold the runner registration.
