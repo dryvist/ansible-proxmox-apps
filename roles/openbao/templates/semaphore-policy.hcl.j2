@@ -20,8 +20,9 @@
 #   platform/splunk/main
 #     ansible-splunk's converge reads the Splunk and Splunkbase credentials it
 #     used to receive as ambient environment variables from a laptop secrets
-#     manager. Read-only: these are provisioned out of band and a converge must
-#     never rewrite the account it authenticates as. Call sites:
+#     manager, and which an unattended run therefore could not reach at all.
+#     Read-only: these are provisioned out of band and a converge must never
+#     rewrite the account it authenticates as. Call sites:
 #       ansible-splunk  playbooks/site.yml                       (SPLUNK_PASSWORD,
 #                                                                 SPLUNK_HEC_TOKEN,
 #                                                                 HEC_NAMESPACE)
@@ -29,26 +30,25 @@
 #                                                                (SPLUNKBASE_USERNAME,
 #                                                                 SPLUNKBASE_PASSWORD)
 #
-#   apps/splunkbase-mirror
-#     The bucket-scoped read-write object-storage key the Splunkbase mirror
-#     writes add-ons with. Deliberately NOT platform/object-storage/main: that
-#     path holds the object store's ROOT credentials, which authorize every
-#     bucket. One bucket per workload, one key pair per bucket — an unattended
-#     mirror job has no business holding root. Call site:
-#       ansible-splunk  playbooks/sync-splunkbase.yml            (s3_env)
+# NO OBJECT-STORAGE GRANT HERE, DELIBERATELY, AND IT IS NOT AN OVERSIGHT.
+# The Splunkbase mirror writes to the artifact bucket, so it needs an
+# object-storage credential — but ansible-converge, which this AppRole also
+# attaches, already grants the path the mirror reads. A second grant here would
+# widen nothing and only add a place to keep in sync.
+#
+# The longer-term intent is a bucket-scoped read-write key per workload, per
+# the one-bucket-per-workload rule, rather than the shared credential in use
+# today. That is blocked on the object store rather than on policy: the
+# deployed version implements neither an IAM nor an STS API, so there is no
+# second credential to mint and no role to assume — verified against the
+# running service, not inferred from its documentation. When the store gains
+# one, the scoped key lands at apps/splunkbase-mirror and gets its own stanza
+# here.
 
 path "{{ openbao_kv_mount }}/data/platform/splunk/main" {
   capabilities = ["read"]
 }
 
 path "{{ openbao_kv_mount }}/metadata/platform/splunk/main" {
-  capabilities = ["read", "list"]
-}
-
-path "{{ openbao_kv_mount }}/data/apps/splunkbase-mirror" {
-  capabilities = ["read"]
-}
-
-path "{{ openbao_kv_mount }}/metadata/apps/splunkbase-mirror" {
   capabilities = ["read", "list"]
 }
