@@ -1,5 +1,47 @@
 # Changelog
 
+## [4.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.27.1...v4.28.0) (2026-09-04)
+
+
+### Features
+
+* **authelia,syslog:** narrow Semaphore API bypass, ship iac-platform logs ([#1680](https://github.com/dryvist/ansible-proxmox-apps/issues/1680)) ([116a5d9](https://github.com/dryvist/ansible-proxmox-apps/commit/116a5d9ad56e3bff0e8207bebcb86f906965be89))
+* **cribl_stream:** alias the cache token counts onto the usage convention ([b171efd](https://github.com/dryvist/ansible-proxmox-apps/commit/b171efdf76e06fd3ec498decfd266012e93dd26a))
+* **cribl_stream:** alias the cache token counts onto the usage convention ([27c40c1](https://github.com/dryvist/ansible-proxmox-apps/commit/27c40c18550f00a79fc7995e17f03bc9f36061ad))
+* **cribl_stream:** fan Prometheus remote_write to VictoriaMetrics ([02db847](https://github.com/dryvist/ansible-proxmox-apps/commit/02db8479b0cc06ae41ae1943659dbecd73abc4f4))
+* **cribl_stream:** map OTLP span identity onto the Langfuse attribute contract ([#1687](https://github.com/dryvist/ansible-proxmox-apps/issues/1687)) ([e046ea7](https://github.com/dryvist/ansible-proxmox-apps/commit/e046ea7f96d093e5d563a9dc40f31b2b2c985e29))
+* **cribl:** route OTLP log records to the ai_usage index ([3852e5c](https://github.com/dryvist/ansible-proxmox-apps/commit/3852e5c14dd703b0a5c54d3fa71987be09928554))
+* **cribl:** route OTLP log records to the ai_usage index ([c2a3e0d](https://github.com/dryvist/ansible-proxmox-apps/commit/c2a3e0d5e67851c672dd402aa183d48c9dc99ee8))
+* **openbao:** add the iac-platform-semaphore workspace identity ([#1681](https://github.com/dryvist/ansible-proxmox-apps/issues/1681)) ([b179574](https://github.com/dryvist/ansible-proxmox-apps/commit/b179574eb875a6b7be09df83d001f623a68a2681))
+* **openbao:** finite secret_id TTLs, CIDR binding, scoped admin policy, issuer split, human unlock ([#1692](https://github.com/dryvist/ansible-proxmox-apps/issues/1692)) ([da51e0e](https://github.com/dryvist/ansible-proxmox-apps/commit/da51e0e0f81052b076b48f06a5358e6036939a33))
+* **openbao:** generate a per-consumer router key for Open WebUI and LangGraph ([#1709](https://github.com/dryvist/ansible-proxmox-apps/issues/1709)) ([ac190d1](https://github.com/dryvist/ansible-proxmox-apps/commit/ac190d12248cdc886e289be5e2197f7a15e3278b))
+* **service_deadman:** watch the github-runner pool for silent drift ([#1694](https://github.com/dryvist/ansible-proxmox-apps/issues/1694)) ([511eca4](https://github.com/dryvist/ansible-proxmox-apps/commit/511eca49585b3c8768034d8567e7dd1b4be21663))
+* **status:** add Gatus/Uptime Kuma stack and truthful board probes ([5a1da6d](https://github.com/dryvist/ansible-proxmox-apps/commit/5a1da6d1b841b3e37c737b78eb72679e7ae7d44c))
+* **status:** Gatus/Uptime Kuma status stack and board health probes ([c7ab66c](https://github.com/dryvist/ansible-proxmox-apps/commit/c7ab66c16542e269b1114d3f62e93cb621f1965f))
+
+
+### Bug Fixes
+
+* **ci:** retry the galaxy and loop-device flakes instead of rerunning ([#1703](https://github.com/dryvist/ansible-proxmox-apps/issues/1703)) ([7d316fb](https://github.com/dryvist/ansible-proxmox-apps/commit/7d316fb77f73de399f6f6eba641b729f109efd33))
+* **cribl_docker_stack:** raise Stream's memory limit to stop OOM kills ([#1695](https://github.com/dryvist/ansible-proxmox-apps/issues/1695)) ([f73dc91](https://github.com/dryvist/ansible-proxmox-apps/commit/f73dc91ce787d3720f81b698919307f5c01c8f49))
+* **cribl_stream:** gate the Langfuse output redeploy on the live endpoint ([#1708](https://github.com/dryvist/ansible-proxmox-apps/issues/1708)) ([779a6e9](https://github.com/dryvist/ansible-proxmox-apps/commit/779a6e93afee7d9396f13d9c23c5816afdcc89eb))
+* **cribl_stream:** send Langfuse OTLP to the base endpoint, not the signal path ([#1702](https://github.com/dryvist/ansible-proxmox-apps/issues/1702)) ([97afab5](https://github.com/dryvist/ansible-proxmox-apps/commit/97afab56a4c4653d907b94ece2f6d5c99e6a78e9))
+* **cribl_stream:** strip valueless attributes before the Langfuse output ([#1712](https://github.com/dryvist/ansible-proxmox-apps/issues/1712)) ([d97ac58](https://github.com/dryvist/ansible-proxmox-apps/commit/d97ac58e52f6daabaecc1d6ba5d37573400e62fd))
+* **grafana_stack:** give the Claude Code metrics dashboard a stable uid ([#1710](https://github.com/dryvist/ansible-proxmox-apps/issues/1710)) ([71ce843](https://github.com/dryvist/ansible-proxmox-apps/commit/71ce843c110951fe0b425daff94bd99f420e4f5d))
+* **media-stack:** forward a scoped run's --limit/--tags to the child converge ([#1700](https://github.com/dryvist/ansible-proxmox-apps/issues/1700)) ([f756afd](https://github.com/dryvist/ansible-proxmox-apps/commit/f756afd8620cf5a23a1859fed7362ce98981d967))
+* **nautobot:** refuse a seed bundle whose core array assembled empty ([#1696](https://github.com/dryvist/ansible-proxmox-apps/issues/1696)) ([b14a94f](https://github.com/dryvist/ansible-proxmox-apps/commit/b14a94f690fe50fb7f74d065a6d19546794467ee))
+* **openbao_secrets:** fail loud on missing or unreadable secrets ([#1691](https://github.com/dryvist/ansible-proxmox-apps/issues/1691)) ([c239fc1](https://github.com/dryvist/ansible-proxmox-apps/commit/c239fc1dea33d13ab14e3f5823e57f71128e4f07))
+* **openbao:** constrain the one policy path inventory renders verbatim ([52a6436](https://github.com/dryvist/ansible-proxmox-apps/commit/52a6436bdd8586c97a6df6dd6e51134097b9cedf))
+* **openbao:** constrain the one policy path inventory renders verbatim ([72f4248](https://github.com/dryvist/ansible-proxmox-apps/commit/72f4248ac11ea6f363b23b8d8c0ab096b9592565))
+* **openbao:** curl the snapshot API on an on-box IPv4 ([#1706](https://github.com/dryvist/ansible-proxmox-apps/issues/1706)) ([53cb576](https://github.com/dryvist/ansible-proxmox-apps/commit/53cb5766beacf8685f98573ef25d391bc457c98f))
+* **openbao:** deploy the snapshot timer, fix voter-health self-detection, harden audit forwarding ([#1693](https://github.com/dryvist/ansible-proxmox-apps/issues/1693)) ([59f2fe4](https://github.com/dryvist/ansible-proxmox-apps/commit/59f2fe49605b0445708ca4aff437ec624948102d))
+* **openbao:** fail the snapshot leader-gate on local API errors ([#1705](https://github.com/dryvist/ansible-proxmox-apps/issues/1705)) ([c4215b6](https://github.com/dryvist/ansible-proxmox-apps/commit/c4215b6eb42cd1181dee4673db27193c39e740ad))
+* **openbao:** reconcile AppRole TTL bounds on existing machine roles ([#1704](https://github.com/dryvist/ansible-proxmox-apps/issues/1704)) ([3aaa1a1](https://github.com/dryvist/ansible-proxmox-apps/commit/3aaa1a1f90a05a07e830d79a421f8096edc91bc4))
+* **openbao:** stop the audit trail vanishing for hours at a time ([#1690](https://github.com/dryvist/ansible-proxmox-apps/issues/1690)) ([438dc21](https://github.com/dryvist/ansible-proxmox-apps/commit/438dc21ebff0155fdb87198a6b19d070ff3eb0be))
+* **status:** clear ansible-lint blockers on estate-health PR ([7fc6f36](https://github.com/dryvist/ansible-proxmox-apps/commit/7fc6f36b906089a8f4a0efff9e5927c549b93cdb))
+* **tests:** drop trailing blank line in cribl_stream assertions ([adac188](https://github.com/dryvist/ansible-proxmox-apps/commit/adac188cc4a2cc58a7b7e8d897ea1d6aeb92e647))
+* **tests:** split cribl_stream assertions to stay under token limit ([#1716](https://github.com/dryvist/ansible-proxmox-apps/issues/1716)) ([a9b9e04](https://github.com/dryvist/ansible-proxmox-apps/commit/a9b9e04de639d2d56ad9e58e9ed9bf2112804e7e))
+
 ## [4.27.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.27.0...v4.27.1) (2026-08-31)
 
 
