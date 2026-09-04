@@ -1,0 +1,26 @@
+---
+# Builds the --limit/--tags args the media-stack child run-ansible.sh call
+# should inherit from THIS run. Shared by the real converge task and its
+# contract test (tests/inventory_load/verify_media_stack_limit_passthrough.yml)
+# so the two never drift.
+#
+# Reads servarr_limit_override/servarr_tags_override first (task vars, so a
+# test can set them) and falls back to the real ansible_limit/ansible_run_tags
+# magic vars, which cannot themselves be shadowed by a task-level `vars:` —
+# magic vars outrank them. ansible_limit is empty on an unscoped run;
+# ansible_run_tags is ['all'] when --tags was never passed — neither should
+# be forwarded in that case, since the parent's own unscoped run means the
+# child should be unscoped too.
+- name: Compute the --limit/--tags args to forward to the media-stack child
+  vars:
+    _servarr_limit: "{{ servarr_limit_override | default(ansible_limit) | default('') }}"
+    _servarr_tags: "{{ servarr_tags_override | default(ansible_run_tags) | default(['all']) }}"
+  ansible.builtin.set_fact:
+    _servarr_extra_args: >-
+      {{
+        (('--limit ' ~ (_servarr_limit | quote))
+         if (_servarr_limit | length > 0) else '')
+        ~ ' ' ~
+        (('--tags ' ~ (_servarr_tags | join(',') | quote))
+         if (_servarr_tags != ['all'] and _servarr_tags | length > 0) else '')
+      }}

@@ -11,17 +11,30 @@
       pack-routed events, so unstamped events would fall into Splunk's
       HEC token defaults (index=main, sourcetype=httpevent)
 
-- name: Assert prometheus_rw input is present on port 9201 with prometheusAPI and prometheus_to_netmon pipeline
+- name: Assert prometheus_rw input fans to Splunk and VictoriaMetrics
   ansible.builtin.assert:
     that:
       - "'type: prometheus_rw' in _cribl_stream_inputs"
       - "'port: 9201' in _cribl_stream_inputs"
       - "'prometheusAPI: /api/v1/write' in _cribl_stream_inputs"
       - "'pipeline: prometheus_to_netmon' in _cribl_stream_inputs"
+      - "'output: splunk_hec' in _cribl_stream_inputs"
+      - "'output: victoriametrics_rw' in _cribl_stream_inputs"
     fail_msg: >-
-      inputs.yml.j2 must include a prometheus_rw input on port 9201 with
-      prometheusAPI: /api/v1/write (required by Cribl schema) connected
-      to the prometheus_to_netmon pipeline
+      inputs.yml.j2 must include prometheus_rw on port 9201 with
+      prometheusAPI: /api/v1/write, connected to BOTH
+      (prometheus_to_netmon → splunk_hec) and (victoriametrics_rw with no
+      Splunk-stamp pipeline)
+
+- name: Assert victoriametrics_rw Prometheus remote_write output renders
+  ansible.builtin.assert:
+    that:
+      - "'victoriametrics_rw:' in _cribl_stream_outputs_pi"
+      - "'type: prometheus' in _cribl_stream_outputs_pi"
+      - "'url: \"http://grafana.example.invalid:8428/api/v1/write\"' in _cribl_stream_outputs_pi"
+    fail_msg: >-
+      outputs.yml.j2 must define victoriametrics_rw as type: prometheus
+      targeting the fixture URL (FQDN + victoriametrics port + /api/v1/write)
 
 - name: Assert OTLP input renders on the otel port with the otel_stamp pipeline
   ansible.builtin.assert:
@@ -52,6 +65,19 @@
       in_otel connection fork, the langfuse_otlp OTLP/HTTP output at
       otlpVersion 1.3.1, and the trace-only drop filter (Langfuse rejects
       non-trace signals; a missing filter jams the persistent queue)
+
+- name: Assert the Langfuse destination default is the OTLP base, not a signal path
+  ansible.builtin.assert:
+    that:
+      - _cribl_stream_defaults.cribl_stream_langfuse_url is search('/api/public/otel$')
+    fail_msg: >-
+      cribl_stream_langfuse_url must end at the OTLP base. The
+      open_telemetry destination appends the per-signal path itself, so a
+      `/v1/traces` suffix on the default renders a doubled path the backend
+      answers 404 — every span rejected while the input, the pipeline and
+      the parallel leg all stay green, which is why this is asserted on the
+      DEFAULT and not on a rendered fixture (the fixture restates the URL,
+      so it cannot see a bad default).
 
 - name: Assert AI ingest inputs render per routing entry with the right type
   ansible.builtin.assert:
@@ -149,43 +175,3 @@
       outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
       splunk_hec_<index> output for netflow plus each unique
       ai_log_routing index
-
-- name: Assert force_splunk_meta evals are conditional and mask schema is valid
-  ansible.builtin.assert:
-    that:
-      - "'index ||' in _cribl_stream_meta_pipeline"
-      - "'sourcetype ||' in _cribl_stream_meta_pipeline"
-      - "'matchRegex' in _cribl_stream_meta_pipeline"
-      - "'replaceExpr' in _cribl_stream_meta_pipeline"
-      - "'regex:' not in _cribl_stream_meta_pipeline"
-      # Copilot datatypes stamp index=openai — there is no 'copilot' index;
-      # openai is the designated Copilot/OpenAI CLI index (ai_log_routing).
-      - "\"? 'openai'\" in _cribl_stream_meta_pipeline"
-      - "\"? 'copilot'\" not in _cribl_stream_meta_pipeline"
-      # antigravity-cli-* datatypes stamp the colon sourcetype form
-      # (antigravity:cli:transcript / :history), mirroring gemini-cli-;
-      # the general antigravity- branch stays for antigravity-brain etc.
-      - "\"replace('antigravity-cli-','antigravity:cli:')\" in _cribl_stream_meta_pipeline"
-    fail_msg: >-
-      force_splunk_meta must keep conditional evals (index || ...) so
-      Edge-stamped events pass through, and the mask rules must use
-      matchRegex/replaceExpr — regex/replacement keys fail function init
-      and silently disable the whole pipeline
-
-- name: Assert force_splunk_meta renders as parseable YAML
-  ansible.builtin.assert:
-    that:
-      - "(_cribl_stream_meta_pipeline | from_yaml).functions | length == 2"
-    fail_msg: "force_splunk_meta conf.yml must parse as YAML with eval + mask functions"
-
-- name: Assert prometheus_to_netmon stamps index=netmon_metrics and sourcetype=prometheus:metrics
-  ansible.builtin.assert:
-    that:
-      - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 1"
-      - "'netmon_metrics' in _cribl_stream_prom_pipeline"
-      - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
-      - "'Number.isFinite' in _cribl_stream_prom_pipeline"
-    fail_msg: >-
-      prometheus_to_netmon pipeline must have exactly one eval function
-      that coerces non-finite metric values and stamps index=netmon_metrics
-      and sourcetype=prometheus:metrics

@@ -50,7 +50,7 @@ def _app_payload(want, icon_url):
         "description": want.get("desc") or None,
         "iconUrl": icon_url,
         "href": want["url"],
-        "pingUrl": None,
+        "pingUrl": want.get("probe_url") or None,
     }
 
 
@@ -81,7 +81,8 @@ def sync_board(api, api_key, board_name, apps):
             changed = True
         else:
             app_ids[want["name"]] = have["id"]
-            if have.get("href") != want["url"]:
+            want_ping = want.get("probe_url") or None
+            if have.get("href") != want["url"] or have.get("pingUrl") != want_ping:
                 payload = _app_payload(want, have.get("iconUrl") or DEFAULT_ICON_URL)
                 payload["id"] = have["id"]  # appEditSchema = appManageSchema & {id}
                 api.trpc("app.update", payload, api_key=api_key)

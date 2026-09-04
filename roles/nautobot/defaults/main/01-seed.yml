@@ -1,0 +1,102 @@
+---
+# Seed-bundle assembly defaults for roles/nautobot/tasks/seed_*.yml.
+#
+# Split out of the role's single defaults file, which had reached the
+# repository per-file token limit. Ansible loads every file under
+# defaults/main/ the same way it loaded defaults/main.yml, so this is a
+# physical split only — no variable changed name, value or precedence.
+# roles/openbao/defaults/main/ is laid out the same way.
+# Seed-bundle assembly (tasks/seed_bundle.yml). On by default: the resolved tofu
+# inventory is present on every run of this repo and is the ordinary source, so a
+# bundle can always be built. The three sibling-repo sources are independently
+# optional — an absent one warns and contributes nothing, and the seed jobs are
+# additive, so Nautobot retains objects that slice previously supplied.
+#
+# This must stay paired with nautobot_run_seed_jobs. Running the jobs without
+# rebuilding replays whatever bundle is already on the guest: the export's
+# ordering guard sees a successful ingest and publishes, while the content is
+# unchanged. Rebuilding without running leaves the fresh bundle unread. Either
+# half alone reintroduces the stale-export failure the guard exists to catch.
+nautobot_build_seed: true
+nautobot_seed_sops_path: "{{ lookup('env', 'TERRAFORM_PROXMOX_SOPS') | default('', true) }}"
+nautobot_seed_fixed_ips_path: "{{ lookup('env', 'TOFU_UNIFI_FIXED_IPS') | default('', true) }}"
+nautobot_seed_hosts_yml_path: "{{ lookup('env', 'ANSIBLE_PROXMOX_HOSTS') | default('', true) }}"
+# Generated hardware slice (hardware/inventory.seed.yml in the inventory repo).
+# Optional and independent like every other source: absent means the hardware
+# seed contributes nothing and existing Devices/Modules are retained.
+nautobot_seed_hardware_path: "{{ lookup('env', 'INT_HOMELAB_HARDWARE') | default('', true) }}"
+# Physical drives, written by ansible-proxmox's pve_disk_inventory role. Optional
+# like the rest, but NOT equivalent when absent: every other slice feeds an
+# additive seed, while this one feeds a sync that deletes what it stops seeing.
+# So absent means the drive job is skipped entirely, never "sync nothing".
+nautobot_seed_drives_path: "{{ lookup('env', 'ANSIBLE_PROXMOX_DRIVES') | default('', true) }}"
+# VLAN/prefix definitions (list of {vid, name, cidr}) from Doppler / terraform
+# output, supplied as a JSON string.
+nautobot_seed_networks: "{{ (lookup('env', 'NAUTOBOT_SEED_NETWORKS') | default('[]', true)) | from_json }}"
+# Rack topology is not carried by rack_servers; default to one homelab rack.
+nautobot_seed_racks:
+  - name: homelab-rack-1
+    site: homelab
+# fixed-ips.json reservation resolution is handled in seed_bundle.yml (confirmed
+# live shape: {value: {<name>: {cidr_key, host, hostname}}}, no literal IP —
+# address = cidrhost(network_cidrs[cidr_key], host)). No json_query var needed.
+#   hosts.yml groups the pve hypervisors under this key.
+nautobot_seed_hosts_group: proxmox
+
+# Gate the heavy live application layer: pip install of Nautobot + apps,
+# post_upgrade (migrate/collectstatic), superuser, service start, HTTP health.
+# Molecule sets this false to validate the deterministic config/unit/redis/jobs
+# layer without a multi-minute install + live DB; live app validation is the
+# cutover gate (issue #138 "Done when"). Same idea as keepalived_manage_services.
+nautobot_manage_app: true
+
+# Run the additive SSoT seed jobs (load nautobot_seed.json into Nautobot) during
+# the converge. On by default so the converge — the event that resolves a fresh
+# tofu inventory — is what ingests it. The jobs are additive and a delete is a
+# no-op, so re-running is safe.
+#
+# The seed jobs are deliberately NOT celery-beat scheduled. Bundle assembly is a
+# controller-side step (seed_bundle.yml), so a scheduled worker run could only
+# replay the on-disk bundle — satisfying the export's ordering guard with
+# unchanged content. Ingest belongs on the converge; see nautobot_build_seed.
+nautobot_run_seed_jobs: true
+nautobot_run_export: false
+
+# --- Automated discovery (nautobot-device-onboarding) -----------------------
+# One shared discovery credential (env-sourced, never a literal). Folded into
+# nautobot.env only when set, then bound to Nautobot Secret objects (provider
+# `environment-variable`) inside the `device-onboarding` SecretsGroup by
+# device_onboarding_setup.py. The nautobot-device-onboarding "Sync Devices From
+# Network" job (SSOTSyncDevices) drives SSH-CLI discovery for netmiko platforms.
+#
+# SCOPE NOTE: that plugin onboards SSH-CLI *network* devices (switches/routers).
+# Proxmox VE nodes (Linux), iDRAC/BMC (IPMI/Redfish), and the UniFi controller
+# (HTTP API) are NOT netmiko platforms — full discovery of those needs their
+# native APIs and is tracked as a follow-up (see roles/nautobot/README). This
+# wiring makes the SSH-CLI path real and leaves the discovery run inert until
+# real SSH targets + a platform are configured.
+nautobot_onboard_username: "{{ lookup('env', 'NAUTOBOT_ONBOARD_USERNAME') | default('', true) }}"
+nautobot_onboard_password: "{{ lookup('env', 'NAUTOBOT_ONBOARD_PASSWORD') | default('', true) }}"
+# Run + schedule the SSOTSyncDevices discovery — off by default; the run is
+# inert unless discovery targets are supplied (empty ip list -> nothing swept).
+nautobot_run_discovery: false
+# Comma-separated target IPs/CIDRs for the SSH-CLI sweep (env-sourced; the only
+# place an IP literal is legitimate, and even then env-derived, not committed).
+nautobot_onboard_targets: "{{ lookup('env', 'NAUTOBOT_ONBOARD_TARGETS') | default('', true) }}"
+nautobot_onboard_platform: "{{ lookup('env', 'NAUTOBOT_ONBOARD_PLATFORM') | default('', true) }}"
+nautobot_onboard_location: "{{ lookup('env', 'NAUTOBOT_ONBOARD_LOCATION') | default('homelab', true) }}"
+nautobot_onboard_port: 22
+nautobot_discovery_schedule_hour: 5
+nautobot_discovery_schedule_minute: 43
+
+# Seed-bundle arrays that must never assemble empty. An empty array is not "no
+# changes" to the DiffSync job — it is a diff that deletes every member of that
+# model class. See roles/nautobot/tasks/seed_guard.yml.
+nautobot_seed_core_arrays:
+  - nodes
+  - devices
+  - virtual_machines
+
+# Classes that may legitimately be empty, for a genuine first seed into an empty
+# Nautobot. Names the exceptions rather than switching the guard off.
+nautobot_seed_allow_empty: []

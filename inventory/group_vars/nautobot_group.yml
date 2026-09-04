@@ -1,6 +1,8 @@
 ---
-# Nautobot IPAM/DCIM (issue #138). tofu-derived FQDNs/ports plus bao-first
-# secrets (apps domain). The heavy app layer stays enabled here; molecule
+# Nautobot IPAM/DCIM (issue #138). tofu-derived FQDNs/ports plus
+# OpenBao-sourced secrets (apps domain). OpenBao is the only source: each secret ends in
+# `| default(undef(), true) | mandatory(...)`, so an absent or empty value
+# aborts the play instead of being rendered over a live credential. The heavy app layer stays enabled here; molecule
 # disables it separately.
 
 # Web port from the published constants (WS-C adds service_ports.nautobot_web,
@@ -16,7 +18,8 @@ nautobot_db_host: >-
   {{ postgres_apps_primary_host }}.{{ hostvars['localhost']['tofu_data']['domain'] }}
 nautobot_db_password: >-
   {{ bao_apps_secrets.db_password
-     | default(lookup('env', 'NAUTOBOT_DB_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('NAUTOBOT_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # Public UI FQDN (Traefik-fronted): nautobot.<ingress subdomain>, matching the
 # Traefik router base domain and wildcard certificate from PROXMOX_SUBDOMAIN.
@@ -28,13 +31,15 @@ nautobot_ui_fqdn: >-
   nautobot.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
      or undef('PROXMOX_SUBDOMAIN is required for the Nautobot UI FQDN') }}
 
-# SECRET_KEY + superuser password bao-first (secret/apps/nautobot), env fallback.
+# SECRET_KEY + superuser password from secret/apps/nautobot.
 nautobot_secret_key: >-
   {{ bao_apps_secrets.secret_key
-     | default(lookup('env', 'NAUTOBOT_SECRET_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('NAUTOBOT_SECRET_KEY missing: OpenBao fetch did not supply it') }}
 nautobot_superuser_password: >-
   {{ bao_apps_secrets.superuser_password
-     | default(lookup('env', 'NAUTOBOT_SUPERUSER_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('NAUTOBOT_SUPERUSER_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # Export artifact target — the object-store bucket the published Ansible
 # inventory already lives in, which the sibling IaC repo declares as a plain

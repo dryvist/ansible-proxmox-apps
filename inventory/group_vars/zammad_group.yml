@@ -1,7 +1,10 @@
 ---
 # Zammad ITSM/ticketing + knowledge base — the incident-management system of
-# record. tofu-derived FQDNs/ports plus bao-first secrets (apps domain), env
-# fallback. Mirrors the nautobot_group.yml shape (shared-Postgres app on the
+# record. tofu-derived FQDNs/ports plus OpenBao-sourced secrets (apps
+# domain). OpenBao is the only source: each secret ends in
+# `| default(undef(), true) | mandatory(...)`, so an absent or empty value
+# aborts the play instead of being rendered over a live credential. Mirrors
+# the nautobot_group.yml shape (shared-Postgres app on the
 # apps VLAN). The heavy app layer stays enabled here; molecule disables it via
 # zammad_manage_app.
 
@@ -18,12 +21,14 @@ zammad_db_host: >-
   {{ postgres_apps_primary_host }}.{{ hostvars['localhost']['tofu_data']['domain'] }}
 zammad_db_password: >-
   {{ bao_apps_secrets.zammad_db_password
-     | default(lookup('env', 'ZAMMAD_DB_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('ZAMMAD_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
 
-# Admin password bao-first (secret/apps/zammad), env fallback.
+# Admin password from secret/apps/zammad.
 zammad_admin_password: >-
   {{ bao_apps_secrets.zammad_admin_password
-     | default(lookup('env', 'ZAMMAD_ADMIN_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('ZAMMAD_ADMIN_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # Public UI FQDN (Traefik-fronted): zammad.<ingress subdomain>, matching the
 # Traefik router base domain and wildcard certificate from PROXMOX_SUBDOMAIN.
@@ -36,29 +41,31 @@ zammad_ui_fqdn: >-
 
 # API token seeded into Zammad for the Hermes agent. Its canonical home is
 # ai/hermes (local-llm domain) so ONE token feeds both the seeding side here
-# and the Hermes skill env — bao-first with env fallback. On hosts where the
-# local-llm domain is not fetched, bao_local_llm_secrets is {} and the env
-# fallback (ZAMMAD_API_TOKEN, from Doppler/SOPS) resolves it.
+# and the Hermes skill env. The local-llm domain is fetched for every run
+# (openbao_secrets fails the play when it cannot be), so an unresolved value
+# here is an error, not a cue to fall back.
 zammad_hermes_api_token: >-
   {{ bao_local_llm_secrets.ZAMMAD_API_TOKEN
-     | default(lookup('env', 'ZAMMAD_API_TOKEN'), true) }}
+     | default(undef(), true)
+     | mandatory('ZAMMAD_API_TOKEN missing: OpenBao fetch did not supply it') }}
 
 # Bearer token for the LiteLLM router (Hermes' brain front door) that Zammad's
 # AI provider authenticates with. Canonical home is ai/llm's LLM_ROUTER_MASTER_KEY
-# (local-llm domain) — the SAME key Hermes/n8n use — so bao-first with env
-# fallback, mirroring zammad_hermes_api_token. On hosts where the local-llm domain
-# is not fetched, bao_local_llm_secrets is {} and the env fallback resolves it.
+# (local-llm domain) — the SAME key Hermes/n8n use — mirroring
+# zammad_hermes_api_token, and required rather than falling back.
 zammad_ai_provider_token: >-
   {{ bao_local_llm_secrets.LLM_ROUTER_MASTER_KEY
-     | default(lookup('env', 'LLM_ROUTER_MASTER_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('LLM_ROUTER_MASTER_KEY missing: OpenBao fetch did not supply it') }}
 
 # API token for the interactive-AI service account (Claude Code / Codex
 # sessions — a separate Zammad user from both hermes and the human admin, so
 # the activity stream attributes writes to the real actor). Canonical home is
-# apps/zammad alongside the other Zammad secrets; bao-first, env fallback.
+# apps/zammad alongside the other Zammad secrets.
 zammad_ai_api_token: >-
   {{ bao_apps_secrets.zammad_ai_api_token
-     | default(lookup('env', 'ZAMMAD_AI_API_TOKEN'), true) }}
+     | default(undef(), true)
+     | mandatory('ZAMMAD_AI_API_TOKEN missing: OpenBao fetch did not supply it') }}
 
 # Outbound notification email relays through the existing Mailpit LXC (SMTP on
 # notification_ports.mailpit_smtp). Reached by its guest FQDN — no auth, no TLS
