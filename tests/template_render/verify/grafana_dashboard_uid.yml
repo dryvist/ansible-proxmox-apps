@@ -1,0 +1,51 @@
+---
+# Grafana assigns a random uid to any dashboard whose `uid` is empty or
+# absent, and assigns a NEW one on every provisioning run. The dashboard still
+# renders, so nothing fails — but its URL is never stable, and a bookmark or a
+# cross-dashboard link to it breaks silently. One dashboard shipped that way.
+#
+# The uid is pinned to the filename stem so the two cannot drift apart, and so
+# a new dashboard has one obvious correct value rather than a free choice.
+- name: Verify every provisioned Grafana dashboard has a stable uid
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # See the header of verify_templates.yml: group_vars/all.yml sets
+    # ansible_become for managed nodes and implicit localhost inherits it, so
+    # without this the play escalates to root just to read a JSON file.
+    ansible_become: false
+    # Three levels, not the two other verify files use. Those are task files
+    # included into the entrypoint's play, so their playbook_dir is
+    # tests/template_render. This is an imported PLAYBOOK, so its playbook_dir
+    # is its own directory, one deeper.
+    _dashboard_dir: "{{ playbook_dir }}/../../../roles/grafana_stack/files/dashboards"
+  tasks:
+    - name: Collect the provisioned dashboard files
+      ansible.builtin.find:
+        paths: "{{ _dashboard_dir }}"
+        patterns: "*.json"
+      register: _grafana_dashboards
+
+    - name: Assert the dashboard set is non-empty
+      ansible.builtin.assert:
+        that:
+          - _grafana_dashboards.files | length > 0
+        fail_msg: >-
+          no dashboards found under {{ _dashboard_dir }} — a check that
+          asserts over an empty set passes without testing anything, so the
+          set itself has to be proven non-empty first
+
+    - name: Assert each dashboard uid is set and matches its filename
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', item.path) | from_json).uid | default('', true)
+            == (item.path | basename | splitext | first)
+        fail_msg: >-
+          {{ item.path | basename }} must set a top-level "uid" equal to its
+          filename without the extension. Grafana replaces an empty or absent
+          uid with a fresh random one on every provisioning run, so the
+          dashboard's URL changes underneath any saved link while the
+          dashboard itself keeps rendering normally.
+      loop: "{{ _grafana_dashboards.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"

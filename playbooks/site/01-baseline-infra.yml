@@ -177,6 +177,40 @@
   roles:
     - role: ssh_ca_trust
 
+# ssh_ca_trust's own postcondition only proves the hosts it REACHED are
+# correctly configured. It says nothing about a VM the tofu contract knows
+# about that this play's resolved host set never included — which is exactly
+# how two guests carried ssh_ca_trust_rollout_enabled with no trust for
+# weeks. Group membership (unlike --limit) isn't affected by how narrowly a
+# given run is scoped, so this is safe on every converge, not just a full one.
+- name: Assert the CA-trust play reached every VM the tofu contract declares
+  hosts: localhost
+  gather_facts: false
+  tags:
+    - ssh_ca_trust
+    - baseline
+  tasks:
+    - name: Compare resolved vms:splunk_vms:docker_vms membership to the tofu contract
+      vars:
+        _resolved: >-
+          {{ (groups['vms'] | default([]))
+             + (groups['splunk_vms'] | default([]))
+             + (groups['docker_vms'] | default([]))
+             | unique }}
+        _contracted: >-
+          {{ (tofu_data.vms | default({}) | length)
+             + (tofu_data.splunk_vm | default({}) | length)
+             + (tofu_data.docker_vms | default({}) | length) }}
+      ansible.builtin.assert:
+        that:
+          - _resolved | length >= _contracted | int
+        fail_msg: >-
+          vms:splunk_vms:docker_vms resolved to {{ _resolved | length }} host(s)
+          ({{ _resolved | join(', ') }}) but the tofu contract declares
+          {{ _contracted }} VM(s) — inventory loading is silently dropping at
+          least one, and it will never receive the ssh_ca_trust rollout (or
+          anything else this group targets).
+
 # =============================================================================
 # Phase 0a2: Syslog forwarding to the central pipeline
 # Every infra LXC ships its logs (systemd journal + native services) to the
@@ -184,10 +218,14 @@
 # timestamps are accurate. The pipeline (cribl_edge / cribl_stream) and the load
 # balancer (haproxy) are excluded: they RECEIVE this traffic, so forwarding into
 # themselves would loop; their own logs are collected locally by Cribl Edge.
+#
+# iac-platform (the docker_vms member running Semaphore) is added explicitly
+# by name, not by including the whole docker_vms group: docker-host is
+# testing/dev only and stays off the production pipeline.
 # =============================================================================
 
-- name: Forward infra LXC logs to the syslog pipeline
-  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group
+- name: Forward infra LXC (and iac-platform) logs to the syslog pipeline
+  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group:iac-platform
   become: true
   gather_facts: false
   tags:

@@ -1,21 +1,24 @@
 ---
-# Vikunja task management (issue #141) — bao-first secrets (apps domain) with an
-# env fallback, mirroring nautobot_group.yml / zammad_group.yml. Only the fields
+# Vikunja task management (issue #141) — OpenBao-sourced secrets (apps
+# domain). OpenBao is the only source: each secret ends in
+# `| default(undef(), true) | mandatory(...)`, so an absent or empty value
+# aborts the play instead of being rendered over a live credential. Mirrors
+# nautobot_group.yml / zammad_group.yml. Only the fields
 # with a home in secret/apps/vikunja (the openbao_promoted_app_secrets.vikunja promotion map)
 # are wired bao-first here. As of the apps-tier cutover (#17039) all three of the
 # role's required secrets — vikunja_db_password, vikunja_jwt_secret,
-# vikunja_admin_password — have a bao home and are wired bao-first below; the env
-# fallback stays for hosts where the apps domain was not fetched.
+# vikunja_admin_password — have a bao home and are wired to it below.
 #
 # The database password is app-namespaced (vikunja_db_password) so the flat merge
 # into bao_apps_secrets never collides with Nautobot's bare db_password. It MUST
 # match the postgres side (postgres_managed_databases reads the same
 # bao_apps_secrets.vikunja_db_password), so both ends resolve one canonical value.
-# On hosts where the apps domain was not fetched (BAO_ADDR or the apps role_id/
-# secret_id unset) bao_apps_secrets is {} and the env fallback resolves instead.
+# An unfetched apps domain fails the openbao_secrets pre-play, so it can no
+# longer reach this line as an empty value.
 vikunja_db_password: >-
   {{ bao_apps_secrets.vikunja_db_password
-     | default(lookup('env', 'VIKUNJA_DB_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('VIKUNJA_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # JWT signing secret + initial admin password bao-first (secret/apps/vikunja
 # fields vikunja_jwt_secret / vikunja_admin_password, promoted via
@@ -27,10 +30,12 @@ vikunja_db_password: >-
 # invalidate every issued session/API token.
 vikunja_jwt_secret: >-
   {{ bao_apps_secrets.vikunja_jwt_secret
-     | default(lookup('env', 'VIKUNJA_JWT_SECRET'), true) }}
+     | default(undef(), true)
+     | mandatory('VIKUNJA_JWT_SECRET missing: OpenBao fetch did not supply it') }}
 vikunja_admin_password: >-
   {{ bao_apps_secrets.vikunja_admin_password
-     | default(lookup('env', 'VIKUNJA_ADMIN_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('VIKUNJA_ADMIN_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # Postgres has no ingress; reach it by the shared apps cluster's declared
 # primary FQDN. A guest hostname is a stable service identifier here, not a
@@ -46,11 +51,13 @@ vikunja_service_users:
   - username: svc-mcp-ro
     password: >-
       {{ bao_apps_secrets.svc_mcp_ro_password
-         | default(lookup('env', 'VIKUNJA_SVC_MCP_RO_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('VIKUNJA_SVC_MCP_RO_PASSWORD missing: OpenBao fetch did not supply it') }}
   - username: svc-mcp-rw
     password: >-
       {{ bao_apps_secrets.svc_mcp_rw_password
-         | default(lookup('env', 'VIKUNJA_SVC_MCP_RW_PASSWORD'), true) }}
+         | default(undef(), true)
+         | mandatory('VIKUNJA_SVC_MCP_RW_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 # Robust auto-restart (#17046). The vikunja.service unit already carries
 # Restart=on-failure inline, but with systemd's default start-rate limiter it

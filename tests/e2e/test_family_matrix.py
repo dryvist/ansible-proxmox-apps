@@ -44,9 +44,11 @@ SYSLOG_FAMILIES_NOT_LIVE = {
     "cisco_asa", # no ASA in the lab
 }
 # AI sources whose ingest path (B4a rollout) has not converged yet.
-AI_SOURCES_NOT_LIVE = {
-    "openbao_audit",  # gated on the B7a audit-device rollout
-}
+# openbao_audit came off this list once the rollout was confirmed live: the
+# index holds 439k records going back to 2026-07-08. It had converged long
+# before anyone removed the gate, and leaving it here meant the matrix stayed
+# silent through a four-hour outage of the audit trail.
+AI_SOURCES_NOT_LIVE: set[str] = set()
 # UDP-only families (datagram senders relayed by Nginx, not HAProxy TCP).
 UDP_FAMILIES = {"macos"}
 # rsyslog-fed AI sources: syslog-type Stream inputs — send RFC3164, not JSON.

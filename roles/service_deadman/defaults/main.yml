@@ -67,6 +67,21 @@ service_deadman_group_checks:
         BAO_ADDR="http://{{ container_ip | default(ansible_host) }}:8200"
         bao status >/dev/null 2>&1
       healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_OPENBAO') | default('', true) }}"
+  docker_vms:
+    # The pooled GitHub Actions runner fleet is not a keystone SPOF, but it
+    # shares the same silent-failure shape: github_runner's converge-time
+    # assertion (tasks/main.yml) only proves the pool healthy AT converge
+    # time, and nothing has watched it between converges. A dead fleet has
+    # gone unnoticed for days three times running. `systemctl is-active`
+    # given multiple units returns 0 only if every one is active, matching
+    # the converge-time assertion's own definition of "healthy".
+    - name: github-runner-pool
+      probe_command: >-
+        systemctl is-active --quiet
+        {{ range(1, github_runner_replicas | int + 1)
+           | map('regex_replace', '^', 'github-runner@')
+           | map('regex_replace', '$', '.service') | join(' ') }}
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_GITHUB_RUNNER') | default('', true) }}"
 
 # Resolved set of checks for THIS host — every group's checks the host is in.
 service_deadman_checks: >-

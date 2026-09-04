@@ -1,6 +1,6 @@
 ---
-# Homarr dashboard — bao-first secrets with an env fallback, mirroring
-# vikunja_group.yml / n8n_group.yml.
+# Homarr dashboard — OpenBao-sourced secrets, mirroring vikunja_group.yml /
+# n8n_group.yml.
 #
 # Two domains are in play here, which is unusual and deliberate:
 #   - `apps`  carries Homarr's own credentials (secret/apps/homarr), which this
@@ -9,20 +9,26 @@
 #     are owned by ansible-servarr; Homarr only reads them. Never copy one into
 #     the apps domain — one credential, one home.
 #
-# The `| default(x, true)` second argument is mandatory: without it an empty
-# string satisfies the default and the fallback never fires.
+# Each secret below ends in `| default(undef(), true) | mandatory(...)`: there
+# is no env fallback, and an absent OR empty value aborts the play instead of
+# being rendered over a live credential. `| mandatory()` on its own would not
+# fire on an empty string — it raises only on undefined — which is why the
+# `default(undef(), true)` in front of it is load-bearing.
 
 homarr_admin_password: >-
   {{ bao_apps_secrets.homarr_admin_password
-     | default(lookup('env', 'HOMARR_ADMIN_PASSWORD'), true) }}
+     | default(undef(), true)
+     | mandatory('HOMARR_ADMIN_PASSWORD missing: OpenBao fetch did not supply it') }}
 
 homarr_api_key: >-
   {{ bao_apps_secrets.homarr_api_key
-     | default(lookup('env', 'HOMARR_API_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('HOMARR_API_KEY missing: OpenBao fetch did not supply it') }}
 
 homarr_encryption_key: >-
   {{ bao_apps_secrets.homarr_encryption_key
-     | default(lookup('env', 'HOMARR_ENCRYPTION_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('HOMARR_ENCRYPTION_KEY missing: OpenBao fetch did not supply it') }}
 
 # --- SSO (Authelia OIDC) -------------------------------------------------------
 # The client secret is generated once in OpenBao and shared with Authelia,
@@ -33,7 +39,8 @@ homarr_encryption_key: >-
 homarr_oidc_issuer: "https://authelia.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
 homarr_oidc_client_secret: >-
   {{ bao_apps_secrets.authelia_oidc_homarr_client_secret
-     | default(lookup('env', 'HOMARR_OIDC_CLIENT_SECRET'), true) }}
+     | default(undef(), true)
+     | mandatory('HOMARR_OIDC_CLIENT_SECRET missing: OpenBao fetch did not supply it') }}
 
 # --- Credentials of the integrated services (read-only, owned elsewhere) ------
 # Field names are the UPPERCASE ones ansible-servarr already publishes under
@@ -42,20 +49,29 @@ homarr_oidc_client_secret: >-
 
 homarr_sonarr_api_key: >-
   {{ bao_media_secrets.SONARR_API_KEY
-     | default(lookup('env', 'SONARR_API_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('SONARR_API_KEY missing: OpenBao fetch did not supply it') }}
 
 homarr_radarr_api_key: >-
   {{ bao_media_secrets.RADARR_API_KEY
-     | default(lookup('env', 'RADARR_API_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('RADARR_API_KEY missing: OpenBao fetch did not supply it') }}
 
 homarr_seerr_api_key: >-
   {{ bao_media_secrets.SEERR_API_KEY
-     | default(lookup('env', 'SEERR_API_KEY'), true) }}
+     | default(undef(), true)
+     | mandatory('SEERR_API_KEY missing: OpenBao fetch did not supply it') }}
 
 homarr_plex_token: >-
   {{ bao_media_secrets.PLEX_TOKEN
-     | default(lookup('env', 'PLEX_TOKEN'), true) }}
+     | default(undef(), true)
+     | mandatory('PLEX_TOKEN missing: OpenBao fetch did not supply it') }}
 
+# The two Proxmox fields below are the exception to the no-fallback rule above:
+# empty is a SUPPORTED state (homarr_proxmox_integration omits the integration
+# entirely when the token is empty), not a lost credential, so they keep their
+# env fallback and are not mandatory.
+#
 # Proxmox is a SEPARATE, audit-scoped token minted for Homarr alone — never the
 # Terraform provider's write-capable credential, because Homarr copies every
 # secret it is handed into its own SQLite. Absent = the integration is skipped.

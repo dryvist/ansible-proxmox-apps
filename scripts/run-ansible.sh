@@ -173,6 +173,9 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   printf '%s\n' "$SSH_KNOWN_HOSTS" > "$CERT_DIR/known_hosts"
   chmod 600 "$CERT_DIR/known_hosts"
   export ANSIBLE_SSH_COMMON_ARGS="-o UserKnownHostsFile=$CERT_DIR/known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes${ANSIBLE_SSH_COMMON_ARGS:+ $ANSIBLE_SSH_COMMON_ARGS}"
+  # Same file, for tests/inventory_load/verify_inventory.yml's coverage
+  # check — the actual materialized pin, not the fixture, on every real run.
+  export SSH_KNOWN_HOSTS_FILE="$CERT_DIR/known_hosts"
 fi
 
 # A converge is the highest-consequence thing this repo does; without a

@@ -90,6 +90,34 @@ def test_new_app_is_created_and_placed():
     assert len(api.board["items"]) == 1
 
 
+def test_probe_url_is_sent_as_ping_url():
+    api = FakeApi(board={"id": "b1", "items": []})
+    apps = [
+        {
+            "name": "Sonarr",
+            "url": "https://sonarr.example.test",
+            "probe_url": "http://sonarr.internal:8989",
+            "desc": "TV",
+        }
+    ]
+
+    homarr_api.sync_board(api, "key", "default", apps)
+
+    create = next(c for c in api.calls if c[0] == "app.create")
+    assert create[1]["pingUrl"] == "http://sonarr.internal:8989"
+    assert create[1]["href"] == "https://sonarr.example.test"
+
+
+def test_missing_probe_url_sends_null_ping_url():
+    api = FakeApi(board={"id": "b1", "items": []})
+    apps = [{"name": "Sonarr", "url": "https://sonarr.example.test"}]
+
+    homarr_api.sync_board(api, "key", "default", apps)
+
+    create = next(c for c in api.calls if c[0] == "app.create")
+    assert create[1]["pingUrl"] is None
+
+
 def test_unchanged_app_already_on_board_is_a_pure_noop():
     existing = {"id": "app1", "name": "Sonarr", "href": "https://sonarr.example.test"}
     board = {"id": "b1", "items": [{"kind": "app", "options": {"appId": "app1"}}]}

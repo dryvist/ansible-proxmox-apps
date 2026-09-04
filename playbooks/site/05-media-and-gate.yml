@@ -19,6 +19,26 @@
 # unreviewed change in the other repo reach a converge here without a PR.
 # =============================================================================
 
+# A scoped parent (--limit docker-host,localhost) used to run this play
+# unconditionally with NO --limit/--tags passed to the child — every scoped
+# converge silently triggered a full, unscoped, 40+ minute media-stack run.
+# Ansible's own --limit resolution against media_group (below) is the
+# intersection check: the play has zero hosts, and so never runs its task,
+# exactly when this run's --limit excludes every media guest.
+- name: Determine whether this run's --limit includes any media host
+  hosts: media_group
+  gather_facts: false
+  tags:
+    - media
+    - servarr
+  tasks:
+    - name: Record that at least one media host is in scope
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+      ansible.builtin.set_fact:
+        _media_in_scope: true
+
 - name: Converge the media stack from its own repository
   hosts: localhost
   connection: local
@@ -35,8 +55,12 @@
     ansible_become: false
   tasks:
     - name: Converge the media stack (isolated — failure does not abort downstream plays)
-      when: site_converge_servarr | default(true) | bool
+      when: >-
+        site_converge_servarr | default(true) | bool
+        and _media_in_scope | default(false)
       block:
+        - name: Compute the --limit/--tags args to forward to the media-stack child
+          ansible.builtin.import_tasks: ../tasks/compute_servarr_extra_args.yml
         # scripts/run-ansible.sh checks the submodule out at its pinned SHA
         # before invoking ansible, so a bare clone needs no preparatory step.
         # Fail here with the reason rather than letting `chdir` report a bare
@@ -54,6 +78,7 @@
               scripts/fetch-openbao-secrets.sh media --
               scripts/run-ansible.sh playbooks/site.yml
               {{ '--check' if ansible_check_mode else '' }}
+              {{ _servarr_extra_args }}
             chdir: "{{ _servarr_dir }}"
           register: _servarr_converge
           changed_when: true

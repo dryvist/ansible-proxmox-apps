@@ -16,6 +16,7 @@
     syslog_forwarder_target_port: 1517
     syslog_forwarder_protocol: tcp
     syslog_forwarder_queue_max_disk_space: 256m
+    syslog_forwarder_max_message_size: 64k
     # Mirror the group_vars wiring: program-specific routes rendered above
     # the catch-all (traefik -> the proxy family standard frontend).
     syslog_forwarder_program_routes:
@@ -94,6 +95,18 @@
           global(workDirectory=...) must render before module(load="imfile") or
           the standalone config-validate step fails (imfile has no working dir
           in scope without it).
+
+    - name: Assert maxMessageSize is raised and precedes every action
+      ansible.builtin.assert:
+        that:
+          - "'maxMessageSize=' ~ '\"64k\"' in _sf"
+          - "_sf.index('maxMessageSize=') < _sf.index('omfwd')"
+        fail_msg: >-
+          global(maxMessageSize=...) must render before the first omfwd action.
+          rsyslog applies it only to inputs and actions defined after it, and
+          this drop-in is the first one it reads, so an ordering regression
+          silently restores the 8 KB default — which truncates oversized
+          records with no error anywhere.
 
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:

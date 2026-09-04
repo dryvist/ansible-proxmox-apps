@@ -2,6 +2,9 @@
 
 ## Commands
 
+> **Primary Execution Plane: Semaphore**
+> Routine execution (site converge, validation pipelines, drift reports) is handled centrally by **Semaphore**. The commands below are for local development, break-glass recovery, or testing only. When deploying changes in production, trigger the appropriate Semaphore job via its UI or API.
+
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS)
 doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml
@@ -120,3 +123,39 @@ molecule destroy    # clean up
 ```
 
 **When to run:** Any time you modify a role in `roles/` before opening a PR.
+
+### Reviewing a new check: which layer does it observe?
+
+Ask one question of any check being added or changed: **does it observe the
+layer that can actually break, or a layer upstream of it?** A check that reads
+the wrong layer passes for the wrong reason, and a passing check nobody
+questions is worse than no check at all.
+
+Seams where this has bitten in practice:
+
+| Check observes | What can still break |
+| --- | --- |
+| the evaluated config | whether the file reached disk |
+| a file copied | whether the service parsed it |
+| a command's exit code | whether it matched any hosts at all |
+| a declared dependency | whether it is pinned |
+| one platform | the platforms CI actually builds |
+| a route responding | whether the payload was accepted |
+
+Concrete shapes seen here: a play targeting a group nothing populates matches
+zero hosts, warns once, and exits 0 having deployed nothing; a copied dashboard
+reports `changed` whether or not the service could parse it; an HTTP endpoint
+returns 200 to an empty body while rejecting every real payload.
+
+Two habits that catch all of them:
+
+- **Read the artifact back.** Query the service for what it loaded; re-fetch the
+  object you wrote. An exit code describes the command, not the outcome.
+- **Make failure loud.** `failed_when: false` and a permissive default turn a
+  rejected request into a passing result — and an error body often maps cleanly
+  over the same filters as a success body, so the output still looks plausible.
+
+When a limit is exceeded, split the thing rather than raising the limit.
+Raising it is always available and always looks reasonable, which is how a
+limit stops being one.
+
