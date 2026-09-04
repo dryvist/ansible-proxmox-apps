@@ -1,0 +1,122 @@
+---
+# status_stack — Gatus + Uptime Kuma compose on the status guest.
+
+- name: Build the shared service catalog
+  ansible.builtin.include_role:
+    name: dashboard_catalog
+
+- name: Assert dashboard catalog is available for Gatus
+  ansible.builtin.assert:
+    that:
+      - dashboard_catalog_services is defined
+      - dashboard_catalog_services | length > 0
+    fail_msg: >-
+      status_stack needs dashboard_catalog_services from the dashboard_catalog role.
+    quiet: true
+
+- name: Create status stack directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ status_stack_data_dir }}"
+    - "{{ status_stack_data_dir }}/gatus"
+    - "{{ status_stack_data_dir }}/uptime-kuma"
+
+- name: Read any persisted Uptime Kuma admin password
+  ansible.builtin.slurp:
+    src: "{{ status_stack_kuma_admin_password_file }}"
+  register: status_stack_kuma_pw_stored
+  failed_when: false
+  no_log: true
+
+- name: Decide the Uptime Kuma admin password
+  ansible.builtin.set_fact:
+    status_stack_effective_kuma_password: >-
+      {{ status_stack_kuma_admin_password
+         or (status_stack_kuma_pw_stored.content | default('') | b64decode | trim)
+         or lookup('community.general.random_string', length=32, special=false) }}
+  no_log: true
+
+- name: Persist the Uptime Kuma admin password
+  ansible.builtin.copy:
+    content: "{{ status_stack_effective_kuma_password }}\n"
+    dest: "{{ status_stack_kuma_admin_password_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+- name: Render Gatus configuration
+  ansible.builtin.template:
+    src: gatus-config.yaml.j2
+    dest: "{{ status_stack_data_dir }}/gatus/config.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart status stack
+
+- name: Render status stack docker-compose
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ status_stack_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart status stack
+
+- name: Deploy status stack via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ status_stack_data_dir }}"
+    state: present
+  register: status_stack_compose
+
+- name: Flush handlers so health checks see the new containers
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Gatus HTTP port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ status_stack_gatus_port | trim }}"
+    timeout: 120
+
+- name: Wait for Uptime Kuma HTTP port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ status_stack_kuma_port | trim }}"
+    timeout: 120
+
+- name: Verify Gatus answers /
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ status_stack_gatus_port | trim }}/"
+    status_code: [200]
+  register: status_stack_gatus_health
+  retries: 10
+  delay: 3
+  until: status_stack_gatus_health.status | default(0) == 200
+
+# Uptime Kuma's own first-run HTTP endpoint — no collection, no sidecar, no
+# monitor sync. Gatus is the synthetics SoR; Kuma is the operator status UI.
+- name: Probe whether Uptime Kuma still needs initial setup
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ status_stack_kuma_port | trim }}/api/entry-page"
+    return_content: true
+  register: status_stack_kuma_entry
+  retries: 10
+  delay: 3
+  until: status_stack_kuma_entry.status | default(0) == 200
+
+- name: Create Uptime Kuma initial admin
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ status_stack_kuma_port | trim }}/setup"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ status_stack_kuma_admin_username }}"
+      password: "{{ status_stack_effective_kuma_password }}"
+    status_code: [200, 201]
+  when: status_stack_kuma_entry.json.needSetup | default(false) | bool
+  no_log: true

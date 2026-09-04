@@ -36,6 +36,19 @@ pve_node_exporter_scrape_targets: >-
   {%- endfor -%}
   {{ out }}
 
+# Gatus metrics on the status guest (tag `status`). Empty list when the guest
+# is absent — Prometheus accepts an empty targets list (no scrapes).
+gatus_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['gatus_web']
+     | default(8080) }}
+gatus_scrape_targets: >-
+  {{ tofu_data['containers'] | default({}) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'status')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (gatus_scrape_port | string))
+     | list }}
+
 prometheus_stack_extra_scrape_configs: |
   - job_name: smokeping
     static_configs:
@@ -51,6 +64,11 @@ prometheus_stack_extra_scrape_configs: |
     static_configs:
       - targets: ["{{ hostvars['localhost']['tofu_data']['containers']['agentgateway']['ip'] }}:{{
           hostvars['localhost']['tofu_data']['constants']['service_ports']['agentgateway_metrics'] }}"]
+  - job_name: gatus
+    scrape_interval: 60s
+    metrics_path: /metrics
+    static_configs:
+      - targets: {{ gatus_scrape_targets | to_json }}
 
 # Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics).
 # Points at cribl-stream-01 directly (no HAProxy — WAL provides delivery durability).
@@ -64,3 +82,5 @@ prometheus_stack_remote_write_keep_jobs:
   - blackbox_.*
   - smokeping
   - pve_node_exporter
+  - gatus
+  - traefik
