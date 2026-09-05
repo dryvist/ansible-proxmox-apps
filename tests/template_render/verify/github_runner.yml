@@ -113,9 +113,28 @@
         that:
           - "'Restart=always' in _unit"
         fail_msg: >-
-          An ephemeral runner exits 0 after its job, so Restart=on-failure (or
-          no Restart=) drains the pool one job at a time with no error anywhere
-          -- jobs simply start queueing.
+          An ephemeral runner exits NON-ZERO after a completed job (observed:
+          status=1/FAILURE right after "completed with result: Succeeded"), so
+          Restart=on-failure happens to work while meaning something it does
+          not, and no Restart= drains the pool one job at a time with no error
+          anywhere -- jobs simply start queueing.
+
+    - name: Assert every runner incarnation gets a unique name
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', 'RUNNER_NAME_PREFIX=') | length > 0
+          - _unit | select('search', '(^|\\s)--env\\s+RUNNER_NAME=') | length == 0
+        fail_msg: >-
+          The unit passes a fixed RUNNER_NAME instead of RUNNER_NAME_PREFIX.
+          The image uses an explicit RUNNER_NAME verbatim, so every incarnation
+          re-registers the SAME name -- and with EPHEMERAL the registration is
+          torn down after each job while the listener session is released
+          asynchronously a minute or two later. The replacement container
+          collides with that session ("A session for this runner already
+          exists" -> Conflict), never reaches `Listening for Jobs`, and exits
+          into another restart. The pool wedges with every runner reporting
+          "up" while jobs queue unassigned until GitHub's 24h ceiling cancels
+          them. Nothing here goes red -- CI just stops.
 
     - name: Assert the env file is not quoted
       ansible.builtin.assert:
