@@ -91,9 +91,20 @@ export PROXMOX_DKR_SSH_KEY_PATH="<path-to-docker-vm-ssh-key>"
 
 ## Usage
 
-Run playbooks inside the dev shell, with secrets injected by Doppler. Hosts and
-ports come from the published inventory (see
-[Inventory contract](#inventory-contract)).
+Converges run through Semaphore, the execution plane. Its template wrapper
+loads the run environment from OpenBao before the playbook starts. Playbooks
+read plain environment variables and are independent of the secrets manager:
+`.env`, Doppler, OpenBao or any other injector behaves identically.
+`scripts/run-ansible.sh` remains the runner the wrapper calls and the
+break-glass path from a workstation.
+
+The OpenBao-node play (`--tags openbao` on `openbao_group`) is the single
+converge still run from a workstation under the secret-zero wrapper, because
+its inputs are the seal key and the provisioning identities.
+
+Hosts and ports come from the published inventory (see
+[Inventory contract](#inventory-contract)). Run the playbooks below from the
+dev shell for break-glass or local work.
 
 ```bash
 # Deploy Cribl Edge (syslog processing on LXC containers)

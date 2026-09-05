@@ -2,8 +2,17 @@
 
 ## Commands
 
-> **Primary Execution Plane: Semaphore**
-> Routine execution (site converge, validation pipelines, drift reports) is handled centrally by **Semaphore**. The commands below are for local development, break-glass recovery, or testing only. When deploying changes in production, trigger the appropriate Semaphore job via its UI or API.
+> **Every converge runs through Semaphore.** Semaphore is the execution
+> plane; its template wrapper loads the run environment from OpenBao before
+> the playbook starts. Playbooks read plain environment variables and are
+> independent of the secrets manager: `.env`, Doppler, OpenBao or any other
+> injector behaves identically. `scripts/run-ansible.sh` remains the runner
+> the wrapper calls and the break-glass path from a workstation. The commands
+> below are that break-glass path, plus local development and testing.
+>
+> The OpenBao-node play (`--tags openbao` on `openbao_group`) is the single
+> converge still run from a workstation under the secret-zero wrapper,
+> because its inputs are the seal key and the provisioning identities.
 
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS)
@@ -58,9 +67,9 @@ ansible-lint
 > HEAD (CI's PR checkout, or a manual `git checkout <sha>`) has no tracked
 > branch to compare against, so the guard skips the check there rather than
 > failing — it does not, and structurally cannot, detect staleness on a
-> detached checkout. Use `doppler run -- scripts/run-ansible.sh
-> playbooks/site.yml ...` in place of the direct `ansible-playbook` calls
-> above when checkout freshness matters.
+> detached checkout. Use `scripts/run-ansible.sh playbooks/site.yml ...`
+> under an environment injector in place of the direct `ansible-playbook`
+> calls above when checkout freshness matters.
 
 ## Execution Performance & Optimization
 
@@ -158,4 +167,3 @@ Two habits that catch all of them:
 When a limit is exceeded, split the thing rather than raising the limit.
 Raising it is always available and always looks reasonable, which is how a
 limit stops being one.
-
