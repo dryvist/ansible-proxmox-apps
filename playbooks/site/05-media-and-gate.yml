@@ -72,14 +72,26 @@
           failed_when: not _servarr_stat.stat.exists
           changed_when: false
 
+        # The media domain's KV entries are already fetched by the
+        # openbao_secrets pre-play under this repo's own MEDIA AppRole, and
+        # their field names are the UPPER_SNAKE variables the media roles
+        # read — so handing the child the fetched dict does exactly what a
+        # separate fetch-and-exec wrapper did, with one login instead of two
+        # and no second copy of the fetch logic to keep in sync.
+        # no_log: the environment carries the domain's secrets, which would
+        # otherwise appear in the task arguments at -vvv. The recap and the
+        # failure output are reported by the debug tasks below, which read the
+        # registered result, so suppressing this task's own output loses
+        # nothing an operator needs.
         - name: Run the media stack's own site.yml
           ansible.builtin.command:
             cmd: >-
-              scripts/fetch-openbao-secrets.sh media --
               scripts/run-ansible.sh playbooks/site.yml
               {{ '--check' if ansible_check_mode else '' }}
               {{ _servarr_extra_args }}
             chdir: "{{ _servarr_dir }}"
+          environment: "{{ bao_media_secrets | default({}) }}"
+          no_log: true
           register: _servarr_converge
           changed_when: true
           # This play is the only caller, and it already reports the outcome.
