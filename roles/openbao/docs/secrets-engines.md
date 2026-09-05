@@ -77,6 +77,11 @@ Token access is tiered; the tier IS the privilege boundary:
   AppRole, plus the claim-before-work write lease under
   `secret/locks/github-write/` (KV-v2 CAS acquire, `delete_version_after`
   deadman).
+- **publish (`docs-publisher`)** — `github/token/docs-publisher`: one
+  repository, `contents: write` + `pull_requests: write`, all three stored in
+  the set. The repository list comes from the iac secret store; with none
+  configured the set is not declared and the policy grants nothing. Excluded
+  from `github-mint`, so no estate AI identity inherits it.
 - **admin (`github-admin`)** — `github/token/dryvist-full-automation` and
   `github/token/personal-full-automation`: installation-wide, full App
   ceiling. INERT AppRole — a human response-wraps a single-use secret_id per
