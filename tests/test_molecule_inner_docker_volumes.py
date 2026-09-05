@@ -29,6 +29,8 @@ LAYER_ROOTS = ("/var/lib/docker", "/var/lib/containerd")
 
 def _load_selector():
     spec = importlib.util.spec_from_file_location("scenario_selector", SELECTOR)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"no loader for {SELECTOR}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
