@@ -20,6 +20,10 @@ it is the denial that was conflated with it.
 These render the REAL expressions out of the task files, never a reimplementation
 -- retyping a template performs its own escaping and can pass while the real
 expression fails.
+
+The upstream site where the false "absent" is minted, openbao_secrets' KV read
+gate, is not covered here: it lives in its own task file and is exercised end to
+end against synthetic results by tests/openbao_secrets/verify_read_gate.yml.
 """
 
 from pathlib import Path
@@ -160,12 +164,15 @@ class PromoteAppSecret(unittest.TestCase):
 class PublishReadBeforeWrite(unittest.TestCase):
     """The highest-consequence site: the anti-clobber merge must not clobber."""
 
+    # The read itself registers unconditionally: a bare `msg` is not injected
+    # into `failed_when` on ansible-core 2.21, so the classification is the
+    # separate task below it and that is what carries the discrimination.
     REL = "roles/openbao_secrets/tasks/publish.yml"
-    TASK = "Read the existing secret so the write merges rather than clobbers"
+    TASK = "Fail unless the read-before-write found the path simply absent"
 
     def _fails(self, result):
         return _all(
-            _find(self.REL, self.TASK)["failed_when"],
+            _find(self.REL, self.TASK)["when"],
             {
                 "openbao_secrets_publish_existing": result,
                 "openbao_secrets_absent_msg_marker": MOD_ABSENT,
@@ -181,50 +188,6 @@ class PublishReadBeforeWrite(unittest.TestCase):
 
     def test_a_successful_read_does_NOT_fail(self):
         self.assertFalse(self._fails({"failed": False, "secret": {"a": "b"}}))
-
-
-class FetchDomainOriginOfTheFalseAbsent(unittest.TestCase):
-    """Where the false 'absent' is minted, upstream of both destructive sites."""
-
-    REL = "roles/openbao_secrets/tasks/fetch_domain.yml"
-    TASK = "FAIL -- a KV read was DENIED, so absence cannot be concluded"
-
-    def _denied(self, results):
-        task = _find(self.REL, self.TASK)
-        return _render(
-            task["vars"]["_denied"],
-            {
-                "openbao_secrets_domain_reads": {"results": results},
-                "openbao_secrets_absent_msg_marker": MOD_ABSENT,
-            },
-            wrap=False,
-        )
-
-    def test_a_denied_path_is_named(self):
-        got = self._denied(
-            [{"failed": True, "msg": MOD_DENIED_MSG, "item": "apps/authelia"}]
-        )
-        self.assertEqual(list(got), ["apps/authelia"])
-
-    def test_an_unseeded_path_is_NOT_named(self):
-        got = self._denied(
-            [{"failed": True, "msg": MOD_ABSENT_MSG, "item": "apps/new"}]
-        )
-        self.assertEqual(list(got), [])
-
-    def test_a_successful_read_is_NOT_named(self):
-        got = self._denied([{"failed": False, "secret": {}, "item": "apps/ok"}])
-        self.assertEqual(list(got), [])
-
-    def test_a_denial_is_still_caught_alongside_a_real_absence(self):
-        # The mixed case: one unseeded path must not mask a denial on another.
-        got = self._denied(
-            [
-                {"failed": True, "msg": MOD_ABSENT_MSG, "item": "apps/new"},
-                {"failed": True, "msg": MOD_DENIED_MSG, "item": "apps/authelia"},
-            ]
-        )
-        self.assertEqual(list(got), ["apps/authelia"])
 
 
 class KvRetentionProbe(unittest.TestCase):
