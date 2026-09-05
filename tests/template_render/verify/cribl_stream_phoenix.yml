@@ -14,12 +14,13 @@
     # so both blocks below must render with no credential at all. This play
     # sets the vars directly, so the defaults' `mandatory` never evaluates.
     cribl_stream_phoenix_api_key: ""
-    cribl_stream_phoenix_url: "https://phoenix.example.invalid/v1/traces"
+    cribl_stream_phoenix_url: "https://phoenix.example.invalid"
     # Langfuse vars are fixture scaffolding here (asserted by their own play).
     cribl_stream_langfuse_public_key: "fixture"
     cribl_stream_langfuse_secret_key: "fixture"
     cribl_stream_langfuse_url: "https://langfuse.example.invalid/api/public/otel"
     # Remaining vars are fixture scaffolding, not under test.
+    cribl_stream_victoriametrics_rw_url: "http://grafana.example.invalid:8428/api/v1/write"
     cribl_stream_splunk_hec_url: "https://splunk.example.invalid/services/collector/event"
     cribl_stream_splunk_hec_token: "fixture-token"
     cribl_stream_splunk_hec_tls_verify: true
@@ -69,6 +70,26 @@
           with an empty credential — a credential-conditional gate has been
           reintroduced, which silently deletes the destination instead of
           failing the converge.
+
+    # Read the defaults as TEXT, not through include_vars: the shipped value is
+    # a lookup('env', 'PROXMOX_SUBDOMAIN') | mandatory expression, and this
+    # harness deliberately runs without that variable set.
+    - name: Read the cribl_stream role defaults as text
+      ansible.builtin.set_fact:
+        _cribl_stream_defaults_text: >-
+          {{ lookup('file', '../../../roles/cribl_stream/defaults/main.yml')
+             | regex_replace('(?m)#.*$', '') }}
+
+    - name: Assert the shipped OTLP endpoints carry no per-signal path
+      ansible.builtin.assert:
+        that:
+          - "'/v1/traces' not in _cribl_stream_defaults_text"
+        fail_msg: >-
+          An OTLP destination URL in roles/cribl_stream/defaults/main.yml
+          carries a per-signal path. The open_telemetry destination appends
+          that path itself, so every span goes to /v1/traces/v1/traces and the
+          backend answers 404 while the input, the pipeline and the converge
+          all stay green. Keep these URLs at the base.
 
     - name: Cribl Stream Phoenix rendering verification PASSED
       ansible.builtin.debug:
