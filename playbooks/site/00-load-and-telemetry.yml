@@ -126,11 +126,30 @@
             bao_observability_secrets: "{{ openbao_secrets_by_domain['observability'] | default({}) }}"
             bao_local_cloud_secrets: "{{ openbao_secrets_by_domain['local-cloud'] | default({}) }}"
             bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
-            bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
             bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
             bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
           vars:
             openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
+          no_log: true
+
+        # bao_media_secrets is the one domain a localhost-only play consumes
+        # (playbooks/site/05-media-and-gate.yml, which hands it to the media
+        # stack's child ansible-playbook as its environment): this play's own
+        # hosts never include localhost, so publishing it above like every
+        # other domain would set the fact on hosts that never read it and
+        # leave localhost's copy at the `{}` default in group_vars/all.yml —
+        # silently running the media stack with no secrets regardless of
+        # whether the fetch above succeeded. delegate_facts + run_once put it
+        # on localhost specifically, the same way openbao_secrets_by_domain
+        # itself is published (roles/openbao_secrets/tasks/main.yml).
+        - name: Publish the media domain's secrets to localhost
+          ansible.builtin.set_fact:
+            bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
+          vars:
+            openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
+          delegate_to: localhost
+          delegate_facts: true
+          run_once: true
           no_log: true
       rescue:
         - name: Record isolated failure and continue
