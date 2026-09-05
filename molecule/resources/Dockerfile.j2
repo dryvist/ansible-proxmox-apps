@@ -1,0 +1,46 @@
+# Molecule managed. Shared by the scenarios whose converge would otherwise
+# apt-install Docker inside every single run.
+#
+# The docker_engine role skips its entire apt block when `docker --version`
+# answers, so installing Docker in the image removes two `apt-get update`
+# runs, a key fetch and a repository add from every converge that uses this
+# file. The role still reconciles the storage driver and the service state,
+# so nothing it asserts is skipped — only the download is.
+#
+# The layer is built once and reused by every later run on the same daemon,
+# which is the point: the runners are long-lived and share one dockerd, so the
+# work moves from once-per-converge to once-per-base-image-change.
+#
+# The prologue mirrors the driver's own default template so a platform that
+# sets `registry` or `env` keeps working.
+{% if item.registry is defined %}
+FROM {{ item.registry.url }}/{{ item.image }}
+{% else %}
+FROM {{ item.image }}
+{% endif %}
+
+{% if item.env is defined %}
+{% for var, value in item.env.items() %}
+{% if value %}
+ENV {{ var }} {{ value }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+ && . /etc/os-release \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL "https://download.docker.com/linux/${ID}/gpg" \
+      -o /etc/apt/keyrings/docker.asc \
+ && chmod a+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [signed-by=/etc/apt/keyrings/docker.asc]" \
+      "https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*

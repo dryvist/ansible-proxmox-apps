@@ -74,6 +74,18 @@ def referenced_roles(paths: list[Path], known: set[str]) -> set[str]:
     return found
 
 
+def scenarios_on_disk() -> list[str]:
+    """Scenario names under molecule/.
+
+    A molecule.yml is what makes a directory a scenario. molecule/ also holds
+    shared resource directories that scenarios reference, and those resolve no
+    roles at all — which is indistinguishable, to the self-check, from a
+    scenario whose parsing broke. Matching the same rule the sibling selector
+    in scripts/ uses keeps a new shared directory from tripping that guard.
+    """
+    return sorted(p.name for p in SCENARIO_DIR.iterdir() if (p / "molecule.yml").is_file())
+
+
 def scenario_roles(known: set[str]) -> dict[str, set[str]]:
     """Roles each scenario exercises, closed over role-to-role references.
 
@@ -82,7 +94,7 @@ def scenario_roles(known: set[str]) -> dict[str, set[str]]:
     to B. Bounding the depth would silently miss exactly that case.
     """
     mapping: dict[str, set[str]] = {}
-    for scenario in sorted(p.name for p in SCENARIO_DIR.iterdir() if p.is_dir()):
+    for scenario in scenarios_on_disk():
         direct = referenced_roles(sorted((SCENARIO_DIR / scenario).glob("*.yml")), known)
         closed = set(direct)
         pending = list(direct)
@@ -242,7 +254,7 @@ def main() -> int:
     if "--self-check" in sys.argv:
         return self_check()
 
-    all_scenarios = sorted(p.name for p in SCENARIO_DIR.iterdir() if p.is_dir())
+    all_scenarios = scenarios_on_disk()
     event = os.environ.get("EVENT_NAME", "")
     base_ref = os.environ.get("BASE_REF", "")
     base_sha = os.environ.get("BASE_SHA", "")
