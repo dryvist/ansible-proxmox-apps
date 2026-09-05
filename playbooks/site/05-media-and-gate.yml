@@ -90,7 +90,20 @@
               {{ '--check' if ansible_check_mode else '' }}
               {{ _servarr_extra_args }}
             chdir: "{{ _servarr_dir }}"
-          environment: "{{ bao_media_secrets | default({}) }}"
+          # `default({})` here would silently converge the media stack with no
+          # secrets whenever the pre-play below didn't populate the fact —
+          # `default(undef(), true) | mandatory(...)` is the same no-fallback
+          # contract every bao_media_secrets consumer uses (see
+          # inventory/group_vars/homarr_group.yml): an absent OR empty dict
+          # aborts the play instead of running a live service with no
+          # credentials.
+          environment: >-
+            {{ bao_media_secrets
+               | default(undef(), true)
+               | mandatory('bao_media_secrets is missing or empty: the '
+                            + 'openbao-secrets pre-fetch play '
+                            + '(playbooks/site/00-load-and-telemetry.yml) did '
+                            + 'not populate the media domain') }}
           no_log: true
           register: _servarr_converge
           changed_when: true
