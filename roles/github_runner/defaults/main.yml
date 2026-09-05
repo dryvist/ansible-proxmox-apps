@@ -50,7 +50,41 @@ github_runner_data_paths:
   - /var/lib/docker
   - /var/lib/containerd
 
-github_runner_access_token: "{{ lookup('env', 'GH_PAT_RUNNER_TOKEN') | default('', true) }}"
+# ---------------------------------------------------------------------------
+# Registration credential (OpenBao github secrets engine, never a static PAT).
+#
+# The container's ACCESS_TOKEN is a GitHub App installation token scoped to
+# organization_self_hosted_runners:write. GitHub fixes its lifetime at roughly
+# an hour and exposes no way to extend it, so a token rendered once at converge
+# time is expired for every container start after the first hour -- an outage
+# that arrives on a delay and looks nothing like a converge failure.
+#
+# So it is not rendered by Ansible at all. A per-host `bao agent` holds the
+# AppRole session and keeps github_runner_token_env_file current; the runner
+# units only read that file. Ansible delivers the AppRole secret-zero and
+# nothing else.
+# ---------------------------------------------------------------------------
+github_runner_openbao_role_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID') | default('', true) }}
+github_runner_openbao_secret_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_GITHUB_RUNNER_SECRET_ID') | default('', true) }}
+github_runner_bao_addr: >-
+  https://openbao.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | mandatory('PROXMOX_SUBDOMAIN environment variable is required (Doppler)') }}
+# Keep in sync with roles/openbao `openbao_version`.
+github_runner_openbao_version: "2.5.5"
+github_runner_openbao_deb_url: >-
+  https://github.com/openbao/openbao/releases/download/v{{
+  github_runner_openbao_version }}/openbao_{{ github_runner_openbao_version
+  }}_linux_amd64.deb
+github_runner_bao_bin: /usr/bin/bao
+github_runner_approle_dir: /etc/github-runner/approle
+github_runner_agent_config: /etc/github-runner/openbao-agent.hcl
+# Written by the agent, read by every runner container as a second --env-file.
+github_runner_token_env_file: /etc/github-runner/access-token.env
+# Organization-scoped runner registration set. Its stored permission map is
+# organization_self_hosted_runners:write and cannot be widened by the request.
+github_runner_token_path: github/token/runner-register-dryvist
 
 # SOPS age private key (raw key content, not path).
 # Passed into runner containers so E2E tests can decrypt secrets.enc.yaml.
