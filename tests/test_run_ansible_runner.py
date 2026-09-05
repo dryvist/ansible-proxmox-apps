@@ -198,5 +198,80 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self._assert_cert_cleanup()
 
 
+class CheckoutFreshnessGuard(unittest.TestCase):
+    """The guard must name the divergence it actually found.
+
+    A checkout that is AHEAD of origin is zero commits behind it. Reporting
+    that as "0 commit(s) behind -- refusing" reads as a broken guard rather
+    than a fact about the checkout, and the obvious way to make a broken guard
+    stop complaining is ALLOW_STALE_CHECKOUT=1 -- which converges unpushed,
+    unreviewed local commits, the exact outcome the guard exists to prevent.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.upstream = root / "upstream"
+        self.clone = root / "clone"
+        self.env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        self._git("init", "-q", "-b", "main", str(self.upstream), cwd=root)
+        (self.upstream / "seed").write_text("1\n", encoding="utf-8")
+        self._git("add", "-A", cwd=self.upstream)
+        self._git("commit", "-qm", "seed", cwd=self.upstream)
+        self._git("clone", "-q", str(self.upstream), str(self.clone), cwd=root)
+        scripts = self.clone / "scripts"
+        scripts.mkdir(parents=True, exist_ok=True)
+        (scripts / "run-ansible.sh").write_text(
+            RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _git(self, *args, cwd):
+        subprocess.run(
+            ["git", *args], cwd=str(cwd), env=self.env, check=True,
+            capture_output=True,
+        )
+
+    def _run_guard(self):
+        return subprocess.run(
+            ["bash", "scripts/run-ansible.sh", "playbooks/site.yml"],
+            cwd=str(self.clone), env=self.env, capture_output=True, text=True,
+        )
+
+    def test_ahead_checkout_is_named_as_ahead_and_says_to_push(self):
+        (self.clone / "local-only").write_text("x\n", encoding="utf-8")
+        self._git("add", "-A", cwd=self.clone)
+        self._git("commit", "-qm", "local only", cwd=self.clone)
+
+        result = self._run_guard()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("1 ahead", result.stderr)
+        self.assertIn("0 behind", result.stderr)
+        self.assertIn("git push origin", result.stderr)
+        # The stale-checkout remedy is wrong here and must not be suggested.
+        self.assertNotIn("ALLOW_STALE_CHECKOUT", result.stderr)
+
+    def test_behind_checkout_still_says_to_pull(self):
+        (self.upstream / "newer").write_text("y\n", encoding="utf-8")
+        self._git("add", "-A", cwd=self.upstream)
+        self._git("commit", "-qm", "newer", cwd=self.upstream)
+
+        result = self._run_guard()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("1 behind", result.stderr)
+        self.assertIn("0 ahead", result.stderr)
+        self.assertIn("--ff-only", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,10 @@ After=docker.service
 Requires=docker.service
 # A runner is worthless without the daemon; do not spin restarting if it dies.
 PartOf=docker.service
+# The registration token is minted by the agent, not by Ansible. Ordering alone
+# is not enough -- see the ExecStartPre wait below.
+After=openbao-github-runner-agent.service
+Requires=openbao-github-runner-agent.service
 
 [Service]
 Type=exec
@@ -30,6 +34,20 @@ Type=exec
 # reset), and `docker run --name` then fails with a name conflict forever.
 # `-` so a clean start is not a failure.
 ExecStartPre=-/usr/bin/docker rm -f {{ github_runner_container_prefix }}-%i
+# Requires= only guarantees the agent PROCESS started, not that it has
+# authenticated and rendered a token yet, so on a cold boot this unit can reach
+# `docker run` with the file still absent and register with an empty token.
+#
+# This waits on the observable condition (a non-empty token file), not on a
+# guessed interval, and gives up loudly rather than starting a runner that
+# cannot register. A timeout here exits 124 and fails the unit; the thing to
+# look at is `systemctl status openbao-github-runner-agent`.
+#
+# `timeout` rather than a counting loop on purpose: systemd expands $VAR in
+# command lines itself, so a shell variable would need escaping as $$VAR and
+# silently becomes the empty string if that is ever forgotten. This form
+# contains no dollar sign to get wrong.
+ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until [ -s {{ github_runner_token_env_file }} ]; do sleep 1; done'
 # RUNNER_NAME_PREFIX below, never RUNNER_NAME. The image appends a random
 # suffix to a prefix, but an explicit RUNNER_NAME is used verbatim -- and a
 # FIXED name is unusable for an EPHEMERAL runner. GitHub tears down the
@@ -51,6 +69,7 @@ ExecStart=/usr/bin/docker run \
     --rm \
     --name {{ github_runner_container_prefix }}-%i \
     --env-file {{ github_runner_env_file }} \
+    --env-file {{ github_runner_token_env_file }} \
     --cpus {{ github_runner_cpu_limit }} \
     --memory {{ github_runner_memory_limit }} \
     --group-add {{ github_runner_docker_gid }} \
