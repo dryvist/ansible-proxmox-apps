@@ -9,6 +9,13 @@ outputs:
     disabled: false
     url: "{{ cribl_stream_splunk_hec_url }}"
     token: "{{ cribl_stream_splunk_hec_token }}"
+{% if (cribl_stream_splunk_hec_post_processing_pipeline | default('')) | length > 0 %}
+    # Post-processing pipeline: the last thing every event passes through
+    # before it leaves for Splunk. Placing the redaction here rather than in
+    # each producer's own pack makes it one choke point for all of them, and
+    # one that a new producer cannot be added around.
+    pipeline: "{{ cribl_stream_splunk_hec_post_processing_pipeline }}"
+{% endif %}
     concurrency: 5
     maxPayloadSizeKB: 4096
     maxPayloadEvents: 0
@@ -35,6 +42,11 @@ outputs:
     disabled: false
     url: "{{ cribl_stream_splunk_hec_url }}"
     token: "{{ ('splunk-hec-' ~ idx) | to_uuid(cribl_stream_hec_namespace) }}"
+{% if (cribl_stream_splunk_hec_post_processing_pipeline | default('')) | length > 0 %}
+    # Same choke point as the base output above; a per-index HEC bypasses it
+    # entirely otherwise, and every AI index goes through one of these.
+    pipeline: "{{ cribl_stream_splunk_hec_post_processing_pipeline }}"
+{% endif %}
     concurrency: 5
     maxPayloadSizeKB: 4096
     maxPayloadEvents: 0
@@ -95,4 +107,25 @@ outputs:
     pqPath: "$CRIBL_HOME/state/queues"
     pqMaxFileSize: "1 GB"
     pqMaxSize: "10 GB"
+    pqCompress: none
+
+  # Arize Phoenix OTLP destination — second sink for the same LLM fabric
+  # traces (bearer API key minted in the Phoenix UI). Phoenix reads the OTel
+  # GenAI / OpenInference attributes as emitted, so this leg gets the
+  # otel_traces_phoenix pipeline: same drops and redaction as the Langfuse
+  # leg, none of the langfuse.*-prefixed rewrites.
+  phoenix_otlp:
+    id: phoenix_otlp
+    type: open_telemetry
+    disabled: false
+    protocol: http
+    endpoint: "{{ cribl_stream_phoenix_url }}"
+    otlpVersion: "1.3.1"
+    authType: token
+    token: "{{ cribl_stream_phoenix_api_key }}"
+    onBackpressure: queue
+    pqEnabled: true
+    pqPath: "$CRIBL_HOME/state/queues"
+    pqMaxFileSize: "1 GB"
+    pqMaxSize: "5 GB"
     pqCompress: none
