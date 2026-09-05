@@ -69,14 +69,12 @@ export BAO_ADDR
 #    active node. A standby is a clean no-op so peers never double-ship.
 #    A curl failure is NOT a standby: collapsing it into the no-op made a
 #    cluster-wide snapshot miss look healthy. Fail that so the deadman fires.
-# ponytail: JSON grep instead of jq (not on these WAN-firewalled nodes); swap to
-# `jq -e .is_self` if jq ever lands in the base image.
 leader_json="$(mktemp)"
 if ! curl -fsS --max-time 8 -o "${leader_json}" "${BAO_ADDR}/v1/sys/leader"; then
   rm -f "${leader_json}"
   fail "local sys/leader unreachable (not a standby no-op)"
 fi
-if ! grep -Eq '"is_self"[[:space:]]*:[[:space:]]*true' "${leader_json}"; then
+if ! jq -e '.is_self == true' "${leader_json}" >/dev/null 2>&1; then
   rm -f "${leader_json}"
   log "not the active node — nothing to do"
   exit 0
