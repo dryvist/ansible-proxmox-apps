@@ -2,11 +2,22 @@
 
 ## Commands
 
-> **Primary Execution Plane: Semaphore**
-> Routine execution (site converge, validation pipelines, drift reports) is
-> handled centrally by **Semaphore**. The commands below are for local
-> development, break-glass recovery, or testing only. When deploying changes
-> in production, trigger the appropriate Semaphore job via its UI or API.
+> **Every converge runs through Semaphore.** Semaphore is the execution
+> plane; its template wrapper loads the run environment from OpenBao before
+> the playbook starts. Playbooks read plain environment variables and are
+> independent of the secrets manager: `.env`, Doppler, OpenBao or any other
+> injector behaves identically. `scripts/run-ansible.sh` remains the runner
+> the wrapper calls and the break-glass path from a workstation. The commands
+> below are that break-glass path, plus local development and testing.
+>
+> The OpenBao-node play (`--tags openbao` on `openbao_group`) is the single
+> converge still run from a workstation under the secret-zero wrapper,
+> because its inputs are the seal key and the provisioning identities. The
+> AppRole TTL verification playbook (`verify-approle-ttls.yml`, below) runs
+> through Semaphore like every other play — it is read-only against issued
+> tokens and revokes everything it creates, so it carries none of the
+> seal-key/provisioning-identity constraint that keeps the OpenBao-node play
+> on a workstation.
 
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS)
@@ -43,10 +54,12 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/search-missing.yml'
 
 # Assert that issued AppRole tokens honour their declared bounds. Standalone,
-# on-demand; never part of site.yml. Logs in with the AppRole credentials
-# already in the environment, asserts each issued token's creation TTL against
-# the declared one, and revokes every token it created. Roles with no ambient
-# credentials are named in the output and are not covered by the run.
+# on-demand; never part of site.yml. Runs through its own Semaphore job like
+# every other play; the command below is the local/on-demand form. Logs in
+# with the AppRole credentials already in the environment, asserts each
+# issued token's creation TTL against the declared one, and revokes every
+# token it created. Roles with no ambient credentials are named in the
+# output and are not covered by the run.
 doppler run -- ansible-playbook playbooks/verify-approle-ttls.yml
 
 # Lint
@@ -68,9 +81,9 @@ ansible-lint
 > HEAD (CI's PR checkout, or a manual `git checkout <sha>`) has no tracked
 > branch to compare against, so the guard skips the check there rather than
 > failing — it does not, and structurally cannot, detect staleness on a
-> detached checkout. Use `doppler run -- scripts/run-ansible.sh
-> playbooks/site.yml ...` in place of the direct `ansible-playbook` calls
-> above when checkout freshness matters.
+> detached checkout. Use `scripts/run-ansible.sh playbooks/site.yml ...`
+> under an environment injector in place of the direct `ansible-playbook`
+> calls above when checkout freshness matters.
 
 ## Execution Performance & Optimization
 
