@@ -3,13 +3,14 @@
 The containerd image store replaces the graph-driver stack, so with it enabled
 `storage-driver` is parsed and then has no effect. A file that pins a driver
 and says nothing about the image store therefore reads as a decision that is
-not in force. Where the daemon runs on another container's overlayfs rootfs
-that silence is not cosmetic: layers unpack through containerd's overlayfs
-snapshotter, whose whiteout conversion the kernel rejects on an overlay upper.
+not in force. On the Docker guests that means fuse-overlayfs, which the ZFS-backed
+containers need, is asked for and not used.
 
-Every writer of /etc/docker/daemon.json in this repository is checked, so a new
-one cannot reintroduce the gap. Jinja expressions are stubbed before parsing --
-the assertion is about the JSON shape, not about any rendered value.
+Every writer under roles and playbooks is checked, so a new one cannot
+reintroduce the gap. The Molecule scenarios are out of scope: their instances
+give the inner daemon a volume for its layer root, so the driver it ends up on
+is a real filesystem either way. Jinja expressions are stubbed before parsing
+-- the assertion is about the JSON shape, not about any rendered value.
 """
 
 import json
@@ -21,7 +22,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SEARCH_DIRS = ("roles", "playbooks", "molecule")
+SEARCH_DIRS = ("roles", "playbooks")
 JINJA = re.compile(r"{{.*?}}", re.S)
 
 
