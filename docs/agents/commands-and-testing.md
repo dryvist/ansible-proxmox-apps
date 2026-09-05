@@ -3,7 +3,10 @@
 ## Commands
 
 > **Primary Execution Plane: Semaphore**
-> Routine execution (site converge, validation pipelines, drift reports) is handled centrally by **Semaphore**. The commands below are for local development, break-glass recovery, or testing only. When deploying changes in production, trigger the appropriate Semaphore job via its UI or API.
+> Routine execution (site converge, validation pipelines, drift reports) is
+> handled centrally by **Semaphore**. The commands below are for local
+> development, break-glass recovery, or testing only. When deploying changes
+> in production, trigger the appropriate Semaphore job via its UI or API.
 
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS)
@@ -38,6 +41,13 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
 # on-demand; never part of site.yml. Scope with --tags sonarr (or --tags radarr).
 sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/search-missing.yml'
+
+# Assert that issued AppRole tokens honour their declared bounds. Standalone,
+# on-demand; never part of site.yml. Logs in with the AppRole credentials
+# already in the environment, asserts each issued token's creation TTL against
+# the declared one, and revokes every token it created. Roles with no ambient
+# credentials are named in the output and are not covered by the run.
+doppler run -- ansible-playbook playbooks/verify-approle-ttls.yml
 
 # Lint
 ansible-lint
@@ -158,4 +168,3 @@ Two habits that catch all of them:
 When a limit is exceeded, split the thing rather than raising the limit.
 Raising it is always available and always looks reasonable, which is how a
 limit stops being one.
-
