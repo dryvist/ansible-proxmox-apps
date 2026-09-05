@@ -24,66 +24,45 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.event_log = self.temp_path / "events.log"
         self.tmp_path = self.temp_path / "tmp"
         self.tmp_path.mkdir()
+        # One fake for the OpenBao CLI. It also enforces the two contracts
+        # the runner depends on and that no assertion below could otherwise
+        # see: the secret_id arrives on stdin rather than in the argument
+        # list, and each call asks for the single response field it uses.
         self._write_executable(
-            "jq",
+            "bao",
             f"""
             #!/usr/bin/env bash
             set -euo pipefail
-            filter=""
-            for arg in "$@"; do
-              filter=$arg
-            done
-            case "$filter" in
-              .auth.client_token)
-                cat >/dev/null
-                printf '%s\\n' '{MINTED_TOKEN}'
-                ;;
-              .data.signed_key)
-                cat >/dev/null
-                printf '%s\\n' 'test-certificate'
-                ;;
-              *)
-                printf '%s\\n' '{{}}'
-                ;;
-            esac
-            """,
-        )
-        self._write_executable(
-            "curl",
-            f"""
-            #!/usr/bin/env bash
-            set -euo pipefail
-            url="" header_arg="" next_is_header=false
-            for arg in "$@"; do
-              if $next_is_header; then
-                header_arg=$arg
-                next_is_header=false
-                continue
-              fi
-              case "$arg" in
-                -H|--header) next_is_header=true ;;
-                http://*|https://*) url=$arg ;;
-              esac
-            done
             auth=""
-            if [[ $header_arg == @/dev/fd/* ]]; then
-              IFS= read -r auth_header < "${{header_arg#@}}"
-              [[ $auth_header == "X-Vault-Token: $EXPECTED_MINTED_TOKEN" ]]
+            if [[ ${{BAO_TOKEN:-}} == "$EXPECTED_MINTED_TOKEN" ]]; then
               auth=" runner-auth"
             fi
-            printf 'curl %s%s\n' "$url" "$auth" >> "$FAKE_EVENT_LOG"
-            case "$url" in
-              */auth/approle/login)
-                cat >/dev/null
-                printf '%s\n' '{{"auth":{{"client_token":"{MINTED_TOKEN}"}}}}'
+            for arg in "$@"; do
+              if [[ $arg == *"$EXPECTED_APPROLE_SECRET"* ]]; then
+                printf 'secret_id passed as an argument\n' >&2
+                exit 64
+              fi
+            done
+            case "$*" in
+              *"auth/approle/login"*)
+                [[ " $* " == *" -field=token "* ]] || exit 65
+                [[ " $* " == *" secret_id=- "* ]] || exit 66
+                piped=""
+                IFS= read -r piped || true
+                [[ $piped == "$EXPECTED_APPROLE_SECRET" ]] || exit 67
+                printf 'bao write auth/approle/login\n' >> "$FAKE_EVENT_LOG"
+                printf '%s\n' '{MINTED_TOKEN}'
                 ;;
-              */sign/automation-ansible)
-                cat >/dev/null
-                [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 22
-                printf '%s\n' '{{"data":{{"signed_key":"test-certificate"}}}}'
+              *"sign/automation-ansible"*)
+                [[ " $* " == *" -field=signed_key "* ]] || exit 68
+                [[ " $* " == *" public_key=@"* ]] || exit 69
+                printf 'bao write ssh-client-ca/sign/automation-ansible%s\n' \
+                  "$auth" >> "$FAKE_EVENT_LOG"
+                [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 2
+                printf '%s\n' 'test-certificate'
                 ;;
-              */auth/token/revoke-self)
-                cat >/dev/null
+              *"token revoke -self"*)
+                printf 'bao token revoke -self%s\n' "$auth" >> "$FAKE_EVENT_LOG"
                 ;;
               *)
                 exit 2
@@ -119,6 +98,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "OPENBAO_APPROLE_ANSIBLE_SECRET_ID": APPROLE_SECRET,
                 "EXPECTED_CHILD_BAO_TOKEN": caller_token or MINTED_TOKEN,
                 "EXPECTED_MINTED_TOKEN": MINTED_TOKEN,
+                "EXPECTED_APPROLE_SECRET": APPROLE_SECRET,
                 "FAKE_EVENT_LOG": str(self.event_log),
                 "FAKE_SIGN_FAILURE": "1" if sign_failure else "0",
                 "PATH": f"{self.bin_path}{os.pathsep}{env['PATH']}",
@@ -156,10 +136,10 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(
             self.event_log.read_text(encoding="utf-8").splitlines(),
             [
-                "curl https://openbao.test/v1/auth/approle/login",
-                "curl https://openbao.test/v1/ssh-client-ca/sign/automation-ansible runner-auth",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
                 "ansible",
-                "curl https://openbao.test/v1/auth/token/revoke-self runner-auth",
+                "bao token revoke -self runner-auth",
             ],
         )
         self._assert_no_secret_leak(result)
@@ -172,9 +152,9 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(
             self.event_log.read_text(encoding="utf-8").splitlines(),
             [
-                "curl https://openbao.test/v1/auth/approle/login",
-                "curl https://openbao.test/v1/ssh-client-ca/sign/automation-ansible runner-auth",
-                "curl https://openbao.test/v1/auth/token/revoke-self runner-auth",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
+                "bao token revoke -self runner-auth",
                 "ansible",
             ],
         )
@@ -189,9 +169,9 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(
             self.event_log.read_text(encoding="utf-8").splitlines(),
             [
-                "curl https://openbao.test/v1/auth/approle/login",
-                "curl https://openbao.test/v1/ssh-client-ca/sign/automation-ansible runner-auth",
-                "curl https://openbao.test/v1/auth/token/revoke-self runner-auth",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
+                "bao token revoke -self runner-auth",
             ],
         )
         self._assert_no_secret_leak(result)

@@ -80,9 +80,7 @@ RUNNER_BAO_TOKEN=""
 revoke_runner_token() {
   [[ -z $RUNNER_BAO_TOKEN ]] && return 0
   { set +x; } 2>/dev/null
-  if curl -fsSL --max-time 10 -X POST \
-    -H @<(printf 'X-Vault-Token: %s\n' "$RUNNER_BAO_TOKEN") \
-    "$BAO_ADDR/v1/auth/token/revoke-self" >/dev/null 2>&1; then
+  if BAO_TOKEN=$RUNNER_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 bao token revoke -self >/dev/null 2>&1; then
     RUNNER_BAO_TOKEN=""
     return 0
   fi
@@ -105,29 +103,25 @@ trap cleanup EXIT
 # id + id-cert.pub automatically via PROXMOX_SSH_KEY_PATH. No secret
 # material on any command line.
 mint_ssh_cert() {
-  local mount=${SSH_CA_MOUNT:-ssh-client-ca} login token signed
+  local mount=${SSH_CA_MOUNT:-ssh-client-ca}
   CERT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ansible-sshcert.XXXXXX") || return 1
   chmod 700 "$CERT_DIR"
   (umask 077 && ssh-keygen -q -t ed25519 -N '' -C "ansible-converge" -f "$CERT_DIR/id") || return 1
   { set +x; } 2>/dev/null
-  login=$(jq -nc --arg r "$OPENBAO_APPROLE_ANSIBLE_ROLE_ID" --arg s "$OPENBAO_APPROLE_ANSIBLE_SECRET_ID" \
-    '{role_id: $r, secret_id: $s}' \
-    | curl -fsSL --max-time 10 -H 'Content-Type: application/json' --data @- \
-      "$BAO_ADDR/v1/auth/approle/login") || return 1
-  token=$(printf '%s' "$login" | jq -er '.auth.client_token') || return 1
-  RUNNER_BAO_TOKEN=$token
+  # secret_id is read from stdin (`secret_id=-`), never passed as an argument:
+  # every process on the host can read another's argv.
+  RUNNER_BAO_TOKEN=$(printf '%s' "$OPENBAO_APPROLE_ANSIBLE_SECRET_ID" \
+    | BAO_CLIENT_TIMEOUT=10 bao write -field=token auth/approle/login \
+      role_id="$OPENBAO_APPROLE_ANSIBLE_ROLE_ID" secret_id=-) || return 1
   # 2h, matching the automation-ansible signing role's ceiling. At 1h a full
   # converge outlived its own certificate and every remaining host reported
   # "Failed to authenticate" — an elapsed credential wearing the costume of a
   # broken one. A request above the role's ceiling is refused outright, so this
   # value and openbao_ssh_roles must move together.
-  signed=$(jq -nc --rawfile pub "$CERT_DIR/id.pub" --arg ttl "${SSH_CERT_TTL:-2h}" \
-    '{public_key: $pub, ttl: $ttl}' \
-    | curl -fsSL --max-time 10 \
-      -H @<(printf 'X-Vault-Token: %s\n' "$RUNNER_BAO_TOKEN") --data @- \
-      "$BAO_ADDR/v1/$mount/sign/automation-ansible" \
-    | jq -er '.data.signed_key') || return 1
-  printf '%s\n' "$signed" > "$CERT_DIR/id-cert.pub"
+  BAO_TOKEN=$RUNNER_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 \
+    bao write -field=signed_key "$mount/sign/automation-ansible" \
+    public_key=@"$CERT_DIR/id.pub" ttl="${SSH_CERT_TTL:-2h}" \
+    > "$CERT_DIR/id-cert.pub" || return 1
   export PROXMOX_SSH_KEY_PATH="$CERT_DIR/id"
 
   if [[ -z ${BAO_TOKEN:-} ]]; then
