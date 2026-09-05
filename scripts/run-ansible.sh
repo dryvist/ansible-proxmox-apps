@@ -61,7 +61,16 @@ fi
 # Best-effort, not fatal: a checkout without access to the submodule must still
 # be able to run every other playbook. site.yml's media play checks for the
 # checkout itself and fails there, where the consequence is actually media.
-if [[ -f .gitmodules ]] && ! git submodule update --init --recursive; then
+#
+# --checkout is what makes this work at all now. .gitmodules marks the
+# submodule `update = none`, because Semaphore clones a repository with an
+# unconditional `git submodule update --init --recursive` it offers no way to
+# disable, and that step is fatal: one private submodule the execution plane
+# cannot read failed EVERY template at clone time, before any playbook ran.
+# `update = none` makes that step skip it; --checkout overrides the setting
+# here, so a caller that CAN read the submodule still gets it and still warns
+# when the checkout fails.
+if [[ -f .gitmodules ]] && ! git submodule update --init --recursive --checkout; then
   echo "run-ansible: submodule checkout failed — the media stack will not converge" >&2
 fi
 
