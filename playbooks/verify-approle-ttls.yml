@@ -1,0 +1,196 @@
+---
+# Ad-hoc verification: do the declared AppRole token bounds hold for a token
+# the server actually issues?
+#
+# Reading `auth/approle/role/<name>` back reports what is stored, which is the
+# same source the reconcile task writes and compares. It cannot distinguish a
+# role whose bounds were written from one whose bounds were never applied and
+# whose tokens therefore inherit the auth mount's own default. Only a login
+# shows what a holder ends up with, so this logs in and asserts on the issued
+# token: its creation TTL must equal the declared one, and its remaining TTL
+# must not exceed it.
+#
+# READ-SCOPED BY CONSTRUCTION. It mints no secret_id and writes no
+# configuration. It logs in with credentials that are already in the
+# environment, and every token it creates is revoked before the play ends —
+# including on the failure path, which is why the revoke sits in `always`.
+#
+# Not part of site.yml. Run directly, under whatever supplies the AppRole
+# environment:
+#   doppler run -- ansible-playbook playbooks/verify-approle-ttls.yml
+- name: Verify issued AppRole tokens honour their declared bounds
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _bao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+
+  tasks:
+    - name: Load the openbao role defaults
+      ansible.builtin.include_vars:
+        dir: ../roles/openbao/defaults/main
+
+    - name: Require an OpenBao endpoint
+      ansible.builtin.assert:
+        that:
+          - _bao_addr | length > 0
+        fail_msg: >-
+          BAO_ADDR is unset. This play talks to a live server; there is nothing
+          it can assert without one.
+        quiet: true
+
+    # The environment-variable shape is the one the credential helpers already
+    # use to find any AppRole's secret-zero: the role name upper-cased with
+    # every non-alphanumeric replaced by an underscore.
+    - name: Pair each declared AppRole with whatever credentials are ambient
+      ansible.builtin.set_fact:
+        _approle_candidates: >-
+          {{ _approle_candidates | default([]) + [{
+               'name': item.name,
+               'declared_ttl': _declared,
+               'declared_ttl_s': _declared | community.general.to_seconds | int,
+               'role_id': lookup('env', _env ~ '_ROLE_ID') | default('', true),
+               'secret_id': lookup('env', _env ~ '_SECRET_ID') | default('', true),
+             }] }}
+      vars:
+        _env: >-
+          OPENBAO_APPROLE_{{ item.name | upper | regex_replace('[^A-Z0-9]', '_') }}
+        _declared: "{{ item.token_ttl | default(openbao_approle_token_ttl) }}"
+      loop: "{{ openbao_approles }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Split the declared roles into testable and unreachable
+      ansible.builtin.set_fact:
+        _testable: >-
+          {{ _approle_candidates | selectattr('role_id') | selectattr('secret_id') | list }}
+        _untestable: >-
+          {{ _approle_candidates | rejectattr('role_id') | list
+             + (_approle_candidates | selectattr('role_id')
+                | rejectattr('secret_id') | list) }}
+      no_log: true
+
+    # Named, not silent. A role with no ambient credential is not evidence of
+    # anything, and an operator reading a green run has to be able to tell
+    # which roles it actually spoke for. Break-glass roles hold no standing
+    # secret_id by design and are expected here.
+    - name: Report which declared roles this run could not speak for
+      ansible.builtin.debug:
+        msg: >-
+          No ambient credentials for {{ _untestable | length }} declared
+          AppRole(s); they are not covered by this run:
+          {{ _untestable | map(attribute='name') | sort | join(', ') }}
+      when: _untestable | length > 0
+
+    # A run that tested nothing must not read as a pass.
+    - name: Require at least one role to have been reachable
+      ansible.builtin.assert:
+        that:
+          - _testable | length > 0
+        fail_msg: >-
+          No declared AppRole had both a role_id and a secret_id in the
+          environment, so this play asserted nothing. Run it under the layer
+          that supplies them.
+        quiet: true
+
+    - name: Log in and inspect the issued tokens
+      block:
+        # The secret_id goes to stdin (`secret_id=-`), never into an argument:
+        # every process on the host can read another's argument list.
+        - name: Log in with each reachable AppRole
+          ansible.builtin.command:
+            cmd: >-
+              bao write -field=token auth/approle/login
+              role_id={{ item.role_id }} secret_id=-
+            stdin: "{{ item.secret_id }}"
+            stdin_add_newline: false
+          environment:
+            BAO_ADDR: "{{ _bao_addr }}"
+            BAO_CLIENT_TIMEOUT: "10"
+          loop: "{{ _testable }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: _logins
+          changed_when: false
+          no_log: true
+
+        - name: Look up each issued token
+          ansible.builtin.command:
+            cmd: bao token lookup -format=json
+          environment:
+            BAO_ADDR: "{{ _bao_addr }}"
+            BAO_CLIENT_TIMEOUT: "10"
+            BAO_TOKEN: "{{ item.stdout }}"
+          loop: "{{ _logins.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          register: _lookups
+          changed_when: false
+          no_log: true
+
+      always:
+        # Every token this play created is revoked, whether or not the
+        # assertions below ever run. A verification that leaves live tokens
+        # behind has widened the thing it was measuring.
+        - name: Revoke every token this play created
+          ansible.builtin.command:
+            cmd: bao token revoke -self
+          environment:
+            BAO_ADDR: "{{ _bao_addr }}"
+            BAO_CLIENT_TIMEOUT: "10"
+            BAO_TOKEN: "{{ item.stdout }}"
+          loop: "{{ (_logins | default({})).results | default([]) }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          changed_when: true
+          failed_when: false
+          no_log: true
+
+    # Only the bounds are carried forward. The lookup response carries the
+    # token itself, so nothing downstream may report the raw result.
+    - name: Collect the declared and issued bounds per role
+      ansible.builtin.set_fact:
+        _bounds: >-
+          {{ _bounds | default([]) + [{
+               'name': item.item.item.name,
+               'declared': item.item.item.declared_ttl,
+               'declared_s': item.item.item.declared_ttl_s,
+               'creation_ttl': (item.stdout | from_json).data.creation_ttl | int,
+               'ttl': (item.stdout | from_json).data.ttl | int,
+             }] }}
+      loop: "{{ _lookups.results }}"
+      loop_control:
+        label: "{{ item.item.item.name }}"
+      no_log: true
+
+    - name: Report the issued bounds per role
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.name }}: declared {{ item.declared }}
+          ({{ item.declared_s }}s), issued creation_ttl={{ item.creation_ttl }}s
+          ttl={{ item.ttl }}s
+      loop: "{{ _bounds }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # creation_ttl is the assertion that catches the defect this play exists
+    # for: a role created before its bounds were declared keeps a token TTL of
+    # zero, and a zero TTL is not a short token — it is the auth mount's own
+    # default, which is far longer than anything declared here.
+    - name: Assert every issued token honours its declared bound
+      ansible.builtin.assert:
+        that:
+          - item.creation_ttl == item.declared_s
+          - item.ttl <= item.declared_s
+        fail_msg: >-
+          {{ item.name }} issued a token with creation_ttl={{ item.creation_ttl }}s
+          and ttl={{ item.ttl }}s against a declared {{ item.declared }}
+          ({{ item.declared_s }}s). A creation_ttl of 0 means the role carries
+          no token TTL at all and its tokens take the auth mount default.
+        success_msg: "{{ item.name }}: issued token matches its declared bound"
+      loop: "{{ _bounds }}"
+      loop_control:
+        label: "{{ item.name }}"
