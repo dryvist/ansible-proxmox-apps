@@ -52,10 +52,24 @@
         mode: "0755"
 
     - name: Configure Docker vfs storage driver for Docker-in-Docker
+      # containerd-snapshotter is pinned off alongside the driver. The
+      # containerd image store replaces the graph-driver stack entirely, so
+      # with it on, "storage-driver" is read and then has no effect: layers
+      # unpack through containerd's overlayfs snapshotter regardless. That
+      # snapshotter turns a layer's `.wh.` entries into overlayfs whiteouts
+      # with mknod(char 0/0), and this snapshotter root sits on the test
+      # container's own overlayfs rootfs, which the kernel does not accept as
+      # an overlay upper. Images whose layers carry no whiteout entry still
+      # extract, so the breakage looks image-specific rather than
+      # configuration-wide. Docker Engine 29 turns the containerd image store
+      # on for fresh installs, and this role installs docker-ce unpinned.
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
         content: |
           {
-            "storage-driver": "vfs"
+            "storage-driver": "vfs",
+            "features": {
+              "containerd-snapshotter": false
+            }
           }
         mode: "0644"
