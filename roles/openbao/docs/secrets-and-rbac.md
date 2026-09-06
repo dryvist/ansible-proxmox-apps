@@ -171,6 +171,15 @@ values arrive by environment and are never committed. A class that a declared
 role uses but which was never supplied **fails the converge** rather than
 quietly creating the unbound role the binding exists to prevent.
 
+Two sibling asserts cover the class *assignment* rather than the class values.
+Every AppRole the converge loops must resolve to a class, so a role declared
+outside `openbao_approles` fails the run by name instead of dying on an
+undefined variable inside a `no_log` loop. And every key of
+`openbao_approle_cidr_class_overrides` must name a declared role, because an
+override that matches nothing is a silent no-op that leaves its role on the
+machine default while the file says otherwise. `unbound` stays a decision that
+is written down with a reason, never something a role arrives at by omission.
+
 The one exception throughout is `public`: it needs no secret-zero, no
 redemption cap and no source binding, since it only unlocks non-exploitable
 facts.
