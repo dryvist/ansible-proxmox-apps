@@ -40,6 +40,7 @@ names verified against the live services:
 | `haproxy_group` | `haproxy.service` | unit active (TCP VIP) |
 | `haproxy_group` | `nginx.service` | unit active (UDP syslog/netflow LB) |
 | `docker_vms` | `github-runner@N.service` (pool) | every configured replica unit active |
+| `docker_vms` | Docker data disk | `/var/lib/docker` used percent below `service_deadman_disk_floor_pct` |
 
 ## Healthchecks URLs
 
@@ -55,6 +56,7 @@ keystone in the healthchecks LXC and export its ping URL:
 | haproxy-vip | `DEADMAN_HC_URL_HAPROXY` |
 | nginx-syslog-lb | `DEADMAN_HC_URL_NGINX` |
 | github-runner-pool | `DEADMAN_HC_URL_GITHUB_RUNNER` |
+| github-runner-data-disk | `DEADMAN_HC_URL_GITHUB_RUNNER_DISK` |
 
 ntfy alerts always fire (no provisioning needed) via the repo's ntfy LXC.
 

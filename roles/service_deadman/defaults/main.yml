@@ -82,12 +82,27 @@ service_deadman_group_checks:
            | map('regex_replace', '^', 'github-runner@')
            | map('regex_replace', '$', '.service') | join(' ') }}
       healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_GITHUB_RUNNER') | default('', true) }}"
+    # A full Docker data disk fails every Molecule scenario on the host with
+    # apt reporting a truncated index as an "invalid signature" — a disk
+    # problem that reads exactly like a broken package mirror. The recurring
+    # prune timer (github_runner role) is the fix; this is the visibility
+    # layer for the case it falls behind between converges.
+    - name: github-runner-data-disk
+      probe_command: >-
+        [ "$(df --output=pcent /var/lib/docker | tail -1 | tr -dc 0-9)"
+        -lt {{ service_deadman_disk_floor_pct }} ]
+      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_GITHUB_RUNNER_DISK') | default('', true) }}"
 
 # Resolved set of checks for THIS host — every group's checks the host is in.
 service_deadman_checks: >-
   {{ service_deadman_group_checks | dict2items
      | selectattr('key', 'in', group_names)
      | map(attribute='value') | flatten | list }}
+
+# Capacity floor for the github-runner-data-disk check: page once the Docker
+# data disk crosses this percent used, well before the 100% that fails every
+# job's apt update with a signature error that has nothing to do with GPG.
+service_deadman_disk_floor_pct: 90
 
 # Deployed paths (rarely overridden).
 service_deadman_script_path: /usr/local/bin/service-deadman-validate.sh

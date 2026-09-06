@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Remove Molecule-owned containers a job's own destroy step missed
+# A cancelled or timed-out CI run never reaches `molecule destroy`, so its
+# platform container (and anything a role deployed as a docker-compose
+# sibling inside it) survives indefinitely on the shared daemon. No test
+# scenario's own timeout bounds this — only a host-side reaper does.
+#
+# Scoped by the `owner=molecule` label molecule-plugins[docker] stamps on
+# every container it creates (create.yml sets `molecule_labels: {owner:
+# molecule}`); nothing else on this host carries it, so this can only ever
+# remove Molecule's own containers, never a platform service.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# No scenario's own timeout-minutes exceeds 45 (see _molecule.yml); anything
+# with this label still running past twice that is orphaned, not slow.
+ExecStart=/usr/bin/bash -c 'now=$(date +%%s); \
+  for c in $(docker ps -q --filter "label=owner=molecule"); do \
+    started=$(date -d "$(docker inspect -f "{{ "{{" }}.State.StartedAt{{ "}}" }}" "$c")" +%%s); \
+    age=$(( (now - started) / 60 )); \
+    if [ "$age" -gt {{ github_runner_reaper_max_age_minutes }} ]; then \
+      echo "reaping orphaned molecule container $c (running ${age}m)"; \
+      docker rm -f "$c"; \
+    fi; \
+  done'

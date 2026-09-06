@@ -51,6 +51,27 @@ github_runner_data_paths:
   - /var/lib/containerd
 
 # ---------------------------------------------------------------------------
+# Recurring reclaim (see tasks/data_disk.yml). The one-time migration prune
+# only fires once; nothing pruned the shared daemon afterwards, and unused
+# image/build-cache layers from every Molecule run across every PR grew until
+# the data disk hit 0 bytes free.
+# ---------------------------------------------------------------------------
+# Off-peak and infrequent enough that it never races a job's own image pull —
+# `docker system prune` never touches an image backing a running container
+# regardless of age, so this can only ever evict what nothing is using.
+github_runner_prune_schedule: "*-*-* 03:00:00"
+# Images/containers must be unused for at least this long before a prune run
+# will evict them, so an image a job pulled between runs is never a target.
+github_runner_prune_min_age_hours: 24
+
+# Orphaned Molecule container reaper (see tasks/data_disk.yml). No scenario's
+# own timeout-minutes exceeds 45 (.github/workflows/_molecule.yml); anything
+# still running well past that missed its own `molecule destroy` and is a
+# leak, not a slow test.
+github_runner_reaper_interval: "15m"
+github_runner_reaper_max_age_minutes: 90
+
+# ---------------------------------------------------------------------------
 # Registration credential (OpenBao github secrets engine, never a static PAT).
 #
 # The container's ACCESS_TOKEN is a GitHub App installation token scoped to
