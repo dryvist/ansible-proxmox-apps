@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Reclaim Docker/containerd data unused for over {{ github_runner_prune_min_age_hours }}h
+# Every replica on this host shares one dockerd (siblings on docker.sock, not
+# children of the runner's cgroup — see github_runner defaults). Nothing ever
+# reclaimed it between the one-time data-disk migration and now, so pulled
+# test images and build cache grew without bound until the disk hit 0 bytes
+# free and every Molecule scenario failed apt's signature check on a
+# truncated index — not a real GPG problem. This timer is the recurring
+# reclaim that migration never was.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# --all also drops unused (not just dangling) images; a currently-running
+# sibling container's image is never a prune candidate regardless of age, so
+# this cannot evict what another in-flight job is using. The age filter keeps
+# it from evicting an image a job pulled seconds ago between prune runs.
+ExecStart=/usr/bin/docker system prune --all --force --filter "until={{ github_runner_prune_min_age_hours }}h"
