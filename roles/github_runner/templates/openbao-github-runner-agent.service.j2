@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+# Keeps {{ github_runner_token_env_file }} holding a currently-valid GitHub App
+# installation token. One instance per host serves every runner replica.
+#
+# This unit is the reason the runner units carry no credential of their own.
+# It is not optional infrastructure around them -- if it is down, the token
+# file goes stale within the hour and every replica fails to register.
+
+[Unit]
+Description=OpenBao Agent minting GitHub runner registration tokens
+# It talks to OpenBao before it can render anything, so routing must be up.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart={{ github_runner_bao_bin }} agent -config={{ github_runner_agent_config }}
+# An OpenBao outage, an expired secret_id, or a revoked AppRole all land here.
+# Keep retrying: the fleet is useless without this, and a stopped agent is a
+# silent failure that only shows up as runners that will not register.
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
