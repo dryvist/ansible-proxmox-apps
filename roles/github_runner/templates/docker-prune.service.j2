@@ -1,6 +1,6 @@
 # {{ ansible_managed }}
 [Unit]
-Description=Reclaim Docker/containerd data unused for over {{ github_runner_prune_min_age_hours }}h
+Description=Reclaim Docker/containerd images, containers and unused volumes
 # Every replica on this host shares one dockerd (siblings on docker.sock, not
 # children of the runner's cgroup — see github_runner defaults). Nothing ever
 # reclaimed it between the one-time data-disk migration and now, so pulled
@@ -18,3 +18,13 @@ Type=oneshot
 # this cannot evict what another in-flight job is using. The age filter keeps
 # it from evicting an image a job pulled seconds ago between prune runs.
 ExecStart=/usr/bin/docker system prune --all --force --filter "until={{ github_runner_prune_min_age_hours }}h"
+# `docker system prune` never touches volumes (removing one destroys data, not
+# a rebuildable layer) — verified against the installed CLI (29.4.0):
+# `docker volume prune` takes no `until`/age filter at all, only `--filter
+# label` and `-a`. Its safety is instead structural: a volume attached to any
+# existing container, running or not, is never a candidate, with or without
+# `-a` — so this cannot remove one a container still references. Deliberately
+# without `-a`: that leaves it to anonymous volumes only (never a named one a
+# platform service created and temporarily detached from), which is already
+# enough to reclaim what test runs leave behind.
+ExecStartPost=/usr/bin/docker volume prune --force
