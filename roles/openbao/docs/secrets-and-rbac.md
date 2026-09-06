@@ -85,7 +85,7 @@ plans):
 | `apps-seed` | `secret/apps/*` | `secret/apps/*` create/update | Doppler-published writer; Terraform `vault-secrets` seeds `secret/apps/<app>` at source |
 | `flow-lock` | `secret/locks/global`, `secret/infra/*` | `secret/locks/global` | Cross-repo apply lock; releases the lock via metadata delete |
 | `terrakube-<workspace>` JWT | Only that workspace's native paths | Workspace-specific | Short-lived; exact organization/workspace subject and audience |
-| `ansible-converge` | Platform, apps, exact MCP secrets, the run-environment documents (`platform/ansible/env` on each mount) | Exact MCP secrets | Config pulls and transitional MCP publishers; no broad AI access |
+| `ansible-converge` | Platform, apps, MCP secrets, `platform/ansible/env` per mount | Exact MCP secrets | Config pulls, MCP publishers; no broad AI access |
 | `observability` | `secret/platform/{splunk,cribl}` | — | Ingest pipeline (shared HEC tokens) |
 | `local-cloud` | `secret/platform/{object-storage,compute}` | — | RustFS + compute creds |
 | `monitoring` | `secret/apps/monitoring` | — | netmon/unifi_metrics/prometheus_stack |
@@ -174,6 +174,19 @@ quietly creating the unbound role the binding exists to prevent.
 The one exception throughout is `public`: it needs no secret-zero, no
 redemption cap and no source binding, since it only unlocks non-exploitable
 facts.
+
+Every check above assumes the declared list is the complete truth. It is not,
+by construction: reconciliation only ever loops what code declares, so an
+identity created by any other path — a rename that left the old name live, a
+manual break-glass create nobody backfilled — is invisible to every one of
+them and keeps whatever bounds it was created with forever. The converge
+closes that by listing what actually exists in the store (`bao list
+auth/approle/role`, granted read-only to the reconcile identity) and failing
+by name on anything live that is declared nowhere. A genuine, deliberate
+exception is named in `openbao_approle_undeclared_exceptions`, next to the
+declarations themselves, with a reason — never a silent allowlist elsewhere.
+The reverse direction (declared but not yet live) only warns: that is the
+ordinary shape of a role about to be created, not a leak.
 
 ### How a human gets break-glass now
 
