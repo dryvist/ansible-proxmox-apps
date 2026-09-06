@@ -24,66 +24,45 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.event_log = self.temp_path / "events.log"
         self.tmp_path = self.temp_path / "tmp"
         self.tmp_path.mkdir()
+        # One fake for the OpenBao CLI. It also enforces the two contracts
+        # the runner depends on and that no assertion below could otherwise
+        # see: the secret_id arrives on stdin rather than in the argument
+        # list, and each call asks for the single response field it uses.
         self._write_executable(
-            "jq",
+            "bao",
             f"""
             #!/usr/bin/env bash
             set -euo pipefail
-            filter=""
-            for arg in "$@"; do
-              filter=$arg
-            done
-            case "$filter" in
-              .auth.client_token)
-                cat >/dev/null
-                printf '%s\\n' '{MINTED_TOKEN}'
-                ;;
-              .data.signed_key)
-                cat >/dev/null
-                printf '%s\\n' 'test-certificate'
-                ;;
-              *)
-                printf '%s\\n' '{{}}'
-                ;;
-            esac
-            """,
-        )
-        self._write_executable(
-            "curl",
-            f"""
-            #!/usr/bin/env bash
-            set -euo pipefail
-            url="" header_arg="" next_is_header=false
-            for arg in "$@"; do
-              if $next_is_header; then
-                header_arg=$arg
-                next_is_header=false
-                continue
-              fi
-              case "$arg" in
-                -H|--header) next_is_header=true ;;
-                http://*|https://*) url=$arg ;;
-              esac
-            done
             auth=""
-            if [[ $header_arg == @/dev/fd/* ]]; then
-              IFS= read -r auth_header < "${{header_arg#@}}"
-              [[ $auth_header == "X-Vault-Token: $EXPECTED_MINTED_TOKEN" ]]
+            if [[ ${{BAO_TOKEN:-}} == "$EXPECTED_MINTED_TOKEN" ]]; then
               auth=" runner-auth"
             fi
-            printf 'curl %s%s\n' "$url" "$auth" >> "$FAKE_EVENT_LOG"
-            case "$url" in
-              */auth/approle/login)
-                cat >/dev/null
-                printf '%s\n' '{{"auth":{{"client_token":"{MINTED_TOKEN}"}}}}'
+            for arg in "$@"; do
+              if [[ $arg == *"$EXPECTED_APPROLE_SECRET"* ]]; then
+                printf 'secret_id passed as an argument\n' >&2
+                exit 64
+              fi
+            done
+            case "$*" in
+              *"auth/approle/login"*)
+                [[ " $* " == *" -field=token "* ]] || exit 65
+                [[ " $* " == *" secret_id=- "* ]] || exit 66
+                piped=""
+                IFS= read -r piped || true
+                [[ $piped == "$EXPECTED_APPROLE_SECRET" ]] || exit 67
+                printf 'bao write auth/approle/login\n' >> "$FAKE_EVENT_LOG"
+                printf '%s\n' '{MINTED_TOKEN}'
                 ;;
-              */sign/automation-ansible)
-                cat >/dev/null
-                [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 22
-                printf '%s\n' '{{"data":{{"signed_key":"test-certificate"}}}}'
+              *"sign/automation-ansible"*)
+                [[ " $* " == *" -field=signed_key "* ]] || exit 68
+                [[ " $* " == *" public_key=@"* ]] || exit 69
+                printf 'bao write ssh-client-ca/sign/automation-ansible%s\n' \
+                  "$auth" >> "$FAKE_EVENT_LOG"
+                [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 2
+                printf '%s\n' 'test-certificate'
                 ;;
-              */auth/token/revoke-self)
-                cat >/dev/null
+              *"token revoke -self"*)
+                printf 'bao token revoke -self%s\n' "$auth" >> "$FAKE_EVENT_LOG"
                 ;;
               *)
                 exit 2
@@ -119,6 +98,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "OPENBAO_APPROLE_ANSIBLE_SECRET_ID": APPROLE_SECRET,
                 "EXPECTED_CHILD_BAO_TOKEN": caller_token or MINTED_TOKEN,
                 "EXPECTED_MINTED_TOKEN": MINTED_TOKEN,
+                "EXPECTED_APPROLE_SECRET": APPROLE_SECRET,
                 "FAKE_EVENT_LOG": str(self.event_log),
                 "FAKE_SIGN_FAILURE": "1" if sign_failure else "0",
                 "PATH": f"{self.bin_path}{os.pathsep}{env['PATH']}",
@@ -156,10 +136,10 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(
             self.event_log.read_text(encoding="utf-8").splitlines(),
             [
-                "curl https://openbao.test/v1/auth/approle/login",
-                "curl https://openbao.test/v1/ssh-client-ca/sign/automation-ansible runner-auth",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
                 "ansible",
-                "curl https://openbao.test/v1/auth/token/revoke-self runner-auth",
+                "bao token revoke -self runner-auth",
             ],
         )
         self._assert_no_secret_leak(result)
@@ -172,9 +152,9 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(
             self.event_log.read_text(encoding="utf-8").splitlines(),
             [
-                "curl https://openbao.test/v1/auth/approle/login",
-                "curl https://openbao.test/v1/ssh-client-ca/sign/automation-ansible runner-auth",
-                "curl https://openbao.test/v1/auth/token/revoke-self runner-auth",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
+                "bao token revoke -self runner-auth",
                 "ansible",
             ],
         )
@@ -189,13 +169,88 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(
             self.event_log.read_text(encoding="utf-8").splitlines(),
             [
-                "curl https://openbao.test/v1/auth/approle/login",
-                "curl https://openbao.test/v1/ssh-client-ca/sign/automation-ansible runner-auth",
-                "curl https://openbao.test/v1/auth/token/revoke-self runner-auth",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
+                "bao token revoke -self runner-auth",
             ],
         )
         self._assert_no_secret_leak(result)
         self._assert_cert_cleanup()
+
+
+class CheckoutFreshnessGuard(unittest.TestCase):
+    """The guard must name the divergence it actually found.
+
+    A checkout that is AHEAD of origin is zero commits behind it. Reporting
+    that as "0 commit(s) behind -- refusing" reads as a broken guard rather
+    than a fact about the checkout, and the obvious way to make a broken guard
+    stop complaining is ALLOW_STALE_CHECKOUT=1 -- which converges unpushed,
+    unreviewed local commits, the exact outcome the guard exists to prevent.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.upstream = root / "upstream"
+        self.clone = root / "clone"
+        self.env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        self._git("init", "-q", "-b", "main", str(self.upstream), cwd=root)
+        (self.upstream / "seed").write_text("1\n", encoding="utf-8")
+        self._git("add", "-A", cwd=self.upstream)
+        self._git("commit", "-qm", "seed", cwd=self.upstream)
+        self._git("clone", "-q", str(self.upstream), str(self.clone), cwd=root)
+        scripts = self.clone / "scripts"
+        scripts.mkdir(parents=True, exist_ok=True)
+        (scripts / "run-ansible.sh").write_text(
+            RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _git(self, *args, cwd):
+        subprocess.run(
+            ["git", *args], cwd=str(cwd), env=self.env, check=True,
+            capture_output=True,
+        )
+
+    def _run_guard(self):
+        return subprocess.run(
+            ["bash", "scripts/run-ansible.sh", "playbooks/site.yml"],
+            cwd=str(self.clone), env=self.env, capture_output=True, text=True,
+        )
+
+    def test_ahead_checkout_is_named_as_ahead_and_says_to_push(self):
+        (self.clone / "local-only").write_text("x\n", encoding="utf-8")
+        self._git("add", "-A", cwd=self.clone)
+        self._git("commit", "-qm", "local only", cwd=self.clone)
+
+        result = self._run_guard()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("1 ahead", result.stderr)
+        self.assertIn("0 behind", result.stderr)
+        self.assertIn("git push origin", result.stderr)
+        # The stale-checkout remedy is wrong here and must not be suggested.
+        self.assertNotIn("ALLOW_STALE_CHECKOUT", result.stderr)
+
+    def test_behind_checkout_still_says_to_pull(self):
+        (self.upstream / "newer").write_text("y\n", encoding="utf-8")
+        self._git("add", "-A", cwd=self.upstream)
+        self._git("commit", "-qm", "newer", cwd=self.upstream)
+
+        result = self._run_guard()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("1 behind", result.stderr)
+        self.assertIn("0 ahead", result.stderr)
+        self.assertIn("--ff-only", result.stderr)
 
 
 if __name__ == "__main__":
