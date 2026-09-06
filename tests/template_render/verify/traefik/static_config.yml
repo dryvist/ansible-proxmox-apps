@@ -61,3 +61,25 @@
     fail_msg: >-
       traefik.yml.j2 did not enable metrics/tracing, put metrics on a shared
       entryPoint, or failed to derive the OTLP endpoint from the otel row.
+
+# Every AppRole login through this proxy is CIDR-bound on the address the
+# backend sees, and the backend only sees the real client while Traefik keeps
+# forwarding it. Two Traefik defaults do that, and both are defaults precisely
+# because no forwardedHeaders block exists on any entryPoint here: the proxy
+# appends the connecting peer to X-Forwarded-For, and it discards whatever the
+# client sent first, so the forwarded value cannot be spoofed. Adding a
+# forwardedHeaders block switches one or both off — trustedIPs/insecure let a
+# client-supplied value survive, notAppendXForwardedFor stops the header being
+# sent at all — and every bound CIDR then evaluates the proxy's own address,
+# which passes for every client. Nothing about that failure is visible at
+# runtime, so the absence is asserted here.
+- name: Assert no entryPoint stops forwarding the real client address
+  ansible.builtin.assert:
+    that:
+      - >-
+        _traefik_static_yaml.entryPoints.values()
+        | selectattr('forwardedHeaders', 'defined') | list | length == 0
+    fail_msg: >-
+      An entryPoint carries a forwardedHeaders block. Trusting client-sent
+      forwarded headers, or suppressing the appended one, makes every backend
+      CIDR check evaluate a spoofable or proxy-owned address.
