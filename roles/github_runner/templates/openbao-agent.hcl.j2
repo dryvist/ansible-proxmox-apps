@@ -1,0 +1,45 @@
+{{ ansible_managed | comment }}
+# OpenBao Agent for the runner fleet. One per host, NOT one per replica: it
+# holds a single AppRole session and mints from it, which is what keeps the
+# fleet inside its secret_id budget.
+#
+# The distinction that forces this shape: an AppRole LOGIN spends a secret_id
+# use (github-runner inherits the machine default, 30 uses / 24h), while
+# MINTING from an authenticated session spends none. A script that logged in
+# before each `docker run` would burn the budget in under a day at this fleet's
+# job rate and then fail closed. The agent logs in once, renews its own token,
+# and mints as often as the template needs.
+exit_after_auth = false
+
+vault {
+  address = "{{ github_runner_bao_addr }}"
+}
+
+auto_auth {
+  method "approle" {
+    config = {
+      role_id_file_path   = "{{ github_runner_approle_dir }}/role_id"
+      secret_id_file_path = "{{ github_runner_approle_dir }}/secret_id"
+      # The secret_id is re-delivered by Ansible on every converge, so the
+      # agent must not consume the file it will need again after a restart.
+      remove_secret_id_file_after_reading = false
+    }
+  }
+}
+
+# A GET here mints a token: the plugin registers ReadOperation against the same
+# callback as CreateOperation. The github-runner policy grants `read` for
+# exactly this reason -- the template engine issues a GET, and without that
+# capability this renders a 403 rather than a token.
+#
+# error_on_missing_key keeps a malformed response loud. A silently empty
+# ACCESS_TOKEN would leave the runners "up" and unable to register, which is
+# the failure mode this whole change exists to remove.
+{% raw %}
+template {
+  contents             = "ACCESS_TOKEN={{ with secret \"{% endraw %}{{ github_runner_token_path }}{% raw %}\" }}{{ .Data.token }}{{ end }}\n"
+{% endraw %}
+  destination          = "{{ github_runner_token_env_file }}"
+  perms                = "0600"
+  error_on_missing_key = true
+}

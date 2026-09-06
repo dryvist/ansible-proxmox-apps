@@ -146,6 +146,27 @@
   when: technitium_dns_apply | bool
   no_log: true
 
+# Technitium answers a bad token with HTTP 200 and status "invalid-token", so
+# `failed_when: false` is not even required for the collapse -- the `default([])`
+# below turns ANY unusable answer into "no zones", which is indistinguishable
+# from "the zone does not exist yet" and drops straight through to the very
+# heuristic the comment above documents as having caused Zammad #17246.
+# An unusable answer must stop the run, not silently pick a role.
+- name: FAIL -- the zone list was not usable, so the live zone type is unknown
+  vars:
+    _status: "{{ technitium_dns_zone_list.json.status | default('') }}"
+  ansible.builtin.fail:
+    msg: >-
+      The Technitium zone list did not return status "ok"
+      (status={{ _status | default('<none>', true) }},
+      http={{ technitium_dns_zone_list.status | default('<none>') }}).
+      That says NOTHING about which zones exist, so this run must not fall back
+      to the lowest-vmid heuristic -- doing so is what designated the SECONDARY
+      as primary in Zammad #17246 while the run still exited green.
+  when:
+    - technitium_dns_apply | bool
+    - _status != 'ok'
+
 - name: Derive this node's live zone type
   ansible.builtin.set_fact:
     technitium_dns_live_zone_type: >-
