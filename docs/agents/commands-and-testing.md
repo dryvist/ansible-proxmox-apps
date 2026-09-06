@@ -12,7 +12,12 @@
 >
 > The OpenBao-node play (`--tags openbao` on `openbao_group`) is the single
 > converge still run from a workstation under the secret-zero wrapper,
-> because its inputs are the seal key and the provisioning identities.
+> because its inputs are the seal key and the provisioning identities. The
+> AppRole TTL verification playbook (`verify-approle-ttls.yml`, below) runs
+> through Semaphore like every other play — it is read-only against issued
+> tokens and revokes everything it creates, so it carries none of the
+> seal-key/provisioning-identity constraint that keeps the OpenBao-node play
+> on a workstation.
 
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS)
@@ -47,6 +52,15 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
 # on-demand; never part of site.yml. Scope with --tags sonarr (or --tags radarr).
 sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/search-missing.yml'
+
+# Assert that issued AppRole tokens honour their declared bounds. Standalone,
+# on-demand; never part of site.yml. Runs through its own Semaphore job like
+# every other play; the command below is the local/on-demand form. Logs in
+# with the AppRole credentials already in the environment, asserts each
+# issued token's creation TTL against the declared one, and revokes every
+# token it created. Roles with no ambient credentials are named in the
+# output and are not covered by the run.
+doppler run -- ansible-playbook playbooks/verify-approle-ttls.yml
 
 # Lint
 ansible-lint
