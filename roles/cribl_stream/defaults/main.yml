@@ -67,6 +67,26 @@ cribl_stream_langfuse_secret_key: >-
      | default(undef(), true)
      | mandatory('LANGFUSE_SECRET_KEY is required for the langfuse_otlp output') }}
 
+# Arize Phoenix OTLP destination — the second leg of the same in_otel input,
+# rendered unconditionally for the same reason as Langfuse above. Phoenix
+# authenticates OTLP/HTTP with a bearer API key (minted in its UI, seeded to
+# ai/phoenix as PHOENIX_INGEST_API_KEY); the bao-first read with the env
+# fallback lives in inventory/group_vars/cribl_stream_group.yml.
+#
+# BASE URL ONLY, for the same reason spelled out for Langfuse above: the
+# open_telemetry destination appends the per-signal path itself. Phoenix serves
+# OTLP at /v1/traces off the root, so writing that path here produces
+# /v1/traces/v1/traces — a 404 on every POST while the input, the pipeline and
+# the converge all stay green. Test cribl_stream_phoenix.yml asserts the
+# rendered endpoint carries no signal path.
+cribl_stream_phoenix_url: >-
+  https://phoenix.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | mandatory('PROXMOX_SUBDOMAIN required') }}
+cribl_stream_phoenix_api_key: >-
+  {{ lookup('env', 'PHOENIX_INGEST_API_KEY')
+     | default(undef(), true)
+     | mandatory('PHOENIX_INGEST_API_KEY is required for the phoenix_otlp output') }}
+
 # Splunk HEC output configuration. Host comes from the one shared
 # splunk_hec_base_url (inventory/group_vars/all.yml) — never reconstructed
 # here (apps#588: a local "splunk.<zone>:8088" build black-holed every HEC
@@ -111,6 +131,14 @@ cribl_stream_per_index_indexes: >-
   {{ (['netflow', 'otel_traces', 'ai_usage']
       + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
      | unique | list }}
+# Post-processing pipeline applied to every splunk_hec output, base and
+# per-index alike. It names a pipeline inside the redaction pack, addressed
+# `<pack>/<pipeline>`; the pack is installed by dryvist.homelab.cribl_packs,
+# not by this role, so the value is declared here rather than discovered at
+# converge time and does not depend on when the pack lands. Set it to an empty
+# string to render no post-processing at all, which is the escape hatch if the
+# pack is ever unavailable on a node.
+cribl_stream_splunk_hec_post_processing_pipeline: cc-stream-secret-redaction-io/secret_redaction
 cribl_stream_splunk_hec_tls: true
 cribl_stream_splunk_hec_tls_verify: false  # Self-signed cert in lab
 # Single definition shared by the template and the drift check in tasks.
