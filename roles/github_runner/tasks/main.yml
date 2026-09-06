@@ -5,10 +5,13 @@
       - github_runner_org | length > 0
       - github_runner_group | length > 0
       - github_runner_replicas | int > 0
-      - github_runner_access_token | length > 0
+      - github_runner_openbao_role_id | length > 0
+      - github_runner_openbao_secret_id | length > 0
     fail_msg: >-
       The runner pool needs an organization, runner group, positive replica
-      count, and GH_PAT_RUNNER_TOKEN in the converge environment.
+      count, and the github-runner AppRole secret-zero
+      (OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID / _SECRET_ID) in the converge
+      environment.
 
 # Runs before anything touches Docker: the migration stops and restarts the
 # daemon, and the converge-time assertion must fail before runners are started
@@ -84,6 +87,85 @@
     owner: root
     group: root
     mode: "0700"
+
+# ---------------------------------------------------------------------------
+# Registration credential. Ansible delivers the AppRole secret-zero and the
+# agent that spends it; it never renders a GitHub token itself, because a
+# GitHub App installation token outlives its usefulness in about an hour and
+# converges are days apart.
+# ---------------------------------------------------------------------------
+- name: Install the OpenBao client (bao agent mints the registration token)
+  ansible.builtin.apt:
+    deb: "{{ github_runner_openbao_deb_url }}"
+    state: present
+
+- name: Create the AppRole credential directory
+  ansible.builtin.file:
+    path: "{{ github_runner_approle_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# Two bare-value files, not KEY=VALUE: role_id_file_path/secret_id_file_path
+# read the whole file as the value, so an env-file shape would authenticate as
+# the literal string "OPENBAO_APPROLE_...=..." and fail.
+- name: Deploy the AppRole secret-zero
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ github_runner_approle_dir }}/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - name: role_id
+      value: "{{ github_runner_openbao_role_id }}"
+    - name: secret_id
+      value: "{{ github_runner_openbao_secret_id }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  notify: Restart the runner token agent
+
+- name: Deploy the OpenBao Agent configuration
+  ansible.builtin.template:
+    src: openbao-agent.hcl.j2
+    dest: "{{ github_runner_agent_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart the runner token agent
+
+- name: Deploy the OpenBao Agent systemd unit
+  ansible.builtin.template:
+    src: openbao-github-runner-agent.service.j2
+    dest: /etc/systemd/system/openbao-github-runner-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the runner token agent
+
+- name: Enable and start the runner token agent
+  ansible.builtin.systemd:
+    name: openbao-github-runner-agent.service
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Without this, a changed agent config would not take effect until the end of
+# the play -- after the runner units had already been started against the old
+# one. The wait below would then be checking the wrong agent.
+- name: Apply any pending agent restart before the runners depend on it
+  ansible.builtin.meta: flush_handlers
+
+# The runner units refuse to start without this file, so a converge that got
+# this far but cannot mint should say so here rather than surface as N failed
+# runner units with an opaque docker error.
+- name: Wait for the agent to render a registration token
+  ansible.builtin.wait_for:
+    path: "{{ github_runner_token_env_file }}"
+    search_regex: "ACCESS_TOKEN=."
+    timeout: 60
 
 - name: Deploy the runner environment file
   ansible.builtin.template:

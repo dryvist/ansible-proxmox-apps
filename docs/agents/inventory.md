@@ -65,7 +65,8 @@ documented once at
 | `MAILPIT_RELAY_USERNAME` | SMTP relay username | SOPS |
 | `MAILPIT_RELAY_PASSWORD` | SMTP relay password / app password | Doppler / SOPS |
 | `MSSQL_SA_PASSWORD` | SQL Server SA password (for mssql_docker role) | SOPS |
-| `GH_PAT_RUNNER_TOKEN` | Fine-grained PAT for runner auto-registration (multi-repo) | Doppler (`gh-workflow-tokens`) |
+| `OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID` | `github-runner` AppRole id; the per-host agent mints registration tokens with it | Doppler (tier-0) |
+| `OPENBAO_APPROLE_GITHUB_RUNNER_SECRET_ID` | `github-runner` AppRole secret-zero (24h / 30 uses) | Doppler (tier-0) |
 | `SOPS_AGE_KEY` | Age private key content for SOPS decryption in runner containers | Doppler |
 | `GITHUB_RUNNER_TOKEN` | (deprecated) Single-repo registration token (1h expiry) | SOPS |
 | `BAO_TOKEN` | Privileged token for reconciling an initialized OpenBao cluster | operator environment |
