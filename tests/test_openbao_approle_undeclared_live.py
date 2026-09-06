@@ -1,4 +1,4 @@
-"""Contract for the undeclared-live AppRole gate in 10-approles.yml.
+"""Contract for the undeclared-live AppRole gate in 10d-approle-undeclared-live.yml.
 
 Every task in this file iterates the DECLARED set (openbao_approles, filtered
 to openbao_manageable_approles). An identity that exists in the store but was
@@ -8,7 +8,7 @@ never visits it, never bounds it, and never notices it again. This is the
 only check in the role that catches that case; everywhere else assumes the
 declared list is the whole truth.
 
-Both directions render the REAL Jinja out of 10-approles.yml, never a
+Both directions render the REAL Jinja out of 10d-approle-undeclared-live.yml, never a
 reimplementation -- a retyped copy of an expression tests the copy.
 """
 
@@ -22,7 +22,7 @@ from ansible.template import Templar, trust_as_template
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TASKS = ROOT / "roles" / "openbao" / "tasks" / "init" / "10-approles.yml"
+TASKS = ROOT / "roles" / "openbao" / "tasks" / "init" / "10d-approle-undeclared-live.yml"
 
 LIVE_NAMES_TASK = "Resolve the set of AppRole names that actually exist live"
 UNDECLARED_TASK = "Assert every live AppRole is either declared or a named exception"
