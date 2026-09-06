@@ -1,5 +1,36 @@
 # Changelog
 
+## [4.29.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.28.0...v4.29.0) (2026-09-06)
+
+
+### Features
+
+* **cribl_stream:** send every Splunk destination through a post-processing pipeline ([85c7b03](https://github.com/dryvist/ansible-proxmox-apps/commit/85c7b031136bd57dc1ea30291f9293b1dd35faea))
+* **cribl_stream:** send every Splunk destination through a post-processing pipeline ([ebe0a49](https://github.com/dryvist/ansible-proxmox-apps/commit/ebe0a490d57802a997453c886be6c4f15ad44258))
+* **cribl:** fan OTLP traces out to Arize Phoenix and register its OIDC client ([#1701](https://github.com/dryvist/ansible-proxmox-apps/issues/1701)) ([4df0097](https://github.com/dryvist/ansible-proxmox-apps/commit/4df00977d95859cea24744ac26dccd6993279f7e))
+* **github_runner:** mint registration tokens from OpenBao, not a static PAT ([#1722](https://github.com/dryvist/ansible-proxmox-apps/issues/1722)) ([a1bb24e](https://github.com/dryvist/ansible-proxmox-apps/commit/a1bb24ec23b97834dbf378cb4efa7cd615172803))
+* **openbao:** give the unattended execution plane its own identity ([#1724](https://github.com/dryvist/ansible-proxmox-apps/issues/1724)) ([e5c70ba](https://github.com/dryvist/ansible-proxmox-apps/commit/e5c70bae7cb25a538d9b9b0bc6884daf0286a873))
+* **openbao:** grant the converge identity its run-environment documents ([#1737](https://github.com/dryvist/ansible-proxmox-apps/issues/1737)) ([a0d0a8d](https://github.com/dryvist/ansible-proxmox-apps/commit/a0d0a8d3a3ecedf500e0061a23c96ea725a14b28))
+* **openbao:** let the semaphore identity mint read-tier GitHub tokens ([#1742](https://github.com/dryvist/ansible-proxmox-apps/issues/1742)) ([d26f4fe](https://github.com/dryvist/ansible-proxmox-apps/commit/d26f4fe543d383e41715a7ea0c04e17785dda1d2))
+* **openbao:** mint a repository-scoped docs publisher token from GitHub Actions OIDC ([#1729](https://github.com/dryvist/ansible-proxmox-apps/issues/1729)) ([3ddc82a](https://github.com/dryvist/ansible-proxmox-apps/commit/3ddc82a353a1c4aa8b620534f1e4184fa2a03e3f))
+* **openbao:** mint the tofu-github token instead of storing it ([#1726](https://github.com/dryvist/ansible-proxmox-apps/issues/1726)) ([6ce7185](https://github.com/dryvist/ansible-proxmox-apps/commit/6ce7185a3efbd1dfe301638d498ca1ea5d3d3510))
+* **openbao:** trust ingress X-Forwarded-For and reconcile bound-CIDR drift ([#1735](https://github.com/dryvist/ansible-proxmox-apps/issues/1735)) ([6bd1b13](https://github.com/dryvist/ansible-proxmox-apps/commit/6bd1b1311f135f5527782bb65793921ebade8942))
+* **openbao:** verify AppRole token bounds by logging in, not by reading config ([#1731](https://github.com/dryvist/ansible-proxmox-apps/issues/1731)) ([00ed82b](https://github.com/dryvist/ansible-proxmox-apps/commit/00ed82b01a085946bbd477fa98ea38ebc16d8884))
+
+
+### Bug Fixes
+
+* **docker_engine:** honour the pinned storage driver on the Docker guests ([#1739](https://github.com/dryvist/ansible-proxmox-apps/issues/1739)) ([9bdfdb8](https://github.com/dryvist/ansible-proxmox-apps/commit/9bdfdb89f27ed4f96eea9e791b948a9c60aaee3a))
+* **github_runner:** give every runner incarnation a unique name ([#1721](https://github.com/dryvist/ansible-proxmox-apps/issues/1721)) ([9475284](https://github.com/dryvist/ansible-proxmox-apps/commit/9475284a06c395ea354453bb54cc2c87c16d854e))
+* **molecule:** give each CI job its own instance names ([#1741](https://github.com/dryvist/ansible-proxmox-apps/issues/1741)) ([ecddc9b](https://github.com/dryvist/ansible-proxmox-apps/commit/ecddc9be22c0e7ed6d59f0c4983bcad0ce5b9507))
+* **molecule:** give the instance's inner Docker a volume for its root ([#1740](https://github.com/dryvist/ansible-proxmox-apps/issues/1740)) ([aa82e56](https://github.com/dryvist/ansible-proxmox-apps/commit/aa82e561d91a34578944b0e80428cbb5993a160b))
+* **openbao:** bound the admin AppRole token to the human unlock window ([#1734](https://github.com/dryvist/ansible-proxmox-apps/issues/1734)) ([cb47012](https://github.com/dryvist/ansible-proxmox-apps/commit/cb4701224fdef20049e9e6649aa2b04e647f7133))
+* **openbao:** fail the converge when no ingress address is trusted for X-Forwarded-For ([#1743](https://github.com/dryvist/ansible-proxmox-apps/issues/1743)) ([4f23471](https://github.com/dryvist/ansible-proxmox-apps/commit/4f234717f8a2074929c64a4893c49331bfc3f548))
+* **openbao:** install curl and jq on the nodes, and name a missing one ([#1730](https://github.com/dryvist/ansible-proxmox-apps/issues/1730)) ([fb15990](https://github.com/dryvist/ansible-proxmox-apps/commit/fb159903b512d8b2c458fa92ea61c9e5db56aa0b))
+* **openbao:** tolerate only a genuine-absence answer before a conditional write ([#1678](https://github.com/dryvist/ansible-proxmox-apps/issues/1678)) ([51b20f4](https://github.com/dryvist/ansible-proxmox-apps/commit/51b20f4a26ef7a901546283b2906abd51069a329))
+* **submodule:** stop one private submodule failing every unattended clone ([#1723](https://github.com/dryvist/ansible-proxmox-apps/issues/1723)) ([58dc657](https://github.com/dryvist/ansible-proxmox-apps/commit/58dc657402d5cf41d94bce4e0244d3da1df3bd56))
+* **syslog:** match the published routing key, which is semaphore_docker ([9a75c2e](https://github.com/dryvist/ansible-proxmox-apps/commit/9a75c2eb14e5023246f3c0ca2217de21b9509d42))
+
 ## [4.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.27.1...v4.28.0) (2026-09-04)
 
 
