@@ -36,8 +36,15 @@
     github_runner_org: example-org
     github_runner_group: example-group
     github_runner_labels: "self-hosted,Linux,X64,proxmox"
-    github_runner_access_token: "test-token-not-a-real-credential"
     github_runner_replicas: 3
+    github_runner_token_env_file: /etc/github-runner/access-token.env
+    github_runner_approle_dir: /etc/github-runner/approle
+    github_runner_agent_config: /etc/github-runner/openbao-agent.hcl
+    github_runner_bao_bin: /usr/bin/bao
+    github_runner_bao_addr: "https://openbao.example.invalid"
+    github_runner_token_path: github/token/runner-register-dryvist
+    github_runner_openbao_role_id: "role-id-not-a-real-credential"
+    github_runner_openbao_secret_id: "secret-id-not-a-real-credential"
 
   tasks:
     - name: Render the runner systemd unit
@@ -144,3 +151,37 @@
           A value in the env file is quoted. `docker run --env-file` parses
           KEY=VALUE literally, so the quote characters become part of the value
           and the token or org name silently arrives wrong.
+
+    - name: Assert the runner env file carries no registration token
+      ansible.builtin.assert:
+        that:
+          - _env | select('search', '^ACCESS_TOKEN=') | length == 0
+        fail_msg: >-
+          runner.env carries ACCESS_TOKEN. That token is a GitHub App
+          installation token with a fixed ~1h lifetime, and this file is
+          written once per converge -- so every container started more than an
+          hour later registers with an expired credential. The pool then wedges
+          exactly as it does on a name collision: units "up", nothing reaching
+          `Listening for Jobs`, jobs queueing until GitHub cancels them at 24h.
+          The token belongs in the agent-rendered file instead.
+
+    - name: Assert the container is given the agent-rendered token
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', '--env-file\\s+/etc/github-runner/access-token.env') | length > 0
+        fail_msg: >-
+          The unit does not pass the agent-rendered token file to `docker run`.
+          With ACCESS_TOKEN removed from runner.env, this second --env-file is
+          the container's only source of a registration credential.
+
+    - name: Assert a runner cannot start before a token exists
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', 'openbao-github-runner-agent.service') | length > 0
+          - _unit | select('search', 'ExecStartPre=.*access-token.env') | length > 0
+        fail_msg: >-
+          The unit does not both order itself after the token agent AND wait
+          for the token file. Ordering alone only proves the agent PROCESS
+          started, not that it has authenticated and rendered anything, so on a
+          cold boot the container starts with an empty ACCESS_TOKEN and fails
+          to register.

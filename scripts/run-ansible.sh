@@ -32,11 +32,22 @@ if [[ -n $BRANCH ]]; then
   LOCAL_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
   REMOTE_SHA=$(git -C "$REPO_ROOT" rev-parse "origin/$BRANCH")
   if [[ $LOCAL_SHA != "$REMOTE_SHA" ]] && [[ -z ${ALLOW_STALE_CHECKOUT:-} ]]; then
+    # Report the divergence honestly. A checkout that is AHEAD of origin has
+    # zero commits behind it, and reporting that as "0 commit(s) behind —
+    # refusing" reads as a bug in the guard rather than a fact about the
+    # checkout, which invites setting ALLOW_STALE_CHECKOUT to make the noise
+    # stop. That converges unpushed, unreviewed local commits — the exact
+    # outcome this guard exists to prevent.
     BEHIND=$(git -C "$REPO_ROOT" rev-list --count "$LOCAL_SHA..$REMOTE_SHA")
-    echo "ERROR: checkout is $BEHIND commit(s) behind origin/$BRANCH — refusing to converge." >&2
+    AHEAD=$(git -C "$REPO_ROOT" rev-list --count "$REMOTE_SHA..$LOCAL_SHA")
+    echo "ERROR: checkout does not match origin/$BRANCH ($BEHIND behind, $AHEAD ahead) — refusing to converge." >&2
     echo "  local:  $LOCAL_SHA" >&2
     echo "  remote: $REMOTE_SHA" >&2
-    echo "Run 'git pull --ff-only origin $BRANCH', or set ALLOW_STALE_CHECKOUT=1 for a deliberate pinned replay." >&2
+    if [[ $AHEAD -gt 0 ]]; then
+      echo "Push the local commit(s) so what converges is what was reviewed: git push origin $BRANCH" >&2
+    else
+      echo "Run 'git pull --ff-only origin $BRANCH', or set ALLOW_STALE_CHECKOUT=1 for a deliberate pinned replay." >&2
+    fi
     exit 1
   fi
 fi
