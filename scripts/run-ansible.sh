@@ -190,6 +190,31 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   # Same file, for tests/inventory_load/verify_inventory.yml's coverage
   # check — the actual materialized pin, not the fixture, on every real run.
   export SSH_KNOWN_HOSTS_FILE="$CERT_DIR/known_hosts"
+
+  # ANSIBLE_SSH_COMMON_ARGS above reaches the OpenSSH transport only: it is
+  # appended to an ssh command line, and container hosts are not reached by
+  # one. They use proxmox_pct_remote, which builds a paramiko client in
+  # process, ignores those options entirely, and reads two fixed paths for
+  # host keys — the user's own known_hosts and the system file. The path is
+  # hard-coded in the plugin, so there is nothing to point elsewhere; the pin
+  # has to be written where it already looks.
+  #
+  # Until this existed the pin was configured, reviewed, and inert for every
+  # container host. That is worse than absent, because it looks enforced. It
+  # surfaces as an unattended run trying to PROMPT for an unknown host key and
+  # failing with "stdin is not interactive" — a message naming neither host
+  # keys nor the connection — and reporting every target UNREACHABLE.
+  #
+  # Merge rather than overwrite: on a workstation this is the operator's own
+  # file. Exact-line dedupe keeps repeated runs idempotent.
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  touch "$HOME/.ssh/known_hosts"
+  chmod 600 "$HOME/.ssh/known_hosts"
+  merged=$(mktemp "${TMPDIR:-/tmp}/ansible-kh.XXXXXX")
+  awk '!seen[$0]++' "$HOME/.ssh/known_hosts" "$CERT_DIR/known_hosts" > "$merged"
+  cat "$merged" > "$HOME/.ssh/known_hosts"
+  rm -f "$merged"
 fi
 
 # A converge is the highest-consequence thing this repo does; without a
