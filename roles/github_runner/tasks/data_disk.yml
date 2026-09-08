@@ -315,3 +315,70 @@
         cmd: docker system prune --force
       register: github_runner_prune
       changed_when: "'Total reclaimed space: 0B' not in github_runner_prune.stdout"
+
+# ---------------------------------------------------------------------------
+# Recurring reclaim.
+#
+# The block above only fires on the one-time migration (mount not yet
+# present). Every converge after that, `docker_mount.rc == 0` forever, so it
+# never runs again — and nothing else on this host ever prunes. Every
+# Molecule scenario across every PR pulls and builds images on the SAME
+# shared daemon (siblings on docker.sock, not bounded by any one job's
+# cleanup), so unused layers grew unbounded until the data disk hit 0 bytes
+# free. At that point the runner's own container filesystem cannot write a
+# complete apt index, and apt reports a truncated file as "invalid
+# signature" — a disk problem wearing a GPG problem's clothes. This timer
+# is deployed unconditionally, every converge, independent of migration
+# state.
+# ---------------------------------------------------------------------------
+- name: Deploy the Docker data reclaim service
+  ansible.builtin.template:
+    src: docker-prune.service.j2
+    dest: /etc/systemd/system/github-runner-docker-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy the Docker data reclaim timer
+  ansible.builtin.template:
+    src: docker-prune.timer.j2
+    dest: /etc/systemd/system/github-runner-docker-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the Docker data reclaim timer
+  ansible.builtin.systemd:
+    name: github-runner-docker-prune.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# A cancelled/timed-out job never runs `molecule destroy`, so its container
+# (and anything a role deployed as a docker-compose sibling inside it) is
+# invisible to the prune timer above — prune only touches images/build cache,
+# never a still-running container. Reaped by label (`owner=molecule`, stamped
+# by molecule-plugins on everything it creates), so this can never touch one
+# of the platform services sharing this host.
+- name: Deploy the Molecule orphan-container reaper service
+  ansible.builtin.template:
+    src: molecule-reaper.service.j2
+    dest: /etc/systemd/system/github-runner-molecule-reaper.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy the Molecule orphan-container reaper timer
+  ansible.builtin.template:
+    src: molecule-reaper.timer.j2
+    dest: /etc/systemd/system/github-runner-molecule-reaper.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the Molecule orphan-container reaper timer
+  ansible.builtin.systemd:
+    name: github-runner-molecule-reaper.timer
+    state: started
+    enabled: true
+    daemon_reload: true

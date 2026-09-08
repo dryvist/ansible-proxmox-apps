@@ -87,7 +87,7 @@ class RunAnsibleGuardContract(unittest.TestCase):
         path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
         path.chmod(0o700)
 
-    def _run(self, *args, allow_stale=False):
+    def _run(self, *args, allow_stale=False, env_extra=None):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         env["PROXMOX_SSH_KEY_PATH"] = "/nonexistent-static-key"
@@ -102,6 +102,7 @@ class RunAnsibleGuardContract(unittest.TestCase):
         env["FAKE_RECAP_FILE"] = str(self.recap_file)
         if allow_stale:
             env["ALLOW_STALE_CHECKOUT"] = "1"
+        env.update(env_extra or {})
         return subprocess.run(
             [str(self.runner), "playbooks/site.yml", *args],
             cwd=self.work,
@@ -150,7 +151,12 @@ class RunAnsibleGuardContract(unittest.TestCase):
 
         result = self._run("--limit", "localhost")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("behind origin/develop", result.stderr)
+        # The refusal names the remote and the direction; it has said
+        # "does not match origin/develop (N behind, M ahead)" since the
+        # counts were added, and this assertion still expected the older
+        # wording, so it has been failing on an unrelated point.
+        self.assertIn("origin/develop", result.stderr)
+        self.assertIn("behind", result.stderr)
         self._assert_playbook_not_called()
 
     def test_allow_stale_checkout_bypasses_behind_remote(self):
@@ -296,6 +302,51 @@ class RunAnsibleGuardContract(unittest.TestCase):
         # fire when --limit never asked for anything beyond localhost.
         result = self._run("--limit", "localhost")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+    # --- host-key pin reaches the in-process transport --------------------
+
+    def _run_with_pin(self, home, pin):
+        self._write_recap("a-host")
+        return self._run(
+            "--limit",
+            "a-host",
+            env_extra={"HOME": str(home), "SSH_KNOWN_HOSTS": pin},
+        )
+
+    def test_pin_is_written_where_the_pct_transport_reads_it(self):
+        # proxmox_pct_remote builds a paramiko client in process and reads
+        # ~/.ssh/known_hosts directly, so ANSIBLE_SSH_COMMON_ARGS never
+        # reaches it. Without this the pin is configured and inert.
+        home = self.tmp_path_home()
+        result = self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        known = home / ".ssh" / "known_hosts"
+        self.assertTrue(known.exists(), "pin was not written to the read path")
+        self.assertIn("AAAAPINNED", known.read_text(encoding="utf-8"))
+        self.assertEqual(known.stat().st_mode & 0o777, 0o600)
+
+    def test_pin_merges_and_does_not_discard_an_existing_file(self):
+        # On a workstation this file belongs to the operator. Overwriting it
+        # would silently drop every host they had verified themselves.
+        home = self.tmp_path_home()
+        known = home / ".ssh" / "known_hosts"
+        known.parent.mkdir(parents=True, exist_ok=True)
+        known.write_text("theirs ssh-ed25519 AAAAOPERATOR\n", encoding="utf-8")
+
+        self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
+        first = known.read_text(encoding="utf-8")
+        self.assertIn("AAAAOPERATOR", first)
+        self.assertIn("AAAAPINNED", first)
+
+        # Repeating a run must not keep growing the file.
+        self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
+        self.assertEqual(known.read_text(encoding="utf-8"), first)
+
+    def tmp_path_home(self):
+        home = Path(self.tmp.name) / "fake-home"
+        home.mkdir(parents=True, exist_ok=True)
+        return home
 
 
 if __name__ == "__main__":
