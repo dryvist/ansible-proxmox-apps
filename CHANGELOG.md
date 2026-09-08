@@ -1,5 +1,25 @@
 # Changelog
 
+## [4.30.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.29.0...v4.30.0) (2026-09-08)
+
+
+### Features
+
+* **openbao:** fail the converge on an AppRole live but declared nowhere ([#1750](https://github.com/dryvist/ansible-proxmox-apps/issues/1750)) ([ca0b0d6](https://github.com/dryvist/ansible-proxmox-apps/commit/ca0b0d6a900e87a100ce8cdee50eecb8af1269e6))
+* **openbao:** fail the converge on an AppRole with no source-address class ([#1747](https://github.com/dryvist/ansible-proxmox-apps/issues/1747)) ([ff62fd9](https://github.com/dryvist/ansible-proxmox-apps/commit/ff62fd9c29b9b6b127668bf6e12d7545b074d7fa))
+
+
+### Bug Fixes
+
+* **converge:** bring fan-out inside the plane's memory budget ([#1757](https://github.com/dryvist/ansible-proxmox-apps/issues/1757)) ([2d6af67](https://github.com/dryvist/ansible-proxmox-apps/commit/2d6af675e75303a772a773e54a8a94217eeb3416))
+* **converge:** write the host-key pin where the LXC transport reads it ([#1755](https://github.com/dryvist/ansible-proxmox-apps/issues/1755)) ([49454c0](https://github.com/dryvist/ansible-proxmox-apps/commit/49454c0e4511ff5b8256eee11cb24e799c785b02))
+* **github_runner:** declare the docker_engine dependency and assert the subdomain is non-empty ([#1751](https://github.com/dryvist/ansible-proxmox-apps/issues/1751)) ([4d67653](https://github.com/dryvist/ansible-proxmox-apps/commit/4d67653e278debaccbfd7ac9cb221b7d5a6e7211))
+* **github_runner:** reclaim Docker data disk on a recurring schedule ([#1749](https://github.com/dryvist/ansible-proxmox-apps/issues/1749)) ([76c4133](https://github.com/dryvist/ansible-proxmox-apps/commit/76c4133608d88782b4dde3b2902ded2a72628180))
+* **openbao:** bind flow-lock to a machine-or-workstation CIDR class ([#1748](https://github.com/dryvist/ansible-proxmox-apps/issues/1748)) ([1165bf3](https://github.com/dryvist/ansible-proxmox-apps/commit/1165bf3d03c79c601360ea82f2c159d35994da20))
+* **openbao:** classify the platform deploy identity as workstation-held ([#1754](https://github.com/dryvist/ansible-proxmox-apps/issues/1754)) ([3f634b7](https://github.com/dryvist/ansible-proxmox-apps/commit/3f634b7d179ea2a28eb2ca8f5ecf9d0e18bf29db))
+* **roles:** repair env-lookup guards that could never fire ([#1752](https://github.com/dryvist/ansible-proxmox-apps/issues/1752)) ([91a38f4](https://github.com/dryvist/ansible-proxmox-apps/commit/91a38f426bc5dbade7bd3dc79b8228323ac7c710))
+* **roles:** state that a variable must be set, not where to store it ([#1753](https://github.com/dryvist/ansible-proxmox-apps/issues/1753)) ([84b00a6](https://github.com/dryvist/ansible-proxmox-apps/commit/84b00a6d7d8a7fbba725fe6d68f5eefebdfd145f))
+
 ## [4.29.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.28.0...v4.29.0) (2026-09-06)
 
 
