@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.3...v4.32.0) (2026-09-09)
+
+
+### Features
+
+* **openbao:** accept a pre-issued token as the reconcile identity ([#1783](https://github.com/dryvist/ansible-proxmox-apps/issues/1783)) ([5c4f74e](https://github.com/dryvist/ansible-proxmox-apps/commit/5c4f74e60c88c4d97a2d32f4b0302cab72a71846))
+* **openbao:** declare the four identities that existed only in the store ([#1788](https://github.com/dryvist/ansible-proxmox-apps/issues/1788)) ([aeaf111](https://github.com/dryvist/ansible-proxmox-apps/commit/aeaf1118a9ba6af732e01e4360037ad288054c22))
+* **openbao:** let the execution plane be the reconcile identity ([#1785](https://github.com/dryvist/ansible-proxmox-apps/issues/1785)) ([846b162](https://github.com/dryvist/ansible-proxmox-apps/commit/846b162c2254e34ff578422692b1696794926e4a))
+
 ## [4.31.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.2...v4.31.3) (2026-09-09)
 
 
