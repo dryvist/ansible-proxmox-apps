@@ -16,16 +16,45 @@
   when: ssh_ca_trust_enabled | bool
   tags: [ssh_ca_trust]
 
+# The clock gate is real: a certificate presented against a skewed clock is
+# refused before anything else is tried, so trust must not be distributed to a
+# host whose time is wrong. But it was sampled ONCE, and the ntp role's restart
+# handler runs earlier in the same play. A chrony restart clears
+# NTPSynchronized until sync is re-established, so a single sample taken
+# straight afterwards fails on exactly the hosts whose clock configuration the
+# run just corrected -- the assertion failing because of an action the same run
+# took.
+#
+# Retried, not relaxed. A host that never synchronizes still fails and trust is
+# still withheld; only the moment of measurement changed.
 - name: Assert the host clock is NTP-synchronized
-  ansible.builtin.command:
-    cmd: timedatectl show -p NTPSynchronized --value
-  register: ssh_ca_trust_ntp
-  changed_when: false
-  failed_when: ssh_ca_trust_ntp.stdout != 'yes'
   when:
     - ssh_ca_trust_enabled | bool
     - ansible_virtualization_type != 'docker'
   tags: [ssh_ca_trust]
+  block:
+    - name: Wait for the host clock to report NTP synchronization
+      ansible.builtin.command:
+        cmd: timedatectl show -p NTPSynchronized --value
+      register: ssh_ca_trust_ntp
+      changed_when: false
+      until: ssh_ca_trust_ntp.stdout == 'yes'
+      retries: 12
+      delay: 10
+  rescue:
+    # `until` exhausting its retries fails with an EMPTY message, which names
+    # neither the clock nor the value seen. Say what was actually observed --
+    # this also covers the case where the command itself could not run.
+    - name: FAIL -- the host clock did not report NTP synchronization
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} did not report an NTP-synchronized clock
+          within {{ 12 * 10 }}s. Last value: '{{ ssh_ca_trust_ntp.stdout
+          | default('(command did not run)') }}' (rc
+          {{ ssh_ca_trust_ntp.rc | default('unknown') }}). Certificate
+          authentication fails closed on clock skew, so trust is not being
+          distributed to this host. Check the time daemon here, not the
+          certificate path.
 
 - name: Fetch the CA public key from OpenBao
   ansible.builtin.uri:
