@@ -63,13 +63,29 @@ openbao_approle_human_secret_id_ttl: 15m
 
 # Per-role overrides, name -> value. An entry in openbao_base_approles wins over
 # these (it is the more visible declaration); these win over the globals above.
-openbao_approle_secret_id_ttl_overrides: {}
+openbao_approle_secret_id_ttl_overrides:
+  # The unattended plane's credential. A secret_id that expires here does not
+  # fail loudly — it stops the estate reconciling, and the converge keeps
+  # reporting success while every declared policy change stops landing. That
+  # exact silence went unnoticed for three days.
+  #
+  # It is non-expiring, and it is NOT unbounded: it is redeemable only from the
+  # plane's own segment (the default `machine` class), the role it unlocks
+  # cannot write the break-glass tiers, and the AppRole itself is excluded from
+  # routine reconciliation so nothing it holds can retune these bounds. The
+  # credential is also never held by the converge — an agent exchanges it for a
+  # short renewable token, so a leak requires the plane itself.
+  openbao-plane: 0
 # num_uses 0 (unlimited redemptions) is permitted ONLY with a reason on the line.
 openbao_approle_secret_id_num_uses_overrides:
   # Its secret_id is live, non-expiring, and in active use by every agent
   # session; capping redemptions here would strand them at an arbitrary login.
   # Bounded instead by the CIDR class below until it is deliberately re-minted.
   ai-orchestrator: 0
+  # The plane's agent re-authenticates whenever it restarts, and a restart is
+  # routine. A redemption cap would strand the estate's reconciliation at an
+  # arbitrary reboot, with the same silent symptom the TTL note above describes.
+  openbao-plane: 0
   # The anonymous, non-exploitable-facts identity. It carries no secret worth
   # bounding and is shipped ambiently by design, so a redemption cap buys
   # nothing and would break every ambient consumer on a fixed schedule.

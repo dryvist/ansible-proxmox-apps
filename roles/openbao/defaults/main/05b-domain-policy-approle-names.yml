@@ -119,6 +119,16 @@ openbao_github_oidc_docs_token_ttl: 10m
 openbao_github_oidc_docs_token_max_ttl: 15m
 openbao_reconcile_policy_name: openbao-reconcile
 openbao_reconcile_approle_name: openbao-reconcile
+# openbao-plane — the unattended execution plane's own identity, carrying the
+# SAME policy as the reconcile identity but a different credential.
+#
+# Two holders rather than one, because the two live in different places and a
+# single credential cannot be bounded correctly for both. The workstation half
+# is redeemed by a person, from a workstation, and its secret_id can expire
+# because a person is there to obtain another. The plane half is redeemed by an
+# agent, unattended, and an expiring secret_id there simply stops the estate
+# reconciling — silently, which is the fault this identity exists to end.
+openbao_plane_approle_name: openbao-plane
 # approle-issuer — the ONLY identity that may mint an AppRole secret_id.
 #
 # Split out of openbao-reconcile because those are two different powers wearing
@@ -146,6 +156,17 @@ openbao_reconcile_excluded_policies:
   - "{{ openbao_github_admin_policy_name }}"
   - "{{ openbao_slack_admin_policy_name }}"
   - "{{ openbao_reconcile_policy_name }}"
+  # This list is matched against POLICY names when filtering policies and
+  # against APPROLE names when filtering AppRoles, so a name belongs here for
+  # either half. This entry is the AppRole half: the plane runs AS the
+  # reconcile identity, and without this it would be able to rewrite its own
+  # role — retuning the very bounds that make its non-expiring secret_id safe.
+  # An identity that can edit its own bounds has no bounds.
+  #
+  # The consequence is deliberate: this AppRole cannot be created or changed by
+  # a routine converge. It takes a privileged run, which is the one-time
+  # human checkpoint its whole design rests on.
+  - "{{ openbao_plane_approle_name }}"
 # Repositories a github-write identity may name (exactly one per request; the
 # wrapper sends `repositories` as a plain STRING, `installation_id` as a
 # STRING). Values are repository NAMES resolved within whichever installation

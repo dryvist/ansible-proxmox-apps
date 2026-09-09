@@ -1,0 +1,109 @@
+---
+# A never-expiring secret_id is permitted here only when something else bounds it.
+#
+# The unattended plane cannot hold an expiring credential: when it lapses the
+# estate stops reconciling and the converge keeps reporting success, which is
+# the exact silence this identity was created to end. So its secret_id neither
+# expires nor caps redemptions — and that is only defensible because three other
+# things constrain it, none of which are visible from the override line itself.
+#
+# This asserts the CONJUNCTION. Removing any one of the compensating controls
+# while leaving the exception in place is the failure mode, and it would
+# otherwise look like a tidy-up.
+#
+# Everything is RENDERED from the role's own defaults rather than restated: the
+# names are generated, and computing them any other way has already produced
+# three different wrong answers in this repository.
+- name: Verify the plane identity's exception is bounded by something
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    role_defaults: "{{ playbook_dir }}/../../roles/openbao/defaults/main"
+    openbao_management_cidrs: "192.0.2.0/24"
+    openbao_workstation_cidrs: "198.51.100.0/24"
+    openbao_ci_cidrs: "203.0.113.0/24"
+    openbao_ssh_source_cidrs: "192.0.2.0/24"
+
+  tasks:
+    - name: Load the openbao role defaults
+      ansible.builtin.include_vars:
+        dir: "{{ role_defaults }}"
+
+    # include_vars outranks play vars, so the fixture ranges have to be set
+    # AFTER the load or the defaults' own env-derived (empty here) values win.
+    - name: Supply the range inputs the class definitions read
+      ansible.builtin.set_fact:
+        openbao_management_cidrs: "192.0.2.0/24"
+        openbao_workstation_cidrs: "198.51.100.0/24"
+        openbao_ci_cidrs: "203.0.113.0/24"
+
+    - name: The plane identity is declared, or this test asserts nothing
+      ansible.builtin.assert:
+        that:
+          - openbao_plane_approle_name is defined
+          - openbao_plane_approle_name in (openbao_approles | map(attribute='name') | list)
+        fail_msg: >-
+          The plane identity is not in the declared AppRole set, so every
+          assertion below would pass by looking up nothing.
+
+    - name: It is redeemable only from the plane's own segment
+      vars:
+        cls: "{{ openbao_approle_cidr_class_map[openbao_plane_approle_name] }}"
+      ansible.builtin.assert:
+        that:
+          - cls == 'machine'
+          - (openbao_approle_cidr_classes[cls] | default('')) | length > 0
+        fail_msg: >-
+          The plane identity declares class '{{ cls }}'. Its secret_id never
+          expires and never caps redemptions, so the source binding is the only
+          thing standing between a copied value and an estate-wide credential.
+          It must be the narrowest class, and that class must resolve to a
+          non-empty range — an empty class binds nothing at all.
+
+    - name: It cannot reconcile its own role and retune its own bounds
+      ansible.builtin.assert:
+        that:
+          - openbao_plane_approle_name in openbao_reconcile_excluded_policies
+        fail_msg: >-
+          The plane identity is not excluded from routine reconciliation. It
+          runs AS the reconcile identity, so without this it can rewrite its
+          own AppRole — including the bounds asserted above. An identity that
+          can edit its own bounds has no bounds. The deliberate consequence is
+          that creating or changing this role takes a privileged run, which is
+          the one-time human checkpoint the design rests on.
+
+    - name: It holds no power the reconcile identity does not
+      vars:
+        plane: >-
+          {{ openbao_approles | selectattr('name', 'equalto', openbao_plane_approle_name)
+             | first }}
+      ansible.builtin.assert:
+        that:
+          - plane.policy == openbao_reconcile_policy_name
+        fail_msg: >-
+          The plane identity carries policy '{{ plane.policy }}' rather than the
+          reconcile policy. Two holders of ONE policy is the point: a second
+          policy here would be a second thing to keep in step, and the wider of
+          the two would silently become what the plane can do.
+
+    # The general guard. Any future never-expiring secret_id must earn it the
+    # same way, or this fails on the day it is added rather than the day it
+    # leaks.
+    - name: Every non-expiring secret_id is bounded by something else
+      vars:
+        forever: >-
+          {{ (openbao_approle_secret_id_ttl_overrides | default({}))
+             | dict2items | selectattr('value', 'equalto', 0)
+             | map(attribute='key') | list }}
+        unprotected: >-
+          {{ forever | reject('in', openbao_reconcile_excluded_policies)
+             | list }}
+      ansible.builtin.assert:
+        that:
+          - unprotected | length == 0
+        fail_msg: >-
+          {{ unprotected | join(', ') }} declare a secret_id that never expires
+          while remaining reconcilable by the unattended identity. Either bound
+          the lifetime, or exclude the role so nothing running with it can
+          rewrite the compensating controls.
