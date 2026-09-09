@@ -53,8 +53,7 @@ documented once at
 | `PROXMOX_VE_NODE` | Proxmox node name | SOPS |
 | `PROXMOX_VE_GATEWAY` | Network gateway (for IP derivation) | Doppler / SOPS |
 | `PROXMOX_DOMAIN` | Internal DNS domain | Doppler / SOPS |
-| `PROXMOX_SSH_KEY_PATH` | SSH key for Proxmox VE host and non-Docker VM access | Doppler / SOPS |
-| `PROXMOX_DKR_SSH_KEY_PATH` | SSH key for Docker VM direct access (docker-host) | Doppler / SOPS |
+| `PROXMOX_SSH_KEY_PATH` | SSH identity for every SSH-reached guest, Docker VMs included; the run wrapper mints a signed certificate and exports this | Doppler / SOPS |
 | `SPLUNK_HEC_TOKEN` | Splunk HEC token (for Cribl output) | Doppler / SOPS |
 | `SPLUNK_PASSWORD` | Splunk admin password (for E2E validation) | Doppler / SOPS |
 | `HAPROXY_STATS_PASSWORD` | HAProxy stats page password | SOPS |
