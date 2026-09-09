@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.31.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.0...v4.31.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **openbao:** declare the reconcile identity's class as plane-and-workstation ([#1772](https://github.com/dryvist/ansible-proxmox-apps/issues/1772)) ([99f60fe](https://github.com/dryvist/ansible-proxmox-apps/commit/99f60fef05b7194f99c0eeb694251c7c9823414b))
+
 ## [4.31.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.30.0...v4.31.0) (2026-09-09)
 
 
