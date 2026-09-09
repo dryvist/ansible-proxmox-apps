@@ -64,7 +64,18 @@ class TaskTimingEvents(unittest.TestCase):
         self.assertGreaterEqual(first["duration"], 0.0)
         self.assertIsNotNone(first["ended"])
 
-    def test_failures_and_unreachable_count_as_failed(self):
+    def test_failed_ignored_and_unreachable_are_three_different_things(self):
+        """`failed` counts hosts the task ran on and failed. Nothing else.
+
+        This previously asserted that unreachable counted as failed, and it had
+        never run — it sat below the module's entry point. Two separate reasons
+        to change it: Ansible's own recap keeps the two apart, and so does this
+        plugin's SUMMARY event, so only the task event conflated them.
+
+        The cost of conflating is concrete. A template unchanged between two
+        runs reported 37 "failures" that were entirely unreachable hosts, which
+        points a reader at the task instead of at the connection.
+        """
         cb = self._plugin()
         cb.v2_playbook_on_task_start(self._task("flaky"))
         cb.v2_runner_on_failed(self._result())
@@ -74,7 +85,8 @@ class TaskTimingEvents(unittest.TestCase):
 
         task = cb._tasks[0]
         self.assertEqual(task["hosts"], 3)
-        self.assertEqual(task["failed"], 2, "ignored errors must not count as failures")
+        self.assertEqual(task["failed"], 1, "ignored errors and unreachable are not failures")
+        self.assertEqual(task["unreachable"], 1)
 
     def test_handler_tasks_are_timed_separately(self):
         cb = self._plugin()
@@ -207,6 +219,26 @@ class UnreachableReasonEvents(unittest.TestCase):
             len(events[0]["event"]["reason"]),
             telemetry._events.UNREACHABLE_MSG_MAX,
         )
+
+    def test_an_unreachable_host_is_not_counted_as_a_task_failure(self):
+        """The task did not fail on that host — it never ran on it.
+
+        Folding the two together makes an untouched, working task look broken
+        on however many hosts were unreachable that run, which sends a reader
+        to debug the task instead of the connection. That is not hypothetical:
+        a template unchanged between two runs reported 37 "failures", every one
+        of them an unreachable host.
+        """
+        cb = RecordingCallback()
+        cb.v2_playbook_on_task_start(self._task("Render the config"))
+        cb.v2_runner_on_unreachable(self._result("openbao-01", "no route"))
+        cb._close_open_task()
+
+        events = telemetry.build_task_events(cb._tasks, CONFIG, "site.yml", 1000.0)
+        event = events[0]["event"]
+        self.assertEqual(event["failed"], 0, "an unreachable host is not a failure")
+        self.assertEqual(event["unreachable"], 1)
+        self.assertEqual(event["hosts"], 1)
 
     def test_a_reachable_run_ships_no_such_events(self):
         """The quiet case: no unreachable host, no events, no noise."""

@@ -205,6 +205,7 @@ def build_task_events(tasks, config, playbook, now):
                     "hosts": task["hosts"],
                     "changed": task["changed"],
                     "failed": task["failed"],
+                    "unreachable": task["unreachable"],
                 },
             }
         )

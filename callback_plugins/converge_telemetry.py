@@ -137,6 +137,9 @@ class CallbackModule(CallbackBase):
             "hosts": 0,
             "changed": 0,
             "failed": 0,
+            # Counted apart from `failed` on purpose -- see
+            # v2_runner_on_unreachable.
+            "unreachable": 0,
         }
 
     # Ansible routes handler tasks through their own callback; without this a
@@ -171,7 +174,14 @@ class CallbackModule(CallbackBase):
         self._count(result, None if ignore_errors else "failed")
 
     def v2_runner_on_unreachable(self, result):
-        self._count(result, "failed")
+        # NOT counted as `failed`. A host the transport could not reach did not
+        # fail the task -- the task never ran on it. Folding the two together
+        # makes an untouched, working task look broken on however many hosts
+        # were unreachable that run, which sends a reader to debug the task
+        # instead of the connection. Measured: a template that had not changed
+        # in either direction between two runs reported 37 "failures", all of
+        # them unreachable hosts.
+        self._count(result, "unreachable")
         # Captured here because this is the only place the reason exists: the
         # end-of-run summary keeps the counter and discards the message.
         #
