@@ -4,54 +4,13 @@ The alert built on these events is only as trustworthy as the success verdict
 the plugin publishes, so these tests pin the verdict rules and the event shape.
 """
 
-import importlib.util
 import json
-from pathlib import Path
 import unittest
 
 from ansible import context
 from ansible.module_utils.common.collections import ImmutableDict
 
-
-ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "callback_plugins" / "converge_telemetry.py"
-
-
-def _load_plugin():
-    spec = importlib.util.spec_from_file_location("converge_telemetry", PLUGIN)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-telemetry = _load_plugin()
-
-
-CONFIG = {
-    "hec_url": "https://splunk.example.test:8088/services/collector/event",
-    "index": "ansible",
-    "git_sha": "0123456789abcdef0123456789abcdef01234567",
-    "roster": ["alpha", "bravo", "charlie"],
-    "fqdns": {
-        "alpha": "alpha.example.test",
-        "bravo": "bravo.example.test",
-        "charlie": "charlie.example.test",
-    },
-}
-
-
-def summary(**kwargs):
-    base = {
-        "ok": 10,
-        "changed": 2,
-        "skipped": 3,
-        "failures": 0,
-        "unreachable": 0,
-        "rescued": 0,
-        "ignored": 0,
-    }
-    base.update(kwargs)
-    return base
+from converge_telemetry_support import CONFIG, RecordingCallback, summary, telemetry
 
 
 class HostStatusContract(unittest.TestCase):
@@ -140,17 +99,6 @@ class FakeStats(object):
 
     def summarize(self, host):  # noqa: ARG002 - one fixed clean host is enough
         return summary()
-
-
-class RecordingCallback(telemetry.CallbackModule):
-    """The real callback with only its Ansible plumbing stubbed out."""
-
-    def __init__(self):
-        telemetry.CallbackModule.__init__(self)
-        self._plugin_options = {"enabled": True, "hec_token": "unit-test-token"}
-
-    def get_option(self, name):
-        return self._plugin_options[name]
 
 
 def emit_and_capture(config, cliargs):
@@ -248,107 +196,8 @@ class DesiredStateFieldsContract(unittest.TestCase):
         for event in roster:
             self.assertNotIn("desired_state_current", event["event"])
 
-
+# Must stay LAST. unittest.main() runs at import of this line, so every class
+# defined below it is silently never collected -- the suite still reports OK,
+# with a smaller number nobody reads.
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
-
-class TaskTimingEvents(unittest.TestCase):
-    """Per-task duration is the number that explains converge wall clock.
-
-    It previously existed only in `profile_tasks` stdout, which is written to a
-    local run log and shipped nowhere — so a single task burning 776 seconds of
-    a 40-minute converge was invisible to every dashboard. These tests pin the
-    timing bookkeeping, because a callback that silently records nothing looks
-    exactly like a converge with no slow tasks.
-    """
-
-    def _task(self, name, action="command", role="openbao"):
-        class _Role:
-            def __str__(self):
-                return role
-
-        class _Task:
-            def __init__(self):
-                self.action = action
-                self._role = _Role() if role else None
-
-            def get_name(self):
-                return name
-
-        return _Task()
-
-    def _result(self, changed=False):
-        class _Result:
-            def __init__(self):
-                self._result = {"changed": changed}
-
-        return _Result()
-
-    def _plugin(self):
-        cb = telemetry.CallbackModule()
-        cb._playbook_name = "site.yml"
-        return cb
-
-    def test_durations_are_recorded_per_task(self):
-        cb = self._plugin()
-        cb.v2_playbook_on_task_start(self._task("slow render"))
-        cb.v2_runner_on_ok(self._result(changed=True))
-        cb.v2_runner_on_ok(self._result())
-        cb.v2_playbook_on_task_start(self._task("fast thing"))
-        cb._close_open_task()
-
-        self.assertEqual([t["name"] for t in cb._tasks], ["slow render", "fast thing"])
-        first = cb._tasks[0]
-        self.assertEqual(first["hosts"], 2)
-        self.assertEqual(first["changed"], 1)
-        self.assertEqual(first["failed"], 0)
-        self.assertGreaterEqual(first["duration"], 0.0)
-        self.assertIsNotNone(first["ended"])
-
-    def test_failures_and_unreachable_count_as_failed(self):
-        cb = self._plugin()
-        cb.v2_playbook_on_task_start(self._task("flaky"))
-        cb.v2_runner_on_failed(self._result())
-        cb.v2_runner_on_unreachable(self._result())
-        cb.v2_runner_on_failed(self._result(), ignore_errors=True)
-        cb._close_open_task()
-
-        task = cb._tasks[0]
-        self.assertEqual(task["hosts"], 3)
-        self.assertEqual(task["failed"], 2, "ignored errors must not count as failures")
-
-    def test_handler_tasks_are_timed_separately(self):
-        cb = self._plugin()
-        cb.v2_playbook_on_task_start(self._task("main work"))
-        cb.v2_playbook_on_handler_task_start(self._task("restart service"))
-        cb._close_open_task()
-
-        self.assertEqual(
-            [t["name"] for t in cb._tasks],
-            ["main work", "restart service"],
-            "a handler must not have its runtime attributed to the previous task",
-        )
-
-    def test_event_shape_carries_duration_and_identity(self):
-        cb = self._plugin()
-        cb.v2_playbook_on_task_start(self._task("render policies"))
-        cb.v2_runner_on_ok(self._result(changed=True))
-        cb._close_open_task()
-
-        events = telemetry.build_task_events(cb._tasks, CONFIG, "site.yml", 1000.0)
-        self.assertEqual(len(events), 1)
-        envelope = events[0]
-        self.assertEqual(envelope["sourcetype"], "ansible:converge:task")
-        self.assertEqual(envelope["index"], "ansible")
-        event = envelope["event"]
-        self.assertEqual(event["task"], "render policies")
-        self.assertEqual(event["role"], "openbao")
-        self.assertEqual(event["git_sha"], CONFIG["git_sha"])
-        self.assertIn("duration_seconds", event)
-        self.assertEqual(event["changed"], 1)
-        # Must survive the HEC encoder the transport actually uses.
-        json.loads(json.dumps(envelope))
-
-    def test_no_tasks_produces_no_task_events(self):
-        self.assertEqual(telemetry.build_task_events([], CONFIG, "site.yml", 1.0), [])

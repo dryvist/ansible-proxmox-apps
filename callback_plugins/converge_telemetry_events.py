@@ -28,6 +28,7 @@ SOURCETYPE_CONVERGE = "ansible:converge"
 SOURCETYPE_ROSTER = "ansible:converge:roster"
 SOURCETYPE_TASK = "ansible:converge:task"
 SOURCETYPE_INTERRUPTED = "ansible:converge:interrupted"
+SOURCETYPE_UNREACHABLE = "ansible:converge:unreachable"
 SOURCE = "ansible-proxmox-apps"
 
 
@@ -204,10 +205,54 @@ def build_task_events(tasks, config, playbook, now):
                     "hosts": task["hosts"],
                     "changed": task["changed"],
                     "failed": task["failed"],
+                    "unreachable": task["unreachable"],
                 },
             }
         )
     return events
+
+
+#: An unreachable message is a connection error, not command output, but it is
+#: assembled from whatever the transport said and its length is not bounded by
+#: anything this repo controls. Cap it so one pathological error cannot dominate
+#: a batch; the useful part -- the transport's own reason -- is at the front.
+UNREACHABLE_MSG_MAX = 512
+
+
+def build_unreachable_events(unreachables, config, playbook, now):
+    """One event per host that could not be reached, carrying the REASON.
+
+    The per-host summary already records that a host was unreachable. It does
+    not record why, and the counter alone cannot distinguish a guest that is
+    down from a connection refused mid-handshake under load from a host key
+    that no longer matches -- three faults with three different fixes that look
+    identical in the summary. Answering that meant leaving the log platform for
+    the runner's raw job output, which is exactly the gap this closes.
+
+    Emitted per host rather than folded into the summary: the question is
+    "which hosts, and what did the transport say", and a summary field would
+    hold one reason for a run where several hosts failed differently.
+    """
+    index = config.get("index") or "ansible"
+    git_sha = config.get("git_sha")
+
+    return [
+        {
+            "time": now,
+            "host": entry["host"],
+            "source": SOURCE,
+            "sourcetype": SOURCETYPE_UNREACHABLE,
+            "index": index,
+            "event": {
+                "playbook": playbook,
+                "repo": SOURCE,
+                "git_sha": git_sha,
+                "task": entry["task"],
+                "reason": entry["reason"][:UNREACHABLE_MSG_MAX],
+            },
+        }
+        for entry in unreachables
+    ]
 
 
 def build_interrupted_event(config, playbook, now):
