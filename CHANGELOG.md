@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.31.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.1...v4.31.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* **openbao:** attribute a refused AppRole login to its identity ([#1776](https://github.com/dryvist/ansible-proxmox-apps/issues/1776)) ([e0b0744](https://github.com/dryvist/ansible-proxmox-apps/commit/e0b07445fcd2208b7529237e9281c9907e65fe5c))
+* **ssh_ca_trust:** wait for clock synchronization instead of sampling once ([#1778](https://github.com/dryvist/ansible-proxmox-apps/issues/1778)) ([f842b0f](https://github.com/dryvist/ansible-proxmox-apps/commit/f842b0f0be47c2ddb45e6c69d87ca31644a4533f))
+
 ## [4.31.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.0...v4.31.1) (2026-09-09)
 
 
