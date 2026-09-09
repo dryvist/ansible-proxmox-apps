@@ -170,9 +170,9 @@ mint_ssh_cert() {
   { set +x; } 2>/dev/null
   # secret_id is read from stdin (`secret_id=-`), never passed as an argument:
   # every process on the host can read another's argv.
-  RUNNER_BAO_TOKEN=$(printf '%s' "$OPENBAO_APPROLE_ANSIBLE_SECRET_ID" \
+  RUNNER_BAO_TOKEN=$(printf '%s' "$CONVERGE_SECRET_ID" \
     | BAO_CLIENT_TIMEOUT=10 bao write -field=token auth/approle/login \
-      role_id="$OPENBAO_APPROLE_ANSIBLE_ROLE_ID" secret_id=-) || return 1
+      role_id="$CONVERGE_ROLE_ID" secret_id=-) || return 1
   # 2h, matching the automation-ansible signing role's ceiling. At 1h a full
   # converge outlived its own certificate and every remaining host reported
   # "Failed to authenticate" — an elapsed credential wearing the costume of a
@@ -206,7 +206,44 @@ if [[ -n ${BAO_ADDR:-} ]] && ! mint_reconcile_token; then
   exit 1
 fi
 
-if [[ -n ${BAO_ADDR:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
+# WHICH IDENTITY THIS CONVERGE AUTHENTICATES AS.
+#
+# Two AppRoles carry an identical grant — the converge policy, config
+# authorship, and the automation-ansible signing role. One is declared and
+# bounded: a one-day secret_id, a redemption cap, and a source-address
+# restriction to the internal segments. The other is declared nowhere and
+# bounded on no axis at all — it never expires, redeems without limit, and is
+# accepted from any address that can reach the endpoint.
+#
+# This wrapper read the unbounded one. Its own certificate label and the
+# comments around it name the bounded one. Measured on the store's audit log:
+# the bounded identity's last login was 2026-09-06 04:09, and every converge
+# since has authenticated as the unbounded shadow of it — a bound that lapsed
+# and fell through to a standing credential, with nothing anywhere reporting a
+# failure.
+#
+# Preference, not a hard switch, because the bounded credential is not yet
+# published everywhere this script runs. The fallback is deliberately LOUD: a
+# silent one is how this went unnoticed for three days.
+CONVERGE_ROLE_ID=""
+CONVERGE_SECRET_ID=""
+CONVERGE_IDENTITY=""
+if [[ -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID:-} ]]; then
+  CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID
+  CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID
+  CONVERGE_IDENTITY="ansible-converge (declared, bounded)"
+elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
+  CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
+  CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
+  CONVERGE_IDENTITY="ansible (UNDECLARED, unbounded)"
+  echo "WARNING: converging as an identity that is declared nowhere and bounded" >&2
+  echo "  on no axis — no lifetime, no redemption cap, no source restriction —" >&2
+  echo "  because the declared equivalent's credential is not in this" >&2
+  echo "  environment. Publish OPENBAO_APPROLE_ANSIBLE_CONVERGE_{ROLE,SECRET}_ID" >&2
+  echo "  here and this warning goes away. See the identity-swap incident." >&2
+fi
+
+if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; then
   # FAIL-LOUD: when the cert env is present, a mint failure is an error — never
   # silently ride the static key (that masked a dead cert path once already).
   # Break-glass = run WITHOUT the BAO env, with PROXMOX_SSH_KEY_PATH set.
@@ -220,6 +257,7 @@ if [[ -n ${BAO_ADDR:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBA
   # UNREACHABLE that reads exactly like a broken host, and the only way to tell
   # the two apart afterwards is knowing when the cert expired.
   echo "Using a short-lived SSH certificate from the OpenBao CA (automation-ansible)."
+  echo "  authenticated as: $CONVERGE_IDENTITY"
   # `|| true` is load-bearing under `set -euo pipefail`: if ssh-keygen cannot
   # parse the certificate the pipeline fails and takes the whole converge with
   # it. A line that only reports when the credential expires must never be able

@@ -89,7 +89,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
         path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
         path.chmod(0o700)
 
-    def _run(self, caller_token=None, sign_failure=False):
+    def _run(self, caller_token=None, sign_failure=False, declared_identity=False):
         env = os.environ.copy()
         env.update(
             {
@@ -105,6 +105,14 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "TMPDIR": str(self.tmp_path),
             }
         )
+        # Two AppRoles carry an identical grant: one declared and bounded, one
+        # declared nowhere and bounded on no axis. The runner must prefer the
+        # first and say so loudly when it falls back to the second.
+        env.pop("OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID", None)
+        env.pop("OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID", None)
+        if declared_identity:
+            env["OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID"] = "test-declared-role-id"
+            env["OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID"] = APPROLE_SECRET
         if caller_token is None:
             env.pop("BAO_TOKEN", None)
         else:
@@ -144,6 +152,30 @@ class RunAnsibleTokenContract(unittest.TestCase):
         )
         self._assert_no_secret_leak(result)
         self._assert_cert_cleanup()
+
+    def test_the_declared_identity_is_preferred_and_says_so(self):
+        result = self._run(declared_identity=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("ansible-converge", output)
+        # No warning: this is the bounded identity, which is the whole point.
+        self.assertNotIn("UNDECLARED", output)
+        self._assert_no_secret_leak(result)
+
+    def test_falling_back_to_the_unbounded_identity_is_loud(self):
+        # The bounded credential is not published everywhere yet, so the
+        # fallback still has to work. What it must never do is happen quietly:
+        # a silent fallback is how three days of converges ran on a credential
+        # with no lifetime, no redemption cap and no source restriction, while
+        # every recap stayed green.
+        result = self._run(declared_identity=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        warning = result.stderr
+        self.assertIn("UNDECLARED", result.stdout + warning)
+        self.assertIn("WARNING", warning)
+        self._assert_no_secret_leak(result)
 
     def test_caller_token_is_preserved_and_runner_token_revoked_before_child(self):
         result = self._run(caller_token=CALLER_TOKEN)

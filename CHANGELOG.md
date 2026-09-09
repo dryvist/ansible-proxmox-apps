@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.31.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.2...v4.31.3) (2026-09-09)
+
+
+### Bug Fixes
+
+* **apt:** retry the cache probe and record the fallback ([#1779](https://github.com/dryvist/ansible-proxmox-apps/issues/1779)) ([81a51ba](https://github.com/dryvist/ansible-proxmox-apps/commit/81a51ba93e72ae82224bd63a2a18887ef43c6aef))
+
 ## [4.31.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.1...v4.31.2) (2026-09-09)
 
 
