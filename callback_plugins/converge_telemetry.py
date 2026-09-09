@@ -89,6 +89,7 @@ is_check_mode = _events.is_check_mode
 build_events = _events.build_events
 build_task_events = _events.build_task_events
 build_interrupted_event = _events.build_interrupted_event
+build_unreachable_events = _events.build_unreachable_events
 encode_batch = _events.encode_batch
 
 
@@ -111,6 +112,9 @@ class CallbackModule(CallbackBase):
         # Set the moment the normal stats path is entered, so the exit hook can
         # never double-publish a run that ended cleanly.
         self._emitted = False
+        # Hosts the transport could not reach, with what it said. The summary
+        # counts them; only this carries the reason.
+        self._unreachable = []
         atexit.register(self._on_interpreter_exit)
 
     def _close_open_task(self):
@@ -168,6 +172,28 @@ class CallbackModule(CallbackBase):
 
     def v2_runner_on_unreachable(self, result):
         self._count(result, "failed")
+        # Captured here because this is the only place the reason exists: the
+        # end-of-run summary keeps the counter and discards the message.
+        #
+        # Everything is read defensively. This runs on the connectivity path,
+        # so an attribute this callback did not expect would turn a host that
+        # could not be reached into a run that died in telemetry -- trading a
+        # blip for an outage, to record a diagnostic.
+        try:
+            host = result._host.get_name()
+        except Exception:  # noqa: BLE001 - telemetry must never fail a run
+            return
+        try:
+            reason = to_text((result._result or {}).get("msg") or "unreachable")
+        except Exception:  # noqa: BLE001 - telemetry must never fail a run
+            reason = "unreachable"
+        self._unreachable.append(
+            {
+                "host": host,
+                "task": self._open["name"] if self._open else None,
+                "reason": reason,
+            }
+        )
 
     def v2_runner_on_skipped(self, result):
         self._count(result)
@@ -224,6 +250,11 @@ class CallbackModule(CallbackBase):
         events.extend(
             build_task_events(self._tasks, config, self._playbook_name, now)
         )
+        events.extend(
+            build_unreachable_events(
+                self._unreachable, config, self._playbook_name, now
+            )
+        )
         if not events:
             return
 
@@ -278,6 +309,11 @@ class CallbackModule(CallbackBase):
             self._close_open_task()
             now = time.time()
             events = build_task_events(self._tasks, config, self._playbook_name, now)
+            events.extend(
+                build_unreachable_events(
+                    self._unreachable, config, self._playbook_name, now
+                )
+            )
             events.append(
                 build_interrupted_event(config, self._playbook_name, now)
             )

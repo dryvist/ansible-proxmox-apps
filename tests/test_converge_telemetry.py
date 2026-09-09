@@ -249,8 +249,6 @@ class DesiredStateFieldsContract(unittest.TestCase):
             self.assertNotIn("desired_state_current", event["event"])
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TaskTimingEvents(unittest.TestCase):
@@ -352,3 +350,129 @@ class TaskTimingEvents(unittest.TestCase):
 
     def test_no_tasks_produces_no_task_events(self):
         self.assertEqual(telemetry.build_task_events([], CONFIG, "site.yml", 1.0), [])
+
+
+class UnreachableReasonEvents(unittest.TestCase):
+    """An unreachable host must ship WHY, not just that it happened.
+
+    The per-host summary records a counter. A counter cannot tell a guest that
+    is down from a connection dropped mid-handshake under load from a host key
+    that no longer matches — three faults with three different fixes, identical
+    in the summary. Answering that meant leaving the log platform for the
+    runner's raw job output.
+    """
+
+    def _result(self, host, msg):
+        class _Host:
+            def get_name(self):
+                return host
+
+        class _Result:
+            def __init__(self):
+                self._host = _Host()
+                self._result = {"msg": msg, "unreachable": True}
+
+        return _Result()
+
+    def _task(self, name):
+        class _Task:
+            def __init__(self):
+                self.action = "gather_facts"
+                self._role = None
+
+            def get_name(self):
+                return name
+
+        return _Task()
+
+    def test_the_transport_reason_is_captured_and_shipped(self):
+        cb = RecordingCallback()
+        cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
+        cb.v2_runner_on_unreachable(
+            self._result("openbao-01", "Failed to connect to the host via ssh: kex_exchange")
+        )
+
+        events = telemetry.build_unreachable_events(
+            cb._unreachable, CONFIG, "site.yml", 1000.0
+        )
+        self.assertEqual(len(events), 1)
+        envelope = events[0]
+        self.assertEqual(envelope["sourcetype"], "ansible:converge:unreachable")
+        self.assertEqual(envelope["host"], "openbao-01")
+        self.assertEqual(envelope["index"], "ansible")
+        event = envelope["event"]
+        self.assertIn("kex_exchange", event["reason"])
+        self.assertEqual(event["task"], "Gathering Facts")
+        self.assertEqual(event["git_sha"], CONFIG["git_sha"])
+        # Must survive the HEC encoder the transport actually uses.
+        json.loads(json.dumps(envelope))
+
+    def test_each_host_keeps_its_own_reason(self):
+        """A run where hosts fail differently must not collapse to one reason."""
+        cb = RecordingCallback()
+        cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
+        cb.v2_runner_on_unreachable(self._result("openbao-01", "connection refused"))
+        cb.v2_runner_on_unreachable(self._result("openbao-20", "no route to host"))
+
+        events = telemetry.build_unreachable_events(
+            cb._unreachable, CONFIG, "site.yml", 1000.0
+        )
+        reasons = {e["host"]: e["event"]["reason"] for e in events}
+        self.assertEqual(
+            reasons,
+            {"openbao-01": "connection refused", "openbao-20": "no route to host"},
+        )
+
+    def test_a_missing_message_still_produces_an_event(self):
+        """A reason we cannot read is still a host that could not be reached."""
+        cb = RecordingCallback()
+        cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
+        cb.v2_runner_on_unreachable(self._result("openbao-21", None))
+
+        events = telemetry.build_unreachable_events(
+            cb._unreachable, CONFIG, "site.yml", 1000.0
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"]["reason"], "unreachable")
+
+    def test_a_pathological_reason_cannot_dominate_a_batch(self):
+        cb = RecordingCallback()
+        cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
+        cb.v2_runner_on_unreachable(self._result("openbao-01", "x" * 50000))
+
+        events = telemetry.build_unreachable_events(
+            cb._unreachable, CONFIG, "site.yml", 1000.0
+        )
+        self.assertEqual(
+            len(events[0]["event"]["reason"]),
+            telemetry._events.UNREACHABLE_MSG_MAX,
+        )
+
+    def test_a_reachable_run_ships_no_such_events(self):
+        """The quiet case: no unreachable host, no events, no noise."""
+        self.assertEqual(
+            telemetry.build_unreachable_events([], CONFIG, "site.yml", 1.0), []
+        )
+
+    def test_capture_never_raises_into_the_run(self):
+        """A diagnostic must not turn an unreachable host into a dead run.
+
+        This is the connectivity path: whatever the transport hands back, the
+        callback has to survive it. Failing here would trade a blip for an
+        outage in exchange for a log line.
+        """
+
+        class _Opaque:
+            pass
+
+        cb = RecordingCallback()
+        cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
+        cb.v2_runner_on_unreachable(_Opaque())
+        self.assertEqual(cb._unreachable, [])
+
+
+# Must stay LAST. unittest.main() runs at import of this line, so every class
+# defined below it is silently never collected -- the suite still reports OK,
+# with a smaller number nobody reads.
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
