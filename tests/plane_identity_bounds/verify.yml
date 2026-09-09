@@ -79,6 +79,18 @@
     # Both spellings are checked: the override map AND an inline declaration on
     # the role itself, because the first version of this guard read only the
     # map and would have missed the very identity it was written for.
+    #
+    # CORRECTED, and the correction matters — read before tightening this back.
+    # An earlier version accepted only exclusion from reconciliation, and so
+    # failed the four identities that were declared to match what the store
+    # already held. Being RECONCILED BY the unattended identity is not the
+    # hazard; being able to RECONCILE ITSELF is, and the assertion directly
+    # above is what tests for that. A source-address class that is not
+    # `unbound` is a compensating control in its own right — a leaked secret_id
+    # is useless from anywhere else — and it is the control this programme
+    # names alongside lifetime and redemption limits. Excluding a role from
+    # reconciliation is the heavier remedy, reserved for the role that holds
+    # the reconcile policy, because exclusion also means nothing manages it.
     - name: Every non-expiring secret_id is bounded by something else
       vars:
         from_overrides: >-
@@ -90,17 +102,23 @@
              | selectattr('secret_id_ttl', 'defined')
              | selectattr('secret_id_ttl', 'in', [0, '0', '0s'])
              | map(attribute='name') | list }}
+        bound_by_place: >-
+          {{ (openbao_approle_cidr_class_map | default({})) | dict2items
+             | rejectattr('value', 'equalto', 'unbound')
+             | map(attribute='key') | list }}
         unprotected: >-
           {{ (from_overrides + from_declarations) | unique
-             | reject('in', openbao_reconcile_excluded_policies) | list }}
+             | reject('in', openbao_reconcile_excluded_policies)
+             | reject('in', bound_by_place) | list }}
       ansible.builtin.assert:
         that:
           - unprotected | length == 0
         fail_msg: >-
           {{ unprotected | join(', ') }} declare a secret_id that never expires
-          while remaining reconcilable by the unattended identity. Either bound
-          the lifetime, or exclude the role so nothing running with it can
-          rewrite the compensating controls.
+          with nothing standing in for the lifetime. Give it one, or bind it to
+          a source-address class, or exclude the role so nothing running as it
+          can rewrite its own controls. Any of the three; none of them
+          optional.
 
     - name: The guard is looking at something, not passing on an empty set
       vars:
