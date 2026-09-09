@@ -115,7 +115,39 @@
             label: "{{ item.name }}"
           register: _logins
           changed_when: false
+          # A refused login is a RESULT, not an abort. Failing here raised a
+          # censored message naming no identity, so a run that could speak for
+          # exactly two roles reported only that "an item failed" — the one
+          # thing an operator cannot act on. The refusals are attributed below
+          # and still fail the play.
+          failed_when: false
           no_log: true
+
+        # Projected, never filtered afterwards: the login result carries the
+        # issued token in stdout and the secret_id in item.secret_id, so only
+        # the name, the return code and a bounded stderr are carried out of
+        # the no_log boundary. `bao` reads the secret_id from stdin and never
+        # echoes it, and the role_id lives in the argument list, not stderr.
+        - name: Attribute every login outcome to its identity
+          ansible.builtin.set_fact:
+            _login_outcomes: >-
+              {{ _login_outcomes | default([]) + [{
+                   'name': item.item.name,
+                   'rc': item.rc | default(1),
+                   'reason': (item.stderr | default('') | trim)[:200],
+                 }] }}
+          loop: "{{ _logins.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          no_log: true
+
+        - name: Report every identity that could not log in
+          ansible.builtin.debug:
+            msg: >-
+              {{ item.name }}: login rc={{ item.rc }} -- {{ item.reason }}
+          loop: "{{ _login_outcomes | default([]) | rejectattr('rc', 'equalto', 0) | list }}"
+          loop_control:
+            label: "{{ item.name }}"
 
         - name: Look up each issued token
           ansible.builtin.command:
@@ -124,7 +156,8 @@
             BAO_ADDR: "{{ _bao_addr }}"
             BAO_CLIENT_TIMEOUT: "10"
             BAO_TOKEN: "{{ item.stdout }}"
-          loop: "{{ _logins.results }}"
+          loop: "{{ _logins.results | selectattr('rc', 'defined')
+                    | selectattr('rc', 'equalto', 0) | list }}"
           loop_control:
             label: "{{ item.item.name }}"
           register: _lookups
@@ -142,7 +175,9 @@
             BAO_ADDR: "{{ _bao_addr }}"
             BAO_CLIENT_TIMEOUT: "10"
             BAO_TOKEN: "{{ item.stdout }}"
-          loop: "{{ (_logins | default({})).results | default([]) }}"
+          loop: "{{ (_logins | default({})).results | default([])
+                    | selectattr('rc', 'defined')
+                    | selectattr('rc', 'equalto', 0) | list }}"
           loop_control:
             label: "{{ item.item.name }}"
           changed_when: true
@@ -194,3 +229,18 @@
       loop: "{{ _bounds }}"
       loop_control:
         label: "{{ item.name }}"
+
+    # Last, deliberately. A dead credential and an unbounded token are separate
+    # findings, and asserting the login earlier would abort the play before the
+    # bounds above were ever measured — one broken identity would hide the
+    # state of every working one.
+    - name: Every reachable identity authenticates
+      ansible.builtin.assert:
+        that:
+          - _login_outcomes | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+        fail_msg: >-
+          These declared identities hold an ambient credential that no longer
+          authenticates:
+          {{ _login_outcomes | default([]) | rejectattr('rc', 'equalto', 0)
+             | map(attribute='name') | sort | join(', ') }}
+        quiet: true
