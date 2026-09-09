@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.31.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.30.0...v4.31.0) (2026-09-09)
+
+
+### Features
+
+* **openbao:** fail when the store's provisioning host is absent from a run ([#1766](https://github.com/dryvist/ansible-proxmox-apps/issues/1766)) ([7fda51b](https://github.com/dryvist/ansible-proxmox-apps/commit/7fda51b726506b1b9ced5b6c66645ca23bfff754))
+* **traefik:** bound backend forwarding timeouts on both transports ([#1768](https://github.com/dryvist/ansible-proxmox-apps/issues/1768)) ([49fd2b3](https://github.com/dryvist/ansible-proxmox-apps/commit/49fd2b3cfd6583c1bd693b7809006afbd900b2bc))
+
+
+### Bug Fixes
+
+* **inventory:** authenticate Docker VMs with the signed certificate ([#1762](https://github.com/dryvist/ansible-proxmox-apps/issues/1762)) ([b020af9](https://github.com/dryvist/ansible-proxmox-apps/commit/b020af9b6e5a1afbf85deb16e6887783e81808b8))
+* **ntp:** step the clock and persist it to the RTC ([#1760](https://github.com/dryvist/ansible-proxmox-apps/issues/1760)) ([9a46adc](https://github.com/dryvist/ansible-proxmox-apps/commit/9a46adcff4a73713621babb965bf1a5954b23547))
+* **openbao:** emit the voters count the quorum alert needs, and fail closed ([#1761](https://github.com/dryvist/ansible-proxmox-apps/issues/1761)) ([0730b64](https://github.com/dryvist/ansible-proxmox-apps/commit/0730b6483e0adf796a15bdb2cd51c4655951cc28))
+* **technitium_dns:** never derive the primary into its own secondary list ([#1763](https://github.com/dryvist/ansible-proxmox-apps/issues/1763)) ([bbdcc11](https://github.com/dryvist/ansible-proxmox-apps/commit/bbdcc11c8c816de5862fb538d0c9c51c5b29f98e))
+
 ## [4.30.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.29.0...v4.30.0) (2026-09-08)
 
 
