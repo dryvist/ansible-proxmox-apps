@@ -17,8 +17,8 @@
   vars:
     guard_file: "{{ playbook_dir }}/../../roles/openbao/tasks/main/configure_and_bootstrap.yml"
     guard_task_name: >-
-      FAIL -- the store's provisioning host is not in this run, so nothing it
-      owns will happen
+      FAIL -- the store's provisioning host dropped out of this run, so nothing
+      it owns will happen
 
   tasks:
     # Read the guard's own condition out of the role rather than restating it:
@@ -64,11 +64,13 @@
       ansible.builtin.assert:
         that:
           - "'openbao_bootstrap_host not in ansible_play_hosts' in clauses"
+          - "'openbao_bootstrap_host in ansible_play_hosts_all' in clauses"
         fail_msg: >-
-          The guard no longer tests `openbao_bootstrap_host not in
-          ansible_play_hosts` (found: {{ clauses }}). ansible_play_hosts_all
-          and groups[] both still contain a host that dropped out, so either
-          would make this guard incapable of firing.
+          The guard must test BOTH lists (found: {{ clauses }}). Absent from
+          the active hosts alone would also fire on a deliberately scoped run;
+          present in the play's full list is what makes it mean "dropped out"
+          rather than "not asked for". Dropping either clause makes the guard
+          either incapable of firing or noisy enough to be switched off.
 
     # Evaluate the condition's SHAPE both ways, so this proves behaviour and
     # not just text. The stand-in names are deliberate: ansible_play_hosts is
@@ -76,18 +78,31 @@
     # it, so a fixture using the real name would silently test the real play's
     # host list instead of the fixture. The assertion above is what pins the
     # real variable names in the role.
-    - name: The condition fires when the bootstrap host is not among the active hosts
+    - name: It fires when the bootstrap host was in the play and dropped out
       vars:
         bootstrap_host: openbao-01.example.com
-        active_hosts: [openbao-02.example.com, openbao-30.example.com]
+        all_hosts: [openbao-01.example.com, openbao-02.example.com]
+        active_hosts: [openbao-02.example.com]
       ansible.builtin.assert:
         that:
+          - bootstrap_host in all_hosts
           - bootstrap_host not in active_hosts
 
-    - name: The condition stays quiet when the bootstrap host is present
+    - name: It stays quiet when the bootstrap host converged normally
       vars:
         bootstrap_host: openbao-01.example.com
+        all_hosts: [openbao-01.example.com, openbao-02.example.com]
         active_hosts: [openbao-01.example.com, openbao-02.example.com]
       ansible.builtin.assert:
         that:
-          - not (bootstrap_host not in active_hosts)
+          - not (bootstrap_host in all_hosts and bootstrap_host not in active_hosts)
+
+    # The false positive that would get the guard switched off.
+    - name: It stays quiet on a run deliberately scoped away from that host
+      vars:
+        bootstrap_host: openbao-01.example.com
+        all_hosts: [openbao-02.example.com]
+        active_hosts: [openbao-02.example.com]
+      ansible.builtin.assert:
+        that:
+          - not (bootstrap_host in all_hosts and bootstrap_host not in active_hosts)

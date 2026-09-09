@@ -103,10 +103,17 @@
 # unnoticed for three days, because the bootstrap host was unreachable on most
 # runs and nothing said so.
 #
-# ansible_play_hosts is the hosts STILL ACTIVE in the play, so a host that went
-# unreachable during it is already gone from this list -- which is the case
-# being caught. run_once keeps it to one message rather than one per host.
-- name: FAIL -- the store's provisioning host is not in this run, so nothing it owns will happen
+# The two lists together are what separates the two cases, and only one is a
+# fault. ansible_play_hosts_all is the play's hosts INCLUDING those that went
+# unreachable; ansible_play_hosts is those still active. So:
+#
+#   in _all, not in _hosts  -> the host was meant to be here and dropped out.
+#   in neither              -> the run was deliberately scoped elsewhere.
+#
+# Only the first fails. Firing on the second would make every targeted --limit
+# run red, and a guard with false positives is a guard someone switches off.
+# run_once keeps it to one message rather than one per host.
+- name: FAIL -- the store's provisioning host dropped out of this run, so nothing it owns will happen
   ansible.builtin.fail:
     msg: >-
       {{ openbao_bootstrap_host }} is the only host that runs cluster
@@ -119,6 +126,7 @@
   run_once: true
   when:
     - ansible_virtualization_type | default('') != 'docker'
+    - openbao_bootstrap_host in ansible_play_hosts_all
     - openbao_bootstrap_host not in ansible_play_hosts
 
 - name: Bootstrap OpenBao (init, KV, policies, AppRoles)
