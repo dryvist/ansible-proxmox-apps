@@ -87,6 +87,7 @@ fi
 
 CERT_DIR=""
 RUNNER_BAO_TOKEN=""
+RECONCILE_BAO_TOKEN=""
 
 revoke_runner_token() {
   [[ -z $RUNNER_BAO_TOKEN ]] && return 0
@@ -98,12 +99,60 @@ revoke_runner_token() {
   return 1
 }
 
+# Same false positive as `cleanup` below, same reason and same reproduction:
+# the linter stops crediting a trap reference once the script ends in an
+# explicit `exit`. This function's only caller IS that trap. Narrowed to the
+# one rule and the one function, exactly like the existing case.
+# shellcheck disable=SC2329 # false positive: invoked via `trap cleanup EXIT`.
+revoke_reconcile_token() {
+  [[ -z $RECONCILE_BAO_TOKEN ]] && return 0
+  { set +x; } 2>/dev/null
+  if BAO_TOKEN=$RECONCILE_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 bao token revoke -self >/dev/null 2>&1; then
+    RECONCILE_BAO_TOKEN=""
+    return 0
+  fi
+  return 1
+}
+
+# Mint the token the store role reconciles WITH, from the execution plane's own
+# declared identity.
+#
+# This is separate from the SSH-signing token above on purpose. That one
+# authenticates as the identity whose certificates the guests already trust,
+# and changing it changes the principal on the wire; this one only ever talks
+# to the store's own API. Keeping them apart means reconciliation can be fixed
+# without touching the path that reaches every guest.
+#
+# Absent credentials are NOT an error here: a caller running this from a
+# workstation supplies secret-zero for the reconcile identity instead, and the
+# store role prefers a token only when one is actually present. What must never
+# happen is a silent skip on the PLANE, so say which case this is.
+mint_reconcile_token() {
+  if [[ -z ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} || -z ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
+    echo "run-ansible: no execution-plane identity in this environment; the store" >&2
+    echo "  role will fall back to reconcile secret-zero, or skip and say so." >&2
+    return 0
+  fi
+  { set +x; } 2>/dev/null
+  # secret_id on stdin, never in argv.
+  RECONCILE_BAO_TOKEN=$(printf '%s' "$OPENBAO_APPROLE_SEMAPHORE_SECRET_ID" \
+    | BAO_CLIENT_TIMEOUT=10 bao write -field=token auth/approle/login \
+      role_id="$OPENBAO_APPROLE_SEMAPHORE_ROLE_ID" secret_id=-) || {
+    echo "run-ansible: the execution-plane identity did not authenticate, so this" >&2
+    echo "  run will NOT reconcile the store. That is a refusal to diagnose, not" >&2
+    echo "  a reason to continue quietly." >&2
+    return 1
+  }
+  export OPENBAO_RECONCILE_TOKEN=$RECONCILE_BAO_TOKEN
+}
+
 # shellcheck disable=SC2329 # false positive: invoked via `trap cleanup EXIT` below.
 # Reproduced in isolation — shellcheck stops crediting the trap reference once
 # the script ends in an explicit `exit`, which the run log below now does.
 cleanup() {
   local status=$?
   revoke_runner_token || true
+  revoke_reconcile_token || true
   [[ -n $CERT_DIR ]] && rm -rf "$CERT_DIR"
   return "$status"
 }
@@ -145,6 +194,17 @@ mint_ssh_cert() {
     revoke_runner_token || true
   fi
 }
+
+# Independent of the SSH path below, and deliberately before it: the store
+# reconciliation is what a converge silently skipped for days, and a failure to
+# obtain its credential must stop the run rather than produce another green
+# recap that changed nothing.
+if [[ -n ${BAO_ADDR:-} ]] && ! mint_reconcile_token; then
+  echo "ERROR: refusing to converge without the store-reconcile credential the" >&2
+  echo "execution-plane identity was supposed to provide. A run that continues" >&2
+  echo "here reports success while every declared policy change fails to land." >&2
+  exit 1
+fi
 
 if [[ -n ${BAO_ADDR:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
   # FAIL-LOUD: when the cert env is present, a mint failure is an error — never

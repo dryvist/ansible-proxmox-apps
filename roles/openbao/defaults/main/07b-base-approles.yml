@@ -35,11 +35,23 @@ openbao_base_approles:
   # No config-write: that capability belongs to the systems that AUTHOR config
   # (see config-write-policy.hcl.j2), and this one only runs them. Attaching it
   # would make a third holder of a deliberately two-holder capability.
+  #
+  # It also carries the RECONCILE policy, because this is the identity that
+  # actually performs routine reconciliation. Without it the plane held no way
+  # to be the reconcile identity at all: every unattended converge skipped the
+  # whole provisioning path — policies, AppRoles, TTL bounds and generated
+  # application secrets — and still reported success. Three days of green
+  # recaps changed nothing in the store.
+  #
+  # Attaching it here rather than shipping a second plane identity is
+  # deliberate: two credentials for one caller means two sets of bounds to keep
+  # in step, and the looser of the two silently becomes what the plane can do.
   - name: "{{ openbao_semaphore_approle_name }}"
     secret_id_ttl: "0s"
     secret_id_num_uses: 0
     token_policies: >-
-      {{ [openbao_ansible_converge_policy_name, openbao_semaphore_policy_name]
+      {{ [openbao_ansible_converge_policy_name, openbao_semaphore_policy_name,
+          openbao_reconcile_policy_name]
          + (['ssh-sign-automation-semaphore'] if openbao_ssh_engine_enabled else []) }}
   - name: "{{ openbao_observability_approle_name }}"
     policy: "{{ openbao_observability_policy_name }}"
