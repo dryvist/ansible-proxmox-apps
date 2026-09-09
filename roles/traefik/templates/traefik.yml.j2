@@ -50,6 +50,24 @@ certificatesResolvers:
           disableChecks: {{ traefik_acme_disable_propagation_check | bool | lower }}
           delayBeforeChecks: "{{ traefik_acme_delay_before_checks }}"
 
+{# Default transport for every backend. Traefik's own defaults are a 30s dial
+   timeout and NO response-header timeout at all, so a backend that ACCEPTS a
+   connection and then never answers makes the ingress wait forever and the
+   client sees a hang rather than an error. Measured: a fronted name whose
+   backend accepts but never responds was still holding the connection open
+   with zero bytes after 75 seconds, while names whose backend refused
+   correctly returned 504 at the dial timeout. A hang is the worse failure —
+   it reads as a network fault and holds a connection per attempt.
+
+   responseHeaderTimeout bounds time-to-first-HEADER only. Streaming and
+   websocket backends send headers immediately and stream the body afterwards,
+   so this does not cap a long response; it is deliberately generous anyway for
+   a backend that computes before answering. #}
+serversTransport:
+  forwardingTimeouts:
+    dialTimeout: "{{ traefik_backend_dial_timeout }}"
+    responseHeaderTimeout: "{{ traefik_backend_response_header_timeout }}"
+
 providers:
   file:
     directory: "{{ traefik_dynamic_dir }}"
