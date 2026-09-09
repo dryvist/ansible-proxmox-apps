@@ -1,0 +1,80 @@
+---
+# Exercise the corrected primary/secondary derivation with the SAME expression
+# the role uses, across the cases that matter. Pure fact arithmetic, no host
+# contact.
+- name: Verify the DNS secondary derivation never contains the primary
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cases:
+      # Today's live shape: the lowest-vmid guess named a STOPPED member, so
+      # the bootstrap secondary list holds the real primary's own address, and
+      # no member reports the secondary role.
+      - name: "guess named a non-primary; no live secondaries"
+        role_map:
+          - {ip: "10.0.2.2", role: "primary"}
+        bootstrap_secondaries: ["10.0.2.3", "10.0.2.2"]
+        bootstrap_primary: "10.0.2.4"
+        expect_primary: "10.0.2.2"
+        expect_secondaries: ["10.0.2.3"]
+      - name: "a live secondary exists"
+        role_map:
+          - {ip: "10.0.2.2", role: "primary"}
+          - {ip: "10.0.2.3", role: "secondary"}
+        bootstrap_secondaries: ["10.0.2.3", "10.0.2.2"]
+        bootstrap_primary: "10.0.2.4"
+        expect_primary: "10.0.2.2"
+        expect_secondaries: ["10.0.2.3"]
+      - name: "single member: it is its own primary, no secondaries"
+        role_map:
+          - {ip: "10.0.2.2", role: "primary"}
+        bootstrap_secondaries: []
+        bootstrap_primary: "10.0.2.2"
+        expect_primary: "10.0.2.2"
+        expect_secondaries: []
+      - name: "bootstrap list held ONLY the primary"
+        role_map:
+          - {ip: "10.0.2.2", role: "primary"}
+        bootstrap_secondaries: ["10.0.2.2"]
+        bootstrap_primary: "10.0.2.4"
+        expect_primary: "10.0.2.2"
+        expect_secondaries: []
+      - name: "no live role map at all (first bootstrap)"
+        role_map: []
+        bootstrap_secondaries: ["10.0.2.3"]
+        bootstrap_primary: "10.0.2.2"
+        expect_primary: "10.0.2.2"
+        expect_secondaries: ["10.0.2.3"]
+  tasks:
+    - name: Evaluate the derivation for each case
+      vars:
+        _live_primaries: >-
+          {{ item.role_map | selectattr('role', 'equalto', 'primary')
+             | map(attribute='ip') | reject('equalto', '') | list }}
+        _live_secondaries: >-
+          {{ item.role_map | selectattr('role', 'equalto', 'secondary')
+             | map(attribute='ip') | reject('equalto', '') | list }}
+        _primary: >-
+          {{ _live_primaries | first | default(item.bootstrap_primary, true) }}
+        _secondaries: >-
+          {{ (_live_secondaries if (_live_secondaries | length > 0)
+              else item.bootstrap_secondaries)
+             | reject('equalto', (_live_primaries | first
+                                  | default(item.bootstrap_primary, true)))
+             | list }}
+      ansible.builtin.assert:
+        that:
+          - _primary == item.expect_primary
+          - _secondaries == item.expect_secondaries
+          # The property the guard downstream enforces.
+          - _primary not in _secondaries
+        success_msg: >-
+          OK  {{ item.name }} -> primary={{ _primary }}
+          secondaries={{ _secondaries }}
+        fail_msg: >-
+          FAIL {{ item.name }} -> primary={{ _primary }} (want
+          {{ item.expect_primary }}) secondaries={{ _secondaries }} (want
+          {{ item.expect_secondaries }})
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"

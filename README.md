@@ -85,8 +85,8 @@ loader requires whenever the inventory contains Docker VMs:
 # SSH key for the LXC containers (production stacks)
 export PROXMOX_SSH_KEY_PATH="<path-to-ssh-key>"
 
-# SSH key for the Docker VMs — required when the inventory has docker_vms
-export PROXMOX_DKR_SSH_KEY_PATH="<path-to-docker-vm-ssh-key>"
+# The Docker VMs need no separate variable: they authenticate with the same
+# signed certificate as every other SSH-reached guest.
 ```
 
 ## Usage

@@ -241,9 +241,25 @@
   ansible.builtin.set_fact:
     technitium_dns_primary_ip: >-
       {{ _live_primaries | first | default(technitium_dns_primary_ip, true) }}
+    # The primary can never be its own secondary. Correcting the primary from
+    # the live roles was not enough on its own: when NO member reports the
+    # secondary role, `_live_secondaries` is empty and the fallback keeps the
+    # bootstrap list, which was derived by rejecting the lowest-vmid GUESS.
+    # If that guess named a member which is not the live primary, the list
+    # still holds the real primary's own address, and the AXFR authorisation
+    # guard downstream correctly refuses to write a transfer ACL naming it.
+    #
+    # Rejecting the resolved primary here makes the pair self-consistent in
+    # every case, so the guard is left to catch genuine faults rather than
+    # this derivation contradicting itself. The guard is deliberately NOT
+    # relaxed: an empty list after the rejection simply skips the ACL task,
+    # which is the correct behaviour when no secondary exists yet.
     technitium_dns_secondary_ips: >-
-      {{ _live_secondaries if (_live_secondaries | length > 0)
-         else technitium_dns_secondary_ips }}
+      {{ (_live_secondaries if (_live_secondaries | length > 0)
+          else technitium_dns_secondary_ips)
+         | reject('equalto', (_live_primaries | first
+                              | default(technitium_dns_primary_ip, true)))
+         | list }}
 
 # Technitium authenticates API calls via `?token=...` query parameter,
 # NOT via an X-Api-Token header. The header is silently ignored and

@@ -8,6 +8,24 @@ pool {{ pool }}
 driftfile /var/lib/chrony/chrony.drift
 logdir /var/log/chrony
 leapsectz right/UTC
+
+# Step the clock instead of slewing it whenever the offset exceeds the
+# threshold, at ANY update rather than only the first few. Without this chrony
+# only slews: it corrects a small error slowly and refuses to jump a large one,
+# so a host that boots with a wrong hardware clock stays wrong for days. It
+# also reports itself healthy while doing so — once it settles around the wrong
+# time, "Last offset" is tiny and the leap status is Normal. Only the absolute
+# "System time ... of NTP time" value shows the error.
+makestep {{ ntp_makestep_threshold }} {{ ntp_makestep_limit }}
+
+{% if ntp_rtcsync %}
+# Copy the corrected system time back to the hardware clock. Without it the
+# correction is lost at reboot and the host re-inherits the same wrong value,
+# which makes the drift permanent rather than a one-off. Not set inside
+# containers — they have no hardware clock — and this role does not run chrony
+# there anyway.
+rtcsync
+{% endif %}
 allow 127.0.0.1
 allow ::1
 {% if ntp_serve %}
