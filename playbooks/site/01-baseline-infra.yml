@@ -43,15 +43,36 @@
           #!/bin/bash
           # Managed by Ansible (ansible-proxmox-apps site.yml) — do not edit.
           # apt Acquire::http::Proxy-Auto-Detect hook: first live cache wins,
-          # DIRECT when none answer (fail open, apt fetches upstream).
-          for host in {% for h in groups['apt_cacher_group'] | sort -%}
-          {{ h }}.{{ tofu_data.domain }} {% endfor %}; do
-            if timeout 2 bash -c "exec 3<>/dev/tcp/${host}/{{ _apt_cache_port }}" 2>/dev/null; then
-              exec 3>&- 2>/dev/null
-              echo "http://${host}:{{ _apt_cache_port }}"
-              exit 0
-            fi
+          # DIRECT when none answer.
+          #
+          # The probe is RETRIED. A single short connect test is decided by
+          # whatever the cache happens to be doing at that instant, and during a
+          # fleet converge it is serving every other guest at once — so one
+          # timeout demoted a healthy cache and sent apt upstream.
+          #
+          # DIRECT is not a safe fallback everywhere: some VLANs permit outbound
+          # 443 and the internal network but BLOCK outbound 80, and Debian's
+          # default sources are http. There, apt fails with "Failed to update
+          # apt cache after N retries:" and an EMPTY reason — a fallback into a
+          # path that cannot work, reported as nothing. The fallback is kept,
+          # because other VLANs do reach upstream, but the decision is now
+          # RECORDED so that empty failure has a companion line naming what was
+          # probed.
+          CACHES="{% for h in groups['apt_cacher_group'] | sort -%}
+          {{ h }}.{{ tofu_data.domain }} {% endfor %}"
+          for attempt in 1 2 3; do
+            for host in $CACHES; do
+              if timeout 3 bash -c "exec 3<>/dev/tcp/${host}/{{ _apt_cache_port }}" 2>/dev/null; then
+                exec 3>&- 2>/dev/null
+                echo "http://${host}:{{ _apt_cache_port }}"
+                exit 0
+              fi
+            done
+            [ "$attempt" -lt 3 ] && sleep 1
           done
+          logger -t apt-proxy-detect -p daemon.warning \
+            "no apt cache answered in 3 attempts ($CACHES); returning DIRECT," \
+            "which fails wherever outbound 80 is blocked"
           echo DIRECT
         owner: root
         group: root
