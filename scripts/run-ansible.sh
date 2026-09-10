@@ -114,8 +114,8 @@ revoke_reconcile_token() {
   return 1
 }
 
-# Mint the token the store role reconciles WITH, from the execution plane's own
-# declared identity.
+# Mint the token the store role reconciles WITH, from the reconcile identity
+# itself -- not from whichever identity happens to be running the plane.
 #
 # This is separate from the SSH-signing token above on purpose. That one
 # authenticates as the identity whose certificates the guests already trust,
@@ -127,18 +127,25 @@ revoke_reconcile_token() {
 # workstation supplies secret-zero for the reconcile identity instead, and the
 # store role prefers a token only when one is actually present. What must never
 # happen is a silent skip on the PLANE, so say which case this is.
+# The token MUST be minted from the reconcile identity. The store role treats a
+# supplied token as that identity and therefore skips its own login, so a token
+# from any other role is not a weaker credential -- it is a different identity
+# wearing the reconcile name, and it silently displaces the credential that
+# would have worked. The plane identity carries no reconciliation grants at all,
+# so every store call under it is refused while the reconcile secret-zero sits
+# unused in the same environment.
 mint_reconcile_token() {
-  if [[ -z ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} || -z ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
-    echo "run-ansible: no execution-plane identity in this environment; the store" >&2
+  if [[ -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID:-} || -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID:-} ]]; then
+    echo "run-ansible: no reconcile identity in this environment; the store" >&2
     echo "  role will fall back to reconcile secret-zero, or skip and say so." >&2
     return 0
   fi
   { set +x; } 2>/dev/null
   # secret_id on stdin, never in argv.
-  RECONCILE_BAO_TOKEN=$(printf '%s' "$OPENBAO_APPROLE_SEMAPHORE_SECRET_ID" \
+  RECONCILE_BAO_TOKEN=$(printf '%s' "$OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID" \
     | BAO_CLIENT_TIMEOUT=10 bao write -field=token auth/approle/login \
-      role_id="$OPENBAO_APPROLE_SEMAPHORE_ROLE_ID" secret_id=-) || {
-    echo "run-ansible: the execution-plane identity did not authenticate, so this" >&2
+      role_id="$OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID" secret_id=-) || {
+    echo "run-ansible: the reconcile identity did not authenticate, so this" >&2
     echo "  run will NOT reconcile the store. That is a refusal to diagnose, not" >&2
     echo "  a reason to continue quietly." >&2
     return 1
