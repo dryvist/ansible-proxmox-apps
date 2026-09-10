@@ -44,6 +44,17 @@ docker container prune --force || true
 docker image prune --force || true
 docker builder prune --force || true
 
+# VOLUMES ARE THE ONE THAT MATTERS, and they are NOT covered by any of the three
+# above -- `docker system prune` excludes them too unless asked. Measured on a
+# runner that had filled its disk: images, containers and build cache together
+# held under 10GB, while 109 orphaned volumes held 88.42GB. Every scenario leaves
+# one behind, so this is the category that grows without bound.
+#
+# Safe by construction: a volume referenced by ANY container, running or stopped,
+# is not a prune candidate. A sibling job's volume is attached to its container
+# and survives; only volumes whose container is already gone are removed.
+docker volume prune --force || true
+
 echo "--- disk after reclaim"
 report_space
 
