@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.33.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.32.0...v4.33.0) (2026-09-10)
+
+
+### Features
+
+* **openbao:** promote the task-tracker operator account into its app bucket ([#1794](https://github.com/dryvist/ansible-proxmox-apps/issues/1794)) ([29cea79](https://github.com/dryvist/ansible-proxmox-apps/commit/29cea792a1109826930f3f9a8da0e2cff6495cbf))
+
+
+### Bug Fixes
+
+* **openbao:** fail with the secrets-engine listing's exit code and stderr ([#1795](https://github.com/dryvist/ansible-proxmox-apps/issues/1795)) ([ac2ab9b](https://github.com/dryvist/ansible-proxmox-apps/commit/ac2ab9b81b1cbbf5c5eb7ae91ebf5157678262f4))
+* **openbao:** mint the reconcile token from the reconcile role ([#1800](https://github.com/dryvist/ansible-proxmox-apps/issues/1800)) ([c8aad98](https://github.com/dryvist/ansible-proxmox-apps/commit/c8aad982b3275b1fea78d4e002346dc55ae0dd37))
+
 ## [4.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.31.3...v4.32.0) (2026-09-09)
 
 
