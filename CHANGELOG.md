@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.34.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.34.0...v4.34.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* stop the post-merge sweep skipping behind a green board ([58d1206](https://github.com/dryvist/ansible-proxmox-apps/commit/58d1206e1b46b3bd0f0a5b6893aa993047ecf5a0))
+
 ## [4.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.33.1...v4.34.0) (2026-09-11)
 
 
