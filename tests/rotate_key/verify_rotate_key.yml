@@ -8,6 +8,8 @@
 #   2. rotating a field that does not already exist on the entry FAILS with
 #      the "does not invent a field" message
 #   3. a path marked custom_metadata.rotation=exempt is refused
+#   4. with no standing secret_id in the environment (the inert AppRole
+#      tier), a ROTATE_WRAPPING_TOKEN is unwrapped and the rotation succeeds
 #
 # Usage: ansible-playbook tests/rotate_key/verify_rotate_key.yml -c local
 - name: Verify rotate-key.yml against a stubbed OpenBao
@@ -152,6 +154,41 @@
           Case 3 (rotation=exempt) must be refused. rc={{ _case3.rc }}
           stdout={{ _case3.stdout }} stderr={{ _case3.stderr }}
 
+    # -------------------------------------------------------------------
+    # Case 4: an inert AppRole tier — no standing secret_id in the
+    # environment, only a wrapping token — must still succeed by unwrapping
+    # it. This is the ai-rotate/apps-rotate path; media-rotate (Cases 1-3)
+    # never needs a wrap.
+    # -------------------------------------------------------------------
+    - name: "Case 4: reseed a clean, non-exempt entry"
+      ansible.builtin.copy:
+        dest: "{{ state_file }}"
+        mode: "0600"
+        content: >-
+          {"data": {"REAL_FIELD": "old-value", "OTHER_FIELD": "untouched"},
+          "version": 3, "custom_metadata": {}, "wrap_used": false}
+
+    - name: "Case 4: rotate using only a wrapping token, no standing secret_id"
+      ansible.builtin.command: >-
+        ansible-playbook {{ _playbook }} -c local
+        -e rotate_domain=test -e rotate_entry=entry -e rotate_field=REAL_FIELD
+      register: _case4
+      changed_when: false
+      failed_when: false
+      environment:
+        BAO_ADDR: "http://127.0.0.1:{{ _port }}"
+        TEST_ROTATE_VAULT_ROLE_ID: test-role-id
+        ROTATE_WRAPPING_TOKEN: test-wrapping-token
+
+    - name: "Case 4: assert the wrap-only rotation succeeded"
+      ansible.builtin.assert:
+        that:
+          - _case4.rc == 0
+        fail_msg: >-
+          Case 4 (wrapping-token-only, no standing secret_id) must succeed
+          by unwrapping ROTATE_WRAPPING_TOKEN. rc={{ _case4.rc }}
+          stdout={{ _case4.stdout }} stderr={{ _case4.stderr }}
+
     - name: Stop the stub OpenBao server
       ansible.builtin.command: "kill {{ _stub.stdout | trim }}"
       changed_when: false
@@ -164,3 +201,4 @@
           - clean rotation: succeeds, keeps siblings, stamps custom_metadata
           - unknown field: refused, never invented
           - custom_metadata.rotation=exempt: refused
+          - wrapping-token-only (no standing secret_id): succeeds via unwrap

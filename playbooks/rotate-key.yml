@@ -37,6 +37,17 @@
 #
 # Writing uses the <DOMAIN>-rotate AppRole, not the read-only `<domain>` one the
 # converge uses: a converge must never be able to rewrite its own secrets.
+#
+# Most <DOMAIN>-rotate AppRoles are INERT (manage_secret_id=false,
+# secret_id_ttl=15m, num_uses=1): there is no standing secret_id in the
+# environment. A human runs
+#   bao write -wrap-ttl=5m -f auth/approle/role/<domain>-rotate/secret-id
+# and hands the wrapping token to this playbook as ROTATE_WRAPPING_TOKEN —
+# that wrap IS the approval, the same pattern as the ai-apply-<svc> tier
+# (see roles/openbao/defaults/main/06-ai-access-model.yml). `media` keeps its
+# legacy standing Doppler pair (MEDIA_ROTATE_VAULT_ROLE_ID/_SECRET_ID), so
+# both paths must keep working: a non-empty <PREFIX>_VAULT_SECRET_ID wins,
+# otherwise ROTATE_WRAPPING_TOKEN is unwrapped for a single-use secret_id.
 - name: Rotate a secret field and prove the new value is readable
   hosts: localhost
   connection: local
@@ -56,7 +67,12 @@
     # another domain's secrets.
     rotate_env_prefix: "{{ rotate_domain | upper | replace('-', '_') }}_ROTATE"
     rotate_role_id: "{{ lookup('env', rotate_env_prefix ~ '_VAULT_ROLE_ID') }}"
-    rotate_secret_id: "{{ lookup('env', rotate_env_prefix ~ '_VAULT_SECRET_ID') }}"
+    # A standing pair (media's legacy tier) supplies the secret_id directly.
+    # An inert AppRole tier has none — see rotate_wrapping_token below.
+    rotate_secret_id_env: "{{ lookup('env', rotate_env_prefix ~ '_VAULT_SECRET_ID') }}"
+    # A human-issued, single-use wrapped secret_id — the approval for every
+    # inert <DOMAIN>-rotate AppRole. Settable with -e as well as the env var.
+    rotate_wrapping_token: "{{ lookup('env', 'ROTATE_WRAPPING_TOKEN') }}"
   tasks:
     - name: Refuse to run without a target and a write identity
       ansible.builtin.assert:
@@ -66,13 +82,16 @@
           - rotate_field | default('') | length > 0
           - rotate_bao_addr | length > 0
           - rotate_role_id | length > 0
-          - rotate_secret_id | length > 0
+          - (rotate_secret_id_env | length > 0) or (rotate_wrapping_token | length > 0)
         fail_msg: >-
           Needs -e rotate_field=<ENV_VAR_NAME>, plus either rotate_entry (with
           rotate_domain) or an explicit rotate_path, plus BAO_ADDR and
-          {{ rotate_env_prefix }}_VAULT_ROLE_ID/_SECRET_ID in the environment
-          (run under `doppler run`). Refusing rather than rotating something
-          unintended.
+          {{ rotate_env_prefix }}_VAULT_ROLE_ID in the environment (run under
+          `doppler run`). Also needs a write identity for the secret_id:
+          either {{ rotate_env_prefix }}_VAULT_SECRET_ID (media's legacy
+          standing pair) or ROTATE_WRAPPING_TOKEN (a human-issued wrapped
+          secret_id for every other, inert <DOMAIN>-rotate AppRole). Refusing
+          rather than rotating something unintended.
         quiet: true
 
     # A minted rotation delegates to groups['openbao_group'][0]; without this
@@ -88,6 +107,29 @@
           rotate_mint={{ rotate_mint }} needs an openbao_group host in
           inventory.
         quiet: true
+
+    # An inert AppRole (manage_secret_id=false, single-use) has no standing
+    # secret_id — the human's wrap IS the approval. Skipped entirely for
+    # media's legacy standing pair, where rotate_secret_id_env already has
+    # the value and the wrapping token wasn't required to run this playbook.
+    - name: Unwrap the single-use secret_id
+      when: rotate_secret_id_env | length == 0
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/sys/wrapping/unwrap"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ rotate_wrapping_token }}"
+        status_code: 200
+      register: rotate_unwrap
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the effective secret_id
+      ansible.builtin.set_fact:
+        rotate_secret_id: >-
+          {{ rotate_secret_id_env if (rotate_secret_id_env | length > 0)
+             else rotate_unwrap.json.data.secret_id }}
+      no_log: true
 
     - name: Authenticate as the rotation identity
       ansible.builtin.uri:

@@ -40,6 +40,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/auth/approle/login":
             self._reply(200, {"auth": {"client_token": "test-token"}})
             return
+        if self.path == "/v1/sys/wrapping/unwrap":
+            # Single-use: a second unwrap of the same wrapping token must
+            # fail, same as a real OpenBao response-wrapped secret.
+            state = load()
+            if state.get("wrap_used"):
+                self._reply(400, {"errors": ["wrapping token is not valid or does not exist"]})
+                return
+            state["wrap_used"] = True
+            save(state)
+            self._reply(200, {"data": {"secret_id": "test-wrapped-secret-id"}})
+            return
         if self.path == "/v1/secret/data/apps/test/entry":
             state = load()
             body = self._read_json()
