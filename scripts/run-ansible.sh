@@ -146,25 +146,26 @@ mint_ssh_cert() {
   fi
 }
 
-# The store role logs in for itself, at the point it reconciles. This wrapper
-# checks only that the credential it will need is PRESENT, and refuses the run
-# when it is not -- the same protection as before, without holding a token.
+# The store role logs in for itself, at the point it reconciles, so this wrapper
+# neither mints nor holds a reconcile token.
 #
-# Minting here instead put the login at the start of the run while the store
-# play executes over an hour later, and the role's token lives 30 minutes. The
-# token was therefore expired before its first use, and the store answers an
-# expired token with the same `403 permission denied` it uses for a policy
-# denial -- so the fault read as a missing grant the identity has always had.
-# Raising the lifetime to cover the gap would make the credential longer-lived
-# to accommodate a scheduling defect, and would fail again the first time a run
-# outgrew the new ceiling.
+# Minting here instead put the login at the start of the run while the store play
+# executes over an hour later, and the role's token lives 30 minutes. The token
+# was therefore expired before its first use, and the store answers an expired
+# token with the same `403 permission denied` it uses for a policy denial -- so
+# the fault read as a missing grant the identity has always had. Raising the
+# lifetime to cover the gap would make the credential longer-lived to accommodate
+# a scheduling defect, and would fail again the first time a run outgrew it.
+#
+# An absent credential is NOT an error here, and the contract tests assert that:
+# a workstation caller supplies reconcile secret-zero to the role directly, and
+# the role itself refuses loudly when it is configured but cannot authenticate.
+# Say which case this is so a silent skip on the plane stays impossible.
 if [[ -n ${BAO_ADDR:-} ]] &&
    [[ -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID:-} ||
       -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID:-} ]]; then
-  echo "ERROR: refusing to converge without the store-reconcile credential the" >&2
-  echo "execution-plane identity was supposed to provide. A run that continues" >&2
-  echo "here reports success while every declared policy change fails to land." >&2
-  exit 1
+  echo "run-ansible: no reconcile identity in this environment; the store" >&2
+  echo "  role will fall back to reconcile secret-zero, or skip and say so." >&2
 fi
 
 # WHICH IDENTITY THIS CONVERGE AUTHENTICATES AS.
