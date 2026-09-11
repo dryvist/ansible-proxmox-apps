@@ -63,14 +63,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      # A push to `main` forces both true. Not a shortcut: on a push
+      # dorny/paths-filter diffs against github.event.before, which a
+      # fetch-depth:1 checkout does not contain, so every filter returned false
+      # and the whole suite skipped behind a green board. Forcing also matches
+      # the rule the trigger exists to implement — a merge into `main` runs
+      # everything, regardless of what the diff looks like.
       deploy: >-
         ${{ steps.filter.outputs.deploy == 'true'
+            || github.event_name == 'push'
             || github.event.pull_request.base.ref == 'main' }}
       molecule: >-
         ${{ steps.filter.outputs.molecule == 'true'
+            || github.event_name == 'push'
             || github.event.pull_request.base.ref == 'main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # paths-filter needs the pre-push commit to diff against.
+          fetch-depth: 0
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         id: filter
         with:
@@ -96,9 +107,13 @@ jobs:
   data-contract:
     name: Data Contract
     needs: [ci, scope]
+    # `ci.outputs.ansible` comes from the shared workflow, whose own change
+    # filter is shallow-checkout bound and therefore false on a push. Accept a
+    # push directly so the post-merge sweep is not gated on a filter that
+    # cannot answer for this event.
     if: >-
-      needs.ci.outputs.ansible == 'true' &&
-      needs.scope.outputs.deploy == 'true'
+      needs.scope.outputs.deploy == 'true' &&
+      (needs.ci.outputs.ansible == 'true' || github.event_name == 'push')
     uses: ./.github/workflows/_data-contract.yml
 
   # The inventory half of the same contract, split out because the source file
@@ -108,8 +123,8 @@ jobs:
     name: Inventory Contract
     needs: [ci, scope]
     if: >-
-      needs.ci.outputs.ansible == 'true' &&
-      needs.scope.outputs.deploy == 'true'
+      needs.scope.outputs.deploy == 'true' &&
+      (needs.ci.outputs.ansible == 'true' || github.event_name == 'push')
     uses: ./.github/workflows/_inventory-contract.yml
 
   molecule:
@@ -132,11 +147,13 @@ jobs:
     #
     # Restricted to `push` so it runs on merge into main and never blocks a PR.
     # `Merge Gate` already forgives an e2e skip, so PRs stay green without it.
+    # Deliberately NOT gated on the shared workflow's change filter: that filter
+    # cannot answer on a push, and a post-merge sweep that silently skips is the
+    # failure this trigger exists to prevent.
     if: >-
-      needs.ci.outputs.ansible == 'true' &&
-      needs.scope.outputs.deploy == 'true' &&
+      github.event_name == 'push' &&
       vars.E2E_RUNNERS_ENABLED == 'true' &&
-      github.event_name == 'push'
+      needs.scope.outputs.deploy == 'true'
     uses: ./.github/workflows/_e2e-tests.yml
 
   gate:
