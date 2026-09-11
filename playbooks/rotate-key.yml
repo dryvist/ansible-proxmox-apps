@@ -1,0 +1,274 @@
+---
+# Rotate any single secret field under a KV v2 mount.
+#
+# Generic by construction: every entry is a KV item whose field names are
+# already the UPPER_SNAKE environment variable names the roles read
+# (SONARR_API_KEY, PROWLARR_API_KEY, ...). So rotating any of them is the
+# same steps — generate or mint, read-modify-write, re-converge — with no
+# per-key special casing.
+#
+#   ansible-playbook playbooks/rotate-key.yml \
+#     -e rotate_domain=media -e rotate_entry=prowlarr -e rotate_field=PROWLARR_API_KEY
+#
+# `rotate_mount` and `rotate_path` generalize the target beyond apps/<domain>:
+#
+#   ansible-playbook playbooks/rotate-key.yml \
+#     -e rotate_mount=secret -e rotate_path=ai/mcp/splunk \
+#     -e rotate_field=SPLUNK_MCP_TOKEN -e rotate_domain=ai
+#
+# `rotate_mint` picks how the replacement value is produced. The default
+# `random` generates it locally, as always. Any other value names a systemd
+# unit already deployed on the OpenBao cluster (`openbao-rotate-<value>.service`)
+# that mints the value itself (e.g. rotating a credential a third-party API
+# must issue, not one this repo can invent) — this playbook only triggers it,
+# waits for it to finish, and proves the read-back; the unit does its own
+# CAS write and metadata stamp.
+#
+# Then re-converge so every consumer is rebuilt against the new value:
+#
+#   doppler run -- scripts/fetch-openbao-secrets.sh media -- \
+#     scripts/run-ansible.sh playbooks/site.yml
+#
+# The converge is a SEPARATE process on purpose. Roles read their secrets with
+# lookup('env', ...), which is resolved from the environment the ansible process
+# started with — a value written to OpenBao mid-run is invisible to the run that
+# wrote it. Chaining them inside one playbook would appear to work and would
+# silently converge the old key.
+#
+# Writing uses the <DOMAIN>-rotate AppRole, not the read-only `<domain>` one the
+# converge uses: a converge must never be able to rewrite its own secrets.
+- name: Rotate a secret field and prove the new value is readable
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    rotate_domain: media
+    rotate_length: 32
+    rotate_mint: random
+    rotate_mount: secret
+    # Backward-compatible default: apps/<domain>/<entry>. Pass rotate_path
+    # directly to rotate anything else under rotate_mount.
+    rotate_path: "apps/{{ rotate_domain }}/{{ rotate_entry | default('') }}"
+    rotate_bao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+    # Derived from the domain rather than hardcoded, so a second domain needs a
+    # matching <DOMAIN>_ROTATE AppRole and no edit here. The identity is
+    # deliberately per-domain: a media rotation must not be able to rewrite
+    # another domain's secrets.
+    rotate_env_prefix: "{{ rotate_domain | upper | replace('-', '_') }}_ROTATE"
+    rotate_role_id: "{{ lookup('env', rotate_env_prefix ~ '_VAULT_ROLE_ID') }}"
+    rotate_secret_id: "{{ lookup('env', rotate_env_prefix ~ '_VAULT_SECRET_ID') }}"
+  tasks:
+    - name: Refuse to run without a target and a write identity
+      ansible.builtin.assert:
+        that:
+          - rotate_path | length > 0
+          - not rotate_path.endswith('/')
+          - rotate_field | default('') | length > 0
+          - rotate_bao_addr | length > 0
+          - rotate_role_id | length > 0
+          - rotate_secret_id | length > 0
+        fail_msg: >-
+          Needs -e rotate_field=<ENV_VAR_NAME>, plus either rotate_entry (with
+          rotate_domain) or an explicit rotate_path, plus BAO_ADDR and
+          {{ rotate_env_prefix }}_VAULT_ROLE_ID/_SECRET_ID in the environment
+          (run under `doppler run`). Refusing rather than rotating something
+          unintended.
+        quiet: true
+
+    # A minted rotation delegates to groups['openbao_group'][0]; without this
+    # guard an inventory with no openbao_group members silently falls back to
+    # localhost (see the delegate_to default(omit) below) instead of failing
+    # loud on the target that actually needs to exist.
+    - name: Refuse a minted rotation without an OpenBao host in inventory
+      when: rotate_mint != 'random'
+      ansible.builtin.assert:
+        that:
+          - (groups['openbao_group'] | default([])) | length > 0
+        fail_msg: >-
+          rotate_mint={{ rotate_mint }} needs an openbao_group host in
+          inventory.
+        quiet: true
+
+    - name: Authenticate as the rotation identity
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ rotate_role_id }}"
+          secret_id: "{{ rotate_secret_id }}"
+        status_code: 200
+      register: rotate_login
+      changed_when: false
+      no_log: true
+
+    # Read before write: several entries carry more than one field (the VPN one
+    # holds seven), and writing a single-key object would delete the siblings.
+    - name: Read the entry as it stands
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/{{ rotate_mount }}/data/{{ rotate_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
+        status_code: 200
+      register: rotate_current
+      changed_when: false
+      no_log: true
+
+    - name: Read the entry's custom metadata
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/{{ rotate_mount }}/metadata/{{ rotate_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
+        status_code: 200
+      register: rotate_metadata
+      changed_when: false
+      no_log: true
+
+    - name: Refuse to rotate a path marked exempt
+      ansible.builtin.assert:
+        that:
+          - (rotate_metadata.json.data.custom_metadata | default({})).rotation | default('') != 'exempt'
+        fail_msg: >-
+          {{ rotate_mount }}/{{ rotate_path }} carries
+          custom_metadata.rotation=exempt. Remove that marker before rotating
+          this path — it is there on purpose.
+        quiet: true
+
+    - name: Refuse to create a field that does not already exist
+      ansible.builtin.assert:
+        that:
+          - rotate_field in (rotate_current.json.data.data | default({}))
+        fail_msg: >-
+          '{{ rotate_field }}' is not a field of {{ rotate_mount }}/{{ rotate_path }}.
+          Rotation replaces an existing credential; it does not invent one, because a
+          typo would otherwise add a dead field and leave the real key untouched.
+        quiet: true
+
+    - name: Rotate with a locally generated random value
+      when: rotate_mint == 'random'
+      block:
+        - name: Get the current UTC timestamp for the metadata stamp
+          ansible.builtin.set_fact:
+            rotate_now: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+
+        - name: Generate the replacement value
+          ansible.builtin.set_fact:
+            rotate_new_value: >-
+              {{ lookup('community.general.random_string', length=rotate_length, special=false)
+                 | lower }}
+          no_log: true
+
+        # cas pins the write to the version just read, so a concurrent rotation
+        # fails loudly instead of one silently overwriting the other.
+        - name: Write the rotated entry, siblings preserved
+          ansible.builtin.uri:
+            url: "{{ rotate_bao_addr }}/v1/{{ rotate_mount }}/data/{{ rotate_path }}"
+            method: POST
+            headers:
+              X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
+            body_format: json
+            body:
+              options:
+                cas: "{{ rotate_current.json.data.metadata.version | int }}"
+              data: >-
+                {{ rotate_current.json.data.data | combine({rotate_field: rotate_new_value}) }}
+            status_code: 200
+          register: rotate_written
+          changed_when: true
+          no_log: true
+
+        # RFC 7396 merge-patch: OpenBao merges this into the existing
+        # custom_metadata server-side, so siblings survive without a
+        # client-side read-modify-write. The ai-rotate/apps-rotate AppRole
+        # policies (and the timer-driven minted rotators) only grant
+        # metadata ["read","patch"], not the "update" a POST would need.
+        # Per the OpenBao KV v2 API doc "Patch Metadata"
+        # (PATCH /<mount>/metadata/:path): custom_metadata keys given here
+        # are merged into the stored map; a key set to null deletes it.
+        - name: Stamp the rotation timestamp onto custom metadata, siblings preserved
+          ansible.builtin.uri:
+            url: "{{ rotate_bao_addr }}/v1/{{ rotate_mount }}/metadata/{{ rotate_path }}"
+            method: PATCH
+            headers:
+              X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
+              Content-Type: application/merge-patch+json
+            body_format: json
+            body: "{{ {'custom_metadata': {'rotated_' ~ rotate_field: rotate_now}} }}"
+            status_code: 200
+          changed_when: true
+          no_log: true
+
+    - name: Rotate by triggering a minted-value rotation unit
+      when: rotate_mint != 'random'
+      block:
+        - name: Trigger the minted rotation on the OpenBao cluster
+          ansible.builtin.systemd:
+            name: "openbao-rotate-{{ rotate_mint }}.service"
+            state: started
+          # delegate_to is templated even for a skipped (when: false) task, so
+          # a `default(omit)` guard keeps a run with no openbao_group members
+          # (e.g. this playbook's own test fixture) from erroring on a
+          # branch it never takes — the real openbao_group is always
+          # populated whenever rotate_mint != 'random' is actually reached.
+          delegate_to: "{{ (groups['openbao_group'] | default([]))[0] | default(omit) }}"
+          become: true
+
+        - name: Wait for the minted rotation unit to settle
+          ansible.builtin.systemd:
+            name: "openbao-rotate-{{ rotate_mint }}.service"
+          delegate_to: "{{ (groups['openbao_group'] | default([]))[0] | default(omit) }}"
+          become: true
+          register: rotate_mint_status
+          changed_when: false
+          until: rotate_mint_status.status.ActiveState in ['inactive', 'failed']
+          retries: 30
+          delay: 2
+
+        - name: Fail loudly if the minted rotation unit did not succeed
+          ansible.builtin.assert:
+            that:
+              - rotate_mint_status.status.ActiveState == 'inactive'
+              - rotate_mint_status.status.Result == 'success'
+            fail_msg: >-
+              openbao-rotate-{{ rotate_mint }}.service did not complete
+              successfully (ActiveState=
+              {{ rotate_mint_status.status.ActiveState }} Result=
+              {{ rotate_mint_status.status.Result }} after 60s). Check
+              `journalctl -u openbao-rotate-{{ rotate_mint }}.service` on the
+              delegated host. The unit stamps its own custom_metadata, so
+              nothing further runs here.
+            quiet: true
+
+    - name: Prove the new value reads back
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/{{ rotate_mount }}/data/{{ rotate_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
+        status_code: 200
+      register: rotate_verify
+      changed_when: false
+      no_log: true
+
+    - name: Assert the rotation landed and kept every sibling field
+      ansible.builtin.assert:
+        that:
+          - rotate_verify.json.data.data[rotate_field] != rotate_current.json.data.data[rotate_field]
+          - (rotate_verify.json.data.data.keys() | list | sort)
+            == (rotate_current.json.data.data.keys() | list | sort)
+        fail_msg: >-
+          The rotated entry did not read back as expected — either the value is
+          unchanged or a sibling field was lost. Check the KV version history
+          before re-running.
+        quiet: true
+      no_log: true
+
+    - name: Say what must happen next
+      ansible.builtin.debug:
+        msg: >-
+          Rotated {{ rotate_field }} in {{ rotate_mount }}/{{ rotate_path }}
+          (now KV version {{ rotate_verify.json.data.metadata.version }}). Nothing
+          is live yet — every consumer still holds the old value until you
+          re-converge in a fresh process.
