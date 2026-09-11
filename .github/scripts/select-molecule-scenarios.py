@@ -263,9 +263,6 @@ def main() -> int:
     if event != "pull_request" or not base_sha:
         emit(all_scenarios, f"full matrix: event `{event or 'unknown'}` is not a pull request")
         return 0
-    if base_ref == production:
-        emit(all_scenarios, f"full matrix: promotion into `{production}`")
-        return 0
 
     changed = changed_files(base_sha)
     shared_hits = [f for f in changed if SHARED.match(f)]
