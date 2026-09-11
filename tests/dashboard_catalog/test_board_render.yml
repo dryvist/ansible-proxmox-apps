@@ -40,6 +40,11 @@
            sso: true, ui: true, section: Hermes, desc: "hermes-agent — agent dashboard"}
         - {name: hermes-agent-api, group: ai, ip: "192.0.2.21", port: 8081,
            sso: true, ui: false, section: Hermes, desc: "hermes-agent — job submission API"}
+        # The only fixture row with a real ingress url_path. Its link must carry
+        # /ui while its probe must not — so a template that appended the path to
+        # every URL, or a role that appended it to the probe, both fail here.
+        - {name: llm, group: ai, ip: "192.0.2.60", port: 4000, sso: false, ui: true,
+           url_path: "/ui", desc: "OpenAI-compatible model router"}
         - {name: plex, group: media_svc, ip: "192.0.2.50", port: 32400, sso: false,
            ui: true, desc: "Media library"}
   tasks:
@@ -94,7 +99,7 @@
           - _homepage_services | length == 3
           - _homepage_settings.layout.keys() | list | length == 3
           - _glance_page | length == 1
-          - _glance_all_links | length == 4
+          - _glance_all_links | length == 5
         fail_msg: >-
           A board rendered but does not carry every service. An incomplete board
           converges green and simply omits things in the browser — which is
@@ -112,7 +117,7 @@
           - _glance_page[0].columns | length == 2
           - _glance_page[0].columns[0].size == 'full'
           - _glance_page[0].columns[1].size == 'small'
-          - _ui_names == ['vikunja', 'hermes-agent', 'plex']
+          - _ui_names == ['vikunja', 'hermes-agent', 'llm', 'plex']
           - _api_names == ['hermes-agent-api']
         fail_msg: >-
           Glance did not split by `ui`. Got UI column {{ _ui_names }} and
@@ -159,6 +164,38 @@
              | map(attribute='value') | map(attribute='href') | list }}
         _glance_links: "{{ _glance_all_links | map(attribute='url') | list }}"
         _all_links: "{{ _homepage_links + _glance_links }}"
+
+    # url_path is a LINK concern only. Both boards must render it (a bare-host
+    # link 404s at Traefik), and the probe must never gain it: the probe is the
+    # unauthenticated HEAD that the Authelia gate would answer with a login page,
+    # so a path on the probe reads every service as down. The catalog keeps the
+    # two fields separate (tasks/main.yml:32 vs :53) for exactly this.
+    - name: A url_path reaches the links but never the probe
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _homepage_llm_href == 'https://llm.pve.example.test/ui'
+          - _glance_ui_llm_url == 'https://llm.pve.example.test/ui'
+          - _llm.probe_url == 'http://192.0.2.60:4000'
+          - "'/ui' not in _llm.probe_url"
+        fail_msg: >-
+          llm's link or probe rendered wrong. The href and the board url must be
+          the gated /ui URL, while the probe stays the bare guest address; a
+          probe that gained /ui would be answered by Authelia and read down.
+          href={{ _homepage_llm_href }} url={{ _glance_ui_llm_url }}
+          probe={{ _llm.probe_url }}
+        success_msg: "llm links to /ui on both boards while its probe stays guest-direct."
+      vars:
+        _homepage_llm_href: >-
+          {{ (_homepage_services | map('dict2items') | flatten
+             | map(attribute='value') | flatten
+             | map('dict2items') | flatten
+             | selectattr('key', 'equalto', 'llm')
+             | map(attribute='value') | map(attribute='href') | first) }}
+        _glance_ui_llm_url: >-
+          {{ (_glance_ui_links | selectattr('title', 'equalto', 'llm')
+             | map(attribute='url') | first) }}
+        _llm: "{{ dashboard_catalog_services | selectattr('name', 'equalto', 'llm') | first }}"
 
 # A SECOND PLAY, deliberately. Play vars and role defaults from the play above
 # do NOT carry here; only what dashboard_catalog exported with set_fact does.
