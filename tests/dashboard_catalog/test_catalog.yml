@@ -51,6 +51,16 @@
           group: apps
           ip: "10.0.0.40"
           port: 7575
+        # Pool-backed LLM router whose board link lands on a sub-path. The
+        # url_path rides the LINK only; the probe stays guest-direct.
+        - name: llm
+          group: ai
+          backends: ["10.0.0.50", "10.0.0.51"]
+          port: 4000
+          sso: false
+          ui: true
+          url_path: "/ui"
+          desc: "OpenAI-compatible model router"
   tasks:
     - name: Build the catalog
       ansible.builtin.include_role:
@@ -61,11 +71,11 @@
         quiet: true
         that:
           - "'homarr' in (dashboard_catalog_services | map(attribute='name') | list)"
-          - dashboard_catalog_services | length == 5
+          - dashboard_catalog_services | length == 6
         fail_msg: >-
           A fronted service is missing from the catalog — the board would
           silently omit it in the browser while the converge stays green.
-        success_msg: "All five fixture rows are catalogued, homarr included."
+        success_msg: "All six fixture rows are catalogued, homarr included."
 
     - name: Every link is a clean HTTPS URL with no port
       ansible.builtin.assert:
@@ -114,6 +124,23 @@
           HEAD, so Authelia answers with a login page and EVERY service reports
           down while the converge stays green.
         success_msg: "Probes hit the guest; links hit the vhost."
+      vars:
+        _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
+
+    # The url_path distinction: appended to the click-through link, never the probe.
+    - name: An ingress url_path joins the link but never the probe
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _by_name['llm'].url == 'https://llm.pve.example.test/ui'
+          - _by_name['llm'].probe_url == 'http://10.0.0.50:4000'
+          - _by_name['llm'].ui == true
+          - _by_name['llm'].sso == false
+        fail_msg: >-
+          The llm link dropped its url_path, or the probe gained one. A probe
+          with a url_path is an unauthenticated HEAD against Authelia's login
+          page: every service reads down while the converge stays green.
+        success_msg: "url_path rides the link only; the llm probe stays guest-direct."
       vars:
         _by_name: "{{ dict(dashboard_catalog_services | map(attribute='name') | zip(dashboard_catalog_services)) }}"
 
