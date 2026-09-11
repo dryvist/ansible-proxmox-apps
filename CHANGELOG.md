@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.33.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.33.0...v4.33.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **run-ansible:** absent reconcile credential is a notice, not a refusal ([587a00e](https://github.com/dryvist/ansible-proxmox-apps/commit/587a00e130952847a9ab5945d6ef8424716c12c6))
+* **run-ansible:** absent reconcile credential is a notice, not a refusal ([a9f5b03](https://github.com/dryvist/ansible-proxmox-apps/commit/a9f5b035ddf311cfe2b5a5c2a8a0c8befa4e1c19))
+* **run-ansible:** let the store role obtain its own reconcile token ([d73d74e](https://github.com/dryvist/ansible-proxmox-apps/commit/d73d74ec33870b5653cd419badcb399e29270d98))
+* **run-ansible:** let the store role obtain its own reconcile token ([50ba2d3](https://github.com/dryvist/ansible-proxmox-apps/commit/50ba2d39bb740690ee8bf5197191184943d6c4c8))
+
 ## [4.33.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.32.0...v4.33.0) (2026-09-10)
 
 
