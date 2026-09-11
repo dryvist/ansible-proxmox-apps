@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.33.1...v4.34.0) (2026-09-11)
+
+
+### Features
+
+* **authelia,dashboards:** LiteLLM OIDC client + ingress url_path on board links ([9181080](https://github.com/dryvist/ansible-proxmox-apps/commit/9181080fa4ce50f6f6c79f3ff83d67de31d3181f))
+
 ## [4.33.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.33.0...v4.33.1) (2026-09-11)
 
 
