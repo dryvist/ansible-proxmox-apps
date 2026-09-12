@@ -1,0 +1,129 @@
+---
+# One generator, N renderers: derives the estate's monitor target list from
+# the already-published tofu_data so Gatus, AutoKuma (and, per Wave 3, the
+# Prometheus blackbox file_sd) render from a single source instead of each
+# hand-declaring its own targets. Every value below is inventory-derived —
+# no literal host/IP/app name.
+#
+# Deliberately scoped to what tofu_data actually publishes: there is no
+# per-guest "primary port" fact in this repo (no host_services map), so
+# guests get an ICMP target only. HTTP health targets are added only for
+# services whose health path is already used elsewhere in this repo
+# (openbao_secrets, cribl_docker_stack) and only when that guest's tags
+# declare the service — never invented for a service with no such entry.
+# DNS query checks are out of scope: no existing Gatus/Prometheus DNS-check
+# pattern exists in this repo to reuse.
+
+- name: Declare monitor-target constants (product-fixed ports/paths, not tofu-managed)
+  ansible.builtin.set_fact:
+    monitor_targets_node_exporter_port: 9100
+    monitor_targets_openbao_port: "{{ openbao_api_port | default(8200) }}"
+    monitor_targets_openbao_health_path: "/v1/sys/health?standbyok=true&perfstandbyok=true"
+    monitor_targets_cribl_edge_port: "{{ cribl_docker_stack_edge_web_port | default(9000) }}"
+    monitor_targets_cribl_stream_port: "{{ cribl_docker_stack_stream_web_port | default(9100) }}"
+    monitor_targets_cribl_health_path: "/api/v1/health"
+    monitor_targets_splunk_mgmt_port: 8089
+    monitor_targets_splunk_hec_port: 8088
+
+- name: Combine every guest dict for ICMP/service monitoring
+  ansible.builtin.set_fact:
+    monitor_targets_guests: >-
+      {{ (tofu_data.containers | default({}))
+         | combine(tofu_data.vms | default({}))
+         | combine(tofu_data.docker_vms | default({}))
+         | combine(tofu_data.splunk_vm | default({})) }}
+
+- name: Build ICMP targets — every guest
+  ansible.builtin.set_fact:
+    monitor_targets_icmp: >-
+      {{ monitor_targets_icmp | default([]) + [{
+           'name': item.key,
+           'fqdn': item.value.hostname ~ '.' ~ tofu_data.domain,
+           'group': 'guest',
+         }] }}
+  loop: "{{ monitor_targets_guests | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Build ICMP targets — every PVE node
+  ansible.builtin.set_fact:
+    monitor_targets_icmp: >-
+      {{ monitor_targets_icmp | default([]) + [{
+           'name': item.key,
+           'fqdn': (item.value.role | default(item.key, true)) ~ '.' ~ tofu_data.domain,
+           'group': 'node',
+         }] }}
+  loop: "{{ tofu_data.nodes | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Build TCP targets — PVE node management ports (web UI, SSH, node_exporter)
+  ansible.builtin.set_fact:
+    monitor_targets_tcp: >-
+      {{ monitor_targets_tcp | default([]) + [
+           {'name': item.key ~ '-web', 'fqdn': _fqdn, 'port': 8006, 'group': 'node'},
+           {'name': item.key ~ '-ssh', 'fqdn': _fqdn, 'port': 22, 'group': 'node'},
+           {'name': item.key ~ '-node-exporter', 'fqdn': _fqdn,
+            'port': monitor_targets_node_exporter_port | int, 'group': 'node'},
+         ] }}
+  vars:
+    _fqdn: "{{ (item.value.role | default(item.key, true)) ~ '.' ~ tofu_data.domain }}"
+  loop: "{{ tofu_data.nodes | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Add Splunk management-port TCP targets when the Splunk VM exists
+  ansible.builtin.set_fact:
+    monitor_targets_tcp: >-
+      {{ monitor_targets_tcp | default([]) + [
+           {'name': 'splunk-mgmt', 'fqdn': _fqdn, 'port': monitor_targets_splunk_mgmt_port, 'group': 'service'},
+           {'name': 'splunk-hec', 'fqdn': _fqdn, 'port': monitor_targets_splunk_hec_port, 'group': 'service'},
+         ] }}
+  vars:
+    _fqdn: "{{ tofu_data.splunk_vm.splunk.hostname }}.{{ tofu_data.domain }}"
+  when:
+    - tofu_data.splunk_vm is defined
+    - tofu_data.splunk_vm.splunk is defined
+
+- name: Build HTTP health targets — OpenBao (verified /v1/sys/health path)
+  ansible.builtin.set_fact:
+    monitor_targets_http: >-
+      {{ monitor_targets_http | default([]) + [{
+           'name': item.key ~ '-health',
+           'fqdn': item.value.hostname ~ '.' ~ tofu_data.domain,
+           'port': monitor_targets_openbao_port | int,
+           'path': monitor_targets_openbao_health_path,
+           'expect_status': [200],
+           'group': 'service',
+         }] }}
+  loop: "{{ monitor_targets_guests | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: "'openbao' in (item.value.tags | default([]))"
+
+- name: Build HTTP health targets — Cribl Edge/Stream (verified /api/v1/health path)
+  ansible.builtin.set_fact:
+    monitor_targets_http: >-
+      {{ monitor_targets_http | default([]) + [{
+           'name': item.key ~ '-health',
+           'fqdn': item.value.hostname ~ '.' ~ tofu_data.domain,
+           'port': (monitor_targets_cribl_edge_port
+                    if 'edge' in (item.value.tags | default([]))
+                    else monitor_targets_cribl_stream_port) | int,
+           'path': monitor_targets_cribl_health_path,
+           'expect_status': [200],
+           'group': 'service',
+         }] }}
+  loop: "{{ monitor_targets_guests | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - "'cribl' in (item.value.tags | default([]))"
+    - "'edge' in (item.value.tags | default([])) or 'stream' in (item.value.tags | default([]))"
+
+- name: Assemble the monitor_targets fact
+  ansible.builtin.set_fact:
+    monitor_targets:
+      icmp: "{{ monitor_targets_icmp | default([]) }}"
+      tcp: "{{ monitor_targets_tcp | default([]) }}"
+      http: "{{ monitor_targets_http | default([]) }}"

@@ -98,3 +98,42 @@ status_stack_kuma_admin_password_file: "{{ status_stack_data_dir }}/.kuma_admin_
 # Empty by default — populate from inventory when Homarr/OpenBao secrets are
 # already available. Each entry: {name, url, headers:{Header: value}}
 status_stack_authenticated_endpoints: []
+
+# Per-name Gatus success-status override for the dashboard-catalog loop. A
+# service whose generic `< 500` catalog condition would itself BE the failure
+# — LiteLLM's /health is an authenticated router that answers 401 when it is
+# healthy and unauthenticated, so a bare 200 would be the actual problem.
+status_stack_catalog_status_overrides:
+  litellm: [401]
+
+# --- monitor_targets — ICMP/TCP/HTTP endpoints derived from tofu inventory
+# (inventory/load_tofu/monitor_targets.yml), propagated to every host. Same
+# fact both Gatus and the AutoKuma sidecar below render from.
+status_stack_monitor_targets: "{{ monitor_targets | default({'icmp': [], 'tcp': [], 'http': []}) }}"
+
+# --- AutoKuma sidecar (BigBoot/AutoKuma) — syncs Uptime Kuma monitors from
+# status_stack_monitor_targets via its own socket.io API, so Ansible never
+# needs the first-party Kuma API this role's README previously ruled out.
+# Static-monitors mode: AUTOKUMA__STATIC_MONITORS is a DIRECTORY of one
+# .json file per monitor (id = filename), not inline content.
+# renovate: datasource=docker depName=ghcr.io/bigboot/autokuma
+status_stack_autokuma_image: "ghcr.io/bigboot/autokuma:v2.0.0"
+status_stack_autokuma_container_name: autokuma
+status_stack_autokuma_static_monitors_dir: "{{ status_stack_data_dir }}/autokuma/static-monitors"
+status_stack_autokuma_kuma_url: "http://127.0.0.1:{{ status_stack_kuma_port | trim }}"
+
+# --- Alerting — ntfy, shared by Gatus and AutoKuma/Uptime Kuma ---
+# Topic name STRINGS only, sourced from these variables rather than written
+# inline in the templates. The ntfy_docker role's own topic vars land in a
+# parallel package; not depended on here, so these default to the same
+# sensible topic name strings rather than that role's variables.
+status_stack_ntfy_url: >-
+  {{ ntfy_docker_base_url
+     | default('http://127.0.0.1:' ~ (ntfy_docker_http_port | default(8080)), true) }}
+status_stack_ntfy_topic_urgent: "keystone"
+status_stack_ntfy_topic_degraded: "observability"
+status_stack_ntfy_priority_urgent: 5
+status_stack_ntfy_priority_degraded: 3
+status_stack_ntfy_username: ""
+status_stack_ntfy_password: ""
+status_stack_failure_threshold: 3
