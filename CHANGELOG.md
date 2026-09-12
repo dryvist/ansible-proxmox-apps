@@ -1,5 +1,28 @@
 # Changelog
 
+## [4.36.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.35.0...v4.36.0) (2026-09-12)
+
+
+### Features
+
+* **mcp_gateway:** add MCP gateway role and OpenBao secret wiring ([0f81a2b](https://github.com/dryvist/ansible-proxmox-apps/commit/0f81a2b8d866b184aac00bb6fa0300c850f0858e))
+* **openbao:** add approle-audit read-only policy for auth/approle/role ([c991dc2](https://github.com/dryvist/ansible-proxmox-apps/commit/c991dc223b6449b3a009c57978bdaf7d711963ec))
+* **openbao:** add read-only approle-audit policy ([9908724](https://github.com/dryvist/ansible-proxmox-apps/commit/990872420d5fd911be29dea1c1b5f43ac954edd8))
+* **openbao:** set approle-audit CIDR class to machine_or_workstation ([8163d07](https://github.com/dryvist/ansible-proxmox-apps/commit/8163d076ebf2b31eee0da475314447856aeaae94))
+* **runner:** authenticate as the execution plane's own identity when its credential is present ([8f24a0a](https://github.com/dryvist/ansible-proxmox-apps/commit/8f24a0a64f25276dc37624838b132faf94d8ce8b))
+* **runner:** authenticate as the execution plane's own identity when its credential is present ([c7dadbd](https://github.com/dryvist/ansible-proxmox-apps/commit/c7dadbdf728824d44e2414aa588e6c3b5e05d6ba))
+* **runner:** fall back when the semaphore AppRole login is refused ([#1846](https://github.com/dryvist/ansible-proxmox-apps/issues/1846)) ([5091aa8](https://github.com/dryvist/ansible-proxmox-apps/commit/5091aa814b5ac2357e76369c641378866de4390f))
+* **service_deadman:** ping an Uptime Kuma push monitor per keystone ([#1845](https://github.com/dryvist/ansible-proxmox-apps/issues/1845)) ([09151e3](https://github.com/dryvist/ansible-proxmox-apps/commit/09151e34a6b90e0f480f35c7c0796f7a9d3af379))
+
+
+### Bug Fixes
+
+* **grafana:** migrate Cribl dashboards from rate() to sum_over_time() for gauge metrics ([4457d3d](https://github.com/dryvist/ansible-proxmox-apps/commit/4457d3d4487314bbf3cbd7662c971151f694d373))
+* **openbao:** filter ai-orchestrator GitHub grants by tier ([#1834](https://github.com/dryvist/ansible-proxmox-apps/issues/1834)) ([407b7fe](https://github.com/dryvist/ansible-proxmox-apps/commit/407b7fe197203b4b050f59fa1532840fd307a54f))
+* **openbao:** reconcile RBAC before tagging rotation-exempt paths ([#1844](https://github.com/dryvist/ansible-proxmox-apps/issues/1844)) ([cb620ab](https://github.com/dryvist/ansible-proxmox-apps/commit/cb620ab60ff5334512f50def6dbff12dbb3e3305))
+* **openbao:** refuse to write an empty rendered RBAC policy ([#1831](https://github.com/dryvist/ansible-proxmox-apps/issues/1831)) ([655f8ff](https://github.com/dryvist/ansible-proxmox-apps/commit/655f8ff4eefc1aeab34271a258ef54a27be06932))
+* **ssh_ca_trust:** trust the execution plane's principal on VMs ([#1843](https://github.com/dryvist/ansible-proxmox-apps/issues/1843)) ([2df958a](https://github.com/dryvist/ansible-proxmox-apps/commit/2df958a1d60aa0deacf67ccdb1855a2b33512c16))
+
 ## [4.35.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.34.1...v4.35.0) (2026-09-12)
 
 
