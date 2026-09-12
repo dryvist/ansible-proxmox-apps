@@ -1,0 +1,204 @@
+---
+# Runs the ACTUAL playbooks/rotate-key.yml as a subprocess against a stubbed
+# OpenBao (fixtures/stub_bao.py, stdlib http.server — no live OpenBao), to
+# prove the real behavior, not just that the code parses:
+#
+#   1. a clean random rotation succeeds, keeps sibling fields, and stamps
+#      custom_metadata
+#   2. rotating a field that does not already exist on the entry FAILS with
+#      the "does not invent a field" message
+#   3. a path marked custom_metadata.rotation=exempt is refused
+#   4. with no standing secret_id in the environment (the inert AppRole
+#      tier), a ROTATE_WRAPPING_TOKEN is unwrapped and the rotation succeeds
+#
+# Usage: ansible-playbook tests/rotate_key/verify_rotate_key.yml -c local
+- name: Verify rotate-key.yml against a stubbed OpenBao
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    _fixtures_dir: "{{ playbook_dir }}/fixtures"
+    _playbook: "{{ playbook_dir }}/../../playbooks/rotate-key.yml"
+    _port: 18821
+
+  tasks:
+    - name: Create a directory unique to this run
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: verify_rotate_key_
+      register: _tmp
+
+    - name: Publish the fixture directory
+      ansible.builtin.set_fact:
+        state_file: "{{ _tmp.path }}/state.json"
+
+    # A pre-existing custom_metadata key (unrelated to the rotation) proves
+    # the PATCH is a real RFC 7396 merge, not a client-side read-combine
+    # accidentally dropping siblings the metadata GET didn't happen to see.
+    - name: Seed the stub's initial state (two existing fields, one pre-existing metadata key)
+      ansible.builtin.copy:
+        dest: "{{ state_file }}"
+        mode: "0600"
+        content: >-
+          {"data": {"REAL_FIELD": "old-value", "OTHER_FIELD": "untouched"},
+          "version": 3, "custom_metadata": {"owner": "media-team"}}
+
+    - name: Start the stub OpenBao server
+      ansible.builtin.shell: >-
+        nohup python3 {{ _fixtures_dir }}/stub_bao.py {{ _port }} {{ state_file }}
+        >/dev/null 2>&1 & echo $!
+      register: _stub
+      changed_when: false
+
+    - name: Wait for the stub to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ _port }}"
+        timeout: 10
+
+    - name: Common environment for every rotate-key.yml invocation
+      ansible.builtin.set_fact:
+        rotate_env:
+          BAO_ADDR: "http://127.0.0.1:{{ _port }}"
+          TEST_ROTATE_VAULT_ROLE_ID: test-role-id
+          TEST_ROTATE_VAULT_SECRET_ID: test-secret-id
+
+    # -------------------------------------------------------------------
+    # Case 1: a clean random rotation.
+    # -------------------------------------------------------------------
+    - name: "Case 1: rotate an existing field"
+      ansible.builtin.command: >-
+        ansible-playbook {{ _playbook }} -c local
+        -e rotate_domain=test -e rotate_entry=entry -e rotate_field=REAL_FIELD
+      register: _case1
+      changed_when: false
+      failed_when: false
+      environment: "{{ rotate_env }}"
+
+    - name: "Case 1: read back the stub state"
+      ansible.builtin.slurp:
+        src: "{{ state_file }}"
+      register: _case1_state
+
+    - name: "Case 1: assert rotation succeeded, sibling preserved, metadata stamped"
+      vars:
+        _state: "{{ _case1_state.content | b64decode | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _case1.rc == 0
+          - _state.data.REAL_FIELD != 'old-value'
+          - _state.data.OTHER_FIELD == 'untouched'
+          - "'rotated_REAL_FIELD' in _state.custom_metadata"
+          - _state.custom_metadata.owner == 'media-team'
+        fail_msg: >-
+          Case 1 (clean rotation) must exit 0, change only REAL_FIELD, stamp
+          custom_metadata.rotated_REAL_FIELD, and preserve the pre-existing
+          custom_metadata.owner (the PATCH merge must not drop siblings).
+          rc={{ _case1.rc }} stdout={{ _case1.stdout }} stderr={{ _case1.stderr }}
+          state={{ _state }}
+
+    # -------------------------------------------------------------------
+    # Case 2: rotating a field that does not exist must fail loud, not
+    # invent it.
+    # -------------------------------------------------------------------
+    - name: "Case 2: rotate a field the entry does not have"
+      ansible.builtin.command: >-
+        ansible-playbook {{ _playbook }} -c local
+        -e rotate_domain=test -e rotate_entry=entry -e rotate_field=BOGUS_FIELD
+      register: _case2
+      changed_when: false
+      failed_when: false
+      environment: "{{ rotate_env }}"
+
+    - name: "Case 2: assert the run failed with the expected refusal"
+      ansible.builtin.assert:
+        that:
+          - _case2.rc != 0
+          - "'is not a field of' in (_case2.stdout + _case2.stderr)"
+        fail_msg: >-
+          Case 2 (bogus field) must fail with the "is not a field of"
+          refusal, never invent the field. rc={{ _case2.rc }}
+          stdout={{ _case2.stdout }} stderr={{ _case2.stderr }}
+
+    # -------------------------------------------------------------------
+    # Case 3: a path marked exempt must be refused even for a real field.
+    # -------------------------------------------------------------------
+    - name: "Case 3: mark the entry exempt"
+      ansible.builtin.set_fact:
+        _exempt_state: >-
+          {{ _case1_state.content | b64decode | from_json
+             | combine({'custom_metadata': {'rotation': 'exempt'}}) }}
+
+    - name: "Case 3: write the exempt state"
+      ansible.builtin.copy:
+        dest: "{{ state_file }}"
+        mode: "0600"
+        content: "{{ _exempt_state | to_json }}"
+
+    - name: "Case 3: attempt to rotate an exempt entry"
+      ansible.builtin.command: >-
+        ansible-playbook {{ _playbook }} -c local
+        -e rotate_domain=test -e rotate_entry=entry -e rotate_field=REAL_FIELD
+      register: _case3
+      changed_when: false
+      failed_when: false
+      environment: "{{ rotate_env }}"
+
+    - name: "Case 3: assert the run refused the exempt path"
+      ansible.builtin.assert:
+        that:
+          - _case3.rc != 0
+          - "'exempt' in (_case3.stdout + _case3.stderr)"
+        fail_msg: >-
+          Case 3 (rotation=exempt) must be refused. rc={{ _case3.rc }}
+          stdout={{ _case3.stdout }} stderr={{ _case3.stderr }}
+
+    # -------------------------------------------------------------------
+    # Case 4: an inert AppRole tier — no standing secret_id in the
+    # environment, only a wrapping token — must still succeed by unwrapping
+    # it. This is the ai-rotate/apps-rotate path; media-rotate (Cases 1-3)
+    # never needs a wrap.
+    # -------------------------------------------------------------------
+    - name: "Case 4: reseed a clean, non-exempt entry"
+      ansible.builtin.copy:
+        dest: "{{ state_file }}"
+        mode: "0600"
+        content: >-
+          {"data": {"REAL_FIELD": "old-value", "OTHER_FIELD": "untouched"},
+          "version": 3, "custom_metadata": {}, "wrap_used": false}
+
+    - name: "Case 4: rotate using only a wrapping token, no standing secret_id"
+      ansible.builtin.command: >-
+        ansible-playbook {{ _playbook }} -c local
+        -e rotate_domain=test -e rotate_entry=entry -e rotate_field=REAL_FIELD
+      register: _case4
+      changed_when: false
+      failed_when: false
+      environment:
+        BAO_ADDR: "http://127.0.0.1:{{ _port }}"
+        TEST_ROTATE_VAULT_ROLE_ID: test-role-id
+        ROTATE_WRAPPING_TOKEN: test-wrapping-token
+
+    - name: "Case 4: assert the wrap-only rotation succeeded"
+      ansible.builtin.assert:
+        that:
+          - _case4.rc == 0
+        fail_msg: >-
+          Case 4 (wrapping-token-only, no standing secret_id) must succeed
+          by unwrapping ROTATE_WRAPPING_TOKEN. rc={{ _case4.rc }}
+          stdout={{ _case4.stdout }} stderr={{ _case4.stderr }}
+
+    - name: Stop the stub OpenBao server
+      ansible.builtin.command: "kill {{ _stub.stdout | trim }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Rotate-key.yml behavioral assertions passed
+      ansible.builtin.debug:
+        msg: |
+          rotate-key.yml verified against a stubbed OpenBao:
+          - clean rotation: succeeds, keeps siblings, stamps custom_metadata
+          - unknown field: refused, never invented
+          - custom_metadata.rotation=exempt: refused
+          - wrapping-token-only (no standing secret_id): succeeds via unwrap
