@@ -6,8 +6,8 @@
 # those services self-heal, but a service that exhausts its restart budget — or
 # hangs while still "active" — fails silently. This role adds the missing
 # VISIBILITY layer: a systemd timer runs a validator that probes each keystone
-# every cycle and pings a healthchecks deadman (OK when healthy, /fail on breach)
-# plus an ntfy alert, mirroring the proven download_vpn killswitch-validator
+# every cycle and reports to two deadman receivers (Gatus external endpoint,
+# healthchecks) plus an ntfy alert, mirroring the proven download_vpn killswitch-validator
 # pattern. A crash, a restart-loop that gives up, or a stalled validator all page
 # instead of going unnoticed.
 
@@ -21,18 +21,38 @@ service_deadman_ntfy_url: >-
   https://ntfy.{{ ingress_domain }}/{{ service_deadman_ntfy_topic }}
 service_deadman_ntfy_topic: "keystone"
 
+# Deadman receivers. Every check pings both every cycle; each URL is derived
+# from the check name, so a new check needs no per-check secret or env var.
+#
+# Gatus external endpoint (status_stack renders one per name under the
+# `deadman` group with a heartbeat): POST
+# <gatus>/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>
+# with the shared bearer token. EMPTY token => Gatus ping skipped.
+service_deadman_gatus_url: "https://gatus.{{ ingress_domain }}"
+service_deadman_gatus_token: "{{ bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN | default('') }}"
+
+# Uptime Kuma push monitor (status_stack renders one per name via AutoKuma):
+# GET <kuma>/api/push/<token>?status=up|down&msg=<msg>, where the token is
+# sha256("<gatus token>:<name>")[:20] — derived, so no per-check secret.
+service_deadman_kuma_url: "https://uptime-kuma.{{ ingress_domain }}"
+
+# Healthchecks ping-by-slug: <hc>/ping/<ping key>/<name>, with `?create=1` so
+# the check is created on first contact. The URL is empty — and the ping
+# skipped — until the healthchecks backend is in the published ingress table.
+service_deadman_hc_url: >-
+  {{ ('https://healthchecks.' ~ ingress_domain)
+     if (tofu_data.ingress | default([]) | map(attribute='hostname')
+         | select('equalto', 'healthchecks') | list | length > 0)
+     else '' }}
+service_deadman_hc_ping_key: "{{ bao_monitoring_secrets.HEALTHCHECK_PING_KEY | default('') }}"
+
 # Per-group keystone checks. The role selects every check whose group this host
 # belongs to (group_names), so one site.yml play covers all keystones and each
 # host watches only its own services. Each check:
-#   name            - label used in alerts and the healthchecks slug
+#   name            - label used in alerts and the monitor slug (must match a
+#                     status_stack_deadman_endpoints entry)
 #   probe_command   - shell returning 0 when healthy (functional, not just
 #                     "systemd thinks it's up"); unit names verified live
-#   healthcheck_url  - per-check healthchecks deadman ping URL; EMPTY => ping
-#                     skipped (ntfy + journal alert still fire), set from the
-#                     healthchecks LXC per check via the env var shown.
-#   status_push_url  - per-check Uptime Kuma push-monitor URL (the /api/push
-#                     form, without a query string); EMPTY => skipped. Both
-#                     monitors are pinged every cycle so each pages on its own.
 service_deadman_group_checks:
   technitium_dns_group:
     - name: technitium-dns
@@ -41,27 +61,19 @@ service_deadman_group_checks:
       probe_command: >-
         systemctl is-active --quiet dns.service &&
         dig +tries=1 +time=3 @127.0.0.1 . NS >/dev/null 2>&1
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_DNS') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_DNS') | default('', true) }}"
   traefik_group:
     - name: traefik
       probe_command: >-
         systemctl is-active --quiet traefik.service &&
         timeout 5 bash -c '</dev/tcp/127.0.0.1/443'
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_TRAEFIK') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_TRAEFIK') | default('', true) }}"
   haproxy_group:
     # The LB host runs BOTH the HAProxy TCP VIP and the nginx UDP syslog/netflow
     # balancer; nginx is the one #421 found shipping no Restart=. nginx listens
     # UDP-only, so a port probe is unreliable — assert the unit instead.
     - name: haproxy-vip
       probe_command: "systemctl is-active --quiet haproxy.service"
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_HAPROXY') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_HAPROXY') | default('', true) }}"
     - name: nginx-syslog-lb
       probe_command: "systemctl is-active --quiet nginx.service"
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_NGINX') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_NGINX') | default('', true) }}"
   openbao_group:
     # `bao status` exits 0 only when THIS node is unsealed (2 = sealed, 1 =
     # error/unreachable) — a direct seal+liveness probe. Hit the node's own VLAN
@@ -73,8 +85,6 @@ service_deadman_group_checks:
         systemctl is-active --quiet openbao &&
         BAO_ADDR="http://{{ container_ip | default(ansible_host) }}:8200"
         bao status >/dev/null 2>&1
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_OPENBAO') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_OPENBAO') | default('', true) }}"
   docker_vms:
     # The pooled GitHub Actions runner fleet is not a keystone SPOF, but it
     # shares the same silent-failure shape: github_runner's converge-time
@@ -89,8 +99,6 @@ service_deadman_group_checks:
         {{ range(1, github_runner_replicas | int + 1)
            | map('regex_replace', '^', 'github-runner@')
            | map('regex_replace', '$', '.service') | join(' ') }}
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_GITHUB_RUNNER') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_GITHUB_RUNNER') | default('', true) }}"
     # A full Docker data disk fails every Molecule scenario on the host with
     # apt reporting a truncated index as an "invalid signature" — a disk
     # problem that reads exactly like a broken package mirror. The recurring
@@ -100,8 +108,6 @@ service_deadman_group_checks:
       probe_command: >-
         [ "$(df --output=pcent /var/lib/docker | tail -1 | tr -dc 0-9)"
         -lt {{ service_deadman_disk_floor_pct }} ]
-      healthcheck_url: "{{ lookup('env', 'DEADMAN_HC_URL_GITHUB_RUNNER_DISK') | default('', true) }}"
-      status_push_url: "{{ lookup('env', 'DEADMAN_KUMA_URL_GITHUB_RUNNER_DISK') | default('', true) }}"
 
 # Resolved set of checks for THIS host — every group's checks the host is in.
 service_deadman_checks: >-

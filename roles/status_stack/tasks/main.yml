@@ -50,13 +50,15 @@
     mode: "0400"
   no_log: true
 
+# Root-only: the config carries the external-endpoint bearer token.
 - name: Render Gatus configuration
   ansible.builtin.template:
     src: gatus-config.yaml.j2
     dest: "{{ status_stack_data_dir }}/gatus/config.yaml"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"
+  no_log: true
   notify: Restart status stack
 
 - name: Render status stack docker-compose
@@ -163,6 +165,48 @@
     label: "{{ item.kind }}-{{ item.name }}"
   notify: Restart status stack
 
+# Deadman push monitors: one per status_stack_deadman_endpoints entry, so the
+# same pushers that report to the Gatus external endpoints also report to
+# Uptime Kuma. The push token is derived from the shared deadman token and the
+# name (sha256, first 20 chars), so every pusher can compute its own URL from
+# the one secret it already holds; `interval` is the heartbeat after which a
+# silent pusher is marked down.
+- name: Render the AutoKuma deadman parent group
+  ansible.builtin.copy:
+    dest: "{{ status_stack_autokuma_static_monitors_dir }}/group-deadman.json"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ {'type': 'group', 'name': 'Deadman'} | to_nice_json }}"
+  notify: Restart status stack
+
+- name: Render one AutoKuma push monitor per deadman pusher
+  ansible.builtin.copy:
+    dest: "{{ status_stack_autokuma_static_monitors_dir }}/push-{{ item.name }}.json"
+    owner: root
+    group: root
+    mode: "0600"
+    content: >-
+      {{ {
+        'type': 'push',
+        'name': item.name,
+        'parent_name': 'group-deadman',
+        'notification_name_list': ['ntfy'],
+        'interval': _seconds | int,
+        'retry_interval': _seconds | int,
+        'max_retries': 0,
+        'push_token': ((status_stack_deadman_token ~ ':' ~ item.name) | hash('sha256'))[:20],
+      } | to_nice_json }}
+  vars:
+    _seconds: >-
+      {{ (item.heartbeat[:-1] | int)
+         * ({'s': 1, 'm': 60, 'h': 3600}[item.heartbeat[-1]]) }}
+  loop: "{{ status_stack_deadman_endpoints }}"
+  loop_control:
+    label: "push-{{ item.name }}"
+  no_log: true
+  notify: Restart status stack
+
 - name: Find existing AutoKuma static-monitor files (for stale-target cleanup)
   ansible.builtin.find:
     paths: "{{ status_stack_autokuma_static_monitors_dir }}"
@@ -189,7 +233,9 @@
     state: absent
   vars:
     _expected_files: >-
-      {{ ['ntfy.json', 'group-guest.json', 'group-node.json', 'group-service.json']
+      {{ ['ntfy.json', 'group-guest.json', 'group-node.json', 'group-service.json', 'group-deadman.json']
+         + (status_stack_deadman_endpoints | map(attribute='name')
+            | map('regex_replace', '^(.*)$', 'push-\\1.json') | list)
          + (status_stack_autokuma_monitors
             | map(attribute='kind') | zip(status_stack_autokuma_monitors | map(attribute='name'))
             | map('join', '-') | map('regex_replace', '$', '.json') | list) }}

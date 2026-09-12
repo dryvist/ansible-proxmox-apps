@@ -45,28 +45,22 @@ names verified against the live services:
 
 ## Monitor URLs
 
-Each check pings two independent deadmen every cycle: its own healthchecks
-check, and its own Uptime Kuma push monitor (`status=up` when healthy,
-`status=down` with the failure message on a breach). Both URLs are read from
-per-check environment variables and are **optional** — an empty URL skips only
-that monitor's ping; the journal entry and ntfy alert still fire. Provision a
-check per keystone in the healthchecks LXC and a push monitor per keystone in
-Uptime Kuma, then export their URLs:
+Each check reports to independent deadmen every cycle. Every URL is derived
+from the check name, so a new check needs no per-check secret:
 
-| Check | Healthchecks | Uptime Kuma push |
+| Receiver | Report | Source of the credential |
 | --- | --- | --- |
-| technitium-dns | `DEADMAN_HC_URL_DNS` | `DEADMAN_KUMA_URL_DNS` |
-| traefik | `DEADMAN_HC_URL_TRAEFIK` | `DEADMAN_KUMA_URL_TRAEFIK` |
-| haproxy-vip | `DEADMAN_HC_URL_HAPROXY` | `DEADMAN_KUMA_URL_HAPROXY` |
-| nginx-syslog-lb | `DEADMAN_HC_URL_NGINX` | `DEADMAN_KUMA_URL_NGINX` |
-| openbao | `DEADMAN_HC_URL_OPENBAO` | `DEADMAN_KUMA_URL_OPENBAO` |
-| github-runner-pool | `DEADMAN_HC_URL_GITHUB_RUNNER` | `DEADMAN_KUMA_URL_GITHUB_RUNNER` |
-| github-runner-data-disk | `DEADMAN_HC_URL_GITHUB_RUNNER_DISK` | `DEADMAN_KUMA_URL_GITHUB_RUNNER_DISK` |
+| Gatus external endpoint `deadman_<name>` | `POST …/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>` with the shared bearer token | `bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN` (monitoring domain) |
+| Uptime Kuma push monitor `<name>` | `…/api/push/<token>?status=up\|down&msg=<msg>`, token = `sha256("<gatus token>:<name>")[:20]` | derived from the same token |
+| Healthchecks check `<name>` | `…/ping/<ping key>/<name>` (`/fail` on a breach), `?create=1` so the check exists after the first report | `bao_monitoring_secrets.HEALTHCHECK_PING_KEY` |
 
-The Kuma value is the push URL without its query string; the validator adds
-`status` and `msg` itself.
-
-ntfy alerts always fire (no provisioning needed) via the repo's ntfy LXC.
+The Gatus endpoints and the Kuma push monitors are both rendered by
+`roles/status_stack` from `status_stack_deadman_endpoints` (one entry per check
+name with its heartbeat); a name missing there is rejected by Gatus and unknown
+to Kuma, so add the entry there when adding a check here. The Healthchecks
+report is skipped until a `healthchecks` backend is present in the published
+ingress table; an empty token skips only that receiver. The journal entry and
+ntfy alert always fire.
 
 ## Installation
 
