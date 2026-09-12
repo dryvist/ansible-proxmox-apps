@@ -16,12 +16,13 @@ killswitch-validator pattern.
 systemd timer (every 60s)
   -> validator script
        per keystone on this host: run a functional probe
-         healthy  -> ping healthchecks OK   (deadman stays green)
-         breached -> journal + ntfy alert + ping healthchecks /fail
+         healthy  -> ping healthchecks OK + Kuma push status=up
+         breached -> journal + ntfy alert + healthchecks /fail + Kuma status=down
 ```
 
-Because healthchecks expects a ping every cycle, a missed run (validator crash,
-host down) **also** pages — true deadman semantics.
+Because both monitors expect a ping every cycle, a missed run (validator crash,
+host down) **also** pages — true deadman semantics, from two independent
+monitors.
 
 ## How it works
 
@@ -42,21 +43,28 @@ names verified against the live services:
 | `docker_vms` | `github-runner@N.service` (pool) | every configured replica unit active |
 | `docker_vms` | Docker data disk | `/var/lib/docker` used percent below `service_deadman_disk_floor_pct` |
 
-## Healthchecks URLs
+## Monitor URLs
 
-Each check pings its own healthchecks deadman check. The ping URL is read from a
-per-check environment variable and is **optional** — an empty URL skips only the
-deadman ping; the journal entry and ntfy alert still fire. Provision a check per
-keystone in the healthchecks LXC and export its ping URL:
+Each check pings two independent deadmen every cycle: its own healthchecks
+check, and its own Uptime Kuma push monitor (`status=up` when healthy,
+`status=down` with the failure message on a breach). Both URLs are read from
+per-check environment variables and are **optional** — an empty URL skips only
+that monitor's ping; the journal entry and ntfy alert still fire. Provision a
+check per keystone in the healthchecks LXC and a push monitor per keystone in
+Uptime Kuma, then export their URLs:
 
-| Check | Env var |
-| --- | --- |
-| technitium-dns | `DEADMAN_HC_URL_DNS` |
-| traefik | `DEADMAN_HC_URL_TRAEFIK` |
-| haproxy-vip | `DEADMAN_HC_URL_HAPROXY` |
-| nginx-syslog-lb | `DEADMAN_HC_URL_NGINX` |
-| github-runner-pool | `DEADMAN_HC_URL_GITHUB_RUNNER` |
-| github-runner-data-disk | `DEADMAN_HC_URL_GITHUB_RUNNER_DISK` |
+| Check | Healthchecks | Uptime Kuma push |
+| --- | --- | --- |
+| technitium-dns | `DEADMAN_HC_URL_DNS` | `DEADMAN_KUMA_URL_DNS` |
+| traefik | `DEADMAN_HC_URL_TRAEFIK` | `DEADMAN_KUMA_URL_TRAEFIK` |
+| haproxy-vip | `DEADMAN_HC_URL_HAPROXY` | `DEADMAN_KUMA_URL_HAPROXY` |
+| nginx-syslog-lb | `DEADMAN_HC_URL_NGINX` | `DEADMAN_KUMA_URL_NGINX` |
+| openbao | `DEADMAN_HC_URL_OPENBAO` | `DEADMAN_KUMA_URL_OPENBAO` |
+| github-runner-pool | `DEADMAN_HC_URL_GITHUB_RUNNER` | `DEADMAN_KUMA_URL_GITHUB_RUNNER` |
+| github-runner-data-disk | `DEADMAN_HC_URL_GITHUB_RUNNER_DISK` | `DEADMAN_KUMA_URL_GITHUB_RUNNER_DISK` |
+
+The Kuma value is the push URL without its query string; the validator adds
+`status` and `msg` itself.
 
 ntfy alerts always fire (no provisioning needed) via the repo's ntfy LXC.
 
@@ -89,6 +97,7 @@ systemctl status service-deadman-validate.timer
 #   - journal: journalctl -t service-deadman
 #   - ntfy:    the "keystone" topic receives an urgent message
 #   - healthchecks: the corresponding check flips to down
+#   - Uptime Kuma: the corresponding push monitor flips to down
 ```
 
 ## Contributing
