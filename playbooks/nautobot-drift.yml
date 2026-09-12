@@ -1,0 +1,51 @@
+---
+# Read-only Nautobot parity report, run the same way as every other template:
+# the run wrapper exports the run environment, the shared inventory_resolve
+# role fetches the published inventory artifact, and the read-only Nautobot
+# credential is read from the store for the duration of the play. Nothing here
+# reaches a managed host, and by the script's own contract it exits non-zero
+# only on an API error, never on drift.
+#
+# Not part of site.yml. Run directly:
+#   ansible-playbook -i inventory/hosts.yml playbooks/nautobot-drift.yml
+- name: Nautobot drift report
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    # Same reason as inventory/load_tofu.yml: the system python lacks boto3.
+    ansible_python_interpreter: auto_silent
+
+  tasks:
+    - name: Resolve the published OpenTofu inventory
+      ansible.builtin.include_role:
+        name: dryvist.homelab.inventory_resolve
+
+    # The run's own token: the wrapper logs in once and exports it, and the
+    # runner keeps it for the play. A workstation caller sets BAO_TOKEN by hand.
+    - name: Read the read-only Nautobot inventory credential
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ lookup('env', 'BAO_ADDR') }}"
+        auth_method: token
+        token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
+        engine_mount_point: secret
+        path: apps/nautobot
+      register: nautobot_drift_credential
+      no_log: true
+
+    - name: Compare Nautobot against the published inventory
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../scripts/nautobot_drift.py"
+          - --tofu-inventory
+          - "{{ tofu_inventory_resolved }}"
+      environment:
+        NAUTOBOT_URL: "{{ nautobot_drift_credential.secret.inventory_url }}"
+        NAUTOBOT_TOKEN: "{{ nautobot_drift_credential.secret.inventory_ro_token }}"
+      register: nautobot_drift_report
+      changed_when: false
+
+    - name: Print the report
+      ansible.builtin.debug:
+        msg: "{{ nautobot_drift_report.stdout_lines }}"
