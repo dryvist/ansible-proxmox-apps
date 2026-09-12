@@ -29,6 +29,8 @@ hermes_email = env!('ZAMMAD_HERMES_EMAIL')
 ai_email     = env!('ZAMMAD_AI_EMAIL')
 splunk_email = env!('ZAMMAD_SPLUNK_EMAIL')
 splunk_api_token = env!('ZAMMAD_SPLUNK_API_TOKEN')
+ntfy_email = env!('ZAMMAD_NTFY_EMAIL')
+ntfy_api_token = env!('ZAMMAD_NTFY_API_TOKEN')
 smtp_host   = env!('ZAMMAD_SMTP_HOST')
 smtp_port   = env!('ZAMMAD_SMTP_PORT').to_i
 sender      = env!('ZAMMAD_NOTIFICATION_SENDER')
@@ -190,10 +192,15 @@ hermes_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 # ticket customer. That keeps Splunk-opened incidents attributable to Splunk
 # without the action having to invent or provision a customer.
 splunk_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
+# svc-ntfy: same reasoning as svc-splunk — the ntfy-zammad subscriber (ntfy CLI
+# `command:` hook) omits the customer field too, so its token's user becomes
+# the ticket customer.
+ntfy_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 service_users = [
   [hermes_email, 'Hermes', 'Agent', hermes_roles],
   [ai_email, 'AI', 'Assistant', agent_role],
   [splunk_email, 'Splunk', 'Alerting', splunk_roles],
+  [ntfy_email, 'ntfy', 'Alerting', ntfy_roles],
 ].map do |email, first, last, desired_roles|
   u = User.find_by(email: email.downcase)
   if u.nil?
@@ -295,12 +302,16 @@ agent_prefs = { 'permission' => %w[ticket.agent knowledge_base.editor] }
 # svc-splunk creates tickets, appends articles, and searches by title for the
 # dedup lookup. ticket.agent is the smallest permission that covers all three --
 # Zammad has no finer split -- and knowledge_base.editor is withheld because the
-# alert action has no use for it.
+# alert action has no use for it. svc-ntfy gets the same scope as svc-splunk:
+# it opens tickets, appends articles, closes on a resolved tag, and searches
+# by title for the dedup lookup -- no knowledge_base use either.
 splunk_prefs = { 'permission' => %w[ticket.agent] }
+ntfy_prefs = { 'permission' => %w[ticket.agent] }
 [
   ['hermes', service_users[0], api_token, agent_prefs],
   ['ai', service_users[1], ai_api_token, agent_prefs],
   ['splunk', service_users[2], splunk_api_token, splunk_prefs],
+  ['ntfy', service_users[3], ntfy_api_token, ntfy_prefs],
 ].each do |name, user, value, token_prefs|
   t = Token.find_by(action: 'api', name: name)
   if t.nil?

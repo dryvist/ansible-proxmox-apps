@@ -1,0 +1,129 @@
+---
+# One ntfy-to-slack (https://github.com/ozskywalker/ntfy-to-slack) instance per
+# route in ntfy_docker_slack_routes whose webhook is actually seeded. A single
+# instantiated systemd unit (ntfy-to-slack@.service, %i = topic) covers every
+# route -- adding one is a variable edit, never a new unit file.
+#
+# Routes with no webhook in ntfy_docker_slack_webhooks yet are skipped rather than
+# failed: the route list is a superset of what has been seeded so far (see
+# ntfy_docker_slack_webhooks' default() in roles/ntfy_docker/defaults/main.yml).
+
+- name: Compute the routes with a seeded webhook
+  ansible.builtin.set_fact:
+    ntfy_docker_slack_active_routes: >-
+      {{ ntfy_docker_slack_routes | dict2items
+         | selectattr('key', 'in', ntfy_docker_slack_webhooks.keys() | list)
+         | items2dict }}
+
+- name: Warn about routes with no seeded webhook
+  ansible.builtin.debug:
+    msg: >-
+      ntfy_docker_slack_routes declares topic '{{ item }}' but
+      secrets-external/platform/slack-webhooks has no matching key -- no
+      ntfy-to-slack instance will be deployed for it until it is seeded.
+  loop: "{{ ntfy_docker_slack_routes.keys() | difference(ntfy_docker_slack_active_routes.keys()) | list }}"
+
+- name: Create the ntfy-to-slack env directory
+  ansible.builtin.file:
+    path: "{{ ntfy_docker_to_slack_env_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Fetch the ntfy-to-slack release checksums
+  ansible.builtin.uri:
+    url: "{{ ntfy_docker_to_slack_checksums_url }}"
+    return_content: true
+  register: ntfy_docker_to_slack_checksums
+  changed_when: false
+  when: ntfy_docker_slack_active_routes | length > 0
+
+- name: Download the ntfy-to-slack release tarball
+  ansible.builtin.get_url:
+    url: "{{ ntfy_docker_to_slack_release_base }}/{{ ntfy_docker_to_slack_asset }}"
+    dest: "/tmp/{{ ntfy_docker_to_slack_asset }}"
+    checksum: >-
+      sha256:{{ (ntfy_docker_to_slack_checksums.content | default('') | split('\n')
+         | select('search', ntfy_docker_to_slack_asset) | first | default('')).split()
+         | first | default('') }}
+    mode: "0644"
+  when: ntfy_docker_slack_active_routes | length > 0
+
+- name: Extract the ntfy-to-slack binary
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ ntfy_docker_to_slack_asset }}"
+    remote_src: true
+    dest: "{{ ntfy_docker_to_slack_install_dir }}"
+    include: ntfy-to-slack
+    owner: root
+    group: root
+    mode: "0755"
+  when: ntfy_docker_slack_active_routes | length > 0
+
+# Bare-value env file (no other secret shares this path), mode 0600: it holds
+# a live Slack webhook URL.
+- name: Deploy the per-route ntfy-to-slack environment file
+  ansible.builtin.copy:
+    content: |
+      NTFY_DOMAIN={{ ntfy_docker_base_url | regex_replace('^https?://', '') }}
+      NTFY_TOPIC={{ item.key }}
+      SLACK_WEBHOOK_URL={{ item.value }}
+    dest: "{{ ntfy_docker_to_slack_env_dir }}/{{ item.key }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ ntfy_docker_slack_active_routes | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  notify: Restart ntfy-to-slack instances
+
+- name: Deploy the ntfy-to-slack instantiated systemd unit
+  ansible.builtin.template:
+    src: ntfy-to-slack@.service.j2
+    dest: /etc/systemd/system/ntfy-to-slack@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ntfy-to-slack instances
+
+- name: Enable and start one ntfy-to-slack instance per active route
+  ansible.builtin.systemd:
+    name: "ntfy-to-slack@{{ item.key }}.service"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ ntfy_docker_slack_active_routes | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# Retiring a route (removed from ntfy_docker_slack_routes, or its webhook unseeded
+# again) must stop and disable the matching instance -- otherwise it keeps
+# forwarding a topic the operator believed was retired.
+- name: Find any deployed ntfy-to-slack env files
+  ansible.builtin.find:
+    paths: "{{ ntfy_docker_to_slack_env_dir }}"
+    patterns: "*.env"
+  register: ntfy_docker_to_slack_deployed_envs
+
+- name: Retire ntfy-to-slack instances for routes no longer active
+  vars:
+    ntfy_docker_to_slack_stale_topics: >-
+      {{ (ntfy_docker_to_slack_deployed_envs.files | map(attribute='path')
+         | map('basename') | map('regex_replace', '\.env$', '') | list)
+         | difference(ntfy_docker_slack_active_routes.keys() | list) }}
+  when: ntfy_docker_to_slack_stale_topics | length > 0
+  block:
+    - name: Stop and disable retired ntfy-to-slack instances
+      ansible.builtin.systemd:
+        name: "ntfy-to-slack@{{ item }}.service"
+        state: stopped
+        enabled: false
+      loop: "{{ ntfy_docker_to_slack_stale_topics }}"
+
+    - name: Remove retired ntfy-to-slack env files
+      ansible.builtin.file:
+        path: "{{ ntfy_docker_to_slack_env_dir }}/{{ item }}.env"
+        state: absent
+      loop: "{{ ntfy_docker_to_slack_stale_topics }}"
