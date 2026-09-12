@@ -1,0 +1,158 @@
+---
+# --- secret_id / token CIDR binding -------------------------------------------
+# `secret_id_bound_cidrs` restricts where a secret_id may be REDEEMED;
+# `token_bound_cidrs` restricts where the resulting token may be USED. Together
+# they turn a leaked credential into one that only works from inside the network
+# segment that was supposed to hold it.
+#
+# Real CIDRs are NEVER committed — this repository is public and a CIDR list is
+# topology. They arrive by env, the same channel and shape as
+# OPENBAO_SSH_SOURCE_CIDRS (comma-separated, empty when unset).
+#
+# ASSERT-ON-RENDER: init/10-approles.yml fails the converge when a class that
+# any declared role uses is empty, unless the operator has explicitly accepted
+# unbound roles by setting openbao_approle_allow_unbound_cidrs. An unset
+# variable must not quietly produce the unbound role it was added to prevent.
+openbao_management_cidrs: >-
+  {{ lookup('env', 'OPENBAO_MANAGEMENT_CIDRS') | default('', true) }}
+openbao_workstation_cidrs: >-
+  {{ lookup('env', 'OPENBAO_WORKSTATION_CIDRS') | default('', true) }}
+openbao_ci_cidrs: >-
+  {{ lookup('env', 'OPENBAO_CI_CIDRS') | default('', true) }}
+# Escape hatch for a first bootstrap, where no CIDR is known yet. Setting it
+# true downgrades the assert to the loud warning that preceded it.
+openbao_approle_allow_unbound_cidrs: >-
+  {{ (lookup('env', 'OPENBAO_APPROLE_ALLOW_UNBOUND_CIDRS') | default('', true)) | length > 0 }}
+
+# Named classes, so a role declares WHERE it lives rather than a literal.
+openbao_approle_cidr_classes:
+  machine: "{{ openbao_management_cidrs }}"
+  workstation: "{{ openbao_workstation_cidrs }}"
+  ci: "{{ openbao_ci_cidrs }}"
+  # Union of machine + workstation, for an identity genuinely redeemed from
+  # BOTH: never restate either range literally, derive from the two lists
+  # above so there remains exactly one declaration of each.
+  machine_or_workstation: >-
+    {{ ([openbao_management_cidrs, openbao_workstation_cidrs]
+        | reject('equalto', '') | list
+        | map('split', ',') | list
+        | sum(start=[]) | unique | list
+        | join(',')) }}
+  # Deliberately unbound; every member needs a reason in the override map.
+  unbound: ""
+openbao_approle_default_cidr_class: machine
+# name -> class, for the identities that are not machine-resident.
+openbao_approle_cidr_class_overrides:
+  # Workstation-held: the operator's own machine runs git/gh and the unlocks.
+  # admin is also the provisioning tier: redeemed on the workstation, then used
+  # ON the store host by the openbao play (OPENBAO_PROVISIONING_TOKEN). A
+  # workstation-only bound answers those calls 403 -- same shape as flow-lock.
+  admin: machine_or_workstation
+  ai-admin: workstation
+  github-admin: workstation
+  github-read: workstation
+  github-write: workstation
+  # The write realm is redeemed from the same place as github-write — the
+  # operator's git/gh — so it takes the same class. It carried no override and
+  # declared as `machine`, which refuses the workstation on source address
+  # while the credential stays valid.
+  github-write-x10: workstation
+  # Ephemeral CI runners sit on their own isolated segment.
+  github-runner: ci
+  # Operator-run, not machine-resident: the platform deploy is driven from the
+  # operator's workstation against a remote engine, so it belongs to the same
+  # class as the other identities that machine holds. It defaulted to the
+  # machine class, which stopped accepting the workstation when that machine
+  # moved onto a client segment — the deploy then failed on source address
+  # while its credentials were perfectly valid, which reads as a broken
+  # credential rather than a misclassified one.
+  iac-platform-deploy: workstation
+  # The cross-repo apply-lock holder: taken interactively from the operator's
+  # own workstation AND by every automation host during a converge/apply. A
+  # single class here would break one caller or the other -- do not "tidy"
+  # this back to `machine` or `workstation` alone.
+  flow-lock: machine_or_workstation
+  # The routine reconcile identity runs from the execution plane AND is the
+  # documented workstation path for read-only queries against the platform and
+  # the trackers. It carried no override, so it declared as `machine` — and it
+  # is currently UNBOUND live, which is why the workstation use has worked.
+  # Applying the declared class as-is would refuse the workstation on source
+  # address while its credentials stayed valid, which reads as a broken
+  # credential rather than a misclassified one. That is the same failure
+  # iac-platform-deploy already hit; do not narrow this to `machine` alone
+  # without first moving those workstation callers somewhere else.
+  openbao-reconcile: machine_or_workstation
+  # approle-audit answers an operator-run sweep (read auth/approle/role/* back)
+  # from the workstation as well as the plane -- same reasoning as reconcile.
+  approle-audit: machine_or_workstation
+  # The four live-only identities (05e). The union, matching what they carry in
+  # the store today, so the first reconcile does not move them. Narrowing each
+  # to the class it truly needs is a per-identity decision and belongs with
+  # whoever owns the workload — getting it wrong refuses a valid credential on
+  # source address, which reads as a broken credential rather than a
+  # misclassified one, and that mistake has been made twice here already.
+  terraform: machine_or_workstation
+  vikunja: machine_or_workstation
+  media-rotate: machine_or_workstation
+  slack-admin: machine_or_workstation
+  slack-ops: machine_or_workstation
+  # Every openbao_secrets_domains entry (ansible-proxmox-apps
+  # roles/openbao_secrets/defaults/main.yml) the prefetch loop logs into for a
+  # workstation converge -- same failure as the entries above.
+  observability: machine_or_workstation
+  local-cloud: machine_or_workstation
+  monitoring: machine_or_workstation
+  media: machine_or_workstation
+  apps: machine_or_workstation
+  ntfy: machine_or_workstation
+  local-llm: machine_or_workstation
+  # Human-gated, operator-driven (rotate-key.yml, W1c): the wrap+unlock and
+  # the rotation run it drives both happen from the operator's own
+  # workstation, not a machine-resident timer — unlike every other rotator
+  # in openbao_rotators, these two carry no standing secret_id at all.
+  ai-rotate: workstation
+  apps-rotate: workstation
+# Every declared role's class, defaults filled in and then overridden — so a
+# lookup never has to cope with a missing key. (`map('extract', dict, default)`
+# does NOT take a default: it raises on the first name absent from the override
+# map, which is most of them. Verified, not assumed.)
+openbao_approle_cidr_class_map: >-
+  {{ dict(openbao_approles | map(attribute='name') | list
+          | zip(openbao_approles | map(attribute='name')
+                | map('regex_replace', '^.*$', openbao_approle_default_cidr_class)
+                | list))
+     | combine(openbao_approle_cidr_class_overrides)
+     | combine(openbao_github_write_scope_cidr_classes) }}
+# The classes that actually carry a role, so the assert in init/10-approles.yml
+# demands only the CIDRs this declaration set really needs. `unbound` is
+# excluded by definition — it is the documented opt-out, not a missing value.
+openbao_approle_cidr_classes_in_use: >-
+  {{ openbao_approle_cidr_class_map.values() | unique
+     | reject('equalto', 'unbound') | list }}
+# Of those, the ones with nothing supplied. Empty is the healthy state; the
+# assert in init/10-approles.yml fails on anything here.
+openbao_approle_unsupplied_cidr_classes: >-
+  {{ openbao_approle_cidr_classes_in_use
+     | select('in', openbao_approle_cidr_classes | dict2items
+                    | selectattr('value', 'equalto', '')
+                    | map(attribute='key') | list)
+     | list }}
+
+# --- Coverage: every created AppRole must carry a class decision ---------------
+# openbao_approle_cidr_class_map is built from openbao_approles ALONE. A role
+# created from any other list therefore resolves to no class at all, and the
+# only symptom is an undefined-variable error raised deep inside a no_log loop
+# that names neither the role nor the reason. init/10-approles.yml asserts the
+# set it actually loops (openbao_manageable_approles) against the map keys
+# first, so the failure names the role before anything is written.
+#
+# `unbound` is the documented opt-out, not a gap: its members are listed with a
+# reason in openbao_approle_cidr_class_overrides above, so they ARE covered.
+#
+# The second gap is quieter and needs its own list. An override key that names
+# no declared role is a silent no-op -- the role it was meant to move keeps the
+# machine default, the converge stays green, and nothing anywhere says the
+# class it was given is not the class it has. Empty is the healthy state.
+openbao_approle_unknown_cidr_class_overrides: >-
+  {{ openbao_approle_cidr_class_overrides | list
+     | reject('in', openbao_approles | map(attribute='name') | list) | list }}

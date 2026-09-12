@@ -23,7 +23,7 @@ from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "roles" / "openbao" / "tasks" / "init" / "10-approles.yml"
-DEFAULTS = ROOT / "roles" / "openbao" / "defaults" / "main" / "08-admin-and-ttls.yml"
+DEFAULTS = ROOT / "roles" / "openbao" / "defaults" / "main" / "08b-approle-cidr-classes.yml"
 
 UNCLASSED_TASK = "Assert every AppRole this run creates has a source-address class"
 
