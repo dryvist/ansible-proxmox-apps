@@ -65,7 +65,138 @@
     dest: "{{ status_stack_data_dir }}/docker-compose.yml"
     owner: root
     group: root
+    mode: "0600"  # contains the Uptime Kuma admin password (AutoKuma env)
+  no_log: true
+  notify: Restart status stack
+
+# AutoKuma syncs Uptime Kuma monitors from the SAME monitor_targets fact
+# Gatus renders from (one generator, N renderers). AUTOKUMA__STATIC_MONITORS
+# is a DIRECTORY of one .json file per monitor — the filename (minus
+# extension) becomes the AutoKuma id, so group files are named group-<group>
+# and each target file is named <type>-<name> to stay unique.
+- name: Ensure the AutoKuma static-monitors directory exists
+  ansible.builtin.file:
+    path: "{{ status_stack_autokuma_static_monitors_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render the AutoKuma ntfy notification provider
+  ansible.builtin.copy:
+    dest: "{{ status_stack_autokuma_static_monitors_dir }}/ntfy.json"
+    owner: root
+    group: root
+    mode: "0600"
+    content: >-
+      {{ {
+        'type': 'notification',
+        'active': true,
+        'name': 'ntfy',
+        'config': {
+          'type': 'ntfy',
+          'ntfyserverurl': status_stack_ntfy_url,
+          'ntfytopic': status_stack_ntfy_topic_urgent,
+          'ntfyPriority': status_stack_ntfy_priority_urgent,
+          'ntfyPriorityDown': status_stack_ntfy_priority_urgent,
+          'ntfyAuthenticationMethod': 'usernamePassword' if (status_stack_ntfy_username | length > 0) else 'none',
+          'ntfyusername': status_stack_ntfy_username,
+          'ntfypassword': status_stack_ntfy_password,
+        },
+      } | to_nice_json }}
+  no_log: true
+  notify: Restart status stack
+
+- name: Render AutoKuma parent groups (one per monitor_targets group)
+  ansible.builtin.copy:
+    dest: "{{ status_stack_autokuma_static_monitors_dir }}/group-{{ item }}.json"
+    owner: root
+    group: root
     mode: "0644"
+    content: "{{ {'type': 'group', 'name': item | capitalize} | to_nice_json }}"
+  loop:
+    - guest
+    - node
+    - service
+  loop_control:
+    label: "group-{{ item }}"
+  notify: Restart status stack
+
+- name: Build the combined AutoKuma monitor list from monitor_targets
+  ansible.builtin.set_fact:
+    status_stack_autokuma_monitors: >-
+      {{ (status_stack_monitor_targets.icmp | map('combine', {'kind': 'ping'}) | list)
+         + (status_stack_monitor_targets.tcp | map('combine', {'kind': 'port'}) | list)
+         + (status_stack_monitor_targets.http | map('combine', {'kind': 'http'}) | list) }}
+
+# accepted_statuscodes format (an array of "<code>-<code>" range strings) is
+# reasoned from Uptime Kuma's UI-driven multi-select, not exercised against a
+# live instance — flag it on first real converge if AutoKuma rejects it.
+- name: Render one AutoKuma static-monitor file per target
+  ansible.builtin.copy:
+    dest: "{{ status_stack_autokuma_static_monitors_dir }}/{{ item.kind }}-{{ item.name }}.json"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ _monitor | to_nice_json }}"
+  vars:
+    _interval_seconds: "{{ status_stack_interval | regex_replace('s$', '') | int }}"
+    _monitor: >-
+      {{
+        {
+          'type': item.kind,
+          'name': item.name,
+          'parent_name': 'group-' ~ item.group,
+          'notification_name_list': ['ntfy'],
+          'interval': _interval_seconds,
+        }
+        | combine({'hostname': item.fqdn} if item.kind in ['ping', 'port'] else {})
+        | combine({'port': item.port} if item.kind == 'port' else {})
+        | combine({
+            'url': 'http://' ~ item.fqdn ~ ':' ~ item.port ~ item.path,
+            'accepted_statuscodes': item.expect_status
+              | map('string') | map('regex_replace', '^(.*)$', '\\1-\\1') | list,
+          } if item.kind == 'http' else {})
+      }}
+  loop: "{{ status_stack_autokuma_monitors }}"
+  loop_control:
+    label: "{{ item.kind }}-{{ item.name }}"
+  notify: Restart status stack
+
+- name: Find existing AutoKuma static-monitor files (for stale-target cleanup)
+  ansible.builtin.find:
+    paths: "{{ status_stack_autokuma_static_monitors_dir }}"
+    patterns: "*.json"
+  register: status_stack_autokuma_existing_files
+
+- name: Guard against wiping every AutoKuma monitor on a degenerate empty target list
+  ansible.builtin.assert:
+    that:
+      - status_stack_autokuma_monitors | length > 0
+    fail_msg: >-
+      status_stack_monitor_targets produced zero monitors (tofu_data or
+      monitor_targets is likely empty/malformed this run) but
+      {{ status_stack_autokuma_existing_files.files | length }} AutoKuma
+      static-monitor file(s) already exist in
+      {{ status_stack_autokuma_static_monitors_dir }}. Refusing to run
+      stale-monitor cleanup, which would delete all of them — regenerate the
+      published tofu inventory and re-run instead of trusting this pass.
+  when: status_stack_autokuma_existing_files.files | length > 4
+
+- name: Remove AutoKuma static-monitor files for decommissioned targets
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  vars:
+    _expected_files: >-
+      {{ ['ntfy.json', 'group-guest.json', 'group-node.json', 'group-service.json']
+         + (status_stack_autokuma_monitors
+            | map(attribute='kind') | zip(status_stack_autokuma_monitors | map(attribute='name'))
+            | map('join', '-') | map('regex_replace', '$', '.json') | list) }}
+  loop: "{{ status_stack_autokuma_existing_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (item.path | basename) not in _expected_files
   notify: Restart status stack
 
 - name: Deploy status stack via docker compose

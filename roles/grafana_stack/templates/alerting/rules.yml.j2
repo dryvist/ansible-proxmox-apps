@@ -1,0 +1,178 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: alert rules.
+## https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
+##
+## Every rule below queries the "prometheus" datasource (infra metrics —
+## grafana_stack/templates/datasource.yml.j2), which is provisioned only when
+## a prometheus-tagged container exists (grafana_stack_prometheus_url). This
+## whole file renders with zero groups otherwise, exactly like the community
+## dashboards this role also skips when there is nothing for them to query.
+##
+## READY NOW vs DORMANT (see role README / PR evidence for detail):
+##   - blackbox-probe-down   READY  — blackbox_exporter's probe_success is
+##                                    scraped today (prometheus_stack role).
+##   - infra-targets-down    READY  — `up` exists for every job prometheus.yml
+##                                    actually renders today: prometheus,
+##                                    blackbox_<module>, traefik, llm_router.
+##                                    There is NO node/PVE scrape job yet — a
+##                                    per-PVE-node up/down rule is not written
+##                                    here rather than invented against a job
+##                                    label that does not exist.
+##   - wan-latency-high      READY  — probe_duration_seconds{job="blackbox_icmp"}
+##                                    is scraped today.
+##   - disk-usage-high       READY  — node_filesystem_avail_bytes /
+##                                    node_filesystem_size_bytes are scraped
+##                                    today under job="pve_node_exporter"
+##                                    (inventory/group_vars/prometheus_group.yml).
+##   - secret-rotation-overdue DORMANT — depends on a node_exporter textfile
+##                                     collector metric from the secret-age
+##                                     auditor, a package not yet in develop.
+##                                     Same noDataState: OK reasoning.
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: {{ grafana_stack_alert_folder }}
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: blackbox-probe-down
+        title: Blackbox probe failing
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: probe_success == 0
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "Blackbox probe {{ '{{' }} $labels.instance {{ '}}' }} ({{ '{{' }} $labels.job {{ '}}' }}) has failed for 5m."
+
+      - uid: infra-targets-down
+        title: Infra scrape target down
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: up{job=~"prometheus|blackbox_.*|traefik|llm_router"} == 0
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "Scrape target {{ '{{' }} $labels.instance {{ '}}' }} (job {{ '{{' }} $labels.job {{ '}}' }}) is down."
+
+      - uid: wan-latency-high
+        title: WAN ICMP latency high
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: avg_over_time(probe_duration_seconds{job="blackbox_icmp"}[5m])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_wan_latency_seconds }}]}
+              refId: B
+        for: 10m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "WAN ICMP latency to {{ '{{' }} $labels.instance {{ '}}' }} averaged above {{ grafana_stack_alert_wan_latency_seconds }}s over 5m."
+
+      - uid: disk-usage-high
+        title: Disk usage high
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                100 * (1 - node_filesystem_avail_bytes{job="pve_node_exporter", fstype!~"tmpfs|overlay"}
+                / node_filesystem_size_bytes{job="pve_node_exporter", fstype!~"tmpfs|overlay"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_disk_pct }}]}
+              refId: B
+        for: 15m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "Disk usage on {{ '{{' }} $labels.instance {{ '}}' }} ({{ '{{' }} $labels.mountpoint {{ '}}' }}) above {{ grafana_stack_alert_disk_pct }}%."
+
+      # DORMANT — see file header. secret_age_days is a future textfile-collector
+      # metric from a separate secret-age-audit package, not present in develop.
+      - uid: secret-rotation-overdue
+        title: Secret rotation overdue (dormant until secret-age exporter lands)
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: secret_age_days
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gte, params: [{{ grafana_stack_alert_secret_age_days }}]}
+              refId: B
+        for: 0m
+        noDataState: OK
+        execErrState: OK
+        labels: {severity: warning}
+        annotations:
+          summary: "Secret {{ '{{' }} $labels.path {{ '}}' }} is {{ '{{' }} $values.A {{ '}}' }} days old (>= {{ grafana_stack_alert_secret_age_days }})."
+{% endif %}
