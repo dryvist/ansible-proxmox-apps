@@ -88,6 +88,19 @@ zammad_overviews:
     organization: Hermes
     order_by: updated_at
     order_direction: DESC
+  - name: Pending close
+    link: pending_close
+    prio: 1060
+    state: "pending close"
+    order_by: pending_time
+    order_direction: ASC
+  - name: Stale new
+    link: stale_new
+    prio: 1070
+    state: new
+    tag: stale-new
+    order_by: created_at
+    order_direction: ASC
 zammad_extra_priority:
   id: 4
   name: 4 critical
@@ -127,3 +140,34 @@ zammad_kb_answers:
   - title: "Infrastructure docs (home)"
     url: "https://docs.jacobpevans.com/infrastructure"
     blurb: "Top-level infrastructure documentation for the homelab + AI estate."
+
+# Time-based automation ("Job" in Zammad terms). Seeded idempotently by name
+# in zammad_bootstrap.rb, mirroring zammad_overviews — `state` is resolved by
+# NAME so the YAML carries no Zammad internal ids. `timeplan` runs daily only
+# for now (bootstrap hardcodes every weekday); hours/minutes are the values
+# Zammad's Job#timeplan schema expects (minutes snap to the nearest 10 below).
+#
+# stale-new-escalation: tags a ticket that has sat in `new`, unassigned, for a
+# week. Deliberately does NOT bump priority — the Hermes review cron owns
+# triage; the tag is the signal the "Stale new" overview above surfaces.
+zammad_jobs:
+  - name: stale-new-escalation
+    timeplan:
+      hours: [6]
+      minutes: [0]
+    state: new
+    unassigned: true
+    stale_after_days: 7
+    add_tag: stale-new
+    disable_notification: true
+
+# SLA: first-response deadline for tickets left in `new`. Seeded idempotently
+# by name, mirroring zammad_overviews — `state` is resolved by NAME. An Sla
+# requires a Calendar; zammad_bootstrap.rb seeds a dedicated 24x7 calendar
+# (zammad_sla_calendar_name) idempotently by name first and references it by
+# id, so this list stays free of Zammad internal ids too.
+zammad_sla_calendar_name: "24x7"
+zammad_slas:
+  - name: incident-first-response
+    state: new
+    first_response_minutes: 10080
