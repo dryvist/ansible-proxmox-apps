@@ -20,10 +20,10 @@
 ##                                    label that does not exist.
 ##   - wan-latency-high      READY  — probe_duration_seconds{job="blackbox_icmp"}
 ##                                    is scraped today.
-##   - disk-usage-high       DORMANT — node_exporter is not scraped by this
-##                                     stack yet (Wave 3). noDataState: OK so
-##                                     the rule sits quiet instead of paging
-##                                     "no data" forever.
+##   - disk-usage-high       READY  — node_filesystem_avail_bytes /
+##                                    node_filesystem_size_bytes are scraped
+##                                    today under job="pve_node_exporter"
+##                                    (inventory/group_vars/prometheus_group.yml).
 ##   - secret-rotation-overdue DORMANT — depends on a node_exporter textfile
 ##                                     collector metric from the secret-age
 ##                                     auditor, a package not yet in develop.
@@ -118,10 +118,8 @@ groups:
         annotations:
           summary: "WAN ICMP latency to {{ '{{' }} $labels.instance {{ '}}' }} averaged above {{ grafana_stack_alert_wan_latency_seconds }}s over 5m."
 
-      # DORMANT — see file header. node_filesystem_avail_bytes /
-      # node_filesystem_size_bytes do not exist until node_exporter is scraped.
       - uid: disk-usage-high
-        title: Disk usage high (dormant until node_exporter scrape lands)
+        title: Disk usage high
         condition: B
         data:
           - refId: A
@@ -129,8 +127,8 @@ groups:
             datasourceUid: prometheus
             model:
               expr: >-
-                100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
-                / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+                100 * (1 - node_filesystem_avail_bytes{job="pve_node_exporter", fstype!~"tmpfs|overlay"}
+                / node_filesystem_size_bytes{job="pve_node_exporter", fstype!~"tmpfs|overlay"})
               instant: true
               refId: A
           - refId: B
@@ -144,7 +142,7 @@ groups:
               refId: B
         for: 15m
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         labels: {severity: warning}
         annotations:
           summary: "Disk usage on {{ '{{' }} $labels.instance {{ '}}' }} ({{ '{{' }} $labels.mountpoint {{ '}}' }}) above {{ grafana_stack_alert_disk_pct }}%."
