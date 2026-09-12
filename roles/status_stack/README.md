@@ -40,6 +40,18 @@ routing is implemented as a criticality split by endpoint group: `keystone`/
 `status_stack_ntfy_priority_urgent`), everything else to
 `status_stack_ntfy_topic_degraded`.
 
+## Deadman receivers
+
+`status_stack_deadman_endpoints` declares one Gatus external endpoint per
+pusher under the `deadman` group. Pushers `POST
+/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>` with the
+shared bearer token (`bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN`); a pusher
+silent for longer than its `heartbeat` goes unhealthy and alerts on ntfy. The
+pushers are `roles/service_deadman` (this repo), the media stack's validators,
+and the mlx watchdog; their slugs must appear here first — Gatus rejects a
+report for an undeclared endpoint (`tests/test_deadman_endpoints_declared.py`
+checks the service_deadman names).
+
 ## Auth overlays
 
 `status_stack_authenticated_endpoints` may add API-key probes when inventory

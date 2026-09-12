@@ -89,6 +89,32 @@ status_stack_kuma_keystones:
   - name: Healthchecks
     url: "https://healthchecks.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
 
+# Deadman receivers: one Gatus external endpoint per pusher, group `deadman`.
+# Pushers POST /api/v1/endpoints/deadman_<name>/external?success=<bool> with
+# the shared bearer token; a heartbeat that goes quiet for longer than
+# `heartbeat` marks the endpoint unhealthy and alerts. Names must match the
+# pusher's slug: service_deadman_group_checks (this repo), the media stack's
+# validators, and the mlx watchdog.
+status_stack_deadman_endpoints:
+  - { name: technitium-dns, heartbeat: 5m }
+  - { name: traefik, heartbeat: 5m }
+  - { name: haproxy-vip, heartbeat: 5m }
+  - { name: nginx-syslog-lb, heartbeat: 5m }
+  - { name: openbao, heartbeat: 5m }
+  - { name: github-runner-pool, heartbeat: 5m }
+  - { name: github-runner-data-disk, heartbeat: 5m }
+  - { name: download-vpn, heartbeat: 10m }
+  - { name: sqlite-backup, heartbeat: 26h }
+  - { name: mlx-watchdog, heartbeat: 15m }
+status_stack_deadman_token: >-
+  {{ bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN
+     | default(undef(), true)
+     | mandatory('bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN is missing: the '
+                 + 'monitoring domain fetch did not carry the Gatus push token') }}
+# Deadman alerts go to the same ntfy topic the pushers alert on themselves.
+status_stack_deadman_ntfy_url: "https://ntfy.{{ ingress_domain }}"
+status_stack_deadman_ntfy_topic: keystone
+
 # Uptime Kuma admin (generate-once + OpenBao publish when wired).
 status_stack_kuma_admin_username: admin
 status_stack_kuma_admin_password: ""

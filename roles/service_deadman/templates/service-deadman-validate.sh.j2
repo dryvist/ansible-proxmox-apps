@@ -4,47 +4,54 @@
 # Keystone SPOF liveness watchdog. Rendered by the service_deadman role and run
 # on a systemd timer (every {{ service_deadman_interval }}). For each keystone
 # service on this host it runs a functional probe and:
-#   - healthy  -> pings the per-check healthchecks deadman OK endpoint and the
-#                 per-check status push monitor with status=up
-#   - breached -> logs, pushes an ntfy alert, pings the deadman /fail endpoint
-#                 and the status push monitor with status=down
+#   - healthy  -> reports success to its Gatus external endpoint and pings its
+#                 healthchecks check
+#   - breached -> logs, pushes an ntfy alert, reports failure to Gatus and
+#                 pings the healthchecks /fail endpoint
 #
 # A missed run (validator crash / host down) also pages, because both monitors
-# expect a ping every cycle. An empty monitor URL skips only that monitor's
-# ping; the journal + ntfy alert still fire.
+# expect a report every cycle. An unconfigured receiver skips only that
+# receiver; the journal + ntfy alert still fire.
 set -uo pipefail
 
 NTFY_URL="{{ service_deadman_ntfy_url }}"
+GATUS_URL="{{ service_deadman_gatus_url }}"
+GATUS_TOKEN="{{ service_deadman_gatus_token }}"
+HC_URL="{{ service_deadman_hc_url }}"
+HC_PING_KEY="{{ service_deadman_hc_ping_key }}"
 HOST="$(hostname)"
 rc=0
 
-# Ping a healthchecks endpoint if a URL is configured; no-op otherwise.
-hc_ping() {
-  local url="$1"
-  [[ -n "${url}" ]] || return 0
-  curl -fsS --max-time 8 "${url}" >/dev/null 2>&1 || true
+# Report to the Gatus external endpoint deadman_<name>; no-op without a token.
+# success is "true" or "false"; the error text is ignored by Gatus on success.
+gatus_report() {
+  local name="$1" success="$2" msg="$3"
+  [[ -n "${GATUS_TOKEN}" ]] || return 0
+  curl -fsS --max-time 8 -X POST -H "Authorization: Bearer ${GATUS_TOKEN}" \
+    -G --data-urlencode "success=${success}" --data-urlencode "error=${msg}" \
+    "${GATUS_URL}/api/v1/endpoints/deadman_${name}/external" >/dev/null 2>&1 || true
 }
 
-# Ping a status push monitor (Uptime Kuma /api/push form) if a URL is
-# configured; no-op otherwise. status is "up" or "down".
-push_ping() {
-  local url="$1" status="$2" msg="$3"
-  [[ -n "${url}" ]] || return 0
-  curl -fsS --max-time 8 -G --data-urlencode "status=${status}" \
-    --data-urlencode "msg=${msg}" "${url}" >/dev/null 2>&1 || true
+# Ping the healthchecks check named <name> (created on first contact); no-op
+# until the healthchecks receiver is configured. suffix is "" or "/fail".
+hc_ping() {
+  local name="$1" suffix="$2" msg="$3"
+  [[ -n "${HC_URL}" && -n "${HC_PING_KEY}" ]] || return 0
+  curl -fsS --max-time 8 -d "${msg}" \
+    "${HC_URL}/ping/${HC_PING_KEY}/${name}${suffix}?create=1" >/dev/null 2>&1 || true
 }
 
 # Healthy: signal both deadmen OK so a stalled validator is also caught.
 mark_ok() {
-  local name="$1" url="$2" push_url="$3"
+  local name="$1"
   logger -t service-deadman "OK: ${name} healthy on ${HOST}"
-  hc_ping "${url}"
-  push_ping "${push_url}" up OK
+  gatus_report "${name}" true ""
+  hc_ping "${name}" "" "OK"
 }
 
 # Breached: log, alert ntfy, signal both deadmen's failure paths.
 mark_fail() {
-  local name="$1" url="$2" push_url="$3"
+  local name="$1"
   local msg="KEYSTONE DOWN: ${name} failed its liveness probe on ${HOST}"
   rc=1
   logger -t service-deadman "${msg}"
@@ -53,16 +60,16 @@ mark_fail() {
       -H "Priority: urgent" -H "Tags: rotating_light" \
       -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1 || true
   fi
-  [[ -n "${url}" ]] && curl -fsS --max-time 8 -d "${msg}" "${url}/fail" >/dev/null 2>&1 || true
-  push_ping "${push_url}" down "${msg}"
+  gatus_report "${name}" false "${msg}"
+  hc_ping "${name}" "/fail" "${msg}"
 }
 
 {% for check in service_deadman_checks %}
 # --- {{ check.name }} ---
 if {{ check.probe_command }}; then
-  mark_ok "{{ check.name }}" "{{ check.healthcheck_url }}" "{{ check.status_push_url | default('') }}"
+  mark_ok "{{ check.name }}"
 else
-  mark_fail "{{ check.name }}" "{{ check.healthcheck_url }}" "{{ check.status_push_url | default('') }}"
+  mark_fail "{{ check.name }}"
 fi
 {% endfor %}
 
