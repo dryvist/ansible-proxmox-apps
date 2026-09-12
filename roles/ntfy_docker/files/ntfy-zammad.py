@@ -54,7 +54,14 @@ def should_skip(tags):
 
 
 def correlation_key(topic, title):
-    return "%s|%s" % (topic, title)
+    # fk:<source>:<rule>:<entity> -- the same title-embedded dedup token
+    # every other alerting source in this estate uses (see
+    # splunk-homelab-alerts' zammad.py, adapted below). source is fixed to
+    # "ntfy" (this subscriber owns every ntfy topic); rule is the topic;
+    # entity is the alert's own title. Zammad's title search is exact-phrase,
+    # not prefix, so this exact token is what a cross-source dedup lookup
+    # must match.
+    return "fk:ntfy:%s:%s" % (topic, title)
 
 
 def note(message, tags):
@@ -174,11 +181,18 @@ def run():
 
     groups = json.loads(env("NTFY_ZAMMAD_TOPIC_GROUPS_JSON", "{}"))
     group = groups.get(topic, "Incidents")
+    # "fk:... — <human summary>", same layout as every other source: the
+    # fk: token stays the exact-phrase dedup key, the summary after the dash
+    # is only for a human reading the ticket list.
+    summary = message.splitlines()[0] if message else title
     # No customer field: Zammad makes the token's user (svc-ntfy) the ticket
     # customer, the same "own actor, own token" attribution as svc-splunk.
     zammad_call(
         zammad_base, zammad_token, "tickets",
-        payload={"title": key, "group": group, "state": "new", "article": note(message, tags)},
+        payload={
+            "title": "%s — %s" % (key, summary),
+            "group": group, "state": "new", "article": note(message, tags),
+        },
         method="POST",
     )
 
@@ -186,7 +200,7 @@ def run():
 def selftest():
     import tempfile
 
-    assert correlation_key("network", "WAN down") == "network|WAN down"
+    assert correlation_key("network", "WAN down") == "fk:ntfy:network:WAN down"
     assert should_skip(["no-zammad"]) is True
     assert should_skip(["high"]) is False
     assert is_resolved(["resolved"]) is True
@@ -201,9 +215,10 @@ def selftest():
     # so escaping just those two keeps the hostile value INSIDE one phrase.
     assert escape_lucene_phrase('a\\b"c') == 'a\\\\b\\"c'
     hostile = 'net" OR state.name:closed AND title:"x (foo:bar) NOT y'
-    query = build_search_query("topic|%s" % hostile)
+    hostile_key = correlation_key("topic", hostile)
+    query = build_search_query(hostile_key)
     assert query == 'title:"%s" AND state.name:(new OR open)' % escape_lucene_phrase(
-        "topic|%s" % hostile
+        hostile_key
     )
 
     # Self-alert must fire exactly once when crossing the threshold, not on
