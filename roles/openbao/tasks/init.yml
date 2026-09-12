@@ -36,11 +36,18 @@
 # attempts the privileged register -- failing the run partway through. A denied
 # read is not an absent object.
 #
-# 03 and 09 are NOT gated: their add-if-missing steps key off a real sys/mounts
-# and sys/auth listing, which reconcile may read, and the KV content they seed
-# is inside its grant. Only the plugin-registering engines are excluded.
+# Sibling of the 09 gate below: measured live, `bao secrets list` (sys/mounts)
+# 403s under the reconcile identity exactly like `bao auth list` (sys/auth)
+# does for 09 -- the "reconcile may read sys/mounts" assumption this comment
+# used to make was never true. A denied read reads as rc != 0 under
+# failed_when: false, which the file's own listing task then turns into a hard
+# fail rather than "absent" (unlike 04/05/06/07's plugin probes), aborting the
+# rest of init.yml -- including every AppRole/CIDR reconcile after it -- on
+# every workstation-run converge. Enabling a mount is bootstrap work; it needs
+# OPENBAO_PROVISIONING_TOKEN, same as auth methods below.
 - name: Enable the KV mounts and seed per-app service secrets
   ansible.builtin.include_tasks: init/03-kv-mounts-and-seed-secrets.yml
+  when: not (openbao_reconcile_mode | default(false))
 
 - name: Register and configure the AWS secrets engine
   ansible.builtin.include_tasks: init/04-aws-engine.yml
