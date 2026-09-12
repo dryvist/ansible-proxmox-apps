@@ -1,0 +1,47 @@
+---
+# MCP gateway (IBM mcp-context-forge) — pip-installed Python app, SQLite
+# state. Unlike vikunja/technitium there is no controller-staged binary: PyPI
+# is reachable directly (this guest's egress profile includes outbound_https),
+# so pip installs on the target like any other guest that needs package-index
+# egress (see modules/firewall/mcp_gateway_rules.tf in tofu-proxmox).
+
+# --- Version -----------------------------------------------------------------
+# renovate: datasource=pypi depName=mcp-contextforge-gateway
+mcp_gateway_version: "1.0.10"
+mcp_gateway_package: "mcp-contextforge-gateway=={{ mcp_gateway_version }}"
+
+# --- System user / paths ------------------------------------------------------
+mcp_gateway_user: mcp-gateway
+mcp_gateway_group: mcp-gateway
+mcp_gateway_install_dir: /opt/mcp-gateway
+mcp_gateway_venv: "{{ mcp_gateway_install_dir }}/venv"
+mcp_gateway_env_file: /etc/mcp-gateway/mcp-gateway.env
+# SQLite db on the persistent ZFS bind mount (terraform-proxmox mount_points),
+# never under the ephemeral install dir — same treatment as vikunja's files_dir.
+mcp_gateway_data_dir: /var/lib/mcp-gateway
+mcp_gateway_db_path: "{{ mcp_gateway_data_dir }}/mcp.db"
+
+# --- Network -------------------------------------------------------------------
+mcp_gateway_port: "{{ tofu_data.constants.service_ports.mcp_gateway_web }}"
+# Must match the Traefik router FQDN (<name>.<ingress base domain>) — every MCP
+# client (Claude Code, Codex, Cursor, OpenCode) is configured with this exact URL.
+mcp_gateway_public_url: "https://mcp-gateway.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+
+# --- Secrets: injection-agnostic plain env lookups (AGENTS.md convention) ---
+# Populated today via `doppler run --`; validated fail-loud below. Generated at
+# source in OpenBao (openbao_generated_app_secrets.mcp-gateway), never a
+# hand-picked value.
+mcp_gateway_admin_user: admin
+mcp_gateway_admin_password: "{{ lookup('env', 'MCP_GATEWAY_ADMIN_PASSWORD') }}"
+mcp_gateway_jwt_secret: "{{ lookup('env', 'MCP_GATEWAY_JWT_SECRET') }}"
+mcp_gateway_encryption_secret: "{{ lookup('env', 'MCP_GATEWAY_ENCRYPTION_SECRET') }}"
+
+# Upstream MCP servers this gateway federates behind its one endpoint. Each
+# entry's api_key_env names an env var the converge environment supplies
+# (doppler-injected from OpenBao secrets-external/, per this repo's
+# secret-separation convention) — the VALUE is never written here or in any
+# committed file. Empty by default; populate per upstream server as adopted.
+# e.g.: { name: huggingface, url: "https://...", api_key_env: MCP_GATEWAY_HF_API_KEY }
+mcp_gateway_upstream_servers: []
+
+mcp_gateway_api_timeout: 30

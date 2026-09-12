@@ -4,12 +4,14 @@
 # Keystone SPOF liveness watchdog. Rendered by the service_deadman role and run
 # on a systemd timer (every {{ service_deadman_interval }}). For each keystone
 # service on this host it runs a functional probe and:
-#   - healthy  -> pings the per-check healthchecks deadman OK endpoint
-#   - breached -> logs, pushes an ntfy alert, and pings the deadman /fail endpoint
+#   - healthy  -> pings the per-check healthchecks deadman OK endpoint and the
+#                 per-check status push monitor with status=up
+#   - breached -> logs, pushes an ntfy alert, pings the deadman /fail endpoint
+#                 and the status push monitor with status=down
 #
-# A missed run (validator crash / host down) also pages, because healthchecks
-# expects a ping every cycle. Empty healthcheck URLs skip only the deadman ping;
-# the journal + ntfy alert still fire.
+# A missed run (validator crash / host down) also pages, because both monitors
+# expect a ping every cycle. An empty monitor URL skips only that monitor's
+# ping; the journal + ntfy alert still fire.
 set -uo pipefail
 
 NTFY_URL="{{ service_deadman_ntfy_url }}"
@@ -23,16 +25,26 @@ hc_ping() {
   curl -fsS --max-time 8 "${url}" >/dev/null 2>&1 || true
 }
 
-# Healthy: signal the deadman OK so a stalled validator is also caught.
-mark_ok() {
-  local name="$1" url="$2"
-  logger -t service-deadman "OK: ${name} healthy on ${HOST}"
-  hc_ping "${url}"
+# Ping a status push monitor (Uptime Kuma /api/push form) if a URL is
+# configured; no-op otherwise. status is "up" or "down".
+push_ping() {
+  local url="$1" status="$2" msg="$3"
+  [[ -n "${url}" ]] || return 0
+  curl -fsS --max-time 8 -G --data-urlencode "status=${status}" \
+    --data-urlencode "msg=${msg}" "${url}" >/dev/null 2>&1 || true
 }
 
-# Breached: log, alert ntfy, signal the deadman failure endpoint.
+# Healthy: signal both deadmen OK so a stalled validator is also caught.
+mark_ok() {
+  local name="$1" url="$2" push_url="$3"
+  logger -t service-deadman "OK: ${name} healthy on ${HOST}"
+  hc_ping "${url}"
+  push_ping "${push_url}" up OK
+}
+
+# Breached: log, alert ntfy, signal both deadmen's failure paths.
 mark_fail() {
-  local name="$1" url="$2"
+  local name="$1" url="$2" push_url="$3"
   local msg="KEYSTONE DOWN: ${name} failed its liveness probe on ${HOST}"
   rc=1
   logger -t service-deadman "${msg}"
@@ -42,14 +54,15 @@ mark_fail() {
       -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1 || true
   fi
   [[ -n "${url}" ]] && curl -fsS --max-time 8 -d "${msg}" "${url}/fail" >/dev/null 2>&1 || true
+  push_ping "${push_url}" down "${msg}"
 }
 
 {% for check in service_deadman_checks %}
 # --- {{ check.name }} ---
 if {{ check.probe_command }}; then
-  mark_ok "{{ check.name }}" "{{ check.healthcheck_url }}"
+  mark_ok "{{ check.name }}" "{{ check.healthcheck_url }}" "{{ check.status_push_url | default('') }}"
 else
-  mark_fail "{{ check.name }}" "{{ check.healthcheck_url }}"
+  mark_fail "{{ check.name }}" "{{ check.healthcheck_url }}" "{{ check.status_push_url | default('') }}"
 fi
 {% endfor %}
 
