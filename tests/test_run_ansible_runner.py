@@ -53,11 +53,12 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 printf 'bao write auth/approle/login\n' >> "$FAKE_EVENT_LOG"
                 printf '%s\n' '{MINTED_TOKEN}'
                 ;;
-              *"sign/automation-ansible"*)
+              *"sign/automation-ansible"*|*"sign/automation-semaphore"*)
                 [[ " $* " == *" -field=signed_key "* ]] || exit 68
                 [[ " $* " == *" public_key=@"* ]] || exit 69
-                printf 'bao write ssh-client-ca/sign/automation-ansible%s\n' \
-                  "$auth" >> "$FAKE_EVENT_LOG"
+                sign_role=$(printf '%s' "$*" | grep -o 'sign/automation-[a-z]*')
+                printf 'bao write ssh-client-ca/%s%s\n' \
+                  "$sign_role" "$auth" >> "$FAKE_EVENT_LOG"
                 [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 2
                 printf '%s\n' 'test-certificate'
                 ;;
@@ -89,7 +90,13 @@ class RunAnsibleTokenContract(unittest.TestCase):
         path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
         path.chmod(0o700)
 
-    def _run(self, caller_token=None, sign_failure=False, declared_identity=False):
+    def _run(
+        self,
+        caller_token=None,
+        sign_failure=False,
+        declared_identity=False,
+        semaphore_identity=False,
+    ):
         env = os.environ.copy()
         env.update(
             {
@@ -113,6 +120,11 @@ class RunAnsibleTokenContract(unittest.TestCase):
         if declared_identity:
             env["OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID"] = "test-declared-role-id"
             env["OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID"] = APPROLE_SECRET
+        env.pop("OPENBAO_APPROLE_SEMAPHORE_ROLE_ID", None)
+        env.pop("OPENBAO_APPROLE_SEMAPHORE_SECRET_ID", None)
+        if semaphore_identity:
+            env["OPENBAO_APPROLE_SEMAPHORE_ROLE_ID"] = "test-semaphore-role-id"
+            env["OPENBAO_APPROLE_SEMAPHORE_SECRET_ID"] = APPROLE_SECRET
         if caller_token is None:
             env.pop("BAO_TOKEN", None)
         else:
@@ -175,6 +187,29 @@ class RunAnsibleTokenContract(unittest.TestCase):
         warning = result.stderr
         self.assertIn("UNDECLARED", result.stdout + warning)
         self.assertIn("WARNING", warning)
+        self._assert_no_secret_leak(result)
+
+    def test_semaphore_identity_is_preferred_over_declared_ansible_converge(self):
+        # All three pairs present: the execution plane's own identity wins,
+        # signs under its own CA role, and the ansible-converge warning path
+        # is not even reached.
+        result = self._run(declared_identity=True, semaphore_identity=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("authenticated as: semaphore", output)
+        self.assertIn("sign/automation-semaphore", output)
+        self.assertNotIn("UNDECLARED", output)
+        self.assertNotIn("ansible-converge", output)
+        self.assertEqual(
+            self.event_log.read_text(encoding="utf-8").splitlines(),
+            [
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-semaphore runner-auth",
+                "ansible",
+                "bao token revoke -self runner-auth",
+            ],
+        )
         self._assert_no_secret_leak(result)
 
     def test_caller_token_is_preserved_and_runner_token_revoked_before_child(self):
