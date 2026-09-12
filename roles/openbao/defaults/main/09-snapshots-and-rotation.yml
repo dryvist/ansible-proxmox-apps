@@ -102,8 +102,8 @@ openbao_rotators:
     enabled: "{{ openbao_splunk_mcp_rotate_enabled }}"
     interval: 24h
     approle: splunk-mcp-rotate
-    role_id: "{{ lookup('env', 'OPENBAO_APPROLE_SPLUNK_MCP_ROTATE_ROLE_ID') | default('', true) }}"
-    secret_id: "{{ lookup('env', 'OPENBAO_APPROLE_SPLUNK_MCP_ROTATE_SECRET_ID') | default('', true) }}"
+    role_id: "{{ openbao_splunk_mcp_rotate_role_id }}"
+    secret_id: "{{ openbao_splunk_mcp_rotate_secret_id }}"
     mint: splunk-mcp
     target: { mount: "{{ openbao_kv_mount }}", path: ai/mcp/splunk }
     field: SPLUNK_MCP_TOKEN
@@ -117,13 +117,32 @@ openbao_rotators:
     # username, password, mgmt_url) — seeded by a sibling package; the
     # script fails loud if it is absent rather than skipping quietly.
     minter_secret: apps/splunk-rotator
-    healthcheck_url: "{{ lookup('env', 'OPENBAO_SPLUNK_MCP_ROTATE_HC_URL') | default('', true) }}"
-    # secrets-security topic (Vikunja-slug topic set) — new publishers land
-    # here; the legacy `openbao` topic stays reserved for the existing
-    # snapshot/slack publishers until the rename sweep.
-    ntfy_url: >-
-      https://ntfy.{{ ingress_domain }}/secrets-security
+    healthcheck_url: "{{ openbao_splunk_mcp_rotate_healthcheck_url }}"
+    ntfy_url: "{{ openbao_splunk_mcp_rotate_ntfy_url }}"
 openbao_splunk_mcp_rotate_enabled: true
+# --- splunk-mcp rotator knobs (the table row above points at these; kept as
+# standalone vars for the same reason the slack-admin knobs below are split
+# out — a scenario that needs a different value (e.g. molecule, which has no
+# `ingress_domain` inventory fact) overrides the var directly instead of the
+# table row, and the row itself carries no inlined lookup() or Jinja
+# expression that could fail before its `enabled`/role_id/secret_id guard in
+# tasks/rotate.yml ever gets a chance to skip it — dict2items renders every
+# row's values to build the loop list, so an inlined expression in a
+# disabled row still has to resolve.) --------------------------------------
+# splunk-mcp-rotate AppRole creds the timer logs in with. Injected at
+# converge from tier-0 (never committed). When unset the rotator is skipped
+# so a pre-provisioning converge stays green.
+openbao_splunk_mcp_rotate_role_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_SPLUNK_MCP_ROTATE_ROLE_ID') | default('', true) }}
+openbao_splunk_mcp_rotate_secret_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_SPLUNK_MCP_ROTATE_SECRET_ID') | default('', true) }}
+openbao_splunk_mcp_rotate_healthcheck_url: "{{ lookup('env', 'OPENBAO_SPLUNK_MCP_ROTATE_HC_URL') | default('', true) }}"
+# ntfy alert target — secrets-security topic (Vikunja-slug topic set): new
+# publishers land here; the legacy `openbao` topic (used by the snapshot and
+# slack-admin jobs above) stays reserved for those existing publishers until
+# the rename sweep.
+openbao_splunk_mcp_rotate_ntfy_url: >-
+  https://ntfy.{{ ingress_domain }}/secrets-security
 
 # --- slack-admin rotator knobs (the table row above points at these; kept as
 # standalone vars so the Doppler-published env-var/value names underneath
