@@ -110,9 +110,12 @@ cleanup() {
 trap cleanup EXIT
 
 # Mint an ephemeral ed25519 keypair signed by ssh-client-ca/sign/
-# automation-ansible (principal `ansible`, TTL <=1h). OpenSSH pairs
-# id + id-cert.pub automatically via PROXMOX_SSH_KEY_PATH. No secret
-# material on any command line.
+# automation-ansible (principal `ansible`, TTL <=1h) or, when the caller is
+# the execution plane itself, sign/automation-semaphore (principal
+# `semaphore`) — see CONVERGE_SIGN_ROLE below. The plane's own principal makes
+# a plane-run converge distinguishable from every other caller in sshd logs.
+# OpenSSH pairs id + id-cert.pub automatically via PROXMOX_SSH_KEY_PATH. No
+# secret material on any command line.
 mint_ssh_cert() {
   local mount=${SSH_CA_MOUNT:-ssh-client-ca}
   CERT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ansible-sshcert.XXXXXX") || return 1
@@ -130,7 +133,7 @@ mint_ssh_cert() {
   # broken one. A request above the role's ceiling is refused outright, so this
   # value and openbao_ssh_roles must move together.
   BAO_TOKEN=$RUNNER_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 \
-    bao write -field=signed_key "$mount/sign/automation-ansible" \
+    bao write -field=signed_key "$mount/sign/$CONVERGE_SIGN_ROLE" \
     public_key=@"$CERT_DIR/id.pub" ttl="${SSH_CERT_TTL:-2h}" \
     > "$CERT_DIR/id-cert.pub" || return 1
   export PROXMOX_SSH_KEY_PATH="$CERT_DIR/id"
@@ -187,10 +190,22 @@ fi
 # Preference, not a hard switch, because the bounded credential is not yet
 # published everywhere this script runs. The fallback is deliberately LOUD: a
 # silent one is how this went unnoticed for three days.
+#
+# A third pair, OPENBAO_APPROLE_SEMAPHORE_*, belongs to the unattended
+# execution plane itself rather than to any human-run checkout. It carries
+# the same converge grant plus its own delta and signs under its own CA role,
+# so a plane-run converge is distinguishable from every other caller in sshd
+# logs by principal alone. Preferred first when present.
 CONVERGE_ROLE_ID=""
 CONVERGE_SECRET_ID=""
 CONVERGE_IDENTITY=""
-if [[ -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID:-} ]]; then
+CONVERGE_SIGN_ROLE="automation-ansible"
+if [[ -n ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
+  CONVERGE_ROLE_ID=$OPENBAO_APPROLE_SEMAPHORE_ROLE_ID
+  CONVERGE_SECRET_ID=$OPENBAO_APPROLE_SEMAPHORE_SECRET_ID
+  CONVERGE_IDENTITY="semaphore (execution plane)"
+  CONVERGE_SIGN_ROLE="automation-semaphore"
+elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID:-} ]]; then
   CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID
   CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID
   CONVERGE_IDENTITY="ansible-converge (declared, bounded)"
@@ -218,7 +233,7 @@ if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; the
   # Print the window. A converge that outlives its certificate dies with an
   # UNREACHABLE that reads exactly like a broken host, and the only way to tell
   # the two apart afterwards is knowing when the cert expired.
-  echo "Using a short-lived SSH certificate from the OpenBao CA (automation-ansible)."
+  echo "Using a short-lived SSH certificate from the OpenBao CA ($CONVERGE_SIGN_ROLE)."
   echo "  authenticated as: $CONVERGE_IDENTITY"
   # `|| true` is load-bearing under `set -euo pipefail`: if ssh-keygen cannot
   # parse the certificate the pipeline fails and takes the whole converge with
