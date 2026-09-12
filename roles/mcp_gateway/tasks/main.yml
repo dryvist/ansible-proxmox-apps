@@ -1,0 +1,107 @@
+---
+# MCP gateway (IBM mcp-context-forge) — pip install into a dedicated venv,
+# SQLite state, systemd unit. Shares the fail-closed secrets-assert pattern
+# every other apps-tier role uses (see roles/vikunja/tasks/main.yml).
+
+- name: Validate MCP gateway secrets are set
+  ansible.builtin.include_role:
+    name: openbao_secrets
+    tasks_from: assert_nonempty.yml
+  vars:
+    openbao_secrets_required_vars:
+      - mcp_gateway_admin_password
+      - mcp_gateway_jwt_secret
+      - mcp_gateway_encryption_secret
+
+- name: Create mcp-gateway system group
+  ansible.builtin.group:
+    name: "{{ mcp_gateway_group }}"
+    system: true
+    state: present
+
+- name: Create mcp-gateway system user
+  ansible.builtin.user:
+    name: "{{ mcp_gateway_user }}"
+    group: "{{ mcp_gateway_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ mcp_gateway_install_dir }}"
+    create_home: false
+    state: present
+
+- name: Create MCP gateway directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ mcp_gateway_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ mcp_gateway_install_dir }}", owner: root, mode: "0755" }
+    - { path: "/etc/mcp-gateway", owner: root, mode: "0750" }
+    - { path: "{{ mcp_gateway_data_dir }}", owner: "{{ mcp_gateway_user }}", mode: "0750" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Ensure python3-venv is present
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Create the mcp-gateway venv
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - "{{ mcp_gateway_venv }}"
+    creates: "{{ mcp_gateway_venv }}/bin/python"
+
+- name: Install mcp-contextforge-gateway (PyPI, direct — guest has outbound_https)
+  ansible.builtin.pip:
+    name: "{{ mcp_gateway_package }}"
+    virtualenv: "{{ mcp_gateway_venv }}"
+    state: present
+  notify: Restart mcp-gateway
+
+- name: Render MCP gateway environment file
+  ansible.builtin.template:
+    src: mcp-gateway.env.j2
+    dest: "{{ mcp_gateway_env_file }}"
+    owner: root
+    group: "{{ mcp_gateway_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart mcp-gateway
+
+- name: Install the mcp-gateway systemd unit
+  ansible.builtin.template:
+    src: mcp-gateway.service.j2
+    dest: /etc/systemd/system/mcp-gateway.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mcp-gateway
+
+- name: Enable and start mcp-gateway
+  ansible.builtin.systemd:
+    name: mcp-gateway
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Flush so a config/unit/package change is live before the health check below.
+- name: Apply any pending mcp-gateway restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the gateway to answer its health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ mcp_gateway_port }}/health"
+    method: GET
+    status_code: [200]
+    timeout: "{{ mcp_gateway_api_timeout }}"
+  register: mcp_gateway_health
+  until: mcp_gateway_health.status == 200
+  retries: 10
+  delay: 3
+  changed_when: false
