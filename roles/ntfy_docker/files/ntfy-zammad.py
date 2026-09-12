@@ -77,11 +77,22 @@ def zammad_call(base, token, path, payload=None, method=None):
         return json.loads(body) if body else {}
 
 
-def find_ticket(base, token, key):
-    query = 'title:"%s" AND state.name:(%s)' % (
-        key.replace('"', ""),
+def escape_lucene_phrase(value):
+    # Backslash and double-quote are the only characters that break OUT of a
+    # quoted Lucene phrase; every other special token (:, (, ), AND/OR/NOT)
+    # is literal once inside one, so escaping just these two is sufficient.
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def build_search_query(key):
+    return 'title:"%s" AND state.name:(%s)' % (
+        escape_lucene_phrase(key),
         " OR ".join(OPEN_STATES),
     )
+
+
+def find_ticket(base, token, key):
+    query = build_search_query(key)
     url = "tickets/search?%s" % urllib.parse.urlencode({"query": query, "limit": 1})
     tickets = zammad_call(base, token, url).get("tickets") or []
     return tickets[0] if tickets else None
@@ -111,7 +122,7 @@ def record_failure(state_dir, threshold, ntfy_base, keystone_topic):
     n += 1
     with open(path, "w") as f:
         f.write(str(n))
-    if n >= threshold and ntfy_base and keystone_topic:
+    if n == threshold and ntfy_base and keystone_topic:
         try:
             publish_self_alert(ntfy_base, keystone_topic, "ntfy-zammad has failed %d consecutive times" % n)
         except Exception:
@@ -124,6 +135,11 @@ def clear_failures(state_dir):
         os.remove(path)
 
 
+# ponytail: find_ticket-then-create below is check-then-act -- two ntfy
+# messages on the same topic|title processed concurrently could both miss
+# the existing ticket and each open a duplicate. ntfy runs this hook
+# synchronously per subscriber process, so it needs a real lock only if a
+# topic is ever fanned out to multiple concurrent workers.
 def run():
     topic = env("NTFY_TOPIC")
     title = env("NTFY_TITLE") or topic or "ntfy alert"
@@ -168,6 +184,8 @@ def run():
 
 
 def selftest():
+    import tempfile
+
     assert correlation_key("network", "WAN down") == "network|WAN down"
     assert should_skip(["no-zammad"]) is True
     assert should_skip(["high"]) is False
@@ -177,6 +195,35 @@ def selftest():
     assert parse_tags(" a, b ,,c") == ["a", "b", "c"]
     n = note("body text", ["a", "b"])
     assert n["internal"] is True and "body text" in n["body"] and "a, b" in n["body"]
+
+    # Lucene phrase escaping: :, (, ), AND/OR/NOT are literal once inside a
+    # correctly-escaped quoted phrase; only backslash and " can break out,
+    # so escaping just those two keeps the hostile value INSIDE one phrase.
+    assert escape_lucene_phrase('a\\b"c') == 'a\\\\b\\"c'
+    hostile = 'net" OR state.name:closed AND title:"x (foo:bar) NOT y'
+    query = build_search_query("topic|%s" % hostile)
+    assert query == 'title:"%s" AND state.name:(new OR open)' % escape_lucene_phrase(
+        "topic|%s" % hostile
+    )
+
+    # Self-alert must fire exactly once when crossing the threshold, not on
+    # every failure afterward, and a success must reset the counter so the
+    # NEXT outage can alert again.
+    with tempfile.TemporaryDirectory() as state_dir:
+        fired = []
+        orig_publish = globals()["publish_self_alert"]
+        globals()["publish_self_alert"] = lambda *a, **k: fired.append(1)
+        try:
+            for _ in range(5):
+                record_failure(state_dir, 3, "http://ntfy", "keystone")
+            assert fired == [1], "self-alert must fire exactly once crossing threshold"
+            clear_failures(state_dir)
+            for _ in range(3):
+                record_failure(state_dir, 3, "http://ntfy", "keystone")
+            assert fired == [1, 1], "counter reset must allow a second alert on the next outage"
+        finally:
+            globals()["publish_self_alert"] = orig_publish
+
     print("selftest OK")
 
 
