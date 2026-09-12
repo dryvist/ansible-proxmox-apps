@@ -4,10 +4,10 @@
 # Keystone SPOF liveness watchdog. Rendered by the service_deadman role and run
 # on a systemd timer (every {{ service_deadman_interval }}). For each keystone
 # service on this host it runs a functional probe and:
-#   - healthy  -> reports success to its Gatus external endpoint and pings its
-#                 healthchecks check
+#   - healthy  -> reports success to its Gatus external endpoint and its
+#                 Uptime Kuma push monitor, and pings its healthchecks check
 #   - breached -> logs, pushes an ntfy alert, reports failure to Gatus and
-#                 pings the healthchecks /fail endpoint
+#                 Kuma, and pings the healthchecks /fail endpoint
 #
 # A missed run (validator crash / host down) also pages, because both monitors
 # expect a report every cycle. An unconfigured receiver skips only that
@@ -17,6 +17,7 @@ set -uo pipefail
 NTFY_URL="{{ service_deadman_ntfy_url }}"
 GATUS_URL="{{ service_deadman_gatus_url }}"
 GATUS_TOKEN="{{ service_deadman_gatus_token }}"
+KUMA_URL="{{ service_deadman_kuma_url }}"
 HC_URL="{{ service_deadman_hc_url }}"
 HC_PING_KEY="{{ service_deadman_hc_ping_key }}"
 HOST="$(hostname)"
@@ -32,6 +33,16 @@ gatus_report() {
     "${GATUS_URL}/api/v1/endpoints/deadman_${name}/external" >/dev/null 2>&1 || true
 }
 
+# Report to the Uptime Kuma push monitor for <name>; the push token is derived
+# from the shared token and the name the same way status_stack renders it.
+kuma_report() {
+  local name="$1" status="$2" msg="$3" token
+  [[ -n "${GATUS_TOKEN}" ]] || return 0
+  token="$(printf '%s:%s' "${GATUS_TOKEN}" "${name}" | sha256sum | cut -c1-20)"
+  curl -fsS --max-time 8 -G --data-urlencode "status=${status}" --data-urlencode "msg=${msg}" \
+    "${KUMA_URL}/api/push/${token}" >/dev/null 2>&1 || true
+}
+
 # Ping the healthchecks check named <name> (created on first contact); no-op
 # until the healthchecks receiver is configured. suffix is "" or "/fail".
 hc_ping() {
@@ -41,15 +52,16 @@ hc_ping() {
     "${HC_URL}/ping/${HC_PING_KEY}/${name}${suffix}?create=1" >/dev/null 2>&1 || true
 }
 
-# Healthy: signal both deadmen OK so a stalled validator is also caught.
+# Healthy: signal every deadman OK so a stalled validator is also caught.
 mark_ok() {
   local name="$1"
   logger -t service-deadman "OK: ${name} healthy on ${HOST}"
   gatus_report "${name}" true ""
+  kuma_report "${name}" up OK
   hc_ping "${name}" "" "OK"
 }
 
-# Breached: log, alert ntfy, signal both deadmen's failure paths.
+# Breached: log, alert ntfy, signal every deadman's failure path.
 mark_fail() {
   local name="$1"
   local msg="KEYSTONE DOWN: ${name} failed its liveness probe on ${HOST}"
@@ -61,6 +73,7 @@ mark_fail() {
       -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1 || true
   fi
   gatus_report "${name}" false "${msg}"
+  kuma_report "${name}" down "${msg}"
   hc_ping "${name}" "/fail" "${msg}"
 }
 

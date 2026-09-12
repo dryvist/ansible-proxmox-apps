@@ -45,17 +45,19 @@ names verified against the live services:
 
 ## Monitor URLs
 
-Each check reports to two independent deadmen every cycle. Both URLs are
-derived from the check name, so a new check needs no per-check secret:
+Each check reports to independent deadmen every cycle. Every URL is derived
+from the check name, so a new check needs no per-check secret:
 
 | Receiver | Report | Source of the credential |
 | --- | --- | --- |
 | Gatus external endpoint `deadman_<name>` | `POST …/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>` with the shared bearer token | `bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN` (monitoring domain) |
+| Uptime Kuma push monitor `<name>` | `…/api/push/<token>?status=up\|down&msg=<msg>`, token = `sha256("<gatus token>:<name>")[:20]` | derived from the same token |
 | Healthchecks check `<name>` | `…/ping/<ping key>/<name>` (`/fail` on a breach), `?create=1` so the check exists after the first report | `bao_monitoring_secrets.HEALTHCHECK_PING_KEY` |
 
-The Gatus side is declared in `roles/status_stack` (`status_stack_deadman_endpoints`,
-one entry per check name with its heartbeat); a name missing there is rejected by
-Gatus, so add the endpoint there when adding a check here. The Healthchecks
+The Gatus endpoints and the Kuma push monitors are both rendered by
+`roles/status_stack` from `status_stack_deadman_endpoints` (one entry per check
+name with its heartbeat); a name missing there is rejected by Gatus and unknown
+to Kuma, so add the entry there when adding a check here. The Healthchecks
 report is skipped until a `healthchecks` backend is present in the published
 ingress table; an empty token skips only that receiver. The journal entry and
 ntfy alert always fire.

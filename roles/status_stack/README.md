@@ -42,11 +42,14 @@ routing is implemented as a criticality split by endpoint group: `keystone`/
 
 ## Deadman receivers
 
-`status_stack_deadman_endpoints` declares one Gatus external endpoint per
-pusher under the `deadman` group. Pushers `POST
-/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>` with the
-shared bearer token (`bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN`); a pusher
-silent for longer than its `heartbeat` goes unhealthy and alerts on ntfy. The
+`status_stack_deadman_endpoints` declares, per pusher, one Gatus external
+endpoint under the `deadman` group and one Uptime Kuma push monitor (rendered
+as an AutoKuma static monitor). Pushers `POST
+/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>` to Gatus
+with the shared bearer token (`bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN`)
+and `GET /api/push/<token>?status=up|down&msg=…` to Kuma, where the push token
+is `sha256("<gatus token>:<name>")[:20]`; a pusher silent for longer than its
+`heartbeat` goes unhealthy in both and alerts on ntfy. The
 pushers are `roles/service_deadman` (this repo), the media stack's validators,
 and the mlx watchdog; their slugs must appear here first — Gatus rejects a
 report for an undeclared endpoint (`tests/test_deadman_endpoints_declared.py`
