@@ -169,6 +169,20 @@
     patterns: "*.json"
   register: status_stack_autokuma_existing_files
 
+- name: Guard against wiping every AutoKuma monitor on a degenerate empty target list
+  ansible.builtin.assert:
+    that:
+      - status_stack_autokuma_monitors | length > 0
+    fail_msg: >-
+      status_stack_monitor_targets produced zero monitors (tofu_data or
+      monitor_targets is likely empty/malformed this run) but
+      {{ status_stack_autokuma_existing_files.files | length }} AutoKuma
+      static-monitor file(s) already exist in
+      {{ status_stack_autokuma_static_monitors_dir }}. Refusing to run
+      stale-monitor cleanup, which would delete all of them — regenerate the
+      published tofu inventory and re-run instead of trusting this pass.
+  when: status_stack_autokuma_existing_files.files | length > 4
+
 - name: Remove AutoKuma static-monitor files for decommissioned targets
   ansible.builtin.file:
     path: "{{ item.path }}"
