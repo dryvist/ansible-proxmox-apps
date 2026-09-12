@@ -23,7 +23,7 @@ REL = "roles/openbao/tasks/seed_generated_app_secret.yml"
 TASK = "Generate a random value for each field that is not yet stored"
 
 DEFAULTS = yaml.safe_load(
-    (ROOT / "roles/openbao/defaults/main/01-kv-hierarchy-and-rbac.yml").read_text()
+    (ROOT / "roles/openbao/defaults/main/01b-app-secret-generation.yml").read_text()
 )
 ROUTER_SUFFIX = DEFAULTS["openbao_app_secret_router_key_suffix"]
 ROUTER_PREFIX = DEFAULTS["openbao_app_secret_router_key_prefix"]
