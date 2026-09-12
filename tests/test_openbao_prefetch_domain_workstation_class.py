@@ -5,9 +5,9 @@ roles/openbao_secrets/tasks/fetch_domain.yml logs into one AppRole per
 observability, local-cloud, monitoring, media, apps, ntfy, local-llm -- for
 every workstation-run converge (`scripts/run-ansible.sh` from a dev shell).
 None of them had a CIDR class override, so all seven defaulted to `machine`
-and rejected the workstation exactly like slack-ops did (Vikunja 3098):
-observability is first in the loop, so every workstation converge died on the
-very first domain, regardless of which app the converge was actually for.
+and rejected the workstation exactly like slack-ops did: observability is
+first in the loop, so every workstation converge died on the very first
+domain, regardless of which app the converge was actually for.
 
 This pins each declared domain to an override whose class includes
 `workstation` (bare `workstation` or `machine_or_workstation`), so a domain
