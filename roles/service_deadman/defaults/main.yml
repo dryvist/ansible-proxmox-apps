@@ -46,6 +46,15 @@ service_deadman_hc_url: >-
      else '' }}
 service_deadman_hc_ping_key: "{{ bao_monitoring_secrets.HEALTHCHECK_PING_KEY | default('') }}"
 
+# Off-site free-tier deadman (healthchecks.io-style ping-by-slug, same wire
+# protocol as the self-hosted receiver above: <url>/<name> ok, <url>/<name>/fail
+# breach). This is the one receiver every OTHER receiver here cannot be: it
+# lives outside the homelab, so it is the only page that still fires when the
+# whole estate — ingress, DNS, the self-hosted Gatus/Kuma/Healthchecks stack —
+# is unreachable. The whole ping URL (its unique id is the credential) comes
+# from OpenBao, never a literal; empty skips the ping like every receiver here.
+service_deadman_offsite_hc_url: "{{ bao_monitoring_secrets.HEALTHCHECKS_OFFSITE_PING_URL | default('', true) }}"
+
 # Per-group keystone checks. The role selects every check whose group this host
 # belongs to (group_names), so one site.yml play covers all keystones and each
 # host watches only its own services. Each check:
@@ -85,6 +94,18 @@ service_deadman_group_checks:
         systemctl is-active --quiet openbao &&
         BAO_ADDR="http://{{ container_ip | default(ansible_host) }}:8200"
         bao status >/dev/null 2>&1
+  ntfy_group:
+    # The ntfy alert hub (roles/ntfy_docker) is itself a keystone: every other
+    # deadman check, Grafana alert and Zammad ticket in this repo depends on
+    # it to page. Its own liveness therefore cannot depend on ntfy to report
+    # -- it is checked here, alongside the other SPOFs, so a dead hub still
+    # pages through Gatus/Kuma/Healthchecks and the off-site receiver above.
+    # Port matches ntfy_docker_http_port's default (roles/ntfy_docker); the
+    # two roles run in separate plays, so this cannot reference that role's
+    # default directly.
+    - name: ntfy
+      probe_command: >-
+        curl -fsS --max-time 5 http://127.0.0.1:8080/v1/health >/dev/null 2>&1
   docker_vms:
     # The pooled GitHub Actions runner fleet is not a keystone SPOF, but it
     # shares the same silent-failure shape: github_runner's converge-time

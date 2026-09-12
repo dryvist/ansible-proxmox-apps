@@ -42,25 +42,40 @@ names verified against the live services:
 | `haproxy_group` | `nginx.service` | unit active (UDP syslog/netflow LB) |
 | `docker_vms` | `github-runner@N.service` (pool) | every configured replica unit active |
 | `docker_vms` | Docker data disk | `/var/lib/docker` used percent below `service_deadman_disk_floor_pct` |
+| `ntfy_group` | `ntfy` (roles/ntfy_docker) | `curl` to the local `/v1/health` endpoint returns 200 |
 
 ## Monitor URLs
 
 Each check reports to independent deadmen every cycle. Every URL is derived
 from the check name, so a new check needs no per-check secret:
 
-| Receiver | Report | Source of the credential |
+| Receiver | Report | Credential |
 | --- | --- | --- |
-| Gatus external endpoint `deadman_<name>` | `POST …/api/v1/endpoints/deadman_<name>/external?success=<bool>&error=<msg>` with the shared bearer token | `bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN` (monitoring domain) |
-| Uptime Kuma push monitor `<name>` | `…/api/push/<token>?status=up\|down&msg=<msg>`, token = `sha256("<gatus token>:<name>")[:20]` | derived from the same token |
-| Healthchecks check `<name>` | `…/ping/<ping key>/<name>` (`/fail` on a breach), `?create=1` so the check exists after the first report | `bao_monitoring_secrets.HEALTHCHECK_PING_KEY` |
+| Gatus external endpoint `deadman_<name>` | `POST …/api/v1/endpoints/deadman_<name>/external` | `bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN` |
+| Uptime Kuma push monitor `<name>` | `…/api/push/<token>?status=up\|down`, token derived from the Gatus token | same token |
+| Healthchecks check `<name>` (self-hosted) | `…/ping/<ping key>/<name>`, `/fail` on breach | `bao_monitoring_secrets.HEALTHCHECK_PING_KEY` |
+| Off-site healthchecks deadman `<name>` | same wire form, different (third-party) base URL | `bao_monitoring_secrets.HEALTHCHECKS_OFFSITE_PING_URL` |
+
+Details each receiver's report format omits: Gatus takes `success=<bool>&error=<msg>`;
+Kuma's push token is `sha256("<gatus token>:<name>")[:20]`; the two Healthchecks
+rows both append `?create=1` so the check exists after the first report, and
+`/fail` on a breach. The off-site row's URL, unique id included, is the whole
+credential — no separate ping key.
 
 The Gatus endpoints and the Kuma push monitors are both rendered by
 `roles/status_stack` from `status_stack_deadman_endpoints` (one entry per check
 name with its heartbeat); a name missing there is rejected by Gatus and unknown
 to Kuma, so add the entry there when adding a check here. The Healthchecks
 report is skipped until a `healthchecks` backend is present in the published
-ingress table; an empty token skips only that receiver. The journal entry and
-ntfy alert always fire.
+ingress table; an empty URL/token skips only that receiver, self-hosted or
+off-site. The journal entry and ntfy alert always fire.
+
+The off-site receiver is the one exception worth calling out: it is a
+free-tier SaaS deadman, reachable from the open internet, not the homelab.
+It is the only receiver that still pages when the homelab itself — ingress,
+DNS, or the self-hosted Gatus/Kuma/Healthchecks stack — is unreachable. It
+is unseeded (empty, skipped) by default; seed
+`secrets-external/platform/healthchecks-offsite` in OpenBao to enable it.
 
 ## Installation
 
@@ -92,6 +107,7 @@ systemctl status service-deadman-validate.timer
 #   - ntfy:    the "keystone" topic receives an urgent message
 #   - healthchecks: the corresponding check flips to down
 #   - Uptime Kuma: the corresponding push monitor flips to down
+#   - off-site healthchecks: the corresponding check flips to down (once seeded)
 ```
 
 ## Contributing
