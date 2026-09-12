@@ -100,6 +100,35 @@ prometheus_stack_traefik_targets: >-
            '\1:' ~ (prometheus_stack_traefik_metrics_port | string))
      | list }}
 
+# --- LLM router ---------------------------------------------------------------
+# The router's own metrics endpoint, which is the only consumer of its fallback
+# events: counters keyed by the model group asked for and the one that served.
+# Targets derive from the llm-router-tagged inventory entries, so a new router
+# is a scrape target with no edit here; the port is the published constant.
+# The endpoint AUTHENTICATES, so the job renders only when both a target and
+# the bearer exist — a job with an empty bearer would sit at 401 forever and
+# read like a scrape that never quite works.
+prometheus_stack_llm_router_metrics_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['llm_router_api']
+     | default(4000) }}
+prometheus_stack_llm_router_targets: >-
+  {{ tofu_data['containers'] | default({}) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'llm-router')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$',
+           '\1:' ~ (prometheus_stack_llm_router_metrics_port | string))
+     | list }}
+# The bearer. Empty here on purpose; inventory/group_vars/prometheus_group.yml
+# supplies it from bao_apps_secrets.prometheus_llm_router_key.
+prometheus_stack_llm_router_bearer: ""
+
+# Group that owns the rendered prometheus.yml. It carries the bearer above, so
+# it is 0640 rather than world-readable — but the container reads it as the
+# image's default unprivileged user, so the group is that user's numeric gid
+# rather than root. The number is the image's, not the host's.
+prometheus_stack_config_group: "65534"
+
 # Cribl Stream remote_write endpoint. Empty = remote_write block omitted entirely.
 # Set in a private inventory; never commit a real Cribl IP to this public role default.
 prometheus_stack_remote_write_url: ""
@@ -114,6 +143,7 @@ prometheus_stack_remote_write_keep_jobs:
   # Listed here as well as in scrape_configs — a job absent from this allow-list
   # is scraped locally and never shipped, which is the gotcha named above.
   - traefik
+  - llm_router
 
 # --- probe modules (HOW to probe; targets come from prometheus_stack_blackbox_jobs) ---
 # icmp        — latency/loss to the modem + ISP hops + public anycast
