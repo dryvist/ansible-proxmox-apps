@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.35.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.34.1...v4.35.0) (2026-09-12)
+
+
+### Features
+
+* **openbao:** add daily secret-age auditor timer ([#1821](https://github.com/dryvist/ansible-proxmox-apps/issues/1821)) ([38b5f06](https://github.com/dryvist/ansible-proxmox-apps/commit/38b5f060fe862723532306559e48208a9d8ce032))
+* **openbao:** add opencode to the ai-api-key provider set ([#1828](https://github.com/dryvist/ansible-proxmox-apps/issues/1828)) ([b81e523](https://github.com/dryvist/ansible-proxmox-apps/commit/b81e523b6d9ebf786c829945b24633367be27383))
+* **openbao:** generalize slack rotator into an openbao_rotators table, add splunk-mcp ([#1820](https://github.com/dryvist/ansible-proxmox-apps/issues/1820)) ([0433936](https://github.com/dryvist/ansible-proxmox-apps/commit/0433936c87dadf21f578ddc0f47678e743f0438f))
+* **openbao:** generate a github-actions router key ([#1825](https://github.com/dryvist/ansible-proxmox-apps/issues/1825)) ([00d68dd](https://github.com/dryvist/ansible-proxmox-apps/commit/00d68ddbb0e277f116cfe96d32c8571972f4a536))
+* **prometheus_stack:** scrape the LLM router's metrics with a generated per-scraper key ([#1823](https://github.com/dryvist/ansible-proxmox-apps/issues/1823)) ([0d14f97](https://github.com/dryvist/ansible-proxmox-apps/commit/0d14f97cfcdf86d572524fc18d4477e64768b310))
+* **rotate-key:** add canonical on-demand secret rotation playbook ([#1819](https://github.com/dryvist/ansible-proxmox-apps/issues/1819)) ([9acd4ed](https://github.com/dryvist/ansible-proxmox-apps/commit/9acd4ed1db7ee22f16747a6f4e7e7cc2d3839215))
+* **zammad:** seed stale-new job, first-response SLA, and pending-close overview ([#1822](https://github.com/dryvist/ansible-proxmox-apps/issues/1822)) ([7e4781c](https://github.com/dryvist/ansible-proxmox-apps/commit/7e4781cda10c4ee1d3f761733eee0d25022482a6))
+
+
+### Bug Fixes
+
+* **homarr:** build the seerr URL from the ingress subdomain; retire the public AppRole ([#1824](https://github.com/dryvist/ansible-proxmox-apps/issues/1824)) ([de118a1](https://github.com/dryvist/ansible-proxmox-apps/commit/de118a11284e2aabbef8907495ba0a50e17e5bc8))
+
 ## [4.34.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.34.0...v4.34.1) (2026-09-11)
 
 
