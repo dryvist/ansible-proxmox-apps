@@ -1,14 +1,19 @@
-"""Regression for the reconcile-mode mount/auth gate in roles/openbao/tasks/init.yml.
+"""Regression for the reconcile-mode sys/mounts handling in 03-kv-mounts-and-seed-secrets.yml.
 
-Measured live: `bao secrets list` (sys/mounts) 403s under the openbao-reconcile
-identity, exactly like `bao auth list` (sys/auth) already does for 09. Before
-this fix, init.yml did not gate the "Enable the KV mounts and seed per-app
-service secrets" include (03-kv-mounts-and-seed-secrets.yml) the way it gates
-04/05/06/07/09 -- so that file's own hard-fail-on-denied-read task aborted the
-rest of init.yml under every workstation reconcile converge, including the
-AppRole/CIDR reconcile task (10-approles.yml) that runs after it. This asserts
-03's include carries the same reconcile-mode skip as its sibling 09, so a
-future edit cannot silently drop it again.
+templates/openbao-reconcile-policy.hcl.j2 grants sys/mounts read/list to the
+reconcile identity, so 03's own probe (`bao secrets list`) is meant to succeed
+under reconcile mode. A denied read there means the DEPLOYED reconcile policy
+is stale against the template (05d-reconcile-exclusions.yml excludes that
+policy from its own reconciliation, so only a privileged converge refreshes
+it) -- not that the grant was never meant to exist. This asserts:
+
+* the hard `fail` on a denied listing only fires OUTSIDE reconcile mode, so a
+  stale policy under reconcile mode does not abort init.yml (and therefore
+  the AppRole/CIDR reconcile task that runs after this file);
+* a loud warning fires INSTEAD, under reconcile mode, on a denied listing;
+* the rest of the file's KV-mount and app-secret work is gated on the probe
+  having actually succeeded (rc == 0), not on reconcile mode alone -- so it
+  runs normally in reconcile mode once the deployed policy is refreshed.
 """
 
 from pathlib import Path
@@ -18,52 +23,91 @@ import yaml
 from jinja2 import Environment
 
 ROOT = Path(__file__).resolve().parents[1]
-INIT = ROOT / "roles" / "openbao" / "tasks" / "init.yml"
+TASKS = ROOT / "roles" / "openbao" / "tasks" / "init" / "03-kv-mounts-and-seed-secrets.yml"
 
-KV_MOUNTS_STEP = "Enable the KV mounts and seed per-app service secrets"
-AUTH_METHODS_STEP = "Enable AppRole/JWT auth and reconcile Terrakube workspace JWT roles"
-
-
-def _steps(node):
-    if isinstance(node, list):
-        for entry in node:
-            yield from _steps(entry)
-    elif isinstance(node, dict):
-        if "name" in node:
-            yield node
-        for key in ("block", "rescue", "always"):
-            if key in node:
-                yield from _steps(node[key])
+FAIL_TASK = "Fail with the reason the secrets-engine listing did not succeed"
+WARN_TASK = "WARN -- deployed openbao-reconcile policy is stale (sys/mounts denied)"
+GATED_BLOCK = "Enable the KV mounts and seed per-app service secrets (probe succeeded)"
 
 
-class ReconcileModeMountGate(unittest.TestCase):
+def _load():
+    return yaml.safe_load(TASKS.read_text(encoding="utf-8"))
+
+
+class ReconcileModeMountHandling(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.steps = {s["name"]: s for s in _steps(yaml.safe_load(INIT.read_text()))}
-        for name in (KV_MOUNTS_STEP, AUTH_METHODS_STEP):
-            assert name in cls.steps, f"{name!r} not found in {INIT}"
+        cls.tasks = {t["name"]: t for t in _load()}
+        for name in (FAIL_TASK, WARN_TASK, GATED_BLOCK):
+            assert name in cls.tasks, f"{name!r} not found in {TASKS}"
         cls.env = Environment()
 
-    def _fires_under_reconcile(self, step_name):
-        cond = self.steps[step_name].get("when")
-        if cond is None:
-            return True
-        conds = [cond] if isinstance(cond, str) else cond
+    def _fires(self, task_name, **context):
+        conds = self.tasks[task_name]["when"]
+        conds = [conds] if isinstance(conds, str) else conds
         for c in conds:
-            rendered = self.env.from_string("{{ %s }}" % c).render(
-                openbao_reconcile_mode=True
-            )
+            rendered = self.env.from_string("{{ %s }}" % c).render(**context)
             if rendered.strip() != "True":
                 return False
         return True
 
-    def test_kv_mounts_step_is_skipped_under_reconcile_mode(self):
-        self.assertFalse(self._fires_under_reconcile(KV_MOUNTS_STEP))
+    def test_fail_does_not_fire_under_reconcile_mode(self):
+        self.assertFalse(
+            self._fires(
+                FAIL_TASK,
+                openbao_bootstrap_token="tok",
+                openbao_reconcile_mode=True,
+                openbao_mounts_raw={"rc": 1},
+            )
+        )
 
-    def test_auth_methods_step_stays_skipped_under_reconcile_mode(self):
-        # The sibling this fix was modeled on -- pinned so both can't drift
-        # back out of sync with each other.
-        self.assertFalse(self._fires_under_reconcile(AUTH_METHODS_STEP))
+    def test_fail_still_fires_outside_reconcile_mode(self):
+        self.assertTrue(
+            self._fires(
+                FAIL_TASK,
+                openbao_bootstrap_token="tok",
+                openbao_reconcile_mode=False,
+                openbao_mounts_raw={"rc": 1},
+            )
+        )
+
+    def test_warn_fires_under_reconcile_mode_on_denial(self):
+        self.assertTrue(
+            self._fires(
+                WARN_TASK,
+                openbao_bootstrap_token="tok",
+                openbao_reconcile_mode=True,
+                openbao_mounts_raw={"rc": 1},
+            )
+        )
+
+    def test_warn_does_not_fire_when_the_probe_succeeded(self):
+        self.assertFalse(
+            self._fires(
+                WARN_TASK,
+                openbao_bootstrap_token="tok",
+                openbao_reconcile_mode=True,
+                openbao_mounts_raw={"rc": 0},
+            )
+        )
+
+    def test_gated_block_skips_on_a_denied_probe(self):
+        self.assertFalse(
+            self._fires(
+                GATED_BLOCK,
+                openbao_bootstrap_token="tok",
+                openbao_mounts_raw={"rc": 1},
+            )
+        )
+
+    def test_gated_block_runs_once_the_probe_succeeds(self):
+        self.assertTrue(
+            self._fires(
+                GATED_BLOCK,
+                openbao_bootstrap_token="tok",
+                openbao_mounts_raw={"rc": 0},
+            )
+        )
 
 
 if __name__ == "__main__":

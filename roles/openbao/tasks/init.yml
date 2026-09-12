@@ -36,18 +36,16 @@
 # attempts the privileged register -- failing the run partway through. A denied
 # read is not an absent object.
 #
-# Sibling of the 09 gate below: measured live, `bao secrets list` (sys/mounts)
-# 403s under the reconcile identity exactly like `bao auth list` (sys/auth)
-# does for 09 -- the "reconcile may read sys/mounts" assumption this comment
-# used to make was never true. A denied read reads as rc != 0 under
-# failed_when: false, which the file's own listing task then turns into a hard
-# fail rather than "absent" (unlike 04/05/06/07's plugin probes), aborting the
-# rest of init.yml -- including every AppRole/CIDR reconcile after it -- on
-# every workstation-run converge. Enabling a mount is bootstrap work; it needs
-# OPENBAO_PROVISIONING_TOKEN, same as auth methods below.
+# Unlike 04/05/06/09, this include is NOT gated on reconcile mode:
+# templates/openbao-reconcile-policy.hcl.j2 already grants sys/mounts
+# read/list, so the reconcile identity is meant to run this file. The file's
+# own tasks handle a denied sys/mounts read (a stale deployed policy --
+# 05d-reconcile-exclusions.yml excludes the reconcile policy from its own
+# reconciliation, so only a privileged converge refreshes it) by warning and
+# skipping its own KV-mount and app-secret work, instead of this include
+# skipping blind.
 - name: Enable the KV mounts and seed per-app service secrets
   ansible.builtin.include_tasks: init/03-kv-mounts-and-seed-secrets.yml
-  when: not (openbao_reconcile_mode | default(false))
 
 - name: Register and configure the AWS secrets engine
   ansible.builtin.include_tasks: init/04-aws-engine.yml
@@ -69,11 +67,11 @@
 
 - name: Enable AppRole/JWT auth and reconcile Terrakube workspace JWT roles
   ansible.builtin.include_tasks: init/09-auth-methods-and-terrakube-jwt.yml
-  # sys/auth and auth/terrakube/* are outside the reconcile identity's policy
-  # (it grants sys/policies/acl, auth/approle/role/<name> and <ssh>/roles/<name>
-  # only), so every write here 403s under a reconcile-mode run. These are all
-  # add-if-missing against a live listing, and a denied READ returns rc != 0
-  # under failed_when: false — which reads as "absent" and triggers exactly the
+  # templates/openbao-reconcile-policy.hcl.j2 grants sys/auth read/list, but
+  # the deployed reconcile policy can be stale against it the same way 03's
+  # sys/mounts grant was (05d-reconcile-exclusions.yml excludes the reconcile
+  # policy from its own reconciliation). A denied READ returns rc != 0 under
+  # failed_when: false — which reads as "absent" and triggers exactly the
   # privileged create that cannot succeed. Enabling an auth method is bootstrap
   # work; it needs OPENBAO_PROVISIONING_TOKEN.
   when: not (openbao_reconcile_mode | default(false))
