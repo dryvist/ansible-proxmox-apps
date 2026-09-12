@@ -50,6 +50,10 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 piped=""
                 IFS= read -r piped || true
                 [[ $piped == "$EXPECTED_APPROLE_SECRET" ]] || exit 67
+                if [[ -n "${{FAKE_REFUSE_ROLE_ID:-}}" && " $* " == *" role_id=$FAKE_REFUSE_ROLE_ID "* ]]; then
+                  printf 'bao write auth/approle/login refused\n' >> "$FAKE_EVENT_LOG"
+                  exit 70
+                fi
                 printf 'bao write auth/approle/login\n' >> "$FAKE_EVENT_LOG"
                 printf '%s\n' '{MINTED_TOKEN}'
                 ;;
@@ -78,6 +82,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
             set -euo pipefail
             printf 'ansible\n' >> "$FAKE_EVENT_LOG"
             [[ ${BAO_TOKEN:-} == "$EXPECTED_CHILD_BAO_TOKEN" ]]
+            printf 'child CONVERGE_ROLE_ID=%s\n' "${CONVERGE_ROLE_ID:-}" >> "$FAKE_EVENT_LOG"
             printf 'child received expected token\n'
             """,
         )
@@ -96,6 +101,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
         sign_failure=False,
         declared_identity=False,
         semaphore_identity=False,
+        refuse_role_id=None,
     ):
         env = os.environ.copy()
         env.update(
@@ -108,6 +114,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "EXPECTED_APPROLE_SECRET": APPROLE_SECRET,
                 "FAKE_EVENT_LOG": str(self.event_log),
                 "FAKE_SIGN_FAILURE": "1" if sign_failure else "0",
+                "FAKE_REFUSE_ROLE_ID": refuse_role_id or "",
                 "PATH": f"{self.bin_path}{os.pathsep}{env['PATH']}",
                 "TMPDIR": str(self.tmp_path),
             }
@@ -159,6 +166,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "bao write auth/approle/login",
                 "bao write ssh-client-ca/sign/automation-ansible runner-auth",
                 "ansible",
+                "child CONVERGE_ROLE_ID=test-role-id",
                 "bao token revoke -self runner-auth",
             ],
         )
@@ -207,10 +215,41 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "bao write auth/approle/login",
                 "bao write ssh-client-ca/sign/automation-semaphore runner-auth",
                 "ansible",
+                "child CONVERGE_ROLE_ID=test-semaphore-role-id",
                 "bao token revoke -self runner-auth",
             ],
         )
         self._assert_no_secret_leak(result)
+
+    def test_semaphore_login_refused_falls_back_to_ansible_converge(self):
+        # The semaphore AppRole's own source-address restriction can refuse a
+        # caller (e.g. a workstation) even though its credential is present.
+        # That is not a fatal mint failure: retry with the next identity in
+        # order instead of aborting the converge.
+        result = self._run(
+            declared_identity=True,
+            semaphore_identity=True,
+            refuse_role_id="test-semaphore-role-id",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("AppRole login refused", result.stderr)
+        self.assertIn("authenticated as: ansible-converge", output)
+        self.assertNotIn("UNDECLARED", output)
+        self.assertEqual(
+            self.event_log.read_text(encoding="utf-8").splitlines(),
+            [
+                "bao write auth/approle/login refused",
+                "bao write auth/approle/login",
+                "bao write ssh-client-ca/sign/automation-ansible runner-auth",
+                "ansible",
+                "child CONVERGE_ROLE_ID=test-declared-role-id",
+                "bao token revoke -self runner-auth",
+            ],
+        )
+        self._assert_no_secret_leak(result)
+        self._assert_cert_cleanup()
 
     def test_caller_token_is_preserved_and_runner_token_revoked_before_child(self):
         result = self._run(caller_token=CALLER_TOKEN)
@@ -223,6 +262,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "bao write ssh-client-ca/sign/automation-ansible runner-auth",
                 "bao token revoke -self runner-auth",
                 "ansible",
+                "child CONVERGE_ROLE_ID=test-role-id",
             ],
         )
         self._assert_no_secret_leak(result)
