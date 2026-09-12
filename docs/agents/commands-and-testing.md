@@ -126,7 +126,7 @@ TOFU_INVENTORY_PATH=$PWD/tests/inventory_load/tofu_inventory.json \
     -i inventory/hosts.yml -c local
 ```
 
-### Extended (manual — run before merging role changes)
+### Extended (manual)
 
 Full Molecule test deploys the `mssql_docker` role in a Docker container,
 starts SQL Server, and verifies port 1433 is accepting connections.
@@ -144,8 +144,6 @@ molecule converge   # deploy role into container
 molecule verify     # run assertions
 molecule destroy    # clean up
 ```
-
-**When to run:** Any time you modify a role in `roles/` before opening a PR.
 
 ### Reviewing a new check: which layer does it observe?
 
