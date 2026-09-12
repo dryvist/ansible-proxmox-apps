@@ -1,0 +1,38 @@
+---
+# cAdvisor Docker Deployment Tasks
+# Docker itself (docker-ce + compose plugin, fuse-overlayfs) is installed by
+# the docker_engine meta dependency (meta/main.yml). No venv: cAdvisor deploys
+# via docker_compose_v2, which uses the docker compose CLI (not the docker SDK).
+
+- name: Create cAdvisor data directory
+  ansible.builtin.file:
+    path: "{{ cadvisor_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy cAdvisor docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ cadvisor_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart cadvisor
+
+- name: Deploy cAdvisor via docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ cadvisor_data_dir }}"
+    state: present
+
+- name: Verify cAdvisor metrics endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ cadvisor_port }}/metrics"
+    method: GET
+    status_code: 200
+  register: cadvisor_health
+  retries: 10
+  delay: 5
+  until: cadvisor_health.status | default(0) == 200
+  changed_when: false

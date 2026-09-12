@@ -1,0 +1,71 @@
+---
+# prometheus-pve-exporter Docker deployment. Docker itself (docker-ce +
+# compose plugin, fuse-overlayfs) is installed by the docker_engine meta
+# dependency (meta/main.yml). No venv: deploys via docker_compose_v2, which
+# uses the docker compose CLI (not the docker SDK).
+#
+# The PVE API token is a SUPPORTED-absent value (see defaults/main.yml): until
+# an operator creates one with `pveum user token add` and promotes it into
+# OpenBao, this role no-ops rather than deploying an exporter that would query
+# the PVE API unauthenticated.
+
+- name: Set whether the PVE API token is provisioned
+  ansible.builtin.set_fact:
+    prometheus_pve_exporter_token_present: >-
+      {{ (prometheus_pve_exporter_token_id | trim | length > 0)
+         and (prometheus_pve_exporter_token_secret | trim | length > 0) }}
+
+- name: Skip pve-exporter deployment when no PVE API token is provisioned
+  ansible.builtin.debug:
+    msg: >-
+      prometheus_pve_exporter_token_id/_secret are empty — skipping
+      pve-exporter deployment. Create a read-only PVE API token (pveum user
+      token add) and promote it to secret/apps/pve-exporter
+      (PVE_EXPORTER_TOKEN_ID/_SECRET) to enable this role.
+  when: not prometheus_pve_exporter_token_present
+
+- name: Deploy pve-exporter
+  when: prometheus_pve_exporter_token_present
+  block:
+    - name: Create pve-exporter data directory
+      ansible.builtin.file:
+        path: "{{ prometheus_pve_exporter_data_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render pve-exporter configuration
+      ansible.builtin.template:
+        src: pve.yml.j2
+        dest: "{{ prometheus_pve_exporter_data_dir }}/pve.yml"
+        owner: root
+        group: root
+        mode: "0640"
+      no_log: true
+      notify: Restart pve-exporter
+
+    - name: Deploy pve-exporter docker-compose template
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ prometheus_pve_exporter_data_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart pve-exporter
+
+    - name: Deploy pve-exporter via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ prometheus_pve_exporter_data_dir }}"
+        state: present
+
+    - name: Verify pve-exporter answers its health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ prometheus_pve_exporter_port }}/"
+        method: GET
+        status_code: 200
+      register: prometheus_pve_exporter_health
+      retries: 10
+      delay: 5
+      until: prometheus_pve_exporter_health.status | default(0) == 200
+      changed_when: false
