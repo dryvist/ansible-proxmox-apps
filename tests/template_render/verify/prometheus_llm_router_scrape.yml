@@ -1,0 +1,114 @@
+---
+# The LLM-router scrape job in roles/prometheus_stack/templates/prometheus.yml.j2.
+# Renders the REAL template against the REAL role defaults and the REAL
+# prometheus_group group_vars (vars_files), so the expression under test is the
+# one that ships; a fixture that restated it could not fail the way it fails.
+#
+# Two directions, each with its failing input named:
+#   1. Seeded: an llm-router-tagged guest and a bearer in the flat apps merge
+#      render ONE job, targeting <ip>:<router api port>, with that bearer.
+#      Fails if the target is typed rather than derived (fixture ip/port are
+#      values no default carries), the bearer is missing or empty, or the job
+#      name changes (it is also the remote_write keep key).
+#   2. Unseeded: the same guest with NO bearer renders NO job. Fails if the
+#      template drops its bearer gate — a job with an empty bearer would sit at
+#      401 forever and read like a scrape that never quite works.
+#
+# tofu_data is set as a FACT (the group_vars read hostvars['localhost']), so
+# this play is imported next to pve_node_exporter_targets at the END of
+# verify_templates.yml; see the note there.
+- name: Verify the LLM-router scrape job renders only when seeded, from derived targets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          blackbox_exporter: 9115
+          llm_router_api: 4321
+          smokeping_prober: 9374
+          node_exporter: 9100
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+      nodes: {}
+      containers:
+        llm-router-under-test:
+          ip: router-under-test.test.example
+          tags: [llm-router]
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+
+  vars_files:
+    # Relative to THIS file (vars_files resolve at parse time).
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Seed the scraper's bearer in the flat apps merge
+      ansible.builtin.set_fact:
+        bao_apps_secrets:
+          prometheus_llm_router_key: sk-scrape-under-test
+
+    - name: Render prometheus.yml with the bearer seeded
+      ansible.builtin.set_fact:
+        _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the router job
+      ansible.builtin.set_fact:
+        _router_jobs: >-
+          {{ _seeded.scrape_configs | selectattr('job_name', 'equalto', 'llm_router') | list }}
+
+    - name: Seeded render carries one router job with the derived target and the bearer
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _router_jobs | length == 1
+          - _router_jobs[0].metrics_path == '/metrics'
+          - _router_jobs[0].authorization.type == 'Bearer'
+          - _router_jobs[0].authorization.credentials == 'sk-scrape-under-test'
+          - _router_jobs[0].static_configs[0].targets == ['router-under-test.test.example:4321']
+          - "'llm_router' in prometheus_stack_remote_write_keep_jobs"
+        fail_msg: >-
+          Seeded render has {{ _router_jobs | length }} llm_router job(s):
+          {{ _router_jobs }}. Expected exactly one, targeting the llm-router
+          tagged guest at the llm_router_api port (both fixture values, so a
+          typed target cannot pass), with the seeded bearer, and the job name
+          present in the remote_write keep list — a job absent from that list
+          is scraped locally and never shipped.
+        success_msg: One router job, derived target, bearer present, shipped.
+
+    - name: Clear the bearer
+      ansible.builtin.set_fact:
+        bao_apps_secrets: {}
+
+    - name: Render prometheus.yml with no bearer
+      ansible.builtin.set_fact:
+        _unseeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Unseeded render carries no router job at all
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _unseeded.scrape_configs | selectattr('job_name', 'equalto', 'llm_router') | list | length == 0
+          - _unseeded.scrape_configs | length > 0
+        fail_msg: >-
+          With no bearer the template still rendered an llm_router job —
+          {{ _unseeded.scrape_configs | selectattr('job_name', 'equalto', 'llm_router') | list }}.
+          An empty bearer is not a scrape, it is a permanent 401 that looks like
+          a flaky target. The job must be absent until the key is seeded.
+        success_msg: No bearer, no job; the rest of the config still renders.
