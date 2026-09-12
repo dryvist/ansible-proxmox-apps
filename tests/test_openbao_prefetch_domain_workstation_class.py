@@ -23,7 +23,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 DOMAINS_FILE = ROOT / "roles" / "openbao_secrets" / "defaults" / "main.yml"
 OVERRIDES_FILE = ROOT / "roles" / "openbao" / "defaults" / "main" / "08b-approle-cidr-classes.yml"
-CLASSES_FILE = ROOT / "roles" / "openbao" / "defaults" / "main" / "08-admin-and-ttls.yml"
 
 
 class PrefetchDomainsHaveAWorkstationClass(unittest.TestCase):
