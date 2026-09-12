@@ -198,7 +198,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         output = result.stdout + result.stderr
         self.assertIn("authenticated as: semaphore", output)
-        self.assertIn("sign/automation-semaphore", output)
+        self.assertIn("(automation-semaphore)", output)
         self.assertNotIn("UNDECLARED", output)
         self.assertNotIn("ansible-converge", output)
         self.assertEqual(
