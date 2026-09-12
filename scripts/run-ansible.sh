@@ -110,9 +110,12 @@ cleanup() {
 trap cleanup EXIT
 
 # Mint an ephemeral ed25519 keypair signed by ssh-client-ca/sign/
-# automation-ansible (principal `ansible`, TTL <=1h). OpenSSH pairs
-# id + id-cert.pub automatically via PROXMOX_SSH_KEY_PATH. No secret
-# material on any command line.
+# automation-ansible (principal `ansible`, TTL <=1h) or, when the caller is
+# the execution plane itself, sign/automation-semaphore (principal
+# `semaphore`) — see CONVERGE_SIGN_ROLE below. The plane's own principal makes
+# a plane-run converge distinguishable from every other caller in sshd logs.
+# OpenSSH pairs id + id-cert.pub automatically via PROXMOX_SSH_KEY_PATH. No
+# secret material on any command line.
 mint_ssh_cert() {
   local mount=${SSH_CA_MOUNT:-ssh-client-ca}
   CERT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ansible-sshcert.XXXXXX") || return 1
@@ -121,16 +124,19 @@ mint_ssh_cert() {
   { set +x; } 2>/dev/null
   # secret_id is read from stdin (`secret_id=-`), never passed as an argument:
   # every process on the host can read another's argv.
+  # Return 2 specifically for a refused LOGIN (as opposed to a signing
+  # failure) so the caller can tell "this identity is not accepted here" from
+  # every other mint failure and fall back to the next identity in order.
   RUNNER_BAO_TOKEN=$(printf '%s' "$CONVERGE_SECRET_ID" \
     | BAO_CLIENT_TIMEOUT=10 bao write -field=token auth/approle/login \
-      role_id="$CONVERGE_ROLE_ID" secret_id=-) || return 1
+      role_id="$CONVERGE_ROLE_ID" secret_id=-) || return 2
   # 2h, matching the automation-ansible signing role's ceiling. At 1h a full
   # converge outlived its own certificate and every remaining host reported
   # "Failed to authenticate" — an elapsed credential wearing the costume of a
   # broken one. A request above the role's ceiling is refused outright, so this
   # value and openbao_ssh_roles must move together.
   BAO_TOKEN=$RUNNER_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 \
-    bao write -field=signed_key "$mount/sign/automation-ansible" \
+    bao write -field=signed_key "$mount/sign/$CONVERGE_SIGN_ROLE" \
     public_key=@"$CERT_DIR/id.pub" ttl="${SSH_CERT_TTL:-2h}" \
     > "$CERT_DIR/id-cert.pub" || return 1
   export PROXMOX_SSH_KEY_PATH="$CERT_DIR/id"
@@ -187,38 +193,90 @@ fi
 # Preference, not a hard switch, because the bounded credential is not yet
 # published everywhere this script runs. The fallback is deliberately LOUD: a
 # silent one is how this went unnoticed for three days.
-CONVERGE_ROLE_ID=""
-CONVERGE_SECRET_ID=""
-CONVERGE_IDENTITY=""
-if [[ -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID:-} ]]; then
-  CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID
-  CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID
-  CONVERGE_IDENTITY="ansible-converge (declared, bounded)"
-elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
-  CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
-  CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
-  CONVERGE_IDENTITY="ansible (UNDECLARED, unbounded)"
-  echo "WARNING: converging as an identity that is declared nowhere and bounded" >&2
-  echo "  on no axis — no lifetime, no redemption cap, no source restriction —" >&2
-  echo "  because the declared equivalent's credential is not in this" >&2
-  echo "  environment. Publish OPENBAO_APPROLE_ANSIBLE_CONVERGE_{ROLE,SECRET}_ID" >&2
-  echo "  here and this warning goes away. See the identity-swap incident." >&2
-fi
+#
+# A third pair, OPENBAO_APPROLE_SEMAPHORE_*, belongs to the unattended
+# execution plane itself rather than to any human-run checkout. It carries
+# the same converge grant plus its own delta and signs under its own CA role,
+# so a plane-run converge is distinguishable from every other caller in sshd
+# logs by principal alone. Preferred first when present.
+# select_converge_identity fills CONVERGE_ROLE_ID/SECRET_ID/IDENTITY/SIGN_ROLE
+# from the first candidate present, skipping any tier whose AppRole login was
+# already refused this run (SKIP_SEMAPHORE / SKIP_ANSIBLE_CONVERGE, set by the
+# retry loop below). Callable more than once so a refused login can fall
+# through to the next tier without duplicating the selection logic.
+select_converge_identity() {
+  CONVERGE_ROLE_ID=""
+  CONVERGE_SECRET_ID=""
+  CONVERGE_IDENTITY=""
+  CONVERGE_SIGN_ROLE="automation-ansible"
+  if [[ -z ${SKIP_SEMAPHORE:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$OPENBAO_APPROLE_SEMAPHORE_ROLE_ID
+    CONVERGE_SECRET_ID=$OPENBAO_APPROLE_SEMAPHORE_SECRET_ID
+    CONVERGE_IDENTITY="semaphore (execution plane)"
+    CONVERGE_SIGN_ROLE="automation-semaphore"
+  elif [[ -z ${SKIP_ANSIBLE_CONVERGE:-} && -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID
+    CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID
+    CONVERGE_IDENTITY="ansible-converge (declared, bounded)"
+  elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
+    CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
+    CONVERGE_IDENTITY="ansible (UNDECLARED, unbounded)"
+    echo "WARNING: converging as an identity that is declared nowhere and bounded" >&2
+    echo "  on no axis — no lifetime, no redemption cap, no source restriction —" >&2
+    echo "  because the declared equivalent's credential is not in this" >&2
+    echo "  environment. Publish OPENBAO_APPROLE_ANSIBLE_CONVERGE_{ROLE,SECRET}_ID" >&2
+    echo "  here and this warning goes away. See the identity-swap incident." >&2
+  fi
+}
+select_converge_identity
 
 if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; then
   # FAIL-LOUD: when the cert env is present, a mint failure is an error — never
   # silently ride the static key (that masked a dead cert path once already).
   # Break-glass = run WITHOUT the BAO env, with PROXMOX_SSH_KEY_PATH set.
-  if ! mint_ssh_cert; then
-    echo "ERROR: OpenBao SSH cert mint FAILED and the cert env is present — refusing" >&2
-    echo "the silent static-key fallback. Fix the cert path, or unset the OPENBAO_APPROLE_ANSIBLE_*" >&2
-    echo "env and set PROXMOX_SSH_KEY_PATH to deliberately use the static break-glass key." >&2
-    exit 1
-  fi
+  #
+  # A refused LOGIN (mint_ssh_cert returns 2) is not a fatal mint failure — it
+  # means this tier's AppRole is not accepted from here (e.g. the semaphore
+  # pair's source-address restriction refuses a workstation caller) — so retry
+  # with the next tier in order before giving up. Any other mint failure
+  # (signing, key generation) still fails loud immediately, unchanged.
+  while true; do
+    mint_ssh_cert && break
+    status=$?
+    if [[ $status -ne 2 ]]; then
+      echo "ERROR: OpenBao SSH cert mint FAILED and the cert env is present — refusing" >&2
+      echo "the silent static-key fallback. Fix the cert path, or unset the OPENBAO_APPROLE_ANSIBLE_*" >&2
+      echo "env and set PROXMOX_SSH_KEY_PATH to deliberately use the static break-glass key." >&2
+      exit 1
+    fi
+    echo "WARNING: AppRole login refused for identity: $CONVERGE_IDENTITY — retrying with the next identity in order." >&2
+    case $CONVERGE_SIGN_ROLE in
+      automation-semaphore) SKIP_SEMAPHORE=1 ;;
+      *)
+        # Under set -e, a bare `[[ ]] && x=1` that evaluates false would end
+        # this case arm on a nonzero status and kill the script — the `if`
+        # keeps the arm's own exit status at 0 regardless of the match.
+        if [[ $CONVERGE_IDENTITY == ansible-converge* ]]; then
+          SKIP_ANSIBLE_CONVERGE=1
+        fi
+        ;;
+    esac
+    [[ -n $CERT_DIR ]] && rm -rf "$CERT_DIR"
+    CERT_DIR=""
+    select_converge_identity
+    if [[ -z $CONVERGE_ROLE_ID || -z $CONVERGE_SECRET_ID ]]; then
+      echo "ERROR: every OpenBao converge identity was refused — no identity left to try." >&2
+      exit 1
+    fi
+  done
+  # The playbook process (and anything it shells out to) inherits the pair
+  # that actually authenticated, not just whichever tier was preferred first.
+  export CONVERGE_ROLE_ID CONVERGE_SECRET_ID
   # Print the window. A converge that outlives its certificate dies with an
   # UNREACHABLE that reads exactly like a broken host, and the only way to tell
   # the two apart afterwards is knowing when the cert expired.
-  echo "Using a short-lived SSH certificate from the OpenBao CA (automation-ansible)."
+  echo "Using a short-lived SSH certificate from the OpenBao CA ($CONVERGE_SIGN_ROLE)."
   echo "  authenticated as: $CONVERGE_IDENTITY"
   # `|| true` is load-bearing under `set -euo pipefail`: if ssh-keygen cannot
   # parse the certificate the pipeline fails and takes the whole converge with
