@@ -1,0 +1,88 @@
+---
+- name: Render and verify ntfy_unit_failure templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/ntfy_unit_failure/defaults/main.yml
+    ntfy_unit_failure_topic: keystone
+    ntfy_unit_failure_ntfy_url: "https://ntfy.example.test/keystone"
+    ntfy_unit_failure_priority: high
+    ntfy_unit_failure_tags: warning
+    _template_dir: "../../../roles/ntfy_unit_failure/templates"
+
+  tasks:
+    - name: Render ntfy-unit-failure@.service.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-unit-failure@.service.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_unit_failure.service"
+        mode: "0644"
+
+    - name: Read rendered ntfy-unit-failure@.service
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_ntfy_unit_failure.service"
+      register: _ntfy_unit_failure_raw
+
+    - name: Decode ntfy-unit-failure@.service content
+      ansible.builtin.set_fact:
+        _ntfy_unit_failure: "{{ _ntfy_unit_failure_raw.content | b64decode }}"
+
+    # %i is a systemd specifier, not Jinja -- it must survive rendering
+    # verbatim so the ALERT names the unit that actually failed, not a
+    # literal "%i" or an empty string.
+    - name: Assert the alert unit is a oneshot that names the failing unit via %i
+      ansible.builtin.assert:
+        that:
+          - "'Type=oneshot' in _ntfy_unit_failure"
+          - "'Title: unit failed: %i' in _ntfy_unit_failure"
+          - "'%i entered a failed state on %H' in _ntfy_unit_failure"
+        fail_msg: >-
+          ntfy-unit-failure@.service.j2 must alert with the %i/%H systemd
+          specifiers left intact; rendered content: {{ _ntfy_unit_failure }}
+
+    - name: Assert the alert posts to the configured ntfy URL with priority/tags
+      ansible.builtin.assert:
+        that:
+          - "'https://ntfy.example.test/keystone' in _ntfy_unit_failure"
+          - "'Priority: high' in _ntfy_unit_failure"
+          - "'Tags: warning' in _ntfy_unit_failure"
+        fail_msg: >-
+          ntfy-unit-failure@.service.j2 does not post to the configured ntfy
+          topic/priority/tags; rendered content: {{ _ntfy_unit_failure }}
+
+    - name: Render onfailure-override.conf.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/onfailure-override.conf.j2"
+        dest: "{{ _fixture_dir }}/test_onfailure_override.conf"
+        mode: "0644"
+
+    - name: Read rendered onfailure-override.conf
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_onfailure_override.conf"
+      register: _onfailure_override_raw
+
+    - name: Decode onfailure-override.conf content
+      ansible.builtin.set_fact:
+        _onfailure_override: "{{ _onfailure_override_raw.content | b64decode }}"
+
+    # %n must also survive verbatim -- it is what makes the hook generic
+    # (any unit's own name, resolved by systemd at failure time), not tied to
+    # whichever role happens to apply the drop-in.
+    - name: Assert the drop-in hooks OnFailure= to the generic alert unit via %n
+      ansible.builtin.assert:
+        that:
+          - "'[Unit]' in _onfailure_override"
+          - "'OnFailure=ntfy-unit-failure@%n.service' in _onfailure_override"
+        fail_msg: >-
+          onfailure-override.conf.j2 must set OnFailure=ntfy-unit-failure@%n.service
+          verbatim; rendered content: {{ _onfailure_override }}
+
+    - name: Ntfy_unit_failure template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          ntfy_unit_failure template assertions passed:
+          - ntfy-unit-failure@.service.j2: oneshot, %i/%H specifiers, ntfy URL/priority/tags
+          - onfailure-override.conf.j2: OnFailure=ntfy-unit-failure@%n.service
