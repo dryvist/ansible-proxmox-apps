@@ -4,18 +4,20 @@
 # roles/nautobot/tasks/readonly_token.yml) instead of carrying it in the run
 # environment, then execs nautobot_drift.py with it as NAUTOBOT_URL/NAUTOBOT_TOKEN.
 #
-# AppRole login mirrors scripts/run-ansible.sh's mint_ssh_cert: CONVERGE_ROLE_ID/
-# SECRET_ID (whichever identity the runner actually authenticated as this run)
-# preferred, falling back to OPENBAO_APPROLE_ANSIBLE_* for a caller that
-# bypasses the runner. secret_id is read from stdin, never passed as an
-# argument -- every process on the host can read another's argv.
+# AppRole login follows scripts/run-ansible.sh's identity order, but this
+# template never runs that script, so it selects for itself: CONVERGE_ROLE_ID/
+# SECRET_ID when a runner already chose, else the execution plane's own pair
+# (the only pair the plane's run environment carries), else the shared
+# OPENBAO_APPROLE_ANSIBLE_* pair for a workstation caller. secret_id is read
+# from stdin, never passed as an argument -- every process on the host can
+# read another's argv.
 set -euo pipefail
 
 : "${BAO_ADDR:?BAO_ADDR must be set}"
-ROLE_ID=${CONVERGE_ROLE_ID:-${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-}}
-SECRET_ID=${CONVERGE_SECRET_ID:-${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-}}
-: "${ROLE_ID:?no converge AppRole in this environment (CONVERGE_ROLE_ID or OPENBAO_APPROLE_ANSIBLE_ROLE_ID)}"
-: "${SECRET_ID:?no converge AppRole secret in this environment (CONVERGE_SECRET_ID or OPENBAO_APPROLE_ANSIBLE_SECRET_ID)}"
+ROLE_ID=${CONVERGE_ROLE_ID:-${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-}}}
+SECRET_ID=${CONVERGE_SECRET_ID:-${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-}}}
+: "${ROLE_ID:?no AppRole in this environment (CONVERGE_ROLE_ID, OPENBAO_APPROLE_SEMAPHORE_ROLE_ID or OPENBAO_APPROLE_ANSIBLE_ROLE_ID)}"
+: "${SECRET_ID:?no AppRole secret in this environment (CONVERGE_SECRET_ID, OPENBAO_APPROLE_SEMAPHORE_SECRET_ID or OPENBAO_APPROLE_ANSIBLE_SECRET_ID)}"
 
 RUNNER_BAO_TOKEN=$(printf '%s' "$SECRET_ID" \
   | BAO_CLIENT_TIMEOUT=10 bao write -field=token auth/approle/login \
