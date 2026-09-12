@@ -199,6 +199,12 @@ fi
 # the same converge grant plus its own delta and signs under its own CA role,
 # so a plane-run converge is distinguishable from every other caller in sshd
 # logs by principal alone. Preferred first when present.
+# A fourth pair, OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_*, is the workstation
+# identity for the OpenBao-node play and is preferred ABOVE all of them when
+# present. It is inert and human-unlocked, so it is in an environment only
+# because an operator just unwrapped it for this run — and if a broader pair is
+# also ambient there, silently preferring that one is the identity swap this
+# block already exists to prevent.
 # select_converge_identity fills CONVERGE_ROLE_ID/SECRET_ID/IDENTITY/SIGN_ROLE
 # from the first candidate present, skipping any tier whose AppRole login was
 # already refused this run (SKIP_SEMAPHORE / SKIP_ANSIBLE_CONVERGE, set by the
@@ -209,7 +215,11 @@ select_converge_identity() {
   CONVERGE_SECRET_ID=""
   CONVERGE_IDENTITY=""
   CONVERGE_SIGN_ROLE="automation-ansible"
-  if [[ -z ${SKIP_SEMAPHORE:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
+  if [[ -z ${SKIP_OPENBAO_NODE_CONVERGE:-} && -n ${OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID
+    CONVERGE_SECRET_ID=$OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID
+    CONVERGE_IDENTITY="openbao-node-converge (workstation, break-glass)"
+  elif [[ -z ${SKIP_SEMAPHORE:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_SEMAPHORE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_SEMAPHORE_SECRET_ID
     CONVERGE_IDENTITY="semaphore (execution plane)"
@@ -259,6 +269,11 @@ if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; the
         # keeps the arm's own exit status at 0 regardless of the match.
         if [[ $CONVERGE_IDENTITY == ansible-converge* ]]; then
           SKIP_ANSIBLE_CONVERGE=1
+        fi
+        # Same sign role as ansible-converge, so it needs its own arm here —
+        # without one a refused login re-selects the same tier forever.
+        if [[ $CONVERGE_IDENTITY == openbao-node-converge* ]]; then
+          SKIP_OPENBAO_NODE_CONVERGE=1
         fi
         ;;
     esac
