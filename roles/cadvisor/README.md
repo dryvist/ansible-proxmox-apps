@@ -41,6 +41,16 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `cadvisor_port` | `8080` | Host port the metrics endpoint is published on. |
 | `cadvisor_data_dir` | `/opt/cadvisor` | Compose project directory. |
 
+## Known limitations
+
+- The container runs `privileged: true`, matching cAdvisor's own upstream
+  deployment guidance for `/dev/kmsg` and cgroup access. On this repo's
+  Docker-in-LXC guests, cAdvisor's actual visibility is still bounded by
+  whatever the outer LXC's own privilege level exposes to the nested Docker
+  daemon — `privileged: true` on the container cannot grant access beyond
+  that ceiling. Metrics accuracy under this repo's actual LXC configuration
+  has not been live-verified.
+
 ## Verification
 
 ```bash
