@@ -1,0 +1,143 @@
+---
+# Guards the AI/LLM ingest stamp's substring-matching contract.
+#
+# The ai_stamp connection pipeline resolves index/sourcetype per input with a
+# chain of `__inputId.includes('in_ai_<name>') ? ... : ...` ternaries
+# (roles/cribl_stream/templates/pipelines/ai_stamp/conf.yml.j2). `.includes()`
+# is a SUBSTRING check, not equality: if one entry's `in_ai_<name>` id text
+# were ever contained inside a different entry's own id, the wrong branch
+# could win depending on dictsort order, silently mis-stamping index and
+# sourcetype for that source. This fixture mirrors every ai_log_ports entry
+# in tofu-proxmox's modules/proxmox-stack/constants-ai-log.tf (same
+# duplication-with-a-comment already used by cribl_stream.yml's smaller
+# fixture) so the check runs over the real name set, not a representative
+# subset that happens not to collide.
+#
+# Run (from the REPO ROOT):
+#   ansible-playbook tests/template_render/verify/cribl_stream_ai_log_range.yml
+
+- name: Every AI log port resolves to exactly one sourcetype, no substring collisions
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "../../../roles/cribl_stream/templates"
+    cribl_stream_hec_namespace: ""
+    cribl_stream_pq_enabled: true
+    # inputs.yml.j2 renders the netflow/S2S inputs unconditionally; these are
+    # fixture scaffolding, not under test here.
+    cribl_stream_netflow_port: 2055
+    cribl_stream_s2s_port: 10300
+    cribl_stream_otel_port: 4318
+    cribl_stream_prometheus_rw_port: 9201
+    cribl_stream_prometheus_rw_api_path: /api/v1/write
+    cribl_stream_victoriametrics_rw_url: "http://grafana.example.invalid:8428/api/v1/write"
+    # Mirror of tofu-proxmox's constants-ai-log.tf ai_log_index_map (all
+    # entries) plus its ai_log_ports (ports, needed for inputs.yml.j2). Keep
+    # in sync when that file's roster changes.
+    cribl_stream_ai_log_routing:
+      claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
+      codex_cli: { port: 10312, index: codex, sourcetype: "codex:cli" }
+      agy_cli: { port: 10313, index: gemini, sourcetype: "antigravity:cli" }
+      copilot_cli: { port: 10314, index: openai, sourcetype: "copilot:cli" }
+      vscode: { port: 10315, index: vscode, sourcetype: "vscode:telemetry" }
+      macstudio_llm: { port: 10321, index: llm, sourcetype: llamaswap }
+      macstudio_gate: { port: 10322, index: llm, sourcetype: "caddy:access" }
+      homelab_llm: { port: 10323, index: llm, sourcetype: llamaswap }
+      openbao_audit: { port: 10331, index: openbao_audit, sourcetype: "openbao:audit" }
+      hermes_agent: { port: 10332, index: hermes, sourcetype: "hermes:agent" }
+      agentgateway_docker: { port: 10341, index: agentgateway, sourcetype: "agentgateway:app" }
+      dify_docker: { port: 10342, index: dify, sourcetype: "dify:app" }
+      hindsight_docker: { port: 10343, index: hindsight, sourcetype: "hindsight:app" }
+      langflow_docker: { port: 10344, index: langflow, sourcetype: "langflow:app" }
+      langfuse_docker: { port: 10345, index: langfuse, sourcetype: "langfuse:app" }
+      langgraph_docker: { port: 10346, index: langgraph, sourcetype: "langgraph:app" }
+      qdrant_docker: { port: 10347, index: qdrant, sourcetype: "qdrant:app" }
+      docling_serve_docker: { port: 10348, index: docling, sourcetype: "docling:app" }
+      semaphore_docker: { port: 10349, index: semaphore, sourcetype: "semaphore:run" }
+      clickhouse_docker: { port: 10350, index: clickhouse, sourcetype: "clickhouse:app" }
+      phoenix_docker: { port: 10351, index: phoenix, sourcetype: "phoenix:app" }
+      llm_router: { port: 10352, index: llm, sourcetype: "litellm:proxy" }
+    cribl_stream_ai_input_types:
+      homelab_llm: syslog
+      openbao_audit: syslog
+      hermes_agent: syslog
+      llm_router: syslog
+
+  tasks:
+    - name: Render inputs.yml.j2 and the ai_stamp pipeline
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/test_ai_log_range_{{ item.name }}.yml"
+        mode: "0644"
+      loop:
+        - { src: "inputs.yml.j2", name: "inputs" }
+        - { src: "pipelines/ai_stamp/conf.yml.j2", name: "ai_stamp" }
+
+    - name: Every AI log source got its own input rendered
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - ("in_ai_" ~ name) in _inputs_text
+        fail_msg: "in_ai_{{ name }} is missing from the rendered inputs.yml.j2"
+      loop: "{{ cribl_stream_ai_log_routing.keys() | list }}"
+      loop_control:
+        loop_var: name
+      vars:
+        _inputs_text: "{{ lookup('file', _fixture_dir ~ '/test_ai_log_range_inputs.yml') }}"
+
+    # The invariant itself: for every entry's OWN match string
+    # ("in_ai_<name>"), no OTHER entry's match string may be a substring of
+    # it. A collision here means __inputId.includes() could pick the wrong
+    # branch for a real input id, stamping the wrong index/sourcetype.
+    - name: No AI log source's match string is a substring of another's
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _colliding | length == 0
+        fail_msg: >-
+          "in_ai_{{ name }}" contains {{ _colliding }} as a substring --
+          Cribl's __inputId.includes('in_ai_<name>') ternary chain would be
+          ambiguous for this source, and the branch actually taken depends on
+          dictsort order rather than which port the event really arrived on.
+        success_msg: "in_ai_{{ name }} collides with no other entry."
+      loop: "{{ cribl_stream_ai_log_routing.keys() | list }}"
+      loop_control:
+        loop_var: name
+      vars:
+        _self_needle: "in_ai_{{ name }}"
+        # select('in', _self_needle) keeps every OTHER entry's own needle
+        # that is a substring of THIS entry's needle -- the Jinja `in` test
+        # on a string container is Python substring containment, the exact
+        # semantics __inputId.includes() uses at runtime.
+        _colliding: >-
+          {{ cribl_stream_ai_log_routing.keys()
+             | reject('equalto', name)
+             | map('regex_replace', '^(.*)$', 'in_ai_\1')
+             | select('in', _self_needle)
+             | list }}
+
+    - name: Every entry maps to exactly one sourcetype in the rendered ai_stamp pipeline
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - (_ai_stamp_text | regex_findall("'" ~ entry[1].sourcetype | regex_escape ~ "'") | length) >= 1
+        fail_msg: >-
+          sourcetype {{ entry[1].sourcetype }} for {{ entry[0] }} is not
+          present in the rendered ai_stamp pipeline.
+      loop: "{{ cribl_stream_ai_log_routing | dictsort }}"
+      loop_control:
+        loop_var: entry
+      vars:
+        _ai_stamp_text: "{{ lookup('file', _fixture_dir ~ '/test_ai_log_range_ai_stamp.yml') }}"
+
+    - name: AI log range render verification PASSED
+      ansible.builtin.debug:
+        msg: >-
+          All {{ cribl_stream_ai_log_routing | length }} AI log sources render
+          exactly one input each, no __inputId.includes() match strings
+          collide, and every declared sourcetype appears in the rendered
+          ai_stamp pipeline.
