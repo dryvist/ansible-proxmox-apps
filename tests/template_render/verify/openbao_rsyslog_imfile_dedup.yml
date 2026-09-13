@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# openbao's audit-log and secret-age-report rsyslog drop-ins each render an
+# `input(type="imfile" ...)`, and rsyslog hard-fails `rsyslogd -N1` if
+# `module(load="imfile")` appears more than once across the config it loads.
+# Both drop-ins default to enabled and are commonly enabled together on the
+# same host, so render them together and assert the module load appears
+# exactly once across the pair.
+# =============================================================================
+- name: Render and verify the openbao rsyslog imfile module loads exactly once
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/openbao/defaults/main/10-audit-and-breakglass.yml and
+    # 09b-secret-age.yml with scrubbed values.
+    openbao_audit_enabled: true
+    openbao_audit_log_path: /var/log/openbao/audit.log
+    openbao_audit_syslog_host: "syslog.pve.example.com"
+    openbao_audit_syslog_port: 1517
+    openbao_audit_queue_max_disk_space: 256m
+    openbao_audit_rebind_interval: 100
+    openbao_secret_age_report_path: /var/log/openbao/secret-age.json
+    _openbao_template_dir: "{{ playbook_dir }}/../../../roles/openbao/templates"
+
+  tasks:
+    - name: Render the audit-log rsyslog drop-in
+      ansible.builtin.template:
+        src: "{{ _openbao_template_dir }}/openbao-audit-rsyslog.conf.j2"
+        dest: "{{ _fixture_dir }}/test_openbao_audit_rsyslog.conf"
+        mode: "0644"
+
+    - name: Render the secret-age rsyslog drop-in
+      ansible.builtin.template:
+        src: "{{ _openbao_template_dir }}/openbao-secret-age-rsyslog.conf.j2"
+        dest: "{{ _fixture_dir }}/test_openbao_secret_age_rsyslog.conf"
+        mode: "0644"
+
+    - name: Read both rendered drop-ins
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      loop:
+        - test_openbao_audit_rsyslog.conf
+        - test_openbao_secret_age_rsyslog.conf
+      register: _openbao_rsyslog_raw
+
+    - name: Combine both rendered drop-ins as rsyslog.d would load them
+      ansible.builtin.set_fact:
+        _openbao_rsyslog_combined: >-
+          {{ _openbao_rsyslog_raw.results
+             | map(attribute='content')
+             | map('b64decode')
+             | join('\n') }}
+
+    - name: Assert imfile's module load appears exactly once across both drop-ins
+      ansible.builtin.assert:
+        that:
+          - _openbao_rsyslog_combined.count('module(load=\"imfile\")') == 1
+        fail_msg: >-
+          module(load="imfile") must render in exactly one of the two openbao
+          rsyslog drop-ins when both are enabled -- rsyslogd -N1 hard-fails
+          config validation on a duplicate module load.
