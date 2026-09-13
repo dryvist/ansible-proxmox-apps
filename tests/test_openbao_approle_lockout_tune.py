@@ -4,11 +4,11 @@ per 15 minutes -- locking a shared workstation alias on ordinary retry noise.
 
 This renders the REAL tune task's `cmd`, `vars` and `when`, never a
 reimplementation of them, so a renamed variable, a dropped flag, or a broken
-key name fails here instead of only at converge time. OpenBao's tune read
-nests every lockout field under `data.user_lockout_config` as integer
-seconds, with the reset field keyed `lockout_counter_reset_duration` (not the
-`lockout_counter_reset` name the write/CLI side uses) -- exercised below with
-a realistic tune-read fixture.
+key name fails here instead of only at converge time. A live
+`sys/auth/approle/tune` read has NO nested `user_lockout_config` object -- the
+fields sit flat under `.data` with a `user_` prefix and integer seconds
+(`user_lockout_threshold`, `user_lockout_duration`,
+`user_lockout_counter_reset_duration`), which is the shape exercised below.
 """
 
 import json
@@ -67,11 +67,11 @@ def _resolve_task_vars(task, base_variables):
 def _mount_tune_read(threshold, duration_s, counter_reset_duration_s):
     return {
         "rc": 0,
-        "stdout": json.dumps({"data": {"user_lockout_config": {
-            "lockout_threshold": threshold,
-            "lockout_duration": duration_s,
-            "lockout_counter_reset_duration": counter_reset_duration_s,
-        }}}),
+        "stdout": json.dumps({"data": {
+            "user_lockout_threshold": threshold,
+            "user_lockout_duration": duration_s,
+            "user_lockout_counter_reset_duration": counter_reset_duration_s,
+        }}),
     }
 
 

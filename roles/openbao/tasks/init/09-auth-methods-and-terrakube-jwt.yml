@@ -42,13 +42,15 @@
 
 - name: Tune the AppRole mount login lockout
   vars:
-    # The tune read nests every lockout field under data.user_lockout_config,
-    # with the reset duration keyed lockout_counter_reset_duration (not the
-    # lockout_counter_reset name the write/CLI side uses) and both durations
-    # as integer seconds.
-    live_lockout: >-
-      {{ ((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
-          | default({}, true)).user_lockout_config | default({}, true) }}
+    # The tune read has NO nested user_lockout_config object -- the fields
+    # are flat under .data with a user_ prefix and integer seconds:
+    # user_lockout_threshold, user_lockout_duration,
+    # user_lockout_counter_reset_duration. (The write/CLI side keys them
+    # lockout_threshold etc. inside user_lockout_config; the read shape is
+    # different, confirmed against a live sys/auth/approle/tune response.)
+    live: >-
+      {{ (openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
+         | default({}, true) }}
   ansible.builtin.command:
     cmd: >-
       bao auth tune
@@ -65,11 +67,11 @@
     - openbao_bootstrap_token is defined
     - >-
       (openbao_approle_mount_tune_current.rc | default(1)) != 0
-      or (live_lockout.lockout_threshold | default(0) | int
+      or (live.user_lockout_threshold | default(0) | int
           != openbao_approle_lockout_threshold | int)
-      or (live_lockout.lockout_duration | default(0) | int
+      or (live.user_lockout_duration | default(0) | int
           != openbao_approle_lockout_duration | int)
-      or (live_lockout.lockout_counter_reset_duration | default(0) | int
+      or (live.user_lockout_counter_reset_duration | default(0) | int
           != openbao_approle_lockout_counter_reset | int)
 
 # --- Terrakube native JWT workload identity --------------------------------
