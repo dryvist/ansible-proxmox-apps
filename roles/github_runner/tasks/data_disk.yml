@@ -294,6 +294,35 @@
       then guarding a directory the daemon does not write to, and the boot disk
       will fill anyway. A daemon.json `data-root` is the usual cause.
 
+# Ask the filesystem the daemon actually writes to, not a hardcoded path: the
+# assertion above has just proven the two agree, so this reads the same disk
+# the images land on even if the role's variables and the daemon ever diverge.
+- name: Read free space on the filesystem backing Docker's data root
+  ansible.builtin.command:
+    cmd: "findmnt -no AVAIL,SIZE --bytes --target {{ github_runner_docker_root.stdout | trim }}"
+  register: github_runner_data_free
+  changed_when: false
+
+- name: Assert the Docker data filesystem still has headroom
+  vars:
+    _avail: "{{ github_runner_data_free.stdout.split()[0] | int }}"
+    _size: "{{ github_runner_data_free.stdout.split()[1] | int }}"
+    _free_pct: "{{ (_avail | int * 100 // (_size | int)) if (_size | int) > 0 else 0 }}"
+  ansible.builtin.assert:
+    that:
+      - _free_pct | int >= github_runner_data_min_free_percent | int
+    fail_msg: >-
+      The filesystem backing Docker's data root has {{ _free_pct }}% free,
+      below the {{ github_runner_data_min_free_percent }}% this role requires.
+      The daily reclaim is not keeping up with what the scenario matrix
+      creates. Reclaim now with
+      `systemctl start github-runner-docker-prune.service`, then either grow
+      the data disk or lower github_runner_prune_min_age_hours — a converge
+      that proceeds from here ends in ENOSPC in an unrelated job.
+    success_msg: >-
+      The filesystem backing Docker's data root has {{ _free_pct }}% free
+      (threshold {{ github_runner_data_min_free_percent }}%).
+
 # Reclaim the boot disk only once the mounts are proven, never before. Either
 # migration can happen without the other: a guest converged before the
 # containerd bind mount existed already has /var/lib/docker on the data disk.

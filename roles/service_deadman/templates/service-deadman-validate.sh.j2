@@ -32,7 +32,10 @@ rc=0
 # success is "true" or "false"; the error text is ignored by Gatus on success.
 gatus_report() {
   local name="$1" success="$2" msg="$3"
-  [[ -n "${GATUS_TOKEN}" ]] || return 0
+  if [[ -z "${GATUS_TOKEN}" ]]; then
+    logger -t service-deadman "WARN: ${name} skipped Gatus report (GATUS_TOKEN unset)"
+    return 0
+  fi
   curl -fsS --max-time 8 -X POST -H "Authorization: Bearer ${GATUS_TOKEN}" \
     -G --data-urlencode "success=${success}" --data-urlencode "error=${msg}" \
     "${GATUS_URL}/api/v1/endpoints/deadman_${name}/external" >/dev/null 2>&1 || true
@@ -42,7 +45,10 @@ gatus_report() {
 # from the shared token and the name the same way status_stack renders it.
 kuma_report() {
   local name="$1" status="$2" msg="$3" token
-  [[ -n "${GATUS_TOKEN}" ]] || return 0
+  if [[ -z "${GATUS_TOKEN}" ]]; then
+    logger -t service-deadman "WARN: ${name} skipped Uptime Kuma report (GATUS_TOKEN unset)"
+    return 0
+  fi
   token="$(printf '%s:%s' "${GATUS_TOKEN}" "${name}" | sha256sum | cut -c1-20)"
   curl -fsS --max-time 8 -G --data-urlencode "status=${status}" --data-urlencode "msg=${msg}" \
     "${KUMA_URL}/api/push/${token}" >/dev/null 2>&1 || true
@@ -52,7 +58,10 @@ kuma_report() {
 # until the healthchecks receiver is configured. suffix is "" or "/fail".
 hc_ping() {
   local name="$1" suffix="$2" msg="$3"
-  [[ -n "${HC_URL}" && -n "${HC_PING_KEY}" ]] || return 0
+  if [[ -z "${HC_URL}" || -z "${HC_PING_KEY}" ]]; then
+    logger -t service-deadman "WARN: ${name} skipped healthchecks ping (HC_URL/HC_PING_KEY unset)"
+    return 0
+  fi
   curl -fsS --max-time 8 -d "${msg}" \
     "${HC_URL}/ping/${HC_PING_KEY}/${name}${suffix}?create=1" >/dev/null 2>&1 || true
 }
@@ -63,7 +72,10 @@ hc_ping() {
 # secret, so no ping key is needed here. suffix is "" or "/fail".
 offsite_hc_ping() {
   local name="$1" suffix="$2" msg="$3"
-  [[ -n "${OFFSITE_HC_URL}" ]] || return 0
+  if [[ -z "${OFFSITE_HC_URL}" ]]; then
+    logger -t service-deadman "WARN: ${name} skipped off-site healthchecks ping (OFFSITE_HC_URL unset)"
+    return 0
+  fi
   curl -fsS --max-time 8 -d "${msg}" "${OFFSITE_HC_URL%/}/${name}${suffix}" >/dev/null 2>&1 || true
 }
 

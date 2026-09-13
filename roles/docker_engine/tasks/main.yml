@@ -92,6 +92,11 @@
     - docker_engine_install_fuse_overlayfs | bool
     - ansible_virtualization_type | default('') == 'lxc'
 
+# A virtual machine keeps the image store it already runs on: pinning a driver
+# it does not have starts the daemon against an empty store, or not at all. The
+# role owns the same file on a VM and removes it, so a host pinned by mistake
+# returns to Docker's own selection on the next converge. Containers (LXC, and
+# the Docker-in-Docker guests Molecule runs) keep the pin.
 - name: Configure Docker storage driver
   # The containerd image store replaces the graph-driver stack, which makes
   # "storage-driver" inert whenever it is enabled -- the pin is read and then
@@ -111,13 +116,26 @@
     group: root
     mode: "0644"
   register: docker_engine_daemon_config
-  when: docker_engine_configure_daemon_json | bool
+  when:
+    - docker_engine_configure_daemon_json | bool
+    - ansible_virtualization_type | default('') not in docker_engine_vm_virtualization_types
+
+- name: Remove the storage-driver pin from a virtual machine
+  ansible.builtin.file:
+    path: /etc/docker/daemon.json
+    state: absent
+  register: docker_engine_daemon_unpin
+  when:
+    - docker_engine_configure_daemon_json | bool
+    - ansible_virtualization_type | default('') in docker_engine_vm_virtualization_types
 
 - name: Restart Docker to apply the storage-driver configuration
   ansible.builtin.systemd:  # noqa: no-handler
     name: docker
     state: restarted
-  when: docker_engine_configure_daemon_json | bool and docker_engine_daemon_config.changed
+  when:
+    - docker_engine_configure_daemon_json | bool
+    - docker_engine_daemon_config.changed | default(false) or docker_engine_daemon_unpin.changed | default(false)
 
 - name: Ensure Docker service is running
   ansible.builtin.systemd:
