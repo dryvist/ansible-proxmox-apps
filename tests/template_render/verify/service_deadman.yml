@@ -1,0 +1,69 @@
+---
+- name: Render and verify service_deadman templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/service_deadman/defaults/main.yml
+    service_deadman_interval: "60s"
+    service_deadman_ntfy_url: "https://ntfy.example.test/keystone"
+    service_deadman_gatus_url: "https://gatus.example.test"
+    service_deadman_gatus_token: "test-gatus-token"
+    service_deadman_kuma_url: "https://uptime-kuma.example.test"
+    service_deadman_hc_url: "https://healthchecks.example.test"
+    service_deadman_hc_ping_key: "test-hc-ping-key"
+    service_deadman_offsite_hc_url: "https://hc-ping.example.test/test-uuid"
+    # Only the check this fixture needs to prove (roles/ntfy_docker's liveness).
+    service_deadman_checks:
+      - name: ntfy
+        probe_command: >-
+          curl -fsS --max-time 5 http://127.0.0.1:8080/v1/health >/dev/null 2>&1
+    _template_dir: "../../../roles/service_deadman/templates"
+
+  tasks:
+    - name: Render service-deadman-validate.sh.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/service-deadman-validate.sh.j2"
+        dest: "{{ _fixture_dir }}/test_service_deadman_validate.sh"
+        mode: "0755"
+
+    - name: Read rendered service-deadman-validate.sh
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_service_deadman_validate.sh"
+      register: _service_deadman_raw
+
+    - name: Decode service-deadman-validate.sh content
+      ansible.builtin.set_fact:
+        _service_deadman: "{{ _service_deadman_raw.content | b64decode }}"
+
+    - name: Assert the off-site deadman URL is wired and pinged on both paths
+      ansible.builtin.assert:
+        that:
+          - "'OFFSITE_HC_URL=\"https://hc-ping.example.test/test-uuid\"' in _service_deadman"
+          - "'offsite_hc_ping()' in _service_deadman"
+          - "'offsite_hc_ping \"${name}\" \"\" \"OK\"' in _service_deadman"
+          - "'offsite_hc_ping \"${name}\" \"/fail\" \"${msg}\"' in _service_deadman"
+        fail_msg: >-
+          service-deadman-validate.sh.j2 must wire the off-site healthchecks
+          receiver and ping it on both the OK and /fail paths; rendered
+          content: {{ _service_deadman }}
+
+    - name: Assert the off-site ping never fires without a configured URL
+      ansible.builtin.assert:
+        that:
+          - "'[[ -n \"${OFFSITE_HC_URL}\" ]] || return 0' in _service_deadman"
+        fail_msg: >-
+          offsite_hc_ping must no-op on an empty OFFSITE_HC_URL, same as
+          every other receiver here; rendered content: {{ _service_deadman }}
+
+    - name: Assert the ntfy liveness check renders into the per-check loop
+      ansible.builtin.assert:
+        that:
+          - "'--- ntfy ---' in _service_deadman"
+          - "'curl -fsS --max-time 5 http://127.0.0.1:8080/v1/health' in _service_deadman"
+        fail_msg: >-
+          service-deadman-validate.sh.j2 did not render the ntfy hub
+          liveness check; rendered content: {{ _service_deadman }}

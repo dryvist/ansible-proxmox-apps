@@ -6,12 +6,16 @@
 # service on this host it runs a functional probe and:
 #   - healthy  -> reports success to its Gatus external endpoint and its
 #                 Uptime Kuma push monitor, and pings its healthchecks check
+#                 and its off-site (free-tier SaaS) healthchecks deadman
 #   - breached -> logs, pushes an ntfy alert, reports failure to Gatus and
-#                 Kuma, and pings the healthchecks /fail endpoint
+#                 Kuma, and pings the healthchecks and off-site /fail paths
 #
-# A missed run (validator crash / host down) also pages, because both monitors
-# expect a report every cycle. An unconfigured receiver skips only that
-# receiver; the journal + ntfy alert still fire.
+# A missed run (validator crash / host down) also pages, because every
+# receiver expects a report every cycle. An unconfigured receiver skips only
+# that receiver; the journal + ntfy alert still fire. The off-site receiver
+# is the one exception worth naming: it lives outside the homelab, so it is
+# the only one of these that still fires when the homelab itself -- ingress,
+# DNS, the self-hosted Gatus/Kuma/Healthchecks stack -- is unreachable.
 set -uo pipefail
 
 NTFY_URL="{{ service_deadman_ntfy_url }}"
@@ -20,6 +24,7 @@ GATUS_TOKEN="{{ service_deadman_gatus_token }}"
 KUMA_URL="{{ service_deadman_kuma_url }}"
 HC_URL="{{ service_deadman_hc_url }}"
 HC_PING_KEY="{{ service_deadman_hc_ping_key }}"
+OFFSITE_HC_URL="{{ service_deadman_offsite_hc_url }}"
 HOST="$(hostname)"
 rc=0
 
@@ -52,6 +57,16 @@ hc_ping() {
     "${HC_URL}/ping/${HC_PING_KEY}/${name}${suffix}?create=1" >/dev/null 2>&1 || true
 }
 
+# Ping the off-site (free-tier SaaS) healthchecks deadman for <name>. Same
+# wire protocol as hc_ping above, but a DIFFERENT base URL at a third party on
+# the open internet -- the whole URL, id included, is the OpenBao-sourced
+# secret, so no ping key is needed here. suffix is "" or "/fail".
+offsite_hc_ping() {
+  local name="$1" suffix="$2" msg="$3"
+  [[ -n "${OFFSITE_HC_URL}" ]] || return 0
+  curl -fsS --max-time 8 -d "${msg}" "${OFFSITE_HC_URL%/}/${name}${suffix}" >/dev/null 2>&1 || true
+}
+
 # Healthy: signal every deadman OK so a stalled validator is also caught.
 mark_ok() {
   local name="$1"
@@ -59,6 +74,7 @@ mark_ok() {
   gatus_report "${name}" true ""
   kuma_report "${name}" up OK
   hc_ping "${name}" "" "OK"
+  offsite_hc_ping "${name}" "" "OK"
 }
 
 # Breached: log, alert ntfy, signal every deadman's failure path.
@@ -75,6 +91,7 @@ mark_fail() {
   gatus_report "${name}" false "${msg}"
   kuma_report "${name}" down "${msg}"
   hc_ping "${name}" "/fail" "${msg}"
+  offsite_hc_ping "${name}" "/fail" "${msg}"
 }
 
 {% for check in service_deadman_checks %}
