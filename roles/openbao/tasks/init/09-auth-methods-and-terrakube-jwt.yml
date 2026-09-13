@@ -38,6 +38,17 @@
   when: openbao_bootstrap_token is defined
 
 - name: Tune the AppRole mount login lockout
+  vars:
+    live_lockout: >-
+      {{ ((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
+          | default({}, true)).user_lockout_config | default({}, true) }}
+    # OpenBao returns the two durations as integer seconds in the tune read
+    # (never a duration string), so the declared "5m"/"15m" values are
+    # converted to seconds here for a like-for-like compare -- same explicit
+    # int coercion 10c-approle-ttl-bounds.yml uses for TTL drift.
+    desired_lockout_duration_s: "{{ openbao_approle_lockout_duration | community.general.to_seconds }}"
+    desired_lockout_counter_reset_s: >-
+      {{ openbao_approle_lockout_counter_reset | community.general.to_seconds }}
   ansible.builtin.command:
     cmd: >-
       bao auth tune
@@ -54,15 +65,12 @@
     - openbao_bootstrap_token is defined
     - >-
       (openbao_approle_mount_tune_current.rc | default(1)) != 0
-      or (((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
-          | default({}, true)).user_lockout_config | default({}, true)).lockout_threshold
-         | default('') | string != openbao_approle_lockout_threshold | string
-      or (((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
-          | default({}, true)).user_lockout_config | default({}, true)).lockout_duration
-         | default('') != openbao_approle_lockout_duration
-      or (((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
-          | default({}, true)).user_lockout_config | default({}, true)).lockout_counter_reset
-         | default('') != openbao_approle_lockout_counter_reset
+      or (live_lockout.lockout_threshold | default(0) | int
+          != openbao_approle_lockout_threshold | int)
+      or (live_lockout.lockout_duration | default(0) | int
+          != desired_lockout_duration_s | int)
+      or (live_lockout.lockout_counter_reset | default(0) | int
+          != desired_lockout_counter_reset_s | int)
 
 # --- Terrakube native JWT workload identity --------------------------------
 - name: Enable the Terrakube JWT auth method
