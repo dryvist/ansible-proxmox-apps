@@ -130,6 +130,24 @@
         name: docker
         state: restarted
   tasks:
+    # fuse-overlayfs is the unprivileged-LXC workaround for Docker on ZFS; a VM
+    # keeps whatever image store it already runs on. Pinning a driver there
+    # would boot the daemon against an empty store, so the pin is LXC-only and
+    # needs the virtualization fact even though the play skips fact gathering.
+    - name: Gather the virtualization type
+      when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.setup:
+        filter:
+          - ansible_virtualization_type
+
+    - name: Install fuse-overlayfs before pinning it as the storage driver
+      when:
+        - "'docker' in (host_tags | default([]))"
+        - ansible_virtualization_type | default('') == 'lxc'
+      ansible.builtin.apt:
+        name: fuse-overlayfs
+        state: present
+
     # This play is the single owner of /etc/docker/daemon.json on docker LXCs.
     # roles/idrac_kvm_docker no longer writes the storage-driver here (removed
     # on a separate branch) to avoid two writers fighting over the same file.
@@ -143,22 +161,30 @@
           {{ hostvars['localhost']['tofu_data']
              ['constants']['service_ports']['registry']
              | default(5000) }}
+        _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
+        _daemon_json:
+          registry-mirrors: ["http://{{ _registry_ip }}:{{ _registry_port }}"]
+          insecure-registries: ["{{ _registry_ip }}:{{ _registry_port }}"]
+          log-driver: journald
+        _lxc_storage:
+          storage-driver: fuse-overlayfs
+          features:
+            containerd-snapshotter: false
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
-        content: |
-          {
-            "registry-mirrors": ["http://{{ _registry_ip }}:{{ _registry_port }}"],
-            "insecure-registries": ["{{ _registry_ip }}:{{ _registry_port }}"],
-            "storage-driver": "fuse-overlayfs",
-            "log-driver": "journald",
-            "features": {
-              "containerd-snapshotter": false
-            }
-          }
+        content: "{{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})) | to_nice_json }}\n"
         owner: root
         group: root
         mode: '0644'
       notify: Restart docker
+
+    # A daemon that failed on an unmet pin stays down (start-limit-hit) until
+    # something starts it again; an unchanged daemon.json fires no handler.
+    - name: Ensure Docker is running
+      when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.systemd:
+        name: docker
+        state: started
 
 # =============================================================================
 # Phase 0a: NTP Time Synchronization Baseline
