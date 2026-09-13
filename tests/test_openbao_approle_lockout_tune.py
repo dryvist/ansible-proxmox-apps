@@ -4,11 +4,11 @@ per 15 minutes -- locking a shared workstation alias on ordinary retry noise.
 
 This renders the REAL tune task's `cmd`, `vars` and `when`, never a
 reimplementation of them, so a renamed variable, a dropped flag, or a broken
-seconds comparison fails here instead of only at converge time. OpenBao
-returns the two lockout durations as integer seconds in the tune read (never
-a duration string), so the drift check must convert the declared "5m"/"15m"
-defaults to seconds before comparing -- exercised below with a synthetic
-seconds-valued read.
+key name fails here instead of only at converge time. OpenBao's tune read
+nests every lockout field under `data.user_lockout_config` as integer
+seconds, with the reset field keyed `lockout_counter_reset_duration` (not the
+`lockout_counter_reset` name the write/CLI side uses) -- exercised below with
+a realistic tune-read fixture.
 """
 
 import json
@@ -18,7 +18,6 @@ import unittest
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
-from ansible_collections.community.general.plugins.filter.time import to_seconds
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = ROOT / "roles/openbao/defaults/main/08a-admin-and-ttls.yml"
@@ -50,17 +49,8 @@ def _mark_templates(value):
     return value
 
 
-def _templar():
-    templar = Templar(loader=DataLoader())
-    # The real filter, not a reimplementation -- registered directly because a
-    # bare Templar (no play/module context) does not resolve collection
-    # filter plugins on its own.
-    templar.environment.filters["community.general.to_seconds"] = to_seconds
-    return templar
-
-
 def _render(template, variables):
-    templar = _templar()
+    templar = Templar(loader=DataLoader())
     templar.available_variables = _mark_templates(variables)
     return templar.template(trust_as_template(template))
 
@@ -74,9 +64,23 @@ def _resolve_task_vars(task, base_variables):
     return namespace
 
 
+def _mount_tune_read(threshold, duration_s, counter_reset_duration_s):
+    return {
+        "rc": 0,
+        "stdout": json.dumps({"data": {"user_lockout_config": {
+            "lockout_threshold": threshold,
+            "lockout_duration": duration_s,
+            "lockout_counter_reset_duration": counter_reset_duration_s,
+        }}}),
+    }
+
+
 class TestApproleLockoutTune(unittest.TestCase):
     def setUp(self):
         self.variables = _defaults()
+        # Only exercising the drift-comparison condition, so satisfy the
+        # sibling "openbao_bootstrap_token is defined" gate with a stand-in.
+        self.variables["openbao_bootstrap_token"] = "test-token"
         self.task = _task()
 
     def test_lockout_defaults_are_declared_and_non_empty(self):
@@ -84,53 +88,45 @@ class TestApproleLockoutTune(unittest.TestCase):
             self.assertIn(name, self.variables)
             self.assertTrue(str(self.variables[name]))
 
-    def test_tune_command_renders_every_lockout_default(self):
+    def test_lockout_defaults_are_integer_seconds(self):
+        # The tune read returns durations as integer seconds; a "5m"-style
+        # string here would compare unequal to a matching live read forever.
+        self.assertIsInstance(self.variables["openbao_approle_lockout_duration"], int)
+        self.assertIsInstance(self.variables["openbao_approle_lockout_counter_reset"], int)
+
+    def test_tune_command_renders_every_lockout_default_in_seconds(self):
         cmd = _render(self.task["ansible.builtin.command"]["cmd"], self.variables)
         self.assertIn(f"-user-lockout-threshold={self.variables['openbao_approle_lockout_threshold']}", cmd)
-        self.assertIn(f"-user-lockout-duration={self.variables['openbao_approle_lockout_duration']}", cmd)
+        self.assertIn(f"-user-lockout-duration={self.variables['openbao_approle_lockout_duration']}s", cmd)
         self.assertIn(
-            f"-user-lockout-counter-reset-duration={self.variables['openbao_approle_lockout_counter_reset']}",
+            f"-user-lockout-counter-reset-duration={self.variables['openbao_approle_lockout_counter_reset']}s",
             cmd,
         )
 
     def _when_is_true(self, mount_tune_current):
-        namespace = _resolve_task_vars(self.task, {**self.variables, "openbao_approle_mount_tune_current": mount_tune_current})
+        namespace = _resolve_task_vars(
+            self.task, {**self.variables, "openbao_approle_mount_tune_current": mount_tune_current}
+        )
         conditions = self.task["when"]
         # `when:` entries are bare Jinja expressions (no {{ }}), the same way
         # Ansible itself evaluates a conditional -- wrap each to get a value.
         return all(_render("{{ (" + cond + ") }}", namespace) in ("True", True) for cond in conditions)
 
-    def test_when_is_false_for_a_live_seconds_read_matching_declared(self):
-        """OpenBao returns lockout_duration/lockout_counter_reset in SECONDS,
-        not the "5m"/"15m" strings declared in defaults. A comparison that
-        forgot to convert would treat every converge as drift forever."""
-        live_seconds = {
-            "lockout_threshold": self.variables["openbao_approle_lockout_threshold"],
-            "lockout_duration": int(to_seconds(self.variables["openbao_approle_lockout_duration"])),
-            "lockout_counter_reset": int(to_seconds(self.variables["openbao_approle_lockout_counter_reset"])),
-        }
-        mount_tune_current = {
-            "rc": 0,
-            "stdout": json.dumps({"data": {"user_lockout_config": live_seconds}}),
-        }
+    def test_when_is_false_when_live_matches_declared(self):
+        mount_tune_current = _mount_tune_read(
+            self.variables["openbao_approle_lockout_threshold"],
+            self.variables["openbao_approle_lockout_duration"],
+            self.variables["openbao_approle_lockout_counter_reset"],
+        )
         self.assertFalse(self._when_is_true(mount_tune_current))
 
-    def test_when_is_true_when_live_still_holds_string_form(self):
-        """A read that (incorrectly) held the declared string form rather
-        than seconds must still be treated as drift, not equal."""
-        live_strings = {
-            "lockout_threshold": self.variables["openbao_approle_lockout_threshold"],
-            "lockout_duration": self.variables["openbao_approle_lockout_duration"],
-            "lockout_counter_reset": self.variables["openbao_approle_lockout_counter_reset"],
-        }
-        mount_tune_current = {
-            "rc": 0,
-            "stdout": yaml.safe_dump({"data": {"user_lockout_config": live_strings}}, default_flow_style=True),
-        }
-        with self.assertRaises(Exception):
-            # "5m" | int fails to coerce -- proves the comparison is a real
-            # int cast, not a permissive one that would silently pass.
-            self._when_is_true(mount_tune_current)
+    def test_when_is_true_when_live_threshold_drifted(self):
+        mount_tune_current = _mount_tune_read(
+            5,
+            self.variables["openbao_approle_lockout_duration"],
+            self.variables["openbao_approle_lockout_counter_reset"],
+        )
+        self.assertTrue(self._when_is_true(mount_tune_current))
 
 
 if __name__ == "__main__":
