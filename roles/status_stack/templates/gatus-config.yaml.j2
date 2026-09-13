@@ -10,6 +10,27 @@ metrics: true
 storage:
   type: memory
 
+# ntfy alerting — critical-infra groups (keystone/node/service) route to the
+# urgent topic; everything else (catalog/oidc/guest) uses the lower-priority
+# topic. Gatus fires the same alert for a status failure and a slow-response
+# failure (there is no separate "degraded" alert channel), so the down-vs-
+# degraded split from the package brief is implemented as a criticality split
+# by endpoint group instead.
+alerting:
+  ntfy:
+    url: "{{ status_stack_ntfy_url }}"
+    topic: "{{ status_stack_ntfy_topic_degraded }}"
+    priority: {{ status_stack_ntfy_priority_degraded }}
+    default-alert:
+      failure-threshold: {{ status_stack_failure_threshold }}
+      send-on-resolved: true
+    overrides:
+{% for grp in ['keystone', 'node', 'service', 'deadman'] %}
+      - group: "{{ grp }}"
+        topic: "{{ status_stack_ntfy_topic_urgent }}"
+        priority: {{ status_stack_ntfy_priority_urgent }}
+{% endfor %}
+
 endpoints:
 {% for svc in dashboard_catalog_services | default([]) %}
   - name: {{ svc.name }}
@@ -20,11 +41,19 @@ endpoints:
       timeout: 15s
       ignore-redirect: false
     conditions:
+{% if svc.name in status_stack_catalog_status_overrides %}
+      - "[STATUS] == any({{ status_stack_catalog_status_overrides[svc.name] | join(', ') }})"
+{% else %}
       - "[STATUS] < 500"
       - "[STATUS] != 504"
 {% for pat in status_stack_authelia_error_patterns %}
       - "[BODY] != pat(*{{ pat }}*)"
 {% endfor %}
+{% endif %}
+      - "[RESPONSE_TIME] < 3000"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
 {% endfor %}
 {% for ep in status_stack_authenticated_endpoints | default([]) %}
   - name: {{ ep.name }}-authed
@@ -40,6 +69,8 @@ endpoints:
       ignore-redirect: false
     conditions:
       - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
 {% endfor %}
 {% for ks in status_stack_kuma_keystones | default([]) %}
   - name: keystone-{{ ks.name | regex_replace('[^A-Za-z0-9._-]', '-') }}
@@ -55,6 +86,8 @@ endpoints:
 {% for pat in status_stack_authelia_error_patterns %}
       - "[BODY] != pat(*{{ pat }}*)"
 {% endfor %}
+    alerts:
+      - type: ntfy
 {% endfor %}
 {% for oidc in status_stack_oidc_clients | default([]) %}
   - name: oidc-{{ oidc.name }}
@@ -70,4 +103,60 @@ endpoints:
 {% for pat in status_stack_authelia_error_patterns %}
       - "[BODY] != pat(*{{ pat }}*)"
 {% endfor %}
+    alerts:
+      - type: ntfy
+{% endfor %}
+
+# --- monitor_targets — ICMP/TCP/HTTP endpoints derived from tofu inventory
+# (inventory/load_tofu/monitor_targets.yml). Same fact the AutoKuma sidecar
+# renders its static monitors from.
+{% for t in status_stack_monitor_targets.icmp %}
+  - name: icmp-{{ t.name }}
+    group: {{ t.group }}
+    url: "icmp://{{ t.fqdn }}"
+    interval: {{ status_stack_interval }}
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
+{% endfor %}
+{% for t in status_stack_monitor_targets.tcp %}
+  - name: tcp-{{ t.name }}
+    group: {{ t.group }}
+    url: "tcp://{{ t.fqdn }}:{{ t.port }}"
+    interval: {{ status_stack_interval }}
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
+{% endfor %}
+{% for t in status_stack_monitor_targets.http %}
+  - name: http-{{ t.name }}
+    group: {{ t.group }}
+    url: "http://{{ t.fqdn }}:{{ t.port }}{{ t.path }}"
+    interval: {{ status_stack_interval }}
+    client:
+      timeout: 15s
+      ignore-redirect: false
+    conditions:
+      - "[STATUS] == any({{ t.expect_status | join(', ') }})"
+    alerts:
+      - type: ntfy
+{% endfor %}
+
+# Deadman receivers: pushers report success/failure every cycle; silence past
+# the heartbeat interval is a failure. One missed heartbeat alerts (the
+# heartbeat already is the tolerance), on the urgent topic via the group
+# override above.
+external-endpoints:
+{% for ep in status_stack_deadman_endpoints %}
+  - name: {{ ep.name }}
+    group: deadman
+    token: "{{ status_stack_deadman_token }}"
+    heartbeat:
+      interval: {{ ep.heartbeat }}
+    alerts:
+      - type: ntfy
+        failure-threshold: 1
+        success-threshold: 1
 {% endfor %}

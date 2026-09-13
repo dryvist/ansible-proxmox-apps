@@ -1,0 +1,62 @@
+---
+# Prometheus node_exporter for every LXC/VM guest in this repo's inventory
+# (the PVE-host equivalent, pve_node_exporter, lives in the sibling
+# ansible-proxmox repo — that repo owns PVE-node-level roles, this one owns
+# guest-level roles). Pinned upstream release installed as a native systemd
+# service, exposing host metrics on :9100 for the central Prometheus scrape.
+
+# Pinned upstream release. Renovate-friendly single source for the version;
+# bump deliberately (the checksums below must move with it when set).
+node_exporter_version: "1.9.1"
+
+# GOARCH name derived from the host fact; covers the amd64/arm64 fleet.
+# Defined here (ahead of its first use below) purely to keep the download-url
+# and release-dir lines under the yamllint line-length gate.
+node_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_architecture, 'amd64') }}"
+
+# The versioned, per-arch release name — shared by the download URL, the
+# unpacked directory and the installed-binary source path below, so an
+# upgrade only ever touches node_exporter_version in one place.
+node_exporter_release: "node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_arch }}"
+
+# Where the release tarball comes from. Standard GitHub releases URL; override
+# to point at a local mirror (e.g. the apt-cacher / artifact LXC) if guests
+# must not reach the internet at converge time.
+node_exporter_download_url: >-
+  https://github.com/prometheus/node_exporter/releases/download/v{{
+  node_exporter_version }}/{{ node_exporter_release }}.tar.gz
+
+# Integrity pin for the tarball ("sha256:<hex>"), per-arch from the release's
+# sha256sums.txt. Refresh both hashes when bumping the version; an empty
+# string skips the check (get_url still only downloads when the versioned
+# dest is absent). Same pin as ansible-proxmox's pve_node_exporter — same
+# upstream release.
+node_exporter_checksum: >-
+  sha256:{{ {
+    'amd64': 'becb950ee80daa8ae7331d77966d94a611af79ad0d3307380907e0ec08f5b4e8',
+    'arm64': '848f139986f63232ced83babe3cad1679efdbb26c694737edc1f4fbd27b96203',
+  }[node_exporter_arch] }}
+
+# Bind to the guest's management IP (the default-route interface fact —
+# derived at runtime, never hardcoded) so metrics are only reachable on the
+# management VLAN. Set to 0.0.0.0 to listen on every interface.
+node_exporter_listen_address: "{{ (ansible_default_ipv4 | default({})).address | default('0.0.0.0') }}"
+
+# Standard node_exporter port — matches pve_node_exporter and the
+# monitor_targets/prometheus_stack scrape-side constant of the same name.
+node_exporter_port: 9100
+
+# Dedicated no-login system user the service runs as.
+node_exporter_user: node-exporter
+
+# Versioned install root; the active binary is /usr/local/bin/node_exporter.
+node_exporter_install_dir: /opt/node_exporter
+
+# Optional textfile collector: drop *.prom files into this directory and
+# node_exporter exposes them as metrics.
+node_exporter_textfile_collector_enabled: true
+node_exporter_textfile_collector_dir: /var/lib/node_exporter/textfile_collector
+
+# Extra CLI flags appended verbatim to the service ExecStart (e.g.
+# ["--no-collector.wifi"]).
+node_exporter_extra_args: []

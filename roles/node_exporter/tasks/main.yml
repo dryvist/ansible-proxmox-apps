@@ -1,0 +1,114 @@
+---
+# Install prometheus node_exporter as a pinned-version systemd service.
+# Everything is versioned: the tarball and unpacked tree live under
+# {{ node_exporter_install_dir }}/node_exporter-<version>..., and
+# /usr/local/bin/node_exporter is only rewritten when the pinned version
+# changes — so re-runs are no-ops and a version bump is one variable.
+#
+# No container-vs-host branching needed (unlike e.g. the ntp role): unlike
+# chronyd, node_exporter only reads /proc and /sys and needs no clock/kernel
+# privilege an unprivileged LXC lacks, so the same systemd unit runs
+# identically on every guest — LXC or VM.
+
+- name: Assert critical variables are defined and valid
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['x86_64', 'aarch64']
+      - ansible_default_ipv4.address is defined
+      - ansible_default_ipv4.address | length > 0
+      - node_exporter_version is defined and node_exporter_version | length > 0
+      - node_exporter_port is defined and node_exporter_port | string | length > 0
+    fail_msg: >-
+      One or more critical configuration variables (architecture, default
+      IPv4 address, version, or port) are undefined, empty, or unsupported.
+    quiet: true
+  tags:
+    - node_exporter
+
+- name: Create node_exporter system user
+  ansible.builtin.user:
+    name: "{{ node_exporter_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+  tags:
+    - node_exporter
+
+- name: Create node_exporter install directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags:
+    - node_exporter
+
+- name: Download the pinned node_exporter release tarball
+  ansible.builtin.get_url:
+    url: "{{ node_exporter_download_url }}"
+    dest: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}.tar.gz"
+    checksum: "{{ node_exporter_checksum | default('', true) or omit }}"
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - node_exporter
+
+- name: Unpack the node_exporter release
+  ansible.builtin.unarchive:
+    src: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}.tar.gz"
+    dest: "{{ node_exporter_install_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}/node_exporter"
+  tags:
+    - node_exporter
+
+- name: Install the node_exporter binary
+  ansible.builtin.copy:
+    src: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}/node_exporter"
+    dest: /usr/local/bin/node_exporter
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart node_exporter
+  tags:
+    - node_exporter
+
+- name: Create the textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_collector_dir }}"
+    state: directory
+    owner: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_user }}"
+    mode: "0755"
+  when: node_exporter_textfile_collector_enabled
+  tags:
+    - node_exporter
+
+- name: Deploy the node_exporter systemd unit
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart node_exporter
+  tags:
+    - node_exporter
+
+- name: Flush handlers to apply systemd changes
+  ansible.builtin.meta: flush_handlers
+  tags:
+    - node_exporter
+
+- name: Enable and start node_exporter
+  ansible.builtin.systemd:
+    name: node_exporter
+    state: started
+    enabled: true
+  tags:
+    - node_exporter

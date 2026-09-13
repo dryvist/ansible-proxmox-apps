@@ -1,0 +1,116 @@
+---
+# Native ntfy CLI subscriber (`ntfy subscribe --from-config`) -- one shared
+# service, not one per topic: the CLI's own client.yml already multiplexes
+# every subscription over a single connection. Each matching message invokes
+# ntfy-zammad (files/ntfy-zammad.py), which opens/appends/closes a Zammad
+# ticket keyed by "topic|title".
+
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: "{{ ntfy_docker_zammad_apt_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the ntfy release signing key
+  ansible.builtin.get_url:
+    url: https://archive.ntfy.sh/apt/keyring.gpg
+    dest: "{{ ntfy_docker_zammad_apt_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the ntfy apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/ntfy.list
+    content: >-
+      deb [arch=amd64 signed-by={{ ntfy_docker_zammad_apt_keyring }}]
+      https://archive.ntfy.sh/apt stable main
+    owner: root
+    group: root
+    mode: "0644"
+  register: ntfy_docker_zammad_repo
+
+- name: Install the ntfy CLI
+  ansible.builtin.apt:
+    name: ntfy
+    state: present
+    update_cache: "{{ ntfy_docker_zammad_repo.changed }}"
+
+- name: Create the ntfy-zammad state directory
+  ansible.builtin.file:
+    path: "{{ ntfy_docker_zammad_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create the ntfy-zammad env directory
+  ansible.builtin.file:
+    path: "{{ ntfy_docker_zammad_env_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy the ntfy-zammad script
+  ansible.builtin.copy:
+    src: ntfy-zammad.py
+    dest: "{{ ntfy_docker_zammad_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the ntfy-zammad environment file
+  ansible.builtin.copy:
+    content: |
+      ZAMMAD_API_URL={{ ntfy_docker_zammad_api_url }}
+      ZAMMAD_API_TOKEN={{ ntfy_docker_zammad_api_token }}
+      NTFY_BASE_URL={{ ntfy_docker_base_url }}
+      NTFY_ZAMMAD_STATE_DIR={{ ntfy_docker_zammad_state_dir }}
+      NTFY_ZAMMAD_FAILURE_THRESHOLD={{ ntfy_docker_zammad_failure_threshold }}
+      NTFY_ZAMMAD_KEYSTONE_TOPIC={{ ntfy_docker_zammad_keystone_topic }}
+      NTFY_ZAMMAD_TOPIC_GROUPS_JSON={{ ntfy_docker_zammad_topic_groups | to_json }}
+    dest: "{{ ntfy_docker_zammad_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart ntfy subscriber
+
+- name: Assert the Zammad connection is present before wiring the subscriber
+  ansible.builtin.assert:
+    that:
+      - ntfy_docker_zammad_api_url | length > 0
+      - ntfy_docker_zammad_api_token | length > 0
+    fail_msg: >-
+      ntfy_docker_zammad_api_token resolved empty -- OpenBao apps domain has not
+      seeded zammad_ntfy_api_token yet (roles/zammad's zammad_bootstrap.rb
+      creates the svc-ntfy token on its own converge). Converge zammad first.
+    quiet: true
+
+- name: Deploy the ntfy CLI client configuration
+  ansible.builtin.template:
+    src: client.yml.j2
+    dest: "{{ ntfy_docker_zammad_client_config }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ntfy subscriber
+
+- name: Deploy the ntfy subscriber systemd unit
+  ansible.builtin.template:
+    src: ntfy-subscribe.service.j2
+    dest: /etc/systemd/system/ntfy-subscribe.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ntfy subscriber
+
+- name: Enable and start the ntfy subscriber
+  ansible.builtin.systemd:
+    name: ntfy-subscribe.service
+    state: started
+    enabled: true
+    daemon_reload: true

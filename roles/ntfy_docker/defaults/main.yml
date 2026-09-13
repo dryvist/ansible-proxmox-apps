@@ -19,3 +19,83 @@ ntfy_docker_attachment_cache_dir: /var/cache/ntfy/attachments
 # proxy only serves TLS.
 ntfy_docker_base_url: >-
   https://{{ ntfy_docker_container_name }}.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}
+
+# =============================================================================
+# Alert hub: Slack fan-out (one ntfy-to-slack instance per route)
+# =============================================================================
+# topic -> Slack channel. A starting point, not exhaustive — adding a route is
+# a defaults/group_vars edit, never a task change. `keystone` is the
+# "something is down" catch-all every other detector can fall back to.
+ntfy_docker_slack_routes:
+  secrets-security: secrets-security
+  observability: observability
+  network: network
+  proxmox: proxmox
+  ai: ai
+  media: media
+  hardware: hardware
+  keystone: keystone
+  # Hermes agent fleet: split by signal so a noisy channel never buries a
+  # page. Same contract as every other route above — no webhook here, only
+  # the topic name; the URL comes from secrets-external/platform/slack-webhooks
+  # once an operator seeds these four keys.
+  hermes-all: hermes-all
+  hermes-noise: hermes-noise
+  hermes-alerts: hermes-alerts
+  router-budget: router-budget
+
+# Webhook URLs keyed by topic (same keys as ntfy_docker_slack_routes), from OpenBao
+# secrets-external/platform/slack-webhooks (openbao_secrets domain "ntfy" —
+# see roles/openbao_secrets). A topic with no webhook seeded is simply not
+# deployed (see slack_fanout.yml) rather than failing the converge, since the
+# route list here is a superset of what may be seeded so far.
+ntfy_docker_slack_webhooks: "{{ bao_ntfy_secrets | default({}, true) }}"
+
+ntfy_docker_to_slack_version: v3.0.0
+ntfy_docker_to_slack_arch: Linux-x86_64
+ntfy_docker_to_slack_release_base: >-
+  https://github.com/ozskywalker/ntfy-to-slack/releases/download/{{ ntfy_docker_to_slack_version }}
+ntfy_docker_to_slack_asset: "ntfy-to-slack-{{ ntfy_docker_to_slack_arch }}.tar.gz"
+ntfy_docker_to_slack_checksums_url: "{{ ntfy_docker_to_slack_release_base }}/checksums.txt"
+ntfy_docker_to_slack_install_dir: /usr/local/bin
+ntfy_docker_to_slack_env_dir: /etc/ntfy-to-slack
+
+# =============================================================================
+# Alert hub: Zammad subscriber (native ntfy CLI, one shared subscribe service)
+# =============================================================================
+# Same topics as the Slack routes -- every route is also a Zammad candidate;
+# ntfy_docker_zammad_topic_groups below decides where each one files.
+ntfy_docker_zammad_topics: "{{ ntfy_docker_slack_routes.keys() | list }}"
+# low/min priority messages stay Slack-only and never open a ticket.
+ntfy_docker_zammad_priority_filter: "default,high,urgent"
+ntfy_docker_zammad_apt_keyring: /etc/apt/keyrings/ntfy.gpg
+ntfy_docker_zammad_client_config: /etc/ntfy/client.yml
+ntfy_docker_zammad_env_file: /etc/ntfy-zammad/ntfy-zammad.env
+ntfy_docker_zammad_script_path: /usr/local/bin/ntfy-zammad
+ntfy_docker_zammad_state_dir: /var/lib/ntfy-zammad
+# Consecutive Zammad-API failures before the subscriber gives up opening its
+# own ticket and instead pages ntfy_docker_zammad_keystone_topic directly
+# (tagged no-zammad, so that publish can never recurse into another failed
+# attempt).
+ntfy_docker_zammad_failure_threshold: 3
+ntfy_docker_zammad_keystone_topic: keystone
+# topic -> Zammad group. Falls back to "Incidents" (the catch-all seeded by
+# every zammad_group.yml deployment) for a topic with no explicit mapping.
+# Every value here MUST be a group zammad_groups actually seeds.
+ntfy_docker_zammad_topic_groups:
+  secrets-security: Homelab Infrastructure
+  observability: Homelab Infrastructure
+  network: Homelab Infrastructure
+  proxmox: Homelab Infrastructure
+  ai: AI/LLM Serving
+  media: Media
+  hardware: Homelab Infrastructure
+  keystone: Incidents
+# Zammad connection for the subscriber's own token (svc-ntfy, seeded by
+# roles/zammad's zammad_bootstrap.rb). Bao-first via the apps domain,
+# matching zammad_ntfy_api_token's own source in the zammad role.
+ntfy_docker_zammad_api_url: "https://zammad.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/api/v1"
+ntfy_docker_zammad_api_token: "{{ bao_apps_secrets.zammad_ntfy_api_token | default('', true) }}"
+# Off by default in a dry run/molecule: the subscriber needs a live Zammad
+# token that only exists after roles/zammad has converged at least once.
+ntfy_docker_zammad_manage_subscriber: true

@@ -42,31 +42,40 @@ names verified against the live services:
 | `haproxy_group` | `nginx.service` | unit active (UDP syslog/netflow LB) |
 | `docker_vms` | `github-runner@N.service` (pool) | every configured replica unit active |
 | `docker_vms` | Docker data disk | `/var/lib/docker` used percent below `service_deadman_disk_floor_pct` |
+| `ntfy_group` | `ntfy` (roles/ntfy_docker) | `curl` to the local `/v1/health` endpoint returns 200 |
 
 ## Monitor URLs
 
-Each check pings two independent deadmen every cycle: its own healthchecks
-check, and its own Uptime Kuma push monitor (`status=up` when healthy,
-`status=down` with the failure message on a breach). Both URLs are read from
-per-check environment variables and are **optional** — an empty URL skips only
-that monitor's ping; the journal entry and ntfy alert still fire. Provision a
-check per keystone in the healthchecks LXC and a push monitor per keystone in
-Uptime Kuma, then export their URLs:
+Each check reports to independent deadmen every cycle. Every URL is derived
+from the check name, so a new check needs no per-check secret:
 
-| Check | Healthchecks | Uptime Kuma push |
+| Receiver | Report | Credential |
 | --- | --- | --- |
-| technitium-dns | `DEADMAN_HC_URL_DNS` | `DEADMAN_KUMA_URL_DNS` |
-| traefik | `DEADMAN_HC_URL_TRAEFIK` | `DEADMAN_KUMA_URL_TRAEFIK` |
-| haproxy-vip | `DEADMAN_HC_URL_HAPROXY` | `DEADMAN_KUMA_URL_HAPROXY` |
-| nginx-syslog-lb | `DEADMAN_HC_URL_NGINX` | `DEADMAN_KUMA_URL_NGINX` |
-| openbao | `DEADMAN_HC_URL_OPENBAO` | `DEADMAN_KUMA_URL_OPENBAO` |
-| github-runner-pool | `DEADMAN_HC_URL_GITHUB_RUNNER` | `DEADMAN_KUMA_URL_GITHUB_RUNNER` |
-| github-runner-data-disk | `DEADMAN_HC_URL_GITHUB_RUNNER_DISK` | `DEADMAN_KUMA_URL_GITHUB_RUNNER_DISK` |
+| Gatus external endpoint `deadman_<name>` | `POST …/api/v1/endpoints/deadman_<name>/external` | `bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN` |
+| Uptime Kuma push monitor `<name>` | `…/api/push/<token>?status=up\|down`, token derived from the Gatus token | same token |
+| Healthchecks check `<name>` (self-hosted) | `…/ping/<ping key>/<name>`, `/fail` on breach | `bao_monitoring_secrets.HEALTHCHECK_PING_KEY` |
+| Off-site healthchecks deadman `<name>` | same wire form, different (third-party) base URL | `bao_monitoring_secrets.HEALTHCHECKS_OFFSITE_PING_URL` |
 
-The Kuma value is the push URL without its query string; the validator adds
-`status` and `msg` itself.
+Details each receiver's report format omits: Gatus takes `success=<bool>&error=<msg>`;
+Kuma's push token is `sha256("<gatus token>:<name>")[:20]`; the two Healthchecks
+rows both append `?create=1` so the check exists after the first report, and
+`/fail` on a breach. The off-site row's URL, unique id included, is the whole
+credential — no separate ping key.
 
-ntfy alerts always fire (no provisioning needed) via the repo's ntfy LXC.
+The Gatus endpoints and the Kuma push monitors are both rendered by
+`roles/status_stack` from `status_stack_deadman_endpoints` (one entry per check
+name with its heartbeat); a name missing there is rejected by Gatus and unknown
+to Kuma, so add the entry there when adding a check here. The Healthchecks
+report is skipped until a `healthchecks` backend is present in the published
+ingress table; an empty URL/token skips only that receiver, self-hosted or
+off-site. The journal entry and ntfy alert always fire.
+
+The off-site receiver is the one exception worth calling out: it is a
+free-tier SaaS deadman, reachable from the open internet, not the homelab.
+It is the only receiver that still pages when the homelab itself — ingress,
+DNS, or the self-hosted Gatus/Kuma/Healthchecks stack — is unreachable. It
+is unseeded (empty, skipped) by default; seed
+`secrets-external/platform/healthchecks-offsite` in OpenBao to enable it.
 
 ## Installation
 
@@ -98,6 +107,7 @@ systemctl status service-deadman-validate.timer
 #   - ntfy:    the "keystone" topic receives an urgent message
 #   - healthchecks: the corresponding check flips to down
 #   - Uptime Kuma: the corresponding push monitor flips to down
+#   - off-site healthchecks: the corresponding check flips to down (once seeded)
 ```
 
 ## Contributing

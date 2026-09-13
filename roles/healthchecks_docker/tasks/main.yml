@@ -151,3 +151,30 @@
     - healthchecks_docker_admin_email | length > 0
     - healthchecks_docker_admin_password | length > 0
   no_log: true
+
+# =============================================================================
+# ntfy notification channel (idempotent bootstrap; see defaults/main.yml)
+# =============================================================================
+
+- name: Stage the Healthchecks ntfy bootstrap script
+  ansible.builtin.copy:
+    src: healthchecks_ntfy_bootstrap.py
+    dest: "{{ healthchecks_docker_data_dir }}/ntfy_bootstrap.py"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Run the idempotent Healthchecks ntfy bootstrap
+  ansible.builtin.shell:
+    cmd: >-
+      docker exec -i {{ healthchecks_docker_container_name }}
+      /opt/healthchecks/manage.py shell < {{ healthchecks_docker_data_dir }}/ntfy_bootstrap.py
+  environment:
+    HEALTHCHECKS_NTFY_URL: "{{ healthchecks_docker_ntfy_url }}"
+    HEALTHCHECKS_NTFY_TOPIC: "{{ healthchecks_docker_ntfy_topic }}"
+    HEALTHCHECKS_NTFY_TOKEN: "{{ healthchecks_docker_ntfy_token }}"
+    HEALTHCHECKS_NTFY_PRIORITY: "{{ healthchecks_docker_ntfy_priority }}"
+    HEALTHCHECKS_NTFY_PRIORITY_UP: "{{ healthchecks_docker_ntfy_priority_up }}"
+  register: healthchecks_docker_ntfy_bootstrap
+  changed_when: "'HEALTHCHECKS_NTFY_BOOTSTRAP_CHANGED' in healthchecks_docker_ntfy_bootstrap.stdout"
+  no_log: true
