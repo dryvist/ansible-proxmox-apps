@@ -1,0 +1,36 @@
+---
+# prometheus-pve-exporter (prompve/prometheus-pve-exporter) — a multi-target
+# exporter for the PVE cluster API, deployed beside prometheus_stack on the
+# monitoring guest. Read-only: it queries whatever PVE endpoint Prometheus
+# passes it via the `?target=` query param (the same multi-target pattern
+# prometheus_stack already uses for blackbox_exporter), so this role's own
+# config carries no PVE node address — no literal IP/hostname is invented
+# here, and none is needed: the target list itself is the Prometheus scrape
+# config's job (Wave 3a), derived from the tofu-published node inventory.
+
+prometheus_pve_exporter_image: "prompve/prometheus-pve-exporter:3.5.5"
+prometheus_pve_exporter_container_name: pve-exporter
+prometheus_pve_exporter_port: 9221
+prometheus_pve_exporter_data_dir: /opt/prometheus-pve-exporter
+
+# Read-only PVE API token, created out-of-band with `pveum user token add` on
+# a role scoped read-only (PVEAuditor or narrower) — never the Terraform
+# provider's write-capable credential. token_id is the full identity string
+# (`user@realm!tokenname`); token_secret is the token's UUID value. Same
+# two-field shape as inventory/group_vars/homarr_group.yml's
+# homarr_proxmox_token_id/_secret — a separate, narrowly-scoped token per
+# consumer, never a shared one. This is a SUPPORTED-absent pair, not a lost
+# credential: empty means the exporter has not been provisioned yet, so the
+# role skips deploying it rather than shipping a container that would query
+# the PVE API unauthenticated and fail every scrape.
+prometheus_pve_exporter_token_id: >-
+  {{ bao_apps_secrets.pve_exporter_token_id
+     | default(lookup('env', 'PVE_EXPORTER_TOKEN_ID'), true) }}
+prometheus_pve_exporter_token_secret: >-
+  {{ bao_apps_secrets.pve_exporter_token_secret
+     | default(lookup('env', 'PVE_EXPORTER_TOKEN_SECRET'), true) }}
+
+# PVE uses a self-signed cert by default on most homelabs; verifying it needs
+# the cluster's CA distributed to this container, which is out of scope here.
+# Override to true once that trust exists.
+prometheus_pve_exporter_verify_ssl: false

@@ -101,6 +101,7 @@ class RunAnsibleTokenContract(unittest.TestCase):
         sign_failure=False,
         declared_identity=False,
         semaphore_identity=False,
+        node_converge_identity=False,
         refuse_role_id=None,
     ):
         env = os.environ.copy()
@@ -132,6 +133,11 @@ class RunAnsibleTokenContract(unittest.TestCase):
         if semaphore_identity:
             env["OPENBAO_APPROLE_SEMAPHORE_ROLE_ID"] = "test-semaphore-role-id"
             env["OPENBAO_APPROLE_SEMAPHORE_SECRET_ID"] = APPROLE_SECRET
+        env.pop("OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID", None)
+        env.pop("OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID", None)
+        if node_converge_identity:
+            env["OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID"] = "test-node-role-id"
+            env["OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID"] = APPROLE_SECRET
         if caller_token is None:
             env.pop("BAO_TOKEN", None)
         else:
@@ -248,6 +254,41 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 "bao token revoke -self runner-auth",
             ],
         )
+        self._assert_no_secret_leak(result)
+        self._assert_cert_cleanup()
+
+    def test_node_converge_identity_wins_over_every_broader_pair(self):
+        # It is inert and human-unlocked, so it is only in an environment
+        # because an operator just unwrapped it for this run. Silently
+        # preferring a broader pair that happens to be ambient on the same
+        # workstation is the identity swap this ordering exists to prevent.
+        result = self._run(
+            declared_identity=True,
+            semaphore_identity=True,
+            node_converge_identity=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("authenticated as: openbao-node-converge", output)
+        self.assertNotIn("UNDECLARED", output)
+        self.assertIn("child CONVERGE_ROLE_ID=test-node-role-id", self.event_log.read_text(encoding="utf-8"))
+        self._assert_no_secret_leak(result)
+
+    def test_node_converge_login_refused_falls_through_instead_of_looping(self):
+        # It shares automation-ansible with ansible-converge, so the retry loop
+        # cannot tell the two apart by sign role. Without its own skip flag a
+        # refused login re-selects the same tier forever.
+        result = self._run(
+            declared_identity=True,
+            node_converge_identity=True,
+            refuse_role_id="test-node-role-id",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("AppRole login refused", result.stderr)
+        self.assertIn("authenticated as: ansible-converge", output)
         self._assert_no_secret_leak(result)
         self._assert_cert_cleanup()
 
