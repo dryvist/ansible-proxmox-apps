@@ -130,6 +130,15 @@
         name: docker
         state: restarted
   tasks:
+    # The daemon.json below pins fuse-overlayfs; a docker host that did not
+    # get Docker from roles/docker_engine has no guarantee the binary exists,
+    # and dockerd refuses to start at all when the pinned driver is missing.
+    - name: Install fuse-overlayfs before pinning it as the storage driver
+      when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.apt:
+        name: fuse-overlayfs
+        state: present
+
     # This play is the single owner of /etc/docker/daemon.json on docker LXCs.
     # roles/idrac_kvm_docker no longer writes the storage-driver here (removed
     # on a separate branch) to avoid two writers fighting over the same file.
@@ -159,6 +168,14 @@
         group: root
         mode: '0644'
       notify: Restart docker
+
+    # A daemon that failed on an unmet pin stays down (start-limit-hit) until
+    # something starts it again; an unchanged daemon.json fires no handler.
+    - name: Ensure Docker is running
+      when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.systemd:
+        name: docker
+        state: started
 
 # =============================================================================
 # Phase 0a: NTP Time Synchronization Baseline
