@@ -130,11 +130,20 @@
         name: docker
         state: restarted
   tasks:
-    # The daemon.json below pins fuse-overlayfs; a docker host that did not
-    # get Docker from roles/docker_engine has no guarantee the binary exists,
-    # and dockerd refuses to start at all when the pinned driver is missing.
-    - name: Install fuse-overlayfs before pinning it as the storage driver
+    # fuse-overlayfs is the unprivileged-LXC workaround for Docker on ZFS; a VM
+    # keeps whatever image store it already runs on. Pinning a driver there
+    # would boot the daemon against an empty store, so the pin is LXC-only and
+    # needs the virtualization fact even though the play skips fact gathering.
+    - name: Gather the virtualization type
       when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.setup:
+        filter:
+          - ansible_virtualization_type
+
+    - name: Install fuse-overlayfs before pinning it as the storage driver
+      when:
+        - "'docker' in (host_tags | default([]))"
+        - ansible_virtualization_type | default('') == 'lxc'
       ansible.builtin.apt:
         name: fuse-overlayfs
         state: present
@@ -152,18 +161,18 @@
           {{ hostvars['localhost']['tofu_data']
              ['constants']['service_ports']['registry']
              | default(5000) }}
+        _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
+        _daemon_json:
+          registry-mirrors: ["http://{{ _registry_ip }}:{{ _registry_port }}"]
+          insecure-registries: ["{{ _registry_ip }}:{{ _registry_port }}"]
+          log-driver: journald
+        _lxc_storage:
+          storage-driver: fuse-overlayfs
+          features:
+            containerd-snapshotter: false
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
-        content: |
-          {
-            "registry-mirrors": ["http://{{ _registry_ip }}:{{ _registry_port }}"],
-            "insecure-registries": ["{{ _registry_ip }}:{{ _registry_port }}"],
-            "storage-driver": "fuse-overlayfs",
-            "log-driver": "journald",
-            "features": {
-              "containerd-snapshotter": false
-            }
-          }
+        content: "{{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})) | to_nice_json }}\n"
         owner: root
         group: root
         mode: '0644'
