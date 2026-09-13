@@ -1,5 +1,44 @@
 # Changelog
 
+## [4.37.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.36.0...v4.37.0) (2026-09-13)
+
+
+### Features
+
+* **cribl_stream:** route llm_router's ai log port as syslog ([#1874](https://github.com/dryvist/ansible-proxmox-apps/issues/1874)) ([df8f099](https://github.com/dryvist/ansible-proxmox-apps/commit/df8f09971216b7c194a99bd0a9c7c1073f3cfa72))
+* **deadman:** report to Gatus external endpoints and Healthchecks by slug ([#1856](https://github.com/dryvist/ansible-proxmox-apps/issues/1856)) ([699d3ff](https://github.com/dryvist/ansible-proxmox-apps/commit/699d3fff21c13491aa4d32906d03856e8bc402ef))
+* **github_runner:** assert Docker data filesystem headroom at converge time ([#1875](https://github.com/dryvist/ansible-proxmox-apps/issues/1875)) ([989d50f](https://github.com/dryvist/ansible-proxmox-apps/commit/989d50f0cc91f102670b027cdc89d297905340c7))
+* **grafana_stack:** file-provisioned unified alerting (ntfy contact point, policy, 5 rules) ([#1852](https://github.com/dryvist/ansible-proxmox-apps/issues/1852)) ([5e07c77](https://github.com/dryvist/ansible-proxmox-apps/commit/5e07c77f912c1b95af8bf90daab1bf7cc826a36d))
+* **healthchecks_docker:** replace the dead email channel with native ntfy ([#1849](https://github.com/dryvist/ansible-proxmox-apps/issues/1849)) ([c623692](https://github.com/dryvist/ansible-proxmox-apps/commit/c6236923175bdd7c0627637f2525abb4df7c6f60))
+* **metrics:** guest-level node_exporter, cAdvisor, PVE API exporter ([#1859](https://github.com/dryvist/ansible-proxmox-apps/issues/1859)) ([fa4ec46](https://github.com/dryvist/ansible-proxmox-apps/commit/fa4ec469a03652c6328dc45884d9c6c1a584bef3))
+* **nautobot:** run the drift report as a playbook through the run wrapper ([#1851](https://github.com/dryvist/ansible-proxmox-apps/issues/1851)) ([9a1feec](https://github.com/dryvist/ansible-proxmox-apps/commit/9a1feecf74213ad15b2ee7a713678a624eb5468d))
+* **ntfy_docker:** add four hermes Slack fan-out routes ([#1863](https://github.com/dryvist/ansible-proxmox-apps/issues/1863)) ([368b31a](https://github.com/dryvist/ansible-proxmox-apps/commit/368b31ae258a6ec6eb169a14e13113dfe0cb80f0))
+* **ntfy:** add reusable OnFailure=ntfy-unit-failure@%n.service hook ([#1855](https://github.com/dryvist/ansible-proxmox-apps/issues/1855)) ([5218e0f](https://github.com/dryvist/ansible-proxmox-apps/commit/5218e0fca9d347ed01e2b96b4f39a05bd06bdf5a))
+* **ntfy:** alert hub with Slack fan-out and Zammad subscriber ([#1842](https://github.com/dryvist/ansible-proxmox-apps/issues/1842)) ([71cb831](https://github.com/dryvist/ansible-proxmox-apps/commit/71cb831e868f2e9d0e910b6cbbeff0b3568b756c))
+* **openbao:** add a workstation-only converge identity for the OpenBao-node play ([#1862](https://github.com/dryvist/ansible-proxmox-apps/issues/1862)) ([81225f7](https://github.com/dryvist/ansible-proxmox-apps/commit/81225f711a52ef6e2d51e8ab1af2d6bd6f317974))
+* **openbao:** add github-repo-create tier ([1a0167e](https://github.com/dryvist/ansible-proxmox-apps/commit/1a0167e4da8b1a98db52c73f1fe0299871d37963))
+* **openbao:** generate router keys for eight new apps ([#1867](https://github.com/dryvist/ansible-proxmox-apps/issues/1867)) ([e4290b7](https://github.com/dryvist/ansible-proxmox-apps/commit/e4290b72729124d387c8a40f404e63743c7bdc60))
+* **service_deadman:** add an off-site free-tier deadman + ntfy liveness check ([#1866](https://github.com/dryvist/ansible-proxmox-apps/issues/1866)) ([44b562c](https://github.com/dryvist/ansible-proxmox-apps/commit/44b562c1bd3453313042edb9ccaac871b84c11d1))
+* **status_stack:** monitor_targets generator feeding Gatus + AutoKuma ([#1848](https://github.com/dryvist/ansible-proxmox-apps/issues/1848)) ([535b694](https://github.com/dryvist/ansible-proxmox-apps/commit/535b6944db05f1c677f8b3c6d4055d93f864e247))
+
+
+### Bug Fixes
+
+* **baseline:** pin fuse-overlayfs only on LXC guests, keep Docker started ([#1879](https://github.com/dryvist/ansible-proxmox-apps/issues/1879)) ([f86b314](https://github.com/dryvist/ansible-proxmox-apps/commit/f86b314038d1e29b7383103103f5c76fd2475a37))
+* **docker_engine:** never pin a storage driver on a virtual machine ([#1880](https://github.com/dryvist/ansible-proxmox-apps/issues/1880)) ([eb8c8ff](https://github.com/dryvist/ansible-proxmox-apps/commit/eb8c8ff3677b4d6e996d0893af2b2bb8fc35b06d))
+* **nautobot:** run the drift playbook without privilege escalation ([#1873](https://github.com/dryvist/ansible-proxmox-apps/issues/1873)) ([730aad7](https://github.com/dryvist/ansible-proxmox-apps/commit/730aad759b6af7c9ce44ffcd922ec5234b8b9b08))
+* **openbao_secrets:** declare apps/pve-exporter optional ([#1878](https://github.com/dryvist/ansible-proxmox-apps/issues/1878)) ([22b5ebe](https://github.com/dryvist/ansible-proxmox-apps/commit/22b5ebe8f7d4fba3e67db8f02459769c5b6ba78f))
+* **openbao:** admin and write-realm AppRoles accept the workstation ([#1854](https://github.com/dryvist/ansible-proxmox-apps/issues/1854)) ([0f3fa38](https://github.com/dryvist/ansible-proxmox-apps/commit/0f3fa38db2707a55aeb44528b60403c02216f790))
+* **openbao:** bind github-repo-create to the workstation class ([#1869](https://github.com/dryvist/ansible-proxmox-apps/issues/1869)) ([7043023](https://github.com/dryvist/ansible-proxmox-apps/commit/7043023a723d5de44e78904abc1892ed46c7a141))
+* **openbao:** bind the github-write-x10 realm to the workstation class ([#1858](https://github.com/dryvist/ansible-proxmox-apps/issues/1858)) ([748de2f](https://github.com/dryvist/ansible-proxmox-apps/commit/748de2f6260c73d60427d450eb48b0b4ea7b02dc))
+* **openbao:** gate the KV-mounts init step behind reconcile mode ([#1865](https://github.com/dryvist/ansible-proxmox-apps/issues/1865)) ([1c36a72](https://github.com/dryvist/ansible-proxmox-apps/commit/1c36a7236af4655bf1a106665c681d8492b6def2))
+* **openbao:** generate router virtual keys in the format the router accepts ([#1857](https://github.com/dryvist/ansible-proxmox-apps/issues/1857)) ([124e706](https://github.com/dryvist/ansible-proxmox-apps/commit/124e706aaebcfbcba58f9b02c66d98c4cf5135b4))
+* **openbao:** guard secret-age rsyslog drop-in against duplicate imfile load ([#1877](https://github.com/dryvist/ansible-proxmox-apps/issues/1877)) ([34186ab](https://github.com/dryvist/ansible-proxmox-apps/commit/34186ab3636c73064aa77d9f9dfe3bbed1d8ec81))
+* **openbao:** reclassify slack approles for workstation CIDR access ([#1864](https://github.com/dryvist/ansible-proxmox-apps/issues/1864)) ([a0b21f1](https://github.com/dryvist/ansible-proxmox-apps/commit/a0b21f12aae9464fe8a6da255b9a21f923f3b144))
+* **openbao:** tune the approle mount login lockout for shared aliases ([#1872](https://github.com/dryvist/ansible-proxmox-apps/issues/1872)) ([afc5203](https://github.com/dryvist/ansible-proxmox-apps/commit/afc520366303eac2f433c92904a3491688b93f29))
+* **openbao:** unbound redemption count on the workstation GitHub AppRoles ([#1871](https://github.com/dryvist/ansible-proxmox-apps/issues/1871)) ([c39e137](https://github.com/dryvist/ansible-proxmox-apps/commit/c39e137ab97eb6f94878e969bb5da8b36e80eae3))
+* **service_deadman:** reach bao_monitoring_secrets on every target host ([#1868](https://github.com/dryvist/ansible-proxmox-apps/issues/1868)) ([7f416a3](https://github.com/dryvist/ansible-proxmox-apps/commit/7f416a34140ebbed7195d960dd0329234fed722e))
+
 ## [4.36.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.35.0...v4.36.0) (2026-09-12)
 
 
