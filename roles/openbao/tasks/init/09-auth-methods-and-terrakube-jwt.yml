@@ -22,6 +22,48 @@
     - openbao_bootstrap_token is defined
     - "'approle/' not in (openbao_auth_raw.stdout | from_json).keys()"
 
+# Shared workstation aliases are redeemed by many concurrent sessions; the
+# mount default of 5 failures per 15 min locks the alias on ordinary retry
+# noise, so the mount's own lockout is tuned wider instead.
+- name: Read the AppRole mount tune
+  ansible.builtin.command:
+    cmd: bao read -format=json sys/auth/approle/tune
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_bootstrap_token }}"
+  register: openbao_approle_mount_tune_current
+  no_log: true
+  changed_when: false
+  failed_when: false
+  when: openbao_bootstrap_token is defined
+
+- name: Tune the AppRole mount login lockout
+  ansible.builtin.command:
+    cmd: >-
+      bao auth tune
+      -user-lockout-threshold={{ openbao_approle_lockout_threshold }}
+      -user-lockout-duration={{ openbao_approle_lockout_duration }}
+      -user-lockout-counter-reset-duration={{ openbao_approle_lockout_counter_reset }}
+      approle
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_bootstrap_token }}"
+  no_log: true
+  changed_when: true
+  when:
+    - openbao_bootstrap_token is defined
+    - >-
+      (openbao_approle_mount_tune_current.rc | default(1)) != 0
+      or (((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
+          | default({}, true)).user_lockout_config | default({}, true)).lockout_threshold
+         | default('') | string != openbao_approle_lockout_threshold | string
+      or (((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
+          | default({}, true)).user_lockout_config | default({}, true)).lockout_duration
+         | default('') != openbao_approle_lockout_duration
+      or (((openbao_approle_mount_tune_current.stdout | default('{}') | from_json).data
+          | default({}, true)).user_lockout_config | default({}, true)).lockout_counter_reset
+         | default('') != openbao_approle_lockout_counter_reset
+
 # --- Terrakube native JWT workload identity --------------------------------
 - name: Enable the Terrakube JWT auth method
   ansible.builtin.command:
