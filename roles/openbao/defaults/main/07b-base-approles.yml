@@ -86,8 +86,12 @@ openbao_base_approles_core:
   # approle-audit: standing, ambient read-only identity like config-read —
   # read + list can never mint or reveal a secret_id value (see the policy
   # template header), so leaking this one costs nothing exploitable.
+  # Standing and ambient with nothing re-minting it, same as config-read and
+  # the github tiers below: unbounded lifetime, bounded by address class.
   - name: "{{ openbao_approle_audit_approle_name }}"
     policy: "{{ openbao_approle_audit_policy_name }}"
+    secret_id_ttl: "0s"
+    secret_id_num_uses: 0
   # ai-public: read-only fabric-brain domain, its own narrow credential (see
   # the name vars above) — held by the hermes / open_webui brain-sync timers.
   - name: "{{ openbao_ai_public_approle_name }}"
@@ -100,16 +104,32 @@ openbao_base_approles_core:
   # human gate (user decision 2026-07-17: ambient for allowlisted repos).
   # github-admin is INERT break-glass like ai-admin: no standing secret_id; a
   # human wraps a single-use secret_id per elevation.
+  #
+  # All three carry secret_id_ttl "0s" + num_uses 0 for the reason already
+  # given for semaphore above and for the four in 07d: NOTHING RE-MINTS THEM.
+  # A finite bound on a credential with no re-issue automation is a scheduled
+  # outage, and on 2026-09-14 it was a real one — all three expired and every
+  # harness on the workstation lost GitHub access at once, with the only
+  # symptom a 400 "invalid role or secret ID" that reads like a broken role.
+  # What bounds these is the workstation address class, not a lifetime. Give
+  # them one back when something re-mints on a schedule.
+  # "0s" not 0: 10c compares via to_seconds, which splits its input.
   - name: "{{ openbao_github_read_approle_name }}"
     policy: "{{ openbao_github_read_policy_name }}"
+    secret_id_ttl: "0s"
+    secret_id_num_uses: 0
   - name: "{{ openbao_github_write_approle_name }}"
     policy: "{{ openbao_github_write_policy_name }}"
     token_ttl: 30m  # write identity gets a short token TTL
+    secret_id_ttl: "0s"
+    secret_id_num_uses: 0
   # github-repo-create: standing ambient identity, ceiling administration:write
   # only — no per-repo allowlist to pin; boundary is dryvist-repo-create's map.
   - name: "{{ openbao_github_repo_create_approle_name }}"
     policy: "{{ openbao_github_repo_create_policy_name }}"
     token_ttl: 30m  # short TTL like github-write
+    secret_id_ttl: "0s"
+    secret_id_num_uses: 0
   - name: "{{ openbao_github_admin_approle_name }}"
     policy: "{{ openbao_github_admin_policy_name }}"
     token_ttl: "{{ openbao_ai_admin_token_ttl }}"
@@ -127,10 +147,23 @@ openbao_base_approles_core:
   # approle-issuer: mints secret_ids for the enumerated non-break-glass roles
   # and does nothing else. Its own token TTL is short because a mint is a
   # single operation, not a session — nothing legitimate holds this for hours.
+  #
+  # Its SECRET_ID, though, must not expire, and this is the one role where that
+  # is a correctness requirement rather than a convenience: approle-issuer is
+  # the only identity that may mint a secret_id, so it is the only identity
+  # that could mint a replacement for its own. Under the finite default it
+  # expired and took that power with it — a deadlock, not an outage, because
+  # every remaining path to recovery (re-mint github-read, re-mint itself) ran
+  # through the credential that had just died. Recovery then needs the
+  # operator's human-unlock tier, which is break-glass by design and not a
+  # thing a routine expiry should be able to require.
+  # Bounded by its address class and by a policy that can do nothing but mint.
   - name: "{{ openbao_approle_issuer_approle_name }}"
     policy: "{{ openbao_approle_issuer_policy_name }}"
     token_ttl: 15m
     token_max_ttl: 30m
+    secret_id_ttl: "0s"
+    secret_id_num_uses: 0
   # ai-orchestrator: role_id/secret_id are operator-held in Doppler tier-0
   # (services BAO_AI_ORCHESTRATOR_ROLE_ID / _SECRET_ID), consumed as ambient env.
   # This AppRole already exists LIVE with a non-expiring secret_id in active
