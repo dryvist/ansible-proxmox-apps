@@ -104,9 +104,20 @@ result that is entirely wrong.
    hardware source set commits immediately. The dry-run path is:
 
    1. converge with the hardware source set **and seed jobs disabled**, so the
-      bundle is placed but nothing runs;
+      bundle is placed but nothing runs:
+
+      ```bash
+      INT_HOMELAB_HARDWARE=<path to inventory.seed.yml> doppler run -- \
+        scripts/run-ansible.sh playbooks/site.yml --tags nautobot \
+        --limit nautobot_group,localhost -e nautobot_run_seed_jobs=false
+      ```
+
    2. launch `Seed Hardware Inventory` from the UI with its dry-run box ticked;
-   3. read the counts, then converge normally to commit.
+   3. read the counts, then converge normally to commit — the same command
+      without `-e nautobot_run_seed_jobs=false`. This stage also applies any
+      pending Nautobot version bump, which runs database migrations: take a
+      backup first, and confirm no one holds a maintenance window on the
+      guest.
 
    A dry run writes nothing at all — not the objects, and not the module bays,
    module types, locations or roles they would need. That is asserted in
