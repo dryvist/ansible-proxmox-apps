@@ -48,6 +48,28 @@
       # check mode and git_sha publishes as an empty string.
       check_mode: false
 
+    # Prints nothing on a detached HEAD (how CI, and possibly the plane, check
+    # out) rather than failing, and the budget gate treats empty like any
+    # non-main branch -- an undeterminable branch can never unlock the cap
+    # override. `branch` is on ansible-lint's read-only git allow-list;
+    # `symbolic-ref` is not.
+    - name: Read the branch being converged
+      ansible.builtin.command:
+        cmd: git branch --show-current
+        chdir: "{{ playbook_dir }}/../.."
+      register: converge_telemetry_branch
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Read by site/budget-gate.yml between every stage of site.yml. Kept on
+    # localhost, which every scoped run includes (--limit must name it for
+    # the inventory loader to run at all).
+    - name: Start the converge wall clock
+      ansible.builtin.set_fact:
+        converge_started_epoch: "{{ now().timestamp() | int }}"
+        converge_branch: "{{ converge_telemetry_branch.stdout | default('') | trim }}"
+
     - name: Publish converge-freshness configuration for the callback plugin
       ansible.builtin.set_stats:
         aggregate: false
