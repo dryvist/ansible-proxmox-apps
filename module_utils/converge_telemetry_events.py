@@ -7,8 +7,9 @@ These are ordinary functions over plain dicts with no Ansible callback state,
 so they are the half worth reading (and testing) on its own when the question
 is "what does a converge publish", not "when does it publish".
 
-Not a callback plugin itself: Ansible's loader only instantiates modules that
-are enabled by name, so a sibling here is never loaded as one.
+Not a callback plugin, which is why it does not live in callback_plugins/:
+the loader inspects every *.py there and warns "skipped as invalid" on each
+one without a CallbackModule class, on every run.
 """
 
 from __future__ import absolute_import, division, print_function
