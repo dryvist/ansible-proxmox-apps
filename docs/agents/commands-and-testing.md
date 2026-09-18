@@ -18,19 +18,31 @@
 > tokens and revokes everything it creates, so it carries none of the
 > seal-key/provisioning-identity constraint that keeps the OpenBao-node play
 > on a workstation.
+>
+> **Every converge has a wall-clock budget: 10 minutes, hard cap 20.**
+> `site.yml` checks the clock between stages (`playbooks/site/budget-gate.yml`)
+> and stops the run at the first stage boundary past the cap, with a failed
+> recap and the `TASKS RECAP` naming the slowest tasks. A single task is
+> capped at 10 minutes by `task_timeout` in `ansible.cfg`. A converge that
+> needs longer is a defect to file, not a value to raise: scope it with
+> `--limit <group>,localhost` and `--tags`. `CONVERGE_WALL_CLOCK_CAP` (seconds)
+> is honoured only on `main`, the promotion boundary where a full end-to-end
+> converge is the point; every other branch gets the default.
 
 ```bash
-# Deploy all apps (Doppler — main pipeline does not require SOPS)
-doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml
+# Deploy all apps (Doppler — main pipeline does not require SOPS). A full
+# site.yml is a promotion-boundary action, not a development one: scope a
+# development converge with --limit and --tags (see the budget above).
+doppler run -- scripts/run-ansible.sh playbooks/site.yml
 
 # Deploy all apps including SOPS-only roles (e.g., haproxy, mailpit)
-sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
-  -i inventory/hosts.yml playbooks/site.yml'
+sops exec-env secrets.enc.yaml 'doppler run -- scripts/run-ansible.sh \
+  playbooks/site.yml'
 
 # Deploy GitHub runners (requires token from gh-workflow-tokens Doppler project)
 doppler run -p gh-workflow-tokens -c prd -- \
-  doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
-  --tags github_runner
+  doppler run -- scripts/run-ansible.sh playbooks/site.yml \
+  --tags github_runner --limit docker_vms,localhost
 
 # Edit encrypted secrets
 sops secrets.enc.yaml
@@ -73,38 +85,39 @@ ansible-lint
 > reports "no hosts matched". Always use `--limit <group>,localhost`.
 >
 > **`scripts/run-ansible.sh` wraps `ansible-playbook` with a stale-checkout
-> guard — the commands above call `ansible-playbook` directly and skip it.**
-> The guard refuses to converge from a checkout behind its tracked branch (a
-> stale checkout deploys old content and still exits 0 with a green play
-> recap); `ALLOW_STALE_CHECKOUT=1` is the deliberate escape hatch for a
-> pinned replay. It does **not** cover every stale-checkout case: a detached
-> HEAD (CI's PR checkout, or a manual `git checkout <sha>`) has no tracked
-> branch to compare against, so the guard skips the check there rather than
-> failing — it does not, and structurally cannot, detect staleness on a
-> detached checkout. Use `scripts/run-ansible.sh playbooks/site.yml ...`
-> under an environment injector in place of the direct `ansible-playbook`
-> calls above when checkout freshness matters.
+> guard.** The `site.yml` commands above go through it; the standalone
+> playbooks below call `ansible-playbook` directly and skip it. The guard
+> refuses to converge from a checkout behind its tracked branch (a stale
+> checkout deploys old content and still exits 0 with a green play recap);
+> `ALLOW_STALE_CHECKOUT=1` is the deliberate escape hatch for a pinned
+> replay. It does **not** cover every stale-checkout case: a detached HEAD
+> (CI's PR checkout, or a manual `git checkout <sha>`) has no tracked branch
+> to compare against, so the guard skips the check there rather than failing
+> — it does not, and structurally cannot, detect staleness on a detached
+> checkout.
 
 ## Execution Performance & Optimization
 
-Since site playbook runs or dry-runs evaluate 55+ hosts, checks can take a
-long time even when 99% of the tasks are no-ops (due to SSH/LXC connection
-overhead and fact-gathering serialization).
+A full `site.yml` evaluates 55+ hosts, and every task costs a flat few
+seconds of transport per host even when it changes nothing. The levers, in
+order of effect:
 
-To increase execution speed, you can leverage several options:
-
-1. **Parallel Execution (`--forks` or `ANSIBLE_FORKS`)**: Increase the
-   concurrency from the default 5 hosts at once. Using `25` forks
-   (e.g. `doppler run -- ansible-playbook ... --forks 25`) runs significantly
-   faster across large fleets.
-2. **Targeted Runs (`--limit`)**: Keep play scope narrow by limiting execution
-   to the specific role host and localhost (e.g., `--limit sortarr,localhost`).
-3. **Scoping via Tags (`--tags`)**: Use `--tags <tag-name>` to run only a
-   subset of roles (e.g., `--tags github_runner`).
-4. **SSH Pipelining & Multiplexing**: Already enabled for SSH
-   (`pipelining = True` and `ControlPersist=60s` in `ansible.cfg`).
-5. **Disable Fact Gathering**: For ad-hoc plays where host facts are not
-   needed, set `gather_facts: false` to skip the costly gathering step.
+1. **Scope with `--limit`**: the host group you are working on plus
+   localhost (e.g., `--limit sortarr,localhost`). This is the lever that
+   turns a fleet converge into a minutes-long one.
+2. **Scope with `--tags`**: `--tags <tag-name>` runs only that role's plays
+   (e.g., `--tags github_runner`). Combine with `--limit`.
+3. **Cut the task count, not the per-task cost**: a loop of `command` tasks
+   against one host pays the transport cost once per item. Run read-only
+   probes on the controller (`delegate_to: localhost`) or collapse a loop of
+   `set_fact` into one expression — see `roles/openbao/tasks/init/02-initialize-cluster.yml`
+   for the shape.
+4. **Do not raise `forks`**: `ansible.cfg` sets it deliberately. A worker is a
+   forked controller of ~110 MiB, the execution plane is memory-capped, and
+   OpenSSH penalises a source that opens too many connections at once. The
+   value moves only with the plane's memory limit, never from a command line.
+5. **SSH pipelining and multiplexing** are already on (`ansible.cfg`), and
+   plays that need no facts already set `gather_facts: false`.
 
 ## Testing
 

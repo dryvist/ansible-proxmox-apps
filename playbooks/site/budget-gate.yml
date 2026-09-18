@@ -1,0 +1,75 @@
+---
+# Wall-clock budget for a converge, checked between every stage of site.yml.
+#
+# A development converge that runs for an hour is reporting a defect, not a
+# configuration need. Nothing native bounds a whole ansible-playbook run:
+# Semaphore has no task timeout (semaphoreui/semaphore discussion #2421) and
+# Ansible's `task_timeout` bounds one task attempt, never the total. So the
+# playbook bounds itself. A failed assert ends the run the NORMAL way -- the
+# PLAY RECAP prints, profile_tasks prints its slowest-task table, the exit is
+# non-zero and the telemetry callback publishes as usual -- which is exactly
+# the report a run over budget should leave behind.
+#
+# Granularity is one stage, by design: this cannot interrupt a stage in
+# progress, and `task_timeout` in ansible.cfg is what bounds a single task.
+# Both are needed; neither replaces the other.
+#
+# The cap is honoured from CONVERGE_WALL_CLOCK_CAP only on main, the
+# promotion boundary where a full end-to-end converge is the point. Every
+# other branch (and a detached HEAD) gets the default: raising it there
+# would hide the problem the cap exists to surface.
+- name: Gate the converge on its wall-clock budget
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags:
+    - always
+  vars:
+    ansible_become: false
+    converge_wall_clock_budget: 600
+    converge_wall_clock_cap_default: 1200
+    converge_wall_clock_cap: >-
+      {{ (lookup('env', 'CONVERGE_WALL_CLOCK_CAP') | default(converge_wall_clock_cap_default, true) | int)
+         if converge_branch | default('') == 'main'
+         else converge_wall_clock_cap_default }}
+    # now() without utc: its timestamp() treats a naive value as local time,
+    # so the utc form is off by the zone offset. Both ends use the same call.
+    converge_elapsed: >-
+      {{ (now().timestamp() | int) - (converge_started_epoch | default(now().timestamp()) | int) }}
+  tasks:
+    # Says which branch the gate resolved, so a plane run whose checkout is
+    # detached shows as refused rather than silently capped -- a control that
+    # looks present and does nothing is the failure this file exists to
+    # prevent.
+    - name: Report a cap override this branch does not honour
+      ansible.builtin.debug:
+        msg: >-
+          CONVERGE_WALL_CLOCK_CAP={{ lookup('env', 'CONVERGE_WALL_CLOCK_CAP') }}
+          ignored: the override is honoured only on main and this checkout
+          resolved to branch '{{ converge_branch | default('') }}'
+          (empty means detached HEAD). Capping at
+          {{ converge_wall_clock_cap_default }}s.
+      when:
+        - lookup('env', 'CONVERGE_WALL_CLOCK_CAP') | length > 0
+        - converge_branch | default('') != 'main'
+
+    - name: Warn once the converge is over its soft budget
+      ansible.builtin.debug:
+        msg: >-
+          Converge has run {{ converge_elapsed }}s, over the
+          {{ converge_wall_clock_budget }}s soft budget. Scope it with
+          --limit <group>,localhost and --tags; the TASKS RECAP at the end
+          of the run names what was slow.
+      when: converge_elapsed | int >= converge_wall_clock_budget
+
+    - name: Refuse to continue past the wall-clock cap
+      ansible.builtin.assert:
+        that:
+          - converge_elapsed | int < converge_wall_clock_cap | int
+        fail_msg: >-
+          Converge has run {{ converge_elapsed }}s, past the
+          {{ converge_wall_clock_cap }}s cap -- stopping before the next
+          stage. Stages that already ran DID converge; the rest did not, so
+          treat this run as partial. A converge this long is a defect to file,
+          not a cap to raise: the TASKS RECAP below names the slowest tasks.
+        quiet: true
