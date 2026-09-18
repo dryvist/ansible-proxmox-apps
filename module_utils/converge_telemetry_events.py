@@ -284,5 +284,3 @@ def build_interrupted_event(config, playbook, now):
 def encode_batch(events):
     """Encode events as the concatenated-JSON body Splunk HEC expects."""
     return "".join(json.dumps(event, sort_keys=True) for event in events)
-
-
