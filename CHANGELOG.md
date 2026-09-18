@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.39.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.38.0...v4.39.0) (2026-09-18)
+
+
+### Features
+
+* **authelia:** exempt the metrics store ingest paths from the forward-auth gate ([#1899](https://github.com/dryvist/ansible-proxmox-apps/issues/1899)) ([5957bb4](https://github.com/dryvist/ansible-proxmox-apps/commit/5957bb4f7ebac3dc3ef80cd7b1c7f2e4cd8f13de))
+
 ## [4.38.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.37.0...v4.38.0) (2026-09-18)
 
 
