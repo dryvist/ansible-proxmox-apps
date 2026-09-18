@@ -20,10 +20,48 @@ Ports come from the tofu `service_ports` constants
 itself comes from the `docker_engine` meta dependency; `daemon.json` is owned
 by the registry-mirror play in `site.yml`, never written here.
 
-Vendored dashboards live in `files/dashboards/` (currently Grafana.com 25255,
-"Claude Code Metrics (Prometheus)", pinned to the provisioned datasource uid).
-Add a dashboard by dropping its JSON there — the provider picks it up on the
-next converge.
+Vendored dashboards live in `files/dashboards/`, pinned to the provisioned
+`victoriametrics` datasource uid. Add a dashboard by dropping its JSON there —
+the provider picks it up on the next converge. Provenance for each vendored
+file:
+
+- `claude-code-metrics.json` — grafana.com dashboard 25255, "Claude Code
+  Metrics (Prometheus)".
+- `claude-code-victoriastack.json` — grafana.com dashboard 24640, "Claude
+  Code (VictoriaStack)". Ships mixed metrics + log panels upstream; only the
+  metrics panels populate here (no VictoriaLogs datasource is provisioned),
+  so the log-sourced panels read `No data`.
+- `litellm-prod-v2.json` — BerriAI/litellm
+  `cookbook/litellm_proxy_server/grafana_dashboard/dashboard_v2`.
+- `litellm-all-prometheus-metrics.json` — BerriAI/litellm, same path,
+  `dashboard_all_metrics`.
+- `litellm-genai-otel.json` — BerriAI/litellm, same path,
+  `dashboard_genai_otel`. Prometheus-backed (queries OTEL GenAI
+  semantic-convention metrics), no logs/traces backend needed.
+
+Every vendored file has had its upstream `__inputs`/`__requires` import
+prompts and any dashboard-level datasource template variable resolved to the
+literal `victoriametrics` uid, since a file-provisioned dashboard never gets
+an import screen to answer those from.
+
+Skipped: grafana.com dashboard 24641 ("OpenAI Codex (VictoriaStack)") — every
+panel in it queries a logs or traces datasource (VictoriaLogs / Jaeger); none
+of its panels query Prometheus-compatible metrics, so remapping it to
+`victoriametrics` would ship a dashboard where 100% of panels error rather
+than populate.
+
+## Installation
+
+Included via `requirements.yml`/`meta/main.yml` like any other role in this
+collection; not installed standalone. Add it to a play's `roles:` list.
+
+## Usage
+
+```yaml
+- hosts: grafana_group
+  roles:
+    - grafana_stack
+```
 
 ## Dashboard metric sources
 
