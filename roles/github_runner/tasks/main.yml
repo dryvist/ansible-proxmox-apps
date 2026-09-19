@@ -197,6 +197,30 @@
     mode: "0600"
     force: false
 
+# One directory per pooled slot, bind-mounted into that slot's container
+# below (github-runner@.service.j2) so _diag survives past --rm. Idempotent
+# and safe to run every converge, including when replicas shrinks -- a slot
+# no longer wanted just stops getting new files; nothing here deletes one.
+- name: Create the runner diagnostics directories
+  ansible.builtin.file:
+    path: "{{ github_runner_diag_host_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+
+# Every _diag directory grows a new file per job forever without this --
+# systemd-tmpfiles-clean.timer (already enabled on every systemd host) reads
+# it, so nothing role-specific needs to run or be scheduled.
+- name: Deploy the runner diagnostics retention policy
+  ansible.builtin.template:
+    src: github-runner-diag-tmpfiles.conf.j2
+    dest: /etc/tmpfiles.d/github-runner-diag.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Deploy the runner environment file
   ansible.builtin.template:
     src: runner.env.j2
