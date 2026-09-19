@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.39.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.39.0...v4.39.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **ci:** revive the e2e suite with OpenBao-rendered inputs and one matrix job ([#1906](https://github.com/dryvist/ansible-proxmox-apps/issues/1906)) ([22fdd57](https://github.com/dryvist/ansible-proxmox-apps/commit/22fdd5783a94cac4da87873f7eed581a24b0a395))
+* **cribl_stream:** prove the OTLP listener instead of inferring it from config ([9d1c477](https://github.com/dryvist/ansible-proxmox-apps/commit/9d1c477e40377a03ee9fa1622c61de8c80cc6512))
+* **github_runner:** never let the e2e env file gate the runner fleet ([#1908](https://github.com/dryvist/ansible-proxmox-apps/issues/1908)) ([737d92c](https://github.com/dryvist/ansible-proxmox-apps/commit/737d92c054a8e541a159e1675f0c1713b7a9deac))
+* **openbao:** make the bao CLI routing switch a role default, not a fact ([#1907](https://github.com/dryvist/ansible-proxmox-apps/issues/1907)) ([ff1c316](https://github.com/dryvist/ansible-proxmox-apps/commit/ff1c3167e22d6b1b7651b324ddd70b49c3e5aa8a))
+* **openbao:** resolve the existing TOTP method by the field the API returns ([#1913](https://github.com/dryvist/ansible-proxmox-apps/issues/1913)) ([980f887](https://github.com/dryvist/ansible-proxmox-apps/commit/980f88781f33ccb7baca515c157810c4cdd819e7))
+* **openbao:** seed the claude-code router key under apps ([4b491fa](https://github.com/dryvist/ansible-proxmox-apps/commit/4b491fa0b26f0c019409ec1672767d70a07838fc))
+* **openbao:** validate rsyslog once, after every drop-in writer has run ([#1917](https://github.com/dryvist/ansible-proxmox-apps/issues/1917)) ([22901cf](https://github.com/dryvist/ansible-proxmox-apps/commit/22901cf8b34122ff509d249e2ef3650ec346b7bf))
+
+
+### Performance
+
+* **converge:** cap wall clock at 20 minutes and run openbao reads on the controller ([#1904](https://github.com/dryvist/ansible-proxmox-apps/issues/1904)) ([5c0bdde](https://github.com/dryvist/ansible-proxmox-apps/commit/5c0bdded12f4d0fce52bbc44896041819bbd0061))
+
 ## [4.39.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.38.0...v4.39.0) (2026-09-18)
 
 
