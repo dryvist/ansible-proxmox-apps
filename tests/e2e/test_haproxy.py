@@ -12,24 +12,28 @@ class TestHAProxyComponent:
     def test_stats_port_is_open(self, haproxy_host, constants):
         """Verify HAProxy stats is reachable."""
         port = constants["service_ports"]["haproxy_stats"]
-        assert check_port_tcp(haproxy_host, port), (
-            f"HAProxy stats port {port} is not accepting connections on {haproxy_host}"
+        result = check_port_tcp(haproxy_host, port)
+        assert result, (
+            f"HAProxy stats port {port} is not accepting connections on "
+            f"{haproxy_host}: {result}"
         )
 
     @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
     def test_tcp_standard_frontend_is_open(self, haproxy_host, source):
         """Verify the app-facing TCP syslog frontend exists."""
-        assert check_port_tcp(haproxy_host, source.standard_port), (
+        result = check_port_tcp(haproxy_host, source.standard_port)
+        assert result, (
             f"HAProxy TCP standard frontend {source.standard_port} "
-            f"for {source.label} is not open"
+            f"for {source.label} is not open: {result}"
         )
 
     @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
     def test_tcp_high_frontend_is_open(self, haproxy_host, constants, source):
         """Verify the backward-compatible TCP syslog frontend exists."""
         port = constants["syslog_ports"][source.key]
-        assert check_port_tcp(haproxy_host, port), (
-            f"HAProxy TCP high frontend {port} for {source.label} is not open"
+        result = check_port_tcp(haproxy_host, port)
+        assert result, (
+            f"HAProxy TCP high frontend {port} for {source.label} is not open: {result}"
         )
 
     @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)

@@ -41,9 +41,10 @@ class TestHAProxy:
     )
     def test_haproxy_tcp_syslog_standard_ports(self, haproxy_host, source):
         """Verify HAProxy is accepting TCP syslog on each app-facing port."""
-        assert check_port_tcp(haproxy_host, source.standard_port), (
+        result = check_port_tcp(haproxy_host, source.standard_port)
+        assert result, (
             f"HAProxy TCP syslog port {source.standard_port} "
-            f"({source.key}) is not accepting connections on {haproxy_host}"
+            f"({source.key}) is not accepting connections on {haproxy_host}: {result}"
         )
 
     @pytest.mark.parametrize(
@@ -54,17 +55,19 @@ class TestHAProxy:
     def test_haproxy_tcp_syslog_high_ports(self, haproxy_host, constants, source):
         """Verify HAProxy is accepting TCP syslog on each high port."""
         port = constants["syslog_ports"][source.key]
-        assert check_port_tcp(haproxy_host, port), (
+        result = check_port_tcp(haproxy_host, port)
+        assert result, (
             f"HAProxy TCP syslog port {port} ({source.key}) is not accepting connections "
-            f"on {haproxy_host}"
+            f"on {haproxy_host}: {result}"
         )
 
     def test_haproxy_stats(self, haproxy_host, constants):
         """Verify HAProxy stats page port is listening."""
         port = constants["service_ports"]["haproxy_stats"]
-        assert check_port_tcp(haproxy_host, port), (
+        result = check_port_tcp(haproxy_host, port)
+        assert result, (
             f"HAProxy stats port {port} is not accepting "
-            f"connections on {haproxy_host}"
+            f"connections on {haproxy_host}: {result}"
         )
 
 
@@ -91,9 +94,10 @@ class TestCriblEdgeLXC:
         """Verify Cribl Edge API port is accepting TCP connections."""
         port = constants["service_ports"]["cribl_edge_api"]
         for edge_ip in cribl_edge_ips:
-            assert check_port_tcp(edge_ip, port), (
+            result = check_port_tcp(edge_ip, port)
+            assert result, (
                 f"Cribl Edge API port {port} is not accepting "
-                f"connections on {edge_ip}"
+                f"connections on {edge_ip}: {result}"
             )
 
 
@@ -113,9 +117,10 @@ class TestCriblStreamLXC:
         """Verify Cribl Stream API port is accepting TCP connections."""
         port = constants["service_ports"]["cribl_stream_api"]
         for stream_ip in cribl_stream_ips:
-            assert check_port_tcp(stream_ip, port), (
+            result = check_port_tcp(stream_ip, port)
+            assert result, (
                 f"Cribl Stream API port {port} is not accepting "
-                f"connections on {stream_ip}"
+                f"connections on {stream_ip}: {result}"
             )
 
 
@@ -125,17 +130,19 @@ class TestSplunk:
     def test_splunk_web(self, splunk_host, constants):
         """Verify Splunk Web UI port is listening."""
         port = constants["service_ports"]["splunk_web"]
-        assert check_port_tcp(splunk_host, port), (
+        result = check_port_tcp(splunk_host, port)
+        assert result, (
             f"Splunk Web port {port} is not accepting "
-            f"connections on {splunk_host}"
+            f"connections on {splunk_host}: {result}"
         )
 
     def test_splunk_hec(self, splunk_host, constants):
         """Verify Splunk HEC port is listening."""
         port = constants["service_ports"]["splunk_hec"]
-        assert check_port_tcp(splunk_host, port), (
+        result = check_port_tcp(splunk_host, port)
+        assert result, (
             f"Splunk HEC port {port} is not accepting "
-            f"connections on {splunk_host}"
+            f"connections on {splunk_host}: {result}"
         )
 
     def test_splunk_hec_health(self, splunk_hec_url):
