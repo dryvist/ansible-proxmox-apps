@@ -114,16 +114,22 @@
 # this task changed, which notifies the same handler and repairs the run it is
 # found in.
 #
-# rc is the discriminator, NOT `.failed`: with failed_when false, `.failed` is
-# always false, so a guard written against it can never fire — the exact shape
-# of false green this task exists to remove.
+# wait_for, not a shell probe: it is pure Python on the target, so it needs
+# neither bash nor timeout present. A shell probe that cannot run returns
+# non-zero, marks this task changed on EVERY converge, and bounces the service
+# every run — the same defect the outputs.yml note below exists to avoid.
+#
+# `msg`, NOT `.failed`, is the discriminator: with failed_when false, `.failed`
+# is always false, so a guard written against it can never fire — the exact
+# shape of false green this task exists to remove.
 - name: Prove the OTLP listener is bound
-  ansible.builtin.command:
-    cmd: >-
-      timeout 3 bash -c
-      '</dev/tcp/127.0.0.1/{{ cribl_stream_otel_port | trim }}'
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ cribl_stream_otel_port | trim | int }}"
+    timeout: 5
+    state: started
   register: cribl_stream_otel_probe
-  changed_when: cribl_stream_otel_probe.rc != 0
+  changed_when: "'Timeout' in (cribl_stream_otel_probe.msg | default(''))"
   failed_when: false
   notify: Restart cribl stream
 
