@@ -27,8 +27,17 @@ ENV {{ var }} {{ value }}
 {% endfor %}
 {% endif %}
 
+# APT_PROXY_URL arrives through the platform's `env` (from the runner host's
+# environment, see molecule/resources/apt_proxy.yml). Written as apt config
+# rather than exported as http_proxy: the cache only serves package
+# repositories, and the curl below must still reach its upstream directly. The
+# file stays in the image, so the converge's own apt runs are cached too.
 RUN export DEBIAN_FRONTEND=noninteractive \
  && . /etc/os-release \
+ && if [ -n "${APT_PROXY_URL:-}" ]; then \
+      echo "Acquire::http::Proxy \"${APT_PROXY_URL}\";" \
+        > /etc/apt/apt.conf.d/01proxy; \
+    fi \
  && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  && install -m 0755 -d /etc/apt/keyrings \
