@@ -42,3 +42,128 @@
           status={{ _boards.status }}
           count={{ _boards.json | length }}
           loaded={{ _boards.json | map(attribute='title') | list | sort }}
+
+    # Alert rules: dashboards loading proves nothing about whether the
+    # provisioned alert rules were also accepted and are actually evaluating.
+    # The expected rule/datasource set is derived by rendering the role's own
+    # template here (single source of truth) rather than duplicating its
+    # uid list in this playbook.
+    - name: Render the alert-rules file exactly as the role would provision it
+      ansible.builtin.set_fact:
+        _rules_rendered: >-
+          {{ lookup('ansible.builtin.template',
+                     '../roles/grafana_stack/templates/alerting/rules.yml.j2') | from_yaml }}
+
+    - name: Derive the expected rules and datasources from the rendered template
+      ansible.builtin.set_fact:
+        _expected_rules: "{{ _rules_rendered.groups | default([]) | map(attribute='rules') | flatten }}"
+        _expected_datasource_uids: >-
+          {{ (_rules_rendered.groups | default([]) | map(attribute='rules') | flatten
+              | map(attribute='data') | flatten | map(attribute='datasourceUid')
+              | reject('equalto', '__expr__') | unique | list) }}
+
+    - name: List provisioned alert rules
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:3000/api/v1/provisioning/alert-rules"
+        user: admin
+        password: "{{ (_pw.content | b64decode | trim) if _pw.content is defined else '' }}"
+        force_basic_auth: true
+        return_content: true
+      register: _provisioned_rules
+      no_log: true
+      failed_when: _provisioned_rules.status != 200
+
+    - name: Assert every rendered alert rule is provisioned
+      ansible.builtin.assert:
+        that: >-
+          (_expected_rules | map(attribute='uid') | list
+           | difference(_provisioned_rules.json | map(attribute='uid') | list) | length) == 0
+        fail_msg: >-
+          Missing provisioned alert rule uid(s):
+          {{ (_expected_rules | map(attribute='uid') | list)
+             | difference(_provisioned_rules.json | map(attribute='uid') | list) }}
+        success_msg: "All {{ _expected_rules | length }} rendered alert rule(s) are provisioned."
+
+    - name: List datasources
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:3000/api/datasources"
+        user: admin
+        password: "{{ (_pw.content | b64decode | trim) if _pw.content is defined else '' }}"
+        force_basic_auth: true
+        return_content: true
+      register: _datasources
+      no_log: true
+      failed_when: _datasources.status != 200
+
+    - name: Assert every alert rule's datasource exists (a rule bound to a missing datasource is dormant)
+      ansible.builtin.assert:
+        that: >-
+          (_expected_datasource_uids
+           | difference(_datasources.json | map(attribute='uid') | list) | length) == 0
+        fail_msg: >-
+          Alert rule(s) reference nonexistent datasource uid(s):
+          {{ _expected_datasource_uids | difference(_datasources.json | map(attribute='uid') | list) }}
+        success_msg: "All {{ _expected_datasource_uids | length }} alert-rule datasource(s) exist."
+
+    - name: Query rule evaluation health (Prometheus-compatible ruler API)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:3000/api/prometheus/grafana/api/v1/rules"
+        user: admin
+        password: "{{ (_pw.content | b64decode | trim) if _pw.content is defined else '' }}"
+        force_basic_auth: true
+        return_content: true
+      register: _rule_health
+      no_log: true
+      failed_when: _rule_health.status != 200
+
+    - name: Flatten evaluated rules from the ruler API
+      ansible.builtin.set_fact:
+        _evaluated_rules: "{{ _rule_health.json.data.groups | map(attribute='rules') | flatten }}"
+
+    - name: Assert every expected rule is evaluating without error
+      ansible.builtin.assert:
+        that:
+          - (_evaluated_rules | selectattr('name', 'equalto', item.title) | list | length) == 1
+          - (_evaluated_rules | selectattr('name', 'equalto', item.title) | map(attribute='health') | first) != 'error'
+        fail_msg: >-
+          Rule "{{ item.title }}" is missing from evaluation results or reports health
+          "{{ (_evaluated_rules | selectattr('name', 'equalto', item.title)
+               | map(attribute='health') | list | first) | default('MISSING') }}".
+      loop: "{{ _expected_rules }}"
+      loop_control:
+        label: "{{ item.title }}"
+
+    # nodata rules (e.g. the dormant secret-rotation-overdue rule, see rules.yml.j2
+    # header) legitimately never re-evaluate against fresh samples the same way —
+    # their health is asserted above, freshness is only meaningful for the rest.
+    - name: Assert every non-nodata rule evaluated within the last 10 minutes
+      ansible.builtin.assert:
+        that: >-
+          (now(utc=true) -
+            ((_evaluated_rules | selectattr('name', 'equalto', item.title)
+              | map(attribute='lastEvaluation') | first)
+             | regex_replace('(\.\d{1,6})\d*Z$', '\1Z')
+             | to_datetime('%Y-%m-%dT%H:%M:%S.%fZ'))
+          ).total_seconds() < 600
+        fail_msg: >-
+          Rule "{{ item.title }}" last evaluated more than 10 minutes ago
+          ({{ _evaluated_rules | selectattr('name', 'equalto', item.title)
+              | map(attribute='lastEvaluation') | first }}).
+      loop: "{{ _expected_rules }}"
+      loop_control:
+        label: "{{ item.title }}"
+      when: >-
+        (_evaluated_rules | selectattr('name', 'equalto', item.title)
+         | map(attribute='health') | first) != 'nodata'
+
+    - name: Report rule health
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.title }}:
+          health={{ (_evaluated_rules | selectattr('name', 'equalto', item.title)
+                     | map(attribute='health') | first) | default('MISSING') }}
+          lastEvaluation={{ (_evaluated_rules | selectattr('name', 'equalto', item.title)
+                             | map(attribute='lastEvaluation') | first) | default('n/a') }}
+      loop: "{{ _expected_rules }}"
+      loop_control:
+        label: "{{ item.title }}"
