@@ -39,6 +39,10 @@ def _tasks(node):
         for entry in node:
             yield from _tasks(entry)
     elif isinstance(node, dict):
+        # A playbook-level import (the wall-clock gate bracketing this file)
+        # is a play list entry with a name, not a task of the play.
+        if "import_playbook" in node:
+            return
         if "name" in node and not {"hosts", "tasks"} <= set(node):
             yield node
         for key in ("tasks", "block", "rescue", "always", "pre_tasks", "post_tasks"):
