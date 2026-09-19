@@ -77,11 +77,21 @@ ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until [ -s {{ github_runner_token_e
 # instance id (%i) into CONTAINER_TAG/SYSLOG_IDENTIFIER so a job's output can
 # be found by runner slot without a separate per-container log store; deleting
 # the container (--rm above) never deletes what already left it.
+#
+# The _diag bind mount does the same job for Runner.Listener/Runner.Worker's
+# own log FILES, which carry more detail than what either process writes to
+# stdout. The host-side directory is per-slot (%i) on the same data disk
+# github_runner_data_paths already keeps off the boot disk, and
+# tasks/main.yml creates it every converge. syslog_forwarder's imfile input
+# (inventory/group_vars/docker_vms.yml) tails it into the same journald ->
+# Splunk path as everything else on this host -- no new mount, index, or
+# reaper; the files just outlive the container that wrote them.
 ExecStart=/usr/bin/docker run \
     --rm \
     --name {{ github_runner_container_prefix }}-%i \
     --log-driver journald \
     --log-opt tag={{ github_runner_container_prefix }}-%i \
+    --volume {{ github_runner_diag_host_dir }}/%i:/actions-runner/_diag \
     --env-file {{ github_runner_env_file }} \
     --env-file {{ github_runner_token_env_file }} \
     --env-file {{ github_runner_e2e_env_file }} \
