@@ -1,0 +1,107 @@
+---
+# promhippie/github_exporter — CI-metrics exporter. This deployment ships the
+# self-hosted runner online/busy gauges only (see the collector comment
+# below for why workflow_run/workflow_job are off). Co-located on the
+# prometheus LXC (prometheus_group) and scraped locally, same shape as
+# roles/prometheus_pve_exporter and roles/node_exporter.
+
+# Pinned upstream release. Renovate-friendly single source; bump deliberately
+# (the checksums below must move with it when set).
+github_exporter_version: "19.0.0"
+
+# GOARCH-shaped name derived from the host fact; covers the amd64/arm64 fleet
+# (same map as roles/node_exporter).
+github_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_architecture, 'amd64') }}"
+
+# Upstream ships a .deb with its own systemd unit
+# (github-exporter.service), system user (github-exporter) and state
+# directory (/var/lib/github-exporter) — installed via apt, not a manual
+# tarball unpack, same approach as roles/github_runner's OpenBao client
+# install.
+github_exporter_release: "github-exporter-{{ github_exporter_version }}-linux-{{ github_exporter_arch }}"
+github_exporter_deb_url: >-
+  https://github.com/promhippie/github_exporter/releases/download/v{{
+  github_exporter_version }}/{{ github_exporter_release }}.deb
+
+# Integrity pin for the .deb ("sha256:<hex>"), per-arch from the release's own
+# <asset>.sha256 file. Refresh both hashes when bumping the version.
+github_exporter_checksum: >-
+  sha256:{{ {
+    'amd64': '65e9e7d68d0af8849ea53628c5ce0e263b5f8821e3b5a1b5ad9e2f00d8f8a268',
+    'arm64': 'd0bc73436b7afc500e815764aa9e2743d5ea77edd381c900d12ae04a0cf716b8',
+  }[github_exporter_arch] }}
+
+# Bind to localhost only: this is co-located on the prometheus LXC and scraped
+# via prometheus_stack_extra_scrape_configs (inventory/group_vars/
+# prometheus_group.yml), never across the network.
+github_exporter_web_address: "127.0.0.1:9504"
+
+# Organizations to scrape. Set in inventory/group_vars/prometheus_group.yml,
+# the same separation github_runner_org uses (role defaults stay blank; the
+# org name is estate topology, not a role concern).
+github_exporter_org: ""
+
+# No repository list is ever set (no github_exporter_repos variable exists):
+# the runners collector's repo-level lookup (repoRunners()) only iterates a
+# configured repo list, and leaving it empty keeps that loop at zero
+# iterations — org-level runner status comes from orgRunners() alone, one API
+# call per configured org, never per-repo.
+#
+# Collectors: only `runners` is enabled. It is the only collector in this
+# exporter version that calls the GitHub API live (GET
+# /orgs/{org}/actions/runners) — `workflow_runs` and `workflow_jobs` read
+# exclusively from the exporter's own local database, which only its
+# built-in /github webhook receiver populates. Nothing in this estate
+# delivers webhook events to it yet (the estate has no WAN-facing ingress,
+# and GitHub cannot originate a webhook against an internal-only host), so
+# enabling those two collectors would ship two permanently-empty metric
+# families. Known gap, not fixed here — tracked for a follow-up that relays
+# run/job data from an internal source instead of a GitHub-originated
+# webhook. `orgs`/`repos` (upstream defaults: enabled) are also off: this
+# identity holds no repository-content permission, so they would only ever
+# 403.
+github_exporter_collector_workflow_runs: false
+github_exporter_collector_workflow_jobs: false
+github_exporter_collector_runners: true
+github_exporter_collector_orgs: false
+github_exporter_collector_repos: false
+
+# sqlite DSN for the (currently unused, collectors above are off) run/job
+# history store — set now so enabling those collectors later is a one-line
+# flag flip, not a fresh path/permissions decision. Pinned under the
+# package's own state directory so it survives a package upgrade.
+github_exporter_database_dsn: "sqlite:///var/lib/github-exporter/github_exporter.db"
+
+# ---------------------------------------------------------------------------
+# Credential. A GitHub App installation token expires in about an hour and
+# converges are days apart (Semaphore only auto-schedules non-mutating
+# templates), so this is not rendered by Ansible directly — a per-host
+# `bao agent` holds the AppRole session and keeps the token file current,
+# restarting the exporter on every render. Ansible delivers the AppRole
+# secret-zero and nothing else. Mirrors roles/github_runner exactly.
+# ---------------------------------------------------------------------------
+github_exporter_openbao_role_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_GITHUB_EXPORTER_ROLE_ID') | default('', true) }}
+github_exporter_openbao_secret_id: >-
+  {{ lookup('env', 'OPENBAO_APPROLE_GITHUB_EXPORTER_SECRET_ID') | default('', true) }}
+github_exporter_subdomain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+github_exporter_bao_addr: "https://openbao.{{ github_exporter_subdomain }}"
+# Keep in sync with roles/openbao `openbao_version` / roles/github_runner
+# `github_runner_openbao_version`.
+github_exporter_openbao_version: "2.5.5"
+github_exporter_openbao_deb_url: >-
+  https://github.com/openbao/openbao/releases/download/v{{
+  github_exporter_openbao_version }}/openbao_{{ github_exporter_openbao_version
+  }}_linux_amd64.deb
+github_exporter_bao_bin: /usr/bin/bao
+github_exporter_approle_dir: /etc/github-exporter/approle
+github_exporter_agent_config: /etc/github-exporter/openbao-agent.hcl
+# Read by the package's own shipped systemd unit as a second, optional
+# EnvironmentFile= (github-exporter.service ships
+# `EnvironmentFile=-/etc/sysconfig/github-exporter`) — no override unit
+# needed, the agent only has to write here.
+github_exporter_token_env_file: /etc/sysconfig/github-exporter
+# Read-only, organization-scoped permission set (roles/openbao
+# 03-github-engine.yml). Its stored permission map is
+# organization_self_hosted_runners:read and cannot be widened by the request.
+github_exporter_token_path: github/token/exporter-dryvist
