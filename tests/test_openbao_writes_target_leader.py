@@ -179,9 +179,8 @@ class BaoCliRunsOnTheController(unittest.TestCase):
         """openbao_cli_become is consumed as `vars: ansible_become:` on
         delegated tasks, and a connection variable there is resolved in the
         DELEGATED host's scope. A set_fact on the openbao node is invisible
-        there: the first delegated read on the plane failed with
-        'openbao_cli_become' is undefined. A role default is in scope for
-        every host in the play."""
+        there ('openbao_cli_become' is undefined). A role default is in
+        scope for every host in the play."""
         for name in CLI_SWITCH:
             with self.assertRaises(AssertionError, msg=f"{name} is set as a fact again"):
                 _set_fact_expr(name)
