@@ -39,6 +39,13 @@
     release_namespace: "{{ github_runner_arc_controller_namespace }}"
     create_namespace: false
     wait: true
+    values:
+      # Applies to the controller-manager AND every listener it manages —
+      # one flag on this chart, not a per-scale-set setting.
+      metrics:
+        controllerManagerAddr: "{{ github_runner_arc_metrics_addr }}"
+        listenerAddr: "{{ github_runner_arc_metrics_addr }}"
+        listenerEndpoint: "/metrics"
 
 - name: Install the ARC runner scale set
   kubernetes.core.helm:
@@ -54,6 +61,10 @@
       githubConfigSecret: "{{ github_runner_arc_secret_name }}"
       runnerGroup: "{{ github_runner_arc_group }}"
       runnerScaleSetName: "{{ github_runner_arc_scale_set_name }}"
+      # The systemd fleet's exact label list, so a workflow's `runs-on` that
+      # names those labels (not just the implicit "self-hosted") matches
+      # ARC runners too during the pilot.
+      scaleSetLabels: "{{ github_runner_arc_labels.split(',') }}"
       minRunners: "{{ github_runner_arc_min_runners }}"
       maxRunners: "{{ github_runner_arc_max_runners }}"
       containerMode:
@@ -106,3 +117,28 @@
       `kubectl -n {{ github_runner_arc_scale_set_namespace }} get pods` and
       the controller's own logs — a listener that never starts means the
       GitHub App credentials or githubConfigUrl are wrong.
+
+# Metrics only — no other Service. Exposes the listener's own /metrics
+# (gha_job_startup_duration_seconds, gha_assigned_jobs, gha_started_jobs_total,
+# gha_completed_jobs_total) to the estate's Prometheus, which runs outside
+# this k3s cluster. Fixed NodePort so the scrape target is stable across a
+# listener pod restart.
+- name: Expose the ARC listener metrics
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ github_runner_arc_listener_metrics_service_name }}"
+        namespace: "{{ github_runner_arc_scale_set_namespace }}"
+      spec:
+        type: NodePort
+        selector:
+          app.kubernetes.io/component: runner-scale-set-listener
+        ports:
+          - name: metrics
+            port: "{{ github_runner_arc_metrics_port }}"
+            targetPort: "{{ github_runner_arc_metrics_port }}"
+            nodePort: "{{ github_runner_arc_listener_metrics_node_port }}"
