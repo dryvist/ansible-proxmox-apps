@@ -197,6 +197,30 @@
     mode: "0600"
     force: false
 
+# One directory per pooled slot, bind-mounted into that slot's container
+# below (github-runner@.service.j2) so _diag survives past --rm. Idempotent
+# and safe to run every converge, including when replicas shrinks -- a slot
+# no longer wanted just stops getting new files; nothing here deletes one.
+- name: Create the runner diagnostics directories
+  ansible.builtin.file:
+    path: "{{ github_runner_diag_host_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+
+# Every _diag directory grows a new file per job forever without this --
+# systemd-tmpfiles-clean.timer (already enabled on every systemd host) reads
+# it, so nothing role-specific needs to run or be scheduled.
+- name: Deploy the runner diagnostics retention policy
+  ansible.builtin.template:
+    src: github-runner-diag-tmpfiles.conf.j2
+    dest: /etc/tmpfiles.d/github-runner-diag.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Deploy the runner environment file
   ansible.builtin.template:
     src: runner.env.j2
@@ -251,10 +275,32 @@
     {{ ansible_facts.services | select('match', '^github-runner@\\d+\\.service$')
        | difference(github_runner_wanted_units) | list }}
 
+# A changed unit file or env file has notified a pool restart. Apply it BEFORE
+# the assertion below: a failed assert ends the play for this host, and
+# handlers flush only at the end of a play that reaches it, so a unit still
+# running the previous unit file would keep running it on every later converge
+# too -- each one failing the same assert, none ever restarting the pool.
+- name: Apply any pending runner restart before checking the pool
+  ansible.builtin.meta: flush_handlers
+
 # Re-read after the changes above so the assertion sees current state rather
-# than the snapshot taken before the pool was started.
+# than the snapshot taken before the pool was started. An ephemeral runner
+# leaves `running` for RestartSec after every job it finishes, so a single
+# read can catch a healthy unit between jobs; keep reading until every wanted
+# unit is up, and only then judge.
 - name: Re-read the installed services
   ansible.builtin.service_facts:
+  register: github_runner_service_read
+  until: >-
+    github_runner_wanted_units
+    | reject('in', github_runner_service_read.ansible_facts.services
+                   | dict2items
+                   | selectattr('value.state', 'in', ['running', 'activating'])
+                   | map(attribute='key') | list)
+    | list | length == 0
+  retries: 6
+  delay: 10
+  failed_when: false
 
 - name: Assert every pooled runner unit is running
   vars:

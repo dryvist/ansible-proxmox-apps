@@ -28,6 +28,34 @@
 ##                                     collector metric from the secret-age
 ##                                     auditor, a package not yet in develop.
 ##                                     Same noDataState: OK reasoning.
+##
+## AI-TELEMETRY ABSENCE RULES query the "victoriametrics" datasource instead
+## (grafana_stack/templates/datasource.yml.j2). Unlike "prometheus" above,
+## that datasource is provisioned unconditionally by this role — it is the
+## role's own AI-observability backend, not gated behind any variable — so
+## those rule groups sit outside the conditional block below and always
+## render, independent of grafana_stack_prometheus_url.
+##
+## The absence-window split (15m vs 6h) is deliberate, not a tidy number:
+##   - claude_code_token_usage_tokens_total / claude_code_cost_usage_USD_total
+##     are pushed by a running process, so quiet is abnormal within minutes.
+##   - claude_jsonl_cache_read_tokens_total / claude_jsonl_cache_creation_tokens_total
+##     / codex_conversation_turn_count_total are launchd StartInterval timers
+##     on a laptop. launchd timers do not fire while the machine sleeps, so a
+##     15m window would page every night, get muted, and restore the exact
+##     silence these rules exist to end.
+##
+## claude-jsonl-etl-frozen exists because a FROZEN writer passes every
+## absence rule above: a cumulative counter that stops advancing while its
+## series still exists is invisible to absent_over_time. Measured
+## 2026-09-19: the JSONL cache-read sum sat at exactly 360.005B for 19
+## consecutive 10-minute steps with no absence rule noticing.
+##
+## litellm_*, opencode_*, gen_ai* and vm_* are deliberately NOT covered here
+## — none of them has any series in the store yet, and a rule on a
+## nonexistent metric fires on load, gets muted, and restores the silence
+## these rules exist to end. Add a rule the moment each source's first
+## sample lands.
 apiVersion: 1
 
 groups:
@@ -176,3 +204,194 @@ groups:
         annotations:
           summary: "Secret {{ '{{' }} $labels.path {{ '}}' }} is {{ '{{' }} $values.A {{ '}}' }} days old (>= {{ grafana_stack_alert_secret_age_days }})."
 {% endif %}
+  # AI telemetry absence checks — see file header for the interval-split and
+  # frozen-writer rationale. Datasource is "victoriametrics", provisioned
+  # unconditionally, so this group (and the two below) always render.
+  - orgId: 1
+    name: ai-telemetry-absence-pushed
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: claude-code-telemetry-absent
+        title: Claude Code token telemetry absent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: absent_over_time(claude_code_token_usage_tokens_total[15m])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 15m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, stream: claude-code}
+        annotations:
+          summary: "Claude Code has emitted no token telemetry for 15 minutes."
+
+      - uid: claude-code-cost-absent
+        title: Claude Code cost telemetry absent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: absent_over_time(claude_code_cost_usage_USD_total[15m])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 15m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, stream: claude-code}
+        annotations:
+          summary: "Claude Code has emitted no cost telemetry for 15 minutes."
+
+  # Timer-driven streams on a machine that legitimately sleeps — see file
+  # header. 6h tolerates an overnight sleep without paging, while still
+  # catching a collector that has genuinely stopped. Tighten only for a
+  # source on an always-on host.
+  - orgId: 1
+    name: ai-telemetry-absence-timered
+    folder: {{ grafana_stack_alert_folder }}
+    interval: 5m
+    rules:
+      - uid: claude-jsonl-etl-absent
+        title: Claude JSONL ETL telemetry absent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: absent_over_time(claude_jsonl_cache_read_tokens_total[6h])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 30m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, stream: claude-jsonl-etl}
+        annotations:
+          summary: >-
+            Claude JSONL ETL has pushed nothing for 6 hours. Check whether
+            the machine slept before suspecting the collector — launchd
+            timers do not fire while asleep.
+
+      - uid: claude-jsonl-cache-tier-absent
+        title: Claude JSONL cache-tier telemetry absent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: absent_over_time(claude_jsonl_cache_creation_tokens_total[6h])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 30m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, stream: claude-jsonl-etl}
+        annotations:
+          summary: >-
+            No Claude JSONL cache-creation telemetry for 6 hours; the 5m/1h
+            cache-tier split is blind until this recovers.
+
+      - uid: codex-telemetry-absent
+        title: Codex telemetry absent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: absent_over_time(codex_conversation_turn_count_total[6h])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 30m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, stream: codex}
+        annotations:
+          summary: "Codex has emitted no turn telemetry for 6 hours."
+
+  # A frozen writer is NOT an absent one — see file header. A cumulative
+  # counter that stops advancing while its series still exists passes every
+  # absence rule above.
+  - orgId: 1
+    name: ai-telemetry-staleness
+    folder: {{ grafana_stack_alert_folder }}
+    interval: 5m
+    rules:
+      - uid: claude-jsonl-etl-frozen
+        title: Claude JSONL ETL frozen (series present, not advancing)
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: increase(claude_jsonl_cache_read_tokens_total[6h])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lte, params: [0]}
+              refId: B
+        for: 1h
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, stream: claude-jsonl-etl}
+        annotations:
+          summary: "Claude JSONL ETL series exist but have not advanced in 6 hours."

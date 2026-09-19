@@ -103,19 +103,23 @@ prometheus_stack_traefik_targets: >-
 # --- LLM router ---------------------------------------------------------------
 # The router's own metrics endpoint, which is the only consumer of its fallback
 # events: counters keyed by the model group asked for and the one that served.
-# Targets derive from the llm-router-tagged inventory entries, so a new router
-# is a scrape target with no edit here; the port is the published constant.
-# The endpoint AUTHENTICATES, so the job renders only when both a target and
-# the bearer exist — a job with an empty bearer would sit at 401 forever and
-# read like a scrape that never quite works.
+# Targets derive from the llm_router_group membership (built from the
+# llm-router tag in add_lxc_hosts.yml), reading each member's container_ip
+# hostvar — the one address fact add_host sets for both static and DHCP-lease
+# guests (see haproxy_syslog_backend_servers / netmon_cribl_host for the same
+# group -> hostvars['container_ip'] pattern). Filtering tofu_data.containers
+# directly by tag, as this used to, skips that resolved hostvar and reads the
+# raw per-guest record instead, which is empty for a DHCP-lease guest. A new
+# router is a scrape target with no edit here; the port is the published
+# constant. The endpoint AUTHENTICATES, so the job renders only when both a
+# target and the bearer exist — a job with an empty bearer would sit at 401
+# forever and read like a scrape that never quite works.
 prometheus_stack_llm_router_metrics_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['llm_router_api']
      | default(4000) }}
 prometheus_stack_llm_router_targets: >-
-  {{ tofu_data['containers'] | default({}) | dict2items
-     | selectattr('value.tags', 'defined')
-     | selectattr('value.tags', 'contains', 'llm-router')
-     | map(attribute='value.ip', default='') | reject('equalto', '')
+  {{ groups['llm_router_group'] | default([])
+     | map('extract', hostvars, 'container_ip') | reject('equalto', '')
      | map('regex_replace', '^(.+)$',
            '\1:' ~ (prometheus_stack_llm_router_metrics_port | string))
      | list }}

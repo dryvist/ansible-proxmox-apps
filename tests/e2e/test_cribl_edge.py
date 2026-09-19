@@ -26,9 +26,8 @@ class TestCriblEdgeComponent:
     def test_api_port_is_open(self, edge_ip, constants):
         """Verify the Cribl Edge API port is open on this Edge."""
         port = constants["service_ports"]["cribl_edge_api"]
-        assert check_port_tcp(edge_ip, port), (
-            f"Cribl Edge API port {port} is not open on {edge_ip}"
-        )
+        result = check_port_tcp(edge_ip, port)
+        assert result, f"Cribl Edge API port {port} is not open on {edge_ip}: {result}"
 
     @pytest.mark.parametrize("source", SYSLOG_SOURCES, ids=SYSLOG_SOURCE_IDS)
     def test_syslog_listener_is_reachable(self, edge_ip, constants, source):

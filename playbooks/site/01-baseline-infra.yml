@@ -166,6 +166,22 @@
           registry-mirrors: ["http://{{ _registry_ip }}:{{ _registry_port }}"]
           insecure-registries: ["{{ _registry_ip }}:{{ _registry_port }}"]
           log-driver: journald
+          # Docker's journald driver otherwise tags every entry with the
+          # container's short ID, so a container's own output is findable in
+          # the journal only by first looking up that ID. {{.Name}} is
+          # Docker's own log-opts template syntax (not Jinja); the {{ '{{' }}
+          # escape produces that literal string in the rendered JSON, the
+          # same escape this repo already uses for a Go template inside a
+          # Jinja file (roles/cribl_docker_stack/templates/docker-stack.yml.j2
+          # hostname:). This is a DAEMON DEFAULT: it takes effect for a
+          # container created after this file changes and the daemon
+          # restarts (handler below) -- it does not retag a container
+          # already running under the previous (or no) daemon.json. Compose
+          # only recreates a container when ITS OWN rendered file changes, so
+          # nothing here forces that; each already-running container adopts
+          # this default the next time something else recreates it.
+          log-opts:
+            tag: "{{ '{{' }}.Name{{ '}}' }}"
         _lxc_storage:
           storage-driver: fuse-overlayfs
           features:
@@ -301,13 +317,16 @@
 # balancer (haproxy) are excluded: they RECEIVE this traffic, so forwarding into
 # themselves would loop; their own logs are collected locally by Cribl Edge.
 #
-# iac-platform (the docker_vms member running Semaphore) is added explicitly
-# by name, not by including the whole docker_vms group: docker-host is
-# testing/dev only and stays off the production pipeline.
+# iac-platform (the docker_vms member running Semaphore) and docker-host-540
+# (the docker_vms member running the github_runner fleet) are added
+# explicitly by name, not by including the whole docker_vms group: other
+# docker_vms members are testing/dev only and stay off the production
+# pipeline. docker-host-540 previously shipped zero logs even though it now
+# also carries production CI runners, not just dev/test workloads.
 # =============================================================================
 
-- name: Forward infra LXC (and iac-platform) logs to the syslog pipeline
-  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group:iac-platform
+- name: Forward infra LXC (and iac-platform, docker-host-540) logs to the syslog pipeline
+  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group:iac-platform:docker-host-540
   become: true
   gather_facts: false
   tags:
