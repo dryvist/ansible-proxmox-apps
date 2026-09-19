@@ -70,9 +70,18 @@ ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until [ -s {{ github_runner_token_e
 #
 # A unique name per incarnation cannot collide -- which is the image's own
 # default, and what the variable was always named for.
+# --log-driver journald (never the json-file default) is what makes this
+# container's stdout/stderr -- Runner.Listener's job-assignment log and every
+# job step's own output -- reach the host journal, which syslog_forwarder
+# already ships to Cribl/Splunk for this host. The tag carries the pooled
+# instance id (%i) into CONTAINER_TAG/SYSLOG_IDENTIFIER so a job's output can
+# be found by runner slot without a separate per-container log store; deleting
+# the container (--rm above) never deletes what already left it.
 ExecStart=/usr/bin/docker run \
     --rm \
     --name {{ github_runner_container_prefix }}-%i \
+    --log-driver journald \
+    --log-opt tag={{ github_runner_container_prefix }}-%i \
     --env-file {{ github_runner_env_file }} \
     --env-file {{ github_runner_token_env_file }} \
     --env-file {{ github_runner_e2e_env_file }} \
