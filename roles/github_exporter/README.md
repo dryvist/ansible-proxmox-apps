@@ -70,7 +70,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | --- | --- | --- |
 | `github_exporter_version` | `19.0.0` | Pinned upstream release. |
 | `github_exporter_checksum` | pinned per-arch sha256 | `sha256:<hex>` pin for the `.deb`. |
-| `github_exporter_web_address` | `127.0.0.1:9504` | Bind address (local-only; scraped via `prometheus_stack_extra_scrape_configs`). |
+| `github_exporter_web_address` | `127.0.0.1:9504` | Bind address (local-only). Set in `prometheus_group.yml` group_vars, not this role. |
 | `github_exporter_org` | `""` | Organization to poll. Set in `inventory/group_vars/prometheus_group.yml`. |
 | `github_exporter_collector_runners` | `true` | Org-level runner online/busy gauges. |
 | `github_exporter_collector_workflow_runs` / `_workflow_jobs` | `false` | Off — see "What it ships today" above. |
