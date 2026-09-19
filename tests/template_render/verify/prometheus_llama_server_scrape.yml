@@ -1,0 +1,100 @@
+---
+# The llama-server scrape job in roles/prometheus_stack/templates/prometheus.yml.j2.
+# Renders the REAL template against the REAL role defaults and the REAL
+# prometheus_group group_vars (vars_files), so the expression under test is
+# the one that ships.
+#
+# Same "no group members -> no job" shape as the llm_router scrape test, but
+# a single job now: llama-swap was retired 2026-09-19 (ansible-proxmox-ai
+# runs llama-server directly with --metrics on the same address/port
+# llama-swap used to front), so there is no per-model upstream fan-out left
+# to test.
+#   1. No llm_vllm_group members: renders no job.
+#   2. Seeded: an llm_vllm_group member (container_ip only, the DHCP-lease
+#      shape) renders exactly one llama_server job.
+#
+# tofu_data is set as a FACT for the same reason as prometheus_llm_router_scrape.yml
+# (llama_server_metrics_port reads hostvars['localhost']['tofu_data']), so this
+# play belongs in the same trailing, fact-publishing block of verify_templates.yml.
+- name: Verify the llama-server scrape job renders only when the guest is in inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          blackbox_exporter: 9115
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          node_exporter: 9100
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+      nodes: {}
+      containers:
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Render prometheus.yml with no llm_vllm_group members
+      ansible.builtin.set_fact:
+        _no_members: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: No group members renders no llama_server job
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_members.scrape_configs | selectattr('job_name', 'equalto', 'llama_server') | list | length == 0
+        fail_msg: >-
+          With llm_vllm_group empty the template still rendered a llama_server
+          job. An empty target list must omit the job, not scrape nothing.
+        success_msg: No group members, no job.
+
+    - name: Add a DHCP-lease-style llm_vllm_group member (container_ip only, no static ip)
+      ansible.builtin.add_host:
+        name: llm-vllm-under-test
+        groups: llm_vllm_group
+        container_ip: vllm-under-test.test.example
+
+    - name: Render prometheus.yml with the group populated
+      ansible.builtin.set_fact:
+        _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the llama_server job
+      ansible.builtin.set_fact:
+        _jobs: "{{ _seeded.scrape_configs | selectattr('job_name', 'equalto', 'llama_server') | list }}"
+
+    - name: Seeded render carries exactly one job with the group-derived target
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs | length == 1
+          - _jobs[0].metrics_path == '/metrics'
+          - _jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:10434']
+          - "'llama_server' in prometheus_stack_remote_write_keep_jobs"
+        fail_msg: >-
+          Seeded render has {{ _jobs | length }} llama_server job(s):
+          {{ _jobs }}. Expected exactly one, targeting the llm_vllm_group
+          member's container_ip hostvar at the llm_fast_api port (both
+          fixture values, so a typed target cannot pass), with the keep-jobs
+          list covering it.
+        success_msg: One llama_server job, group-derived target, shipped.
