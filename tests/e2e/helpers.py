@@ -1,6 +1,7 @@
 """Pure utility functions for E2E pipeline tests."""
 
 import base64
+import errno
 import json
 import socket
 import ssl
@@ -275,6 +276,25 @@ def splunk_hec_health(hec_url):
         return response.status, response.read().decode("utf-8")
 
 
+class PortCheckResult:
+    """Bool-like result of check_port_tcp that also carries the fault class.
+
+    Truthy when the connection succeeded. ``str()`` gives "ok" on success or
+    the fault class ("refused", "timeout after 2.0s", "reset",
+    "unreachable", or an errno name) on failure, for use in assert messages.
+    """
+
+    def __init__(self, ok, fault=None):
+        self.ok = ok
+        self.fault = fault
+
+    def __bool__(self):
+        return self.ok
+
+    def __str__(self):
+        return "ok" if self.ok else self.fault
+
+
 def check_port_tcp(host, port, timeout=2):
     """Check if a TCP port is accepting connections.
 
@@ -284,16 +304,26 @@ def check_port_tcp(host, port, timeout=2):
         timeout: Connection timeout in seconds.
 
     Returns:
-        True if the port is open and accepting connections, False otherwise.
+        A PortCheckResult: truthy if the port is open and accepting
+        connections, falsy with a `.fault` class otherwise.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
         sock.connect((host, port))
+        return PortCheckResult(True)
+    except TimeoutError:
+        return PortCheckResult(False, f"timeout after {timeout}s")
+    except ConnectionRefusedError:
+        return PortCheckResult(False, "refused")
+    except ConnectionResetError:
+        return PortCheckResult(False, "reset")
+    except OSError as exc:
+        if exc.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH):
+            return PortCheckResult(False, "unreachable")
+        return PortCheckResult(False, errno.errorcode.get(exc.errno, str(exc)))
+    finally:
         sock.close()
-        return True
-    except (socket.timeout, ConnectionRefusedError, OSError):
-        return False
 
 
 def check_port_udp(host, port, timeout=2):
