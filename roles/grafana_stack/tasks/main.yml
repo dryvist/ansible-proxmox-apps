@@ -12,6 +12,11 @@
 # Directories + admin credential
 # =============================================================================
 
+# grafana_stack_provisioning_subdirs (defaults/main.yml) is the single list of
+# provisioning/<subdir> names — reused verbatim by docker-compose.yml.j2 to
+# mount each one into the container. A subdir added only here (or only there)
+# is the exact bug that shipped zero alert rules: rendered on the host,
+# invisible to Grafana because nothing mounted the directory.
 - name: Create grafana stack directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -19,12 +24,11 @@
     owner: root
     group: root
     mode: "0755"
-  loop:
-    - "{{ grafana_stack_data_dir }}"
-    - "{{ grafana_stack_data_dir }}/provisioning/datasources"
-    - "{{ grafana_stack_data_dir }}/provisioning/dashboards"
-    - "{{ grafana_stack_data_dir }}/provisioning/alerting"
-    - "{{ grafana_stack_data_dir }}/dashboards"
+  loop: >-
+    {{ [grafana_stack_data_dir, grafana_stack_data_dir ~ '/dashboards']
+       + (grafana_stack_provisioning_subdirs
+          | map('regex_replace', '^', grafana_stack_data_dir ~ '/provisioning/')
+          | list) }}
 
 # Same decide/persist pattern as the homarr role: an inventory-supplied value
 # wins, else the previously persisted one, else generate. Grafana honors the
