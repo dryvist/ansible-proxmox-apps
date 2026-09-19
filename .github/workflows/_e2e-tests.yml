@@ -8,9 +8,17 @@ on:
 permissions:
   contents: read
 
-# One job per component so each layer's pass/fail is independently visible.
-# Smoke gates the data-flow suites -- no point chasing data through Splunk
-# if the live endpoints are down.
+# Smoke gates the data-flow suites -- no point chasing data through Splunk if
+# the live endpoints are down. Every suite after it is one matrix entry so each
+# layer's pass/fail stays independently visible with one job definition.
+#
+# Inputs the suite reads (tests/e2e/conftest.py, fixtures.py) arrive from the
+# runner host, not from this workflow: TOFU_INVENTORY_PATH points at the
+# inventory the host's converge bind mounts into every runner container, and
+# SPLUNK_PASSWORD / SPLUNK_HEC_TOKEN come from an env file the host's OpenBao
+# Agent renders from secret/apps/splunk (roles/github_runner). Nothing here
+# decrypts anything, and the only package the suite needs beyond the standard
+# library is pytest.
 
 jobs:
   smoke:
@@ -21,156 +29,57 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Runner prerequisites: self-hosted runner is pre-baked with
-      # Python 3, SOPS, age keys, and pytest. No setup steps needed.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
       - name: pytest tests/e2e/test_smoke.py
-        run: python3 -m pytest tests/e2e/test_smoke.py -v
+        run: uv run --no-project --with pytest python -m pytest tests/e2e/test_smoke.py -v
 
-  pipeline:
-    name: Syslog pipeline data flow
+  suite:
+    name: ${{ matrix.name }}
     needs: smoke
     runs-on: [self-hosted, Linux]
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Syslog pipeline data flow
+            file: test_pipeline.py
+          - name: Splunk component
+            file: test_splunk.py
+          - name: Cribl Edge component
+            file: test_cribl_edge.py
+          - name: HAProxy component
+            file: test_haproxy.py
+          - name: NetFlow forwarding
+            file: test_forwarding.py
+          - name: Ingest family matrix
+            file: test_family_matrix.py
+          # The audit trail is the one stream whose absence is a security
+          # finding rather than a monitoring gap. Un-skipping the test without
+          # an entry here changed nothing: no job referenced the file, so the
+          # suite stayed green through a four-hour outage of that trail.
+          - name: OpenBao audit-trail freshness
+            file: test_openbao_audit.py
+          - name: macOS pipeline freshness
+            file: test_macos.py
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
+      # GitHub masks only what it is told about. The credentials arrive as
+      # plain environment from the runner host, so register them before any
+      # step can echo one into a log.
+      - name: Mask the Splunk credentials
+        run: |
+          echo "::add-mask::$SPLUNK_PASSWORD"
+          echo "::add-mask::$SPLUNK_HEC_TOKEN"
 
-      - name: pytest tests/e2e/test_pipeline.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_pipeline.py -v'
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
-  splunk:
-    name: Splunk component
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
-
-      - name: pytest tests/e2e/test_splunk.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_splunk.py -v'
-
-  cribl-edge:
-    name: Cribl Edge component
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
-
-      - name: pytest tests/e2e/test_cribl_edge.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_cribl_edge.py -v'
-
-  haproxy:
-    name: HAProxy component
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: pytest tests/e2e/test_haproxy.py
-        run: python3 -m pytest tests/e2e/test_haproxy.py -v
-
-  forwarding:
-    name: NetFlow forwarding
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
-
-      - name: pytest tests/e2e/test_forwarding.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_forwarding.py -v'
-
-  family-matrix:
-    name: Ingest family matrix
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
-
-      - name: pytest tests/e2e/test_family_matrix.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_family_matrix.py -v'
-
-  # The audit trail is the one stream whose absence is a security finding
-  # rather than a monitoring gap, so it gets its own job. Un-skipping the test
-  # without this changed nothing: no job referenced the file, so the suite
-  # stayed green through a four-hour outage of that trail.
-  openbao-audit:
-    name: OpenBao audit-trail freshness
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
-
-      - name: pytest tests/e2e/test_openbao_audit.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_openbao_audit.py -v'
-
-  macos:
-    name: macOS pipeline freshness
-    needs: smoke
-    runs-on: [self-hosted, Linux]
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Mask secrets
-        uses: JacobPEvans/.github/actions/mask-secrets@main
-        with:
-          sops-file: secrets.enc.yaml
-
-      - name: pytest tests/e2e/test_macos.py
-        run: >-
-          sops exec-env secrets.enc.yaml
-          'python3 -m pytest tests/e2e/test_macos.py -v'
+      - name: pytest tests/e2e/${{ matrix.file }}
+        env:
+          E2E_FILE: ${{ matrix.file }}
+        run: uv run --no-project --with pytest python -m pytest "tests/e2e/$E2E_FILE" -v
