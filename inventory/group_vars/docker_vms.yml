@@ -87,6 +87,14 @@ github_runner_data_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 # different plays (syslog_forwarder before github_runner), so neither can
 # read the other's default at render time and there is no single place left
 # to define it once.
-syslog_forwarder_imfile_inputs:
-  - file: /var/lib/docker/github-runner-diag/*/*.log
-    tag: github-runner-diag
+#
+# The second entry ships k3s pod logs (github_runner_arc pilot), same shape:
+# kubelet symlinks every container's log under /var/log/containers/*.log
+# regardless of pod count, so one wildcard input covers the cluster without
+# a per-pod entry to maintain. Both reuse the os index -- no new route.
+# Gated on the same host_var that enables the ARC role, so a host without
+# k3s never gets an input with nothing to tail.
+syslog_forwarder_imfile_inputs: >-
+  {{ [{'file': '/var/lib/docker/github-runner-diag/*/*.log', 'tag': 'github-runner-diag'}]
+     + ([{'file': '/var/log/containers/*.log', 'tag': 'k3s-containers'}]
+        if github_runner_arc_enabled | default(false) | bool else []) }}
