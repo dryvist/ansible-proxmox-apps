@@ -23,6 +23,7 @@ jobs:
     # Self-hosted (pre-baked ansible + collections); fork PRs fall back to a
     # hosted runner so fork-author code never runs on the fleet.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -54,8 +55,16 @@ jobs:
           uv pip install --system 'ansible-core>=2.16'
 
       - name: Install Ansible collections
-        run: |
-          scripts/ansible-galaxy-install-retry.sh
+        # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
+        # the whole job. Same four attempts and backoff the retry script used.
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 4
+          retry_wait_seconds: 15
+          timeout_minutes: 10
+          command: ansible-galaxy install -r requirements.yml
+        env:
+          ANSIBLE_GALAXY_SERVER_TIMEOUT: "60"
       - name: Syntax check playbooks
         run: |
           # Top level only: playbooks/tasks/ holds include_tasks task lists,
@@ -90,6 +99,7 @@ jobs:
   validate-inventory-schema:
     name: Validate Inventory Schema
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -111,6 +121,7 @@ jobs:
   verify-inventory-load:
     name: Verify Inventory Load
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -138,8 +149,16 @@ jobs:
       # shared inventory_resolve role by FQCN, so this run is what proves the
       # collection actually resolves it.
       - name: Install Ansible dependencies
-        run: |
-          scripts/ansible-galaxy-install-retry.sh
+        # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
+        # the whole job. Same four attempts and backoff the retry script used.
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 4
+          retry_wait_seconds: 15
+          timeout_minutes: 10
+          command: ansible-galaxy install -r requirements.yml
+        env:
+          ANSIBLE_GALAXY_SERVER_TIMEOUT: "60"
       - name: Verify inventory loads and groups are assigned correctly
         run: >-
           ansible-playbook tests/inventory_load/verify_inventory.yml

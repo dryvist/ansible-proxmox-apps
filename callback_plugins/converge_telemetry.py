@@ -69,10 +69,12 @@ from ansible.plugins.callback import CallbackBase
 
 #: Key the converging playbook uses with ``set_stats`` to hand this plugin its
 #: tofu-derived configuration (endpoint, index, host FQDN map, git SHA).
-#: The event builders live next door so each file stays inside the per-file
-#: token budget. callback_plugins is not on sys.path, so load by path.
-_EVENTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "converge_telemetry_events.py")
+#: The event builders live in module_utils/ so each file stays inside the
+#: per-file token budget. They sit outside callback_plugins/ because the
+#: loader globs every *.py there and warns about each one that is not a
+#: CallbackModule. Neither directory is on sys.path, so load by path.
+_EVENTS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "module_utils", "converge_telemetry_events.py")
 _spec = importlib.util.spec_from_file_location("converge_telemetry_events", _EVENTS_PATH)
 _events = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_events)
