@@ -127,6 +127,34 @@ prometheus_stack_llm_router_targets: >-
 # supplies it from bao_apps_secrets.prometheus_llm_router_key.
 prometheus_stack_llm_router_bearer: ""
 
+# --- llama-swap (RTX 4080 serving guest) --------------------------------------
+# Host+GPU telemetry (llama-swap's own /metrics) plus, optionally, per-model
+# llama-server metrics proxied through llama-swap's /upstream passthrough.
+# Targets derive from llm_vllm_group membership (hostvars['container_ip']),
+# the same corrected pattern as prometheus_stack_llm_router_targets above — a
+# raw tofu_data.containers tag filter misses container_ip's DHCP-lease
+# resolution. Unauthenticated (unlike the router), so no bearer gate here.
+prometheus_stack_llama_swap_metrics_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['llm_fast_api']
+     | default(10434) }}
+prometheus_stack_llama_swap_targets: >-
+  {{ groups['llm_vllm_group'] | default([])
+     | map('extract', hostvars, 'container_ip') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$',
+           '\1:' ~ (prometheus_stack_llama_swap_metrics_port | string))
+     | list }}
+# Per-model llama-server metrics via llama-swap's /upstream/<model>/metrics
+# passthrough. Model names are owned by ansible-proxmox-ai's llama_cpp role
+# (llama_cpp_models), not by anything in tofu_data — this role cannot derive
+# them, so the list is empty here and supplied by
+# inventory/group_vars/prometheus_group.yml, the same "empty default, private
+# override" shape as prometheus_stack_llm_router_bearer above. Scraping this
+# path is only safe because ansible-proxmox-ai's llama_cpp role sets
+# upstream.ignorePaths on a "*/metrics$" pattern: without it, a scrape of
+# whichever model is NOT currently swapped in would read as a load request
+# and load-thrash the swap:true pair on every scrape interval.
+prometheus_stack_llama_swap_models: []
+
 # Group that owns the rendered prometheus.yml. It carries the bearer above, so
 # it is 0640 rather than world-readable — but the container reads it as the
 # image's default unprivileged user, so the group is that user's numeric gid
@@ -148,6 +176,7 @@ prometheus_stack_remote_write_keep_jobs:
   # is scraped locally and never shipped, which is the gotcha named above.
   - traefik
   - llm_router
+  - llama_swap.*
 
 # --- probe modules (HOW to probe; targets come from prometheus_stack_blackbox_jobs) ---
 # icmp        — latency/loss to the modem + ISP hops + public anycast
