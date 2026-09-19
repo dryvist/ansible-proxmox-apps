@@ -40,5 +40,30 @@ class RestartAppliedBeforeTheAssert(unittest.TestCase):
         self.assertIs(task.get("failed_when"), False)
 
 
+class ZeroReplicasRetiresTheHost(unittest.TestCase):
+    """A host declared with zero replicas stops its units and agent and ends
+    there; nothing later in the role (input asserts, agent, token wait) runs."""
+
+    def test_the_retire_block_precedes_the_input_assert_and_ends_the_host(self):
+        tasks = _tasks()
+        retire = tasks[0]
+        self.assertEqual(retire["when"], "github_runner_replicas | int == 0")
+        inner = retire["block"]
+        self.assertEqual(inner[-1]["ansible.builtin.meta"], "end_host")
+        stop = next(t for t in inner if "ansible.builtin.systemd" in t)
+        self.assertEqual(stop["ansible.builtin.systemd"]["state"], "stopped")
+        self.assertIn("openbao-github-runner-agent", stop["loop"])
+        self.assertIn(
+            "Validate the native organization runner pool",
+            [t.get("name") for t in tasks[1:]],
+        )
+
+    def test_the_host_without_runners_declares_zero_replicas(self):
+        host_vars = yaml.safe_load(
+            (ROOT / "inventory/host_vars/iac-platform.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(host_vars["github_runner_replicas"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
