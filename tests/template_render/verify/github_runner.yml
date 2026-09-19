@@ -45,6 +45,11 @@
     github_runner_token_path: github/token/runner-register-dryvist
     github_runner_openbao_role_id: "role-id-not-a-real-credential"
     github_runner_openbao_secret_id: "secret-id-not-a-real-credential"
+    github_runner_e2e_env_file: /etc/github-runner/e2e.env
+    github_runner_inventory_file: /etc/github-runner/tofu_inventory.json
+    github_runner_inventory_mount: /opt/e2e/tofu_inventory.json
+    _inventory_mount_flag: >-
+      --volume\s+{{ github_runner_inventory_file }}:{{ github_runner_inventory_mount }}:ro
 
   tasks:
     - name: Render the runner systemd unit
@@ -174,14 +179,33 @@
           With ACCESS_TOKEN removed from runner.env, this second --env-file is
           the container's only source of a registration credential.
 
+    - name: Assert the e2e inputs reach the container and nothing else does
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', '--env-file\\s+/etc/github-runner/e2e.env') | length > 0
+          - _unit | select('search', _inventory_mount_flag) | length > 0
+          - "'TOFU_INVENTORY_PATH=/opt/e2e/tofu_inventory.json' in _env"
+          - _env | select('search', '^SOPS_AGE_KEY=') | length == 0
+          - _env | select('search', '^SPLUNK_') | length == 0
+        fail_msg: >-
+          The e2e suite's inputs are wired wrong. The Splunk credentials come
+          ONLY from the agent-rendered e2e.env (never runner.env, which is
+          written once per converge), the inventory is a read-only bind mount
+          at the path TOFU_INVENTORY_PATH names, and the retired SOPS age key
+          must not come back -- the runner image has no sops, and the suite no
+          longer decrypts anything.
+
     - name: Assert a runner cannot start before a token exists
       ansible.builtin.assert:
         that:
           - _unit | select('search', 'openbao-github-runner-agent.service') | length > 0
           - _unit | select('search', 'ExecStartPre=.*access-token.env') | length > 0
+          - _unit | select('search', 'ExecStartPre=.*e2e.env') | length == 0
         fail_msg: >-
           The unit does not both order itself after the token agent AND wait
           for the token file. Ordering alone only proves the agent PROCESS
           started, not that it has authenticated and rendered anything, so on a
           cold boot the container starts with an empty ACCESS_TOKEN and fails
-          to register.
+          to register. The e2e env file must NOT be a start condition: it
+          feeds one test suite, and a store path that suite cannot read must
+          fail that suite, never keep every PR's CI runner from starting.

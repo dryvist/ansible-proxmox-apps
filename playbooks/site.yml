@@ -14,25 +14,44 @@
 # only relocates where the play text lives. Splitting further inside a file
 # (e.g. one apt_cacher_ng play plus its apt-proxy sibling in 01-) never
 # crosses a file boundary that would change --tags matching.
+#
+# site/budget-gate.yml between every stage: the run stops at the first stage
+# boundary past its wall-clock cap (see that file for the budget and why the
+# playbook, not a wrapper, enforces it).
 - name: Load infrastructure inventory, publish telemetry, pre-fetch secrets
   import_playbook: site/00-load-and-telemetry.yml
 
 - name: Baseline infra — apt cache, registry mirror, NTP, SSH CA, syslog, storage
   import_playbook: site/01-baseline-infra.yml
 
+- name: Budget gate before DNS and pipeline
+  import_playbook: site/budget-gate.yml
+
 - name: DNS and the syslog/netflow pipeline (Technitium, Cribl, HAProxy, netmon)
   import_playbook: site/02-dns-and-pipeline.yml
+
+- name: Budget gate before notifications and core apps
+  import_playbook: site/budget-gate.yml
 
 - name: Notifications and core apps (mailpit, ntfy, healthchecks, postgres, ...)
   import_playbook: site/03-notifications-and-core-apps.yml
 
+- name: Budget gate before secrets and collab apps
+  import_playbook: site/budget-gate.yml
+
 - name: OpenBao, collaboration apps, SSO, and ingress (Authelia, Traefik, ...)
   import_playbook: site/04-secrets-and-collab-apps.yml
+
+- name: Budget gate before GitHub runners
+  import_playbook: site/budget-gate.yml
 
 # Must stay after 04: the runner host mints its own registration token from
 # OpenBao, so it needs the github-runner policy that the openbao play writes.
 - name: GitHub Actions runners (mint their own registration token from OpenBao)
   import_playbook: site/04b-github-runners.yml
+
+- name: Budget gate before the media stack
+  import_playbook: site/budget-gate.yml
 
 - name: Converge the media stack and gate the run on isolated-play failures
   import_playbook: site/05-media-and-gate.yml
