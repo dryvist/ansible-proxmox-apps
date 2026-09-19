@@ -15,13 +15,17 @@
   roles:
     - role: apt_cacher_ng
 
-- name: Configure apt proxy on LXC containers
-  hosts: lxc_containers:!apt_cacher_group:!download_vpn_group
+# The CI runner VMs take the same hook: their own apt runs go through the
+# cache, and the runner role hands the cache pool to the jobs it hosts so the
+# Molecule containers can point apt at it too.
+- name: Configure apt proxy on LXC containers and docker VMs
+  hosts: lxc_containers:docker_vms:!apt_cacher_group:!download_vpn_group
   become: true
   gather_facts: false
   tags:
     - apt_proxy
     - lxc
+    - docker_vms
   tasks:
     # The cache is an HA pair (tofu node_services generates one instance per
     # always-on node; all carry the `apt-cache` tag, so apt_cacher_group tracks
@@ -102,7 +106,8 @@
 # Phase 0-zot: Zot OCI Registry
 # Self-hosted pull-through cache (docker.io/ghcr.io/quay.io) and private
 # registry. Deployed early — before any docker app roles — so firewalled
-# docker hosts can pull through it. Pairs with the tofu registry LXC 109.
+# docker hosts can pull through it. The guest is whichever container carries
+# the `registry` tag in the published inventory.
 # =============================================================================
 
 - name: Deploy Zot registry
@@ -116,14 +121,18 @@
   roles:
     - role: zot_registry
 
-- name: Configure Docker registry mirror on LXC containers
-  hosts: lxc_containers:!registry_group
+# The CI runner VMs are docker hosts too: every Molecule image they pull
+# through their daemon rides the same mirror, which is where the cold-pull
+# minutes in the Molecule matrix go.
+- name: Configure Docker registry mirror on docker hosts
+  hosts: lxc_containers:docker_vms:!registry_group
   become: true
   gather_facts: false
   tags:
     - registry_mirror
     - docker
     - lxc
+    - docker_vms
   handlers:
     - name: Restart docker
       ansible.builtin.systemd:
@@ -148,23 +157,31 @@
         name: fuse-overlayfs
         state: present
 
-    # This play is the single owner of /etc/docker/daemon.json on docker LXCs.
-    # roles/idrac_kvm_docker no longer writes the storage-driver here (removed
-    # on a separate branch) to avoid two writers fighting over the same file.
+    # This play is the single owner of /etc/docker/daemon.json on docker LXCs
+    # and on the docker VMs. roles/idrac_kvm_docker no longer writes the
+    # storage-driver here (removed on a separate branch) to avoid two writers
+    # fighting over the same file; roles/github_runner's docker_engine
+    # dependency leaves the file alone for the same reason.
+    #
+    # The mirror is addressed by name: the registry guest is whichever host
+    # carries the `registry` tag, reached at its own FQDN under the ingress
+    # zone (no route fronts it, so the name resolves to the guest itself). The
+    # daemon speaks plain HTTP to it, which is why the same name:port is also
+    # listed as an insecure registry.
     - name: Configure Docker registry mirror
       when:
-        - "'registry' in hostvars"
+        - groups['registry_group'] | default([]) | length > 0
         - "'docker' in (host_tags | default([]))"
       vars:
-        _registry_ip: "{{ hostvars['registry']['container_ip'] }}"
+        _registry_host: "{{ groups['registry_group'] | sort | first }}.{{ ingress_domain }}"
         _registry_port: >-
           {{ hostvars['localhost']['tofu_data']
              ['constants']['service_ports']['registry']
              | default(5000) }}
         _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
         _daemon_json:
-          registry-mirrors: ["http://{{ _registry_ip }}:{{ _registry_port }}"]
-          insecure-registries: ["{{ _registry_ip }}:{{ _registry_port }}"]
+          registry-mirrors: ["http://{{ _registry_host }}:{{ _registry_port }}"]
+          insecure-registries: ["{{ _registry_host }}:{{ _registry_port }}"]
           log-driver: journald
           # Docker's journald driver otherwise tags every entry with the
           # container's short ID, so a container's own output is findable in
