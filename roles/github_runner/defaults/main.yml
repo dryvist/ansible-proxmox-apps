@@ -51,6 +51,34 @@ github_runner_data_paths:
   - /var/lib/containerd
 
 # ---------------------------------------------------------------------------
+# Runner diagnostics (_diag), bind-mounted from the container onto this same
+# data disk -- see github-runner@.service.j2 and the directory creation in
+# tasks/main.yml. Runner.Listener/Runner.Worker's own log files are richer
+# than the container's stdout (which --log-driver journald above already
+# covers) and would otherwise die with the container's writable layer on
+# every --rm. A subdirectory of /var/lib/docker rather than a path of its
+# own: that is already this role's data disk, so nothing new is mounted or
+# partitioned, and the boot-disk guard above already covers it by covering
+# its parent.
+#
+# inventory/group_vars/docker_vms.yml points syslog_forwarder's imfile input
+# at this same path so the files reach Splunk (index os); keep the two in
+# sync if either ever changes -- they cannot share one definition across the
+# plays that use them (syslog_forwarder converges before this role does).
+# ---------------------------------------------------------------------------
+github_runner_diag_host_dir: /var/lib/docker/github-runner-diag
+
+# Each job writes NEW _diag files (Runner.Listener/Runner.Worker never append
+# to one growing file), so logrotate's rotate-and-truncate model does not fit
+# here -- there is nothing to truncate, only an ever-growing count of already-
+# closed files. systemd-tmpfiles' age-based `e` line is the native tool for
+# exactly that shape (see github-runner-diag-tmpfiles.conf.j2), and it runs
+# on the systemd-tmpfiles-clean.timer every host already ships -- no role-
+# specific timer or reaper. 7 days matches this repo's existing retention for
+# a comparable diagnostic log (openbao_audit_logrotate_rotate).
+github_runner_diag_retention_days: 7
+
+# ---------------------------------------------------------------------------
 # Recurring reclaim (see tasks/data_disk.yml). The one-time migration prune
 # only fires once; nothing pruned the shared daemon afterwards, and unused
 # image/build-cache layers from every Molecule run across every PR grew until

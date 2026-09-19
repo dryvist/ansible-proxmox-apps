@@ -37,6 +37,8 @@
     github_runner_group: example-group
     github_runner_labels: "self-hosted,Linux,X64,proxmox"
     github_runner_replicas: 3
+    github_runner_diag_host_dir: /var/lib/docker/github-runner-diag
+    github_runner_diag_retention_days: 7
     github_runner_token_env_file: /etc/github-runner/access-token.env
     github_runner_approle_dir: /etc/github-runner/approle
     github_runner_agent_config: /etc/github-runner/openbao-agent.hcl
@@ -50,6 +52,8 @@
     github_runner_inventory_mount: /opt/e2e/tofu_inventory.json
     _inventory_mount_flag: >-
       --volume\s+{{ github_runner_inventory_file }}:{{ github_runner_inventory_mount }}:ro
+    _diag_mount_flag: >-
+      --volume\s+{{ github_runner_diag_host_dir }}/%i:/actions-runner/_diag
 
   tasks:
     - name: Render the runner systemd unit
@@ -64,6 +68,12 @@
         dest: "{{ _fixture_dir }}/test_runner.env"
         mode: "0600"
 
+    - name: Render the runner diagnostics retention policy
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/github-runner-diag-tmpfiles.conf.j2"
+        dest: "{{ _fixture_dir }}/test_github-runner-diag-tmpfiles.conf"
+        mode: "0644"
+
     - name: Read the rendered unit and environment file
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/{{ item }}"
@@ -71,11 +81,13 @@
       loop:
         - test_github-runner@.service
         - test_runner.env
+        - test_github-runner-diag-tmpfiles.conf
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
         _unit_raw: "{{ _runner_raw.results[0].content | b64decode }}"
         _env_raw: "{{ _runner_raw.results[1].content | b64decode }}"
+        _tmpfiles_raw: "{{ _runner_raw.results[2].content | b64decode }}"
 
     # Assert on DIRECTIVE LINES ONLY, as a list. Two traps informed this:
     #   * Both files explain themselves at length and those comments name the
@@ -112,6 +124,30 @@
           container on exit -- --rm above discards it before anything ships
           it to Splunk. journald is what syslog_forwarder already collects on
           this host.
+
+    - name: Assert the runner's _diag log files survive past --rm
+      ansible.builtin.assert:
+        that:
+          - _unit | select('search', _diag_mount_flag) | length > 0
+        fail_msg: >-
+          The unit does not bind-mount the per-slot _diag directory into
+          /actions-runner/_diag. Runner.Listener/Runner.Worker's own log
+          files are richer than the container's stdout and are discarded by
+          --rm the moment the container exits unless a host path outlives it.
+
+    - name: Assert the _diag directory is actually cleaned up
+      ansible.builtin.assert:
+        that:
+          - >-
+            _tmpfiles_raw is search('^e\\s+' ~ (github_runner_diag_host_dir | regex_escape)
+            ~ '/\\*/\\*\\.log', multiline=True)
+          - _tmpfiles_raw is search(github_runner_diag_retention_days | string ~ 'd')
+        fail_msg: >-
+          The tmpfiles rule does not target every slot's _diag log files with
+          the configured retention. Each job writes NEW files rather than
+          appending to one, so without this the bind mount above turns into
+          an unbounded file count on the same data disk the role exists to
+          protect from exactly that.
 
     - name: Assert the runner serves one job per container
       ansible.builtin.assert:
