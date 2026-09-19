@@ -170,6 +170,33 @@
     search_regex: "ACCESS_TOKEN=."
     timeout: 60
 
+# The inventory this converge resolved, for the e2e suite. Not a secret in the
+# sense of a credential, but it is a topology map, so it stays root-only in a
+# 0700 directory and reaches the container only through a read-only bind
+# mount -- never through the image or the checkout.
+- name: Deploy the published inventory for the e2e suite
+  ansible.builtin.copy:
+    content: "{{ tofu_data | to_nice_json }}\n"
+    dest: "{{ github_runner_inventory_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart github runners
+
+# `docker run --env-file` refuses a missing file, and the agent writes this
+# one only once it can read the Splunk bucket. An empty placeholder keeps the
+# fleet starting either way; the e2e job checks the values and fails on its
+# own when they are absent. force: false so a rendered file is never blanked.
+- name: Ensure the e2e environment file exists before the agent renders it
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ github_runner_e2e_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
 - name: Deploy the runner environment file
   ansible.builtin.template:
     src: runner.env.j2

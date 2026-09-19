@@ -47,6 +47,11 @@ ExecStartPre=-/usr/bin/docker rm -f {{ github_runner_container_prefix }}-%i
 # command lines itself, so a shell variable would need escaping as $$VAR and
 # silently becomes the empty string if that is ever forgotten. This form
 # contains no dollar sign to get wrong.
+#
+# Only the registration token is waited for. The e2e env file is deliberately
+# NOT a start condition: it feeds one test suite, and a store path that suite
+# cannot read must fail that suite, never keep every PR's CI runner from
+# starting. Ansible pre-creates it empty so --env-file always has a file.
 ExecStartPre=/usr/bin/timeout 60 /bin/sh -c 'until [ -s {{ github_runner_token_env_file }} ]; do sleep 1; done'
 # RUNNER_NAME_PREFIX below, never RUNNER_NAME. The image appends a random
 # suffix to a prefix, but an explicit RUNNER_NAME is used verbatim -- and a
@@ -70,6 +75,8 @@ ExecStart=/usr/bin/docker run \
     --name {{ github_runner_container_prefix }}-%i \
     --env-file {{ github_runner_env_file }} \
     --env-file {{ github_runner_token_env_file }} \
+    --env-file {{ github_runner_e2e_env_file }} \
+    --volume {{ github_runner_inventory_file }}:{{ github_runner_inventory_mount }}:ro \
     --cpus {{ github_runner_cpu_limit }} \
     --memory {{ github_runner_memory_limit }} \
     --group-add {{ github_runner_docker_gid }} \

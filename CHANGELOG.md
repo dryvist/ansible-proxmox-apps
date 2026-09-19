@@ -1,5 +1,29 @@
 # Changelog
 
+## [4.39.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.38.0...v4.39.0) (2026-09-18)
+
+
+### Features
+
+* **authelia:** exempt the metrics store ingest paths from the forward-auth gate ([#1899](https://github.com/dryvist/ansible-proxmox-apps/issues/1899)) ([5957bb4](https://github.com/dryvist/ansible-proxmox-apps/commit/5957bb4f7ebac3dc3ef80cd7b1c7f2e4cd8f13de))
+
+## [4.38.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.37.0...v4.38.0) (2026-09-18)
+
+
+### Features
+
+* **grafana:** adopt upstream Claude Code and LiteLLM dashboards ([#1894](https://github.com/dryvist/ansible-proxmox-apps/issues/1894)) ([b6e6737](https://github.com/dryvist/ansible-proxmox-apps/commit/b6e6737fcf44efc97fcdd7718cc17a08d71f08a8))
+* **openbao:** set ai-public cidr class and secret_id bounds ([#1886](https://github.com/dryvist/ansible-proxmox-apps/issues/1886)) ([bb9e106](https://github.com/dryvist/ansible-proxmox-apps/commit/bb9e1065cdc0ca945e792b967dba35ce02c564e4))
+
+
+### Bug Fixes
+
+* **openbao_secrets:** engine_mount_point AttributeError on ansible-core 2.21 ([#1895](https://github.com/dryvist/ansible-proxmox-apps/issues/1895)) ([6d34639](https://github.com/dryvist/ansible-proxmox-apps/commit/6d346399822f513e6b6d8b1474d8bb4fb0ecfe08))
+* **openbao:** define openbao_write_addr in the exempt-tag test fixture ([#1890](https://github.com/dryvist/ansible-proxmox-apps/issues/1890)) ([9764ead](https://github.com/dryvist/ansible-proxmox-apps/commit/9764ead3f0d58adb1c9871bc513fee3e15f4e0fc))
+* **openbao:** non-expiring secret_ids for the standing ambient AppRoles ([#1885](https://github.com/dryvist/ansible-proxmox-apps/issues/1885)) ([f55a5ab](https://github.com/dryvist/ansible-proxmox-apps/commit/f55a5ab3f452d57254d3c794eb0933ede38b6f14))
+* **openbao:** send provisioning writes to the Raft leader ([293f0e3](https://github.com/dryvist/ansible-proxmox-apps/commit/293f0e3745caa310f0f85ece075ae5a1ce0f9b97))
+* **postgres:** replace removed postgresql_set with postgresql_alter_system ([#1889](https://github.com/dryvist/ansible-proxmox-apps/issues/1889)) ([6d77658](https://github.com/dryvist/ansible-proxmox-apps/commit/6d77658d5a59f3ae464760c25fc7dca812a7fa54))
+
 ## [4.37.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.36.0...v4.37.0) (2026-09-13)
 
 

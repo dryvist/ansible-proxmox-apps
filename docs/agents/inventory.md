@@ -53,7 +53,7 @@ documented once at
 | `PROXMOX_VE_NODE` | Proxmox node name | SOPS |
 | `PROXMOX_VE_GATEWAY` | Network gateway (for IP derivation) | Doppler / SOPS |
 | `PROXMOX_DOMAIN` | Internal DNS domain | Doppler / SOPS |
-| `PROXMOX_SSH_KEY_PATH` | SSH identity for every SSH-reached guest, Docker VMs included; the run wrapper mints a signed certificate and exports this | Doppler / SOPS |
+| `PROXMOX_SSH_KEY_PATH` | SSH identity for every SSH-reached guest, Docker VMs included; the run wrapper mints a certificate and sets this | Doppler / SOPS |
 | `SPLUNK_HEC_TOKEN` | Splunk HEC token (for Cribl output) | Doppler / SOPS |
 | `SPLUNK_PASSWORD` | Splunk admin password (for E2E validation) | Doppler / SOPS |
 | `HAPROXY_STATS_PASSWORD` | HAProxy stats page password | SOPS |
@@ -66,7 +66,6 @@ documented once at
 | `MSSQL_SA_PASSWORD` | SQL Server SA password (for mssql_docker role) | SOPS |
 | `OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID` | `github-runner` AppRole id; the per-host agent mints registration tokens with it | Doppler (tier-0) |
 | `OPENBAO_APPROLE_GITHUB_RUNNER_SECRET_ID` | `github-runner` AppRole secret-zero (24h / 30 uses) | Doppler (tier-0) |
-| `SOPS_AGE_KEY` | Age private key content for SOPS decryption in runner containers | Doppler |
 | `GITHUB_RUNNER_TOKEN` | (deprecated) Single-repo registration token (1h expiry) | SOPS |
 | `BAO_TOKEN` | Privileged token for reconciling an initialized OpenBao cluster | operator environment |
 | `OPENBAO_AWS_ROOT_ACCESS_KEY_ID` | AWS engine bootstrap/rotation access key | tier-0 injection |
