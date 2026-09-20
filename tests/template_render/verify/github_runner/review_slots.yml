@@ -1,0 +1,52 @@
+---
+# Per-slot environment files and the review-label split across slots.
+# Imported by ../github_runner.yml (kept under the shared token limit).
+- name: Assert the unit reads a per-slot environment file
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', '--env-file\\s+/etc/github-runner/runner\\.env-%i(\\s|$)') | length > 0
+    fail_msg: >-
+      The unit does not read {{ github_runner_env_file }}-%i. LABELS must
+      differ by slot (the review pool) and %i is a systemd specifier
+      expanded at service-start time, invisible to this Jinja render --
+      one shared runner.env for every slot cannot carry a per-slot value,
+      which is why tasks/main.yml renders one file per slot.
+
+- name: Read the rendered per-slot environment files
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_runner-{{ item }}.env"
+  register: _runner_env_by_slot
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+
+- name: Decode the per-slot LABELS line
+  ansible.builtin.set_fact:
+    _labels_by_slot: >-
+      {{ _labels_by_slot | default({}) |
+         combine({item.item | string: (item.content | b64decode
+           | regex_search('^LABELS=.*$', multiline=True))}) }}
+  loop: "{{ _runner_env_by_slot.results }}"
+
+- name: Assert exactly the first github_runner_review_slots slots carry review
+  vars:
+    _reviewed: >-
+      {{ range(1, github_runner_replicas | int + 1)
+         | select('le', github_runner_review_slots | int) | map('string') | list }}
+  ansible.builtin.assert:
+    that:
+      - _labels_by_slot[item] is search(',review$')
+    fail_msg: >-
+      Slot {{ item }} is within github_runner_review_slots
+      ({{ github_runner_review_slots }}) but its rendered LABELS
+      ("{{ _labels_by_slot[item] }}") does not end in ",review".
+  loop: "{{ _reviewed }}"
+
+- name: Assert every slot beyond github_runner_review_slots stays unlabeled
+  ansible.builtin.assert:
+    that:
+      - not (_labels_by_slot[item | string] is search(',review$'))
+    fail_msg: >-
+      Slot {{ item }} is beyond github_runner_review_slots
+      ({{ github_runner_review_slots }}) but its rendered LABELS
+      ("{{ _labels_by_slot[item | string] }}") ends in ",review" anyway --
+      the review lane would no longer be dedicated.
+  loop: "{{ range(github_runner_review_slots | int + 1, github_runner_replicas | int + 1) | list }}"
