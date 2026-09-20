@@ -27,8 +27,6 @@ compose project.
 signal — this is the evidence path now that the modem exposes no DOCSIS data.
 
 The `llama_server` job scrapes the RTX 4080 serving guest's native `/metrics`
-directly: llama-swap sat in front of llama-server until 2026-09-19 and was
-retired (no value for a single-model card); metrics come from llama-server
 directly.
 
 ## Networking
