@@ -1,0 +1,77 @@
+---
+# Single-node k3s server (xanmanning.k3s, pinned in requirements.yml). Data
+# dir pinned off the boot disk — see the assertion in tasks/main.yml.
+- name: Install k3s (single-node server)
+  ansible.builtin.include_role:
+    name: xanmanning.k3s
+  vars:
+    k3s_control_node: true
+    k3s_release_version: "{{ github_runner_arc_k3s_version }}"
+    k3s_server:
+      data-dir: "{{ github_runner_arc_data_dir }}"
+      # ARC's own resources are namespaced; no ports need exposing beyond the
+      # cluster-internal API k3s already binds.
+      disable:
+        - traefik  # this estate's own Traefik owns ingress; k3s's is unused.
+      # Kubelet's own rotation for /var/log/containers/*.log — the same
+      # mechanism syslog_forwarder's imfile input tails. No tmpfiles rule
+      # needed: unlike github_runner's _diag files, kubelet truncates and
+      # recreates in place rather than leaving closed files to accumulate.
+      kubelet-arg:
+        - "container-log-max-size={{ github_runner_arc_container_log_max_size }}"
+        - "container-log-max-files={{ github_runner_arc_container_log_max_files }}"
+
+# kubernetes.core.k8s / kubernetes.core.helm run against THIS host's own
+# kubeconfig, so both need their python/CLI dependencies present locally,
+# not on the controller.
+- name: Install the Python Kubernetes client (kubernetes.core.k8s dependency)
+  ansible.builtin.apt:
+    name: python3-kubernetes
+    state: present
+
+- name: Check the installed Helm version
+  ansible.builtin.command:
+    cmd: helm version --short
+  register: github_runner_arc_helm_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Helm
+  when: >-
+    github_runner_arc_helm_check.rc != 0
+    or (github_runner_arc_helm_version not in github_runner_arc_helm_check.stdout)
+  block:
+    - name: Download the Helm release archive
+      ansible.builtin.get_url:
+        url: >-
+          https://get.helm.sh/helm-{{ github_runner_arc_helm_version
+          }}-linux-amd64.tar.gz
+        dest: /tmp/helm-{{ github_runner_arc_helm_version }}.tar.gz
+        mode: "0644"
+        checksum: >-
+          sha256:https://get.helm.sh/helm-{{ github_runner_arc_helm_version
+          }}-linux-amd64.tar.gz.sha256sum
+
+    - name: Extract the Helm binary
+      ansible.builtin.unarchive:
+        src: /tmp/helm-{{ github_runner_arc_helm_version }}.tar.gz
+        dest: /tmp
+        remote_src: true
+        creates: /tmp/linux-amd64/helm
+
+    - name: Install the Helm binary
+      ansible.builtin.copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Clean up the Helm download
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/helm-{{ github_runner_arc_helm_version }}.tar.gz
+        - /tmp/linux-amd64

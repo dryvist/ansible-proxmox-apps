@@ -1,0 +1,23 @@
+---
+# github_runner_review_slots (roles/github_runner/defaults/main.yml, overridden
+# per host next to github_runner_replicas) names how many of a host's pooled
+# slots additionally carry the `review` label. The role's own converge-time
+# assert already rejects a bad value for the host being converged; this
+# proves it for EVERY docker_vms host at once, from the same inventory the
+# converge would read, so a regression on a host nobody is actively
+# converging (e.g. a shrunk github_runner_replicas left review_slots
+# stranded above it) is caught here instead of at the next converge of that
+# one host.
+- name: Verify every docker_vms host keeps review_slots within its pool size
+  ansible.builtin.assert:
+    that:
+      - (hostvars[item].github_runner_review_slots | default(0) | int) >= 0
+      - >-
+        (hostvars[item].github_runner_review_slots | default(0) | int)
+        <= (hostvars[item].github_runner_replicas | default(0) | int)
+    fail_msg: >-
+      {{ item }} has github_runner_review_slots={{
+      hostvars[item].github_runner_review_slots | default(0) }} but
+      github_runner_replicas={{ hostvars[item].github_runner_replicas | default(0) }}
+      — set it in inventory/host_vars/{{ item }}.yml.
+  loop: "{{ groups['docker_vms'] | default([]) }}"

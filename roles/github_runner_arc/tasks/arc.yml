@@ -1,0 +1,144 @@
+---
+- name: Create the ARC namespaces
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    name: "{{ item }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  loop:
+    - "{{ github_runner_arc_controller_namespace }}"
+    - "{{ github_runner_arc_scale_set_namespace }}"
+
+# The dedicated ARC App's key, never the estate's main GitHub App (see
+# defaults/main.yml). Field names are ARC's own contract
+# (githubConfigSecret), not chosen here.
+- name: Deploy the ARC GitHub App secret
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ github_runner_arc_secret_name }}"
+        namespace: "{{ github_runner_arc_scale_set_namespace }}"
+      type: Opaque
+      stringData:
+        github_app_id: "{{ github_runner_arc_app_id }}"
+        github_app_installation_id: "{{ github_runner_arc_installation_id }}"
+        github_app_private_key: "{{ github_runner_arc_app_private_key }}"
+  no_log: true
+
+- name: Install the ARC controller
+  kubernetes.core.helm:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    name: "{{ github_runner_arc_controller_release_name }}"
+    chart_ref: "{{ github_runner_arc_chart_oci_registry }}/gha-runner-scale-set-controller"
+    chart_version: "{{ github_runner_arc_chart_version }}"
+    release_namespace: "{{ github_runner_arc_controller_namespace }}"
+    create_namespace: false
+    wait: true
+    values:
+      # Applies to the controller-manager AND every listener it manages —
+      # one flag on this chart, not a per-scale-set setting.
+      metrics:
+        controllerManagerAddr: "{{ github_runner_arc_metrics_addr }}"
+        listenerAddr: "{{ github_runner_arc_metrics_addr }}"
+        listenerEndpoint: "/metrics"
+
+- name: Install the ARC runner scale set
+  kubernetes.core.helm:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    name: "{{ github_runner_arc_scale_set_release_name }}"
+    chart_ref: "{{ github_runner_arc_chart_oci_registry }}/gha-runner-scale-set"
+    chart_version: "{{ github_runner_arc_chart_version }}"
+    release_namespace: "{{ github_runner_arc_scale_set_namespace }}"
+    create_namespace: false
+    wait: true
+    values:
+      githubConfigUrl: "https://github.com/{{ github_runner_arc_org }}"
+      githubConfigSecret: "{{ github_runner_arc_secret_name }}"
+      runnerGroup: "{{ github_runner_arc_group }}"
+      runnerScaleSetName: "{{ github_runner_arc_scale_set_name }}"
+      # The systemd fleet's exact label list, so a workflow's `runs-on` that
+      # names those labels (not just the implicit "self-hosted") matches
+      # ARC runners too during the pilot.
+      scaleSetLabels: "{{ github_runner_arc_labels.split(',') }}"
+      minRunners: "{{ github_runner_arc_min_runners }}"
+      maxRunners: "{{ github_runner_arc_max_runners }}"
+      containerMode:
+        type: dind
+      template:
+        spec:
+          containers:
+            - name: runner
+              resources:
+                requests:
+                  cpu: "{{ github_runner_arc_runner_cpu_request }}"
+                  memory: "{{ github_runner_arc_runner_memory_request }}"
+                limits:
+                  cpu: "{{ github_runner_arc_runner_cpu_limit }}"
+                  memory: "{{ github_runner_arc_runner_memory_limit }}"
+      # dind-container-specific requests/limits and the local-path
+      # StorageClass for github_runner_arc_dind_storage_path are chart-version
+      # -specific fields not fully confirmed against a live install — verify
+      # against `helm show values` for the pinned chart_version on first
+      # converge and fill in here rather than guessing the schema.
+
+- name: Wait for the ARC listener pod
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    kind: Pod
+    namespace: "{{ github_runner_arc_scale_set_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/component=runner-scale-set-listener"
+  register: github_runner_arc_listener
+  until: >-
+    github_runner_arc_listener.resources | default([])
+    | selectattr('status.phase', 'defined')
+    | selectattr('status.phase', 'equalto', 'Running')
+    | list | length > 0
+  retries: 12
+  delay: 10
+
+- name: Assert the ARC listener is running
+  ansible.builtin.assert:
+    that:
+      - >-
+        github_runner_arc_listener.resources | default([])
+        | selectattr('status.phase', 'defined')
+        | selectattr('status.phase', 'equalto', 'Running')
+        | list | length > 0
+    fail_msg: >-
+      No Running pod carries
+      app.kubernetes.io/component=runner-scale-set-listener in
+      {{ github_runner_arc_scale_set_namespace }}. Check
+      `kubectl -n {{ github_runner_arc_scale_set_namespace }} get pods` and
+      the controller's own logs — a listener that never starts means the
+      GitHub App credentials or githubConfigUrl are wrong.
+
+# Metrics only — no other Service. Exposes the listener's own /metrics
+# (gha_job_startup_duration_seconds, gha_assigned_jobs, gha_started_jobs_total,
+# gha_completed_jobs_total) to the estate's Prometheus, which runs outside
+# this k3s cluster. Fixed NodePort so the scrape target is stable across a
+# listener pod restart.
+- name: Expose the ARC listener metrics
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ github_runner_arc_listener_metrics_service_name }}"
+        namespace: "{{ github_runner_arc_scale_set_namespace }}"
+      spec:
+        type: NodePort
+        selector:
+          app.kubernetes.io/component: runner-scale-set-listener
+        ports:
+          - name: metrics
+            port: "{{ github_runner_arc_metrics_port }}"
+            targetPort: "{{ github_runner_arc_metrics_port }}"
+            nodePort: "{{ github_runner_arc_listener_metrics_node_port }}"
