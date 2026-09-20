@@ -143,13 +143,32 @@ http:
           interval: "{{ route.health_check_interval | default('10s') }}"
           timeout: "{{ route.health_check_timeout | default('5s') }}"
 {% endif %}
-{% if route.insecure_tls | default(false) %}
+{% if route.response_header_timeout | default('') %}
+        serversTransport: {{ route.name }}
+{% elif route.insecure_tls | default(false) %}
         serversTransport: insecure-backend
 {% endif %}
 {% endfor %}
-{% if traefik_routes | selectattr('insecure_tls', 'defined') | selectattr('insecure_tls') | list | length > 0 %}
+{% set _insecure_routes = traefik_routes | selectattr('insecure_tls', 'defined') | selectattr('insecure_tls') | rejectattr('response_header_timeout') | list %}
+{% set _timed_routes = traefik_routes | selectattr('response_header_timeout', 'defined') | selectattr('response_header_timeout') | list %}
+{% if _insecure_routes or _timed_routes %}
 
   serversTransports:
+{% for route in _timed_routes %}
+{# A route whose ingress row carries response_header_timeout gets its own
+   transport: the backend bounds its own request lifetime, so the ingress
+   waits for its headers as long as the row says ("0s" = no limit) while the
+   dial stays bounded like everywhere else. #}
+    {{ route.name }}:
+      forwardingTimeouts:
+        dialTimeout: "{{ traefik_backend_dial_timeout }}"
+        responseHeaderTimeout: "{{ route.response_header_timeout }}"
+{% if route.insecure_tls | default(false) %}
+      insecureSkipVerify: true
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if _insecure_routes %}
     # Backends serving HTTPS with a self-signed cert (e.g. Splunk Web). Traefik
     # terminates the public wildcard cert and re-encrypts to the backend; the
     # backend cert is not chain-verifiable, so skip verification for these only.
