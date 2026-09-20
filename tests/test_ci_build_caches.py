@@ -98,6 +98,17 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn("Acquire::http::Proxy", directives)
         self.assertNotIn("http_proxy", directives)
 
+    def test_https_repositories_bypass_the_cache(self):
+        # apt's https method inherits the http proxy when its own is unset, and
+        # the cache does not tunnel TLS -- an https repository would then be
+        # skipped silently. Both writers must pin https to DIRECT.
+        for path in (
+            MOLECULE / "resources" / "Dockerfile.j2",
+            MOLECULE / "resources" / "tasks" / "apt_proxy.yml",
+        ):
+            with self.subTest(path=path.name):
+                self.assertIn('Acquire::https::Proxy "DIRECT";', path.read_text())
+
     def test_the_runner_env_hands_the_cache_to_jobs(self):
         env = (ROOT / "roles" / "github_runner" / "templates" / "runner.env.j2").read_text()
         self.assertIn("APT_PROXY_URL={{ github_runner_apt_proxy_url }}", env)
