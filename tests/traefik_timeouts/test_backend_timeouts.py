@@ -49,6 +49,17 @@ class BackendTimeouts(unittest.TestCase):
         self.assertIn(DIAL, after)
         self.assertIn(HEADER, after)
 
+    def test_a_per_route_transport_keeps_the_dial_bounded(self) -> None:
+        """A route whose ingress row carries response_header_timeout gets its
+        own transport so the ingress waits for a backend that bounds itself;
+        the dial timeout is the estate default there too, never the row's."""
+        body = strip_jinja_comments(DYNAMIC.read_text(encoding="utf-8"))
+        self.assertIn("route.response_header_timeout", body)
+        per_route = body.split("_timed_routes %}", 2)[-1].split("insecure-backend:", 1)[0]
+        self.assertIn(DIAL, per_route)
+        self.assertIn('responseHeaderTimeout: "{{ route.response_header_timeout }}"', per_route)
+        self.assertNotIn(HEADER, per_route)
+
     def test_both_timeouts_have_defaults_so_a_render_cannot_be_empty(self) -> None:
         """An undefined value renders as an empty string, which Traefik reads
         as no timeout — the very state this change removes."""
