@@ -9,12 +9,19 @@
       # and deregisters units a previous nonzero converge already started,
       # rather than a skip that leaves them running and registered forever.
       - github_runner_replicas | int >= 0
+      # A review-slot count above the pool size, or negative, would either
+      # silently label zero slots (harmless) or -- worse -- be read by a
+      # future caller as "every slot" once replicas shrinks below it. Fail
+      # loudly here instead of at a Jinja range() that just clamps quietly.
+      - github_runner_review_slots | int >= 0
+      - github_runner_review_slots | int <= github_runner_replicas | int
       - github_runner_openbao_role_id | length > 0
       - github_runner_openbao_secret_id | length > 0
       - github_runner_subdomain | length > 0
     fail_msg: >-
       The runner pool needs an organization, runner group, a replica count
-      >= 0, and the github-runner AppRole secret-zero
+      >= 0, a review-slot count between 0 and the replica count, and the
+      github-runner AppRole secret-zero
       (OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID / _SECRET_ID) and
       PROXMOX_SUBDOMAIN in the converge environment. An empty PROXMOX_SUBDOMAIN
       is checked here rather than with `mandatory`, which cannot see it: an env
@@ -225,13 +232,21 @@
     group: root
     mode: "0644"
 
+# One file per slot, not one shared file: LABELS must differ for the first
+# github_runner_review_slots slots, and the unit is a systemd template where
+# %i is expanded by systemd at service-start time -- Jinja never sees it, so
+# a single shared render cannot vary by slot. github-runner@.service.j2 reads
+# "{{ github_runner_env_file }}-%i" to match.
 - name: Deploy the runner environment file
   ansible.builtin.template:
     src: runner.env.j2
-    dest: "{{ github_runner_env_file }}"
+    dest: "{{ github_runner_env_file }}-{{ github_runner_slot }}"
     owner: root
     group: root
     mode: "0600"
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_slot
   no_log: true
   notify: Restart github runners
 
