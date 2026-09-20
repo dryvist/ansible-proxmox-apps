@@ -116,7 +116,7 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
 
     def test_the_runner_role_builds_the_image_from_the_shared_dockerfile(self):
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
         deploy = next(t for t in tasks if t["name"] == "Deploy the Molecule base image Dockerfile")
         self.assertEqual(
             deploy["ansible.builtin.copy"]["src"], "{{ role_path }}/../../molecule/resources/Dockerfile"

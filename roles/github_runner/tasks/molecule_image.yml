@@ -1,0 +1,62 @@
+---
+# ---------------------------------------------------------------------------
+# The Molecule base image. Every scenario runs on it (MOLECULE_BASE_IMAGE in
+# runner.env), so it is built here, on the shared daemon, and never by a job:
+# six slots each building the same Dockerfile at once is what produced the
+# cold rebuilds this replaces. The build runs as a oneshot unit so the daily
+# timer and the converge share one definition.
+# ---------------------------------------------------------------------------
+- name: Create the Molecule base image build context
+  ansible.builtin.file:
+    path: "{{ github_runner_molecule_image_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the Molecule base image Dockerfile
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../molecule/resources/Dockerfile"
+    dest: "{{ github_runner_molecule_image_dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Build the Molecule base image
+
+- name: Deploy the Molecule base image build service
+  ansible.builtin.template:
+    src: molecule-image.service.j2
+    dest: /etc/systemd/system/github-runner-molecule-image.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Build the Molecule base image
+
+- name: Deploy the Molecule base image build timer
+  ansible.builtin.template:
+    src: molecule-image.timer.j2
+    dest: /etc/systemd/system/github-runner-molecule-image.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the Molecule base image build timer
+  ansible.builtin.systemd:
+    name: github-runner-molecule-image.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Check whether the Molecule base image exists
+  community.docker.docker_image_info:
+    name: "{{ github_runner_molecule_image }}"
+  register: github_runner_molecule_image_info
+
+# A host whose image is gone (a manual prune, a fresh data disk) gets it back
+# on the next converge even when nothing above changed.
+- name: Build the Molecule base image when it is missing
+  ansible.builtin.systemd:
+    name: github-runner-molecule-image.service
+    state: started
+    no_block: true
+  when: github_runner_molecule_image_info.images | length == 0
