@@ -12,8 +12,9 @@ exist to remove -- so the wiring is asserted structurally here.
   * The mirror is addressed by FQDN under the ingress zone; a container_ip
     lookup would put an address in a daemon config (docs/IP_AUTHORITY.md).
   * Every Molecule scenario runs on the pre-built base image the runner host
-    builds (falling back to the upstream base off a runner) and includes the
-    shared prepare task; no scenario builds an image of its own.
+    builds (falling back to the upstream base off a runner), waits for the
+    instance to finish booting before any other module runs, and includes the
+    shared apt-proxy task; no scenario builds an image of its own.
   * The runner env template hands APT_PROXY_URL and MOLECULE_BASE_IMAGE to
     the jobs, and the role builds the image from the shared Dockerfile.
 """
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
 MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
+BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
 DOCKERFILE = MOLECULE / "resources" / "Dockerfile"
 RUNNER = ROOT / "roles" / "github_runner"
 BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}"
@@ -78,11 +80,13 @@ class CiBuildCaches(unittest.TestCase):
                     self.assertEqual(platform.get("image"), BASE_IMAGE, platform["name"])
                     self.assertTrue(platform.get("pre_build_image"), platform["name"])
                     self.assertNotIn("dockerfile", platform, platform["name"])
-                includes = [
-                    t.get("ansible.builtin.include_tasks")
-                    for t in _tasks(yaml.safe_load((scenario / "prepare.yml").read_text()))
-                ]
+                tasks = list(_tasks(yaml.safe_load((scenario / "prepare.yml").read_text())))
+                includes = [t.get("ansible.builtin.include_tasks") for t in tasks]
                 self.assertIn(SHARED_TASK, includes)
+                # The boot wait is the first thing after the connection wait:
+                # any module that runs before it can lose its /tmp payload.
+                connected = next(i for i, t in enumerate(tasks) if "ansible.builtin.wait_for_connection" in t)
+                self.assertEqual(includes[connected + 1], BOOT_WAIT, scenario.name)
 
     def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
         lines = DOCKERFILE.read_text().splitlines()
