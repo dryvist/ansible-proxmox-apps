@@ -55,6 +55,9 @@ class AptCacherNgHostsPins(unittest.TestCase):
             self.assertRegex(f"203.0.113.1 {host}", regexp)
             self.assertRegex(f"  2001:db8::1\t{host} alias", regexp)
 
+    def test_a_stripped_pin_restarts_the_daemon(self):
+        self.assertEqual(_task().get("notify"), "Restart apt-cacher-ng")
+
     def test_loopback_self_and_comment_lines_are_kept(self):
         for line in KEEP:
             for regexp in self.regexps:
