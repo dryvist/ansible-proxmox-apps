@@ -52,10 +52,13 @@ github_runner_plane_hosts:
 github_runner_org: "dryvist"
 github_runner_replicas: 3
 # Every runner carries the union of every label any consumer job asks for, so
-# any runner can serve any job. A specialised label would recreate the
-# fragmentation the pool exists to remove: `terraform` (tofu-proxmox
+# any runner can serve any job -- except `proxmox` itself, which is the one
+# label review-pool slots deliberately do NOT get (see
+# github_runner_labels_pool, roles/github_runner/defaults/main.yml). A
+# specialised label would recreate
+# the fragmentation the pool exists to remove: `terraform` (tofu-proxmox
 # servarr-config-drift) and `terrakube` (tofu-github).
-github_runner_labels: "self-hosted,Linux,X64,proxmox,terraform,terrakube"
+github_runner_labels_common: "self-hosted,Linux,X64,terraform,terrakube"
 # The Default group is the sole X64 pool.  Its GitHub-side policy allows all
 # organization repositories and public repositories; keep repository names out
 # of this public inventory.
@@ -87,6 +90,14 @@ github_runner_data_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 # different plays (syslog_forwarder before github_runner), so neither can
 # read the other's default at render time and there is no single place left
 # to define it once.
-syslog_forwarder_imfile_inputs:
-  - file: /var/lib/docker/github-runner-diag/*/*.log
-    tag: github-runner-diag
+#
+# The second entry ships k3s pod logs (github_runner_arc pilot), same shape:
+# kubelet symlinks every container's log under /var/log/containers/*.log
+# regardless of pod count, so one wildcard input covers the cluster without
+# a per-pod entry to maintain. Both reuse the os index -- no new route.
+# Gated on the same host_var that enables the ARC role, so a host without
+# k3s never gets an input with nothing to tail.
+syslog_forwarder_imfile_inputs: >-
+  {{ [{'file': '/var/lib/docker/github-runner-diag/*/*.log', 'tag': 'github-runner-diag'}]
+     + ([{'file': '/var/log/containers/*.log', 'tag': 'k3s-containers'}]
+        if github_runner_arc_enabled | default(false) | bool else []) }}
