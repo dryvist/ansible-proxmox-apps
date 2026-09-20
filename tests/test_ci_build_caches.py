@@ -11,10 +11,11 @@ exist to remove -- so the wiring is asserted structurally here.
     (the runner hosts), not only the LXC containers.
   * The mirror is addressed by FQDN under the ingress zone; a container_ip
     lookup would put an address in a daemon config (docs/IP_AUTHORITY.md).
-  * Every Molecule scenario points apt at APT_PROXY_URL: a prebuilt-image
-    scenario includes the shared prepare task, a scenario that builds from the
-    shared Dockerfile passes the variable into the build.
-  * The runner env template hands APT_PROXY_URL to the jobs.
+  * Every Molecule scenario runs on the pre-built base image the runner host
+    builds (falling back to the upstream base off a runner) and includes the
+    shared prepare task; no scenario builds an image of its own.
+  * The runner env template hands APT_PROXY_URL and MOLECULE_BASE_IMAGE to
+    the jobs, and the role builds the image from the shared Dockerfile.
 """
 
 import unittest
@@ -26,7 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
 MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
-SHARED_DOCKERFILE = "../resources/Dockerfile.j2"
+DOCKERFILE = MOLECULE / "resources" / "Dockerfile"
+RUNNER = ROOT / "roles" / "github_runner"
+BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}"
 
 
 def _play(name):
@@ -65,35 +68,24 @@ class CiBuildCaches(unittest.TestCase):
         self.assertNotIn("container_ip", str(task["vars"]))
         self.assertIn("groups['registry_group']", str(task["when"]))
 
-    def test_every_scenario_points_apt_at_the_cache(self):
+    def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
         self.assertGreater(len(scenarios), 0)
         for scenario in scenarios:
             with self.subTest(scenario=scenario.name):
                 config = yaml.safe_load((scenario / "molecule.yml").read_text())
-                builds = [
-                    p for p in config.get("platforms", [])
-                    if p.get("dockerfile") == SHARED_DOCKERFILE
+                for platform in config["platforms"]:
+                    self.assertEqual(platform.get("image"), BASE_IMAGE, platform["name"])
+                    self.assertTrue(platform.get("pre_build_image"), platform["name"])
+                    self.assertNotIn("dockerfile", platform, platform["name"])
+                includes = [
+                    t.get("ansible.builtin.include_tasks")
+                    for t in _tasks(yaml.safe_load((scenario / "prepare.yml").read_text()))
                 ]
-                for platform in builds:
-                    self.assertEqual(
-                        platform.get("env", {}).get("APT_PROXY_URL"), "${APT_PROXY_URL}",
-                        f"{scenario.name}: a Dockerfile build must pass APT_PROXY_URL",
-                    )
-                prepare = scenario / "prepare.yml"
-                self.assertTrue(
-                    prepare.exists() or builds,
-                    f"{scenario.name}: no prepare.yml and no shared Dockerfile build",
-                )
-                if prepare.exists():
-                    includes = [
-                        t.get("ansible.builtin.include_tasks")
-                        for t in _tasks(yaml.safe_load(prepare.read_text()))
-                    ]
-                    self.assertIn(SHARED_TASK, includes)
+                self.assertIn(SHARED_TASK, includes)
 
     def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
-        lines = (MOLECULE / "resources" / "Dockerfile.j2").read_text().splitlines()
+        lines = DOCKERFILE.read_text().splitlines()
         directives = "\n".join(line for line in lines if not line.startswith("#"))
         self.assertIn("Acquire::http::Proxy", directives)
         self.assertNotIn("http_proxy", directives)
@@ -103,7 +95,7 @@ class CiBuildCaches(unittest.TestCase):
         # the cache does not tunnel TLS -- an https repository would then be
         # skipped silently. Both writers must pin https to DIRECT.
         for path in (
-            MOLECULE / "resources" / "Dockerfile.j2",
+            DOCKERFILE,
             MOLECULE / "resources" / "tasks" / "apt_proxy.yml",
         ):
             with self.subTest(path=path.name):
@@ -117,6 +109,19 @@ class CiBuildCaches(unittest.TestCase):
         )
         self.assertIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
         self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
+        self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
+
+    def test_the_runner_role_builds_the_image_from_the_shared_dockerfile(self):
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        deploy = next(t for t in tasks if t["name"] == "Deploy the Molecule base image Dockerfile")
+        self.assertEqual(
+            deploy["ansible.builtin.copy"]["src"], "{{ role_path }}/../../molecule/resources/Dockerfile"
+        )
+        self.assertEqual(deploy["notify"], "Build the Molecule base image")
+        unit = (RUNNER / "templates" / "molecule-image.service.j2").read_text()
+        self.assertIn("--build-arg APT_PROXY_URL={{ github_runner_apt_proxy_url }}", unit)
+        self.assertIn("--tag {{ github_runner_molecule_image }}", unit)
+        self.assertIn("ARG APT_PROXY_URL", DOCKERFILE.read_text())
 
 
 if __name__ == "__main__":
