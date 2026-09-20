@@ -1,0 +1,83 @@
+---
+# =============================================================================
+# ARC pilot — every task in this role is gated on the enable flag, so an
+# unenabled host (the default) never runs k3s, never touches Helm, and never
+# reads the ARC App secret path. The host this targets first is a host_var,
+# never named here.
+# =============================================================================
+- name: Actions Runner Controller pilot
+  when: github_runner_arc_enabled | bool
+  block:
+    - name: Validate the runner pool identity
+      ansible.builtin.assert:
+        that:
+          - github_runner_arc_org | length > 0
+          - github_runner_arc_group | length > 0
+        fail_msg: >-
+          github_runner_arc needs an organization and runner group — the same
+          host_vars the systemd github_runner pool already declares
+          (github_runner_org / github_runner_group).
+
+    - name: Read the filesystem backing the data directory's parent and root
+      ansible.builtin.command:
+        cmd: "findmnt -no SOURCE --target {{ item }}"
+      loop:
+        - "{{ github_runner_arc_data_dir | dirname }}"
+        - /
+      register: github_runner_arc_fs_sources
+      changed_when: false
+
+    - name: Assert the k3s/dind data directory is off the boot disk
+      vars:
+        _data_fs: "{{ github_runner_arc_fs_sources.results[0].stdout | trim }}"
+        _root_fs: "{{ github_runner_arc_fs_sources.results[1].stdout | trim }}"
+      ansible.builtin.assert:
+        that:
+          - _data_fs != _root_fs
+        fail_msg: >-
+          {{ github_runner_arc_data_dir }} resolves to the boot filesystem
+          ({{ _root_fs }}). Run the systemd github_runner role's data-disk
+          migration on this host first (it mounts the dedicated data disk at
+          /var/lib/docker) — this role deliberately does not re-implement
+          that migration.
+        success_msg: >-
+          {{ github_runner_arc_data_dir | dirname }} is off the boot disk
+          ({{ _data_fs }}).
+
+    - name: Require the dedicated ARC App credentials
+      ansible.builtin.assert:
+        that:
+          - github_runner_arc_app_id | length > 0
+        fail_msg: >-
+          github_runner_arc_app_id is empty. Populate
+          secret/{{ github_runner_arc_app_secret_path }} (field
+          github_runner_arc_app_id) via the openbao role's promoted-secrets
+          env vars — see roles/openbao openbao_promoted_app_secrets.
+      no_log: true
+
+    - name: Require the dedicated ARC App installation id
+      ansible.builtin.assert:
+        that:
+          - github_runner_arc_installation_id | length > 0
+        fail_msg: >-
+          github_runner_arc_installation_id is empty. Populate
+          secret/{{ github_runner_arc_app_secret_path }} (field
+          github_runner_arc_installation_id).
+      no_log: true
+
+    - name: Require the dedicated ARC App private key
+      ansible.builtin.assert:
+        that:
+          - github_runner_arc_app_private_key | length > 0
+        fail_msg: >-
+          github_runner_arc_app_private_key is empty. Populate
+          secret/{{ github_runner_arc_app_secret_path }} (field
+          github_runner_arc_app_private_key). This is the DEDICATED ARC App's
+          key, never the estate's main GitHub App.
+      no_log: true
+
+    - name: Install k3s and Helm
+      ansible.builtin.include_tasks: k3s.yml
+
+    - name: Install Actions Runner Controller
+      ansible.builtin.include_tasks: arc.yml

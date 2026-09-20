@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# Actions Runner Controller (gha-runner-scale-set) pilot.
+#
+# Off by default. Enable per-host with a host_var — never a hardcoded
+# hostname here or in any playbook. The host this targets first is a host_var
+# in inventory, not a name in this role.
+# =============================================================================
+github_runner_arc_enabled: false
+
+# Reuse the same org/group/label identity the systemd fleet already declares
+# per host group, so a workflow's `runs-on` matches both fleets unchanged
+# during the pilot.
+github_runner_arc_org: "{{ github_runner_org | default('', true) }}"
+github_runner_arc_group: "{{ github_runner_group | default('', true) }}"
+github_runner_arc_labels: "{{ github_runner_labels | default('self-hosted,Linux,X64,proxmox') }}"
+
+# ---------------------------------------------------------------------------
+# k3s (single-node; xanmanning.k3s Galaxy role, pinned in requirements.yml).
+#
+# Data dir off the boot disk. This role does NOT re-run the data-disk
+# migration itself (github_runner's data_disk.yml already proved and mounted
+# it on every runner host) — it only asserts the path it is about to use
+# actually resolves to a non-root filesystem, so a host that has not had the
+# data disk migration run fails loudly here rather than filling its boot disk.
+# ---------------------------------------------------------------------------
+github_runner_arc_data_dir: /var/lib/docker/k3s
+github_runner_arc_k3s_version: "v1.31.5+k3s1"
+# Helm CLI is not part of the k3s role; installed from the official static
+# release (get.helm.sh), pinned and checksum-verified.
+github_runner_arc_helm_version: "v4.3.0"
+# Kubelet's own rotation for /var/log/containers/*.log, the file
+# syslog_forwarder tails (inventory/group_vars/docker_vms.yml). No
+# tmpfiles/logrotate rule needed — kubelet manages this natively.
+github_runner_arc_container_log_max_size: "10Mi"
+github_runner_arc_container_log_max_files: 5
+
+# ---------------------------------------------------------------------------
+# ARC Helm charts (OCI, GitHub-published). Both charts release together under
+# the same version tag.
+# ---------------------------------------------------------------------------
+github_runner_arc_chart_oci_registry: oci://ghcr.io/actions/actions-runner-controller-charts
+github_runner_arc_chart_version: "0.14.2"
+github_runner_arc_controller_release_name: arc-controller
+github_runner_arc_controller_namespace: arc-systems
+github_runner_arc_scale_set_release_name: arc-runner-set
+# Also the runs-on target name workflows use to reach THIS pool specifically.
+# "self-hosted" still matches too — GitHub adds it as an implicit label on
+# every self-hosted runner, ARC-managed or not. The full custom label set
+# (github_runner_arc_labels, same value as the systemd fleet's
+# github_runner_labels) is passed through scaleSetLabels below, so a
+# workflow targeting the systemd fleet's exact label list matches ARC
+# runners too during the pilot.
+github_runner_arc_scale_set_name: arc-runner-set
+github_runner_arc_scale_set_namespace: arc-runners
+github_runner_arc_secret_name: github-runner-arc-app
+
+# ---------------------------------------------------------------------------
+# Metrics. Enabling both addrs turns metrics on for the controller-manager AND
+# every listener it manages (a single flag on the controller chart, not
+# per-scale-set) — see gha-runner-scale-set-controller's own values.yaml.
+# Only the listener's port is exposed outside the cluster: it carries the
+# native queue-time signal (gha_job_startup_duration_seconds,
+# gha_assigned_jobs, gha_started_jobs_total, gha_completed_jobs_total) the
+# estate's Prometheus scrapes. No Service is created for the
+# controller-manager's own metrics — cluster-internal only.
+# ---------------------------------------------------------------------------
+github_runner_arc_metrics_addr: ":8080"
+github_runner_arc_metrics_port: 8080
+github_runner_arc_listener_metrics_service_name: arc-listener-metrics
+# Fixed so the estate's Prometheus can target it by node port without a
+# service-discovery hop into the k3s cluster. Never a literal host address —
+# the scrape target is this port on whichever host has the flag enabled.
+github_runner_arc_listener_metrics_node_port: 30880
+
+# ---------------------------------------------------------------------------
+# Autoscaling — 80%-of-host budget, RAM-bound on both estate hosts (12 GB
+# each). See the design note this pilot came from for the sizing math.
+# ---------------------------------------------------------------------------
+github_runner_arc_min_runners: 1
+github_runner_arc_max_runners: 3
+github_runner_arc_runner_cpu_request: "1"
+github_runner_arc_runner_memory_request: "3Gi"
+github_runner_arc_runner_cpu_limit: "2"
+github_runner_arc_runner_memory_limit: "4Gi"
+# dind sidecar's own /var/lib/docker, backed by a local-path StorageClass
+# whose provisioner path sits on the same off-root data dir as k3s's own.
+github_runner_arc_dind_storage_path: "{{ github_runner_arc_data_dir }}/dind-storage"
+
+# ---------------------------------------------------------------------------
+# GitHub App credentials — a DEDICATED App, never the estate's main one. ARC's
+# listener mints its own installation tokens directly against GitHub, so its
+# key must never sit in a namespace next to privileged dind pods, and that
+# key mints repo-write tokens if leaked. The operator creates this App with
+# exactly one org permission: Self-hosted runners (read/write).
+#
+# Read from OpenBao KV (secret/{{ github_runner_arc_app_secret_path }}),
+# promoted there like every other externally-created app credential
+# (roles/openbao openbao_promoted_app_secrets — see that role's PR for the
+# three env vars an operator populates once). Never generated, never minted:
+# this is the raw App key, which no OpenBao engine can hand back out once
+# consumed.
+# ---------------------------------------------------------------------------
+github_runner_arc_app_secret_path: apps/github-runner-arc
+github_runner_arc_app_id: "{{ bao_apps_secrets.github_runner_arc_app_id | default('', true) }}"
+github_runner_arc_installation_id: >-
+  {{ bao_apps_secrets.github_runner_arc_installation_id | default('', true) }}
+github_runner_arc_app_private_key: >-
+  {{ bao_apps_secrets.github_runner_arc_app_private_key | default('', true) }}
