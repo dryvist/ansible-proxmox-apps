@@ -1,0 +1,83 @@
+---
+# Split out of github_runner.yml (2026-09-20) to stay under the repo's
+# per-file token budget (.token-limits.yaml) -- imported by that file's own
+# play, so it shares its vars (_template_dir, _fixture_dir,
+# github_runner_replicas, github_runner_review_slots, _unit) and facts
+# (_unit, from "Reduce both files to their directive lines") rather than
+# redeclaring them.
+#
+# One render per slot -- the same shape tasks/main.yml uses -- to prove the
+# review label lands on exactly the first github_runner_review_slots slots
+# and no others. LABELS is the only line that can vary by slot; every other
+# assertion in github_runner.yml runs against slot 1 (rendered there),
+# which is already inside that range.
+- name: Render the runner environment file per slot
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/runner.env.j2"
+    dest: "{{ _fixture_dir }}/test_runner-{{ _slot }}.env"
+    mode: "0600"
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+  loop_control:
+    loop_var: _slot
+  vars:
+    github_runner_slot: "{{ _slot }}"
+
+- name: Assert the unit reads a per-slot environment file
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', '--env-file\\s+/etc/github-runner/runner\\.env-%i(\\s|$)') | length > 0
+    fail_msg: >-
+      The unit does not read {{ github_runner_env_file }}-%i. LABELS must
+      differ by slot (the review pool) and %i is a systemd specifier
+      expanded at service-start time, invisible to this Jinja render --
+      one shared runner.env for every slot cannot carry a per-slot value,
+      which is why tasks/main.yml renders one file per slot.
+
+- name: Read the rendered per-slot environment files
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_runner-{{ item }}.env"
+  register: _runner_env_by_slot
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+
+- name: Decode the per-slot LABELS line
+  ansible.builtin.set_fact:
+    _labels_by_slot: >-
+      {{ _labels_by_slot | default({}) |
+         combine({item.item | string: (item.content | b64decode
+           | regex_search('^LABELS=.*$', multiline=True))}) }}
+  loop: "{{ _runner_env_by_slot.results }}"
+
+# A review slot must ALSO never carry `proxmox` -- a Molecule job requests
+# `runs-on: proxmox` (apps _molecule.yml, _inventory-contract.yml), so a
+# review slot that still matched it could be occupied by a Molecule job
+# and the lane would no longer be dedicated, regardless of `review` also
+# being present.
+- name: Assert exactly the first github_runner_review_slots slots carry review, not proxmox
+  vars:
+    _reviewed: >-
+      {{ range(1, github_runner_replicas | int + 1)
+         | select('le', github_runner_review_slots | int) | map('string') | list }}
+  ansible.builtin.assert:
+    that:
+      - _labels_by_slot[item] is search(',review$')
+      - not (_labels_by_slot[item] is search('(^|,)proxmox(,|$)'))
+    fail_msg: >-
+      Slot {{ item }} is within github_runner_review_slots
+      ({{ github_runner_review_slots }}) but its rendered LABELS
+      ("{{ _labels_by_slot[item] }}") does not end in ",review", or still
+      carries "proxmox" -- either way a Molecule job (runs-on: proxmox)
+      could still land on the review lane.
+  loop: "{{ _reviewed }}"
+
+- name: Assert every slot beyond github_runner_review_slots carries proxmox, not review
+  ansible.builtin.assert:
+    that:
+      - _labels_by_slot[item | string] is search(',proxmox$')
+      - not (_labels_by_slot[item | string] is search(',review$'))
+    fail_msg: >-
+      Slot {{ item }} is beyond github_runner_review_slots
+      ({{ github_runner_review_slots }}) but its rendered LABELS
+      ("{{ _labels_by_slot[item | string] }}") does not end in
+      ",proxmox", or ends in ",review" anyway -- the review lane would no
+      longer be dedicated.
+  loop: "{{ range(github_runner_review_slots | int + 1, github_runner_replicas | int + 1) | list }}"
