@@ -1,0 +1,48 @@
+---
+# Molecule verification for github_runner_arc (disabled path only).
+#
+# Asserts the no-op is real: no k3s config/data dir, no Helm binary, no
+# kubeconfig, and the role's own defaults resolve without error (import_role
+# exposes them without re-running any task, since every task is gated on
+# github_runner_arc_enabled).
+
+- name: Verify
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Expose github_runner_arc defaults
+      ansible.builtin.import_role:
+        name: github_runner_arc
+        tasks_from: main
+      vars:
+        # Still false — this only proves the defaults evaluate cleanly, e.g.
+        # that github_runner_arc_app_id resolves against an absent
+        # bao_apps_secrets without erroring.
+        github_runner_arc_enabled: false
+
+    - name: Assert the sizing defaults are what the design pilot specified
+      ansible.builtin.assert:
+        that:
+          - github_runner_arc_min_runners == 1
+          - github_runner_arc_max_runners == 3
+
+    - name: Assert k3s was never installed
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/k3s.yaml
+      register: github_runner_arc_kubeconfig
+
+    - name: Assert no kubeconfig exists
+      ansible.builtin.assert:
+        that:
+          - not github_runner_arc_kubeconfig.stat.exists
+
+    - name: Assert Helm was never installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/helm
+      register: github_runner_arc_helm_bin
+
+    - name: Assert no Helm binary exists
+      ansible.builtin.assert:
+        that:
+          - not github_runner_arc_helm_bin.stat.exists
