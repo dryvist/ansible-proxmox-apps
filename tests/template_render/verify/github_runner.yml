@@ -35,7 +35,8 @@
     github_runner_docker_gid: 992
     github_runner_org: example-org
     github_runner_group: example-group
-    github_runner_labels: "self-hosted,Linux,X64,proxmox"
+    github_runner_labels_common: "self-hosted,Linux,X64"
+    github_runner_labels_pool: "proxmox"
     github_runner_replicas: 3
     # Deliberately not 0 or replicas: proves both the "carries review" and
     # the "does not" side of the boundary against the same render.
@@ -305,7 +306,12 @@
                | regex_search('^LABELS=.*$', multiline=True))}) }}
       loop: "{{ _runner_env_by_slot.results }}"
 
-    - name: Assert exactly the first github_runner_review_slots slots carry review
+    # A review slot must ALSO never carry `proxmox` -- a Molecule job requests
+    # `runs-on: proxmox` (apps _molecule.yml, _inventory-contract.yml), so a
+    # review slot that still matched it could be occupied by a Molecule job
+    # and the lane would no longer be dedicated, regardless of `review` also
+    # being present.
+    - name: Assert exactly the first github_runner_review_slots slots carry review, not proxmox
       vars:
         _reviewed: >-
           {{ range(1, github_runner_replicas | int + 1)
@@ -313,19 +319,24 @@
       ansible.builtin.assert:
         that:
           - _labels_by_slot[item] is search(',review$')
+          - not (_labels_by_slot[item] is search('(^|,)proxmox(,|$)'))
         fail_msg: >-
           Slot {{ item }} is within github_runner_review_slots
           ({{ github_runner_review_slots }}) but its rendered LABELS
-          ("{{ _labels_by_slot[item] }}") does not end in ",review".
+          ("{{ _labels_by_slot[item] }}") does not end in ",review", or still
+          carries "proxmox" -- either way a Molecule job (runs-on: proxmox)
+          could still land on the review lane.
       loop: "{{ _reviewed }}"
 
-    - name: Assert every slot beyond github_runner_review_slots stays unlabeled
+    - name: Assert every slot beyond github_runner_review_slots carries proxmox, not review
       ansible.builtin.assert:
         that:
+          - _labels_by_slot[item | string] is search(',proxmox$')
           - not (_labels_by_slot[item | string] is search(',review$'))
         fail_msg: >-
           Slot {{ item }} is beyond github_runner_review_slots
           ({{ github_runner_review_slots }}) but its rendered LABELS
-          ("{{ _labels_by_slot[item | string] }}") ends in ",review" anyway --
-          the review lane would no longer be dedicated.
+          ("{{ _labels_by_slot[item | string] }}") does not end in
+          ",proxmox", or ends in ",review" anyway -- the review lane would no
+          longer be dedicated.
       loop: "{{ range(github_runner_review_slots | int + 1, github_runner_replicas | int + 1) | list }}"
