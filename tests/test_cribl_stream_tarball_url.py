@@ -3,7 +3,8 @@
 
 Cribl's real download filenames are cribl-{version}-{hash}-linux-x64.tgz; a
 bare cribl-{version}-linux-x64.tgz 404s. Both the CDN default template
-(roles/cribl_stream/defaults/main.yml) and the object-storage mirror override
+(roles/cribl_stream/defaults/main/00-install.yml) and the object-storage
+mirror override
 (inventory/group_vars/cribl_stream_group.yml) build this filename from
 separate `cribl_stream_version`/`cribl_stream_build_hash` variables, so a
 version bump that only updates one of the two silently breaks downloads on
@@ -25,7 +26,7 @@ import yaml
 from jinja2 import Environment
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main.yml"
+DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main" / "00-install.yml"
 GROUP_VARS = ROOT / "inventory" / "group_vars" / "cribl_stream_group.yml"
 
 TEST_VERSION = "4.20.0"
