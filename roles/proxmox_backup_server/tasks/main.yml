@@ -82,14 +82,36 @@
     path: /etc/apt/sources.list.d/pbs-enterprise.list
     state: absent
 
+# Wrapped in block/rescue purely for diagnosability: a failed control
+# process gives Ansible/systemd's own error, never the journal line that
+# says why. On failure, dump each service's journal before re-raising so CI
+# logs carry the real cause instead of just "exited with error code".
 - name: Start and enable the Proxmox Backup Server services
-  ansible.builtin.systemd_service:
-    name: "{{ item }}"
-    state: started
-    enabled: true
-  loop:
-    - proxmox-backup.service
-    - proxmox-backup-proxy.service
+  block:
+    - name: Start and enable the Proxmox Backup Server services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - proxmox-backup.service
+        - proxmox-backup-proxy.service
+  rescue:
+    - name: Dump the failed service's journal
+      ansible.builtin.command: journalctl -xeu {{ item }} --no-pager -n 200
+      loop:
+        - proxmox-backup.service
+        - proxmox-backup-proxy.service
+      changed_when: false
+      register: proxmox_backup_server_journal
+
+    - name: Show the journal
+      ansible.builtin.debug:
+        var: proxmox_backup_server_journal.results
+
+    - name: Re-raise the original failure
+      ansible.builtin.fail:
+        msg: "{{ ansible_failed_result.msg | default('Service start failed; see journal above.') }}"
 
 - name: Create the datastore directory
   ansible.builtin.file:
