@@ -54,17 +54,22 @@
 - name: Assert otel_traces strips valueless attributes before the output
   ansible.builtin.assert:
     that:
-      - "(_cribl_stream_otel_traces | from_yaml).functions[-1].id == 'eval'"
-      - "\"Object.fromEntries\" in _cribl_stream_otel_traces"
-      - "\"v !== undefined\" in _cribl_stream_otel_traces"
+      - "(_cribl_stream_otel_traces | from_yaml).functions[-1].id == 'code'"
+      - "\"__e.attributes\" in _cribl_stream_otel_traces"
+      - "\"delete __e.attributes\" in _cribl_stream_otel_traces"
     fail_msg: >-
       otel_traces must strip any attribute whose value is undefined or null
       as its LAST function, after every enrichment step's `x || undefined`
-      has had a chance to run. The Langfuse worker throws
-      "Cannot read properties of undefined (reading 'stringValue')" and
-      drops the whole span on the shape those produce when a source is
-      absent — proven live with hand-built OTLP payloads to the real
-      endpoint (2026-09-03).
+      has had a chance to run, using a Code function against `__e` (not an
+      Eval "add" expression — Eval's value grammar rejects any function
+      literal, e.g. an arrow function passed to .filter(), so that form is
+      accepted by Ansible's template render but silently never executes on
+      the real Cribl instance). The Langfuse worker throws "Cannot read
+      properties of undefined (reading 'stringValue')" and drops the whole
+      span on the shape an undefined/null attribute value produces — proven
+      live with hand-built OTLP payloads to the real endpoint (2026-09-03),
+      and the Eval-form regression proven live against the same instance's
+      own REST API validator and a synthetic end-to-end trace (2026-09-21).
 
 - name: Assert otel_traces_phoenix keeps the guards and none of the Langfuse rewrites
   ansible.builtin.assert:
