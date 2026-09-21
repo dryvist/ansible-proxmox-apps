@@ -49,6 +49,30 @@ gatus_scrape_targets: >-
      | map('regex_replace', '^(.+)$', '\1:' ~ (gatus_scrape_port | string))
      | list }}
 
+# ARC (GitHub Actions self-hosted runner listener) metrics port, once that
+# guest is tagged `arc-listener` (no such guest exists yet). Empty targets
+# list renders a job with nothing to scrape rather than omitting the job, so
+# the named target is visible in Prometheus config before the guest exists.
+arc_listener_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['arc_listener_metrics']
+     | default(8080) }}
+arc_listener_scrape_targets: >-
+  {{ (tofu_data['containers'] | default({}) | combine(tofu_data['vms'] | default({}))
+      | combine(tofu_data['docker_vms'] | default({}))) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'arc-listener')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (arc_listener_scrape_port | string))
+     | list }}
+
+# github_exporter (roles/github_exporter) binds localhost-only and is scraped
+# from this same host, so the address is fixed rather than derived from
+# tofu_data. Defined here, not in the role's defaults, because this
+# group_vars file (not the role) renders the scrape job that consumes it —
+# a role default is not in scope when group_vars is evaluated outside the
+# role's own play.
+github_exporter_web_address: "127.0.0.1:9504"
+
 # The router scrape job's bearer, from the flat apps merge (roles/openbao
 # openbao_generated_app_secrets.prometheus -> secret/apps/prometheus, read via
 # roles/openbao_secrets apps/prometheus). Empty until seeded, which omits the
@@ -75,6 +99,21 @@ prometheus_stack_extra_scrape_configs: |
     metrics_path: /metrics
     static_configs:
       - targets: {{ gatus_scrape_targets | to_json }}
+  # Co-located github_exporter (roles/github_exporter). 5-minute interval,
+  # not the global default: the runners collector polls the GitHub API live
+  # on every scrape, and a shorter interval risks the installation token's
+  # hourly rate limit once more collectors are enabled later.
+  - job_name: github_exporter
+    scrape_interval: 5m
+    static_configs:
+      - targets: ["{{ github_exporter_web_address }}"]
+  # ARC's own listener metrics (gha_job_startup_duration_seconds and the
+  # assigned/started/completed counters) — the native queue-time source for
+  # the self-hosted pool once apps #1932 lands and exposes it on a
+  # NodePort. Ships with an empty target list until that guest is tagged.
+  - job_name: arc_listener
+    static_configs:
+      - targets: {{ arc_listener_scrape_targets | to_json }}
 
 # Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics).
 # Points at cribl-stream-01 directly (no HAProxy — WAL provides delivery durability).
@@ -91,3 +130,10 @@ prometheus_stack_remote_write_keep_jobs:
   - gatus
   - traefik
   - llm_router
+  - llama_server
+  - github_exporter
+  - arc_listener
+
+# Organization for github_exporter to poll — same separation
+# github_runner_org uses (roles/github_exporter defaults stay blank).
+github_exporter_org: dryvist

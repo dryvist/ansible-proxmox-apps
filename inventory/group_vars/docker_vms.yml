@@ -39,13 +39,26 @@ ssh_ca_trust_rollout_enabled: true
 # Workflows still must not send fork PRs to these runners (the org CI gate
 # already forces ubuntu-latest for forks) because the fleet bind-mounts
 # docker.sock.
+# Guests placed on the execution-plane host (Semaphore/Terrakube), never a
+# GitHub runner target per operator decision — a plane host's own workload
+# competes with anything a job on it might build or test, and a runner
+# outage there would take the plane down with it. Extend this list, never a
+# node name, if a future guest lands on that same host; host_vars/<name>.yml
+# is where each listed host's github_runner_replicas is actually set to 0
+# (tests/inventory_load/verify_inventory.yml asserts it stays that way).
+github_runner_plane_hosts:
+  - iac-platform
+
 github_runner_org: "dryvist"
 github_runner_replicas: 3
 # Every runner carries the union of every label any consumer job asks for, so
-# any runner can serve any job. A specialised label would recreate the
-# fragmentation the pool exists to remove: `terraform` (tofu-proxmox
+# any runner can serve any job -- except `proxmox` itself, which is the one
+# label review-pool slots deliberately do NOT get (see
+# github_runner_labels_pool, roles/github_runner/defaults/main.yml). A
+# specialised label would recreate
+# the fragmentation the pool exists to remove: `terraform` (tofu-proxmox
 # servarr-config-drift) and `terrakube` (tofu-github).
-github_runner_labels: "self-hosted,Linux,X64,proxmox,terraform,terrakube"
+github_runner_labels_common: "self-hosted,Linux,X64,terraform,terrakube"
 # The Default group is the sole X64 pool.  Its GitHub-side policy allows all
 # organization repositories and public repositories; keep repository names out
 # of this public inventory.
@@ -63,3 +76,28 @@ github_runner_group: "Default"
 # This is the first data disk on the guests' SCSI controller. A guest without
 # one fails this play loudly — give it the disk, do not remove the variable.
 github_runner_data_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1"
+
+# Ship the runner fleet's _diag log files (github_runner role, bind-mounted
+# per pooled slot) to the same syslog pipeline as everything else on this
+# host. One wildcard input covers every slot regardless of replica count --
+# no per-slot entry to maintain here when github_runner_replicas changes.
+# Directory wildcards need rsyslog >= 8.25.0 (Debian bookworm ships newer);
+# metadata (which file a line came from) is on by default for a wildcard
+# input, so the slot number in the path is not lost even with one shared tag.
+#
+# Keep this path in sync with github_runner_diag_host_dir
+# (roles/github_runner/defaults/main.yml) -- the two roles converge in
+# different plays (syslog_forwarder before github_runner), so neither can
+# read the other's default at render time and there is no single place left
+# to define it once.
+#
+# The second entry ships k3s pod logs (github_runner_arc pilot), same shape:
+# kubelet symlinks every container's log under /var/log/containers/*.log
+# regardless of pod count, so one wildcard input covers the cluster without
+# a per-pod entry to maintain. Both reuse the os index -- no new route.
+# Gated on the same host_var that enables the ARC role, so a host without
+# k3s never gets an input with nothing to tail.
+syslog_forwarder_imfile_inputs: >-
+  {{ [{'file': '/var/lib/docker/github-runner-diag/*/*.log', 'tag': 'github-runner-diag'}]
+     + ([{'file': '/var/log/containers/*.log', 'tag': 'k3s-containers'}]
+        if github_runner_arc_enabled | default(false) | bool else []) }}

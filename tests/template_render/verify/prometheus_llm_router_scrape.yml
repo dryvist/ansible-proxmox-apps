@@ -4,20 +4,29 @@
 # prometheus_group group_vars (vars_files), so the expression under test is the
 # one that ships; a fixture that restated it could not fail the way it fails.
 #
-# Two directions, each with its failing input named:
-#   1. Seeded: an llm-router-tagged guest and a bearer in the flat apps merge
-#      render ONE job, targeting <ip>:<router api port>, with that bearer.
-#      Fails if the target is typed rather than derived (fixture ip/port are
-#      values no default carries), the bearer is missing or empty, or the job
+# Targets derive from llm_router_group membership (hostvars['container_ip']),
+# not from a raw tofu_data.containers tag filter — that filter reads the
+# per-guest record directly and misses container_ip's DHCP-lease resolution
+# (add_lxc_hosts.yml sets container_ip to the guest's FQDN for a DHCP-lease
+# guest, empty ip in the raw record). Three directions, each with its failing
+# input named:
+#   1. No group members: a bearer alone renders NO job. Fails if the target
+#      list ever renders non-empty with nothing in the group — an empty
+#      target job is a Prometheus config that scrapes nothing.
+#   2. Seeded: an llm_router_group member (container_ip only, no static
+#      tofu_data.containers ip — the DHCP-lease shape) plus a bearer renders
+#      ONE job, targeting <container_ip>:<router api port>. Fails if the
+#      target is typed rather than derived from the group (fixture values are
+#      ones no default carries), the bearer is missing or empty, or the job
 #      name changes (it is also the remote_write keep key).
-#   2. Unseeded: the same guest with NO bearer renders NO job. Fails if the
-#      template drops its bearer gate — a job with an empty bearer would sit at
-#      401 forever and read like a scrape that never quite works.
+#   3. Unseeded: the same group member with NO bearer renders NO job. Fails if
+#      the template drops its bearer gate — a job with an empty bearer would
+#      sit at 401 forever and read like a scrape that never quite works.
 #
 # tofu_data is set as a FACT (the group_vars read hostvars['localhost']), so
 # this play is imported next to pve_node_exporter_targets at the END of
 # verify_templates.yml; see the note there.
-- name: Verify the LLM-router scrape job renders only when seeded, from derived targets
+- name: Verify the LLM-router scrape job renders only when seeded, from group-derived targets
   hosts: localhost
   connection: local
   gather_facts: false
@@ -38,9 +47,6 @@
           agentgateway_metrics: 15020
       nodes: {}
       containers:
-        llm-router-under-test:
-          ip: router-under-test.test.example
-          tags: [llm-router]
         agentgateway:
           ip: agw.test.example
           tags: [agentgateway]
@@ -64,7 +70,28 @@
         bao_apps_secrets:
           prometheus_llm_router_key: sk-scrape-under-test
 
-    - name: Render prometheus.yml with the bearer seeded
+    - name: Render prometheus.yml with a bearer but no llm_router_group members
+      ansible.builtin.set_fact:
+        _no_members: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: A bearer alone (no group members) renders no router job
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_members.scrape_configs | selectattr('job_name', 'equalto', 'llm_router') | list | length == 0
+        fail_msg: >-
+          With llm_router_group empty the template still rendered an
+          llm_router job. An empty target list must omit the job, not scrape
+          nothing.
+        success_msg: No group members, no job.
+
+    - name: Add a DHCP-lease-style llm_router_group member (container_ip only, no static ip)
+      ansible.builtin.add_host:
+        name: llm-router-under-test
+        groups: llm_router_group
+        container_ip: router-under-test.test.example
+
+    - name: Render prometheus.yml with the bearer seeded and the group populated
       ansible.builtin.set_fact:
         _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
 
@@ -73,24 +100,25 @@
         _router_jobs: >-
           {{ _seeded.scrape_configs | selectattr('job_name', 'equalto', 'llm_router') | list }}
 
-    - name: Seeded render carries one router job with the derived target and the bearer
+    - name: Seeded render carries one router job with the group-derived target and the bearer
       ansible.builtin.assert:
         quiet: true
         that:
           - _router_jobs | length == 1
-          - _router_jobs[0].metrics_path == '/metrics'
+          - _router_jobs[0].metrics_path == '/metrics/'
           - _router_jobs[0].authorization.type == 'Bearer'
           - _router_jobs[0].authorization.credentials == 'sk-scrape-under-test'
           - _router_jobs[0].static_configs[0].targets == ['router-under-test.test.example:4321']
           - "'llm_router' in prometheus_stack_remote_write_keep_jobs"
         fail_msg: >-
           Seeded render has {{ _router_jobs | length }} llm_router job(s):
-          {{ _router_jobs }}. Expected exactly one, targeting the llm-router
-          tagged guest at the llm_router_api port (both fixture values, so a
-          typed target cannot pass), with the seeded bearer, and the job name
-          present in the remote_write keep list — a job absent from that list
-          is scraped locally and never shipped.
-        success_msg: One router job, derived target, bearer present, shipped.
+          {{ _router_jobs }}. Expected exactly one, targeting the
+          llm_router_group member's container_ip hostvar at the
+          llm_router_api port (both fixture values, so a typed target cannot
+          pass), with the seeded bearer, and the job name present in the
+          remote_write keep list — a job absent from that list is scraped
+          locally and never shipped.
+        success_msg: One router job, group-derived target, bearer present, shipped.
 
     - name: Clear the bearer
       ansible.builtin.set_fact:

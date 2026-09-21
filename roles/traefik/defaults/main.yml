@@ -9,7 +9,7 @@
 # --- Traefik binary -----------------------------------------------------------
 # Pinned so Renovate can track + bump it (the whole point of pinning vs :latest).
 # renovate: datasource=github-releases depName=traefik/traefik
-traefik_version: "3.7.12"
+traefik_version: "3.7.13"
 traefik_arch: amd64
 traefik_release_base: https://github.com/traefik/traefik/releases/download
 traefik_release_file: "traefik_v{{ traefik_version }}_linux_{{ traefik_arch }}.tar.gz"
@@ -168,26 +168,9 @@ traefik_ingress_routes: "{{ tofu_data.ingress | default([]) }}"
 traefik_health_check_interval: "10s"
 traefik_health_check_timeout: "5s"
 
-# Per-route interval overrides, keyed by route name. A route's own
-# `health_check_interval` from the tofu ingress table always wins; this map is
-# the consuming-side policy layer for backends whose probe cadence needs tuning
-# before the upstream contract carries the value.
-#
-# openbao: only the Raft leader answers 200. Standbys return 429 BY DESIGN —
-# pooling them amplified a real inter-node-forward failure, so their exclusion
-# is deliberate and must not be "fixed" with standbyok. The consequence is that
-# a pool of N voters has exactly ONE eligible member at any moment, so a short
-# interval re-probes every voter constantly to sustain that single member, and
-# one slow probe empties the pool and returns "no available server". Measured
-# through the ingress at 10s: 503,503,503,200,200 across a single minute — the
-# route flaps rather than being down. A longer interval is less twitchy about a
-# backend set that is mostly-429 by design.
-#
-# LONG-TERM: this belongs in the tofu ingress contract next to health_check_path
-# so there is one definition. Tracked in Vikunja; remove the entry here when the
-# upstream row carries it.
-traefik_health_check_interval_overrides:
-  openbao: "30s"
+# Per-route interval overrides, keyed by route name. A route's own value from
+# the ingress table always wins.
+traefik_health_check_interval_overrides: {}
 
 # --- Backend forwarding timeouts ---------------------------------------------
 # Applied as the DEFAULT serversTransport, so every fronted service is bounded
@@ -201,6 +184,9 @@ traefik_health_check_interval_overrides:
 # Traefik's default is no limit, which turns a backend that accepts and then
 # stalls into an unbounded hang. Generous rather than tight: it must not cut
 # off a backend that computes before answering, and it does not bound the
-# response BODY, so streaming is unaffected.
+# response BODY, so streaming is unaffected. A backend that bounds its own
+# request lifetime and computes for longer than this before its first byte
+# says so in its ingress row (`response_header_timeout`, tofu ingress table;
+# "0s" = no limit) and gets a transport of its own with only the dial bounded.
 traefik_backend_dial_timeout: 10s
 traefik_backend_response_header_timeout: 120s

@@ -349,87 +349,9 @@
   ansible.builtin.include_tasks: offsite.yml
   when: object_storage_offsite_enabled | bool
 
-# Phase 10: Mirror external infrastructure artifacts into the local bucket so
-# egress-restricted roles can pull them over the internal network. The
-# controller stages the download; the target uploads via the aws CLI. Existing
-# objects are left alone (manual retention is not clobbered on re-runs).
-- name: Check which infra artifacts are already mirrored
-  ansible.builtin.command:
-    cmd: >-
-      aws --endpoint-url {{ object_storage_endpoint }} s3api head-object
-      --bucket {{ item.bucket }} --key {{ item.key }}
-  loop: "{{ object_storage_infra_mirrors }}"
-  loop_control:
-    label: "{{ item.name }}"
-  environment: "{{ object_storage_aws_env }}"
-  register: object_storage_infra_stat
-  changed_when: false
-  failed_when: >-
-    object_storage_infra_stat.rc is defined and
-    object_storage_infra_stat.rc != 0 and
-    '404' not in (object_storage_infra_stat.stderr | default('')) and
-    'Not Found' not in (object_storage_infra_stat.stderr | default(''))
-  no_log: true
 
-- name: Stage missing infra artifacts on controller
-  ansible.builtin.get_url:
-    url: "{{ item.item.url }}"
-    dest: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
-    mode: "0644"
-    force: true
-  loop: "{{ object_storage_infra_stat.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  delegate_to: localhost
-  connection: local
-  become: false
-  vars:
-    ansible_become: false
-  when: item.rc != 0
-
-- name: Push missing infra artifacts to target
-  ansible.builtin.copy:
-    src: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
-    dest: "/tmp/object-storage-mirror-{{ item.item.name }}"
-    mode: "0644"
-  loop: "{{ object_storage_infra_stat.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  when: item.rc != 0
-
-- name: Upload missing infra artifacts to object storage
-  ansible.builtin.command:
-    cmd: >-
-      aws --endpoint-url {{ object_storage_endpoint }} s3 cp
-      /tmp/object-storage-mirror-{{ item.item.name }}
-      s3://{{ item.item.bucket }}/{{ item.item.key }}
-  loop: "{{ object_storage_infra_stat.results }}"
-  loop_control:
-    label: "{{ item.item.name }} -> {{ item.item.bucket }}/{{ item.item.key }}"
-  environment: "{{ object_storage_aws_env }}"
-  when: item.rc != 0
-  changed_when: true
-  no_log: true
-
-- name: Remove staging files from target
-  ansible.builtin.file:
-    path: "/tmp/object-storage-mirror-{{ item.item.name }}"
-    state: absent
-  loop: "{{ object_storage_infra_stat.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  when: item.rc != 0
-
-- name: Remove staging files from controller
-  ansible.builtin.file:
-    path: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
-    state: absent
-  loop: "{{ object_storage_infra_stat.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  delegate_to: localhost
-  connection: local
-  become: false
-  vars:
-    ansible_become: false
-  when: item.rc != 0
+# Phase 10: mirror external infrastructure artifacts into the local bucket.
+# Split into its own file: with pointer_url/sidecar support this section
+# alone exceeded the per-file token budget. See tasks/infra_mirrors.yml.
+- name: Mirror external infrastructure artifacts
+  ansible.builtin.include_tasks: infra_mirrors.yml

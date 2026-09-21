@@ -20,9 +20,14 @@ permissions:
 jobs:
   syntax-check:
     name: Syntax Check
-    # Self-hosted (pre-baked ansible + collections); fork PRs fall back to a
-    # hosted runner so fork-author code never runs on the fleet.
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    # Hosted for a public repo and for fork PRs; self-hosted only for a
+    # private repo's own PRs. Nothing in this job touches the estate (no
+    # OpenBao, no internal DNS, no published inventory object) -- fork PRs
+    # already prove it runs hosted.
+    runs-on: >-
+      ${{ (github.event.repository.private == false ||
+      github.event.pull_request.head.repo.fork) &&
+      'ubuntu-latest' || 'proxmox' }}
     timeout-minutes: 15
 
     steps:
@@ -54,9 +59,24 @@ jobs:
         run: |
           uv pip install --system 'ansible-core>=2.16'
 
+      # Cache Galaxy content keyed on requirements.yml, under this job's
+      # isolated ANSIBLE_HOME (never the shared runner-wide ~/.ansible) so the
+      # cache restore can't reintroduce the cross-job race that isolation
+      # exists to prevent. Same key convention as dryvist/.github's
+      # _ansible-ci.yml.
+      - name: Cache Ansible Galaxy content
+        id: galaxy-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ env.ANSIBLE_HOME }}/collections
+            ${{ env.ANSIBLE_HOME }}/roles
+          key: ansible-galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
+
       - name: Install Ansible collections
         # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
         # the whole job. Same four attempts and backoff the retry script used.
+        if: steps.galaxy-cache.outputs.cache-hit != 'true'
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           max_attempts: 4
@@ -120,7 +140,14 @@ jobs:
 
   verify-inventory-load:
     name: Verify Inventory Load
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    # Hosted for a public repo and for fork PRs; self-hosted only for a
+    # private repo's own PRs. Every step here runs against a checked-in
+    # fixture (tests/inventory_load/tofu_inventory.json, pinned via
+    # TOFU_INVENTORY_PATH) or a stubbed local server -- nothing estate-only.
+    runs-on: >-
+      ${{ (github.event.repository.private == false ||
+      github.event.pull_request.head.repo.fork) &&
+      'ubuntu-latest' || 'proxmox' }}
     timeout-minutes: 15
 
     steps:
@@ -148,9 +175,24 @@ jobs:
       # load_tofu.yml (imported by verify_inventory.yml) include_role's the
       # shared inventory_resolve role by FQCN, so this run is what proves the
       # collection actually resolves it.
+      # Cache Galaxy content keyed on requirements.yml, under this job's
+      # isolated ANSIBLE_HOME (never the shared runner-wide ~/.ansible) so the
+      # cache restore can't reintroduce the cross-job race that isolation
+      # exists to prevent. Same key convention as dryvist/.github's
+      # _ansible-ci.yml.
+      - name: Cache Ansible Galaxy content
+        id: galaxy-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ env.ANSIBLE_HOME }}/collections
+            ${{ env.ANSIBLE_HOME }}/roles
+          key: ansible-galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
+
       - name: Install Ansible dependencies
         # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
         # the whole job. Same four attempts and backoff the retry script used.
+        if: steps.galaxy-cache.outputs.cache-hit != 'true'
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           max_attempts: 4
@@ -214,6 +256,9 @@ jobs:
 
       - name: Verify the apt proxy autodetect hook
         run: python3 tests/test_apt_proxy_detect.py -v
+
+      - name: Verify the CI build caches reach every consumer
+        run: python3 tests/test_ci_build_caches.py -v
 
       # Static paths only — no workflow-context interpolation in this step.
       - name: Verify DNS primary/secondary derivation

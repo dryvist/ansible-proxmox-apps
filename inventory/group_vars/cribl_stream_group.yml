@@ -4,11 +4,16 @@ systemd_restart_policy_services:
 
 # Cribl Stream containers have the `outbound-internal` firewall group applied
 # (RFC1918 only), so they cannot reach cdn.cribl.io directly. Serve the
-# tarball from the object-storage (RustFS) artifact store — same binary as
-# Cribl Edge, different runtime configuration.
+# tarball from the object-storage (RustFS) artifact store, at a key carrying
+# the version so a pin bump can never silently reuse a stale object (no
+# build hash in the key -- see roles/cribl_stream/tasks/mirror_seed.yml,
+# which is the only place that hash gets resolved). Cribl Edge reads this
+# exact same key (inventory/group_vars/cribl_edge.yml); the mirror_seed.yml
+# task seeds it once for both.
 cribl_stream_tarball_url: >-
   http://{{ tofu_data.containers['s3'].ip }}:{{
-  tofu_data.constants.service_ports.object_storage_s3 }}/splunk-addons/infra/cribl-linux-x64.tgz
+  tofu_data.constants.service_ports.object_storage_s3 }}/splunk-addons/infra/cribl-{{
+  cribl_stream_version }}-linux-x64.tgz
 
 # Langfuse project keypair for the langfuse_otlp output — bao-first with an env
 # fallback, the same shape as zammad_group.yml. Canonical home is the
@@ -48,3 +53,19 @@ cribl_stream_phoenix_api_key: >-
      | default(lookup('env', 'PHOENIX_INGEST_API_KEY'), true)
      | default(undef(), true)
      | mandatory('PHOENIX_INGEST_API_KEY unset: seed ai/phoenix in OpenBao (local-llm domain) or set the env var') }}
+
+# Management API (:9000) local admin credential — vendor ships admin/admin
+# until rotated. Generated at source by
+# openbao_generated_app_secrets.cribl-stream (secret/apps/cribl-stream,
+# field cribl_admin_password), read here bao-first with an env fallback — same
+# shape as the Langfuse/Phoenix pairs above. On the first converge after this
+# lands, apps/cribl-stream does not exist yet (optional prefetch), so
+# bao_apps_secrets.cribl_admin_password is undefined and this falls to the env
+# var; a second converge, after the generation play seeds OpenBao, picks up the
+# bao value. roles/cribl_stream tasks/rotate_admin_password.yml applies it and
+# stops rotating once the vendor default no longer authenticates.
+cribl_stream_admin_password: >-
+  {{ bao_apps_secrets.cribl_admin_password
+     | default(lookup('env', 'CRIBL_ADMIN_PASSWORD'), true)
+     | default(undef(), true)
+     | mandatory('CRIBL_ADMIN_PASSWORD unset: seed apps/cribl-stream in OpenBao or set the env var') }}

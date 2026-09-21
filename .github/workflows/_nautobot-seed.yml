@@ -1,0 +1,86 @@
+---
+# Reusable: Nautobot Seed Bundle Tests
+#
+# Split out of _molecule.yml (which reached the per-file token budget), same
+# pattern as _data-contract.yml / _inventory-contract.yml. Called only from
+# _molecule.yml's `nautobot-seed` job — not a standalone entry point.
+
+name: _nautobot-seed
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    name: Nautobot Seed Bundle Tests
+    # Hosted, ephemeral runner: this test is fully offline and needs no fleet
+    # resources, and the role's json_query filter needs jmespath, which the
+    # pre-baked self-hosted image does not carry (and cannot gain via pip —
+    # its system python is PEP-668 externally managed).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "latest"
+
+      - name: Install Ansible and dependencies
+        run: |
+          uv pip install --system \
+            'ansible-core>=2.16' \
+            jmespath
+
+      # Cache Galaxy content keyed on requirements.yml. Hosted, ephemeral
+      # runner, so the default ~/.ansible path is safe here. Same key/paths as
+      # dryvist/.github's _ansible-ci.yml so a warm run of either workflow
+      # warms the other.
+      - name: Cache Ansible Galaxy content
+        id: galaxy-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.ansible/collections
+            ~/.ansible/roles
+          key: ansible-galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
+
+      - name: Install Ansible collections
+        # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
+        # the whole job. Same four attempts and backoff the retry script used.
+        if: steps.galaxy-cache.outputs.cache-hit != 'true'
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 4
+          retry_wait_seconds: 15
+          timeout_minutes: 10
+          command: ansible-galaxy install -r requirements.yml
+        env:
+          ANSIBLE_GALAXY_SERVER_TIMEOUT: "60"
+
+      # Covers roles/nautobot/tasks/seed_bundle.yml, which the nautobot Molecule
+      # scenario cannot reach (it pins nautobot_build_seed false).
+      - name: Run nautobot seed-bundle assembly tests
+        run: ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"
+
+      # The per-array non-empty guard, covered on its own because the assembly
+      # tests above exempt every core class.
+      - name: Verify the nautobot seed empty-array guard
+        run: ansible-playbook tests/nautobot_seed/verify_empty_array_guard.yml -c local
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"

@@ -27,10 +27,6 @@ file:
 
 - `claude-code-metrics.json` — grafana.com dashboard 25255, "Claude Code
   Metrics (Prometheus)".
-- `claude-code-victoriastack.json` — grafana.com dashboard 24640, "Claude
-  Code (VictoriaStack)". Ships mixed metrics + log panels upstream; only the
-  metrics panels populate here (no VictoriaLogs datasource is provisioned),
-  so the log-sourced panels read `No data`.
 - `litellm-prod-v2.json` — BerriAI/litellm
   `cookbook/litellm_proxy_server/grafana_dashboard/dashboard_v2`.
 - `litellm-all-prometheus-metrics.json` — BerriAI/litellm, same path,

@@ -37,6 +37,24 @@ permissions:
   pull-requests: read
 
 jobs:
+  # Content-aware classifier (dryvist/ai-workflows' scope-classify.yml,
+  # "Jev"). Named `jev`, not `scope` - this repo's own deterministic
+  # paths-filter job below is already named `scope`. AUTHORITATIVE for
+  # Molecule/e2e below: its `molecule`/`e2e` outputs decide on their own;
+  # the deterministic `ci`/`scope` filter outputs are consulted ONLY when
+  # `jev.outputs.source == 'fallback'` (classifier unreachable), which is
+  # also the one case scope-classify.yml's own fail-safe already forces
+  # every output to full/yes - so a jev failure or an untouched
+  # TYPESAFE_API_KEY still runs Molecule/e2e, never skips them.
+  jev:
+    name: Classify CI scope (Jev)
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: dryvist/ai-workflows/.github/workflows/scope-classify.yml@main
+    secrets:
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+
   ci:
     permissions:
       contents: read
@@ -95,7 +113,6 @@ jobs:
             molecule:
               - 'roles/**'
               - 'molecule/**'
-              - 'inventory/**'
               - 'playbooks/**'
               - 'requirements.yml'
               - 'requirements-ci.txt'
@@ -128,18 +145,26 @@ jobs:
 
   molecule:
     name: Molecule
-    needs: [ci, scope]
+    needs: [ci, scope, jev]
     # Scenario selection happens inside the called workflow, which derives the
     # role-to-scenario map from the tree and runs everything on a promotion.
+    # Jev is AUTHORITATIVE: runs whenever it says anything other than "none".
+    # The deterministic ci/scope filter is consulted only as the fallback
+    # when jev is unreachable (source == 'fallback') - which itself always
+    # answers molecule: full, so this OR is redundant-but-explicit defense
+    # in depth against a future change to that fallback guarantee, not
+    # load-bearing today.
     if: >-
-      needs.ci.outputs.molecule == 'true' ||
-      needs.scope.outputs.molecule == 'true'
+      !cancelled() &&
+      (needs.jev.outputs.molecule != 'none' ||
+       (needs.jev.outputs.source == 'fallback' &&
+        (needs.ci.outputs.molecule == 'true' || needs.scope.outputs.molecule == 'true')))
     uses: ./.github/workflows/_molecule.yml
     secrets: inherit
 
   e2e:
     name: E2E Tests
-    needs: [ci, scope]
+    needs: [ci, scope, jev]
     # Self-hosted. e2e exercises deployed infrastructure, so it follows the
     # deploy scope above rather than the lint filter.
     # (PR e2e also runs on its own schedule / workflow_dispatch.)
@@ -149,10 +174,19 @@ jobs:
     # Deliberately NOT gated on the shared workflow's change filter: that filter
     # cannot answer on a push, and a post-merge sweep that silently skips is the
     # failure this trigger exists to prevent.
+    #
+    # Jev-authoritative on `e2e`, same fallback pattern as Molecule above.
+    # In practice this never narrows anything here: every push is a
+    # non-pull_request event, which scope-classify.yml's own ALWAYS-FULL
+    # override always answers e2e: yes for - kept for consistency with
+    # Molecule's gating, not because it changes behavior today.
     if: >-
+      !cancelled() &&
       github.event_name == 'push' &&
       vars.E2E_RUNNERS_ENABLED == 'true' &&
-      needs.scope.outputs.deploy == 'true'
+      needs.scope.outputs.deploy == 'true' &&
+      (needs.jev.outputs.e2e != 'no' ||
+       (needs.jev.outputs.source == 'fallback' && needs.scope.outputs.deploy == 'true'))
     uses: ./.github/workflows/_e2e-tests.yml
 
   gate:
@@ -161,7 +195,7 @@ jobs:
     # the deployment checks run, so a failure there skips them — and a skip the
     # gate forgives is a green board with nothing having run. The job that
     # decides what to skip can never itself be skippable.
-    needs: [ci, scope, data-contract, inventory-contract, molecule, e2e]
+    needs: [ci, scope, jev, data-contract, inventory-contract, molecule, e2e]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -170,4 +204,12 @@ jobs:
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
           allowed-skips: data-contract, inventory-contract, molecule, e2e
+          # `jev` never skips (no `if:`), so it needs allowed-FAILURES, not
+          # allowed-skips - a classifier infra failure is visible as a red
+          # job but never blocks this gate, since Molecule/e2e above already
+          # defer to the deterministic filter whenever jev's own source
+          # isn't 'fallback' from a clean success (an outright job failure
+          # leaves `molecule`/`e2e` outputs empty, and empty != 'none'/'no'
+          # is true, so both still run - the safe direction).
+          allowed-failures: jev
           jobs: ${{ toJSON(needs) }}

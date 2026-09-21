@@ -1,0 +1,204 @@
+---
+# Phase 10: Mirror external infrastructure artifacts into the local bucket so
+# egress-restricted roles can pull them over the internal network. The
+# controller stages the download; the target uploads via the aws CLI. Existing
+# objects are left alone (manual retention is not clobbered on re-runs).
+- name: Check which infra artifacts are already mirrored
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3api head-object
+      --bucket {{ item.bucket }} --key {{ item.key }}
+  loop: "{{ object_storage_infra_mirrors }}"
+  loop_control:
+    label: "{{ item.name }}"
+  environment: "{{ object_storage_aws_env }}"
+  register: object_storage_infra_stat
+  changed_when: false
+  failed_when: >-
+    object_storage_infra_stat.rc is defined and
+    object_storage_infra_stat.rc != 0 and
+    '404' not in (object_storage_infra_stat.stderr | default('')) and
+    'Not Found' not in (object_storage_infra_stat.stderr | default(''))
+  no_log: true
+
+# A `pointer_url` entry (e.g. Cribl's CDN, which has no stable per-version
+# URL) resolves its real download URL at run time from the pointer's
+# fetched, trimmed body, and that body must contain the entry's pinned
+# `version` -- the resolver only exposes a build identifier for its CURRENT
+# release, so a lagging pin cannot be auto-seeded and fails loudly here
+# instead of silently mirroring the wrong build.
+- name: Resolve pointer URLs for missing pointer-based infra artifacts
+  ansible.builtin.uri:
+    url: "{{ mirror_stat.item.pointer_url }}"
+    return_content: true
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    loop_var: mirror_stat
+    label: "{{ mirror_stat.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: mirror_stat.rc != 0 and mirror_stat.item.pointer_url is defined
+  register: object_storage_infra_pointer
+
+- name: Assert the pinned version appears in the resolved pointer content
+  ansible.builtin.assert:
+    that:
+      - "pointer_result.mirror_stat.item.version in (pointer_result.content | default(''))"
+    fail_msg: >-
+      {{ pointer_result.mirror_stat.item.name }}'s pinned version
+      ({{ pointer_result.mirror_stat.item.version }}) does not match its
+      resolver's current release ({{ (pointer_result.content | default('')) | trim }}).
+      This source only exposes a resolvable build identifier for its
+      CURRENT release, so a lagging pin cannot be auto-seeded -- bump the
+      pin to match, or seed {{ pointer_result.mirror_stat.item.bucket }}/{{
+      pointer_result.mirror_stat.item.key }} by hand.
+  loop: "{{ object_storage_infra_pointer.results }}"
+  loop_control:
+    loop_var: pointer_result
+    label: "{{ pointer_result.mirror_stat.item.name }}"
+  when: not (pointer_result.skipped | default(false))
+
+- name: Stage missing infra artifacts on controller
+  ansible.builtin.get_url:
+    url: >-
+      {{ (object_storage_infra_pointer.results[idx].content | trim)
+         if item.item.pointer_url is defined
+         else item.item.url }}
+    dest: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
+    checksum: >-
+      {{ 'sha256:' ~ (object_storage_infra_pointer.results[idx].content | trim) ~ '.sha256'
+         if (item.item.sidecar | default('') == 'sha256' and item.item.pointer_url is defined)
+         else omit }}
+    mode: "0644"
+    force: true
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    index_var: idx
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0
+
+# A `sidecar: sha256` entry stages its checksum file too, from the same
+# resolved URL (or the plain `url` with `.sha256` appended when there is no
+# pointer_url), so it can be uploaded and served alongside the tarball --
+# consumers verify against the mirror's own sidecar, not a literal digest.
+- name: Stage the sha256 sidecar for missing checksummed infra artifacts
+  ansible.builtin.get_url:
+    url: >-
+      {{ ((object_storage_infra_pointer.results[idx].content | trim)
+          if item.item.pointer_url is defined
+          else item.item.url) ~ '.sha256' }}
+    dest: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}.sha256"
+    mode: "0644"
+    force: true
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    index_var: idx
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'
+
+- name: Push missing infra artifacts to target
+  ansible.builtin.copy:
+    src: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
+    dest: "/tmp/object-storage-mirror-{{ item.item.name }}"
+    mode: "0644"
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+
+- name: Push missing infra sidecars to target
+  ansible.builtin.copy:
+    src: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}.sha256"
+    dest: "/tmp/object-storage-mirror-{{ item.item.name }}.sha256"
+    mode: "0644"
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'
+
+- name: Upload missing infra artifacts to object storage
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3 cp
+      /tmp/object-storage-mirror-{{ item.item.name }}
+      s3://{{ item.item.bucket }}/{{ item.item.key }}
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }} -> {{ item.item.bucket }}/{{ item.item.key }}"
+  environment: "{{ object_storage_aws_env }}"
+  when: item.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Upload missing infra sidecars to object storage
+  ansible.builtin.command:
+    cmd: >-
+      aws --endpoint-url {{ object_storage_endpoint }} s3 cp
+      /tmp/object-storage-mirror-{{ item.item.name }}.sha256
+      s3://{{ item.item.bucket }}/{{ item.item.key }}.sha256
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }} -> {{ item.item.bucket }}/{{ item.item.key }}.sha256"
+  environment: "{{ object_storage_aws_env }}"
+  when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'
+  changed_when: true
+  no_log: true
+
+- name: Remove staging files from target
+  ansible.builtin.file:
+    path: "/tmp/object-storage-mirror-{{ item.item.name }}"
+    state: absent
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+
+- name: Remove sidecar staging files from target
+  ansible.builtin.file:
+    path: "/tmp/object-storage-mirror-{{ item.item.name }}.sha256"
+    state: absent
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'
+
+- name: Remove staging files from controller
+  ansible.builtin.file:
+    path: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
+    state: absent
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0
+
+- name: Remove sidecar staging files from controller
+  ansible.builtin.file:
+    path: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}.sha256"
+    state: absent
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'

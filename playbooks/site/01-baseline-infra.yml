@@ -15,13 +15,17 @@
   roles:
     - role: apt_cacher_ng
 
-- name: Configure apt proxy on LXC containers
-  hosts: lxc_containers:!apt_cacher_group:!download_vpn_group
+# The CI runner VMs take the same hook: their own apt runs go through the
+# cache, and the runner role hands the cache pool to the jobs it hosts so the
+# Molecule containers can point apt at it too.
+- name: Configure apt proxy on LXC containers and docker VMs
+  hosts: lxc_containers:docker_vms:!apt_cacher_group:!download_vpn_group
   become: true
   gather_facts: false
   tags:
     - apt_proxy
     - lxc
+    - docker_vms
   tasks:
     # The cache is an HA pair (tofu node_services generates one instance per
     # always-on node; all carry the `apt-cache` tag, so apt_cacher_group tracks
@@ -102,7 +106,8 @@
 # Phase 0-zot: Zot OCI Registry
 # Self-hosted pull-through cache (docker.io/ghcr.io/quay.io) and private
 # registry. Deployed early — before any docker app roles — so firewalled
-# docker hosts can pull through it. Pairs with the tofu registry LXC 109.
+# docker hosts can pull through it. The guest is whichever container carries
+# the `registry` tag in the published inventory.
 # =============================================================================
 
 - name: Deploy Zot registry
@@ -116,75 +121,8 @@
   roles:
     - role: zot_registry
 
-- name: Configure Docker registry mirror on LXC containers
-  hosts: lxc_containers:!registry_group
-  become: true
-  gather_facts: false
-  tags:
-    - registry_mirror
-    - docker
-    - lxc
-  handlers:
-    - name: Restart docker
-      ansible.builtin.systemd:
-        name: docker
-        state: restarted
-  tasks:
-    # fuse-overlayfs is the unprivileged-LXC workaround for Docker on ZFS; a VM
-    # keeps whatever image store it already runs on. Pinning a driver there
-    # would boot the daemon against an empty store, so the pin is LXC-only and
-    # needs the virtualization fact even though the play skips fact gathering.
-    - name: Gather the virtualization type
-      when: "'docker' in (host_tags | default([]))"
-      ansible.builtin.setup:
-        filter:
-          - ansible_virtualization_type
-
-    - name: Install fuse-overlayfs before pinning it as the storage driver
-      when:
-        - "'docker' in (host_tags | default([]))"
-        - ansible_virtualization_type | default('') == 'lxc'
-      ansible.builtin.apt:
-        name: fuse-overlayfs
-        state: present
-
-    # This play is the single owner of /etc/docker/daemon.json on docker LXCs.
-    # roles/idrac_kvm_docker no longer writes the storage-driver here (removed
-    # on a separate branch) to avoid two writers fighting over the same file.
-    - name: Configure Docker registry mirror
-      when:
-        - "'registry' in hostvars"
-        - "'docker' in (host_tags | default([]))"
-      vars:
-        _registry_ip: "{{ hostvars['registry']['container_ip'] }}"
-        _registry_port: >-
-          {{ hostvars['localhost']['tofu_data']
-             ['constants']['service_ports']['registry']
-             | default(5000) }}
-        _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
-        _daemon_json:
-          registry-mirrors: ["http://{{ _registry_ip }}:{{ _registry_port }}"]
-          insecure-registries: ["{{ _registry_ip }}:{{ _registry_port }}"]
-          log-driver: journald
-        _lxc_storage:
-          storage-driver: fuse-overlayfs
-          features:
-            containerd-snapshotter: false
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        content: "{{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})) | to_nice_json }}\n"
-        owner: root
-        group: root
-        mode: '0644'
-      notify: Restart docker
-
-    # A daemon that failed on an unmet pin stays down (start-limit-hit) until
-    # something starts it again; an unchanged daemon.json fires no handler.
-    - name: Ensure Docker is running
-      when: "'docker' in (host_tags | default([]))"
-      ansible.builtin.systemd:
-        name: docker
-        state: started
+# Docker daemon configuration (registry mirror, storage driver, DNS) moved
+# to site/01a-docker-daemon.yml -- imported right after this file.
 
 # =============================================================================
 # Phase 0a: NTP Time Synchronization Baseline
@@ -301,13 +239,16 @@
 # balancer (haproxy) are excluded: they RECEIVE this traffic, so forwarding into
 # themselves would loop; their own logs are collected locally by Cribl Edge.
 #
-# iac-platform (the docker_vms member running Semaphore) is added explicitly
-# by name, not by including the whole docker_vms group: docker-host is
-# testing/dev only and stays off the production pipeline.
+# iac-platform (the docker_vms member running Semaphore) and docker-host-540
+# (the docker_vms member running the github_runner fleet) are added
+# explicitly by name, not by including the whole docker_vms group: other
+# docker_vms members are testing/dev only and stay off the production
+# pipeline. docker-host-540 previously shipped zero logs even though it now
+# also carries production CI runners, not just dev/test workloads.
 # =============================================================================
 
-- name: Forward infra LXC (and iac-platform) logs to the syslog pipeline
-  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group:iac-platform
+- name: Forward infra LXC (and iac-platform, docker-host-540) logs to the syslog pipeline
+  hosts: lxc_containers:!cribl_edge:!cribl_stream_group:!haproxy_group:iac-platform:docker-host-540
   become: true
   gather_facts: false
   tags:

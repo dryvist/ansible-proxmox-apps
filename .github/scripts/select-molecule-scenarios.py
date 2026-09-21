@@ -12,8 +12,8 @@ Selection rules, in order:
   * not a pull request, or a pull request into the production branch -> every
     scenario. Promotion is the one place a full sweep is guaranteed, and it is
     what makes narrowing safe everywhere else.
-  * a shared input changed (inventory, playbooks, requirements, this script,
-    the workflow) -> every scenario, because those genuinely affect all of them.
+  * a shared input changed (playbooks, requirements, this script, the
+    workflow) -> every scenario, because those genuinely affect all of them.
   * otherwise -> every scenario that references a changed role or whose
     directory changed, plus `default`.
 
@@ -37,11 +37,21 @@ REPO = Path(__file__).resolve().parents[2]
 SCENARIO_DIR = REPO / "molecule"
 ROLE_DIR = REPO / "roles"
 
-# Changes here can affect any scenario, so they select all of them.
+# Changes here can affect any scenario, so they select all of them. inventory/
+# is deliberately not here: no scenario reads the repo inventory (each declares
+# its own host_vars inline), and inventory changes are already covered by the
+# Inventory Contract and Template Rendering Tests jobs.
+#
+# molecule/resources/ is the Dockerfile and prep tasks every scenario imports;
+# .config/molecule/ is the Molecule base config (dependency, driver, verifier)
+# merged into every scenario's own molecule.yml before it runs — see
+# molecule.util.merge_dicts. A change to either affects every scenario, the
+# same as a shared playbook does.
 SHARED = re.compile(
-    r"^(inventory/|playbooks/|requirements\.yml$|requirements-ci\.txt$"
+    r"^(playbooks/|requirements\.yml$|requirements-ci\.txt$"
     r"|\.github/workflows/(?:ci-gate|_molecule)\.yml$"
-    r"|\.github/scripts/select-molecule-scenarios\.py$)"
+    r"|\.github/scripts/select-molecule-scenarios\.py$"
+    r"|molecule/resources/|\.config/molecule/)"
 )
 ROLE_PATH = re.compile(r"^roles/([^/]+)/")
 SCENARIO_PATH = re.compile(r"^molecule/([^/]+)/")
@@ -218,6 +228,20 @@ def self_check() -> int:
 
     if not SHARED.match(".github/workflows/ci-gate.yml"):
         failures.append("the Molecule gate workflow no longer widens the matrix")
+
+    # molecule/resources/ (the shared Dockerfile + prep tasks every scenario
+    # imports) and .config/molecule/ (the Molecule base config merged into
+    # every scenario before its own molecule.yml) both affect every
+    # scenario, so a change there must widen the matrix too.
+    if not SHARED.match("molecule/resources/tasks/apt_proxy.yml"):
+        failures.append("a change under molecule/resources/ no longer widens the matrix")
+    if not SHARED.match(".config/molecule/config.yml"):
+        failures.append("a change to the Molecule base config no longer widens the matrix")
+
+    # inventory/ is deliberately not shared: no scenario reads the repo
+    # inventory, so an inventory-only change must not select the full matrix.
+    if SHARED.match("inventory/host_vars/example.yml"):
+        failures.append("an inventory-only change now widens the matrix")
 
     selected, unrecognised = changed_roles(["roles/no-longer-present/tasks/main.yml"], known)
     if selected or unrecognised != {"no-longer-present"}:

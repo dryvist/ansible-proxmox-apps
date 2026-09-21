@@ -8,7 +8,25 @@ github_runner_work_dir: "/opt/github-runner"
 github_runner_org: ""
 github_runner_group: ""
 github_runner_replicas: 1
-github_runner_labels: "self-hosted,Linux,X64,proxmox"
+# Labels every slot on this host carries regardless of pool -- never
+# "proxmox": that is the heavy-pool label (github_runner_labels_pool below)
+# and belongs on exactly the slots NOT dedicated to review, or a review job's
+# runner would also match every Molecule job's `runs-on: proxmox` and the
+# lane it exists to protect stops being dedicated.
+github_runner_labels_common: "self-hosted,Linux,X64"
+# The label the pooled (non-review) slots carry, appended to
+# github_runner_labels_common. A Molecule job requests `runs-on: proxmox`;
+# this is what makes it land only on those slots.
+github_runner_labels_pool: "proxmox"
+# The FIRST N pooled slots on this host carry `review` (github_runner_labels_common
+# plus this, in place of github_runner_labels_pool) instead, so AI-review jobs
+# (a router-backed classify/policy-gate call, seconds not minutes) get a lane
+# that never queues behind a Molecule matrix on the same pool -- and a
+# Molecule job can never occupy one, since it does not carry `proxmox`.
+# Derived per slot index in runner.env.j2 -- never a literal per-slot list.
+# 0 means no slot on this host carries it; the per-host value lives in
+# host_vars next to github_runner_replicas.
+github_runner_review_slots: 0
 github_runner_name_prefix: "proxmox-runner"
 
 # Docker container name prefix; the systemd instance number is appended.
@@ -49,6 +67,34 @@ github_runner_data_fstype: ext4
 github_runner_data_paths:
   - /var/lib/docker
   - /var/lib/containerd
+
+# ---------------------------------------------------------------------------
+# Runner diagnostics (_diag), bind-mounted from the container onto this same
+# data disk -- see github-runner@.service.j2 and the directory creation in
+# tasks/main.yml. Runner.Listener/Runner.Worker's own log files are richer
+# than the container's stdout (which --log-driver journald above already
+# covers) and would otherwise die with the container's writable layer on
+# every --rm. A subdirectory of /var/lib/docker rather than a path of its
+# own: that is already this role's data disk, so nothing new is mounted or
+# partitioned, and the boot-disk guard above already covers it by covering
+# its parent.
+#
+# inventory/group_vars/docker_vms.yml points syslog_forwarder's imfile input
+# at this same path so the files reach Splunk (index os); keep the two in
+# sync if either ever changes -- they cannot share one definition across the
+# plays that use them (syslog_forwarder converges before this role does).
+# ---------------------------------------------------------------------------
+github_runner_diag_host_dir: /var/lib/docker/github-runner-diag
+
+# Each job writes NEW _diag files (Runner.Listener/Runner.Worker never append
+# to one growing file), so logrotate's rotate-and-truncate model does not fit
+# here -- there is nothing to truncate, only an ever-growing count of already-
+# closed files. systemd-tmpfiles' age-based `e` line is the native tool for
+# exactly that shape (see github-runner-diag-tmpfiles.conf.j2), and it runs
+# on the systemd-tmpfiles-clean.timer every host already ships -- no role-
+# specific timer or reaper. 7 days matches this repo's existing retention for
+# a comparable diagnostic log (openbao_audit_logrotate_rotate).
+github_runner_diag_retention_days: 7
 
 # ---------------------------------------------------------------------------
 # Recurring reclaim (see tasks/data_disk.yml). The one-time migration prune
@@ -139,3 +185,14 @@ github_runner_e2e_env_file: /etc/github-runner/e2e.env
 # scoped read-only key once object-store IAM is managed.
 github_runner_inventory_file: /etc/github-runner/tofu_inventory.json
 github_runner_inventory_mount: /opt/e2e/tofu_inventory.json
+# The apt cache handed to the jobs' own containers as APT_PROXY_URL: the
+# first cache in the published inventory (the `apt-cache` tag), by name. Empty
+# when none is declared, and the env file then omits the variable.
+# A guest name resolves under the estate domain, never the ingress
+# subdomain -- that one carries only ingress vhosts (see
+# playbooks/site/01-baseline-infra.yml's apt Proxy-Auto-Detect hook, which
+# addresses this same guest the same way).
+github_runner_apt_proxy_url: >-
+  {{ 'http://' ~ (groups['apt_cacher_group'] | sort | first) ~ '.' ~ tofu_data.domain
+     ~ ':' ~ (tofu_data.constants.service_ports.apt_cacher_ng | default(3142))
+     if groups['apt_cacher_group'] | default([]) | length > 0 else '' }}

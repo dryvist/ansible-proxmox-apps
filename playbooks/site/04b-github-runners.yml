@@ -37,7 +37,10 @@
     # that did. The role asserts its own inputs instead; a missing credential
     # now fails here, is recorded by the rescue below, and fails the run at the
     # end-of-site gate without aborting unrelated plays.
+    # github_runner_enabled is a declared per-host value, not a converge-env
+    # lookup: a host that opts out is a skip on record, not a silent one.
     - name: Converge github_runner (isolated — failure does not abort downstream plays)
+      when: github_runner_enabled | default(true) | bool
       block:
         - name: Include github_runner role
           ansible.builtin.include_role:
@@ -47,3 +50,20 @@
           ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
           vars:
             _isolated_play_name: github_runner
+
+    # Actions Runner Controller pilot (k3s + gha-runner-scale-set), alongside
+    # the systemd fleet above during the pilot. github_runner_arc_enabled
+    # defaults to false in the role itself — a host opts in via its own
+    # host_vars, never here. Same isolation shape as github_runner above: a
+    # failed pilot converge is recorded and does not abort the rest of site.yml.
+    - name: Converge github_runner_arc (isolated — failure does not abort downstream plays)
+      when: github_runner_arc_enabled | default(false) | bool
+      block:
+        - name: Include github_runner_arc role
+          ansible.builtin.include_role:
+            name: github_runner_arc
+      rescue:
+        - name: Record isolated failure and continue
+          ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
+          vars:
+            _isolated_play_name: github_runner_arc

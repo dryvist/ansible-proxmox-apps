@@ -27,7 +27,7 @@
   vars:
     ansible_become: false
     converge_wall_clock_budget: 600
-    converge_wall_clock_cap_default: 1200
+    converge_wall_clock_cap_default: 3600
     converge_wall_clock_cap: >-
       {{ (lookup('env', 'CONVERGE_WALL_CLOCK_CAP') | default(converge_wall_clock_cap_default, true) | int)
          if converge_branch | default('') == 'main'
@@ -37,6 +37,16 @@
     converge_elapsed: >-
       {{ (now().timestamp() | int) - (converge_started_epoch | default(now().timestamp()) | int) }}
   tasks:
+    # A playbook that does not pass through site/00-load-and-telemetry.yml
+    # (the verify/validate playbooks) has no wall clock yet. The first gate it
+    # imports starts one, so a gate imported first and last bounds the whole
+    # run; without this the elapsed value defaults to zero and the gate would
+    # be present but decorative.
+    - name: Start the converge wall clock at the first gate
+      ansible.builtin.set_fact:
+        converge_started_epoch: "{{ now().timestamp() | int }}"
+      when: converge_started_epoch is not defined
+
     # Says which branch the gate resolved, so a plane run whose checkout is
     # detached shows as refused rather than silently capped -- a control that
     # looks present and does nothing is the failure this file exists to

@@ -1,0 +1,21 @@
+---
+# github_runner_plane_hosts (inventory/group_vars/docker_vms.yml) names
+# every guest placed on the execution-plane host; each MUST override
+# github_runner_replicas to 0 in its own host_vars. A regression here (the
+# override dropped, or a new plane guest added without one) would otherwise
+# only surface as CI runners silently competing with Semaphore for the same
+# host's resources.
+- name: Verify every plane host has its runner pool torn down to 0
+  vars:
+    # github_runner_plane_hosts lives in group_vars/docker_vms.yml, which
+    # applies only within that group -- read it off a real member
+    # (docker-host), not off localhost, which the group_vars never reach.
+    _plane_hosts: "{{ hostvars['docker-host'].github_runner_plane_hosts | default([]) }}"
+  ansible.builtin.assert:
+    that:
+      - (hostvars[item].github_runner_replicas | default(-1) | int) == 0
+    fail_msg: >-
+      {{ item }} is in github_runner_plane_hosts but github_runner_replicas
+      is {{ hostvars[item].github_runner_replicas | default('(undefined)') }},
+      not 0 — set it in inventory/host_vars/{{ item }}.yml.
+  loop: "{{ _plane_hosts }}"

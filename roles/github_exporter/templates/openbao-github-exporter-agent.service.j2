@@ -1,0 +1,24 @@
+{{ ansible_managed | comment }}
+# Keeps {{ github_exporter_token_env_file }} holding a currently-valid GitHub
+# App installation token. If this is down, the token file goes stale within
+# the hour and github-exporter's runners collector starts failing its API
+# calls (metrics scrape still succeeds; the runner gauges just stop
+# updating).
+
+[Unit]
+Description=OpenBao Agent minting the github-exporter installation token
+# It talks to OpenBao before it can render anything, so routing must be up.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart={{ github_exporter_bao_bin }} agent -config={{ github_exporter_agent_config }}
+# An OpenBao outage, an expired secret_id, or a revoked AppRole all land
+# here. Keep retrying rather than fail out — the exporter degrades quietly,
+# not loudly, so a stopped agent is a silent failure otherwise.
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
