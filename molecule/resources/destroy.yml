@@ -7,6 +7,10 @@
 # scenario in the matrix, and a transient "tried to kill container, but did
 # not receive an exit event" from a busy daemon otherwise fails the whole
 # scenario instead of retrying.
+#
+# Removes containers only -- no scenario declares platforms.networks or
+# platforms.docker_networks, so there is nothing for a network-cleanup step
+# to do; tests/test_ci_build_caches.py enforces that contract.
 - name: Destroy
   hosts: localhost
   connection: local
@@ -44,41 +48,6 @@
       retries: 3
       delay: 5
       loop: "{{ molecule_yml.platforms }}"
-      loop_control:
-        label: "{{ item.name }}"
-      no_log: false
-
-    # molecule-plugins' own molecule_get_docker_networks filter only
-    # resolves for a playbook running from inside its own package (Ansible
-    # discovers a filter_plugins/ directory relative to the playbook file),
-    # so this reproduces its logic in native Jinja instead of vendoring it:
-    # a docker_networks-declared network is kept as-is (extra keys and all)
-    # with a labels key added if missing; a networks-declared network is
-    # added only if no docker_networks entry already claimed that name --
-    # matching the upstream filter exactly, quirks included (two platforms
-    # both naming the same network only via `networks:` are NOT deduped
-    # against each other, since only docker_networks entries populate the
-    # dedup set).
-    - name: Delete docker networks(s)
-      ansible.builtin.include_tasks: tasks/delete_network.yml
-      vars:
-        _docker_networks: >-
-          {%- set ns = namespace(list=[], names=[]) -%}
-          {%- for platform in molecule_yml.platforms -%}
-          {%- for net in platform.docker_networks | default([]) -%}
-          {%- if net.name is defined -%}
-          {%- set _ = ns.list.append(net | combine({'labels': net.labels | default({})})) -%}
-          {%- set _ = ns.names.append(net.name) -%}
-          {%- endif -%}
-          {%- endfor -%}
-          {%- for net in platform.networks | default([]) -%}
-          {%- if net.name is defined and net.name not in ns.names -%}
-          {%- set _ = ns.list.append({'name': net.name, 'labels': {}}) -%}
-          {%- endif -%}
-          {%- endfor -%}
-          {%- endfor -%}
-          {{ ns.list }}
-      loop: "{{ _docker_networks }}"
       loop_control:
         label: "{{ item.name }}"
       no_log: false

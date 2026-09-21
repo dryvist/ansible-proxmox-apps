@@ -23,8 +23,6 @@ import unittest
 from pathlib import Path
 
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
@@ -125,58 +123,22 @@ class CiBuildCaches(unittest.TestCase):
         self.assertEqual(task.get("delay"), 5)
         self.assertIn("is succeeded", str(task.get("until")))
 
-    def test_the_native_jinja_network_filter_matches_the_upstream_filter(self):
-        # A real Templar render of the ACTUAL _docker_networks expression
-        # compared against molecule-plugins' own get_docker_networks
-        # (imported, not reimplemented from memory) on the same fixtures --
-        # molecule_get_docker_networks only resolves for a playbook running
-        # from inside its own package (a filter_plugins/ directory Ansible
-        # discovers relative to the playbook file), so copying just the
-        # playbook renders clean in a string-matching test and then fails at
-        # runtime with "No filter named 'molecule_get_docker_networks'".
-        # This tests behavior equivalence instead of plugin loading.
-        from molecule_plugins.docker.playbooks.filter_plugins.get_docker_networks import (
-            get_docker_networks,
-        )
-
-        task = next(
-            t for t in _tasks(yaml.safe_load(DESTROY_PLAYBOOK.read_text()))
-            if t["name"] == "Delete docker networks(s)"
-        )
-        expr = trust_as_template(task["vars"]["_docker_networks"])
-        fixtures = {
-            "no_networks": [{"name": "p1"}, {"name": "p2", "networks": []}],
-            "two_platforms_shared_network": [
-                {"name": "p1", "networks": [{"name": "shared"}]},
-                {"name": "p2", "networks": [{"name": "shared"}]},
-            ],
-            "docker_network_with_extra_keys": [
-                {
-                    "name": "p1",
-                    "docker_networks": [
-                        {"name": "netx", "ipam_config": [{"subnet": "10.0.0.0/24"}]}
-                    ],
-                }
-            ],
-        }
-        for label, platforms in fixtures.items():
-            with self.subTest(fixture=label):
-                templar = Templar(
-                    loader=DataLoader(), variables={"molecule_yml": {"platforms": platforms}}
-                )
-                rendered = templar.template(expr)
-                self.assertEqual(rendered, get_docker_networks(platforms))
-
-    def test_no_scenario_declares_networks_today(self):
-        # The native Jinja above is exercised structurally by the fixtures,
-        # but no scenario's molecule.yml currently sets networks or
-        # docker_networks on a platform, so live Molecule runs never
-        # populate that loop either way.
+    def test_no_scenario_declares_networks(self):
+        # The shared destroy playbook removes containers only; add network
+        # cleanup before declaring one.
         for scenario in (d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()):
             config = yaml.safe_load((scenario / "molecule.yml").read_text())
             for platform in config["platforms"]:
-                self.assertNotIn("networks", platform, scenario.name)
-                self.assertNotIn("docker_networks", platform, scenario.name)
+                self.assertNotIn(
+                    "networks", platform,
+                    "the shared destroy playbook removes containers only; "
+                    "add network cleanup before declaring one",
+                )
+                self.assertNotIn(
+                    "docker_networks", platform,
+                    "the shared destroy playbook removes containers only; "
+                    "add network cleanup before declaring one",
+                )
 
     def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
         lines = DOCKERFILE.read_text().splitlines()
