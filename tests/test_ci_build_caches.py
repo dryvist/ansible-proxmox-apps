@@ -30,6 +30,7 @@ MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
 BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
 DOCKERFILE = MOLECULE / "resources" / "Dockerfile"
+DESTROY_PLAYBOOK = MOLECULE / "resources" / "destroy.yml"
 RUNNER = ROOT / "roles" / "github_runner"
 BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}"
 
@@ -98,6 +99,29 @@ class CiBuildCaches(unittest.TestCase):
                 # any module that runs before it can lose its /tmp payload.
                 connected = next(i for i, t in enumerate(tasks) if "ansible.builtin.wait_for_connection" in t)
                 self.assertEqual(includes[connected + 1], BOOT_WAIT, scenario.name)
+
+    def test_every_scenario_uses_the_shared_destroy_playbook(self):
+        scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
+        self.assertGreater(len(scenarios), 0)
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario.name):
+                config = yaml.safe_load((scenario / "molecule.yml").read_text())
+                self.assertEqual(
+                    config["provisioner"].get("playbooks", {}).get("destroy"),
+                    "../resources/destroy.yml",
+                )
+
+    def test_the_shared_destroy_playbook_retries_container_removal(self):
+        # A daemon shared by the whole scenario matrix occasionally answers a
+        # kill with a transient error; retrying the removal is what turns
+        # that into a pass instead of a scenario failure.
+        task = next(
+            t for t in _tasks(yaml.safe_load(DESTROY_PLAYBOOK.read_text()))
+            if t["name"] == "Destroy molecule instance(s)"
+        )
+        self.assertEqual(task.get("retries"), 3)
+        self.assertEqual(task.get("delay"), 5)
+        self.assertIn("is succeeded", str(task.get("until")))
 
     def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
         lines = DOCKERFILE.read_text().splitlines()
