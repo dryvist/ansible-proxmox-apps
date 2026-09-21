@@ -1,19 +1,10 @@
-"""Contract: a plugin binary rewrite always triggers a cluster reload.
+"""Contract: a rewritten plugin binary must trigger a cluster reload.
 
-`stage_plugins.yml` copies the AWS/GitHub/OAuthapp plugin binaries onto every
-voter on EVERY converge, independent of whether the declared catalog version
-changed. Before this fix, the three "Reload the <X> plugin across the Raft
-cluster after an upgrade" tasks fired only when `<x>_plugin_tune is changed`
--- which only happens on a version bump. A same-version binary rewrite (a
-redeployed release, a corrected checksum, a re-run after an interrupted
-converge) replaced the file on disk without ever reloading the already-running
-plugin process, which is exactly what killed the GitHub engine's plugin
-process on 2026-09-21 (its /tmp/pluginNNNN socket vanished, every GitHub
-token mint returned a 500 rpc dial error).
-
-Each reload task's `when` must now also fire on
-`<x>_plugin_install_task is changed`, and each install task must register
-that name so the fact exists to check.
+A plugin binary can change independent of the declared catalog version. Each
+"Reload the <X> plugin across the Raft cluster after an upgrade" task's
+`when` must include the matching install task's result, alongside the
+existing version-bump condition, and each install task must register that
+result so the condition can reference it.
 """
 
 from pathlib import Path
