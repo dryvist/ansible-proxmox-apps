@@ -1,10 +1,12 @@
 ---
-# RED->GREEN coverage for cribl_stream_worker_count (roles/cribl_stream/
-# defaults/main.yml): renders cribl.yml.j2 through the real Templar at three
-# RAM points and asserts the derived count, not just that the template
-# renders. Before the formula existed this role always shipped Cribl's own
-# default (count: -2, memory: 2048) regardless of the container's declared
-# RAM — a 2048 MB guest and an 8192 MB guest got identical worker sizing.
+# Coverage for cribl_stream_worker_count (roles/cribl_stream/defaults/
+# main.yml) and the live-cribl.yml merge in roles/cribl_stream/tasks/
+# main.yml. Before the formula existed this role always shipped Cribl's own
+# default regardless of the container's declared RAM — a 2048 MB guest and
+# an 8192 MB guest got identical worker sizing. Before the merge, deploying
+# cribl.yml wholesale would have dropped any key Cribl itself materializes
+# into that file (system settings, same rewrite-at-startup risk outputs.yml
+# already documents) and re-diffed — bouncing the service — every converge.
 - name: Render and verify cribl_stream worker-process sizing
   hosts: localhost
   connection: local
@@ -13,86 +15,116 @@
   vars:
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
-    _template_dir: "{{ playbook_dir }}/../../../roles/cribl_stream/templates"
     cribl_stream_worker_heap_mb: 2048
 
   tasks:
-    # 2048 MB, 2 vCPUs: floor((2048-512)/2048)=0 -> clamped up to the min of 1.
-    - name: Render cribl.yml.j2 at 2048 MB / 2 vCPUs
-      ansible.builtin.template:
-        src: "{{ _template_dir }}/cribl.yml.j2"
-        dest: "{{ _fixture_dir }}/test_cribl_worker_2048.yml"
-        mode: "0644"
-      vars:
-        ansible_memtotal_mb: 2048
-        ansible_processor_vcpus: 2
-        cribl_stream_worker_count: >-
-          {{ [
-               [ ((ansible_memtotal_mb | int - 512) // cribl_stream_worker_heap_mb), 1 ] | max,
-               (ansible_processor_vcpus | default(ansible_processor_count | default(1))) | int
-             ] | min }}
-
-    # 4096 MB, 2 vCPUs: floor((4096-512)/2048)=1, cores clamp doesn't bite.
-    - name: Render cribl.yml.j2 at 4096 MB / 2 vCPUs
-      ansible.builtin.template:
-        src: "{{ _template_dir }}/cribl.yml.j2"
-        dest: "{{ _fixture_dir }}/test_cribl_worker_4096.yml"
-        mode: "0644"
-      vars:
-        ansible_memtotal_mb: 4096
-        ansible_processor_vcpus: 2
-        cribl_stream_worker_count: >-
-          {{ [
-               [ ((ansible_memtotal_mb | int - 512) // cribl_stream_worker_heap_mb), 1 ] | max,
-               (ansible_processor_vcpus | default(ansible_processor_count | default(1))) | int
-             ] | min }}
-
-    # 8192 MB, 2 vCPUs: floor((8192-512)/2048)=3, but only 2 vCPUs exist, so
-    # the cores clamp bites and wins over the RAM-only figure.
-    - name: Render cribl.yml.j2 at 8192 MB / 2 vCPUs
-      ansible.builtin.template:
-        src: "{{ _template_dir }}/cribl.yml.j2"
-        dest: "{{ _fixture_dir }}/test_cribl_worker_8192.yml"
-        mode: "0644"
-      vars:
-        ansible_memtotal_mb: 8192
-        ansible_processor_vcpus: 2
-        cribl_stream_worker_count: >-
-          {{ [
-               [ ((ansible_memtotal_mb | int - 512) // cribl_stream_worker_heap_mb), 1 ] | max,
-               (ansible_processor_vcpus | default(ansible_processor_count | default(1))) | int
-             ] | min }}
-
-    - name: Read rendered worker-sizing fixtures
-      ansible.builtin.slurp:
-        src: "{{ item }}"
-      register: _cribl_worker_rendered
-      loop:
-        - "{{ _fixture_dir }}/test_cribl_worker_2048.yml"
-        - "{{ _fixture_dir }}/test_cribl_worker_4096.yml"
-        - "{{ _fixture_dir }}/test_cribl_worker_8192.yml"
-
-    - name: Decode rendered worker-sizing fixtures
+    # --- RAM -> count formula, three points, exercising both clamps -------
+    - name: Compute worker count at 2048 MB / 2 vCPUs
       ansible.builtin.set_fact:
-        _cribl_worker_2048: "{{ _cribl_worker_rendered.results[0].content | b64decode }}"
-        _cribl_worker_4096: "{{ _cribl_worker_rendered.results[1].content | b64decode }}"
-        _cribl_worker_8192: "{{ _cribl_worker_rendered.results[2].content | b64decode }}"
+        _cribl_worker_count_2048: >-
+          {{ [[((2048 - 512) // cribl_stream_worker_heap_mb), 1] | max, 2] | min }}
+
+    - name: Compute worker count at 4096 MB / 2 vCPUs
+      ansible.builtin.set_fact:
+        _cribl_worker_count_4096: >-
+          {{ [[((4096 - 512) // cribl_stream_worker_heap_mb), 1] | max, 2] | min }}
+
+    - name: Compute worker count at 8192 MB / 2 vCPUs
+      ansible.builtin.set_fact:
+        _cribl_worker_count_8192: >-
+          {{ [[((8192 - 512) // cribl_stream_worker_heap_mb), 1] | max, 2] | min }}
 
     - name: Assert worker count scales with RAM and clamps to vCPU count
       ansible.builtin.assert:
         that:
-          - "'count: 1' in _cribl_worker_2048"
-          - "'memory: 2048' in _cribl_worker_2048"
-          - "'count: 1' in _cribl_worker_4096"
-          - "'count: 2' in _cribl_worker_8192"
+          - _cribl_worker_count_2048 | int == 1
+          - _cribl_worker_count_4096 | int == 1
+          - _cribl_worker_count_8192 | int == 2
         fail_msg: >-
-          cribl.yml.j2 must render workers.count = 1 at 2048 MB (RAM-starved,
-          clamped up to the minimum of 1), workers.count = 1 at 4096 MB
-          (floor((4096-512)/2048) = 1), and workers.count = 2 at 8192 MB
+          cribl_stream_worker_count must be 1 at 2048 MB (RAM-starved,
+          clamped up to the minimum of 1), 1 at 4096 MB
+          (floor((4096-512)/2048) = 1), and 2 at 8192 MB
           (floor((8192-512)/2048) = 3, clamped down to the 2-vCPU ceiling) —
           a fixed worker count regardless of declared RAM is exactly the
           regression this formula exists to remove.
 
+    # --- Merge into a live cribl.yml: unrelated keys survive ---------------
+    - name: Write a fixture live cribl.yml with an unrelated key, no workers block
+      ansible.builtin.copy:
+        dest: "{{ _fixture_dir }}/live_cribl_no_workers.yml"
+        content: |
+          api:
+            host: 0.0.0.0
+        mode: "0644"
+
+    - name: Read the fixture back the same way tasks/main.yml reads the live file
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/live_cribl_no_workers.yml"
+      register: _cribl_yml_live_case1
+
+    - name: Merge the computed worker sizing in (mirrors tasks/main.yml)
+      ansible.builtin.set_fact:
+        _cribl_merged_case1: >-
+          {{ (_cribl_yml_live_case1.content | default('') | b64decode | from_yaml
+              | default({}, true))
+             | combine({'workers': {'count': 1, 'memory': cribl_stream_worker_heap_mb}},
+                        recursive=true) }}
+
+    - name: Assert the unrelated key survives and the workers block is added
+      ansible.builtin.assert:
+        that:
+          - _cribl_merged_case1.api.host == '0.0.0.0'
+          - _cribl_merged_case1.workers.count == 1
+          - _cribl_merged_case1.workers.memory == 2048
+        fail_msg: >-
+          merging worker sizing into a live cribl.yml must keep every
+          existing top-level key (here api.host) — a wholesale template
+          write would silently drop it
+
+    # --- Merge into a live cribl.yml already carrying the right values -----
+    # (the no-op case: Deploy task's copy compares content, so an unchanged
+    # merge here is what keeps the converge from bouncing Cribl every run)
+    - name: Write a fixture live cribl.yml whose workers block already matches
+      ansible.builtin.copy:
+        dest: "{{ _fixture_dir }}/live_cribl_matching_workers.yml"
+        content: |
+          api:
+            host: 0.0.0.0
+          workers:
+            count: 2
+            memory: 2048
+        mode: "0644"
+
+    - name: Read the matching-workers fixture
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/live_cribl_matching_workers.yml"
+      register: _cribl_yml_live_case2
+
+    - name: Decode the matching-workers fixture as the expected end state
+      ansible.builtin.set_fact:
+        _cribl_fixture_case2: "{{ _cribl_yml_live_case2.content | b64decode | from_yaml }}"
+
+    - name: Merge the same worker sizing values in (should be a true no-op)
+      ansible.builtin.set_fact:
+        _cribl_merged_case2: >-
+          {{ (_cribl_yml_live_case2.content | default('') | b64decode | from_yaml
+              | default({}, true))
+             | combine({'workers': {'count': 2, 'memory': cribl_stream_worker_heap_mb}},
+                        recursive=true) }}
+
+    - name: Assert merging already-correct values changes nothing
+      ansible.builtin.assert:
+        that:
+          - _cribl_merged_case2 == _cribl_fixture_case2
+        fail_msg: >-
+          merging the computed workers block into a live cribl.yml that
+          already carries the same values must produce an identical dict —
+          the Deploy task's ansible.builtin.copy diffs on this content, so
+          any drift here would bounce Cribl Stream on every converge
+
     - name: Cribl Stream worker-sizing assertions PASSED
       ansible.builtin.debug:
-        msg: "cribl_stream_worker_count scales with RAM and clamps to vCPU count"
+        msg: >-
+          cribl_stream_worker_count scales with RAM and clamps to vCPU
+          count; merging it into a live cribl.yml preserves unrelated keys
+          and is a true no-op when values already match
