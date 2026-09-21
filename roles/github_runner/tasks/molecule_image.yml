@@ -60,8 +60,27 @@
 # runners, which can be handed a job within seconds. A fire-and-forget first
 # build would let a job run before the image exists, and a failed build
 # surfaces here as a converge failure instead of in a later job.
+#
+# This host ships no logs to the central platform (Vikunja 3353), so a bare
+# systemd failure here is a dead end: a converge failure with no way to see
+# why. The rescue reads the unit's own journal and fails WITH it, so the
+# cause is in the converge output instead of behind a host nobody can log
+# into to check.
 - name: Build the Molecule base image when it is missing
-  ansible.builtin.systemd:
-    name: github-runner-molecule-image.service
-    state: started
   when: github_runner_molecule_image_info.images | length == 0
+  block:
+    - name: Start the Molecule base image build
+      ansible.builtin.systemd:
+        name: github-runner-molecule-image.service
+        state: started
+  rescue:
+    - name: Read the failed build's journal
+      ansible.builtin.command:
+        cmd: journalctl -u github-runner-molecule-image.service --no-pager -n 60 -o cat
+      register: github_runner_molecule_image_journal
+      changed_when: false
+      no_log: false
+
+    - name: Fail with the build's own output
+      ansible.builtin.fail:
+        msg: "{{ github_runner_molecule_image_journal.stdout_lines }}"

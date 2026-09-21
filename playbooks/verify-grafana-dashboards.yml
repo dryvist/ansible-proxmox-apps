@@ -171,5 +171,65 @@
       loop_control:
         label: "{{ item.title }}"
 
+- name: Verify Prometheus scrape targets are up
+  hosts: prometheus_group
+  become: true
+  gather_facts: false
+  # Prometheus sits behind Authelia, so its API is unreachable from a
+  # workstation. This play runs on the host itself and hits its own loopback
+  # API, which needs no SSO. The role vars are needed to derive the expected
+  # job list and reach the right port.
+  vars_files:
+    - ../roles/prometheus_stack/defaults/main.yml
+  tasks:
+    - name: Render prometheus.yml exactly as the role would provision it
+      ansible.builtin.set_fact:
+        _prom_rendered: >-
+          {{ lookup('ansible.builtin.template',
+                     '../roles/prometheus_stack/templates/prometheus.yml.j2') | from_yaml }}
+
+    - name: Derive the expected job list from the rendered config
+      ansible.builtin.set_fact:
+        _expected_jobs: "{{ _prom_rendered.scrape_configs | map(attribute='job_name') | list }}"
+
+    - name: Query Prometheus's own targets API
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ prometheus_stack_port }}/api/v1/targets"
+        return_content: true
+      register: _targets
+      failed_when: _targets.status != 200
+
+    - name: Report scrape target health per job
+      ansible.builtin.debug:
+        msg: >-
+          job={{ item }} targets={{ _matches | length }}
+          up={{ _matches | selectattr('health', 'equalto', 'up') | list | length }}
+          {{ ('lastError=' ~ (_matches | rejectattr('health', 'equalto', 'up')
+              | map(attribute='lastError') | join('; ')))
+             if (_matches | rejectattr('health', 'equalto', 'up') | list | length) > 0 else '' }}
+      vars:
+        _matches: "{{ _targets.json.data.activeTargets | selectattr('labels.job', 'equalto', item) | list }}"
+      loop: "{{ _expected_jobs }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Assert every expected job has at least one target reporting healthy
+      ansible.builtin.assert:
+        that:
+          - (_matches | selectattr('health', 'equalto', 'up') | list | length) > 0
+        fail_msg: >-
+          Job "{{ item }}" has {{ _matches | length }} target(s), 0 up.
+          lastError: {{ (_matches | map(attribute='lastError') | select('string')
+                         | reject('equalto', '') | list | join('; ')) | default('n/a', true) }}
+        success_msg: >-
+          Job "{{ item }}" has
+          {{ _matches | selectattr('health', 'equalto', 'up') | list | length }}/{{ _matches | length }}
+          target(s) up.
+      vars:
+        _matches: "{{ _targets.json.data.activeTargets | selectattr('labels.job', 'equalto', item) | list }}"
+      loop: "{{ _expected_jobs }}"
+      loop_control:
+        label: "{{ item }}"
+
 - name: Refuse a run past its wall-clock budget
   import_playbook: site/budget-gate.yml

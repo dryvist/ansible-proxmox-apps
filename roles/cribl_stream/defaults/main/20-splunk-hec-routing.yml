@@ -1,0 +1,63 @@
+---
+# Splunk HEC output configuration. Host comes from the one shared
+# splunk_hec_base_url (inventory/group_vars/all.yml) — never reconstructed
+# here (apps#588: a local "splunk.<zone>:8088" build black-holed every HEC
+# POST the moment the bare `splunk` alias stopped resolving direct-to-host).
+cribl_stream_splunk_hec_token: "{{ lookup('env', 'SPLUNK_HEC_TOKEN') }}"
+# Per-index HEC (one index = one token). When HEC_NAMESPACE (Doppler) is set,
+# single-index inputs send to a dedicated splunk_hec_<index> output whose token
+# is derived as uuid5('splunk-hec-<index>', HEC_NAMESPACE) — identical to the
+# Splunk side. Only netflow (in_ipfix) is single-index; the S2S input
+# (in_cribl_s2s) fans one TCP stream into many indexes by datatype and stays
+# on the shared legacy output. Since 4.12 a routes table COULD split it per
+# index (the Edge otel input already fans out that way) — kept as-is here
+# because the per-datatype token split is a separate migration.
+cribl_stream_hec_namespace: "{{ lookup('env', 'HEC_NAMESPACE') | default('', true) }}"
+
+# AI/LLM log routing from tofu constants (single source of truth): per source
+# name — HAProxy-fronted TCP port plus the Splunk index/sourcetype the ai_stamp
+# pipeline stamps. Guarded with default({}) so an inventory that predates
+# ai_log_routing renders no AI inputs instead of failing.
+cribl_stream_ai_log_routing: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['ai_log_routing']
+     | default({}) }}
+
+# Input type per AI source. Default is tcpjson (agent CLIs / serving hosts ship
+# newline-delimited JSON over TCP). rsyslog senders (omfwd) speak RFC3164/5424,
+# so their inputs must be syslog-type instead. Names here are the pre-`_docker`
+# rsyslog senders that need an explicit override; every `*_docker` name (the
+# journald-driver-tagged Docker-in-LXC AI services, syslog_forwarder role)
+# classifies as syslog by suffix in inputs.yml.j2 — no per-service entry
+# needed here as tofu-proxmox adds more of them.
+cribl_stream_ai_input_types:
+  homelab_llm: syslog
+  openbao_audit: syslog
+  hermes_agent: syslog
+  llm_router: syslog
+
+# Per-index HEC outputs to render: netflow (in_ipfix), otel_traces and
+# ai_usage (in_otel spans and log records), cribl_internal (the built-in
+# CriblLogs/CriblMetrics source — see cribl_internal pipeline), plus every
+# unique index named in ai_log_routing (claude/codex/gemini/openai/
+# vscode/llm/openbao_audit/hermes with the current tofu constants) — derived,
+# never hand-maintained.
+cribl_stream_per_index_indexes: >-
+  {{ (['netflow', 'otel_traces', 'ai_usage', 'cribl_internal']
+      + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
+     | unique | list }}
+# Post-processing pipeline applied to every splunk_hec output, base and
+# per-index alike. It names a pipeline inside the redaction pack, addressed
+# `<pack>/<pipeline>`; the pack is installed by dryvist.homelab.cribl_packs,
+# not by this role, so the value is declared here rather than discovered at
+# converge time and does not depend on when the pack lands. Set it to an empty
+# string to render no post-processing at all, which is the escape hatch if the
+# pack is ever unavailable on a node.
+cribl_stream_splunk_hec_post_processing_pipeline: cc-stream-secret-redaction-io/secret_redaction
+cribl_stream_splunk_hec_tls: true
+cribl_stream_splunk_hec_tls_verify: false  # Self-signed cert in lab
+# Single definition shared by the template and the drift check in tasks.
+# Generic /services/collector, NOT /services/collector/event: the events-only
+# endpoint silently discards metric payloads, which kept every metric index
+# (host_metrics/netmon_metrics/unifi_metrics/llm_metrics) empty. The generic
+# endpoint accepts event and metric payloads alike.
+cribl_stream_splunk_hec_url: "{{ splunk_hec_base_url }}/services/collector"

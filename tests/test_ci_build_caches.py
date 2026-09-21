@@ -19,13 +19,20 @@ exist to remove -- so the wiring is asserted structurally here.
     the jobs, and the role builds the image from the shared Dockerfile.
 """
 
+import json
 import unittest
 from pathlib import Path
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
+# The Docker daemon play (registry mirror, storage driver, DNS) lives in its
+# own file, split out of SITE once the DNS block grew SITE past the site/
+# token-limit gate.
+DOCKER_DAEMON_SITE = ROOT / "playbooks" / "site" / "01a-docker-daemon.yml"
 MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
 BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
@@ -35,10 +42,11 @@ BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}
 
 
 def _play(name):
-    for play in yaml.safe_load(SITE.read_text()):
-        if play.get("name") == name:
-            return play
-    raise AssertionError(f"play {name!r} not found in {SITE}")
+    for path in (SITE, DOCKER_DAEMON_SITE):
+        for play in yaml.safe_load(path.read_text()):
+            if play.get("name") == name:
+                return play
+    raise AssertionError(f"play {name!r} not found in {SITE} or {DOCKER_DAEMON_SITE}")
 
 
 def _tasks(node):
@@ -53,6 +61,18 @@ def _tasks(node):
                 yield from _tasks(node[key])
 
 
+def _mark_templates(value):
+    """Recursively mark every string in a loaded YAML structure as a trusted
+    template, matching how Ansible treats values sourced from a play/task."""
+    if isinstance(value, str):
+        return trust_as_template(value)
+    if isinstance(value, dict):
+        return {k: _mark_templates(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mark_templates(v) for v in value]
+    return value
+
+
 class CiBuildCaches(unittest.TestCase):
     def test_both_cache_plays_reach_the_docker_vms(self):
         for name in (
@@ -62,24 +82,137 @@ class CiBuildCaches(unittest.TestCase):
             with self.subTest(play=name):
                 self.assertIn("docker_vms", _play(name)["hosts"])
 
-    def test_the_mirror_is_addressed_by_ingress_fqdn(self):
+    def test_the_mirror_is_addressed_by_the_estate_domain(self):
+        # Guest names resolve under the estate domain; the ingress subdomain
+        # carries only ingress vhosts. tofu_data.domain matches the apt
+        # Proxy-Auto-Detect hook, which addresses its own guest the same way.
         play = _play("Configure Docker registry mirror on docker hosts")
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
         host = task["vars"]["_registry_host"]
-        self.assertIn("ingress_domain", host)
-        # container_ip is legitimate here for _dns_servers only: a DNS
-        # resolver cannot be addressed by a name it would itself have to
-        # resolve, the same static-anchor exception docs/IP_AUTHORITY.md
-        # already documents for technitium_dns. _registry_host stays FQDN.
+        self.assertIn("tofu_data.domain", host)
+        self.assertNotIn("ingress_domain", host)
         self.assertNotIn("container_ip", host)
         self.assertIn("groups['registry_group']", str(task["when"]))
 
-    def test_dns_servers_come_from_the_technitium_group_not_a_literal(self):
+    def test_the_mirror_host_and_apt_proxy_url_render_under_the_estate_domain(self):
+        # A real Templar render of the ACTUAL expressions, not a
+        # reimplementation of them: with ingress_domain and tofu_data.domain
+        # set to two DIFFERENT values, each URL must land on the estate
+        # domain, never the ingress one -- the bug this guards was a guest
+        # name built from the wrong one, which resolves to nothing.
         play = _play("Configure Docker registry mirror on docker hosts")
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
-        dns_servers = task["vars"]["_dns_servers"]
-        self.assertIn("groups['technitium_dns_group']", dns_servers)
-        self.assertNotRegex(dns_servers, r"\b\d{1,3}(\.\d{1,3}){3}\b")
+        registry_host_expr = trust_as_template(task["vars"]["_registry_host"])
+        apt_proxy_defaults = yaml.safe_load(
+            (RUNNER / "defaults" / "main.yml").read_text()
+        )
+        apt_proxy_expr = trust_as_template(apt_proxy_defaults["github_runner_apt_proxy_url"])
+        variables = _mark_templates(
+            {
+                "groups": {"registry_group": ["registry-1"], "apt_cacher_group": ["apt-cache-1"]},
+                "ingress_domain": "pve.example.com",
+                "tofu_data": {"domain": "example.com", "constants": {"service_ports": {}}},
+            }
+        )
+        templar = Templar(loader=DataLoader(), variables=variables)
+        registry_host = templar.template(registry_host_expr)
+        apt_proxy_url = templar.template(apt_proxy_expr)
+        self.assertTrue(registry_host.endswith(".example.com"), registry_host)
+        self.assertNotIn("pve.", registry_host)
+        self.assertTrue(apt_proxy_url.startswith("http://apt-cache-1.example.com:"), apt_proxy_url)
+        self.assertNotIn("pve.", apt_proxy_url)
+
+    def test_daemon_json_content_renders_as_valid_json_with_one_newline(self):
+        # A real render of the WHOLE content: expression, not a
+        # reimplementation -- a `>-` folded scalar with a trailing
+        # `{{ "\n" }}` renders the two characters backslash-n literally
+        # instead of a real newline, which is invalid JSON and leaves dockerd
+        # refusing to start. json.loads() and an exact-newline check catch
+        # that the string-matching tests above cannot.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
+        content_expr = task["ansible.builtin.copy"]["content"]
+        fixture = {
+            "groups": {"registry_group": ["registry-1"]},
+            "hostvars": {
+                "registry-1": {},
+                "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}},
+            },
+            "tofu_data": {"domain": "example.com"},
+            "ansible_virtualization_type": "kvm",
+            "host_tags": ["docker"],
+        }
+        variables = {**fixture, **task["vars"]}
+        templar = Templar(loader=DataLoader(), variables=_mark_templates(variables))
+        rendered = templar.template(trust_as_template(content_expr))
+        self.assertTrue(rendered.endswith("\n"))
+        self.assertFalse(rendered.endswith("\n\n"))
+        self.assertNotIn("\\n", rendered)
+        parsed = json.loads(rendered)  # raises if the daemon.json this writes is invalid
+        # Containers inherit the host's own upstream resolvers by default
+        # (dockerd's documented behavior); the daemon config does not pin a
+        # resolver.
+        self.assertNotIn("dns", parsed)
+
+    def test_docker_vms_gather_the_facts_the_netplan_override_needs(self):
+        # The netplan override is templated from facts (the VM's own default
+        # interface and gateway); a play with gather_facts: false only has
+        # them when a task explicitly gathers them.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        self.assertFalse(play.get("gather_facts", True))
+        tasks = list(_tasks(play))
+        gather = next(t for t in tasks if t["name"] == "Gather the default route")
+        self.assertIn("docker_vms", str(gather["when"]))
+        self.assertIn(
+            "ansible_default_ipv4", gather["ansible.builtin.setup"]["filter"]
+        )
+        remove_task = next(
+            t for t in tasks if t["name"] == "Remove the hand-placed resolver override"
+        )
+        self.assertEqual(remove_task["ansible.builtin.file"]["path"], "/etc/netplan/60-dns-interim.yaml")
+        self.assertEqual(remove_task["ansible.builtin.file"]["state"], "absent")
+        override_task = next(
+            t for t in tasks if t["name"] == "Configure the estate resolver on docker VMs"
+        )
+        self.assertIn("docker_vms", str(override_task["when"]))
+        dest = override_task["ansible.builtin.copy"]["dest"]
+        dest_basename = dest.rsplit("/", 1)[-1]
+        # Netplan concatenates nameserver lists across files in lexical
+        # order; this file's address is only tried first if its name sorts
+        # before the cloud-init file's.
+        self.assertEqual(sorted([dest_basename, "50-cloud-init.yaml"])[0], dest_basename)
+        self.assertEqual(override_task["ansible.builtin.copy"]["mode"], "0600")
+        flush = next(
+            t for t in tasks if t["name"] == "Apply any pending netplan/resolver changes before the probe"
+        )
+        self.assertEqual(flush["ansible.builtin.meta"], "flush_handlers")
+        probe = next(
+            t for t in tasks if t["name"] == "Verify a guest name resolves through the new resolver"
+        )
+        self.assertIn("apt_cacher_group", str(probe["when"]))
+        self.assertIs(probe.get("changed_when"), False)
+        self.assertIn("getent hosts", probe["ansible.builtin.command"]["cmd"])
+
+    def test_the_netplan_override_renders_the_interface_gateway_and_domain(self):
+        # A real Templar render of the ACTUAL override content, not a
+        # reimplementation of it.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(
+            t for t in _tasks(play) if t["name"] == "Configure the estate resolver on docker VMs"
+        )
+        content_expr = trust_as_template(task["ansible.builtin.copy"]["content"])
+        variables = _mark_templates(
+            {
+                "ansible_default_ipv4": {"interface": "eth0", "gateway": "10.20.0.1"},
+                "tofu_data": {"domain": "example.com"},
+            }
+        )
+        templar = Templar(loader=DataLoader(), variables=variables)
+        rendered = templar.template(content_expr)
+        parsed = yaml.safe_load(rendered)
+        iface = parsed["network"]["ethernets"]["eth0"]
+        self.assertEqual(iface["nameservers"]["addresses"], ["10.20.0.1"])
+        self.assertEqual(iface["nameservers"]["search"], ["example.com"])
 
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
@@ -122,7 +255,8 @@ class CiBuildCaches(unittest.TestCase):
         defaults = yaml.safe_load(
             (ROOT / "roles" / "github_runner" / "defaults" / "main.yml").read_text()
         )
-        self.assertIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
+        self.assertIn("tofu_data.domain", defaults["github_runner_apt_proxy_url"])
+        self.assertNotIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
         self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
         self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
 
@@ -145,8 +279,26 @@ class CiBuildCaches(unittest.TestCase):
         # cold multi-minute build finishes, and Molecule's docker driver then
         # tries to pull a tag that has never existed on the daemon.
         tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        build = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        build = next(t for t in tasks if t["name"] == "Start the Molecule base image build")
         self.assertNotIn("no_block", build["ansible.builtin.systemd"])
+
+    def test_a_failed_first_build_surfaces_its_own_journal(self):
+        # This host ships no logs to the central platform (Vikunja 3353) and
+        # SSH is off-limits, so a bare systemd failure here is a dead end --
+        # a converge failure with no way to see why. The rescue reads the
+        # unit's own journal and fails WITH it.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
+        outer = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        self.assertIn("block", outer)
+        self.assertIn("rescue", outer)
+        rescue_names = [t["name"] for t in outer["rescue"]]
+        self.assertIn("Read the failed build's journal", rescue_names)
+        journal_task = next(t for t in outer["rescue"] if t["name"] == "Read the failed build's journal")
+        self.assertIn("journalctl", journal_task["ansible.builtin.command"]["cmd"])
+        self.assertIn("github-runner-molecule-image.service", journal_task["ansible.builtin.command"]["cmd"])
+        self.assertIs(journal_task.get("changed_when"), False)
+        fail_task = next(t for t in outer["rescue"] if t["name"] == "Fail with the build's own output")
+        self.assertIn("stdout_lines", fail_task["ansible.builtin.fail"]["msg"])
 
     def test_a_host_with_no_replicas_does_not_build_the_image(self):
         # A host with github_runner_replicas: 0 runs no scenarios, so it has
