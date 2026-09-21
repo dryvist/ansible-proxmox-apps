@@ -67,8 +67,19 @@ class CiBuildCaches(unittest.TestCase):
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
         host = task["vars"]["_registry_host"]
         self.assertIn("ingress_domain", host)
-        self.assertNotIn("container_ip", str(task["vars"]))
+        # container_ip is legitimate here for _dns_servers only: a DNS
+        # resolver cannot be addressed by a name it would itself have to
+        # resolve, the same static-anchor exception docs/IP_AUTHORITY.md
+        # already documents for technitium_dns. _registry_host stays FQDN.
+        self.assertNotIn("container_ip", host)
         self.assertIn("groups['registry_group']", str(task["when"]))
+
+    def test_dns_servers_come_from_the_technitium_group_not_a_literal(self):
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
+        dns_servers = task["vars"]["_dns_servers"]
+        self.assertIn("groups['technitium_dns_group']", dns_servers)
+        self.assertNotRegex(dns_servers, r"\b\d{1,3}(\.\d{1,3}){3}\b")
 
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
@@ -126,6 +137,23 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn("--build-arg APT_PROXY_URL={{ github_runner_apt_proxy_url }}", unit)
         self.assertIn("--tag {{ github_runner_molecule_image }}", unit)
         self.assertIn("ARG APT_PROXY_URL", DOCKERFILE.read_text())
+
+    def test_the_first_build_blocks_before_runners_start(self):
+        # main.yml enables the pooled runners (which can be handed a job
+        # within seconds) right after this include_tasks. A fire-and-forget
+        # (no_block: true) first build races that: a job can land before a
+        # cold multi-minute build finishes, and Molecule's docker driver then
+        # tries to pull a tag that has never existed on the daemon.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
+        build = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        self.assertNotIn("no_block", build["ansible.builtin.systemd"])
+
+    def test_a_host_with_no_replicas_does_not_build_the_image(self):
+        # A host with github_runner_replicas: 0 runs no scenarios, so it has
+        # no consumer for the image and must not build one.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        include = next(t for t in tasks if t["name"] == "Build the Molecule base image every scenario runs on")
+        self.assertEqual(include.get("when"), "github_runner_replicas | int > 0")
 
 
 if __name__ == "__main__":

@@ -137,5 +137,37 @@ class DaemonJsonPinsImageStore(unittest.TestCase):
                 )
 
 
+class DaemonJsonDns(unittest.TestCase):
+    """The docker-hosts writer must give containers a real DNS server.
+
+    Docker's embedded resolver forwards container lookups to whatever the
+    daemon is configured with, not to the host's own resolver -- so a build
+    step that needs an internal-only name (the Molecule base image's apt
+    cache) can only reach it if the daemon itself is told a real resolver.
+    The value must be derived from inventory (a group's members), never a
+    literal address.
+    """
+
+    PATH = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
+
+    def _config(self):
+        path, config = next(
+            (p, c) for p, c in _daemon_json_writers() if p == self.PATH
+        )
+        return config
+
+    def test_the_docker_hosts_writer_sets_dns(self):
+        self.assertIn("dns", self._config())
+
+    def test_dns_is_derived_from_inventory_not_a_literal_address(self):
+        for task in _copy_task_nodes(yaml.safe_load(self.PATH.read_text())):
+            copy_args = task["ansible.builtin.copy"]
+            if copy_args.get("dest") != "/etc/docker/daemon.json":
+                continue
+            dns_var = task["vars"]["_dns_servers"]
+            self.assertIn("groups[", dns_var)
+            self.assertNotRegex(dns_var, r"\b\d{1,3}(\.\d{1,3}){3}\b")
+
+
 if __name__ == "__main__":
     unittest.main()
