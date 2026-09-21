@@ -1,6 +1,6 @@
-# The one image every Molecule scenario runs on. Built once per runner host
-# by roles/github_runner (see github-runner-molecule-image.service) and handed
-# to jobs as MOLECULE_BASE_IMAGE; scenarios never build it themselves.
+# The one image every Molecule scenario runs on. Built and published to GHCR
+# by .github/workflows/molecule-image.yml and handed to jobs as
+# MOLECULE_BASE_IMAGE; scenarios never build it themselves.
 #
 # What it bakes in, and why:
 #   * apt proxy config -- every apt run in every scenario goes through the

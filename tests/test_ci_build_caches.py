@@ -12,11 +12,12 @@ exist to remove -- so the wiring is asserted structurally here.
   * The mirror is addressed by FQDN under the ingress zone; a container_ip
     lookup would put an address in a daemon config (docs/IP_AUTHORITY.md).
   * Every Molecule scenario runs on the pre-built base image the runner host
-    builds (falling back to the upstream base off a runner), waits for the
+    pulls (falling back to the upstream base off a runner), waits for the
     instance to finish booting before any other module runs, and includes the
     shared apt-proxy task; no scenario builds an image of its own.
   * The runner env template hands APT_PROXY_URL and MOLECULE_BASE_IMAGE to
-    the jobs, and the role builds the image from the shared Dockerfile.
+    the jobs; the image itself is built and published to GHCR by
+    .github/workflows/molecule-image.yml, never by a runner host.
 """
 
 import unittest
@@ -126,34 +127,36 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
         self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
 
-    def test_the_runner_role_builds_the_image_from_the_shared_dockerfile(self):
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        deploy = next(t for t in tasks if t["name"] == "Deploy the Molecule base image Dockerfile")
-        self.assertEqual(
-            deploy["ansible.builtin.copy"]["src"], "{{ role_path }}/../../molecule/resources/Dockerfile"
-        )
-        self.assertEqual(deploy["notify"], "Build the Molecule base image")
-        unit = (RUNNER / "templates" / "molecule-image.service.j2").read_text()
-        self.assertIn("--build-arg APT_PROXY_URL={{ github_runner_apt_proxy_url }}", unit)
-        self.assertIn("--tag {{ github_runner_molecule_image }}", unit)
-        self.assertIn("ARG APT_PROXY_URL", DOCKERFILE.read_text())
+    def test_the_image_is_published_to_ghcr_not_built_on_a_runner_host(self):
+        # The host never builds this image -- roles/github_runner has no
+        # molecule_image.yml, no build service/timer template, and no
+        # matching handler. .github/workflows/molecule-image.yml is the only
+        # thing that builds molecule/resources/Dockerfile.
+        self.assertFalse((RUNNER / "tasks" / "molecule_image.yml").exists())
+        self.assertFalse((RUNNER / "templates" / "molecule-image.service.j2").exists())
+        self.assertFalse((RUNNER / "templates" / "molecule-image.timer.j2").exists())
+        handlers = (RUNNER / "handlers" / "main.yml").read_text()
+        self.assertNotIn("Build the Molecule base image", handlers)
 
-    def test_the_first_build_blocks_before_runners_start(self):
-        # main.yml enables the pooled runners (which can be handed a job
-        # within seconds) right after this include_tasks. A fire-and-forget
-        # (no_block: true) first build races that: a job can land before a
-        # cold multi-minute build finishes, and Molecule's docker driver then
-        # tries to pull a tag that has never existed on the daemon.
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        build = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
-        self.assertNotIn("no_block", build["ansible.builtin.systemd"])
+        defaults = yaml.safe_load((RUNNER / "defaults" / "main.yml").read_text())
+        self.assertEqual(defaults["github_runner_molecule_image"], "ghcr.io/dryvist/molecule-debian12:latest")
 
-    def test_a_host_with_no_replicas_does_not_build_the_image(self):
-        # A host with github_runner_replicas: 0 runs no scenarios, so it has
-        # no consumer for the image and must not build one.
+        workflow = (ROOT / ".github" / "workflows" / "molecule-image.yml").read_text()
+        self.assertIn("ghcr.io/dryvist/molecule-debian12", workflow)
+        self.assertIn("docker/build-push-action", workflow)
+
+    def test_the_runner_role_pulls_the_published_image(self):
         tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
-        include = next(t for t in tasks if t["name"] == "Build the Molecule base image every scenario runs on")
-        self.assertEqual(include.get("when"), "github_runner_replicas | int > 0")
+        pull = next(t for t in tasks if t["name"] == "Pull the Molecule base image every scenario runs on")
+        self.assertEqual(pull["community.docker.docker_image"]["name"], "{{ github_runner_molecule_image }}")
+        self.assertEqual(pull["community.docker.docker_image"]["source"], "pull")
+
+    def test_a_host_with_no_replicas_does_not_pull_the_image(self):
+        # A host with github_runner_replicas: 0 runs no scenarios, so it has
+        # no consumer for the image and must not pull one.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        pull = next(t for t in tasks if t["name"] == "Pull the Molecule base image every scenario runs on")
+        self.assertEqual(pull.get("when"), "github_runner_replicas | int > 0")
 
 
 if __name__ == "__main__":
