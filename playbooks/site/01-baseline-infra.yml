@@ -179,6 +179,18 @@
              ['constants']['service_ports']['registry']
              | default(5000) }}
         _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
+        # A build container gets its DNS from the daemon, not from the host's
+        # own resolver (Docker's embedded resolver forwards to whatever the
+        # daemon is told, and does not inherit a host resolver that is itself
+        # a loopback stub). Without this, a Dockerfile RUN step that needs an
+        # internal-only name -- the apt cache below included -- can only
+        # reach a public resolver, which never has that name. Every
+        # technitium_dns_group member's own address, so a name that only that
+        # service knows is still resolvable, and never a literal IP.
+        _dns_servers: >-
+          {{ groups['technitium_dns_group'] | default([])
+             | sort | map('extract', hostvars, 'container_ip')
+             | select('string') | select('length') | list }}
         _daemon_json:
           registry-mirrors: ["http://{{ _registry_host }}:{{ _registry_port }}"]
           insecure-registries: ["{{ _registry_host }}:{{ _registry_port }}"]
@@ -203,9 +215,14 @@
           storage-driver: fuse-overlayfs
           features:
             containerd-snapshotter: false
+        _dns_config:
+          dns: "{{ _dns_servers }}"
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
-        content: "{{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})) | to_nice_json }}\n"
+        content: >-
+          {{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})
+              | combine(_dns_config if _dns_servers | length > 0 else {}))
+             | to_nice_json }}{{ "\n" }}
         owner: root
         group: root
         mode: '0644'
