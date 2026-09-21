@@ -19,6 +19,7 @@ exist to remove -- so the wiring is asserted structurally here.
     the jobs, and the role builds the image from the shared Dockerfile.
 """
 
+import json
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,18 @@ def _tasks(node):
         for key in ("tasks", "block", "rescue", "always", "pre_tasks", "post_tasks"):
             if key in node:
                 yield from _tasks(node[key])
+
+
+def _mark_templates(value):
+    """Recursively mark every string in a loaded YAML structure as a trusted
+    template, matching how Ansible treats values sourced from a play/task."""
+    if isinstance(value, str):
+        return trust_as_template(value)
+    if isinstance(value, dict):
+        return {k: _mark_templates(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mark_templates(v) for v in value]
+    return value
 
 
 class CiBuildCaches(unittest.TestCase):
@@ -109,6 +122,35 @@ class CiBuildCaches(unittest.TestCase):
         }
         templar = Templar(loader=DataLoader(), variables=variables)
         self.assertEqual(templar.template(expr), ["10.20.0.5"])
+
+    def test_daemon_json_content_renders_as_valid_json_with_one_newline(self):
+        # A real render of the WHOLE content: expression, not a
+        # reimplementation -- a `>-` folded scalar with a trailing
+        # `{{ "\n" }}` renders the two characters backslash-n literally
+        # instead of a real newline, which is invalid JSON and leaves dockerd
+        # refusing to start. json.loads() and an exact-newline check catch
+        # that the string-matching tests above cannot.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
+        content_expr = task["ansible.builtin.copy"]["content"]
+        fixture = {
+            "groups": {"registry_group": ["registry-1"], "technitium_dns_group": ["technitium-1"]},
+            "hostvars": {
+                "registry-1": {},
+                "technitium-1": {"container_ip": "10.20.0.5"},
+                "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}},
+            },
+            "ingress_domain": "example.internal",
+            "ansible_virtualization_type": "kvm",
+            "host_tags": ["docker"],
+        }
+        variables = {**fixture, **task["vars"]}
+        templar = Templar(loader=DataLoader(), variables=_mark_templates(variables))
+        rendered = templar.template(trust_as_template(content_expr))
+        self.assertTrue(rendered.endswith("\n"))
+        self.assertFalse(rendered.endswith("\n\n"))
+        self.assertNotIn("\\n", rendered)
+        json.loads(rendered)  # raises if the daemon.json this writes is invalid
 
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]

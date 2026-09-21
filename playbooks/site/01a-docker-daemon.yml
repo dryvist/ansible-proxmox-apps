@@ -106,12 +106,18 @@
             containerd-snapshotter: false
         _dns_config:
           dns: "{{ _dns_servers }}"
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        content: >-
+        # A double-quoted YAML scalar is required here: only that form lets
+        # the trailing \n be a YAML escape for a real newline. The folded
+        # (>-) block scalar this replaced instead passed {{ "\n" }} through
+        # Jinja literally, writing the two characters backslash-n into the
+        # file and making it invalid JSON -- dockerd then refuses to start.
+        _daemon_json_final: >-
           {{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})
               | combine(_dns_config if _dns_servers | length > 0 else {}))
-             | to_nice_json }}{{ "\n" }}
+             | to_nice_json }}
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: "{{ _daemon_json_final }}\n"
         owner: root
         group: root
         mode: '0644'
