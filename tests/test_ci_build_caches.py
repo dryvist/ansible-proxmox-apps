@@ -216,8 +216,26 @@ class CiBuildCaches(unittest.TestCase):
         # cold multi-minute build finishes, and Molecule's docker driver then
         # tries to pull a tag that has never existed on the daemon.
         tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        build = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        build = next(t for t in tasks if t["name"] == "Start the Molecule base image build")
         self.assertNotIn("no_block", build["ansible.builtin.systemd"])
+
+    def test_a_failed_first_build_surfaces_its_own_journal(self):
+        # This host ships no logs to the central platform (Vikunja 3353) and
+        # SSH is off-limits, so a bare systemd failure here is a dead end --
+        # a converge failure with no way to see why. The rescue reads the
+        # unit's own journal and fails WITH it.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
+        outer = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        self.assertIn("block", outer)
+        self.assertIn("rescue", outer)
+        rescue_names = [t["name"] for t in outer["rescue"]]
+        self.assertIn("Read the failed build's journal", rescue_names)
+        journal_task = next(t for t in outer["rescue"] if t["name"] == "Read the failed build's journal")
+        self.assertIn("journalctl", journal_task["ansible.builtin.command"]["cmd"])
+        self.assertIn("github-runner-molecule-image.service", journal_task["ansible.builtin.command"]["cmd"])
+        self.assertIs(journal_task.get("changed_when"), False)
+        fail_task = next(t for t in outer["rescue"] if t["name"] == "Fail with the build's own output")
+        self.assertIn("stdout_lines", fail_task["ansible.builtin.fail"]["msg"])
 
     def test_a_host_with_no_replicas_does_not_build_the_image(self):
         # A host with github_runner_replicas: 0 runs no scenarios, so it has
