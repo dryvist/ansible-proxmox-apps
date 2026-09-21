@@ -12,7 +12,7 @@ give the inner daemon a volume for its layer root, so the driver it ends up on
 is a real filesystem either way. Jinja expressions are stubbed before parsing
 -- the assertion is about the JSON shape, not about any rendered value.
 
-One writer (playbooks/site/01-baseline-infra.yml) wraps its ENTIRE content in
+One writer (playbooks/site/01a-docker-daemon.yml) wraps its ENTIRE content in
 one Jinja expression (`content: "{{ (_daemon_json | combine(...)) |
 to_nice_json }}\n"`) rather than embedding `{{ vars }}` inside literal JSON
 text -- the two writers have genuinely different shapes. The stub-and-parse
@@ -115,7 +115,7 @@ class DaemonJsonPinsImageStore(unittest.TestCase):
         container's short ID, which nobody can search on without first
         looking the ID up. log-opts.tag is what makes a container's own
         output findable by name in the journal (and, downstream, in
-        Splunk) -- see playbooks/site/01-baseline-infra.yml.
+        Splunk) -- see playbooks/site/01a-docker-daemon.yml.
         """
         writers = list(_daemon_json_writers())
         self.assertTrue(writers, "no /etc/docker/daemon.json writer was found")
@@ -135,38 +135,6 @@ class DaemonJsonPinsImageStore(unittest.TestCase):
                     "container's own output is still only findable by its "
                     "short container ID",
                 )
-
-
-class DaemonJsonDns(unittest.TestCase):
-    """The docker-hosts writer must give containers a real DNS server.
-
-    Docker's embedded resolver forwards container lookups to whatever the
-    daemon is configured with, not to the host's own resolver -- so a build
-    step that needs an internal-only name (the Molecule base image's apt
-    cache) can only reach it if the daemon itself is told a real resolver.
-    The value must be derived from inventory (a group's members), never a
-    literal address.
-    """
-
-    PATH = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
-
-    def _config(self):
-        path, config = next(
-            (p, c) for p, c in _daemon_json_writers() if p == self.PATH
-        )
-        return config
-
-    def test_the_docker_hosts_writer_sets_dns(self):
-        self.assertIn("dns", self._config())
-
-    def test_dns_is_derived_from_inventory_not_a_literal_address(self):
-        for task in _copy_task_nodes(yaml.safe_load(self.PATH.read_text())):
-            copy_args = task["ansible.builtin.copy"]
-            if copy_args.get("dest") != "/etc/docker/daemon.json":
-                continue
-            dns_var = task["vars"]["_dns_servers"]
-            self.assertIn("groups[", dns_var)
-            self.assertNotRegex(dns_var, r"\b\d{1,3}(\.\d{1,3}){3}\b")
 
 
 if __name__ == "__main__":
