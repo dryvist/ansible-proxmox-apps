@@ -1,0 +1,211 @@
+---
+# =============================================================================
+# Phase 0a: Docker daemon configuration (registry mirror, storage driver)
+#
+# Its own file, split out of 01-baseline-infra.yml, for one reason: the
+# site/ token-limit gate caps each file's rendered size, and this play once
+# grew SITE past it. Imported immediately after 01, so nothing about when it
+# runs changes -- Docker still gets its daemon.json here, before anything on
+# these hosts depends on it.
+# =============================================================================
+
+# The CI runner VMs are docker hosts too: every Molecule image they pull
+# through their daemon rides the same mirror, which is where the cold-pull
+# minutes in the Molecule matrix go.
+- name: Configure Docker registry mirror on docker hosts
+  hosts: lxc_containers:docker_vms:!registry_group
+  become: true
+  gather_facts: false
+  tags:
+    - registry_mirror
+    - docker
+    - lxc
+    - docker_vms
+    - baseline
+  handlers:
+    - name: Restart docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+    - name: Apply netplan
+      ansible.builtin.command:
+        cmd: netplan apply
+      changed_when: true
+
+    - name: Flush resolved caches
+      ansible.builtin.command:
+        cmd: resolvectl flush-caches
+      changed_when: false
+  tasks:
+    # fuse-overlayfs is the unprivileged-LXC workaround for Docker on ZFS; a VM
+    # keeps whatever image store it already runs on. Pinning a driver there
+    # would boot the daemon against an empty store, so the pin is LXC-only and
+    # needs the virtualization fact even though the play skips fact gathering.
+    - name: Gather the virtualization type
+      when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.setup:
+        filter:
+          - ansible_virtualization_type
+
+    - name: Install fuse-overlayfs before pinning it as the storage driver
+      when:
+        - "'docker' in (host_tags | default([]))"
+        - ansible_virtualization_type | default('') == 'lxc'
+      ansible.builtin.apt:
+        name: fuse-overlayfs
+        state: present
+
+    # A VM's resolvers come from its own default gateway, which forwards
+    # every estate zone, and are declared once, in the VM module, at create
+    # time only -- an existing VM keeps whatever it booted with. LXC
+    # containers are out of scope: their resolvers are managed live by the
+    # container module, not by this play.
+    - name: Gather the default route
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.setup:
+        filter:
+          - ansible_default_ipv4
+
+    - name: Assert the default route fact carries an interface and a gateway
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.assert:
+        that:
+          - ansible_default_ipv4.interface | default('') | length > 0
+          - ansible_default_ipv4.gateway | default('') | length > 0
+        fail_msg: >-
+          No default-route fact on this VM -- the netplan resolver override
+          below would render with no interface or no DNS server.
+
+    # A single hand-placed override file existed before this task did the
+    # same job in Ansible; one file owns the setting going forward.
+    - name: Remove the hand-placed resolver override
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.file:
+        path: /etc/netplan/60-dns-interim.yaml
+        state: absent
+      notify: Apply netplan
+
+    # An earlier shape of this file sorted after the cloud-init file; remove
+    # it from any host it already reached.
+    - name: Remove the earlier-sorting resolver override
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.file:
+        path: /etc/netplan/70-estate-dns.yaml
+        state: absent
+      notify: Apply netplan
+
+    # Netplan concatenates nameserver lists across files in lexical order
+    # and resolved uses the first server, so this file sorts BEFORE the
+    # cloud-init file for its address to be tried first. World-readable
+    # netplan files draw a runtime warning, hence 0600.
+    - name: Configure the estate resolver on docker VMs
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.copy:
+        dest: /etc/netplan/10-estate-dns.yaml
+        content: |
+          network:
+            version: 2
+            ethernets:
+              {{ ansible_default_ipv4.interface }}:
+                nameservers:
+                  addresses: [{{ ansible_default_ipv4.gateway }}]
+                  search: [{{ tofu_data.domain }}]
+        owner: root
+        group: root
+        mode: "0600"
+      notify:
+        - Apply netplan
+        - Flush resolved caches
+
+    # Handlers run at end of play; the getent probe below needs the new
+    # resolver already active, not queued behind it.
+    - name: Apply any pending netplan/resolver changes before the probe
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.meta: flush_handlers
+
+    # A guest name failing to resolve here means the resolver override did
+    # not take, and every apt/Docker pull that needs one will fail the same
+    # way -- fail loudly at the source instead of downstream.
+    - name: Verify a guest name resolves through the new resolver
+      when:
+        - inventory_hostname in groups['docker_vms']
+        - groups['apt_cacher_group'] | default([]) | length > 0
+      ansible.builtin.command:
+        cmd: >-
+          getent hosts {{ groups['apt_cacher_group'] | sort | first }}.{{ tofu_data.domain }}
+      changed_when: false
+
+    # This play is the single owner of /etc/docker/daemon.json on docker LXCs
+    # and on the docker VMs. roles/idrac_kvm_docker no longer writes the
+    # storage-driver here (removed on a separate branch) to avoid two writers
+    # fighting over the same file; roles/github_runner's docker_engine
+    # dependency leaves the file alone for the same reason.
+    #
+    # The mirror is addressed by name: the registry guest is whichever host
+    # carries the `registry` tag, reached at its own FQDN under the estate
+    # domain (guest names resolve there; the ingress subdomain carries only
+    # ingress vhosts). The daemon speaks plain HTTP to it, which is why the
+    # same name:port is also listed as an insecure registry.
+    - name: Configure Docker registry mirror
+      when:
+        - groups['registry_group'] | default([]) | length > 0
+        - "'docker' in (host_tags | default([]))"
+      vars:
+        # A guest name resolves under the estate domain, never the ingress
+        # subdomain -- that one carries only ingress vhosts (see the apt
+        # Proxy-Auto-Detect hook above, which addresses its own guest the
+        # same way).
+        _registry_host: "{{ groups['registry_group'] | sort | first }}.{{ tofu_data.domain }}"
+        _registry_port: >-
+          {{ hostvars['localhost']['tofu_data']
+             ['constants']['service_ports']['registry']
+             | default(5000) }}
+        _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
+        _daemon_json:
+          registry-mirrors: ["http://{{ _registry_host }}:{{ _registry_port }}"]
+          insecure-registries: ["{{ _registry_host }}:{{ _registry_port }}"]
+          log-driver: journald
+          # Docker's journald driver otherwise tags every entry with the
+          # container's short ID, so a container's own output is findable in
+          # the journal only by first looking up that ID. {{.Name}} is
+          # Docker's own log-opts template syntax (not Jinja); the {{ '{{' }}
+          # escape produces that literal string in the rendered JSON, the
+          # same escape this repo already uses for a Go template inside a
+          # Jinja file (roles/cribl_docker_stack/templates/docker-stack.yml.j2
+          # hostname:). This is a DAEMON DEFAULT: it takes effect for a
+          # container created after this file changes and the daemon
+          # restarts (handler below) -- it does not retag a container
+          # already running under the previous (or no) daemon.json. Compose
+          # only recreates a container when ITS OWN rendered file changes, so
+          # nothing here forces that; each already-running container adopts
+          # this default the next time something else recreates it.
+          log-opts:
+            tag: "{{ '{{' }}.Name{{ '}}' }}"
+        _lxc_storage:
+          storage-driver: fuse-overlayfs
+          features:
+            containerd-snapshotter: false
+        # A double-quoted YAML scalar is required here: only that form lets
+        # the trailing \n be a YAML escape for a real newline. The folded
+        # (>-) block scalar this replaced instead passed {{ "\n" }} through
+        # Jinja literally, writing the two characters backslash-n into the
+        # file and making it invalid JSON -- dockerd then refuses to start.
+        _daemon_json_final: >-
+          {{ (_daemon_json | combine(_lxc_storage if _is_lxc else {}))
+             | to_nice_json }}
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: "{{ _daemon_json_final }}\n"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart docker
+
+    # A daemon that failed on an unmet pin stays down (start-limit-hit) until
+    # something starts it again; an unchanged daemon.json fires no handler.
+    - name: Ensure Docker is running
+      when: "'docker' in (host_tags | default([]))"
+      ansible.builtin.systemd:
+        name: docker
+        state: started
