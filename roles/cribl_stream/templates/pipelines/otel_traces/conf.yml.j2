@@ -119,16 +119,30 @@ functions:
   # no value member at all. The Langfuse worker throws
   # "Cannot read properties of undefined (reading 'stringValue')" on that
   # exact shape and drops the whole span after the web tier already returned
-  # 200 -- confirmed live with four hand-built payloads to the real endpoint
-  # (plain string, array, and empty-object values all stored; a value-less
-  # key alone reproduced the crash and never stored). Strip them here rather
-  # than at every `|| undefined` site, so a source added later is covered too.
-  - id: eval
+  # 200 -- confirmed live with four hand-built payloads direct to the real
+  # endpoint (plain string, array, and empty-object values all stored; a
+  # value-less key alone reproduced the crash and never stored).
+  #
+  # A prior version of this step used a single Eval "add" expression
+  # (`Object.fromEntries(Object.entries(attributes).filter(([, v]) => ...))`)
+  # -- syntactically valid JS, but Eval's "add" value is validated as a
+  # restricted single-expression grammar that rejects any function literal
+  # ("Expression cannot have any declarations" / "... nested scopes"), live-
+  # confirmed against this same Cribl instance's own REST validator. Ansible's
+  # file-based deploy path never runs that validation, so the step was
+  # accepted, shipped, and then silently did nothing at runtime -- every span
+  # kept every value-less key and every OTel ingestion job kept crashing,
+  # for 18 days, despite the fix looking correct and passing review.
+  #
+  # A Code function has no such restriction: it runs full statements against
+  # the reserved `__e` event reference, so the strip happens as an in-place
+  # delete rather than a whole-field reassignment. Re-verified live: a
+  # synthetic span landed in Langfuse only after switching to this form.
+  - id: code
     filter: "true"
     disabled: false
     conf:
-      add:
-        - name: "attributes"
-          value: >-
-            Object.fromEntries(Object.entries(attributes)
-              .filter(([, v]) => v !== undefined && v !== null))
+      code: >-
+        if (__e.attributes) { for (var k in __e.attributes) { if
+        (__e.attributes[k] === undefined || __e.attributes[k] === null) {
+        delete __e.attributes[k]; } } }
