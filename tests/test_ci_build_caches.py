@@ -140,7 +140,15 @@ class CiBuildCaches(unittest.TestCase):
         # The role must remove github-runner-molecule-image.{service,timer}
         # where present, not just stop deploying them, or an enabled timer
         # keeps firing a build nothing consumes.
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        main_tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        include = next(
+            t for t in main_tasks if t["name"] == "Retire the former per-host Molecule image build units"
+        )
+        self.assertEqual(include["ansible.builtin.include_tasks"], "retire_molecule_image_build.yml")
+
+        tasks = list(
+            _tasks(yaml.safe_load((RUNNER / "tasks" / "retire_molecule_image_build.yml").read_text()))
+        )
         removed = next(
             t for t in tasks if t["name"] == "Remove the old Molecule image build unit files and Dockerfile context"
         )
