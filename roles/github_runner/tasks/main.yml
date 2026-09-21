@@ -265,6 +265,51 @@
     source: pull
     force_source: true
 
+# ---------------------------------------------------------------------------
+# Retires the per-host Molecule image build this replaced. docker-host and
+# iac-platform already carry github-runner-molecule-image.{service,timer}
+# from before every scenario moved to the upstream image directly; left
+# alone, an enabled timer keeps firing a build nothing consumes any more.
+# Stat-gated rather than firing `systemd: state=stopped/enabled=false`
+# unconditionally: disabling a unit whose file does not exist fails loudly
+# on real systemd, which would turn "nothing to retire" into a converge
+# failure on every host that never had it.
+# ---------------------------------------------------------------------------
+- name: Check whether the old Molecule image build timer unit is present
+  ansible.builtin.stat:
+    path: /etc/systemd/system/github-runner-molecule-image.timer
+  register: github_runner_old_molecule_image_timer_unit
+
+- name: Stop and disable the old Molecule image build timer
+  ansible.builtin.systemd:
+    name: github-runner-molecule-image.timer
+    state: stopped
+    enabled: false
+  when: github_runner_old_molecule_image_timer_unit.stat.exists
+
+- name: Stop and disable the old Molecule image build service
+  ansible.builtin.systemd:
+    name: github-runner-molecule-image.service
+    state: stopped
+    enabled: false
+  when: github_runner_old_molecule_image_timer_unit.stat.exists
+
+- name: Remove the old Molecule image build unit files and Dockerfile context
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/github-runner-molecule-image.timer
+    - /etc/systemd/system/github-runner-molecule-image.service
+    - /etc/github-runner/molecule-image
+  register: github_runner_retired_old_molecule_image_files
+
+- name: Reload systemd after removing the old Molecule image build units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - github_runner_old_molecule_image_timer_unit.stat.exists
+    - github_runner_retired_old_molecule_image_files.results | selectattr('changed') | list | length > 0
 
 - name: Name the units this replica count wants
   ansible.builtin.set_fact:

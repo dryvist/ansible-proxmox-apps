@@ -131,9 +131,37 @@ class CiBuildCaches(unittest.TestCase):
         handlers = (RUNNER / "handlers" / "main.yml").read_text()
         self.assertNotIn("Build the Molecule base image", handlers)
         main_tasks = (RUNNER / "tasks" / "main.yml").read_text()
-        self.assertNotIn("molecule_image", main_tasks)
+        self.assertNotIn("include_tasks: molecule_image.yml", main_tasks)
+        self.assertNotIn("Build the Molecule base image every scenario runs on", main_tasks)
         defaults = (RUNNER / "defaults" / "main.yml").read_text()
         self.assertNotIn("github_runner_molecule_image", defaults)
+
+    def test_the_role_retires_the_old_molecule_image_build_units(self):
+        # Hosts converged before the move to the upstream image still carry
+        # github-runner-molecule-image.{service,timer} on disk. The role must
+        # remove them, not just stop deploying new ones, or an enabled timer
+        # keeps firing a build nothing consumes any more.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        removed = next(
+            t for t in tasks if t["name"] == "Remove the old Molecule image build unit files and Dockerfile context"
+        )
+        self.assertEqual(
+            set(removed["loop"]),
+            {
+                "/etc/systemd/system/github-runner-molecule-image.timer",
+                "/etc/systemd/system/github-runner-molecule-image.service",
+                "/etc/github-runner/molecule-image",
+            },
+        )
+        for unit_name in ("github-runner-molecule-image.timer", "github-runner-molecule-image.service"):
+            with self.subTest(unit=unit_name):
+                stopped = next(
+                    t
+                    for t in tasks
+                    if t.get("ansible.builtin.systemd", {}).get("name") == unit_name
+                    and t["ansible.builtin.systemd"].get("state") == "stopped"
+                )
+                self.assertFalse(stopped["ansible.builtin.systemd"]["enabled"])
 
 
 if __name__ == "__main__":
