@@ -82,46 +82,45 @@ class CiBuildCaches(unittest.TestCase):
             with self.subTest(play=name):
                 self.assertIn("docker_vms", _play(name)["hosts"])
 
-    def test_the_mirror_is_addressed_by_ingress_fqdn(self):
+    def test_the_mirror_is_addressed_by_the_estate_domain(self):
+        # Guest names resolve under the estate domain; the ingress subdomain
+        # carries only ingress vhosts. tofu_data.domain matches the apt
+        # Proxy-Auto-Detect hook, which addresses its own guest the same way.
         play = _play("Configure Docker registry mirror on docker hosts")
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
         host = task["vars"]["_registry_host"]
-        self.assertIn("ingress_domain", host)
-        # container_ip is legitimate here for _dns_servers only: a DNS
-        # resolver cannot be addressed by a name it would itself have to
-        # resolve, the same static-anchor exception docs/IP_AUTHORITY.md
-        # already documents for technitium_dns. _registry_host stays FQDN.
+        self.assertIn("tofu_data.domain", host)
+        self.assertNotIn("ingress_domain", host)
         self.assertNotIn("container_ip", host)
         self.assertIn("groups['registry_group']", str(task["when"]))
 
-    def test_dns_servers_come_from_the_technitium_group_not_a_literal(self):
+    def test_the_mirror_host_and_apt_proxy_url_render_under_the_estate_domain(self):
+        # A real Templar render of the ACTUAL expressions, not a
+        # reimplementation of them: with ingress_domain and tofu_data.domain
+        # set to two DIFFERENT values, each URL must land on the estate
+        # domain, never the ingress one -- the bug this guards was a guest
+        # name built from the wrong one, which resolves to nothing.
         play = _play("Configure Docker registry mirror on docker hosts")
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
-        dns_servers = task["vars"]["_dns_servers"]
-        self.assertIn("groups['technitium_dns_group']", dns_servers)
-        self.assertNotRegex(dns_servers, r"\b\d{1,3}(\.\d{1,3}){3}\b")
-
-    def test_dns_servers_renders_to_the_live_addresses_only(self):
-        # A real Templar render of the ACTUAL expression, not a
-        # reimplementation of it: a filter typo (e.g. select('length'), a
-        # filter, where select() needs a Jinja TEST) renders clean in a
-        # string-matching test but raises at converge time. groups/hostvars
-        # fixture two technitium hosts, one with no address yet (a guest
-        # mid-bring-up, or one this group's own DHCP lease hasn't been
-        # published for) -- the empty one must be dropped, never rendered as
-        # an empty-string DNS server.
-        play = _play("Configure Docker registry mirror on docker hosts")
-        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
-        expr = trust_as_template(task["vars"]["_dns_servers"])
-        variables = {
-            "groups": {"technitium_dns_group": ["technitium-2", "technitium-1"]},
-            "hostvars": {
-                "technitium-1": {"container_ip": "10.20.0.5"},
-                "technitium-2": {"container_ip": ""},
-            },
-        }
+        registry_host_expr = trust_as_template(task["vars"]["_registry_host"])
+        apt_proxy_defaults = yaml.safe_load(
+            (RUNNER / "defaults" / "main.yml").read_text()
+        )
+        apt_proxy_expr = trust_as_template(apt_proxy_defaults["github_runner_apt_proxy_url"])
+        variables = _mark_templates(
+            {
+                "groups": {"registry_group": ["registry-1"], "apt_cacher_group": ["apt-cache-1"]},
+                "ingress_domain": "pve.example.com",
+                "tofu_data": {"domain": "example.com", "constants": {"service_ports": {}}},
+            }
+        )
         templar = Templar(loader=DataLoader(), variables=variables)
-        self.assertEqual(templar.template(expr), ["10.20.0.5"])
+        registry_host = templar.template(registry_host_expr)
+        apt_proxy_url = templar.template(apt_proxy_expr)
+        self.assertTrue(registry_host.endswith(".example.com"), registry_host)
+        self.assertNotIn("pve.", registry_host)
+        self.assertTrue(apt_proxy_url.startswith("http://apt-cache-1.example.com:"), apt_proxy_url)
+        self.assertNotIn("pve.", apt_proxy_url)
 
     def test_daemon_json_content_renders_as_valid_json_with_one_newline(self):
         # A real render of the WHOLE content: expression, not a
@@ -134,13 +133,12 @@ class CiBuildCaches(unittest.TestCase):
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
         content_expr = task["ansible.builtin.copy"]["content"]
         fixture = {
-            "groups": {"registry_group": ["registry-1"], "technitium_dns_group": ["technitium-1"]},
+            "groups": {"registry_group": ["registry-1"]},
             "hostvars": {
                 "registry-1": {},
-                "technitium-1": {"container_ip": "10.20.0.5"},
                 "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}},
             },
-            "ingress_domain": "example.internal",
+            "tofu_data": {"domain": "example.com"},
             "ansible_virtualization_type": "kvm",
             "host_tags": ["docker"],
         }
@@ -150,7 +148,11 @@ class CiBuildCaches(unittest.TestCase):
         self.assertTrue(rendered.endswith("\n"))
         self.assertFalse(rendered.endswith("\n\n"))
         self.assertNotIn("\\n", rendered)
-        json.loads(rendered)  # raises if the daemon.json this writes is invalid
+        parsed = json.loads(rendered)  # raises if the daemon.json this writes is invalid
+        # Containers inherit the host's own upstream resolvers by default
+        # (dockerd's documented behavior); the daemon config does not pin a
+        # resolver.
+        self.assertNotIn("dns", parsed)
 
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
@@ -193,7 +195,8 @@ class CiBuildCaches(unittest.TestCase):
         defaults = yaml.safe_load(
             (ROOT / "roles" / "github_runner" / "defaults" / "main.yml").read_text()
         )
-        self.assertIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
+        self.assertIn("tofu_data.domain", defaults["github_runner_apt_proxy_url"])
+        self.assertNotIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
         self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
         self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
 

@@ -1,12 +1,12 @@
 ---
 # =============================================================================
-# Phase 0a: Docker daemon configuration (registry mirror, storage driver, DNS)
+# Phase 0a: Docker daemon configuration (registry mirror, storage driver)
 #
-# Its own file, split out of 01-baseline-infra.yml, for one reason:
-# the site/ token-limit gate caps each file's rendered size, and the DNS
-# block this play grew past it. Imported immediately after 01, so nothing
-# about when it runs changes -- Docker still gets its daemon.json here,
-# before anything on these hosts depends on it.
+# Its own file, split out of 01-baseline-infra.yml, for one reason: the
+# site/ token-limit gate caps each file's rendered size, and this play once
+# grew SITE past it. Imported immediately after 01, so nothing about when it
+# runs changes -- Docker still gets its daemon.json here, before anything on
+# these hosts depends on it.
 # =============================================================================
 
 # The CI runner VMs are docker hosts too: every Molecule image they pull
@@ -53,33 +53,25 @@
     # dependency leaves the file alone for the same reason.
     #
     # The mirror is addressed by name: the registry guest is whichever host
-    # carries the `registry` tag, reached at its own FQDN under the ingress
-    # zone (no route fronts it, so the name resolves to the guest itself). The
-    # daemon speaks plain HTTP to it, which is why the same name:port is also
-    # listed as an insecure registry.
+    # carries the `registry` tag, reached at its own FQDN under the estate
+    # domain (guest names resolve there; the ingress subdomain carries only
+    # ingress vhosts). The daemon speaks plain HTTP to it, which is why the
+    # same name:port is also listed as an insecure registry.
     - name: Configure Docker registry mirror
       when:
         - groups['registry_group'] | default([]) | length > 0
         - "'docker' in (host_tags | default([]))"
       vars:
-        _registry_host: "{{ groups['registry_group'] | sort | first }}.{{ ingress_domain }}"
+        # A guest name resolves under the estate domain, never the ingress
+        # subdomain -- that one carries only ingress vhosts (see the apt
+        # Proxy-Auto-Detect hook above, which addresses its own guest the
+        # same way).
+        _registry_host: "{{ groups['registry_group'] | sort | first }}.{{ tofu_data.domain }}"
         _registry_port: >-
           {{ hostvars['localhost']['tofu_data']
              ['constants']['service_ports']['registry']
              | default(5000) }}
         _is_lxc: "{{ ansible_virtualization_type | default('') == 'lxc' }}"
-        # A build container gets its DNS from the daemon, not from the host's
-        # own resolver (Docker's embedded resolver forwards to whatever the
-        # daemon is told, and does not inherit a host resolver that is itself
-        # a loopback stub). Without this, a Dockerfile RUN step that needs an
-        # internal-only name -- the apt cache below included -- can only
-        # reach a public resolver, which never has that name. Every
-        # technitium_dns_group member's own address, so a name that only that
-        # service knows is still resolvable, and never a literal IP.
-        _dns_servers: >-
-          {{ groups['technitium_dns_group'] | default([])
-             | sort | map('extract', hostvars, 'container_ip')
-             | select('string') | select('truthy') | list }}
         _daemon_json:
           registry-mirrors: ["http://{{ _registry_host }}:{{ _registry_port }}"]
           insecure-registries: ["{{ _registry_host }}:{{ _registry_port }}"]
@@ -104,16 +96,13 @@
           storage-driver: fuse-overlayfs
           features:
             containerd-snapshotter: false
-        _dns_config:
-          dns: "{{ _dns_servers }}"
         # A double-quoted YAML scalar is required here: only that form lets
         # the trailing \n be a YAML escape for a real newline. The folded
         # (>-) block scalar this replaced instead passed {{ "\n" }} through
         # Jinja literally, writing the two characters backslash-n into the
         # file and making it invalid JSON -- dockerd then refuses to start.
         _daemon_json_final: >-
-          {{ (_daemon_json | combine(_lxc_storage if _is_lxc else {})
-              | combine(_dns_config if _dns_servers | length > 0 else {}))
+          {{ (_daemon_json | combine(_lxc_storage if _is_lxc else {}))
              | to_nice_json }}
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
