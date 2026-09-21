@@ -11,12 +11,14 @@ exist to remove -- so the wiring is asserted structurally here.
     (the runner hosts), not only the LXC containers.
   * The mirror is addressed by FQDN under the ingress zone; a container_ip
     lookup would put an address in a daemon config (docs/IP_AUTHORITY.md).
-  * Every Molecule scenario runs on the pre-built base image the runner host
-    builds (falling back to the upstream base off a runner), waits for the
-    instance to finish booting before any other module runs, and includes the
-    shared apt-proxy task; no scenario builds an image of its own.
-  * The runner env template hands APT_PROXY_URL and MOLECULE_BASE_IMAGE to
-    the jobs, and the role builds the image from the shared Dockerfile.
+  * Every Molecule scenario runs on the upstream geerlingguy/docker-debian12-
+    ansible image, waits for the instance to finish booting before any other
+    module runs, and includes the shared apt-proxy task; no scenario builds
+    or pre-bakes an image of its own -- a role that needs Docker Engine gets
+    it from its own docker_engine meta dependency at converge, through the
+    same apt cache.
+  * The runner env template hands APT_PROXY_URL to the jobs; there is no
+    Molecule-image variable to hand alongside it.
 """
 
 import json
@@ -36,9 +38,8 @@ DOCKER_DAEMON_SITE = ROOT / "playbooks" / "site" / "01a-docker-daemon.yml"
 MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
 BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
-DOCKERFILE = MOLECULE / "resources" / "Dockerfile"
 RUNNER = ROOT / "roles" / "github_runner"
-BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}"
+BASE_IMAGE = "geerlingguy/docker-debian12-ansible:latest"
 
 
 def _play(name):
@@ -214,7 +215,7 @@ class CiBuildCaches(unittest.TestCase):
         self.assertEqual(iface["nameservers"]["addresses"], ["10.20.0.1"])
         self.assertEqual(iface["nameservers"]["search"], ["example.com"])
 
-    def test_every_scenario_runs_on_the_prebuilt_image(self):
+    def test_every_scenario_runs_on_the_upstream_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
         self.assertGreater(len(scenarios), 0)
         for scenario in scenarios:
@@ -232,22 +233,12 @@ class CiBuildCaches(unittest.TestCase):
                 connected = next(i for i, t in enumerate(tasks) if "ansible.builtin.wait_for_connection" in t)
                 self.assertEqual(includes[connected + 1], BOOT_WAIT, scenario.name)
 
-    def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
-        lines = DOCKERFILE.read_text().splitlines()
-        directives = "\n".join(line for line in lines if not line.startswith("#"))
-        self.assertIn("Acquire::http::Proxy", directives)
-        self.assertNotIn("http_proxy", directives)
-
     def test_https_repositories_bypass_the_cache(self):
         # apt's https method inherits the http proxy when its own is unset, and
         # the cache does not tunnel TLS -- an https repository would then be
-        # skipped silently. Both writers must pin https to DIRECT.
-        for path in (
-            DOCKERFILE,
-            MOLECULE / "resources" / "tasks" / "apt_proxy.yml",
-        ):
-            with self.subTest(path=path.name):
-                self.assertIn('Acquire::https::Proxy "DIRECT";', path.read_text())
+        # skipped silently.
+        path = MOLECULE / "resources" / "tasks" / "apt_proxy.yml"
+        self.assertIn('Acquire::https::Proxy "DIRECT";', path.read_text())
 
     def test_the_runner_env_hands_the_cache_to_jobs(self):
         env = (ROOT / "roles" / "github_runner" / "templates" / "runner.env.j2").read_text()
@@ -258,54 +249,60 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn("tofu_data.domain", defaults["github_runner_apt_proxy_url"])
         self.assertNotIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
         self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
-        self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
+        # No Molecule-image variable to hand alongside it -- every scenario
+        # names the upstream image directly.
+        self.assertNotIn("MOLECULE_BASE_IMAGE", env)
 
-    def test_the_runner_role_builds_the_image_from_the_shared_dockerfile(self):
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        deploy = next(t for t in tasks if t["name"] == "Deploy the Molecule base image Dockerfile")
-        self.assertEqual(
-            deploy["ansible.builtin.copy"]["src"], "{{ role_path }}/../../molecule/resources/Dockerfile"
+    def test_no_molecule_image_is_built_or_overridden_on_a_runner_host(self):
+        # The host never builds or pulls a Molecule image -- there is nothing
+        # to build (molecule_image.yml, the build service/timer templates, the
+        # matching handler, and every github_runner_molecule_image* variable
+        # are all gone) and no MOLECULE_BASE_IMAGE override to hand a job.
+        self.assertFalse((RUNNER / "tasks" / "molecule_image.yml").exists())
+        self.assertFalse((RUNNER / "templates" / "molecule-image.service.j2").exists())
+        self.assertFalse((RUNNER / "templates" / "molecule-image.timer.j2").exists())
+        self.assertFalse((MOLECULE / "resources" / "Dockerfile").exists())
+        handlers = (RUNNER / "handlers" / "main.yml").read_text()
+        self.assertNotIn("Build the Molecule base image", handlers)
+        main_tasks = (RUNNER / "tasks" / "main.yml").read_text()
+        self.assertNotIn("include_tasks: molecule_image.yml", main_tasks)
+        self.assertNotIn("Build the Molecule base image every scenario runs on", main_tasks)
+        defaults = (RUNNER / "defaults" / "main.yml").read_text()
+        self.assertNotIn("github_runner_molecule_image", defaults)
+
+    def test_the_role_retires_the_old_molecule_image_build_units(self):
+        # The role must remove github-runner-molecule-image.{service,timer}
+        # where present, not just stop deploying them, or an enabled timer
+        # keeps firing a build nothing consumes.
+        main_tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        include = next(
+            t for t in main_tasks if t["name"] == "Retire the former per-host Molecule image build units"
         )
-        self.assertEqual(deploy["notify"], "Build the Molecule base image")
-        unit = (RUNNER / "templates" / "molecule-image.service.j2").read_text()
-        self.assertIn("--build-arg APT_PROXY_URL={{ github_runner_apt_proxy_url }}", unit)
-        self.assertIn("--tag {{ github_runner_molecule_image }}", unit)
-        self.assertIn("ARG APT_PROXY_URL", DOCKERFILE.read_text())
+        self.assertEqual(include["ansible.builtin.include_tasks"], "retire_molecule_image_build.yml")
 
-    def test_the_first_build_blocks_before_runners_start(self):
-        # main.yml enables the pooled runners (which can be handed a job
-        # within seconds) right after this include_tasks. A fire-and-forget
-        # (no_block: true) first build races that: a job can land before a
-        # cold multi-minute build finishes, and Molecule's docker driver then
-        # tries to pull a tag that has never existed on the daemon.
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        build = next(t for t in tasks if t["name"] == "Start the Molecule base image build")
-        self.assertNotIn("no_block", build["ansible.builtin.systemd"])
-
-    def test_a_failed_first_build_surfaces_its_own_journal(self):
-        # This host ships no logs to the central platform (Vikunja 3353) and
-        # SSH is off-limits, so a bare systemd failure here is a dead end --
-        # a converge failure with no way to see why. The rescue reads the
-        # unit's own journal and fails WITH it.
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
-        outer = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
-        self.assertIn("block", outer)
-        self.assertIn("rescue", outer)
-        rescue_names = [t["name"] for t in outer["rescue"]]
-        self.assertIn("Read the failed build's journal", rescue_names)
-        journal_task = next(t for t in outer["rescue"] if t["name"] == "Read the failed build's journal")
-        self.assertIn("journalctl", journal_task["ansible.builtin.command"]["cmd"])
-        self.assertIn("github-runner-molecule-image.service", journal_task["ansible.builtin.command"]["cmd"])
-        self.assertIs(journal_task.get("changed_when"), False)
-        fail_task = next(t for t in outer["rescue"] if t["name"] == "Fail with the build's own output")
-        self.assertIn("stdout_lines", fail_task["ansible.builtin.fail"]["msg"])
-
-    def test_a_host_with_no_replicas_does_not_build_the_image(self):
-        # A host with github_runner_replicas: 0 runs no scenarios, so it has
-        # no consumer for the image and must not build one.
-        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
-        include = next(t for t in tasks if t["name"] == "Build the Molecule base image every scenario runs on")
-        self.assertEqual(include.get("when"), "github_runner_replicas | int > 0")
+        tasks = list(
+            _tasks(yaml.safe_load((RUNNER / "tasks" / "retire_molecule_image_build.yml").read_text()))
+        )
+        removed = next(
+            t for t in tasks if t["name"] == "Remove the old Molecule image build unit files and Dockerfile context"
+        )
+        self.assertEqual(
+            set(removed["loop"]),
+            {
+                "/etc/systemd/system/github-runner-molecule-image.timer",
+                "/etc/systemd/system/github-runner-molecule-image.service",
+                "/etc/github-runner/molecule-image",
+            },
+        )
+        for unit_name in ("github-runner-molecule-image.timer", "github-runner-molecule-image.service"):
+            with self.subTest(unit=unit_name):
+                stopped = next(
+                    t
+                    for t in tasks
+                    if t.get("ansible.builtin.systemd", {}).get("name") == unit_name
+                    and t["ansible.builtin.systemd"].get("state") == "stopped"
+                )
+                self.assertFalse(stopped["ansible.builtin.systemd"]["enabled"])
 
 
 if __name__ == "__main__":
