@@ -28,10 +28,10 @@
         name: docker
         state: restarted
 
-    - name: Restart systemd-resolved
-      ansible.builtin.systemd:
-        name: systemd-resolved
-        state: restarted
+    - name: Apply netplan
+      ansible.builtin.command:
+        cmd: netplan apply
+      changed_when: true
 
     - name: Flush resolved caches
       ansible.builtin.command:
@@ -67,29 +67,66 @@
         filter:
           - ansible_default_ipv4
 
-    - name: Assert the default gateway fact is set
+    - name: Assert the default route fact carries an interface and a gateway
       when: inventory_hostname in groups['docker_vms']
       ansible.builtin.assert:
         that:
+          - ansible_default_ipv4.interface | default('') | length > 0
           - ansible_default_ipv4.gateway | default('') | length > 0
         fail_msg: >-
-          No default gateway fact on this VM -- the resolver drop-in below
-          would render with no DNS server.
+          No default-route fact on this VM -- the netplan resolver override
+          below would render with no interface or no DNS server.
 
+    # A single hand-placed override file existed before this task did the
+    # same job in Ansible; one file owns the setting going forward.
+    - name: Remove the hand-placed resolver override
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.file:
+        path: /etc/netplan/60-dns-interim.yaml
+        state: absent
+      notify: Apply netplan
+
+    # Netplan merges same-named mapping keys from lexicographically later
+    # files by REPLACING the earlier file's value, never appending to it, so
+    # this file's nameservers.addresses/search fully replace the ones
+    # declared at first boot. World-readable netplan files draw a runtime
+    # warning, hence 0600.
     - name: Configure the estate resolver on docker VMs
       when: inventory_hostname in groups['docker_vms']
       ansible.builtin.copy:
-        dest: /etc/systemd/resolved.conf.d/10-estate.conf
+        dest: /etc/netplan/70-estate-dns.yaml
         content: |
-          [Resolve]
-          DNS={{ ansible_default_ipv4.gateway }}
-          Domains={{ tofu_data.domain }}
+          network:
+            version: 2
+            ethernets:
+              {{ ansible_default_ipv4.interface }}:
+                nameservers:
+                  addresses: [{{ ansible_default_ipv4.gateway }}]
+                  search: [{{ tofu_data.domain }}]
         owner: root
         group: root
-        mode: "0644"
+        mode: "0600"
       notify:
-        - Restart systemd-resolved
+        - Apply netplan
         - Flush resolved caches
+
+    # Handlers run at end of play; the getent probe below needs the new
+    # resolver already active, not queued behind it.
+    - name: Apply any pending netplan/resolver changes before the probe
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.meta: flush_handlers
+
+    # A guest name failing to resolve here means the resolver override did
+    # not take, and every apt/Docker pull that needs one will fail the same
+    # way -- fail loudly at the source instead of downstream.
+    - name: Verify a guest name resolves through the new resolver
+      when:
+        - inventory_hostname in groups['docker_vms']
+        - groups['apt_cacher_group'] | default([]) | length > 0
+      ansible.builtin.command:
+        cmd: >-
+          getent hosts {{ groups['apt_cacher_group'] | sort | first }}.{{ tofu_data.domain }}
+      changed_when: false
 
     # This play is the single owner of /etc/docker/daemon.json on docker LXCs
     # and on the docker VMs. roles/idrac_kvm_docker no longer writes the

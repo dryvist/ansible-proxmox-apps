@@ -154,10 +154,10 @@ class CiBuildCaches(unittest.TestCase):
         # resolver.
         self.assertNotIn("dns", parsed)
 
-    def test_docker_vms_gather_the_facts_the_resolver_drop_in_needs(self):
-        # The resolver drop-in is templated from a fact (the VM's own
-        # default gateway); a play with gather_facts: false only has that
-        # fact when a task explicitly gathers it.
+    def test_docker_vms_gather_the_facts_the_netplan_override_needs(self):
+        # The netplan override is templated from facts (the VM's own default
+        # interface and gateway); a play with gather_facts: false only has
+        # them when a task explicitly gathers them.
         play = _play("Configure Docker registry mirror on docker hosts")
         self.assertFalse(play.get("gather_facts", True))
         tasks = list(_tasks(play))
@@ -166,17 +166,30 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn(
             "ansible_default_ipv4", gather["ansible.builtin.setup"]["filter"]
         )
-        resolver_task = next(
+        remove_task = next(
+            t for t in tasks if t["name"] == "Remove the hand-placed resolver override"
+        )
+        self.assertEqual(remove_task["ansible.builtin.file"]["path"], "/etc/netplan/60-dns-interim.yaml")
+        self.assertEqual(remove_task["ansible.builtin.file"]["state"], "absent")
+        override_task = next(
             t for t in tasks if t["name"] == "Configure the estate resolver on docker VMs"
         )
-        self.assertIn("docker_vms", str(resolver_task["when"]))
-        self.assertEqual(
-            resolver_task["ansible.builtin.copy"]["dest"],
-            "/etc/systemd/resolved.conf.d/10-estate.conf",
+        self.assertIn("docker_vms", str(override_task["when"]))
+        self.assertEqual(override_task["ansible.builtin.copy"]["dest"], "/etc/netplan/70-estate-dns.yaml")
+        self.assertEqual(override_task["ansible.builtin.copy"]["mode"], "0600")
+        flush = next(
+            t for t in tasks if t["name"] == "Apply any pending netplan/resolver changes before the probe"
         )
+        self.assertEqual(flush["ansible.builtin.meta"], "flush_handlers")
+        probe = next(
+            t for t in tasks if t["name"] == "Verify a guest name resolves through the new resolver"
+        )
+        self.assertIn("apt_cacher_group", str(probe["when"]))
+        self.assertIs(probe.get("changed_when"), False)
+        self.assertIn("getent hosts", probe["ansible.builtin.command"]["cmd"])
 
-    def test_the_estate_resolver_drop_in_renders_the_gateway_and_domain(self):
-        # A real Templar render of the ACTUAL drop-in content, not a
+    def test_the_netplan_override_renders_the_interface_gateway_and_domain(self):
+        # A real Templar render of the ACTUAL override content, not a
         # reimplementation of it.
         play = _play("Configure Docker registry mirror on docker hosts")
         task = next(
@@ -185,14 +198,16 @@ class CiBuildCaches(unittest.TestCase):
         content_expr = trust_as_template(task["ansible.builtin.copy"]["content"])
         variables = _mark_templates(
             {
-                "ansible_default_ipv4": {"gateway": "10.20.0.1"},
+                "ansible_default_ipv4": {"interface": "eth0", "gateway": "10.20.0.1"},
                 "tofu_data": {"domain": "example.com"},
             }
         )
         templar = Templar(loader=DataLoader(), variables=variables)
         rendered = templar.template(content_expr)
-        self.assertIn("DNS=10.20.0.1", rendered)
-        self.assertIn("Domains=example.com", rendered)
+        parsed = yaml.safe_load(rendered)
+        iface = parsed["network"]["ethernets"]["eth0"]
+        self.assertEqual(iface["nameservers"]["addresses"], ["10.20.0.1"])
+        self.assertEqual(iface["nameservers"]["search"], ["example.com"])
 
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
