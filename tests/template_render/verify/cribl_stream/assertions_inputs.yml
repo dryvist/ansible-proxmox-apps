@@ -176,6 +176,24 @@
       splunk_hec_<index> output for netflow plus each unique
       ai_log_routing index
 
+- name: Assert the LLM-observability sinks drop under backpressure, HEC sinks do not
+  ansible.builtin.assert:
+    that:
+      # langfuse_otlp + phoenix_otlp: a dead sink must not gate in_otel
+      # admission (apps: phoenix_otlp latched Red and 503'd in_otel on both
+      # nodes even though the destination itself was healthy).
+      - "_cribl_stream_outputs_pi.count('type: open_telemetry') == 2"
+      - "_cribl_stream_outputs_pi.count('onBackpressure: drop') == 2"
+      # Every splunk_hec output (base + per-index) keeps its current
+      # block behaviour — unchanged by this fix.
+      - "_cribl_stream_outputs_pi.count('type: splunk_hec')
+         == _cribl_stream_outputs_pi.count('onBackpressure: block')"
+    fail_msg: >-
+      outputs.yml.j2 must render onBackpressure: drop on both open_telemetry
+      destinations (langfuse_otlp, phoenix_otlp) so a dead LLM-observability
+      sink cannot gate in_otel admission, while every splunk_hec destination
+      keeps its current onBackpressure: block.
+
 - name: Assert the built-in Cribl Internal source renders both feeds
   ansible.builtin.assert:
     that:

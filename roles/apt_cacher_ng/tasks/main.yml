@@ -1,11 +1,44 @@
 ---
 # Apt-Cacher-NG installation and configuration
 
+- name: Block service actions during apt-cacher-ng package install
+  # Debian's postinst calls invoke-rc.d to start the service immediately
+  # after unpacking, using whatever default acng.conf ships in the .deb --
+  # before "Deploy apt-cacher-ng configuration" below overwrites it. On a
+  # guest where the package has never been installed, that vendor-default
+  # first start can fail and abort the whole apt transaction (dpkg exits 1,
+  # package left half-configured), even though the role's own config works
+  # fine once deployed. policy-rc.d is the standard Debian mechanism for
+  # deferring service actions during package operations; only invoke-rc.d
+  # consults it, so the explicit `systemd` calls below are unaffected.
+  ansible.builtin.copy:
+    dest: /usr/sbin/policy-rc.d
+    content: |
+      #!/bin/sh
+      exit 101
+    mode: '0755'
+
 - name: Install apt-cacher-ng package
   ansible.builtin.apt:
     name: apt-cacher-ng
     state: present
     update_cache: true
+
+- name: Remove the policy-rc.d install guard
+  ansible.builtin.file:
+    path: /usr/sbin/policy-rc.d
+    state: absent
+
+- name: Remove /etc/hosts pins for upstream mirror hosts
+  # Upstreams resolve through DNS; a static pin here is drift, not config.
+  # The daemon keeps its own resolver cache, so a stripped pin only takes
+  # effect after a restart.
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*[^#\s]+\s+.*\b{{ item | regex_escape }}\b'
+    state: absent
+  loop: "{{ apt_cacher_ng_dns_only_hosts }}"
+  notify: Restart apt-cacher-ng
 
 - name: Ensure cache directory exists
   ansible.builtin.file:

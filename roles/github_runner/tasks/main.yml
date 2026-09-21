@@ -265,6 +265,12 @@
     source: pull
     force_source: true
 
+# A host with no replicas runs no scenarios, so it has no consumer for the
+# image and must not build one.
+- name: Build the Molecule base image every scenario runs on
+  ansible.builtin.include_tasks: molecule_image.yml
+  when: github_runner_replicas | int > 0
+
 - name: Name the units this replica count wants
   ansible.builtin.set_fact:
     github_runner_wanted_units: >-
@@ -282,8 +288,26 @@
 
 # A replica removed from the pool must be stopped, not merely un-enabled: the
 # unit template still exists, so the container would keep serving jobs.
-- name: Read the installed services
-  ansible.builtin.service_facts:
+#
+# service_facts is deliberately NOT used for this: it sources unit state from
+# `systemctl list-unit-files`, which lists a systemd TEMPLATE by its bare
+# generic name (`github-runner@.service`) -- an instantiated unit like
+# `github-runner@1.service` only exists in `list-units`, so
+# `ansible_facts.services` never carried a key this task's regex could match.
+# The loop below silently evaluated to an empty list on every converge as a
+# result: a host moved to 0 replicas (iac-platform, host_vars) kept three
+# `github-runner@N` units enabled and crash-looping against an
+# ever-more-stale registration token for 24+ hours, because nothing ever
+# told systemd to stop them. `list-units` resolves the instance glob against
+# the running units directly, which is what this task actually needs.
+# noqa command-instead-of-module: the ansible.builtin.systemd module manages
+# one named unit; it has no "list what matches this glob" mode, and that is
+# exactly what resolving a template instance requires here.
+- name: List every github-runner instance systemd currently knows about  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: systemctl list-units --all --plain --no-legend "github-runner@*.service"
+  changed_when: false
+  register: github_runner_installed_units
 
 - name: Stop runners above the configured replica count
   ansible.builtin.systemd:
@@ -291,7 +315,8 @@
     state: stopped
     enabled: false
   loop: >-
-    {{ ansible_facts.services | select('match', '^github-runner@\\d+\\.service$')
+    {{ github_runner_installed_units.stdout_lines | map('trim')
+       | map('regex_replace', ' .*$', '')
        | difference(github_runner_wanted_units) | list }}
 
 # A changed unit file or env file has notified a pool restart. Apply it BEFORE

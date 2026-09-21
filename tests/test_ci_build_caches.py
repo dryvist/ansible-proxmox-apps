@@ -11,10 +11,12 @@ exist to remove -- so the wiring is asserted structurally here.
     (the runner hosts), not only the LXC containers.
   * The mirror is addressed by FQDN under the ingress zone; a container_ip
     lookup would put an address in a daemon config (docs/IP_AUTHORITY.md).
-  * Every Molecule scenario points apt at APT_PROXY_URL: a prebuilt-image
-    scenario includes the shared prepare task, a scenario that builds from the
-    shared Dockerfile passes the variable into the build.
-  * The runner env template hands APT_PROXY_URL to the jobs.
+  * Every Molecule scenario runs on the pre-built base image the runner host
+    builds (falling back to the upstream base off a runner), waits for the
+    instance to finish booting before any other module runs, and includes the
+    shared apt-proxy task; no scenario builds an image of its own.
+  * The runner env template hands APT_PROXY_URL and MOLECULE_BASE_IMAGE to
+    the jobs, and the role builds the image from the shared Dockerfile.
 """
 
 import unittest
@@ -26,7 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
 MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
-SHARED_DOCKERFILE = "../resources/Dockerfile.j2"
+BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
+DOCKERFILE = MOLECULE / "resources" / "Dockerfile"
+RUNNER = ROOT / "roles" / "github_runner"
+BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}"
 
 
 def _play(name):
@@ -62,41 +67,54 @@ class CiBuildCaches(unittest.TestCase):
         task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
         host = task["vars"]["_registry_host"]
         self.assertIn("ingress_domain", host)
-        self.assertNotIn("container_ip", str(task["vars"]))
+        # container_ip is legitimate here for _dns_servers only: a DNS
+        # resolver cannot be addressed by a name it would itself have to
+        # resolve, the same static-anchor exception docs/IP_AUTHORITY.md
+        # already documents for technitium_dns. _registry_host stays FQDN.
+        self.assertNotIn("container_ip", host)
         self.assertIn("groups['registry_group']", str(task["when"]))
 
-    def test_every_scenario_points_apt_at_the_cache(self):
+    def test_dns_servers_come_from_the_technitium_group_not_a_literal(self):
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
+        dns_servers = task["vars"]["_dns_servers"]
+        self.assertIn("groups['technitium_dns_group']", dns_servers)
+        self.assertNotRegex(dns_servers, r"\b\d{1,3}(\.\d{1,3}){3}\b")
+
+    def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
         self.assertGreater(len(scenarios), 0)
         for scenario in scenarios:
             with self.subTest(scenario=scenario.name):
                 config = yaml.safe_load((scenario / "molecule.yml").read_text())
-                builds = [
-                    p for p in config.get("platforms", [])
-                    if p.get("dockerfile") == SHARED_DOCKERFILE
-                ]
-                for platform in builds:
-                    self.assertEqual(
-                        platform.get("env", {}).get("APT_PROXY_URL"), "${APT_PROXY_URL}",
-                        f"{scenario.name}: a Dockerfile build must pass APT_PROXY_URL",
-                    )
-                prepare = scenario / "prepare.yml"
-                self.assertTrue(
-                    prepare.exists() or builds,
-                    f"{scenario.name}: no prepare.yml and no shared Dockerfile build",
-                )
-                if prepare.exists():
-                    includes = [
-                        t.get("ansible.builtin.include_tasks")
-                        for t in _tasks(yaml.safe_load(prepare.read_text()))
-                    ]
-                    self.assertIn(SHARED_TASK, includes)
+                for platform in config["platforms"]:
+                    self.assertEqual(platform.get("image"), BASE_IMAGE, platform["name"])
+                    self.assertTrue(platform.get("pre_build_image"), platform["name"])
+                    self.assertNotIn("dockerfile", platform, platform["name"])
+                tasks = list(_tasks(yaml.safe_load((scenario / "prepare.yml").read_text())))
+                includes = [t.get("ansible.builtin.include_tasks") for t in tasks]
+                self.assertIn(SHARED_TASK, includes)
+                # The boot wait is the first thing after the connection wait:
+                # any module that runs before it can lose its /tmp payload.
+                connected = next(i for i, t in enumerate(tasks) if "ansible.builtin.wait_for_connection" in t)
+                self.assertEqual(includes[connected + 1], BOOT_WAIT, scenario.name)
 
     def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
-        lines = (MOLECULE / "resources" / "Dockerfile.j2").read_text().splitlines()
+        lines = DOCKERFILE.read_text().splitlines()
         directives = "\n".join(line for line in lines if not line.startswith("#"))
         self.assertIn("Acquire::http::Proxy", directives)
         self.assertNotIn("http_proxy", directives)
+
+    def test_https_repositories_bypass_the_cache(self):
+        # apt's https method inherits the http proxy when its own is unset, and
+        # the cache does not tunnel TLS -- an https repository would then be
+        # skipped silently. Both writers must pin https to DIRECT.
+        for path in (
+            DOCKERFILE,
+            MOLECULE / "resources" / "tasks" / "apt_proxy.yml",
+        ):
+            with self.subTest(path=path.name):
+                self.assertIn('Acquire::https::Proxy "DIRECT";', path.read_text())
 
     def test_the_runner_env_hands_the_cache_to_jobs(self):
         env = (ROOT / "roles" / "github_runner" / "templates" / "runner.env.j2").read_text()
@@ -106,6 +124,36 @@ class CiBuildCaches(unittest.TestCase):
         )
         self.assertIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
         self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
+        self.assertIn("MOLECULE_BASE_IMAGE={{ github_runner_molecule_image }}", env)
+
+    def test_the_runner_role_builds_the_image_from_the_shared_dockerfile(self):
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
+        deploy = next(t for t in tasks if t["name"] == "Deploy the Molecule base image Dockerfile")
+        self.assertEqual(
+            deploy["ansible.builtin.copy"]["src"], "{{ role_path }}/../../molecule/resources/Dockerfile"
+        )
+        self.assertEqual(deploy["notify"], "Build the Molecule base image")
+        unit = (RUNNER / "templates" / "molecule-image.service.j2").read_text()
+        self.assertIn("--build-arg APT_PROXY_URL={{ github_runner_apt_proxy_url }}", unit)
+        self.assertIn("--tag {{ github_runner_molecule_image }}", unit)
+        self.assertIn("ARG APT_PROXY_URL", DOCKERFILE.read_text())
+
+    def test_the_first_build_blocks_before_runners_start(self):
+        # main.yml enables the pooled runners (which can be handed a job
+        # within seconds) right after this include_tasks. A fire-and-forget
+        # (no_block: true) first build races that: a job can land before a
+        # cold multi-minute build finishes, and Molecule's docker driver then
+        # tries to pull a tag that has never existed on the daemon.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
+        build = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        self.assertNotIn("no_block", build["ansible.builtin.systemd"])
+
+    def test_a_host_with_no_replicas_does_not_build_the_image(self):
+        # A host with github_runner_replicas: 0 runs no scenarios, so it has
+        # no consumer for the image and must not build one.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
+        include = next(t for t in tasks if t["name"] == "Build the Molecule base image every scenario runs on")
+        self.assertEqual(include.get("when"), "github_runner_replicas | int > 0")
 
 
 if __name__ == "__main__":
