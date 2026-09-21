@@ -86,15 +86,23 @@
         state: absent
       notify: Apply netplan
 
-    # Netplan merges same-named mapping keys from lexicographically later
-    # files by REPLACING the earlier file's value, never appending to it, so
-    # this file's nameservers.addresses/search fully replace the ones
-    # declared at first boot. World-readable netplan files draw a runtime
-    # warning, hence 0600.
+    # An earlier shape of this file sorted after the cloud-init file; remove
+    # it from any host it already reached.
+    - name: Remove the earlier-sorting resolver override
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.file:
+        path: /etc/netplan/70-estate-dns.yaml
+        state: absent
+      notify: Apply netplan
+
+    # Netplan concatenates nameserver lists across files in lexical order
+    # and resolved uses the first server, so this file sorts BEFORE the
+    # cloud-init file for its address to be tried first. World-readable
+    # netplan files draw a runtime warning, hence 0600.
     - name: Configure the estate resolver on docker VMs
       when: inventory_hostname in groups['docker_vms']
       ansible.builtin.copy:
-        dest: /etc/netplan/70-estate-dns.yaml
+        dest: /etc/netplan/10-estate-dns.yaml
         content: |
           network:
             version: 2

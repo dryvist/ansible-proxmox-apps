@@ -175,7 +175,12 @@ class CiBuildCaches(unittest.TestCase):
             t for t in tasks if t["name"] == "Configure the estate resolver on docker VMs"
         )
         self.assertIn("docker_vms", str(override_task["when"]))
-        self.assertEqual(override_task["ansible.builtin.copy"]["dest"], "/etc/netplan/70-estate-dns.yaml")
+        dest = override_task["ansible.builtin.copy"]["dest"]
+        dest_basename = dest.rsplit("/", 1)[-1]
+        # Netplan concatenates nameserver lists across files in lexical
+        # order; this file's address is only tried first if its name sorts
+        # before the cloud-init file's.
+        self.assertEqual(sorted([dest_basename, "50-cloud-init.yaml"])[0], dest_basename)
         self.assertEqual(override_task["ansible.builtin.copy"]["mode"], "0600")
         flush = next(
             t for t in tasks if t["name"] == "Apply any pending netplan/resolver changes before the probe"
