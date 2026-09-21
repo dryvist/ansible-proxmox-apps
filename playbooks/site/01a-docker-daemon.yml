@@ -27,6 +27,16 @@
       ansible.builtin.systemd:
         name: docker
         state: restarted
+
+    - name: Restart systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Flush resolved caches
+      ansible.builtin.command:
+        cmd: resolvectl flush-caches
+      changed_when: false
   tasks:
     # fuse-overlayfs is the unprivileged-LXC workaround for Docker on ZFS; a VM
     # keeps whatever image store it already runs on. Pinning a driver there
@@ -45,6 +55,41 @@
       ansible.builtin.apt:
         name: fuse-overlayfs
         state: present
+
+    # A VM's resolvers come from its own default gateway, which forwards
+    # every estate zone, and are declared once, in the VM module, at create
+    # time only -- an existing VM keeps whatever it booted with. LXC
+    # containers are out of scope: their resolvers are managed live by the
+    # container module, not by this play.
+    - name: Gather the default route
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.setup:
+        filter:
+          - ansible_default_ipv4
+
+    - name: Assert the default gateway fact is set
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.assert:
+        that:
+          - ansible_default_ipv4.gateway | default('') | length > 0
+        fail_msg: >-
+          No default gateway fact on this VM -- the resolver drop-in below
+          would render with no DNS server.
+
+    - name: Configure the estate resolver on docker VMs
+      when: inventory_hostname in groups['docker_vms']
+      ansible.builtin.copy:
+        dest: /etc/systemd/resolved.conf.d/10-estate.conf
+        content: |
+          [Resolve]
+          DNS={{ ansible_default_ipv4.gateway }}
+          Domains={{ tofu_data.domain }}
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Restart systemd-resolved
+        - Flush resolved caches
 
     # This play is the single owner of /etc/docker/daemon.json on docker LXCs
     # and on the docker VMs. roles/idrac_kvm_docker no longer writes the

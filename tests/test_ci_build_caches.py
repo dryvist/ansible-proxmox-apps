@@ -154,6 +154,46 @@ class CiBuildCaches(unittest.TestCase):
         # resolver.
         self.assertNotIn("dns", parsed)
 
+    def test_docker_vms_gather_the_facts_the_resolver_drop_in_needs(self):
+        # The resolver drop-in is templated from a fact (the VM's own
+        # default gateway); a play with gather_facts: false only has that
+        # fact when a task explicitly gathers it.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        self.assertFalse(play.get("gather_facts", True))
+        tasks = list(_tasks(play))
+        gather = next(t for t in tasks if t["name"] == "Gather the default route")
+        self.assertIn("docker_vms", str(gather["when"]))
+        self.assertIn(
+            "ansible_default_ipv4", gather["ansible.builtin.setup"]["filter"]
+        )
+        resolver_task = next(
+            t for t in tasks if t["name"] == "Configure the estate resolver on docker VMs"
+        )
+        self.assertIn("docker_vms", str(resolver_task["when"]))
+        self.assertEqual(
+            resolver_task["ansible.builtin.copy"]["dest"],
+            "/etc/systemd/resolved.conf.d/10-estate.conf",
+        )
+
+    def test_the_estate_resolver_drop_in_renders_the_gateway_and_domain(self):
+        # A real Templar render of the ACTUAL drop-in content, not a
+        # reimplementation of it.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(
+            t for t in _tasks(play) if t["name"] == "Configure the estate resolver on docker VMs"
+        )
+        content_expr = trust_as_template(task["ansible.builtin.copy"]["content"])
+        variables = _mark_templates(
+            {
+                "ansible_default_ipv4": {"gateway": "10.20.0.1"},
+                "tofu_data": {"domain": "example.com"},
+            }
+        )
+        templar = Templar(loader=DataLoader(), variables=variables)
+        rendered = templar.template(content_expr)
+        self.assertIn("DNS=10.20.0.1", rendered)
+        self.assertIn("Domains=example.com", rendered)
+
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
         self.assertGreater(len(scenarios), 0)
