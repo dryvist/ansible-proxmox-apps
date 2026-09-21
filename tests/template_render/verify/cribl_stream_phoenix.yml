@@ -81,18 +81,27 @@
     # the guard on that variable could never fire, so an unset value rendered
     # empty and produced a hostname with nothing before the dot -- green, and
     # wrong. The harness now supplies a reserved placeholder.)
+    - name: Find the cribl_stream role defaults files
+      ansible.builtin.find:
+        paths: ../../../roles/cribl_stream/defaults/main
+        patterns: "*.yml"
+      register: _cribl_stream_defaults_files
+
     - name: Read the cribl_stream role defaults as text
       ansible.builtin.set_fact:
-        _cribl_stream_defaults_text: >-
-          {{ lookup('file', '../../../roles/cribl_stream/defaults/main.yml')
-             | regex_replace('(?m)#.*$', '') }}
+        _cribl_stream_defaults_text: "{{ _cribl_stream_defaults_text | default('') }}\n{{ lookup('file', item.path) }}"
+      loop: "{{ _cribl_stream_defaults_files.files | sort(attribute='path') }}"
+
+    - name: Strip comments from the accumulated defaults text
+      ansible.builtin.set_fact:
+        _cribl_stream_defaults_text: "{{ _cribl_stream_defaults_text | regex_replace('(?m)#.*$', '') }}"
 
     - name: Assert the shipped OTLP endpoints carry no per-signal path
       ansible.builtin.assert:
         that:
           - "'/v1/traces' not in _cribl_stream_defaults_text"
         fail_msg: >-
-          An OTLP destination URL in roles/cribl_stream/defaults/main.yml
+          An OTLP destination URL in roles/cribl_stream/defaults/main/
           carries a per-signal path. The open_telemetry destination appends
           that path itself, so every span goes to /v1/traces/v1/traces and the
           backend answers 404 while the input, the pipeline and the converge

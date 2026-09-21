@@ -1,0 +1,59 @@
+---
+# NetFlow port from tofu constants
+cribl_stream_netflow_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['netflow_ports']['unifi'] }}
+
+# Cribl-to-Cribl (S2S) listener for remote Edge nodes, fronted by HAProxy.
+# Port from tofu constants (single source of truth).
+cribl_stream_s2s_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['cribl_s2s'] }}
+
+# OTLP/HTTP trace-ingest listener, fronted by the otel Traefik ingress.
+# Port from tofu constants (single source of truth).
+cribl_stream_otel_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['otel_traces_http'] }}
+
+# Langfuse OTLP destination for the LLM fabric traces. The output and its
+# input connection render unconditionally: a missing key aborts the converge
+# instead of silently dropping the destination from the rendered config.
+# `lookup('env', ...)` returns "" (a *defined* empty string) when the var is
+# unset, which `mandatory` would happily pass through, so `default(undef(),
+# true)` coerces the empty string to undefined first.
+# The OTLP *base*, with no signal path. The open_telemetry output appends the
+# per-signal path (`/v1/traces`) itself, so carrying it here renders
+# `/api/public/otel/v1/traces/v1/traces`, which the backend answers 404 — a
+# destination that fails every POST while the input and pipeline both stay
+# green. Keep this at the base and let the output type append.
+cribl_stream_langfuse_url: >-
+  https://langfuse.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | default(undef('PROXMOX_SUBDOMAIN is empty'), true)
+  | mandatory('PROXMOX_SUBDOMAIN required') }}/api/public/otel
+cribl_stream_langfuse_public_key: >-
+  {{ lookup('env', 'LANGFUSE_PUBLIC_KEY')
+     | default(undef(), true)
+     | mandatory('LANGFUSE_PUBLIC_KEY is required for the langfuse_otlp output') }}
+cribl_stream_langfuse_secret_key: >-
+  {{ lookup('env', 'LANGFUSE_SECRET_KEY')
+     | default(undef(), true)
+     | mandatory('LANGFUSE_SECRET_KEY is required for the langfuse_otlp output') }}
+
+# Arize Phoenix OTLP destination — the second leg of the same in_otel input,
+# rendered unconditionally for the same reason as Langfuse above. Phoenix
+# authenticates OTLP/HTTP with a bearer API key (minted in its UI, seeded to
+# ai/phoenix as PHOENIX_INGEST_API_KEY); the bao-first read with the env
+# fallback lives in inventory/group_vars/cribl_stream_group.yml.
+#
+# BASE URL ONLY, for the same reason spelled out for Langfuse above: the
+# open_telemetry destination appends the per-signal path itself. Phoenix serves
+# OTLP at /v1/traces off the root, so writing that path here produces
+# /v1/traces/v1/traces — a 404 on every POST while the input, the pipeline and
+# the converge all stay green. Test cribl_stream_phoenix.yml asserts the
+# rendered endpoint carries no signal path.
+cribl_stream_phoenix_url: >-
+  https://phoenix.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+  | default(undef('PROXMOX_SUBDOMAIN is empty'), true)
+  | mandatory('PROXMOX_SUBDOMAIN required') }}
+cribl_stream_phoenix_api_key: >-
+  {{ lookup('env', 'PHOENIX_INGEST_API_KEY')
+     | default(undef(), true)
+     | mandatory('PHOENIX_INGEST_API_KEY is required for the phoenix_otlp output') }}
