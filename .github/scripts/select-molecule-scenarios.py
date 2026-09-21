@@ -41,10 +41,17 @@ ROLE_DIR = REPO / "roles"
 # is deliberately not here: no scenario reads the repo inventory (each declares
 # its own host_vars inline), and inventory changes are already covered by the
 # Inventory Contract and Template Rendering Tests jobs.
+#
+# molecule/resources/ is the Dockerfile and prep tasks every scenario imports;
+# .config/molecule/ is the Molecule base config (dependency, driver, verifier)
+# merged into every scenario's own molecule.yml before it runs — see
+# molecule.util.merge_dicts. A change to either affects every scenario, the
+# same as a shared playbook does.
 SHARED = re.compile(
     r"^(playbooks/|requirements\.yml$|requirements-ci\.txt$"
     r"|\.github/workflows/(?:ci-gate|_molecule)\.yml$"
-    r"|\.github/scripts/select-molecule-scenarios\.py$)"
+    r"|\.github/scripts/select-molecule-scenarios\.py$"
+    r"|molecule/resources/|\.config/molecule/)"
 )
 ROLE_PATH = re.compile(r"^roles/([^/]+)/")
 SCENARIO_PATH = re.compile(r"^molecule/([^/]+)/")
@@ -221,6 +228,15 @@ def self_check() -> int:
 
     if not SHARED.match(".github/workflows/ci-gate.yml"):
         failures.append("the Molecule gate workflow no longer widens the matrix")
+
+    # molecule/resources/ (the shared Dockerfile + prep tasks every scenario
+    # imports) and .config/molecule/ (the Molecule base config merged into
+    # every scenario before its own molecule.yml) both affect every
+    # scenario, so a change there must widen the matrix too.
+    if not SHARED.match("molecule/resources/tasks/apt_proxy.yml"):
+        failures.append("a change under molecule/resources/ no longer widens the matrix")
+    if not SHARED.match(".config/molecule/config.yml"):
+        failures.append("a change to the Molecule base config no longer widens the matrix")
 
     # inventory/ is deliberately not shared: no scenario reads the repo
     # inventory, so an inventory-only change must not select the full matrix.
