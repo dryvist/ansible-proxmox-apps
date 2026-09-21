@@ -99,7 +99,8 @@ Or include the role directly against the metrics host:
 
 ## Handlers
 
-- `Reload prometheus config` — POST `/-/reload` (config-only change to
-  `prometheus.yml`; no restart, no scrape gap).
-- `Restart prometheus stack` — recreates the compose stack (TSDB persists in the
-  named volume).
+- `Restart prometheus stack` — recreates the compose stack (TSDB persists in
+  the named volume). Every rendered file is bind-mounted as a single file, so
+  only a recreate — not the `/-/reload` lifecycle API — actually picks up a
+  change (a single-file bind mount does not follow the atomic rename
+  `ansible.builtin.template` writes).
