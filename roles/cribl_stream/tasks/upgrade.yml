@@ -1,0 +1,81 @@
+---
+# Upgrade an already-installed Cribl Stream node to the pinned version.
+# Skipped entirely on a fresh install (the block below in main.yml already
+# lands the pinned version). Gated on the running install's own reported
+# version, read via its CLI -- no management-API credential needed, so a
+# credential problem can never silently skip the upgrade.
+
+- name: Read the installed Cribl Stream version
+  ansible.builtin.command:
+    cmd: "{{ cribl_stream_install_dir }}/bin/cribl version"
+  register: cribl_stream_upgrade_installed_version
+  changed_when: false
+
+# The CLI prints "Version: <version>[-<hash>]" on its own line; a dev/alpha
+# build reports "4.8.0-alpha.<epoch>-<hash>", a GA release the bare semver.
+# Matched as a prefix so either shape is recognised once the declared
+# version is actually running.
+- name: Upgrade Cribl Stream to the pinned version
+  vars:
+    _cribl_stream_running_version: >-
+      {{ cribl_stream_upgrade_installed_version.stdout
+         | regex_search('Version:\s*(\S+)', '\1')
+         | default([], true) | first | default('', true) }}
+  when: not (_cribl_stream_running_version is match('^' ~ cribl_stream_version ~ '(\W|$)'))
+  block:
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ cribl_stream_install_dir }}/../cribl-stream-backups"
+        state: directory
+        mode: "0700"
+
+    - name: Stop Cribl Stream before upgrading
+      ansible.builtin.systemd:
+        name: "{{ cribl_stream_service_name }}"
+        state: stopped
+
+    - name: Back up local/ before upgrading (rollback point)
+      community.general.archive:
+        path: "{{ cribl_stream_install_dir }}/local"
+        dest: >-
+          {{ cribl_stream_install_dir }}/../cribl-stream-backups/local-{{
+          _cribl_stream_running_version | default('unknown', true) }}-{{
+          ansible_facts.date_time.epoch }}.tgz
+        format: gz
+        mode: "0600"
+
+    - name: Download the pinned Cribl Stream tarball (checksum-verified)
+      ansible.builtin.get_url:
+        url: "{{ cribl_stream_tarball_url }}"
+        dest: /tmp/cribl-stream-upgrade.tgz
+        checksum: "sha256:{{ cribl_stream_tarball_sha256 }}"
+        mode: "0644"
+
+    - name: Extract the new version over the existing install (local/ preserved)
+      ansible.builtin.unarchive:
+        src: /tmp/cribl-stream-upgrade.tgz
+        dest: "{{ cribl_stream_install_dir | dirname }}"
+        remote_src: true
+        owner: "{{ cribl_stream_user }}"
+        group: "{{ cribl_stream_group }}"
+
+    - name: Remove the downloaded upgrade tarball
+      ansible.builtin.file:
+        path: /tmp/cribl-stream-upgrade.tgz
+        state: absent
+
+    - name: Start Cribl Stream after upgrading
+      ansible.builtin.systemd:
+        name: "{{ cribl_stream_service_name }}"
+        state: started
+
+    - name: Wait for Cribl Stream to come back after the upgrade
+      ansible.builtin.uri:
+        url: "{{ cribl_stream_api_url }}/api/v1/health"
+        method: GET
+        status_code: [200]
+        timeout: "{{ cribl_stream_api_timeout }}"
+      register: cribl_stream_upgrade_health
+      until: cribl_stream_upgrade_health.status | default(0) == 200
+      retries: 24
+      delay: 5
