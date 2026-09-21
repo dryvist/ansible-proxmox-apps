@@ -73,6 +73,42 @@
   changed_when: true
   when: not cribl_stream_binary.stat.exists
 
+# cribl.yml is Cribl's own system-settings file (worker sizing, API host,
+# whatever the UI or Cribl itself writes there) — this role never owned it
+# before this task, and Cribl may materialize its own defaults into it at
+# startup the same way it rewrites outputs.yml (see the "Read live Cribl
+# Stream outputs configuration" note below). Overwriting it wholesale would
+# drop anything already there and re-diff every converge the moment Cribl
+# fills in a default this template doesn't know about. Merge instead: keep
+# every key already on disk and only set workers.count/workers.memory.
+#
+# docs.cribl.io/stream/criblyml documents these two keys verbatim:
+#   count:   # number of worker processes to spawn, if less than 1 the value is added to CPU count
+#   memory:  # [number; min: 1024; default: 2048]
+- name: Read live Cribl Stream system settings
+  ansible.builtin.slurp:
+    src: "{{ cribl_stream_install_dir }}/local/cribl/cribl.yml"
+  register: cribl_stream_cribl_yml_live
+  failed_when: false
+
+- name: Merge worker-process sizing into the live cribl.yml
+  ansible.builtin.set_fact:
+    cribl_stream_cribl_yml_merged: >-
+      {{ (cribl_stream_cribl_yml_live.content | default('') | b64decode | from_yaml
+          | default({}, true))
+         | combine({'workers': {'count': cribl_stream_worker_count | int,
+                                 'memory': cribl_stream_worker_heap_mb | int}},
+                    recursive=true) }}
+
+- name: Deploy the merged Cribl Stream system settings
+  ansible.builtin.copy:
+    content: "{{ cribl_stream_cribl_yml_merged | to_nice_yaml }}"
+    dest: "{{ cribl_stream_install_dir }}/local/cribl/cribl.yml"
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0644"
+  notify: Restart cribl stream
+
 - name: Ensure pipeline config directories exist
   ansible.builtin.file:
     path: "{{ cribl_stream_install_dir }}/local/cribl/pipelines/{{ item }}"
