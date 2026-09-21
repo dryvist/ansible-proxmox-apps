@@ -137,10 +137,9 @@ class CiBuildCaches(unittest.TestCase):
         self.assertNotIn("github_runner_molecule_image", defaults)
 
     def test_the_role_retires_the_old_molecule_image_build_units(self):
-        # Hosts converged before the move to the upstream image still carry
-        # github-runner-molecule-image.{service,timer} on disk. The role must
-        # remove them, not just stop deploying new ones, or an enabled timer
-        # keeps firing a build nothing consumes any more.
+        # The role must remove github-runner-molecule-image.{service,timer}
+        # where present, not just stop deploying them, or an enabled timer
+        # keeps firing a build nothing consumes.
         tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
         removed = next(
             t for t in tasks if t["name"] == "Remove the old Molecule image build unit files and Dockerfile context"
