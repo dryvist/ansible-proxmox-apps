@@ -23,6 +23,8 @@ import unittest
 from pathlib import Path
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
@@ -85,6 +87,28 @@ class CiBuildCaches(unittest.TestCase):
         dns_servers = task["vars"]["_dns_servers"]
         self.assertIn("groups['technitium_dns_group']", dns_servers)
         self.assertNotRegex(dns_servers, r"\b\d{1,3}(\.\d{1,3}){3}\b")
+
+    def test_dns_servers_renders_to_the_live_addresses_only(self):
+        # A real Templar render of the ACTUAL expression, not a
+        # reimplementation of it: a filter typo (e.g. select('length'), a
+        # filter, where select() needs a Jinja TEST) renders clean in a
+        # string-matching test but raises at converge time. groups/hostvars
+        # fixture two technitium hosts, one with no address yet (a guest
+        # mid-bring-up, or one this group's own DHCP lease hasn't been
+        # published for) -- the empty one must be dropped, never rendered as
+        # an empty-string DNS server.
+        play = _play("Configure Docker registry mirror on docker hosts")
+        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
+        expr = trust_as_template(task["vars"]["_dns_servers"])
+        variables = {
+            "groups": {"technitium_dns_group": ["technitium-2", "technitium-1"]},
+            "hostvars": {
+                "technitium-1": {"container_ip": "10.20.0.5"},
+                "technitium-2": {"container_ip": ""},
+            },
+        }
+        templar = Templar(loader=DataLoader(), variables=variables)
+        self.assertEqual(templar.template(expr), ["10.20.0.5"])
 
     def test_every_scenario_runs_on_the_prebuilt_image(self):
         scenarios = [d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()]
