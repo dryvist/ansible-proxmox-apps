@@ -2,30 +2,30 @@
 # Cribl Stream native install role defaults
 
 # Installation
-# Pinned to Cribl's current GA release, resolved from the CDN's own
-# `dl/latest-x64` pointer file (not the "latest" filename alias, which is
-# unversioned and has been observed frozen on a stale build).
-cribl_stream_version: "4.20.0"
-# Cribl's real filenames carry a build hash after the version
-# (cribl-{version}-{hash}-linux-x64.tgz); a bare cribl-{version}-linux-x64.tgz
-# 404s. Read the hash for a version bump from `dl/latest-x64`'s content or
-# the version's own release notes -- it is not guessable.
-cribl_stream_build_hash: "cee79842"
-# SHA256 of the pinned tarball, from the CDN's own
-# cribl-{version}-{hash}-linux-x64.tgz.sha256 sidecar. Verified by get_url's
-# checksum param on every download, install and upgrade alike.
-cribl_stream_tarball_sha256: "8602d5bcb239d402a8b7ad28140f739059278edb292dfe8d6675e8b263fc4e9f"
+# Reads the single org-wide pin (inventory/group_vars/all.yml cribl_version)
+# rather than declaring its own -- see the comment there. No literal version
+# lives in this role; `default('latest', true)` only covers a run where
+# cribl_version itself is somehow unset (e.g. a stray unit test), never the
+# normal path.
+cribl_stream_version: "{{ cribl_version | default('latest', true) }}"
 cribl_stream_tarball_base: "https://cdn.cribl.io/dl"
 # Upstream release URL. Cribl's CDN uses two filename patterns:
-#   - versioned release: https://cdn.cribl.io/dl/4.20.0/cribl-4.20.0-cee79842-linux-x64.tgz
+#   - versioned release: https://cdn.cribl.io/dl/4.20.0/cribl-4.20.0-<hash>-linux-x64.tgz
 #   - rolling "latest":  https://cdn.cribl.io/dl/latest/cribl-linux-x64.tgz    (no version in filename)
-# Group vars for the `cribl_stream_group` override this with an object-storage mirror URL
-# because the cribl-stream containers have the `outbound-internal` firewall
-# and cannot reach cdn.cribl.io directly.
+# The versioned filename also carries a per-build hash this role does not
+# pin literally (no committed build hash -- see roles/cribl_stream/tasks/
+# mirror_seed.yml, which resolves it at run time from the CDN's own
+# `dl/latest-x64` pointer). This default CDN URL is therefore dead in
+# practice: cribl_stream_group.yml always overrides it with the
+# object-storage mirror URL, because these hosts sit behind the
+# outbound-internal firewall and cannot reach cdn.cribl.io directly. Kept
+# only as a template-render fallback (tests, `latest`); a hash-bearing
+# pinned-version request against the real CDN through this branch would
+# 404, same as it always has for an unpinned filename.
 cribl_stream_tarball_url: >-
   {{ cribl_stream_tarball_base }}/{{ cribl_stream_version }}/{{
   'cribl-linux-x64.tgz' if cribl_stream_version == 'latest'
-  else 'cribl-' + cribl_stream_version + '-' + cribl_stream_build_hash + '-linux-x64.tgz' }}
+  else 'cribl-' + cribl_stream_version + '-linux-x64.tgz' }}
 cribl_stream_install_dir: /opt/cribl
 
 # Service user

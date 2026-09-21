@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Cribl Stream's tarball URL must always carry the build hash Cribl requires.
+"""Cribl version/hash/checksum must never be hardcoded anywhere in the repo.
 
-Cribl's real download filenames are cribl-{version}-{hash}-linux-x64.tgz; a
-bare cribl-{version}-linux-x64.tgz 404s. Both the CDN default template
-(roles/cribl_stream/defaults/main/00-install.yml) and the object-storage
-mirror override
-(inventory/group_vars/cribl_stream_group.yml) build this filename from
-separate `cribl_stream_version`/`cribl_stream_build_hash` variables, so a
-version bump that only updates one of the two silently breaks downloads on
-whichever host resolves the other. This test renders both templates and
-checks the hash actually appears in the produced filename, not just that the
-template renders without error.
+One org-wide pin, inventory/group_vars/all.yml `cribl_version`, is the only
+literal Cribl version in this repository (Renovate-managed). Every consumer
+-- roles/cribl_stream/defaults/main/00-install.yml (`cribl_stream_version`),
+inventory/group_vars/cribl_edge.yml (the mirror tarball key), and
+roles/cribl_docker_stack/defaults/main.yml (the image tag) -- reads it rather
+than declaring its own pin, so a version bump is one edit instead of three
+that can silently drift out of step (exactly how the pre-split
+cribl_stream_build_hash/cribl_stream_tarball_sha256 pair could drift from
+cribl_stream_version if only one was bumped).
 
-Also asserts cribl_stream_tarball_sha256 looks like a real sha256 (64 hex
-chars) -- get_url's checksum param fails open into "always redownload" on a
-malformed value rather than failing the converge, so a typo here would not
-otherwise be caught.
+No build hash or sha256 digest is committed anywhere either: Cribl's CDN
+filenames carry a per-build hash that isn't derivable from the version
+string, so it is resolved at run time (roles/cribl_stream/tasks/
+mirror_seed.yml, from the CDN's own `dl/latest-x64` pointer) rather than
+pinned as a default that would go stale the moment the CDN rotates a build
+without a version bump.
 """
 
 import re
@@ -23,71 +24,97 @@ import unittest
 from pathlib import Path
 
 import yaml
-from jinja2 import Environment
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main" / "00-install.yml"
-GROUP_VARS = ROOT / "inventory" / "group_vars" / "cribl_stream_group.yml"
+ALL_VARS = ROOT / "inventory" / "group_vars" / "all.yml"
+CRIBL_EDGE_VARS = ROOT / "inventory" / "group_vars" / "cribl_edge.yml"
+CRIBL_STREAM_DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main" / "00-install.yml"
+CRIBL_DOCKER_STACK_DEFAULTS = ROOT / "roles" / "cribl_docker_stack" / "defaults" / "main.yml"
+RENOVATE_JSON = ROOT / "renovate.json"
 
-TEST_VERSION = "4.20.0"
-TEST_HASH = "cee79842"
+# A literal version, build hash, or sha256 digest assigned to a variable
+# (not appearing only in a comment or documentation string). Matches
+# `key: "4.20.0"`, `key: "cee79842"`, `key: "8602d5...f9"` -- any quoted
+# token that looks like a bare semver, an 8-hex-char build hash, or a
+# 64-hex-char digest, sitting on a non-comment line.
+_LITERAL_VERSION_HASH_RE = re.compile(
+    r'^\s*[A-Za-z0-9_]+:\s*"(?:\d+\.\d+\.\d+|[0-9a-f]{8}|[0-9a-f]{64})"\s*$'
+)
 
 
-def _load_var(path: Path, name: str) -> str:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert name in data, f"{name} not declared in {path}"
-    return data[name]
+def _non_comment_lines(path: Path):
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("#"):
+            continue
+        yield line
 
 
-class CriblStreamTarballUrl(unittest.TestCase):
-    def setUp(self):
-        self.env = Environment()
-        self.context = {
-            "cribl_stream_version": TEST_VERSION,
-            "cribl_stream_build_hash": TEST_HASH,
-            "cribl_stream_tarball_base": "https://cdn.cribl.io/dl",
-            "tofu_data": {
-                "containers": {"s3": {"ip": "10.0.0.1"}},
-                "constants": {"service_ports": {"object_storage_s3": 9000}},
-            },
-        }
+class CriblNoLiteralVersionOrHash(unittest.TestCase):
+    def test_no_literal_version_hash_or_sha_under_cribl_stream_or_docker_stack(self):
+        for role_dir in ("cribl_stream", "cribl_docker_stack"):
+            for path in sorted((ROOT / "roles" / role_dir).rglob("*.yml")):
+                for line in _non_comment_lines(path):
+                    self.assertNotRegex(
+                        line,
+                        _LITERAL_VERSION_HASH_RE,
+                        f"{path.relative_to(ROOT)} hardcodes a version/hash/sha256 "
+                        f"literal ({line.strip()!r}) -- read cribl_version instead "
+                        "of declaring a role-local pin.",
+                    )
 
-    def _render(self, path: Path) -> str:
-        template = _load_var(path, "cribl_stream_tarball_url")
-        return self.env.from_string(template).render(**self.context)
 
-    def test_cdn_default_url_carries_the_build_hash(self):
-        url = self._render(DEFAULTS)
-        expected_filename = f"cribl-{TEST_VERSION}-{TEST_HASH}-linux-x64.tgz"
+class CriblConsumersReadTheSharedVersion(unittest.TestCase):
+    def _assert_references_cribl_version(self, path: Path, var_name: str):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        self.assertIn(var_name, data, f"{var_name} not declared in {path}")
+        value = str(data[var_name])
         self.assertIn(
-            expected_filename,
-            url,
-            f"CDN tarball URL {url!r} does not carry the build hash -- "
-            "Cribl's real filenames always include one and a bare "
-            "version-only filename 404s.",
+            "cribl_version",
+            value,
+            f"{path.relative_to(ROOT)}'s {var_name} ({value!r}) does not "
+            "reference the shared cribl_version -- it can drift from the "
+            "single org-wide pin.",
         )
 
-    def test_object_storage_mirror_url_carries_the_build_hash(self):
-        url = self._render(GROUP_VARS)
-        expected_filename = f"cribl-{TEST_VERSION}-{TEST_HASH}-linux-x64.tgz"
-        self.assertIn(
-            expected_filename,
-            url,
-            f"Object-storage mirror URL {url!r} does not carry the build "
-            "hash -- a bare cribl-linux-x64.tgz key can silently stay "
-            "pinned to whatever build was last uploaded there.",
-        )
+    def test_cribl_stream_defaults_read_cribl_version(self):
+        self._assert_references_cribl_version(CRIBL_STREAM_DEFAULTS, "cribl_stream_version")
 
-    def test_declared_sha256_is_a_real_sha256_shape(self):
-        checksum = _load_var(DEFAULTS, "cribl_stream_tarball_sha256")
-        self.assertRegex(
-            checksum,
-            r"^[0-9a-f]{64}$",
-            "cribl_stream_tarball_sha256 must be a 64-character lowercase "
-            "hex sha256 digest, exactly as the CDN's .sha256 sidecar prints "
-            "it, or get_url's checksum verification is not actually "
-            "checking the declared value.",
+    def test_cribl_edge_tarball_url_reads_cribl_version(self):
+        self._assert_references_cribl_version(CRIBL_EDGE_VARS, "cribl_edge_tarball_url")
+
+    def test_cribl_docker_stack_image_reads_cribl_version(self):
+        self._assert_references_cribl_version(CRIBL_DOCKER_STACK_DEFAULTS, "cribl_docker_stack_image")
+
+
+class CriblVersionIsRenovateManaged(unittest.TestCase):
+    def test_renovate_custom_manager_matches_the_all_yml_pin(self):
+        renovate_config = yaml.safe_load(RENOVATE_JSON.read_text(encoding="utf-8"))
+        managers = [
+            m
+            for m in renovate_config.get("customManagers", [])
+            if m.get("depNameTemplate") == "cribl/cribl"
+        ]
+        self.assertTrue(
+            managers,
+            "renovate.json has no customManager tracking cribl/cribl -- "
+            "cribl_version would never be flagged for a bump.",
         )
+        manager = managers[0]
+        all_yml_text = ALL_VARS.read_text(encoding="utf-8")
+        # Renovate's regex manager uses named groups as `(?<name>...)`
+        # (.NET/JS style); Python's re module requires `(?P<name>...)`.
+        matched = any(
+            re.search(pattern.replace("(?<", "(?P<"), all_yml_text)
+            for pattern in manager["matchStrings"]
+        )
+        self.assertTrue(
+            matched,
+            f"None of the cribl/cribl customManager's matchStrings "
+            f"{manager['matchStrings']!r} match the actual cribl_version "
+            f"line in {ALL_VARS.relative_to(ROOT)} -- Renovate would silently "
+            "stop tracking the pin.",
+        )
+        self.assertEqual(manager.get("datasourceTemplate"), "docker")
 
 
 if __name__ == "__main__":
