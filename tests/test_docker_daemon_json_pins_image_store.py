@@ -12,7 +12,7 @@ give the inner daemon a volume for its layer root, so the driver it ends up on
 is a real filesystem either way. Jinja expressions are stubbed before parsing
 -- the assertion is about the JSON shape, not about any rendered value.
 
-One writer (playbooks/site/01-baseline-infra.yml) wraps its ENTIRE content in
+One writer (playbooks/site/01a-docker-daemon.yml) wraps its ENTIRE content in
 one Jinja expression (`content: "{{ (_daemon_json | combine(...)) |
 to_nice_json }}\n"`) rather than embedding `{{ vars }}` inside literal JSON
 text -- the two writers have genuinely different shapes. The stub-and-parse
@@ -115,7 +115,7 @@ class DaemonJsonPinsImageStore(unittest.TestCase):
         container's short ID, which nobody can search on without first
         looking the ID up. log-opts.tag is what makes a container's own
         output findable by name in the journal (and, downstream, in
-        Splunk) -- see playbooks/site/01-baseline-infra.yml.
+        Splunk) -- see playbooks/site/01a-docker-daemon.yml.
         """
         writers = list(_daemon_json_writers())
         self.assertTrue(writers, "no /etc/docker/daemon.json writer was found")
@@ -148,7 +148,7 @@ class DaemonJsonDns(unittest.TestCase):
     literal address.
     """
 
-    PATH = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
+    PATH = ROOT / "playbooks" / "site" / "01a-docker-daemon.yml"
 
     def _config(self):
         path, config = next(

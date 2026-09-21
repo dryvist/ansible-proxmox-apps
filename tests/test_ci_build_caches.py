@@ -26,6 +26,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "playbooks" / "site" / "01-baseline-infra.yml"
+# The Docker daemon play (registry mirror, storage driver, DNS) lives in its
+# own file, split out of SITE once the DNS block grew SITE past the site/
+# token-limit gate.
+DOCKER_DAEMON_SITE = ROOT / "playbooks" / "site" / "01a-docker-daemon.yml"
 MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
 BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
@@ -35,10 +39,11 @@ BASE_IMAGE = "${MOLECULE_BASE_IMAGE:-geerlingguy/docker-debian12-ansible:latest}
 
 
 def _play(name):
-    for play in yaml.safe_load(SITE.read_text()):
-        if play.get("name") == name:
-            return play
-    raise AssertionError(f"play {name!r} not found in {SITE}")
+    for path in (SITE, DOCKER_DAEMON_SITE):
+        for play in yaml.safe_load(path.read_text()):
+            if play.get("name") == name:
+                return play
+    raise AssertionError(f"play {name!r} not found in {SITE} or {DOCKER_DAEMON_SITE}")
 
 
 def _tasks(node):
