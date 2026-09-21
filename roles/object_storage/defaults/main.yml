@@ -58,11 +58,9 @@ object_storage_aws_env:
 # lifecycle-bounded.
 #
 # - splunk-addons: Splunk apps + the Cribl infra mirror (anonymous read).
-#   The Cribl object is versioned and seeded by
-#   roles/cribl_stream/tasks/mirror_seed.yml (not object_storage_infra_mirrors
-#   below) because a plain URL mirror can't also re-checksum a
-#   per-build-hash filename or re-seed on a version bump the way that task
-#   does.
+#   The Cribl entry in object_storage_infra_mirrors below is versioned and
+#   re-seeds itself on a version bump (pointer_url + sidecar), the same
+#   fix the Technitium comment above describes wanting but never getting.
 # - artifacts: public-read mirror of non-secret infra binaries (the Technitium
 #   DNS app distribution, etc.) that egress-restricted LXCs fetch anonymously.
 #   Objects are operator-staged (no public upstream URL — captured from the
@@ -131,15 +129,31 @@ object_storage_noncurrent_expiration_days: 3650
 # Infrastructure artifact mirrors. Roles on egress-restricted LXCs cannot reach
 # public CDNs, so the controller (unrestricted egress) stages each artifact and
 # uploads it into the anonymous-read bucket for local pulls. Existing objects
-# are left alone so manual retention decisions are not clobbered on re-runs.
+# are left alone so manual retention decisions are not clobbered on re-runs
+# (the head-object check in tasks/main.yml short-circuits before any of this
+# runs).
 #
-# The Cribl tarball used to be mirrored here at an unversioned
-# infra/cribl-linux-x64.tgz key ("rolling latest"), which meant a version
-# bump could only be re-seeded by hand -- the same gap the Technitium
-# comment above describes. It now has its own versioned, re-seeding-on-bump
-# task (roles/cribl_stream/tasks/mirror_seed.yml), so it is not declared
-# here. Empty for now; the next mirror-hosted artifact goes here.
-object_storage_infra_mirrors: []
+# Each entry takes a plain `url` (used as-is, e.g. a fixed release asset) OR
+# `pointer_url` (a URL whose fetched, trimmed body IS the real download URL --
+# for a source with no stable per-version URL, like Cribl's CDN). A
+# `pointer_url` entry also declares `version`: the pinned version string that
+# MUST appear in the resolved pointer content, so a pin that lags the
+# resolver's current release fails loudly instead of silently mirroring the
+# wrong build (that resolver only exposes a build identifier for its CURRENT
+# release -- there is no way to ask it for an older one).
+#
+# `sidecar: sha256` additionally stages `<resolved url>.sha256` and uploads it
+# at `<key>.sha256`, and checksums the main download against it. Omit both
+# `pointer_url` and `sidecar` for a plain fixed-URL, unchecksummed mirror
+# (unchanged from before this was added).
+object_storage_infra_mirrors:
+  - name: cribl
+    description: Cribl Edge/Stream tarball, versioned to the org-wide cribl_version pin
+    bucket: splunk-addons
+    key: "infra/cribl-{{ cribl_version }}-linux-x64.tgz"
+    pointer_url: https://cdn.cribl.io/dl/latest-x64
+    version: "{{ cribl_version }}"
+    sidecar: sha256
 
 # --- Offsite copies --------------------------------------------------------
 # Without these, every object in this store exists in exactly one place: this

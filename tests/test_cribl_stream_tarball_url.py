@@ -4,19 +4,21 @@
 One org-wide pin, inventory/group_vars/all.yml `cribl_version`, is the only
 literal Cribl version in this repository (Renovate-managed). Every consumer
 -- roles/cribl_stream/defaults/main/00-install.yml (`cribl_stream_version`),
-inventory/group_vars/cribl_edge.yml (the mirror tarball key), and
-roles/cribl_docker_stack/defaults/main.yml (the image tag) -- reads it rather
-than declaring its own pin, so a version bump is one edit instead of three
-that can silently drift out of step (exactly how the pre-split
+inventory/group_vars/cribl_edge.yml (the mirror tarball key),
+roles/cribl_docker_stack/defaults/main.yml (the image tag), and the `cribl`
+entry in roles/object_storage/defaults/main.yml's
+`object_storage_infra_mirrors` (the mirrored object's key) -- reads it
+rather than declaring its own pin, so a version bump is one edit instead of
+several that can silently drift out of step (exactly how the pre-split
 cribl_stream_build_hash/cribl_stream_tarball_sha256 pair could drift from
 cribl_stream_version if only one was bumped).
 
 No build hash or sha256 digest is committed anywhere either: Cribl's CDN
 filenames carry a per-build hash that isn't derivable from the version
-string, so it is resolved at run time (roles/cribl_stream/tasks/
-mirror_seed.yml, from the CDN's own `dl/latest-x64` pointer) rather than
-pinned as a default that would go stale the moment the CDN rotates a build
-without a version bump.
+string, so it is resolved at run time (the `object_storage_infra_mirrors`
+entry's `pointer_url`, fetched by roles/object_storage/tasks/main.yml, from
+the CDN's own `dl/latest-x64` pointer) rather than pinned as a default that
+would go stale the moment the CDN rotates a build without a version bump.
 """
 
 import re
@@ -30,6 +32,7 @@ ALL_VARS = ROOT / "inventory" / "group_vars" / "all.yml"
 CRIBL_EDGE_VARS = ROOT / "inventory" / "group_vars" / "cribl_edge.yml"
 CRIBL_STREAM_DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main" / "00-install.yml"
 CRIBL_DOCKER_STACK_DEFAULTS = ROOT / "roles" / "cribl_docker_stack" / "defaults" / "main.yml"
+OBJECT_STORAGE_DEFAULTS = ROOT / "roles" / "object_storage" / "defaults" / "main.yml"
 RENOVATE_JSON = ROOT / "renovate.json"
 
 # A literal version, build hash, or sha256 digest assigned to a variable
@@ -84,6 +87,23 @@ class CriblConsumersReadTheSharedVersion(unittest.TestCase):
 
     def test_cribl_docker_stack_image_reads_cribl_version(self):
         self._assert_references_cribl_version(CRIBL_DOCKER_STACK_DEFAULTS, "cribl_docker_stack_image")
+
+    def test_object_storage_cribl_mirror_key_reads_cribl_version(self):
+        data = yaml.safe_load(OBJECT_STORAGE_DEFAULTS.read_text(encoding="utf-8"))
+        mirrors = data.get("object_storage_infra_mirrors") or []
+        cribl_entries = [m for m in mirrors if m.get("name") == "cribl"]
+        self.assertTrue(
+            cribl_entries,
+            f"No 'cribl' entry in object_storage_infra_mirrors ({OBJECT_STORAGE_DEFAULTS})",
+        )
+        key = str(cribl_entries[0].get("key", ""))
+        self.assertIn(
+            "cribl_version",
+            key,
+            f"object_storage_infra_mirrors' cribl entry key ({key!r}) does not "
+            "reference the shared cribl_version -- it can drift from the "
+            "single org-wide pin.",
+        )
 
 
 class CriblVersionIsRenovateManaged(unittest.TestCase):
