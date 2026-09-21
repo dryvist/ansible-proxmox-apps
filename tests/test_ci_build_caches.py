@@ -123,7 +123,7 @@ class CiBuildCaches(unittest.TestCase):
         self.assertEqual(task.get("delay"), 5)
         self.assertIn("is succeeded", str(task.get("until")))
 
-    def test_no_scenario_declares_networks(self):
+    def test_no_scenario_declares_networks_today(self):
         # The shared destroy playbook removes containers only; add network
         # cleanup before declaring one.
         for scenario in (d for d in MOLECULE.iterdir() if (d / "molecule.yml").exists()):
