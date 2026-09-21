@@ -123,6 +123,19 @@ class CiBuildCaches(unittest.TestCase):
         self.assertEqual(task.get("delay"), 5)
         self.assertIn("is succeeded", str(task.get("until")))
 
+    def test_the_shared_destroy_playbook_can_load_its_own_filter(self):
+        # A real plugin-discovery check, not a string match: Ansible only
+        # auto-discovers a filter_plugins/ directory that sits next to the
+        # PLAYBOOK actually being run. molecule-plugins ships
+        # molecule_get_docker_networks next to ITS OWN bundled destroy.yml,
+        # so copying just the playbook (without a sibling filter_plugins/)
+        # renders clean in every string-matching test here and then fails
+        # at runtime with "No filter named 'molecule_get_docker_networks'".
+        from ansible.plugins.loader import filter_loader
+
+        filter_loader.add_directory(str(DESTROY_PLAYBOOK.parent / "filter_plugins"))
+        self.assertIsNotNone(filter_loader.get("molecule_get_docker_networks"))
+
     def test_the_shared_dockerfile_writes_apt_config_not_http_proxy(self):
         lines = DOCKERFILE.read_text().splitlines()
         directives = "\n".join(line for line in lines if not line.startswith("#"))
