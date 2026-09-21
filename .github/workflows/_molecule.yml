@@ -7,6 +7,16 @@ on:
       DOPPLER_TOKEN:
         description: Doppler service token
         required: true
+      DOCKERHUB_USERNAME:
+        description: >-
+          Docker Hub username, for authenticated image pulls on a hosted
+          runner. Optional — the test job runs unauthenticated when unset.
+        required: false
+      DOCKERHUB_TOKEN:
+        description: >-
+          Docker Hub read-only access token, paired with DOCKERHUB_USERNAME.
+          Optional — the test job runs unauthenticated when unset.
+        required: false
 
 permissions:
   contents: read
@@ -45,10 +55,18 @@ jobs:
   test:
     name: Molecule (${{ matrix.scenario }})
     needs: scenarios
-    # Self-hosted (pre-baked toolchain); fork PRs fall back to a hosted runner
-    # so fork-author code never runs on the fleet.
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    # Self-hosted (pre-baked toolchain) for a private repo's own PRs; hosted
+    # otherwise — a public repo's Actions runs are visible to anyone, so they
+    # never touch the fleet, and neither does fork-author code regardless of
+    # repo visibility.
+    runs-on: ${{ (github.event.repository.private == false || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'proxmox' }}
     timeout-minutes: 45
+    # A hosted run pulls scenario container images anonymously and can hit
+    # Docker Hub's per-IP rate limit; log in when the org secret pair exists
+    # so the pull is authenticated instead. Optional: still runs unauthenticated
+    # if the pair isn't set (see PR notes — the operator provisions it).
+    env:
+      HAS_DOCKERHUB_CREDS: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     strategy:
       fail-fast: false
       # No max-parallel here. The test containers are created through the
@@ -76,6 +94,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKERHUB_CREDS == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Per-job Ansible state. The fleet runners share ~/.ansible, and
       # concurrent `ansible-galaxy collection install` runs race in it — the
@@ -219,7 +244,8 @@ jobs:
 
   template-render:
     name: Template Rendering Tests
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'proxmox' }}
+    # Same public-repo/fork split as `test` above.
+    runs-on: ${{ (github.event.repository.private == false || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'proxmox' }}
     timeout-minutes: 20
 
     steps:
