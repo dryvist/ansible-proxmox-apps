@@ -127,6 +127,16 @@ class CiBuildCaches(unittest.TestCase):
         self.assertIn("--tag {{ github_runner_molecule_image }}", unit)
         self.assertIn("ARG APT_PROXY_URL", DOCKERFILE.read_text())
 
+    def test_the_first_build_blocks_before_runners_start(self):
+        # main.yml enables the pooled runners (which can be handed a job
+        # within seconds) right after this include_tasks. A fire-and-forget
+        # (no_block: true) first build races that: a job can land before a
+        # cold multi-minute build finishes, and Molecule's docker driver then
+        # tries to pull a tag that has never existed on the daemon.
+        tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "molecule_image.yml").read_text())))
+        build = next(t for t in tasks if t["name"] == "Build the Molecule base image when it is missing")
+        self.assertNotIn("no_block", build["ansible.builtin.systemd"])
+
 
 if __name__ == "__main__":
     unittest.main()
