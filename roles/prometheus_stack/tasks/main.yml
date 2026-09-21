@@ -30,6 +30,19 @@
 # Carries the router bearer when seeded, so: not world-readable, group-readable
 # by the container's default user (prometheus_stack_config_group), and no_log so
 # a diff never prints it.
+#
+# Notifies a full recreate, not the lifecycle-API reload: this file is bind-
+# mounted into the container as a single file
+# ({{ prometheus_stack_data_dir }}/prometheus.yml:/etc/prometheus/prometheus.yml,
+# docker-compose.yml.j2), and ansible.builtin.template writes by atomic
+# rename — a new inode. A single-file bind mount is set up against the inode
+# present when the container started, so the rename never propagates into the
+# running container: /-/reload then reloads the container's OWN, now-stale
+# copy and silently keeps serving the old scrape config. `unsafe_writes: true`
+# does not prevent this — it is only a fallback for when the atomic rename
+# itself fails (e.g. cross-device), which it does not on this LXC's rootfs.
+# Recreating the stack re-establishes the bind mount against the current
+# inode, at the cost of the brief scrape gap the reload was meant to avoid.
 - name: Render prometheus.yml scrape configuration
   ansible.builtin.template:
     src: prometheus.yml.j2
@@ -39,7 +52,7 @@
     mode: "0640"
     unsafe_writes: true
   no_log: true
-  notify: Reload prometheus config
+  notify: Restart prometheus stack
 
 - name: Render blackbox exporter configuration
   ansible.builtin.template:
