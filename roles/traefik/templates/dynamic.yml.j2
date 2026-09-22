@@ -101,6 +101,43 @@ http:
 
   services:
 {% for route in traefik_routes %}
+{% if route.failover_fallback %}
+{# A route carrying failover_fallback publishes a `failover` service under its
+   OWN name (so the router's `service: {{ route.name }}` needs no change) that
+   points at two ordinary loadBalancer services suffixed -primary/-fallback.
+   Traefik only sends traffic to -fallback when -primary has no healthy
+   server left — e.g. openbao's leader-election gap, where the primary pool
+   (active-only health check) can briefly go to zero. #}
+    {{ route.name }}:
+      failover:
+        service: {{ route.name }}-primary
+        fallback: {{ route.name }}-fallback
+        healthCheck: {}
+    {{ route.name }}-primary:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+{% for url in route.servers %}
+          - url: "{{ url }}"
+{% endfor %}
+        healthCheck:
+          scheme: "{{ route.scheme | default('http') }}"
+          path: "{{ route.health_check_path | default('/') }}"
+          interval: "{{ route.health_check_interval | default('10s') }}"
+          timeout: "{{ route.health_check_timeout | default('5s') }}"
+    {{ route.name }}-fallback:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+{% for url in route.failover_fallback.servers %}
+          - url: "{{ url }}"
+{% endfor %}
+        healthCheck:
+          scheme: "{{ route.scheme | default('http') }}"
+          path: "{{ route.failover_fallback.health_check_path }}"
+          interval: "{{ route.failover_fallback.health_check_interval }}"
+          timeout: "{{ route.failover_fallback.health_check_timeout }}"
+{% else %}
     {{ route.name }}:
       loadBalancer:
         passHostHeader: true
@@ -132,14 +169,7 @@ http:
 {% endif %}
 {# Interval and timeout are per-route, defaulting to the historic 10s/5s so every
    existing route renders byte-identical. A route overrides them only when its
-   backend set has a reason to be probed less twitchily. OpenBao is the live
-   example: only the Raft leader answers 200 — standbys return 429 BY DESIGN
-   (pooling them amplified a real inter-node-forward failure, so excluding them
-   is deliberate, not a bug). That means a short interval re-probes every voter
-   constantly to keep exactly one marked up, and a single slow probe empties the
-   pool and surfaces as "no available server". Measured through the ingress at
-   the 10s default: 503,503,503,200,200 across one minute — flapping, not down.
-   #}
+   backend set has a reason to be probed less twitchily. #}
           interval: "{{ route.health_check_interval | default('10s') }}"
           timeout: "{{ route.health_check_timeout | default('5s') }}"
 {% endif %}
@@ -147,6 +177,7 @@ http:
         serversTransport: {{ route.name }}
 {% elif route.insecure_tls | default(false) %}
         serversTransport: insecure-backend
+{% endif %}
 {% endif %}
 {% endfor %}
 {% set _insecure_routes = traefik_routes | selectattr('insecure_tls', 'defined') | selectattr('insecure_tls') | rejectattr('response_header_timeout') | list %}

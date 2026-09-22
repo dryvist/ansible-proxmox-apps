@@ -165,3 +165,34 @@
       dynamic.yml.j2 did not honor scheme/insecure_tls: the https backend
       lost its scheme, the serversTransport was missing or leaked onto an
       http service, or insecureSkipVerify was not set.
+
+- name: Assert a route with failover_fallback renders as a Traefik failover service
+  ansible.builtin.assert:
+    that:
+      # The route's own name resolves to a failover service (not a plain
+      # loadBalancer) so the router's `service: openbao-ha` needs no change.
+      - _traefik_dynamic_yaml.http.services['openbao-ha'].failover.service == "openbao-ha-primary"
+      - _traefik_dynamic_yaml.http.services['openbao-ha'].failover.fallback == "openbao-ha-fallback"
+      - "'healthCheck' in _traefik_dynamic_yaml.http.services['openbao-ha'].failover"
+      # -primary keeps the route's own (active-only) health check untouched.
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha-primary'].loadBalancer.servers
+        == [{"url": "http://openbao-01.example.com:8200"}, {"url": "http://openbao-02.example.com:8200"}]
+      - _traefik_dynamic_yaml.http.services['openbao-ha-primary'].loadBalancer.healthCheck.path == "/v1/sys/health"
+      - _traefik_dynamic_yaml.http.services['openbao-ha-primary'].loadBalancer.healthCheck.interval == "30s"
+      # -fallback carries the standbyok+perfstandbyok path and reuses the
+      # primary's interval/timeout (the fixture set none of its own).
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha-fallback'].loadBalancer.healthCheck.path
+        == "/v1/sys/health?standbyok=true&perfstandbyok=true"
+      - _traefik_dynamic_yaml.http.services['openbao-ha-fallback'].loadBalancer.healthCheck.interval == "30s"
+      # A route with no failover_fallback (plex) must render byte-identical
+      # to before: a plain loadBalancer service under its own name, no
+      # -primary/-fallback siblings.
+      - "'loadBalancer' in _traefik_dynamic_yaml.http.services.plex"
+      - "'failover' not in _traefik_dynamic_yaml.http.services.plex"
+      - "'plex-primary' not in _traefik_dynamic_yaml.http.services"
+    fail_msg: >-
+      dynamic.yml.j2 did not render a failover_fallback route as a Traefik
+      `failover` service (service/fallback/healthCheck) over two nested
+      loadBalancer services, or it changed a route with no failover_fallback.
