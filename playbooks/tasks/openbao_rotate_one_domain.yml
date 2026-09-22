@@ -132,8 +132,8 @@
 
 # Only reached once the new pair has proven it authenticates. A previous
 # rotation of an already-migrated domain has no legacy value left to find --
-# rotate_old_secret_id is then empty and there is nothing to destroy.
-- name: Look up the previous secret_id's accessor for {{ rotate_domain_name }}
+# rotate_old_secret_id is then empty and there is nothing to look up.
+- name: Look up the previous secret_id's accessor and expiry for {{ rotate_domain_name }}
   ansible.builtin.uri:
     url: "{{ rotate_bao_addr }}/v1/auth/approle/role/{{ rotate_domain_name }}/secret-id/lookup"
     method: POST
@@ -148,6 +148,18 @@
   no_log: true
   when: rotate_old_secret_id | length > 0
 
+# A previous secret_id with a FINITE ttl may still be in active use by a
+# converge that already logged in under it and is mid-play -- destroying it
+# out from under that run would break it. Only a NEVER-expiring one
+# (expiration_time == "", the pre-hardening shape this rotation exists to
+# retire) is destroyed here; a finite one is left to expire on its own.
+- name: Decide whether the previous secret_id never expires for {{ rotate_domain_name }}
+  ansible.builtin.set_fact:
+    rotate_old_secret_id_never_expires: >-
+      {{ (rotate_old_secret_id_lookup.json.data.expiration_time | default('', true)) | length == 0 }}
+  no_log: false
+  when: rotate_old_secret_id | length > 0
+
 - name: Destroy the previous secret_id for {{ rotate_domain_name }}
   ansible.builtin.uri:
     url: "{{ rotate_bao_addr }}/v1/auth/approle/role/{{ rotate_domain_name }}/secret-id-accessor/destroy"
@@ -160,12 +172,22 @@
     status_code: 204
   changed_when: true
   no_log: true
-  when: rotate_old_secret_id | length > 0
+  when:
+    - rotate_old_secret_id | length > 0
+    - rotate_old_secret_id_never_expires | bool
 
 - name: Report this domain rotated
+  vars:
+    _expires_at: "{{ rotate_old_secret_id_lookup.json.data.expiration_time | default('', true) }}"
+    _finite_msg: "previous secret_id left to expire at {{ _expires_at }} (finite TTL, may still be in use)"
+    _never_expiring_msg: "previous secret_id destroyed (it never expired)"
+    _old_status: >-
+      {{ (rotate_old_secret_id | length == 0)
+         | ternary('none found to destroy',
+             (rotate_old_secret_id_never_expires | default(false) | bool)
+             | ternary(_never_expiring_msg, _finite_msg)) }}
   ansible.builtin.debug:
     msg: >-
       {{ rotate_domain_name }}: rotated
-      ({{ rotate_new_prefix }}_ROLE_ID/_SECRET_ID written; previous secret_id
-      {{ 'destroyed' if (rotate_old_secret_id | length > 0) else 'none found to destroy' }}).
+      ({{ rotate_new_prefix }}_ROLE_ID/_SECRET_ID written; {{ _old_status }}).
   no_log: false
