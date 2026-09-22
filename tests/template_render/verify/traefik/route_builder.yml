@@ -24,8 +24,24 @@
           'health_check': item.health_check | default(false),
           'health_check_path': item.health_check_path | default('/'),
           'health_check_port': item.health_check_port | default(0),
+          'health_check_interval': item.health_check_interval | default('10s', true),
+          'health_check_timeout': item.health_check_timeout | default('5s', true),
           'response_header_timeout': item.response_header_timeout | default(''),
-          'sso': item.sso | default(false)
+          'sso': item.sso | default(false),
+          'failover_fallback': (item.failover_fallback is defined) | ternary(
+            {
+              'servers': (item.failover_fallback.backends | default([]))
+                         | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
+                         | map('regex_replace', '$', ':' ~ (item.port | string))
+                         | list,
+              'health_check_path': (item.failover_fallback.health_check_path | default('/')),
+              'health_check_interval': (item.failover_fallback.health_check_interval
+                | default(item.health_check_interval | default('10s'), true)),
+              'health_check_timeout': (item.failover_fallback.health_check_timeout
+                | default(item.health_check_timeout | default('5s'), true))
+            },
+            None
+          )
         }]
       }}
   loop: "{{ traefik_ingress_routes }}"
@@ -50,6 +66,21 @@
         (traefik_routes | selectattr('name', 'equalto', 'hermes-dashboard') | first).fqdn
         == "hermes.pve.example.com"
       - (traefik_routes | selectattr('name', 'equalto', 'hermes') | first).path_prefix == "/webhooks/"
+      # failover_fallback normalises the same way as the primary pool: raw
+      # backend FQDNs become full urls, and an unset interval/timeout falls
+      # back to the primary route's own values (never drifting apart).
+      - >-
+        (traefik_routes | selectattr('name', 'equalto', 'openbao-ha') | first).failover_fallback.servers
+        == ["http://openbao-01.example.com:8200", "http://openbao-02.example.com:8200"]
+      - >-
+        (traefik_routes | selectattr('name', 'equalto', 'openbao-ha') | first).failover_fallback.health_check_path
+        == "/v1/sys/health?standbyok=true&perfstandbyok=true"
+      - >-
+        (traefik_routes | selectattr('name', 'equalto', 'openbao-ha') | first).failover_fallback.health_check_interval
+        == "30s"
+      # A route with no failover_fallback in the ingress table must normalise
+      # to None, not an empty dict — the template branches on truthiness.
+      - (traefik_routes | selectattr('name', 'equalto', 'plex') | first).failover_fallback is none
     fail_msg: >-
       The route-builder did not normalise the ingress table correctly: apex
       fqdn, the multi-backend servers list, or the sticky/health flags wrong.
