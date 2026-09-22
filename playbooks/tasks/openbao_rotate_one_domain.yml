@@ -150,13 +150,18 @@
 
 # A previous secret_id with a FINITE ttl may still be in active use by a
 # converge that already logged in under it and is mid-play -- destroying it
-# out from under that run would break it. Only a NEVER-expiring one
-# (expiration_time == "", the pre-hardening shape this rotation exists to
-# retire) is destroyed here; a finite one is left to expire on its own.
+# out from under that run would break it. Only a NEVER-expiring one is
+# destroyed here; a finite one is left to expire on its own. OpenBao/Vault
+# (Go's zero time.Time) serializes a never-set expiration_time as
+# "0001-01-01T00:00:00Z", not "" -- treat both an empty string and that
+# zero-time value as never-expiring (the pre-hardening shape this rotation
+# exists to retire). This same expression is exercised directly by
+# tests/openbao_secrets/verify_rotation_naming.yml -- keep them identical.
 - name: Decide whether the previous secret_id never expires for {{ rotate_domain_name }}
   ansible.builtin.set_fact:
     rotate_old_secret_id_never_expires: >-
-      {{ (rotate_old_secret_id_lookup.json.data.expiration_time | default('', true)) | length == 0 }}
+      {{ (rotate_old_secret_id_lookup.json.data.expiration_time | default('', true))
+         is match('^(0001-01-01T00:00:00Z?)?$') }}
   no_log: false
   when: rotate_old_secret_id | length > 0
 

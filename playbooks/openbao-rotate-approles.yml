@@ -48,6 +48,11 @@
 # earlier in the loop are NOT rolled back (each is independently proven
 # before this playbook moves on).
 #
+# Scheduled mode only: after every domain, this run rotates the
+# approle-secret-id-rotate-scheduled identity's OWN secret_id last, through
+# the same steps 1-4 above, targeted at itself. Its previous secret_id is
+# left to expire (step 4's same finite-TTL rule), never destroyed outright.
+#
 # This does NOT re-converge anything. Consumers still hold the old value in
 # their own process environment until a fresh `doppler run -- ...
 # scripts/run-ansible.sh playbooks/site.yml` -- same reasoning as
@@ -177,6 +182,21 @@
       loop: "{{ rotate_domain_names }}"
       loop_control:
         loop_var: rotate_domain_name
+
+    - name: Load the scheduled identity's own AppRole name (scheduled mode)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/openbao/defaults/main/05b-domain-policy-approle-names.yml"
+      when: rotate_scheduled_mode | bool
+
+    # Same tasks file, targeted at approle-secret-id-rotate-scheduled itself,
+    # run last so every domain is already rotated first. Its own previous
+    # secret_id is left to expire, same as any other finite-TTL previous
+    # value -- never destroyed by this step.
+    - name: Rotate the scheduled identity's own secret_id (scheduled mode)
+      ansible.builtin.include_tasks: tasks/openbao_rotate_one_domain.yml
+      vars:
+        rotate_domain_name: "{{ openbao_approle_secret_id_rotate_scheduled_approle_name }}"
+      when: rotate_scheduled_mode | bool
 
     - name: Say what must happen next
       ansible.builtin.debug:

@@ -98,18 +98,29 @@
         fail_msg: "a domain with only bare-string paths must NOT be all-optional"
         quiet: true
 
-    - name: Assert the never-expiring-destroy decision on a finite expiration_time
+    # Same match expression playbooks/tasks/openbao_rotate_one_domain.yml uses
+    # to decide rotate_old_secret_id_never_expires -- keep both identical.
+    - name: Assert the never-expiring-destroy decision on a future finite expiration_time
       vars:
-        _never_expires: "{{ ('2027-01-01T00:00:00Z' | default('', true)) | length == 0 }}"
+        _never_expires: "{{ ('2027-01-01T00:00:00Z' | default('', true)) is match('^(0001-01-01T00:00:00Z?)?$') }}"
       ansible.builtin.assert:
         that:
           - not (_never_expires | bool)
-        fail_msg: "a secret_id with a non-empty expiration_time must NOT be treated as never-expiring"
+        fail_msg: "a future, non-zero-time expiration_time must NOT be treated as never-expiring"
+        quiet: true
+
+    - name: Assert the never-expiring-destroy decision on Go's zero-time expiration_time
+      vars:
+        _never_expires: "{{ ('0001-01-01T00:00:00Z' | default('', true)) is match('^(0001-01-01T00:00:00Z?)?$') }}"
+      ansible.builtin.assert:
+        that:
+          - _never_expires | bool
+        fail_msg: "OpenBao/Vault's zero-time expiration_time (0001-01-01T00:00:00Z) must be treated as never-expiring"
         quiet: true
 
     - name: Assert the never-expiring-destroy decision on an empty expiration_time
       vars:
-        _never_expires: "{{ ('' | default('', true)) | length == 0 }}"
+        _never_expires: "{{ ('' | default('', true)) is match('^(0001-01-01T00:00:00Z?)?$') }}"
       ansible.builtin.assert:
         that:
           - _never_expires | bool
