@@ -1,0 +1,129 @@
+---
+# Rotates the secret_id half of one or more openbao_secrets domain AppRoles
+# then rewrites the environment document those
+# domains' converges read their credentials from.
+#
+#   ansible-playbook playbooks/openbao-rotate-approles.yml
+#     -e ROTATE_WRAPPING_TOKEN=<wrap from `bao write -wrap-ttl=90s -f
+#        auth/approle/role/approle-secret-id-rotate/secret-id>
+#     [-e openbao_rotate_domains=observability,media]
+#
+# Per domain, in this exact order (see roles/openbao/templates/
+# approle-secret-id-rotate-policy.hcl.j2 for why this identity, not
+# approle-issuer, holds the grants this needs):
+#   1. mint a fresh secret_id (TTL taken from the role's OWN declared bound,
+#      never 0 -- see 07e-rotation-approles.yml, never invented here)
+#   2. CAS-write it into the env document under the OPENBAO_APPROLE_<NAME>_
+#      {ROLE,SECRET}_ID names, removing the domain's legacy
+#      <NAME>_VAULT_{ROLE,SECRET}_ID keys if present, every sibling domain's
+#      keys untouched
+#   3. prove the new pair logs in
+#   4. only THEN destroy the previous secret_id by accessor
+#
+# so a failure at any step before (4) leaves the OLD credential still valid
+# -- nothing is destroyed until the replacement is proven. A failure at any
+# step stops the run immediately, naming the domain; already-rotated domains
+# earlier in the loop are NOT rolled back (each is independently proven
+# before this playbook moves on).
+#
+# This does NOT re-converge anything. Consumers still hold the old value in
+# their own process environment until a fresh `doppler run -- ...
+# scripts/run-ansible.sh playbooks/site.yml` -- same reasoning as
+# rotate-key.yml.
+- name: Rotate openbao_secrets domain AppRole secret_ids
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    rotate_bao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+    rotate_role_id: "{{ lookup('env', 'OPENBAO_APPROLE_APPROLE_SECRET_ID_ROTATE_ROLE_ID') | default('', true) }}"
+    # No standing secret_id for this identity (manage_secret_id: false) -- a
+    # human-issued, single-use wrapped secret_id is the only way in, same
+    # pattern as rotate-key.yml's ai-rotate/apps-rotate path.
+    rotate_wrapping_token: "{{ lookup('env', 'ROTATE_WRAPPING_TOKEN') | default('', true) }}"
+    rotate_kv_mount: secret
+    rotate_env_path: platform/ansible/env
+    # Single source: the same domain declarations openbao_secrets itself
+    # reads, loaded directly rather than duplicated into a second list.
+    rotate_domains_file: "{{ playbook_dir }}/../roles/openbao_secrets/defaults/main/01-domains.yml"
+    # Comma-separated domain names, or unset/empty for every domain.
+    openbao_rotate_domains: ""
+
+  tasks:
+    - name: Refuse to run without an endpoint and a write identity
+      ansible.builtin.assert:
+        that:
+          - rotate_bao_addr | length > 0
+          - rotate_role_id | length > 0
+          - rotate_wrapping_token | length > 0
+        fail_msg: >-
+          Needs BAO_ADDR, OPENBAO_APPROLE_APPROLE_SECRET_ID_ROTATE_ROLE_ID
+          (run under `doppler run`), and -e ROTATE_WRAPPING_TOKEN=<a
+          human-issued, single-use wrap of the approle-secret-id-rotate
+          AppRole's secret_id>. Refusing rather than rotating anything
+          unintended.
+        quiet: true
+
+    - name: Load the domain declarations
+      ansible.builtin.include_vars:
+        file: "{{ rotate_domains_file }}"
+
+    - name: Resolve the domains to rotate this run
+      ansible.builtin.set_fact:
+        rotate_domain_names: >-
+          {{ (openbao_rotate_domains | trim | length > 0)
+             | ternary(
+                 openbao_rotate_domains.split(',') | map('trim') | reject('equalto', '') | list,
+                 openbao_secrets_domains | map(attribute='name') | list
+               ) }}
+
+    - name: Refuse an unknown domain name
+      vars:
+        _known: "{{ openbao_secrets_domains | map(attribute='name') | list }}"
+        _unknown: "{{ rotate_domain_names | reject('in', _known) | list }}"
+      ansible.builtin.assert:
+        that:
+          - _unknown | length == 0
+        fail_msg: >-
+          openbao_rotate_domains named a domain that is not in
+          {{ rotate_domains_file }}: {{ _unknown }}.
+        quiet: true
+
+    - name: Unwrap the single-use secret_id
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/sys/wrapping/unwrap"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ rotate_wrapping_token }}"
+        status_code: 200
+      register: rotate_unwrap
+      changed_when: false
+      no_log: true
+
+    - name: Authenticate as approle-secret-id-rotate
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ rotate_role_id }}"
+          secret_id: "{{ rotate_unwrap.json.data.secret_id }}"
+        status_code: 200
+      register: rotate_login
+      changed_when: false
+      no_log: true
+
+    - name: Rotate each domain's AppRole secret_id in turn
+      ansible.builtin.include_tasks: tasks/openbao_rotate_one_domain.yml
+      loop: "{{ rotate_domain_names }}"
+      loop_control:
+        loop_var: rotate_domain_name
+
+    - name: Say what must happen next
+      ansible.builtin.debug:
+        msg: >-
+          Rotated {{ rotate_domain_names | join(', ') }}. Nothing is live yet
+          -- every consumer still holds its old credential until you
+          re-converge in a fresh process (a value read at process start by
+          `lookup('env', ...)` is invisible to the run that wrote it).
