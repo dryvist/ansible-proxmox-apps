@@ -239,35 +239,12 @@
     - postgres_role == 'primary'
     - not (postgres_pgbackrest_credentials_present | bool)
   block:
-    # postgresql_alter_system doesn't reliably compare an empty-string value
-    # against the live setting, so read both GUCs first and only alter the
-    # one that actually differs.
-    - name: Read the live archiving GUCs
-      community.postgresql.postgresql_query:
-        login_db: postgres
-        query: >-
-          SELECT current_setting('archive_mode') AS archive_mode,
-                 current_setting('archive_command') AS archive_command
-      register: postgres_live_archive_settings
-      changed_when: false
-      check_mode: false
-
     - name: Ensure archive_mode is off
       community.postgresql.postgresql_alter_system:
         param: archive_mode
         value: "off"
-      when: postgres_live_archive_settings.query_result[0].archive_mode != 'off'
       notify: Restart postgresql
 
-    - name: Clear archive_command
-      community.postgresql.postgresql_alter_system:
-        param: archive_command
-        value: ""
-      when: postgres_live_archive_settings.query_result[0].archive_command != ''
-      notify: Restart postgresql
-
-    # Both GUCs above are postmaster-context; flush now so the next read of
-    # either sees the restarted value, not the one still running.
     - name: Apply the pending archiving-off restart
       ansible.builtin.meta: flush_handlers
 
