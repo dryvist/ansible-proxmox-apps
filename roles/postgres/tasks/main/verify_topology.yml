@@ -49,6 +49,9 @@
     # pgBackRest enabled but archive_mode off accepts the archive_command
     # config and never calls it, so backups look configured and no WAL is ever
     # shipped. Catch it here rather than at restore time.
+    #
+    # Only applies once credentials are present; archiving stays off
+    # otherwise.
     - name: Read archive_mode
       community.postgresql.postgresql_query:
         login_db: postgres
@@ -56,16 +59,20 @@
       register: postgres_live_archive_mode
       changed_when: false
       check_mode: false
-      when: postgres_pgbackrest_enabled | bool
+      when:
+        - postgres_pgbackrest_enabled | bool
+        - postgres_pgbackrest_credentials_present | bool
 
-    - name: Assert archive_mode is on when pgBackRest is enabled
+    - name: Assert archive_mode is on when pgBackRest is enabled and credentialed
       ansible.builtin.assert:
         that:
           - postgres_live_archive_mode.query_result[0].archive_mode == 'on'
         fail_msg: >-
-          pgBackRest is enabled but archive_mode is
+          pgBackRest is enabled and credentialed but archive_mode is
           '{{ postgres_live_archive_mode.query_result[0].archive_mode }}'.
           No WAL is being shipped, so PITR is silently impossible.
           archive_mode requires a full restart, not a reload.
         quiet: true
-      when: postgres_pgbackrest_enabled | bool
+      when:
+        - postgres_pgbackrest_enabled | bool
+        - postgres_pgbackrest_credentials_present | bool
