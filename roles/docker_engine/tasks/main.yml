@@ -141,12 +141,19 @@
     - ansible_virtualization_type | default('') in docker_engine_vm_virtualization_types
 
 - name: Restart Docker to apply the storage-driver configuration
+  # Never on the plane host: this restart tears down every container on the
+  # host it runs on, including Semaphore itself when it lands here, which
+  # kills the task that is running it. The plane host still gets its
+  # daemon.json written/unpinned above; it just picks up a changed storage
+  # driver on its next restart for some other reason instead of this one
+  # converging into a self-inflicted kill.
   ansible.builtin.systemd:  # noqa: no-handler
     name: docker
     state: restarted
   when:
     - docker_engine_configure_daemon_json | bool
     - docker_engine_daemon_config.changed | default(false) or docker_engine_daemon_unpin.changed | default(false)
+    - inventory_hostname != docker_engine_plane_host
 
 - name: Ensure Docker service is running
   ansible.builtin.systemd:

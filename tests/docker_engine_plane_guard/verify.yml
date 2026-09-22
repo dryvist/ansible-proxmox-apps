@@ -1,0 +1,48 @@
+---
+# Regression trap for the docker_engine plane-host guard: a baseline converge
+# that reconfigures the storage driver must never restart Docker on the host
+# running Semaphore itself, or the task doing the restarting kills its own
+# container mid-run. This does not run the role (no host to converge here);
+# it asserts the guard clause is still present in the task and the default it
+# reads is still declared, so removing either fails this instead of failing
+# silently on the next converge that reaches the plane host.
+- name: Verify the docker_engine restart task still spares the plane host
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    role_dir: "{{ playbook_dir }}/../../roles/docker_engine"
+
+  tasks:
+    - name: Load the role's declared default
+      ansible.builtin.include_vars:
+        file: "{{ role_dir }}/defaults/main.yml"
+
+    - name: The plane host is declared, or the guard below asserts nothing
+      ansible.builtin.assert:
+        that:
+          - docker_engine_plane_host is defined
+          - docker_engine_plane_host | length > 0
+        fail_msg: >-
+          docker_engine_plane_host is no longer declared in
+          roles/docker_engine/defaults/main.yml. The restart task's guard
+          references it directly and would fail every converge instead of
+          only sparing the plane host.
+
+    - name: Read the restart task
+      ansible.builtin.slurp:
+        src: "{{ role_dir }}/tasks/main.yml"
+      register: docker_engine_tasks_raw
+
+    - name: The restart task still excludes the plane host
+      vars:
+        docker_engine_tasks: "{{ docker_engine_tasks_raw.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'inventory_hostname != docker_engine_plane_host' in docker_engine_tasks"
+        fail_msg: >-
+          roles/docker_engine/tasks/main.yml no longer guards the Docker
+          restart with `inventory_hostname != docker_engine_plane_host`. A
+          baseline converge that reaches the plane host's storage-driver
+          config would restart Docker there and kill the Semaphore container
+          running the task.
