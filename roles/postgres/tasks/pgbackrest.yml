@@ -231,19 +231,7 @@
       loop_control:
         label: "{{ item.type }}"
 
-# =============================================================================
-# Primary, credentials missing: archiving must come back OFF, not stay
-# half-on. The block above only turns archive_mode on when it can also point
-# archive_command at a working pgBackRest; without this, a primary that once
-# had working credentials (and so has archive_mode=on + a stanza-scoped
-# archive_command already written to postgresql.auto.conf) keeps that config
-# forever once credentials disappear — the task that would fix or disable it
-# never runs again, archive-push fails every segment, and pg_wal grows until
-# the data volume fills and crash recovery can no longer even write
-# pg_control (Zammad 1000431). Runs unconditionally on every primary so it
-# also heals a host that was never enabled for pgBackRest at all but somehow
-# carries a leftover archive_command (e.g. inherited from a prior primary).
-# =============================================================================
+# A primary that cannot archive runs with archiving off.
 - name: Force WAL archiving off on the primary when pgBackRest cannot actually archive
   become: true
   become_user: postgres
@@ -279,9 +267,8 @@
 #
 # The timers: a host demoted from primary to standby keeps whatever backup
 # timers it was given, and goes on running base backups against a stanza it no
-# longer owns. Nothing else removes them, so this does. The same cleanup
-# applies to a primary whose credentials are missing — it must not go on
-# running base-backup timers against a stanza it cannot archive into either.
+# longer owns. Nothing else removes them, so this does. The same applies to a
+# primary that cannot archive.
 # =============================================================================
 - name: Keep pgBackRest consistent but inert on a standby, or a primary that cannot archive
   when:

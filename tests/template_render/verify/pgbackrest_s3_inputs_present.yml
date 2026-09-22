@@ -3,22 +3,21 @@
 # postgres_pgbackrest_credentials_present (roles/postgres/defaults/main/02-pgbackrest.yml)
 # =============================================================================
 # This is the gate that keeps archive_mode/archive_command OFF whenever any
-# one of the three S3 inputs is missing. Get it wrong towards true and a
-# converge turns archiving on with a broken archive_command again — the exact
-# state that let WAL fill the data volume and wedge crash recovery
-# (Zammad 1000431). Get it wrong towards false and a fully-credentialed host
-# stops archiving for no reason.
+# one of the three S3 inputs is missing. Loads the role's actual defaults
+# file and overrides only the three S3 input vars per case, so this checks
+# the real expression rather than a hand-copied duplicate of it.
 #
 # Exercised here rather than in the postgres molecule scenario because that
 # scenario cannot enable pgBackRest at all (no S3 endpoint in CI) — same
 # reason pgbackrest_initial_backup.yml lives here instead of in molecule.
-- name: Verify the pgBackRest credentials-present detection expression
+- name: Verify the pgBackRest credentials-present gate against its real definition
   hosts: localhost
   connection: local
   gather_facts: false
 
   vars:
     ansible_become: false
+    _pgbackrest_defaults_file: "{{ playbook_dir }}/../../../roles/postgres/defaults/main/02-pgbackrest.yml"
     _credentials_cases:
       - name: all three set
         endpoint: s3.fixture.invalid
@@ -47,28 +46,21 @@
         expect_present: false
 
   tasks:
-    # KEEP IN SYNC with postgres_pgbackrest_credentials_present in
-    # roles/postgres/defaults/main/02-pgbackrest.yml.
-    - name: Assert the gate resolves correctly for every credential shape
-      ansible.builtin.assert:
-        that:
-          - >-
-            (((item.endpoint | length > 0)
-              and (item.access_key_id | length > 0)
-              and (item.secret_access_key | length > 0))
-             | bool) == (item.expect_present | bool)
-        fail_msg: >-
-          {{ item.name }}: expected credentials_present={{ item.expect_present }}.
-          postgres_pgbackrest_credentials_present has drifted from this check.
-        quiet: true
+    - name: Load the real credentials_present expression from the role defaults
+      ansible.builtin.include_vars:
+        file: "{{ _pgbackrest_defaults_file }}"
+
+    - name: Evaluate the real gate for every credential shape
+      ansible.builtin.include_tasks: pgbackrest_s3_inputs_present_case.yml
       loop: "{{ _credentials_cases }}"
       loop_control:
         label: "{{ item.name }}"
 
-    - name: PgBackRest credentials-present detection verification PASSED
+    - name: PgBackRest credentials-present gate verification PASSED
       ansible.builtin.debug:
         msg: |
-          credentials-present gate assertions passed:
+          credentials-present gate assertions passed against the real
+          postgres_pgbackrest_credentials_present expression:
           - all three set -> present
           - any one of the three missing -> not present
           - none set (today's actual estate state) -> not present
