@@ -109,6 +109,27 @@
     ansible_become: false
   when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'
 
+# The vendor's sidecar lists ITS OWN resolved filename (e.g. a pointer's
+# per-build CDN name), not the key this mirror stores the tarball under.
+# `ansible.builtin.get_url`'s checksum-from-URL matching requires the
+# sidecar's filename token to equal the download's destination basename,
+# so the mismatch fails every future consumer's checksum lookup -- rewrite
+# the token to the mirrored key's basename before it is ever pushed.
+- name: Rewrite the sidecar's filename token to match the mirrored artifact name
+  ansible.builtin.replace:
+    path: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}.sha256"
+    regexp: '(\S+)$'
+    replace: "{{ item.item.key | basename }}"
+  loop: "{{ object_storage_infra_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: item.rc != 0 and item.item.sidecar | default('') == 'sha256'
+
 - name: Push missing infra artifacts to target
   ansible.builtin.copy:
     src: "/tmp/object-storage-mirror-{{ inventory_hostname }}-{{ item.item.name }}"
