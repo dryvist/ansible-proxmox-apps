@@ -61,6 +61,30 @@
           on {{ inventory_hostname }}
       when: not cribl_stream_config_dir.stat.exists
 
+    - name: Read live Cribl Stream outputs configuration
+      ansible.builtin.slurp:
+        src: /opt/cribl/local/cribl/outputs.yml
+      register: cribl_stream_outputs_live
+      no_log: true
+
+    - name: Extract live VictoriaMetrics remote-write output
+      ansible.builtin.set_fact:
+        cribl_stream_victoriametrics_live: >-
+          {{ ((cribl_stream_outputs_live.content | b64decode | from_yaml)
+              | default({}, true)).get('outputs', {}).get('victoriametrics_rw', {}) }}
+      no_log: true
+
+    - name: Assert VictoriaMetrics remote-write output is configured
+      ansible.builtin.assert:
+        that:
+          - cribl_stream_victoriametrics_live.get('type', '') == 'prometheus'
+          - >-
+            cribl_stream_victoriametrics_live.get('url', '')
+            == cribl_stream_victoriametrics_rw_url
+        fail_msg: Cribl Stream VictoriaMetrics remote-write output is not configured.
+        quiet: true
+      no_log: true
+
     - name: Display Cribl Stream validation results
       ansible.builtin.debug:
         msg: |
