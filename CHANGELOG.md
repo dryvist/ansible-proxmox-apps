@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.41.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.40.0...v4.41.0) (2026-09-22)
+
+
+### Features
+
+* **openbao:** seed open-llm's vikunja/zammad MCP URLs from OpenBao ([f22ada1](https://github.com/dryvist/ansible-proxmox-apps/commit/f22ada127d3be8e85b159118fccdf9140bf95b70))
+* **openbao:** seed open-llm's vikunja/zammad MCP URLs from OpenBao ([9657a6b](https://github.com/dryvist/ansible-proxmox-apps/commit/9657a6b8a67b23ead9c5a6a37ed979f06d2de625))
+
+
+### Bug Fixes
+
+* **cribl_stream:** reconcile VictoriaMetrics remote write ([b36bf6b](https://github.com/dryvist/ansible-proxmox-apps/commit/b36bf6b1cf4e68b8271a99e7d5a5ed198be1990c))
+* **object_storage:** rewrite the sidecar's filename token to the mirrored key ([c42e807](https://github.com/dryvist/ansible-proxmox-apps/commit/c42e8075d74b776d11c6197c916e91d8ac685c3e))
+* **object_storage:** rewrite the sidecar's filename token to the mirrored key ([9dd16d5](https://github.com/dryvist/ansible-proxmox-apps/commit/9dd16d58896a04535647f5051dc87ae69f334469))
+
 ## [4.40.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.39.1...v4.40.0) (2026-09-21)
 
 
