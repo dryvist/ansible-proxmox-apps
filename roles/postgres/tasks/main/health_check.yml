@@ -10,3 +10,21 @@
   register: postgres_ping
   failed_when: not postgres_ping.is_available
   changed_when: false
+
+# Loud, but last: every earlier phase (including the ping above) has already
+# run, so a missing credential here no longer skips the rest of the play the
+# way a mid-role assert used to (see pgbackrest.yml's credentials_present
+# gate). PITR being unavailable is still a real gap worth failing on.
+- name: Assert pgBackRest is actually archiving when declared enabled
+  ansible.builtin.assert:
+    that:
+      - postgres_pgbackrest_credentials_present | bool
+    fail_msg: >-
+      postgres_pgbackrest_enabled is true but the S3 endpoint/credentials are
+      unset (POSTGRES_BACKUP_S3_ENDPOINT, POSTGRES_BACKUP_S3_ACCESS_KEY_ID,
+      POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY). Archiving is OFF on this primary
+      until they are supplied, so PITR is unavailable.
+    quiet: true
+  when:
+    - postgres_pgbackrest_enabled | bool
+    - postgres_role == 'primary'

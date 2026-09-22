@@ -15,6 +15,22 @@
 # disable pg_dump, so this tier owns its own flag.
 postgres_pgbackrest_enabled: true
 
+# Whether the archive_command this tier depends on can actually run — not
+# just whether it was asked for. `postgres_pgbackrest_enabled` alone is
+# INTENT; every task below is gated on this too, because a converge that hits
+# the missing-credential assert used to abort the whole play immediately
+# (Phase 5b), which left an EARLIER successful render's archive_mode=on +
+# archive_command in place forever, unable to reach the task that would ever
+# fix or disable it again. That single stuck state let WAL accumulate
+# unarchived until the data volume filled and crash recovery could not
+# complete (Zammad 1000431). Archiving now stays fully OFF — not half-on —
+# whenever these are unset, and the loud failure moves to the end of the
+# play (health_check.yml) so every other phase still runs.
+postgres_pgbackrest_credentials_present: >-
+  {{ (postgres_backup_s3_endpoint | length > 0)
+     and (postgres_backup_s3_access_key_id | length > 0)
+     and (postgres_backup_s3_secret_access_key | length > 0) }}
+
 # Force a WAL segment closed on this cadence so an idle cluster still ships
 # archive. Without it PostgreSQL only archives a segment once it fills, so a
 # quiet database can leave the last committed transactions unarchived
