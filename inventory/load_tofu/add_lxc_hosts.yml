@@ -36,10 +36,12 @@
   failed_when: false
   ignore_unreachable: true
 
-- name: Map each container vmid to the node it is running on
+- name: Map each container vmid to its current node and status
   ansible.builtin.set_fact:
     add_lxc_hosts_live_node: >-
       {{ dict(_lxc | map(attribute='vmid') | map('string') | zip(_lxc | map(attribute='node'))) }}
+    add_lxc_hosts_live_status: >-
+      {{ dict(_lxc | map(attribute='vmid') | map('string') | zip(_lxc | map(attribute='status'))) }}
   vars:
     _answer: >-
       {{ (add_lxc_hosts_placement.results | default([])
@@ -56,6 +58,21 @@
     - tofu_data.containers is defined
     - tofu_data.containers | length > 0
     - add_lxc_hosts_live_node | length == 0
+
+# A declared container the cluster reports as not running cannot be reached by
+# pct. It is left out of the inventory, and the decision is logged, so its
+# plays skip it instead of reporting it unreachable.
+- name: Log declared containers skipped because they are not running
+  ansible.builtin.debug:
+    msg: >-
+      Skipping {{ item.key }} (vmid {{ item.value.vmid }}): cluster reports
+      status '{{ add_lxc_hosts_live_status[item.value.vmid | string] | default('absent') }}'.
+  loop: "{{ tofu_data.containers | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - add_lxc_hosts_live_node | default({}) | length > 0
+    - add_lxc_hosts_live_status[item.value.vmid | string] | default('absent') != 'running'
 
 - name: Add LXC containers to inventory (proxmox_pct_remote connection)
   ansible.builtin.add_host:
@@ -326,3 +343,6 @@
   when:
     - tofu_data.containers is defined
     - tofu_data.containers | length > 0
+    - >-
+      add_lxc_hosts_live_node | length == 0 or
+      add_lxc_hosts_live_status[item.value.vmid | string] | default('absent') == 'running'
