@@ -18,6 +18,23 @@
 # pct reaches only the containers on its own node. Any node answers
 # /cluster/resources for the whole cluster; the first answer is used. raw needs
 # no Python or remote tmp dir on the node.
+#
+# Only commissioned nodes are dialed. An uncommissioned node (e.g. pve2) has
+# no DNS record at all, so looping it here is a guaranteed unreachable — this
+# repo's own signal for "not yet racked", not a transient outage worth
+# retrying.
+#
+# ansible_ssh_use_tty: false is load-bearing, not cosmetic. ansible.builtin.raw
+# force-allocates a pty (ssh -tt) unless told otherwise, but the
+# automation-ansible SSH certificate is signed WITHOUT permit-pty (see
+# ansible.cfg's [paramiko_connection] note — the pct_remote connection never
+# requests one either, for the same reason). Proxmox's sshd then rejects the
+# pty channel post-auth: the exec silently returns rc=0 with EMPTY stdout
+# instead of a visible error, which is indistinguishable from "no answer" one
+# task later. Confirmed live (2026-09-23): the identical `raw` command over a
+# plain non-pty ssh session, and via `ansible -m raw` with this same var set,
+# both return the real /cluster/resources JSON; only the ptty-forced form
+# comes back empty.
 - name: Read live container placement from the cluster
   ansible.builtin.raw: pvesh get /cluster/resources --type vm --output-format json
   delegate_to: "{{ (item.value.role | default(item.key, true)) ~ '.' ~ tofu_data.domain }}"
@@ -25,8 +42,12 @@
     ansible_connection: ssh
     ansible_user: root
     ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
+    ansible_ssh_use_tty: false
   register: add_lxc_hosts_placement
-  loop: "{{ tofu_data.nodes | default({}) | dict2items }}"
+  loop: >-
+    {{ tofu_data.nodes | default({}) | dict2items
+       | selectattr('value.commissioned', 'defined')
+       | selectattr('value.commissioned') | list }}
   loop_control:
     label: "{{ item.key }}"
   when:
@@ -43,10 +64,16 @@
     add_lxc_hosts_live_status: >-
       {{ dict(_lxc | map(attribute='vmid') | map('string') | zip(_lxc | map(attribute='status'))) }}
   vars:
+    # An empty answer is no answer: `default()` only substitutes an UNDEFINED
+    # value, and a node that answered with rc=0 but no bytes yields a defined
+    # empty string, which from_json then raises on. select the non-empty
+    # candidates first, and pass default's boolean_true so a still-empty
+    # result (no node answered at all) is caught too.
     _answer: >-
       {{ (add_lxc_hosts_placement.results | default([])
           | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
-          | map(attribute='stdout') | first | default('[]')) }}
+          | map(attribute='stdout') | select('ne', '') | list
+          | first | default('[]', true)) }}
     _lxc: "{{ _answer | from_json | selectattr('type', 'equalto', 'lxc') | list }}"
 
 - name: Warn when live placement is unavailable

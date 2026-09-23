@@ -1,0 +1,135 @@
+---
+# Regression coverage for the live-placement lookup in
+# ../../inventory/load_tofu/add_lxc_hosts.yml.
+#
+# The bug this guards (2026-09-23, blocked every converge): `raw` force-
+# allocates a pty (`ssh -tt`) unless told otherwise, which the
+# automation-ansible SSH certificate does not permit — Proxmox's sshd then
+# rejects the pty channel post-auth and the exec silently returns rc=0 with
+# EMPTY stdout instead of a visible error. The next task's `_answer | default`
+# only substitutes an UNDEFINED value, never a defined-but-empty string, so
+# `from_json('')` raised on every real converge.
+#
+# This can't be exercised through tofu_inventory.json + a live SSH attempt —
+# CI runs that fixture with PROXMOX_SSH_KEY_PATH=/dev/null precisely so no
+# real connection is attempted, and an auth failure is caught by
+# ignore_unreachable long before this bug's shape (rc=0, empty stdout) is ever
+# produced. So this file tests the fix two ways: the mocked-input behavior
+# directly, and that the shipped source still carries the fix's key
+# expressions (catching a future edit that reintroduces the bug without
+# touching this file).
+
+- name: Verify the source still carries the empty-answer and commissioned-only fixes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _add_lxc_hosts_source: "{{ lookup('file', playbook_dir + '/../../inventory/load_tofu/add_lxc_hosts.yml') }}"
+  tasks:
+    - name: Assert the raw placement task disables pty allocation
+      ansible.builtin.assert:
+        that:
+          - "'ansible_ssh_use_tty: false' in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer sets ansible_ssh_use_tty: false on the
+          raw placement task — ansible.builtin.raw force-allocates a pty by
+          default, which the automation-ansible SSH certificate does not
+          permit, and Proxmox's sshd silently returns empty stdout for it.
+
+    - name: Assert the placement loop is filtered to commissioned nodes only
+      ansible.builtin.assert:
+        that:
+          - "\"selectattr('value.commissioned', 'defined')\" in _add_lxc_hosts_source"
+          - "\"selectattr('value.commissioned')\" in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer restricts the placement loop to
+          commissioned nodes — an uncommissioned node has no DNS record and
+          is a guaranteed unreachable, not a transient failure worth dialing.
+
+    - name: Assert a defined-but-empty stdout answer is filtered before from_json
+      ansible.builtin.assert:
+        that:
+          - "\"select('ne', '')\" in _add_lxc_hosts_source"
+          - "\"default('[]', true)\" in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer filters out an empty (but defined)
+          stdout answer before from_json, or dropped default()'s boolean_true
+          arg — default() only substitutes an undefined value, never a
+          defined empty string, so an empty answer reaches from_json and
+          raises.
+
+- name: Verify the empty-answer fix against a mocked placement result
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Reproduces the exact bug shape: the first commissioned node to answer
+    # (rc=0) returned nothing because of the pty rejection; a second node
+    # answered normally. Ordering the empty one first is deliberate — it is
+    # what `first` used to grab unconditionally.
+    _mock_placement_results:
+      - rc: 0
+        stdout: ""
+      - rc: 0
+        stdout: >-
+          [{"type": "lxc", "vmid": 605010, "node": "pve-w1700", "status": "running"}]
+    _answer: >-
+      {{ (_mock_placement_results
+          | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+          | map(attribute='stdout') | select('ne', '') | list
+          | first | default('[]', true)) }}
+    _lxc: "{{ _answer | from_json | selectattr('type', 'equalto', 'lxc') | list }}"
+  tasks:
+    - name: Assert the empty first answer is skipped in favor of the real one
+      ansible.builtin.assert:
+        that:
+          - _lxc | length == 1
+          - _lxc[0].vmid == 605010
+          - _lxc[0].node == 'pve-w1700'
+        fail_msg: >-
+          Expected the empty first stdout to be skipped and the second
+          node's real answer used; got {{ _lxc }}
+
+- name: Verify no answer at all still resolves to an empty, not a crash
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _mock_placement_results:
+      - rc: 0
+        stdout: ""
+    _answer: >-
+      {{ (_mock_placement_results
+          | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+          | map(attribute='stdout') | select('ne', '') | list
+          | first | default('[]', true)) }}
+    _lxc: "{{ _answer | from_json | selectattr('type', 'equalto', 'lxc') | list }}"
+  tasks:
+    - name: Assert an all-empty answer set yields an empty container list, not a from_json error
+      ansible.builtin.assert:
+        that:
+          - _lxc | length == 0
+        fail_msg: >-
+          Expected an empty container list when no node answered with real
+          content; got {{ _lxc }}
+
+- name: Verify the commissioned-only loop filter excludes an uncommissioned node
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _mock_nodes:
+      pve-a:
+        commissioned: true
+      pve-b:
+        commissioned: false
+      pve-c: {}
+    _commissioned_items: >-
+      {{ _mock_nodes | dict2items
+         | selectattr('value.commissioned', 'defined')
+         | selectattr('value.commissioned') | list }}
+  tasks:
+    - name: Assert only the commissioned node is dialed
+      ansible.builtin.assert:
+        that:
+          - _commissioned_items | length == 1
+          - _commissioned_items[0].key == 'pve-a'
+        fail_msg: >-
+          Expected only the commissioned node in the placement loop; got
+          {{ _commissioned_items | map(attribute='key') | list }}
