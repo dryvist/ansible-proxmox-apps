@@ -106,6 +106,19 @@
         health_check: true
         health_check_path: /metrics
         health_check_port: 15020
+      # A route carrying failover_fallback (openbao's shape): the primary pool
+      # stays active-only; the fallback pool is standby-eligible and reached
+      # only when the primary has no healthy server.
+      - name: openbao-ha
+        backends: ["openbao-01.example.com", "openbao-02.example.com"]
+        port: 8200
+        health_check: true
+        health_check_path: /v1/sys/health
+        health_check_interval: "30s"
+        health_check_timeout: "20s"
+        failover_fallback:
+          backends: ["openbao-01.example.com", "openbao-02.example.com"]
+          health_check_path: "/v1/sys/health?standbyok=true&perfstandbyok=true"
       # A pool whose backend bounds its own request lifetime and answers its
       # first byte only when the whole response is computed: the row carries
       # response_header_timeout, so the ingress must not cut it at the default.
@@ -116,6 +129,11 @@
         health_check_path: /health/liveliness
         response_header_timeout: "0s"
         sso: false
+        strategy: hrw
+      # UI host whose bare root redirects to its own /ui/ admin path —
+      # root_redirect renders a redirectRegex middleware scoped to this
+      # router only.
+      - { name: llm-ui, ip: "192.0.2.40", port: 4000, sso: true, root_redirect: "/ui/" }
     _template_dir: "../../../roles/traefik/templates"
 
   tasks:

@@ -13,20 +13,9 @@
 - name: Configure pgBackRest object-storage PITR backups
   when:
     - postgres_pgbackrest_enabled | bool
+    - postgres_pgbackrest_credentials_present | bool
     - postgres_role == 'primary'
   block:
-    - name: Assert the pgBackRest S3 endpoint and credentials are set
-      ansible.builtin.assert:
-        that:
-          - postgres_backup_s3_endpoint | length > 0
-          - postgres_backup_s3_access_key_id | length > 0
-          - postgres_backup_s3_secret_access_key | length > 0
-        fail_msg: >-
-          pgBackRest is enabled but the S3 endpoint/credentials are unset. Set
-          POSTGRES_BACKUP_S3_ENDPOINT, POSTGRES_BACKUP_S3_ACCESS_KEY_ID, and
-          POSTGRES_BACKUP_S3_SECRET_ACCESS_KEY.
-        quiet: true
-
     - name: Assert the offsite (repo2) endpoint and credentials are set
       ansible.builtin.assert:
         that:
@@ -242,6 +231,23 @@
       loop_control:
         label: "{{ item.type }}"
 
+# A primary that cannot archive runs with archiving off.
+- name: Force WAL archiving off on the primary when pgBackRest cannot actually archive
+  become: true
+  become_user: postgres
+  when:
+    - postgres_role == 'primary'
+    - not (postgres_pgbackrest_credentials_present | bool)
+  block:
+    - name: Ensure archive_mode is off
+      community.postgresql.postgresql_alter_system:
+        param: archive_mode
+        value: "off"
+      notify: Restart postgresql
+
+    - name: Apply the pending archiving-off restart
+      ansible.builtin.meta: flush_handlers
+
 # =============================================================================
 # Standby side of the same tier. Only the primary archives WAL and takes base
 # backups — a standby's WAL arrives by streaming — but the standby is NOT left
@@ -258,12 +264,13 @@
 #
 # The timers: a host demoted from primary to standby keeps whatever backup
 # timers it was given, and goes on running base backups against a stanza it no
-# longer owns. Nothing else removes them, so this does.
+# longer owns. Nothing else removes them, so this does. The same applies to a
+# primary that cannot archive.
 # =============================================================================
-- name: Keep pgBackRest consistent but inert on a standby
+- name: Keep pgBackRest consistent but inert on a standby, or a primary that cannot archive
   when:
     - postgres_pgbackrest_enabled | bool
-    - postgres_role == 'standby'
+    - postgres_role == 'standby' or not (postgres_pgbackrest_credentials_present | bool)
   block:
     - name: Install pgBackRest
       ansible.builtin.apt:
