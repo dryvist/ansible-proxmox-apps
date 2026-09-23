@@ -26,6 +26,7 @@ FILES = ROOT / "roles/homarr/files"
 if str(FILES) not in sys.path:
     sys.path.insert(0, str(FILES))
 SPEC = importlib.util.spec_from_file_location("homarr_api", FILES / "homarr_api.py")
+assert SPEC is not None and SPEC.loader is not None
 homarr_api = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(homarr_api)
 
@@ -51,9 +52,11 @@ class FakeApi:
         if procedure == "integration.byId":
             if not query:
                 raise AssertionError("integration.byId is a query — needs query=True")
+            assert payload is not None
             row = next(r for r in self.rows.values() if r["id"] == payload["id"])
             return {**row, "app": row.get("app")}
         if procedure == "integration.create":
+            assert payload is not None
             # Mirrors Homarr's real behaviour: it connection-tests a secret
             # before persisting the row and rejects an empty one.
             if any(not (s.get("value") or "").strip() for s in payload.get("secrets", [])):
@@ -70,6 +73,7 @@ class FakeApi:
             }
             return None
         if procedure == "integration.update":
+            assert payload is not None
             if "appId" not in payload:
                 raise homarr_api.HomarrError(
                     "integration.update -> HTTP 400: appId received undefined"
