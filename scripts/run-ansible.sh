@@ -183,16 +183,9 @@ fi
 # bounded on no axis at all — it never expires, redeems without limit, and is
 # accepted from any address that can reach the endpoint.
 #
-# This wrapper read the unbounded one. Its own certificate label and the
-# comments around it name the bounded one. Measured on the store's audit log:
-# the bounded identity's last login was 2026-09-06 04:09, and every converge
-# since has authenticated as the unbounded shadow of it — a bound that lapsed
-# and fell through to a standing credential, with nothing anywhere reporting a
-# failure.
-#
-# Preference, not a hard switch, because the bounded credential is not yet
-# published everywhere this script runs. The fallback is deliberately LOUD: a
-# silent one is how this went unnoticed for three days.
+# The unbounded one is being retired: a workstation converges as its own
+# identity (OPERATOR_VAULT_*), and the undeclared tier stays only until every
+# workstation caller has moved.
 #
 # A third pair, OPENBAO_APPROLE_SEMAPHORE_*, belongs to the unattended
 # execution plane itself rather than to any human-run checkout. It carries
@@ -231,12 +224,12 @@ select_converge_identity() {
   elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
-    CONVERGE_IDENTITY="ansible (UNDECLARED, unbounded)"
-    echo "WARNING: converging as an identity that is declared nowhere and bounded" >&2
-    echo "  on no axis — no lifetime, no redemption cap, no source restriction —" >&2
-    echo "  because the declared equivalent's credential is not in this" >&2
-    echo "  environment. Publish OPENBAO_APPROLE_ANSIBLE_CONVERGE_{ROLE,SECRET}_ID" >&2
-    echo "  here and this warning goes away. See the identity-swap incident." >&2
+    CONVERGE_IDENTITY="ansible (UNDECLARED, retiring)"
+    echo "WARNING: converging as the undeclared ansible AppRole, which is being retired." >&2
+  elif [[ -z ${SKIP_WORKSTATION_IDENTITY:-} && -n ${OPERATOR_VAULT_ROLE_ID:-} && -n ${OPERATOR_VAULT_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$OPERATOR_VAULT_ROLE_ID
+    CONVERGE_SECRET_ID=$OPERATOR_VAULT_SECRET_ID
+    CONVERGE_IDENTITY="workstation identity"
   fi
 }
 select_converge_identity
@@ -274,6 +267,9 @@ if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; the
         # without one a refused login re-selects the same tier forever.
         if [[ $CONVERGE_IDENTITY == openbao-node-converge* ]]; then
           SKIP_OPENBAO_NODE_CONVERGE=1
+        fi
+        if [[ $CONVERGE_IDENTITY == "workstation identity" ]]; then
+          SKIP_WORKSTATION_IDENTITY=1
         fi
         ;;
     esac
