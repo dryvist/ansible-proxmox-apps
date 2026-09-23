@@ -9,6 +9,7 @@ reimplementation.
 """
 
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -17,10 +18,15 @@ from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 REL = "roles/vikunja/tasks/hermes_bridge_identity_one.yml"
+DEFAULTS_REL = "roles/vikunja/defaults/main.yml"
 
 
 def _tasks():
     return yaml.safe_load((ROOT / REL).read_text(encoding="utf-8"))
+
+
+def _defaults():
+    return yaml.safe_load((ROOT / DEFAULTS_REL).read_text(encoding="utf-8"))
 
 
 def _find(name):
@@ -150,6 +156,37 @@ class DeleteStaleTokenOnlyWhenNeeded(unittest.TestCase):
         # only ever pass a string, which let a `| length > 0` guard on a
         # bare int ship without being caught.
         self.assertTrue(self._fires(False, 42))
+
+
+class ProbeEndpointStaysInScope(unittest.TestCase):
+    """A stored token only ever holds the permissions
+    vikunja_hermes_bridge_permissions grants (projects/tasks scopes, never
+    `user`), so the liveness probe must hit a route inside that same set --
+    otherwise a freshly-minted, fully working token reads 401/403 forever
+    and the check can never report success. Derived from the real
+    permissions var, not a hardcoded group name, so it breaks the moment
+    the probe and the granted scopes drift apart again in either
+    direction.
+    """
+
+    TASK = "Verify the stored token still authenticates for {{ vikunja_hermes_identity.username }}"
+
+    def test_probe_path_is_a_granted_permission_group(self):
+        url = _find(self.TASK)["ansible.builtin.uri"]["url"]
+        match = re.search(r"/api/v1/([a-z_]+)", url)
+        assert match is not None, f"no /api/v1/<group> path in {url!r}"
+        group = match.group(1)
+        permissions = _defaults()["vikunja_hermes_bridge_permissions"]
+        self.assertIn(
+            group,
+            permissions,
+            f"probe hits {group!r}, which vikunja_hermes_bridge_permissions "
+            f"does not grant: {sorted(permissions)}",
+        )
+        self.assertTrue(
+            permissions[group],
+            f"{group!r} is granted but with no actions: {permissions[group]!r}",
+        )
 
 
 if __name__ == "__main__":
