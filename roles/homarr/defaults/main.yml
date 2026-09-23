@@ -178,10 +178,10 @@ homarr_board_name: default
 # separately) and Home Assistant (reachable, but no long-lived token is managed
 # anywhere in the estate yet).
 #
-# One rule for all four: a candidate renders only when its api_key is
-# non-empty. OpenBao not yet seeding one is a supported state, not a converge
-# failure. Proxmox (below) keeps its own var — its secret shape (token +
-# realm) is not a single api_key.
+# Every URL displays always: an app is always in the list below, key or no
+# key. OpenBao not yet seeding one shows up as a visible rejection on the
+# board, never a row that silently isn't there. Proxmox (below) keeps its
+# own var — its secret shape (token + realm) is not a single api_key.
 homarr_radarr_api_key: ""
 homarr_seerr_api_key: ""
 homarr_plex_token: ""
@@ -217,14 +217,15 @@ homarr_media_integration_candidates:
       - kind: apiKey
         value: "{{ homarr_sonarr_api_key }}"
 
-homarr_integrations: >-
-  {{ homarr_media_integration_candidates
-     | rejectattr('secrets.0.value', 'eq', '')
-     | list }}
+# Always rendered, key or no key — an empty secret is a visible, reported
+# rejection (roles/homarr/files/homarr_api.py:sync_integrations), never a
+# silently omitted row. roles/homarr/tasks/integrations.yml warns by name
+# at the end of the play for whichever ones have no credential.
+homarr_integrations: "{{ homarr_media_integration_candidates }}"
 
-# Proxmox is appended only when a token is available. It is a SEPARATE,
-# audit-scoped token — never the Terraform provider's write-capable credential,
-# because Homarr copies every secret it is handed into its own SQLite.
+# Proxmox is a SEPARATE, audit-scoped token — never the Terraform provider's
+# write-capable credential, because Homarr copies every secret it is handed
+# into its own SQLite.
 #
 # The endpoint is derived, never a pinned node name. `ansible_host` for an LXC
 # is already its own node's management FQDN ({node-role}.{domain}, see
@@ -236,22 +237,15 @@ homarr_proxmox_token_id: ""
 homarr_proxmox_token_secret: ""
 homarr_proxmox_realm: pam
 
-# Appended to homarr_integrations only when a token exists, so the estate does
-# not carry a permanently-skipped entry just to hold a place.
-homarr_proxmox_integration: >-
-  {{ (
-      []
-      if not homarr_proxmox_token_secret
-      else [
-          {
-              'name': 'Proxmox',
-              'kind': 'proxmox',
-              'url': homarr_proxmox_endpoint,
-              'secrets': [
-                  {'kind': 'tokenId', 'value': homarr_proxmox_token_id},
-                  {'kind': 'personalAccessToken', 'value': homarr_proxmox_token_secret},
-                  {'kind': 'realm', 'value': homarr_proxmox_realm},
-              ],
-          }
-      ]
-  ) }}
+# Always rendered too, same rule as the media candidates above.
+homarr_proxmox_integration:
+  - name: Proxmox
+    kind: proxmox
+    url: "{{ homarr_proxmox_endpoint }}"
+    secrets:
+      - kind: tokenId
+        value: "{{ homarr_proxmox_token_id }}"
+      - kind: personalAccessToken
+        value: "{{ homarr_proxmox_token_secret }}"
+      - kind: realm
+        value: "{{ homarr_proxmox_realm }}"
