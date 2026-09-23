@@ -88,6 +88,7 @@
         - github-repo-create-policy.hcl
         - github-org-admin-policy.hcl
         - github-write-policy.hcl
+        - github-agents-policy.hcl
         - ai-public-policy.hcl
 
     - name: Read the policies rendered with a publisher repository
@@ -104,7 +105,8 @@
         _repo_create_paths: "{{ _paths[3] }}"
         _org_admin_paths: "{{ _paths[4] }}"
         _write_paths: "{{ _paths[5] }}"
-        _ai_public_paths: "{{ _paths[6] }}"
+        _agents_paths: "{{ _paths[6] }}"
+        _ai_public_paths: "{{ _paths[7] }}"
       vars:
         _paths: >-
           {{ _tier_raw.results | map(attribute='content') | map('b64decode')
@@ -177,16 +179,14 @@
     - name: Assert the lower-trust tier mints only the named agents set
       ansible.builtin.assert:
         that:
-          - (openbao_github_agents_mount ~ '/token/' ~ openbao_github_agents_set_name) in _ai_public_paths
-          - (openbao_github_agents_mount ~ '/token') not in _ai_public_paths
-          - _ai_public_paths | select('match', '^github') | list
-            == [openbao_github_agents_mount ~ '/token/' ~ openbao_github_agents_set_name]
+          - _agents_paths == [openbao_github_agents_mount ~ '/token/' ~ openbao_github_agents_set_name]
+          - _ai_public_paths | select('match', '^github') | list == []
           - _mint_paths | select('match', '^' ~ openbao_github_agents_mount ~ '/') | list == []
         fail_msg: >-
-          ai-public must hold exactly
+          github-agents must hold exactly
           {{ openbao_github_agents_mount }}/token/{{ openbao_github_agents_set_name }}
-          (no raw token path, no other GitHub mount), and no other tier may
-          reach the agents mount.
+          (no raw token path, no other GitHub mount); ai-public and every other
+          tier must reach no GitHub mount through it.
 
     - name: Assert no set on the per-App mounts carries administration
       ansible.builtin.assert:
