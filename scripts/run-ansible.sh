@@ -138,11 +138,7 @@ mint_ssh_cert() {
   BAO_TOKEN=$RUNNER_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 \
     bao write -field=signed_key "$mount/sign/$CONVERGE_SIGN_ROLE" \
     public_key=@"$CERT_DIR/id.pub" ttl="${SSH_CERT_TTL:-2h}" \
-    > "$CERT_DIR/id-cert.pub" || {
-    # A workstation identity without the sign grant falls through like a refused login.
-    [[ $CONVERGE_IDENTITY == "workstation identity" ]] && return 2
-    return 1
-  }
+    > "$CERT_DIR/id-cert.pub" || { [[ $CONVERGE_IDENTITY == "workstation identity" ]] && return 2; return 1; }
   export PROXMOX_SSH_KEY_PATH="$CERT_DIR/id"
 
   if [[ -z ${BAO_TOKEN:-} ]]; then
