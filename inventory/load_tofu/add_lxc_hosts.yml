@@ -15,13 +15,7 @@
   changed_when: false
   when: tofu_data.containers is defined
 
-# pct reaches only the containers on its own node. Any node answers
-# /cluster/resources for the whole cluster; the first answer is used.
-# ansible.builtin.command, not raw: raw sends the command as a bare SSH exec
-# and returned empty stdout from every reachable node here (rc 0, no error) —
-# command is the pattern pve_ha already uses for this exact pvesh call
-# (ansible-proxmox roles/pve_ha/tasks/estate_wide_enrollment.yml) and PVE
-# nodes always carry Python 3, so raw's no-Python advantage buys nothing.
+# Read live placement from any commissioned node.
 - name: Read live container placement from the cluster
   ansible.builtin.command: pvesh get /cluster/resources --type vm --output-format json
   delegate_to: "{{ (item.value.role | default(item.key, true)) ~ '.' ~ tofu_data.domain }}"
@@ -30,9 +24,6 @@
     ansible_user: root
     ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
   register: add_lxc_hosts_placement
-  # Same default-true filter as inventory/group_vars/prometheus_group.yml —
-  # a decommissioned node (commissioned=false) has no working DNS/SSH and
-  # must never be dialed.
   loop: "{{ tofu_data.nodes | default({}) | dict2items | selectattr('value.commissioned', 'ne', false) | list }}"
   loop_control:
     label: "{{ item.key }}"
