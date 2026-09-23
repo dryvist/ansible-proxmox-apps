@@ -1,0 +1,140 @@
+---
+# Regression coverage for the live-placement lookup in
+# ../../inventory/load_tofu/add_lxc_hosts.yml (PR #2061, fixed by #2063).
+#
+# #2061 broke every converge: `ansible.builtin.raw` force-allocates a pty
+# (`ssh -tt`) unless told otherwise, but the automation-ansible SSH
+# certificate is signed WITHOUT permit-pty (see ansible.cfg's
+# [paramiko_connection] note — the working proxmox_pct_remote connection never
+# requests one either, for the same reason). Proxmox's sshd rejected the pty
+# channel post-auth and the exec silently returned rc=0 with EMPTY stdout
+# instead of a visible error. #2063 fixed the transport (raw -> command, which
+# never requests a pty) and added the commissioned-node filter.
+#
+# This file pins three properties so none of them regress independently:
+#   1. the placement read never uses ansible.builtin.raw's default pty
+#      allocation against this certificate;
+#   2. the placement loop dials commissioned nodes only;
+#   3. an empty cluster answer is NEVER silently accepted as "no data, fall
+#      back to the declared node" — no default('[]', true)-style fail-open.
+#      A cluster that answers rc=0 with nothing usable is a louder anomaly
+#      than "no node was reachable at all" (which the existing
+#      ignore_unreachable + "Warn when live placement is unavailable" path
+#      already handles on purpose), and must keep failing the play rather
+#      than being folded into that same quiet path.
+#
+# Can't be exercised through tofu_inventory.json + a live SSH attempt — CI
+# runs that fixture with PROXMOX_SSH_KEY_PATH=/dev/null precisely so no real
+# connection is attempted, and an auth failure is caught by
+# ignore_unreachable long before any of these three shapes is produced.
+
+- name: Verify the source still carries the pty, commissioned, and fail-closed fixes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _add_lxc_hosts_source: "{{ lookup('file', playbook_dir + '/../../inventory/load_tofu/add_lxc_hosts.yml') }}"
+  tasks:
+    - name: Assert the placement read does not use ansible.builtin.raw
+      ansible.builtin.assert:
+        that:
+          - "'ansible.builtin.raw:' not in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml uses ansible.builtin.raw again — raw
+          force-allocates a pty by default, which the automation-ansible SSH
+          certificate does not permit, and Proxmox's sshd silently returns
+          empty stdout for it.
+
+    - name: Assert the placement loop is filtered to commissioned nodes
+      ansible.builtin.assert:
+        that:
+          - "\"selectattr('value.commissioned'\" in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer restricts the placement loop to
+          commissioned nodes — an uncommissioned node has no DNS record and
+          is a guaranteed unreachable, not a transient failure worth dialing.
+
+    - name: Assert no fail-open default was added to the placement answer
+      ansible.builtin.assert:
+        that:
+          - "\"default('[]', true)\" not in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml's placement answer now silently substitutes an
+          empty list for a defined-but-empty cluster response. That is a
+          fail-open: every container in it would fall back to its DECLARED
+          node instead of the play failing loud on a cluster that answered
+          with nothing usable.
+
+- name: Verify the commissioned-only loop filter's exact behavior
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # ne false (the shipped filter) is deliberately not the same as
+    # "defined and truthy": a node with no commissioned key at all is still
+    # dialed (checked via `| default({}, true)` below, matching how a real
+    # tofu_data.nodes entry with no commissioned key resolves). Only an
+    # EXPLICIT false excludes it.
+    _mock_nodes:
+      pve-a:
+        commissioned: true
+      pve-b:
+        commissioned: false
+      pve-c:
+        commissioned: null
+    _placement_loop_items: >-
+      {{ _mock_nodes | dict2items | selectattr('value.commissioned', 'ne', false) | list }}
+  tasks:
+    - name: Assert only the explicitly-false node is excluded
+      ansible.builtin.assert:
+        that:
+          - _placement_loop_items | map(attribute='key') | list | sort == ['pve-a', 'pve-c']
+        fail_msg: >-
+          Expected pve-a (commissioned: true) and pve-c (commissioned: null,
+          i.e. not explicitly false) in the placement loop, pve-b
+          (commissioned: false) excluded; got
+          {{ _placement_loop_items | map(attribute='key') | list }}
+
+- name: Verify an empty-but-defined cluster answer fails the play, not the declared-node fallback
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Reproduces the shape a pty-rejected exec used to produce: rc=0, but
+    # nothing in stdout. The shipped _answer/_lxc expressions (copied
+    # verbatim from add_lxc_hosts.yml) must still raise on this input rather
+    # than resolving to an empty list — see the "no fail-open" note above.
+    _mock_placement_results:
+      - rc: 0
+        stdout: ""
+  tasks:
+    - name: Attempt the shipped placement-mapping expression against an empty answer
+      block:
+        - name: Compute _lxc from the mocked empty answer
+          ansible.builtin.set_fact:
+            _lxc_from_empty_answer: "{{ _lxc }}"
+          vars:
+            _answer: >-
+              {{ (_mock_placement_results | default([])
+                  | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+                  | map(attribute='stdout') | first | default('[]')) }}
+            _lxc: "{{ _answer | from_json | selectattr('type', 'equalto', 'lxc') | list }}"
+        - name: Fail the test — the empty answer was silently accepted
+          ansible.builtin.fail:
+            msg: >-
+              GUARD_ERODED — the empty answer resolved to
+              {{ _lxc_from_empty_answer }} instead of raising, which every
+              container would then fall back to its declared node under,
+              unnoticed.
+      rescue:
+        # The Python json decoder's own error text — present only in a
+        # genuine from_json parse failure, never in this file's own
+        # GUARD_ERODED message above. Distinguishing the two matters: without
+        # it, a future code change that silently accepts the empty answer
+        # would still "fail" this block (via the deliberate fail task) and
+        # could be mistaken for the guard still holding.
+        - name: Assert the failure is the expected from_json parse error, not a guard regression
+          ansible.builtin.assert:
+            that:
+              - "'GUARD_ERODED' not in ansible_failed_result.msg"
+              - "'Expecting value' in ansible_failed_result.msg"
+            fail_msg: >-
+              The block failed, but not on the expected from_json parse
+              error — got: {{ ansible_failed_result.msg }}
