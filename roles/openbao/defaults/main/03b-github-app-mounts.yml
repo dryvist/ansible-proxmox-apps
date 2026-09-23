@@ -1,0 +1,51 @@
+---
+# Per-App GitHub engine mounts on the same plugin as the admin mount. Each
+# App's own grant is the hard ceiling for every token its mount mints, and
+# every set below states its permission map explicitly (05b asserts none holds
+# administration). App ID, private key and installation IDs arrive via
+# environment; a supplied private key is a deliberate (re)configuration.
+#
+#   github         everyday read/write for the trusted harness tier
+#   github-agents  lower-trust AI tier, public repositories only
+openbao_github_claude_mount: github
+openbao_github_claude_dryvist_installation_id: >-
+  {{ lookup('env', 'OPENBAO_GITHUB_DRYVIST_INSTALLATION_ID') | default('', true) }}
+openbao_github_claude_personal_installation_id: >-
+  {{ lookup('env', 'OPENBAO_GITHUB_PERSONAL_INSTALLATION_ID') | default('', true) }}
+openbao_github_read_permission_sets:
+  - name: read-dryvist-all
+    tier: read
+    installation_id: "{{ openbao_github_claude_dryvist_installation_id }}"
+    permissions: "{{ openbao_github_read_permissions }}"
+  - name: read-personal-all
+    tier: read
+    installation_id: "{{ openbao_github_claude_personal_installation_id }}"
+    permissions: "{{ openbao_github_read_permissions }}"
+
+openbao_github_agents_mount: github-agents
+openbao_github_agents_set_name: agents-write
+openbao_github_agents_permissions:
+  contents: write
+  issues: write
+  pull_requests: write
+  merge_queues: write
+  metadata: read
+# `public_repos_of`: the set's repository list is the named organization's
+# public repositories, read from the GitHub API at converge time.
+openbao_github_agents_permission_sets:
+  - name: "{{ openbao_github_agents_set_name }}"
+    tier: agents
+    installation_id: >-
+      {{ lookup('env', 'OPENBAO_GITHUB_AGENTS_DRYVIST_INSTALLATION_ID') | default('', true) }}
+    permissions: "{{ openbao_github_agents_permissions }}"
+    public_repos_of: dryvist
+
+openbao_github_app_mounts:
+  - mount: "{{ openbao_github_claude_mount }}"
+    app_id: "{{ lookup('env', 'OPENBAO_GITHUB_CLAUDE_APP_ID') | default('', true) }}"
+    private_key: "{{ lookup('env', 'OPENBAO_GITHUB_CLAUDE_APP_PRIVATE_KEY') | default('', true) }}"
+    permission_sets: "{{ openbao_github_read_permission_sets }}"
+  - mount: "{{ openbao_github_agents_mount }}"
+    app_id: "{{ lookup('env', 'OPENBAO_GITHUB_AGENTS_APP_ID') | default('', true) }}"
+    private_key: "{{ lookup('env', 'OPENBAO_GITHUB_AGENTS_APP_PRIVATE_KEY') | default('', true) }}"
+    permission_sets: "{{ openbao_github_agents_permission_sets }}"
