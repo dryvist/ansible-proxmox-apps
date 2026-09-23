@@ -31,6 +31,17 @@
                         | zip(vikunja_service_users | map(attribute='password')))) }}
   no_log: true
 
+# A STABLE password per identity, resolved before creation is even
+# considered — see hermes_bridge_password_one.yml for why re-deriving it
+# fresh each run (the previous shape) breaks login on every run after the
+# one that created the user.
+- name: "Resolve each identity's login password"
+  ansible.builtin.include_tasks: hermes_bridge_password_one.yml
+  loop: "{{ vikunja_hermes_bridge_identities }}"
+  loop_control:
+    loop_var: vikunja_hermes_identity
+    label: "{{ vikunja_hermes_identity.username }}"
+
 # Idempotent create, same whole-cell regex match as the admin/service-user
 # creation in tasks/main.yml (vikunja_user_list is registered there, earlier
 # in the same play).
@@ -42,15 +53,13 @@
       - create
       - "--username={{ item.username }}"
       - "--email={{ item.username }}@{{ tofu_data.domain }}"
-      - "--password={{ item.password }}"
+      - "--password={{ vikunja_hermes_resolved_password[item.username] }}"
   loop: "{{ vikunja_hermes_bridge_identities }}"
   loop_control:
     label: "{{ item.username }}"
-  when:
-    - item.password | length > 0
-    - >-
-      not (vikunja_user_list.stdout | default('', true)
-           | regex_search('(?:^|\\s|\\|)' ~ item.username ~ '(?:\\s|\\||$)'))
+  when: >-
+    not (vikunja_user_list.stdout | default('', true)
+         | regex_search('(?:^|\\s|\\|)' ~ item.username ~ '(?:\\s|\\||$)'))
   changed_when: true
   no_log: true
 
@@ -60,3 +69,5 @@
   loop_control:
     loop_var: vikunja_hermes_identity
     label: "{{ vikunja_hermes_identity.username }}"
+  vars:
+    vikunja_hermes_identity_password: "{{ vikunja_hermes_resolved_password[vikunja_hermes_identity.username] }}"
