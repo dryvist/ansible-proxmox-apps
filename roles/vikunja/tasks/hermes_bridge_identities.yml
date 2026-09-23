@@ -1,0 +1,62 @@
+---
+# Provision every declared Hermes bridge identity: its own Vikunja user, its
+# declared project shares, and a token scoped to an exact permission table —
+# published to that identity's own OpenBao field. Included from tasks/main.yml
+# only when vikunja_hermes_bridge_publish_openbao is true. Mirrors
+# mcp_tokens.yml's shape (same OpenBao write-credential assert, same
+# per-item include pattern), generalized to a data-driven identity list
+# instead of the shared svc-mcp-ro/rw RO/RW split.
+
+- name: Assert OpenBao write credentials are present
+  ansible.builtin.assert:
+    that:
+      - vikunja_token_openbao_addr | length > 0
+      - vikunja_token_openbao_token | length > 0
+    fail_msg: >-
+      vikunja_hermes_bridge_publish_openbao is on but BAO_ADDR/BAO_TOKEN are
+      unset. Provide a write-capable OpenBao AppRole in the converge
+      environment.
+    quiet: true
+
+# Resolved from the role's canonical secret sources rather than restated, so
+# the bao-first values group_vars sets for the admin and MCP service accounts
+# are picked up automatically. Same block as operator_access.yml's owner map,
+# duplicated rather than shared because that one only runs when the human
+# operator account is configured — a precondition unrelated to this mechanism.
+- name: Build the project-share owner credential map from the role's canonical sources
+  ansible.builtin.set_fact:
+    vikunja_hermes_bridge_owner_password_map: >-
+      {{ {vikunja_admin_user: vikunja_admin_password}
+         | combine(dict(vikunja_service_users | map(attribute='username')
+                        | zip(vikunja_service_users | map(attribute='password')))) }}
+  no_log: true
+
+# Idempotent create, same whole-cell regex match as the admin/service-user
+# creation in tasks/main.yml (vikunja_user_list is registered there, earlier
+# in the same play).
+- name: Create Hermes bridge Vikunja users (idempotent — skipped if already present)
+  ansible.builtin.command:
+    argv:
+      - "{{ vikunja_binary_path }}"
+      - user
+      - create
+      - "--username={{ item.username }}"
+      - "--email={{ item.username }}@{{ tofu_data.domain }}"
+      - "--password={{ item.password }}"
+  loop: "{{ vikunja_hermes_bridge_identities }}"
+  loop_control:
+    label: "{{ item.username }}"
+  when:
+    - item.password | length > 0
+    - >-
+      not (vikunja_user_list.stdout | default('', true)
+           | regex_search('(?:^|\\s|\\|)' ~ item.username ~ '(?:\\s|\\||$)'))
+  changed_when: true
+  no_log: true
+
+- name: Provision each Hermes bridge identity's shares, token, and OpenBao publish
+  ansible.builtin.include_tasks: hermes_bridge_identity_one.yml
+  loop: "{{ vikunja_hermes_bridge_identities }}"
+  loop_control:
+    loop_var: vikunja_hermes_identity
+    label: "{{ vikunja_hermes_identity.username }}"
