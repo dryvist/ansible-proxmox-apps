@@ -143,6 +143,14 @@ class DeleteStaleTokenOnlyWhenNeeded(unittest.TestCase):
     def test_does_not_fire_when_there_is_nothing_to_delete(self):
         self.assertFalse(self._fires(False, ""))
 
+    def test_fires_with_a_real_int_token_id_not_just_a_string(self):
+        # Vikunja's token id is a JSON integer; `first | default('', true)`
+        # on the parsed list yields that int (Ansible's own tagged int
+        # subclass in real runs), never a string. The other cases above
+        # only ever pass a string, which let a `| length > 0` guard on a
+        # bare int ship without being caught.
+        self.assertTrue(self._fires(False, 42))
+
 
 if __name__ == "__main__":
     unittest.main()
