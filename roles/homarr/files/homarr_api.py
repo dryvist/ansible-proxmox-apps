@@ -44,9 +44,16 @@ def _app_payload(want, icon_url):
     validation error rather than a default — invalid_type for name/description/
     iconUrl, invalid_union for the href/pingUrl unions. Send all five, null
     rather than absent.
+
+    `name` is `want["title"]` — the board's display label — falling back to
+    `want["name"]` (the route slug) only when a row carries no title. It is
+    NOT the diff key (see sync_board): a title is expected to change over
+    time (an agent's summary, a surface's wording), and matching Homarr's
+    existing rows by a value that can legitimately change is exactly what
+    orphans a tile into a duplicate instead of updating it in place.
     """
     return {
-        "name": want["name"],
+        "name": want.get("title") or want["name"],
         "description": want.get("desc") or None,
         "iconUrl": icon_url,
         "href": want["url"],
@@ -57,9 +64,16 @@ def _app_payload(want, icon_url):
 def sync_board(api, api_key, board_name, apps):
     """Sync one bookmark tile per catalog service onto a board.
 
-    Two diffs, both by name/id — `app.create` and `board.addItem` always
-    insert, so undiffed calls double every tile each converge. `apps` entries
-    are dashboard_catalog rows as-is.
+    Two diffs, both by URL — `app.create` and `board.addItem` always insert,
+    so an undiffed call doubles every tile each converge. `apps` entries are
+    dashboard_catalog rows as-is.
+
+    Matched by `href` (the route's clean URL), not by `name`: `name` is now a
+    display title (see `_app_payload`) that legitimately changes over time,
+    and matching on a value that changes is how a rename turns into a
+    duplicate tile instead of an update. The URL a route resolves to changes
+    far less often, and only deliberately (a route rename), which is already
+    the same risk the old name-keyed match carried for a route rename.
 
     An "app" tile points at its app row via `options.appId`, NOT via
     `addItem`'s `integrationIds` — that links to the separate `integration`
@@ -68,10 +82,10 @@ def sync_board(api, api_key, board_name, apps):
     actions = []
     changed = False
 
-    existing_apps = {a["name"]: a for a in api.trpc("app.all", api_key=api_key)}
+    existing_apps = {a["href"]: a for a in api.trpc("app.all", api_key=api_key)}
     app_ids = {}
     for want in apps:
-        have = existing_apps.get(want["name"])
+        have = existing_apps.get(want["url"])
         if have is None:
             created = api.trpc(
                 "app.create", _app_payload(want, DEFAULT_ICON_URL), api_key=api_key
@@ -81,8 +95,13 @@ def sync_board(api, api_key, board_name, apps):
             changed = True
         else:
             app_ids[want["name"]] = have["id"]
-            want_ping = want.get("probe_url") or None
-            if have.get("href") != want["url"] or have.get("pingUrl") != want_ping:
+            want_name = want.get("title") or want["name"]
+            want_desc = want.get("desc") or None
+            if (
+                have.get("name") != want_name
+                or have.get("description") != want_desc
+                or have.get("pingUrl") != (want.get("probe_url") or None)
+            ):
                 payload = _app_payload(want, have.get("iconUrl") or DEFAULT_ICON_URL)
                 payload["id"] = have["id"]  # appEditSchema = appManageSchema & {id}
                 api.trpc("app.update", payload, api_key=api_key)

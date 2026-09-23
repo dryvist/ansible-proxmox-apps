@@ -5,12 +5,19 @@
 #
 # Every href is the clean portless HTTPS URL, so each click passes through
 # Traefik and its Authelia gate.
+#
+# UI groups render first, API/machine groups after (settings.yaml.j2 mirrors
+# this exact group list and order, since display order there is layout key
+# order, not alphabetical). A VLAN group with services on both sides renders
+# twice — once per side — so the API half is suffixed "(API)" rather than
+# reusing the bare group name twice.
+{% macro audience_groups(services, suffix) %}
 {% set _ordered = dashboard_catalog_group_order
-     + (dashboard_catalog_services | map(attribute='group') | unique | reject('in', dashboard_catalog_group_order) | sort | list) %}
-{% for group in _ordered if dashboard_catalog_services | selectattr('group', 'equalto', group) | list | length > 0 %}
-- {{ group }}:
-{% for svc in dashboard_catalog_services if svc.group == group %}
-    - {{ svc.name }}:
+     + (services | map(attribute='group') | unique | reject('in', dashboard_catalog_group_order) | sort | list) %}
+{% for group in _ordered if services | selectattr('group', 'equalto', group) | list | length > 0 %}
+- "{{ group }}{{ suffix }}":
+{% for svc in services if svc.group == group %}
+    - {{ svc.title }}:
         href: {{ svc.url }}
 {% if homepage_site_monitor_enabled | bool and svc.probe_url | length > 0 %}
         # The GUEST address, never the public URL: this check is an
@@ -21,3 +28,8 @@
 {% endif %}
 {% endfor %}
 {% endfor %}
+{% endmacro %}
+{% set _ui = dashboard_catalog_services | selectattr('ui') | list %}
+{% set _api = dashboard_catalog_services | rejectattr('ui') | list %}
+{{ audience_groups(_ui, '') }}
+{{ audience_groups(_api, ' (API)') }}

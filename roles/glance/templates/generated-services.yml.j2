@@ -6,76 +6,80 @@
 # Every link is the clean portless HTTPS URL, so each click passes through
 # Traefik and its Authelia gate.
 #
-# LAYOUT — four levels, all driven by tofu tags, nothing hand-listed:
-#   column  -> audience: the wide left column is what a PERSON opens, the
-#              narrow right column is machine endpoints (svc.ui, from tofu).
-#   widget  -> group: the service's VLAN-derived category.
-#   group   -> section: an optional sub-block inside a category, so one guest's
-#              many routes (Hermes publishes five per agent) read together
-#              instead of scattering alphabetically.
-#   link    -> the service, with its one-line description beside it.
+# LAYOUT:
+#   split-column -> audience: UI (human-facing, svc.ui) beside API/machine
+#                    endpoints. Glance's own page `columns:` looks like the
+#                    obvious tool for this, but its multiple columns become
+#                    swipeable TABS on mobile (one hidden until tapped) —
+#                    the opposite of "UI first, then API below it" on a
+#                    phone. `split-column` is Glance's side-by-side widget:
+#                    side by side on desktop, a single stacked column in
+#                    declared order on mobile — exactly UI-then-API either
+#                    way. It only places two widgets deterministically when
+#                    given exactly two, so each side is exactly ONE combined
+#                    widget below, never one widget per VLAN group.
+#   widget group  -> the service's VLAN-derived category, as a named group
+#                     within that one combined widget.
+#   link          -> the service, with its one-line description beside it.
 #
 # A service reaches this board by having a Traefik route. There is no exclude
-# list: everything fronted is shown, and `ui` only decides WHICH column.
-{% macro service_column(services, size, monitor) %}
+# list: everything fronted is shown, and `ui` only decides which side.
+{% macro audience_widget(services, monitor) %}
 {#- Ordered categories first, then any that the order list does not name. -#}
 {% set _groups = dashboard_catalog_group_order
      + (services | map(attribute='group') | unique
         | reject('in', dashboard_catalog_group_order) | sort | list) %}
-    - size: {{ size }}
-      widgets:
+{% if monitor %}
+            - type: monitor
+              cache: {{ glance_monitor_interval | default('1m') }}
+              sites:
+{% for group in _groups %}
+{% for svc in services | selectattr('group', 'equalto', group) | list %}
+                - title: "{{ group }} · {{ svc.title }}"
+                  url: {{ svc.url }}
+{% if svc.probe_url | length > 0 %}
+                  # check-url is the GUEST address: this probe is unauthenticated,
+                  # and against the gated URL every service would read as down.
+                  check-url: {{ svc.probe_url }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% else %}
+            - type: bookmarks
+              groups:
 {% for group in _groups %}
 {% set _in_group = services | selectattr('group', 'equalto', group) | list %}
 {% if _in_group | length > 0 %}
-{#- Sections sort first (named sub-blocks), then the ungrouped remainder. -#}
-{% set _sections = _in_group | selectattr('section') | map(attribute='section') | unique | sort | list %}
-{% set _loose = _in_group | rejectattr('section') | list %}
-        - type: {{ monitor | ternary('monitor', 'bookmarks') }}
-          title: {{ group }}
-{% if monitor %}
-          cache: {{ glance_monitor_interval | default('1m') }}
-          sites:
-{% for svc in _in_group %}
-            - title: {{ svc.name }}
-              url: {{ svc.url }}
-{% if svc.probe_url | length > 0 %}
-              # check-url is the GUEST address: this probe is unauthenticated,
-              # and against the gated URL every service would read as down.
-              check-url: {{ svc.probe_url }}
-{% endif %}
-{% endfor %}
-{% else %}
-          groups:
-{% for section in _sections %}
-            - title: {{ section }}
-              links:
-{% for svc in _in_group if svc.section == section %}
-                - title: {{ svc.name }}
-                  url: {{ svc.url }}
+{#- Sections cluster together first (e.g. one Hermes agent's routes), then
+   the ungrouped remainder — same ordering as before, but flattened into one
+   links list: split-column only nests two widgets deterministically, so a
+   per-agent sub-heading is no longer a nested group. Each Hermes route's own
+   `title` (locals-hermes-routes.tf) already names the agent and surface, so
+   nothing here reads as ambiguous without the extra heading. -#}
+{% set _ordered = (_in_group | selectattr('section') | sort(attribute='section') | list)
+     + (_in_group | rejectattr('section') | list) %}
+                - title: {{ group }}
+                  links:
+{% for svc in _ordered %}
+                    - title: {{ svc.title }}
+                      url: {{ svc.url }}
 {% if svc.desc | length > 0 %}
-                  description: {{ svc.desc }}
-{% endif %}
-{% endfor %}
-{% endfor %}
-{% if _loose | length > 0 %}
-            - links:
-{% for svc in _loose %}
-                - title: {{ svc.name }}
-                  url: {{ svc.url }}
-{% if svc.desc | length > 0 %}
-                  description: {{ svc.desc }}
+                      description: {{ svc.desc }}
 {% endif %}
 {% endfor %}
 {% endif %}
-{% endif %}
-{% endif %}
 {% endfor %}
+{% endif %}
 {% endmacro %}
 {% set _ui = dashboard_catalog_services | selectattr('ui') | list %}
 {% set _api = dashboard_catalog_services | rejectattr('ui') | list %}
 - name: Services
   columns:
-{{ service_column(_ui, 'full', glance_monitor_enabled | bool) }}
+    - size: full
+      widgets:
+        - type: split-column
+          widgets:
+{{ audience_widget(_ui, glance_monitor_enabled | bool) }}
 {%- if _api | length > 0 %}
-{{ service_column(_api, 'small', false) }}
+{{ audience_widget(_api, false) }}
 {%- endif %}

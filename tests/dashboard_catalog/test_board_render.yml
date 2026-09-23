@@ -74,75 +74,79 @@
         _glance_page: >-
           {{ lookup('template', playbook_dir ~ '/../../roles/glance/templates/generated-services.yml.j2') | from_yaml }}
 
-    # Flatten each Glance column once. Column 0 is the human board, column 1 the
-    # machine endpoints; every assertion below reads these rather than repeating
-    # a four-deep map chain that would drift between checks.
-    - name: Flatten the rendered Glance columns
+    # Glance now renders ONE page column holding a single split-column widget
+    # — side by side on desktop, a single stacked column in declared order on
+    # mobile, unlike Glance's own multi-column pages (which become swipeable
+    # per-column TABS on narrow viewports, hiding whichever isn't selected).
+    # split-column's first widget is the combined UI catalog, its second the
+    # combined API catalog; every assertion below reads those two rather than
+    # repeating a five-deep map chain that would drift between checks.
+    - name: Flatten the rendered Glance split-column widgets
+      ansible.builtin.set_fact:
+        _glance_split: "{{ _glance_page[0].columns[0].widgets[0] }}"
+
+    - name: Flatten each side's links
       ansible.builtin.set_fact:
         _glance_ui_links: >-
-          {{ _glance_page[0].columns[0].widgets
-             | map(attribute='groups') | flatten
+          {{ _glance_split.widgets[0].groups
              | map(attribute='links') | flatten | list }}
         _glance_api_links: >-
-          {{ _glance_page[0].columns[1].widgets
-             | map(attribute='groups') | flatten
+          {{ _glance_split.widgets[1].groups
              | map(attribute='links') | flatten | list }}
-        _glance_all_links: >-
-          {{ (_glance_page[0].columns | map(attribute='widgets') | flatten
-              | map(attribute='groups') | flatten
-              | map(attribute='links') | flatten | list) }}
+
+    - name: Combine both sides
+      ansible.builtin.set_fact:
+        _glance_all_links: "{{ _glance_ui_links + _glance_api_links }}"
 
     - name: Every board parses and lists every catalogued service
       ansible.builtin.assert:
         quiet: true
         that:
-          - _homepage_services | length == 3
-          - _homepage_settings.layout.keys() | list | length == 3
+          - _homepage_services | length == 4
+          - _homepage_settings.layout.keys() | list | length == 4
           - _glance_page | length == 1
           - _glance_all_links | length == 5
         fail_msg: >-
           A board rendered but does not carry every service. An incomplete board
           converges green and simply omits things in the browser — which is
           exactly how the estate's other dashboard went missing from the boards.
+          Homepage has one extra group here versus the raw VLAN count: the `ai`
+          group appears twice, once per audience side ("ai" and "ai (API)").
         success_msg: "All three boards render every catalogued service."
 
     # The split is the whole point of the audience tagging: a person opens the
-    # left column, machine endpoints sit out of the way on the right. Assert
-    # BOTH sides — a template that dropped the right column entirely would
-    # still satisfy "the left column has the UIs".
+    # UI side, machine endpoints sit out of the way on the other. Assert BOTH
+    # sides — a template that dropped the machine side entirely would still
+    # satisfy "the UI side has the UIs".
     - name: Glance splits the catalogue by audience, not by auth gate
       ansible.builtin.assert:
         quiet: true
         that:
-          - _glance_page[0].columns | length == 2
-          - _glance_page[0].columns[0].size == 'full'
-          - _glance_page[0].columns[1].size == 'small'
+          - _glance_split.widgets | length == 2
           - _ui_names == ['vikunja', 'hermes-agent', 'llm', 'plex']
           - _api_names == ['hermes-agent-api']
         fail_msg: >-
-          Glance did not split by `ui`. Got UI column {{ _ui_names }} and
-          machine column {{ _api_names }}. Note vikunja is sso:false and MUST
-          still be in the UI column — keying off `sso` is the wrong tag.
-        success_msg: "Glance renders the UI column and the machine column from `ui`."
+          Glance did not split by `ui`. Got UI side {{ _ui_names }} and
+          machine side {{ _api_names }}. Note vikunja is sso:false and MUST
+          still be on the UI side — keying off `sso` is the wrong tag.
+        success_msg: "Glance renders the UI side and the machine side from `ui`."
       vars:
         _ui_names: "{{ _glance_ui_links | map(attribute='title') | list }}"
         _api_names: "{{ _glance_api_links | map(attribute='title') | list }}"
 
-    - name: Hermes routes collapse into one section, each link described
+    # A per-agent `section` no longer renders as its own nested heading — with
+    # exactly one combined widget per audience side, split-column can only
+    # place two widgets deterministically (see generated-services.yml.j2), so
+    # there is nowhere left to nest one. Each route's own `title` (tofu's
+    # locals-hermes-routes.tf) carries the disambiguation instead; this only
+    # has to prove every link still renders with its one-line description.
+    - name: Every rendered link carries its one-line description
       ansible.builtin.assert:
         quiet: true
         that:
-          - _ai_widget.groups | selectattr('title', 'defined')
-            | map(attribute='title') | list == ['Hermes']
           - _glance_all_links | rejectattr('description', 'defined') | list | length == 0
-        fail_msg: >-
-          Hermes did not collapse into a section, or a link rendered without its
-          one-line description. Sections: {{ _ai_widget.groups }}
-        success_msg: "Sections group as tagged and every link carries a description."
-      vars:
-        _ai_widget: >-
-          {{ _glance_page[0].columns[0].widgets
-             | selectattr('title', 'equalto', 'ai') | first }}
+        fail_msg: "A link rendered without its one-line description: {{ _glance_all_links }}"
+        success_msg: "Every link carries a description."
 
     - name: No rendered link carries a port or a guest address
       ansible.builtin.assert:
