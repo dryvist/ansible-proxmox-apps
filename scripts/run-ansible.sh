@@ -350,6 +350,24 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   rm -f "$merged"
 fi
 
+# Machine-identity AppRole pairs come from the env document, read with the
+# converge identity's own token, and replace any same-named value already in
+# the environment. A pair the document does not carry is not supplied from
+# anywhere else.
+if [[ -n ${BAO_TOKEN:-} ]]; then
+  { set +x; } 2>/dev/null
+  if ! ENV_DOC=$(BAO_CLIENT_TIMEOUT=10 bao kv get -mount=secret -format=json platform/ansible/env); then
+    echo "ERROR: cannot read the env document with the converge identity — refusing to run." >&2
+    exit 1
+  fi
+  while IFS= read -r -d '' pair; do
+    export "${pair?}"
+  done < <(jq -j '.data.data | to_entries[]
+    | select(.key | test("^OPENBAO_APPROLE_[A-Z0-9_]+_(ROLE|SECRET)_ID$"))
+    | "\(.key)=\(.value)\u0000"' <<<"$ENV_DOC")
+  unset ENV_DOC
+fi
+
 # A converge is the highest-consequence thing this repo does; without a
 # persisted log, reconstructing what happened after the fact means trusting
 # a green recap or digging through unrelated evidence (sshd logins, reflog).
