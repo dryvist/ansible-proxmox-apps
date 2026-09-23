@@ -151,6 +151,30 @@
       reference a transport of its own name whose responseHeaderTimeout is the
       row's value and whose dialTimeout stays the estate default.
 
+- name: Assert root_redirect renders a per-router redirectRegex middleware
+  ansible.builtin.assert:
+    that:
+      # The redirect middleware runs after strip-remote-headers and before
+      # authelia, so a match short-circuits before the auth check, and the
+      # header strip still covers the redirect response itself.
+      - >-
+        _traefik_dynamic_yaml.http.routers['llm-ui'].middlewares
+        == ['strip-remote-headers', 'llm-ui-root-redirect', 'authelia']
+      - >-
+        _traefik_dynamic_yaml.http.middlewares['llm-ui-root-redirect'].redirectRegex.regex
+        == "^https?://[^/]+/?$"
+      - >-
+        _traefik_dynamic_yaml.http.middlewares['llm-ui-root-redirect'].redirectRegex.replacement
+        == "https://llm-ui.pve.example.com/ui/"
+      # A route with no root_redirect gets neither the middleware reference
+      # nor a middleware definition.
+      - "'plex-root-redirect' not in _traefik_dynamic_yaml.http.routers.plex.middlewares"
+      - "'plex-root-redirect' not in _traefik_dynamic_yaml.http.middlewares"
+    fail_msg: >-
+      dynamic.yml.j2 did not render root_redirect as a router-scoped
+      redirectRegex middleware, in the right position, or leaked it onto an
+      unflagged route.
+
 - name: Assert HTTPS backend gets an https URL + insecure-backend serversTransport
   ansible.builtin.assert:
     that:
