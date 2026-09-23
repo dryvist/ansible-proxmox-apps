@@ -73,6 +73,21 @@ arc_listener_scrape_targets: >-
 # role's own play.
 github_exporter_web_address: "127.0.0.1:9504"
 
+# OpenBao Raft peers (tag `openbao`) — unauthenticated_metrics_access on the
+# listener (roles/openbao templates/openbao.hcl.j2) serves every node,
+# active and standby alike, so all peers are scraped, not just the leader.
+openbao_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['openbao_api']
+     | default(8200) }}
+openbao_scrape_targets: >-
+  {{ (tofu_data['containers'] | default({}) | combine(tofu_data['vms'] | default({})))
+     | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'openbao')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (openbao_scrape_port | string))
+     | list }}
+
 # The router scrape job's bearer, from the flat apps merge (roles/openbao
 # openbao_generated_app_secrets.prometheus -> secret/apps/prometheus, read via
 # roles/openbao_secrets apps/prometheus). Empty until seeded, which omits the
@@ -114,6 +129,15 @@ prometheus_stack_extra_scrape_configs: |
   - job_name: arc_listener
     static_configs:
       - targets: {{ arc_listener_scrape_targets | to_json }}
+  # OpenBao Raft cluster: core.handle_request/handle_login_request cost,
+  # raft apply/commit, audit, and secret-engine timings, plus runtime
+  # CPU/goroutines — for attributing leader latency spikes.
+  - job_name: openbao
+    metrics_path: /v1/sys/metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+      - targets: {{ openbao_scrape_targets | to_json }}
 
 # Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics).
 # Points at cribl-stream-01 directly (no HAProxy — WAL provides delivery durability).
@@ -133,6 +157,7 @@ prometheus_stack_remote_write_keep_jobs:
   - llama_server
   - github_exporter
   - arc_listener
+  - openbao
 
 # Organization for github_exporter to poll — same separation
 # github_runner_org uses (roles/github_exporter defaults stay blank).
