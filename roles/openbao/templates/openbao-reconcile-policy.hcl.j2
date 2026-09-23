@@ -2,12 +2,19 @@
 # openbao-reconcile — the identity an unattended converge uses to keep this
 # cluster's declared RBAC in step with the repository.
 #
-# It is NOT an admin tier and must never become one. The grants below are
-# enumerated by NAME from the role's own declarations, never wildcarded across
-# sys/policies/acl/*, because a wildcard there is escalation: anything that can
-# write an arbitrary policy can write itself a better one.
+# It is NOT an admin tier and must never become one. The grants below are a
+# wildcard across sys/policies/acl/* and auth/approle/role/*, with an exact-path
+# `deny` stanza rendered for every excluded name. OpenBao's ACL evaluator picks
+# the most-specific matching path when several rules could match a request; an
+# exact path is more specific than a suffix glob regardless of write order, and
+# `deny` always wins over any other capability set on the path it names
+# (openbao.org/docs/concepts/policies: "most-specific match", and "[deny]
+# always takes precedence regardless of any other defined capabilities").
+# The exclusions are rendered from ONE variable, openbao_reconcile_excluded_policies
+# — never a second hand-kept list — so the deny set can't drift from the set
+# 08-rbac-policies.yml/10-approles.yml already treat as unmanaged.
 #
-# Three exclusions are what make that true, and all are load-bearing:
+# Three exclusions are what make this safe, and all are load-bearing:
 #
 #   1. The break-glass tiers are excluded. This identity cannot create or
 #      rewrite them, so it can never mint itself break-glass.
@@ -18,31 +25,25 @@
 #      (approle-issuer-policy.hcl.j2); a leaked reconcile secret_id
 #      reconciles declarations, it does not manufacture credentials.
 #
-# The consequence is deliberate: adding a NEW policy or AppRole name is not a
-# routine converge. The name has to be added to this template first, and that
-# edit only takes effect through a break-glass run, which is a human decision.
-# Routine converges — every change that touches only already-declared names —
-# need no operator and no token in anyone's environment.
+# The consequence: a newly declared, non-excluded policy or AppRole name is
+# reachable the moment it is declared — no break-glass run needed to widen
+# this identity's own grant first. Adding a name to the EXCLUDED set still
+# needs a human-run edit here (a deny stanza rendered from a variable this
+# identity cannot write, since its own policy is one of the excluded names),
+# which is exactly the decision that should stay gated.
 #
 # If this identity is revoked, provisioning skips cleanly rather than failing;
 # the cluster keeps serving, it just stops reconciling until someone restores it.
 
 {% set breakglass = openbao_reconcile_excluded_policies | default([]) %}
-{% set managed_policies = openbao_policies
-     | map(attribute='name')
-     | reject('in', breakglass)
-     | list %}
-{% set managed_approles = openbao_approles
-     | rejectattr('manage_secret_id', 'defined')
-     | map(attribute='name')
-     | reject('in', breakglass)
-     | list %}
 
-# --- Policies this converge owns, by name --------------------------------
-# Excluded and therefore unreachable from here: {{ breakglass | join(', ') }}
-{% for policy_name in managed_policies %}
-path "sys/policies/acl/{{ policy_name }}" {
+# --- Policies: wildcard, with the excluded set denied by exact path ------
+path "sys/policies/acl/*" {
   capabilities = ["create", "read", "update"]
+}
+{% for policy_name in breakglass %}
+path "sys/policies/acl/{{ policy_name }}" {
+  capabilities = ["deny"]
 }
 {% endfor %}
 # Listing is read-only and makes drift visible without granting a write.
@@ -50,25 +51,35 @@ path "sys/policies/acl" {
   capabilities = ["list"]
 }
 
-# --- AppRoles this converge owns, by name --------------------------------
-# Roles carrying manage_secret_id: false are the inert, human-gated tiers and
-# are omitted above by that marker rather than by a second hand-kept list —
-# one declaration, so a new inert tier cannot be forgotten here.
-{% for approle_name in managed_approles %}
-path "auth/approle/role/{{ approle_name }}" {
+# --- AppRoles: wildcard, with the excluded set denied by exact path ------
+# Roles carrying manage_secret_id: false are the inert, human-gated tiers.
+# They are covered by the same deny set as the policies above — the AppRole
+# half of openbao_reconcile_excluded_policies — so there is still exactly one
+# list to keep in step, not a marker plus a list.
+path "auth/approle/role/*" {
   capabilities = ["create", "read", "update"]
 }
-path "auth/approle/role/{{ approle_name }}/role-id" {
+path "auth/approle/role/*/role-id" {
   capabilities = ["read"]
 }
-path "auth/approle/role/{{ approle_name }}/policies" {
+path "auth/approle/role/*/policies" {
   capabilities = ["create", "update"]
+}
+{% for approle_name in breakglass %}
+path "auth/approle/role/{{ approle_name }}" {
+  capabilities = ["deny"]
+}
+path "auth/approle/role/{{ approle_name }}/role-id" {
+  capabilities = ["deny"]
+}
+path "auth/approle/role/{{ approle_name }}/policies" {
+  capabilities = ["deny"]
 }
 {% endfor %}
 # Listing names only (no role definitions, no credentials) is how the converge
-# notices an AppRole that exists in the store but was never enumerated above —
-# the enumerate-by-name design above means such a role is otherwise invisible
-# to every future reconcile. Read-only, same reasoning as the policy list line.
+# notices an AppRole that exists in the store but was never declared — see
+# 10d-approle-undeclared-live.yml. Read-only, same reasoning as the policy
+# list line.
 path "auth/approle/role" {
   capabilities = ["list"]
 }

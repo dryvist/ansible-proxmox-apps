@@ -29,124 +29,15 @@
   delegate_to: localhost
   become: false
 
-# A reconcile-mode run may manage only what its OWN policy grants. That policy
-# is excluded from the set reconcile can rewrite (it cannot widen its own
-# grants), so the live policy drifts BEHIND the declared set the moment a new
-# policy is declared -- and every read/write of the new name then 403s.
-#
-# Ask the server what this token can actually do rather than inferring it from
-# the declared set, and fail LOUDLY naming the shortfall. Silently narrowing to
-# what happens to work is the exact false green this block exists to prevent:
-# a declared policy would never be written and nothing would say so.
-# The prefix is added by matching '^' rather than capturing the whole name and
-# substituting \1. A backreference does not survive the trip: YAML, Jinja and
-# `command`'s shlex.split each get a say in what a backslash means, and the net
-# effect was that all 60 paths rendered as the single literal
-# `sys/policies/acl/1` -- a policy that does not exist, so the server answered
-# `deny` and the gate concluded the identity could write nothing. It had never
-# once asked about a real path.
-- name: Ask the server which declared policies this identity may actually write
-  ansible.builtin.command:
-    cmd: >-
-      bao write -format=json sys/capabilities-self
-      {{ openbao_manageable_policies
-         | map(attribute='name')
-         | map('regex_replace', '^', 'paths=sys/policies/acl/')
-         | join(' ') }}
-  environment:
-    BAO_ADDR: "{{ openbao_write_addr }}"
-    BAO_TOKEN: "{{ openbao_bootstrap_token }}"
-  register: openbao_policy_capabilities
-  changed_when: false
-  failed_when: false
-  no_log: true
-  when:
-    - openbao_bootstrap_token is defined
-    - openbao_reconcile_mode | default(false)
-
-# sys/capabilities-self returns the per-path capability lists BOTH at the top
-# level and under `data`, and which of the two a given client surfaces is not
-# something to bet a hard failure on. Reading only `data` yielded an empty dict
-# against a live policy that demonstrably grants create/read/update on every
-# path asked about -- and an empty dict reads as "denied everything", so the
-# gate blocked a converge that should have proceeded.
-- name: Resolve what the server said this identity may write
-  ansible.builtin.set_fact:
-    openbao_policy_caps: >-
-      {{ (_body.get('data', {}) | combine(_body)) | dict2items
-         | selectattr('key', 'match', '^sys/policies/acl/') | items2dict }}
-  vars:
-    _body: "{{ openbao_policy_capabilities.stdout | default('{}') | from_json }}"
-  # Keep only real policy paths, rather than removing a hand-listed set of
-  # envelope keys. The response also carries `capabilities`, `mount_type`,
-  # `mount_class` and friends, and any future field would join them -- a
-  # denylist would have to grow to stay correct. A stray key surviving here
-  # would be compared against declared policy NAMES below (the prefix is
-  # stripped, not filtered, at that point), so a collision would mark a policy
-  # writable that is not: a false green in the guard built to prevent one.
-  when:
-    - openbao_bootstrap_token is defined
-    - openbao_reconcile_mode | default(false)
-    - (openbao_policy_capabilities.rc | default(1)) == 0
-
-# An uninformative probe is NOT a denial. If the response carried capability
-# entries for FEWER paths than were asked about, the probe itself is broken (a
-# shape change, a malformed request) and reading the gap as a permission finding
-# would be a confident false red -- the same absent-vs-denied confusion this
-# whole block exists to eliminate. Fail, but say which failure it is.
-#
-# The count, not merely zero: the backreference bug asked about one literal path
-# and got ONE well-formed entry back, so a `== 0` arm did not fire and the gate
-# went on to report a unanimous false denial. A short answer is the direct
-# signature of a probe that asked the wrong question, and neither a zero-check
-# nor a type-check sees it -- the values were valid capability lists, just for a
-# path nobody declared.
-- name: FAIL -- the capability probe did not answer about every path it asked about
-  ansible.builtin.fail:
-    msg: >-
-      Asked sys/capabilities-self about
-      {{ openbao_manageable_policies | length }} policy paths and the response
-      carried a capability entry for only
-      {{ openbao_policy_caps | default({}) | length }} of them. That is a broken
-      probe, not a permission finding -- do not read a short answer as "this
-      identity may write nothing". Check the request shape and the response
-      envelope before concluding anything about grants.
-  when:
-    - openbao_bootstrap_token is defined
-    - openbao_reconcile_mode | default(false)
-    - (openbao_policy_capabilities.rc | default(1)) == 0
-    - openbao_manageable_policies | length > 0
-    - >-
-      (openbao_policy_caps | default({}) | length)
-      < (openbao_manageable_policies | length)
-
-- name: FAIL -- the reconcile identity cannot manage every declared policy
-  vars:
-    _caps: "{{ openbao_policy_caps | default({}) }}"
-    _unwritable: >-
-      {{ openbao_manageable_policies | map(attribute='name') | reject('in',
-         (_caps | dict2items
-                | selectattr('value', 'contains', 'update')
-                | map(attribute='key')
-                | map('regex_replace', '^sys/policies/acl/', '')
-                | list)) | list | sort }}
-  ansible.builtin.fail:
-    msg: >-
-      The openbao-reconcile identity is declared as managing
-      {{ openbao_manageable_policies | length }} policies but the live
-      openbao-reconcile policy grants update on none of these
-      {{ _unwritable | length }}: {{ _unwritable | join(', ') }}.
-      Reconcile CANNOT widen its own grants -- openbao-reconcile is in
-      openbao_reconcile_excluded_policies by design -- so this only clears with
-      one operator-token run (OPENBAO_PROVISIONING_TOKEN), which rewrites the
-      reconcile policy from the current declared set. Refusing to continue:
-      writing only the reachable subset would leave the rest declared but never
-      written, with the converge still reporting success.
-  when:
-    - openbao_bootstrap_token is defined
-    - openbao_reconcile_mode | default(false)
-    - (openbao_policy_capabilities.rc | default(1)) == 0
-    - _unwritable | length > 0
+# openbao-reconcile-policy.hcl.j2 grants `sys/policies/acl/*` (deny stanzas
+# carve out the excluded/break-glass names), so this identity's own policy
+# can never drift behind the declared set the way the by-name enumeration
+# used to: a newly declared, non-excluded policy name is reachable the moment
+# it is declared, with no operator-token run required. The capabilities-self
+# probe-and-fail that used to live here existed only to catch that drift and
+# is now permanently a no-op, so it is removed rather than kept as dead
+# weight -- see openbao-access-model.mdx, "How a declared policy reaches the
+# cluster", for the current behaviour.
 
 # Rendered on the CONTROLLER, not the target. The previous shape wrote each
 # policy to the guest with `template`, read it back with `slurp`, and deleted it
