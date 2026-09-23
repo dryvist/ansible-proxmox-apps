@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.43.0...v4.44.0) (2026-09-23)
+
+
+### Features
+
+* **openbao:** docs publisher policy reads one app bucket ([#2073](https://github.com/dryvist/ansible-proxmox-apps/issues/2073)) ([957ba56](https://github.com/dryvist/ansible-proxmox-apps/commit/957ba5614ef438547dc7c49f49b74e8e34acbf68))
+* **openbao:** let claude-identity rotate its own secret_id ([#2074](https://github.com/dryvist/ansible-proxmox-apps/issues/2074)) ([dad2d66](https://github.com/dryvist/ansible-proxmox-apps/commit/dad2d6683a859f28cf849028a68181b2a72ea9ce))
+* **vikunja:** publish MCP token to OpenBao with a scoped reader AppRole ([#2054](https://github.com/dryvist/ansible-proxmox-apps/issues/2054)) ([0ea2d54](https://github.com/dryvist/ansible-proxmox-apps/commit/0ea2d54e8c48a324b1746f6d23a83f80852cb64f))
+
 ## [4.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.42.0...v4.43.0) (2026-09-23)
 
 
