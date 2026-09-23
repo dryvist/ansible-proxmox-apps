@@ -138,7 +138,11 @@ mint_ssh_cert() {
   BAO_TOKEN=$RUNNER_BAO_TOKEN BAO_CLIENT_TIMEOUT=10 \
     bao write -field=signed_key "$mount/sign/$CONVERGE_SIGN_ROLE" \
     public_key=@"$CERT_DIR/id.pub" ttl="${SSH_CERT_TTL:-2h}" \
-    > "$CERT_DIR/id-cert.pub" || return 1
+    > "$CERT_DIR/id-cert.pub" || {
+    # A workstation identity without the sign grant falls through like a refused login.
+    [[ $CONVERGE_IDENTITY == "workstation identity" ]] && return 2
+    return 1
+  }
   export PROXMOX_SSH_KEY_PATH="$CERT_DIR/id"
 
   if [[ -z ${BAO_TOKEN:-} ]]; then
@@ -221,15 +225,15 @@ select_converge_identity() {
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID
     CONVERGE_IDENTITY="ansible-converge (declared, bounded)"
+  elif [[ -z ${SKIP_WORKSTATION_IDENTITY:-} && -n ${OPERATOR_VAULT_ROLE_ID:-} && -n ${OPERATOR_VAULT_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$OPERATOR_VAULT_ROLE_ID
+    CONVERGE_SECRET_ID=$OPERATOR_VAULT_SECRET_ID
+    CONVERGE_IDENTITY="workstation identity"
   elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
     CONVERGE_IDENTITY="ansible (UNDECLARED, retiring)"
     echo "WARNING: converging as the undeclared ansible AppRole, which is being retired." >&2
-  elif [[ -z ${SKIP_WORKSTATION_IDENTITY:-} && -n ${OPERATOR_VAULT_ROLE_ID:-} && -n ${OPERATOR_VAULT_SECRET_ID:-} ]]; then
-    CONVERGE_ROLE_ID=$OPERATOR_VAULT_ROLE_ID
-    CONVERGE_SECRET_ID=$OPERATOR_VAULT_SECRET_ID
-    CONVERGE_IDENTITY="workstation identity"
   fi
 }
 select_converge_identity
