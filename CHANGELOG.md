@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.43.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.42.0...v4.43.0) (2026-09-23)
+
+
+### Features
+
+* **inventory:** resolve each LXC container's current node ([#2061](https://github.com/dryvist/ansible-proxmox-apps/issues/2061)) ([00bc824](https://github.com/dryvist/ansible-proxmox-apps/commit/00bc824e74dd79f253c46ca757036165d72fef9a))
+* **openbao:** policy-sync keeps the reconcile policy in step on plane converges ([#2068](https://github.com/dryvist/ansible-proxmox-apps/issues/2068)) ([f4409b1](https://github.com/dryvist/ansible-proxmox-apps/commit/f4409b1dbb4614ba53e0c8942a2442deee473214))
+* **openbao:** self-bootstrapping github-admin-claude with an org-admin set ([#2067](https://github.com/dryvist/ansible-proxmox-apps/issues/2067)) ([46d49e5](https://github.com/dryvist/ansible-proxmox-apps/commit/46d49e5150d1f6a8c79f77817c064910e90fd6f7))
+* **vikunja:** add data-driven Hermes bridge identity mechanism ([#2062](https://github.com/dryvist/ansible-proxmox-apps/issues/2062)) ([d9004cd](https://github.com/dryvist/ansible-proxmox-apps/commit/d9004cd42c4d02b8cdd991d90bb5704595cfdafd))
+
+
+### Bug Fixes
+
+* **cribl_stream:** bound live outputs read ([9c609c5](https://github.com/dryvist/ansible-proxmox-apps/commit/9c609c5db083263b3fcbc25595c338601ea653ef))
+* **inventory:** use command module and filter decommissioned nodes for LXC placement ([#2063](https://github.com/dryvist/ansible-proxmox-apps/issues/2063)) ([860faee](https://github.com/dryvist/ansible-proxmox-apps/commit/860faeedb9a07974b0e1512da8b4fa46a494eff1))
+* **zot_registry:** verify the binary against the release sha256 list ([#2058](https://github.com/dryvist/ansible-proxmox-apps/issues/2058)) ([70e0ed1](https://github.com/dryvist/ansible-proxmox-apps/commit/70e0ed1c48741210e2b0b5942c75c9ccd832813c))
+
 ## [4.42.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.41.0...v4.42.0) (2026-09-23)
 
 
