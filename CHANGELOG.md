@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.44.0...v4.45.0) (2026-09-23)
+
+
+### Features
+
+* **dashboards:** audience split (UI/API) and distinguishable titles ([#2082](https://github.com/dryvist/ansible-proxmox-apps/issues/2082)) ([161d660](https://github.com/dryvist/ansible-proxmox-apps/commit/161d660c4bc2ccc057470d0e7f87127514c7e8aa))
+* **openbao:** move policy-sync to an inert openbao-policy-sync AppRole ([#2079](https://github.com/dryvist/ansible-proxmox-apps/issues/2079)) ([275ca5c](https://github.com/dryvist/ansible-proxmox-apps/commit/275ca5cc11d7a22dbdfe714b133e7c5c171a19ad))
+
+
+### Bug Fixes
+
+* **openbao:** grant the rotate policy's missing role-id/lookup reads ([#2081](https://github.com/dryvist/ansible-proxmox-apps/issues/2081)) ([d8adee7](https://github.com/dryvist/ansible-proxmox-apps/commit/d8adee79c034f10028a5cb6b4fa134f67ac6b42e))
+
 ## [4.44.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.43.0...v4.44.0) (2026-09-23)
 
 
