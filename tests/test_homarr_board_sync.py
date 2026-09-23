@@ -119,7 +119,13 @@ def test_missing_probe_url_sends_null_ping_url():
 
 
 def test_unchanged_app_already_on_board_is_a_pure_noop():
-    existing = {"id": "app1", "name": "Sonarr", "href": "https://sonarr.example.test"}
+    existing = {
+        "id": "app1",
+        "name": "Sonarr",
+        "href": "https://sonarr.example.test",
+        "description": "TV",
+        "pingUrl": None,
+    }
     board = {"id": "b1", "items": [{"kind": "app", "options": {"appId": "app1"}}]}
     api = FakeApi(apps=[existing], board=board)
     apps = [{"name": "Sonarr", "url": "https://sonarr.example.test", "desc": "TV"}]
@@ -131,8 +137,16 @@ def test_unchanged_app_already_on_board_is_a_pure_noop():
     assert not any(c[0] in ("app.create", "app.update", "board.addItem") for c in api.calls)
 
 
-def test_drifted_href_updates_without_re_adding_the_tile():
-    existing = {"id": "app1", "name": "Sonarr", "href": "https://old.example.test"}
+def test_drifted_title_or_description_updates_without_re_adding_the_tile():
+    # Matched by href (see homarr_api.py:sync_board) — the title/description
+    # changed, the URL did not, so this is the same row, updated in place.
+    existing = {
+        "id": "app1",
+        "name": "Sonarr",
+        "href": "https://sonarr.example.test",
+        "description": "old description",
+        "pingUrl": None,
+    }
     board = {"id": "b1", "items": [{"kind": "app", "options": {"appId": "app1"}}]}
     api = FakeApi(apps=[existing], board=board)
     apps = [{"name": "Sonarr", "url": "https://sonarr.example.test", "desc": "TV"}]
@@ -143,6 +157,23 @@ def test_drifted_href_updates_without_re_adding_the_tile():
     assert any(c[0] == "app.update" for c in api.calls)
     assert not any(c[0] == "board.addItem" for c in api.calls)
     assert len(board["items"]) == 1  # the exact regression this guards against
+
+
+def test_drifted_href_is_treated_as_a_new_app_not_an_update():
+    # The deliberate trade-off matching by href accepts: a route rename
+    # (a new href) cannot be told apart from a genuinely new service, so it
+    # creates rather than updates — same trade-off the old name-keyed match
+    # made for a TITLE rename. See homarr_api.py:sync_board's own docstring.
+    existing = {"id": "app1", "name": "Sonarr", "href": "https://old.example.test"}
+    board = {"id": "b1", "items": [{"kind": "app", "options": {"appId": "app1"}}]}
+    api = FakeApi(apps=[existing], board=board)
+    apps = [{"name": "Sonarr", "url": "https://sonarr.example.test", "desc": "TV"}]
+
+    actions, changed = homarr_api.sync_board(api, "key", "default", apps)
+
+    assert changed is True
+    assert any(c[0] == "app.create" for c in api.calls)
+    assert not any(c[0] == "app.update" for c in api.calls)
 
 
 def test_missing_board_is_reported_not_a_crash():
