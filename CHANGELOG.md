@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.45.0...v4.46.0) (2026-09-23)
+
+
+### Features
+
+* **openbao:** update vikunja-mcp AppRole declaration ([fe3ac20](https://github.com/dryvist/ansible-proxmox-apps/commit/fe3ac20fe25b0078517a59305bda96f8a54db76b))
+
+
+### Bug Fixes
+
+* **apt_cacher_ng:** allow HTTPS passthrough for deb.nodesource.com ([#2088](https://github.com/dryvist/ansible-proxmox-apps/issues/2088)) ([91b6318](https://github.com/dryvist/ansible-proxmox-apps/commit/91b6318175b1307571ce1bfc172c3325c09ef6b2))
+* **vikunja:** give the donna bridge identity its own OpenBao secret path ([#2087](https://github.com/dryvist/ansible-proxmox-apps/issues/2087)) ([39f2a33](https://github.com/dryvist/ansible-proxmox-apps/commit/39f2a33de33de2a0b7f4947760f88b0b13d09791))
+
 ## [4.45.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.44.0...v4.45.0) (2026-09-23)
 
 
