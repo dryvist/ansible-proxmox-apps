@@ -181,3 +181,53 @@ vikunja_mcp_token_users:
   - username: svc-mcp-rw
     readonly: false
     kv_field: VIKUNJA_MCP_TOKEN_RW
+
+# --- Hermes bridge identities -> per-identity OpenBao paths ------------------
+# Each Hermes agent gets its OWN Vikunja user, an explicit project-share list,
+# and a token scoped to an EXACT permission table (not the blanket RO/RW split
+# above) — published to that identity's own OpenBao field, never the shared
+# secret/ai/mcp/vikunja path. Onboarding the next identity is one new list
+# entry below; nothing else in this file or the tasks it drives changes.
+#
+# Inert by default, same shape as vikunja_token_publish_openbao above: enable
+# with -e '{"vikunja_hermes_bridge_publish_openbao": true}' once the converge
+# identity's OpenBao policy grants write on every identity's own openbao_path
+# below. It does NOT today for ai/hermes — see roles/openbao/templates/
+# ansible-converge-policy.hcl.j2, whose consumer inventory stops at
+# ai/mcp/{splunk,vikunja,zammad,nautobot}; ai/hermes write is scoped to the
+# separate hermes-write/ai-orchestrator policies. This flag is deliberately
+# its OWN gate rather than a reuse of vikunja_token_publish_openbao, so
+# enabling that one for the existing svc-mcp-ro/rw tokens can never also
+# attempt this still-ungranted write.
+vikunja_hermes_bridge_publish_openbao: false
+
+# The permission table roles/hermes_agent/docs/vikunja-and-api.md documents
+# for the bridge's own HERMES_VIKUNJA_API_TOKEN — donna's token below is
+# scoped identically. Route groups/actions are validated against the live
+# GET /api/v1/routes response at mint time (hermes_bridge_identities.yml),
+# same as vikunja_rw_permissions/vikunja_ro_permissions above.
+vikunja_hermes_bridge_permissions:
+  projects: [read_all, views_buckets_tasks]
+  projects_views: [read_all]
+  projects_views_tasks: [read_all]
+  tasks: [read_one, update]
+  tasks_comments: [create]
+
+vikunja_hermes_bridge_identities:
+  - username: donna
+    password: "{{ lookup('env', 'VIKUNJA_DONNA_PASSWORD') | default('', true) }}"
+    # Assumed owner: project 66 "Donna" is a Hermes-automation board, and
+    # svc-mcp-rw already owns project 64 "Hermes" (see the comment on
+    # vikunja_operator_share_owner_usernames above). Correct this if wrong —
+    # the share grant fails loudly (403/404), never silently, since only a
+    # project's own owner/admin may share it.
+    project_shares:
+      - project_id: 66
+        owner_username: svc-mcp-rw
+        # models.Permission: 1 = Read & Write. The token's own action list
+        # (token_permissions below) is the real restrictor, not this share.
+        permission: 1
+    token_permissions: "{{ vikunja_hermes_bridge_permissions }}"
+    openbao_mount: secret
+    openbao_path: ai/hermes
+    kv_field: DONNA_VIKUNJA_API_TOKEN
