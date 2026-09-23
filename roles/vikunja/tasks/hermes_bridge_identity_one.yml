@@ -1,0 +1,111 @@
+---
+# Provision ONE Hermes bridge identity end to end: its declared project
+# shares, a token scoped to its own exact permission table, and the OpenBao
+# publish. Included per item from hermes_bridge_identities.yml with
+# loop_var: vikunja_hermes_identity ({username, password, project_shares,
+# token_permissions, openbao_mount, openbao_path, kv_field}). The user itself
+# is created by the caller, in the same batch as the admin/service-user
+# creation in tasks/main.yml.
+
+- name: "Grant declared project shares to {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.include_tasks: hermes_bridge_share_one.yml
+  loop: "{{ vikunja_hermes_identity.project_shares }}"
+  loop_control:
+    loop_var: vikunja_hermes_share
+    label: "{{ vikunja_hermes_share.project_id }}"
+
+- name: "Log in to Vikunja as {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_hermes_identity.username }}"
+      password: "{{ vikunja_hermes_identity.password }}"
+    status_code: [200]
+  register: vikunja_hermes_login
+  no_log: true
+
+- name: "List existing API tokens for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
+    status_code: [200]
+  register: vikunja_hermes_token_list
+  no_log: true
+
+# The list omits the secret value (returned exactly once at creation), so a
+# live token titled hermes-bridge-<user> means "already provisioned" — do not
+# re-mint. Same idiom as mcp_token_one.yml's mcp-<user> detection.
+- name: "Detect a live token for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.set_fact:
+    vikunja_hermes_token_exists: >-
+      {{ (vikunja_hermes_token_list.json | default([], true))
+         | selectattr('title', 'defined')
+         | selectattr('title', 'equalto', 'hermes-bridge-' ~ vikunja_hermes_identity.username)
+         | list | length > 0 }}
+
+- name: "Mint API token for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
+    body_format: json
+    body:
+      title: "hermes-bridge-{{ vikunja_hermes_identity.username }}"
+      permissions: "{{ vikunja_hermes_identity.token_permissions }}"
+      expires_at: >-
+        {{ '%Y-%m-%dT%H:%M:%SZ'
+           | strftime((now(utc=true).timestamp() | int) + (vikunja_token_expiry_days | int * 86400), utc=true) }}
+    status_code: [200, 201]
+  register: vikunja_hermes_token_mint
+  when: not vikunja_hermes_token_exists
+  no_log: true
+
+- name: "Read current OpenBao secret at {{ vikunja_hermes_identity.openbao_path }}"
+  ansible.builtin.uri:
+    url: >-
+      {{ vikunja_token_openbao_addr }}/v1/{{ vikunja_hermes_identity.openbao_mount
+        }}/data/{{ vikunja_hermes_identity.openbao_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: vikunja_hermes_bao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+# KV v2 replaces the whole secret, so merge over current data to preserve
+# siblings — this path also holds the one-time Hermes credential seed (see
+# roles/openbao/templates/hermes-write-policy.hcl.j2). Guarded on an actual
+# delta: once the field is present, later converges no-op here.
+- name: "Publish the minted token to OpenBao for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: >-
+      {{ vikunja_token_openbao_addr }}/v1/{{ vikunja_hermes_identity.openbao_mount
+        }}/data/{{ vikunja_hermes_identity.openbao_path }}
+    method: POST
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    body_format: json
+    body:
+      data: >-
+        {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+           | combine({vikunja_hermes_identity.kv_field: vikunja_hermes_token_mint.json.token}) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: vikunja_hermes_token_mint is not skipped
+  no_log: true

@@ -178,31 +178,36 @@
 # materializes defaults), so an unconditional template re-diffs and bounces
 # the service on every converge. Deploy only when a managed field drifts.
 - name: Read live Cribl Stream outputs configuration
-  ansible.builtin.slurp:
-    src: "{{ cribl_stream_install_dir }}/local/cribl/outputs.yml"
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - 30s
+      - cat
+      - "{{ cribl_stream_install_dir }}/local/cribl/outputs.yml"
   register: cribl_stream_outputs_live
+  changed_when: false
   failed_when: false
   no_log: true  # file contains the HEC token
 
 - name: Extract live Splunk HEC output settings
   ansible.builtin.set_fact:
     cribl_stream_hec_live: >-
-      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('splunk_hec', {}) }}
     # Live output ids, so a NEW per-index output (a fresh index in
     # ai_log_routing) counts as drift — the url/token compare below only sees
     # the legacy shared output and left outputs.yml stale when hermes was added.
     cribl_stream_outputs_live_ids: >-
-      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).keys() | list }}
     # The OTLP legs' live settings, so a rotated key or a moved endpoint
     # counts as drift too — presence alone left a re-seeded PHOENIX_INGEST_API_KEY
     # or LANGFUSE_* pair unapplied until some unrelated field changed.
     cribl_stream_langfuse_live: >-
-      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('langfuse_otlp', {}) }}
     cribl_stream_phoenix_live: >-
-      {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('phoenix_otlp', {}) }}
     cribl_stream_victoriametrics_live: >-
       {{ ((cribl_stream_outputs_live.content | default('') | b64decode | from_yaml)

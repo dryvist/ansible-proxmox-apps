@@ -1,0 +1,86 @@
+---
+# Grant ONE Hermes bridge identity a share on ONE project. Included per item
+# from hermes_bridge_identity_one.yml with loop_var: vikunja_hermes_share
+# ({project_id, owner_username, permission}); the outer loop_var
+# vikunja_hermes_identity names the grantee.
+#
+# Create-if-absent, correct-if-drifted, never-delete — same shape as
+# operator_access_project.yml, generalized to an arbitrary grantee/project/
+# permission instead of the hardcoded operator triple. Authenticated as the
+# OWNING account's own JWT: only a project's owner/admin may share it.
+
+- name: "Log in as the project owner {{ vikunja_hermes_share.owner_username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_hermes_share.owner_username }}"
+      password: "{{ vikunja_hermes_bridge_owner_password_map[vikunja_hermes_share.owner_username] }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_hermes_share_owner_login
+  no_log: true
+
+# Bounded by the ?s= username search (see operator_access_project.yml) so this
+# can never be truncated by pagination; the exact username is still matched
+# out of the result below.
+- name: "Read the current share on project {{ vikunja_hermes_share.project_id }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{
+        vikunja_hermes_share.project_id }}/users?s={{ vikunja_hermes_identity.username | urlencode }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_share_owner_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_hermes_project_shares
+  changed_when: false
+
+- name: "Resolve the existing share on project {{ vikunja_hermes_share.project_id }}"
+  ansible.builtin.set_fact:
+    vikunja_hermes_existing_share: >-
+      {{ (vikunja_hermes_project_shares.json | default([], true))
+         | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', vikunja_hermes_identity.username)
+         | list | first | default({}, true) }}
+
+# PUT is the create path, addressed by username in the body — see
+# operator_access_project.yml for the upstream route/field detail.
+- name: "Grant a share on project {{ vikunja_hermes_share.project_id }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_hermes_share.project_id }}/users"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_share_owner_login.json.token }}"
+    body_format: json
+    body:
+      username: "{{ vikunja_hermes_identity.username }}"
+      permission: "{{ vikunja_hermes_share.permission | int }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  when: vikunja_hermes_existing_share | length == 0
+  changed_when: true
+
+# POST is the update path; the final path segment is the USERNAME, not a
+# numeric id, despite the swagger annotation claiming otherwise — see
+# operator_access_project.yml's comment for the upstream source detail.
+- name: "Correct the permission on project {{ vikunja_hermes_share.project_id }}"
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/projects/{{
+        vikunja_hermes_share.project_id }}/users/{{ vikunja_hermes_identity.username | urlencode }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_share_owner_login.json.token }}"
+    body_format: json
+    body:
+      username: "{{ vikunja_hermes_identity.username }}"
+      permission: "{{ vikunja_hermes_share.permission | int }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  when:
+    - vikunja_hermes_existing_share | length > 0
+    - (vikunja_hermes_existing_share.permission | default(0) | int) != (vikunja_hermes_share.permission | int)
+  changed_when: true
