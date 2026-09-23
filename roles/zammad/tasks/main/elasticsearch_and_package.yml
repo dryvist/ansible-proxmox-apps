@@ -140,9 +140,10 @@
         that: zammad_deb.files | length > 0
         fail_msg: "zammad .deb not found in the apt cache after download-only."
 
+    # --force-unsafe-io skips dpkg's per-file fsync for this one extract.
     - name: Unpack zammad (creates /opt/zammad; runs NO postinst)
       ansible.builtin.command:
-        cmd: "dpkg --unpack {{ (zammad_deb.files | sort(attribute='path') | last).path }}"
+        cmd: "dpkg --force-unsafe-io --unpack {{ (zammad_deb.files | sort(attribute='path') | last).path }}"
       changed_when: true
 
 - name: Template Zammad's database.yml (points at the shared external Postgres)
@@ -156,15 +157,21 @@
   no_log: true
 
 # dpkg --unpack skipped apt's dependency resolution, so zammad's REAL
-# runtime deps (libpq5, libxslt1.1, curl, ...) may be missing and a bare
-# `dpkg --configure` fails. `apt-get -f install` pulls exactly the missing
-# deps and configures the unpacked package (running the postinst, which
-# migrates against the external DB); the equivs dummy keeps the
+# runtime deps (libpq5, libxslt1.1, curl, ...) may be missing; `apt-get -f
+# install` pulls exactly the missing ones. The equivs dummy keeps the
 # `postgresql` dep satisfied without a local cluster.
-- name: Configure zammad (resolve deps + run the postinst against the external DB)
+- name: Resolve zammad's missing runtime deps
   ansible.builtin.apt:
     state: fixed
   when: not zammad_configured
+
+# dpkg --configure runs the postinst so the package reaches installed;
+# apt fix-broken only acts on unmet deps.
+- name: Configure zammad (run the postinst against the external DB)
+  ansible.builtin.command:
+    cmd: dpkg --configure zammad
+  when: not zammad_configured
+  changed_when: true
 
 # The postinst's own "Updating db" step does not reliably build the schema
 # on an EMPTY external database (observed: configure succeeds, 496
