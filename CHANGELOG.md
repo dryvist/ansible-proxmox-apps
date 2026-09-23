@@ -1,5 +1,33 @@
 # Changelog
 
+## [4.42.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.41.0...v4.42.0) (2026-09-23)
+
+
+### Features
+
+* **openbao:** add inert github-admin-claude repo-create AppRole ([#2055](https://github.com/dryvist/ansible-proxmox-apps/issues/2055)) ([84200c3](https://github.com/dryvist/ansible-proxmox-apps/commit/84200c3d41f295fa36a4c1a3e00ca94dff0785d0))
+* **openbao:** add Prometheus telemetry and scrape target ([#2051](https://github.com/dryvist/ansible-proxmox-apps/issues/2051)) ([bb7320d](https://github.com/dryvist/ansible-proxmox-apps/commit/bb7320d6e46dd84a3be9062b86d81729a1a0cbd0))
+* **openbao:** generate a litellm-local router-key secret ([#2046](https://github.com/dryvist/ansible-proxmox-apps/issues/2046)) ([037f0b8](https://github.com/dryvist/ansible-proxmox-apps/commit/037f0b8c3fd85793d603b611fe27db0f80fcb18b))
+* **openbao:** grant tofu-proxmox read on ssh-client-ca config ([#2043](https://github.com/dryvist/ansible-proxmox-apps/issues/2043)) ([e531dc3](https://github.com/dryvist/ansible-proxmox-apps/commit/e531dc3a90e7844e8d39127647b9bec231ab126f))
+* **openbao:** rotate domain AppRole secret_ids under a dedicated identity ([#2040](https://github.com/dryvist/ansible-proxmox-apps/issues/2040)) ([c3f1dbf](https://github.com/dryvist/ansible-proxmox-apps/commit/c3f1dbf5f4adfe88ce9ae04124fa8c30d4d7f5ac))
+* **traefik:** add loadBalancer strategy and a dashboard opt-out ([#2050](https://github.com/dryvist/ansible-proxmox-apps/issues/2050)) ([d12522e](https://github.com/dryvist/ansible-proxmox-apps/commit/d12522eb3a248ba846a940d95ad75aa20d2740b3))
+* **traefik:** render a failover service for routes carrying failover_fallback ([#2039](https://github.com/dryvist/ansible-proxmox-apps/issues/2039)) ([68a6fe2](https://github.com/dryvist/ansible-proxmox-apps/commit/68a6fe200e58219614d107b8a7cc423e1e18dfe9))
+* **traefik:** render an optional per-router root redirect ([#2048](https://github.com/dryvist/ansible-proxmox-apps/issues/2048)) ([dc28d07](https://github.com/dryvist/ansible-proxmox-apps/commit/dc28d0727476fd46bea8b0a3efe569caaece36eb))
+
+
+### Bug Fixes
+
+* **ansible:** fail fast on a host that goes dark mid-task ([#2033](https://github.com/dryvist/ansible-proxmox-apps/issues/2033)) ([b9f31a1](https://github.com/dryvist/ansible-proxmox-apps/commit/b9f31a18b05c500049f77a8af30a809b30b19d5e))
+* **apt_proxy:** route HTTPS apt sources through the cache too ([#2041](https://github.com/dryvist/ansible-proxmox-apps/issues/2041)) ([5ce9daf](https://github.com/dryvist/ansible-proxmox-apps/commit/5ce9daf317dffdb692b1efd7a82efa27e4760050))
+* **docker_engine:** never restart Docker on the Semaphore plane host ([#2036](https://github.com/dryvist/ansible-proxmox-apps/issues/2036)) ([45e41ce](https://github.com/dryvist/ansible-proxmox-apps/commit/45e41cee0ee26d50148ef357b4ded63e7a11d6c5))
+* **glance:** keep the v-prefix on version write-back ([#2053](https://github.com/dryvist/ansible-proxmox-apps/issues/2053)) ([4021b95](https://github.com/dryvist/ansible-proxmox-apps/commit/4021b959a6e403b23b2a8be691fad3dffe8422cb))
+* **isolation:** convert unreachable to a rescuable failure in isolated plays ([#2045](https://github.com/dryvist/ansible-proxmox-apps/issues/2045)) ([7e60cfa](https://github.com/dryvist/ansible-proxmox-apps/commit/7e60cfacae6fb486a1b99dcb1b25bd80d23b5873))
+* **isolation:** gather facts inside the block, not before it ([#2044](https://github.com/dryvist/ansible-proxmox-apps/issues/2044)) ([0a0a6a3](https://github.com/dryvist/ansible-proxmox-apps/commit/0a0a6a3bd6dda42798978c781795f0d88ce2e939))
+* **molecule:** give plane_host to scenarios instead of a repeated default ([#2042](https://github.com/dryvist/ansible-proxmox-apps/issues/2042)) ([468567e](https://github.com/dryvist/ansible-proxmox-apps/commit/468567e4bdf97c2f0c2002dff996b2b1ea88feda))
+* **postgres:** keep WAL archiving off when pgBackRest credentials are unset ([#2037](https://github.com/dryvist/ansible-proxmox-apps/issues/2037)) ([9c36da1](https://github.com/dryvist/ansible-proxmox-apps/commit/9c36da17e1e23158b1af8ec88b6da23bfdde5427))
+* **zammad:** stop redoing the unpack on every converge ([#2049](https://github.com/dryvist/ansible-proxmox-apps/issues/2049)) ([5c36251](https://github.com/dryvist/ansible-proxmox-apps/commit/5c362512c356fbc0faa9819815fdff31eebae9be))
+* **zammad:** wire splunk/ntfy API tokens to OpenBao ([#2052](https://github.com/dryvist/ansible-proxmox-apps/issues/2052)) ([4441d6c](https://github.com/dryvist/ansible-proxmox-apps/commit/4441d6c5aab2ed830807c1f846980d96dac8945c))
+
 ## [4.41.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.40.0...v4.41.0) (2026-09-22)
 
 
