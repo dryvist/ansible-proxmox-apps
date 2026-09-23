@@ -30,11 +30,11 @@ def _read_role_defaults(role: str) -> dict:
 def test_ansible_converge_owns_the_exact_donna_publisher_path():
     policy = _read("roles/openbao/templates/ansible-converge-policy.hcl.j2")
 
-    data_grant = (
+    data_grant: str = (
         f'{CANONICAL_DATA_PATH} {{\n'
         '  capabilities = ["create", "update", "read"]\n}'
     )
-    metadata_grant = f'{CANONICAL_METADATA_PATH} {{\n  capabilities = ["read"]\n}}'
+    metadata_grant: str = f'{CANONICAL_METADATA_PATH} {{\n  capabilities = ["read"]\n}}'
 
     assert data_grant in policy
     assert metadata_grant in policy
