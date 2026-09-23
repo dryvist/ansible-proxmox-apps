@@ -97,6 +97,62 @@
             desired_state_published: "{{ tofu_desired_state_published | default(omit) }}"
             desired_state_live: "{{ tofu_desired_state_live | default(omit) }}"
 
+# Machine-identity AppRole pairs: read the env document once, with the
+# converge identity's token, into a localhost fact that roles and delegated
+# tasks take from hostvars['localhost'] (see openbao_platform_env). Nothing
+# falls back to the controller's environment for these pairs.
+- name: Pre-fetch machine-identity AppRole pairs from the env document
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags:
+    - always
+  vars:
+    ansible_become: false
+    _bao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+    _bao_token: "{{ lookup('env', 'BAO_TOKEN') | default('', true) }}"
+    _required_keys: >-
+      {{ ['SLACK_ADMIN', 'SNAPSHOT', 'SPLUNK_MCP_ROTATE', 'SECRET_AGE_AUDIT', 'GITHUB_RUNNER']
+         | product(['_ROLE_ID', '_SECRET_ID'])
+         | map('join') | map('regex_replace', '^', 'OPENBAO_APPROLE_') | list }}
+  tasks:
+    - name: Require an OpenBao endpoint and a converge token
+      ansible.builtin.assert:
+        that:
+          - _bao_addr | length > 0
+          - _bao_token | length > 0
+        fail_msg: >-
+          BAO_ADDR and BAO_TOKEN must be set (scripts/run-ansible.sh exports
+          the converge identity's token) to read the env document.
+        quiet: true
+
+    - name: Read the env document
+      ansible.builtin.uri:
+        url: "{{ _bao_addr }}/v1/secret/data/platform/ansible/env"
+        headers:
+          X-Vault-Token: "{{ _bao_token }}"
+        status_code: 200
+      register: _platform_env_read
+      changed_when: false
+      no_log: true
+
+    - name: Keep only the AppRole pairs
+      ansible.builtin.set_fact:
+        openbao_platform_env_doc: >-
+          {{ _platform_env_read.json.data.data | dict2items
+             | selectattr('key', 'match', '^OPENBAO_APPROLE_[A-Z0-9_]+_(ROLE|SECRET)_ID$')
+             | items2dict }}
+      no_log: true
+
+    - name: Require every pair a role consumes
+      ansible.builtin.assert:
+        that:
+          - _missing | length == 0
+        fail_msg: "The env document is missing {{ _missing }}."
+        quiet: true
+      vars:
+        _missing: "{{ _required_keys | reject('in', openbao_platform_env_doc) | list }}"
+
 # Configure application stacks based on OpenTofu infrastructure
 
 # =============================================================================
