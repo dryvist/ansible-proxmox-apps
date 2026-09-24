@@ -75,7 +75,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `github_exporter_collector_runners` | `true` | Org-level runner online/busy gauges. |
 | `github_exporter_collector_workflow_runs` / `_workflow_jobs` | `false` | Off — see "What it ships today" above. |
 | `github_exporter_database_dsn` | sqlite path under `/var/lib/github-exporter` | Unused while the two collectors above are off. |
-| `github_exporter_token_path` | `github/token/exporter-dryvist` | OpenBao permission-set path the agent mints from. |
+| `github_exporter_token_path` | `github-admin/token/exporter-dryvist` | OpenBao permission-set path the agent mints from. |
 
 ## Verification
 
