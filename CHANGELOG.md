@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.0...v4.47.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **openbao:** republish rotated workstation AppRole pairs into Doppler ([#2120](https://github.com/dryvist/ansible-proxmox-apps/issues/2120)) ([1d00490](https://github.com/dryvist/ansible-proxmox-apps/commit/1d00490294abcaa5eb85ae9e5ff9d583c0388acf))
+
 ## [4.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.46.0...v4.47.0) (2026-09-24)
 
 
