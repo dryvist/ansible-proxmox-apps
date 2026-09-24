@@ -1,5 +1,40 @@
 # Changelog
 
+## [4.47.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.46.0...v4.47.0) (2026-09-24)
+
+
+### Features
+
+* **openbao_secrets:** accept an operator AppRole pair as the last fallback ([#2101](https://github.com/dryvist/ansible-proxmox-apps/issues/2101)) ([9726778](https://github.com/dryvist/ansible-proxmox-apps/commit/972677863955611d83cee0acc96a14bd192be7fa))
+* **openbao:** add a seed-only entry point runnable in either auth mode ([#2118](https://github.com/dryvist/ansible-proxmox-apps/issues/2118)) ([87147a4](https://github.com/dryvist/ansible-proxmox-apps/commit/87147a4dd6dc006fc34712f4bd5236a86f3c8d49))
+* **openbao:** add a seed-only mode to the AppRole rotation playbook ([#2112](https://github.com/dryvist/ansible-proxmox-apps/issues/2112)) ([184d9fd](https://github.com/dryvist/ansible-proxmox-apps/commit/184d9fdd78332a17be85a7ae5fcfdb8313be3ac2))
+* **openbao:** add an agent workstation AppRole ([#2106](https://github.com/dryvist/ansible-proxmox-apps/issues/2106)) ([4c7fc33](https://github.com/dryvist/ansible-proxmox-apps/commit/4c7fc3311a70ce5f612a57e51c0d706d4ab5b585))
+* **openbao:** add an operator workstation AppRole ([#2097](https://github.com/dryvist/ansible-proxmox-apps/issues/2097)) ([695c066](https://github.com/dryvist/ansible-proxmox-apps/commit/695c066ad0503902fbc73774a9ba483008004266))
+* **openbao:** attach GitHub and AI read tiers to the workstation identities ([#2111](https://github.com/dryvist/ansible-proxmox-apps/issues/2111)) ([41ffb43](https://github.com/dryvist/ansible-proxmox-apps/commit/41ffb43fcd983268daeeb23acfde7afb8ae5d745))
+* **openbao:** generate a scoped router key for langfuse ([#2105](https://github.com/dryvist/ansible-proxmox-apps/issues/2105)) ([3c8c8ec](https://github.com/dryvist/ansible-proxmox-apps/commit/3c8c8ec44d036ac0e17048c6a24ff38f1d8c7b84))
+* **openbao:** generate scoped router keys for agentgateway, dify, llamaindex ([#2104](https://github.com/dryvist/ansible-proxmox-apps/issues/2104)) ([219a3fa](https://github.com/dryvist/ansible-proxmox-apps/commit/219a3fa63aee9431966eb1fe365c1b99e782df23))
+* **openbao:** grant the agent workstation AppRole the vikunja MCP read policy ([#2108](https://github.com/dryvist/ansible-proxmox-apps/issues/2108)) ([55cb261](https://github.com/dryvist/ansible-proxmox-apps/commit/55cb2610dd9bd8a04ba190a5591d3b5c8dbf1ced))
+* **openbao:** let the agent workstation identity run converges ([#2115](https://github.com/dryvist/ansible-proxmox-apps/issues/2115)) ([64cd5c0](https://github.com/dryvist/ansible-proxmox-apps/commit/64cd5c0cfcb23218fae6b363a664594e402b72a8))
+* **openbao:** read machine-identity AppRole pairs from the env document in a prefetch play ([#2113](https://github.com/dryvist/ansible-proxmox-apps/issues/2113)) ([2959c59](https://github.com/dryvist/ansible-proxmox-apps/commit/2959c5941859cd85012330200da71ad033b21a49))
+* **rotate-key:** add opt-in rotate_prefix for sk-prefixed router keys ([#2103](https://github.com/dryvist/ansible-proxmox-apps/issues/2103)) ([d07e0d7](https://github.com/dryvist/ansible-proxmox-apps/commit/d07e0d7a58a7d20ea7ab0165dfc54d8224d287ac))
+* **vikunja:** mint a narrow dispatch-queue token and publish it to its own path ([#2109](https://github.com/dryvist/ansible-proxmox-apps/issues/2109)) ([7c5e900](https://github.com/dryvist/ansible-proxmox-apps/commit/7c5e9004b0e9d046da2d34f26fb468424cbe191c))
+
+
+### Bug Fixes
+
+* **homarr:** authenticate the installer's release fetch in CI ([#2116](https://github.com/dryvist/ansible-proxmox-apps/issues/2116)) ([8c72c98](https://github.com/dryvist/ansible-proxmox-apps/commit/8c72c98d4c322a3150cb58b84d2e0ecffbbd3003))
+* **homarr:** key-gate every media integration by one rule ([#2098](https://github.com/dryvist/ansible-proxmox-apps/issues/2098)) ([06b8708](https://github.com/dryvist/ansible-proxmox-apps/commit/06b8708642223aee6ff9cc112fa68abd48618c70))
+* **homarr:** make the Sonarr integration optional, mirroring Proxmox ([#2090](https://github.com/dryvist/ansible-proxmox-apps/issues/2090)) ([72b4382](https://github.com/dryvist/ansible-proxmox-apps/commit/72b4382750ebc3acab17be57fe0347a5195b8e42))
+* **openbao:** keep the existing static-seal key when none is supplied ([#2102](https://github.com/dryvist/ansible-proxmox-apps/issues/2102)) ([5bd2dcb](https://github.com/dryvist/ansible-proxmox-apps/commit/5bd2dcb2f880527ed49c96c36794259a4ab3fef0))
+* **rotate-key:** accept 204 from the metadata stamp PATCH ([#2110](https://github.com/dryvist/ansible-proxmox-apps/issues/2110)) ([06e5f75](https://github.com/dryvist/ansible-proxmox-apps/commit/06e5f75bcb01121d7487748c8e7df7887864fd46))
+* **run-ansible:** resolve shellcheck SC2001 in the recap check ([#2114](https://github.com/dryvist/ansible-proxmox-apps/issues/2114)) ([89c9118](https://github.com/dryvist/ansible-proxmox-apps/commit/89c911887b7d3fb28eaae36acca8dc858f17e853))
+* **secrets:** publish bao_media_secrets to every host in the pre-fetch play ([#2100](https://github.com/dryvist/ansible-proxmox-apps/issues/2100)) ([426b8dc](https://github.com/dryvist/ansible-proxmox-apps/commit/426b8dc109af4f53be92575c0ca3ffbd6a84f9c0))
+* **service_deadman,vikunja,unifi_metrics:** no_log on secret-rendering templates ([#2119](https://github.com/dryvist/ansible-proxmox-apps/issues/2119)) ([d90d8b9](https://github.com/dryvist/ansible-proxmox-apps/commit/d90d8b9d680a11a6f8b9475cbfc814b4f9034a9c))
+* **tests:** load classify tasks in liveness test; store-neutral role messages ([#2095](https://github.com/dryvist/ansible-proxmox-apps/issues/2095)) ([c5ef772](https://github.com/dryvist/ansible-proxmox-apps/commit/c5ef772b73fc08be21d5525977bebfe504240275))
+* **vikunja:** coerce the stale-token id to a string before length check ([#2096](https://github.com/dryvist/ansible-proxmox-apps/issues/2096)) ([ca8cf45](https://github.com/dryvist/ansible-proxmox-apps/commit/ca8cf45a26177e12ba7803ed7589f28be5c1fac2))
+* **vikunja:** point the bridge token liveness probe at an in-scope route ([#2099](https://github.com/dryvist/ansible-proxmox-apps/issues/2099)) ([a6ea165](https://github.com/dryvist/ansible-proxmox-apps/commit/a6ea1651f851101d19909da8f987ee7cc8a78070))
+* **vikunja:** verify the stored bridge token before skipping the mint ([#2093](https://github.com/dryvist/ansible-proxmox-apps/issues/2093)) ([893bfba](https://github.com/dryvist/ansible-proxmox-apps/commit/893bfba81b7b4d5f44805fa6e7e1d1b814626165))
+
 ## [4.46.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.45.0...v4.46.0) (2026-09-23)
 
 
