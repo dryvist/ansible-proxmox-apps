@@ -27,45 +27,6 @@
   register: vikunja_hermes_login
   no_log: true
 
-- name: "List existing API tokens for {{ vikunja_hermes_identity.username }}"
-  ansible.builtin.uri:
-    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
-    status_code: [200]
-  register: vikunja_hermes_token_list
-  no_log: true
-
-# The list omits the secret value (returned exactly once at creation), so a
-# live token titled hermes-bridge-<user> means "already provisioned" — do not
-# re-mint. Same idiom as mcp_token_one.yml's mcp-<user> detection.
-- name: "Detect a live token for {{ vikunja_hermes_identity.username }}"
-  ansible.builtin.set_fact:
-    vikunja_hermes_token_exists: >-
-      {{ (vikunja_hermes_token_list.json | default([], true))
-         | selectattr('title', 'defined')
-         | selectattr('title', 'equalto', 'hermes-bridge-' ~ vikunja_hermes_identity.username)
-         | list | length > 0 }}
-
-- name: "Mint API token for {{ vikunja_hermes_identity.username }}"
-  ansible.builtin.uri:
-    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
-    method: PUT
-    headers:
-      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
-    body_format: json
-    body:
-      title: "hermes-bridge-{{ vikunja_hermes_identity.username }}"
-      permissions: "{{ vikunja_hermes_identity.token_permissions }}"
-      expires_at: >-
-        {{ '%Y-%m-%dT%H:%M:%SZ'
-           | strftime((now(utc=true).timestamp() | int) + (vikunja_token_expiry_days | int * 86400), utc=true) }}
-    status_code: [200, 201]
-  register: vikunja_hermes_token_mint
-  when: not vikunja_hermes_token_exists
-  no_log: true
-
 - name: "Read current OpenBao secret at {{ vikunja_hermes_identity.openbao_path }}"
   ansible.builtin.uri:
     url: >-
@@ -84,10 +45,97 @@
     ansible_become: false
   no_log: true
 
+- name: "Resolve the stored token for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.set_fact:
+    vikunja_hermes_stored_token: >-
+      {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+         .get(vikunja_hermes_identity.kv_field, '') }}
+  no_log: true
+
+# A title match on Vikunja's own list only proves a token was minted once; it
+# says nothing about whether the value actually stored at openbao_path still
+# authenticates (missing field, a stale/foreign value, or one Vikunja has
+# since revoked all read the same on the list endpoint). Call a cheap
+# authenticated endpoint with the STORED value itself — one every bridge
+# identity's own token_permissions actually grants (vikunja_hermes_bridge_
+# permissions always includes projects: read_all), unlike /api/v1/user,
+# which sits outside every bridge identity's scope and would read 401/403
+# even for a freshly-minted, fully working token.
+- name: "Verify the stored token still authenticates for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_stored_token }}"
+    status_code: [200, 401, 403]
+  register: vikunja_hermes_stored_token_check
+  when: vikunja_hermes_stored_token | length > 0
+  ignore_errors: true
+  no_log: true
+
+- name: "Record whether the stored token is usable for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.set_fact:
+    vikunja_hermes_stored_token_works: >-
+      {{ vikunja_hermes_stored_token_check.status is defined
+         and vikunja_hermes_stored_token_check.status == 200 }}
+
+- name: "List existing API tokens for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
+    status_code: [200]
+  register: vikunja_hermes_token_list
+  when: not vikunja_hermes_stored_token_works
+  no_log: true
+
+- name: "Find the existing titled token id for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.set_fact:
+    vikunja_hermes_existing_token_id: >-
+      {{ (vikunja_hermes_token_list.json | default([], true))
+         | selectattr('title', 'defined')
+         | selectattr('title', 'equalto', 'hermes-bridge-' ~ vikunja_hermes_identity.username)
+         | map(attribute='id') | list | first | default('', true) }}
+  when: not vikunja_hermes_stored_token_works
+
+# A stored token that no longer authenticates is worthless; remove the
+# titled token it names (if Vikunja still has one) so a fresh mint below
+# does not accumulate an orphaned entry under the same title.
+- name: "Delete the stale API token for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens/{{ vikunja_hermes_existing_token_id }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
+    status_code: [200, 204, 404]
+  when:
+    - not vikunja_hermes_stored_token_works
+    - vikunja_hermes_existing_token_id | default('', true) | string | length > 0
+  no_log: true
+
+- name: "Mint API token for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
+    body_format: json
+    body:
+      title: "hermes-bridge-{{ vikunja_hermes_identity.username }}"
+      permissions: "{{ vikunja_hermes_identity.token_permissions }}"
+      expires_at: >-
+        {{ '%Y-%m-%dT%H:%M:%SZ'
+           | strftime((now(utc=true).timestamp() | int) + (vikunja_token_expiry_days | int * 86400), utc=true) }}
+    status_code: [200, 201]
+  register: vikunja_hermes_token_mint
+  when: not vikunja_hermes_stored_token_works
+  no_log: true
+
 # KV v2 replaces the whole secret, so merge over current data to preserve
 # siblings — this path also holds the one-time Hermes credential seed (see
 # roles/openbao/templates/hermes-write-policy.hcl.j2). Guarded on an actual
-# delta: once the field is present, later converges no-op here.
+# delta: once the stored token authenticates, later converges no-op here.
 - name: "Publish the minted token to OpenBao for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.uri:
     url: >-

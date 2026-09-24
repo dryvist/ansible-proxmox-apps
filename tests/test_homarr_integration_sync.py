@@ -26,6 +26,7 @@ FILES = ROOT / "roles/homarr/files"
 if str(FILES) not in sys.path:
     sys.path.insert(0, str(FILES))
 SPEC = importlib.util.spec_from_file_location("homarr_api", FILES / "homarr_api.py")
+assert SPEC is not None and SPEC.loader is not None
 homarr_api = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(homarr_api)
 
@@ -51,9 +52,18 @@ class FakeApi:
         if procedure == "integration.byId":
             if not query:
                 raise AssertionError("integration.byId is a query — needs query=True")
+            assert payload is not None
             row = next(r for r in self.rows.values() if r["id"] == payload["id"])
             return {**row, "app": row.get("app")}
         if procedure == "integration.create":
+            assert payload is not None
+            # Mirrors Homarr's real behaviour: it connection-tests a secret
+            # before persisting the row and rejects an empty one.
+            if any(not (s.get("value") or "").strip() for s in payload.get("secrets", [])):
+                raise homarr_api.HomarrError(
+                    f"integration.create -> HTTP 400: {payload['name']} failed "
+                    "Homarr's connection test"
+                )
             self.rows[payload["name"]] = {
                 "id": "new1",
                 "name": payload["name"],
@@ -63,6 +73,7 @@ class FakeApi:
             }
             return None
         if procedure == "integration.update":
+            assert payload is not None
             if "appId" not in payload:
                 raise homarr_api.HomarrError(
                     "integration.update -> HTTP 400: appId received undefined"
@@ -130,7 +141,9 @@ def test_missing_integration_is_created_without_appid():
     assert "appId" not in create
 
 
-def test_integration_without_a_credential_is_skipped_loudly():
+def test_integration_without_a_credential_is_attempted_and_its_rejection_reported():
+    """Every integration always renders — a missing credential is never
+    pre-filtered out. Homarr's own rejection is caught and named, not hidden."""
     api = FakeApi()
     want = [{"name": "Sonarr", "kind": "sonarr", "url": "https://sonarr.example.test",
              "secrets": [{"kind": "apiKey", "value": ""}]}]
@@ -138,4 +151,24 @@ def test_integration_without_a_credential_is_skipped_loudly():
     actions, changed = homarr_api.sync_integrations(api, "key", want)
 
     assert changed is False
-    assert any("Sonarr" in a and "skipped" in a for a in actions)
+    assert any(proc == "integration.create" for proc, _ in api.calls)
+    assert any("Sonarr" in a and "rejected by Homarr" in a for a in actions)
+
+
+def test_one_rejected_integration_does_not_stop_the_rest():
+    """A bad/missing credential for one app must not take the others down."""
+    api = FakeApi()
+    want = [
+        {"name": "Radarr", "kind": "radarr", "url": "https://radarr.example.test",
+         "secrets": SECRET},
+        {"name": "Sonarr", "kind": "sonarr", "url": "https://sonarr.example.test",
+         "secrets": [{"kind": "apiKey", "value": ""}]},
+    ]
+
+    actions, changed = homarr_api.sync_integrations(api, "key", want)
+
+    assert changed is True  # Radarr's create still succeeded
+    assert "Radarr" in api.rows
+    assert "Sonarr" not in api.rows  # rejected, never persisted
+    assert any("created Radarr" in a for a in actions)
+    assert any("Sonarr" in a and "rejected by Homarr" in a for a in actions)

@@ -76,7 +76,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json()
             state["custom_metadata"].update(body.get("custom_metadata") or {})
             save(state)
-            self._reply(200, {})
+            # Real OpenBao returns 204 No Content for a metadata PATCH.
+            self.send_response(204)
+            self.end_headers()
             return
         self._reply(404, {"errors": ["unhandled path: " + self.path]})
 

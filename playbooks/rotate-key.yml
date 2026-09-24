@@ -24,6 +24,16 @@
 # waits for it to finish, and proves the read-back; the unit does its own
 # CAS write and metadata stamp.
 #
+# `rotate_prefix` (opt-in, empty by default) is prepended to a `random` mint.
+# A LiteLLM virtual key must start with `sk-` — the SAME literal
+# seed_generated_app_secret.yml already uses for every other router key
+# (openbao_app_secret_router_key_prefix), not a second one:
+#
+#   ansible-playbook playbooks/rotate-key.yml \
+#     -e rotate_mount=secret -e rotate_path=ai/llm \
+#     -e rotate_field=LLM_ROUTER_MASTER_KEY -e rotate_domain=ai \
+#     -e 'rotate_prefix={{ openbao_app_secret_router_key_prefix }}'
+#
 # Then re-converge so every consumer is rebuilt against the new value:
 #
 #   doppler run -- scripts/fetch-openbao-secrets.sh media -- \
@@ -56,6 +66,10 @@
     rotate_domain: media
     rotate_length: 32
     rotate_mint: random
+    # Opt-in, prepended to a `random` mint. Empty by default — every existing
+    # field keeps its plain random value. See the LLM_ROUTER_MASTER_KEY
+    # example above for the one case that needs it.
+    rotate_prefix: ""
     rotate_mount: secret
     # Backward-compatible default: apps/<domain>/<entry>. Pass rotate_path
     # directly to rotate anything else under rotate_mount.
@@ -74,6 +88,16 @@
     # inert <DOMAIN>-rotate AppRole. Settable with -e as well as the env var.
     rotate_wrapping_token: "{{ lookup('env', 'ROTATE_WRAPPING_TOKEN') }}"
   tasks:
+    # Makes openbao_app_secret_router_key_prefix available for -e
+    # 'rotate_prefix={{ openbao_app_secret_router_key_prefix }}' without this
+    # playbook hardcoding a second "sk-" literal — same idiom as
+    # openbao-rotate-approles.yml loading 08a-admin-and-ttls.yml directly.
+    # Unconditional: the file is tiny, and most runs don't set rotate_prefix
+    # at all.
+    - name: Load the router-key prefix default
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/openbao/defaults/main/01b-app-secret-generation.yml"
+
     - name: Refuse to run without a target and a write identity
       ansible.builtin.assert:
         that:
@@ -198,7 +222,7 @@
         - name: Generate the replacement value
           ansible.builtin.set_fact:
             rotate_new_value: >-
-              {{ lookup('community.general.random_string', length=rotate_length, special=false)
+              {{ rotate_prefix }}{{ lookup('community.general.random_string', length=rotate_length, special=false)
                  | lower }}
           no_log: true
 
@@ -238,7 +262,8 @@
               Content-Type: application/merge-patch+json
             body_format: json
             body: "{{ {'custom_metadata': {'rotated_' ~ rotate_field: rotate_now}} }}"
-            status_code: 200
+            # OpenBao answers a metadata PATCH with 204 No Content.
+            status_code: [200, 204]
           changed_when: true
           no_log: true
 
