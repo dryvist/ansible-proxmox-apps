@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.47.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.1...v4.47.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **openbao:** read the rotator's Doppler target from the platform env doc ([#2127](https://github.com/dryvist/ansible-proxmox-apps/issues/2127)) ([81b705a](https://github.com/dryvist/ansible-proxmox-apps/commit/81b705a4d591c370859fc9521149ef8cf211c24f))
+
 ## [4.47.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.0...v4.47.1) (2026-09-24)
 
 
