@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.47.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.2...v4.47.3) (2026-09-24)
+
+
+### Bug Fixes
+
+* **openbao:** skip the Doppler sync-token read on a seed run ([#2131](https://github.com/dryvist/ansible-proxmox-apps/issues/2131)) ([5346397](https://github.com/dryvist/ansible-proxmox-apps/commit/534639707a05d1359790c8eca43d7f1e69e3f77f))
+
 ## [4.47.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.1...v4.47.2) (2026-09-24)
 
 
