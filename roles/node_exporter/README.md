@@ -23,10 +23,12 @@ shared collection.
 5. Deploys a hardened systemd unit and enables/starts the service.
 
 Re-runs are no-ops; bumping `node_exporter_version` (plus checksum) rolls the
-fleet forward on the next converge. No container-vs-host branching is needed:
-unlike a clock daemon, node_exporter only reads `/proc`/`/sys` and needs no
-privilege an unprivileged LXC lacks, so the same unit runs identically on
-every guest.
+fleet forward on the next converge. Inside a system container
+(`systemd-detect-virt --container`) the unit omits its mount-namespace
+directives (`ProtectSystem`, `ProtectHome`, `PrivateTmp`,
+`ProtectKernelModules`, `ProtectControlGroups`), which an unprivileged LXC
+without the `nesting` feature cannot set up; `NoNewPrivileges` applies
+everywhere.
 
 ## Installation
 
