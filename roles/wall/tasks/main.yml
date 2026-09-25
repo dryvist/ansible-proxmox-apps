@@ -1,0 +1,150 @@
+---
+# Wall: two checksum-verified release tarballs unpacked into version-scoped
+# directories, a config.json rendered from the shared catalog, and one nginx
+# site that serves the pages and includes the gateway.
+
+- name: Require a Prometheus to point the gateway at
+  ansible.builtin.assert:
+    that:
+      - wall_prometheus_host | trim | length > 0
+    fail_msg: No container carries the `prometheus` tag, so the wall has no data source.
+    quiet: true
+
+- name: Build the shared service catalog
+  ansible.builtin.include_role:
+    name: dashboard_catalog
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx-light
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the wall directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ wall_config_dir }}"
+    - "{{ wall_site_dir }}"
+    - "{{ wall_feed_dir }}"
+
+# The checksum comes from the release's own .sha256 asset, fetched at the same
+# pinned tag, so nothing here stores a digest that could drift.
+- name: Fetch the pinned release assets (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ _url }}"
+    dest: "{{ wall_home }}/{{ item.repo }}-{{ item.version }}.tar.gz"
+    checksum: "sha256:{{ _url }}.sha256"
+    owner: root
+    group: root
+    mode: "0644"
+    force: "{{ item.version == 'latest' }}"
+  vars:
+    _url: >-
+      {{ wall_release_base }}/{{ item.repo }}/releases/{{
+         'latest/download' if item.version == 'latest' else 'download/' ~ item.version
+      }}/{{ item.asset }}
+  loop:
+    - repo: homelab-wall
+      version: "{{ wall_version }}"
+      asset: "{{ wall_site_asset }}"
+      dir: "{{ wall_site_dir }}"
+    - repo: homelab-wall-feed
+      version: "{{ wall_feed_version }}"
+      asset: "{{ wall_feed_asset }}"
+      dir: "{{ wall_feed_dir }}"
+  loop_control:
+    label: "{{ item.repo }}@{{ item.version }}"
+  register: wall_fetch
+
+# A pinned tag unpacks once (creates); `latest` re-unpacks whenever the fetch
+# brought a new tarball.
+- name: Unpack the verified archives
+  ansible.builtin.unarchive:
+    src: "{{ item.dest }}"
+    dest: "{{ item.item.dir }}"
+    remote_src: true
+    owner: root
+    group: root
+  loop: "{{ wall_fetch.results }}"
+  loop_control:
+    label: "{{ item.item.repo }}"
+  when: item.changed or not (item.item.dir ~ '/index.html') is exists
+  notify: Reload nginx
+
+# wall-feed.conf includes wall-feed-proxy.conf by a relative path, which nginx
+# resolves against its config directory.
+- name: Install the gateway config
+  ansible.builtin.copy:
+    src: "{{ wall_feed_dir }}/{{ item }}"
+    dest: "/etc/nginx/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - wall-feed.conf
+    - wall-feed-proxy.conf
+  notify: Reload nginx
+
+- name: Render config.json
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ wall_config_dir }}/config.json"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render the nginx site
+  ansible.builtin.template:
+    src: wall.nginx.conf.j2
+    dest: /etc/nginx/sites-available/wall
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nginx -t -c /etc/nginx/nginx.conf
+  notify: Reload nginx
+
+- name: Enable the wall site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/wall
+    src: /etc/nginx/sites-available/wall
+    state: link
+  notify: Reload nginx
+
+- name: Disable the packaged default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Enable and start nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Apply pending reloads before verifying
+  ansible.builtin.meta: flush_handlers
+
+# A wall that serves its page but cannot reach Prometheus shows every panel
+# empty and still converges green. Ask the gateway for a real answer.
+- name: Verify the page and the gateway answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ wall_port }}{{ item.path }}"
+    return_content: true
+  register: wall_probe
+  failed_when: >-
+    wall_probe.status != 200 or item.expect not in wall_probe.content
+  changed_when: false
+  loop:
+    - {path: /mc1/, expect: "<canvas"}
+    - {path: /config.json, expect: '"groups"'}
+    - {path: "/api/prom/query?query=up", expect: '"status":"success"'}
+  loop_control:
+    label: "{{ item.path }}"
