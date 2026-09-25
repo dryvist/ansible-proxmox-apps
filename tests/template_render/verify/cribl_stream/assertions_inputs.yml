@@ -235,3 +235,31 @@
       post-processing pipeline line(s). A Splunk destination without it sends
       unredacted events.
     success_msg: every splunk_hec output carries the post-processing pipeline
+
+- name: Assert in_unifi_firewall syslog input renders and fans to both metric stores
+  ansible.builtin.assert:
+    that:
+      - "'syslog:in_unifi_firewall' in _cribl_stream_inputs"
+      - "'id: in_unifi_firewall' in _cribl_stream_inputs"
+      - "'port: 514' in _cribl_stream_inputs"
+      - "'pipeline: unifi_syslog_to_metrics' in _cribl_stream_inputs"
+      - "_cribl_stream_inputs.count('pipeline: unifi_syslog_to_metrics') == 2"
+    fail_msg: >-
+      inputs.yml.j2 must declare a syslog in_unifi_firewall input on
+      cribl_stream_unifi_firewall_syslog_port (default 514), connected to
+      BOTH splunk_hec and victoriametrics_rw via unifi_syslog_to_metrics —
+      the derived-metric fan-out rule (every source to every destination
+      where the format fits).
+
+- name: Assert in_ipfix keeps its raw connection and adds a metrics fan-out
+  ansible.builtin.assert:
+    that:
+      - "'pipeline: ipfix' in _cribl_stream_inputs"
+      - "'pipeline: ipfix_to_metrics' in _cribl_stream_inputs"
+      - "_cribl_stream_inputs.count('pipeline: ipfix_to_metrics') == 2"
+    fail_msg: >-
+      inputs.yml.j2 must keep in_ipfix's existing raw-event connection
+      (pipeline: ipfix) UNCHANGED and add two more connections
+      (splunk_hec + victoriametrics_rw) running pipeline: ipfix_to_metrics,
+      so the derived byte-counter metrics reach both stores without
+      touching the raw netflow event route.
