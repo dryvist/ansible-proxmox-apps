@@ -14,6 +14,9 @@
 # roles/openbao/templates/uicheck-policy.hcl.j2) is deliberately
 # read-only on totp/code/svc-uicheck only and cannot perform it.
 #
+# OpenBao is reached over its HTTP API (ansible.builtin.uri), matching the
+# rest of the codebase's convention — never the `bao` CLI.
+#
 # Idempotent: if OpenBao already holds the key, this is a no-op (Authelia's
 # own side is trusted to already match it — see the residual note below).
 # If OpenBao holds no key, this seeds a fresh one on both sides. If OpenBao
@@ -40,8 +43,6 @@
     totp_period: 30
     totp_bao_addr: "{{ lookup('ansible.builtin.env', 'BAO_ADDR') }}"
     totp_bao_token: "{{ lookup('ansible.builtin.env', 'BAO_TOKEN') }}"
-    # Overridable so a test can point it at a stub CLI without touching PATH.
-    totp_bao_cmd: bao
   tasks:
     # authelia_binary_path / authelia_config_file are authelia role defaults;
     # this playbook has no roles: stanza, so they are loaded explicitly —
@@ -67,35 +68,45 @@
         quiet: true
 
     - name: Check whether OpenBao's TOTP engine is mounted
-      ansible.builtin.command:
-        cmd: "{{ totp_bao_cmd }} secrets list -format=json"
-      environment:
-        BAO_ADDR: "{{ totp_bao_addr }}"
-        BAO_TOKEN: "{{ totp_bao_token }}"
+      ansible.builtin.uri:
+        url: "{{ totp_bao_addr }}/v1/sys/mounts"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ totp_bao_token }}"
+        status_code: [200]
       delegate_to: "{{ groups['openbao_group'][0] }}"
       register: totp_mounts
+      no_log: true
       changed_when: false
 
     - name: Enable the TOTP secrets engine
-      ansible.builtin.command:
-        cmd: "{{ totp_bao_cmd }} secrets enable -path={{ openbao_totp_mount }} totp"
-      environment:
-        BAO_ADDR: "{{ totp_bao_addr }}"
-        BAO_TOKEN: "{{ totp_bao_token }}"
+      ansible.builtin.uri:
+        url: "{{ totp_bao_addr }}/v1/sys/mounts/{{ openbao_totp_mount }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ totp_bao_token }}"
+        body_format: json
+        body:
+          type: totp
+        status_code: [200, 204]
       delegate_to: "{{ groups['openbao_group'][0] }}"
+      no_log: true
       changed_when: true
-      when: (openbao_totp_mount ~ '/') not in (totp_mounts.stdout | from_json).keys()
+      when: >-
+        (openbao_totp_mount ~ '/')
+        not in (totp_mounts.json.data | default({}, true)).keys()
 
     - name: Check whether OpenBao already holds this user's TOTP key
-      ansible.builtin.command:
-        cmd: "{{ totp_bao_cmd }} read -format=json {{ openbao_totp_mount }}/keys/{{ totp_user }}"
-      environment:
-        BAO_ADDR: "{{ totp_bao_addr }}"
-        BAO_TOKEN: "{{ totp_bao_token }}"
+      ansible.builtin.uri:
+        url: "{{ totp_bao_addr }}/v1/{{ openbao_totp_mount }}/keys/{{ totp_user }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ totp_bao_token }}"
+        status_code: [200, 404]
       delegate_to: "{{ groups['openbao_group'][0] }}"
       register: totp_bao_check
+      no_log: true
       changed_when: false
-      failed_when: false
 
     - name: Generate a candidate seed (used only if OpenBao has no key yet)
       ansible.builtin.set_fact:
@@ -103,9 +114,9 @@
           {{ lookup('community.general.random_string', length=32, upper=true,
              numbers=true, special=false) }}
       no_log: true
-      when: (totp_bao_check.rc | default(1)) != 0
+      when: totp_bao_check.status != 200
 
-    - name: Attempt to seed Authelia's TOTP configuration (fails harmlessly if it already exists)
+    - name: Seed Authelia's TOTP configuration (refused deterministically when one already exists)
       ansible.builtin.command:
         argv: >-
           {{ [authelia_binary_path, 'storage', 'user', 'totp', 'generate', totp_user,
@@ -114,11 +125,16 @@
               '--period', totp_period | string] }}
       register: totp_authelia_generate
       changed_when: totp_authelia_generate.rc == 0
+      # The Authelia CLI has no HTTP API and no non-mutating existence check
+      # (see the header comment), so this is the one place a substring match
+      # on stderr is load-bearing. It matches ONLY the documented refusal
+      # text for an existing configuration — any other non-zero rc (a
+      # storage-backend error, a bad --secret, etc.) still fails the play.
       failed_when: >-
         totp_authelia_generate.rc != 0
         and 'already has a TOTP configuration' not in (totp_authelia_generate.stderr | default(''))
       no_log: true
-      when: (totp_bao_check.rc | default(1)) != 0
+      when: totp_bao_check.status != 200
 
     - name: Fail loudly when OpenBao has no key but Authelia already does (half-seeded pair)
       ansible.builtin.assert:
@@ -131,26 +147,26 @@
           run or a manual change — resolve it by hand (delete one side, then
           re-run this play) rather than having it guess which value is live.
         quiet: true
-      when: (totp_bao_check.rc | default(1)) != 0
+      when: totp_bao_check.status != 200
 
     - name: Import the freshly seeded secret into OpenBao's TOTP engine
-      ansible.builtin.command:
-        argv:
-          - "{{ totp_bao_cmd }}"
-          - write
-          - "{{ openbao_totp_mount }}/keys/{{ totp_user }}"
-          - generate=false
-          - "key={{ totp_candidate_seed }}"
-          - "algorithm={{ totp_algorithm }}"
-          - "digits={{ totp_digits }}"
-          - "period={{ totp_period }}"
-      environment:
-        BAO_ADDR: "{{ totp_bao_addr }}"
-        BAO_TOKEN: "{{ totp_bao_token }}"
+      ansible.builtin.uri:
+        url: "{{ totp_bao_addr }}/v1/{{ openbao_totp_mount }}/keys/{{ totp_user }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ totp_bao_token }}"
+        body_format: json
+        body:
+          generate: false
+          key: "{{ totp_candidate_seed }}"
+          algorithm: "{{ totp_algorithm }}"
+          digits: "{{ totp_digits }}"
+          period: "{{ totp_period }}"
+        status_code: [200, 204]
       delegate_to: "{{ groups['openbao_group'][0] }}"
       changed_when: true
       no_log: true
-      when: (totp_bao_check.rc | default(1)) != 0
+      when: totp_bao_check.status != 200
 
     - name: Say what happened
       ansible.builtin.debug:
