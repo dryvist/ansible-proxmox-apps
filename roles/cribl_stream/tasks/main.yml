@@ -330,70 +330,11 @@
     mode: "0644"
   notify: Restart cribl stream
 
-- name: Deploy idrac_hw_metrics pipeline configuration
-  ansible.builtin.template:
-    src: pipelines/idrac_hw_metrics/conf.yml.j2
-    dest: "{{ cribl_stream_install_dir }}/local/cribl/pipelines/idrac_hw_metrics/conf.yml"
-    owner: "{{ cribl_stream_user }}"
-    group: "{{ cribl_stream_group }}"
-    mode: "0644"
-  notify: Restart cribl stream
-
-# pve-r540 (iDRAC9) hardware sensor polling. Inert unless a host/group sets
-# cribl_stream_idrac_r540_enabled: true and a real BMC host — see
-# defaults/main/50-idrac-hw-metrics.yml.
-- name: Deploy the r540 Redfish hardware sensor collectors
-  when: cribl_stream_idrac_r540_bmc_host | length > 0
-  block:
-    # A REST Collector's own conf takes a single collectUrl (verified
-    # against the vendored Cribl 4.20.1 conf.schema.json — see the caveat
-    # comment in each collector.yml.j2), so Thermal and Power are two
-    # separate collectors rather than one with a urls array.
-    - name: Ensure each idrac_r540_redfish collector directory exists
-      ansible.builtin.file:
-        path: "{{ cribl_stream_install_dir }}/local/cribl/collectors/idrac_r540_redfish_{{ item }}"
-        state: directory
-        owner: "{{ cribl_stream_user }}"
-        group: "{{ cribl_stream_group }}"
-        mode: "0755"
-      loop:
-        - thermal
-        - power
-
-    - name: Deploy the idrac_r540_redfish collector configurations
-      ansible.builtin.template:
-        src: "collectors/idrac_r540_redfish_{{ item }}/collector.yml.j2"
-        dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/idrac_r540_redfish_{{ item }}/collector.yml"
-        owner: "{{ cribl_stream_user }}"
-        group: "{{ cribl_stream_group }}"
-        mode: "0600"  # embeds a BMC credential
-      loop:
-        - thermal
-        - power
-      no_log: true
-      notify: Restart cribl stream
-
-    - name: Deploy the idrac_r540_redfish collector schedules
-      ansible.builtin.template:
-        src: "collectors/idrac_r540_redfish_{{ item }}/schedule.yml.j2"
-        dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/idrac_r540_redfish_{{ item }}/schedule.yml"
-        owner: "{{ cribl_stream_user }}"
-        group: "{{ cribl_stream_group }}"
-        mode: "0644"
-      loop:
-        - thermal
-        - power
-      notify: Restart cribl stream
-
-# One-time, opt-in: creates Cribl's own least-privilege read-only Redfish
-# user on the r540 BMC. Never run as part of the normal converge — see
-# defaults/main/50-idrac-hw-metrics.yml.
-- name: Provision the r540 Cribl read-only iDRAC account
-  ansible.builtin.include_tasks: provision_idrac_readonly_user.yml
-  when: cribl_stream_idrac_provision_account | bool
-  tags:
-    - never
-    - idrac_provision
+# pve-r540 (iDRAC9) hardware sensor polling: pipeline + Redfish REST
+# Collectors + the opt-in account-provisioning play. Split out to stay under
+# this repo's token-budget gate — see tasks/idrac_hw_metrics.yml.
+- name: Deploy pve-r540 hardware sensor monitoring
+  ansible.builtin.include_tasks: idrac_hw_metrics.yml
 
 - name: Enable Cribl Stream boot-start via systemd
   ansible.builtin.command:
