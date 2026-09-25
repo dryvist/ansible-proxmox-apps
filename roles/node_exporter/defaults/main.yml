@@ -5,9 +5,9 @@
 # guest-level roles). Pinned upstream release installed as a native systemd
 # service, exposing host metrics on :9100 for the central Prometheus scrape.
 
-# Pinned upstream release. Renovate-friendly single source for the version;
-# bump deliberately (the checksums below must move with it when set).
-node_exporter_version: "1.9.1"
+# Pinned upstream release. Single source is node_exporter_version in
+# inventory/group_vars/all.yml (Renovate-managed) -- no literal version lives
+# in this role, matching the org-wide-var rule cribl_version already follows.
 
 # GOARCH name derived from the host fact; covers the amd64/arm64 fleet.
 # Defined here (ahead of its first use below) purely to keep the download-url
@@ -19,23 +19,24 @@ node_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_arch
 # upgrade only ever touches node_exporter_version in one place.
 node_exporter_release: "node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_arch }}"
 
-# Where the release tarball comes from. Standard GitHub releases URL; override
-# to point at a local mirror (e.g. the apt-cacher / artifact LXC) if guests
-# must not reach the internet at converge time.
+# Standard GitHub releases URL. Fetched ONCE on the controller (see
+# tasks/main.yml), which has unrestricted egress, and copied from there to
+# every guest -- about a dozen guests in this fleet (authelia, haproxy,
+# postgres*, splunk-mgmt, unifi-metrics, llm-redis-1, idrac-kvm, ...) sit
+# behind the outbound-internal firewall group and cannot reach github.com
+# themselves.
 node_exporter_download_url: >-
   https://github.com/prometheus/node_exporter/releases/download/v{{
   node_exporter_version }}/{{ node_exporter_release }}.tar.gz
 
-# Integrity pin for the tarball ("sha256:<hex>"), per-arch from the release's
-# sha256sums.txt. Refresh both hashes when bumping the version; an empty
-# string skips the check (get_url still only downloads when the versioned
-# dest is absent). Same pin as ansible-proxmox's pve_node_exporter — same
-# upstream release.
-node_exporter_checksum: >-
-  sha256:{{ {
-    'amd64': 'becb950ee80daa8ae7331d77966d94a611af79ad0d3307380907e0ec08f5b4e8',
-    'arm64': '848f139986f63232ced83babe3cad1679efdbb26c694737edc1f4fbd27b96203',
-  }[node_exporter_arch] }}
+# Upstream's combined checksums manifest (one file, every arch). Passed
+# straight to get_url's `checksum:` as a URL: it is fetched and parsed for
+# the line matching the downloaded filename, so no literal hash is pinned
+# here -- same trick roles/object_storage/defaults/main.yml already uses for
+# its own RustFS binary (object_storage_checksums_url).
+node_exporter_sha256sums_url: >-
+  https://github.com/prometheus/node_exporter/releases/download/v{{
+  node_exporter_version }}/sha256sums.txt
 
 # Bind to the guest's management IP (the default-route interface fact —
 # derived at runtime, never hardcoded) so metrics are only reachable on the

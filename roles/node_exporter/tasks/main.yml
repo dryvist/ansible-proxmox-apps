@@ -43,11 +43,31 @@
   tags:
     - node_exporter
 
-- name: Download the pinned node_exporter release tarball
+# Staged on the controller (unrestricted egress), never downloaded by the
+# guest itself -- see node_exporter_download_url in defaults/main.yml for
+# why. throttle: 1 serializes this one task across every host in the play so
+# two guests sharing an arch never race writing the same controller-side
+# dest; get_url's own checksum check then makes every host after the first
+# a no-op.
+- name: Stage the pinned node_exporter release tarball on the controller
   ansible.builtin.get_url:
     url: "{{ node_exporter_download_url }}"
+    dest: "/tmp/{{ node_exporter_release }}.tar.gz"
+    checksum: "sha256:{{ node_exporter_sha256sums_url }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  throttle: 1
+  tags:
+    - node_exporter
+
+- name: Copy the staged release tarball to the guest
+  ansible.builtin.copy:
+    src: "/tmp/{{ node_exporter_release }}.tar.gz"
     dest: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}.tar.gz"
-    checksum: "{{ node_exporter_checksum | default('', true) or omit }}"
     owner: root
     group: root
     mode: "0644"
