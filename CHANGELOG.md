@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.3...v4.49.0) (2026-09-25)
+
+
+### Features
+
+* **authelia,openbao:** seed a UI check service user with TOTP ([1b8649c](https://github.com/dryvist/ansible-proxmox-apps/commit/1b8649c674d1af2f292c338c5a83f24d973d9048))
+* **prometheus:** scrape guest node_exporters into host_metrics ([#2160](https://github.com/dryvist/ansible-proxmox-apps/issues/2160)) ([b580eba](https://github.com/dryvist/ansible-proxmox-apps/commit/b580ebad69604ddc2d95ffbed225332b9f6e1966))
+* **wall:** rotator slides, node-role naming, and Gatus monitoring coverage ([#2166](https://github.com/dryvist/ansible-proxmox-apps/issues/2166)) ([8ab4bb6](https://github.com/dryvist/ansible-proxmox-apps/commit/8ab4bb69f88c6f6fc8d3494c50200befd4f47d60))
+
+
+### Bug Fixes
+
+* **apt_cacher_ng:** one passthrough host list; add the CUDA and gh CLI repos ([#2163](https://github.com/dryvist/ansible-proxmox-apps/issues/2163)) ([5583016](https://github.com/dryvist/ansible-proxmox-apps/commit/5583016b699a45de0e8e8773e5856f01d943b6c3))
+* **cribl_stream:** require the Splunk HEC token ([#2168](https://github.com/dryvist/ansible-proxmox-apps/issues/2168)) ([b0ea176](https://github.com/dryvist/ansible-proxmox-apps/commit/b0ea1767a35627d7e4dc07f92a6311535c90eb55))
+* **cribl_stream:** VictoriaMetrics output backpressure and admin rotation restart ([#2156](https://github.com/dryvist/ansible-proxmox-apps/issues/2156)) ([9e233f5](https://github.com/dryvist/ansible-proxmox-apps/commit/9e233f55de53eb07d8ab14250af93460fc4cec89))
+* **e2e:** split ingest family matrix into per-family jobs ([#2164](https://github.com/dryvist/ansible-proxmox-apps/issues/2164)) ([35b6132](https://github.com/dryvist/ansible-proxmox-apps/commit/35b613216b27cb06b5d3f1fb80d8fcc1fd107fd9))
+* **inventory:** leave VMs published as started = false out of the converge ([#2161](https://github.com/dryvist/ansible-proxmox-apps/issues/2161)) ([339a8d6](https://github.com/dryvist/ansible-proxmox-apps/commit/339a8d61c537ef91b611c7a9e13eb4681fec72f0))
+* **node_exporter:** stage tarball on the controller, never per-guest github.com ([#2162](https://github.com/dryvist/ansible-proxmox-apps/issues/2162)) ([483d378](https://github.com/dryvist/ansible-proxmox-apps/commit/483d378decc1776250daf95b7d8d9cfd42c5972f))
+
 ## [4.48.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.2...v4.48.3) (2026-09-25)
 
 
