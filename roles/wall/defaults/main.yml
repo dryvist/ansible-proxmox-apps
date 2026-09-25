@@ -1,0 +1,40 @@
+---
+# Server-room wall: the homelab-wall static pages plus the homelab-wall-feed
+# nginx gateway, both fetched as release assets and served by native nginx.
+# Neither repo carries topology; this role supplies it (config.json, the
+# Prometheus upstream).
+
+# Org-wide pins (inventory/group_vars/all.yml, Renovate-managed).
+wall_version: "{{ homelab_wall_version | default('latest', true) }}"
+wall_feed_version: "{{ homelab_wall_feed_version | default('latest', true) }}"
+
+wall_release_base: https://github.com/dryvist
+wall_site_asset: homelab-wall-site.tar.gz
+wall_feed_asset: homelab-wall-feed-nginx.tar.gz
+
+wall_home: /var/lib/wall
+wall_config_dir: /etc/wall
+# Version-scoped so a bump unpacks fresh instead of reusing a stale tree.
+wall_site_dir: "{{ wall_home }}/site/{{ wall_version }}"
+wall_feed_dir: "{{ wall_home }}/feed/{{ wall_feed_version }}"
+
+wall_port: >-
+  {{ tofu_data.constants.service_ports.wall_web
+     | mandatory('tofu_data.constants.service_ports.wall_web missing — regenerate the published inventory') }}
+
+# Prometheus, derived exactly as grafana_stack derives it: the container
+# carrying the `prometheus` tag, never a literal.
+wall_prometheus_port: >-
+  {{ tofu_data.constants.service_ports.prometheus_web | default(9090) }}
+wall_prometheus_host: >-
+  {{ (tofu_data['containers'] | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'prometheus')
+      | map(attribute='value.ip', default='') | reject('equalto', '')
+      | list | first) | default('', true) }}
+
+wall_title: HOMELAB
+wall_refresh_seconds: 15
+# Non-PVE nodes shown as pending until their exporter exists:
+# [{name: <instance short name>, role: <label>}]
+wall_extra_nodes: []
