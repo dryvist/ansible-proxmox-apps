@@ -29,21 +29,6 @@ inputs:
       - output: victoriametrics_rw
         pipeline: ipfix_to_metrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
-  syslog:in_unifi_firewall:
-    id: in_unifi_firewall
-    type: syslog
-    disabled: false
-    host: "0.0.0.0"
-    # UDW's remote Activity Logging (syslog) export. UDP, matching the UDW
-    # default — see cribl_stream_unifi_firewall_syslog_port.
-    port: {{ cribl_stream_unifi_firewall_syslog_port }}
-    sendToRoutes: false
-    connections:
-      - output: splunk_hec
-        pipeline: unifi_syslog_to_metrics
-      - output: victoriametrics_rw
-        pipeline: unifi_syslog_to_metrics
-    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   tcpjson:in_cribl_s2s:
     id: in_cribl_s2s
     # TCP JSON, not cribl_tcp: the Cribl TCP source is only available in
@@ -66,6 +51,17 @@ inputs:
     connections:
       - output: splunk_hec
         pipeline: force_splunk_meta
+      # Additional fan-out, same forwarded stream: the UDW's firewall syslog
+      # (sourcetype ubiquiti:firewall, already stamped at Edge — see the
+      # note above) arrives here too. unifi_syslog_to_metrics drops every
+      # other sourcetype up front (native Drop function) and derives
+      # unifi_firewall_action_total from the rest, fanned to both metric
+      # stores. The raw-event path (force_splunk_meta -> splunk_hec above)
+      # is untouched.
+      - output: splunk_hec
+        pipeline: unifi_syslog_to_metrics
+      - output: victoriametrics_rw
+        pipeline: unifi_syslog_to_metrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% for name, entry in cribl_stream_ai_log_routing | default({}) | dictsort %}
 {% set ai_type = cribl_stream_ai_input_types.get(name, 'syslog' if name.endswith('_docker') else 'tcpjson') %}
