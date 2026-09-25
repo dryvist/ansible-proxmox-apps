@@ -23,16 +23,17 @@
 # Hermes agent route, see locals-hermes-routes.tf). `name` itself stays the
 # stable identifier boards key their own diffing off of, so a title changing
 # later never orphans a synced tile.
-- name: Build the dashboard catalog from the ingress table
+- name: Build the full dashboard catalog from the ingress table
   ansible.builtin.set_fact:
-    dashboard_catalog_services: >-
+    _dashboard_catalog_all: >-
       {{
-        dashboard_catalog_services | default([]) + [{
+        _dashboard_catalog_all | default([]) + [{
           'name': item.name,
           'title': item.title | default(item.name, true),
           'group': item.group | default('other', true),
           'sso': item.sso | default(true),
           'ui': item.ui | default(true),
+          'dashboard': item.dashboard | default(true),
           'section': item.section | default(none),
           'desc': item.desc | default('', true),
           'fqdn': _fqdn,
@@ -63,16 +64,25 @@
   loop: "{{ dashboard_catalog_ingress }}"
   loop_control:
     label: "{{ item.name }} [{{ item.group | default('other', true) }}]"
-  # dashboard = false: the route still gets a Traefik router, but skips every
-  # board tile — a compat path that reaches a UI another route already tiles.
-  when: item.dashboard | default(true)
+  # No `when` filter here: every fronted route is catalogued. `dashboard`
+  # rides along as a field instead of gating the build, because it decides
+  # board TILING only — a compat path that reaches a UI another route
+  # already tiles (e.g. llm-ui-legacy) still needs its OWN Gatus monitoring,
+  # since a broken compat redirect is still a real outage. Board roles keep
+  # reading `dashboard_catalog_services` (filtered below); Gatus reads
+  # `dashboard_catalog_services_monitor` (unfiltered) instead.
 
-- name: Order the catalog by group, then name
+- name: Order the full catalog by group, then name
   ansible.builtin.set_fact:
-    dashboard_catalog_services: >-
-      {{ dashboard_catalog_services
+    _dashboard_catalog_all: >-
+      {{ _dashboard_catalog_all
          | sort(attribute='name')
          | sort(attribute='group') }}
+
+- name: Split the catalog into board tiles and the full monitoring set
+  ansible.builtin.set_fact:
+    dashboard_catalog_services: "{{ _dashboard_catalog_all | selectattr('dashboard') | list }}"
+    dashboard_catalog_services_monitor: "{{ _dashboard_catalog_all }}"
 
 # EVERY default of this role that a board role consumes must be re-exported as
 # a fact. A role default is in scope only inside its own role, so a board role
