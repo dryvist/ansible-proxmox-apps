@@ -19,6 +19,15 @@ inputs:
       - output: splunk_hec
         pipeline: ipfix
 {% endif %}
+      # Second leg, same raw flow events: derive unifi_vlan_bytes_total /
+      # unifi_wan_bytes_total and fan them to both metric stores. Always the
+      # base splunk_hec (index varies by content, same pattern as
+      # prometheus_to_netmon) — never the per-index netflow output above,
+      # which would misroute these into the raw-event index.
+      - output: splunk_hec
+        pipeline: ipfix_to_metrics
+      - output: victoriametrics_rw
+        pipeline: ipfix_to_metrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   tcpjson:in_cribl_s2s:
     id: in_cribl_s2s
@@ -42,6 +51,17 @@ inputs:
     connections:
       - output: splunk_hec
         pipeline: force_splunk_meta
+      # Additional fan-out, same forwarded stream: the UDW's firewall syslog
+      # (sourcetype ubiquiti:firewall, already stamped at Edge — see the
+      # note above) arrives here too. unifi_syslog_to_metrics drops every
+      # other sourcetype up front (native Drop function) and derives
+      # unifi_firewall_action_total from the rest, fanned to both metric
+      # stores. The raw-event path (force_splunk_meta -> splunk_hec above)
+      # is untouched.
+      - output: splunk_hec
+        pipeline: unifi_syslog_to_metrics
+      - output: victoriametrics_rw
+        pipeline: unifi_syslog_to_metrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% for name, entry in cribl_stream_ai_log_routing | default({}) | dictsort %}
 {% set ai_type = cribl_stream_ai_input_types.get(name, 'syslog' if name.endswith('_docker') else 'tcpjson') %}

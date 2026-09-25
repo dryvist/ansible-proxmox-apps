@@ -176,3 +176,60 @@
       The OTLP destination appends the signal path itself. An endpoint that
       already ends in the signal path is posted to a doubled path, which 404s
       and stops trace delivery while every sibling leg keeps working.
+
+- name: Assert unifi_syslog_to_metrics uses native Aggregations + Publish Metrics + Lookup
+  vars:
+    _unifi_syslog_fn_ids: >-
+      {{ (_cribl_stream_unifi_syslog_pipeline | from_yaml).functions
+         | map(attribute='id') | list }}
+  ansible.builtin.assert:
+    that:
+      - "_unifi_syslog_fn_ids == ['drop', 'eval', 'lookup', 'eval', 'aggregation', 'publish_metrics', 'eval']"
+      - "\"sourcetype !== 'ubiquiti:firewall'\" in _cribl_stream_unifi_syslog_pipeline"
+      - "'unifi_vlan_map.csv' in _cribl_stream_unifi_syslog_pipeline"
+      - "\"'unifi_firewall_action_total'\" in _cribl_stream_unifi_syslog_pipeline"
+      - "'type: counter' in _cribl_stream_unifi_syslog_pipeline"
+      - "'-A-' in _cribl_stream_unifi_syslog_pipeline"
+      - "'-D-' in _cribl_stream_unifi_syslog_pipeline"
+      - "\"'unifi_metrics'\" in _cribl_stream_unifi_syslog_pipeline"
+    fail_msg: >-
+      unifi_syslog_to_metrics must lead with a native Drop function filtered
+      to sourcetype ubiquiti:firewall (this pipeline shares in_cribl_s2s with
+      every other S2S-forwarded sourcetype), then derive action (-A-/-D- tag)
+      and vlan (brN interface, joined against unifi_vlan_map.csv), aggregate
+      by vlan+action with a native Aggregations function, and emit
+      unifi_firewall_action_total as a counter via Publish Metrics —
+      native functions only, no custom script.
+
+- name: Assert ipfix_to_metrics derives both VLAN and WAN byte counters natively
+  vars:
+    _ipfix_metrics_fn_ids: >-
+      {{ (_cribl_stream_ipfix_metrics_pipeline | from_yaml).functions
+         | map(attribute='id') | list }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        _ipfix_metrics_fn_ids ==
+        ['eval', 'lookup', 'eval', 'aggregation', 'publish_metrics', 'publish_metrics', 'eval']
+      - "\"'unifi_vlan_bytes_total'\" in _cribl_stream_ipfix_metrics_pipeline"
+      - "\"'unifi_wan_bytes_total'\" in _cribl_stream_ipfix_metrics_pipeline"
+      - "'unifi_vlan_map.csv' in _cribl_stream_ipfix_metrics_pipeline"
+      - "'inputSnmp' in _cribl_stream_ipfix_metrics_pipeline"
+      - "\"'unifi_metrics'\" in _cribl_stream_ipfix_metrics_pipeline"
+    fail_msg: >-
+      ipfix_to_metrics must derive vlan/direction/is_wan from the
+      NetFlow/IPFIX fields, run a single Aggregations function grouped by
+      vlan+direction+is_wan, and emit unifi_vlan_bytes_total /
+      unifi_wan_bytes_total via two filtered Publish Metrics functions —
+      native functions only.
+
+- name: Assert the UniFi VLAN lookup CSV renders vlan_id/network_name rows
+  ansible.builtin.assert:
+    that:
+      - "'vlan_id,network_name' in _cribl_stream_unifi_vlan_map"
+      - "'40,siem' in _cribl_stream_unifi_vlan_map"
+      - "'0,Default' in _cribl_stream_unifi_vlan_map"
+    fail_msg: >-
+      lookups/unifi_vlan_map.csv.j2 must render one vlan_id,network_name
+      row per cribl_stream_unifi_networks entry — this is the join key both
+      derived-metric pipelines use to turn a VLAN id into a network name.
