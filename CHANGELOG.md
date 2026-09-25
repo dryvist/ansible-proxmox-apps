@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.48.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.4...v4.48.0) (2026-09-25)
+
+
+### Features
+
+* **wall:** serve the server-room wall ([#2139](https://github.com/dryvist/ansible-proxmox-apps/issues/2139)) ([e7b585a](https://github.com/dryvist/ansible-proxmox-apps/commit/e7b585a57f47b4e3f3053fbcb038c3180c9d1144))
+
+
+### Bug Fixes
+
+* **status_stack:** probe SSO-gated catalog rows at the guest ([#2136](https://github.com/dryvist/ansible-proxmox-apps/issues/2136)) ([ba88f95](https://github.com/dryvist/ansible-proxmox-apps/commit/ba88f9522c7ea63e9a40886b38d168a0aa851d37))
+
 ## [4.47.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.3...v4.47.4) (2026-09-25)
 
 
