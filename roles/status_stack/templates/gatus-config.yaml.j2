@@ -33,9 +33,14 @@ alerting:
 
 endpoints:
 {% for svc in dashboard_catalog_services | default([]) %}
+{#- An SSO-gated public URL is answered by the Authelia login page, so probing
+    it only proves Authelia is up. Those rows probe the guest directly
+    (the catalog's probe_url); public rows keep the public URL and its
+    certificate check. -#}
+{% set _direct = (svc.sso | default(true)) and (svc.probe_url | default('') | length > 0) %}
   - name: {{ svc.name }}
     group: catalog-{{ svc.group | default('other') }}
-    url: "{{ svc.url }}"
+    url: "{{ svc.probe_url if _direct else svc.url }}"
     interval: {{ status_stack_interval }}
     client:
       timeout: 15s
@@ -51,7 +56,9 @@ endpoints:
 {% endfor %}
 {% endif %}
       - "[RESPONSE_TIME] < 3000"
+{% if not _direct %}
       - "[CERTIFICATE_EXPIRATION] > 240h"
+{% endif %}
     alerts:
       - type: ntfy
 {% endfor %}
