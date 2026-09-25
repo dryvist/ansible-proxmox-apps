@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.48.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.0...v4.48.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **wall:** validate the nginx tree with a command task ([#2145](https://github.com/dryvist/ansible-proxmox-apps/issues/2145)) ([47324a2](https://github.com/dryvist/ansible-proxmox-apps/commit/47324a2b60a9cf423e2217b799ea381c29c9ffb1))
+
 ## [4.48.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.4...v4.48.0) (2026-09-25)
 
 
