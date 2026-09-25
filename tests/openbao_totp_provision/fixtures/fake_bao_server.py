@@ -88,8 +88,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self._send(404, {"errors": ["unhandled path: " + self.path]})
 
-    def log_message(self, fmt, *args):
-        pass  # keep test output quiet
+    def log_message(self, format: str, *args: object) -> None:
+        del format, args  # keep test output quiet
 
 
 if __name__ == "__main__":
