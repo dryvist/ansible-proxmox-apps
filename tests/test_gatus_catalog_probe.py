@@ -22,7 +22,7 @@ def render(services: list[dict]) -> dict[str, dict]:
     env.filters["regex_replace"] = lambda s, pat, rep="": re.sub(pat, rep, s)
     text = env.from_string(TEMPLATE.read_text()).render(
         ansible_managed="managed",
-        dashboard_catalog_services=services,
+        dashboard_catalog_services_monitor=services,
         status_stack_interval="60s",
         status_stack_catalog_status_overrides={},
         status_stack_authelia_error_patterns=["invalid_client"],
@@ -51,6 +51,17 @@ class GatusCatalogProbe(unittest.TestCase):
                       "probe_url": ""}])["pool"]
         self.assertEqual(ep["url"], "https://pool.example.test")
         self.assertIn("[CERTIFICATE_EXPIRATION] > 240h", ep["conditions"])
+
+    def test_a_dashboard_false_compat_route_still_gets_its_own_endpoint(self):
+        # dashboard:false hides a compat route (e.g. llm-ui-legacy) from every
+        # board tile, but the route still fronts a real backend — a broken
+        # compat redirect is still a real outage, so Gatus must monitor it
+        # even though dashboard_catalog_services (the board-facing fact) drops
+        # it entirely.
+        eps = render([{"name": "llm-ui-legacy", "sso": True,
+                       "url": "https://llm.example.test/ui",
+                       "probe_url": "http://guest:4000", "dashboard": False}])
+        self.assertIn("llm-ui-legacy", eps)
 
 
 if __name__ == "__main__":
