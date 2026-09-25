@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.47.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.3...v4.47.4) (2026-09-25)
+
+
+### Bug Fixes
+
+* **openbao:** stop requiring the optional slack-admin pair in the env prefetch ([#2135](https://github.com/dryvist/ansible-proxmox-apps/issues/2135)) ([d823347](https://github.com/dryvist/ansible-proxmox-apps/commit/d8233474ea06c0c80fdcbb295e017df0276c247c))
+
 ## [4.47.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.47.2...v4.47.3) (2026-09-24)
 
 
