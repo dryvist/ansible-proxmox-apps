@@ -5,10 +5,9 @@
 # /usr/local/bin/node_exporter is only rewritten when the pinned version
 # changes — so re-runs are no-ops and a version bump is one variable.
 #
-# No container-vs-host branching needed (unlike e.g. the ntp role): unlike
-# chronyd, node_exporter only reads /proc and /sys and needs no clock/kernel
-# privilege an unprivileged LXC lacks, so the same systemd unit runs
-# identically on every guest — LXC or VM.
+# Inside a system container the unit drops its mount-namespace sandboxing
+# (ProtectSystem, PrivateTmp, ...): an unprivileged LXC without the `nesting`
+# feature denies the namespace mount and the unit dies with 226/NAMESPACE.
 
 - name: Assert critical variables are defined and valid
   ansible.builtin.assert:
@@ -86,6 +85,15 @@
     group: "{{ node_exporter_user }}"
     mode: "0755"
   when: node_exporter_textfile_collector_enabled
+  tags:
+    - node_exporter
+
+- name: Detect if running inside a system container
+  # systemd-detect-virt --container: exit 0 = inside a container, exit 1 = not.
+  ansible.builtin.command: systemd-detect-virt --container
+  register: _node_exporter_virt_container
+  changed_when: false
+  failed_when: false
   tags:
     - node_exporter
 
