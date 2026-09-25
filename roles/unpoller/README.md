@@ -50,7 +50,7 @@ controller API independently.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `unpoller_version` | (set in `inventory/group_vars/all.yml`, Renovate-managed) | Pinned upstream release |
-| `unpoller_metrics_port` | `9130` | Prometheus exporter port |
+| `unpoller_metrics_port` | `9130` (`cribl_stream_group.yml`, shared with `roles/cribl_stream`'s scrape target) | Prometheus exporter port |
 | `unpoller_controller_url` | `$UNIFI_API` | Controller URL (FQDN) |
 | `unpoller_controller_user` | `unpoller` | Read-only controller account |
 | `unpoller_controller_password` | OpenBao `apps/unpoller` | Generated once, rotatable standalone |
