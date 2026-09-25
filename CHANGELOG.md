@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.48.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.2...v4.48.3) (2026-09-25)
+
+
+### Bug Fixes
+
+* **node_exporter:** omit mount-namespace sandboxing inside containers ([#2153](https://github.com/dryvist/ansible-proxmox-apps/issues/2153)) ([226dbf2](https://github.com/dryvist/ansible-proxmox-apps/commit/226dbf2b82b38f340c3594175b00f1f47c564ee2))
+* **wall:** keep nginx directory redirects relative behind Traefik ([#2155](https://github.com/dryvist/ansible-proxmox-apps/issues/2155)) ([ce37388](https://github.com/dryvist/ansible-proxmox-apps/commit/ce373885f4271f0d78d37353311743de8ee82478))
+
 ## [4.48.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.1...v4.48.2) (2026-09-25)
 
 
