@@ -1,7 +1,5 @@
 ---
-# pve-r540 (iDRAC9) hardware sensor polling: the idrac_hw_metrics pipeline
-# plus the Redfish REST Collectors. Split out of tasks/main.yml to stay
-# under this repo's token-budget gate (.token-limits.yaml).
+# pve-r540 hardware sensor monitoring: pipeline + Redfish REST Collectors.
 
 - name: Deploy idrac_hw_metrics pipeline configuration
   ansible.builtin.template:
@@ -12,15 +10,12 @@
     mode: "0644"
   notify: Restart cribl stream
 
-# Inert unless a host/group sets cribl_stream_idrac_r540_enabled: true and a
-# real BMC host — see defaults/main/50-idrac-hw-metrics.yml.
 - name: Deploy the r540 Redfish hardware sensor collectors
-  when: cribl_stream_idrac_r540_bmc_host | length > 0
+  when:
+    - cribl_stream_idrac_r540_bmc_host | length > 0
+    - cribl_stream_idrac_r540_username | length > 0
+    - cribl_stream_idrac_r540_password | length > 0
   block:
-    # A REST Collector's own conf takes a single collectUrl (verified
-    # against the vendored Cribl 4.20.1 conf.schema.json — see the caveat
-    # comment in each collector.yml.j2), so Thermal and Power are two
-    # separate collectors rather than one with a urls array.
     - name: Ensure each idrac_r540_redfish collector directory exists
       ansible.builtin.file:
         path: "{{ cribl_stream_install_dir }}/local/cribl/collectors/idrac_r540_redfish_{{ item }}"
@@ -38,7 +33,7 @@
         dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/idrac_r540_redfish_{{ item }}/collector.yml"
         owner: "{{ cribl_stream_user }}"
         group: "{{ cribl_stream_group }}"
-        mode: "0600"  # embeds a BMC credential
+        mode: "0600"
       loop:
         - thermal
         - power
@@ -57,9 +52,16 @@
         - power
       notify: Restart cribl stream
 
-# One-time, opt-in: creates Cribl's own least-privilege read-only Redfish
-# user on the r540 BMC. Never run as part of the normal converge — see
-# defaults/main/50-idrac-hw-metrics.yml.
+- name: Report the r540 hardware sensor collectors as pending
+  ansible.builtin.debug:
+    msg: >-
+      cribl_stream_idrac_r540_bmc_host is set but no read-only credential is
+      in OpenBao yet (secret/apps/cribl-stream). Collectors not deployed.
+      Run the provisioning play (--tags idrac_provision) to create one.
+  when:
+    - cribl_stream_idrac_r540_bmc_host | length > 0
+    - cribl_stream_idrac_r540_username | length == 0 or cribl_stream_idrac_r540_password | length == 0
+
 - name: Provision the r540 Cribl read-only iDRAC account
   ansible.builtin.include_tasks: provision_idrac_readonly_user.yml
   when: cribl_stream_idrac_provision_account | bool

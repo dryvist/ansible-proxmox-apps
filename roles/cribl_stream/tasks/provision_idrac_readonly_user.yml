@@ -1,32 +1,21 @@
 ---
-# One-time, opt-in: create Cribl's OWN least-privilege read-only account on
-# the pve-r540 iDRAC9 via the Redfish AccountService, instead of handing the
-# collector the shared admin credential. Idempotent (checked, not re-run
-# blindly) but still mutates live BMC state, so it is never part of the
-# normal converge — invoke explicitly with `--tags idrac_provision`.
-#
-# Uses the EXISTING admin credential (cribl_stream_idrac_r540_username/
-# password, which default to the ansible-proxmox idrac_power role's
-# IDRAC_USERNAME/IDRAC_PASSWORD) to create the account, then publishes the
-# generated password to OpenBao (secret/apps/cribl-stream) via the
-# openbao_secrets publish contract, so it is never left as the only copy on
-# this run's stdout/facts.
+# Creates Cribl's own read-only account on pve-r540's iDRAC9 via the Redfish
+# AccountService, and publishes the generated password to OpenBao. Idempotent.
+# Never runs as part of the normal converge — invoke with --tags idrac_provision.
 
 - name: Require a real BMC host before provisioning
   ansible.builtin.assert:
     that:
       - cribl_stream_idrac_r540_bmc_host | length > 0
-    fail_msg: >-
-      cribl_stream_idrac_r540_bmc_host is unset — refusing to provision an
-      iDRAC account without a real target.
+    fail_msg: "cribl_stream_idrac_r540_bmc_host is unset."
     quiet: true
 
 - name: Check whether the Cribl read-only account already exists
   ansible.builtin.uri:
     url: "https://{{ cribl_stream_idrac_r540_bmc_host }}/redfish/v1/AccountService/Accounts"
     method: GET
-    user: "{{ cribl_stream_idrac_r540_username }}"
-    password: "{{ cribl_stream_idrac_r540_password }}"
+    user: "{{ cribl_stream_idrac_r540_admin_username }}"
+    password: "{{ cribl_stream_idrac_r540_admin_password }}"
     force_basic_auth: true
     validate_certs: "{{ cribl_stream_idrac_r540_tls_verify }}"
     status_code: [200]
@@ -67,8 +56,8 @@
           https://{{ cribl_stream_idrac_r540_bmc_host }}/redfish/v1/AccountService/Accounts/{{
           cribl_stream_idrac_ro_slot }}
         method: PATCH
-        user: "{{ cribl_stream_idrac_r540_username }}"
-        password: "{{ cribl_stream_idrac_r540_password }}"
+        user: "{{ cribl_stream_idrac_r540_admin_username }}"
+        password: "{{ cribl_stream_idrac_r540_admin_password }}"
         force_basic_auth: true
         validate_certs: "{{ cribl_stream_idrac_r540_tls_verify }}"
         body_format: json

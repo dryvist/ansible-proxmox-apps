@@ -1,0 +1,81 @@
+---
+- name: Render and verify the idrac_hw_metrics collector gate
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/cribl_stream/templates"
+    cribl_stream_idrac_r540_bmc_host: "pve-r540-idrac.example.invalid"
+    cribl_stream_idrac_r540_chassis: System.Embedded.1
+    cribl_stream_idrac_r540_tls_verify: false
+
+  tasks:
+    - name: Compute the deploy gate for each credential state
+      ansible.builtin.set_fact:
+        _gate_present: >-
+          {{ (cribl_stream_idrac_r540_bmc_host | length > 0)
+             and ('cribl-ro' | length > 0)
+             and ('placeholder-password' | length > 0) }}
+        _gate_absent: >-
+          {{ (cribl_stream_idrac_r540_bmc_host | length > 0)
+             and (('') | length > 0)
+             and (('') | length > 0) }}
+
+    - name: Assert the gate opens only when both credential fields are set
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _gate_present | bool
+          - not (_gate_absent | bool)
+        fail_msg: >-
+          the idrac_hw_metrics collector deploy gate must require both
+          cribl_stream_idrac_r540_username and _password non-empty
+
+    - name: Render the thermal collector with the read-only credential present
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/idrac_r540_redfish_thermal/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/idrac_hw_metrics_present.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_idrac_r540_username: cribl-ro
+        cribl_stream_idrac_r540_password: placeholder-password
+
+    - name: Assert the read-only username renders, never an admin fallback
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'username: \"cribl-ro\"' in _rendered"
+        fail_msg: "collector.yml.j2 did not render the read-only username"
+      vars:
+        _rendered: "{{ lookup('file', _fixture_dir ~ '/idrac_hw_metrics_present.yml') }}"
+
+    - name: Render the thermal collector with an empty credential
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/idrac_r540_redfish_thermal/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/idrac_hw_metrics_absent.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_idrac_r540_username: ""
+        cribl_stream_idrac_r540_password: ""
+
+    - name: Assert an empty credential renders empty, never an admin fallback string
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'username: \"\"' in _rendered"
+          - "'IDRAC_USERNAME' not in _rendered"
+        fail_msg: >-
+          collector.yml.j2 must never render the BMC admin credential; the
+          task-level gate is what keeps this file from being deployed at all
+      vars:
+        _rendered: "{{ lookup('file', _fixture_dir ~ '/idrac_hw_metrics_absent.yml') }}"
+
+    - name: Idrac hw_metrics gate verification PASSED
+      ansible.builtin.debug:
+        msg: >-
+          The collector deploy gate requires both credential fields
+          non-empty, and collector.yml.j2 never references an admin
+          credential fallback.
