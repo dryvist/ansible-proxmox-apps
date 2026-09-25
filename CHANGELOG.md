@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.48.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.1...v4.48.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **openbao:** prove workstation-bound rotated pairs by lookup ([#2149](https://github.com/dryvist/ansible-proxmox-apps/issues/2149)) ([5379733](https://github.com/dryvist/ansible-proxmox-apps/commit/5379733529a0ceb5cffd9ed0481eb3f3a44bff1e))
+
 ## [4.48.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.0...v4.48.1) (2026-09-25)
 
 
