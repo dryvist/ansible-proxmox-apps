@@ -2,7 +2,7 @@
 # Server-room wall: the homelab-wall static pages plus the homelab-wall-feed
 # nginx gateway, both fetched as release assets and served by native nginx.
 # Neither repo carries topology; this role supplies it (config.json, the
-# Prometheus upstream).
+# metrics-query upstream).
 
 # Org-wide pins (inventory/group_vars/all.yml, Renovate-managed).
 wall_version: "{{ homelab_wall_version | default('latest', true) }}"
@@ -22,14 +22,21 @@ wall_port: >-
   {{ tofu_data.constants.service_ports.wall_web
      | mandatory('tofu_data.constants.service_ports.wall_web missing — regenerate the published inventory') }}
 
-# Prometheus, derived exactly as grafana_stack derives it: the container
-# carrying the `prometheus` tag, never a literal.
+# VictoriaMetrics is the superset metrics store (fed by both the
+# prometheus_stack remote_write and Cribl's native metric pipelines), so
+# the gateway reads it instead of Prometheus directly — its
+# Prometheus-compatible /api/v1/query means the gateway's proxy path needs
+# no change. Derived exactly as grafana_stack derives its own
+# infrastructure-metrics datasource address: the container carrying the
+# `grafana` tag (grafana_stack co-locates VictoriaMetrics with Grafana in
+# one compose project), never a literal. Var names kept (wall_prometheus_*)
+# to avoid a wider rename across the role/templates/tests.
 wall_prometheus_port: >-
-  {{ tofu_data.constants.service_ports.prometheus_web | default(9090) }}
+  {{ tofu_data.constants.service_ports.victoriametrics | default(8428) }}
 wall_prometheus_host: >-
   {{ (tofu_data['containers'] | default({}) | dict2items
       | selectattr('value.tags', 'defined')
-      | selectattr('value.tags', 'contains', 'prometheus')
+      | selectattr('value.tags', 'contains', 'grafana')
       | map(attribute='value.ip', default='') | reject('equalto', '')
       | list | first) | default('', true) }}
 
