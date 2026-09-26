@@ -70,11 +70,23 @@
       register: rw_get_own
       changed_when: false
 
+    # lookup('file', ...) reads from the ANSIBLE CONTROLLER, never the
+    # remote host the preceding get-object command actually ran on (this
+    # play's `hosts: all` target, not localhost) -- confirmed by running
+    # this exact scenario: it fails with "File not found", because no such
+    # path exists on the controller. slurp is the correct remote-file read
+    # (same fix already applied to the credentials read-back above and in
+    # converge.yml's idempotence fix).
+    - name: Slurp the object rw fetched from its own bucket
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iam-object-fetched.txt
+      register: _rw_fetched_object
+
     - name: Assert the fetched object matches what was written
       ansible.builtin.assert:
         that:
           - rw_get_own.rc == 0
-          - lookup('file', '/tmp/molecule-iam-object-fetched.txt') == 'molecule rustfs iam scoping check'
+          - (_rw_fetched_object.content | b64decode | trim) == 'molecule rustfs iam scoping check'
         fail_msg: "rw get-object did not return the object rw put"
 
     - name: RW is denied a put into a DIFFERENT bucket
