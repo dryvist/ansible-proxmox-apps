@@ -38,6 +38,15 @@ class WallNginxConfig(unittest.TestCase):
         server_block, _, _location_block = conf.partition("location / {")
         self.assertIn("absolute_redirect off;", server_block)
 
+    def test_location_root_revalidates_on_every_load(self):
+        # No Cache-Control on `location /` lets browsers apply heuristic
+        # freshness, so a kiosk keeps executing a stale deployed JS/CSS
+        # bundle after a new release ships. `no-cache` forces revalidation
+        # (a cheap 304 against the etag) on every load instead.
+        conf = render()
+        _, _, location_block = conf.partition("location / {")
+        self.assertIn('add_header Cache-Control "no-cache" always;', location_block)
+
 
 if __name__ == "__main__":
     unittest.main()
