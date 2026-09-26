@@ -25,6 +25,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 PLAYBOOK = ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
+DOMAIN_GROUPS_FILE = ROOT / "playbooks" / "site" / "vars" / "openbao_secrets_domain_groups.yml"
 DOMAINS_FILE = ROOT / "roles" / "openbao_secrets" / "defaults" / "main" / "01-domains.yml"
 
 PREFETCH_PLAY_NAME = "Pre-fetch resource-domain secrets from OpenBao"
@@ -55,6 +56,11 @@ def _hosts_pattern_groups(hosts_value: str) -> set[str]:
     return {group for group in re.split(r"[\s:]+", hosts_value) if group}
 
 
+def _domain_groups() -> dict:
+    with DOMAIN_GROUPS_FILE.open() as f:
+        return yaml.safe_load(f)["openbao_secrets_domain_groups"]
+
+
 def _declared_domain_names() -> set[str]:
     with DOMAINS_FILE.open() as f:
         data = yaml.safe_load(f)
@@ -62,8 +68,7 @@ def _declared_domain_names() -> set[str]:
 
 
 def test_every_mapped_domain_is_a_real_declared_domain():
-    play = _prefetch_play()
-    mapped_domains = set(play["vars"]["openbao_secrets_domain_groups"].keys())
+    mapped_domains = set(_domain_groups().keys())
     declared_domains = _declared_domain_names()
 
     unknown = mapped_domains - declared_domains
@@ -81,7 +86,7 @@ def test_every_mapped_group_is_reachable_by_the_scoping_gate():
     reachable_groups = in_play_groups | {MEDIA_SCOPE_GROUP} | DEADMAN_SCOPE_GROUPS
 
     all_mapped_groups: set[str] = set()
-    for groups in play["vars"]["openbao_secrets_domain_groups"].values():
+    for groups in _domain_groups().values():
         all_mapped_groups.update(groups)
 
     unreachable = all_mapped_groups - reachable_groups
@@ -100,8 +105,7 @@ def test_domains_with_no_traced_consumer_are_left_unmapped_not_guessed():
     # today (see the map's own comment) -- they must be ABSENT from the map
     # (the "always fetch" safe default), never present with a guessed,
     # unverified group list.
-    play = _prefetch_play()
-    mapped_domains = set(play["vars"]["openbao_secrets_domain_groups"].keys())
+    mapped_domains = set(_domain_groups().keys())
     for unconsumed in ("observability", "local-cloud"):
         assert unconsumed not in mapped_domains, (
             f"{unconsumed!r} has no traced consumer in this repo and must stay "
