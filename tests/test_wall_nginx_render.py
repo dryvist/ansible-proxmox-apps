@@ -35,7 +35,7 @@ def render(**overrides) -> str:
 class WallNginxConfig(unittest.TestCase):
     def test_absolute_redirect_off_present_at_server_scope(self):
         conf = render()
-        server_block, _, _location_block = conf.partition("location / {")
+        server_block, _, _ = conf.partition("location / {")
         self.assertIn("absolute_redirect off;", server_block)
 
     def test_location_root_revalidates_on_every_load(self):
