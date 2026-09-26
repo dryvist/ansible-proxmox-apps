@@ -2,8 +2,42 @@
 # Create the RustFS user + bucket-scoped policy for every bucket iam.yml
 # resolved credentials for. Runs on THIS host (the RustFS guest, loopback,
 # root creds) -- object_storage_bucket_credentials was built by iam.yml.
+#
+# The root credential signs every admin-API call in
+# iam_provision_bucket_role.yml. curl's --aws-sigv4 needs it supplied the
+# same way -u would (a user:secret pair), but -u puts it in argv, readable
+# via `ps`/`/proc/<pid>/cmdline` for the process lifetime. A netrc file
+# avoids that -- verified curl produces the byte-identical AWS4-HMAC-SHA256
+# Authorization header either way -- and unlike `-K -` (config-on-stdin,
+# the pattern roles/openbao/templates/rotators/splunk-mcp.sh.j2 uses for a
+# plain Basic-Auth curl call), it doesn't collide with the two calls below
+# that already use stdin for --data-binary @-.
+#
+# Fixed path under object_storage_config_dir, not a fresh tempfile per
+# converge: a mint-then-delete tempfile would report `changed` on every
+# single converge (a new random path, and a delete of something that
+# always exists) and permanently fail Molecule's idempotence check, for a
+# credential that -- like object_storage_env_file two tasks over in
+# main.yml, deployed 0640 to the same directory tree -- is already at rest
+# on this host for the systemd unit to read. 0600, root:root, stricter than
+# that 0640 env file since only this converge (root) ever needs to read it,
+# not the object-storage service user too.
+- name: Write the root credential to a netrc file so it never appears in curl's argv
+  ansible.builtin.copy:
+    dest: "{{ object_storage_config_dir }}/.rustfs-admin-netrc"
+    content: |
+      machine {{ object_storage_endpoint | urlsplit('hostname') }}
+      login {{ object_storage_root_user }}
+      password {{ object_storage_root_password }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
 - name: Provision RustFS IAM for each bucket
   ansible.builtin.include_tasks: iam_provision_bucket.yml
   loop: "{{ object_storage_bucket_credentials.keys() | list }}"
   loop_control:
     loop_var: object_storage_iam_bucket
+  vars:
+    object_storage_iam_netrc_path: "{{ object_storage_config_dir }}/.rustfs-admin-netrc"
