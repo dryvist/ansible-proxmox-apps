@@ -26,7 +26,7 @@ to IPv6) is a reservation change, not an edit sprawled across roles.
 | DHCP + core networking (L2/L3, VLANs, gateway, reservations) | **UniFi** | Issues every DHCP reservation (MAC → IP); this repo never runs a DHCP server. |
 | IPAM / DCIM source of truth | **Nautobot** (`roles/nautobot`, #138) | Staged SSoT DiffSync + export pipeline, currently gated off. |
 | Provisioning + constants | **tofu-proxmox** (upstream) | Owns `deployment.json`; publishes `tofu_inventory.json` + `pipeline_constants` to S3. |
-| Reservation seed (MAC → host) | **tofu-unifi** | `fixed-ips.json` — committed reservations, no literal IP (`cidrhost(cidr, host)`). |
+| Reservation seed (MAC → host) | **the network IaC repo** | `fixed-ips.json` — committed reservations, no literal IP (`cidrhost(cidr, host)`). |
 | App configuration | **this repo** | **Read-only consumer**; reads the published inventory, never defines an IP/port, fails loud. |
 
 The one-directional boundary matters: this repo consumes `tofu_data` and must not
@@ -150,7 +150,7 @@ upstream. Track them there:
    the whole change — there is no octet to pick and no reservation to add. App
    configs in this repo are unaffected: they reference the FQDN.
 
-### tofu-unifi (`fixed-ips.json`)
+### the network IaC repo (`fixed-ips.json`)
 
 - **Do not add a reservation for a leased guest.** Reservations remain only for
   physical infrastructure (nodes, BMCs), which is genuinely static kit. A

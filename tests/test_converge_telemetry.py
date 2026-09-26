@@ -10,7 +10,7 @@ import unittest
 from ansible import context
 from ansible.module_utils.common.collections import ImmutableDict
 
-from converge_telemetry_support import CONFIG, RecordingCallback, summary, telemetry
+from converge_telemetry_support import CONFIG, CaptureCallback, summary, telemetry
 
 
 class HostStatusContract(unittest.TestCase):
@@ -109,7 +109,7 @@ def emit_and_capture(config, cliargs):
     telemetry.open_url = lambda url, **kwargs: posted.append((url, kwargs))
     context.CLIARGS = ImmutableDict(cliargs)
     try:
-        callback = RecordingCallback()
+        callback = CaptureCallback()
         callback.v2_playbook_on_stats(FakeStats(config))
     finally:
         telemetry.open_url = original_open_url
