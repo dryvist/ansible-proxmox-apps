@@ -159,24 +159,23 @@
 # 301. Behind Traefik that redirect must stay relative, or the browser is
 # sent straight to nginx's own internal scheme and port.
 #
-# Waits for the reloaded workers, not for the task to stop failing: the
-# preceding reload sends SIGHUP and returns as soon as that signal is
-# delivered, while the outgoing worker keeps answering in-flight connections
-# on the same listening socket until it drains — a request landing there
-# during that window still gets the PRE-reload (absolute-redirect) response.
-# `until` re-checks the actual relative-Location condition on each attempt;
-# it only stops retrying once a NEW worker answers, or the retries run out
-# because the redirect is still genuinely absolute.
+# The uri module always resolves Location against the request URL, so a
+# relative and an absolute redirect read back the same. The probe sends a
+# sentinel Host instead: an absolute redirect is built from that Host, a
+# relative one resolves against 127.0.0.1, so the sentinel appears in the
+# Location only when the redirect is absolute. `until` covers the outgoing
+# worker still draining after the reload.
 - name: Wait for the reloaded workers to serve a relative directory redirect
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ wall_port }}/mc1"
+    headers:
+      Host: redirect-probe.invalid
     follow_redirects: none
     status_code: 301
   register: wall_redirect_probe
   until: >-
     wall_redirect_probe.status == 301 and
-    (':' ~ (wall_port | string | trim)) not in wall_redirect_probe.location and
-    'http://' not in wall_redirect_probe.location
+    'redirect-probe.invalid' not in wall_redirect_probe.location
   retries: 5
   delay: 2
   changed_when: false
