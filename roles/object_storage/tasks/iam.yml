@@ -50,6 +50,39 @@
       ansible.builtin.set_fact:
         object_storage_bucket_credentials: {}
 
+    # tofu_data.ingress is the SAME tofu-owned ingress table
+    # roles/traefik/defaults/main.yml reads as traefik_ingress_routes --
+    # propagated to every host in scope by inventory/load_tofu/propagate_facts.yml,
+    # no new plumbing needed here. Deriving the host from the live "s3" row
+    # (rather than composing "s3.{{ proxmox_domain }}" as a bare literal) means
+    # a route rename or an accidental sso flip in tofu-proxmox's ingress.tf
+    # fails this converge loudly instead of silently pointing every bucket's
+    # AWS_ENDPOINT_URL at a dead or SSO-gated host.
+    - name: Find the machine-S3 ingress route
+      ansible.builtin.set_fact:
+        object_storage_iam_ingress_route: >-
+          {{ (tofu_data.ingress | default([]))
+             | selectattr('name', 'equalto', 's3')
+             | list | first | default({}) }}
+
+    - name: Assert the machine-S3 ingress route exists and is not SSO-gated
+      ansible.builtin.assert:
+        that:
+          - object_storage_iam_ingress_route | length > 0
+          - not (object_storage_iam_ingress_route.sso | default(true))
+        fail_msg: >-
+          tofu_data.ingress has no "s3" route (or it is SSO-gated), so the
+          per-bucket RustFS credentials would carry a dead or wrong
+          AWS_ENDPOINT_URL. Check tofu-proxmox's ingress.tf for a rename or
+          an accidental sso flip on the machine-S3 route.
+        quiet: true
+
+    - name: Set the public S3 endpoint from the live ingress route
+      ansible.builtin.set_fact:
+        object_storage_iam_public_endpoint: >-
+          https://{{ object_storage_iam_ingress_route.hostname
+            | default(object_storage_iam_ingress_route.name, true) }}.{{ proxmox_domain }}
+
     - name: Log in with the ansible-converge AppRole
       community.hashi_vault.vault_login:
         url: "{{ object_storage_iam_bao_addr }}"
