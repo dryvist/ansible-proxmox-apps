@@ -50,11 +50,24 @@
     enabled: true
     daemon_reload: "{{ postgres_ha_etcd_unit.changed }}"
 
+# Every etcdctl call below dials this member by its OWN hostname (never
+# 127.0.0.1): the cert issued above has a SAN covering only
+# inventory_hostname (matching what every peer/client actually dials it
+# as), and a Go TLS client verifies the server certificate against the
+# address it dialed — "127.0.0.1" would fail hostname verification
+# against a cert that only lists the real hostname, the same way any
+# other client on the network would fail against "localhost". One fact,
+# not a repeated expression in all four etcdctl tasks below.
+- name: Set this member's own etcdctl endpoint
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_self_endpoint: >-
+      https://{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_etcd_client_port }}
+
 - name: Wait for this etcd member to answer over TLS
   ansible.builtin.command:
     argv:
       - etcdctl
-      - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+      - --endpoints={{ postgres_ha_etcd_self_endpoint }}
       - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
       - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
       - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
@@ -79,7 +92,7 @@
       ansible.builtin.command:
         argv:
           - etcdctl
-          - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
           - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
           - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
           - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
@@ -103,7 +116,7 @@
           ansible.builtin.command:
             argv:
               - etcdctl
-              - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
               - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
               - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
               - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
@@ -118,7 +131,7 @@
           ansible.builtin.command:
             argv:
               - etcdctl
-              - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
               - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
               - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
               - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
