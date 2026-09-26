@@ -31,7 +31,7 @@ controller API independently.
 
 - **Controller URL** (`UNIFI_API`): the same OpenBao-backed environment
   variable (`secret/infrastructure/unifi`, field `UNIFI_API`) the
-  `unifi_metrics` role and the `tofu-unifi` provider already treat as the
+  `unifi_metrics` role and the UniFi infrastructure repo's Terraform provider already treat as the
   single source of truth for the controller address. Must be an FQDN — the
   role asserts it is not a literal IPv4 URL.
 - **Controller account**: neither UniFi Terraform provider
