@@ -238,13 +238,13 @@ apparatus; the block is enable + write-once CA + add-if-missing roles.
   `ci-runner` (`ci`, 30m, no extensions). TTLs are declared in seconds so the
   reconcile can compare them against the API without normalizing.
   `ttl == max_ttl`; a sign request may shorten a cert's life, never extend it.
-  Principals are always explicit — never `*`. `openbao_ssh_user_roles` is the
-  derived, user-cert-only view every consumer that reads `principal`/
-  `extensions` unconditionally must use instead of the full table.
-- `host-cert` (`cert_type: host`) signs HOST certificates under the same CA
-  keypair instead: `allow_host_certificates`, `allowed_domains` (the apex
-  zone guest FQDNs live under), `allow_subdomains`, no bare domains, 90d
-  `ttl`/`max_ttl`. No principal/extensions — those are user-cert-only fields.
+  Principals are always explicit — never `*`.
+- `host-cert` (`cert_type: host`) signs HOST certs under the same CA instead:
+  `allow_host_certificates`, `allowed_domains` (the apex zone guest FQDNs
+  live under), `allow_subdomains`, no bare domains, 90d `ttl`/`max_ttl`, no
+  principal/extensions. `openbao_ssh_user_roles` is the derived,
+  user-cert-only view for consumers that read `principal`/`extensions`
+  unconditionally.
 - One `ssh-sign-<role>` policy leaf per role grants exactly that role's
   `sign/` endpoint. Attachment follows the security decisions:
   `ssh-sign-automation-ai` → `ai-elevated` (standing, a documented tradeoff:
