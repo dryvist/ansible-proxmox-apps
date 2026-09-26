@@ -147,6 +147,41 @@ prometheus_stack_llama_server_targets: >-
            '\1:' ~ (prometheus_stack_llama_server_metrics_port | string))
      | list }}
 
+# --- Hindsight agent-memory service --------------------------------------------
+# Hindsight serves /metrics unauthenticated on its API port (no separate
+# metrics listener upstream). Targets derive from the hindsight-tagged
+# inventory entries, same tag-filter pattern as prometheus_stack_traefik_targets
+# above — a new replica is a scrape target with no edit here.
+prometheus_stack_hindsight_metrics_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['memory_ports']['hindsight_api']
+     | mandatory('tofu_data.constants.memory_ports.hindsight_api missing —'
+                 ~ ' regenerate the published inventory') }}
+prometheus_stack_hindsight_targets: >-
+  {{ tofu_data['containers'] | default({}) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'hindsight')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$',
+           '\1:' ~ (prometheus_stack_hindsight_metrics_port | string))
+     | list }}
+
+# --- agentgateway --------------------------------------------------------------
+# agentgateway's stats server (Prometheus /metrics) is unauthenticated and
+# internal-only. Targets derive from the agentgateway-tagged inventory
+# entries, same tag-filter pattern as above.
+prometheus_stack_agentgateway_metrics_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['agentgateway_metrics']
+     | mandatory('tofu_data.constants.service_ports.agentgateway_metrics missing —'
+                 ~ ' regenerate the published inventory') }}
+prometheus_stack_agentgateway_targets: >-
+  {{ tofu_data['containers'] | default({}) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'agentgateway')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$',
+           '\1:' ~ (prometheus_stack_agentgateway_metrics_port | string))
+     | list }}
+
 # Group that owns the rendered prometheus.yml. It carries the bearer above, so
 # it is 0640 rather than world-readable — but the container reads it as the
 # image's default unprivileged user, so the group is that user's numeric gid
@@ -169,6 +204,8 @@ prometheus_stack_remote_write_keep_jobs:
   - traefik
   - llm_router
   - llama_server
+  - hindsight
+  - agentgateway
 
 # --- probe modules (HOW to probe; targets come from prometheus_stack_blackbox_jobs) ---
 # icmp        — latency/loss to the modem + ISP hops + public anycast
