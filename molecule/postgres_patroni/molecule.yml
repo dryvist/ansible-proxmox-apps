@@ -1,0 +1,91 @@
+---
+# Molecule scenario for the postgres role's Patroni HA mode (postgres_ha_manager:
+# patroni). Three privileged systemd containers form a real 3-member etcd +
+# Patroni cluster and prove: the cluster forms, a leader is elected, killing
+# the leader promotes a replica, and the vector extension on a managed
+# database survives the failover. No live OpenBao in CI, so prepare.yml seeds
+# a local self-signed CA + per-node certs directly (converge.yml then supplies
+# non-empty-but-unreachable postgres_ha_pki_addr/token — patroni_etcd_tls.yml
+# never calls out because the pre-seeded certs are already valid, exercising
+# the "certificate already fresh, skip reissue" path rather than the OpenBao
+# call itself, which the default postgres scenario's own S3-credential gap
+# already establishes as the accepted CI boundary for this role).
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: postgres-patroni-1${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - postgres_patroni_test_group
+      - lxc_containers
+  - name: postgres-patroni-2${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - postgres_patroni_test_group
+      - lxc_containers
+  - name: postgres-patroni-3${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - postgres_patroni_test_group
+      - lxc_containers
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+
+verifier:
+  name: ansible
+
+scenario:
+  name: postgres_patroni
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

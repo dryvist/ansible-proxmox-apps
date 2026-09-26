@@ -10,17 +10,60 @@
 - name: Phase 2 -- install PostgreSQL and create the cluster
   ansible.builtin.include_tasks: main/install_and_create_cluster.yml
 
-- name: Phase 2b -- bootstrap the streaming standby
+- name: Phase 2a -- assert Patroni-mode preconditions
+  ansible.builtin.include_tasks: main/patroni_prereqs.yml
+  when: postgres_ha_manager == 'patroni'
+
+- name: Phase 2b -- bootstrap the streaming standby (native mode only)
   ansible.builtin.include_tasks: main/standby_bootstrap.yml
+  when: postgres_ha_manager != 'patroni'
 
-- name: Phase 3 -- apply idempotent cluster GUCs
+- name: Phase 2c -- configure the etcd DCS member (Patroni mode only)
+  ansible.builtin.include_tasks: main/patroni_etcd.yml
+  when:
+    - postgres_ha_manager == 'patroni'
+    - not (postgres_ha_patroni_adopt | bool)
+
+# Explicit invocation only (never a normal converge): --tags patroni_adopt
+# runs ONLY this file in the whole play (see patroni_adopt.yml's own header
+# for the exact ordered, one-host-at-a-time procedure), so it re-includes
+# every phase it needs (etcd, Patroni install/config/start, leader detection)
+# itself rather than relying on the phases around it having already run.
+- name: Phase 2d -- adopt an existing native cluster into Patroni
+  ansible.builtin.include_tasks: main/patroni_adopt.yml
+  when:
+    - postgres_ha_manager == 'patroni'
+    - postgres_ha_patroni_adopt | bool
+  tags:
+    - never
+    - patroni_adopt
+
+- name: Phase 2e -- install and start Patroni (Patroni mode, normal converge)
+  ansible.builtin.include_tasks: main/patroni_bootstrap.yml
+  when:
+    - postgres_ha_manager == 'patroni'
+    - not (postgres_ha_patroni_adopt | bool)
+
+# Patroni owns leader election below this point, so postgres_role must reflect
+# who currently leads (queried live) rather than the native default's static
+# comparison against postgres_primary_host.
+- name: Phase 2f -- resolve the dynamically elected Patroni leader
+  ansible.builtin.include_tasks: main/patroni_leader.yml
+  when:
+    - postgres_ha_manager == 'patroni'
+    - not (postgres_ha_patroni_adopt | bool)
+
+- name: Phase 3 -- apply idempotent cluster GUCs (native mode only; Patroni owns these itself)
   ansible.builtin.include_tasks: main/cluster_config.yml
+  when: postgres_ha_manager != 'patroni'
 
-- name: Phase 3b -- configure the replication primary
+- name: Phase 3b -- configure the replication primary (native mode only)
   ansible.builtin.include_tasks: main/replication_primary.yml
+  when: postgres_ha_manager != 'patroni'
 
-- name: Phase 3c -- assert the declared topology matches the running one
+- name: Phase 3c -- assert the declared topology matches the running one (native mode only)
   ansible.builtin.include_tasks: main/verify_topology.yml
+  when: postgres_ha_manager != 'patroni'
 
 - name: Phase 4 -- provision managed roles, databases, and pg_hba
   ansible.builtin.include_tasks: main/roles_and_databases.yml

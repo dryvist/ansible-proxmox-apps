@@ -1,0 +1,53 @@
+---
+# Converge all three containers as one Patroni/etcd cluster. Vars below stand
+# in for what a real postgres_ai_group.yml-style group_vars file supplies live
+# (bao-derived passwords, the real ai-VLAN replication CIDR, a real OpenBao
+# PKI endpoint) — see prepare.yml for why the PKI endpoint itself is never
+# actually reached in this scenario.
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    postgres_ha_manager: patroni
+    postgres_cluster_group: postgres_patroni_test_group
+    postgres_primary_host: ""
+
+    # ponytail: 0.0.0.0/0 is deliberately broad — this is an isolated,
+    # single-scenario Docker network with no other tenant, not a live VLAN.
+    # A real cluster's group_vars always supplies a real subnet CIDR
+    # (NETWORK_CIDR_AI); molecule has no equivalent to derive one from.
+    postgres_replication_cidr: 0.0.0.0/0
+
+    postgres_replication_password: molecule-replication-pw
+    postgres_ha_etcd_root_password: molecule-etcd-root-pw
+    postgres_ha_patroni_api_password: molecule-patroni-api-pw
+    postgres_ha_superuser_password: molecule-superuser-pw
+
+    # Non-empty but unreachable: patroni_prereqs.yml only asserts these are
+    # SET, and patroni_etcd_tls.yml never dials out because prepare.yml
+    # already seeded a valid certificate (see that file's "already valid,
+    # skip reissue" checkend gate).
+    postgres_ha_pki_addr: "https://molecule-pki.invalid:8200"
+    postgres_ha_pki_token: molecule-fake-pki-token
+
+    # The object-storage PITR tier needs a real S3-compatible endpoint the
+    # default postgres scenario already cannot supply in CI; same boundary
+    # here. Template rendering for the pgBackRest+Patroni integration
+    # (patroni.yml.j2's pgbackrest/archive_command sections) is covered by
+    # tests/template_render/verify_templates.yml instead, which needs no
+    # endpoint.
+    postgres_pgbackrest_enabled: false
+
+    postgres_managed_databases:
+      - name: patroni_test
+        user: patroni_test
+        password: molecule-patroni-test-db-pw
+        client_cidr: 0.0.0.0/0
+        extensions: [vector]
+
+  tasks:
+    - name: Include postgres role
+      ansible.builtin.include_role:
+        name: postgres

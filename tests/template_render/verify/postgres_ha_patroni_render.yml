@@ -1,0 +1,133 @@
+---
+# inventory_hostname is a read-only special variable — ansible-lint's
+# var-naming[read-only] rule (rightly) refuses a task `vars:` override, and
+# even where lint allowed it the override is not guaranteed to reach every
+# nested variable resolution. Getting a real, non-'localhost' inventory_hostname
+# for this fixture instead means adding an actual host to the in-memory
+# inventory and targeting it — the same mechanism a real 3-node converge uses,
+# just with an add_host stand-in for postgres_ai_group.
+- name: Register the fixture cluster member as a local-connection host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+
+  tasks:
+    - name: Add postgres-ai-1 as an ad hoc render-fixture host
+      ansible.builtin.add_host:
+        name: postgres-ai-1
+        groups: postgres_ha_render_fixture
+        ansible_connection: local
+
+- name: Verify Patroni/etcd templates render for patroni mode
+  hosts: postgres_ha_render_fixture
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    # render_tmp is a fact on the 'localhost' host set by verify_templates.yml's
+    # first play; this play targets a different (add_host-created) host, so it
+    # is not in this host's own hostvars and must be read from localhost's.
+    _fixture_dir: "{{ hostvars['localhost']['render_tmp'] }}"
+    _template_dir: "../../../roles/postgres/templates"
+    # tofu_data MUST be a play var, never a set_fact, in this file: a fact on
+    # a shared host outlives this play and leaks into every play imported
+    # after it (see verify_templates.yml's own header comment on this exact
+    # trap, and the "LAST on purpose" block it keeps the two tofu_data-facing
+    # plays in for the same reason). This play's own tofu_data never needs to
+    # survive past its own tasks.
+    tofu_data:
+      domain: example.invalid
+
+  tasks:
+    - name: Load the real postgres role defaults
+      ansible.builtin.include_vars:
+        dir: "../../../roles/postgres/defaults/main"
+
+    - name: Fix the facts a real inventory/converge would supply
+      ansible.builtin.set_fact:
+        postgres_cluster_version: 18
+        postgres_ha_manager: patroni
+        postgres_cluster_group: postgres_ai_group
+        postgres_primary_host: ""
+        # Bypassing groups.get(...) on purpose: this offline fixture has no
+        # real inventory group to derive from, so the member list is supplied
+        # directly — the same way postgres_primary_host is fixed elsewhere in
+        # this file rather than resolved from a live inventory.
+        postgres_ha_cluster_members:
+          - postgres-ai-1
+          - postgres-ai-2
+          - postgres-ai-3
+        postgres_replication_user: replicator
+        postgres_replication_password: fixture-replication-pw
+        postgres_replication_cidr: 10.20.0.0/24
+        postgres_ha_etcd_root_password: fixture-etcd-root-pw
+        postgres_ha_patroni_api_password: fixture-patroni-api-pw
+        postgres_ha_superuser_password: fixture-superuser-pw
+
+    - name: Render etcd.yml.j2
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/etcd.yml.j2"
+        dest: "{{ _fixture_dir }}/etcd.yml"
+        mode: "0644"
+
+    - name: Read the rendered etcd config
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/etcd.yml"
+      register: _etcd_render
+
+    - name: Assert the etcd config names every cluster member and uses TLS
+      vars:
+        etcd_content: "{{ _etcd_render.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'name: postgres-ai-1' in etcd_content"
+          # initial-cluster entries are 'name=url' pairs — the bare member
+          # name (matching each member's own 'name:' field) on the left of
+          # '=', its FQDN only in the URL on the right.
+          - "'postgres-ai-1=https://postgres-ai-1.example.invalid:2380' in etcd_content"
+          - "'postgres-ai-2=https://postgres-ai-2.example.invalid:2380' in etcd_content"
+          - "'postgres-ai-3=https://postgres-ai-3.example.invalid:2380' in etcd_content"
+          - "'initial-cluster-token: postgres-ai-etcd' in etcd_content"
+          - "'client-cert-auth: true' in etcd_content"
+          - "'/etc/etcd/tls/ca.pem' in etcd_content"
+        fail_msg: "etcd.yml.j2 did not render the expected 3-member TLS config:\n{{ etcd_content }}"
+
+    - name: Render patroni.yml.j2
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/patroni.yml.j2"
+        dest: "{{ _fixture_dir }}/patroni.yml"
+        mode: "0644"
+
+    - name: Read the rendered Patroni config
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/patroni.yml"
+      register: _patroni_render
+
+    - name: Assert the Patroni config is scoped to the cluster and wires pgBackRest
+      vars:
+        patroni_content: "{{ _patroni_render.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'scope: postgres-ai' in patroni_content"
+          - "'name: postgres-ai-1' in patroni_content"
+          # postgres_pgbackrest_stanza must resolve to postgres_ha_scope here
+          # (postgres_ha_manager: patroni), not a per-host hostname.
+          - "'archive_command: pgbackrest --stanza=postgres-ai archive-push %p' in patroni_content"
+          - "'--stanza=postgres-ai --delta restore --type=standby' in patroni_content"
+          - "'synchronous_mode: false' in patroni_content"
+          - "'- pgbackrest' in patroni_content"
+          - "'- basebackup' in patroni_content"
+          - "'cacert: /etc/etcd/tls/ca.pem' in patroni_content"
+          - "'username: patroni' in patroni_content"
+        fail_msg: "patroni.yml.j2 did not render the expected cluster-scoped config:\n{{ patroni_content }}"
+
+    - name: Patroni/etcd template render assertions PASSED
+      ansible.builtin.debug:
+        msg: |
+          etcd.yml.j2 and patroni.yml.j2 both render, name every declared
+          cluster member, and key archive_command/pgbackrest restore off
+          postgres_ha_scope rather than a per-host hostname.

@@ -1,0 +1,131 @@
+---
+# =============================================================================
+# etcd v3, 3 members co-located on this cluster's postgres nodes. Patroni mode
+# only (see patroni_prereqs.yml for the preconditions this assumes already
+# passed). Every member runs this identically — etcd's own clustering handles
+# which one leads Raft, which is a different election from Patroni's own
+# PostgreSQL leader election layered on top of it.
+# =============================================================================
+- name: Install etcd
+  ansible.builtin.apt:
+    name:
+      - "{{ postgres_ha_etcd_package }}"
+      - "{{ postgres_ha_etcd_ctl_package }}"
+    state: present
+    update_cache: true
+
+- name: Ensure the etcd data directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_ha_etcd_data_dir }}"
+    state: directory
+    owner: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    mode: "0700"
+
+- name: Configure etcd TLS
+  ansible.builtin.include_tasks: patroni_etcd_tls.yml
+
+- name: Deploy the etcd config
+  ansible.builtin.template:
+    src: etcd.yml.j2
+    dest: "{{ postgres_ha_etcd_config_file }}"
+    owner: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    mode: "0640"
+  notify: Restart etcd
+
+- name: Deploy the etcd systemd unit
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: postgres_ha_etcd_unit
+
+- name: Ensure the etcd service is started and enabled
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+    enabled: true
+    daemon_reload: "{{ postgres_ha_etcd_unit.changed }}"
+
+- name: Wait for this etcd member to answer over TLS
+  ansible.builtin.command:
+    argv:
+      - etcdctl
+      - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+      - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+      - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+      - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+      - endpoint
+      - health
+  environment:
+    ETCDCTL_API: "3"
+  register: postgres_ha_etcd_health
+  changed_when: false
+  retries: 10
+  delay: 6
+  until: postgres_ha_etcd_health.rc == 0
+
+# Cluster-wide state (etcd's own Raft), so this only needs to actually run
+# once — checked, not assumed, so a re-run after the first member already
+# enabled it is a no-op everywhere else. Gated to the first declared member so
+# only one host attempts the add-then-enable sequence.
+- name: Configure etcd root auth (first member only)
+  when: inventory_hostname == (postgres_ha_cluster_members | first)
+  block:
+    - name: Check whether etcd auth is already enabled
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - -w
+          - json
+          - auth
+          - status
+      environment:
+        ETCDCTL_API: "3"
+      register: postgres_ha_etcd_auth_status
+      changed_when: false
+      failed_when: false
+
+    - name: Enable etcd root auth
+      when: >-
+        (postgres_ha_etcd_auth_status.rc | default(1)) != 0
+        or not ((postgres_ha_etcd_auth_status.stdout | default('{}', true) | from_json).enabled | default(false))
+      no_log: true
+      block:
+        - name: Add the etcd root user
+          ansible.builtin.command:
+            argv:
+              - etcdctl
+              - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+              - user
+              - add
+              - "{{ postgres_ha_etcd_root_user }}:{{ postgres_ha_etcd_root_password }}"
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: true
+
+        - name: Enable etcd auth
+          ansible.builtin.command:
+            argv:
+              - etcdctl
+              - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+              - -u
+              - "{{ postgres_ha_etcd_root_user }}:{{ postgres_ha_etcd_root_password }}"
+              - auth
+              - enable
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: true
