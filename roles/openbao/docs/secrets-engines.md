@@ -245,7 +245,8 @@ apparatus; the block is enable + write-once CA + add-if-missing roles.
   principal/extensions. `openbao_ssh_user_roles` is the derived,
   user-cert-only view for consumers that read `principal`/`extensions`
   unconditionally.
-- One `ssh-sign-<role>` policy leaf per role grants exactly that role's
+- One `ssh-sign-<role>` policy leaf per **user-cert** role (`openbao_ssh_user_roles`
+  — host-cert roles get no leaf of their own) grants exactly that role's
   `sign/` endpoint. Attachment follows the security decisions:
   `ssh-sign-automation-ai` → `ai-elevated` (standing, a documented tradeoff:
   friction-free agent SSH bounded by 1h certs, non-root principals,
@@ -253,9 +254,14 @@ apparatus; the block is enable + write-once CA + add-if-missing roles.
   `ssh-sign-automation-ansible` → `ansible-converge` only;
   `ssh-sign-automation-semaphore` → `semaphore` only, so a certificate's
   principal identifies which caller ran a converge;
-  `ssh-sign-ci-runner` → unattached until a CI identity exists;
-  `ssh-sign-host-cert` → `ansible-converge` and `semaphore` (issuance runs
-  unattended in Semaphore).
+  `ssh-sign-ci-runner` → unattached until a CI identity exists.
+  Host certs (issuance runs unattended in Semaphore) get no separate
+  `ssh-sign-host-cert` policy — a new policy name can only be written by a
+  privileged provisioning run. `openbao_ssh_host_cert_signer_roles`
+  (`automation-ansible`, `automation-semaphore`) instead folds an
+  update-only grant on every host-cert role's `sign/` endpoint directly into
+  `ssh-sign-automation-ansible` and `ssh-sign-automation-semaphore`, whose
+  CONTENT the reconcile identity already owns.
 - `OPENBAO_SSH_SOURCE_CIDRS` (Doppler) adds a `source-address` critical
   option restricting where certs are valid from; unset ⇒ loud warning and
   the guest-firewall default-deny layer is the compensating control.
