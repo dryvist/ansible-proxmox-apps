@@ -94,25 +94,30 @@
   gather_facts: false
   vars:
     # One item succeeded (failed: false, as wait_for's registered result
-    # shapes it), one failed (timed out) — the exact shape
-    # add_lxc_hosts_ssh_probe.results takes. This is the only way to prove
-    # the "probe succeeded" branch: CI has no privilege to bind port 22, and
-    # this repo's tests never make a live network call (mirrors
-    # verify_add_lxc_hosts_placement.yml's own mocked-expression tier).
+    # shapes it), one failed (timed out), one skipped (no 'failed' key at
+    # all — the shape an ansible-core 2.21 per-item `when: false` loop
+    # result takes, and the shape that crashed a sibling repo's loader with
+    # "object of type 'dict' has no attribute 'failed'"). This is the only
+    # way to prove the "probe succeeded" and "result was skipped" branches:
+    # CI has no privilege to bind port 22, and this repo's tests never make
+    # a live network call (mirrors verify_add_lxc_hosts_placement.yml's own
+    # mocked-expression tier).
     _mock_probe_results:
       - item: { key: ssh-ready-poc, value: { fqdn: ssh-ready-poc.example.internal } }
         failed: false
       - item: { key: ssh-down-poc, value: { fqdn: ssh-down-poc.example.internal } }
         failed: true
+      - item: { key: ssh-skipped-poc, value: { fqdn: ssh-skipped-poc.example.internal } }
+        skipped: true
   tasks:
     - name: Compute add_lxc_hosts_ssh_ready from the shipped expression against the mock
       ansible.builtin.set_fact:
         add_lxc_hosts_ssh_ready: >-
           {{ _mock_probe_results | default([])
-             | rejectattr('failed')
+             | selectattr('failed', 'defined') | rejectattr('failed')
              | map(attribute='item') | map(attribute='key') | list }}
 
-    - name: Assert only the item whose probe succeeded is marked ready
+    - name: Assert only the succeeded item is ready, and the skipped item is excluded without crashing
       ansible.builtin.assert:
         that:
           - add_lxc_hosts_ssh_ready == ['ssh-ready-poc']
