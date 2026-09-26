@@ -6,13 +6,131 @@
 # which one leads Raft, which is a different election from Patroni's own
 # PostgreSQL leader election layered on top of it.
 # =============================================================================
-- name: Install etcd
-  ansible.builtin.apt:
-    name:
-      - "{{ postgres_ha_etcd_package }}"
-      - "{{ postgres_ha_etcd_ctl_package }}"
+- name: Ensure etcd system group exists
+  ansible.builtin.group:
+    name: "{{ postgres_ha_etcd_user }}"
+    system: true
     state: present
-    update_cache: true
+
+- name: Ensure etcd system user exists
+  ansible.builtin.user:
+    name: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ postgres_ha_etcd_data_dir }}"
+    create_home: false
+    state: present
+
+# Controller-staged + SHA256SUMS-verified upstream release, same pattern as
+# roles/openbao/tasks/main/install.yml (see 03-patroni.yml for why this is
+# not the Debian apt package). ansible_become: false on the delegated tasks
+# is REQUIRED — Ansible inherits the play's become: true on delegated tasks
+# regardless of task-level become, which fails with "sudo: a password is
+# required" on the controller.
+- name: Check the installed etcd version
+  ansible.builtin.command: "{{ postgres_ha_etcd_install_dir }}/etcd --version"
+  register: postgres_ha_etcd_installed_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Record whether the target etcd version is already installed
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_already_installed: >-
+      {{ postgres_ha_etcd_installed_version.rc == 0
+         and postgres_ha_etcd_version in (postgres_ha_etcd_installed_version.stdout | default('')) }}
+
+- name: Stage etcd release checksums on controller
+  ansible.builtin.get_url:
+    url: "{{ postgres_ha_etcd_checksums_url }}"
+    dest: "/tmp/etcd-{{ postgres_ha_etcd_version }}-{{ postgres_ha_etcd_checksums_filename }}"
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+  when: not postgres_ha_etcd_already_installed
+
+- name: Read the expected SHA256 for the linux-amd64 archive
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_archive_sha256: >-
+      {{ (lookup('file', '/tmp/etcd-' ~ postgres_ha_etcd_version ~ '-' ~ postgres_ha_etcd_checksums_filename)
+          | regex_search('([0-9a-f]{64})\s+' ~ (postgres_ha_etcd_archive_filename | regex_escape), '\1')
+          | first) }}
+  run_once: true
+  when: not postgres_ha_etcd_already_installed
+
+- name: Assert a checksum was found for the etcd archive
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_etcd_archive_sha256 is defined
+      - postgres_ha_etcd_archive_sha256 | length == 64
+    fail_msg: >-
+      Could not find a SHA256 for {{ postgres_ha_etcd_archive_filename }} in
+      the upstream checksums file. Did the asset naming change for
+      v{{ postgres_ha_etcd_version }}?
+  run_once: true
+  when: not postgres_ha_etcd_already_installed
+
+- name: Stage the etcd archive on controller (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ postgres_ha_etcd_archive_url }}"
+    dest: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    checksum: "sha256:{{ postgres_ha_etcd_archive_sha256 }}"
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+  when: not postgres_ha_etcd_already_installed
+
+- name: Copy the etcd archive to the target
+  ansible.builtin.copy:
+    src: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    dest: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not postgres_ha_etcd_already_installed
+
+- name: Extract the etcd archive on the target
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    dest: /tmp
+    remote_src: true
+  when: not postgres_ha_etcd_already_installed
+
+- name: Install the etcd and etcdctl binaries
+  ansible.builtin.copy:
+    src: "/tmp/etcd-v{{ postgres_ha_etcd_version }}-linux-amd64/{{ item }}"
+    dest: "{{ postgres_ha_etcd_install_dir }}/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - etcd
+    - etcdctl
+  when: not postgres_ha_etcd_already_installed
+  notify: Restart etcd
+
+- name: Remove the staged etcd archive and extracted directory from the target
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    - "/tmp/etcd-v{{ postgres_ha_etcd_version }}-linux-amd64"
+  when: not postgres_ha_etcd_already_installed
 
 - name: Ensure the etcd data directory exists
   ansible.builtin.file:
@@ -88,7 +206,14 @@
 - name: Configure etcd root auth (first member only)
   when: inventory_hostname == (postgres_ha_cluster_members | first)
   block:
-    - name: Check whether etcd auth is already enabled
+    # rc-only, not a parsed `auth status` value: even on a supported etcd
+    # release, `-w json` is inconsistently honored across etcdctl
+    # subcommands upstream (etcd-io/etcd#9532, #9975, #5993), and
+    # `auth status`'s own plain-text fallback prints a raw Go struct
+    # (`Authentication Status: &{false}`), not a clean boolean word. `user
+    # get` needs no output parsing at all: it exits 0 only if the root user
+    # already exists, which is exactly the state this guards on.
+    - name: Check whether the etcd root user already exists
       ansible.builtin.command:
         argv:
           - etcdctl
@@ -96,20 +221,17 @@
           - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
           - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
           - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-          - -w
-          - json
-          - auth
-          - status
+          - user
+          - get
+          - "{{ postgres_ha_etcd_root_user }}"
       environment:
         ETCDCTL_API: "3"
-      register: postgres_ha_etcd_auth_status
+      register: postgres_ha_etcd_root_user_check
       changed_when: false
       failed_when: false
 
     - name: Enable etcd root auth
-      when: >-
-        (postgres_ha_etcd_auth_status.rc | default(1)) != 0
-        or not ((postgres_ha_etcd_auth_status.stdout | default('{}', true) | from_json).enabled | default(false))
+      when: postgres_ha_etcd_root_user_check.rc != 0
       no_log: true
       block:
         - name: Add the etcd root user

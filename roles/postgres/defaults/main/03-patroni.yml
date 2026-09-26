@@ -19,17 +19,33 @@
 postgres_ha_manager: native
 
 # --- Packages ----------------------------------------------------------------
-# Unversioned, same pattern as postgres_package/pgbackrest above: apt resolves
-# whatever is current, so there is no literal version in this role for
-# Renovate (or anyone) to track. etcd and Patroni both ship in Debian main.
-postgres_ha_etcd_package: etcd-server
-postgres_ha_etcd_ctl_package: etcd-client
 postgres_ha_patroni_package: patroni
 # Patroni's Debian package does not pull in the etcd client library it needs
 # for the `etcd3` DCS backend.
 postgres_ha_patroni_etcd_client_package: python3-etcd
 
 # --- etcd (3-member DCS) ------------------------------------------------------
+# Debian bookworm's etcd-server/etcd-client apt packages are pinned to
+# 3.4.23, and etcd 3.4 reached upstream end-of-life on 2026-05-15 (etcd.io
+# supports only the latest two-ish minor branches — 3.5/3.6/3.7 as of the
+# 2026-09-21 patch round: https://etcd.io/blog/2026/sep-21-patch-release/,
+# https://etcd.io/blog/2026/june-patch-release/). A brand-new HA cluster
+# must not start life on an EOL DCS, so etcd is installed from the upstream
+# release tarball (controller-staged + SHA256SUMS-verified, same pattern as
+# roles/openbao/tasks/main/install.yml) instead of the Debian package. This
+# also removes 3.4.23's etcdctl `-w json` bug (etcd-io/etcd#9532, #9975,
+# #5993 — `auth status` prints a plain-text `Authentication Status: &{...}`
+# line even when JSON is requested) with no workaround needed.
+# renovate: datasource=github-releases depName=etcd-io/etcd
+postgres_ha_etcd_version: "3.7.2"
+postgres_ha_etcd_release_base_url: "https://github.com/etcd-io/etcd/releases/download"
+postgres_ha_etcd_archive_filename: "etcd-v{{ postgres_ha_etcd_version }}-linux-amd64.tar.gz"
+postgres_ha_etcd_archive_url: >-
+  {{ postgres_ha_etcd_release_base_url }}/v{{ postgres_ha_etcd_version }}/{{ postgres_ha_etcd_archive_filename }}
+postgres_ha_etcd_checksums_filename: "SHA256SUMS"
+postgres_ha_etcd_checksums_url: >-
+  {{ postgres_ha_etcd_release_base_url }}/v{{ postgres_ha_etcd_version }}/{{ postgres_ha_etcd_checksums_filename }}
+postgres_ha_etcd_install_dir: /usr/local/bin
 postgres_ha_etcd_user: etcd
 postgres_ha_etcd_data_dir: /var/lib/etcd
 postgres_ha_etcd_config_file: /etc/etcd/etcd.yml
