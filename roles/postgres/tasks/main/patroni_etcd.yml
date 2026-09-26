@@ -22,6 +22,19 @@
     create_home: false
     state: present
 
+# Patroni's own etcd3 DCS client (running as the postgres user, per
+# patroni.service.j2) needs to read this same node's etcd client cert/key
+# under postgres_ha_etcd_tls_dir (patroni.yml.j2's etcd3.cacert/cert/key) --
+# that directory is 0750 owned etcd:etcd, so without this the postgres user
+# cannot even enter it. A restart is required for an already-running
+# Patroni to pick up a newly-added supplementary group.
+- name: Add the postgres user to the etcd group so Patroni can read its TLS material
+  ansible.builtin.user:
+    name: postgres
+    groups: "{{ postgres_ha_etcd_user }}"
+    append: true
+  notify: Restart patroni
+
 # Controller-staged + SHA256SUMS-verified upstream release, same pattern as
 # roles/openbao/tasks/main/install.yml (see 03-patroni.yml for why this is
 # not the Debian apt package). ansible_become: false on the delegated tasks
