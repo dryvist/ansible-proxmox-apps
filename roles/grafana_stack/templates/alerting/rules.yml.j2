@@ -13,11 +13,27 @@
 ##                                    scraped today (prometheus_stack role).
 ##   - infra-targets-down    READY  — `up` exists for every job prometheus.yml
 ##                                    actually renders today: prometheus,
-##                                    blackbox_<module>, traefik, llm_router.
-##                                    There is NO node/PVE scrape job yet — a
-##                                    per-PVE-node up/down rule is not written
-##                                    here rather than invented against a job
-##                                    label that does not exist.
+##                                    blackbox_<module>, traefik, llm_router,
+##                                    hindsight, agentgateway. There is NO
+##                                    node/PVE scrape job yet — a per-PVE-node
+##                                    up/down rule is not written here rather
+##                                    than invented against a job label that
+##                                    does not exist.
+##   - hindsight-replica-count-low READY — up{job="hindsight"} is scraped
+##                                    today (prometheus_stack role); counts
+##                                    live replicas against the expected
+##                                    total (grafana_stack_alert_hindsight_
+##                                    min_replicas). Retain-failure-rate,
+##                                    stuck-operations and memory_defense-
+##                                    triggered alerts are NOT written here:
+##                                    Hindsight's exported metrics
+##                                    (hindsight_operation_operations_total,
+##                                    scoped by operation/tenant/bank_id) carry
+##                                    no success/failure or staleness label to
+##                                    alert on yet — add them the moment
+##                                    upstream exposes one, per the same
+##                                    "no rule on a nonexistent metric" rule
+##                                    every other DORMANT entry here follows.
 ##   - wan-latency-high      READY  — probe_duration_seconds{job="blackbox_icmp"}
 ##                                    is scraped today.
 ##   - disk-usage-high       READY  — node_filesystem_avail_bytes /
@@ -100,7 +116,7 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: prometheus
             model:
-              expr: up{job=~"prometheus|blackbox_.*|traefik|llm_router"} == 0
+              expr: up{job=~"prometheus|blackbox_.*|traefik|llm_router|hindsight|agentgateway"} == 0
               instant: true
               refId: A
           - refId: B
@@ -118,6 +134,35 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Scrape target {{ '{{' }} $labels.instance {{ '}}' }} (job {{ '{{' }} $labels.job {{ '}}' }}) is down."
+
+      - uid: hindsight-replica-count-low
+        title: Hindsight replica count low
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: count(up{job="hindsight"} == 1)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [{{ grafana_stack_alert_hindsight_min_replicas }}]}
+              refId: B
+        for: 5m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            Only {{ '{{' }} $values.A {{ '}}' }} Hindsight replica(s) up, below
+            the expected {{ grafana_stack_alert_hindsight_min_replicas }}.
 
       - uid: wan-latency-high
         title: WAN ICMP latency high

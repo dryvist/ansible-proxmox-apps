@@ -31,6 +31,10 @@
     monitor_targets_cribl_health_path: "/api/v1/health"
     monitor_targets_splunk_mgmt_port: 8089
     monitor_targets_splunk_hec_port: 8088
+    monitor_targets_hindsight_port: >-
+      {{ tofu_data.constants.memory_ports.hindsight_api
+         | mandatory('tofu_data.constants.memory_ports.hindsight_api missing — regenerate the published inventory') }}
+    monitor_targets_hindsight_health_path: "/health/ready"
 
 - name: Combine every guest dict for ICMP/service monitoring
   ansible.builtin.set_fact:
@@ -127,6 +131,22 @@
   when:
     - "'cribl' in (item.value.tags | default([]))"
     - "'edge' in (item.value.tags | default([])) or 'stream' in (item.value.tags | default([]))"
+
+- name: Build HTTP health targets — Hindsight replicas (per-replica /health/ready)
+  ansible.builtin.set_fact:
+    monitor_targets_http: >-
+      {{ monitor_targets_http | default([]) + [{
+           'name': item.key ~ '-health',
+           'fqdn': item.value.hostname ~ '.' ~ tofu_data.domain,
+           'port': monitor_targets_hindsight_port | int,
+           'path': monitor_targets_hindsight_health_path,
+           'expect_status': [200],
+           'group': 'service',
+         }] }}
+  loop: "{{ monitor_targets_guests | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: "'hindsight' in (item.value.tags | default([]))"
 
 - name: Assemble the monitor_targets fact
   ansible.builtin.set_fact:
