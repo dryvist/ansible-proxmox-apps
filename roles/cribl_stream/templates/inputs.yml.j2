@@ -122,6 +122,30 @@ inputs:
         pipeline: prometheus_to_netmon
       - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+  # unpoller (roles/unpoller, co-located on this guest): native Prometheus
+  # SCRAPER source (not remote_write — unpoller exposes /metrics, it does not
+  # push). Every data source goes to every destination the format fits: fans
+  # to victoriametrics_rw and the Splunk unifi_metrics index, next to the
+  # existing prometheus_rw legs above.
+  prometheus:in_unpoller:
+    id: in_unpoller
+    type: prometheus
+    disabled: false
+    discoveryType: static
+    targets:
+      - "{{ cribl_stream_unpoller_scrape_target }}"
+    pollInterval: {{ cribl_stream_unpoller_poll_interval }}
+    sendToRoutes: false
+    connections:
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      - output: splunk_hec_unifi_metrics
+        pipeline: prometheus_to_unifi_metrics
+{% else %}
+      - output: splunk_hec
+        pipeline: prometheus_to_unifi_metrics
+{% endif %}
+      - output: victoriametrics_rw
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   # OTLP trace spans, fronted by the otel Traefik ingress on 443 (TLS
   # terminated at Traefik; this listens plain HTTP). Claude Code and any other
   # OTLP/HTTP producer POST /v1/traces here. extractSpans turns each OTLP span
