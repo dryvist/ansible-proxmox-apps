@@ -3,12 +3,26 @@
 # exercised directly against literal facts (tests/cribl_stream_rotation/)
 # without stubbing the uri/systemd/stat calls that produce
 # cribl_stream_configured_login, cribl_stream_default_login,
-# cribl_stream_rotation_pending and cribl_stream_rotation_already_restarted.
+# cribl_stream_rotation_pending, cribl_stream_rotation_already_restarted and
+# cribl_stream_users_file_array_format.
+#
+# Decision table (first match wins):
+#   configured login 200                                  -> none
+#   default login != 200 AND file is array format          -> rotate (even if
+#     already restarted — an array-format file is the old defective write
+#     Cribl never loaded, so a prior restart proves nothing)
+#   default login != 200 AND pending AND already restarted -> refuse (a
+#     plaintext key Cribl already failed to load once will not load on a
+#     second restart)
+#   default login 200 OR pending                           -> rotate
+#   else                                                    -> none
 - name: Decide whether to rotate, skip, or refuse
   ansible.builtin.set_fact:
     cribl_stream_rotation_action: >-
       {{
         'none' if cribl_stream_configured_login.status | default(0) == 200
+        else 'rotate' if (cribl_stream_default_login.status | default(0) != 200
+          and cribl_stream_users_file_array_format | default(false) | bool)
         else 'refuse' if (cribl_stream_default_login.status | default(0) != 200
           and cribl_stream_rotation_pending | bool
           and cribl_stream_rotation_already_restarted | bool)
