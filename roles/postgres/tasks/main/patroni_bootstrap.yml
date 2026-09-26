@@ -117,14 +117,56 @@
     enabled: true
     daemon_reload: "{{ postgres_ha_patroni_unit_file.changed }}"
 
-# Generous timeout: a fresh member's first start runs initdb + (for a
-# replica) a full pgBackRest/basebackup restore before it can answer at all.
-- name: Wait for this node's Patroni REST API to answer
+# /liveness only checks Patroni's own heartbeat loop, no SQL -- every CI
+# journal captured this round shows it answering within ~1s of "Started
+# patroni.service" (etcd-auth attempts already logging by then), so
+# 10x3=30s fails fast on a Patroni process that never came up at all
+# instead of burning the much longer /health budget below on it.
+- name: Wait for this node's Patroni process to come up
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/liveness"
+  register: postgres_ha_patroni_liveness
+  until: (postgres_ha_patroni_liveness.status | default(0)) == 200
+  retries: 10
+  delay: 3
+  changed_when: false
+  failed_when: false
+
+# /health is 200 only once PostgreSQL itself is up under Patroni -- unlike
+# the old `is defined` check (satisfied by any response, including a 503
+# mid-bootstrap), a not-yet-200 now correctly keeps retrying instead of
+# letting the rest of the role race ahead. 60x10=600s is this wait's
+# pre-existing budget (a fresh member's initdb +, for a replica, a full
+# pgBackRest/basebackup restore); the condition was the bug, not the
+# timeout, so it is unchanged.
+- name: Wait for this node's Patroni REST API to report PostgreSQL running
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/health"
   register: postgres_ha_patroni_health
-  until: postgres_ha_patroni_health.status is defined
+  until: (postgres_ha_patroni_health.status | default(0)) == 200
   retries: 60
   delay: 10
   changed_when: false
   failed_when: false
+
+# Runs on one member only -- "does a leader exist" is a whole-cluster fact,
+# not a per-host one (same reasoning as postgres_ha_patroni_cluster_already_up
+# above). Ansible's linear strategy holds every host at the health wait above
+# until ALL of them clear it, so by the time this task starts every member's
+# PostgreSQL is already confirmed up -- this only closes the remaining gap
+# where Phase 2f (patroni_leader.yml, next) could otherwise query a role
+# before etcd finishes electing anyone. 12x5=60s is 2x patroni.yml.j2's own
+# `ttl: 30`, the worst case for a stale lock to expire before a new leader
+# can claim it.
+- name: Wait for the cluster to elect a leader
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/cluster"
+  register: postgres_ha_patroni_cluster_status
+  until: >-
+    ((postgres_ha_patroni_cluster_status.json | default({})).members | default([])
+    | selectattr('role', 'in', ['leader', 'standby_leader']) | list | length) > 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == (postgres_ha_cluster_members | first)
