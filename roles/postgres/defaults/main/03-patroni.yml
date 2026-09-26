@@ -111,7 +111,7 @@ postgres_ha_patroni_api_user: patroni
 
 # --- Credentials (OpenBao generated-secret pattern, secret/apps/hindsight) --
 # Same shape as postgres_replication_password: sourced from bao_apps_secrets,
-# no literal, no env fallback for the secret value itself. These four field
+# no literal, no env fallback for the secret value itself. These three field
 # names must be added to roles/openbao's openbao_generated_app_secrets.hindsight
 # list (01c-app-secrets-generated.yml) before postgres_ha_manager: patroni can
 # converge anywhere — see this PR's description for the exact addition. Empty
@@ -119,12 +119,13 @@ postgres_ha_patroni_api_user: patroni
 # 'native' mode where these are never read; patroni_prereqs.yml asserts them
 # non-empty before anything patroni-mode touches disk.
 #
-# Four separate credentials, not one reused value: etcd root (bootstrap
-# only), Patroni's own scoped etcd identity, the Patroni REST API's basic
-# auth, and the PostgreSQL superuser Patroni itself connects as (for
-# rewind/health checks) are four different trust boundaries, the same
-# separation postgres_replication_password already keeps from the managed-
-# database passwords below.
+# Three separate credentials, not one reused value: etcd root (bootstrap
+# only), the Patroni REST API's basic auth, and the PostgreSQL superuser
+# Patroni itself connects as (for rewind/health checks) are three different
+# trust boundaries, the same separation postgres_replication_password already
+# keeps from the managed-database passwords below. Patroni's own scoped etcd
+# identity (below) is deliberately NOT a fourth field here — see its own
+# comment for why.
 # The etcd admin username itself is not a secret (only its password is) —
 # 'root' is the name etcd's own auth model reserves for the superuser role,
 # matching the account patroni_etcd.yml's "Configure etcd root auth" block
@@ -141,9 +142,23 @@ postgres_ha_etcd_root_password: >-
 # nothing else in etcd. Named distinctly from postgres_ha_patroni_api_user
 # (a different credential: Patroni's REST API basic auth, not its etcd
 # identity) even though both happen to be named "patroni" upstream defaults.
+#
+# NOT sourced from bao_apps_secrets/hindsight like the three above: this role
+# serves every postgres cluster, and an app-scoped field would belong to
+# whichever app happened to adopt patroni mode first. Instead it is
+# generated at converge time, keyed to THIS cluster's own postgres_ha_scope,
+# at secret/etcd/{{ postgres_ha_scope }}/rw (the ratified <mount>/<service>/
+# <instance>/<role> grammar, EPIC 887 — docs d/conventions/secret-paths) —
+# see patroni_etcd_credential.yml, included from patroni_etcd.yml. Empty
+# string here only so that task file's own generate-if-absent gate, and a
+# Molecule/test override (converge.yml sets this directly, same as the three
+# passwords above), both have a defined value to check.
 postgres_ha_etcd_patroni_user: patroni-dcs
-postgres_ha_etcd_patroni_password: >-
-  {{ bao_apps_secrets.hindsight_etcd_patroni_password | default('', true) }}
+postgres_ha_etcd_patroni_password: ""
+# Random length for the etcd credential patroni_etcd_credential.yml
+# generates — matches roles/openbao's own openbao_app_secret_length (defined
+# locally rather than depending on that role's defaults being loaded here).
+postgres_ha_etcd_credential_length: 40
 postgres_ha_patroni_api_password: >-
   {{ bao_apps_secrets.hindsight_patroni_api_password | default('', true) }}
 postgres_ha_superuser_password: >-
