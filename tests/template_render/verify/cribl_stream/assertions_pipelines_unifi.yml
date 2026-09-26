@@ -1,0 +1,103 @@
+---
+# UniFi-derived-metric pipeline assertions, split out of
+# assertions_pipelines.yml (that file hit the CI token-limit gate once the
+# vlan/direction regex-unit test was added).
+
+- name: Assert unifi_syslog_to_metrics uses native Aggregations + Publish Metrics + Lookup
+  vars:
+    _unifi_syslog_fn_ids: >-
+      {{ (_cribl_stream_unifi_syslog_pipeline | from_yaml).functions
+         | map(attribute='id') | list }}
+  ansible.builtin.assert:
+    that:
+      - "_unifi_syslog_fn_ids == ['drop', 'eval', 'lookup', 'eval', 'aggregation', 'publish_metrics', 'eval']"
+      - "\"sourcetype !== 'ubiquiti:firewall'\" in _cribl_stream_unifi_syslog_pipeline"
+      - "'unifi_vlan_map.csv' in _cribl_stream_unifi_syslog_pipeline"
+      - "\"'unifi_vlan_fw_events_total'\" in _cribl_stream_unifi_syslog_pipeline"
+      - "'type: counter' in _cribl_stream_unifi_syslog_pipeline"
+      - "'-A-' in _cribl_stream_unifi_syslog_pipeline"
+      - "'-D-' in _cribl_stream_unifi_syslog_pipeline"
+      - "'IN=(\\\\S*)' in _cribl_stream_unifi_syslog_pipeline"
+      - "'OUT=(\\\\S*)' in _cribl_stream_unifi_syslog_pipeline"
+      - >-
+        (_cribl_stream_unifi_syslog_pipeline | from_yaml).functions[4].conf.groupByFields
+        == ['vlan', 'action', 'direction']
+      - >-
+        (_cribl_stream_unifi_syslog_pipeline | from_yaml).functions[5].conf.dimensions
+        == ['vlan', 'action', 'direction']
+      - "\"'unifi_metrics'\" in _cribl_stream_unifi_syslog_pipeline"
+    fail_msg: >-
+      unifi_syslog_to_metrics must lead with a native Drop function filtered
+      to sourcetype ubiquiti:firewall (this pipeline shares in_cribl_s2s with
+      every other S2S-forwarded sourcetype), then derive action (-A-/-D- tag),
+      vlan (brN interface, joined against unifi_vlan_map.csv) and direction
+      (whichever of IN=/OUT= is populated), aggregate by vlan+action+direction
+      with a native Aggregations function, and emit unifi_vlan_fw_events_total
+      as a counter via Publish Metrics with all three dimensions —
+      native functions only, no custom script.
+
+- name: Assert the vlan_id/direction regexes resolve against documentation-shaped raw lines
+  vars:
+    # Same shapes as the pipeline's JS regexes (\bbr(\d+)\b, IN=(\S*), OUT=(\S*));
+    # Python's re engine parses this subset identically. br10/br20 are
+    # documentation examples, not live VLAN ids.
+    _accept_line: >-
+      <13>Sep 25 23:18:25 UDW UDW [LOCAL_CUSTOM1-A-2147483647]
+      IN= OUT=br10 MAC= SRC=192.0.2.1 DST=192.0.2.2
+    _deny_line: >-
+      <13>Sep 25 23:18:07 UDW UDW [WAN_LOCAL-D-2147483647]
+      IN=eth15 OUT= MAC= SRC=192.0.2.3 DST=192.0.2.4
+    _accept_vlan: "{{ _accept_line | regex_search('\\bbr(\\d+)\\b', '\\1') | first }}"
+    _accept_in: "{{ _accept_line | regex_search('IN=(\\S+)') }}"
+    _accept_out: "{{ _accept_line | regex_search('OUT=(\\S+)') }}"
+    _accept_direction: "{{ 'ingress' if _accept_in else ('egress' if _accept_out else 'unknown') }}"
+    _deny_vlan: "{{ 'wan' if not (_deny_line | regex_search('\\bbr(\\d+)\\b')) else 'br' }}"
+    _deny_in: "{{ _deny_line | regex_search('IN=(\\S+)') }}"
+    _deny_out: "{{ _deny_line | regex_search('OUT=(\\S+)') }}"
+    _deny_direction: "{{ 'ingress' if _deny_in else ('egress' if _deny_out else 'unknown') }}"
+  ansible.builtin.assert:
+    that:
+      - "_accept_vlan == '10'"
+      - "_accept_direction == 'egress'"
+      - "'-A-' in _accept_line"
+      - "_deny_vlan == 'wan'"
+      - "_deny_direction == 'ingress'"
+      - "'-D-' in _deny_line"
+    fail_msg: >-
+      The vlan_id/direction parse logic must resolve br10 -> vlan '10' and
+      egress (OUT= populated) on an accepted (-A-) line, and 'wan'
+      (no brN token) plus ingress (IN= populated) on a denied (-D-) WAN
+      line — these are documentation-shaped samples (br10), not live data.
+
+- name: Assert ipfix_to_metrics derives both VLAN and WAN byte counters natively
+  vars:
+    _ipfix_metrics_fn_ids: >-
+      {{ (_cribl_stream_ipfix_metrics_pipeline | from_yaml).functions
+         | map(attribute='id') | list }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        _ipfix_metrics_fn_ids ==
+        ['eval', 'lookup', 'eval', 'aggregation', 'publish_metrics', 'publish_metrics', 'eval']
+      - "\"'unifi_vlan_bytes_total'\" in _cribl_stream_ipfix_metrics_pipeline"
+      - "\"'unifi_wan_bytes_total'\" in _cribl_stream_ipfix_metrics_pipeline"
+      - "'unifi_vlan_map.csv' in _cribl_stream_ipfix_metrics_pipeline"
+      - "'inputSnmp' in _cribl_stream_ipfix_metrics_pipeline"
+      - "\"'unifi_metrics'\" in _cribl_stream_ipfix_metrics_pipeline"
+    fail_msg: >-
+      ipfix_to_metrics must derive vlan/direction/is_wan from the
+      NetFlow/IPFIX fields, run a single Aggregations function grouped by
+      vlan+direction+is_wan, and emit unifi_vlan_bytes_total /
+      unifi_wan_bytes_total via two filtered Publish Metrics functions —
+      native functions only.
+
+- name: Assert the UniFi VLAN lookup CSV renders vlan_id/network_name rows
+  ansible.builtin.assert:
+    that:
+      - "'vlan_id,network_name' in _cribl_stream_unifi_vlan_map"
+      - "'40,siem' in _cribl_stream_unifi_vlan_map"
+      - "'0,Default' in _cribl_stream_unifi_vlan_map"
+    fail_msg: >-
+      lookups/unifi_vlan_map.csv.j2 must render one vlan_id,network_name
+      row per cribl_stream_unifi_networks entry — this is the join key both
+      derived-metric pipelines use to turn a VLAN id into a network name.
