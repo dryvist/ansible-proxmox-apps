@@ -1,0 +1,223 @@
+---
+# Verifies roles/cribl_stream/tasks/pipelines.yml: rendering the full
+# cribl_stream_pipelines set must produce exactly one conf.yml per pipeline,
+# byte-identical to what a direct per-item ansible.builtin.template render
+# of the same template and vars would produce, and a second invocation
+# against the SAME install dir must be a no-op (changed=0, so the restart
+# handler never fires) because the checksum marker matches.
+#
+# Two SEPARATE `ansible-playbook` processes (see
+# .github/workflows/_status-stack-autokuma-render.yml, which runs this
+# alongside the AutoKuma render test it was modeled on), not two plays here —
+# idempotency has to be proven against a real "run this twice" the way an
+# operator would run the role twice, not by re-including the tasks file
+# within one process.
+#
+# Usage:
+#   ansible-playbook tests/cribl_stream_pipelines_render/verify.yml -c local
+#   ansible-playbook tests/cribl_stream_pipelines_render/verify.yml -c local  # must report changed=0
+#   sudo rm -rf /tmp/cribl_stream_pipelines_render_verify                     # cleanup
+#
+# A fixed (not per-run-random) install dir is required so the checksum marker
+# persists between the two ansible-playbook invocations above.
+- name: Verify the cribl_stream pipeline bulk render
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true # the role owns these files as cribl:cribl; matches a real converge
+
+  vars:
+    ansible_become: true
+    # include_role would also import roles/cribl_stream/handlers/main.yml
+    # into this play, and its handler is named identically to the fixture
+    # handler below ("Restart cribl stream") — the REAL systemd restart fired
+    # instead of the fixture stub when this test used include_role. A bare
+    # include_tasks below never imports role handlers, so the play-level
+    # handlers: block is the only "Restart cribl stream" in scope; it needs
+    # the role's directory itself, via the same cribl_stream_role_dir var
+    # pipelines.yml already reads instead of the role_path magic variable
+    # (roles/cribl_stream/defaults/main/00-install.yml) — a bare include_tasks
+    # never sets role_path, and it is read-only besides.
+    cribl_stream_role_dir: "{{ playbook_dir }}/../../roles/cribl_stream"
+    # Overrides for the two pipeline vars whose role defaults need
+    # tofu_data/hostvars this fixture never gathers
+    # (roles/cribl_stream/defaults/main/00-install.yml, 20-splunk-hec-routing.yml).
+    # Everything else the pipeline templates use (the otel_traces enrichment
+    # lists, cribl_stream_pipelines itself) comes from the role's own
+    # defaults unmodified below, so restating it here can never let the two
+    # drift.
+    cribl_stream_install_dir: /tmp/cribl_stream_pipelines_render_verify
+    cribl_stream_netflow_port: 2055
+    cribl_stream_ai_log_routing:
+      fixture_source: { port: 10399, index: fixture, sourcetype: "fixture:test" }
+
+  tasks:
+    - name: Ensure the fixture cribl system group exists
+      ansible.builtin.group:
+        name: cribl
+        system: true
+        state: present
+
+    - name: Ensure the fixture cribl system user exists
+      ansible.builtin.user:
+        name: cribl
+        group: cribl
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+        state: present
+
+    # Loaded by hand (see cribl_stream_role_dir above for why this is a bare
+    # include_tasks, not include_role) into a namespace, not merged directly: some defaults
+    # this fixture never needs (e.g. 00-install.yml's cribl_stream_tarball_url)
+    # cross-reference sibling defaults by bare name, which only resolves when
+    # every default shares one namespace — exactly what a blanket promotion
+    # would have to reconstruct. Only the vars pipelines.yml and the pipeline
+    # templates actually read are promoted below, same technique as
+    # tests/template_render/verify/cribl_stream/render_and_decode.yml.
+    - name: Load cribl_stream role defaults
+      ansible.builtin.include_vars:
+        dir: "{{ cribl_stream_role_dir }}/defaults/main"
+        name: _cribl_stream_defaults
+
+    - name: Promote the role defaults pipelines.yml and its templates read
+      ansible.builtin.set_fact:
+        cribl_stream_pipelines: "{{ _cribl_stream_defaults.cribl_stream_pipelines }}"
+        cribl_stream_user: "{{ _cribl_stream_defaults.cribl_stream_user }}"
+        cribl_stream_group: "{{ _cribl_stream_defaults.cribl_stream_group }}"
+        cribl_stream_otel_drop_span_names: "{{ _cribl_stream_defaults.cribl_stream_otel_drop_span_names }}"
+        cribl_stream_otel_user_id_sources: "{{ _cribl_stream_defaults.cribl_stream_otel_user_id_sources }}"
+        cribl_stream_otel_session_id_sources: "{{ _cribl_stream_defaults.cribl_stream_otel_session_id_sources }}"
+        cribl_stream_otel_trace_name_sources: "{{ _cribl_stream_defaults.cribl_stream_otel_trace_name_sources }}"
+        cribl_stream_otel_trace_name_fallback: "{{ _cribl_stream_defaults.cribl_stream_otel_trace_name_fallback }}"
+        cribl_stream_otel_tag_sources: "{{ _cribl_stream_defaults.cribl_stream_otel_tag_sources }}"
+        cribl_stream_otel_default_environment: "{{ _cribl_stream_defaults.cribl_stream_otel_default_environment }}"
+        cribl_stream_otel_usage_aliases: "{{ _cribl_stream_defaults.cribl_stream_otel_usage_aliases }}"
+        cribl_stream_otel_metadata_passthrough: "{{ _cribl_stream_defaults.cribl_stream_otel_metadata_passthrough }}"
+        cribl_stream_otel_noise_attributes: "{{ _cribl_stream_defaults.cribl_stream_otel_noise_attributes }}"
+        cribl_stream_otel_drop_attributes: "{{ _cribl_stream_defaults.cribl_stream_otel_drop_attributes }}"
+        cribl_stream_otel_redaction_rules: "{{ _cribl_stream_defaults.cribl_stream_otel_redaction_rules }}"
+        cribl_stream_otel_redaction_fields: "{{ _cribl_stream_defaults.cribl_stream_otel_redaction_fields }}"
+
+    - name: Render and ship the cribl_stream pipeline set
+      ansible.builtin.include_tasks: "{{ cribl_stream_role_dir }}/tasks/pipelines.yml"
+
+    - name: List the rendered pipeline conf.yml files
+      ansible.builtin.find:
+        paths: "{{ cribl_stream_install_dir }}/local/cribl/pipelines"
+        patterns: "conf.yml"
+        recurse: true
+      register: _rendered_files
+
+    - name: Assert the rendered file set matches cribl_stream_pipelines exactly
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _rendered_files.files | length == cribl_stream_pipelines | length
+          - (_rendered_files.files | map(attribute='path')
+             | map('dirname') | map('basename') | list)
+            is superset(cribl_stream_pipelines)
+        fail_msg: >-
+          Rendered {{ _rendered_files.files | length }} pipeline configs,
+          expected {{ cribl_stream_pipelines | length }} — the pipeline list
+          or the render task drifted from
+          roles/cribl_stream/defaults/main/00-install.yml.
+
+    - name: Stat every pipeline directory
+      ansible.builtin.stat:
+        path: "{{ cribl_stream_install_dir }}/local/cribl/pipelines/{{ item }}"
+      loop: "{{ cribl_stream_pipelines }}"
+      loop_control:
+        label: "{{ item }}"
+      register: _dir_stats
+
+    - name: Assert every pipeline directory is 0755 owned by cribl:cribl
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - item.stat.exists
+          - item.stat.pw_name == 'cribl'
+          - item.stat.gr_name == 'cribl'
+          - item.stat.mode == '0755'
+        fail_msg: "{{ item.item }} directory permissions drifted from 0755 cribl:cribl."
+      loop: "{{ _dir_stats.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Stat every rendered conf.yml
+      ansible.builtin.stat:
+        path: "{{ cribl_stream_install_dir }}/local/cribl/pipelines/{{ item }}/conf.yml"
+      loop: "{{ cribl_stream_pipelines }}"
+      loop_control:
+        label: "{{ item }}"
+      register: _file_stats
+
+    - name: Assert every rendered conf.yml is 0644 owned by cribl:cribl
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - item.stat.exists
+          - item.stat.pw_name == 'cribl'
+          - item.stat.gr_name == 'cribl'
+          - item.stat.mode == '0644'
+        fail_msg: "{{ item.item }}/conf.yml permissions drifted from 0644 cribl:cribl."
+      loop: "{{ _file_stats.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Assert the checksum marker was written outside the pipelines directory
+      ansible.builtin.stat:
+        path: "{{ cribl_stream_install_dir }}/local/cribl/.pipelines-checksum"
+      register: _marker_stat
+      failed_when: not _marker_stat.stat.exists
+
+    # Same template, same vars, same connection (local) — proves pipelines.yml's
+    # controller-side render produces exactly what the old per-item
+    # ansible.builtin.template loop would have written, not merely "a file
+    # that exists".
+    - name: Compute what a direct per-item template render would produce
+      ansible.builtin.set_fact:
+        cribl_stream_direct_render_contents: >-
+          {{ (cribl_stream_direct_render_contents | default({}))
+             | combine({item: lookup('ansible.builtin.template',
+                                      playbook_dir ~ '/../../roles/cribl_stream/templates/pipelines/'
+                                      ~ item ~ '/conf.yml.j2')}) }}
+      loop: "{{ cribl_stream_pipelines }}"
+      loop_control:
+        label: "{{ item }}"
+
+    # slurp, not the `file` lookup: the `file` lookup strips a trailing
+    # newline (it is meant for single-line values), which made this
+    # assertion fail on every pipeline whose template body itself ends in
+    # exactly one newline — a bug in this check, not in pipelines.yml (a raw
+    # byte compare of the shipped file against the source template on disk
+    # confirmed they already matched exactly).
+    - name: Slurp every shipped conf.yml for an exact byte comparison
+      ansible.builtin.slurp:
+        src: "{{ cribl_stream_install_dir }}/local/cribl/pipelines/{{ item }}/conf.yml"
+      loop: "{{ cribl_stream_pipelines }}"
+      loop_control:
+        label: "{{ item }}"
+      register: _shipped_slurp
+
+    - name: Assert the shipped bytes are byte-identical to a direct template render
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - cribl_stream_pipeline_contents[item.item] == cribl_stream_direct_render_contents[item.item]
+          - (item.content | b64decode) == cribl_stream_direct_render_contents[item.item]
+        fail_msg: >-
+          Pipeline {{ item.item }}'s rendered/shipped bytes differ from a
+          direct ansible.builtin.template render of the same template and
+          vars — pipelines.yml's controller-side render has drifted from
+          what the original per-item template loop produced.
+      loop: "{{ _shipped_slurp.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+  # The real role's own handler restarts the cribl systemd service — nothing
+  # to restart here, so this just absorbs the notify.
+  handlers:
+    - name: Restart cribl stream
+      ansible.builtin.debug:
+        msg: "(fixture: would restart cribl stream here)"
