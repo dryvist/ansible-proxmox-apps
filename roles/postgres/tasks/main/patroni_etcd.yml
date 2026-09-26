@@ -22,6 +22,31 @@
     create_home: false
     state: present
 
+# Every etcdctl call in this file (and the handlers' post-restart wait)
+# dials this member by its OWN hostname (never 127.0.0.1): the cert issued
+# below has a SAN covering only inventory_hostname (matching what every
+# peer/client actually dials it as), and a Go TLS client verifies the
+# server certificate against the address it dialed — "127.0.0.1" would fail
+# hostname verification against a cert that only lists the real hostname.
+# One fact, not a repeated expression everywhere it's needed.
+#
+# Set HERE, before any install/config/notify work below, not next to its
+# first user further down: "Restart etcd" (handlers/main.yml) can flush as
+# early as "Deploy the etcd systemd unit"'s own notify, on a converge where
+# this member's etcd unit is being written for the very first time -- this
+# fact must already exist by then, or that handler's own post-restart wait
+# (which references it) fails with "'postgres_ha_etcd_self_endpoint' is
+# undefined" instead of being skipped by its `when:` (a fresh bootstrap
+# never reaches the `when: postgres_ha_etcd_cluster_already_up` guard first
+# -- combining `throttle:` with an argv referencing this fact makes Ansible
+# finalize the task's args for every host before the per-host `when:` skip
+# applies; confirmed locally, 2026-09-26 CI). It depends on nothing computed
+# later in this file, so there is no reason it needs to wait.
+- name: Set this member's own etcdctl endpoint
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_self_endpoint: >-
+      https://{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_etcd_client_port }}
+
 # Controller-staged + SHA256SUMS-verified upstream release, same pattern as
 # roles/openbao/tasks/main/install.yml (see 03-patroni.yml for why this is
 # not the Debian apt package). ansible_become: false on the delegated tasks
@@ -235,19 +260,8 @@
     enabled: true
     daemon_reload: "{{ postgres_ha_etcd_unit.changed }}"
 
-# Every etcdctl call below dials this member by its OWN hostname (never
-# 127.0.0.1): the cert issued above has a SAN covering only
-# inventory_hostname (matching what every peer/client actually dials it
-# as), and a Go TLS client verifies the server certificate against the
-# address it dialed — "127.0.0.1" would fail hostname verification
-# against a cert that only lists the real hostname, the same way any
-# other client on the network would fail against "localhost". One fact,
-# not a repeated expression in all four etcdctl tasks below.
-- name: Set this member's own etcdctl endpoint
-  ansible.builtin.set_fact:
-    postgres_ha_etcd_self_endpoint: >-
-      https://{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_etcd_client_port }}
-
+# postgres_ha_etcd_self_endpoint is set near the top of this file (before
+# any install/notify work), not here -- see that task's comment for why.
 - name: Wait for this etcd member to answer over TLS
   ansible.builtin.command:
     argv:
