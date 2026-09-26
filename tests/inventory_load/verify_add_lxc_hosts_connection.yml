@@ -1,30 +1,42 @@
 ---
-# Regression coverage for the ansible_connection/fqdn conditional branch in
+# Regression coverage for the ansible_connection/fqdn conditional branch AND
+# the fail-safe SSH-readiness probe in
 # ../../inventory/load_tofu/add_lxc_hosts.yml, added alongside the
 # tofu-proxmox ansible_connection: "ssh" / fqdn contract fields
 # (dryvist/tofu-proxmox#1188). Modeled on
-# verify_add_lxc_hosts_placement.yml's two-part pattern: source inspection,
-# then a real run against stubbed tofu_data.
+# verify_add_lxc_hosts_placement.yml's pattern: source inspection, a
+# mock-expression check for a path this suite cannot exercise live, and a
+# real run against stubbed tofu_data for the path it can.
 #
-# Source-inspection half: pins that add_lxc_hosts.yml still carries no
-# ansible.builtin.raw: task, and that its ssh branch reads item.value.fqdn
-# (never item.value.ip, a static guest's raw address) for ansible_host.
+# Three tiers:
 #
-# Functional half: runs the real add_lxc_hosts.yml task file against a
-# stubbed tofu_data with one ssh-connection container and one default
-# (pct_remote) container side by side, and asserts the resulting hostvars:
-#   - the ssh container gets ansible_host == its own fqdn, ansible_connection
-#     == "ssh", and no proxmox_vmid hostvar (pct-only fact, meaningless on a
-#     host that isn't reached via pct);
-#   - the default container is unaffected: ansible_host is still the
-#     node-derived management FQDN, and proxmox_vmid is still set.
+#   1. Source inspection: no ansible.builtin.raw: task; the ssh branch reads
+#      item.value.fqdn (never item.value.ip); the probe loops only over
+#      ansible_connection: ssh containers; every add_host branch gates on
+#      probe-readiness, not the declared connection alone; a container that
+#      declares ssh but fails the probe gets a visible warning.
+#
+#   2. Mock-expression: recomputes the shipped add_lxc_hosts_ssh_ready
+#      derivation (verbatim) against a probe-results shape with one success
+#      and one failure, proving both branches of the derivation without a
+#      real listener — CI cannot bind port 22 without root, so the "probe
+#      succeeded" path can only be proven this way, never with a live
+#      listener.
+#
+#   3. Functional: runs the real add_lxc_hosts.yml task file against
+#      stubbed tofu_data with a default pct_remote container and an
+#      ssh-declared container whose fqdn cannot resolve. The probe
+#      deterministically times out (verified empirically: exactly 5s,
+#      failed=true, no flakiness) — this is the real fail-safe path
+#      end-to-end: the ssh-declared container falls back to
+#      community.proxmox.proxmox_pct_remote with the node-derived
+#      ansible_host and its proxmox_vmid restored, exactly as if it had
+#      never declared ssh at all.
 #
 # tofu_data.nodes is deliberately empty, so the live-placement command
-# task's loop has zero iterations and never attempts a real SSH
-# connection — this stays a pure local run against mocked data, same as
-# every other verify_*.yml in this directory.
+# task's loop has zero iterations and never attempts a real connection.
 
-- name: Verify the source still reads fqdn (not ip) for the ssh branch
+- name: Verify the source's ssh branch, probe gating, and fallback warning
   hosts: localhost
   gather_facts: false
   vars:
@@ -49,7 +61,82 @@
           item.value.ip (a static guest's raw address) for a guest's own
           SSH host-key identity.
 
-- name: Verify the add_host connection branch against stubbed tofu_data
+    - name: Assert the readiness probe loops only over ssh-declared containers
+      ansible.builtin.assert:
+        that:
+          - "\"selectattr('value.ansible_connection', 'equalto', 'ssh')\" in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml's SSH readiness probe no longer filters its loop
+          to ansible_connection: ssh containers — it must stay zero-cost for
+          every container that keeps the default pct_remote transport.
+
+    - name: Assert every add_host branch gates on probe-readiness, not the declared connection alone
+      ansible.builtin.assert:
+        that:
+          - "'item.key in (add_lxc_hosts_ssh_ready' in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer ANDs the probe result into the
+          ansible_host/ansible_connection/proxmox_vmid gate — a container
+          could be flipped to ssh purely on its declared contract, before
+          anything has confirmed sshd is actually reachable.
+
+    - name: Assert a container that declares ssh but fails the probe gets a visible warning
+      ansible.builtin.assert:
+        that:
+          - "'Warn about containers declaring ssh whose sshd did not answer' in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer warns when a declared-ssh container
+          fails its readiness probe — the fallback would then happen
+          silently instead of naming the container for follow-up.
+
+- name: Verify the ssh-readiness derivation for both probe outcomes (mocked — CI cannot bind port 22)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # One item succeeded (failed: false, as wait_for's registered result
+    # shapes it), one failed (timed out) — the exact shape
+    # add_lxc_hosts_ssh_probe.results takes. This is the only way to prove
+    # the "probe succeeded" branch: CI has no privilege to bind port 22, and
+    # this repo's tests never make a live network call (mirrors
+    # verify_add_lxc_hosts_placement.yml's own mocked-expression tier).
+    _mock_probe_results:
+      - item: { key: ssh-ready-poc, value: { fqdn: ssh-ready-poc.example.internal } }
+        failed: false
+      - item: { key: ssh-down-poc, value: { fqdn: ssh-down-poc.example.internal } }
+        failed: true
+  tasks:
+    - name: Compute add_lxc_hosts_ssh_ready from the shipped expression against the mock
+      ansible.builtin.set_fact:
+        add_lxc_hosts_ssh_ready: >-
+          {{ _mock_probe_results | default([])
+             | rejectattr('failed')
+             | map(attribute='item') | map(attribute='key') | list }}
+
+    - name: Assert only the item whose probe succeeded is marked ready
+      ansible.builtin.assert:
+        that:
+          - add_lxc_hosts_ssh_ready == ['ssh-ready-poc']
+        fail_msg: >-
+          Expected only ssh-ready-poc in add_lxc_hosts_ssh_ready; got
+          {{ add_lxc_hosts_ssh_ready }}
+
+    - name: Compute _ssh_ready for both a ready and a not-ready item using the shipped gate expression
+      ansible.builtin.set_fact:
+        _ssh_ready_for_ready_item: >-
+          {{ 'ssh' == 'ssh' and 'ssh-ready-poc' in (add_lxc_hosts_ssh_ready | default([])) }}
+        _ssh_ready_for_down_item: >-
+          {{ 'ssh' == 'ssh' and 'ssh-down-poc' in (add_lxc_hosts_ssh_ready | default([])) }}
+
+    - name: Assert the gate is true only for the item the probe actually confirmed
+      ansible.builtin.assert:
+        that:
+          - _ssh_ready_for_ready_item | bool
+          - not (_ssh_ready_for_down_item | bool)
+        fail_msg: >-
+          ssh-readiness gate wrong — ready={{ _ssh_ready_for_ready_item }},
+          down={{ _ssh_ready_for_down_item }}
+
+- name: Verify the real fail-safe fallback end to end (unresolvable fqdn — deterministic 5s timeout, no flakiness)
   hosts: localhost
   gather_facts: false
   vars:
@@ -75,14 +162,22 @@
     - name: Run the real add_lxc_hosts.yml loader task file
       ansible.builtin.include_tasks: ../../inventory/load_tofu/add_lxc_hosts.yml
 
-    - name: Assert the ssh-connection container's hostvars
+    - name: Assert the declared-ssh container's probe was attempted and failed (unresolvable fqdn)
       ansible.builtin.assert:
         that:
-          - hostvars['ssh-poc'].ansible_host == 'ssh-poc.example.internal'
-          - hostvars['ssh-poc'].ansible_connection == 'ssh'
-          - hostvars['ssh-poc'].proxmox_vmid is not defined
+          - "'ssh-poc' not in (add_lxc_hosts_ssh_ready | default([]))"
         fail_msg: >-
-          ssh-connection container hostvars wrong —
+          ssh-poc.example.internal unexpectedly answered the readiness probe
+          — add_lxc_hosts_ssh_ready={{ add_lxc_hosts_ssh_ready | default('(undefined)') }}
+
+    - name: Assert the declared-ssh container fell back to pct_remote, exactly as if it had never declared ssh
+      ansible.builtin.assert:
+        that:
+          - hostvars['ssh-poc'].ansible_host == 'node-a.example.internal'
+          - hostvars['ssh-poc'].ansible_connection == 'community.proxmox.proxmox_pct_remote'
+          - hostvars['ssh-poc'].proxmox_vmid == 190
+        fail_msg: >-
+          fail-safe fallback wrong for ssh-poc —
           ansible_host={{ hostvars['ssh-poc'].ansible_host | default('(undefined)') }},
           ansible_connection={{ hostvars['ssh-poc'].ansible_connection | default('(undefined)') }},
           proxmox_vmid={{ hostvars['ssh-poc'].proxmox_vmid | default('(undefined)') }}

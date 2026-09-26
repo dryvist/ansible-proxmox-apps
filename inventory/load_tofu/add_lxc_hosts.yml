@@ -72,6 +72,54 @@
     - add_lxc_hosts_live_node | default({}) | length > 0
     - add_lxc_hosts_live_status[item.value.vmid | string] | default('absent') != 'running'
 
+# Fail-safe flip: a container's contract can declare ansible_connection: ssh
+# before its sshd (and SSH-CA trust) is actually ready. This probes the port
+# directly — zero cost for every container that keeps the default
+# proxmox_pct_remote, since the loop is empty unless something declares ssh.
+- name: Probe SSH readiness for containers whose contract declares ssh
+  ansible.builtin.wait_for:
+    host: "{{ item.value.fqdn }}"
+    port: 22
+    timeout: 5
+    state: started
+  delegate_to: localhost
+  loop: >-
+    {{ tofu_data.containers | default({}) | dict2items
+       | selectattr('value.ansible_connection', 'equalto', 'ssh') | list }}
+  loop_control:
+    label: "{{ item.key }}"
+  register: add_lxc_hosts_ssh_probe
+  ignore_errors: true
+  changed_when: false
+  when:
+    - tofu_data.containers is defined
+    - tofu_data.containers | length > 0
+
+# The containers that actually answered — never the ones the contract merely
+# declares. add_host below gates on membership here, not on the declared
+# ansible_connection alone.
+- name: Record which ssh-declared containers actually answered the probe
+  ansible.builtin.set_fact:
+    add_lxc_hosts_ssh_ready: >-
+      {{ add_lxc_hosts_ssh_probe.results | default([])
+         | rejectattr('failed')
+         | map(attribute='item') | map(attribute='key') | list }}
+  when: tofu_data.containers is defined
+
+- name: Warn about containers declaring ssh whose sshd did not answer
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.key }} declares ansible_connection=ssh but its host did not
+      answer the SSH readiness probe within the timeout — falling back to
+      community.proxmox.proxmox_pct_remote for this run. Verify sshd and
+      SSH-CA trust before the next converge.
+  loop: "{{ tofu_data.containers | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.value.ansible_connection == 'ssh'
+    - item.key not in (add_lxc_hosts_ssh_ready | default([]))
+
 - name: Add LXC containers to inventory (proxmox_pct_remote or ssh connection)
   ansible.builtin.add_host:
     name: "{{ item.key }}"
@@ -316,7 +364,7 @@
     # reached over plain OpenSSH, never pct, so this fact would be present
     # but meaningless there; omit it rather than publish a vmid a reader
     # could mistake for "this host is reachable via pct".
-    proxmox_vmid: "{{ item.value.vmid if item.value.ansible_connection != 'ssh' else omit }}"
+    proxmox_vmid: "{{ item.value.vmid if not _ssh_ready else omit }}"
     # Per-node management FQDN, DERIVED — never a hand-pinned global host.
     # A guest reaches its own node at {node-role}.{domain}, the same pattern
     # terraform-proxmox ingress.tf uses for the Proxmox-UI apex pool; those
@@ -327,15 +375,18 @@
     # key (e.g. the generic test-fixture node key). The node is the one the
     # container is live on when the cluster answered, else the declared one.
     #
-    # An ssh-connection container is reached directly at its OWN fqdn
-    # (tofu-proxmox's per-guest DNS name, published unconditionally for
-    # every container) instead of its node's management FQDN — it is no
-    # longer proxied through pct on that node at all.
+    # An ssh-connection container that answered the readiness probe above is
+    # reached directly at its OWN fqdn (tofu-proxmox's per-guest DNS name)
+    # instead of its node's management FQDN. A container whose contract
+    # declares ssh but did NOT answer the probe falls back to this same
+    # node-derived branch, on the pct_remote transport below — never left
+    # half-flipped onto a transport nothing has confirmed is ready.
     ansible_host: >-
-      {{ item.value.fqdn if item.value.ansible_connection == 'ssh' else
+      {{ item.value.fqdn if _ssh_ready else
          ((tofu_data.nodes[_node] | default({})).role
           | default(_node, true) ~ '.' ~ tofu_data.domain) }}
-    ansible_connection: "{{ item.value.ansible_connection }}"
+    ansible_connection: >-
+      {{ 'ssh' if _ssh_ready else 'community.proxmox.proxmox_pct_remote' }}
     ansible_user: root
     ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
     # NOTE: no `hostname:` here — add_host treats it as an alias of `name`
@@ -352,6 +403,12 @@
     host_tags: "{{ item.value.tags | default([]) }}"
   vars:
     _node: "{{ add_lxc_hosts_live_node[item.value.vmid | string] | default(item.value.node) }}"
+    # The contract declares ssh AND the readiness probe above confirmed it —
+    # every ansible_host/ansible_connection/proxmox_vmid branch above reads
+    # this one flag rather than the declared ansible_connection directly.
+    _ssh_ready: >-
+      {{ item.value.ansible_connection == 'ssh' and
+         item.key in (add_lxc_hosts_ssh_ready | default([])) }}
   loop: "{{ tofu_data.containers | dict2items }}"
   changed_when: false
   when:
