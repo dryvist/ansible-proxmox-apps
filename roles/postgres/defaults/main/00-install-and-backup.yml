@@ -23,6 +23,16 @@ postgres_data_dir: >-
   {{ postgres_data_root }}/{{ postgres_cluster_version | default(postgres_version) }}/{{ postgres_cluster_name }}
 postgres_conf_dir: >-
   /etc/postgresql/{{ postgres_cluster_version | default(postgres_version) }}/{{ postgres_cluster_name }}
+# pg_hba.conf's real location differs by manager: postgresql-common's split
+# layout (postgres_conf_dir) in native mode, but Patroni's own initdb writes
+# everything -- pg_hba.conf included -- directly into postgres_data_dir
+# (patroni.yml.j2 sets postgresql.data_dir with no separate config_dir, so
+# Patroni defaults config_dir to data_dir). The single consumer that needs
+# this (roles_and_databases.yml's pg_hba task, the only one of the two modes'
+# pg_hba writers that isn't already manager-gated) reads this instead of
+# postgres_conf_dir directly.
+postgres_hba_dir: >-
+  {{ postgres_data_dir if postgres_ha_manager == 'patroni' else postgres_conf_dir }}
 
 # Listener. Access is gated by pg_hba (scram, per-CIDR) + the host firewall,
 # NOT by the bind address, so the wildcard below is safe. This used to be
