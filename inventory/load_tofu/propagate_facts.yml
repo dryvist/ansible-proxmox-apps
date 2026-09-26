@@ -16,11 +16,26 @@
 # real per-host fact, written here, is the only mechanism that works.
 #
 # What IS avoidable is the per-host overhead of doing this in two separate
-# looped tasks. The dict-merge below used to live in the hostname task's own
-# `vars:`, which Ansible re-templates on EVERY loop iteration even though
-# the merged value never depends on `item` — recomputing an identical
-# combine() ~150 times per run for no reason. Computed once here, before
-# the loop, instead.
+# looped tasks, and of writing the two heavy facts (tofu_data, monitor_targets)
+# to hosts this run never touches. Ansible only ever executes ordinary tasks
+# on hosts inside --limit, so a full-fleet copy of the two heavy facts is dead
+# weight on every run scoped by --limit. `hostname` is the one exception:
+# roles/technitium_dns/tasks/main/build_records.yml and
+# roles/openbao_voter_health/templates/openbao-voter-health.sh.j2 both read
+# `hostvars[<other host>].hostname` for hosts regardless of the current
+# --limit (building DNS records for the whole fleet, checking every voter),
+# so hostname alone still has to reach every host in groups['all']. Grepped
+# the full tree for `hostvars[...].tofu_data` / `.monitor_targets` and found
+# no such cross-host read anywhere — every other consumer reads either its
+# own bare `tofu_data`/`monitor_targets` (only meaningful on a host this run
+# is itself converging, i.e. already inside --limit) or explicit
+# `hostvars['localhost'][...]` (always available without propagation).
+- name: Determine which hosts this run's --limit actually targets
+  ansible.builtin.set_fact:
+    propagate_facts_limited_hosts: >-
+      {{ query('inventory_hostnames', ansible_limit | default('all', true))
+         | intersect(groups['all']) | list }}
+
 - name: Combine every guest dict for the per-host hostname lookup
   ansible.builtin.set_fact:
     propagate_facts_guests: >-
@@ -38,15 +53,20 @@
 #
 # One combined set_fact + delegate_facts loop, not two: every host in
 # groups['all'] is written to exactly once instead of twice, halving the
-# per-host task overhead that (along with the vars: re-render above) made
-# this file cost 35-50s per Semaphore run at fleet scale. `hostname` is
-# passed through `omit` for a host absent from propagate_facts_guests, so it
-# is left unset there exactly as the separate, `when`-guarded task used to
-# leave it unset.
+# per-host task overhead that (along with the vars: re-render this task used
+# to carry) made this file cost 35-50s per Semaphore run at fleet scale.
+# `hostname` is passed through `omit` for a host absent from
+# propagate_facts_guests, so it is left unset there exactly as the prior
+# `when`-guarded task used to leave it unset. `tofu_data`/`monitor_targets`
+# are passed through `omit` for a host outside this run's --limit, so those
+# hosts keep every OTHER fact (notably `hostname`, needed fleet-wide by the
+# consumers above) but skip the two heavy copies nothing on an out-of-limit
+# host will ever read.
 - name: Propagate tofu_data, monitor_targets and the hostname fact to every host
   ansible.builtin.set_fact:
-    tofu_data: "{{ tofu_data }}"
-    monitor_targets: "{{ monitor_targets }}"
+    tofu_data: "{{ tofu_data if item in propagate_facts_limited_hosts else omit }}"
+    monitor_targets: >-
+      {{ monitor_targets if item in propagate_facts_limited_hosts else omit }}
     hostname: >-
       {{ propagate_facts_guests[item].hostname
          if item in propagate_facts_guests else omit }}
