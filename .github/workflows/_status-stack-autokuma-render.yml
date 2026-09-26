@@ -12,6 +12,12 @@
 # against the SAME target directory must report changed=0 (the checksum
 # marker matches). Neither Molecule scenario for status_stack exercises this
 # path twice against a stable directory, so it needs its own job.
+#
+# Also covers roles/cribl_stream/tasks/pipelines.yml, which mirrors the exact
+# same controller-render + checksum-marker pattern for the pipeline conf.yml
+# set — same job, since it needs the same setup and proves the same thing
+# (a second run reports changed=0, so the restart handler never fires on an
+# unchanged render).
 name: _status-stack-autokuma-render
 
 on:
@@ -22,7 +28,7 @@ permissions:
 
 jobs:
   render:
-    name: status_stack AutoKuma Bulk Render Tests
+    name: AutoKuma + cribl_stream Bulk Render Tests
     # Hosted, ephemeral runner: fully offline, and the role owns its rendered
     # files as root — this needs the runner's passwordless sudo, which the
     # pre-baked self-hosted image does not grant this way.
@@ -76,27 +82,28 @@ jobs:
 
       # Two SEPARATE ansible-playbook processes against the same fixed target
       # directory, exactly like an operator re-running the role — the second
-      # must report changed=0 because the checksum marker matches. Fails
-      # loudly (grep) rather than eyeballing the recap.
-      - name: Run the AutoKuma bulk-render test (first pass)
-        run: ansible-playbook tests/status_stack_autokuma_render/verify.yml -c local
+      # must report changed=0 because the checksum marker matches. Shared
+      # script (not inline here) since cribl_stream's pipelines.yml below
+      # uses the identical checksum-marker pattern and needs the identical
+      # proof.
+      - name: Run the AutoKuma bulk-render idempotence check
+        run: .github/scripts/run-ansible-idempotent-check.sh tests/status_stack_autokuma_render/verify.yml
         env:
           PY_COLORS: "1"
           ANSIBLE_FORCE_COLOR: "1"
 
-      - name: Run the AutoKuma bulk-render test again and require changed=0
-        run: |
-          set -euo pipefail
-          OUTPUT="$(ansible-playbook tests/status_stack_autokuma_render/verify.yml -c local)"
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -E 'localhost[[:space:]]*:.*changed=0' || {
-            echo "::error::second run was not idempotent (expected changed=0)"
-            exit 1
-          }
-        env:
-          PY_COLORS: "0"
-          ANSIBLE_FORCE_COLOR: "0"
-
-      - name: Clean up the fixture's target directory
+      - name: Clean up the AutoKuma fixture's target directory
         if: always()
         run: sudo rm -rf /tmp/status_stack_autokuma_render_verify
+
+      # roles/cribl_stream/tasks/pipelines.yml's checksum-marker gate, same
+      # proof as above.
+      - name: Run the cribl_stream pipeline-render idempotence check
+        run: .github/scripts/run-ansible-idempotent-check.sh tests/cribl_stream_pipelines_render/verify.yml
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"
+
+      - name: Clean up the cribl_stream fixture's target directory
+        if: always()
+        run: sudo rm -rf /tmp/cribl_stream_pipelines_render_verify
