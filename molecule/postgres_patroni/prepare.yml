@@ -16,6 +16,7 @@
   vars:
     postgres_ha_etcd_tls_dir: /etc/etcd/tls
     postgres_ha_etcd_user: etcd
+    postgres_ha_patroni_tls_dir: /etc/patroni/tls
 
   tasks:
     - name: Wait for container to be ready
@@ -155,6 +156,47 @@
       loop:
         - { src: "{{ inventory_hostname }}-cert.pem", dest: cert.pem, mode: "0644" }
         - { src: "{{ inventory_hostname }}-key.pem", dest: key.pem, mode: "0600" }
+      loop_control:
+        label: "{{ item.dest }}"
+
+    # patroni_client_tls.yml (Patroni's OWN etcd-client TLS copy, added
+    # alongside patroni_etcd_credential.yml) needs its own pre-seeded CA/cert
+    # so its "already valid, skip reissue" check runs during converge too,
+    # never an actual call to postgres_ha_pki_addr -- same boundary as the
+    # etcd copy above. Reusing the SAME already-signed CA/node cert (no
+    # separate client-only cert here): the least-privilege server-vs-client
+    # PKI split this pair enforces in production is an OpenBao role-flag
+    # property (roles/openbao's 07b-etcd-pki-engine.yml), not something this
+    # single-tenant, ephemeral test fixture needs to re-prove.
+    #
+    # ponytail: key.pem here is world-readable (0644), not the 0600
+    # patroni_client_tls.yml itself writes in production. This directory is
+    # always reset to 0700 postgres:postgres by that file's own first task
+    # (unconditional, no stat gate) before the pre-seeded files are ever
+    # read, so postgres can already read anything inside it; 0644 just
+    # avoids creating a postgres system user here purely to chown a
+    # throwaway CI test cert. Upgrade to owner:postgres/0600 if this
+    # scenario ever needs to prove file-permission enforcement itself.
+    - name: Ensure Patroni's own TLS directory exists
+      ansible.builtin.file:
+        path: "{{ postgres_ha_patroni_tls_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Push the CA certificate to Patroni's own TLS directory
+      ansible.builtin.copy:
+        src: "{{ postgres_ha_test_ca_dir.path }}/ca.pem"
+        dest: "{{ postgres_ha_patroni_tls_dir }}/ca.pem"
+        mode: "0644"
+
+    - name: Push this node's certificate and key to Patroni's own TLS directory
+      ansible.builtin.copy:
+        src: "{{ postgres_ha_test_ca_dir.path }}/{{ item.src }}"
+        dest: "{{ postgres_ha_patroni_tls_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: "{{ inventory_hostname }}-cert.pem", dest: cert.pem }
+        - { src: "{{ inventory_hostname }}-key.pem", dest: key.pem }
       loop_control:
         label: "{{ item.dest }}"
 

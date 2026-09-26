@@ -211,3 +211,24 @@ path "{{ openbao_kv_mount }}/metadata/apps/{{ app }}" {
 }
 
 {% endfor %}
+# --- Patroni's own etcd credential, per cluster (generate-if-absent) ---------
+# roles/postgres's patroni_etcd_credential.yml generates Patroni's etcd
+# password once per cluster at secret/etcd/<postgres_ha_scope>/rw (the
+# ratified <mount>/<service>/<instance>/<role> path grammar, EPIC 887 --
+# docs d/conventions/secret-paths), then reads it back on every member so
+# all three render an identical patroni.yml. Wildcard, unlike the enumerated
+# apps/* grants above: the whole secret/etcd/* subtree holds ONLY these
+# generated per-cluster credentials -- no other service is ever filed under
+# the etcd name -- so a wildcard here is already scoped to exactly one
+# purpose, the same reasoning secret/rustfs/* uses just above. Enumerating
+# per cluster instead would need every postgres_ha_scope in scope when THIS
+# policy renders (the OpenBao bootstrap host, which never includes the
+# postgres role's inventory), a cross-role dependency this avoids entirely.
+# No `delete`: generation never removes a cluster's credential.
+path "{{ openbao_kv_mount }}/data/etcd/*" {
+  capabilities = ["create", "update", "read"]
+}
+
+path "{{ openbao_kv_mount }}/metadata/etcd/*" {
+  capabilities = ["read", "list"]
+}
