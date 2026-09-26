@@ -32,6 +32,10 @@ RENDER_TASK = "Render the bucket-scoped policy for this role"
 BUCKET_ROLE_TASKS = ROLE / "tasks" / "iam_bucket_role.yml"
 ENDPOINT_REGION_TASK = "Compute this credential's endpoint and region fields"
 MERGE_TASK = "Merge generated + derived fields over the stored secret"
+IAM_TASKS = ROLE / "tasks" / "iam.yml"
+INGRESS_ROUTE_TASK = "Find the machine-S3 ingress route"
+INGRESS_ASSERT_TASK = "Assert the machine-S3 ingress route exists and is not SSO-gated"
+PUBLIC_ENDPOINT_TASK = "Set the public S3 endpoint from the live ingress route"
 
 # The ratified secret-path convention's S3 row (private docs
 # d/conventions/secret-paths, "consumed by...") lists these four fields for
@@ -80,6 +84,59 @@ def _bucket_role_task(name):
         if task.get("name") == name:
             return task
     raise AssertionError(f"task {name!r} not found in {BUCKET_ROLE_TASKS}")
+
+
+def _flatten_tasks(tasks):
+    """Descend into block:/always:/rescue: the same way Ansible itself
+    flattens a task list, so a task nested inside iam.yml's OpenBao block is
+    found just like a top-level one."""
+    for task in tasks:
+        yield task
+        for key in ("block", "always", "rescue"):
+            if key in task:
+                yield from _flatten_tasks(task[key])
+
+
+def _iam_task(name):
+    for task in _flatten_tasks(yaml.safe_load(IAM_TASKS.read_text(encoding="utf-8"))):
+        if task.get("name") == name:
+            return task
+    raise AssertionError(f"task {name!r} not found in {IAM_TASKS}")
+
+
+def _render_ingress_endpoint(ingress, proxmox_domain="pve.example.test"):
+    """Render the REAL ingress-route lookup, assert conditions, and endpoint
+    expressions out of iam.yml against a fixture tofu_data.ingress list --
+    exactly what a real converge builds from the tofu-published inventory.
+    Returns (route, assert_holds, endpoint_or_None)."""
+    templar = Templar(loader=DataLoader())
+    templar._loader.set_basedir(str(ROLE))
+    # Explicitly widened to dict[str, object]: this dict's slots hold a mix of
+    # a nested dict (tofu_data), a rendered route (dict), and plain strings
+    # (proxmox_domain) -- narrowing to the first literal's shape is what a
+    # bare `templar.available_variables = {...}` would do, then reject the
+    # later string assignment.
+    available_vars: dict[str, object] = {"tofu_data": {"ingress": ingress}}
+    templar.available_variables = available_vars
+
+    route_expr = _iam_task(INGRESS_ROUTE_TASK)["ansible.builtin.set_fact"]["object_storage_iam_ingress_route"]
+    route = templar.template(trust_as_template(route_expr))
+
+    available_vars["object_storage_iam_ingress_route"] = route
+    conditions = _iam_task(INGRESS_ASSERT_TASK)["ansible.builtin.assert"]["that"]
+    assert_holds = all(
+        str(templar.template(trust_as_template("{{ (" + cond + ") }}"))) == "True" for cond in conditions
+    )
+
+    endpoint = None
+    if assert_holds:
+        available_vars["proxmox_domain"] = proxmox_domain
+        endpoint_expr = _iam_task(PUBLIC_ENDPOINT_TASK)["ansible.builtin.set_fact"][
+            "object_storage_iam_public_endpoint"
+        ]
+        endpoint = templar.template(trust_as_template(endpoint_expr))
+
+    return route, assert_holds, endpoint
 
 
 def _render_merged_secret(current_data, generated):
@@ -195,14 +252,47 @@ class SecretFieldCompleteness(unittest.TestCase):
         self.assertEqual(defaults["object_storage_iam_endpoint_field"], "AWS_ENDPOINT_URL")
         self.assertEqual(defaults["object_storage_iam_region_field"], "AWS_REGION")
 
-    def test_public_endpoint_is_derived_from_proxmox_domain(self):
-        # The one base ingress-domain variable every fronted service's public
-        # hostname in this estate composes with (roles/traefik/README.md) --
-        # never a second, role-local domain literal.
-        self.assertEqual(
-            _defaults()["object_storage_iam_public_endpoint"],
-            "https://s3.{{ proxmox_domain }}",
+    def test_public_endpoint_is_derived_from_the_live_s3_ingress_route(self):
+        # tasks/iam.yml derives the endpoint from the tofu-owned ingress table
+        # (tofu_data.ingress, the same one roles/traefik reads) rather than
+        # composing "s3.{{ proxmox_domain }}" as a bare literal -- proves the
+        # happy path resolves to the same hostname the old literal always
+        # produced, PLUS that a route rename/removal or an sso flip is
+        # rejected instead of silently composing a dead/wrong host.
+        route, assert_holds, endpoint = _render_ingress_endpoint(
+            ingress=[{"name": "s3", "sso": False}, {"name": "other-route", "sso": True}]
         )
+        self.assertEqual(route, {"name": "s3", "sso": False})
+        self.assertTrue(assert_holds)
+        self.assertEqual(endpoint, "https://s3.pve.example.test")
+
+    def test_public_endpoint_honours_a_hostname_override_like_traefik_does(self):
+        # Same {name, hostname} precedence roles/traefik/tasks/main.yml uses
+        # for every other ingress row -- an "s3" row need not fix its public
+        # hostname to its route name.
+        _, assert_holds, endpoint = _render_ingress_endpoint(
+            ingress=[{"name": "s3", "hostname": "s3-alt", "sso": False}]
+        )
+        self.assertTrue(assert_holds)
+        self.assertEqual(endpoint, "https://s3-alt.pve.example.test")
+
+    def test_a_missing_s3_ingress_route_fails_the_assert(self):
+        # A route rename/removal in tofu-proxmox's ingress.tf must fail this
+        # converge loudly, never silently compose a dead host.
+        route, assert_holds, endpoint = _render_ingress_endpoint(
+            ingress=[{"name": "object-storage", "sso": True}]
+        )
+        self.assertEqual(route, {})
+        self.assertFalse(assert_holds)
+        self.assertIsNone(endpoint)
+
+    def test_an_sso_gated_s3_ingress_route_fails_the_assert(self):
+        # An accidental sso flip on the machine-S3 route must also fail loud
+        # -- SSO-gated means browser/human auth, not a machine S3 client.
+        route, assert_holds, endpoint = _render_ingress_endpoint(ingress=[{"name": "s3", "sso": True}])
+        self.assertEqual(route, {"name": "s3", "sso": True})
+        self.assertFalse(assert_holds)
+        self.assertIsNone(endpoint)
 
     def test_a_freshly_generated_secret_carries_all_four_fields_on_both_roles(self):
         for role in _defaults()["object_storage_iam_roles"]:
