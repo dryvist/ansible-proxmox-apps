@@ -53,8 +53,14 @@ def _included_init_files():
     return files
 
 
-def _flatten(tasks, order):
-    """Depth-first task names in document order, recursing into block/rescue/always."""
+def _flatten(tasks, order, base_dir):
+    """Depth-first task names in document order.
+
+    Recurses into block/rescue/always AND into any sibling-file
+    import_tasks/include_tasks whose target is a plain string (the dynamic,
+    `loop`-driven include in init/03 passes a dict instead and is skipped --
+    it carries no task names of interest here).
+    """
     for task in tasks or []:
         if not isinstance(task, dict):
             continue
@@ -62,13 +68,22 @@ def _flatten(tasks, order):
             order.append(task["name"])
         for key in ("block", "rescue", "always"):
             if key in task:
-                _flatten(task[key], order)
+                _flatten(task[key], order, base_dir)
+        for key in ("ansible.builtin.import_tasks", "ansible.builtin.include_tasks"):
+            target = task.get(key)
+            if isinstance(target, str):
+                included = base_dir / target
+                _flatten(
+                    yaml.safe_load(included.read_text(encoding="utf-8")),
+                    order,
+                    included.parent,
+                )
 
 
 def _global_task_order():
     order = []
     for path in _included_init_files():
-        _flatten(yaml.safe_load(path.read_text(encoding="utf-8")), order)
+        _flatten(yaml.safe_load(path.read_text(encoding="utf-8")), order, path.parent)
     return order
 
 
