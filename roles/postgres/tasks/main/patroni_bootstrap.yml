@@ -20,6 +20,18 @@
   changed_when: false
   failed_when: false
 
+# Same reasoning as patroni_etcd.yml's identical task: `throttle:` runs once
+# per task/handler for the whole batch of hosts, not per host, so every host
+# must land on the same value. Reading every member's already-gathered
+# unit_status out of hostvars guarantees that.
+- name: Determine whether the Patroni cluster (not just this member) was already up
+  ansible.builtin.set_fact:
+    postgres_ha_patroni_cluster_already_up: >-
+      {{ postgres_ha_cluster_members
+         | map('extract', hostvars)
+         | map(attribute='postgres_ha_patroni_unit_status.status.ActiveState', default='inactive')
+         | select('equalto', 'active') | list | length > 0 }}
+
 - name: Refuse to start Patroni against unadopted existing data
   ansible.builtin.fail:
     msg: >-

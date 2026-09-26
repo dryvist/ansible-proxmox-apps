@@ -150,12 +150,10 @@
   ansible.builtin.include_tasks: patroni_client_tls.yml
 
 # Read-only (no `state:` -> the systemd module only reports facts, never
-# changes anything): captures whether etcd was already running BEFORE this
-# converge's own config/unit deploy below. handlers/main.yml's "Restart etcd"
-# reads this same fact to decide whether a notified restart must be a
-# throttled rolling one (already-established member) or may run freely
-# (first bring-up, where etcd needs every member reachable to reach quorum in
-# the first place).
+# changes anything): captures whether THIS member's etcd was already running
+# before this converge's own config/unit deploy below. Per-host, so the next
+# task folds every member's copy of this into one cluster-wide fact -- see
+# its own comment for why that extra step is required.
 - name: Record whether etcd was already running before this converge
   ansible.builtin.systemd:
     name: etcd
@@ -163,6 +161,24 @@
   check_mode: true
   changed_when: false
   failed_when: false
+
+# `throttle:` is evaluated ONCE per task/handler and applied to the whole
+# batch of hosts running it together -- it is not templated per host despite
+# looking like an ordinary Jinja expression (proven locally: a per-host-
+# templated throttle ran every host in parallel regardless of each host's own
+# value, matching this cluster's 2026-09-26 CI failure where all 3 members'
+# etcd restarted in the same second on an idempotent reconverge). Every host
+# must therefore compute the exact same value, which a per-host fact like
+# postgres_ha_etcd_pre_state cannot guarantee. This reads every member's
+# already-gathered pre_state out of hostvars, so all hosts land on one
+# identical answer.
+- name: Determine whether the etcd cluster (not just this member) was already up
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_cluster_already_up: >-
+      {{ postgres_ha_cluster_members
+         | map('extract', hostvars)
+         | map(attribute='postgres_ha_etcd_pre_state.status.ActiveState', default='inactive')
+         | select('equalto', 'active') | list | length > 0 }}
 
 - name: Deploy the etcd config
   ansible.builtin.template:
@@ -256,164 +272,9 @@
 # Cluster-wide state (etcd's own Raft), so this only needs to actually run
 # once — checked, not assumed, so a re-run after the first member already
 # enabled it is a no-op everywhere else. Gated to the first declared member so
-# only one host attempts the add-then-enable sequence.
+# only one host attempts the add-then-enable sequence. Split into its own
+# file (patroni_etcd_auth.yml, 2026-09-26): this task alone pushed the file
+# over the CI token-limits gate.
 - name: Configure etcd root auth (first member only)
+  ansible.builtin.include_tasks: patroni_etcd_auth.yml
   when: inventory_hostname == (postgres_ha_cluster_members | first)
-  block:
-    # rc-only, not a parsed `auth status` value: even on a supported etcd
-    # release, `-w json` is inconsistently honored across etcdctl
-    # subcommands upstream (etcd-io/etcd#9532, #9975, #5993), and
-    # `auth status`'s own plain-text fallback prints a raw Go struct
-    # (`Authentication Status: &{false}`), not a clean boolean word. `user
-    # get` needs no output parsing at all: it exits 0 only if the root user
-    # already exists, which is exactly the state this guards on.
-    - name: Check whether the etcd root user already exists
-      ansible.builtin.command:
-        argv:
-          - etcdctl
-          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-          - user
-          - get
-          - "{{ postgres_ha_etcd_root_user }}"
-      environment:
-        ETCDCTL_API: "3"
-      register: postgres_ha_etcd_root_user_check
-      changed_when: false
-      failed_when: false
-
-    - name: Enable etcd root auth
-      when: postgres_ha_etcd_root_user_check.rc != 0
-      no_log: true
-      block:
-        - name: Add the etcd root user
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - user
-              - add
-              - "{{ postgres_ha_etcd_root_user }}:{{ postgres_ha_etcd_root_password }}"
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
-
-        # `auth enable` refuses with "root user does not have root role"
-        # (etcd's AuthEnable checks hasRootRole(rootUser) — server/auth/store.go)
-        # unless this grant runs first. "root" is a reserved role name etcd
-        # special-cases in UserGrantRole to skip the usual UnsafeGetRole
-        # existence check, so it never needs its own `role add` the way
-        # postgres_ha_etcd_patroni_user's role does below.
-        - name: Grant the etcd root user its root role
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - user
-              - grant-role
-              - "{{ postgres_ha_etcd_root_user }}"
-              - "{{ postgres_ha_etcd_root_user }}"
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
-
-        # Patroni's own, non-root etcd identity, scoped to readwrite on only
-        # this cluster's own DCS key prefix (patroni.yml.j2 sets
-        # namespace: /service/ and scope: postgres_ha_scope, so Patroni
-        # never touches anything outside /service/{{ postgres_ha_scope }}/).
-        # Created here, before auth enable, while etcd still accepts
-        # unauthenticated admin writes -- same reason the root user above
-        # needs no -u flag either.
-        - name: Add the etcd role scoping Patroni to its own DCS prefix
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - role
-              - add
-              - "{{ postgres_ha_etcd_patroni_user }}"
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
-
-        - name: Grant that role readwrite on the cluster's own DCS prefix
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - role
-              - grant-permission
-              - "{{ postgres_ha_etcd_patroni_user }}"
-              - readwrite
-              - "/service/{{ postgres_ha_scope }}/"
-              - --prefix
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
-
-        - name: Add the etcd user Patroni authenticates as
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - user
-              - add
-              - "{{ postgres_ha_etcd_patroni_user }}:{{ postgres_ha_etcd_patroni_password }}"
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
-
-        - name: Grant Patroni's etcd user its scoped role
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - user
-              - grant-role
-              - "{{ postgres_ha_etcd_patroni_user }}"
-              - "{{ postgres_ha_etcd_patroni_user }}"
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
-
-        # No `-u`/credentials here: auth isn't enabled yet, so etcdctl would
-        # otherwise call the Authenticate RPC first to mint a token before
-        # sending the request, and etcd refuses to authenticate at all while
-        # auth is disabled — the whole command fails client-side in
-        # milliseconds with no server-side log line, before this request is
-        # ever sent (confirmed against etcd's own official RBAC bootstrap
-        # docs: `auth enable` runs unauthenticated; only commands *after* it
-        # need `--user root:<password>`, e.g. `auth disable`).
-        - name: Enable etcd auth
-          ansible.builtin.command:
-            argv:
-              - etcdctl
-              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
-              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
-              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
-              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
-              - auth
-              - enable
-          environment:
-            ETCDCTL_API: "3"
-          changed_when: true
