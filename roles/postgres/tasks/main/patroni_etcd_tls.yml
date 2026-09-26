@@ -18,6 +18,16 @@
     group: "{{ postgres_ha_etcd_user }}"
     mode: "0750"
 
+- name: Check whether the CA certificate is already present
+  ansible.builtin.stat:
+    path: "{{ postgres_ha_etcd_tls_dir }}/ca.pem"
+  register: postgres_ha_etcd_ca_stat
+
+# Fetch-once, not every converge: a PKI root CA is long-lived (rotation is a
+# deliberate, rare operator action, not a routine event), and re-fetching it
+# unconditionally means every converge — including one where OpenBao is
+# genuinely unreachable but the node's own leaf-cert renewal has nothing to
+# do yet — fails on this call before it gets anywhere near that logic.
 - name: Fetch the PKI CA certificate (public, no token needed)
   ansible.builtin.uri:
     url: "{{ postgres_ha_pki_addr }}/v1/{{ postgres_ha_pki_mount }}/ca/pem"
@@ -26,6 +36,7 @@
     status_code: [200]
   register: postgres_ha_etcd_ca_fetch
   changed_when: false
+  when: not postgres_ha_etcd_ca_stat.stat.exists
 
 - name: Write the etcd CA certificate
   ansible.builtin.copy:
@@ -34,6 +45,7 @@
     owner: "{{ postgres_ha_etcd_user }}"
     group: "{{ postgres_ha_etcd_user }}"
     mode: "0644"
+  when: not postgres_ha_etcd_ca_stat.stat.exists
 
 - name: Check whether a node certificate already exists
   ansible.builtin.stat:
