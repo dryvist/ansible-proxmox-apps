@@ -42,7 +42,7 @@ inputs:
     port: {{ cribl_stream_s2s_port }}
     # Remote Edge nodes stamp index/sourcetype where they can, but Cribl
     # Edge provably skips its destination post-processing pipeline for
-    # pack-routed events (claude/gemini transcripts arrived with datatype
+    # pack-routed events (claude/gemini log traffic arrived with datatype
     # but no index/sourcetype and fell into Splunk's token defaults:
     # index=main, sourcetype=httpevent). The force_splunk_meta connection
     # pipeline is a conditional safety net: every eval is `index || ...`,
@@ -62,6 +62,22 @@ inputs:
         pipeline: unifi_syslog_to_metrics
       - output: victoriametrics_rw
         pipeline: unifi_syslog_to_metrics
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+  tcpjson:in_cribl_s2s_metrics:
+    id: in_cribl_s2s_metrics
+    # Dedicated S2S receiver for Edge host/GPU metric events, split from
+    # in_cribl_s2s above onto its own port (cribl_stream_s2s_metrics_port)
+    # so this input's single connection can go straight to
+    # victoriametrics_rw without mixing with the log/trace traffic
+    # in_cribl_s2s carries (which force_splunk_meta processes). Splunk
+    # already has these events via Edge's direct HEC os_metrics output.
+    type: tcpjson
+    disabled: false
+    host: "0.0.0.0"
+    port: {{ cribl_stream_s2s_metrics_port }}
+    sendToRoutes: false
+    connections:
+      - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% for name, entry in cribl_stream_ai_log_routing | default({}) | dictsort %}
 {% set ai_type = cribl_stream_ai_input_types.get(name, 'syslog' if name.endswith('_docker') else 'tcpjson') %}
