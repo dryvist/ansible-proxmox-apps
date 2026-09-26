@@ -165,6 +165,31 @@ jobs:
       - name: Verify the node seed preserves curated fields and refuses renames
         run: python3 tests/nautobot_nodes_seed.py
 
+  # Proves the per-bucket RustFS IAM feature (roles/object_storage
+  # tasks/iam*.yml) actually covers every declared bucket and that its
+  # rendered policy is bucket-scoped -- a loop that silently drops a bucket,
+  # or a policy template that hardcodes one bucket's name, both render clean
+  # YAML and would only surface live, against a real RustFS server.
+  object-storage-iam-contract:
+    name: Verify Object Storage IAM Bucket Scoping
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.14'
+
+      - name: Install Ansible
+        run: python3 -m pip install --disable-pip-version-check 'ansible-core>=2.16'
+
+      - name: Verify every bucket gets ro/rw IAM and no policy leaks another bucket
+        run: python3 -m unittest tests.test_object_storage_iam_bucket_scoping -v
+
   # This file existed but no job ever collected it, so a role naming its
   # secret store in an operator-facing message passed silently (found on
   # roles/unpoller/defaults/main.yml). Its own job, not a step folded into
