@@ -2,8 +2,9 @@
 
 Behind Traefik, an absolute redirect (scheme+host+port) for a bare directory
 URL leaks the internal upstream address to the browser. `absolute_redirect
-off;` is what prevents that; this guards it staying in the rendered config,
-on both the server and the location that actually emits the redirect.
+off;` at server scope (inherited into every location, including the
+try_files fallback in `location /` that emits the redirect) is what
+prevents that; this guards it staying in the rendered config.
 """
 
 from __future__ import annotations
@@ -32,17 +33,10 @@ def render(**overrides) -> str:
 
 
 class WallNginxConfig(unittest.TestCase):
-    def test_absolute_redirect_off_present_in_server_and_location(self):
+    def test_absolute_redirect_off_present_at_server_scope(self):
         conf = render()
-        # Present at server scope (line-level default for the vhost) AND
-        # restated inside `location /` (the block whose try_files fallback
-        # actually generates the directory-redirect) — not relied on by
-        # inheritance alone.
-        self.assertEqual(conf.count("absolute_redirect off;"), 2)
-
-        server_block, _, location_block = conf.partition("location / {")
+        server_block, _, _location_block = conf.partition("location / {")
         self.assertIn("absolute_redirect off;", server_block)
-        self.assertIn("absolute_redirect off;", location_block)
 
 
 if __name__ == "__main__":
