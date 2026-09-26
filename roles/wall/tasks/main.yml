@@ -159,13 +159,15 @@
 # 301. Behind Traefik that redirect must stay relative, or the browser is
 # sent straight to nginx's own internal scheme and port.
 #
-# Retried: the preceding reload sends SIGHUP and returns as soon as that
-# signal is delivered, while the outgoing worker keeps answering in-flight
-# connections on the same listening socket until it drains — a real request
-# landing there during that window still gets the PRE-reload response. A
-# fixed config that hasn't finished rolling out yet is not the same failure
-# as a config that is wrong; only the latter should fail the play.
-- name: Verify the directory redirect stays relative
+# Waits for the reloaded workers, not for the task to stop failing: the
+# preceding reload sends SIGHUP and returns as soon as that signal is
+# delivered, while the outgoing worker keeps answering in-flight connections
+# on the same listening socket until it drains — a request landing there
+# during that window still gets the PRE-reload (absolute-redirect) response.
+# `until` re-checks the actual relative-Location condition on each attempt;
+# it only stops retrying once a NEW worker answers, or the retries run out
+# because the redirect is still genuinely absolute.
+- name: Wait for the reloaded workers to serve a relative directory redirect
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ wall_port }}/mc1"
     follow_redirects: none
