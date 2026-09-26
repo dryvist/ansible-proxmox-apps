@@ -7,39 +7,8 @@
   vars:
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
-    # Mirror roles/cribl_edge/defaults/main.yml: a representative subset of the
-    # tofu syslog_port_map plus the firewall-split and hardware-reclassify match
-    # patterns. HEC namespace is set so the per-index outputs + os router render.
-    cribl_edge_syslog_routing:
-      unifi: { standard: 514, high: 1514, index: unifi, sourcetype: "ubiquiti:unifi" }
-      linux: { standard: 517, high: 1517, index: os, sourcetype: syslog }
-    cribl_edge_syslog_port_mappings: { unifi: 1514, linux: 1517 }
-    cribl_edge_unifi_fw_match: >-
-      \[[A-Z][A-Z0-9_-]*-[AD]\]|\bIN=\S* OUT=\S* MAC=|suricata
-    cribl_edge_hardware_match: >-
-      smartd|medium error|failed command|I\/O error|vdev_state=|\bZED\b|\bZFS\b
-    cribl_edge_hec_namespace: "12345678-1234-5678-1234-567812345678"
-    cribl_edge_hec_url: "https://splunk-hec.pve.example.com"
-    cribl_edge_hec_token: "test-hec-token-placeholder"
-    cribl_edge_hec_input_port: 8088
-    cribl_edge_hec_input_token: ""
-    cribl_edge_langfuse_public_key: ""
-    cribl_edge_per_index_indexes: [unifi, firewall, os, netmon, hardware]
-    # in_system_metrics' gpu group (inputs.yml.j2) and the cribl_stream_s2s_metrics
-    # output (outputs.yml.j2) render unconditionally, so this fixture needs them
-    # too (added by homelab-contracts#87; missed here until the pin bump surfaced
-    # the gap). gpu_mode/per_gpu/detail are plain literal role defaults (Cribl's
-    # own shipped default), so mirror them exactly. host/port are tofu/env-derived
-    # in the role (same pattern as cribl_edge_hec_url above, which this fixture
-    # already substitutes with a representative placeholder rather than deriving
-    # through PROXMOX_SUBDOMAIN/tofu_data) — neither field is asserted on below.
-    cribl_edge_gpu_mode: disabled
-    cribl_edge_gpu_per_gpu: true
-    cribl_edge_gpu_detail: false
-    cribl_edge_stream_s2s_metrics_host: "syslog.pve.example.com"
-    cribl_edge_stream_s2s_metrics_port: 10301
     # cribl_edge ships in the dryvist.homelab collection (homelab-contracts),
-    # not in this repo's roles/. Resolve its templates under whichever
+    # not in this repo's roles/. Resolve its role dir under whichever
     # configured collections path the install landed in, so the test works
     # against a default ~/.ansible install and an explicit
     # ANSIBLE_COLLECTIONS_PATH alike.
@@ -50,8 +19,62 @@
                        | map('regex_replace', '$',
                              '/ansible_collections/dryvist/homelab/roles/cribl_edge')
                        | list)) }}
+    _role_dir: "{{ _template_dir | dirname }}"
 
   tasks:
+    # Load the role's REAL defaults/main.yml instead of hand-mirroring a
+    # subset of it. This is the whole point of this test: any var a template
+    # references that has a role default (including one added after this
+    # test was written) is now supplied automatically -- nothing here can go
+    # stale against the collection the way the hand-copied unifi_fw_match
+    # regex once did (it silently drifted from the real default for months).
+    - name: Load the cribl_edge role's real defaults
+      ansible.builtin.include_vars:
+        file: "{{ _role_dir }}/defaults/main.yml"
+
+    # Override only what this scenario deliberately controls: either the
+    # test's own scenario content (a reduced, deterministic subset chosen to
+    # exercise specific branches), or a fixture for an upstream tofu/env
+    # input a real default derives from, shaped like the real source.
+    - name: Set this scenario's deliberate overrides
+      ansible.builtin.set_fact:
+        # Reduced syslog family map: exercises the unifi firewall/IPS split
+        # and the os-family hardware reclassify without the full tofu
+        # syslog_port_map. cribl_edge_syslog_port_mappings derives from this
+        # via the role's own formula -- no need to also hand-copy that.
+        cribl_edge_syslog_routing:
+          unifi: { standard: 514, high: 1514, index: unifi, sourcetype: "ubiquiti:unifi" }
+          linux: { standard: 517, high: 1517, index: os, sourcetype: syslog }
+        # Non-empty so the per-index outputs + os router render (the branch
+        # every assertion below targets).
+        cribl_edge_hec_namespace: "12345678-1234-5678-1234-567812345678"
+        # Reduced index list: every index the assertions below reference is
+        # still present; keeps the per-index-output render small.
+        cribl_edge_per_index_indexes: [unifi, firewall, os, netmon, hardware]
+        # os catch-all decomposition off: the os-router assertions below
+        # assume exactly two rules (hardware, then the plain catch-all) --
+        # decomposition by host is a different scenario, exercised elsewhere.
+        cribl_edge_os_host_routing: {}
+        # Off: exercises the "no langfuse" branch, so this scenario needs no
+        # PROXMOX_SUBDOMAIN/tofu_data-derived langfuse/otel inputs either.
+        cribl_edge_langfuse_public_key: ""
+        # Off: exercises the "no netmon auth token" branch.
+        cribl_edge_hec_input_token: ""
+        # cribl_edge_stream_s2s_metrics_port is tofu-derived in the role
+        # (hostvars['localhost']['tofu_data']...); a global tofu_data
+        # fixture here would leak into every later template-render play in
+        # this suite (facts for the implicit localhost outlive this play --
+        # see verify_templates.yml's own note on meta: clear_facts not
+        # covering it), so this stays a placeholder port, matching the shape
+        # the real source produces. Not asserted on below.
+        cribl_edge_stream_s2s_metrics_port: 10301
+        # cribl_edge_stream_s2s_metrics_host, cribl_edge_hec_url and
+        # cribl_edge_hec_token are left to the role's real defaults: they
+        # derive from PROXMOX_SUBDOMAIN (set for this whole suite run, see
+        # verify_templates.yml) and SPLUNK_HEC_TOKEN (unset -> empty string,
+        # no mandatory() on that one) respectively -- the upstream inputs
+        # this suite already supplies, per the pattern above.
+
     - name: Render the edge syslog pipeline to /tmp
       ansible.builtin.template:
         src: "{{ _template_dir }}/pipelines/syslog/conf.yml.j2"
