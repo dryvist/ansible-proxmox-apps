@@ -52,8 +52,31 @@
       vars:
         _rendered: "{{ lookup('file', _fixture_dir ~ '/bmc_hw_metrics_absent.yml') }}"
 
+    - name: Render the bmc_hw_metrics pipeline
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/bmc_hw_metrics/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/bmc_hw_metrics_pipeline.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_bmc_node_name: "bmc-node.example.invalid"
+
+    - name: Assert the source Redfish sensor arrays are deleted before publish_metrics
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'delete __e.Temperatures;' in _rendered_pipeline"
+          - "'delete __e.Fans;' in _rendered_pipeline"
+          - "'delete __e.PowerSupplies;' in _rendered_pipeline"
+        fail_msg: >-
+          conf.yml.j2 must delete the source Temperatures/Fans/PowerSupplies
+          arrays before publish_metrics, or dimensions: "*" turns them into
+          dimensions on every emitted metric.
+      vars:
+        _rendered_pipeline: "{{ lookup('file', _fixture_dir ~ '/bmc_hw_metrics_pipeline.yml') }}"
+
     - name: Bmc hw_metrics gate verification PASSED
       ansible.builtin.debug:
         msg: >-
           collector.yml.j2 renders the read-only username when set and never
-          references an admin credential fallback when credentials are empty.
+          references an admin credential fallback when credentials are empty,
+          and the pipeline deletes the source sensor arrays before publish.
