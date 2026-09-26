@@ -1,0 +1,90 @@
+---
+# unpoller — native systemd deployment of the UniFi controller poller.
+#
+# unpoller polls the same controller API the UniFi dashboard uses and exposes
+# a Prometheus /metrics endpoint: per-port, per-VLAN and WAN counters, client
+# counts, and AP/gateway health that the controller does not stream natively.
+# Cribl Stream (roles/cribl_stream) scrapes this endpoint with its native
+# Prometheus scraper source and fans the samples out; this role only starts
+# the poller and exposes the endpoint.
+#
+# This is a SEPARATE deployment from roles/unifi_metrics (Docker-in-LXC
+# unpoller + Telegraf -> Splunk HEC -> index=unifi_metrics), which stays as
+# it is (installed = intentional). This role feeds the Cribl-scrape ->
+# VictoriaMetrics + Splunk metrics fan-out path instead.
+#
+# Pinned upstream release. Single source is unpoller_version in
+# inventory/group_vars/all.yml (Renovate-managed) -- no literal version lives
+# in this role, matching node_exporter's org-wide-var pattern.
+
+# GOARCH name derived from the host fact; covers the amd64/arm64 fleet.
+unpoller_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_architecture, 'amd64') }}"
+
+# The versioned, per-arch release name -- shared by the download URL and the
+# unpacked directory, so an upgrade only ever touches unpoller_version.
+unpoller_release: "unpoller_{{ unpoller_version }}_linux_{{ unpoller_arch }}"
+
+# Standard GitHub releases URL. Fetched ONCE on the controller (unrestricted
+# egress) and copied from there to the guest, same as roles/node_exporter --
+# see tasks/main.yml.
+unpoller_download_url: >-
+  https://github.com/unpoller/unpoller/releases/download/v{{
+  unpoller_version }}/{{ unpoller_release }}.tar.gz
+
+# Upstream's combined checksums manifest (one file, every platform). Passed
+# straight to get_url's `checksum:` as a URL, same trick as
+# node_exporter_sha256sums_url -- no literal hash pinned here.
+unpoller_checksums_url: >-
+  https://github.com/unpoller/unpoller/releases/download/v{{
+  unpoller_version }}/unpoller_{{ unpoller_version }}_checksums.txt
+
+# Versioned install root; the active binary is /usr/local/bin/unpoller. The
+# release tarball has NO wrapping directory (binary + LICENSE + examples/ all
+# at tar root), unlike node_exporter's tarball, so tasks/main.yml unpacks
+# into an explicit versioned subdirectory it creates first.
+unpoller_install_dir: /opt/unpoller
+
+# Dedicated no-login system user the service runs as.
+unpoller_user: unpoller
+
+# Prometheus /metrics endpoint. unpoller and Cribl Stream run co-located on
+# the same guest (playbooks/site/02-dns-and-pipeline.yml), so the endpoint
+# binds to loopback only -- no reason to expose it on the external
+# interface. unpoller_metrics_port is NOT defined here: it lives once in
+# inventory/group_vars/cribl_stream_group.yml, the one scope both this role
+# and roles/cribl_stream's in_unpoller scraper share (the cribl_stream play
+# runs before this role's play, so a default here would not be visible to
+# it) -- see that file's comment for why.
+unpoller_listen_address: localhost
+
+# --- UniFi controller connection ---
+# URL: same env var, same source (the OpenBao secret/infrastructure/unifi
+# UNIFI_API field, exported into the Ansible run's environment) that
+# roles/unifi_metrics and the UniFi infrastructure repo's Terraform provider
+# already treat as the single source of truth for the controller address --
+# not a per-role OpenBao domain fetch. Must be an FQDN, never a literal IP
+# (infrastructure-conventions "Always FQDN").
+unpoller_controller_url: "{{ lookup('env', 'UNIFI_API') | default('', true) }}"
+
+# Read-only poller account on the controller. The ubiquiti-community and
+# filipowm UniFi Terraform providers expose no resource for a controller
+# local-admin/API user (only unifi_account, which manages RADIUS users, and
+# unifi_user, which manages network clients) -- see the UniFi infrastructure
+# repo's provider-gap tracking doc. The account is therefore created the
+# same way the provider's own bootstrap admin is: once, by hand, in the
+# controller UI (Settings > Admins), with Local Access Only and the
+# read-only role. Only its PASSWORD is automated: generated once into OpenBao
+# (secret/apps/unpoller, field unpoller_controller_password --
+# roles/openbao/defaults/main/01c-app-secrets-generated.yml) and read here.
+unpoller_controller_user: unpoller
+unpoller_controller_password: >-
+  {{ bao_apps_secrets.unpoller_controller_password
+     | default(lookup('env', 'UNPOLLER_CONTROLLER_PASSWORD'), true)
+     | default(undef(), true)
+     | mandatory('unpoller_controller_password unset: seed apps/unpoller in OpenBao
+       or set UNPOLLER_CONTROLLER_PASSWORD') }}
+
+# UDW/UDM ships a self-signed certificate.
+unpoller_controller_verify_ssl: false
+# Sites to poll. "all" covers every site on the controller.
+unpoller_sites: "all"

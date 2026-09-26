@@ -65,7 +65,7 @@ The provisioned dashboards read two families of metrics:
 
 - `claude_code_*` — emitted by the coding agent's own metrics exporter.
 - `claude_jsonl_*` — emitted by a collector that runs on workstations, not on
-  the host this role configures. It reads local session transcripts for the
+  the host this role configures. It reads local session logs for the
   fields the exporter does not report: the ephemeral cache TTL split, thinking
   tokens, subagent attribution, and injected-context volume by kind.
 

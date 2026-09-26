@@ -50,7 +50,7 @@ def summary(**kwargs):
     return base
 
 
-class RecordingCallback(telemetry.CallbackModule):
+class CaptureCallback(telemetry.CallbackModule):
     """The real callback with only its Ansible plumbing stubbed out."""
 
     def __init__(self):
