@@ -1,0 +1,151 @@
+---
+# =============================================================================
+# Patroni + etcd automatic failover (Hindsight fabric program, lane L3).
+#
+# OFF by default: postgres_ha_manager stays 'native' for every cluster unless
+# a group_vars file explicitly overrides it. With 'native' every task file
+# added by this change is skipped and the role behaves exactly as it did
+# before this file existed — the shared-apps cluster (postgres_group) and the
+# ai cluster (postgres_ai_group) are UNCHANGED by merging this. Flipping a
+# real cluster to 'patroni' is a separate, deliberate change made in a
+# maintenance window (Vikunja project 54), never bundled with a role PR.
+#
+# 'native' -> today's streaming replication (01-replication.yml,
+#             tasks/main/{standby_bootstrap,replication_primary,verify_topology}.yml).
+# 'patroni' -> Patroni 4.1.x owns leader election and promotion over a
+#              3-member etcd v3 cluster co-located on this cluster's postgres
+#              nodes; this role stops managing replication.conf/slots itself
+#              and instead renders Patroni's own config.
+postgres_ha_manager: native
+
+# --- Packages ----------------------------------------------------------------
+# Unversioned, same pattern as postgres_package/pgbackrest above: apt resolves
+# whatever is current, so there is no literal version in this role for
+# Renovate (or anyone) to track. etcd and Patroni both ship in Debian main.
+postgres_ha_etcd_package: etcd-server
+postgres_ha_etcd_ctl_package: etcd-client
+postgres_ha_patroni_package: patroni
+# Patroni's Debian package does not pull in the etcd client library it needs
+# for the `etcd3` DCS backend.
+postgres_ha_patroni_etcd_client_package: python3-etcd
+
+# --- etcd (3-member DCS) ------------------------------------------------------
+postgres_ha_etcd_user: etcd
+postgres_ha_etcd_data_dir: /var/lib/etcd
+postgres_ha_etcd_config_file: /etc/etcd/etcd.yml
+postgres_ha_etcd_client_port: 2379
+postgres_ha_etcd_peer_port: 2380
+
+# The Patroni "scope" — the etcd namespace key AND (in patroni mode) the
+# pgBackRest stanza name. It names the CLUSTER, never a per-host hostname, so
+# every member and every pgbackrest.conf agrees on one value across a
+# failover. Derived from postgres_cluster_group so postgres_ai_group ->
+# postgres-ai and postgres_group -> postgres, with no per-cluster literal to
+# keep in sync — same reasoning postgres_pgbackrest_stanza already documents
+# for why a stanza name may never be a fixed per-host string (#1017).
+postgres_ha_scope: >-
+  {{ postgres_cluster_group | regex_replace('_group$', '')
+     | regex_replace('_', '-') }}
+
+# Single source of cluster membership for etcd peers, the Patroni REST client
+# list, and the derived consumer DSN below — so all three can never disagree
+# about which hosts are in the cluster. Same inventory group the native path
+# already uses for its replication-slot loop (postgres_cluster_group).
+postgres_ha_cluster_members: "{{ groups.get(postgres_cluster_group, []) }}"
+
+# One place to turn an inventory_hostname into the address peers/consumers
+# reach it at, so etcd's peer/advertise URLs, Patroni's connect_address, and
+# the derived consumer DSN below can never render three different shapes for
+# the same host. Omits the dot entirely when no domain is set (Molecule, or
+# any host with no tofu_data wired) rather than emitting a bare trailing dot
+# — a real hostname with no domain still needs to resolve on its own network.
+postgres_ha_fqdn_suffix: >-
+  {{ ('.' ~ tofu_data.domain) if (tofu_data.domain | default('', true) | length > 0) else '' }}
+
+# --- TLS (etcd peer + client certificates) -----------------------------------
+# Issued from OpenBao's PKI secrets engine — never a hand-rolled CA. Mount and
+# role names are variables, not hardcoded here, because they belong to
+# roles/openbao's own IaC (see that role's 05g-etcd-pki-engine.yml); this role
+# only calls the issue endpoint. Injection-agnostic per AGENTS.md: read from
+# env, same shape as the pgBackRest S3 endpoint/credentials above.
+postgres_ha_pki_addr: "{{ lookup('env', 'POSTGRES_HA_PKI_ADDR') | default('', true) }}"
+postgres_ha_pki_token: "{{ lookup('env', 'POSTGRES_HA_PKI_TOKEN') | default('', true) }}"
+postgres_ha_pki_mount: "pki-{{ postgres_ha_scope }}-etcd"
+postgres_ha_pki_role: "{{ postgres_ha_scope }}-etcd"
+postgres_ha_etcd_tls_dir: /etc/etcd/tls
+# pgBackRest-style pair: pkiRole's max_ttl bounds this from the OpenBao side;
+# this is only how far ahead of expiry the role reissues on a normal converge.
+postgres_ha_etcd_cert_ttl: 2160h0m0s
+postgres_ha_etcd_cert_renew_before_days: 14
+
+# --- Patroni REST API ---------------------------------------------------------
+postgres_ha_patroni_config_dir: /etc/patroni
+postgres_ha_patroni_config_file: "{{ postgres_ha_patroni_config_dir }}/patroni.yml"
+postgres_ha_patroni_rest_port: 8008
+postgres_ha_patroni_api_user: patroni
+
+# --- Credentials (OpenBao generated-secret pattern, secret/apps/hindsight) --
+# Same shape as postgres_replication_password: sourced from bao_apps_secrets,
+# no literal, no env fallback for the secret value itself. These three field
+# names must be added to roles/openbao's openbao_generated_app_secrets.hindsight
+# list (01c-app-secrets-generated.yml) before postgres_ha_manager: patroni can
+# converge anywhere — see this PR's description for the exact addition. Empty
+# default here (not `mandatory`) because every existing cluster runs in
+# 'native' mode where these are never read; patroni_prereqs.yml asserts them
+# non-empty before anything patroni-mode touches disk.
+#
+# Three separate credentials, not one reused value: etcd auth, the Patroni
+# REST API's basic auth, and the PostgreSQL superuser Patroni itself connects
+# as (for rewind/health checks) are three different trust boundaries, the
+# same separation postgres_replication_password already keeps from the
+# managed-database passwords below.
+# The etcd admin username itself is not a secret (only its password is) —
+# 'root' is the name etcd's own auth model reserves for the superuser role,
+# matching the account patroni_etcd.yml's "Configure etcd root auth" block
+# creates via 'etcdctl user add'.
+postgres_ha_etcd_root_user: root
+postgres_ha_etcd_root_password: >-
+  {{ bao_apps_secrets.hindsight_etcd_root_password | default('', true) }}
+postgres_ha_patroni_api_password: >-
+  {{ bao_apps_secrets.hindsight_patroni_api_password | default('', true) }}
+postgres_ha_superuser_password: >-
+  {{ bao_apps_secrets.hindsight_patroni_superuser_password | default('', true) }}
+
+# --- Replica creation + failover behaviour -----------------------------------
+# pgbackrest first (restores from the object-storage PITR tier this role
+# already maintains), pg_basebackup as a fallback when pgBackRest cannot serve
+# a replica (e.g. a stanza that has not taken its first full backup yet).
+postgres_ha_create_replica_methods:
+  - pgbackrest
+  - basebackup
+
+# OFF by default. Synchronous replication trades availability for zero data
+# loss on failover (a synchronous standby down blocks every commit on the
+# primary) — a deliberate per-cluster choice, not this role's default. Set
+# true only for a cluster whose write workload can tolerate that stall.
+postgres_ha_synchronous_mode: false
+
+# --- Adoption of an existing running primary+standby (native -> patroni) ----
+# Explicit, one-time, human-invoked path. FALSE on every normal converge —
+# turning this on is what lets Patroni take over an already-populated PGDATA
+# instead of refusing to touch it. See tasks/main/patroni_adopt.yml (tagged
+# never,patroni_adopt) for the exact ordered steps this gates.
+postgres_ha_patroni_adopt: false
+
+# --- Derived consumer DSN (one base variable feeds every consumer) ----------
+# The host-list + query-string a client DSN needs, computed once here so no
+# consumer role re-derives cluster membership on its own. 'native' renders
+# exactly what today's single-host consumers already build themselves
+# (postgres_primary_host~'.'~domain, no query string), so wiring a consumer to
+# this is a no-op until its inventory sets postgres_ha_manager: patroni.
+# Wiring hindsight_docker/llm_router (ansible-proxmox-ai) to these is a
+# separate follow-up PR — this only defines the formula.
+postgres_ha_connection_host_list: >-
+  {{ ((postgres_ha_cluster_members if (postgres_ha_manager == 'patroni' and postgres_ha_cluster_members | length > 0)
+       else [postgres_primary_host if postgres_primary_host | length > 0 else inventory_hostname]))
+     | map('regex_replace', '^(.*)$', '\1' ~ postgres_ha_fqdn_suffix)
+     | join(',') }}
+postgres_ha_connection_dsn_write_suffix: >-
+  {{ '?target_session_attrs=read-write' if postgres_ha_manager == 'patroni' else '' }}
+postgres_ha_connection_dsn_read_suffix: >-
+  {{ '?target_session_attrs=prefer-standby' if postgres_ha_manager == 'patroni' else '' }}

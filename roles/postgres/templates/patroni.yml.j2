@@ -1,0 +1,95 @@
+# {{ ansible_managed }}
+scope: {{ postgres_ha_scope }}
+namespace: /service/
+name: {{ inventory_hostname }}
+
+restapi:
+  listen: 0.0.0.0:{{ postgres_ha_patroni_rest_port }}
+  connect_address: {{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_patroni_rest_port }}
+  authentication:
+    username: {{ postgres_ha_patroni_api_user }}
+    password: {{ postgres_ha_patroni_api_password }}
+
+etcd3:
+  hosts: >-
+    {{ postgres_ha_cluster_members
+       | map('regex_replace', '^(.*)$',
+             '\\1' ~ postgres_ha_fqdn_suffix ~ ':' ~ postgres_ha_etcd_client_port)
+       | join(',') }}
+  protocol: https
+  cacert: {{ postgres_ha_etcd_tls_dir }}/ca.pem
+  cert: {{ postgres_ha_etcd_tls_dir }}/cert.pem
+  key: {{ postgres_ha_etcd_tls_dir }}/key.pem
+  username: {{ postgres_ha_etcd_root_user }}
+  password: {{ postgres_ha_etcd_root_password }}
+
+# Consulted only for a completely fresh cluster (empty data_dir on every
+# member) — see patroni_adopt.yml for how an already-populated data_dir is
+# taken over instead, which never reads this section.
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: {{ postgres_ha_synchronous_mode | bool | lower }}
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        password_encryption: "{{ postgres_password_encryption }}"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        archive_mode: "on"
+        archive_command: pgbackrest --stanza={{ postgres_pgbackrest_stanza }} archive-push %p
+        archive_timeout: {{ postgres_archive_timeout }}
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - local all all peer
+    - host replication {{ postgres_replication_user }} {{ postgres_replication_cidr }} scram-sha-256
+    - host all all {{ postgres_replication_cidr }} scram-sha-256
+  users:
+    {{ postgres_replication_user }}:
+      password: {{ postgres_replication_password }}
+      options:
+        - replication
+
+postgresql:
+  listen: 0.0.0.0:{{ postgres_port }}
+  connect_address: {{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_port }}
+  data_dir: {{ postgres_data_dir }}
+  bin_dir: /usr/lib/postgresql/{{ postgres_cluster_version }}/bin
+  pgpass: /var/lib/postgresql/.pgpass_patroni
+  authentication:
+    replication:
+      username: {{ postgres_replication_user }}
+      password: {{ postgres_replication_password }}
+    superuser:
+      username: postgres
+      password: {{ postgres_ha_superuser_password }}
+    rewind:
+      username: postgres
+      password: {{ postgres_ha_superuser_password }}
+  create_replica_methods:
+{% for method in postgres_ha_create_replica_methods %}
+    - {{ method }}
+{% endfor %}
+  pgbackrest:
+    command: >-
+      pgbackrest --stanza={{ postgres_pgbackrest_stanza }} --delta restore --type=standby
+    keep_data: true
+    no_params: true
+  basebackup:
+    max-rate: 100M
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

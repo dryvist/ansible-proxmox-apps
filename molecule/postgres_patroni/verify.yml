@@ -1,0 +1,162 @@
+---
+# Verify the 3-member Patroni/etcd cluster: it formed, exactly one leader was
+# elected, the managed database + vector extension exist on the leader, and
+# killing the leader promotes a different member while the managed database
+# stays reachable. Literal paths below match roles/postgres/defaults/main/
+# 03-patroni.yml exactly — a verify play does not include the role, so its
+# defaults are not in scope here (same reason the base postgres scenario's own
+# verify.yml hardcodes postgres_conf_dir/postgres_backup_dir).
+#
+# pgBackRest is disabled in this scenario (converge.yml) for the same reason
+# the default postgres scenario disables it: no S3-compatible endpoint exists
+# in CI. Not verified here; see converge.yml's comment for where template
+# rendering IS covered.
+
+- name: Gather each member's own Patroni status
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    postgres_ha_etcd_tls_dir: /etc/etcd/tls
+    postgres_ha_etcd_client_port: 2379
+    postgres_ha_patroni_rest_port: 8008
+
+  tasks:
+    - name: Check this member's etcd health
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints=https://127.0.0.1:{{ postgres_ha_etcd_client_port }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - endpoint
+          - health
+      environment:
+        ETCDCTL_API: "3"
+      register: postgres_ha_test_etcd_health
+      changed_when: false
+
+    - name: Assert this member's etcd is healthy
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_test_etcd_health.rc == 0
+        fail_msg: "etcd on {{ inventory_hostname }} is not healthy: {{ postgres_ha_test_etcd_health.stdout }}"
+
+    - name: Check whether this member is the current Patroni leader
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/primary"
+      register: postgres_ha_test_primary_check
+      changed_when: false
+      failed_when: false
+
+    - name: Record whether this member is the leader
+      ansible.builtin.set_fact:
+        postgres_ha_test_is_leader: "{{ (postgres_ha_test_primary_check.status | default(0)) == 200 }}"
+
+- name: Verify cluster-wide leader election and failover
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    postgres_ha_patroni_rest_port: 8008
+    postgres_ha_test_members: "{{ groups['postgres_patroni_test_group'] }}"
+
+  tasks:
+    - name: Compute each member's leader flag
+      ansible.builtin.set_fact:
+        postgres_ha_test_leader_flags: >-
+          {{ postgres_ha_test_members | map('extract', hostvars, 'postgres_ha_test_is_leader') | list }}
+
+    - name: Assert exactly one leader was elected
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_test_leader_flags | select('equalto', true) | list | length == 1
+        fail_msg: >-
+          Expected exactly one Patroni leader among
+          {{ postgres_ha_test_members }}, got: {{ postgres_ha_test_leader_flags }}
+
+    - name: Determine the leader hostname
+      ansible.builtin.set_fact:
+        postgres_ha_test_leader: >-
+          {{ (dict(postgres_ha_test_members | zip(postgres_ha_test_leader_flags)) | dict2items)
+             | selectattr('value', 'equalto', true) | map(attribute='key') | list | first }}
+
+    - name: Query the vector extension on the leader before failover
+      become: true
+      become_user: postgres
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      community.postgresql.postgresql_query:
+        login_db: patroni_test
+        query: "SELECT extname FROM pg_extension WHERE extname = 'vector'"
+      register: postgres_ha_test_ext_before
+      changed_when: false
+
+    - name: Assert the vector extension exists on the leader before failover
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_test_ext_before.query_result | length == 1
+        fail_msg: "vector extension not found on patroni_test via the leader ({{ postgres_ha_test_leader }})"
+
+    - name: Stop Patroni on the current leader (simulated failure)
+      become: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      ansible.builtin.systemd:
+        name: patroni
+        state: stopped
+
+    - name: Wait for one of the remaining members to become the new leader
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/primary"
+      delegate_to: "{{ item }}"
+      loop: "{{ postgres_ha_test_members | difference([postgres_ha_test_leader]) }}"
+      loop_control:
+        label: "{{ item }}"
+      register: postgres_ha_test_new_leader_check
+      until: (postgres_ha_test_new_leader_check.status | default(0)) == 200
+      retries: 15
+      delay: 4
+      failed_when: false
+      changed_when: false
+
+    - name: Determine the newly elected leader
+      vars:
+        candidates: "{{ postgres_ha_test_members | difference([postgres_ha_test_leader]) }}"
+        candidate_statuses: "{{ postgres_ha_test_new_leader_check.results | map(attribute='status') | list }}"
+      ansible.builtin.set_fact:
+        postgres_ha_test_new_leader: >-
+          {{ (dict(candidates | zip(candidate_statuses)) | dict2items)
+             | selectattr('value', 'equalto', 200) | map(attribute='key') | list | first }}
+
+    - name: Assert a different member was promoted
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_test_new_leader != postgres_ha_test_leader
+          - postgres_ha_test_new_leader in postgres_ha_test_members
+        fail_msg: >-
+          No standby was promoted after stopping the leader
+          ({{ postgres_ha_test_leader }}); new leader resolved to
+          '{{ postgres_ha_test_new_leader | default('') }}'.
+        success_msg: >-
+          Failover promoted {{ postgres_ha_test_new_leader }} after
+          {{ postgres_ha_test_leader }} was stopped.
+
+    - name: Query the vector extension on the new leader after failover
+      become: true
+      become_user: postgres
+      delegate_to: "{{ postgres_ha_test_new_leader }}"
+      community.postgresql.postgresql_query:
+        login_db: patroni_test
+        query: "SELECT extname FROM pg_extension WHERE extname = 'vector'"
+      register: postgres_ha_test_ext_after
+      changed_when: false
+
+    - name: Assert the vector extension still exists after failover
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_test_ext_after.query_result | length == 1
+        fail_msg: >-
+          vector extension not found on patroni_test via the new leader
+          ({{ postgres_ha_test_new_leader }}) after failover.
