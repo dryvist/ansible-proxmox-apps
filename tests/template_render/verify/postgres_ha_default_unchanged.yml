@@ -1,0 +1,101 @@
+---
+- name: Verify Patroni HA mode defaults to native and changes nothing
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "../../../roles/postgres/templates"
+
+  tasks:
+    # Loaded from the role rather than mirrored here on purpose — see
+    # pgbackrest_stanza_scoped.yml's comment on the same line for why: the
+    # thing under test IS the role's own default expressions.
+    - name: Load the real postgres role defaults
+      ansible.builtin.include_vars:
+        dir: "../../../roles/postgres/defaults/main"
+
+    - name: Assert postgres_ha_manager defaults to native
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_manager == 'native'
+        fail_msg: >-
+          postgres_ha_manager's default changed from 'native' — every
+          existing cluster (postgres_group, postgres_ai_group) would start
+          taking the Patroni code path on its next converge.
+
+    - name: Pin the cluster version so postgres_data_dir resolves offline
+      ansible.builtin.set_fact:
+        postgres_cluster_version: 18
+
+    # --- postgres_pgbackrest_stanza: unchanged for a standalone host --------
+    - name: Resolve as a standalone host (no primary named, native mode)
+      ansible.builtin.set_fact:
+        postgres_primary_host: ""
+        postgres_cluster_group: postgres_group
+
+    - name: Assert the standalone stanza still falls back to the hostname
+      ansible.builtin.assert:
+        that:
+          - postgres_pgbackrest_stanza == inventory_hostname
+        fail_msg: >-
+          postgres_pgbackrest_stanza changed for a standalone native-mode
+          host: {{ postgres_pgbackrest_stanza }} (expected {{ inventory_hostname }}).
+          It must ignore postgres_ha_scope entirely while
+          postgres_ha_manager is 'native'.
+
+    # --- postgres_pgbackrest_stanza: unchanged for a native standby ---------
+    - name: Resolve as a standby whose primary is another host (native mode)
+      ansible.builtin.set_fact:
+        postgres_primary_host: db-primary
+
+    - name: Assert the standby stanza still adopts the primary's hostname
+      ansible.builtin.assert:
+        that:
+          - postgres_pgbackrest_stanza == 'db-primary'
+        fail_msg: >-
+          postgres_pgbackrest_stanza changed for a native-mode standby:
+          {{ postgres_pgbackrest_stanza }} (expected db-primary).
+
+    # --- Changing postgres_cluster_group must not move the native stanza ---
+    # postgres_ha_scope derives from postgres_cluster_group, but in native
+    # mode postgres_pgbackrest_stanza must never read postgres_ha_scope at
+    # all — this is the regression a future edit could silently reintroduce.
+    - name: Point postgres_cluster_group at the ai cluster group, still native mode
+      ansible.builtin.set_fact:
+        postgres_cluster_group: postgres_ai_group
+        postgres_primary_host: postgres-ai-1
+
+    - name: Assert the native-mode stanza ignores postgres_cluster_group
+      ansible.builtin.assert:
+        that:
+          - postgres_pgbackrest_stanza == 'postgres-ai-1'
+          - postgres_pgbackrest_stanza != postgres_ha_scope
+        fail_msg: >-
+          postgres_pgbackrest_stanza ({{ postgres_pgbackrest_stanza }}) now
+          tracks postgres_ha_scope ({{ postgres_ha_scope }}) even in native
+          mode — a cluster-group rename or the ai/apps cutover would silently
+          rename every native cluster's stanza and orphan its backup history.
+
+    - name: Assert the derived consumer DSN falls back to the single host
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_connection_host_list == 'postgres-ai-1'
+          - postgres_ha_connection_dsn_write_suffix == ''
+          - postgres_ha_connection_dsn_read_suffix == ''
+        fail_msg: >-
+          The derived consumer DSN vars changed shape in native mode:
+          host_list={{ postgres_ha_connection_host_list }}
+          write_suffix='{{ postgres_ha_connection_dsn_write_suffix }}'
+          read_suffix='{{ postgres_ha_connection_dsn_read_suffix }}'. Native
+          mode must render exactly what a single-host consumer already
+          builds itself, with no query string.
+
+    - name: Patroni HA default-mode-unchanged assertions PASSED
+      ansible.builtin.debug:
+        msg: |
+          postgres_ha_manager defaults to 'native' and, while it does:
+          - postgres_pgbackrest_stanza never reads postgres_ha_scope
+          - the derived consumer DSN is the bare single-host form

@@ -1,0 +1,180 @@
+---
+# =============================================================================
+# etcd peer/client TLS, issued from OpenBao's PKI secrets engine
+# ({{ postgres_ha_pki_mount }}, created by roles/openbao — see that role's
+# 05g-etcd-pki-engine.yml). One certificate per node, used for BOTH peer and
+# client TLS (etcd's own convention when peer and client share a host) —
+# Patroni's etcd3 client also trusts this same CA when it talks to the
+# co-located etcd member. Never a hand-rolled CA: the issue call authenticates
+# as the shared ansible-converge identity (see patroni_prereqs.yml's
+# postgres_ha_bao_* assert), the same injection-agnostic shape as the
+# pgBackRest S3 credentials above.
+# =============================================================================
+- name: Ensure the etcd TLS directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_ha_etcd_tls_dir }}"
+    state: directory
+    owner: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    mode: "0750"
+
+- name: Check whether the CA certificate is already present
+  ansible.builtin.stat:
+    path: "{{ postgres_ha_etcd_tls_dir }}/ca.pem"
+  register: postgres_ha_etcd_ca_stat
+
+- name: Check whether a node certificate already exists
+  ansible.builtin.stat:
+    path: "{{ postgres_ha_etcd_tls_dir }}/cert.pem"
+  register: postgres_ha_etcd_cert_stat
+
+# openssl checkend takes seconds; exits 1 (rc!=0) when the cert expires within
+# that window OR is already expired. failed_when: false turns "needs renewal"
+# into data instead of a task failure.
+- name: Check whether the existing certificate is nearing expiry
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -checkend
+      - "{{ postgres_ha_etcd_cert_renew_before_days * 86400 }}"
+      - -noout
+      - -in
+      - "{{ postgres_ha_etcd_tls_dir }}/cert.pem"
+  register: postgres_ha_etcd_cert_checkend
+  changed_when: false
+  failed_when: false
+  when: postgres_ha_etcd_cert_stat.stat.exists
+
+# Both stats (and the checkend above) are read BEFORE deciding whether to log
+# in at all: a routine converge where the CA and this node's cert are both
+# already on disk and not nearing expiry needs no OpenBao round trip, exactly
+# as before this login was wired up. Login only when at least one of the two
+# writes inside this block would actually run.
+- name: Resolve this node's etcd TLS material
+  when: >-
+    (not postgres_ha_etcd_ca_stat.stat.exists)
+    or (not postgres_ha_etcd_cert_stat.stat.exists)
+    or (postgres_ha_etcd_cert_checkend.rc | default(1)) != 0
+  block:
+    - name: Log in with the ansible-converge AppRole
+      community.hashi_vault.vault_login:
+        url: "{{ postgres_ha_bao_addr }}"
+        auth_method: approle
+        role_id: "{{ postgres_ha_bao_role_id }}"
+        secret_id: "{{ postgres_ha_bao_secret_id }}"
+        validate_certs: "{{ postgres_ha_bao_validate_certs }}"
+      register: postgres_ha_etcd_tls_login
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      no_log: true
+
+    # Fetch-once, not every converge: a PKI root CA is long-lived (rotation is
+    # a deliberate, rare operator action, not a routine event). Public
+    # endpoint, no token needed, so this still runs directly on the node.
+    - name: Fetch the PKI CA certificate (public, no token needed)
+      ansible.builtin.uri:
+        url: "{{ postgres_ha_bao_addr }}/v1/{{ postgres_ha_pki_mount }}/ca/pem"
+        method: GET
+        return_content: true
+        status_code: [200]
+      register: postgres_ha_etcd_ca_fetch
+      changed_when: false
+      when: not postgres_ha_etcd_ca_stat.stat.exists
+
+    - name: Write the etcd CA certificate
+      ansible.builtin.copy:
+        content: "{{ postgres_ha_etcd_ca_fetch.content }}"
+        dest: "{{ postgres_ha_etcd_tls_dir }}/ca.pem"
+        owner: "{{ postgres_ha_etcd_user }}"
+        group: "{{ postgres_ha_etcd_user }}"
+        mode: "0644"
+      when: not postgres_ha_etcd_ca_stat.stat.exists
+
+    # ponytail: reissue-on-expiry-window via a converge re-run, not a systemd
+    # timer. This estate converges these hosts routinely enough that the
+    # 14-day window comfortably covers the gap; add a dedicated renewal timer
+    # if a cluster ever goes that long between converges.
+    #
+    # Issued from the controller (delegate_to: localhost), never on this
+    # node: the ansible-converge token this login holds also carries
+    # secret/etcd/* KV access (patroni_etcd_credential.yml) — a client must
+    # never hold a server's own identity-minting credential, the same
+    # principle that gives Patroni its own separate client cert below.
+    - name: Issue (or reissue) this node's etcd certificate
+      ansible.builtin.uri:
+        url: "{{ postgres_ha_bao_addr }}/v1/{{ postgres_ha_pki_mount }}/issue/{{ postgres_ha_pki_role }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ postgres_ha_etcd_tls_login.login.auth.client_token }}"
+        body_format: json
+        body:
+          common_name: "{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}"
+          alt_names: "{{ inventory_hostname }}"
+          ttl: "{{ postgres_ha_etcd_cert_ttl }}"
+        status_code: [200]
+      register: postgres_ha_etcd_cert_issue
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      no_log: true
+      changed_when: true
+      when: >-
+        not postgres_ha_etcd_cert_stat.stat.exists
+        or (postgres_ha_etcd_cert_checkend.rc | default(1)) != 0
+
+    - name: Write the issued node certificate and key
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ postgres_ha_etcd_tls_dir }}/{{ item.dest }}"
+        owner: "{{ postgres_ha_etcd_user }}"
+        group: "{{ postgres_ha_etcd_user }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - dest: cert.pem
+          content: "{{ postgres_ha_etcd_cert_issue.json.data.certificate }}"
+          mode: "0644"
+        - dest: key.pem
+          content: "{{ postgres_ha_etcd_cert_issue.json.data.private_key }}"
+          mode: "0600"
+      loop_control:
+        label: "{{ item.dest }}"
+      no_log: true
+      when: postgres_ha_etcd_cert_issue is not skipped
+      notify: Restart etcd
+
+  always:
+    - name: Revoke the OpenBao login token (etcd TLS)
+      community.hashi_vault.vault_write:
+        url: "{{ postgres_ha_bao_addr }}"
+        auth_method: token
+        token: "{{ postgres_ha_etcd_tls_login.login.auth.client_token }}"
+        path: auth/token/revoke-self
+        data: {}
+        validate_certs: "{{ postgres_ha_bao_validate_certs }}"
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      when:
+        - postgres_ha_etcd_tls_login is defined
+        - postgres_ha_etcd_tls_login.login is defined
+      register: postgres_ha_etcd_tls_revoke
+      # Not fatal: failing here would mask the real error of the block it is
+      # cleaning up, and the token expires on its own TTL regardless.
+      ignore_errors: true
+      no_log: true
+
+    - name: Warn that the etcd TLS login token was not revoked
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: revoking the etcd TLS OpenBao login token failed; it stays
+          valid until its TTL expires. This did not affect the reads/writes
+          above.
+      when: postgres_ha_etcd_tls_revoke is failed

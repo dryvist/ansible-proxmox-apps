@@ -1,0 +1,209 @@
+---
+# Bring the three test containers to a ready state before converge: wait for
+# connectivity, then seed a local self-signed CA + per-node certificates at
+# the exact paths patroni_etcd_tls.yml expects. There is no live OpenBao PKI
+# endpoint in CI (same boundary the default postgres scenario already draws
+# around the pgBackRest S3 endpoint) — pre-seeding valid, long-lived certs
+# means patroni_etcd_tls.yml's own "already valid, skip reissue" idempotency
+# check is what runs during converge, never an actual call to
+# postgres_ha_bao_addr, so the etcd/Patroni cluster itself still forms with
+# real TLS between real member processes.
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    postgres_ha_etcd_tls_dir: /etc/etcd/tls
+    postgres_ha_etcd_user: etcd
+    postgres_ha_patroni_tls_dir: /etc/patroni/tls
+
+  tasks:
+    - name: Wait for container to be ready
+      ansible.builtin.wait_for_connection:
+        timeout: 180
+
+    - name: Wait for the instance to finish booting
+      ansible.builtin.include_tasks: ../resources/tasks/wait_for_boot.yml
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Point apt at the estate cache when one is declared
+      ansible.builtin.include_tasks: ../resources/tasks/apt_proxy.yml
+
+    # Creates the etcd system user (postinst), so the cert files below can be
+    # owned correctly before etcd itself is configured in converge.
+    - name: Install etcd so its system user exists
+      ansible.builtin.apt:
+        name: etcd-server
+        state: present
+        update_cache: true
+
+    - name: Ensure the etcd TLS directory exists
+      ansible.builtin.file:
+        path: "{{ postgres_ha_etcd_tls_dir }}"
+        state: directory
+        owner: "{{ postgres_ha_etcd_user }}"
+        group: "{{ postgres_ha_etcd_user }}"
+        mode: "0750"
+
+    # A fresh unique scratch dir per run (not a fixed /tmp path — a fixed name
+    # here would race a concurrent CI job on the same runner).
+    - name: Create a scratch directory for the test CA on the controller
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: molecule-postgres-patroni-ca-
+      register: postgres_ha_test_ca_dir
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Generate the test CA key and self-signed certificate
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -x509
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -days
+          - "3650"
+          - -subj
+          - /CN=molecule-postgres-patroni-ca
+          - -keyout
+          - "{{ postgres_ha_test_ca_dir.path }}/ca-key.pem"
+          - -out
+          - "{{ postgres_ha_test_ca_dir.path }}/ca.pem"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: true
+
+    # -addext/-copy_extensions: a Subject Alternative Name is required, not
+    # just CN — Go's TLS stack (etcd, Patroni's python3-etcd client) has
+    # rejected CN-only certificates outright since Go 1.15, with no opt-out.
+    # Without a SAN here, every peer's mTLS handshake against every other
+    # peer fails, the 3 members never reach quorum, and etcd's systemd unit
+    # (Type=notify) hits its start timeout — this is what actually failed,
+    # not a networking or config problem.
+    - name: Generate this node's key and certificate signing request
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -subj
+          - "/CN={{ inventory_hostname }}"
+          - -addext
+          - "subjectAltName=DNS:{{ inventory_hostname }}"
+          - -keyout
+          - "{{ postgres_ha_test_ca_dir.path }}/{{ inventory_hostname }}-key.pem"
+          - -out
+          - "{{ postgres_ha_test_ca_dir.path }}/{{ inventory_hostname }}.csr"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Sign this node's certificate with the test CA
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -req
+          - -in
+          - "{{ postgres_ha_test_ca_dir.path }}/{{ inventory_hostname }}.csr"
+          - -CA
+          - "{{ postgres_ha_test_ca_dir.path }}/ca.pem"
+          - -CAkey
+          - "{{ postgres_ha_test_ca_dir.path }}/ca-key.pem"
+          - -CAcreateserial
+          - -days
+          - "3650"
+          - -copy_extensions
+          - copy
+      delegate_to: localhost
+      become: false
+      register: postgres_ha_test_cert_signed
+      changed_when: true
+
+    - name: Write the signed certificate on the controller
+      ansible.builtin.copy:
+        content: "{{ postgres_ha_test_cert_signed.stdout }}\n"
+        dest: "{{ postgres_ha_test_ca_dir.path }}/{{ inventory_hostname }}-cert.pem"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Push the CA certificate to this node
+      ansible.builtin.copy:
+        src: "{{ postgres_ha_test_ca_dir.path }}/ca.pem"
+        dest: "{{ postgres_ha_etcd_tls_dir }}/ca.pem"
+        owner: "{{ postgres_ha_etcd_user }}"
+        group: "{{ postgres_ha_etcd_user }}"
+        mode: "0644"
+
+    - name: Push this node's certificate and key
+      ansible.builtin.copy:
+        src: "{{ postgres_ha_test_ca_dir.path }}/{{ item.src }}"
+        dest: "{{ postgres_ha_etcd_tls_dir }}/{{ item.dest }}"
+        owner: "{{ postgres_ha_etcd_user }}"
+        group: "{{ postgres_ha_etcd_user }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "{{ inventory_hostname }}-cert.pem", dest: cert.pem, mode: "0644" }
+        - { src: "{{ inventory_hostname }}-key.pem", dest: key.pem, mode: "0600" }
+      loop_control:
+        label: "{{ item.dest }}"
+
+    # patroni_client_tls.yml (Patroni's OWN etcd-client TLS copy, added
+    # alongside patroni_etcd_credential.yml) needs its own pre-seeded CA/cert
+    # so its "already valid, skip reissue" check runs during converge too,
+    # never an actual call to postgres_ha_bao_addr -- same boundary as the
+    # etcd copy above. Reusing the SAME already-signed CA/node cert (no
+    # separate client-only cert here): the least-privilege server-vs-client
+    # PKI split this pair enforces in production is an OpenBao role-flag
+    # property (roles/openbao's 07b-etcd-pki-engine.yml), not something this
+    # single-tenant, ephemeral test fixture needs to re-prove.
+    #
+    # ponytail: key.pem here is world-readable (0644), not the 0600
+    # patroni_client_tls.yml itself writes in production. This directory is
+    # always reset to 0700 postgres:postgres by that file's own first task
+    # (unconditional, no stat gate) before the pre-seeded files are ever
+    # read, so postgres can already read anything inside it; 0644 just
+    # avoids creating a postgres system user here purely to chown a
+    # throwaway CI test cert. Upgrade to owner:postgres/0600 if this
+    # scenario ever needs to prove file-permission enforcement itself.
+    - name: Ensure Patroni's own TLS directory exists
+      ansible.builtin.file:
+        path: "{{ postgres_ha_patroni_tls_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Push the CA certificate to Patroni's own TLS directory
+      ansible.builtin.copy:
+        src: "{{ postgres_ha_test_ca_dir.path }}/ca.pem"
+        dest: "{{ postgres_ha_patroni_tls_dir }}/ca.pem"
+        mode: "0644"
+
+    - name: Push this node's certificate and key to Patroni's own TLS directory
+      ansible.builtin.copy:
+        src: "{{ postgres_ha_test_ca_dir.path }}/{{ item.src }}"
+        dest: "{{ postgres_ha_patroni_tls_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: "{{ inventory_hostname }}-cert.pem", dest: cert.pem }
+        - { src: "{{ inventory_hostname }}-key.pem", dest: key.pem }
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Remove the controller-side scratch directory
+      ansible.builtin.file:
+        path: "{{ postgres_ha_test_ca_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      run_once: true

@@ -1,0 +1,164 @@
+---
+# Split out of patroni_etcd.yml (2026-09-26, token-limits gate) -- included
+# only on the first cluster member; see the calling task's own comment for
+# why. Everything below runs unauthenticated on purpose (see "Enable etcd
+# auth" at the bottom): this whole file only ever executes before that last
+# task has run anywhere in the cluster.
+
+# rc-only, not a parsed `auth status` value: even on a supported etcd
+# release, `-w json` is inconsistently honored across etcdctl
+# subcommands upstream (etcd-io/etcd#9532, #9975, #5993), and
+# `auth status`'s own plain-text fallback prints a raw Go struct
+# (`Authentication Status: &{false}`), not a clean boolean word. `user
+# get` needs no output parsing at all: it exits 0 only if the root user
+# already exists, which is exactly the state this guards on.
+- name: Check whether the etcd root user already exists
+  ansible.builtin.command:
+    argv:
+      - etcdctl
+      - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+      - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+      - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+      - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+      - user
+      - get
+      - "{{ postgres_ha_etcd_root_user }}"
+  environment:
+    ETCDCTL_API: "3"
+  register: postgres_ha_etcd_root_user_check
+  changed_when: false
+  failed_when: false
+
+- name: Enable etcd root auth
+  when: postgres_ha_etcd_root_user_check.rc != 0
+  no_log: true
+  block:
+    - name: Add the etcd root user
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - user
+          - add
+          - "{{ postgres_ha_etcd_root_user }}:{{ postgres_ha_etcd_root_password }}"
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true
+
+    # `auth enable` refuses with "root user does not have root role"
+    # (etcd's AuthEnable checks hasRootRole(rootUser) — server/auth/store.go)
+    # unless this grant runs first. "root" is a reserved role name etcd
+    # special-cases in UserGrantRole to skip the usual UnsafeGetRole
+    # existence check, so it never needs its own `role add` the way
+    # postgres_ha_etcd_patroni_user's role does below.
+    - name: Grant the etcd root user its root role
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - user
+          - grant-role
+          - "{{ postgres_ha_etcd_root_user }}"
+          - "{{ postgres_ha_etcd_root_user }}"
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true
+
+    # Patroni's own, non-root etcd identity, scoped to readwrite on only
+    # this cluster's own DCS key prefix (patroni.yml.j2 sets
+    # namespace: /service/ and scope: postgres_ha_scope, so Patroni
+    # never touches anything outside /service/{{ postgres_ha_scope }}/).
+    # Created here, before auth enable, while etcd still accepts
+    # unauthenticated admin writes -- same reason the root user above
+    # needs no -u flag either.
+    - name: Add the etcd role scoping Patroni to its own DCS prefix
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - role
+          - add
+          - "{{ postgres_ha_etcd_patroni_user }}"
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true
+
+    - name: Grant that role readwrite on the cluster's own DCS prefix
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - role
+          - grant-permission
+          - "{{ postgres_ha_etcd_patroni_user }}"
+          - readwrite
+          - "/service/{{ postgres_ha_scope }}/"
+          - --prefix
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true
+
+    - name: Add the etcd user Patroni authenticates as
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - user
+          - add
+          - "{{ postgres_ha_etcd_patroni_user }}:{{ postgres_ha_etcd_patroni_password }}"
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true
+
+    - name: Grant Patroni's etcd user its scoped role
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - user
+          - grant-role
+          - "{{ postgres_ha_etcd_patroni_user }}"
+          - "{{ postgres_ha_etcd_patroni_user }}"
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true
+
+    # No `-u`/credentials here: auth isn't enabled yet, so etcdctl would
+    # otherwise call the Authenticate RPC first to mint a token before
+    # sending the request, and etcd refuses to authenticate at all while
+    # auth is disabled — the whole command fails client-side in
+    # milliseconds with no server-side log line, before this request is
+    # ever sent (confirmed against etcd's own official RBAC bootstrap
+    # docs: `auth enable` runs unauthenticated; only commands *after* it
+    # need `--user root:<password>`, e.g. `auth disable`).
+    - name: Enable etcd auth
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+          - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+          - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+          - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+          - auth
+          - enable
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: true

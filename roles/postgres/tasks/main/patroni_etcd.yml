@@ -1,0 +1,280 @@
+---
+# =============================================================================
+# etcd v3, 3 members co-located on this cluster's postgres nodes. Patroni mode
+# only (see patroni_prereqs.yml for the preconditions this assumes already
+# passed). Every member runs this identically — etcd's own clustering handles
+# which one leads Raft, which is a different election from Patroni's own
+# PostgreSQL leader election layered on top of it.
+# =============================================================================
+- name: Ensure etcd system group exists
+  ansible.builtin.group:
+    name: "{{ postgres_ha_etcd_user }}"
+    system: true
+    state: present
+
+- name: Ensure etcd system user exists
+  ansible.builtin.user:
+    name: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ postgres_ha_etcd_data_dir }}"
+    create_home: false
+    state: present
+
+# Controller-staged + SHA256SUMS-verified upstream release, same pattern as
+# roles/openbao/tasks/main/install.yml (see 03-patroni.yml for why this is
+# not the Debian apt package). ansible_become: false on the delegated tasks
+# is REQUIRED — Ansible inherits the play's become: true on delegated tasks
+# regardless of task-level become, which fails with "sudo: a password is
+# required" on the controller.
+- name: Check the installed etcd version
+  ansible.builtin.command: "{{ postgres_ha_etcd_install_dir }}/etcd --version"
+  register: postgres_ha_etcd_installed_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Record whether the target etcd version is already installed
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_already_installed: >-
+      {{ postgres_ha_etcd_installed_version.rc == 0
+         and postgres_ha_etcd_version in (postgres_ha_etcd_installed_version.stdout | default('')) }}
+
+- name: Stage etcd release checksums on controller
+  ansible.builtin.get_url:
+    url: "{{ postgres_ha_etcd_checksums_url }}"
+    dest: "/tmp/etcd-{{ postgres_ha_etcd_version }}-{{ postgres_ha_etcd_checksums_filename }}"
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+  when: not postgres_ha_etcd_already_installed
+
+- name: Read the expected SHA256 for the linux-amd64 archive
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_archive_sha256: >-
+      {{ (lookup('file', '/tmp/etcd-' ~ postgres_ha_etcd_version ~ '-' ~ postgres_ha_etcd_checksums_filename)
+          | regex_search('([0-9a-f]{64})\s+' ~ (postgres_ha_etcd_archive_filename | regex_escape), '\1')
+          | first) }}
+  run_once: true
+  when: not postgres_ha_etcd_already_installed
+
+- name: Assert a checksum was found for the etcd archive
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_etcd_archive_sha256 is defined
+      - postgres_ha_etcd_archive_sha256 | length == 64
+    fail_msg: >-
+      Could not find a SHA256 for {{ postgres_ha_etcd_archive_filename }} in
+      the upstream checksums file. Did the asset naming change for
+      v{{ postgres_ha_etcd_version }}?
+  run_once: true
+  when: not postgres_ha_etcd_already_installed
+
+- name: Stage the etcd archive on controller (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ postgres_ha_etcd_archive_url }}"
+    dest: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    checksum: "sha256:{{ postgres_ha_etcd_archive_sha256 }}"
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+  when: not postgres_ha_etcd_already_installed
+
+- name: Copy the etcd archive to the target
+  ansible.builtin.copy:
+    src: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    dest: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not postgres_ha_etcd_already_installed
+
+- name: Extract the etcd archive on the target
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    dest: /tmp
+    remote_src: true
+  when: not postgres_ha_etcd_already_installed
+
+- name: Install the etcd and etcdctl binaries
+  ansible.builtin.copy:
+    src: "/tmp/etcd-v{{ postgres_ha_etcd_version }}-linux-amd64/{{ item }}"
+    dest: "{{ postgres_ha_etcd_install_dir }}/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - etcd
+    - etcdctl
+  when: not postgres_ha_etcd_already_installed
+  notify: Restart etcd
+
+- name: Remove the staged etcd archive and extracted directory from the target
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/{{ postgres_ha_etcd_archive_filename }}"
+    - "/tmp/etcd-v{{ postgres_ha_etcd_version }}-linux-amd64"
+  when: not postgres_ha_etcd_already_installed
+
+- name: Ensure the etcd data directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_ha_etcd_data_dir }}"
+    state: directory
+    owner: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    mode: "0700"
+
+- name: Configure etcd TLS
+  ansible.builtin.include_tasks: patroni_etcd_tls.yml
+
+# A client must never hold a server's private key: Patroni gets its own
+# client-only identity, in its own postgres-owned directory, never a group
+# grafted onto the etcd server's own TLS material.
+- name: Configure Patroni's own etcd client TLS
+  ansible.builtin.include_tasks: patroni_client_tls.yml
+
+# Read-only (no `state:` -> the systemd module only reports facts, never
+# changes anything): captures whether THIS member's etcd was already running
+# before this converge's own config/unit deploy below. Per-host, so the next
+# task folds every member's copy of this into one cluster-wide fact -- see
+# its own comment for why that extra step is required.
+- name: Record whether etcd was already running before this converge
+  ansible.builtin.systemd:
+    name: etcd
+  register: postgres_ha_etcd_pre_state
+  check_mode: true
+  changed_when: false
+  failed_when: false
+
+# `throttle:` is evaluated ONCE per task/handler and applied to the whole
+# batch of hosts running it together -- it is not templated per host despite
+# looking like an ordinary Jinja expression (proven locally: a per-host-
+# templated throttle ran every host in parallel regardless of each host's own
+# value, matching this cluster's 2026-09-26 CI failure where all 3 members'
+# etcd restarted in the same second on an idempotent reconverge). Every host
+# must therefore compute the exact same value, which a per-host fact like
+# postgres_ha_etcd_pre_state cannot guarantee. This reads every member's
+# already-gathered pre_state out of hostvars, so all hosts land on one
+# identical answer.
+- name: Determine whether the etcd cluster (not just this member) was already up
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_cluster_already_up: >-
+      {{ postgres_ha_cluster_members
+         | map('extract', hostvars)
+         | map(attribute='postgres_ha_etcd_pre_state.status.ActiveState', default='inactive')
+         | select('equalto', 'active') | list | length > 0 }}
+
+- name: Deploy the etcd config
+  ansible.builtin.template:
+    src: etcd.yml.j2
+    dest: "{{ postgres_ha_etcd_config_file }}"
+    owner: "{{ postgres_ha_etcd_user }}"
+    group: "{{ postgres_ha_etcd_user }}"
+    mode: "0640"
+  notify: Restart etcd
+
+# notify Reload systemd daemon (not just Restart etcd): molecule/postgres_
+# patroni/prepare.yml installs the etcd-server apt package first (for its
+# postinst-created system user), which registers systemd's OWN default
+# /lib/systemd/system/etcd.service -- no --config-file, capnslog logging,
+# localhost-only. That unit is already loaded in systemd's cache by the time
+# this task overwrites /etc/systemd/system/etcd.service (which wins on path
+# precedence, but only once systemd re-reads unit files). Flushing "Restart
+# etcd" without an intervening daemon-reload restarts systemd's STALE, cached
+# vendor unit instead of ours -- confirmed via etcd's own journal on 6956b0bf's
+# CI failure: it came up as a single-node, plaintext, localhost:2379 cluster
+# recognizing only ETCD_NAME/ETCD_DATA_DIR (exactly the Debian package's
+# /etc/default/etcd env-file shape), and every member's later TLS health
+# check refused the connection. "Reload systemd daemon" is declared earlier
+# in handlers/main.yml than "Restart etcd", so one flush runs it first.
+- name: Deploy the etcd systemd unit
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: postgres_ha_etcd_unit
+  notify:
+    - Reload systemd daemon
+    - Restart etcd
+
+# Apply a pending config/unit-triggered restart NOW, before the "started"
+# task below and long before Patroni starts depending on etcd staying up --
+# same reasoning as cluster_config.yml's own flush. Handlers otherwise flush
+# at play end (or wherever the next unrelated meta: flush_handlers happens to
+# sit, e.g. Phase 4's), which on this exact cluster restarted etcd out from
+# under an already-running Patroni mid-converge (2026-09-26 CI failure,
+# "Connection refused" on :2379 from every member). On a fresh bootstrap
+# `systemctl restart` on a not-yet-running unit just starts it, so this is
+# never a no-op-turned-harmful-restart -- it collapses "restart" and "started
+# and enabled" below into one deterministic bring-up either way.
+- name: Apply a pending etcd config/unit restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure the etcd service is started and enabled
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+    enabled: true
+    daemon_reload: "{{ postgres_ha_etcd_unit.changed }}"
+
+# Every etcdctl call below dials this member by its OWN hostname (never
+# 127.0.0.1): the cert issued above has a SAN covering only
+# inventory_hostname (matching what every peer/client actually dials it
+# as), and a Go TLS client verifies the server certificate against the
+# address it dialed — "127.0.0.1" would fail hostname verification
+# against a cert that only lists the real hostname, the same way any
+# other client on the network would fail against "localhost". One fact,
+# not a repeated expression in all four etcdctl tasks below.
+- name: Set this member's own etcdctl endpoint
+  ansible.builtin.set_fact:
+    postgres_ha_etcd_self_endpoint: >-
+      https://{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_etcd_client_port }}
+
+- name: Wait for this etcd member to answer over TLS
+  ansible.builtin.command:
+    argv:
+      - etcdctl
+      - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+      - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+      - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+      - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+      - endpoint
+      - health
+  environment:
+    ETCDCTL_API: "3"
+  register: postgres_ha_etcd_health
+  changed_when: false
+  retries: 10
+  delay: 6
+  until: postgres_ha_etcd_health.rc == 0
+
+- name: Resolve Patroni's own etcd credential
+  ansible.builtin.include_tasks: patroni_etcd_credential.yml
+
+# Cluster-wide state (etcd's own Raft), so this only needs to actually run
+# once — checked, not assumed, so a re-run after the first member already
+# enabled it is a no-op everywhere else. Gated to the first declared member so
+# only one host attempts the add-then-enable sequence. Split into its own
+# file (patroni_etcd_auth.yml, 2026-09-26): this task alone pushed the file
+# over the CI token-limits gate.
+- name: Configure etcd root auth (first member only)
+  ansible.builtin.include_tasks: patroni_etcd_auth.yml
+  when: inventory_hostname == (postgres_ha_cluster_members | first)

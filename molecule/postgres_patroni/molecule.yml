@@ -1,0 +1,97 @@
+---
+# Molecule scenario for the postgres role's Patroni HA mode (postgres_ha_manager:
+# patroni). Three privileged systemd containers form a real 3-member etcd +
+# Patroni cluster and prove: the cluster forms, a leader is elected, killing
+# the leader promotes a replica, and the vector extension on a managed
+# database survives the failover. No live OpenBao in CI, so prepare.yml seeds
+# a local self-signed CA + per-node certs directly (converge.yml then supplies
+# non-empty-but-unreachable postgres_ha_bao_addr/role_id/secret_id —
+# patroni_etcd_tls.yml never calls out because the pre-seeded certs are
+# already valid, exercising
+# the "certificate already fresh, skip reissue" path rather than the OpenBao
+# call itself, which the default postgres scenario's own S3-credential gap
+# already establishes as the accepted CI boundary for this role).
+#
+# `networks:` on every platform (all three sharing one name) is required,
+# not cosmetic: etcd's initial-cluster and Patroni's REST client list both
+# dial peers by container hostname (postgres_ha_fqdn_suffix is empty here),
+# and Docker's embedded DNS — the only thing that resolves a container's own
+# name for its peers — is available only on a user-defined network, never on
+# the default bridge a container gets when no `networks:` is set. No other
+# scenario in this repo needed this: every other multi-container scenario
+# here (keepalived, technitium_dns) talks over fixed placeholder IPs baked
+# into config, never a real container-to-container hostname lookup.
+platforms:
+  - name: postgres-patroni-1${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    networks:
+      - name: postgres_patroni_test_net${CI_INSTANCE_SUFFIX}
+    groups:
+      - postgres_patroni_test_group
+      - lxc_containers
+  - name: postgres-patroni-2${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    networks:
+      - name: postgres_patroni_test_net${CI_INSTANCE_SUFFIX}
+    groups:
+      - postgres_patroni_test_group
+      - lxc_containers
+  - name: postgres-patroni-3${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    networks:
+      - name: postgres_patroni_test_net${CI_INSTANCE_SUFFIX}
+    groups:
+      - postgres_patroni_test_group
+      - lxc_containers
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+
+scenario:
+  name: postgres_patroni
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

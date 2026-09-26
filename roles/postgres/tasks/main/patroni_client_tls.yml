@@ -1,0 +1,169 @@
+---
+# =============================================================================
+# Patroni's OWN etcd client certificate — a client must never hold a
+# server's private key, so this is deliberately separate from
+# patroni_etcd_tls.yml (the etcd member's server+peer identity, owned
+# etcd:etcd, unreadable by the postgres user Patroni runs as). Issued from a
+# client-auth-only PKI role on the same mount (postgres_ha_pki_patroni_role,
+# server_flag: false — see roles/openbao's 07b-etcd-pki-engine.yml), and
+# stored in its own postgres-owned directory. Same fetch-once-if-missing /
+# reissue-before-expiry shape as patroni_etcd_tls.yml (including its own
+# separate ansible-converge login/revoke, so a failure revoking one file's
+# token never leaves the other's outstanding); kept as a full mirror rather
+# than a shared include so a change to one identity's lifecycle never
+# silently reaches the other's directory/ownership.
+# =============================================================================
+- name: Ensure the Patroni etcd-client TLS directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_ha_patroni_tls_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+- name: Check whether the CA certificate is already present (Patroni copy)
+  ansible.builtin.stat:
+    path: "{{ postgres_ha_patroni_tls_dir }}/ca.pem"
+  register: postgres_ha_patroni_ca_stat
+
+- name: Check whether Patroni's own client certificate already exists
+  ansible.builtin.stat:
+    path: "{{ postgres_ha_patroni_tls_dir }}/cert.pem"
+  register: postgres_ha_patroni_cert_stat
+
+- name: Check whether Patroni's client certificate is nearing expiry
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -checkend
+      - "{{ postgres_ha_etcd_cert_renew_before_days * 86400 }}"
+      - -noout
+      - -in
+      - "{{ postgres_ha_patroni_tls_dir }}/cert.pem"
+  register: postgres_ha_patroni_cert_checkend
+  changed_when: false
+  failed_when: false
+  when: postgres_ha_patroni_cert_stat.stat.exists
+
+# Same reasoning as patroni_etcd_tls.yml: both stats (and the checkend above)
+# are read before deciding whether to log in at all, so a routine converge
+# with nothing to reissue needs no OpenBao round trip.
+- name: Resolve Patroni's own etcd client TLS material
+  when: >-
+    (not postgres_ha_patroni_ca_stat.stat.exists)
+    or (not postgres_ha_patroni_cert_stat.stat.exists)
+    or (postgres_ha_patroni_cert_checkend.rc | default(1)) != 0
+  block:
+    - name: Log in with the ansible-converge AppRole
+      community.hashi_vault.vault_login:
+        url: "{{ postgres_ha_bao_addr }}"
+        auth_method: approle
+        role_id: "{{ postgres_ha_bao_role_id }}"
+        secret_id: "{{ postgres_ha_bao_secret_id }}"
+        validate_certs: "{{ postgres_ha_bao_validate_certs }}"
+      register: postgres_ha_patroni_tls_login
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      no_log: true
+
+    - name: Fetch the PKI CA certificate for Patroni's copy (public, no token needed)
+      ansible.builtin.uri:
+        url: "{{ postgres_ha_bao_addr }}/v1/{{ postgres_ha_pki_mount }}/ca/pem"
+        method: GET
+        return_content: true
+        status_code: [200]
+      register: postgres_ha_patroni_ca_fetch
+      changed_when: false
+      when: not postgres_ha_patroni_ca_stat.stat.exists
+
+    - name: Write the CA certificate to Patroni's own TLS directory
+      ansible.builtin.copy:
+        content: "{{ postgres_ha_patroni_ca_fetch.content }}"
+        dest: "{{ postgres_ha_patroni_tls_dir }}/ca.pem"
+        owner: postgres
+        group: postgres
+        mode: "0644"
+      when: not postgres_ha_patroni_ca_stat.stat.exists
+
+    # CN is prefixed 'patroni-' (never the bare hostname patroni_etcd_tls.yml
+    # already issues a cert for) so this role's allowed_domains glob
+    # ('patroni-' ~ the etcd role's own allowed_domain) can never also match —
+    # and therefore never issue — an etcd server identity. Issued from the
+    # controller (delegate_to: localhost), never on this node, same reasoning
+    # as patroni_etcd_tls.yml's own issue call.
+    - name: Issue (or reissue) Patroni's own etcd client certificate
+      ansible.builtin.uri:
+        url: "{{ postgres_ha_bao_addr }}/v1/{{ postgres_ha_pki_mount }}/issue/{{ postgres_ha_pki_patroni_role }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ postgres_ha_patroni_tls_login.login.auth.client_token }}"
+        body_format: json
+        body:
+          common_name: "patroni-{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}"
+          alt_names: "patroni-{{ inventory_hostname }}"
+          ttl: "{{ postgres_ha_etcd_cert_ttl }}"
+        status_code: [200]
+      register: postgres_ha_patroni_cert_issue
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      no_log: true
+      changed_when: true
+      when: >-
+        not postgres_ha_patroni_cert_stat.stat.exists
+        or (postgres_ha_patroni_cert_checkend.rc | default(1)) != 0
+
+    - name: Write Patroni's own issued client certificate and key
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ postgres_ha_patroni_tls_dir }}/{{ item.dest }}"
+        owner: postgres
+        group: postgres
+        mode: "{{ item.mode }}"
+      loop:
+        - dest: cert.pem
+          content: "{{ postgres_ha_patroni_cert_issue.json.data.certificate }}"
+          mode: "0644"
+        - dest: key.pem
+          content: "{{ postgres_ha_patroni_cert_issue.json.data.private_key }}"
+          mode: "0600"
+      loop_control:
+        label: "{{ item.dest }}"
+      no_log: true
+      when: postgres_ha_patroni_cert_issue is not skipped
+      notify: Restart patroni
+
+  always:
+    - name: Revoke the OpenBao login token (Patroni client TLS)
+      community.hashi_vault.vault_write:
+        url: "{{ postgres_ha_bao_addr }}"
+        auth_method: token
+        token: "{{ postgres_ha_patroni_tls_login.login.auth.client_token }}"
+        path: auth/token/revoke-self
+        data: {}
+        validate_certs: "{{ postgres_ha_bao_validate_certs }}"
+      delegate_to: localhost
+      connection: local
+      become: false
+      vars:
+        ansible_become: false
+      when:
+        - postgres_ha_patroni_tls_login is defined
+        - postgres_ha_patroni_tls_login.login is defined
+      register: postgres_ha_patroni_tls_revoke
+      ignore_errors: true
+      no_log: true
+
+    - name: Warn that the Patroni client TLS login token was not revoked
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: revoking the Patroni client TLS OpenBao login token
+          failed; it stays valid until its TTL expires. This did not affect
+          the reads/writes above.
+      when: postgres_ha_patroni_tls_revoke is failed

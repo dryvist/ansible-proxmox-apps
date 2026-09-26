@@ -1,0 +1,35 @@
+# {{ ansible_managed }}
+# etcd v3 member config for the {{ postgres_ha_scope }} Patroni cluster.
+name: {{ inventory_hostname }}
+data-dir: {{ postgres_ha_etcd_data_dir }}
+
+listen-peer-urls: https://0.0.0.0:{{ postgres_ha_etcd_peer_port }}
+listen-client-urls: https://0.0.0.0:{{ postgres_ha_etcd_client_port }}
+initial-advertise-peer-urls: https://{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_etcd_peer_port }}
+advertise-client-urls: https://{{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_ha_etcd_client_port }}
+
+# Consulted only when data-dir is completely empty — safe to leave 'new' and
+# this exact initial-cluster list permanently; etcd ignores both once the
+# member has ever started with data on disk (upstream etcd clustering docs).
+initial-cluster-token: {{ postgres_ha_scope }}-etcd
+initial-cluster-state: new
+initial-cluster: >-
+  {{ postgres_ha_cluster_members
+     | map('regex_replace', '^(.*)$',
+           '\\1=https://\\1' ~ postgres_ha_fqdn_suffix ~ ':' ~ postgres_ha_etcd_peer_port)
+     | join(',') }}
+
+client-transport-security:
+  cert-file: {{ postgres_ha_etcd_tls_dir }}/cert.pem
+  key-file: {{ postgres_ha_etcd_tls_dir }}/key.pem
+  trusted-ca-file: {{ postgres_ha_etcd_tls_dir }}/ca.pem
+  client-cert-auth: true
+
+peer-transport-security:
+  cert-file: {{ postgres_ha_etcd_tls_dir }}/cert.pem
+  key-file: {{ postgres_ha_etcd_tls_dir }}/key.pem
+  trusted-ca-file: {{ postgres_ha_etcd_tls_dir }}/ca.pem
+  client-cert-auth: true
+
+logger: zap
+log-outputs: [stderr]

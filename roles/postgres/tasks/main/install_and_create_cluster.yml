@@ -5,6 +5,33 @@
 # the default cluster. Use the config directory as the existence test because
 # pg_createcluster refuses to run when /etc/postgresql/<major>/<name> exists.
 # =============================================================================
+# In Patroni mode Patroni's own bootstrap.dcs block runs initdb the first time
+# it starts, against what must be an EMPTY data directory — so postgresql-
+# common must not auto-create a "main" cluster the moment the package below
+# installs, or patroni_bootstrap.yml's own guard against taking over
+# unadopted existing data refuses to start Patroni on every fresh node. This
+# has to land before the apt install: postgresql-common's postinst reads
+# createcluster.conf while it configures, not afterward.
+- name: Ensure the postgresql-common config directory exists (Patroni mode only)
+  ansible.builtin.file:
+    path: /etc/postgresql-common
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: postgres_ha_manager == 'patroni'
+
+- name: Disable postgresql-common's automatic default cluster (Patroni mode only)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql-common/createcluster.conf
+    regexp: "^create_main_cluster"
+    line: "create_main_cluster = false"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: postgres_ha_manager == 'patroni'
+
 - name: Install PostgreSQL from PGDG
   ansible.builtin.apt:
     name: "{{ postgres_package }}"
@@ -76,87 +103,100 @@
     - (postgres_existing_data_pg_version.content | b64decode | trim) !=
       (postgres_cluster_version | string)
 
-- name: Set pg_createcluster data directory
-  ansible.builtin.set_fact:
-    postgres_createcluster_data_dir: >-
-      {{ postgres_data_root ~ '/.ansible-pg-createcluster-' ~
-         postgres_cluster_version ~ '-' ~ postgres_cluster_name
-         if postgres_existing_data_version.stat.exists
-         else postgres_data_dir }}
-  when: not postgres_cluster_config.stat.exists
+# Patroni owns the cluster's on-disk creation AND its own process supervision
+# (it starts postgres itself, bypassing postgresql-common's postgresql@ unit
+# entirely) — everything below is native-mode-only. Skipping it in patroni
+# mode is what makes this file safe to reuse, unmodified, from
+# patroni_adopt.yml: on an already-running native cluster the stat checks
+# above still discover postgres_cluster_version, but nothing here touches the
+# existing data directory or (re)starts the unit Patroni is about to take
+# over from.
+- name: Create and start the native PostgreSQL cluster
+  when: postgres_ha_manager != 'patroni'
+  block:
+    - name: Set pg_createcluster data directory
+      ansible.builtin.set_fact:
+        postgres_createcluster_data_dir: >-
+          {{ postgres_data_root ~ '/.ansible-pg-createcluster-' ~
+             postgres_cluster_version ~ '-' ~ postgres_cluster_name
+             if postgres_existing_data_version.stat.exists
+             else postgres_data_dir }}
+      when: not postgres_cluster_config.stat.exists
 
-- name: Remove stale temporary pg_createcluster data directory
-  ansible.builtin.file:
-    path: "{{ postgres_createcluster_data_dir }}"
-    state: absent
-  when:
-    - not postgres_cluster_config.stat.exists
-    - postgres_existing_data_version.stat.exists
+    - name: Remove stale temporary pg_createcluster data directory
+      ansible.builtin.file:
+        path: "{{ postgres_createcluster_data_dir }}"
+        state: absent
+      when:
+        - not postgres_cluster_config.stat.exists
+        - postgres_existing_data_version.stat.exists
 
-- name: Create the PostgreSQL cluster when config is absent
-  ansible.builtin.command:
-    argv:
-      - pg_createcluster
-      - --datadir
-      - "{{ postgres_createcluster_data_dir }}"
-      - "{{ postgres_cluster_version }}"
-      - "{{ postgres_cluster_name }}"
-  changed_when: true
-  when: not postgres_cluster_config.stat.exists
+    - name: Create the PostgreSQL cluster when config is absent
+      ansible.builtin.command:
+        argv:
+          - pg_createcluster
+          - --datadir
+          - "{{ postgres_createcluster_data_dir }}"
+          - "{{ postgres_cluster_version }}"
+          - "{{ postgres_cluster_name }}"
+      changed_when: true
+      when: not postgres_cluster_config.stat.exists
 
-- name: Point recreated cluster config at existing persistent data
-  ansible.builtin.lineinfile:
-    path: "{{ postgres_conf_dir }}/postgresql.conf"
-    regexp: "^data_directory\\s*="
-    line: "data_directory = '{{ postgres_data_dir }}'"
-  when:
-    - not postgres_cluster_config.stat.exists
-    - postgres_existing_data_version.stat.exists
+    - name: Point recreated cluster config at existing persistent data
+      ansible.builtin.lineinfile:
+        path: "{{ postgres_conf_dir }}/postgresql.conf"
+        regexp: "^data_directory\\s*="
+        line: "data_directory = '{{ postgres_data_dir }}'"
+      when:
+        - not postgres_cluster_config.stat.exists
+        - postgres_existing_data_version.stat.exists
 
-- name: Remove temporary pg_createcluster data directory
-  ansible.builtin.file:
-    path: "{{ postgres_createcluster_data_dir }}"
-    state: absent
-  when:
-    - not postgres_cluster_config.stat.exists
-    - postgres_existing_data_version.stat.exists
+    - name: Remove temporary pg_createcluster data directory
+      ansible.builtin.file:
+        path: "{{ postgres_createcluster_data_dir }}"
+        state: absent
+      when:
+        - not postgres_cluster_config.stat.exists
+        - postgres_existing_data_version.stat.exists
 
-- name: Ensure the PostgreSQL cluster config exists
-  ansible.builtin.stat:
-    path: "{{ postgres_conf_dir }}/postgresql.conf"
-  register: postgres_cluster_config_file
-  failed_when: not postgres_cluster_config_file.stat.exists
+    - name: Ensure the PostgreSQL cluster config exists
+      ansible.builtin.stat:
+        path: "{{ postgres_conf_dir }}/postgresql.conf"
+      register: postgres_cluster_config_file
+      failed_when: not postgres_cluster_config_file.stat.exists
 
-# A host reboot can start postgresql@ before DHCP hands the guest its address;
-# the packaged unit has no network ordering, so PostgreSQL binds loopback-only
-# and answers nothing off-box until the next converge notices (INC-17124).
-# Instance-generic (postgresql@.service.d) so a PostgreSQL major bump never
-# orphans the drop-in the way a version-pinned path would.
-#
-# A previous fix (#1155) deployed an After=/Wants=network-online.target
-# drop-in here to close a boot-time race where postgres started before its
-# listen address existed. Removed (INC-17124): on these ip=dhcp LXCs,
-# network-online.target is reached before DHCP actually completes, so
-# ordering against it never guaranteed the address was live. listen_addresses
-# is now '*' (roles/postgres/defaults/main.yml), which makes the race moot —
-# a wildcard bind never depends on address-assignment timing. The tasks below
-# remove any copy of the drop-in a prior converge already deployed.
-- name: Remove the (retired) postgresql@ network-online drop-in
-  ansible.builtin.file:
-    path: /etc/systemd/system/postgresql@.service.d/network-online.conf
-    state: absent
-  register: postgres_network_online_dropin_removed
+    # A host reboot can start postgresql@ before DHCP hands the guest its
+    # address; the packaged unit has no network ordering, so PostgreSQL binds
+    # loopback-only and answers nothing off-box until the next converge
+    # notices (INC-17124). Instance-generic (postgresql@.service.d) so a
+    # PostgreSQL major bump never orphans the drop-in the way a
+    # version-pinned path would.
+    #
+    # A previous fix (#1155) deployed an After=/Wants=network-online.target
+    # drop-in here to close a boot-time race where postgres started before
+    # its listen address existed. Removed (INC-17124): on these ip=dhcp LXCs,
+    # network-online.target is reached before DHCP actually completes, so
+    # ordering against it never guaranteed the address was live.
+    # listen_addresses is now '*' (roles/postgres/defaults/main.yml), which
+    # makes the race moot — a wildcard bind never depends on
+    # address-assignment timing. The tasks below remove any copy of the
+    # drop-in a prior converge already deployed.
+    - name: Remove the (retired) postgresql@ network-online drop-in
+      ansible.builtin.file:
+        path: /etc/systemd/system/postgresql@.service.d/network-online.conf
+        state: absent
+      register: postgres_network_online_dropin_removed
 
-- name: Remove the postgresql@ systemd drop-in directory if now empty
-  ansible.builtin.command:
-    argv: [rmdir, /etc/systemd/system/postgresql@.service.d]
-  register: postgres_network_online_dropin_dir
-  changed_when: postgres_network_online_dropin_dir.rc == 0
-  failed_when: false
+    - name: Remove the postgresql@ systemd drop-in directory if now empty
+      ansible.builtin.command:
+        argv: [rmdir, /etc/systemd/system/postgresql@.service.d]
+      register: postgres_network_online_dropin_dir
+      changed_when: postgres_network_online_dropin_dir.rc == 0
+      failed_when: false
 
-- name: Ensure the PostgreSQL cluster service is started and enabled
-  ansible.builtin.systemd:
-    name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
-    state: started
-    enabled: true
-    daemon_reload: "{{ postgres_network_online_dropin_removed.changed }}"
+    - name: Ensure the PostgreSQL cluster service is started and enabled
+      ansible.builtin.systemd:
+        name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+        state: started
+        enabled: true
+        daemon_reload: "{{ postgres_network_online_dropin_removed.changed }}"
