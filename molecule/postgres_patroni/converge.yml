@@ -48,6 +48,39 @@
         extensions: [vector]
 
   tasks:
-    - name: Include postgres role
-      ansible.builtin.include_role:
-        name: postgres
+    - name: Converge the postgres role, diagnosing any etcd/Patroni service
+        failure via journalctl before failing the play
+      block:
+        - name: Include postgres role
+          ansible.builtin.include_role:
+            name: postgres
+      rescue:
+        # ponytail: dumped only on failure, never on a clean converge — a
+        # unit that never started has no useful journal without this, and
+        # the systemd module's own error message only names the symptom
+        # ("timeout was exceeded"), not the cause.
+        - name: Capture etcd's own journal for diagnosis
+          ansible.builtin.command:
+            cmd: journalctl -xeu etcd --no-pager -n 200
+          register: postgres_ha_debug_etcd_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Show etcd's journal
+          ansible.builtin.debug:
+            var: postgres_ha_debug_etcd_journal.stdout_lines
+
+        - name: Capture patroni's own journal for diagnosis
+          ansible.builtin.command:
+            cmd: journalctl -xeu patroni --no-pager -n 200
+          register: postgres_ha_debug_patroni_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Show patroni's journal
+          ansible.builtin.debug:
+            var: postgres_ha_debug_patroni_journal.stdout_lines
+
+        - name: Re-raise the original converge failure
+          ansible.builtin.fail:
+            msg: "postgres role converge failed — see the journal dumps above."
