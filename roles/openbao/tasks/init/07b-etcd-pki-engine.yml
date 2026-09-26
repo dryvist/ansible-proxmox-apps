@@ -135,3 +135,60 @@
     or (item.1.stdout | from_json).data.max_ttl != item.0.max_ttl
   when:
     - openbao_bootstrap_token is defined
+
+# Patroni's own client-auth-only identity (roles/postgres's
+# patroni_client_tls.yml): server_flag: false means this role can never
+# issue a cert any etcd/TLS server would accept as ITS OWN identity, so
+# Patroni (or anything else holding one of these certs) can authenticate to
+# etcd as a client but can never impersonate a member. Same mount as the
+# server+peer role above; the role name and allowed_domain are DERIVED
+# ('-patroni' / 'patroni-' prefixes) rather than a second required field on
+# openbao_pki_etcd_engines, so every existing entry gets this for free.
+- name: Check which etcd PKI Patroni-client roles already exist
+  ansible.builtin.command:
+    cmd: "bao read -format=json {{ item.mount }}/roles/{{ item.role }}-patroni"
+  environment:
+    BAO_ADDR: "{{ openbao_cli_addr }}"
+    BAO_TOKEN: "{{ openbao_bootstrap_token }}"
+  delegate_to: "{{ openbao_cli_host }}"
+  become: "{{ openbao_cli_become }}"
+  vars:
+    ansible_become: "{{ openbao_cli_become }}"
+  loop: "{{ openbao_pki_etcd_engines }}"
+  loop_control:
+    label: "{{ item.mount }}/{{ item.role }}-patroni"
+  register: openbao_pki_etcd_patroni_role_checks
+  no_log: true
+  changed_when: false
+  failed_when: false
+  when:
+    - openbao_bootstrap_token is defined
+
+- name: Reconcile each etcd PKI Patroni-client role
+  ansible.builtin.uri:
+    url: "{{ openbao_api_addr }}/v1/{{ item.0.mount }}/roles/{{ item.0.role }}-patroni"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ openbao_bootstrap_token }}"
+    body_format: json
+    body:
+      allowed_domains: "patroni-{{ item.0.allowed_domain }}"
+      allow_glob_domains: true
+      allow_subdomains: false
+      server_flag: false
+      client_flag: true
+      max_ttl: "{{ item.0.max_ttl }}"
+    status_code:
+      - 200
+      - 204
+  loop: >-
+    {{ openbao_pki_etcd_engines
+       | zip(openbao_pki_etcd_patroni_role_checks.results | default([])) | list }}
+  loop_control:
+    label: "{{ item.0.mount }}/{{ item.0.role }}-patroni"
+  no_log: true
+  changed_when: >-
+    (item.1.rc | default(1)) != 0
+    or (item.1.stdout | from_json).data.max_ttl != item.0.max_ttl
+  when:
+    - openbao_bootstrap_token is defined

@@ -68,6 +68,7 @@
         # real subnet.
         postgres_replication_cidr: 198.51.100.0/24
         postgres_ha_etcd_root_password: fixture-etcd-root-pw
+        postgres_ha_etcd_patroni_password: fixture-etcd-patroni-pw
         postgres_ha_patroni_api_password: fixture-patroni-api-pw
         postgres_ha_superuser_password: fixture-superuser-pw
 
@@ -124,8 +125,15 @@
           - "'synchronous_mode: false' in patroni_content"
           - "'- pgbackrest' in patroni_content"
           - "'- basebackup' in patroni_content"
-          - "'cacert: /etc/etcd/tls/ca.pem' in patroni_content"
-          - "'username: patroni' in patroni_content"
+          # Patroni's etcd3 client reads its OWN client-only TLS material
+          # (never /etc/etcd/tls, which is unreadable outside the etcd
+          # user/group) and authenticates as its own scoped identity, never
+          # etcd root -- see roles/postgres's patroni_client_tls.yml.
+          - "'cacert: /etc/patroni/tls/ca.pem' in patroni_content"
+          - "'cert: /etc/patroni/tls/cert.pem' in patroni_content"
+          - "'key: /etc/patroni/tls/key.pem' in patroni_content"
+          - "'username: patroni-dcs' in patroni_content"
+          - "'username: root' not in patroni_content"
         fail_msg: "patroni.yml.j2 did not render the expected cluster-scoped config:\n{{ patroni_content }}"
 
     - name: Patroni/etcd template render assertions PASSED

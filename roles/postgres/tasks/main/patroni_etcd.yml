@@ -22,19 +22,6 @@
     create_home: false
     state: present
 
-# Patroni's own etcd3 DCS client (running as the postgres user, per
-# patroni.service.j2) needs to read this same node's etcd client cert/key
-# under postgres_ha_etcd_tls_dir (patroni.yml.j2's etcd3.cacert/cert/key) --
-# that directory is 0750 owned etcd:etcd, so without this the postgres user
-# cannot even enter it. A restart is required for an already-running
-# Patroni to pick up a newly-added supplementary group.
-- name: Add the postgres user to the etcd group so Patroni can read its TLS material
-  ansible.builtin.user:
-    name: postgres
-    groups: "{{ postgres_ha_etcd_user }}"
-    append: true
-  notify: Restart patroni
-
 # Controller-staged + SHA256SUMS-verified upstream release, same pattern as
 # roles/openbao/tasks/main/install.yml (see 03-patroni.yml for why this is
 # not the Debian apt package). ansible_become: false on the delegated tasks
@@ -156,6 +143,12 @@
 - name: Configure etcd TLS
   ansible.builtin.include_tasks: patroni_etcd_tls.yml
 
+# A client must never hold a server's private key: Patroni gets its own
+# client-only identity, in its own postgres-owned directory, never a group
+# grafted onto the etcd server's own TLS material.
+- name: Configure Patroni's own etcd client TLS
+  ansible.builtin.include_tasks: patroni_client_tls.yml
+
 - name: Deploy the etcd config
   ansible.builtin.template:
     src: etcd.yml.j2
@@ -258,6 +251,77 @@
               - user
               - add
               - "{{ postgres_ha_etcd_root_user }}:{{ postgres_ha_etcd_root_password }}"
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: true
+
+        # Patroni's own, non-root etcd identity, scoped to readwrite on only
+        # this cluster's own DCS key prefix (patroni.yml.j2 sets
+        # namespace: /service/ and scope: postgres_ha_scope, so Patroni
+        # never touches anything outside /service/{{ postgres_ha_scope }}/).
+        # Created here, before auth enable, while etcd still accepts
+        # unauthenticated admin writes -- same reason the root user above
+        # needs no -u flag either.
+        - name: Add the etcd role scoping Patroni to its own DCS prefix
+          ansible.builtin.command:
+            argv:
+              - etcdctl
+              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+              - role
+              - add
+              - "{{ postgres_ha_etcd_patroni_user }}"
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: true
+
+        - name: Grant that role readwrite on the cluster's own DCS prefix
+          ansible.builtin.command:
+            argv:
+              - etcdctl
+              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+              - role
+              - grant-permission
+              - "{{ postgres_ha_etcd_patroni_user }}"
+              - readwrite
+              - "/service/{{ postgres_ha_scope }}/"
+              - --prefix
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: true
+
+        - name: Add the etcd user Patroni authenticates as
+          ansible.builtin.command:
+            argv:
+              - etcdctl
+              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+              - user
+              - add
+              - "{{ postgres_ha_etcd_patroni_user }}:{{ postgres_ha_etcd_patroni_password }}"
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: true
+
+        - name: Grant Patroni's etcd user its scoped role
+          ansible.builtin.command:
+            argv:
+              - etcdctl
+              - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+              - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+              - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+              - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+              - user
+              - grant-role
+              - "{{ postgres_ha_etcd_patroni_user }}"
+              - "{{ postgres_ha_etcd_patroni_user }}"
           environment:
             ETCDCTL_API: "3"
           changed_when: true
