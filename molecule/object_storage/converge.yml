@@ -1,0 +1,120 @@
+---
+# Converge the object_storage role for real (installs the pinned RustFS
+# binary, starts the systemd service, creates two test buckets over its S3
+# API), then separately exercises the per-bucket IAM provisioning tasks
+# against that same running server.
+#
+# Scope decision: tasks/iam.yml's own generate-if-absent phase
+# (tasks/iam_bucket*.yml) logs into OpenBao via community.hashi_vault to
+# resolve each bucket's ro/rw credentials -- well-exercised library code, the
+# same route roles/object_storage_offsite already uses, and not what PR #2195
+# review flagged as unverified. Standing up a live OpenBao server here to
+# reach it would test that plumbing again without adding coverage where it
+# was actually missing. What review flagged as untested is
+# tasks/iam_provision*.yml's own request shape: hand-built curl --aws-sigv4
+# calls against RustFS's native admin API
+# (list-canned-policies/add-canned-policy/add-user/set-user-or-group-policy),
+# inferred from vendor source and docs and never run against a live server.
+# So: converge the role once with no OpenBao configured (object_storage_iam_ready
+# resolves false, tasks/iam_provision.yml does not run), then include that
+# same tasks/iam_provision.yml directly with object_storage_bucket_credentials
+# set to fixed test fixtures standing in for what OpenBao would have supplied
+# -- exercising exactly the unverified admin-API request shape, against the
+# real pinned RustFS server, with nothing else stood in for.
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    object_storage_default_buckets:
+      - name: molecule-bucket-a
+      - name: molecule-bucket-b
+    # Cribl's pointer-based mirror needs cribl_version (supplied live by
+    # group_vars) and outbound internet; neither exists in this scenario and
+    # mirroring is unrelated to what this scenario tests.
+    object_storage_infra_mirrors: []
+    # Production runs this estate's one shared LXC template (Debian 13
+    # "trixie", glibc 2.40), so the role's own default in
+    # defaults/main/00-core.yml stays the gnu (glibc-linked) RustFS asset --
+    # that is what every real guest needs and correctly gets. This scenario's
+    # container, however, is bound to the repo-wide shared debian12 image
+    # every Molecule scenario is required to share for registry-mirror/apt-
+    # cache efficiency (tests/test_ci_build_caches.py -- not something this
+    # one scenario can opt out of), whose older glibc cannot run that asset.
+    # Override the asset to the musl (statically-linked, glibc-independent)
+    # build for THIS CI container only, the same way molecule.yml's
+    # OBJECT_STORAGE_ROOT_USER/PASSWORD env vars stand in for what production
+    # supplies for real -- production's own converge never sets this and
+    # keeps the gnu default.
+    object_storage_binary_asset: >-
+      rustfs-linux-x86_64-musl-v{{ object_storage_rustfs_version }}.zip
+
+  tasks:
+    # Standing in for OpenBao's generate-if-absent output (see the header
+    # comment above) -- generate-if-absent here too: Molecule's idempotence
+    # check runs this whole play a second time, and regenerating fresh
+    # credentials on that second pass would make every write-if-changed task
+    # downstream (the RustFS user/policy writes) report "changed" again,
+    # failing idempotence for a reason that has nothing to do with what this
+    # scenario actually tests. Same lookup and lengths the role's own
+    # iam_bucket_role.yml uses (object_storage_iam_access_key/secret_key_length),
+    # never a fixed literal (a literal here reads as a real key to gitleaks,
+    # and IS the same shape as one).
+    - name: Check whether this run's test credentials already exist
+      ansible.builtin.stat:
+        path: /tmp/molecule-iam-test-credentials.json
+      register: object_storage_iam_test_credentials_file
+
+    - name: Generate this run's per-bucket/role test credentials
+      when: not object_storage_iam_test_credentials_file.stat.exists
+      no_log: true
+      ansible.builtin.set_fact:
+        object_storage_bucket_credentials:
+          molecule-bucket-a:
+            ro:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+            rw:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+          molecule-bucket-b:
+            ro:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+            rw:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+
+    - name: Persist this run's newly generated test credentials for the verify play to read back
+      when: not object_storage_iam_test_credentials_file.stat.exists
+      no_log: true
+      ansible.builtin.copy:
+        content: "{{ object_storage_bucket_credentials | to_nice_json }}"
+        dest: /tmp/molecule-iam-test-credentials.json
+        mode: "0600"
+
+    # Idempotence's second converge: read back exactly what the first
+    # converge generated and persisted, rather than generating again.
+    - name: Read back the already-persisted test credentials
+      when: object_storage_iam_test_credentials_file.stat.exists
+      no_log: true
+      block:
+        - name: Slurp the persisted test credentials
+          ansible.builtin.slurp:
+            src: /tmp/molecule-iam-test-credentials.json
+          register: object_storage_iam_test_credentials_raw
+
+        - name: Parse the persisted test credentials
+          ansible.builtin.set_fact:
+            object_storage_bucket_credentials: >-
+              {{ object_storage_iam_test_credentials_raw.content | b64decode | from_json }}
+
+    - name: Include object_storage role
+      ansible.builtin.include_role:
+        name: object_storage
+
+    - name: Provision per-bucket RustFS IAM against the real running server
+      ansible.builtin.include_role:
+        name: object_storage
+        tasks_from: iam_provision
