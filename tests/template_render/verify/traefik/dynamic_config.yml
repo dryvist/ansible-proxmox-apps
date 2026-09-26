@@ -199,6 +199,59 @@
       lost its scheme, the serversTransport was missing or leaked onto an
       http service, or insecureSkipVerify was not set.
 
+- name: Render traefik dynamic config with an empty kiosk network list
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/dynamic.yml.j2"
+    dest: "{{ _fixture_dir }}/test_traefik_dynamic_no_kiosk.yml"
+    mode: "0640"
+  vars:
+    traefik_wall_kiosk_networks: []
+
+- name: Read the no-kiosk-network render
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_traefik_dynamic_no_kiosk.yml"
+  register: _traefik_dynamic_no_kiosk_raw
+
+- name: Assert the wall/glance kiosk bypass router renders correctly
+  ansible.builtin.assert:
+    that:
+      # Kiosk router exists, scoped to the fixture's client network, over the
+      # same Host rule as the base wall router.
+      - "'wall-kiosk' in _traefik_dynamic_yaml.http.routers"
+      - "'ClientIP(`192.0.2.99/32`)' in _traefik_dynamic_yaml.http.routers['wall-kiosk'].rule"
+      - "'Host(`wall.pve.example.com`)' in _traefik_dynamic_yaml.http.routers['wall-kiosk'].rule"
+      # Same service as the base router.
+      - _traefik_dynamic_yaml.http.routers['wall-kiosk'].service == _traefik_dynamic_yaml.http.routers.wall.service
+      # Middlewares equal the base router's middlewares with authelia removed,
+      # same order -- auth is the only difference between the two routers.
+      - >-
+        _traefik_dynamic_yaml.http.routers['wall-kiosk'].middlewares
+        == (_traefik_dynamic_yaml.http.routers.wall.middlewares | reject('equalto', 'authelia') | list)
+      - "'authelia' not in _traefik_dynamic_yaml.http.routers['wall-kiosk'].middlewares"
+      # The base router keeps authelia -- only the kiosk router bypasses it.
+      - "'authelia' in _traefik_dynamic_yaml.http.routers.wall.middlewares"
+      # Kiosk priority is always explicit and higher than the base router's
+      # own effective priority (its rule length here, since wall sets none).
+      - _traefik_dynamic_yaml.http.routers['wall-kiosk'].priority is defined
+      - >-
+        _traefik_dynamic_yaml.http.routers['wall-kiosk'].priority
+        > (_traefik_dynamic_yaml.http.routers.wall.rule | length)
+      - >-
+        _traefik_dynamic_yaml.http.routers['wall-kiosk'].priority
+        == (_traefik_dynamic_yaml.http.routers.wall.rule | length) + 1
+      # A non-kiosk sso route (splunk) never gets a -kiosk router.
+      - "'splunk-kiosk' not in _traefik_dynamic_yaml.http.routers"
+      # With an empty kiosk network list, no *-kiosk router renders at all
+      # (second render, mirroring the two-variant pattern in
+      # verify/wall_prometheus_host.yml).
+      - "'-kiosk:' not in (_traefik_dynamic_no_kiosk_raw.content | b64decode)"
+    fail_msg: >-
+      dynamic.yml.j2 did not render the wall/glance kiosk bypass router
+      correctly: missing/wrong rule, middlewares not matching the base minus
+      authelia, priority not explicit/higher than the base router, a leaked
+      router on a non-kiosk sso route, or a kiosk router rendered with an
+      empty network list.
+
 - name: Assert a route with failover_fallback renders as a Traefik failover service
   ansible.builtin.assert:
     that:
