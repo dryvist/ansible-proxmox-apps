@@ -16,12 +16,11 @@
 #      probe-readiness, not the declared connection alone; a container that
 #      declares ssh but fails the probe gets a visible warning.
 #
-#   2. Mock-expression: recomputes the shipped add_lxc_hosts_ssh_ready
-#      derivation (verbatim) against a probe-results shape with one success
-#      and one failure, proving both branches of the derivation without a
-#      real listener — CI cannot bind port 22 without root, so the "probe
-#      succeeded" path can only be proven this way, never with a live
-#      listener.
+#   2. Mock-expression: extracts the real, committed add_lxc_hosts_ssh_ready
+#      expression from add_lxc_hosts.yml (never a hand-copied duplicate) and
+#      renders it against a mocked probe-results shape — CI cannot bind
+#      port 22 without root, so this is the only way to prove the
+#      "probe succeeded" branch.
 #
 #   3. Functional: runs the real add_lxc_hosts.yml task file against
 #      stubbed tofu_data with a default pct_remote container and an
@@ -93,31 +92,60 @@
   hosts: localhost
   gather_facts: false
   vars:
-    # One item succeeded (failed: false, as wait_for's registered result
-    # shapes it), one failed (timed out), one skipped (no 'failed' key at
-    # all — the shape an ansible-core 2.21 per-item `when: false` loop
-    # result takes, and the shape that crashed a sibling repo's loader with
-    # "object of type 'dict' has no attribute 'failed'"). This is the only
-    # way to prove the "probe succeeded" and "result was skipped" branches:
-    # CI has no privilege to bind port 22, and this repo's tests never make
-    # a live network call (mirrors verify_add_lxc_hosts_placement.yml's own
-    # mocked-expression tier).
-    _mock_probe_results:
-      - item: { key: ssh-ready-poc, value: { fqdn: ssh-ready-poc.example.internal } }
-        failed: false
-      - item: { key: ssh-down-poc, value: { fqdn: ssh-down-poc.example.internal } }
-        failed: true
-      - item: { key: ssh-skipped-poc, value: { fqdn: ssh-skipped-poc.example.internal } }
-        skipped: true
+    _add_lxc_hosts_file: "{{ playbook_dir }}/../../inventory/load_tofu/add_lxc_hosts.yml"
+    _ssh_ready_task_name: Record which ssh-declared containers actually answered the probe
+    # Ready means the probe ran and reported failed: false; skipped or keyless items are not ready.
+    # Named add_lxc_hosts_ssh_probe (the production register name) so the extracted expression
+    # below, which reads add_lxc_hosts_ssh_probe.results verbatim, resolves against this fixture.
+    add_lxc_hosts_ssh_probe:
+      results:
+        - item: { key: ssh-ready-poc, value: { fqdn: ssh-ready-poc.example.internal } }
+          failed: false
+        - item: { key: ssh-down-poc, value: { fqdn: ssh-down-poc.example.internal } }
+          failed: true
+        - item: { key: ssh-skipped-poc, value: { fqdn: ssh-skipped-poc.example.internal } }
+          skipped: true
+          failed: false
+          skip_reason: Conditional result was False
+        - item: { key: ssh-no-key-poc, value: { fqdn: ssh-no-key-poc.example.internal } }
   tasks:
-    - name: Compute add_lxc_hosts_ssh_ready from the shipped expression against the mock
+    - name: Extract the real, committed add_lxc_hosts_ssh_ready expression from add_lxc_hosts.yml
+      ansible.builtin.set_fact:
+        _selection_expr: >-
+          {{ (lookup('ansible.builtin.file', _add_lxc_hosts_file) | from_yaml
+              | selectattr('name', 'equalto', _ssh_ready_task_name) | first)
+             ['ansible.builtin.set_fact']['add_lxc_hosts_ssh_ready'] }}
+
+    - name: The extracted expression must exist and must exclude skipped and keyless items
+      ansible.builtin.assert:
+        that:
+          - "\"selectattr('skipped', 'undefined')\" in _selection_expr"
+          - "\"selectattr('failed', 'defined')\" in _selection_expr"
+        fail_msg: >-
+          Could not find the fail-safe add_lxc_hosts_ssh_ready expression in
+          add_lxc_hosts.yml under the task name {{ _ssh_ready_task_name }}
+          — this test's extraction is stale, fix the task name/lookup.
+
+    # A string held in a variable is not re-templated just by referencing it again — writing it
+    # out and rendering it as a real template file forces a second Jinja pass.
+    - name: Write the extracted expression to a temp template file
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .j2
+      register: _expr_template_file
+
+    - name: Persist the extracted expression as a renderable template
+      ansible.builtin.copy:
+        dest: "{{ _expr_template_file.path }}"
+        content: "{{ _selection_expr }}"
+        mode: '0600'
+
+    - name: Render the real, live expression against the mock probe results
       ansible.builtin.set_fact:
         add_lxc_hosts_ssh_ready: >-
-          {{ _mock_probe_results | default([])
-             | selectattr('failed', 'defined') | rejectattr('failed')
-             | map(attribute='item') | map(attribute='key') | list }}
+          {{ lookup('ansible.builtin.template', _expr_template_file.path) | from_yaml }}
 
-    - name: Assert only the succeeded item is ready, and the skipped item is excluded without crashing
+    - name: Assert only the succeeded item is ready, and skipped/keyless items are excluded without crashing
       ansible.builtin.assert:
         that:
           - add_lxc_hosts_ssh_ready == ['ssh-ready-poc']

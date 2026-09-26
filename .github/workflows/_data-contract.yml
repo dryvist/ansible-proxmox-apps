@@ -16,8 +16,16 @@ permissions:
   contents: read
 
 jobs:
-  runner-contract:
-    name: Verify Ansible Runner Token Contract
+  # Every pytest-discoverable test file in the repo (test_*.py / *_test.py)
+  # collected as one suite, so a new test file gates merges with no workflow
+  # edit. tests/e2e/ is excluded: those tests target live infrastructure over
+  # self-hosted runners and already gate merges via _e2e-tests.yml. A per-file
+  # job below that did nothing beyond running pytest on its own file (no
+  # unique dependency or playbook step) was removed once this job covered it;
+  # a job that proves something this one can't (a playbook run, an extra
+  # dependency the generic install below doesn't carry) stays.
+  pytest-suite:
+    name: Verify Full Pytest Suite
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -30,29 +38,50 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Verify runner token ownership and cleanup
-        run: python3 tests/test_run_ansible_runner.py -v
+      - name: Install pytest, PyYAML, and Ansible
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          pytest pyyaml 'ansible-core>=2.16'
 
-  fronted-url-zone:
-    name: Verify Fronted URLs Use The Ingress Zone
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      # test_ansible_cfg_options_are_real.py scans installed connection
+      # plugins for the ini options ansible.cfg sets. ansible-core itself
+      # no longer ships paramiko_ssh (dropped from core; now lives in a
+      # collection) -- without the collections below the scan finds nothing
+      # for that plugin and the test fails on every run, not just when
+      # ansible.cfg actually regresses.
+      #
+      # No per-job ANSIBLE_HOME isolation here (unlike the self-hosted
+      # contract jobs): this runs on a fresh ubuntu-latest VM per job, so
+      # there is no shared-runner install race to isolate against, and the
+      # test above reads the plain ANSIBLE_COLLECTIONS_PATH/HOME default
+      # (~/.ansible/collections) directly -- pointing ANSIBLE_HOME elsewhere
+      # would only make ansible-galaxy and the test disagree on where the
+      # collections landed.
+      - name: Cache Ansible Galaxy content
+        id: galaxy-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          python-version: '3.14'
+          path: |
+            ~/.ansible/collections
+            ~/.ansible/roles
+          key: ansible-galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
 
-      # A fronted URL built from the apex zone resolves to the bare guest or to
-      # nothing, and every layer stays quiet about it: no DNS error surfaces, and
-      # the converge-freshness callback downgrades its own POST failures to a
-      # warning. Only a static check catches this before it ships.
-      - name: Verify no fronted URL is built from the apex zone
-        run: python3 tests/test_fronted_urls_use_ingress_domain.py -v
+      - name: Install Ansible dependencies
+        # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
+        # the whole job. Same four attempts and backoff the other contract
+        # jobs use.
+        if: steps.galaxy-cache.outputs.cache-hit != 'true'
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 4
+          retry_wait_seconds: 15
+          timeout_minutes: 10
+          command: ansible-galaxy install -r requirements.yml
+        env:
+          ANSIBLE_GALAXY_SERVER_TIMEOUT: "60"
+
+      - name: Collect and run every test file in the repo
+        run: python3 -m pytest tests --ignore=tests/e2e -v
 
   # Homarr's tRPC schemas reject an omitted-but-nullable key (appId on
   # integration.update), and its create procedures always insert rather than
@@ -164,100 +193,3 @@ jobs:
       # it, so that behaviour was documented and ungated at the same time.
       - name: Verify the node seed preserves curated fields and refuses renames
         run: python3 tests/nautobot_nodes_seed.py
-
-  # Proves the per-bucket RustFS IAM feature (roles/object_storage
-  # tasks/iam*.yml) actually covers every declared bucket and that its
-  # rendered policy is bucket-scoped -- a loop that silently drops a bucket,
-  # or a policy template that hardcodes one bucket's name, both render clean
-  # YAML and would only surface live, against a real RustFS server.
-  object-storage-iam-contract:
-    name: Verify Object Storage IAM Bucket Scoping
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
-
-      - name: Install Ansible
-        run: python3 -m pip install --disable-pip-version-check 'ansible-core>=2.16'
-
-      - name: Verify every bucket gets ro/rw IAM and no policy leaks another bucket
-        run: python3 -m unittest tests.test_object_storage_iam_bucket_scoping -v
-
-  terrakube-base-policies-contract:
-    name: Verify Terrakube Base-Policies Derivation
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
-
-      - name: Install Ansible
-        run: python3 -m pip install --disable-pip-version-check 'ansible-core>=2.16'
-
-      - name: Verify the derived Terrakube policy entries match the previous hardcoded set
-        run: python3 -m unittest tests.test_terrakube_base_policies_derivation -v
-
-  # This file existed but no job ever collected it, so a role naming its
-  # secret store in an operator-facing message passed silently (found on
-  # roles/unpoller/defaults/main.yml). Its own job, not a step folded into
-  # another, so it runs (and gates) regardless of any other check's outcome.
-  secret-store-agnostic:
-    name: Verify No Role Names Its Secret Store
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
-
-      - name: Install pytest
-        run: python3 -m pip install --disable-pip-version-check pytest
-
-      - name: Verify no role message names a specific secret store
-        run: python3 -m pytest tests/test_roles_are_secret_store_agnostic.py -v
-
-  # `ansible-playbook --list-tasks` can never expand a dynamic `include_role`,
-  # so nothing short of an actual run proves the tag-gating in
-  # playbooks/site/04a-openbao.yml behaves as designed. Runs a real,
-  # lightweight fixture role through it three ways and watches which markers
-  # fired, plus a static check that the real include's tags cover every
-  # phase tag the real role declares.
-  openbao-tag-scoping:
-    name: Verify OpenBao include_role Tag Scoping
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
-
-      - name: Install pytest, PyYAML, and Ansible
-        run: >-
-          python3 -m pip install --disable-pip-version-check
-          pytest pyyaml 'ansible-core>=2.16'
-
-      - name: Verify the include's tags gate entry and inner tasks filter individually
-        run: python3 -m pytest tests/test_openbao_include_role_tag_scoping.py -v
