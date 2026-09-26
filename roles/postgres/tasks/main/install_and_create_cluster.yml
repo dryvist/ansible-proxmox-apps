@@ -5,6 +5,33 @@
 # the default cluster. Use the config directory as the existence test because
 # pg_createcluster refuses to run when /etc/postgresql/<major>/<name> exists.
 # =============================================================================
+# In Patroni mode Patroni's own bootstrap.dcs block runs initdb the first time
+# it starts, against what must be an EMPTY data directory — so postgresql-
+# common must not auto-create a "main" cluster the moment the package below
+# installs, or patroni_bootstrap.yml's own guard against taking over
+# unadopted existing data refuses to start Patroni on every fresh node. This
+# has to land before the apt install: postgresql-common's postinst reads
+# createcluster.conf while it configures, not afterward.
+- name: Ensure the postgresql-common config directory exists (Patroni mode only)
+  ansible.builtin.file:
+    path: /etc/postgresql-common
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: postgres_ha_manager == 'patroni'
+
+- name: Disable postgresql-common's automatic default cluster (Patroni mode only)
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql-common/createcluster.conf
+    regexp: "^create_main_cluster"
+    line: "create_main_cluster = false"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: postgres_ha_manager == 'patroni'
+
 - name: Install PostgreSQL from PGDG
   ansible.builtin.apt:
     name: "{{ postgres_package }}"
