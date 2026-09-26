@@ -1,0 +1,79 @@
+---
+# Converge the object_storage role for real (installs the pinned RustFS
+# binary, starts the systemd service, creates two test buckets over its S3
+# API), then separately exercises the per-bucket IAM provisioning tasks
+# against that same running server.
+#
+# Scope decision: tasks/iam.yml's own generate-if-absent phase
+# (tasks/iam_bucket*.yml) logs into OpenBao via community.hashi_vault to
+# resolve each bucket's ro/rw credentials -- well-exercised library code, the
+# same route roles/object_storage_offsite already uses, and not what PR #2195
+# review flagged as unverified. Standing up a live OpenBao server here to
+# reach it would test that plumbing again without adding coverage where it
+# was actually missing. What review flagged as untested is
+# tasks/iam_provision*.yml's own request shape: hand-built curl --aws-sigv4
+# calls against RustFS's native admin API
+# (list-canned-policies/add-canned-policy/add-user/set-user-or-group-policy),
+# inferred from vendor source and docs and never run against a live server.
+# So: converge the role once with no OpenBao configured (object_storage_iam_ready
+# resolves false, tasks/iam_provision.yml does not run), then include that
+# same tasks/iam_provision.yml directly with object_storage_bucket_credentials
+# set to fixed test fixtures standing in for what OpenBao would have supplied
+# -- exercising exactly the unverified admin-API request shape, against the
+# real pinned RustFS server, with nothing else stood in for.
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    object_storage_default_buckets:
+      - name: molecule-bucket-a
+      - name: molecule-bucket-b
+    # Cribl's pointer-based mirror needs cribl_version (supplied live by
+    # group_vars) and outbound internet; neither exists in this scenario and
+    # mirroring is unrelated to what this scenario tests.
+    object_storage_infra_mirrors: []
+
+  tasks:
+    # Standing in for OpenBao's generate-if-absent output (see the header
+    # comment above) -- generated fresh each run with the same lookup and
+    # lengths the role's own iam_bucket_role.yml uses
+    # (object_storage_iam_access_key/secret_key_length), never a fixed
+    # literal (a literal here reads as a real key to gitleaks, and IS the
+    # same shape as one). Written to a file below so verify.yml -- a
+    # separate play, no shared facts -- can read the exact values back.
+    - name: Generate this run's per-bucket/role test credentials
+      ansible.builtin.set_fact:
+        object_storage_bucket_credentials:
+          molecule-bucket-a:
+            ro:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+            rw:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+          molecule-bucket-b:
+            ro:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+            rw:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+      no_log: true
+
+    - name: Persist the generated test credentials for the verify play to read back
+      ansible.builtin.copy:
+        content: "{{ object_storage_bucket_credentials | to_nice_json }}"
+        dest: /tmp/molecule-iam-test-credentials.json
+        mode: "0600"
+      no_log: true
+
+    - name: Include object_storage role
+      ansible.builtin.include_role:
+        name: object_storage
+
+    - name: Provision per-bucket RustFS IAM against the real running server
+      ansible.builtin.include_role:
+        name: object_storage
+        tasks_from: iam_provision

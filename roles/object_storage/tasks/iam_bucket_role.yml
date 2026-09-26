@@ -58,12 +58,29 @@
             else {}) }}
   no_log: true
 
-- name: "Merge generated fields over the stored secret"
+# AWS_ENDPOINT_URL / AWS_REGION are DERIVED constants, not generated once and
+# frozen like the key pair above -- always recomputed so a stored secret is
+# reconciled to the current endpoint/region rather than freezing whatever was
+# true the first time this bucket/role was provisioned.
+- name: "Compute this credential's endpoint and region fields"
   ansible.builtin.set_fact:
-    object_storage_iam_merged: "{{ object_storage_iam_current_data | combine(object_storage_iam_generated) }}"
+    object_storage_iam_endpoint_region: >-
+      {{ {object_storage_iam_endpoint_field: object_storage_iam_public_endpoint,
+          object_storage_iam_region_field: object_storage_region} }}
+
+- name: "Merge generated + derived fields over the stored secret"
+  ansible.builtin.set_fact:
+    object_storage_iam_merged: >-
+      {{ object_storage_iam_current_data
+         | combine(object_storage_iam_generated)
+         | combine(object_storage_iam_endpoint_region) }}
   no_log: true
 
-- name: "Write the generated fields to OpenBao (merge-preserving, write-if-changed)"
+- name: "Write the stored secret only when it actually changed"
+  ansible.builtin.set_fact:
+    object_storage_iam_needs_write: "{{ object_storage_iam_merged != object_storage_iam_current_data }}"
+
+- name: "Write the generated/derived fields to OpenBao (merge-preserving, write-if-changed)"
   community.hashi_vault.vault_write:
     url: "{{ object_storage_iam_bao_addr }}"
     auth_method: token
@@ -76,7 +93,7 @@
   become: false
   vars:
     ansible_become: false
-  when: object_storage_iam_generated | length > 0
+  when: object_storage_iam_needs_write
   changed_when: true
   no_log: true
 
