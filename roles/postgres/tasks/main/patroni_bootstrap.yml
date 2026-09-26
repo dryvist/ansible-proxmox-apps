@@ -52,6 +52,12 @@
     group: postgres
     mode: "0750"
 
+# A patroni.yml content change only needs the running agent to re-read it --
+# patroni.service.j2's ExecReload sends it a SIGHUP, and Patroni's own FAQ
+# calls that the supported way to apply most local settings. Only a handful
+# of PostgreSQL GUCs can't take effect this way; Patroni flags those
+# `pending_restart: true` itself rather than applying them, and this role
+# leaves that judgment call to an operator (see "Reload patroni" below).
 - name: Deploy the Patroni configuration
   ansible.builtin.template:
     src: patroni.yml.j2
@@ -60,8 +66,16 @@
     group: postgres
     mode: "0600"
   no_log: true
-  notify: Restart patroni
+  notify: Reload patroni
 
+# notify Reload systemd daemon too, same root cause as patroni_etcd.yml's
+# identical comment: a flush that restarts this unit without first refreshing
+# systemd's unit cache risks reusing whatever ExecStart systemd last loaded
+# for "patroni.service", not this task's freshly written one -- harmless on a
+# genuinely first-ever unit (nothing stale to reuse), load-bearing the moment
+# a live reconverge changes this file's contents (round 16: "Restart patroni"
+# now only fires for a systemd unit template change, exactly the case this
+# guards).
 - name: Deploy the Patroni systemd unit
   ansible.builtin.template:
     src: patroni.service.j2
@@ -70,6 +84,9 @@
     group: root
     mode: "0644"
   register: postgres_ha_patroni_unit_file
+  notify:
+    - Reload systemd daemon
+    - Restart patroni
 
 # Same reasoning as patroni_etcd.yml's own flush immediately before its
 # "started and enabled" task: apply a pending config-triggered restart NOW,

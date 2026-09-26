@@ -149,6 +149,21 @@
 - name: Configure Patroni's own etcd client TLS
   ansible.builtin.include_tasks: patroni_client_tls.yml
 
+# Read-only (no `state:` -> the systemd module only reports facts, never
+# changes anything): captures whether etcd was already running BEFORE this
+# converge's own config/unit deploy below. handlers/main.yml's "Restart etcd"
+# reads this same fact to decide whether a notified restart must be a
+# throttled rolling one (already-established member) or may run freely
+# (first bring-up, where etcd needs every member reachable to reach quorum in
+# the first place).
+- name: Record whether etcd was already running before this converge
+  ansible.builtin.systemd:
+    name: etcd
+  register: postgres_ha_etcd_pre_state
+  check_mode: true
+  changed_when: false
+  failed_when: false
+
 - name: Deploy the etcd config
   ansible.builtin.template:
     src: etcd.yml.j2
@@ -158,6 +173,20 @@
     mode: "0640"
   notify: Restart etcd
 
+# notify Reload systemd daemon (not just Restart etcd): molecule/postgres_
+# patroni/prepare.yml installs the etcd-server apt package first (for its
+# postinst-created system user), which registers systemd's OWN default
+# /lib/systemd/system/etcd.service -- no --config-file, capnslog logging,
+# localhost-only. That unit is already loaded in systemd's cache by the time
+# this task overwrites /etc/systemd/system/etcd.service (which wins on path
+# precedence, but only once systemd re-reads unit files). Flushing "Restart
+# etcd" without an intervening daemon-reload restarts systemd's STALE, cached
+# vendor unit instead of ours -- confirmed via etcd's own journal on 6956b0bf's
+# CI failure: it came up as a single-node, plaintext, localhost:2379 cluster
+# recognizing only ETCD_NAME/ETCD_DATA_DIR (exactly the Debian package's
+# /etc/default/etcd env-file shape), and every member's later TLS health
+# check refused the connection. "Reload systemd daemon" is declared earlier
+# in handlers/main.yml than "Restart etcd", so one flush runs it first.
 - name: Deploy the etcd systemd unit
   ansible.builtin.template:
     src: etcd.service.j2
@@ -166,6 +195,9 @@
     group: root
     mode: "0644"
   register: postgres_ha_etcd_unit
+  notify:
+    - Reload systemd daemon
+    - Restart etcd
 
 # Apply a pending config/unit-triggered restart NOW, before the "started"
 # task below and long before Patroni starts depending on etcd staying up --

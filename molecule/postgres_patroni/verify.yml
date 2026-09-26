@@ -100,6 +100,84 @@
           - postgres_ha_test_ext_before.query_result | length == 1
         fail_msg: "vector extension not found on patroni_test via the leader ({{ postgres_ha_test_leader }})"
 
+    # Proves round 16's reload-vs-restart split: a content-only patroni.yml
+    # change must reach the running agent via SIGHUP (patroni.service.j2's
+    # ExecReload), never a process restart -- a restart would show up here as
+    # a changed postmaster_start_time, exactly what a live cluster's "Reload
+    # patroni" handler must never cause.
+    - name: Query the leader's own Patroni status before the reload
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/patroni"
+        return_content: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      register: postgres_ha_test_status_before_reload
+      changed_when: false
+
+    - name: Flip a reloadable Patroni setting on the leader's config file
+      become: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      ansible.builtin.lineinfile:
+        path: /etc/patroni/patroni.yml
+        backrefs: true
+        regexp: "^(\\s*nofailover:) false$"
+        line: '\1 true'
+      register: postgres_ha_test_config_flip
+
+    - name: Assert the config file actually changed
+      ansible.builtin.assert:
+        that:
+          - postgres_ha_test_config_flip.changed
+        fail_msg: >-
+          The nofailover: false line was not found/flipped on
+          {{ postgres_ha_test_leader }} -- this check is not proving anything.
+
+    - name: Reload Patroni on the leader (SIGHUP, not a restart)
+      become: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      ansible.builtin.systemd:
+        name: patroni
+        state: reloaded
+
+    - name: Query the leader's own Patroni status after the reload
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/patroni"
+        return_content: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      register: postgres_ha_test_status_after_reload
+      changed_when: false
+
+    - name: Assert the reload did not restart PostgreSQL
+      vars:
+        before_start: "{{ (postgres_ha_test_status_before_reload.json.postmaster_start_time) }}"
+        after_start: "{{ (postgres_ha_test_status_after_reload.json.postmaster_start_time) }}"
+      ansible.builtin.assert:
+        that:
+          - before_start == after_start
+        fail_msg: >-
+          postmaster_start_time changed ({{ before_start }} ->
+          {{ after_start }}) on {{ postgres_ha_test_leader }} after a
+          content-only patroni.yml reload -- Patroni (or this role's handler)
+          restarted PostgreSQL instead of just reloading Patroni.
+        success_msg: >-
+          postmaster_start_time unchanged ({{ before_start }}) across the
+          reload -- confirmed no restart.
+
+    - name: Revert the reloadable setting flipped above
+      become: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      ansible.builtin.lineinfile:
+        path: /etc/patroni/patroni.yml
+        backrefs: true
+        regexp: "^(\\s*nofailover:) true$"
+        line: '\1 false'
+
+    - name: Reload Patroni on the leader again (restore nofailover to false)
+      become: true
+      delegate_to: "{{ postgres_ha_test_leader }}"
+      ansible.builtin.systemd:
+        name: patroni
+        state: reloaded
+
     - name: Stop Patroni on the current leader (simulated failure)
       become: true
       delegate_to: "{{ postgres_ha_test_leader }}"

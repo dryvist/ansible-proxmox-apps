@@ -20,18 +20,93 @@
     daemon_reload: true
 
 # --- Patroni mode -------------------------------------------------------------
-# A restart here affects only the ONE host this converge is running against —
-# this role has no play-level serial control of its own. Converging every
-# member of a live Patroni cluster in the same run restarts etcd/Patroni on
-# all of them without staggering; invoke this role with `serial: 1` (or
-# `--limit` one host at a time) against a live patroni-mode cluster, the same
-# caution the L1 upgrade lane already documents for the Hindsight worker pool.
+# Converging every member of a live Patroni cluster in the same run notifies
+# this handler on all three hosts in the same Ansible batch. Unthrottled, that
+# restarts etcd on all three at once (losing quorum) or stops PostgreSQL on
+# all three at once (Patroni) -- a full outage on a routine converge. throttle
+# serializes the handler to one host at a time; the paired wait handler below
+# (same `listen:` topic, so it always runs immediately after on that same
+# host, before the next host's turn) blocks until that member is healthy
+# again, making this a real rolling restart.
+#
+# throttle is 0 (unlimited/parallel) on a fresh bootstrap instead: etcd needs
+# a quorum of members reachable to elect a leader in the first place, so
+# throttling member 1's restart-and-wait would block members 2/3 from ever
+# starting their own etcd, and member 1 would then wait forever for a quorum
+# that never forms. postgres_ha_etcd_pre_state/postgres_ha_patroni_unit_status
+# (captured before this converge's own config/unit deploy, in patroni_etcd.yml
+# and patroni_bootstrap.yml) distinguish "this member already existed" (roll
+# it) from "this is the first bring-up" (let it start freely, exactly the
+# fresh-bootstrap shape patroni_etcd.yml/patroni_bootstrap.yml's own
+# flush_handlers already establish).
 - name: Restart etcd
+  listen: Restart etcd
   ansible.builtin.systemd:
     name: etcd
     state: restarted
+  throttle: >-
+    {{ 1 if (postgres_ha_etcd_pre_state.status.ActiveState | default('inactive')) == 'active' else 0 }}
 
+- name: Wait for etcd to answer after a restart
+  listen: Restart etcd
+  ansible.builtin.command:
+    argv:
+      - etcdctl
+      - --endpoints={{ postgres_ha_etcd_self_endpoint }}
+      - --cacert={{ postgres_ha_etcd_tls_dir }}/ca.pem
+      - --cert={{ postgres_ha_etcd_tls_dir }}/cert.pem
+      - --key={{ postgres_ha_etcd_tls_dir }}/key.pem
+      - endpoint
+      - health
+  environment:
+    ETCDCTL_API: "3"
+  register: postgres_ha_etcd_restart_health
+  changed_when: false
+  retries: 10
+  delay: 6
+  until: postgres_ha_etcd_restart_health.rc == 0
+  when: (postgres_ha_etcd_pre_state.status.ActiveState | default('inactive')) == 'active'
+  throttle: >-
+    {{ 1 if (postgres_ha_etcd_pre_state.status.ActiveState | default('inactive')) == 'active' else 0 }}
+
+# A content-only patroni.yml change (most local settings -- see the FAQ:
+# "update the configuration file... and signal the agent with SIGHUP") never
+# needs this: it reloads instead (see "Reload patroni" below). This handler
+# is reserved for a systemd UNIT template change, which does need a real
+# process restart to pick up e.g. a changed ExecStart -- rare, but when it
+# happens it is exactly as disruptive to a live cluster as etcd's restart
+# above, so it gets the identical throttle + paired wait treatment.
 - name: Restart patroni
+  listen: Restart patroni
   ansible.builtin.systemd:
     name: patroni
     state: restarted
+  throttle: >-
+    {{ 1 if (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active' else 0 }}
+
+- name: Wait for patroni to answer after a restart
+  listen: Restart patroni
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/health"
+  register: postgres_ha_patroni_restart_health
+  until: (postgres_ha_patroni_restart_health.status | default(0)) == 200
+  retries: 60
+  delay: 10
+  changed_when: false
+  failed_when: false
+  when: (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active'
+  throttle: >-
+    {{ 1 if (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active' else 0 }}
+
+# Local Patroni settings (tags, most of `postgresql:`/`restapi:`) apply on
+# SIGHUP without touching PostgreSQL at all -- POST /reload's own docs call
+# this "equivalent to sending a SIGHUP". A handful of PostgreSQL GUCs
+# (shared_buffers and friends) cannot take effect on reload regardless; for
+# those Patroni marks the member `pending_restart: true` via its own REST
+# API/patronictl rather than applying them, and this role does not act on
+# that flag -- an operator decides when a restart-requiring GUC change is
+# safe to roll out, the same judgment call promoting a replica already is.
+- name: Reload patroni
+  ansible.builtin.systemd:
+    name: patroni
+    state: reloaded
