@@ -27,17 +27,21 @@
       - "(_cribl_stream_meta_pipeline | from_yaml).functions | length == 2"
     fail_msg: "force_splunk_meta conf.yml must parse as YAML with eval + mask functions"
 
-- name: Assert prometheus_to_netmon stamps index=netmon_metrics and sourcetype=prometheus:metrics
+- name: Assert prometheus_to_netmon drops jobs outside the Splunk allow-list, then stamps index/sourcetype
   ansible.builtin.assert:
     that:
-      - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 1"
+      - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 2"
+      - "(_cribl_stream_prom_pipeline | from_yaml).functions[0].id == 'drop'"
+      - "'^(blackbox_.*|smokeping|traefik)$' in (_cribl_stream_prom_pipeline | from_yaml).functions[0].filter"
       - "'netmon_metrics' in _cribl_stream_prom_pipeline"
       - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
       - "'Number.isFinite' in _cribl_stream_prom_pipeline"
     fail_msg: >-
-      prometheus_to_netmon pipeline must have exactly one eval function
-      that coerces non-finite metric values and stamps index=netmon_metrics
-      and sourcetype=prometheus:metrics
+      prometheus_to_netmon pipeline must lead with a drop function gating on
+      cribl_stream_prometheus_splunk_keep_jobs (the Splunk license-volume
+      allow-list — the victoriametrics_rw leg on the same input has no such
+      filter), then an eval that coerces non-finite metric values and stamps
+      index=netmon_metrics and sourcetype=prometheus:metrics
 
 - name: Assert prometheus_to_unifi_metrics stamps index=unifi_metrics and sourcetype=prometheus:metrics
   ansible.builtin.assert:

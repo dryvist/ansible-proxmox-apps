@@ -1,0 +1,78 @@
+---
+# wall_prometheus_host/port (roles/wall/defaults/main.yml) now derive the
+# VictoriaMetrics-carrying container instead of Prometheus. This play loads
+# the REAL role defaults with vars_files and renders them against a fixture
+# tofu_data, so the expression under test is the one that ships.
+#
+# tofu_data is set as a FACT (the defaults read hostvars['localhost'].tofu_data
+# the same way grafana_stack_prometheus_host does), so this play belongs in
+# the trailing fact-publishing block at the end of verify_templates.yml; see
+# the note there.
+- name: Verify wall_prometheus_host/port derive the grafana-tagged (VictoriaMetrics) container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          victoriametrics: 8428
+      containers:
+        prometheus-01:
+          ip: prom.test.example
+          tags: [prometheus]
+        grafana:
+          ip: vm.test.example
+          tags: [grafana]
+
+  vars_files:
+    - "../../../roles/wall/defaults/main.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+
+    - name: Resolve the rendered host/port
+      ansible.builtin.set_fact:
+        _host: "{{ wall_prometheus_host }}"
+        _port: "{{ wall_prometheus_port }}"
+
+    - name: Assert wall_prometheus_host/port target the grafana-tagged (VictoriaMetrics) container
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _host | trim == 'vm.test.example'
+          - _port | trim == '8428'
+        fail_msg: >-
+          wall_prometheus_host must derive from the container carrying the
+          `grafana` tag (VictoriaMetrics is co-located with Grafana), not the
+          `prometheus`-tagged one, and wall_prometheus_port must read
+          tofu_data.constants.service_ports.victoriametrics. Rendered
+          host={{ _host }} port={{ _port }}.
+
+    - name: No grafana-tagged container renders an empty host
+      ansible.builtin.set_fact:
+        tofu_data:
+          domain: test.example
+          constants: {service_ports: {}}
+          containers:
+            prometheus-01: {ip: prom.test.example, tags: [prometheus]}
+
+    - name: Resolve the host with no grafana-tagged container
+      ansible.builtin.set_fact:
+        _no_grafana_host: "{{ wall_prometheus_host }}"
+
+    - name: Empty host with no grafana-tagged container (the assert task then fails the converge)
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_grafana_host | trim | length == 0
+        fail_msg: >-
+          wall_prometheus_host must render empty when no container carries
+          the `grafana` tag, so roles/wall/tasks/main.yml's own assert can
+          fail the converge with a clear message instead of proxying to a
+          typo'd host.
