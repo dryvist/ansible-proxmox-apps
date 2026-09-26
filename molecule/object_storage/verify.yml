@@ -14,20 +14,32 @@
   vars:
     object_storage_endpoint: "http://127.0.0.1:9000"
     object_storage_region: us-east-1
-    # Same fixtures converge.yml provisioned into RustFS -- kept as this
-    # play's own copy since a verify play does not inherit converge.yml vars.
     bucket_a: molecule-bucket-a
     bucket_b: molecule-bucket-b
+    # Read back below (a verify play does not inherit converge.yml facts) --
+    # the exact credentials converge.yml generated and provisioned into
+    # RustFS, never a second, independently-typed copy.
     bucket_a_rw_env:
-      AWS_ACCESS_KEY_ID: EZG2RTK39H4KF1DNE2WC
-      AWS_SECRET_ACCESS_KEY: D3Kj09VvQtTXYFKoHu8pWSspmpx4mJ2BzboHwVD3
+      AWS_ACCESS_KEY_ID: "{{ object_storage_bucket_credentials[bucket_a]['rw']['access_key'] }}"
+      AWS_SECRET_ACCESS_KEY: "{{ object_storage_bucket_credentials[bucket_a]['rw']['secret_key'] }}"
       AWS_DEFAULT_REGION: "{{ object_storage_region }}"
     bucket_a_ro_env:
-      AWS_ACCESS_KEY_ID: X3V35AJE6FYJ9W2YSC3T
-      AWS_SECRET_ACCESS_KEY: pQoEpMHU5S57rLnviOquzlAWmsIrAgMHxVEbvy9V
+      AWS_ACCESS_KEY_ID: "{{ object_storage_bucket_credentials[bucket_a]['ro']['access_key'] }}"
+      AWS_SECRET_ACCESS_KEY: "{{ object_storage_bucket_credentials[bucket_a]['ro']['secret_key'] }}"
       AWS_DEFAULT_REGION: "{{ object_storage_region }}"
 
   tasks:
+    - name: Read back the test credentials converge.yml generated
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iam-test-credentials.json
+      register: _iam_test_credentials_raw
+      no_log: true
+
+    - name: Parse the test credentials
+      ansible.builtin.set_fact:
+        object_storage_bucket_credentials: "{{ _iam_test_credentials_raw.content | b64decode | from_json }}"
+      no_log: true
+
     - name: Create a test object payload
       ansible.builtin.copy:
         content: "molecule rustfs iam scoping check\n"

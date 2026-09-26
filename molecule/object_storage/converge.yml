@@ -35,26 +35,40 @@
     # mirroring is unrelated to what this scenario tests.
     object_storage_infra_mirrors: []
 
-    # Fixed test-only fixtures standing in for OpenBao's generate-if-absent
-    # output (see the header comment above) -- 20/40 chars, matching the real
-    # generated lengths (object_storage_iam_access_key/secret_key_length).
-    object_storage_bucket_credentials:
-      molecule-bucket-a:
-        ro:
-          access_key: X3V35AJE6FYJ9W2YSC3T
-          secret_key: pQoEpMHU5S57rLnviOquzlAWmsIrAgMHxVEbvy9V
-        rw:
-          access_key: EZG2RTK39H4KF1DNE2WC
-          secret_key: D3Kj09VvQtTXYFKoHu8pWSspmpx4mJ2BzboHwVD3
-      molecule-bucket-b:
-        ro:
-          access_key: 3V3DPXW636EO8PVW693F
-          secret_key: W4f82HybZW6xlXEnBhCfnE8a7tZz5TvJzeXAULi6
-        rw:
-          access_key: JMTYKK8THWAXHMRGS4X7
-          secret_key: WrwZ7slnLDxRjBa1U8eM5dqlzCxAhUGwXk4uREgg
-
   tasks:
+    # Standing in for OpenBao's generate-if-absent output (see the header
+    # comment above) -- generated fresh each run with the same lookup and
+    # lengths the role's own iam_bucket_role.yml uses
+    # (object_storage_iam_access_key/secret_key_length), never a fixed
+    # literal (a literal here reads as a real key to gitleaks, and IS the
+    # same shape as one). Written to a file below so verify.yml -- a
+    # separate play, no shared facts -- can read the exact values back.
+    - name: Generate this run's per-bucket/role test credentials
+      ansible.builtin.set_fact:
+        object_storage_bucket_credentials:
+          molecule-bucket-a:
+            ro:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+            rw:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+          molecule-bucket-b:
+            ro:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+            rw:
+              access_key: "{{ lookup('community.general.random_string', length=20, special=false, lower=false) }}"
+              secret_key: "{{ lookup('community.general.random_string', length=40, special=false) }}"
+      no_log: true
+
+    - name: Persist the generated test credentials for the verify play to read back
+      ansible.builtin.copy:
+        content: "{{ object_storage_bucket_credentials | to_nice_json }}"
+        dest: /tmp/molecule-iam-test-credentials.json
+        mode: "0600"
+      no_log: true
+
     - name: Include object_storage role
       ansible.builtin.include_role:
         name: object_storage

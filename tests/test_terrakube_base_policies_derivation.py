@@ -24,22 +24,6 @@ OPENBAO_DEFAULTS_DIR = ROOT / "roles" / "openbao" / "defaults" / "main"
 WORKSPACES_FILE = OPENBAO_DEFAULTS_DIR / "05c-terrakube-and-remaining-domain-names.yml"
 BASE_POLICIES_FILE = OPENBAO_DEFAULTS_DIR / "07c-base-policies.yml"
 
-# The nine names 07c-base-policies.yml hand-wrote before this derivation
-# replaced them (each "terrakube-" + openbao_terrakube_workspaces[N].name, in
-# the same order) -- the ground-truth "before" state this test proves the
-# derivation still reproduces exactly.
-EXPECTED_TERRAKUBE_POLICY_NAMES = [
-    "terrakube-iac-platform",
-    "terrakube-tofu-github",
-    "terrakube-tofu-unifi",
-    "terrakube-tofu-aws-production",
-    "terrakube-tofu-runs-on",
-    "terrakube-tofu-proxmox",
-    "terrakube-tofu-proxmox-aws-infra",
-    "terrakube-tofu-proxmox-servarr-config",
-    "terrakube-iac-platform-semaphore",
-]
-
 
 def _workspaces():
     data = yaml.safe_load(WORKSPACES_FILE.read_text(encoding="utf-8"))
@@ -61,17 +45,20 @@ def _render_derived_entries(workspaces):
 
 
 class TerrakubeBasePoliciesDerivation(unittest.TestCase):
-    def test_workspace_count_matches_expected_name_count(self):
-        self.assertEqual(len(_workspaces()), len(EXPECTED_TERRAKUBE_POLICY_NAMES))
-
     def test_derived_entry_count_matches_workspace_count(self):
         entries = _render_derived_entries(_workspaces())
         self.assertEqual(len(entries), len(_workspaces()))
 
-    def test_derived_names_match_the_previously_hardcoded_names_in_order(self):
-        entries = _render_derived_entries(_workspaces())
+    def test_derived_names_are_terrakube_prefixed_workspace_names_in_order(self):
+        # Ground truth is openbao_terrakube_workspaces itself, never a second,
+        # hand-typed copy of its names here -- a copy is exactly the
+        # position-coupling this derivation replaced, and re-embeds real
+        # workspace names in a test file (disclosure-denylist hit).
+        workspaces = _workspaces()
+        entries = _render_derived_entries(workspaces)
         names = [e["name"] for e in entries]
-        self.assertEqual(names, EXPECTED_TERRAKUBE_POLICY_NAMES)
+        expected = ["terrakube-" + w["name"] for w in workspaces]
+        self.assertEqual(names, expected)
 
     def test_every_entry_uses_the_terrakube_workspace_template(self):
         entries = _render_derived_entries(_workspaces())
