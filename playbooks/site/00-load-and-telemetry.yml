@@ -97,10 +97,11 @@
             desired_state_published: "{{ tofu_desired_state_published | default(omit) }}"
             desired_state_live: "{{ tofu_desired_state_live | default(omit) }}"
 
-# Machine-identity AppRole pairs: read the env document once, with the
-# converge identity's token, into a localhost fact that roles and delegated
-# tasks take from hostvars['localhost'] (see openbao_platform_env). Nothing
-# falls back to the controller's environment for these pairs.
+# Machine-identity AppRole pairs and GitHub App installation settings: read
+# the env document once, with the converge identity's token, into a localhost
+# fact that roles and delegated tasks take from hostvars['localhost'] (see
+# openbao_platform_env). Nothing falls back to the controller's environment
+# for these values.
 - name: Pre-fetch machine-identity AppRole pairs from the env document
   hosts: localhost
   gather_facts: false
@@ -139,12 +140,15 @@
       changed_when: false
       no_log: true
 
-    - name: Keep only the AppRole pairs
+    - name: Keep only the AppRole pairs and GitHub App installation settings
       ansible.builtin.set_fact:
         openbao_platform_env_doc: >-
           {{ _platform_env_read.json.data.data | dict2items
-             | selectattr('key', 'match', '^OPENBAO_APPROLE_[A-Z0-9_]+_(ROLE|SECRET)_ID$')
+             | selectattr('key', 'match', _kept_keys)
              | items2dict }}
+      vars:
+        _kept_keys: >-
+          ^(OPENBAO_APPROLE_[A-Z0-9_]+_(ROLE|SECRET)_ID|OPENBAO_GITHUB_[A-Z0-9_]*INSTALLATION_ID|OPENBAO_GITHUB_APP_INSTALL_ALLOWLIST)$
       no_log: true
 
     - name: Require every pair a role consumes
