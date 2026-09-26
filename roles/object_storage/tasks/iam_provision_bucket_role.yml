@@ -1,0 +1,180 @@
+---
+# One (bucket, role) pair -- object_storage_iam_bucket / object_storage_iam_role.
+# Creates (or reconciles) the RustFS IAM user + bucket-scoped policy from the
+# credentials iam.yml resolved into object_storage_bucket_credentials.
+#
+# RustFS 1.0.0-beta.x ships its own native Admin API at /rustfs/admin/v3/*
+# (src/admin/handlers/{user,policies}.rs, crates/madmin/src/user.rs -- verified
+# via Context7 against rustfs/rustfs), routed through the SAME S3Router the
+# data-plane uses, so admin requests are AWS SigV4-signed exactly like an S3
+# call. Two vendor CLIs were considered and rejected:
+#   - `mc` (MinIO Client): minio/mc is archived upstream (no more releases),
+#     and its madmin wire format is not confirmed compatible with RustFS's
+#     native admin routes.
+#   - `rc` (rustfs-cli): its documented command surface (docs.rustfs.com
+#     operations/rc, operations/cluster-lifecycle-operations.md) covers alias/
+#     ping/pool/rebalance/decommission/heal only -- no `user`/`policy` verbs
+#     are documented at this pinned version, and rustfs/rustfs#1571 (opened
+#     2026-01, since closed) tracked exactly this CLI gap.
+# So this calls the documented HTTP routes directly with curl's own built-in
+# `--aws-sigv4` (curl >= 7.75, native to the `curl` package this role already
+# installs in tasks/main.yml Phase 1) -- no new binary, no custom script.
+#
+# NOT exercised against a live RustFS server in this PR (none was available)
+# -- verify against a real 1.0.0-beta.8 instance (ideally --check plus one
+# real bucket) before this is trusted for anything beyond the first bucket.
+
+- name: Look up this bucket/role's resolved access key and secret
+  ansible.builtin.set_fact:
+    object_storage_iam_access_key: >-
+      {{ object_storage_bucket_credentials[object_storage_iam_bucket][object_storage_iam_role]['access_key'] }}
+    object_storage_iam_secret_key: >-
+      {{ object_storage_bucket_credentials[object_storage_iam_bucket][object_storage_iam_role]['secret_key'] }}
+  no_log: true
+
+- name: Render the bucket-scoped policy for this role
+  ansible.builtin.set_fact:
+    object_storage_iam_policy_name: "{{ object_storage_iam_bucket }}-{{ object_storage_iam_role }}"
+    object_storage_iam_policy_json: "{{ lookup('template', 'rustfs-iam-policy.json.j2') }}"
+
+- name: Read the current canned policies for this bucket
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -sS
+      - --aws-sigv4
+      - "aws:amz:{{ object_storage_region }}:s3"
+      - -u
+      - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -w
+      - "\n%{http_code}"
+      - "{{ object_storage_endpoint }}/rustfs/admin/v3/list-canned-policies?bucket={{ object_storage_iam_bucket }}"
+  register: object_storage_iam_list
+  changed_when: false
+  no_log: true
+
+- name: Split the response body from its trailing HTTP status code
+  ansible.builtin.set_fact:
+    object_storage_iam_list_status: "{{ object_storage_iam_list.stdout_lines[-1] | default('') }}"
+    object_storage_iam_list_body: "{{ object_storage_iam_list.stdout_lines[:-1] | join('\n') }}"
+
+- name: Fail if the canned-policy listing did not succeed
+  ansible.builtin.assert:
+    that:
+      - object_storage_iam_list_status == '200'
+    fail_msg: >-
+      GET /rustfs/admin/v3/list-canned-policies?bucket={{ object_storage_iam_bucket }}
+      returned HTTP {{ object_storage_iam_list_status }}, not 200. Cannot
+      decide idempotently whether {{ object_storage_iam_policy_name }} exists.
+    quiet: true
+
+- name: Compare the rendered policy against what RustFS already has
+  ansible.builtin.set_fact:
+    object_storage_iam_policy_differs: >-
+      {{ ((object_storage_iam_list_body | from_json).get(object_storage_iam_policy_name))
+         | default({}) != (object_storage_iam_policy_json | from_json) }}
+
+- name: Write the bucket-scoped policy (write-if-changed)
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -sS
+      - --aws-sigv4
+      - "aws:amz:{{ object_storage_region }}:s3"
+      - -u
+      - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -X
+      - PUT
+      - -H
+      - "Content-Type: application/json"
+      - --data-binary
+      - "@-"
+      - -w
+      - "\n%{http_code}"
+      - "{{ object_storage_endpoint }}/rustfs/admin/v3/add-canned-policy?name={{ object_storage_iam_policy_name }}"
+    stdin: "{{ object_storage_iam_policy_json }}"
+  register: object_storage_iam_policy_put
+  when: object_storage_iam_policy_differs
+  changed_when: true
+  no_log: true
+
+- name: Fail if writing the policy did not succeed
+  ansible.builtin.assert:
+    that:
+      - object_storage_iam_policy_put.stdout_lines[-1] in ['200', '204']
+    fail_msg: >-
+      PUT /rustfs/admin/v3/add-canned-policy?name={{ object_storage_iam_policy_name }}
+      did not return 200/204.
+    quiet: true
+  when: object_storage_iam_policy_differs
+
+# Idempotent-safe even without its own existence check: the access key and
+# secret come from OpenBao's generate-if-absent step, so they are stable
+# across converges (never rewritten once generated -- see iam_bucket_role.yml),
+# and re-PUTting the same accessKey/secretKey to an existing user is an
+# upsert, not a rotation. changed_when ties to the policy-diff signal above
+# (the two are always created together, so a matching policy is evidence the
+# user already exists too), rather than an extra API round trip whose
+# existence-check semantics are undocumented for this endpoint.
+- name: Create or update the RustFS user for this bucket/role
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -sS
+      - --aws-sigv4
+      - "aws:amz:{{ object_storage_region }}:s3"
+      - -u
+      - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -X
+      - PUT
+      - -H
+      - "Content-Type: application/json"
+      - --data-binary
+      - "@-"
+      - -w
+      - "\n%{http_code}"
+      - "{{ object_storage_endpoint }}/rustfs/admin/v3/add-user?accessKey={{ object_storage_iam_access_key }}"
+    stdin: >-
+      {{ {'secretKey': object_storage_iam_secret_key, 'status': 'enabled'} | to_json }}
+  register: object_storage_iam_user_put
+  changed_when: object_storage_iam_policy_differs
+  no_log: true
+
+- name: Fail if creating the user did not succeed
+  ansible.builtin.assert:
+    that:
+      - object_storage_iam_user_put.stdout_lines[-1] in ['200', '204']
+    fail_msg: >-
+      PUT /rustfs/admin/v3/add-user for the {{ object_storage_iam_bucket }}/{{ object_storage_iam_role }}
+      user did not return 200/204.
+    quiet: true
+  no_log: true
+
+- name: Attach the policy to the user
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -sS
+      - --aws-sigv4
+      - "aws:amz:{{ object_storage_region }}:s3"
+      - -u
+      - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -X
+      - PUT
+      - -w
+      - "\n%{http_code}"
+      - >-
+        {{ object_storage_endpoint }}/rustfs/admin/v3/set-user-or-group-policy?policyName={{
+        object_storage_iam_policy_name }}&userOrGroup={{ object_storage_iam_access_key }}&isGroup=false
+  register: object_storage_iam_attach
+  changed_when: object_storage_iam_policy_differs
+  no_log: true
+
+- name: Fail if attaching the policy did not succeed
+  ansible.builtin.assert:
+    that:
+      - object_storage_iam_attach.stdout_lines[-1] in ['200', '204']
+    fail_msg: >-
+      PUT /rustfs/admin/v3/set-user-or-group-policy for {{ object_storage_iam_bucket }}/{{ object_storage_iam_role }}
+      did not return 200/204.
+    quiet: true

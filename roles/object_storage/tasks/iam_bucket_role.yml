@@ -1,0 +1,93 @@
+---
+# One (bucket, role) pair -- object_storage_iam_bucket / object_storage_iam_role,
+# set by the caller's loop in iam_bucket.yml. Generate-if-absent + read the KV
+# secret at secret/rustfs/<bucket>/<role>, reusing the login token iam.yml
+# already holds (object_storage_iam_login). Same generate-if-absent contract
+# as roles/openbao seed_generated_app_secret.yml: a field that already holds a
+# value is never rewritten, so a live credential is never rotated here --
+# rotation is playbooks/rotate-key.yml's job.
+- name: Read the current bucket/role secret from OpenBao
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ object_storage_iam_bao_addr }}"
+    auth_method: token
+    token: "{{ object_storage_iam_login.login.auth.client_token }}"
+    engine_mount_point: "{{ object_storage_iam_kv_mount }}"
+    path: "rustfs/{{ object_storage_iam_bucket }}/{{ object_storage_iam_role }}"
+    validate_certs: "{{ object_storage_iam_validate_certs }}"
+  register: object_storage_iam_current
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  # Classified below -- a bare `msg` is not injected into `failed_when` on
+  # ansible-core 2.21 (same gotcha roles/openbao_secrets documents), so the
+  # absent-vs-denied check has to run against the REGISTERED result instead.
+  failed_when: false
+  no_log: true
+
+- name: "Fail unless the read was simply absent (denied is not absent)"
+  ansible.builtin.fail:
+    msg: >-
+      Reading {{ object_storage_iam_kv_mount }}/rustfs/{{ object_storage_iam_bucket }}/{{ object_storage_iam_role }}
+      failed: {{ object_storage_iam_current.msg }}
+      Only a not-yet-seeded path (404) may be tolerated here -- a denied read
+      says nothing about whether the credential exists and must never be
+      treated as absent.
+  when:
+    - object_storage_iam_current.msg is defined
+    - not (object_storage_iam_current.msg is search('^' ~ object_storage_iam_absent_marker))
+
+- name: "Capture the stored fields (empty when the path is absent)"
+  ansible.builtin.set_fact:
+    object_storage_iam_current_data: "{{ object_storage_iam_current.secret | default({}, true) }}"
+  no_log: true
+
+- name: "Generate the access key and secret only if not already stored"
+  ansible.builtin.set_fact:
+    object_storage_iam_generated: >-
+      {{ {}
+         | combine({object_storage_iam_access_key_field:
+              lookup('community.general.random_string', length=object_storage_iam_access_key_length,
+                     special=false, lower=false)}
+            if (object_storage_iam_current_data[object_storage_iam_access_key_field] | default('', true) | length == 0)
+            else {})
+         | combine({object_storage_iam_secret_key_field:
+              lookup('community.general.random_string', length=object_storage_iam_secret_key_length,
+                     special=false)}
+            if (object_storage_iam_current_data[object_storage_iam_secret_key_field] | default('', true) | length == 0)
+            else {}) }}
+  no_log: true
+
+- name: "Merge generated fields over the stored secret"
+  ansible.builtin.set_fact:
+    object_storage_iam_merged: "{{ object_storage_iam_current_data | combine(object_storage_iam_generated) }}"
+  no_log: true
+
+- name: "Write the generated fields to OpenBao (merge-preserving, write-if-changed)"
+  community.hashi_vault.vault_write:
+    url: "{{ object_storage_iam_bao_addr }}"
+    auth_method: token
+    token: "{{ object_storage_iam_login.login.auth.client_token }}"
+    path: "{{ object_storage_iam_kv_mount }}/data/rustfs/{{ object_storage_iam_bucket }}/{{ object_storage_iam_role }}"
+    data:
+      data: "{{ object_storage_iam_merged }}"
+    validate_certs: "{{ object_storage_iam_validate_certs }}"
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_become: false
+  when: object_storage_iam_generated | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Accumulate this bucket/role pair into the credential fact
+  ansible.builtin.set_fact:
+    object_storage_bucket_credentials: >-
+      {{ object_storage_bucket_credentials
+         | combine({object_storage_iam_bucket:
+              (object_storage_bucket_credentials[object_storage_iam_bucket] | default({}))
+              | combine({object_storage_iam_role: {
+                  'access_key': object_storage_iam_merged[object_storage_iam_access_key_field],
+                  'secret_key': object_storage_iam_merged[object_storage_iam_secret_key_field],
+                }})}, recursive=True) }}
+  no_log: true
