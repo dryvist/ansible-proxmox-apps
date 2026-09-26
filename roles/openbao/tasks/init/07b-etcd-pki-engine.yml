@@ -26,12 +26,23 @@
 # Write-once: the CA keypair is generated INSIDE OpenBao on first
 # configuration and never exported; a routine converge with a CA already
 # configured leaves it untouched.
+#
+# Delegated to the controller (openbao_cli_host, resolved in init/02), same as
+# the "Check which etcd PKI roles already exist" loop below: this is a
+# per-item read loop, unlike the SSH CA engine's single (unlooped) CA check,
+# so it falls under tests/test_openbao_writes_target_leader.py's
+# every-read-loop-is-delegated contract and must carry the full
+# openbao_cli_* triple, not openbao_write_addr target-side.
 - name: Check whether each etcd PKI CA is already configured
   ansible.builtin.command:
     cmd: "bao read -format=json {{ item.mount }}/cert/ca"
   environment:
-    BAO_ADDR: "{{ openbao_write_addr }}"
+    BAO_ADDR: "{{ openbao_cli_addr }}"
     BAO_TOKEN: "{{ openbao_bootstrap_token }}"
+  delegate_to: "{{ openbao_cli_host }}"
+  become: "{{ openbao_cli_become }}"
+  vars:
+    ansible_become: "{{ openbao_cli_become }}"
   loop: "{{ openbao_pki_etcd_engines }}"
   loop_control:
     label: "{{ item.mount }}"
