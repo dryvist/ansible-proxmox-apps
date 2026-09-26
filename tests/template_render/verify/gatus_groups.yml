@@ -1,0 +1,138 @@
+---
+# Render gatus-config.yaml.j2 and assert:
+# - catalog endpoints group by the same "Category · UI/API" split the Glance
+#   board already uses (audience_widget in generated-services.yml.j2), using
+#   dashboard_catalog_group_titles — the same map, not a second hand-kept list.
+# - the ntfy alert routing overrides (keystone/node/service/deadman) still
+#   target the group names those endpoints actually render with, so renaming
+#   the catalog groups above never silently breaks urgent-topic routing.
+- name: Render and verify gatus grouping
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    status_stack_interval: "60s"
+    status_stack_ui_dashboard_heading: "Homelab Status"
+    status_stack_ntfy_url: "https://ntfy.example.test/observability"
+    status_stack_ntfy_topic_degraded: "observability"
+    status_stack_ntfy_topic_urgent: "keystone"
+    status_stack_ntfy_priority_degraded: 3
+    status_stack_ntfy_priority_urgent: 5
+    status_stack_failure_threshold: 3
+    status_stack_authelia_error_patterns:
+      - "invalid_client"
+    status_stack_authelia_public_url: "https://authelia.example.test"
+    status_stack_catalog_status_overrides: {}
+    status_stack_authenticated_endpoints: []
+    status_stack_kuma_keystones:
+      - name: Traefik HTTPS
+        url: "https://traefik.example.test/"
+    status_stack_oidc_clients: []
+    status_stack_deadman_endpoints:
+      - { name: technitium-dns, heartbeat: 5m }
+    status_stack_deadman_token: "test-deadman-token"
+    status_stack_monitor_targets:
+      icmp:
+        - { name: pve-node-1, fqdn: pve-node-1.example.test, group: node }
+      tcp: []
+      http:
+        - name: splunk-mgmt
+          fqdn: splunk.example.test
+          port: 8089
+          path: "/"
+          group: service
+          expect_status: [200]
+    dashboard_catalog_group_titles:
+      apps: Apps
+      ai: AI
+      media_svc: Media
+      other: Other
+    dashboard_catalog_services_monitor:
+      - name: plex
+        title: Plex
+        group: media_svc
+        ui: true
+        sso: true
+        url: "https://plex.example.test"
+        probe_url: "http://192.0.2.6:32400"
+      - name: sonarr-api
+        title: Sonarr API
+        group: media_svc
+        ui: false
+        sso: true
+        url: "https://sonarr.example.test/api"
+        probe_url: ""
+      - name: litellm
+        title: LiteLLM
+        group: ai
+        ui: false
+        sso: true
+        url: "https://litellm.example.test"
+        probe_url: ""
+
+  tasks:
+    - name: Render gatus-config.yaml
+      ansible.builtin.template:
+        src: "../../../roles/status_stack/templates/gatus-config.yaml.j2"
+        dest: "{{ render_tmp }}/gatus-config.yaml"
+        mode: "0600"
+
+    - name: Read back the rendered config
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/gatus-config.yaml"
+      register: _gatus_raw
+
+    - name: Parse the rendered config
+      ansible.builtin.set_fact:
+        _gatus: "{{ _gatus_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert catalog endpoints group as "Category · UI/API"
+      ansible.builtin.assert:
+        that:
+          - (_gatus.endpoints | selectattr('name', 'eq', 'plex') | first).group == 'Media · UI'
+          - (_gatus.endpoints | selectattr('name', 'eq', 'sonarr-api') | first).group == 'Media · API'
+          - (_gatus.endpoints | selectattr('name', 'eq', 'litellm') | first).group == 'AI · API'
+        fail_msg: >-
+          Catalog endpoints must group as "<dashboard_catalog_group_titles
+          label> · UI/API", mirroring the Glance board's audience split:
+          {{ _gatus.endpoints | map(attribute='group') | list }}
+
+    - name: Assert ntfy urgent-topic routing still targets the real endpoint groups
+      ansible.builtin.assert:
+        that:
+          - _override_groups | sort == ['deadman', 'keystone', 'node', 'service']
+          # Every override group must be a group some endpoint actually renders
+          # with, or the urgent route is silently dead.
+          - "'node' in _endpoint_groups"
+          - "'service' in _endpoint_groups"
+          - "'keystone' in _endpoint_groups"
+          - "'deadman' in _endpoint_groups"
+          # Catalog groups (the ones this change renamed) must NOT collide
+          # with a routing override group.
+          - "'Media · UI' not in _override_groups"
+        fail_msg: >-
+          ntfy override groups {{ _override_groups }} must match the group
+          names Gatus endpoints actually carry: {{ _endpoint_groups }}
+      vars:
+        _override_groups: "{{ _gatus.alerting.ntfy.overrides | map(attribute='group') | list }}"
+        _endpoint_groups: >-
+          {{ (_gatus.endpoints | map(attribute='group') | list)
+             + (_gatus['external-endpoints'] | map(attribute='group') | list) }}
+
+    - name: Assert the dashboard UI is set to group-sorted
+      ansible.builtin.assert:
+        that:
+          - _gatus.ui['default-sort-by'] == 'group'
+          - _gatus.ui['dashboard-heading'] == 'Homelab Status'
+        fail_msg: "gatus-config.yaml.j2 must set ui.default-sort-by: group: {{ _gatus.ui }}"
+
+    - name: Gatus grouping verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          Gatus grouping assertions passed:
+          - Catalog endpoints group as "<Category> · UI/API" from dashboard_catalog_group_titles
+          - keystone/node/service/deadman routing overrides still match real endpoint groups
+          - ui.default-sort-by is group

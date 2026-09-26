@@ -1,0 +1,55 @@
+---
+# Render glance.yml.j2 and assert the board sets an explicit theme where
+# positive-color differs from primary-color. Glance's own default leaves
+# positive-color unset, which falls back to primary-color (gold) — so a
+# healthy monitor and the page's own accent color read as the same color,
+# and only a failure (red) stood out. See roles/glance/defaults/main.yml.
+- name: Render and verify glance theme
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    glance_host: "0.0.0.0"
+    glance_port: "8085"
+    # Mirror roles/glance/defaults/main.yml (docs reef palette).
+    glance_theme_background_color: "205 58 10"
+    glance_theme_primary_color: "180 40 51"
+    glance_theme_positive_color: "150 55 52"
+    glance_theme_negative_color: "355 75 55"
+    glance_theme_contrast_multiplier: 1.1
+
+  tasks:
+    - name: Render glance.yml
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/glance.yml.j2"
+        dest: "{{ render_tmp }}/glance.yml"
+        mode: "0600"
+
+    - name: Read back the rendered config
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/glance.yml"
+      register: _glance_config_raw
+
+    - name: Parse the rendered config
+      ansible.builtin.set_fact:
+        _glance_config: "{{ _glance_config_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert positive-color is explicitly set and differs from primary-color
+      ansible.builtin.assert:
+        that:
+          - _glance_config.theme is defined
+          - _glance_config.theme['positive-color'] is defined
+          - _glance_config.theme['positive-color'] | length > 0
+          - _glance_config.theme['positive-color'] != _glance_config.theme['primary-color']
+          - _glance_config.theme['negative-color'] != _glance_config.theme['positive-color']
+        fail_msg: >-
+          glance.yml.j2 must set a positive-color distinct from primary-color,
+          or a healthy monitor renders the same color as a failing one:
+          {{ _glance_config.theme }}
+
+    - name: Glance theme render verification PASSED
+      ansible.builtin.debug:
+        msg: "Glance theme sets positive-color != primary-color != negative-color"
