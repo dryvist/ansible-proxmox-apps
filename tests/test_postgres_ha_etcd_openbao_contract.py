@@ -13,14 +13,77 @@ shape as test_donna_ai_domain_openbao_contract.py's check for ai/donna.
 
 from pathlib import Path
 
+import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DATA_PATH = 'path "{{ openbao_kv_mount }}/data/etcd/*"'
 CANONICAL_METADATA_PATH = 'path "{{ openbao_kv_mount }}/metadata/etcd/*"'
+DERIVE_TASK_NAME = "Derive this cluster's etcd PKI engine entry from its scope"
 
 
 def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _render_engine_entry_for_scope(scope: str, suffix: str) -> dict:
+    """Render the REAL derivation task for one loop iteration (one scope)."""
+    tasks = yaml.safe_load(_read("roles/openbao/tasks/init/07b-etcd-pki-engine.yml"))
+    task = next(t for t in tasks if t.get("name") == DERIVE_TASK_NAME)
+
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = {
+        "item": scope,
+        "postgres_ha_pki_role_suffix": suffix,
+        "openbao_pki_etcd_engines_max_ttl": "4320h0m0s",
+        "tofu_data": {},
+    }
+    role = templar.template(trust_as_template(task["vars"]["_openbao_etcd_pki_role"]))
+
+    templar.available_variables["_openbao_etcd_pki_role"] = role
+    engines = templar.template(
+        trust_as_template(task["ansible.builtin.set_fact"]["openbao_pki_etcd_engines"])
+    )
+    assert isinstance(engines, list) and len(engines) == 1, (scope, engines)
+    return engines[0]
+
+
+def _render_postgres_pki_names(scope: str, suffix: str) -> tuple:
+    """Render the REAL postgres_ha_pki_role/_mount defaults for one scope."""
+    defaults = yaml.safe_load(_read("roles/postgres/defaults/main/03-patroni.yml"))
+
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = {
+        "postgres_ha_scope": scope,
+        "postgres_ha_pki_role_suffix": suffix,
+    }
+    role = templar.template(trust_as_template(defaults["postgres_ha_pki_role"]))
+
+    templar.available_variables["postgres_ha_pki_role"] = role
+    mount = templar.template(trust_as_template(defaults["postgres_ha_pki_mount"]))
+    return role, mount
+
+
+def test_derived_etcd_pki_engine_matches_what_postgres_computes():
+    """Every declared scope renders exactly one engine entry whose mount and
+    role equal what roles/postgres computes for that same scope.
+
+    Renders the REAL expressions out of both task/defaults files, never a
+    reimplementation of either formula -- catches drift the moment either
+    side changes its naming scheme without the other (the exact defect the
+    PR that added postgres_ha_patroni_scopes/postgres_ha_pki_role_suffix
+    exists to prevent).
+    """
+    suffix = "-etcd"
+    for scope in ("postgres-ai", "postgres-patroni-test"):
+        entry = _render_engine_entry_for_scope(scope, suffix)
+        postgres_role, postgres_mount = _render_postgres_pki_names(scope, suffix)
+
+        assert entry["scope"] == scope
+        assert entry["role"] == postgres_role == f"{scope}{suffix}"
+        assert entry["mount"] == postgres_mount == f"pki-{scope}{suffix}"
 
 
 def test_ansible_converge_owns_the_etcd_credential_wildcard():

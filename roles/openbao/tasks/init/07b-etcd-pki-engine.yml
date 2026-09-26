@@ -4,9 +4,37 @@
 # CA key) is bootstrap-only work — the reconcile identity's policy grants
 # <mount>/roles/<name> but nothing on sys/mounts or <mount>/root/generate, so
 # each of these tasks is gated on openbao_bootstrap_token being defined the
-# same way the SSH CA's are. openbao_pki_etcd_engines is empty by default, so
-# every task below loops zero times and this file is a no-op on every
-# existing converge.
+# same way the SSH CA's are. postgres_ha_patroni_scopes is empty by default,
+# so the derivation below yields [] and every task past it loops zero times —
+# this file is a no-op on every existing converge.
+#
+# openbao_pki_etcd_engines is COMPUTED here, never hand-typed (see
+# 05g-etcd-pki-engine.yml's header): one entry per
+# inventory/group_vars/all.yml's postgres_ha_patroni_scopes, so this list and
+# roles/postgres's own postgres_ha_scope can never name two different
+# clusters. role is derived from scope via postgres_ha_pki_role_suffix (also
+# in group_vars/all.yml) and mount FROM role -- the exact same two-step
+# formula roles/postgres's postgres_ha_pki_role/postgres_ha_pki_mount use, so
+# a naming-scheme change is one edit, not two kept in sync by hand.
+# allowed_domain reads tofu_data.domain, the same source roles/postgres's
+# postgres_ha_fqdn_suffix uses (propagated to every inventory host, this one
+# included, by inventory/load_tofu/propagate_facts.yml).
+- name: Derive this cluster's etcd PKI engine entry from its scope
+  vars:
+    _openbao_etcd_pki_role: "{{ item }}{{ postgres_ha_pki_role_suffix }}"
+  ansible.builtin.set_fact:
+    openbao_pki_etcd_engines: >-
+      {{ (openbao_pki_etcd_engines | default([])) + [{
+        'scope': item,
+        'role': _openbao_etcd_pki_role,
+        'mount': 'pki-' ~ _openbao_etcd_pki_role,
+        'allowed_domain': item ~ '-*.' ~ (tofu_data.domain | default('', true)),
+        'max_ttl': openbao_pki_etcd_engines_max_ttl
+      }] }}
+  loop: "{{ postgres_ha_patroni_scopes }}"
+  loop_control:
+    label: "{{ item }}"
+
 - name: Enable each configured etcd PKI mount
   ansible.builtin.command:
     cmd: "bao secrets enable -path={{ item.mount }} pki"
