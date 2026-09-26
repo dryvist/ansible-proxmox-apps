@@ -1,0 +1,86 @@
+---
+# Exercises rotate_admin_decision.yml (roles/cribl_stream/tasks) directly,
+# with the uri/systemd/stat facts it reads set as literals — see the header
+# comment on that file for why the surrounding uri/systemd calls aren't
+# stubbed here.
+- name: Verify Cribl admin rotation never restarts blind
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+  tasks:
+    - name: Case 1 — configured login already works
+      ansible.builtin.set_fact:
+        cribl_stream_configured_login: {status: 200}
+        cribl_stream_default_login: {status: 401}
+        cribl_stream_rotation_pending: false
+        cribl_stream_rotation_already_restarted: false
+
+    - name: Decide (case 1)
+      ansible.builtin.include_tasks: ../../roles/cribl_stream/tasks/rotate_admin_decision.yml
+
+    - name: Assert case 1 takes no action
+      ansible.builtin.assert:
+        that: cribl_stream_rotation_action == 'none'
+        fail_msg: a working configured login must not trigger a rotation.
+
+    - name: Case 2 — fresh node, vendor default still works
+      ansible.builtin.set_fact:
+        cribl_stream_configured_login: {status: 401}
+        cribl_stream_default_login: {status: 200}
+        cribl_stream_rotation_pending: false
+        cribl_stream_rotation_already_restarted: false
+
+    - name: Decide (case 2)
+      ansible.builtin.include_tasks: ../../roles/cribl_stream/tasks/rotate_admin_decision.yml
+
+    - name: Assert case 2 rotates
+      ansible.builtin.assert:
+        that: cribl_stream_rotation_action == 'rotate'
+        fail_msg: a fresh node on the vendor default must rotate.
+
+    - name: Case 3 — rotation pending, not yet restarted since the write
+      ansible.builtin.set_fact:
+        cribl_stream_configured_login: {status: 401}
+        cribl_stream_default_login: {status: 401}
+        cribl_stream_rotation_pending: true
+        cribl_stream_rotation_already_restarted: false
+
+    - name: Decide (case 3)
+      ansible.builtin.include_tasks: ../../roles/cribl_stream/tasks/rotate_admin_decision.yml
+
+    - name: Assert case 3 rotates
+      ansible.builtin.assert:
+        that: cribl_stream_rotation_action == 'rotate'
+        fail_msg: a pending credential not yet restarted must still rotate.
+
+    - name: Case 4 — rotation pending, already restarted, nothing logs in
+      ansible.builtin.set_fact:
+        cribl_stream_configured_login: {status: 401}
+        cribl_stream_default_login: {status: 401}
+        cribl_stream_rotation_pending: true
+        cribl_stream_rotation_already_restarted: true
+
+    - name: Decide (case 4)
+      ansible.builtin.include_tasks: ../../roles/cribl_stream/tasks/rotate_admin_decision.yml
+
+    - name: Assert case 4 refuses instead of restarting blind
+      ansible.builtin.assert:
+        that: cribl_stream_rotation_action == 'refuse'
+        fail_msg: a credential Cribl already failed to load once must refuse, not restart again.
+
+    - name: Case 5 — no pending credential, nothing logs in
+      ansible.builtin.set_fact:
+        cribl_stream_configured_login: {status: 401}
+        cribl_stream_default_login: {status: 401}
+        cribl_stream_rotation_pending: false
+        cribl_stream_rotation_already_restarted: false
+
+    - name: Decide (case 5)
+      ansible.builtin.include_tasks: ../../roles/cribl_stream/tasks/rotate_admin_decision.yml
+
+    - name: Assert case 5 takes no action and leaves it to the final assert
+      ansible.builtin.assert:
+        that: cribl_stream_rotation_action == 'none'
+        fail_msg: an unexplained credential drift with no pending key must fall through, not rotate.
