@@ -1,0 +1,100 @@
+---
+# Regression coverage for the ansible_connection/fqdn conditional branch in
+# ../../inventory/load_tofu/add_lxc_hosts.yml, added alongside the
+# tofu-proxmox ansible_connection: "ssh" / fqdn contract fields
+# (dryvist/tofu-proxmox#1188). Modeled on
+# verify_add_lxc_hosts_placement.yml's two-part pattern: source inspection,
+# then a real run against stubbed tofu_data.
+#
+# Source-inspection half: pins that add_lxc_hosts.yml still carries no
+# ansible.builtin.raw: task, and that its ssh branch reads item.value.fqdn
+# (never item.value.ip, a static guest's raw address) for ansible_host.
+#
+# Functional half: runs the real add_lxc_hosts.yml task file against a
+# stubbed tofu_data with one ssh-connection container and one default
+# (pct_remote) container side by side, and asserts the resulting hostvars:
+#   - the ssh container gets ansible_host == its own fqdn, ansible_connection
+#     == "ssh", and no proxmox_vmid hostvar (pct-only fact, meaningless on a
+#     host that isn't reached via pct);
+#   - the default container is unaffected: ansible_host is still the
+#     node-derived management FQDN, and proxmox_vmid is still set.
+#
+# tofu_data.nodes is deliberately empty, so the live-placement command
+# task's loop has zero iterations and never attempts a real SSH
+# connection — this stays a pure local run against mocked data, same as
+# every other verify_*.yml in this directory.
+
+- name: Verify the source still reads fqdn (not ip) for the ssh branch
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _add_lxc_hosts_source: "{{ lookup('file', playbook_dir + '/../../inventory/load_tofu/add_lxc_hosts.yml') }}"
+  tasks:
+    - name: Assert add_lxc_hosts.yml still does not use ansible.builtin.raw
+      ansible.builtin.assert:
+        that:
+          - "'ansible.builtin.raw:' not in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml uses ansible.builtin.raw — raw force-allocates a
+          pty the automation-ansible SSH certificate does not permit, and
+          Proxmox's sshd silently returns rc=0 with empty stdout for it.
+
+    - name: Assert the ssh branch reads item.value.fqdn for ansible_host
+      ansible.builtin.assert:
+        that:
+          - "'item.value.fqdn' in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml's ansible_host no longer reads item.value.fqdn
+          for the ssh-connection branch — it must never fall back to
+          item.value.ip (a static guest's raw address) for a guest's own
+          SSH host-key identity.
+
+- name: Verify the add_host connection branch against stubbed tofu_data
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tofu_data:
+      domain: example.internal
+      nodes: {}
+      containers:
+        ssh-poc:
+          vmid: 190
+          ip: 192.168.0.190
+          fqdn: ssh-poc.example.internal
+          ansible_connection: ssh
+          tags: []
+          node: node-a
+        pct-poc:
+          vmid: 191
+          ip: 192.168.0.191
+          fqdn: pct-poc.example.internal
+          ansible_connection: community.proxmox.proxmox_pct_remote
+          tags: []
+          node: node-a
+  tasks:
+    - name: Run the real add_lxc_hosts.yml loader task file
+      ansible.builtin.include_tasks: ../../inventory/load_tofu/add_lxc_hosts.yml
+
+    - name: Assert the ssh-connection container's hostvars
+      ansible.builtin.assert:
+        that:
+          - hostvars['ssh-poc'].ansible_host == 'ssh-poc.example.internal'
+          - hostvars['ssh-poc'].ansible_connection == 'ssh'
+          - hostvars['ssh-poc'].proxmox_vmid is not defined
+        fail_msg: >-
+          ssh-connection container hostvars wrong —
+          ansible_host={{ hostvars['ssh-poc'].ansible_host | default('(undefined)') }},
+          ansible_connection={{ hostvars['ssh-poc'].ansible_connection | default('(undefined)') }},
+          proxmox_vmid={{ hostvars['ssh-poc'].proxmox_vmid | default('(undefined)') }}
+
+    - name: Assert the default pct_remote container is unaffected
+      ansible.builtin.assert:
+        that:
+          - hostvars['pct-poc'].ansible_host == 'node-a.example.internal'
+          - hostvars['pct-poc'].ansible_connection == 'community.proxmox.proxmox_pct_remote'
+          - hostvars['pct-poc'].proxmox_vmid == 191
+        fail_msg: >-
+          default pct_remote container hostvars regressed —
+          ansible_host={{ hostvars['pct-poc'].ansible_host | default('(undefined)') }},
+          ansible_connection={{ hostvars['pct-poc'].ansible_connection | default('(undefined)') }},
+          proxmox_vmid={{ hostvars['pct-poc'].proxmox_vmid | default('(undefined)') }}

@@ -72,7 +72,7 @@
     - add_lxc_hosts_live_node | default({}) | length > 0
     - add_lxc_hosts_live_status[item.value.vmid | string] | default('absent') != 'running'
 
-- name: Add LXC containers to inventory (proxmox_pct_remote connection)
+- name: Add LXC containers to inventory (proxmox_pct_remote or ssh connection)
   ansible.builtin.add_host:
     name: "{{ item.key }}"
     groups: >-
@@ -311,7 +311,12 @@
           else []
         )
       }}
-    proxmox_vmid: "{{ item.value.vmid }}"
+    # A pct-remote host's own vmid, used by pct-only downstream readers
+    # (e.g. connection-plugin diagnostics). An ssh-connection container is
+    # reached over plain OpenSSH, never pct, so this fact would be present
+    # but meaningless there; omit it rather than publish a vmid a reader
+    # could mistake for "this host is reachable via pct".
+    proxmox_vmid: "{{ item.value.vmid if item.value.ansible_connection != 'ssh' else omit }}"
     # Per-node management FQDN, DERIVED — never a hand-pinned global host.
     # A guest reaches its own node at {node-role}.{domain}, the same pattern
     # terraform-proxmox ingress.tf uses for the Proxmox-UI apex pool; those
@@ -321,9 +326,15 @@
     # role, and falls back to the node value itself when the map omits the
     # key (e.g. the generic test-fixture node key). The node is the one the
     # container is live on when the cluster answered, else the declared one.
+    #
+    # An ssh-connection container is reached directly at its OWN fqdn
+    # (tofu-proxmox's per-guest DNS name, published unconditionally for
+    # every container) instead of its node's management FQDN — it is no
+    # longer proxied through pct on that node at all.
     ansible_host: >-
-      {{ (tofu_data.nodes[_node] | default({})).role
-         | default(_node, true) }}.{{ tofu_data.domain }}
+      {{ item.value.fqdn if item.value.ansible_connection == 'ssh' else
+         ((tofu_data.nodes[_node] | default({})).role
+          | default(_node, true) ~ '.' ~ tofu_data.domain) }}
     ansible_connection: "{{ item.value.ansible_connection }}"
     ansible_user: root
     ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
