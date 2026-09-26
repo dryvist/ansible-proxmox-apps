@@ -40,7 +40,7 @@ compose stack. Prerequisites:
 - A target LXC (the `unifi_metrics` group) able to reach the UniFi controller
   and the Cribl Edge HEC port.
 - `UNIFI_API` / `UNIFI_USERNAME` / `UNIFI_PASSWORD` in the environment of the
-  Ansible run (the `network` keychain items, same creds the tofu-unifi provider
+  Ansible run (the `network` keychain items, same creds the network IaC repo's provider
   uses). A read-only UniFi local admin is sufficient and recommended.
 - The `cribl_edge` group deployed (provides the HEC input + `unifi_metrics`
   index branch) and a Splunk `unifi_metrics` index (tofu-proxmox).

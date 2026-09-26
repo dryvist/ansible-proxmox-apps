@@ -8,7 +8,7 @@ converge_telemetry_support.
 import json
 import unittest
 
-from converge_telemetry_support import CONFIG, RecordingCallback, telemetry
+from converge_telemetry_support import CONFIG, CaptureCallback, telemetry
 
 
 class TaskTimingEvents(unittest.TestCase):
@@ -158,7 +158,7 @@ class UnreachableReasonEvents(unittest.TestCase):
         return _Task()
 
     def test_the_transport_reason_is_captured_and_shipped(self):
-        cb = RecordingCallback()
+        cb = CaptureCallback()
         cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
         cb.v2_runner_on_unreachable(
             self._result("openbao-01", "Failed to connect to the host via ssh: kex_exchange")
@@ -181,7 +181,7 @@ class UnreachableReasonEvents(unittest.TestCase):
 
     def test_each_host_keeps_its_own_reason(self):
         """A run where hosts fail differently must not collapse to one reason."""
-        cb = RecordingCallback()
+        cb = CaptureCallback()
         cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
         cb.v2_runner_on_unreachable(self._result("openbao-01", "connection refused"))
         cb.v2_runner_on_unreachable(self._result("openbao-20", "no route to host"))
@@ -197,7 +197,7 @@ class UnreachableReasonEvents(unittest.TestCase):
 
     def test_a_missing_message_still_produces_an_event(self):
         """A reason we cannot read is still a host that could not be reached."""
-        cb = RecordingCallback()
+        cb = CaptureCallback()
         cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
         cb.v2_runner_on_unreachable(self._result("openbao-21", None))
 
@@ -208,7 +208,7 @@ class UnreachableReasonEvents(unittest.TestCase):
         self.assertEqual(events[0]["event"]["reason"], "unreachable")
 
     def test_a_pathological_reason_cannot_dominate_a_batch(self):
-        cb = RecordingCallback()
+        cb = CaptureCallback()
         cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
         cb.v2_runner_on_unreachable(self._result("openbao-01", "x" * 50000))
 
@@ -229,7 +229,7 @@ class UnreachableReasonEvents(unittest.TestCase):
         a template unchanged between two runs reported 37 "failures", every one
         of them an unreachable host.
         """
-        cb = RecordingCallback()
+        cb = CaptureCallback()
         cb.v2_playbook_on_task_start(self._task("Render the config"))
         cb.v2_runner_on_unreachable(self._result("openbao-01", "no route"))
         cb._close_open_task()
@@ -257,7 +257,7 @@ class UnreachableReasonEvents(unittest.TestCase):
         class _Opaque:
             pass
 
-        cb = RecordingCallback()
+        cb = CaptureCallback()
         cb.v2_playbook_on_task_start(self._task("Gathering Facts"))
         cb.v2_runner_on_unreachable(_Opaque())
         self.assertEqual(cb._unreachable, [])

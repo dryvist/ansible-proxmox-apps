@@ -47,7 +47,7 @@ which is exactly the field set an asset record wants. But it requires a parent
 `Device`, so it cannot represent anything sitting on a shelf.
 
 Concluding from that "Nautobot cannot model spare parts" is wrong, and it leads
-somewhere worse: inventing a synthetic placeholder device to act as a parts bin.
+somewhere worse: inventing a fabricated placeholder device to act as a parts bin.
 That puts a device in DCIM that does not exist, and every downstream consumer —
 inventory, reporting, automation — has to know to filter it out. Use a `Module`
 with a `location`; the model is already there.

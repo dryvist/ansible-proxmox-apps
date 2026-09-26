@@ -158,6 +158,13 @@
 
 # Configure application stacks based on OpenTofu infrastructure
 
+# Two out-of-play OpenBao domain consumers (the media-stack child converge,
+# the deadman watchdog group set) need their own --limit-scope detected
+# before the pre-fetch play below can narrow its domain fetch correctly —
+# see the comment in that file for why.
+- name: Detect out-of-play OpenBao domain consumers
+  import_playbook: 00a-secrets-scope-detect.yml
+
 # =============================================================================
 # Phase 0-secrets: OpenBao resource-domain secrets pre-fetch
 # Reads each resource-domain's KV subtree (its own least-privilege AppRole)
@@ -166,6 +173,16 @@
 # controller and publishes to the union of every domain's consuming groups;
 # each domain SKIPS CLEANLY when BAO_ADDR or that domain's own role_id/
 # secret_id envs are unset.
+#
+# The KV reads themselves are additionally scoped to the domains this run's
+# hosts actually need (openbao_secrets_domain_groups below), traced by
+# grepping every consumer of each bao_<domain>_secrets fact repo-wide. This
+# does NOT reintroduce the tag-based skip that caused the 2026-07-16 outage:
+# the play keeps the `always` tag and still runs the whole role for every
+# converge that reaches this file; only which DOMAINS get fetched narrows,
+# based on which HOSTS --limit actually kept (never this play's tags). A
+# domain with no traced consumer group (observability, local-cloud) stays out
+# of the map and is therefore always fetched — the safe default.
 # =============================================================================
 
 - name: Pre-fetch resource-domain secrets from OpenBao
@@ -175,8 +192,14 @@
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
     postgres_group:postgres_ai_group:hindsight_group:nautobot_group:zammad_group:vikunja_group:
-    immich_group:homarr_group:authelia_group:grafana_group:ntfy_group
+    immich_group:homarr_group:authelia_group:grafana_group:ntfy_group:status_group
   gather_facts: false
+  # status_group: status_stack (Gatus + Uptime Kuma) reads
+  # bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN via `mandatory()`, so it must
+  # be one of this play's own hosts (like ntfy_group) rather than one of the
+  # two out-of-play scope groups detected above -- see
+  # openbao_secrets_domain_groups['monitoring'] below, which names it
+  # explicitly.
   # `always`: every consumer role resolves its secrets bao-first, so a tagged
   # converge (--tags zammad, --tags nautobot, ...) MUST still run this play —
   # under the old `openbao_secrets, ai` tags a tagged converge skipped the
@@ -185,6 +208,11 @@
   # unset, so `always` costs nothing in env-less runs.
   tags:
     - always
+  # openbao_secrets_domain_groups (domain name -> consumer groups) is loaded
+  # from its own file to keep this playbook under its token budget — see
+  # .token-limits.yaml and vars/openbao_secrets_domain_groups.yml.
+  vars_files:
+    - vars/openbao_secrets_domain_groups.yml
   # Wrapped in block/rescue for play-level failure isolation (issue #672): a
   # hard failure on one host in this large combined-group play (e.g. an
   # undefined var) would otherwise be 100% of that host's "batch" and abort
@@ -193,6 +221,39 @@
   tasks:
     - name: Converge OpenBao secrets pre-fetch (isolated — failure does not abort downstream plays)
       block:
+        - name: Determine which declared consumer groups have a host in this run
+          # groups[...] (unaffected by --limit) intersected with this play's
+          # own ansible_play_hosts_all (affected by --limit) tells us whether
+          # --limit kept that group. Only covers groups in THIS play's own
+          # hosts: pattern; media_group and the deadman set are corrected by
+          # the two tasks below instead.
+          ansible.builtin.set_fact:
+            openbao_secrets_active_groups: >-
+              {{ (openbao_secrets_active_groups | default([]))
+                 + ([item] if (groups[item] | default([]) | intersect(ansible_play_hosts_all) | length > 0) else []) }}
+          loop: "{{ openbao_secrets_domain_groups.values() | list | flatten | unique }}"
+          loop_control:
+            label: "{{ item }}"
+
+        - name: Add the media-stack group when this run's --limit includes a media host
+          ansible.builtin.set_fact:
+            openbao_secrets_active_groups: "{{ openbao_secrets_active_groups + ['media_group'] }}"
+          when: hostvars['localhost'].openbao_secrets_media_group_in_scope | default(false)
+
+        - name: Add the deadman watchdog groups when this run's --limit includes one of their hosts
+          ansible.builtin.set_fact:
+            openbao_secrets_active_groups: >-
+              {{ openbao_secrets_active_groups
+                 + ['technitium_dns_group', 'traefik_group', 'haproxy_group', 'openbao_group', 'docker_vms'] }}
+          when: hostvars['localhost'].openbao_secrets_deadman_group_in_scope | default(false)
+
+        # openbao_secrets_active_groups and openbao_secrets_domain_groups flow
+        # into the role as ordinary higher-precedence facts/vars (no explicit
+        # `vars:` needed here) and narrow its default domain list
+        # (01-domains.yml): a domain left out never logs in and never reads
+        # its KV paths, which was the 85-103s cost on every run. Any other
+        # caller of this role, which never sets openbao_secrets_active_groups,
+        # still gets every domain.
         - name: Fetch each resource-domain's KV subtree via its own AppRole
           ansible.builtin.include_role:
             name: openbao_secrets
@@ -238,28 +299,8 @@
           vars:
             _isolated_play_name: openbao-secrets-prefetch
 
-# =============================================================================
-# Phase 0-secrets-monitoring: republish the monitoring domain to the deadman
-# targets only. These hosts are NOT in the combined pre-fetch play above on
-# purpose: that play publishes every fetched domain's fact to every host it
-# touches, and DNS/proxy/OpenBao-node/docker-VM hosts must never see the apps,
-# local-llm, observability, local-cloud or ntfy domains they have no business
-# holding. No new fetch and no new AppRole: this reads the SAME
-# openbao_secrets_by_domain the play above already fetched onto localhost.
-# This play therefore depends on the combined pre-fetch play above having run
-# in the same invocation: a converge limited to only these deadman hosts
-# republishes an empty dict here, silently, with no error.
-# =============================================================================
-
+# Republishes bao_monitoring_secrets (already fetched by the pre-fetch play
+# above) to the deadman watchdog hosts only — see the comment in that file
+# for why they're not simply added to the pre-fetch play's own hosts:.
 - name: Republish the monitoring domain to the deadman watchdog's own hosts
-  hosts: technitium_dns_group:traefik_group:haproxy_group:openbao_group:docker_vms
-  gather_facts: false
-  tags:
-    - always
-  tasks:
-    - name: Publish only bao_monitoring_secrets to these hosts
-      ansible.builtin.set_fact:
-        bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
-      vars:
-        openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
-      no_log: true
+  import_playbook: 00b-secrets-monitoring-republish.yml
