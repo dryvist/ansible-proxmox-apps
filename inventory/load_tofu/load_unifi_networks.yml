@@ -1,0 +1,62 @@
+---
+# Best-effort load of the tofu-unifi-published VLAN/network list, used only
+# to build the Cribl unifi_vlan_map.csv lookup (roles/cribl_stream). This is
+# NOT part of the required tofu_data contract validated in validate.yml:
+# absent or unreachable, it degrades to an empty list — the lookup then
+# falls through to raw VLAN ids (see cribl_stream_unifi_networks in
+# roles/cribl_stream/defaults/main/50-unifi-metrics.yml) rather than
+# failing the whole inventory load.
+#
+# Same on-prem RustFS store as the published Ansible inventory
+# (inventory_resolve role), different object: bucket "iac-inventory",
+# key "unifi_networks.json", published by tofu-unifi's network_publish.tf.
+
+- name: Set unifi_networks_data to empty when the on-prem store is not configured
+  ansible.builtin.set_fact:
+    unifi_networks_data: []
+  when: lookup('env', 'S3_ENDPOINT') | length == 0
+
+- name: Fetch and load the published UniFi network list
+  when: lookup('env', 'S3_ENDPOINT') | length > 0
+  block:
+    - name: Create a temp file for the UniFi network list
+      ansible.builtin.tempfile:
+        state: file
+        suffix: unifi_networks.json
+      register: unifi_networks_tmp
+      changed_when: false
+      check_mode: false
+
+    - name: Download the published UniFi network list
+      amazon.aws.s3_object:
+        bucket: iac-inventory
+        object: unifi_networks.json
+        dest: "{{ unifi_networks_tmp.path }}"
+        mode: get
+        endpoint_url: "{{ lookup('env', 'S3_ENDPOINT') }}"
+        access_key: "{{ lookup('env', 'S3_ACCESS_KEY') }}"
+        secret_key: "{{ lookup('env', 'S3_SECRET_KEY') }}"
+        region: us-east-1
+      register: unifi_networks_get
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Stat the downloaded UniFi network list
+      ansible.builtin.stat:
+        path: "{{ unifi_networks_tmp.path }}"
+      register: unifi_networks_stat
+
+    - name: Load the UniFi network list when the download succeeded
+      ansible.builtin.set_fact:
+        unifi_networks_data: "{{ (lookup('file', unifi_networks_tmp.path) | from_json).networks | default([]) }}"
+      when: (unifi_networks_stat.stat.size | default(0)) > 0
+
+    - name: Default unifi_networks_data to empty when the object is not yet published
+      ansible.builtin.set_fact:
+        unifi_networks_data: []
+      when: unifi_networks_data is not defined
+  rescue:
+    - name: Default unifi_networks_data to empty on any fetch/parse failure
+      ansible.builtin.set_fact:
+        unifi_networks_data: []
