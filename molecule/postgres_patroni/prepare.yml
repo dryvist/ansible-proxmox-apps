@@ -80,6 +80,13 @@
       run_once: true
       changed_when: true
 
+    # -addext/-copy_extensions: a Subject Alternative Name is required, not
+    # just CN — Go's TLS stack (etcd, Patroni's python3-etcd client) has
+    # rejected CN-only certificates outright since Go 1.15, with no opt-out.
+    # Without a SAN here, every peer's mTLS handshake against every other
+    # peer fails, the 3 members never reach quorum, and etcd's systemd unit
+    # (Type=notify) hits its start timeout — this is what actually failed,
+    # not a networking or config problem.
     - name: Generate this node's key and certificate signing request
       ansible.builtin.command:
         argv:
@@ -90,6 +97,8 @@
           - -nodes
           - -subj
           - "/CN={{ inventory_hostname }}"
+          - -addext
+          - "subjectAltName=DNS:{{ inventory_hostname }}"
           - -keyout
           - "{{ postgres_ha_test_ca_dir.path }}/{{ inventory_hostname }}-key.pem"
           - -out
@@ -113,6 +122,8 @@
           - -CAcreateserial
           - -days
           - "3650"
+          - -copy_extensions
+          - copy
       delegate_to: localhost
       become: false
       register: postgres_ha_test_cert_signed
