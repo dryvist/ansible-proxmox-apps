@@ -1,0 +1,50 @@
+---
+# Molecule scenario for the object_storage role. A single privileged systemd
+# container installs the real Renovate-pinned RustFS binary (the same
+# tasks/main.yml every guest converges with), creates two test buckets, then
+# exercises the per-bucket IAM provisioning tasks (tasks/iam_provision*.yml)
+# against RustFS's real admin API -- the part of this role whose request shape
+# was inferred from docs and never run against a live server. See converge.yml
+# for why the OpenBao generate-if-absent phase (tasks/iam_bucket*.yml) is
+# stood in for with fixed credentials rather than a live OpenBao container.
+
+platforms:
+  - name: object-storage-test${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  env:
+    # Mandatory per roles/object_storage/defaults/main/00-core.yml -- fixed
+    # test-only values, never a real credential.
+    OBJECT_STORAGE_ROOT_USER: molecule-root-user
+    OBJECT_STORAGE_ROOT_PASSWORD: molecule-root-password-not-real-0001
+
+scenario:
+  name: object_storage
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

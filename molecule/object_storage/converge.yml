@@ -1,0 +1,65 @@
+---
+# Converge the object_storage role for real (installs the pinned RustFS
+# binary, starts the systemd service, creates two test buckets over its S3
+# API), then separately exercises the per-bucket IAM provisioning tasks
+# against that same running server.
+#
+# Scope decision: tasks/iam.yml's own generate-if-absent phase
+# (tasks/iam_bucket*.yml) logs into OpenBao via community.hashi_vault to
+# resolve each bucket's ro/rw credentials -- well-exercised library code, the
+# same route roles/object_storage_offsite already uses, and not what PR #2195
+# review flagged as unverified. Standing up a live OpenBao server here to
+# reach it would test that plumbing again without adding coverage where it
+# was actually missing. What review flagged as untested is
+# tasks/iam_provision*.yml's own request shape: hand-built curl --aws-sigv4
+# calls against RustFS's native admin API
+# (list-canned-policies/add-canned-policy/add-user/set-user-or-group-policy),
+# inferred from vendor source and docs and never run against a live server.
+# So: converge the role once with no OpenBao configured (object_storage_iam_ready
+# resolves false, tasks/iam_provision.yml does not run), then include that
+# same tasks/iam_provision.yml directly with object_storage_bucket_credentials
+# set to fixed test fixtures standing in for what OpenBao would have supplied
+# -- exercising exactly the unverified admin-API request shape, against the
+# real pinned RustFS server, with nothing else stood in for.
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    object_storage_default_buckets:
+      - name: molecule-bucket-a
+      - name: molecule-bucket-b
+    # Cribl's pointer-based mirror needs cribl_version (supplied live by
+    # group_vars) and outbound internet; neither exists in this scenario and
+    # mirroring is unrelated to what this scenario tests.
+    object_storage_infra_mirrors: []
+
+    # Fixed test-only fixtures standing in for OpenBao's generate-if-absent
+    # output (see the header comment above) -- 20/40 chars, matching the real
+    # generated lengths (object_storage_iam_access_key/secret_key_length).
+    object_storage_bucket_credentials:
+      molecule-bucket-a:
+        ro:
+          access_key: X3V35AJE6FYJ9W2YSC3T
+          secret_key: pQoEpMHU5S57rLnviOquzlAWmsIrAgMHxVEbvy9V
+        rw:
+          access_key: EZG2RTK39H4KF1DNE2WC
+          secret_key: D3Kj09VvQtTXYFKoHu8pWSspmpx4mJ2BzboHwVD3
+      molecule-bucket-b:
+        ro:
+          access_key: 3V3DPXW636EO8PVW693F
+          secret_key: W4f82HybZW6xlXEnBhCfnE8a7tZz5TvJzeXAULi6
+        rw:
+          access_key: JMTYKK8THWAXHMRGS4X7
+          secret_key: WrwZ7slnLDxRjBa1U8eM5dqlzCxAhUGwXk4uREgg
+
+  tasks:
+    - name: Include object_storage role
+      ansible.builtin.include_role:
+        name: object_storage
+
+    - name: Provision per-bucket RustFS IAM against the real running server
+      ansible.builtin.include_role:
+        name: object_storage
+        tasks_from: iam_provision
