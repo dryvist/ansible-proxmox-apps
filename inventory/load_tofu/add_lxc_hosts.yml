@@ -97,12 +97,16 @@
 
 # The containers that actually answered — never the ones the contract merely
 # declares. add_host below gates on membership here, not on the declared
-# ansible_connection alone.
+# ansible_connection alone. selectattr('failed', 'defined') comes first: a
+# skipped loop item (no per-item when today, but nothing stops one being
+# added later) has no 'failed' key at all on ansible-core 2.21, and
+# rejectattr('failed') alone crashes on that missing attribute instead of
+# treating the item as not-ready.
 - name: Record which ssh-declared containers actually answered the probe
   ansible.builtin.set_fact:
     add_lxc_hosts_ssh_ready: >-
       {{ add_lxc_hosts_ssh_probe.results | default([])
-         | rejectattr('failed')
+         | selectattr('failed', 'defined') | rejectattr('failed')
          | map(attribute='item') | map(attribute='key') | list }}
   when: tofu_data.containers is defined
 
