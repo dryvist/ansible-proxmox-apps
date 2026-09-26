@@ -85,17 +85,35 @@ postgres_ha_fqdn_suffix: >-
 # only calls the issue endpoint. Injection-agnostic per AGENTS.md: read from
 # env, same shape as the pgBackRest S3 endpoint/credentials above.
 #
-# postgres_ha_pki_token is ALSO reused by patroni_etcd_credential.yml for the
-# secret/etcd/<scope>/rw KV read/write (not a second credential) — whoever
-# wires POSTGRES_HA_PKI_TOKEN for a real cluster's cutover must supply the
-# ansible-converge identity (or an equally-scoped one), since that AppRole is
-# what roles/openbao/templates/ansible-converge-policy.hcl.j2 now grants
-# create/update/read on secret/data/etcd/* + metadata/etcd/* to — the same
-# identity roles/object_storage already uses for its own per-bucket
-# generate-if-absent KV writes. A pure PKI-issuer identity with no KV grant
-# would fail patroni_etcd_credential.yml's first live converge.
-postgres_ha_pki_addr: "{{ lookup('env', 'POSTGRES_HA_PKI_ADDR') | default('', true) }}"
-postgres_ha_pki_token: "{{ lookup('env', 'POSTGRES_HA_PKI_TOKEN') | default('', true) }}"
+# Every PKI issue call (etcd server/peer cert, Patroni's own client cert) and
+# the secret/etcd/<scope>/rw KV read/write below authenticate as the shared
+# ansible-converge identity -- the SAME route
+# roles/object_storage/tasks/offsite.yml and roles/openbao_secrets/tasks/
+# publish.yml already use, not a dedicated postgres_ha credential. A prior
+# revision of this file carried a POSTGRES_HA_PKI_ADDR/_TOKEN placeholder pair
+# that named a requirement without supplying it -- no wrapper ever set those,
+# so the first live converge would have failed at the first PKI/KV call. This
+# is a login (role_id/secret_id), not a standing token, because a standing
+# token in the environment never expires on its own; patroni_etcd.yml logs in
+# once per host per converge and revokes it in an always: block.
+# roles/openbao/templates/ansible-converge-policy.hcl.j2 grants this identity
+# create/update/read on secret/data/etcd/* + metadata/etcd/* (KV) and, per
+# openbao_pki_etcd_engines entry, create/update on that cluster's own
+# pki-<scope>-etcd/issue/<role> and .../issue/<role>-patroni (PKI) -- no
+# sign-verbatim, no root.
+postgres_ha_bao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+# CONVERGE_ROLE_ID/SECRET_ID is whichever identity scripts/run-ansible.sh
+# actually authenticated as this run (semaphore, ansible-converge, or the
+# undeclared ansible pair); fall back to the ansible pair directly for a
+# caller that bypasses the runner entirely -- same fallback chain as
+# object_storage_offsite_bao_role_id/_secret_id.
+postgres_ha_bao_role_id: >-
+  {{ lookup('env', 'CONVERGE_ROLE_ID')
+     | default(lookup('env', 'OPENBAO_APPROLE_ANSIBLE_ROLE_ID'), true) }}
+postgres_ha_bao_secret_id: >-
+  {{ lookup('env', 'CONVERGE_SECRET_ID')
+     | default(lookup('env', 'OPENBAO_APPROLE_ANSIBLE_SECRET_ID'), true) }}
+postgres_ha_bao_validate_certs: true
 postgres_ha_pki_mount: "pki-{{ postgres_ha_scope }}-etcd"
 postgres_ha_pki_role: "{{ postgres_ha_scope }}-etcd"
 postgres_ha_etcd_tls_dir: /etc/etcd/tls

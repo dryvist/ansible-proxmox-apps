@@ -232,3 +232,28 @@ path "{{ openbao_kv_mount }}/data/etcd/*" {
 path "{{ openbao_kv_mount }}/metadata/etcd/*" {
   capabilities = ["read", "list"]
 }
+
+# --- Patroni's own etcd/PKI certificates, per cluster (issue only) -----------
+# roles/postgres's patroni_etcd_tls.yml and patroni_client_tls.yml issue this
+# cluster's etcd server/peer cert and Patroni's own client-only cert from the
+# PKI mount roles/openbao's 07b-etcd-pki-engine.yml declares for each entry in
+# openbao_pki_etcd_engines (empty by default -- no cluster runs patroni mode
+# yet, so this loop grants nothing today). ENUMERATED per declared cluster,
+# never a Vault ACL glob: OpenBao's `*` glob only ever matches at the very end
+# of a path, and `+` only ever replaces one WHOLE path segment -- neither can
+# match the scope embedded inside one segment (pki-<scope>-etcd), so a mount
+# name that varies per cluster has no valid wildcard shorthand here. Exact
+# create/update on issue only -- no sign-verbatim, no root, no access to
+# root/generate or the mount's own /roles/* config -- and unlike the KV grant
+# above, this list is a roles/openbao-OWN variable, so no cross-role
+# dependency: it is already in scope wherever this policy renders.
+{% for engine in openbao_pki_etcd_engines %}
+path "{{ engine.mount }}/issue/{{ engine.role }}" {
+  capabilities = ["create", "update"]
+}
+
+path "{{ engine.mount }}/issue/{{ engine.role }}-patroni" {
+  capabilities = ["create", "update"]
+}
+
+{% endfor %}
