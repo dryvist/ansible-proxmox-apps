@@ -30,7 +30,7 @@ device-telemetry inputs run. It defaults from the hostname (`netmon-cable` →
 
 A prober reaches *its* link's device (modem/dish, conventionally
 `192.168.100.1`) only when its traffic egresses the assigned uplink. The
-source-IP policy route per prober is owned by **tofu-unifi** (gated). Until it
+source-IP policy route per prober is owned by **the network IaC repo** (gated). Until it
 applies, a prober measures the default-route uplink only; active probes and the
 exporter sidecar still populate.
 

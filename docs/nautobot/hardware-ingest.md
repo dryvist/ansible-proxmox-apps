@@ -56,7 +56,7 @@ report; the job's dry-run flag covers the "what would this change" case.
 | Component naming a Device that does not exist | `Module` at the stated location, **with a warning** |
 
 The last row is the one worth stating plainly: the job never creates a
-placeholder chassis to hang an orphan component off. A synthetic Device is
+placeholder chassis to hang an orphan component off. A placeholder Device is
 indistinguishable from a real one forever afterwards, and every later query,
 export and drift report inherits the lie. Filing the part where the source says
 it is, and logging that the chassis is missing, keeps the gap visible.
