@@ -38,19 +38,47 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Install pytest and Ansible
+      - name: Install pytest, PyYAML, and Ansible
         run: >-
           python3 -m pip install --disable-pip-version-check
-          pytest 'ansible-core>=2.16'
+          pytest pyyaml 'ansible-core>=2.16'
 
       # test_ansible_cfg_options_are_real.py scans installed connection
       # plugins for the ini options ansible.cfg sets. ansible-core itself
-      # no longer ships paramiko_ssh (dropped from core; now lives in
-      # community.general) -- without this install the scan finds nothing
+      # no longer ships paramiko_ssh (dropped from core; now lives in a
+      # collection) -- without the collections below the scan finds nothing
       # for that plugin and the test fails on every run, not just when
       # ansible.cfg actually regresses.
-      - name: Install collections required by the test suite
-        run: ansible-galaxy collection install -r requirements.yml
+      #
+      # No per-job ANSIBLE_HOME isolation here (unlike the self-hosted
+      # contract jobs): this runs on a fresh ubuntu-latest VM per job, so
+      # there is no shared-runner install race to isolate against, and the
+      # test above reads the plain ANSIBLE_COLLECTIONS_PATH/HOME default
+      # (~/.ansible/collections) directly -- pointing ANSIBLE_HOME elsewhere
+      # would only make ansible-galaxy and the test disagree on where the
+      # collections landed.
+      - name: Cache Ansible Galaxy content
+        id: galaxy-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.ansible/collections
+            ~/.ansible/roles
+          key: ansible-galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
+
+      - name: Install Ansible dependencies
+        # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
+        # the whole job. Same four attempts and backoff the other contract
+        # jobs use.
+        if: steps.galaxy-cache.outputs.cache-hit != 'true'
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 4
+          retry_wait_seconds: 15
+          timeout_minutes: 10
+          command: ansible-galaxy install -r requirements.yml
+        env:
+          ANSIBLE_GALAXY_SERVER_TIMEOUT: "60"
 
       - name: Collect and run every test file in the repo
         run: python3 -m pytest tests --ignore=tests/e2e -v
