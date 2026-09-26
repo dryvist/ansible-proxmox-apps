@@ -1,0 +1,59 @@
+---
+- name: Render and verify the bmc_hw_metrics collector gate
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/cribl_stream/templates"
+    cribl_stream_bmc_host: "bmc.example.invalid"
+    cribl_stream_bmc_chassis: System.Embedded.1
+    cribl_stream_bmc_tls_verify: false
+
+  tasks:
+    - name: Render the thermal collector with the read-only credential present
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/bmc_redfish_thermal/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/bmc_hw_metrics_present.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_bmc_username: cribl-ro
+        cribl_stream_bmc_password: placeholder-password
+
+    - name: Assert the read-only username renders, never an admin fallback
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'username: \"cribl-ro\"' in _rendered"
+        fail_msg: "collector.yml.j2 did not render the read-only username"
+      vars:
+        _rendered: "{{ lookup('file', _fixture_dir ~ '/bmc_hw_metrics_present.yml') }}"
+
+    - name: Render the thermal collector with an empty credential
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/bmc_redfish_thermal/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/bmc_hw_metrics_absent.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_bmc_username: ""
+        cribl_stream_bmc_password: ""
+
+    - name: Assert an empty credential renders empty, never an admin fallback string
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'username: \"\"' in _rendered"
+          - "'BMC_USERNAME' not in _rendered"
+        fail_msg: >-
+          collector.yml.j2 must never render the BMC admin credential; the
+          task-level gate is what keeps this file from being deployed at all
+      vars:
+        _rendered: "{{ lookup('file', _fixture_dir ~ '/bmc_hw_metrics_absent.yml') }}"
+
+    - name: Bmc hw_metrics gate verification PASSED
+      ansible.builtin.debug:
+        msg: >-
+          collector.yml.j2 renders the read-only username when set and never
+          references an admin credential fallback when credentials are empty.

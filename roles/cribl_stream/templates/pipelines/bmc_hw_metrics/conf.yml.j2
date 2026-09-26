@@ -1,0 +1,103 @@
+---
+# The monitored node's Redfish Thermal/Power -> hw_temp_celsius/hw_fan_rpm/
+# hw_psu_watts/hw_psu_status metric events, index=host_metrics.
+#
+# A Code function can only mutate the single current event (__e); returning
+# an array does not split it into multiple output events (confirmed against
+# docs.cribl.io/stream/code-function/ and docs.cribl.io/stream/unroll-function/,
+# 2026-09-26 — no reachable schema doc states whether Unroll spreads an
+# array-of-objects element's keys to the top level, so the second Code
+# function below flattens explicitly rather than relying on undocumented
+# behavior). So: the first Code function builds an array field on __e, an
+# Unroll function turns that array into one event per element, and the
+# second Code function hoists that element's fields back to the top of the
+# event before publish_metrics reads them.
+output: splunk_hec
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const host = "{{ cribl_stream_bmc_node_name }}";
+        const metrics = [];
+        if (Array.isArray(__e.Temperatures)) {
+          for (const t of __e.Temperatures) {
+            if (t.ReadingCelsius === null || t.ReadingCelsius === undefined) continue;
+            metrics.push({
+              __name__: 'hw_temp_celsius',
+              _value: Number(t.ReadingCelsius),
+              host,
+              sensor: t.Name || t.MemberId || 'unknown',
+            });
+          }
+        }
+        if (Array.isArray(__e.Fans)) {
+          for (const f of __e.Fans) {
+            const rpm = f.Reading !== undefined ? f.Reading : f.ReadingRPM;
+            if (rpm === null || rpm === undefined) continue;
+            metrics.push({
+              __name__: 'hw_fan_rpm',
+              _value: Number(rpm),
+              host,
+              fan: f.Name || f.MemberId || 'unknown',
+            });
+          }
+        }
+        if (Array.isArray(__e.PowerSupplies)) {
+          for (const p of __e.PowerSupplies) {
+            const psu = p.Name || p.MemberId || 'unknown';
+            if (p.PowerOutputWatts !== null && p.PowerOutputWatts !== undefined) {
+              metrics.push({
+                __name__: 'hw_psu_watts',
+                _value: Number(p.PowerOutputWatts),
+                host,
+                psu,
+              });
+            }
+            const health = (p.Status && p.Status.Health) || 'Unknown';
+            metrics.push({
+              __name__: 'hw_psu_status',
+              _value: health === 'OK' ? 1 : 0,
+              host,
+              psu,
+              health,
+            });
+          }
+        }
+        __e.__bmcMetrics = metrics;
+  - id: unroll
+    filter: "true"
+    disabled: false
+    conf:
+      srcField: __bmcMetrics
+      destField: __bmcMetric
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        if (__e.__bmcMetric) {
+          Object.assign(__e, __e.__bmcMetric);
+        }
+        delete __e.__bmcMetric;
+        delete __e.__bmcMetrics;
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: index
+          value: "'host_metrics'"
+        - name: sourcetype
+          value: "'redfish:metrics'"
+  - id: publish_metrics
+    filter: "true"
+    disabled: false
+    conf:
+      metricNameField: __name__
+      valueField: _value
+      dimensions: "*"
