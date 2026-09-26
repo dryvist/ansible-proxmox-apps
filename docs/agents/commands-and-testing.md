@@ -19,15 +19,22 @@
 > seal-key/provisioning-identity constraint that keeps the OpenBao-node play
 > on a workstation.
 >
-> **Every converge has a wall-clock budget: 10 minutes, hard cap 20.**
-> `site.yml` checks the clock between stages (`playbooks/site/budget-gate.yml`)
-> and stops the run at the first stage boundary past the cap, with a failed
-> recap and the `TASKS RECAP` naming the slowest tasks. A single task is
-> capped at 10 minutes by `task_timeout` in `ansible.cfg`. A converge that
-> needs longer is a defect to file, not a value to raise: scope it with
-> `--limit <group>,localhost` and `--tags`. `CONVERGE_WALL_CLOCK_CAP` (seconds)
-> is honoured only on `main`, the promotion boundary where a full end-to-end
-> converge is the point; every other branch gets the default.
+> **Every converge has a wall-clock budget: soft warning at 5 minutes, hard
+> cap at Semaphore's own per-task duration ceiling minus a 150s margin**
+> (`SEMAPHORE_MAX_TASK_DURATION_SEC`, forwarded into the task environment by
+> `iac-platform`; 900s minus the margin, 750s, when that env var is absent).
+> `site.yml` checks the clock between stages via the shared
+> `dryvist.homelab.converge_gate` playbook (imported from
+> `playbooks/site/budget-gate.yml`) and stops the run at the first stage
+> boundary past the cap, with a failed recap, the `TASKS RECAP` naming the
+> slowest tasks, and a `--limit` rerun hint for whichever hosts recorded an
+> isolated-play failure. A single task is capped at 4 minutes by
+> `task_timeout` in `ansible.cfg`. A converge that needs longer is a defect
+> to file, not a value to raise: scope it with `--limit <group>,localhost`
+> and `--tags`. `CONVERGE_WALL_CLOCK_CAP` (seconds) is honoured only on
+> `main`, the promotion boundary where a full end-to-end converge is the
+> point, and even there is clamped to never exceed the Semaphore-derived
+> cap; every other branch gets the default.
 
 ```bash
 # Deploy all apps (Doppler — main pipeline does not require SOPS). A full
