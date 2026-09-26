@@ -167,6 +167,19 @@
     mode: "0644"
   register: postgres_ha_etcd_unit
 
+# Apply a pending config/unit-triggered restart NOW, before the "started"
+# task below and long before Patroni starts depending on etcd staying up --
+# same reasoning as cluster_config.yml's own flush. Handlers otherwise flush
+# at play end (or wherever the next unrelated meta: flush_handlers happens to
+# sit, e.g. Phase 4's), which on this exact cluster restarted etcd out from
+# under an already-running Patroni mid-converge (2026-09-26 CI failure,
+# "Connection refused" on :2379 from every member). On a fresh bootstrap
+# `systemctl restart` on a not-yet-running unit just starts it, so this is
+# never a no-op-turned-harmful-restart -- it collapses "restart" and "started
+# and enabled" below into one deterministic bring-up either way.
+- name: Apply a pending etcd config/unit restart
+  ansible.builtin.meta: flush_handlers
+
 - name: Ensure the etcd service is started and enabled
   ansible.builtin.systemd:
     name: etcd
