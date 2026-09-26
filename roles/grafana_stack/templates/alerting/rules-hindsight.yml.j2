@@ -1,0 +1,52 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: Hindsight-specific alert rules.
+## Split out of rules.yml.j2 to keep that file under its token budget
+## (.token-limits.yaml) — same "prometheus" datasource and gating condition,
+## just a separate rule group in the same alert folder.
+##
+## hindsight-replica-count-low READY — up{job="hindsight"} is scraped today
+## (prometheus_stack role); counts live replicas against the expected total
+## (grafana_stack_alert_hindsight_min_replicas). Retain-failure-rate,
+## stuck-operations and memory_defense-triggered alerts are NOT written here:
+## Hindsight's exported metrics (hindsight_operation_operations_total, scoped
+## by operation/tenant/bank_id) carry no success/failure or staleness label to
+## alert on yet — add them the moment upstream exposes one, per the same
+## "no rule on a nonexistent metric" rule rules.yml.j2's DORMANT entries follow.
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: hindsight-observability
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: hindsight-replica-count-low
+        title: Hindsight replica count low
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: count(up{job="hindsight"} == 1)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [{{ grafana_stack_alert_hindsight_min_replicas }}]}
+              refId: B
+        for: 5m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            Only {{ '{{' }} $values.A {{ '}}' }} Hindsight replica(s) up, below
+            the expected {{ grafana_stack_alert_hindsight_min_replicas }}.
+{% endif %}
