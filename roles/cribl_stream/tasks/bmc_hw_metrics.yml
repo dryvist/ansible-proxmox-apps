@@ -1,0 +1,63 @@
+---
+# A monitored node's hardware sensor monitoring: Redfish REST Collectors. The
+# bmc_hw_metrics pipeline itself is deployed by the shared
+# cribl_stream_pipelines loop in tasks/main.yml.
+
+- name: Deploy the BMC Redfish hardware sensor collectors
+  when:
+    - cribl_stream_bmc_host | length > 0
+    - cribl_stream_bmc_username | length > 0
+    - cribl_stream_bmc_password | length > 0
+  block:
+    - name: Ensure each bmc_redfish collector directory exists
+      ansible.builtin.file:
+        path: "{{ cribl_stream_install_dir }}/local/cribl/collectors/bmc_redfish_{{ item }}"
+        state: directory
+        owner: "{{ cribl_stream_user }}"
+        group: "{{ cribl_stream_group }}"
+        mode: "0755"
+      loop:
+        - thermal
+        - power
+
+    - name: Deploy the bmc_redfish collector configurations
+      ansible.builtin.template:
+        src: "collectors/bmc_redfish_{{ item }}/collector.yml.j2"
+        dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/bmc_redfish_{{ item }}/collector.yml"
+        owner: "{{ cribl_stream_user }}"
+        group: "{{ cribl_stream_group }}"
+        mode: "0600"
+      loop:
+        - thermal
+        - power
+      no_log: true
+      notify: Restart cribl stream
+
+    - name: Deploy the bmc_redfish collector schedules
+      ansible.builtin.template:
+        src: "collectors/bmc_redfish_{{ item }}/schedule.yml.j2"
+        dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/bmc_redfish_{{ item }}/schedule.yml"
+        owner: "{{ cribl_stream_user }}"
+        group: "{{ cribl_stream_group }}"
+        mode: "0644"
+      loop:
+        - thermal
+        - power
+      notify: Restart cribl stream
+
+- name: Report the BMC hardware sensor collectors as pending
+  ansible.builtin.debug:
+    msg: >-
+      cribl_stream_bmc_host is set but the read-only credential environment
+      variables are not set yet. Collectors not deployed. Run the
+      provisioning play (--tags bmc_provision) to create one.
+  when:
+    - cribl_stream_bmc_host | length > 0
+    - cribl_stream_bmc_username | length == 0 or cribl_stream_bmc_password | length == 0
+
+- name: Provision the Cribl read-only BMC account
+  ansible.builtin.include_tasks: provision_bmc_readonly_user.yml
+  when: cribl_stream_bmc_provision_account | bool
+  tags:
+    - never
+    - bmc_provision
