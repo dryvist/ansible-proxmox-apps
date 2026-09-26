@@ -1,14 +1,33 @@
 ---
 # Push tofu_data (and the derived monitor_targets fact) onto every
 # dynamically-added host so roles can access tofu_data.constants.* / the
-# monitor target lists directly without hostvars['localhost'] indirection.
-- name: Propagate tofu_data and monitor_targets to all inventory hosts
+# monitor target lists directly without hostvars['localhost'] indirection,
+# and set the guest hostname fact at the same time (add_host cannot set a
+# var literally named `hostname` — see below).
+#
+# hostvars['localhost'] indirection is NOT a substitute for this loop: every
+# host here was created at runtime via add_host, and Ansible cannot resolve
+# a group_vars/host_vars value for such a host when that value itself needs
+# hostvars() of another host (confirmed empirically — group_vars/all.yml:
+# `tofu_data: "{{ hostvars['localhost']['tofu_data'] }}"` resolves for
+# localhost but stays undefined for every add_host-created guest, and the
+# same expression run as a live task ON that guest resolves fine, isolating
+# the failure to hostvars-through-hostvars access for a dynamic host). A
+# real per-host fact, written here, is the only mechanism that works.
+#
+# What IS avoidable is the per-host overhead of doing this in two separate
+# looped tasks. The dict-merge below used to live in the hostname task's own
+# `vars:`, which Ansible re-templates on EVERY loop iteration even though
+# the merged value never depends on `item` — recomputing an identical
+# combine() ~150 times per run for no reason. Computed once here, before
+# the loop, instead.
+- name: Combine every guest dict for the per-host hostname lookup
   ansible.builtin.set_fact:
-    tofu_data: "{{ tofu_data }}"
-    monitor_targets: "{{ monitor_targets }}"
-  delegate_to: "{{ item }}"
-  delegate_facts: true
-  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+    propagate_facts_guests: >-
+      {{ (tofu_data.containers | default({}))
+         | combine(tofu_data.vms | default({}))
+         | combine(tofu_data.docker_vms | default({}))
+         | combine(tofu_data.splunk_vm | default({})) }}
   when: tofu_data is defined
 
 # add_host CANNOT set a host var literally named `hostname`: it is an alias
@@ -16,16 +35,22 @@
 # consumed instead of becoming a hostvar. Consumers of `hostname`
 # (technitium_dns A-record builder, *_docker site-URL defaults) therefore
 # never saw it — set it as a real per-host fact here instead.
-- name: Set the guest hostname fact on all inventory hosts
-  vars:
-    tofu_guests: >-
-      {{ (tofu_data.containers | default({}))
-         | combine(tofu_data.vms | default({}))
-         | combine(tofu_data.docker_vms | default({}))
-         | combine(tofu_data.splunk_vm | default({})) }}
+#
+# One combined set_fact + delegate_facts loop, not two: every host in
+# groups['all'] is written to exactly once instead of twice, halving the
+# per-host task overhead that (along with the vars: re-render above) made
+# this file cost 35-50s per Semaphore run at fleet scale. `hostname` is
+# passed through `omit` for a host absent from propagate_facts_guests, so it
+# is left unset there exactly as the separate, `when`-guarded task used to
+# leave it unset.
+- name: Propagate tofu_data, monitor_targets and the hostname fact to every host
   ansible.builtin.set_fact:
-    hostname: "{{ tofu_guests[item].hostname }}"
+    tofu_data: "{{ tofu_data }}"
+    monitor_targets: "{{ monitor_targets }}"
+    hostname: >-
+      {{ propagate_facts_guests[item].hostname
+         if item in propagate_facts_guests else omit }}
   delegate_to: "{{ item }}"
   delegate_facts: true
   loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
-  when: item in tofu_guests
+  when: tofu_data is defined
