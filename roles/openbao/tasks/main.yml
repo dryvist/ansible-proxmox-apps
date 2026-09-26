@@ -17,14 +17,19 @@
 # tagged `always`: nothing below them works without the binary installed,
 # so every phase-scoped run still needs them.
 #
-# This same static-vs-dynamic distinction is why playbooks/site/
-# 04-secrets-and-collab-apps.yml includes this whole role with `import_role`
-# rather than `include_role`: a dynamic include is itself the unit --tags
-# matches against, so a phase-scoped run (`--tags openbao_kv_seed`) would
-# test only that ONE task's tags (inherited from the play: openbao, secrets,
-# secrets-management), find no match, and skip the entire role -- never
-# reaching any of the finer tags declared below, no matter how correctly
-# they are set here.
+# The role's OWN inclusion, from playbooks/site/04a-openbao.yml, stays a
+# DYNAMIC `include_role` on purpose -- NOT the `import_role` this same
+# static-vs-dynamic logic might suggest. Importing statically would parse
+# and flatten every task below into that play before any host is matched:
+# the `always`-tagged ones (install, config render, service start, cluster
+# probe/init) would then fire on ANY unrelated `--tags` run that happens to
+# target an openbao_group host, and a parse error anywhere in this role
+# would abort the whole playbook before that play's own rescue: block ever
+# gets a chance to isolate it (its whole point). `include_role` keeps both
+# properties, at the cost of needing its OWN `tags:` list -- one entry per
+# phase tag used anywhere below -- so --tags can decide whether to enter it
+# at all; once entered, the loaded tasks are filtered individually by their
+# own tags exactly as documented above.
 - name: Phases 1-4 -- prerequisites, system user/group, and the OpenBao package install
   ansible.builtin.import_tasks: main/install.yml
   tags:
