@@ -38,28 +38,38 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Install pytest and Ansible
+      - name: Install pytest, PyYAML, and Ansible
         run: >-
           python3 -m pip install --disable-pip-version-check
           pytest pyyaml 'ansible-core>=2.16'
 
-      # test_ansible_cfg_options_are_real.py scans every installed connection
-      # plugin -- ansible-core's own plus every collection's -- against
-      # ansible.cfg's [*_connection] sections. Without this step no collection
-      # is installed, so it finds only core plugins and fails proving a real,
-      # in-repo option (community.proxmox's proxmox_pct_remote) is "dead
-      # config". Default install path (~/.ansible/collections), matching that
-      # test's own fallback when ANSIBLE_COLLECTIONS_PATH is unset -- no other
-      # step in this job needs the cross-job-race isolation the fleet-runner
-      # jobs use, since this one runs once on an ephemeral ubuntu-latest VM.
+      # test_ansible_cfg_options_are_real.py scans installed connection
+      # plugins for the ini options ansible.cfg sets. ansible-core itself
+      # no longer ships paramiko_ssh (dropped from core; now lives in a
+      # collection) -- without the collections below the scan finds nothing
+      # for that plugin and the test fails on every run, not just when
+      # ansible.cfg actually regresses.
+      #
+      # No per-job ANSIBLE_HOME isolation here (unlike the self-hosted
+      # contract jobs): this runs on a fresh ubuntu-latest VM per job, so
+      # there is no shared-runner install race to isolate against, and the
+      # test above reads the plain ANSIBLE_COLLECTIONS_PATH/HOME default
+      # (~/.ansible/collections) directly -- pointing ANSIBLE_HOME elsewhere
+      # would only make ansible-galaxy and the test disagree on where the
+      # collections landed.
       - name: Cache Ansible Galaxy content
         id: galaxy-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ~/.ansible/collections
+          path: |
+            ~/.ansible/collections
+            ~/.ansible/roles
           key: ansible-galaxy-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
 
-      - name: Install Ansible collections
+      - name: Install Ansible dependencies
+        # Galaxy flakes with 504s and read timeouts; a retry beats rerunning
+        # the whole job. Same four attempts and backoff the other contract
+        # jobs use.
         if: steps.galaxy-cache.outputs.cache-hit != 'true'
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
@@ -105,13 +115,6 @@ jobs:
         run: >-
           ansible-playbook tests/homarr/test_integration_credential_gate.yml
           -i localhost, -c local
-
-  # openbao_pki_etcd_engines is derived from postgres_ha_patroni_scopes
-  # (roles/openbao's 07b-etcd-pki-engine.yml) and must always name the same
-  # mount/role roles/postgres computes for that scope (03-patroni.yml).
-  # tests/test_postgres_ha_etcd_openbao_contract.py covers this; it runs as
-  # part of pytest-suite above, which collects every test file in the repo --
-  # no dedicated job needed here.
 
   # The nautobot-export contract had a shape check (tests/nautobot_export_shape.py)
   # that nothing ever ran, so the export job and its schema could drift apart

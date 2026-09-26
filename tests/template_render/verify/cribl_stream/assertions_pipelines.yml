@@ -223,6 +223,38 @@
       unifi_wan_bytes_total via two filtered Publish Metrics functions —
       native functions only.
 
+- name: Assert pve_metrics_normalize keeps every path segment after the object id
+  ansible.builtin.assert:
+    that:
+      - "'.slice(3)' in _cribl_stream_pve_metrics_pipeline"
+      - "'.slice(4)' in _cribl_stream_pve_metrics_pipeline"
+      - "\".join('_')\" in _cribl_stream_pve_metrics_pipeline"
+      - "'__parts.length' not in _cribl_stream_pve_metrics_pipeline"
+      - "'host_metrics' in _cribl_stream_pve_metrics_pipeline"
+      - "\"'pve:metrics'\" in _cribl_stream_pve_metrics_pipeline"
+    fail_msg: >-
+      pve_metrics_normalize must build the metric name from every path
+      segment after the object id (slice(3) for nodes/qemu/lxc, slice(4)
+      for storages, joined with '_') — taking only the last segment
+      collapses distinct keys like memory.used and swap.used onto the
+      same metric name.
+
+- name: Assert slice(3)/join('_') does not collide two real PVE node keys
+  vars:
+    _pve_key_memory: >-
+      {{ ('proxmox.nodes.pve-node-a.memory.used'.split('.'))[3:] | join('_') }}
+    _pve_key_swap: >-
+      {{ ('proxmox.nodes.pve-node-a.swap.used'.split('.'))[3:] | join('_') }}
+  ansible.builtin.assert:
+    that:
+      - "_pve_key_memory == 'memory_used'"
+      - "_pve_key_swap == 'swap_used'"
+      - "_pve_key_memory != _pve_key_swap"
+    fail_msg: >-
+      memory.used and swap.used must resolve to distinct metric-name
+      suffixes (memory_used vs swap_used) — the old __parts[length-1]
+      logic collapsed both to just "used".
+
 - name: Assert the UniFi VLAN lookup CSV renders vlan_id/network_name rows
   ansible.builtin.assert:
     that:
