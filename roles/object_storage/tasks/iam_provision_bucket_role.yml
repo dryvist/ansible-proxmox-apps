@@ -20,9 +20,29 @@
 # `--aws-sigv4` (curl >= 7.75, native to the `curl` package this role already
 # installs in tasks/main.yml Phase 1) -- no new binary, no custom script.
 #
-# NOT exercised against a live RustFS server in this PR (none was available)
-# -- verify against a real 1.0.0-beta.8 instance (ideally --check plus one
-# real bucket) before this is trusted for anything beyond the first bucket.
+# Two curl --aws-sigv4 quirks, found by running these exact calls against a
+# real RustFS 1.0.0-beta.8 server with curl 7.88.1 (Debian 12's own apt
+# version -- the version every "apt install curl" on this estate's actual
+# guests gets, not whatever newer curl a workstation happens to have):
+#   - curl does not add the x-amz-content-sha256 header by default; RustFS's
+#     admin routes require it (unlike some S3-compatible admin APIs that
+#     default it themselves), and reject its absence with
+#     400 "missing header: x-amz-content-sha256". Every call below sets it
+#     explicitly to UNSIGNED-PAYLOAD (correct for a plain HTTP payload that
+#     is not itself content-hash-verified) rather than relying on a curl
+#     version's implicit default.
+#   - curl signs a multi-parameter query string in the order given in the
+#     URL, not sorted by parameter name -- SigV4 requires alphabetical order
+#     in the canonical request, so an unsorted multi-param URL produces a
+#     signature RustFS correctly rejects as SignatureDoesNotMatch. Only
+#     set-user-or-group-policy below has more than one query parameter, so
+#     its three are written in alphabetical order (isGroup, policyName,
+#     userOrGroup) precisely to route around curl's own lack of sorting,
+#     not because RustFS or SigV4 requires that literal spelling order.
+# Neither is a RustFS bug (both are curl's own documented, longstanding
+# --aws-sigv4 limitations, curl/curl#9717 among others) and neither is
+# specific to this pinned curl version -- fixing them here is
+# version-independent, not a Debian-12-only patch.
 
 - name: Look up this bucket/role's resolved access key and secret
   ansible.builtin.set_fact:
@@ -46,6 +66,8 @@
       - "aws:amz:{{ object_storage_region }}:s3"
       - -u
       - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -H
+      - "x-amz-content-sha256: UNSIGNED-PAYLOAD"
       - -w
       - "\n%{http_code}"
       - "{{ object_storage_endpoint }}/rustfs/admin/v3/list-canned-policies?bucket={{ object_storage_iam_bucket }}"
@@ -68,11 +90,33 @@
       decide idempotently whether {{ object_storage_iam_policy_name }} exists.
     quiet: true
 
+# A raw dict/list equality check against RustFS's own echoed copy can never
+# converge to "no diff", proven by running this task twice against a real
+# server: RustFS always adds its own bookkeeping fields we never send (a
+# top-level "ID", and "Sid"/"Condition" on every statement) and does not
+# preserve the Action/Resource array order we submitted, so a literal `!=`
+# reports "differs" on every single converge, defeating write-if-changed
+# entirely. Compare only the fields this policy's template actually renders
+# (Effect, and Action/Resource as sets via `sort`, since order is not
+# semantically meaningful for either), which is what RustFS is actually
+# preserving.
+- name: Extract the one statement each side actually carries
+  ansible.builtin.set_fact:
+    object_storage_iam_policy_existing_statement: >-
+      {{ ((object_storage_iam_list_body | from_json).get(object_storage_iam_policy_name, {})
+         .get('Statement', [{}]) | first) }}
+    object_storage_iam_policy_rendered_statement: >-
+      {{ (object_storage_iam_policy_json | from_json).Statement | first }}
+
 - name: Compare the rendered policy against what RustFS already has
   ansible.builtin.set_fact:
     object_storage_iam_policy_differs: >-
-      {{ ((object_storage_iam_list_body | from_json).get(object_storage_iam_policy_name))
-         | default({}) != (object_storage_iam_policy_json | from_json) }}
+      {{ (object_storage_iam_policy_existing_statement.Effect | default(''))
+           != (object_storage_iam_policy_rendered_statement.Effect | default(''))
+         or (object_storage_iam_policy_existing_statement.Action | default([]) | sort)
+           != (object_storage_iam_policy_rendered_statement.Action | default([]) | sort)
+         or (object_storage_iam_policy_existing_statement.Resource | default([]) | sort)
+           != (object_storage_iam_policy_rendered_statement.Resource | default([]) | sort) }}
 
 - name: Write the bucket-scoped policy (write-if-changed)
   ansible.builtin.command:
@@ -83,6 +127,8 @@
       - "aws:amz:{{ object_storage_region }}:s3"
       - -u
       - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -H
+      - "x-amz-content-sha256: UNSIGNED-PAYLOAD"
       - -X
       - PUT
       - -H
@@ -125,6 +171,8 @@
       - "aws:amz:{{ object_storage_region }}:s3"
       - -u
       - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -H
+      - "x-amz-content-sha256: UNSIGNED-PAYLOAD"
       - -X
       - PUT
       - -H
@@ -159,13 +207,15 @@
       - "aws:amz:{{ object_storage_region }}:s3"
       - -u
       - "{{ object_storage_root_user }}:{{ object_storage_root_password }}"
+      - -H
+      - "x-amz-content-sha256: UNSIGNED-PAYLOAD"
       - -X
       - PUT
       - -w
       - "\n%{http_code}"
       - >-
-        {{ object_storage_endpoint }}/rustfs/admin/v3/set-user-or-group-policy?policyName={{
-        object_storage_iam_policy_name }}&userOrGroup={{ object_storage_iam_access_key }}&isGroup=false
+        {{ object_storage_endpoint }}/rustfs/admin/v3/set-user-or-group-policy?isGroup=false&policyName={{
+        object_storage_iam_policy_name }}&userOrGroup={{ object_storage_iam_access_key }}
   register: object_storage_iam_attach
   changed_when: object_storage_iam_policy_differs
   no_log: true
