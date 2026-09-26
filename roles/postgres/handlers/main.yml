@@ -110,7 +110,19 @@
 # API/patronictl rather than applying them, and this role does not act on
 # that flag -- an operator decides when a restart-requiring GUC change is
 # safe to roll out, the same judgment call promoting a replica already is.
+#
+# when: gates this to an ALREADY-managed member only (a genuine live
+# reconverge). On a fresh bootstrap both the config and the unit are written
+# for the first time in the same converge, so "Restart patroni" (which reads
+# the same fresh file on its real first start) fires too -- an immediate,
+# unconditional reload right after that real start raced Patroni's own
+# initial etcd-connect retry loop and stalled it (2026-09-26 CI: the loop's
+# cadence visibly dropped from sub-100ms to a flat 5s the instant the reload
+# landed, and it never recovered before the health check ran), a full outage
+# on every fresh bootstrap. A freshly-started process has already read this
+# exact file; reloading it again supplies nothing.
 - name: Reload patroni
   ansible.builtin.systemd:
     name: patroni
     state: reloaded
+  when: (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active'
