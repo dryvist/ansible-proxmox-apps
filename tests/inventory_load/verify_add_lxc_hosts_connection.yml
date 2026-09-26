@@ -94,13 +94,16 @@
   gather_facts: false
   vars:
     # One item succeeded (failed: false, as wait_for's registered result
-    # shapes it), one failed (timed out), one skipped (no 'failed' key at
-    # all — the shape an ansible-core 2.21 per-item `when: false` loop
-    # result takes, and the shape that crashed a sibling repo's loader with
-    # "object of type 'dict' has no attribute 'failed'"). This is the only
-    # way to prove the "probe succeeded" and "result was skipped" branches:
-    # CI has no privilege to bind port 22, and this repo's tests never make
-    # a live network call (mirrors verify_add_lxc_hosts_placement.yml's own
+    # shapes it), one failed (timed out), one skipped (skipped: true AND
+    # failed: false, no per-item when today but nothing stops one being
+    # added later — the exact shape a real ansible-core 2.21 when-skipped
+    # loop item takes, verified against ansible-core 2.21), and one with no
+    # 'failed' key and no 'skipped' key at all (the shape that crashed a
+    # sibling repo's loader with "object of type 'dict' has no attribute
+    # 'failed'"). This is the only way to prove the "probe succeeded",
+    # "result was skipped", and "result carries neither key" branches: CI
+    # has no privilege to bind port 22, and this repo's tests never make a
+    # live network call (mirrors verify_add_lxc_hosts_placement.yml's own
     # mocked-expression tier).
     _mock_probe_results:
       - item: { key: ssh-ready-poc, value: { fqdn: ssh-ready-poc.example.internal } }
@@ -109,15 +112,19 @@
         failed: true
       - item: { key: ssh-skipped-poc, value: { fqdn: ssh-skipped-poc.example.internal } }
         skipped: true
+        failed: false
+        skip_reason: Conditional result was False
+      - item: { key: ssh-no-key-poc, value: { fqdn: ssh-no-key-poc.example.internal } }
   tasks:
     - name: Compute add_lxc_hosts_ssh_ready from the shipped expression against the mock
       ansible.builtin.set_fact:
         add_lxc_hosts_ssh_ready: >-
           {{ _mock_probe_results | default([])
+             | selectattr('skipped', 'undefined')
              | selectattr('failed', 'defined') | rejectattr('failed')
              | map(attribute='item') | map(attribute='key') | list }}
 
-    - name: Assert only the succeeded item is ready, and the skipped item is excluded without crashing
+    - name: Assert only the succeeded item is ready, and skipped/keyless items are excluded without crashing
       ansible.builtin.assert:
         that:
           - add_lxc_hosts_ssh_ready == ['ssh-ready-poc']
