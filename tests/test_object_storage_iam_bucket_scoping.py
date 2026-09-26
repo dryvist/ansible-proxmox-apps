@@ -26,13 +26,17 @@ from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "object_storage"
-DEFAULTS = ROLE / "defaults" / "main.yml"
+DEFAULTS_DIR = ROLE / "defaults" / "main"
 PROVISION_TASKS = ROLE / "tasks" / "iam_provision_bucket_role.yml"
 RENDER_TASK = "Render the bucket-scoped policy for this role"
 
 
 def _defaults():
-    return yaml.safe_load(DEFAULTS.read_text(encoding="utf-8"))
+    """Merge every defaults/main/*.yml split file, same as Ansible's own load."""
+    merged = {}
+    for path in sorted(DEFAULTS_DIR.glob("*.yml")):
+        merged.update(yaml.safe_load(path.read_text(encoding="utf-8")))
+    return merged
 
 
 def _bucket_names():

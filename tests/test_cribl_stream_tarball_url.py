@@ -6,7 +6,7 @@ literal Cribl version in this repository (Renovate-managed). Every consumer
 -- roles/cribl_stream/defaults/main/00-install.yml (`cribl_stream_version`),
 inventory/group_vars/cribl_edge.yml (the mirror tarball key),
 roles/cribl_docker_stack/defaults/main.yml (the image tag), and the `cribl`
-entry in roles/object_storage/defaults/main.yml's
+entry in roles/object_storage/defaults/main/00-core.yml's
 `object_storage_infra_mirrors` (the mirrored object's key) -- reads it
 rather than declaring its own pin, so a version bump is one edit instead of
 several that can silently drift out of step (exactly how the pre-split
@@ -32,7 +32,7 @@ ALL_VARS = ROOT / "inventory" / "group_vars" / "all.yml"
 CRIBL_EDGE_VARS = ROOT / "inventory" / "group_vars" / "cribl_edge.yml"
 CRIBL_STREAM_DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main" / "00-install.yml"
 CRIBL_DOCKER_STACK_DEFAULTS = ROOT / "roles" / "cribl_docker_stack" / "defaults" / "main.yml"
-OBJECT_STORAGE_DEFAULTS = ROOT / "roles" / "object_storage" / "defaults" / "main.yml"
+OBJECT_STORAGE_DEFAULTS = ROOT / "roles" / "object_storage" / "defaults" / "main" / "00-core.yml"
 RENOVATE_JSON = ROOT / "renovate.json"
 
 # A literal version, build hash, or sha256 digest assigned to a variable
