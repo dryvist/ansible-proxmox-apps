@@ -5,8 +5,8 @@ does NOT hide the string from `ps aux` / `/proc/<pid>/cmdline` for the
 process's lifetime -- a `-u user:pass` pair there is as exposed as it would
 be on a shell command line. iam_provision_bucket_role.yml signs its RustFS
 admin-API calls with curl's own --aws-sigv4, which needs the root
-credential; it must reach curl via the short-lived netrc file
-iam_provision.yml creates (object_storage_iam_netrc_path), never via `-u`
+credential; it must reach curl via the netrc file iam_provision.yml
+writes at the role default object_storage_iam_netrc_path, never via `-u`
 or any other argv element built from object_storage_root_user /
 object_storage_root_password.
 
