@@ -1,0 +1,18 @@
+---
+# getent resolves through the host's own resolver and fails on an unknown
+# name, so a mistyped client stops the converge instead of emitting no rule.
+# Mirrors roles/authelia/tasks/wall_kiosk.yml (same source, same reasoning).
+- name: Resolve the wall kiosk clients
+  ansible.builtin.getent:
+    database: ahostsv4
+    key: "{{ item }}"
+  loop: "{{ traefik_wall_kiosk_clients }}"
+  register: traefik_wall_kiosk_dns
+
+- name: Derive the kiosk client networks
+  ansible.builtin.set_fact:
+    traefik_wall_kiosk_networks: >-
+      {{ traefik_wall_kiosk_dns.results | default([])
+         | map(attribute='ansible_facts.getent_ahostsv4')
+         | map('dict2items') | map('first') | map(attribute='key')
+         | map('regex_replace', '$', '/32') | unique | list }}
