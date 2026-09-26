@@ -140,6 +140,60 @@ def test_source_address_restriction_still_applies_to_user_roles():
     assert body["default_critical_options"] == {"source-address": "192.0.2.0/24"}
 
 
+def _render_user_roles(ssh_roles):
+    """Render 07a's real two-step openbao_ssh_user_roles derivation, in the
+    same dependency order Ansible resolves it in (openbao_ssh_host_role_names
+    first, then openbao_ssh_user_roles reads it)."""
+    derived = _read_defaults("07a-derived-rollups-and-ttls.yml")
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = {"openbao_ssh_roles": ssh_roles}
+    host_names = templar.template(
+        trust_as_template(derived["openbao_ssh_host_role_names"])
+    )
+    templar.available_variables = {
+        "openbao_ssh_roles": ssh_roles,
+        "openbao_ssh_host_role_names": host_names,
+    }
+    return templar.template(trust_as_template(derived["openbao_ssh_user_roles"]))
+
+
+def test_ssh_user_roles_view_excludes_host_cert():
+    """openbao_ssh_user_roles (07a) is what every user-cert-only consumer --
+    molecule/openbao/verify/ssh_signing.yml's items2dict among them -- must
+    read instead of the full table. Render it for real against the LIVE
+    table (which includes host-cert) and prove the crash molecule hit is
+    gone: items2dict over the filtered view must not raise, and it must
+    contain exactly the pre-existing four principal-bearing roles."""
+    user_roles = _render_user_roles(LIVE_SSH_ROLES)
+
+    names = {entry["name"] for entry in user_roles}
+    assert "host-cert" not in names
+    assert names == {
+        "automation-ai",
+        "automation-ansible",
+        "automation-semaphore",
+        "ci-runner",
+    }
+
+    # The exact operation that crashed in CI (PR #2203, run 36232738114):
+    # items2dict(key_name='name', value_name='principal') over a table that
+    # includes a principal-less entry.
+    by_name = {entry["name"]: entry["principal"] for entry in user_roles}
+    assert by_name["automation-ai"] == "ai-agent"
+
+
+def test_ssh_user_roles_view_keeps_a_future_explicit_user_cert_type():
+    # The filter must not accidentally drop an entry that later spells 'user'
+    # out explicitly, nor crash on one that omits cert_type entirely.
+    roles = [
+        {"name": "explicit-user", "cert_type": "user", "principal": "p"},
+        {"name": "implicit-user", "principal": "q"},
+        {"name": "host-cert", "cert_type": "host"},
+    ]
+    names = {e["name"] for e in _render_user_roles(roles)}
+    assert names == {"explicit-user", "implicit-user"}
+
+
 def test_ssh_sign_policy_is_derived_for_the_host_cert_role():
     """openbao_ssh_sign_policies (07a) must pick up host-cert automatically --
     no separate declaration, per the ssh-sign-<role> derivation rule."""

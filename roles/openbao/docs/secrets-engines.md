@@ -238,7 +238,13 @@ apparatus; the block is enable + write-once CA + add-if-missing roles.
   `ci-runner` (`ci`, 30m, no extensions). TTLs are declared in seconds so the
   reconcile can compare them against the API without normalizing.
   `ttl == max_ttl`; a sign request may shorten a cert's life, never extend it.
-  Principals are always explicit — never `*`.
+  Principals are always explicit — never `*`. `openbao_ssh_user_roles` is the
+  derived, user-cert-only view every consumer that reads `principal`/
+  `extensions` unconditionally must use instead of the full table.
+- `host-cert` (`cert_type: host`) signs HOST certificates under the same CA
+  keypair instead: `allow_host_certificates`, `allowed_domains` (the apex
+  zone guest FQDNs live under), `allow_subdomains`, no bare domains, 90d
+  `ttl`/`max_ttl`. No principal/extensions — those are user-cert-only fields.
 - One `ssh-sign-<role>` policy leaf per role grants exactly that role's
   `sign/` endpoint. Attachment follows the security decisions:
   `ssh-sign-automation-ai` → `ai-elevated` (standing, a documented tradeoff:
@@ -247,7 +253,9 @@ apparatus; the block is enable + write-once CA + add-if-missing roles.
   `ssh-sign-automation-ansible` → `ansible-converge` only;
   `ssh-sign-automation-semaphore` → `semaphore` only, so a certificate's
   principal identifies which caller ran a converge;
-  `ssh-sign-ci-runner` → unattached until a CI identity exists.
+  `ssh-sign-ci-runner` → unattached until a CI identity exists;
+  `ssh-sign-host-cert` → `ansible-converge` and `semaphore` (issuance runs
+  unattended in Semaphore).
 - `OPENBAO_SSH_SOURCE_CIDRS` (Doppler) adds a `source-address` critical
   option restricting where certs are valid from; unset ⇒ loud warning and
   the guest-firewall default-deny layer is the compensating control.
