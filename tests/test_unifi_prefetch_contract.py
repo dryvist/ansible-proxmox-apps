@@ -5,7 +5,7 @@ Nothing exported UNIFI_API into the Ansible run's environment under
 Semaphore, so `lookup('env', 'UNIFI_API')` silently resolved empty and the
 unpoller role's own assert (tasks/main.yml) failed the converge. The single
 source of truth is secret/infrastructure/unifi (the same path the network
-IaC repo's tofu-unifi Terrakube workspace already reads) — fetched here via
+IaC repo's own Terraform provider already reads) — fetched here via
 the existing openbao_secrets "apps" domain (already pulled for
 cribl_stream_group, where unpoller runs) rather than a dedicated AppRole.
 
