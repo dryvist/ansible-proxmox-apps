@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.50.0...v4.51.0) (2026-09-27)
+
+
+### Features
+
+* **openbao:** generate a litellm-local-workstation router-key secret ([#2237](https://github.com/dryvist/ansible-proxmox-apps/issues/2237)) ([fec4fa5](https://github.com/dryvist/ansible-proxmox-apps/commit/fec4fa58cb909efd71c860340ab024383468bf71))
+
 ## [4.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.49.0...v4.50.0) (2026-09-27)
 
 
