@@ -16,7 +16,7 @@ import yaml
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/status_stack/templates/gatus-config.yaml.j2"
 
 
-def render(services: list[dict], dashboard_catalog_services: list[dict] = None) -> dict[str, dict]:
+def render(services: list[dict], dashboard_catalog_services: list[dict] | None = None) -> dict[str, dict]:
     # If dashboard_catalog_services not specified, default to services for backward compatibility.
     if dashboard_catalog_services is None:
         dashboard_catalog_services = services
