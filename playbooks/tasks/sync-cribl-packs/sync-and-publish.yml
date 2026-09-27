@@ -1,0 +1,203 @@
+---
+# `aws s3api get-object-tagging` returns nonzero for a missing object
+# ("NoSuchKey" in stderr) — expected, drives a sync. Any other nonzero
+# (auth/network/bucket) must fail loud, validated in the next task.
+- name: Query current object-storage version tag for each pack
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3api
+      - get-object-tagging
+      - --bucket
+      - "{{ object_storage_bucket }}"
+      - --key
+      - "{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
+      - --query
+      - TagSet[?Key=='version'].Value
+      - --output
+      - text
+  environment: "{{ s3_env }}"
+  loop: "{{ cribl_packs_desired }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cribl_packs_tag_query
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Validate query errors are only missing-object cases
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.rc == 0
+        or 'NoSuchKey' in ((item.stdout | default('')) ~ (item.stderr | default('')))
+    fail_msg: >-
+      get-object-tagging failed for {{ item.item.name }} with rc={{ item.rc }}.
+      Not a "missing object" — check object-storage connectivity,
+      OBJECT_STORAGE_ROOT_USER/PASSWORD, and bucket existence.
+    quiet: true
+  loop: "{{ cribl_packs_tag_query.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Compute sync decisions (bucket tag vs resolved latest)
+  ansible.builtin.set_fact:
+    cribl_packs_plan: >-
+      {{ cribl_packs_plan | default([]) + [item.item | combine({
+        'current_version': (item.stdout | default('') | trim) if item.rc == 0 else '',
+        'needs_sync': (
+          item.rc != 0
+          or (item.stdout | default('') | trim) != (item.item.desired_version | string | trim)
+        ),
+      })] }}
+  loop: "{{ cribl_packs_tag_query.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Show sync decisions
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.name }}: latest={{ item.desired_version }}
+      store={{ item.current_version or '(none)' }}
+      → {{ 'SYNC' if item.needs_sync else 'skip' }}
+  loop: "{{ cribl_packs_plan }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Build list of packs that need sync
+  ansible.builtin.set_fact:
+    cribl_packs_to_sync: "{{ cribl_packs_plan | selectattr('needs_sync') | list }}"
+
+- name: Download drifted pack assets from GitHub releases
+  ansible.builtin.get_url:
+    url: "{{ item.asset_url }}"
+    dest: "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
+    force: true
+    mode: "0600"
+    timeout: 120
+  loop: "{{ cribl_packs_to_sync }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.desired_version }}"
+
+- name: Compute sha256 of downloaded pack assets
+  ansible.builtin.stat:
+    path: "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
+    checksum_algorithm: sha256
+  loop: "{{ cribl_packs_to_sync }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cribl_packs_checksums
+
+- name: Upload synced pack assets to object storage
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3
+      - cp
+      - "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
+  environment: "{{ s3_env }}"
+  loop: "{{ cribl_packs_to_sync }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+
+# Tag every desired entry (not only re-uploads), same as sync-splunkbase.yml —
+# pre-existing objects may lack channel=latest.
+- name: Tag object-storage objects as the current latest release
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3api
+      - put-object-tagging
+      - --bucket
+      - "{{ object_storage_bucket }}"
+      - --key
+      - "{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
+      - --tagging
+      - >-
+        {{ {'TagSet': [{'Key': 'channel', 'Value': 'latest'},
+        {'Key': 'version', 'Value': item.desired_version | string | trim}]} | to_json }}
+  environment: "{{ s3_env }}"
+  loop: "{{ cribl_packs_desired }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+
+- name: Remove downloaded assets from controller tmpdir
+  ansible.builtin.file:
+    path: "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
+    state: absent
+  loop: "{{ cribl_packs_to_sync }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# sha256 was only computed for freshly-downloaded packs. For an entry that
+# was already current (skipped download), reuse the sha256 already published
+# in the existing manifest so the full manifest is always rebuilt from real
+# checksums, never invented for a pack this run never touched.
+- name: Read existing manifest (source of sha256 for un-synced entries)
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3
+      - cp
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/manifest.json"
+      - "-"
+  environment: "{{ s3_env }}"
+  register: cribl_packs_existing_manifest
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Build manifest (name → {version, key, sha256})
+  ansible.builtin.set_fact:
+    cribl_packs_manifest: >-
+      {{ cribl_packs_manifest | default({}) | combine({
+        item.name: {
+          'version': item.desired_version,
+          'key': cribl_packs_object_storage_prefix ~ '/' ~ item.name ~ '.crbl',
+          'sha256': (
+            (cribl_packs_checksums.results | selectattr('item.name', 'equalto', item.name)
+             | map(attribute='stat.checksum') | list | first)
+            if item.name in (cribl_packs_to_sync | map(attribute='name') | list)
+            else (
+              (cribl_packs_existing_manifest.stdout | default('{}', true) | from_json)
+              .get(item.name, {}).sha256 | default('')
+            )
+          ),
+        }
+      }) }}
+  loop: "{{ cribl_packs_desired }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Write manifest to controller tmpdir
+  ansible.builtin.copy:
+    content: "{{ cribl_packs_manifest | to_nice_json }}\n"
+    dest: "{{ cribl_packs_sync_tmpdir }}/manifest.json"
+    mode: "0600"
+
+- name: Publish manifest.json to object storage
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3
+      - cp
+      - "{{ cribl_packs_sync_tmpdir }}/manifest.json"
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/manifest.json"
+  environment: "{{ s3_env }}"
+  changed_when: true
+
+- name: Remove manifest from controller tmpdir
+  ansible.builtin.file:
+    path: "{{ cribl_packs_sync_tmpdir }}/manifest.json"
+    state: absent
+
+- name: Summary
+  ansible.builtin.debug:
+    msg: >-
+      cc-* pack sync complete.
+      {{ cribl_packs_to_sync | length }} of
+      {{ cribl_packs_desired | length }} resolvable packs updated;
+      manifest.json published with {{ cribl_packs_manifest | length }} packs.

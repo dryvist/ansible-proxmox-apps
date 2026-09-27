@@ -122,6 +122,11 @@ doppler run -- ansible-playbook \
 # Deploy all applications
 doppler run -- ansible-playbook \
   -i inventory/hosts.yml playbooks/site.yml
+
+# Mirror the latest release of every dryvist cc-* Cribl pack repo into
+# object storage and publish cribl-packs/manifest.json (Splunk-addon pattern;
+# site.yml's cribl_packs role installs from the published manifest)
+doppler run -- ansible-playbook playbooks/sync-cribl-packs.yml
 ```
 
 ## Roles
