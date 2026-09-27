@@ -42,17 +42,12 @@ alerting:
 # catalog. A route marked dashboard:false still gets monitored — a broken
 # compat redirect is still a real outage even though it earns no tile.
 endpoints:
-{#- Build combined endpoint list: services_monitor plus wall-only apps. -#}
+{#- Build combined endpoint list: services_monitor plus wall-only apps, deduped by name and url. -#}
 {% set _wall_apps = dashboard_catalog_services | default([]) | selectattr('ui') | list %}
-{% set _monitor_names_and_urls = dashboard_catalog_services_monitor | default([]) | map(attribute='name') | list %}
+{% set _monitor_names = dashboard_catalog_services_monitor | default([]) | map(attribute='name') | list %}
 {% set _monitor_urls = dashboard_catalog_services_monitor | default([]) | map(attribute='url') | list %}
-{% set _endpoints = dashboard_catalog_services_monitor | default([]) | list %}
-{% for svc in _wall_apps %}
-{#- Include wall app if not already in monitor list (dedup by name and url). -#}
-{% if svc.name not in _monitor_names_and_urls and svc.url not in _monitor_urls %}
-{% set _ = _endpoints.append(svc) %}
-{% endif %}
-{% endfor %}
+{% set _wall_only = _wall_apps | rejectattr('name', 'in', _monitor_names) | rejectattr('url', 'in', _monitor_urls) | list %}
+{% set _endpoints = (dashboard_catalog_services_monitor | default([])) + _wall_only %}
 {% for svc in _endpoints %}
 {#- An SSO-gated public URL is answered by the Authelia login page, so probing
     it only proves Authelia is up. Those rows probe the guest directly

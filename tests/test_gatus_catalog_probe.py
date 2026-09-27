@@ -35,6 +35,17 @@ def render(services: list[dict], dashboard_catalog_services: list[dict] = None) 
         status_stack_failure_threshold=3,
         status_stack_ntfy_priority_degraded=3,
         status_stack_ntfy_priority_urgent=5,
+        status_stack_ntfy_url="https://ntfy.example.test/observability",
+        status_stack_ntfy_topic_degraded="observability",
+        status_stack_ntfy_topic_urgent="keystone",
+        status_stack_ui_dashboard_heading="Homelab Status",
+        status_stack_authelia_public_url="https://authelia.example.test",
+        status_stack_deadman_token="test-token",
+        status_stack_kuma_keystones=[],
+        status_stack_oidc_clients=[],
+        status_stack_authenticated_endpoints=[],
+        status_stack_monitor_targets={"icmp": [], "tcp": [], "http": []},
+        status_stack_deadman_endpoints=[],
     )
     return {ep["name"]: ep for ep in yaml.safe_load(text)["endpoints"]}
 
