@@ -25,6 +25,16 @@
 # VLAN-tagged network. WAN traffic carries no brN token (ethN instead) and
 # is labelled 'wan' rather than folded into vlan_id '0' (which would
 # misread as the untagged Default LAN in the lookup).
+#
+# Eval's Value Expression rejects a nested function scope (docs.cribl.io/
+# stream/eval-function, "Value Expression Limitations": no loops, control
+# structures, or function bodies) — the IIFEs this pipeline shipped with
+# ("failed to load function" name=eval "Expression cannot have nested
+# scopes" in cribl.log on every worker start) never loaded, so vlan_id/
+# direction fell through Cribl's own undefined default instead of running
+# this logic. Rewritten below as single expressions: regex .exec() plus a
+# `|| []` guard for a no-match, indexed and ternaried inline — same
+# derivation, no function scope.
 output: splunk_hec
 streamtags: []
 groups: {}
@@ -43,11 +53,12 @@ functions:
             /-A-/.test(_raw) ? 'accept' : /-D-/.test(_raw) ? 'deny' : 'unknown'
         - name: vlan_id
           value: >-
-            (function(){var m=/\bbr(\d+)\b/.exec(_raw); return m ? m[1] : 'wan';})()
+            (/\bbr(\d+)\b/.exec(_raw) || [])[1] || 'wan'
         - name: direction
           value: >-
-            (function(){var i=/\bIN=(\S*)/.exec(_raw), o=/\bOUT=(\S*)/.exec(_raw);
-            return (i && i[1]) ? 'ingress' : (o && o[1]) ? 'egress' : 'unknown';})()
+            (/\bIN=(\S*)/.exec(_raw) || [])[1] ? 'ingress' :
+            (/\bOUT=(\S*)/.exec(_raw) || [])[1] ? 'egress' : 'unknown'
+{% if cribl_stream_unifi_networks | default([]) | length > 0 %}
   - id: lookup
     filter: "true"
     disabled: false
@@ -70,6 +81,20 @@ functions:
       add:
         - name: vlan
           value: "vlan || vlan_id"
+{% else %}
+  - id: eval
+    # No published network list (cribl_stream_unifi_networks empty) — Cribl's
+    # Lookup function crashes ("Cannot read properties of undefined (reading
+    # 'forEach')") reading a header-only CSV, so the lookup+CSV pair is
+    # skipped entirely rather than deployed empty (see the CSV deploy task's
+    # matching `when`). Metrics still flow, labelled by the numeric vlan id.
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: vlan
+          value: "vlan_id"
+{% endif %}
   - id: aggregation
     filter: "true"
     disabled: false
