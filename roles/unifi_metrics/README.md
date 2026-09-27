@@ -39,9 +39,10 @@ compose stack. Prerequisites:
 
 - A target LXC (the `unifi_metrics` group) able to reach the UniFi controller
   and the Cribl Edge HEC port.
-- `UNIFI_API` / `UNIFI_USERNAME` / `UNIFI_PASSWORD` in the environment of the
-  Ansible run (the `network` keychain items, same creds the network IaC repo's provider
-  uses). A read-only UniFi local admin is sufficient and recommended.
+- `UNIFI_API` / `UNIFI_USERNAME` / `UNIFI_PASSWORD` in OpenBao
+  `secret/infrastructure/unifi` (same fields the network IaC repo's provider
+  reads), fetched by the apps-domain prefetch — never from the environment. A
+  read-only UniFi local admin is sufficient and recommended.
 - The `cribl_edge` group deployed (provides the HEC input + `unifi_metrics`
   index branch) and a Splunk `unifi_metrics` index (tofu-proxmox).
 
@@ -60,8 +61,8 @@ devices within a couple of scrape intervals.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `unifi_metrics_controller_url` | `$UNIFI_API` | Controller URL (prefer FQDN) |
-| `unifi_metrics_controller_user` / `_pass` | `$UNIFI_USERNAME` / `$UNIFI_PASSWORD` | Controller creds (env only) |
+| `unifi_metrics_controller_url` | `bao_apps_secrets.UNIFI_API` | Controller URL (prefer FQDN) |
+| `unifi_metrics_controller_user` / `_pass` | `bao_apps_secrets.UNIFI_USERNAME` / `_PASSWORD` | Controller creds (prefetch only) |
 | `unifi_metrics_controller_verify_ssl` | `false` | UDW ships a self-signed cert |
 | `unifi_metrics_sites` | `["all"]` | Sites to poll |
 | `unifi_metrics_unpoller_port` | `9130` | Prometheus exporter port (local) |

@@ -122,6 +122,18 @@ def test_unpoller_controller_url_ignores_env_and_fails_loud_when_bao_is_empty(mo
         raise AssertionError("an env UNIFI_API must never stand in for the prefetch fact")
 
 
+def test_unpoller_controller_password_ignores_env(monkeypatch):
+    monkeypatch.setenv("UNPOLLER_CONTROLLER_PASSWORD", "from-env")
+    defaults = _read_role_defaults("unpoller")
+
+    try:
+        _render(defaults["unpoller_controller_password"], {"bao_apps_secrets": {}})
+    except Exception:
+        pass
+    else:
+        raise AssertionError("an env password must never stand in for secret/apps/unpoller")
+
+
 def test_unifi_metrics_controller_fields_ignore_env(monkeypatch):
     defaults = _read_role_defaults("unifi_metrics")
     for env_name, key in [

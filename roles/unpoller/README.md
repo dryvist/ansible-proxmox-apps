@@ -29,8 +29,8 @@ controller API independently.
 
 ## Credentials
 
-- **Controller URL** (`UNIFI_API`): the same OpenBao-backed environment
-  variable (`secret/infrastructure/unifi`, field `UNIFI_API`) the
+- **Controller URL** (`UNIFI_API`): read from the apps-domain OpenBao
+  prefetch (`secret/infrastructure/unifi`, field `UNIFI_API`) — the same field the
   `unifi_metrics` role and the UniFi infrastructure repo's Terraform provider already treat as the
   single source of truth for the controller address. Must be an FQDN — the
   role asserts it is not a literal IPv4 URL.
@@ -43,7 +43,7 @@ controller API independently.
   Only the **password** is automated: generated once into OpenBao
   (`secret/apps/unpoller`, field `unpoller_controller_password` —
   `roles/openbao/defaults/main/01c-app-secrets-generated.yml`) and read here
-  bao-first with an env fallback (`UNPOLLER_CONTROLLER_PASSWORD`).
+  from the apps-domain OpenBao prefetch only (no env fallback).
 
 ## Key variables
 
@@ -51,7 +51,7 @@ controller API independently.
 | --- | --- | --- |
 | `unpoller_version` | (set in `inventory/group_vars/all.yml`, Renovate-managed) | Pinned upstream release |
 | `unpoller_metrics_port` | `9130` (`cribl_stream_group.yml`, shared with `roles/cribl_stream`'s scrape target) | Prometheus exporter port |
-| `unpoller_controller_url` | `$UNIFI_API` | Controller URL (FQDN) |
+| `unpoller_controller_url` | `bao_apps_secrets.UNIFI_API` | Controller URL (FQDN) |
 | `unpoller_controller_user` | `unpoller` | Read-only controller account |
 | `unpoller_controller_password` | OpenBao `apps/unpoller` | Generated once, rotatable standalone |
 | `unpoller_controller_verify_ssl` | `false` | UDW/UDM ships a self-signed cert |
