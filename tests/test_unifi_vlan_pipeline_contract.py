@@ -93,6 +93,26 @@ def test_no_pipeline_eval_expression_has_a_nested_function_scope():
 # --- 2. Lookup + CSV render only when the network list is non-empty ---
 
 
+def test_unifi_syslog_to_metrics_skips_lookup_when_networks_undefined():
+    # Regression: a caller that renders pipelines.yml directly (e.g. the
+    # status_stack AutoKuma bulk-render molecule scenario) never loads the
+    # cribl_stream role's own defaults, so cribl_stream_unifi_networks is
+    # not merely an empty list here -- it is completely undefined. The
+    # template's `| default([])` guard must not require the variable to
+    # exist at all.
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = {}
+    rendered = templar.template(
+        trust_as_template(
+            (PIPELINE_DIR / "unifi_syslog_to_metrics" / "conf.yml.j2").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+    fn_ids = [fn["id"] for fn in yaml.safe_load(rendered)["functions"]]
+    assert "lookup" not in fn_ids
+
+
 def test_unifi_syslog_to_metrics_skips_lookup_when_networks_empty():
     rendered = _render(PIPELINE_DIR / "unifi_syslog_to_metrics" / "conf.yml.j2", [])
     pipeline = yaml.safe_load(rendered)
@@ -167,7 +187,7 @@ def test_lookup_table_deploy_task_is_gated_on_a_non_empty_network_list():
         re.DOTALL,
     )
     assert task, "the UniFi VLAN lookup table deploy task must still exist"
-    assert "when: cribl_stream_unifi_networks | length > 0" in task.group(0)
+    assert "when: cribl_stream_unifi_networks | default([]) | length > 0" in task.group(0)
 
 
 def test_csv_lookup_is_header_only_when_networks_empty():
