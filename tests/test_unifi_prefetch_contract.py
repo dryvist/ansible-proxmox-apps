@@ -14,8 +14,9 @@ reimplementation, and check every wire this design decision depends on:
   - the "apps" domain declares the infrastructure/unifi path
   - the apps AppRole's policy actually grants read on that exact path
   - unifi_metrics_group is scoped into the domains this run's --limit fetches
-  - the role defaults resolve bao-first, fall back to env, and fail loud
-    (mandatory) when neither is set
+  - the role defaults resolve from the prefetch fact ONLY: an env var of the
+    same name is ignored (no hidden second source), and an empty fact fails
+    loud (mandatory)
 """
 
 from __future__ import annotations
@@ -109,19 +110,8 @@ def test_unpoller_controller_url_resolves_bao_first():
     assert resolved == FAKE_URL
 
 
-def test_unpoller_controller_url_falls_back_to_env_when_bao_is_empty(monkeypatch):
+def test_unpoller_controller_url_ignores_env_and_fails_loud_when_bao_is_empty(monkeypatch):
     monkeypatch.setenv("UNIFI_API", FAKE_URL)
-    defaults = _read_role_defaults("unpoller")
-    resolved = _render(
-        defaults["unpoller_controller_url"],
-        {"bao_apps_secrets": {}},
-    )
-
-    assert resolved == FAKE_URL
-
-
-def test_unpoller_controller_url_fails_loud_when_neither_source_is_set(monkeypatch):
-    monkeypatch.delenv("UNIFI_API", raising=False)
     defaults = _read_role_defaults("unpoller")
 
     try:
@@ -129,7 +119,22 @@ def test_unpoller_controller_url_fails_loud_when_neither_source_is_set(monkeypat
     except Exception:
         pass
     else:
-        raise AssertionError("mandatory() must fail when bao and env both resolve empty")
+        raise AssertionError("an env UNIFI_API must never stand in for the prefetch fact")
+
+
+def test_unifi_metrics_controller_fields_ignore_env(monkeypatch):
+    defaults = _read_role_defaults("unifi_metrics")
+    for env_name, key in [
+        ("UNIFI_API", "unifi_metrics_controller_url"),
+        ("UNIFI_USERNAME", "unifi_metrics_controller_user"),
+        ("UNIFI_PASSWORD", "unifi_metrics_controller_pass"),
+    ]:
+        monkeypatch.setenv(env_name, "from-env")
+        try:
+            _render(defaults[key], {"bao_apps_secrets": {}})
+        except Exception:
+            continue
+        raise AssertionError(f"{key} must not fall back to env {env_name}")
 
 
 def test_unifi_metrics_controller_fields_resolve_bao_first():
