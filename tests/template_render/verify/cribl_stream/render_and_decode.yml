@@ -17,6 +17,18 @@
     dest: "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_netmon.yml"
     mode: "0644"
 
+- name: Render prometheus_to_unifi_metrics conf.yml.j2 to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/pipelines/prometheus_to_unifi_metrics/conf.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_unifi_metrics.yml"
+    mode: "0644"
+
+- name: Render pve_metrics_normalize conf.yml.j2 to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/pipelines/pve_metrics_normalize/conf.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_pve_metrics_normalize.yml"
+    mode: "0644"
+
 - name: Render ai_stamp conf.yml.j2 to /tmp
   ansible.builtin.template:
     src: "{{ _template_dir }}/pipelines/ai_stamp/conf.yml.j2"
@@ -84,6 +96,41 @@
     cribl_stream_otel_redaction_rules: "{{ _cribl_stream_defaults.cribl_stream_otel_redaction_rules }}"
     cribl_stream_otel_redaction_fields: "{{ _cribl_stream_defaults.cribl_stream_otel_redaction_fields }}"
 
+# Non-empty fixture (matches the CSV render below): exercises the branch
+# where the network list is published and the Lookup function is rendered.
+# The empty-list branch (no Lookup, no CSV) is covered by
+# tests/test_unifi_vlan_pipeline_contract.py, which renders both templates
+# directly via Ansible's Templar with cribl_stream_unifi_networks == [].
+- name: Render unifi_syslog_to_metrics conf.yml.j2 to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/pipelines/unifi_syslog_to_metrics/conf.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_unifi_syslog_to_metrics.yml"
+    mode: "0644"
+  vars:
+    cribl_stream_unifi_networks:
+      - { key: vlan_siem, name: siem, vlan: 40 }
+      - { key: lan_main, name: Default, vlan: 0 }
+
+- name: Render ipfix_to_metrics conf.yml.j2 to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/pipelines/ipfix_to_metrics/conf.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_ipfix_to_metrics.yml"
+    mode: "0644"
+  vars:
+    cribl_stream_unifi_networks:
+      - { key: vlan_siem, name: siem, vlan: 40 }
+      - { key: lan_main, name: Default, vlan: 0 }
+
+- name: Render the unifi_vlan_map.csv lookup to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/lookups/unifi_vlan_map.csv.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_unifi_vlan_map.csv"
+    mode: "0644"
+  vars:
+    cribl_stream_unifi_networks:
+      - { key: vlan_siem, name: siem, vlan: 40 }
+      - { key: lan_main, name: Default, vlan: 0 }
+
 - name: Render outputs.yml.j2 with per-index HEC enabled to /tmp
   ansible.builtin.template:
     src: "{{ _template_dir }}/outputs.yml.j2"
@@ -101,21 +148,31 @@
     - "{{ _fixture_dir }}/test_cribl_stream_inputs.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_force_splunk_meta.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_netmon.yml"
+    - "{{ _fixture_dir }}/test_cribl_stream_prometheus_to_unifi_metrics.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_ai_stamp.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_outputs_per_index.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_otel_stamp.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_cribl_internal.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_otel_traces.yml"
     - "{{ _fixture_dir }}/test_cribl_stream_otel_traces_phoenix.yml"
+    - "{{ _fixture_dir }}/test_cribl_stream_unifi_syslog_to_metrics.yml"
+    - "{{ _fixture_dir }}/test_cribl_stream_ipfix_to_metrics.yml"
+    - "{{ _fixture_dir }}/test_cribl_stream_unifi_vlan_map.csv"
+    - "{{ _fixture_dir }}/test_cribl_stream_pve_metrics_normalize.yml"
 
 - name: Decode cribl_stream rendered content
   ansible.builtin.set_fact:
     _cribl_stream_inputs: "{{ _cribl_stream_rendered.results[0].content | b64decode }}"
     _cribl_stream_meta_pipeline: "{{ _cribl_stream_rendered.results[1].content | b64decode }}"
     _cribl_stream_prom_pipeline: "{{ _cribl_stream_rendered.results[2].content | b64decode }}"
-    _cribl_stream_ai_pipeline: "{{ _cribl_stream_rendered.results[3].content | b64decode }}"
-    _cribl_stream_outputs_pi: "{{ _cribl_stream_rendered.results[4].content | b64decode }}"
-    _cribl_stream_otel_pipeline: "{{ _cribl_stream_rendered.results[5].content | b64decode }}"
-    _cribl_stream_internal_pipeline: "{{ _cribl_stream_rendered.results[6].content | b64decode }}"
-    _cribl_stream_otel_traces: "{{ _cribl_stream_rendered.results[7].content | b64decode }}"
-    _cribl_stream_otel_traces_phoenix: "{{ _cribl_stream_rendered.results[8].content | b64decode }}"
+    _cribl_stream_unifi_pipeline: "{{ _cribl_stream_rendered.results[3].content | b64decode }}"
+    _cribl_stream_ai_pipeline: "{{ _cribl_stream_rendered.results[4].content | b64decode }}"
+    _cribl_stream_outputs_pi: "{{ _cribl_stream_rendered.results[5].content | b64decode }}"
+    _cribl_stream_otel_pipeline: "{{ _cribl_stream_rendered.results[6].content | b64decode }}"
+    _cribl_stream_internal_pipeline: "{{ _cribl_stream_rendered.results[7].content | b64decode }}"
+    _cribl_stream_otel_traces: "{{ _cribl_stream_rendered.results[8].content | b64decode }}"
+    _cribl_stream_otel_traces_phoenix: "{{ _cribl_stream_rendered.results[9].content | b64decode }}"
+    _cribl_stream_unifi_syslog_pipeline: "{{ _cribl_stream_rendered.results[10].content | b64decode }}"
+    _cribl_stream_ipfix_metrics_pipeline: "{{ _cribl_stream_rendered.results[11].content | b64decode }}"
+    _cribl_stream_unifi_vlan_map: "{{ _cribl_stream_rendered.results[12].content | b64decode }}"
+    _cribl_stream_pve_metrics_pipeline: "{{ _cribl_stream_rendered.results[13].content | b64decode }}"

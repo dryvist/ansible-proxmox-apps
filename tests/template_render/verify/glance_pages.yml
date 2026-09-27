@@ -1,0 +1,144 @@
+---
+# Render and verify the Glance board's two pages: the existing "Services" page
+# stays byte-shaped the same, and the new "Network + Media" page carries only
+# the network/media VLAN groups (dns, media_svc) — no new services, same
+# dashboard_catalog_services list both pages render from.
+- name: Render and verify glance generated-services templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    glance_monitor_enabled: true
+    glance_monitor_interval: "1m"
+    glance_network_media_groups:
+      - dns
+      - media_svc
+    glance_network_media_slug: network-media
+    dashboard_catalog_group_order:
+      - apps
+      - ai
+      - media_svc
+      - mgmt
+      - siem
+      - data
+      - nonprod
+      - other
+    # Same shape as dashboard_catalog_tasks/main.yml's set_fact — including
+    # `section: ~` on every entry, which the macro's selectattr('section')
+    # requires present (a bare dict lacking the key fails the attribute
+    # lookup, unlike the real catalog which always sets it, even to none).
+    dashboard_catalog_services:
+      - name: vikunja
+        title: Vikunja
+        group: apps
+        ui: true
+        section: ~
+        desc: "Task tracking"
+        url: "https://vikunja.example.test"
+        probe_url: ""
+      - name: technitium
+        title: Technitium
+        group: dns
+        ui: true
+        section: ~
+        desc: "DNS server"
+        url: "https://technitium.example.test"
+        probe_url: "http://192.0.2.5:5380"
+      - name: plex
+        title: Plex
+        group: media_svc
+        ui: true
+        section: ~
+        desc: "Media server"
+        url: "https://plex.example.test"
+        probe_url: ""
+      - name: sonarr
+        title: Sonarr
+        group: media_svc
+        ui: true
+        section: ~
+        desc: "TV automation"
+        url: "https://sonarr.example.test"
+        probe_url: ""
+      - name: sonarr-api
+        title: Sonarr API
+        group: media_svc
+        ui: false
+        section: ~
+        desc: ""
+        url: "https://sonarr.example.test/api"
+        probe_url: ""
+
+  tasks:
+    - name: Render generated-services.yml
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/generated-services.yml.j2"
+        dest: "{{ render_tmp }}/glance-generated-services.yml"
+        mode: "0600"
+
+    - name: Read back the rendered pages
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/glance-generated-services.yml"
+      register: _glance_raw
+
+    - name: Parse the rendered pages
+      ansible.builtin.set_fact:
+        _glance_pages: "{{ _glance_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert both pages render, Services first
+      ansible.builtin.assert:
+        that:
+          - _glance_pages | length == 2
+          - _glance_pages[0].name == 'Services'
+          - _glance_pages[1].name == 'Network + Media'
+          - _glance_pages[1].slug == 'network-media'
+        fail_msg: "expected [Services, Network + Media] pages, got {{ _glance_pages | map(attribute='name') | list }}"
+
+    - name: Assert the Network + Media page carries only dns/media_svc links
+      ansible.builtin.assert:
+        that:
+          # split-column's two child widgets, in fixture order: monitor (UI,
+          # glance_monitor_enabled=true) first, bookmarks (API-only) second —
+          # same shape audience_widget always emits.
+          - _nm_monitor_titles | reject('match', '^(dns|media_svc) ·') | list | length == 0
+          - "'apps' not in (_nm_widget | string)"
+          # No service outside dns/media_svc leaked onto the page (e.g. vikunja).
+          - "'Vikunja' not in (_nm_widget | string)"
+        fail_msg: "Network + Media page pulled in a group or service outside dns/media_svc: {{ _nm_widget }}"
+      vars:
+        _nm_widget: "{{ _glance_pages[1].columns[0].widgets[0].widgets }}"
+        _nm_monitor_titles: >-
+          {{ _nm_widget | selectattr('type', 'eq', 'monitor') | map(attribute='sites')
+             | flatten | map(attribute='title') | list }}
+
+    - name: Assert the Services page still carries every catalog entry
+      ansible.builtin.assert:
+        that:
+          # The UI half renders as a monitor widget (glance_monitor_enabled),
+          # one site per catalog entry — every group must still be present.
+          - _services_monitor_titles | reject('match', '^(apps|dns|media_svc) ·') | list | length == 0
+          - _services_monitor_titles | select('match', '^apps ·') | list | length == 1
+          - _services_monitor_titles | select('match', '^dns ·') | list | length == 1
+          - _services_monitor_titles | select('match', '^media_svc ·') | list | length == 2
+          # The one API-only entry (sonarr-api) keeps rendering as a bookmark.
+          - _services_bookmark_titles == ['media_svc']
+        fail_msg: "Services page dropped a group after adding the second page: {{ _services_monitor_titles }}"
+      vars:
+        _services_widget: "{{ _glance_pages[0].columns[0].widgets[0].widgets }}"
+        _services_monitor_titles: >-
+          {{ _services_widget | selectattr('type', 'eq', 'monitor') | map(attribute='sites')
+             | flatten | map(attribute='title') | list }}
+        _services_bookmark_titles: >-
+          {{ _services_widget | selectattr('type', 'eq', 'bookmarks') | map(attribute='groups')
+             | flatten | map(attribute='title') | list }}
+
+    - name: Glance page render verification PASSED
+      ansible.builtin.debug:
+        msg: |
+          Glance page assertions passed:
+          - Services and Network + Media both render, in that order
+          - Network + Media is scoped to dns/media_svc, no new services
+          - Services keeps every catalog group after the second page was added

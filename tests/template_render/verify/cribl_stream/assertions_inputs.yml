@@ -11,6 +11,20 @@
       pack-routed events, so unstamped events would fall into Splunk's
       HEC token defaults (index=main, sourcetype=httpevent)
 
+- name: Assert PVE metrics input fans to Splunk and VictoriaMetrics
+  ansible.builtin.assert:
+    that:
+      - "'type: metrics' in _cribl_stream_inputs"
+      - "'id: in_pve_metrics' in _cribl_stream_inputs"
+      - "'tcpPort: 10370' in _cribl_stream_inputs"
+      - "'pipeline: pve_metrics_normalize' in _cribl_stream_inputs"
+      - "'output: splunk_hec' in _cribl_stream_inputs"
+      - "'output: victoriametrics_rw' in _cribl_stream_inputs"
+    fail_msg: >-
+      inputs.yml.j2 must include a metrics-type in_pve_metrics input on
+      cribl_stream_pve_metrics_port, connected to both splunk_hec and
+      victoriametrics_rw through the pve_metrics_normalize pipeline
+
 - name: Assert prometheus_rw input fans to Splunk and VictoriaMetrics
   ansible.builtin.assert:
     that:
@@ -25,16 +39,6 @@
       prometheusAPI: /api/v1/write, connected to BOTH
       (prometheus_to_netmon → splunk_hec) and (victoriametrics_rw with no
       Splunk-stamp pipeline)
-
-- name: Assert victoriametrics_rw Prometheus remote_write output renders
-  ansible.builtin.assert:
-    that:
-      - "'victoriametrics_rw:' in _cribl_stream_outputs_pi"
-      - "'type: prometheus' in _cribl_stream_outputs_pi"
-      - "'url: \"http://grafana.example.invalid:8428/api/v1/write\"' in _cribl_stream_outputs_pi"
-    fail_msg: >-
-      outputs.yml.j2 must define victoriametrics_rw as type: prometheus
-      targeting the fixture URL (FQDN + victoriametrics port + /api/v1/write)
 
 - name: Assert OTLP input renders on the otel port with the otel_stamp pipeline
   ansible.builtin.assert:
@@ -169,12 +173,13 @@
       - "'splunk_hec_netflow' in _cribl_stream_outputs_pi"
       - "'splunk_hec_claude' in _cribl_stream_outputs_pi"
       - "'splunk_hec_llm' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_unifi_metrics' in _cribl_stream_outputs_pi"
       # Derived list is unique — no duplicated output ids.
       - "_cribl_stream_outputs_pi.count('id: splunk_hec_llm') == 1"
     fail_msg: >-
       outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
-      splunk_hec_<index> output for netflow plus each unique
-      ai_log_routing index
+      splunk_hec_<index> output for netflow, unifi_metrics, plus each
+      unique ai_log_routing index
 
 - name: Assert the secondary sinks drop under backpressure, HEC sinks do not
   ansible.builtin.assert:

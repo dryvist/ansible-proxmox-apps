@@ -1,0 +1,103 @@
+---
+# propagate_facts.yml scopes the two heavy facts (tofu_data, monitor_targets)
+# to the hosts THIS run's --limit actually targets, while still propagating
+# the cheap `hostname` scalar to every host in groups['all'] regardless of
+# --limit — hostname alone has cross-host consumers outside the limited set
+# (roles/technitium_dns/tasks/main/build_records.yml,
+# roles/openbao_voter_health/templates/openbao-voter-health.sh.j2), while
+# grepping the whole tree finds zero cross-host readers of
+# hostvars[<host>].tofu_data or .monitor_targets. Requires ansible_limit to
+# be a real magic var set by the CLI --limit flag (it cannot be shadowed by
+# a task-level `vars:`), so this file must be invoked with an actual --limit,
+# e.g.:
+#   ansible-playbook tests/inventory_load/verify_propagate_facts_limit_scope.yml
+#     -i inventory/hosts.yml -c local --limit haproxy,localhost
+- name: Load OpenTofu inventory
+  import_playbook: ../../inventory/load_tofu.yml
+
+- name: Verify propagate_facts.yml's --limit scoping of the heavy facts
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Sanity-check this run was actually invoked with the expected --limit
+      ansible.builtin.assert:
+        that:
+          - ansible_limit is defined
+          - ansible_limit == 'haproxy,localhost'
+        fail_msg: >-
+          This test must be run with --limit haproxy,localhost — got
+          ansible_limit={{ ansible_limit | default('(unset)') }}. Without a
+          real --limit the scoping this file exercises never activates.
+
+    - name: Verify hostname still reaches a host OUTSIDE this run's --limit
+      ansible.builtin.assert:
+        that:
+          - hostvars['immich'].hostname == 'immich'
+        fail_msg: >-
+          hostname must propagate to every host in groups['all']
+          regardless of --limit (technitium_dns/openbao_voter_health read
+          other hosts' hostname unconditionally) — got
+          {{ hostvars['immich'].hostname | default('(undefined)') }}
+
+    - name: Verify tofu_data/monitor_targets are NOT copied to an out-of-limit host
+      ansible.builtin.assert:
+        that:
+          - hostvars['immich'].tofu_data is not defined
+          - hostvars['immich'].monitor_targets is not defined
+        fail_msg: >-
+          tofu_data/monitor_targets were propagated to 'immich', which is
+          outside --limit haproxy,localhost — the scoping in
+          inventory/load_tofu/propagate_facts.yml did not take effect.
+          tofu_data={{ hostvars['immich'].tofu_data is defined }}
+          monitor_targets={{ hostvars['immich'].monitor_targets is defined }}
+
+    - name: Verify tofu_data/monitor_targets ARE still copied to an in-limit host
+      ansible.builtin.assert:
+        that:
+          - hostvars['haproxy'].tofu_data is defined
+          - hostvars['haproxy'].monitor_targets is defined
+          - hostvars['haproxy'].hostname == 'haproxy'
+        fail_msg: >-
+          tofu_data/monitor_targets/hostname must all still reach a host
+          inside --limit haproxy,localhost —
+          tofu_data={{ hostvars['haproxy'].tofu_data is defined }}
+          monitor_targets={{ hostvars['haproxy'].monitor_targets is defined }}
+          hostname={{ hostvars['haproxy'].hostname | default('(undefined)') }}
+
+    - name: Display propagate_facts limit-scope verification summary
+      ansible.builtin.debug:
+        msg: >-
+          propagate_facts.yml --limit scoping verified: hostname reached
+          immich (out of limit) and haproxy (in limit); tofu_data/
+          monitor_targets reached only haproxy.
+
+    # omit resolved inside a set_fact argument removes that key entirely
+    # rather than setting a placeholder — proves the same idiom
+    # propagate_facts.yml uses to skip hostname/tofu_data/monitor_targets for
+    # a host it decides to leave out. A sibling literal key is set alongside
+    # the omit-resolved one, matching propagate_facts.yml's real shape: a
+    # single-key set_fact that resolves to omit has nothing left to set and
+    # fails outright, which never happens in propagate_facts.yml itself.
+    - name: Prove omit inside set_fact leaves the key genuinely undefined
+      vars:
+        _omit_probe_guests: {}
+      block:
+        - name: Set a fact via the same if/else-omit idiom propagate_facts.yml uses
+          ansible.builtin.set_fact:
+            _omit_probe_sibling: present
+            _omit_probe_value: >-
+              {{ _omit_probe_guests['haproxy'].hostname
+                 if 'haproxy' in _omit_probe_guests else omit }}
+          delegate_to: haproxy
+          delegate_facts: true
+
+        - name: Assert the omit branch left the fact undefined, not a placeholder
+          ansible.builtin.assert:
+            that:
+              - hostvars['haproxy']._omit_probe_sibling == 'present'
+              - hostvars['haproxy']._omit_probe_value is not defined
+            fail_msg: >-
+              omit inside set_fact did not leave _omit_probe_value undefined
+              — got {{ hostvars['haproxy']._omit_probe_value
+                 | default('(correctly undefined)') }}

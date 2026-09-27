@@ -50,16 +50,16 @@ nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
 ingress route) at converge time from ambient `PROXMOX_SUBDOMAIN` — the
 sensitive domain is never committed.
 
-## Transcript shipping
+## Session-log shipping
 
-Agent containers are `--rm`, so their CLI transcripts would die with the
-container. `agent run --host` bind-mounts each run's per-CLI transcript subdir
+Agent containers are `--rm`, so their CLI session logs would die with the
+container. `agent run --host` bind-mounts each run's per-CLI session-log subdir
 under `{{ agent_sandbox_spool_dir }}/<run-id>/{claude,codex,gemini}/`, and this
 role runs a **Cribl Edge container** (`agent-cribl-edge`) that tails the spool
 and ships each run's session records to Splunk before teardown:
 
 - Worker-level file inputs (one per CLI) with a 4 MiB newline breaker for the
-  oversized transcript lines and per-CLI `datatype` metadata — the same shape
+  oversized session-log lines and per-CLI `datatype` metadata — the same shape
   as the Mac Edge (`dryvist/nix-darwin` `hosts/common/cribl.nix`).
 - codex/gemini run their pack pipeline (`codex_sessions` / `llm_normalize`,
   installed verbatim from the released `.crbl`s); claude ships raw and is

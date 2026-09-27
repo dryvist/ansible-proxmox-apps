@@ -151,11 +151,31 @@
 
 # Phase 7: Health check — RustFS S3 API answers on its port once ready
 # (an unauthenticated request returns 403, which still proves it is listening).
-- name: Wait for object-storage S3 API to accept connections
-  ansible.builtin.wait_for:
-    host: 127.0.0.1
-    port: "{{ object_storage_s3_port }}"
-    timeout: 60
+# 120s, not 60: RustFS's own reference docker-compose healthcheck grants a 40s
+# start_period plus 3 retries at a 30s interval (up to ~130s) before declaring
+# the server unhealthy -- 60s undercuts the vendor's own documented cold-start
+# grace period, especially for a first-ever bucket/erasure-set initialization
+# on a shared CI runner.
+- name: Wait for object-storage S3 API to accept connections (with journal-on-failure)
+  block:
+    - name: Wait for object-storage S3 API to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ object_storage_s3_port }}"
+        timeout: 120
+  rescue:
+    - name: Capture the object-storage service journal for diagnosis
+      ansible.builtin.command:
+        cmd: journalctl -u object-storage --no-pager -n 200
+      register: object_storage_startup_journal
+      changed_when: false
+
+    - name: Fail loud with the real startup error, not a bare timeout
+      ansible.builtin.fail:
+        msg: |
+          object-storage (RustFS) never opened {{ object_storage_s3_port }} within 120s.
+          journalctl -u object-storage --no-pager -n 200:
+          {{ object_storage_startup_journal.stdout }}
 
 # Phase 8: Create + configure buckets via the aws CLI (loopback, root creds).
 - name: Check which default buckets already exist
@@ -342,6 +362,13 @@
     )
   changed_when: true
   no_log: true
+
+# Phase 9a: Per-bucket RustFS IAM. Every bucket declared above gets its own
+# read-only and read-write user, replacing the shared root credential every
+# consumer uses today. See tasks/iam.yml for why this needs OpenBao and skips
+# cleanly when it is not configured.
+- name: Generate and provision per-bucket RustFS IAM credentials
+  ansible.builtin.include_tasks: iam.yml
 
 # Phase 9b: Offsite copies. Everything above leaves this guest holding the only
 # copy of every object in the store; losing it loses all of them at once.

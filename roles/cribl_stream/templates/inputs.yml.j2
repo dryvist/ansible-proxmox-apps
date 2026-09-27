@@ -19,6 +19,15 @@ inputs:
       - output: splunk_hec
         pipeline: ipfix
 {% endif %}
+      # Second leg, same raw flow events: derive unifi_vlan_bytes_total /
+      # unifi_wan_bytes_total and fan them to both metric stores. Always the
+      # base splunk_hec (index varies by content, same pattern as
+      # prometheus_to_netmon) — never the per-index netflow output above,
+      # which would misroute these into the raw-event index.
+      - output: splunk_hec
+        pipeline: ipfix_to_metrics
+      - output: victoriametrics_rw
+        pipeline: ipfix_to_metrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   tcpjson:in_cribl_s2s:
     id: in_cribl_s2s
@@ -33,7 +42,7 @@ inputs:
     port: {{ cribl_stream_s2s_port }}
     # Remote Edge nodes stamp index/sourcetype where they can, but Cribl
     # Edge provably skips its destination post-processing pipeline for
-    # pack-routed events (claude/gemini transcripts arrived with datatype
+    # pack-routed events (claude/gemini log traffic arrived with datatype
     # but no index/sourcetype and fell into Splunk's token defaults:
     # index=main, sourcetype=httpevent). The force_splunk_meta connection
     # pipeline is a conditional safety net: every eval is `index || ...`,
@@ -42,6 +51,33 @@ inputs:
     connections:
       - output: splunk_hec
         pipeline: force_splunk_meta
+      # Additional fan-out, same forwarded stream: the UDW's firewall syslog
+      # (sourcetype ubiquiti:firewall, already stamped at Edge — see the
+      # note above) arrives here too. unifi_syslog_to_metrics drops every
+      # other sourcetype up front (native Drop function) and derives
+      # unifi_vlan_fw_events_total from the rest, fanned to both metric
+      # stores. The raw-event path (force_splunk_meta -> splunk_hec above)
+      # is untouched.
+      - output: splunk_hec
+        pipeline: unifi_syslog_to_metrics
+      - output: victoriametrics_rw
+        pipeline: unifi_syslog_to_metrics
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+  tcpjson:in_cribl_s2s_metrics:
+    id: in_cribl_s2s_metrics
+    # Dedicated S2S receiver for Edge host/GPU metric events, split from
+    # in_cribl_s2s above onto its own port (cribl_stream_s2s_metrics_port)
+    # so this input's single connection can go straight to
+    # victoriametrics_rw without mixing with the log/trace traffic
+    # in_cribl_s2s carries (which force_splunk_meta processes). Splunk
+    # already has these events via Edge's direct HEC os_metrics output.
+    type: tcpjson
+    disabled: false
+    host: "0.0.0.0"
+    port: {{ cribl_stream_s2s_metrics_port }}
+    sendToRoutes: false
+    connections:
+      - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% for name, entry in cribl_stream_ai_log_routing | default({}) | dictsort %}
 {% set ai_type = cribl_stream_ai_input_types.get(name, 'syslog' if name.endswith('_docker') else 'tcpjson') %}
@@ -73,6 +109,21 @@ inputs:
 {% endif %}
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% endfor %}
+  metrics:in_pve_metrics:
+    id: in_pve_metrics
+    # PVE's native External Metric Server (Graphite wire protocol, TCP —
+    # tofu-proxmox proxmox_metrics_server).
+    type: metrics
+    disabled: false
+    host: "0.0.0.0"
+    tcpPort: {{ cribl_stream_pve_metrics_port }}
+    sendToRoutes: false
+    connections:
+      - output: splunk_hec
+        pipeline: pve_metrics_normalize
+      - output: victoriametrics_rw
+        pipeline: pve_metrics_normalize
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   prometheus_rw:in_prometheus_rw:
     id: in_prometheus_rw
     type: prometheus_rw
@@ -84,6 +135,30 @@ inputs:
     connections:
       - output: splunk_hec
         pipeline: prometheus_to_netmon
+      - output: victoriametrics_rw
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+  # unpoller (roles/unpoller, co-located on this guest): native Prometheus
+  # SCRAPER source (not remote_write — unpoller exposes /metrics, it does not
+  # push). Every data source goes to every destination the format fits: fans
+  # to victoriametrics_rw and the Splunk unifi_metrics index, next to the
+  # existing prometheus_rw legs above.
+  prometheus:in_unpoller:
+    id: in_unpoller
+    type: prometheus
+    disabled: false
+    discoveryType: static
+    targets:
+      - "{{ cribl_stream_unpoller_scrape_target }}"
+    pollInterval: {{ cribl_stream_unpoller_poll_interval }}
+    sendToRoutes: false
+    connections:
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      - output: splunk_hec_unifi_metrics
+        pipeline: prometheus_to_unifi_metrics
+{% else %}
+      - output: splunk_hec
+        pipeline: prometheus_to_unifi_metrics
+{% endif %}
       - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   # OTLP trace spans, fronted by the otel Traefik ingress on 443 (TLS

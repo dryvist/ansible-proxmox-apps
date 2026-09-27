@@ -10,6 +10,13 @@
 {% set authelia_routes = traefik_routes | selectattr('name', 'equalto', 'authelia') | list %}
 {% set openbao_routes = traefik_routes | selectattr('name', 'equalto', 'openbao') | list %}
 {% set sso_enabled = authelia_routes | length > 0 %}
+{# Wall/glance kiosk bypass: a second router per eligible sso route, ClientIP-
+   scoped, with no authelia middleware -- see roles/traefik/defaults/main.yml
+   traefik_wall_kiosk_*. Built once here so every route in the loop below
+   reuses the same clause. #}
+{% set kiosk_networks = traefik_wall_kiosk_networks | default([]) %}
+{% set kiosk_clientip_rules = [] %}
+{% for _n in kiosk_networks %}{% set _ = kiosk_clientip_rules.append('ClientIP(`' ~ _n ~ '`)') %}{% endfor %}
 http:
   routers:
 {% if traefik_openbao_oauth_callback_enabled and openbao_routes | length > 0 %}
@@ -29,10 +36,17 @@ http:
               - "*.{{ traefik_base_domain }}"
 {% endif %}
 {% for route in traefik_routes %}
+{% set _rule = "Host(`" ~ route.fqdn ~ "`)" ~ (" && PathPrefix(`" ~ route.path_prefix ~ "`)" if route.path_prefix | default('') | length > 0 else "") %}
+{% set _priority = route.priority | default(0) | int %}
+{# Traefik's own default priority (left unset) is the rule string's length --
+   longer rules win ties. Computed here so the kiosk router below can always
+   render an explicit priority higher than whatever the base router actually
+   runs at, whether or not the base row set one. #}
+{% set _effective_priority = _priority if _priority > 0 else _rule | length %}
     {{ route.name }}:
-      rule: "Host(`{{ route.fqdn }}`){% if route.path_prefix | default('') | length > 0 %} && PathPrefix(`{{ route.path_prefix }}`){% endif %}"
-{% if route.priority | default(0) | int > 0 %}
-      priority: {{ route.priority }}
+      rule: "{{ _rule }}"
+{% if _priority > 0 %}
+      priority: {{ _priority }}
 {% endif %}
       service: {{ route.name }}
       entryPoints:
@@ -58,6 +72,31 @@ http:
           - main: "{{ traefik_base_domain }}"
             sans:
               - "*.{{ traefik_base_domain }}"
+{% if sso_enabled and route.sso | default(false) and route.name in traefik_wall_kiosk_route_names and kiosk_networks | length > 0 %}
+{# Same router as above in every way except the rule gains a ClientIP match
+   and authelia is dropped from the middleware chain -- the display-only
+   kiosk cannot complete a login, so it needs to reach this route even while
+   Authelia itself is unreachable. Priority is always explicit and one above
+   the base router's own effective priority, so this can never win a tie
+   against it for a client outside the kiosk networks. #}
+    {{ route.name }}-kiosk:
+      rule: "{{ _rule }} && ({{ kiosk_clientip_rules | join(' || ') }})"
+      priority: {{ _effective_priority + 1 }}
+      service: {{ route.name }}
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-remote-headers
+{% if route.root_redirect | default('') | length > 0 %}
+        - {{ route.name }}-root-redirect
+{% endif %}
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ traefik_base_domain }}"
+            sans:
+              - "*.{{ traefik_base_domain }}"
+{% endif %}
 {% endfor %}
 {% if traefik_dashboard_enabled %}
     dashboard:
