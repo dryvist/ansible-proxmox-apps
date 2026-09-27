@@ -16,11 +16,8 @@ import yaml
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/status_stack/templates/gatus-config.yaml.j2"
 
 
-def render(services: list[dict] = None, dashboard_catalog_services: list[dict] = None,
-           services_in_monitor: list[dict] = None) -> dict[str, dict]:
-    # For backward compatibility, if services is provided as positional arg, use it for monitor.
-    if services is None:
-        services = services_in_monitor or []
+def render(services: list[dict], dashboard_catalog_services: list[dict] = None) -> dict[str, dict]:
+    # If dashboard_catalog_services not specified, default to services for backward compatibility.
     if dashboard_catalog_services is None:
         dashboard_catalog_services = services
 
@@ -76,18 +73,23 @@ class GatusCatalogProbe(unittest.TestCase):
         # The wall shows apps from dashboard_catalog_services | selectattr('ui').
         # Gatus must explicitly monitor each one, even if it's not in
         # dashboard_catalog_services_monitor (a wall-only entry).
+        monitor_apps = [
+            {"name": "dash", "sso": True, "url": "https://dash.example.test",
+             "probe_url": "http://dash-guest:3000", "ui": True, "dashboard": True},
+        ]
         wall_apps = [
             {"name": "dash", "sso": True, "url": "https://dash.example.test",
-             "probe_url": "http://192.0.2.10:3000", "ui": True, "dashboard": True},
-            {"name": "wall-only", "sso": True, "url": "https://wall.example.test",
-             "probe_url": "http://192.0.2.11:8080", "ui": True, "dashboard": False},
+             "probe_url": "http://dash-guest:3000", "ui": True, "dashboard": True},
+            {"name": "wall-only", "sso": True, "url": "https://wall-only.example.test",
+             "probe_url": "http://wall-guest:8080", "ui": True, "dashboard": False},
         ]
-        # Simulate: dashboard_catalog_services_monitor omits wall-only; Gatus must still monitor it.
+        # Simulate: dashboard_catalog_services_monitor has dash; wall also includes wall-only.
+        # Wall-only must be added even though not in monitor.
         eps = render(
-            dashboard_catalog_services=[wall_apps[0], wall_apps[1]],
-            services_in_monitor=[wall_apps[0]]  # Only the dashboard:true app
+            services=monitor_apps,
+            dashboard_catalog_services=wall_apps
         )
-        # Both wall apps must appear in endpoints, even though wall-only is not in monitor.
+        # Both wall apps must appear in endpoints; wall-only deduped into single list.
         self.assertIn("dash", eps)
         self.assertIn("wall-only", eps)
 
