@@ -39,16 +39,16 @@ LOOKUP_CSV_TEMPLATE = ROOT / "roles/cribl_stream/templates/lookups/unifi_vlan_ma
 
 # Real sanitized raw samples from the ticket (interfaces are always brN).
 SAMPLE_EGRESS_ACCEPT = (
-    "<13>Sep 25 23:18:25 UDW UDW [LOCAL_CUSTOM1-A-1] DESCR=\"x\" "
+    "<13>Sep 25 23:18:25 gw gw [LOCAL_CUSTOM1-A-1] DESCR=\"x\" "
     "IN= OUT=br8 MAC= SRC=192.0.2.1 DST=192.0.2.2 PROTO=UDP"
 )
 SAMPLE_INGRESS_ACCEPT = (
-    "<13>Sep 25 23:18:07 UDW UDW [LAN_CUSTOM1-A-10000] DESCR=\"x\" "
+    "<13>Sep 25 23:18:07 gw gw [LAN_CUSTOM1-A-10000] DESCR=\"x\" "
     "IN=br100 OUT=br5 MAC=DOCUMENTATION-EXAMPLE SRC=192.0.2.10 DST=192.0.2.9 "
     "PROTO=TCP SYN"
 )
 SAMPLE_INGRESS_DENY = (
-    "<13>Sep 25 23:18:11 UDW UDW [LAN_LOCAL-D-1] DESCR=\"x\" "
+    "<13>Sep 25 23:18:11 gw gw [LAN_LOCAL-D-1] DESCR=\"x\" "
     "IN=br50 OUT= MAC= SRC=192.0.2.3 DST=192.0.2.4 PROTO=UDP DPT=53"
 )
 
