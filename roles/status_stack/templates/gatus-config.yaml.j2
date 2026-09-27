@@ -36,11 +36,50 @@ alerting:
         priority: {{ status_stack_ntfy_priority_urgent }}
 {% endfor %}
 
+# Wall apps: every app shown on the wall (dashboard_catalog_services with ui:true)
+# gets an explicit Gatus endpoint, derived from the same catalog. This ensures
+# complete coverage even if an app lacks dashboard:true (a wall-only entry) or
+# if the catalog structure changes. For apps without HTTP URLs, TCP/ICMP checks
+# are generated from the same probe_url logic.
+#
 # The full catalog, not the board-tiled subset: a route marked dashboard:false
 # (a compat path already tiled under a sibling name) still gets monitored — a
 # broken compat redirect is still a real outage even though it earns no tile
 # of its own.
 endpoints:
+{#- Wall apps: explicit coverage for every ui:true entry in the catalog. -#}
+{% set _wall_apps = dashboard_catalog_services | default([]) | selectattr('ui') | list %}
+{% for svc in _wall_apps %}
+{#- Skip if the endpoint would be duplicate (same name appears in services_monitor too). -#}
+{% set _is_dup = dashboard_catalog_services_monitor | default([]) | selectattr('name', 'eq', svc.name) | list %}
+{% if _is_dup | length == 0 %}
+{#- Wall-only app (ui:true but not in services_monitor): create endpoint. -#}
+{% set _direct = (svc.sso | default(true)) and (svc.probe_url | default('') | length > 0) %}
+  - name: {{ svc.name }}
+    group: "{{ dashboard_catalog_group_titles[svc.group | default('other')] | default(svc.group | default('other'), true) }} · {{ 'UI' if (svc.ui | default(true)) else 'API' }}"
+    url: "{{ svc.probe_url if _direct else svc.url }}"
+    interval: {{ status_stack_interval }}
+    client:
+      timeout: 15s
+      ignore-redirect: false
+    conditions:
+{% if svc.name in status_stack_catalog_status_overrides %}
+      - "[STATUS] == any({{ status_stack_catalog_status_overrides[svc.name] | join(', ') }})"
+{% else %}
+      - "[STATUS] < 500"
+      - "[STATUS] != 504"
+{% for pat in status_stack_authelia_error_patterns %}
+      - "[BODY] != pat(*{{ pat }}*)"
+{% endfor %}
+{% endif %}
+      - "[RESPONSE_TIME] < 3000"
+{% if not _direct %}
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+{% endif %}
+    alerts:
+      - type: ntfy
+{% endif %}
+{% endfor %}
 {% for svc in dashboard_catalog_services_monitor | default([]) %}
 {#- An SSO-gated public URL is answered by the Authelia login page, so probing
     it only proves Authelia is up. Those rows probe the guest directly
