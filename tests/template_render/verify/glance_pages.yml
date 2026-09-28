@@ -1,8 +1,6 @@
 ---
-# Render and verify the Glance board's two pages: the existing "Services" page
-# stays byte-shaped the same, and the new "Network + Media" page carries only
-# the network/media VLAN groups (dns, media_svc) — no new services, same
-# dashboard_catalog_services list both pages render from.
+# Render and verify the Glance board: one "Services" page carrying every
+# catalog group (network and media included) from dashboard_catalog_services.
 - name: Render and verify glance generated-services templates
   hosts: localhost
   connection: local
@@ -13,10 +11,6 @@
     ansible_managed: "test fixture"
     glance_monitor_enabled: true
     glance_monitor_interval: "1m"
-    glance_network_media_groups:
-      - dns
-      - media_svc
-    glance_network_media_slug: network-media
     dashboard_catalog_group_order:
       - apps
       - ai
@@ -88,57 +82,16 @@
       ansible.builtin.set_fact:
         _glance_pages: "{{ _glance_raw.content | b64decode | from_yaml }}"
 
-    - name: Assert both pages render, Services first
+    - name: Assert exactly one page renders, the Services board
       ansible.builtin.assert:
         that:
-          - _glance_pages | length == 2
+          - _glance_pages | length == 1
           - _glance_pages[0].name == 'Services'
-          - _glance_pages[1].name == 'Network + Media'
-          - _glance_pages[1].slug == 'network-media'
-        fail_msg: "expected [Services, Network + Media] pages, got {{ _glance_pages | map(attribute='name') | list }}"
+        fail_msg: "expected the single Services page, got {{ _glance_pages | map(attribute='name') | list }}"
 
-    - name: Assert the Network + Media page carries only dns/media_svc links
+    - name: Assert the media and network groups render on the Services board
       ansible.builtin.assert:
         that:
-          # split-column's two child widgets, in fixture order: monitor (UI,
-          # glance_monitor_enabled=true) first, bookmarks (API-only) second —
-          # same shape audience_widget always emits.
-          - _nm_monitor_titles | reject('match', '^(dns|media_svc) ·') | list | length == 0
-          - "'apps' not in (_nm_widget | string)"
-          # No service outside dns/media_svc leaked onto the page (e.g. vikunja).
-          - "'Vikunja' not in (_nm_widget | string)"
-        fail_msg: "Network + Media page pulled in a group or service outside dns/media_svc: {{ _nm_widget }}"
-      vars:
-        _nm_widget: "{{ _glance_pages[1].columns[0].widgets[0].widgets }}"
-        _nm_monitor_titles: >-
-          {{ _nm_widget | selectattr('type', 'eq', 'monitor') | map(attribute='sites')
-             | flatten | map(attribute='title') | list }}
-
-    - name: Assert the Services page still carries every catalog entry
-      ansible.builtin.assert:
-        that:
-          # The UI half renders as a monitor widget (glance_monitor_enabled),
-          # one site per catalog entry — every group must still be present.
-          - _services_monitor_titles | reject('match', '^(apps|dns|media_svc) ·') | list | length == 0
-          - _services_monitor_titles | select('match', '^apps ·') | list | length == 1
-          - _services_monitor_titles | select('match', '^dns ·') | list | length == 1
-          - _services_monitor_titles | select('match', '^media_svc ·') | list | length == 2
-          # The one API-only entry (sonarr-api) keeps rendering as a bookmark.
-          - _services_bookmark_titles == ['media_svc']
-        fail_msg: "Services page dropped a group after adding the second page: {{ _services_monitor_titles }}"
-      vars:
-        _services_widget: "{{ _glance_pages[0].columns[0].widgets[0].widgets }}"
-        _services_monitor_titles: >-
-          {{ _services_widget | selectattr('type', 'eq', 'monitor') | map(attribute='sites')
-             | flatten | map(attribute='title') | list }}
-        _services_bookmark_titles: >-
-          {{ _services_widget | selectattr('type', 'eq', 'bookmarks') | map(attribute='groups')
-             | flatten | map(attribute='title') | list }}
-
-    - name: Glance page render verification PASSED
-      ansible.builtin.debug:
-        msg: |
-          Glance page assertions passed:
-          - Services and Network + Media both render, in that order
-          - Network + Media is scoped to dns/media_svc, no new services
-          - Services keeps every catalog group after the second page was added
+          - "'media_svc' in (_glance_pages[0] | string)"
+          - "'dns' in (_glance_pages[0] | string)"
+        fail_msg: "media_svc/dns groups missing from the single Services board"
