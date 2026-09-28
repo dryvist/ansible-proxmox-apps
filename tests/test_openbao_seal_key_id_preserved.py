@@ -20,7 +20,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = ROOT / "roles" / "openbao" / "defaults" / "main" / "00-install-and-node.yml"
-TASKS = ROOT / "roles" / "openbao" / "tasks" / "main" / "configure_and_bootstrap.yml"
+TASKS = ROOT / "roles" / "openbao" / "tasks" / "main" / "seal_material.yml"
 
 
 def _task_names(node) -> list:
