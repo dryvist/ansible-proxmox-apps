@@ -1,0 +1,78 @@
+---
+- name: Query final object-storage version tags
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3api
+      - get-object-tagging
+      - --bucket
+      - "{{ object_storage_bucket }}"
+      - --key
+      - "{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
+      - --query
+      - TagSet[?Key=='version'].Value
+      - --output
+      - text
+  environment: "{{ s3_env }}"
+  loop: "{{ cribl_packs_desired | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cribl_packs_final_tag_query
+  changed_when: false
+  failed_when: false
+  when: cribl_packs_manifest is defined
+  no_log: true
+
+- name: Verify object-storage tags match resolved release versions
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - (item.stdout | default('') | trim) == (item.item.desired_version | string | trim)
+    fail_msg: >-
+      object-storage version mismatch for {{ item.item.name }}:
+      expected {{ item.item.desired_version }}, got
+      {{ ((item.stdout | default('') | trim) or '(missing)')
+         if item.rc == 0 else '(missing object)' }}.
+    quiet: true
+  loop: "{{ cribl_packs_final_tag_query.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: cribl_packs_manifest is defined
+
+- name: Read published object-storage manifest
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3
+      - cp
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/manifest.json"
+      - "-"
+  environment: "{{ s3_env }}"
+  register: cribl_packs_manifest_verify
+  changed_when: false
+  failed_when: false
+  when: cribl_packs_manifest is defined
+  no_log: true
+
+- name: Verify published manifest matches resolved release versions and sha256
+  ansible.builtin.assert:
+    that:
+      - cribl_packs_manifest_verify.rc == 0
+      - >-
+        ((cribl_packs_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).version
+        | default('') | trim) == (item.desired_version | string | trim)
+      - >-
+        ((cribl_packs_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).key
+        | default('')) == (cribl_packs_object_storage_prefix ~ '/' ~ item.name ~ '.crbl')
+      - >-
+        ((cribl_packs_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).sha256
+        | default('') | length) > 0
+    fail_msg: >-
+      manifest.json mismatch for {{ item.name }}:
+      expected version {{ item.desired_version }} with a non-empty sha256
+      ({{ 'manifest unreadable' if cribl_packs_manifest_verify.rc != 0 else 'value drift' }}).
+    quiet: true
+  loop: "{{ cribl_packs_desired | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: cribl_packs_manifest is defined
