@@ -1,0 +1,88 @@
+---
+# List dryvist org repos (public GitHub API, no auth required), filter to the
+# `cc-` pack-name prefix, and resolve each one's latest release + `.crbl`
+# asset. 5 pages of 100 comfortably covers the org's repo count; a page short
+# of 100 entries ends discovery early.
+- name: List dryvist org repos (paginated)
+  ansible.builtin.uri:
+    url: "{{ cribl_packs_github_api }}/orgs/{{ cribl_packs_github_org }}/repos?type=public&per_page=100&page={{ item }}"
+    method: GET
+    return_content: true
+    status_code: 200
+    headers: >-
+      {{ {'Authorization': 'Bearer ' + lookup('env', 'GITHUB_TOKEN')}
+         if (lookup('env', 'GITHUB_TOKEN') | length > 0) else {} }}
+  register: cribl_packs_org_pages
+  loop: "{{ range(1, 6) | list }}"
+  loop_control:
+    label: "page {{ item }}"
+
+- name: Flatten discovered repo names, filtered to the cc- pack prefix
+  ansible.builtin.set_fact:
+    cribl_packs_repo_names: >-
+      {{ cribl_packs_org_pages.results
+         | map(attribute='json') | flatten
+         | map(attribute='name') | select('match', '^cc-')
+         | unique | sort | list }}
+
+- name: Fail loudly if repo discovery came back empty
+  ansible.builtin.assert:
+    that:
+      - cribl_packs_repo_names | length > 0
+    fail_msg: >-
+      No dryvist/cc-* repos were discovered — either the org has none (unlikely)
+      or the GitHub API call failed silently. Check cribl_packs_org_pages above.
+    quiet: true
+
+- name: Resolve latest release per discovered pack repo
+  ansible.builtin.uri:
+    url: "{{ cribl_packs_github_api }}/repos/{{ cribl_packs_github_org }}/{{ item }}/releases/latest"
+    method: GET
+    return_content: true
+    status_code: [200, 404]
+    headers: >-
+      {{ {'Authorization': 'Bearer ' + lookup('env', 'GITHUB_TOKEN')}
+         if (lookup('env', 'GITHUB_TOKEN') | length > 0) else {} }}
+  register: cribl_packs_release_q
+  loop: "{{ cribl_packs_repo_names }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+# Each pack release publishes two assets (see cribl-pack-release.yml /
+# build-crbl.sh in cc-stream-pack-template): `<repo>-<tag>.crbl` (versioned)
+# and `<repo>.crbl` (the same content at a fixed name). Take the fixed-name
+# asset so this task never has to re-derive the tag inside a filename.
+- name: Compute desired version and asset URL per pack
+  ansible.builtin.set_fact:
+    cribl_packs_desired_all: >-
+      {{ cribl_packs_desired_all | default([]) + [{
+        'name': item.0,
+        'desired_version': (item.1.json.tag_name | default('')) if (item.1.status | default(0)) == 200 else '',
+        'asset_url': (
+          item.1.json.assets | default([])
+          | selectattr('name', 'equalto', item.0 ~ '.crbl') | map(attribute='browser_download_url')
+          | list | first | default('')
+        ) if (item.1.status | default(0)) == 200 else '',
+      }] }}
+  loop: "{{ cribl_packs_repo_names | zip(cribl_packs_release_q.results) | list }}"
+  loop_control:
+    label: "{{ item.0 }}"
+
+- name: Warn about repos with no releases or no matching .crbl asset
+  ansible.builtin.debug:
+    msg: >-
+      Skipping {{ item.name }}: {{ 'no releases published' if item.desired_version == ''
+      else 'no ' ~ item.name ~ '.crbl asset on the latest release' }}.
+  loop: "{{ cribl_packs_desired_all | selectattr('desired_version', 'equalto', '') | list
+            + cribl_packs_desired_all | rejectattr('desired_version', 'equalto', '')
+              | selectattr('asset_url', 'equalto', '') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Keep only packs with a resolvable release asset
+  ansible.builtin.set_fact:
+    cribl_packs_desired: >-
+      {{ cribl_packs_desired_all
+         | rejectattr('desired_version', 'equalto', '')
+         | rejectattr('asset_url', 'equalto', '') | list }}
