@@ -31,6 +31,8 @@ splunk_email = env!('ZAMMAD_SPLUNK_EMAIL')
 splunk_api_token = env!('ZAMMAD_SPLUNK_API_TOKEN')
 ntfy_email = env!('ZAMMAD_NTFY_EMAIL')
 ntfy_api_token = env!('ZAMMAD_NTFY_API_TOKEN')
+cribl_email = env!('ZAMMAD_CRIBL_EMAIL')
+cribl_api_token = env!('ZAMMAD_CRIBL_API_TOKEN')
 smtp_host   = env!('ZAMMAD_SMTP_HOST')
 smtp_port   = env!('ZAMMAD_SMTP_PORT').to_i
 sender      = env!('ZAMMAD_NOTIFICATION_SENDER')
@@ -196,11 +198,15 @@ splunk_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 # `command:` hook) omits the customer field too, so its token's user becomes
 # the ticket customer.
 ntfy_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
+# svc-cribl: same again -- Cribl Edge's zammad_security_ids webhook omits the
+# customer, so its token's user becomes the customer of every IDS ticket.
+cribl_roles = [Role.find_by!(name: 'Agent'), Role.find_by!(name: 'Customer')]
 service_users = [
   [hermes_email, 'Hermes', 'Agent', hermes_roles],
   [ai_email, 'AI', 'Assistant', agent_role],
   [splunk_email, 'Splunk', 'Alerting', splunk_roles],
   [ntfy_email, 'ntfy', 'Alerting', ntfy_roles],
+  [cribl_email, 'Cribl', 'Alerting', cribl_roles],
 ].map do |email, first, last, desired_roles|
   u = User.find_by(email: email.downcase)
   if u.nil?
@@ -307,11 +313,14 @@ agent_prefs = { 'permission' => %w[ticket.agent knowledge_base.editor] }
 # by title for the dedup lookup -- no knowledge_base use either.
 splunk_prefs = { 'permission' => %w[ticket.agent] }
 ntfy_prefs = { 'permission' => %w[ticket.agent] }
+# svc-cribl only creates tickets (dedup happens in the pipeline's Suppress).
+cribl_prefs = { 'permission' => %w[ticket.agent] }
 [
   ['hermes', service_users[0], api_token, agent_prefs],
   ['ai', service_users[1], ai_api_token, agent_prefs],
   ['splunk', service_users[2], splunk_api_token, splunk_prefs],
   ['ntfy', service_users[3], ntfy_api_token, ntfy_prefs],
+  ['cribl', service_users[4], cribl_api_token, cribl_prefs],
 ].each do |name, user, value, token_prefs|
   t = Token.find_by(action: 'api', name: name)
   if t.nil?
