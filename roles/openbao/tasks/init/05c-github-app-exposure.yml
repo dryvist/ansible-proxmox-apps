@@ -11,8 +11,12 @@
 - name: "Build the JWT signing input for App {{ ga.app_id }}"
   vars:
     _now: "{{ now().timestamp() | int }}"
+    _header: '{"alg":"RS256","typ":"JWT"}'
+    _claims: "{{ {'iat': _now | int - 60, 'exp': _now | int + 540, 'iss': ga.app_id | string} | to_json }}"
+    _header_b64: "{{ _header | b64encode | replace('+', '-') | replace('/', '_') | replace('=', '') }}"
+    _claims_b64: "{{ _claims | b64encode | replace('+', '-') | replace('/', '_') | replace('=', '') }}"
   ansible.builtin.set_fact:
-    openbao_github_app_jwt_signing_input: "{{ '{\"alg\":\"RS256\",\"typ\":\"JWT\"}' | b64encode | replace('+', '-') | replace('/', '_') | replace('=', '') }}.{{ ({'iat': _now | int - 60, 'exp': _now | int + 540, 'iss': ga.app_id | string} | to_json) | b64encode | replace('+', '-') | replace('/', '_') | replace('=', '') }}"
+    openbao_github_app_jwt_signing_input: "{{ _header_b64 }}.{{ _claims_b64 }}"
 
 - name: "Sign an App JWT for App {{ ga.app_id }}"
   block:
@@ -65,7 +69,7 @@
   register: openbao_github_app_installs
   no_log: true
 
-- name: "FAIL -- App {{ ga.app_id }} has a webhook or an unapproved installation"
+- name: "FAIL -- webhook or unapproved installation on App {{ ga.app_id }}"
   vars:
     _accounts: "{{ openbao_github_app_installs.json | map(attribute='account.login') | list }}"
     _unapproved: "{{ _accounts | difference(openbao_github_app_install_allowlist) }}"
