@@ -197,6 +197,31 @@
       collapses distinct keys like memory.used and swap.used onto the
       same metric name.
 
+- name: Assert mlx_metrics_normalize drops every other sourcetype then republishes as a native metric
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_cribl_stream_mlx_metrics_pipeline | from_yaml).functions
+        | map(attribute='id') | list == ['drop', 'eval', 'publish_metrics']
+      - "\"sourcetype !== 'mlx:metrics'\" in _cribl_stream_mlx_metrics_pipeline"
+      - "'__name__ || _metric' in _cribl_stream_mlx_metrics_pipeline"
+      - "'Number.isFinite' in _cribl_stream_mlx_metrics_pipeline"
+      - "\"'llm_metrics'\" in _cribl_stream_mlx_metrics_pipeline"
+      - >-
+        (_cribl_stream_mlx_metrics_pipeline | from_yaml).functions[2].conf
+        == {'metricNameField': '__name__', 'valueField': '_value', 'dimensions': '*'}
+    fail_msg: >-
+      mlx_metrics_normalize must lead with a native Drop function filtered
+      to sourcetype mlx:metrics (this pipeline shares in_cribl_s2s with
+      every other S2S-forwarded sourcetype), normalize the metric-name
+      field (__name__ for edge_prometheus, _metric for system_metrics)
+      onto __name__, coerce non-finite values, stamp index=llm_metrics,
+      and re-publish via a native Publish Metrics function — without it
+      the event never regains the metric flag it lost crossing the Edge's
+      TCP JSON S2S hop, and Splunk's metric-index HEC rejects it
+      (invalid_index), same failure nix-darwin#1824 hit stamping this
+      index directly at Edge.
+
 - name: Assert slice(3)/join('_') does not collide two real PVE node keys
   vars:
     _pve_key_memory: >-
