@@ -10,6 +10,7 @@ from test_openbao_denied_vs_absent_writes import _all, _find, _render
 
 ROOT = Path(__file__).resolve().parents[1]
 DNS = "roles/technitium_dns/tasks/main/ingress_and_apex.yml"
+DNS_EXPLICIT_INGRESS = "roles/technitium_dns/tasks/main/explicit_ingress_names.yml"
 
 
 class ClusterIngress(unittest.TestCase):
@@ -39,7 +40,7 @@ class ClusterIngress(unittest.TestCase):
     def test_canonical_child_and_parent_alias_use_one_ingress_target(self):
         names = _render("technitium_dns_explicit_ingress_names", self.variables)
         self.assertEqual(names, ["pve.example.com", "proxmox.example.com"])
-        writer = _find(DNS, "Create explicitly named ingress A records")
+        writer = _find(DNS_EXPLICIT_INGRESS, "Create explicitly named ingress A records")
         for role in ["primary", "secondary"]:
             for name, zone in [(names[0], "pve.example.com"), (names[1], "example.com")]:
                 variables = dict(self.variables, item=name, technitium_dns_role=role)
