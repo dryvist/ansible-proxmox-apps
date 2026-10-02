@@ -1,0 +1,71 @@
+---
+- name: Validate the non-secret cluster connection profile
+  ansible.builtin.assert:
+    that:
+      - >-
+        workstation_connections_profile.keys() | sort
+        == ['auth_method', 'credential_mount', 'credential_path', 'type', 'url']
+      - workstation_connections_profile.type == 'pve'
+      - workstation_connections_profile.auth_method == 'traditional'
+      - workstation_connections_profile.url is match('^https://[^/ ]+$')
+      - workstation_connections_profile.credential_mount | length > 0
+      - workstation_connections_profile.credential_path | length > 0
+      - workstation_connections_addr | length > 0
+      - workstation_connections_token | length > 0
+    quiet: true
+
+- name: Check exact configuration document capabilities
+  community.hashi_vault.vault_write:
+    url: "{{ workstation_connections_addr }}"
+    auth_method: token
+    token: "{{ workstation_connections_token }}"
+    path: sys/capabilities-self
+    data:
+      paths: [config/data/proxman/main]
+  register: workstation_connections_capabilities
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Require configuration read and create or update capability
+  ansible.builtin.assert:
+    that:
+      - "'read' in workstation_connections_capabilities.data.data['config/data/proxman/main']"
+      - >-
+        'create' in workstation_connections_capabilities.data.data['config/data/proxman/main']
+        or 'update' in workstation_connections_capabilities.data.data['config/data/proxman/main']
+    quiet: true
+
+- name: Read current workstation connection profile
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ workstation_connections_addr }}"
+    auth_method: token
+    token: "{{ workstation_connections_token }}"
+    engine_mount_point: config
+    path: proxman/main
+  register: workstation_connections_existing
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Reject configuration read errors other than absent document
+  ansible.builtin.assert:
+    that:
+      - >-
+        workstation_connections_existing.msg is not defined
+        or workstation_connections_existing.msg is search('^Invalid or missing path')
+    quiet: true
+    fail_msg: "Reading the workstation profile failed; publication was refused."
+
+- name: Publish the inventory-derived workstation connection profile
+  community.hashi_vault.vault_write:
+    url: "{{ workstation_connections_addr }}"
+    auth_method: token
+    token: "{{ workstation_connections_token }}"
+    path: config/data/proxman/main
+    data:
+      options:
+        cas: "{{ workstation_connections_existing.metadata.version | default(0) }}"
+      data: "{{ workstation_connections_profile }}"
+  when: workstation_connections_existing.secret | default({}) != workstation_connections_profile
+  no_log: true
