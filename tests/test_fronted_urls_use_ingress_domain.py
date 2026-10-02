@@ -59,7 +59,7 @@ FRONTED_ROLE_DEFAULTS = (
     # deliberately still uses an http:// guest address (it cannot take an API
     # bypass; see roles/authelia/defaults/main/00-core.yml), and the marker below does
     # not match it, so this stays an assertion about the fronted URLs only.
-    ("roles/homarr/defaults/main.yml", "https://"),
+    ("roles/homarr/defaults/main/03-integrations.yml", "https://"),
 )
 
 APEX = "tofu_data.domain"

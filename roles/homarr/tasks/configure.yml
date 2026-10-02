@@ -11,15 +11,18 @@
 # The encryption key is DATA, not a credential. It decrypts every row in
 # `integrationSecret` (AES-256-CBC), so a fresh one does not invalidate those
 # rows — it makes them permanently undecryptable, and the only symptom is every
-# integration failing at once with no obvious cause. Always prefer what is
-# already on disk; mint only when there is genuinely nothing to preserve.
+# integration failing at once with no obvious cause. OpenBao comes first: every
+# converge publishes the key in use, so the stored copy is the one the database
+# was written with. The on-disk file is NOT safe to trust first: when a
+# homarr_cs_tag bump re-runs the borrowed installer, it rewrites this file with
+# a fresh random key before this task runs. Mint only when neither exists.
 - name: Determine the effective encryption key
   ansible.builtin.set_fact:
     homarr_effective_encryption_key: >-
-      {{ (homarr_env_existing.content | default('') | b64decode
-          | regex_search("SECRET_ENCRYPTION_KEY='([^']+)'", '\1')
-          | first | default('', true))
-         or homarr_encryption_key
+      {{ homarr_encryption_key
+         or (homarr_env_existing.content | default('') | b64decode
+             | regex_search("SECRET_ENCRYPTION_KEY='([^']+)'", '\1')
+             | first | default('', true))
          or (lookup('community.general.random_string',
                     length=64, upper=false, special=false, numbers=true)
              | lower) }}
@@ -44,8 +47,8 @@
     name: openbao_secrets
     tasks_from: publish.yml
   vars:
-    openbao_secrets_publish_app: homarr
+    openbao_secrets_publish_app: "{{ homarr_instance }}"
     openbao_secrets_publish_reason: (integration secret encryption key)
-    openbao_secrets_publish_data:
-      homarr_encryption_key: "{{ homarr_effective_encryption_key }}"
+    openbao_secrets_publish_data: >-
+      {{ {homarr_secret_prefix ~ '_encryption_key': homarr_effective_encryption_key} }}
   when: homarr_publish_credentials | bool
