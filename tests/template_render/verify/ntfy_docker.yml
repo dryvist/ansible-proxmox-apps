@@ -184,6 +184,34 @@
               - "'not an https URL' in ansible_failed_result.msg"
               - "'keystone' in ansible_failed_result.msg"
 
+    - name: Render the canary units and the subscriber client config
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}.j2"
+        dest: "{{ _fixture_dir }}/test_{{ item }}"
+        mode: "0644"
+      loop:
+        - ntfy-canary.service
+        - ntfy-canary.timer
+        - client.yml
+      vars:
+        ntfy_docker_canary_topic: canary
+        ntfy_docker_canary_interval: 5min
+        ntfy_docker_zammad_topics: [keystone]
+        ntfy_docker_zammad_script_path: /usr/local/bin/ntfy-zammad
+        ntfy_docker_zammad_priority_filter: "default,high,urgent"
+
+    - name: Assert the canary publishes through the fronted URL and the subscriber pings off-site
+      vars:
+        _client: "{{ lookup('file', _fixture_dir ~ '/test_client.yml') | from_yaml }}"
+        _canary_sub: "{{ _client.subscribe | selectattr('topic', 'equalto', 'canary') | list }}"
+      ansible.builtin.assert:
+        that:
+          - "'https://ntfy.example.test/canary' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.service')"
+          - "'OnUnitActiveSec=5min' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.timer')"
+          - _canary_sub | length == 1
+          - "'NTFY_CANARY_PING_URL' in _canary_sub[0].command"
+          - _canary_sub[0].if is not defined
+
     - name: Ntfy template rendering PASSED
       ansible.builtin.debug:
         msg: |
@@ -191,3 +219,4 @@
           - docker-compose.yml.j2: HTTP port 8080:80, image, config mount
           - server.yml.j2: cache-file, listen-http, cache-duration
           - Slack fan-out: all-alerts + per-topic instances, unseeded key fails
+          - canary: fronted publish URL, unfiltered off-site ping subscription

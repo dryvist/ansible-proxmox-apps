@@ -1,0 +1,31 @@
+---
+# Publisher half of the end-to-end canary; the subscriber half is the
+# canary entry in client.yml.j2 (zammad_subscriber.yml).
+- name: Assert the off-site canary URL is present
+  ansible.builtin.assert:
+    that:
+      - ntfy_docker_canary_offsite_url is match('https://')
+    fail_msg: >-
+      ntfy_docker_canary_offsite_url is not an https URL -- seed
+      HEALTHCHECKS_OFFSITE_PING_URL in the OpenBao monitoring domain; the
+      end-to-end canary cannot report without it.
+    quiet: true
+
+- name: Deploy the ntfy canary service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ntfy-canary.service
+    - ntfy-canary.timer
+  notify: Restart ntfy canary timer
+
+- name: Enable and start the ntfy canary timer
+  ansible.builtin.systemd:
+    name: ntfy-canary.timer
+    state: started
+    enabled: true
+    daemon_reload: true
