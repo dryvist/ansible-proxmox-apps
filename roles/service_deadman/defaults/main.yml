@@ -20,6 +20,11 @@ service_deadman_interval: "60s"
 service_deadman_ntfy_url: >-
   https://ntfy.{{ ingress_domain }}/{{ service_deadman_ntfy_topic }}
 service_deadman_ntfy_topic: "keystone"
+# ntfy publishes only on a state change: once on breach, again every
+# service_deadman_ntfy_remind_minutes while still breached, and once on
+# recovery. Markers live in service_deadman_state_dir.
+service_deadman_ntfy_remind_minutes: 360
+service_deadman_state_dir: /var/lib/service-deadman
 
 # Deadman receivers. Every check pings both every cycle; each URL is derived
 # from the check name, so a new check needs no per-check secret or env var.
@@ -134,7 +139,15 @@ service_deadman_group_checks:
 service_deadman_checks: >-
   {{ service_deadman_group_checks | dict2items
      | selectattr('key', 'in', group_names)
-     | map(attribute='value') | flatten | list }}
+     | map(attribute='value') | flatten
+     | rejectattr('name', 'in', service_deadman_skip_checks) | list }}
+
+# Checks that do not apply to this host even though its group carries them. A
+# docker_vms member with no runner pool (github_runner_replicas: 0, e.g. the
+# execution plane) has no github-runner@ units, so the pool probe would breach
+# on every cycle.
+service_deadman_skip_checks: >-
+  {{ ['github-runner-pool'] if (github_runner_replicas | default(0) | int) == 0 else [] }}
 
 # Capacity floor for the github-runner-data-disk check: page once the Docker
 # data disk crosses this percent used, well before the 100% that fails every
