@@ -74,9 +74,9 @@
 
 - name: Converge the API key, every integration, and the board tiles
   # The spec goes in on stdin so no credential is ever written to disk or to a
-  # command line. Integrations whose secret did not resolve are skipped by the
-  # converger and named in its output — failing the whole play because one
-  # unrelated app's key is missing would be worse than converging the rest.
+  # command line. Every integration is always attempted; one Homarr rejects
+  # for a missing/bad credential is named in the converger's own output and
+  # never takes down the rest of the sync.
   ansible.builtin.command:
     cmd: /usr/local/libexec/homarr/homarr-api
     stdin: "{{ homarr_api_spec | to_json }}"
@@ -90,7 +90,7 @@
       api_key: "{{ homarr_api_key }}"
       api_key_file: "{{ homarr_api_key_file }}"
       force_secret_sync: "{{ homarr_force_secret_sync }}"
-      integrations: "{{ homarr_integrations + homarr_sonarr_integration + homarr_proxmox_integration }}"
+      integrations: "{{ homarr_integrations + homarr_proxmox_integration }}"
       board:
         name: "{{ homarr_board_name }}"
         # Every fronted service, UI and API alike — the converger places each
@@ -118,6 +118,24 @@
 - name: Report what the converger did
   ansible.builtin.debug:
     msg: "{{ (homarr_api_result.stdout | from_json).actions }}"
+
+# Every integration always renders — see homarr_integrations in defaults —
+# so a missing credential never disappears; it surfaces above as Homarr's
+# own rejection, named here once so it can't go unnoticed in the action list.
+- name: Warn when an integration has no credential resolved
+  ansible.builtin.debug:
+    msg: >-
+      {%- set _missing = [] -%}
+      {%- for i in (homarr_integrations + homarr_proxmox_integration) -%}
+      {%-   if i.secrets | selectattr('value', 'eq', '') | list | length > 0 -%}
+      {%-     set _ = _missing.append(i.name) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- if _missing -%}
+      WARNING: no credential resolved for: {{ _missing | join(', ') }}. Each
+      still renders on the board; Homarr's own rejection is in the action
+      list above.{%- else -%}
+      Every integration has a credential.{%- endif %}
 
 - name: Publish the Homarr admin password and API key to OpenBao
   ansible.builtin.include_role:

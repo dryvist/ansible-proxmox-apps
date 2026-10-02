@@ -68,6 +68,24 @@ authelia_portal_url: "https://authelia.{{ authelia_cookie_domain }}"
 # token-authenticated. An app that also serves its BROWSER auth endpoints under
 # /api (NextAuth's /api/auth/* being the common case) must narrow it, or the
 # bypass hands out its session/sign-in routes unauthenticated.
+# Display-only kiosks (the server-room wall) cannot complete a login, so the
+# wall host is bypassed for these clients' addresses only. Clients are FQDNs
+# from the private env document (WALL_KIOSK_CLIENTS, comma-separated) and are
+# resolved on the Authelia host at converge time; Authelia rules take CIDRs,
+# so each resolves to a /32. Unset renders no rule at all (fails closed).
+authelia_wall_kiosk_clients: >-
+  {{ (lookup('env', 'WALL_KIOSK_CLIENTS') | default('', true)).split(',')
+     | map('trim') | reject('equalto', '') | list }}
+authelia_wall_kiosk_domains:
+  - "wall.{{ authelia_cookie_domain }}"
+  # Glance ships no auth of its own; its Traefik route keeps sso=true for
+  # every other client. The wall embeds it in an iframe, and Authelia's own
+  # portal/denial response sets X-Frame-Options: DENY, which blanks the
+  # iframe for anyone who reaches the login redirect. The kiosk-scoped bypass
+  # below is the same mechanism as the wall row above: the route itself stays
+  # gated, only these client addresses skip the redirect.
+  - "glance.{{ authelia_cookie_domain }}"
+
 authelia_api_bypass_default_resource: "^/api(?:/.*)?$"
 authelia_api_bypass_domains:
   - domain: "zammad.{{ authelia_cookie_domain }}"
@@ -156,6 +174,24 @@ authelia_admin_user: "{{ lookup('env', 'DEFAULT_USERNAME') | default('', true) o
 authelia_admin_display_name: "Jacob Evans"
 authelia_admin_email: "{{ authelia_admin_user }}@{{ tofu_data.domain }}"
 authelia_bootstrap_password_file: "{{ authelia_config_dir }}/.bootstrap_password"
+
+authelia_service_users:
+  - username: svc-uicheck
+    display_name: UI Check
+    email: "svc-uicheck@{{ tofu_data.domain }}"
+    groups: [uicheck]
+    # `| default('', true) | mandatory(...)` never fires — see the NOTE in
+    # roles/authelia/defaults/main/01-oidc-clients.yml. `or undef(hint=...)`
+    # raises on both the empty and the undefined case.
+    password: >-
+      {{ (bao_apps_secrets.authelia_uicheck_password | default('', true))
+         or undef(hint='authelia_uicheck_password missing from OpenBao secret/apps/authelia') }}
+# Routine rotation-wise no-op (per seed_generated_app_secret.yml). To rotate:
+# ansible-playbook playbooks/rotate-key.yml -e rotate_domain=apps
+#   -e rotate_mount=secret -e rotate_path=apps/authelia
+#   -e rotate_field=authelia_uicheck_password
+# then re-converge in a fresh process so this role picks up the new value.
+authelia_service_users_rotate_passwords: false
 
 # --- Service secrets: generated at the source, no shared store ---------------
 # JWT / session / storage-encryption secrets have no second consumer, so per

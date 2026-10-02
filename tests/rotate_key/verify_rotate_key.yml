@@ -88,11 +88,13 @@
         that:
           - _case1.rc == 0
           - _state.data.REAL_FIELD != 'old-value'
+          - not _state.data.REAL_FIELD.startswith('sk-')
           - _state.data.OTHER_FIELD == 'untouched'
           - "'rotated_REAL_FIELD' in _state.custom_metadata"
           - _state.custom_metadata.owner == 'media-team'
         fail_msg: >-
-          Case 1 (clean rotation) must exit 0, change only REAL_FIELD, stamp
+          Case 1 (clean rotation) must exit 0, change only REAL_FIELD with no
+          prefix (rotate_prefix defaults to empty), stamp
           custom_metadata.rotated_REAL_FIELD, and preserve the pre-existing
           custom_metadata.owner (the PATCH merge must not drop siblings).
           rc={{ _case1.rc }} stdout={{ _case1.stdout }} stderr={{ _case1.stderr }}
@@ -189,6 +191,58 @@
           by unwrapping ROTATE_WRAPPING_TOKEN. rc={{ _case4.rc }}
           stdout={{ _case4.stdout }} stderr={{ _case4.stderr }}
 
+    # -------------------------------------------------------------------
+    # Case 5: rotate_prefix is prepended to the random mint — the shape
+    # LLM_ROUTER_MASTER_KEY needs (sk-<random>), proven with the real
+    # openbao_app_secret_router_key_prefix value, not a literal re-typed
+    # here.
+    # -------------------------------------------------------------------
+    - name: "Case 5: reseed a clean, non-exempt entry"
+      ansible.builtin.copy:
+        dest: "{{ state_file }}"
+        mode: "0600"
+        content: >-
+          {"data": {"REAL_FIELD": "old-value", "OTHER_FIELD": "untouched"},
+          "version": 3, "custom_metadata": {}}
+
+    # Loaded here, not hardcoded: the value handed to -e below is the same
+    # openbao_app_secret_router_key_prefix var LLM_ROUTER_MASTER_KEY rotation
+    # is documented to pass, resolved once by this outer play.
+    - name: "Case 5: load the real router-key prefix var"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/openbao/defaults/main/01b-app-secret-generation.yml"
+
+    - name: "Case 5: rotate with rotate_prefix set to the real router-key prefix"
+      ansible.builtin.command: >-
+        ansible-playbook {{ _playbook }} -c local
+        -e rotate_domain=test -e rotate_entry=entry -e rotate_field=REAL_FIELD
+        -e rotate_prefix={{ openbao_app_secret_router_key_prefix }}
+      register: _case5
+      changed_when: false
+      failed_when: false
+      environment: "{{ rotate_env }}"
+
+    - name: "Case 5: read back the stub state"
+      ansible.builtin.slurp:
+        src: "{{ state_file }}"
+      register: _case5_state
+
+    - name: "Case 5: assert the rotated value carries the real sk- prefix"
+      vars:
+        _state: "{{ _case5_state.content | b64decode | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - _case5.rc == 0
+          - _state.data.REAL_FIELD.startswith(openbao_app_secret_router_key_prefix)
+          - _state.data.REAL_FIELD != 'old-value'
+        fail_msg: >-
+          Case 5 (rotate_prefix set to openbao_app_secret_router_key_prefix)
+          must exit 0 and produce a value starting with
+          "{{ openbao_app_secret_router_key_prefix }}" — the same var
+          LLM_ROUTER_MASTER_KEY rotation is documented to pass.
+          rc={{ _case5.rc }} stdout={{ _case5.stdout }} stderr={{ _case5.stderr }}
+          state={{ _state }}
+
     - name: Stop the stub OpenBao server
       ansible.builtin.command: "kill {{ _stub.stdout | trim }}"
       changed_when: false
@@ -202,3 +256,4 @@
           - unknown field: refused, never invented
           - custom_metadata.rotation=exempt: refused
           - wrapping-token-only (no standing secret_id): succeeds via unwrap
+          - rotate_prefix: prepended to the random mint (sk-<random> shape)

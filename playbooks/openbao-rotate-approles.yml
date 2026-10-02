@@ -84,6 +84,11 @@
     rotate_domains_file: "{{ playbook_dir }}/../roles/openbao_secrets/defaults/main/01-domains.yml"
     # Comma-separated domain names, or unset/empty for every domain.
     openbao_rotate_domains: ""
+    # One-time seed of openbao_host_secret_zero_approle_names into the env
+    # document, in either auth mode. Mints at each role's current declared TTL
+    # and skips any identity the document already carries. Scheduled
+    # rotation never touches these identities.
+    bootstrap_seed_only: false
 
   tasks:
     - name: Decide which auth mode this run supplies
@@ -123,6 +128,11 @@
       ansible.builtin.include_vars:
         file: "{{ rotate_domains_file }}"
 
+    - name: Load the host secret-zero identity list (seed run)
+      ansible.builtin.include_vars:
+        dir: "{{ playbook_dir }}/../roles/openbao/defaults/main"
+      when: bootstrap_seed_only | bool
+
     # openbao_approle_secret_id_ttl_overrides / openbao_approle_secret_id_ttl:
     # the same declared secret_id_ttl cascade roles/openbao's init/10-approles.yml
     # writes to the live role. tasks/openbao_rotate_one_domain.yml reads it
@@ -132,16 +142,51 @@
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../roles/openbao/defaults/main/08a-admin-and-ttls.yml"
 
+    # openbao_approle_cidr_class_overrides / openbao_approle_default_cidr_class:
+    # which domains are bound to the workstation class. This play runs on the
+    # plane, so a login with such a pair is refused on source address whatever
+    # the credential -- tasks/openbao_rotate_one_domain.yml proves those pairs
+    # by lookup instead.
+    - name: Load the declared AppRole address classes
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/openbao/defaults/main/08b-cidr-and-unlock.yml"
+
+    # openbao_rotate_doppler_project / openbao_rotate_doppler_config / openbao_rotate_doppler_token_kv_path
+    # / openbao_rotate_doppler_sync_domains -- see that file for why these six.
+    - name: Load the Doppler republish config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/openbao/defaults/main/08c-rotator-doppler-sync.yml"
+
+    # The scheduled run reads OPENBAO_ROTATE_DOPPLER_PROJECT/_CONFIG from the
+    # platform env document; a workstation run under `doppler run` falls back
+    # to DOPPLER_PROJECT/_CONFIG (08c-rotator-doppler-sync.yml). Empty here
+    # means neither source is present. A seed run never republishes to
+    # Doppler at all (bootstrap_seed_only rotates host secret-zero
+    # identities, none of which are workstation-consumed), so it is exempt.
+    - name: Refuse to run without a Doppler project/config target
+      ansible.builtin.assert:
+        that:
+          - openbao_rotate_doppler_project | length > 0
+          - openbao_rotate_doppler_config | length > 0
+        fail_msg: >-
+          No Doppler republish target: set OPENBAO_ROTATE_DOPPLER_PROJECT and
+          OPENBAO_ROTATE_DOPPLER_CONFIG in config/platform/ansible/env, or run
+          under `doppler run -p <project> -c <config> -- ...`.
+        quiet: true
+      when: not (bootstrap_seed_only | bool)
+
     - name: Resolve the domains to rotate this run
       ansible.builtin.set_fact:
         rotate_domain_names: >-
-          {{ (openbao_rotate_domains | trim | length > 0)
+          {{ openbao_host_secret_zero_approle_names if (bootstrap_seed_only | bool) else
+             (openbao_rotate_domains | trim | length > 0)
              | ternary(
                  openbao_rotate_domains.split(',') | map('trim') | reject('equalto', '') | list,
                  openbao_secrets_domains | map(attribute='name') | list
                ) }}
 
     - name: Refuse an unknown domain name
+      when: not (bootstrap_seed_only | bool)
       vars:
         _known: "{{ openbao_secrets_domains | map(attribute='name') | list }}"
         _unknown: "{{ rotate_domain_names | reject('in', _known) | list }}"
@@ -185,6 +230,28 @@
       register: rotate_login
       changed_when: false
       no_log: true
+
+    # One read, reused by every domain's Doppler-republish task below --
+    # never ambient env, never stored in Doppler itself (see
+    # 08c-rotator-doppler-sync.yml). A seed run never republishes to
+    # Doppler, so it skips the read.
+    - name: Read the Doppler sync token
+      ansible.builtin.uri:
+        url: "{{ rotate_bao_addr }}/v1/{{ rotate_kv_mount }}/data/{{ openbao_rotate_doppler_token_kv_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
+        status_code: 200
+      register: openbao_rotate_doppler_token_read
+      changed_when: false
+      no_log: true
+      when: not (bootstrap_seed_only | bool)
+
+    - name: Resolve the Doppler sync token
+      ansible.builtin.set_fact:
+        rotate_doppler_token: "{{ openbao_rotate_doppler_token_read.json.data.data.doppler_token }}"
+      no_log: true
+      when: not (bootstrap_seed_only | bool)
 
     - name: Rotate each domain's AppRole secret_id in turn
       ansible.builtin.include_tasks: tasks/openbao_rotate_one_domain.yml

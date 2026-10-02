@@ -1,0 +1,123 @@
+---
+# Verifies roles/status_stack/tasks/autokuma_static_monitors.yml: a fixture
+# of 50 monitor targets must render to exactly the expected file set, and a
+# second invocation against the SAME target directory must be a no-op
+# (changed=0) because the checksum marker matches.
+#
+# The two runs are two SEPARATE `ansible-playbook` processes (see
+# .github/workflows/_molecule.yml), not two plays here — idempotency has to
+# be proven against a real "run this twice" the way an operator would run
+# the role twice, not by re-including the tasks file within one process.
+#
+# Usage:
+#   ansible-playbook tests/status_stack_autokuma_render/verify.yml -c local
+#   ansible-playbook tests/status_stack_autokuma_render/verify.yml -c local  # must report changed=0
+#   rm -rf /tmp/status_stack_autokuma_render_verify                          # cleanup
+#
+# A fixed (not per-run-random) target directory is required so the checksum
+# marker persists between the two ansible-playbook invocations above.
+- name: Verify the AutoKuma static-monitor bulk render
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true # the role owns these files as root; matches a real converge
+
+  vars:
+    ansible_become: true
+    status_stack_data_dir: /tmp/status_stack_autokuma_render_verify
+    status_stack_autokuma_static_monitors_dir: "{{ status_stack_data_dir }}/autokuma/static-monitors"
+    status_stack_interval: "60s"
+    status_stack_ntfy_url: "http://127.0.0.1:9999"
+    status_stack_ntfy_topic_urgent: fixture-urgent
+    status_stack_ntfy_priority_urgent: 5
+    status_stack_ntfy_username: ""
+    status_stack_ntfy_password: ""
+    status_stack_deadman_token: fixture-deadman-token
+    status_stack_deadman_endpoints:
+      - { name: fixture-pusher-a, heartbeat: 5m }
+      - { name: fixture-pusher-b, heartbeat: 10m }
+
+  tasks:
+    # 16 ping + 17 port + 17 http == 50, matching the task's "fixture target
+    # list of 50" ask. Built via loop+combine (this fixture-build cost is
+    # irrelevant — it is not the code under test).
+    - name: Build 16 fixture ICMP targets
+      ansible.builtin.set_fact:
+        _fixture_icmp: >-
+          {{ (_fixture_icmp | default([]))
+             + [{'name': 'guest-' ~ item, 'group': 'guest', 'fqdn': ('guest-' ~ item ~ '.invalid')}] }}
+      loop: "{{ range(1, 17) | list }}"
+      loop_control:
+        label: "guest-{{ item }}"
+
+    - name: Build 17 fixture TCP targets
+      ansible.builtin.set_fact:
+        _fixture_tcp: >-
+          {{ (_fixture_tcp | default([]))
+             + [{'name': 'node-' ~ item, 'group': 'node', 'fqdn': ('node-' ~ item ~ '.invalid'), 'port': 9100}] }}
+      loop: "{{ range(1, 18) | list }}"
+      loop_control:
+        label: "node-{{ item }}"
+
+    - name: Build 17 fixture HTTP targets
+      ansible.builtin.set_fact:
+        _fixture_http: >-
+          {{ (_fixture_http | default([]))
+             + [{'name': 'service-' ~ item, 'group': 'service', 'fqdn': ('service-' ~ item ~ '.invalid'),
+                 'port': 8080, 'path': '/', 'expect_status': [200]}] }}
+      loop: "{{ range(1, 18) | list }}"
+      loop_control:
+        label: "service-{{ item }}"
+
+    - name: Assemble the 50-target monitor_targets fixture
+      ansible.builtin.set_fact:
+        status_stack_monitor_targets:
+          icmp: "{{ _fixture_icmp }}"
+          tcp: "{{ _fixture_tcp }}"
+          http: "{{ _fixture_http }}"
+
+    - name: Sanity-check the fixture is really 50 targets
+      ansible.builtin.assert:
+        that:
+          - (status_stack_monitor_targets.icmp | length)
+            + (status_stack_monitor_targets.tcp | length)
+            + (status_stack_monitor_targets.http | length) == 50
+        fail_msg: The fixture target count drifted from 50 — fix the fixture, not this assertion.
+
+    - name: Render and ship the AutoKuma static-monitor set
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../roles/status_stack/tasks/autokuma_static_monitors.yml"
+
+    - name: List the rendered AutoKuma static-monitor files
+      ansible.builtin.find:
+        paths: "{{ status_stack_autokuma_static_monitors_dir }}"
+        patterns: "*.json"
+      register: _rendered_files
+
+    - name: Assert the rendered file set matches the fixture exactly
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          # 5 fixed (ntfy + 4 groups) + 2 push + 50 targets == 57
+          - _rendered_files.files | length == 57
+          - (_rendered_files.files | map(attribute='path') | map('basename') | list)
+            is superset(['ntfy.json', 'group-guest.json', 'group-node.json',
+                          'group-service.json', 'group-deadman.json',
+                          'push-fixture-pusher-a.json', 'push-fixture-pusher-b.json',
+                          'ping-guest-1.json', 'port-node-1.json', 'http-service-1.json'])
+        fail_msg: >-
+          Rendered {{ _rendered_files.files | length }} files, expected 57
+          (5 fixed + 2 push + 50 targets). The render map or the file-count
+          math above drifted from roles/status_stack/tasks/autokuma_static_monitors.yml.
+
+    - name: Assert the checksum marker was written outside the AutoKuma directory
+      ansible.builtin.stat:
+        path: "{{ status_stack_autokuma_static_monitors_dir | dirname }}/.rendered-checksum"
+      register: _marker_stat
+      failed_when: not _marker_stat.stat.exists
+
+  # The real role's own handler restarts the docker-compose stack — nothing
+  # to restart here, so this just absorbs the notify.
+  handlers:
+    - name: Restart status stack
+      ansible.builtin.debug:
+        msg: "(fixture: would restart the status stack here)"

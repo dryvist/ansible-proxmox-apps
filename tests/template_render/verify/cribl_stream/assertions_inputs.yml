@@ -11,6 +11,20 @@
       pack-routed events, so unstamped events would fall into Splunk's
       HEC token defaults (index=main, sourcetype=httpevent)
 
+- name: Assert PVE metrics input fans to Splunk and VictoriaMetrics
+  ansible.builtin.assert:
+    that:
+      - "'type: metrics' in _cribl_stream_inputs"
+      - "'id: in_pve_metrics' in _cribl_stream_inputs"
+      - "'tcpPort: 10370' in _cribl_stream_inputs"
+      - "'pipeline: pve_metrics_normalize' in _cribl_stream_inputs"
+      - "'output: splunk_hec' in _cribl_stream_inputs"
+      - "'output: victoriametrics_rw' in _cribl_stream_inputs"
+    fail_msg: >-
+      inputs.yml.j2 must include a metrics-type in_pve_metrics input on
+      cribl_stream_pve_metrics_port, connected to both splunk_hec and
+      victoriametrics_rw through the pve_metrics_normalize pipeline
+
 - name: Assert prometheus_rw input fans to Splunk and VictoriaMetrics
   ansible.builtin.assert:
     that:
@@ -25,16 +39,6 @@
       prometheusAPI: /api/v1/write, connected to BOTH
       (prometheus_to_netmon → splunk_hec) and (victoriametrics_rw with no
       Splunk-stamp pipeline)
-
-- name: Assert victoriametrics_rw Prometheus remote_write output renders
-  ansible.builtin.assert:
-    that:
-      - "'victoriametrics_rw:' in _cribl_stream_outputs_pi"
-      - "'type: prometheus' in _cribl_stream_outputs_pi"
-      - "'url: \"http://grafana.example.invalid:8428/api/v1/write\"' in _cribl_stream_outputs_pi"
-    fail_msg: >-
-      outputs.yml.j2 must define victoriametrics_rw as type: prometheus
-      targeting the fixture URL (FQDN + victoriametrics port + /api/v1/write)
 
 - name: Assert OTLP input renders on the otel port with the otel_stamp pipeline
   ansible.builtin.assert:
@@ -169,29 +173,33 @@
       - "'splunk_hec_netflow' in _cribl_stream_outputs_pi"
       - "'splunk_hec_claude' in _cribl_stream_outputs_pi"
       - "'splunk_hec_llm' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_unifi_metrics' in _cribl_stream_outputs_pi"
       # Derived list is unique — no duplicated output ids.
       - "_cribl_stream_outputs_pi.count('id: splunk_hec_llm') == 1"
     fail_msg: >-
       outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
-      splunk_hec_<index> output for netflow plus each unique
-      ai_log_routing index
+      splunk_hec_<index> output for netflow, unifi_metrics, plus each
+      unique ai_log_routing index
 
-- name: Assert the LLM-observability sinks drop under backpressure, HEC sinks do not
+- name: Assert the secondary sinks drop under backpressure, HEC sinks do not
   ansible.builtin.assert:
     that:
       # langfuse_otlp + phoenix_otlp: a dead sink must not gate in_otel
       # admission (apps: phoenix_otlp latched Red and 503'd in_otel on both
       # nodes even though the destination itself was healthy).
       - "_cribl_stream_outputs_pi.count('type: open_telemetry') == 2"
-      - "_cribl_stream_outputs_pi.count('onBackpressure: drop') == 2"
+      # + victoriametrics_rw: the metrics fan-out must not gate the route
+      # that also feeds Splunk.
+      - "_cribl_stream_outputs_pi.count('type: prometheus') == 1"
+      - "_cribl_stream_outputs_pi.count('onBackpressure: drop') == 3"
       # Every splunk_hec output (base + per-index) keeps its current
       # block behaviour — unchanged by this fix.
       - "_cribl_stream_outputs_pi.count('type: splunk_hec')
          == _cribl_stream_outputs_pi.count('onBackpressure: block')"
     fail_msg: >-
       outputs.yml.j2 must render onBackpressure: drop on both open_telemetry
-      destinations (langfuse_otlp, phoenix_otlp) so a dead LLM-observability
-      sink cannot gate in_otel admission, while every splunk_hec destination
+      destinations (langfuse_otlp, phoenix_otlp) and on victoriametrics_rw, so
+      a dead secondary sink cannot gate its source, while every splunk_hec destination
       keeps its current onBackpressure: block.
 
 - name: Assert the built-in Cribl Internal source renders both feeds

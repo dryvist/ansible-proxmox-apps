@@ -24,7 +24,8 @@ See `defaults/main.yml` for all available variables:
 | -------- | ------- | ----------- |
 | `apt_cacher_ng_port` | `3142` | Port for proxy |
 | `apt_cacher_ng_cache_dir` | `/var/cache/apt-cacher-ng` | Cache location |
-| `apt_cacher_ng_passthrough_enabled` | `false` | HTTPS passthrough |
+| `apt_cacher_ng_passthrough_hosts` | see defaults | HTTPS-only repo hosts allowed to tunnel |
+| `apt_cacher_ng_passthrough_enabled` | `false` | Extra verbatim passthrough pattern |
 | `apt_cacher_ng_admin_enabled` | `true` | Admin web UI |
 
 ## Client Configuration

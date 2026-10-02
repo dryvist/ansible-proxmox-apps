@@ -1,0 +1,59 @@
+---
+- name: Assert required environment variables are set
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'OBJECT_STORAGE_ROOT_USER') | length > 0
+      - lookup('env', 'OBJECT_STORAGE_ROOT_PASSWORD') | length > 0
+    fail_msg: >-
+      Missing OBJECT_STORAGE_ROOT_USER or OBJECT_STORAGE_ROOT_PASSWORD. Run via
+      `doppler run -- ansible-playbook …` so Doppler injects secrets.
+
+# Without this, an absent `aws` surfaces as rc=2 from every object-storage
+# command, which the tag-query validation below reports as an object-storage
+# fault - sending the reader to check connectivity, credentials, and bucket
+# existence, none of which are wrong. Fail once, here, naming the real cause.
+- name: Look for the object-storage client
+  ansible.builtin.command:
+    cmd: aws --version
+  changed_when: false
+  failed_when: false
+  register: s3_client_preflight
+
+- name: Assert the object-storage client is installed
+  ansible.builtin.assert:
+    that:
+      - s3_client_preflight.rc == 0
+    fail_msg: >-
+      `aws` is not on PATH. Every object-storage command below would exit 2
+      ("executable not found"), which reads as an object-storage fault but
+      is not one. Install the AWS CLI into the dev shell and re-run.
+    quiet: true
+
+- name: Query object-storage bucket versioning
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3api
+      - get-bucket-versioning
+      - --bucket
+      - "{{ object_storage_bucket }}"
+  environment: "{{ s3_env }}"
+  register: object_storage_versioning
+  changed_when: false
+  no_log: true
+
+- name: Require object-storage version history for stable artifact keys
+  ansible.builtin.assert:
+    that:
+      - (object_storage_versioning.stdout | default('{}', true) | from_json).Status | default('') == 'Enabled'
+    fail_msg: >-
+      Bucket {{ object_storage_bucket }} must have S3 versioning enabled. Stable,
+      version-free artifact keys rely on native object VersionId history for
+      rollback and audit.
+    quiet: true
+
+- name: Ensure temporary download directory exists
+  ansible.builtin.file:
+    path: "{{ cribl_packs_sync_tmpdir }}"
+    state: directory
+    mode: "0700"

@@ -14,8 +14,11 @@ shared collection.
 ## What It Does
 
 1. Creates a dedicated no-login system user (`node-exporter`).
-2. Downloads the **pinned** upstream release tarball to a versioned path under
-   `/opt/node_exporter/` (skipped when already present; optional sha256 pin).
+2. Stages the **pinned** upstream release tarball once on the controller
+   (unrestricted egress) — checksummed against upstream's own
+   `sha256sums.txt`, no literal hash in the role — then copies it to the
+   guest. Guests never reach github.com directly; several sit behind the
+   `outbound-internal` firewall group and would time out otherwise.
 3. Unpacks it (versioned, `creates:`-guarded) and installs the binary to
    `/usr/local/bin/node_exporter` — only rewritten on a version bump.
 4. Optionally creates the textfile-collector directory so scripts can publish
@@ -23,10 +26,12 @@ shared collection.
 5. Deploys a hardened systemd unit and enables/starts the service.
 
 Re-runs are no-ops; bumping `node_exporter_version` (plus checksum) rolls the
-fleet forward on the next converge. No container-vs-host branching is needed:
-unlike a clock daemon, node_exporter only reads `/proc`/`/sys` and needs no
-privilege an unprivileged LXC lacks, so the same unit runs identically on
-every guest.
+fleet forward on the next converge. Inside a system container
+(`systemd-detect-virt --container`) the unit omits its mount-namespace
+directives (`ProtectSystem`, `ProtectHome`, `PrivateTmp`,
+`ProtectKernelModules`, `ProtectControlGroups`), which an unprivileged LXC
+without the `nesting` feature cannot set up; `NoNewPrivileges` applies
+everywhere.
 
 ## Installation
 
@@ -54,9 +59,9 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `node_exporter_version` | `1.9.1` | Pinned upstream release. |
-| `node_exporter_download_url` | GitHub releases URL | Override to a local mirror if guests must not reach the internet at converge time. |
-| `node_exporter_checksum` | pinned per-arch sha256 | Optional `sha256:<hex>` pin for the tarball. Empty skips the check. |
+| `node_exporter_version` | sourced from `inventory/group_vars/all.yml` (org-wide, Renovate-managed) | Pinned upstream release. |
+| `node_exporter_download_url` | GitHub releases URL | Fetched once on the controller; guests never use this URL directly. |
+| `node_exporter_sha256sums_url` | upstream `sha256sums.txt` URL | Passed to `get_url`'s `checksum:` — matched by filename at run time, never a literal hash. |
 | `node_exporter_listen_address` | guest's mgmt IP (`ansible_default_ipv4.address`) | Bind address; set `0.0.0.0` for all interfaces. |
 | `node_exporter_port` | `9100` | Listen port. |
 | `node_exporter_user` | `node-exporter` | Service account. |

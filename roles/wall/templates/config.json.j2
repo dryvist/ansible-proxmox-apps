@@ -1,0 +1,39 @@
+{#- Groups and app names come from the shared catalog's UI rows; Gatus names its
+    endpoints after the same rows, so each hex matches its series. -#}
+{%- set _groups = [] -%}
+{%- for grp, rows in (dashboard_catalog_services | default([]) | selectattr('ui') | groupby('group')) -%}
+{%- set _ = _groups.append({'name': grp, 'apps': rows | map(attribute='name') | list}) -%}
+{%- endfor -%}
+{#- A node with no distinct role maps to ITS OWN NAME, not an empty string —
+    the wall's mc1.js reads nodeRoles[name] === name as "no role" and shows
+    nothing; nodeRoles[name] === '' would instead render a blank role label. -#}
+{%- set _roles = {} -%}
+{%- for name, node in (tofu_data.nodes | default({})) | dictsort -%}
+{%- if node.commissioned | default(true) -%}
+{%- set _ = _roles.update({name: node.role | default(name, true)}) -%}
+{%- endif -%}
+{%- endfor -%}
+{#- The rotator's own schema (homelab-wall site/rotator/rotator.js): a
+    non-empty `slides` array REPLACES its built-in MC1..MC5 defaults, so this
+    config always carries the full list — the five MC slides first, then
+    wall_slides — never wall_slides alone. Each entry is {name, url, seconds}. -#}
+{%- set _slides = [] -%}
+{%- for _n in range(1, 6) -%}
+{%- set _ = _slides.append({'name': 'MC' ~ _n, 'url': '/mc' ~ _n ~ '/'}) -%}
+{%- endfor -%}
+{%- for _s in wall_slides -%}
+{%- if _s.seconds is defined -%}
+{%- set _ = _slides.append({'name': _s.name, 'url': _s.url, 'seconds': _s.seconds}) -%}
+{%- else -%}
+{%- set _ = _slides.append({'name': _s.name, 'url': _s.url}) -%}
+{%- endif -%}
+{%- endfor -%}
+{{ {
+  'title': wall_title,
+  'refreshSeconds': wall_refresh_seconds | int,
+  'guestCount': (tofu_data.containers | default({}) | length) + (tofu_data.vms | default({}) | length),
+  'nodeRoles': _roles,
+  'extraNodes': wall_extra_nodes,
+  'groups': _groups,
+  'slides': _slides,
+} | to_nice_json }}

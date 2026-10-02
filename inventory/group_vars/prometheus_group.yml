@@ -36,6 +36,33 @@ pve_node_exporter_scrape_targets: >-
   {%- endfor -%}
   {{ out }}
 
+# Guest node_exporter metrics: every Linux guest runs node_exporter (the
+# "Install node_exporter on every guest" play). Targets are each guest's
+# inventory address (FQDN, or its static address for critical-tier guests);
+# WinRM guests run no node_exporter and are left out. One static_config per
+# guest so the `guest` label carries the inventory name, which Stream's
+# prometheus_to_netmon pipeline uses as the host for index=host_metrics.
+guest_node_exporter_static_configs: >-
+  {%- set out = [] -%}
+  {%- set guests = (tofu_data['containers'] | default({}))
+                   | combine(tofu_data['vms'] | default({})) -%}
+  {%- for name, g in guests | dictsort -%}
+  {%- if (g.ip | default('')) | length > 0
+        and g.ansible_connection | default('') != 'winrm' -%}
+  {%- set _ = out.append({'targets': [g.ip ~ ':' ~ node_exporter_scrape_port],
+                          'labels': {'guest': name}}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+
+# Metric families the guest job keeps (regexes, joined with |).
+guest_node_exporter_keep_metrics:
+  - node_load(1|5|15)
+  - node_memory_Mem(Total|Available)_bytes
+  - node_filesystem_(avail|size)_bytes
+  - node_network_(receive|transmit)_bytes_total
+  - node_pressure_.*
+
 # Gatus metrics on the status guest (tag `status`). Empty list when the guest
 # is absent — Prometheus accepts an empty targets list (no scrapes).
 gatus_scrape_port: >-
@@ -100,6 +127,16 @@ prometheus_stack_extra_scrape_configs: |
     scrape_interval: 60s
     static_configs:
       - targets: {{ pve_node_exporter_scrape_targets | to_json }}
+  - job_name: guest_node_exporter
+    scrape_interval: 60s
+    static_configs: {{ guest_node_exporter_static_configs | to_json }}
+    # Headline families only: a full node_exporter scrape is ~1000 series per
+    # guest, which across every guest would dominate the Splunk metrics
+    # licence. up is synthesized by Prometheus and is not affected.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "{{ guest_node_exporter_keep_metrics | join('|') }}"
+        action: keep
   - job_name: agentgateway
     # The agentgateway DNS name is a Traefik ingress alias, so scrape the guest
     # directly by its inventory address (no literal IP). agentgateway is
@@ -135,25 +172,19 @@ prometheus_stack_extra_scrape_configs: |
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
 
-# Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics).
-# Points at cribl-stream-01 directly (no HAProxy — WAL provides delivery durability).
+# Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics)
+# and VictoriaMetrics (in_prometheus_rw dual connection). FQDN, not the guest
+# IP: cribl-stream-01 is published directly at the apex zone as an INC-17123
+# escape hatch (inventory/group_vars/technitium_dns_group.yml) specifically
+# so it can be addressed this way — no HAProxy in front (WAL provides
+# delivery durability).
 prometheus_stack_remote_write_url: >-
-  http://{{ hostvars['localhost']['tofu_data']['containers']['cribl-stream-01']['ip']
-  }}:9201/api/v1/write
+  http://cribl-stream-01.{{ hostvars['localhost']['tofu_data']['domain'] }}:9201/api/v1/write
 
-# The remote_write keep relabel must also pass the PVE host-metrics job —
-# Stream's prometheus_to_netmon pipeline splits it into index=host_metrics.
-prometheus_stack_remote_write_keep_jobs:
-  - blackbox_.*
-  - smokeping
-  - pve_node_exporter
-  - gatus
-  - traefik
-  - llm_router
-  - llama_server
-  - github_exporter
-  - arc_listener
-  - openbao
+# Every scrape job ships unfiltered (no write_relabel keep list) — the
+# Splunk-volume allow-list moved to cribl_stream_group.yml
+# (cribl_stream_prometheus_splunk_keep_jobs), which gates only the
+# splunk_hec leg of Cribl's prometheus_rw input.
 
 # Organization for github_exporter to poll — same separation
 # github_runner_org uses (roles/github_exporter defaults stay blank).

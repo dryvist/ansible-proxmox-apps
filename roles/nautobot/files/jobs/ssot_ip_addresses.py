@@ -1,7 +1,7 @@
 """SSoT seed job: IP addresses and reservations (issue #138).
 
 Source of truth: the ``reservations`` array of the seed bundle (from
-``tofu-unifi`` ``fixed-ips.json``). DiffSyncs each reservation into a Nautobot
+the network IaC repo's ``fixed-ips.json``). DiffSyncs each reservation into a Nautobot
 IPAddress (host + dns_name), idempotently.
 
 Live-validation notes: Nautobot 2.x requires each IPAddress to fall inside an

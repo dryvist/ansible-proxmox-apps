@@ -1,0 +1,110 @@
+---
+# Creates Cribl's own read-only account on the monitored node's BMC via the
+# Redfish AccountService, and publishes the generated password to OpenBao.
+# Idempotent. Never runs as part of the normal converge — invoke with
+# --tags bmc_provision.
+#
+# AccountService/Accounts' Members list holds only @odata.id links — no
+# UserName — so both the existence check and the empty-slot search need each
+# member fetched individually before either question can be answered.
+
+- name: Require a real BMC host before provisioning
+  ansible.builtin.assert:
+    that:
+      - cribl_stream_bmc_host | length > 0
+    fail_msg: "cribl_stream_bmc_host is unset."
+    quiet: true
+
+- name: List the BMC AccountService accounts
+  ansible.builtin.uri:
+    url: "https://{{ cribl_stream_bmc_host }}/redfish/v1/AccountService/Accounts"
+    method: GET
+    user: "{{ cribl_stream_bmc_admin_username }}"
+    password: "{{ cribl_stream_bmc_admin_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ cribl_stream_bmc_tls_verify }}"
+    status_code: [200]
+  register: cribl_stream_bmc_accounts
+  no_log: true
+
+- name: Read each Redfish account member
+  ansible.builtin.uri:
+    url: "https://{{ cribl_stream_bmc_host }}{{ item['@odata.id'] }}"
+    method: GET
+    user: "{{ cribl_stream_bmc_admin_username }}"
+    password: "{{ cribl_stream_bmc_admin_password }}"
+    force_basic_auth: true
+    validate_certs: "{{ cribl_stream_bmc_tls_verify }}"
+    status_code: [200]
+  loop: "{{ cribl_stream_bmc_accounts.json.Members | default([]) }}"
+  register: cribl_stream_bmc_account_details
+  no_log: true
+
+- name: Determine whether the read-only account already exists
+  ansible.builtin.set_fact:
+    cribl_stream_bmc_ro_exists: >-
+      {{ (cribl_stream_bmc_account_details.results | default([]))
+         | map(attribute='json') | list
+         | selectattr('UserName', 'defined')
+         | selectattr('UserName', 'equalto', cribl_stream_bmc_readonly_user)
+         | list | length > 0 }}
+
+- name: Create the Cribl read-only account and publish its password
+  when: not cribl_stream_bmc_ro_exists
+  block:
+    - name: Generate a password for the read-only account
+      ansible.builtin.set_fact:
+        cribl_stream_bmc_ro_password: >-
+          {{ lookup('ansible.builtin.password',
+             '/dev/null length=32 chars=ascii_letters,digits') }}
+      no_log: true
+
+    - name: Find the first empty account slot (never Id 1, the reserved slot)
+      ansible.builtin.set_fact:
+        cribl_stream_bmc_ro_slot: >-
+          {{ (cribl_stream_bmc_account_details.results | default([]))
+             | map(attribute='json') | list
+             | selectattr('UserName', 'defined')
+             | selectattr('UserName', 'equalto', '')
+             | map(attribute='Id')
+             | reject('equalto', '1') | reject('equalto', 1)
+             | list | first | default('', true) }}
+
+    - name: Require an empty account slot before provisioning
+      ansible.builtin.assert:
+        that:
+          - cribl_stream_bmc_ro_slot | length > 0
+        fail_msg: >-
+          No empty Redfish AccountService slot was found (excluding the
+          reserved Id 1). Refusing to overwrite an existing account.
+        quiet: true
+
+    - name: Create the read-only Redfish account
+      ansible.builtin.uri:
+        url: >-
+          https://{{ cribl_stream_bmc_host }}/redfish/v1/AccountService/Accounts/{{
+          cribl_stream_bmc_ro_slot }}
+        method: PATCH
+        user: "{{ cribl_stream_bmc_admin_username }}"
+        password: "{{ cribl_stream_bmc_admin_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ cribl_stream_bmc_tls_verify }}"
+        body_format: json
+        body:
+          UserName: "{{ cribl_stream_bmc_readonly_user }}"
+          Password: "{{ cribl_stream_bmc_ro_password }}"
+          RoleId: ReadOnly
+          Enabled: true
+        status_code: [200]
+      no_log: true
+
+    - name: Publish the generated password to OpenBao
+      vars:
+        openbao_secrets_publish_app: cribl-stream
+        openbao_secrets_publish_data:
+          bmc_cribl_username: "{{ cribl_stream_bmc_readonly_user }}"
+          bmc_cribl_password: "{{ cribl_stream_bmc_ro_password }}"
+        openbao_secrets_publish_reason: "BMC read-only account for Cribl hardware sensor polling"
+      ansible.builtin.include_role:
+        name: openbao_secrets
+        tasks_from: publish.yml

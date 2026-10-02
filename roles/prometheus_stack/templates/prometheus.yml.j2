@@ -71,17 +71,40 @@ scrape_configs:
           - "{{ t }}"
 {% endfor %}
 {% endif %}
+{% if prometheus_stack_hindsight_targets | length > 0 %}
+
+  ## Hindsight agent-memory replicas — /metrics is unauthenticated (same port
+  ## as the REST API; no separate metrics listener upstream), one target per
+  ## replica so a stuck/lagging worker shows up on its own instance label.
+  - job_name: hindsight
+    static_configs:
+      - targets:
+{% for t in prometheus_stack_hindsight_targets %}
+          - "{{ t }}"
+{% endfor %}
+{% endif %}
+{% if prometheus_stack_agentgateway_targets | length > 0 %}
+
+  ## agentgateway stats server — unauthenticated, internal-only Prometheus
+  ## /metrics on its dedicated metrics port.
+  - job_name: agentgateway
+    static_configs:
+      - targets:
+{% for t in prometheus_stack_agentgateway_targets %}
+          - "{{ t }}"
+{% endfor %}
+{% endif %}
 {% if prometheus_stack_extra_scrape_configs | trim | length > 0 %}
   ## appended jobs (smokeping_prober / irtt / snmp_exporter)
 {{ prometheus_stack_extra_scrape_configs | indent(2, true) }}
 {% endif %}
 {% if prometheus_stack_remote_write_url | default('') | trim | length > 0 %}
+## Every scrape job ships unfiltered — VictoriaMetrics is the superset
+## store. Cribl's splunk_hec leg (prometheus_to_netmon pipeline) applies
+## its own job allow-list to bound Splunk license volume; the
+## victoriametrics_rw leg has no such filter.
 remote_write:
   - url: "{{ prometheus_stack_remote_write_url }}"
-    write_relabel_configs:
-      - source_labels: [job]
-        regex: "{{ prometheus_stack_remote_write_keep_jobs | join('|') }}"
-        action: keep
     queue_config:
       capacity: 2500
       max_shards: 2

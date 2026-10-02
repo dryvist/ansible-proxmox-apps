@@ -29,14 +29,31 @@ unifi_metrics_unpoller_port: 9130
 # LXC; molecule's Docker-in-Docker overrides this to vfs.
 unifi_metrics_docker_storage_driver: "fuse-overlayfs"
 
-# --- UniFi controller connection (secrets via env; never committed) ---
-# Sourced from the environment of the Ansible run (the UNIFI_* keychain items,
-# same ones the tofu-unifi provider uses). They land in the unpoller container's
-# `environment:` on the single-purpose LXC (gitignored), not in a committed file.
-# UP_UNIFI_DEFAULT_URL must be the controller URL; prefer an FQDN over an IP.
-unifi_metrics_controller_url: "{{ lookup('env', 'UNIFI_API') | default('', true) }}"
-unifi_metrics_controller_user: "{{ lookup('env', 'UNIFI_USERNAME') | default('', true) }}"
-unifi_metrics_controller_pass: "{{ lookup('env', 'UNIFI_PASSWORD') | default('', true) }}"
+# --- UniFi controller connection ---
+# Read only from the OpenBao prefetch fact -- no env fallback, which would be
+# a hidden second source. Same shape as roles/unpoller's
+# unpoller_controller_url. secret/infrastructure/unifi is the single
+# source of truth (same field names the network IaC repo's Terraform provider
+# reads); the openbao_secrets "apps" domain fetches it for unifi_metrics_group
+# (roles/openbao_secrets/defaults/main/01-domains.yml,
+# playbooks/site/vars/openbao_secrets_domain_groups.yml). They land in the
+# unpoller container's `environment:` on the single-purpose LXC (gitignored),
+# not in a committed file. The URL must be an FQDN, never a literal IP.
+unifi_metrics_controller_url: >-
+  {{ bao_apps_secrets.UNIFI_API
+     | default(undef(), true)
+     | mandatory('UNIFI_API missing from the apps-domain OpenBao prefetch
+       (secret/infrastructure/unifi)') }}
+unifi_metrics_controller_user: >-
+  {{ bao_apps_secrets.UNIFI_USERNAME
+     | default(undef(), true)
+     | mandatory('UNIFI_USERNAME missing from the apps-domain OpenBao prefetch
+       (secret/infrastructure/unifi)') }}
+unifi_metrics_controller_pass: >-
+  {{ bao_apps_secrets.UNIFI_PASSWORD
+     | default(undef(), true)
+     | mandatory('UNIFI_PASSWORD missing from the apps-domain OpenBao prefetch
+       (secret/infrastructure/unifi)') }}
 # Verify the controller's TLS cert? UDW ships a self-signed cert, so default to
 # skipping verification (set false only if you install a trusted cert chain).
 unifi_metrics_controller_verify_ssl: false

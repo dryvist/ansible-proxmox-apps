@@ -59,9 +59,18 @@ engine returns one-hour GitHub App installation tokens.
 
 The release checksum manifest is verified with Martin Baillie's pinned signing
 key before the Linux amd64 binary is checksum-verified and copied to every Raft
-voter. The engine stores one dedicated GitHub App ID/private key in its own
-encrypted mount configuration. The key is required only for first configuration
-or an explicit rotation; routine converges never rewrite it.
+voter. Each mount stores one GitHub App ID/private key in its own encrypted
+configuration, so each App's own grant caps every token its mount mints:
+
+| Mount | App | Permission sets |
+| --- | --- | --- |
+| `github` | everyday | read sets and the raw `github/token` write endpoint |
+| `github-admin` | admin | admin, repo-create, docs-publisher, runner, exporter, open-llm |
+| `github-agents` | agents | `agents-write`, limited to the organization's public repositories |
+
+A key is required only for first configuration or an explicit rotation; routine
+converges never rewrite it. Installation IDs come from the env document
+(`secret/platform/ansible/env`).
 
 Token access is tiered; the tier IS the privilege boundary:
 
@@ -81,7 +90,7 @@ Token access is tiered; the tier IS the privilege boundary:
   AppRole, plus the claim-before-work write lease under
   `secret/locks/github-write/` (KV-v2 CAS acquire, `delete_version_after`
   deadman).
-- **publish (`docs-publisher`)** — `github/token/docs-publisher`: one
+- **publish (`docs-publisher`)** — `github-admin/token/docs-publisher`: one
   repository, `contents: write` + `pull_requests: write`, all three stored in
   the set. The repository list comes from the iac secret store; with none
   configured the set is not declared and the policy grants nothing. Excluded
@@ -90,11 +99,11 @@ Token access is tiered; the tier IS the privilege boundary:
   bound to one audience, one repository and one ref, with a 10m token. There
   is no AppRole and no secret_id for it: the workflow's own job identity is
   the credential, so the runner stores nothing.
-- **admin (`github-admin`)** — `github/token/dryvist-full-automation` and
-  `github/token/personal-full-automation`: installation-wide, full App
+- **admin (`github-admin`)** — `github-admin/token/dryvist-full-automation` and
+  `github-admin/token/personal-full-automation`: installation-wide, full App
   ceiling. INERT AppRole — a human response-wraps a single-use secret_id per
   elevation.
-- **repo-create (`github-repo-create`)** — `github/token/dryvist-repo-create`:
+- **repo-create (`github-repo-create`)** — `github-admin/token/dryvist-repo-create`:
   `administration: write` only, nothing else — no `contents`, so this token
   can create a repository but never push to one. Standing ambient AppRole,
   like `github-write`, so repo creation needs no per-call human unlock.
@@ -109,7 +118,7 @@ Token access is tiered; the tier IS the privilege boundary:
   mint a token with no reachable endpoint.
 
   Sequence to create a repository and then push to it: mint
-  `github/token/dryvist-repo-create`, `POST /orgs/dryvist/repos`, add the new
+  `github-admin/token/dryvist-repo-create`, `POST /orgs/dryvist/repos`, add the new
   repository's name to `OPENBAO_GITHUB_WRITE_REPOS`, land a converge so
   `github-write`'s policy allowlists it, then `github/token` (raw, `github-write`)
   mints the token that actually pushes. The repo-create token is never reused
@@ -239,15 +248,21 @@ apparatus; the block is enable + write-once CA + add-if-missing roles.
   reconcile can compare them against the API without normalizing.
   `ttl == max_ttl`; a sign request may shorten a cert's life, never extend it.
   Principals are always explicit — never `*`.
-- One `ssh-sign-<role>` policy leaf per role grants exactly that role's
-  `sign/` endpoint. Attachment follows the security decisions:
-  `ssh-sign-automation-ai` → `ai-elevated` (standing, a documented tradeoff:
-  friction-free agent SSH bounded by 1h certs, non-root principals,
-  default-deny host opt-in, audit) + every `ai-apply-*`;
-  `ssh-sign-automation-ansible` → `ansible-converge` only;
-  `ssh-sign-automation-semaphore` → `semaphore` only, so a certificate's
-  principal identifies which caller ran a converge;
-  `ssh-sign-ci-runner` → unattached until a CI identity exists.
+- `host-cert` (`cert_type: host`) signs HOST certs under the same CA instead:
+  `allow_host_certificates`, `allowed_domains` (the apex zone guest FQDNs
+  live under), `allow_subdomains`, no bare domains, 90d `ttl`/`max_ttl`, no
+  principal/extensions. `openbao_ssh_user_roles` is the derived,
+  user-cert-only view for consumers that read `principal`/`extensions`
+  unconditionally.
+- One `ssh-sign-<role>` policy leaf per **user-cert** role
+  (`openbao_ssh_user_roles`; host-cert gets no leaf of its own) grants
+  exactly that role's `sign/` endpoint: `automation-ai` → `ai-elevated` +
+  every `ai-apply-*`; `automation-ansible` → `ansible-converge` only;
+  `automation-semaphore` → `semaphore` only; `ci-runner` unattached. Host
+  certs get no `ssh-sign-host-cert` policy (a new name needs a privileged
+  provisioning run) — `openbao_ssh_host_cert_signer_roles`
+  (`automation-{ansible,semaphore}`) instead folds an update-only grant on
+  every host-cert `sign/` endpoint into those two leaves' own content.
 - `OPENBAO_SSH_SOURCE_CIDRS` (Doppler) adds a `source-address` critical
   option restricting where certs are valid from; unset ⇒ loud warning and
   the guest-firewall default-deny layer is the compensating control.

@@ -1,0 +1,35 @@
+---
+# playbooks/openbao-rotate-approles.yml also republishes the workstation
+# domains' rotated pairs into Doppler (the six below), so a workstation
+# never sees a stale role_id/secret_id after a rotation run. `ntfy` is
+# deliberately excluded: it has no workstation consumer, only plane-side
+# ones already reading secret/platform/ansible/env directly.
+#
+# openbao_rotate_doppler_project/_config are NEVER a literal project/config
+# name here (that identity belongs in the runtime secret store, not a public
+# repo). The scheduled run on the execution plane reads them from
+# OPENBAO_ROTATE_DOPPLER_PROJECT/_CONFIG in config/platform/ansible/env, which
+# the runner exports like every other key in that document. A workstation run
+# under `doppler run -p <project> -c <config> -- ...` falls back to the
+# DOPPLER_PROJECT/DOPPLER_CONFIG that Doppler's CLI exports.
+openbao_rotate_doppler_project: >-
+  {{ lookup('env', 'OPENBAO_ROTATE_DOPPLER_PROJECT')
+     | default(lookup('env', 'DOPPLER_PROJECT'), true) }}
+openbao_rotate_doppler_config: >-
+  {{ lookup('env', 'OPENBAO_ROTATE_DOPPLER_CONFIG')
+     | default(lookup('env', 'DOPPLER_CONFIG'), true) }}
+# The token that authenticates the Doppler write is never ambient env and
+# never lives in Doppler itself -- it is minted once (read/write, scoped to
+# exactly openbao_rotate_doppler_project/_config) and stored at this KV path,
+# read by the rotate identity's own already-authenticated OpenBao token (see
+# the matching grant in templates/approle-secret-id-rotate-policy.hcl.j2).
+# An internal KV path, not an external identity -- literal here, same as
+# every other path in this file family (e.g. rotate_env_path).
+openbao_rotate_doppler_token_kv_path: platform/rotator/doppler-sync-token
+openbao_rotate_doppler_sync_domains:
+  - apps
+  - local-llm
+  - media
+  - monitoring
+  - local-cloud
+  - observability

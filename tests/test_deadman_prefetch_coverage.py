@@ -41,11 +41,12 @@ def test_every_deadman_target_group_publishes_bao_monitoring_secrets():
         "Deploy keystone SPOF deadman watchdog",
     )
 
-    telemetry_text = (PLAYBOOKS / "00-load-and-telemetry.yml").read_text()
     publisher_groups = _folded_hosts(
-        telemetry_text, "Pre-fetch resource-domain secrets from OpenBao"
+        (PLAYBOOKS / "00-load-and-telemetry.yml").read_text(),
+        "Pre-fetch resource-domain secrets from OpenBao",
     ) | _single_line_hosts(
-        telemetry_text, "Republish the monitoring domain to the deadman watchdog's own hosts"
+        (PLAYBOOKS / "00b-secrets-monitoring-republish.yml").read_text(),
+        "Republish the monitoring domain to the deadman watchdog's own hosts",
     )
 
     assert deadman_groups, "no deadman target groups parsed"

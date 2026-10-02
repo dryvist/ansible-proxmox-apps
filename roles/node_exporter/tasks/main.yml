@@ -5,10 +5,9 @@
 # /usr/local/bin/node_exporter is only rewritten when the pinned version
 # changes — so re-runs are no-ops and a version bump is one variable.
 #
-# No container-vs-host branching needed (unlike e.g. the ntp role): unlike
-# chronyd, node_exporter only reads /proc and /sys and needs no clock/kernel
-# privilege an unprivileged LXC lacks, so the same systemd unit runs
-# identically on every guest — LXC or VM.
+# Inside a system container the unit drops its mount-namespace sandboxing
+# (ProtectSystem, PrivateTmp, ...): an unprivileged LXC without the `nesting`
+# feature denies the namespace mount and the unit dies with 226/NAMESPACE.
 
 - name: Assert critical variables are defined and valid
   ansible.builtin.assert:
@@ -44,11 +43,31 @@
   tags:
     - node_exporter
 
-- name: Download the pinned node_exporter release tarball
+# Staged on the controller (unrestricted egress), never downloaded by the
+# guest itself -- see node_exporter_download_url in defaults/main.yml for
+# why. throttle: 1 serializes this one task across every host in the play so
+# two guests sharing an arch never race writing the same controller-side
+# dest; get_url's own checksum check then makes every host after the first
+# a no-op.
+- name: Stage the pinned node_exporter release tarball on the controller
   ansible.builtin.get_url:
     url: "{{ node_exporter_download_url }}"
+    dest: "/tmp/{{ node_exporter_release }}.tar.gz"
+    checksum: "sha256:{{ node_exporter_sha256sums_url }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  throttle: 1
+  tags:
+    - node_exporter
+
+- name: Copy the staged release tarball to the guest
+  ansible.builtin.copy:
+    src: "/tmp/{{ node_exporter_release }}.tar.gz"
     dest: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}.tar.gz"
-    checksum: "{{ node_exporter_checksum | default('', true) or omit }}"
     owner: root
     group: root
     mode: "0644"
@@ -86,6 +105,15 @@
     group: "{{ node_exporter_user }}"
     mode: "0755"
   when: node_exporter_textfile_collector_enabled
+  tags:
+    - node_exporter
+
+- name: Detect if running inside a system container
+  # systemd-detect-virt --container: exit 0 = inside a container, exit 1 = not.
+  ansible.builtin.command: systemd-detect-virt --container
+  register: _node_exporter_virt_container
+  changed_when: false
+  failed_when: false
   tags:
     - node_exporter
 
