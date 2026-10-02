@@ -262,9 +262,24 @@
     ETCDCTL_API: "3"
   register: postgres_ha_etcd_health
   changed_when: false
+  # Once patroni_etcd_auth.yml has enabled auth (any re-converge), the health
+  # probe's Range read is refused for carrying no user. That refusal is the
+  # member answering over TLS, which is all this gate waits for; credentials
+  # cannot be passed unconditionally because etcd refuses to authenticate
+  # anyone before auth is enabled.
+  failed_when: false
   retries: 10
   delay: 6
-  until: postgres_ha_etcd_health.rc == 0
+  until: >-
+    postgres_ha_etcd_health.rc == 0
+    or 'user name is empty' in postgres_ha_etcd_health.stderr
+
+- name: Fail when this etcd member never answered over TLS
+  ansible.builtin.fail:
+    msg: "etcd did not answer over TLS: {{ postgres_ha_etcd_health.stderr }}"
+  when:
+    - postgres_ha_etcd_health.rc != 0
+    - "'user name is empty' not in postgres_ha_etcd_health.stderr"
 
 - name: Resolve Patroni's own etcd credential
   ansible.builtin.include_tasks: patroni_etcd_credential.yml
