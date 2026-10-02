@@ -87,7 +87,13 @@
         mode: "0640"
       no_log: true
 
-    - name: Configure WAL archiving GUCs for pgBackRest
+    # Patroni mode: these same GUCs are already DCS-synced cluster config
+    # (patroni.yml.j2's bootstrap.dcs.postgresql.parameters) — Patroni
+    # reconciles postgresql.auto.conf from the DCS on every member, so an
+    # out-of-band ALTER SYSTEM here would fight Patroni for ownership of the
+    # same settings instead of adding anything.
+    - name: Configure WAL archiving GUCs for pgBackRest (native mode only)
+      when: postgres_ha_manager != 'patroni'
       become: true
       become_user: postgres
       block:
@@ -231,11 +237,14 @@
       loop_control:
         label: "{{ item.type }}"
 
-# A primary that cannot archive runs with archiving off.
+# A primary that cannot archive runs with archiving off. Native mode only:
+# in Patroni mode patroni.yml.j2 applies the same gate to archive_mode at
+# bootstrap, and no postgresql@ unit exists for the restart handler.
 - name: Force WAL archiving off on the primary when pgBackRest cannot actually archive
   become: true
   become_user: postgres
   when:
+    - postgres_ha_manager != 'patroni'
     - postgres_role == 'primary'
     - not (postgres_pgbackrest_credentials_present | bool)
   block:

@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# Patroni mode: postgres_role must reflect the DYNAMICALLY elected leader, not
+# the static postgres_primary_host comparison native mode's role default uses
+# (01-replication.yml) — patroni mode never sets postgres_primary_host to a
+# fixed member. Queried from THIS node's own Patroni REST API: a 200 from
+# /primary means this node currently leads (Patroni 4.x's inclusive-language
+# rename of the old /master endpoint); anything else — including "connection
+# refused" before Patroni has started — means standby, which is the safe
+# default for roles_and_databases.yml (primary-only writes) to fail closed on.
+# =============================================================================
+- name: Query this node's Patroni role
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/primary"
+  register: postgres_ha_patroni_primary_check
+  changed_when: false
+  failed_when: false
+
+- name: Set the dynamic postgres_role fact for this Patroni-managed node
+  ansible.builtin.set_fact:
+    postgres_role: >-
+      {{ 'primary' if (postgres_ha_patroni_primary_check.status | default(0)) == 200 else 'standby' }}

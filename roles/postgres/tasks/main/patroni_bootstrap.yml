@@ -1,0 +1,172 @@
+---
+# =============================================================================
+# Patroni install + config + service. Runs on every converge once
+# postgres_ha_manager is 'patroni' — safe for a FRESH cluster (empty
+# postgres_data_dir: Patroni's own bootstrap.dcs block runs initdb the first
+# time it starts) and for a cluster Patroni already owns (idempotent config
+# render + ensure-started).
+#
+# It REFUSES to start Patroni against a PRE-EXISTING, not-yet-adopted data
+# directory — that is patroni_adopt.yml's job, explicitly gated and never run
+# by a normal converge. Same interlock SHAPE as standby_bootstrap.yml's reinit
+# guard: a stray postgres_ha_manager flip can identify a cluster as Patroni-
+# managed, but it cannot make this file touch a live, unmigrated primary.
+# =============================================================================
+- name: Check whether Patroni is already managing this node
+  ansible.builtin.systemd:
+    name: patroni
+  register: postgres_ha_patroni_unit_status
+  check_mode: true
+  changed_when: false
+  failed_when: false
+
+# Same reasoning as patroni_etcd.yml's identical task: `throttle:` runs once
+# per task/handler for the whole batch of hosts, not per host, so every host
+# must land on the same value. Reading every member's already-gathered
+# unit_status out of hostvars guarantees that.
+- name: Determine whether the Patroni cluster (not just this member) was already up
+  ansible.builtin.set_fact:
+    postgres_ha_patroni_cluster_already_up: >-
+      {{ postgres_ha_cluster_members
+         | map('extract', hostvars)
+         | map(attribute='postgres_ha_patroni_unit_status.status.ActiveState', default='inactive')
+         | select('equalto', 'active') | list | length > 0 }}
+
+- name: Refuse to start Patroni against unadopted existing data
+  ansible.builtin.fail:
+    msg: >-
+      {{ postgres_data_dir }} already holds a PostgreSQL cluster and Patroni
+      has never managed this node
+      ({{ postgres_ha_patroni_unit_status.status.ActiveState | default('not-found') }}).
+      Starting Patroni here would take over that data directory outside the
+      reviewed adoption procedure. Run the explicit adoption path first:
+      --tags patroni_adopt -e postgres_ha_patroni_adopt=true (see
+      tasks/main/patroni_adopt.yml), in a maintenance window, after a
+      pgBackRest full backup.
+  when:
+    - postgres_existing_data_version.stat.exists | default(false)
+    - (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) != 'active'
+    - not (postgres_ha_patroni_adopt | bool)
+
+- name: Install Patroni and its etcd client library
+  ansible.builtin.apt:
+    name:
+      - "{{ postgres_ha_patroni_package }}"
+      - "{{ postgres_ha_patroni_etcd_client_package }}"
+    state: present
+    update_cache: true
+
+- name: Ensure the Patroni config directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_ha_patroni_config_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+# A patroni.yml content change only needs the running agent to re-read it --
+# patroni.service.j2's ExecReload sends it a SIGHUP, and Patroni's own FAQ
+# calls that the supported way to apply most local settings. Only a handful
+# of PostgreSQL GUCs can't take effect this way; Patroni flags those
+# `pending_restart: true` itself rather than applying them, and this role
+# leaves that judgment call to an operator (see "Reload patroni" below).
+- name: Deploy the Patroni configuration
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: "{{ postgres_ha_patroni_config_file }}"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  no_log: true
+  notify: Reload patroni
+
+# notify Reload systemd daemon too, same root cause as patroni_etcd.yml's
+# identical comment: a flush that restarts this unit without first refreshing
+# systemd's unit cache risks reusing whatever ExecStart systemd last loaded
+# for "patroni.service", not this task's freshly written one -- harmless on a
+# genuinely first-ever unit (nothing stale to reuse), load-bearing the moment
+# a live reconverge changes this file's contents (round 16: "Restart patroni"
+# now only fires for a systemd unit template change, exactly the case this
+# guards).
+- name: Deploy the Patroni systemd unit
+  ansible.builtin.template:
+    src: patroni.service.j2
+    dest: /etc/systemd/system/patroni.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: postgres_ha_patroni_unit_file
+  notify:
+    - Reload systemd daemon
+    - Restart patroni
+
+# Same reasoning as patroni_etcd.yml's own flush immediately before its
+# "started and enabled" task: apply a pending config-triggered restart NOW,
+# before the REST-API wait below, rather than leaving it queued for whatever
+# unrelated meta: flush_handlers happens to run next (Phase 4's, well after
+# this role has already started depending on Patroni being up). Restarting a
+# not-yet-running unit just starts it, so this is safe on a fresh bootstrap
+# too.
+- name: Apply a pending Patroni config/unit restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure the Patroni service is started and enabled
+  ansible.builtin.systemd:
+    name: patroni
+    state: started
+    enabled: true
+    daemon_reload: "{{ postgres_ha_patroni_unit_file.changed }}"
+
+# /liveness only checks Patroni's own heartbeat loop, no SQL -- every CI
+# journal captured this round shows it answering within ~1s of "Started
+# patroni.service" (etcd-auth attempts already logging by then), so
+# 10x3=30s fails fast on a Patroni process that never came up at all
+# instead of burning the much longer /health budget below on it.
+- name: Wait for this node's Patroni process to come up
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/liveness"
+  register: postgres_ha_patroni_liveness
+  until: (postgres_ha_patroni_liveness.status | default(0)) == 200
+  retries: 10
+  delay: 3
+  changed_when: false
+  failed_when: false
+
+# /health is 200 only once PostgreSQL itself is up under Patroni -- unlike
+# the old `is defined` check (satisfied by any response, including a 503
+# mid-bootstrap), a not-yet-200 now correctly keeps retrying instead of
+# letting the rest of the role race ahead. 60x10=600s is this wait's
+# pre-existing budget (a fresh member's initdb +, for a replica, a full
+# pgBackRest/basebackup restore); the condition was the bug, not the
+# timeout, so it is unchanged.
+- name: Wait for this node's Patroni REST API to report PostgreSQL running
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/health"
+  register: postgres_ha_patroni_health
+  until: (postgres_ha_patroni_health.status | default(0)) == 200
+  retries: 60
+  delay: 10
+  changed_when: false
+  failed_when: false
+
+# Runs on one member only -- "does a leader exist" is a whole-cluster fact,
+# not a per-host one (same reasoning as postgres_ha_patroni_cluster_already_up
+# above). Ansible's linear strategy holds every host at the health wait above
+# until ALL of them clear it, so by the time this task starts every member's
+# PostgreSQL is already confirmed up -- this only closes the remaining gap
+# where Phase 2f (patroni_leader.yml, next) could otherwise query a role
+# before etcd finishes electing anyone. 12x5=60s is 2x patroni.yml.j2's own
+# `ttl: 30`, the worst case for a stale lock to expire before a new leader
+# can claim it.
+- name: Wait for the cluster to elect a leader
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/cluster"
+  register: postgres_ha_patroni_cluster_status
+  until: >-
+    ((postgres_ha_patroni_cluster_status.json | default({})).members | default([])
+    | selectattr('role', 'in', ['leader', 'standby_leader']) | list | length) > 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == (postgres_ha_cluster_members | first)
