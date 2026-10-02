@@ -191,5 +191,3 @@ def run_onboarding(api, username, password):
 ONBOARDING_STEPS = (
     "start", "import", "user", "group", "settings", "integrations", "finish",
 )
-
-
