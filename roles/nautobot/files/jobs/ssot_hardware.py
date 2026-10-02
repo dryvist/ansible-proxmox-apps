@@ -150,7 +150,7 @@ class SeedHardware(Job):
         if not devices and not modules and not circuits:
             self.logger.warning(
                 "The seed bundle carries no hardware slice. Nothing was changed. "
-                "Set INT_HOMELAB_HARDWARE on the controller if this is unexpected."
+                "Set NAUTOBOT_SEED_HARDWARE on the controller if this is unexpected."
             )
             return "no hardware slice in the seed bundle"
 

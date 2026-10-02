@@ -9,7 +9,7 @@ without the prose moving anywhere. The modeling decisions behind it are in
 ```text
 inventory tables (markdown, hand-authored)
   -> converter script  -> inventory.seed.yml  (generated, committed)
-    -> INT_HOMELAB_HARDWARE
+    -> NAUTOBOT_SEED_HARDWARE
       -> roles/nautobot/tasks/seed_bundle.yml
         -> nautobot_seed.json  (hardware_devices + hardware_modules)
           -> "Seed Hardware Inventory" Job
@@ -107,7 +107,7 @@ result that is entirely wrong.
       bundle is placed but nothing runs:
 
       ```bash
-      INT_HOMELAB_HARDWARE=<path to inventory.seed.yml> doppler run -- \
+      NAUTOBOT_SEED_HARDWARE=<path to inventory.seed.yml> doppler run -- \
         scripts/run-ansible.sh playbooks/site.yml --tags nautobot \
         --limit nautobot_group,localhost -e nautobot_run_seed_jobs=false
       ```
