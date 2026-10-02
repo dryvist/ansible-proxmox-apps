@@ -9,7 +9,7 @@ without the prose moving anywhere. The modeling decisions behind it are in
 ```text
 inventory tables (markdown, hand-authored)
   -> converter script  -> inventory.seed.yml  (generated, committed)
-    -> INT_HOMELAB_HARDWARE
+    -> NAUTOBOT_SEED_HARDWARE
       -> roles/nautobot/tasks/seed_bundle.yml
         -> nautobot_seed.json  (hardware_devices + hardware_modules)
           -> "Seed Hardware Inventory" Job
@@ -56,7 +56,7 @@ report; the job's dry-run flag covers the "what would this change" case.
 | Component naming a Device that does not exist | `Module` at the stated location, **with a warning** |
 
 The last row is the one worth stating plainly: the job never creates a
-placeholder chassis to hang an orphan component off. A synthetic Device is
+placeholder chassis to hang an orphan component off. An invented Device is
 indistinguishable from a real one forever afterwards, and every later query,
 export and drift report inherits the lie. Filing the part where the source says
 it is, and logging that the chassis is missing, keeps the gap visible.
@@ -107,7 +107,7 @@ result that is entirely wrong.
       bundle is placed but nothing runs:
 
       ```bash
-      INT_HOMELAB_HARDWARE=<path to inventory.seed.yml> doppler run -- \
+      NAUTOBOT_SEED_HARDWARE=<path to inventory.seed.yml> doppler run -- \
         scripts/run-ansible.sh playbooks/site.yml --tags nautobot \
         --limit nautobot_group,localhost -e nautobot_run_seed_jobs=false
       ```
