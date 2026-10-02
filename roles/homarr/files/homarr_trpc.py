@@ -88,6 +88,33 @@ class Homarr:
                 )
             raise HomarrError(f"{procedure} returned unparseable body{hint}: {body[:200]}") from exc
 
+    def claim_onboarding(self):
+        """POST /api/onboarding/claim for the httpOnly cookie Homarr v2+
+        requires before `onboard.nextStep` (an `onboardingClaimedProcedure`)
+        will advance the walk. Not a tRPC call — a plain Next.js route that
+        returns `{status, expiresAt}` and sets the cookie via `Set-Cookie`,
+        which this instance's own cookie jar then resends automatically.
+
+        200 means "issued" or "active" (our own token already holds it, safe
+        to re-call). 423 ("locked") means a concurrent claimant holds it, and
+        403/409-not-finished are the route's other refusals — all three are
+        surfaced loudly rather than retried, since onboarding is meant to run
+        from exactly one place. 409 "finished" alone is not an error: the
+        caller only reaches here when onboarding is still open, so a `finished`
+        race is backed out of silently rather than treated as a failure.
+        """
+        status, body = self._open(
+            urllib.request.Request(
+                f"{self.base}/api/onboarding/claim",
+                data=b"",
+                headers={"Content-Type": "application/json"},
+            )
+        )
+        if status == 409 and json.loads(body).get("code") == "finished":
+            return
+        if status != 200:
+            raise HomarrError(f"onboarding claim -> HTTP {status}: {body[:400]}")
+
     def login(self, username, password):
         """NextAuth credentials sign-in. Returns True when a session results."""
         self.jar.clear()
@@ -164,9 +191,10 @@ def run_onboarding(api, username, password):
     """Drive a fresh instance through onboarding to a usable admin account.
 
     The steps are start -> import -> user -> group -> settings -> integrations
-    -> finish. `onboard.nextStep` is public and advances one step at a time,
-    and `user.initUser` is gated on the DB currently sitting at `user` — so the
-    walk is: advance to `user`, create the admin, then advance to `finish`.
+    -> finish. `onboard.nextStep` requires an onboarding-claim cookie (Homarr
+    v2+) before it will advance, and `user.initUser` is gated on the DB
+    currently sitting at `user` — so the walk is: claim the session, advance
+    to `user`, create the admin, then advance to `finish`.
 
     Bounded rather than `while True`: a step that stops advancing (an upstream
     change to the sequence, say) must fail loudly here instead of spinning.
@@ -179,6 +207,7 @@ def run_onboarding(api, username, password):
             api.trpc("onboard.nextStep", {"preferredStep": target})
         raise HomarrError(f"onboarding never reached the {target!r} step")
 
+    api.claim_onboarding()
     walk_to("user")
     api.trpc("user.initUser", {
         "username": username,
