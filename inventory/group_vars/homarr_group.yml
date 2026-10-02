@@ -3,8 +3,11 @@
 # n8n_group.yml.
 #
 # Two domains are in play here, which is unusual and deliberate:
-#   - `apps`  carries Homarr's own credentials (secret/apps/homarr), which this
-#     role generates and publishes on first converge.
+#   - `apps`  carries each instance's own credentials (secret/apps/<hostname>),
+#     which the role generates and publishes on first converge. Field names
+#     carry the instance prefix (homarr_secret_prefix: `homarr` for the first
+#     instance, `homarr_v2` for homarr-v2) because the prefetch merges every
+#     apps path into one flat map.
 #   - `media` carries the API keys of the services Homarr integrates WITH. They
 #     are owned by the media-stack repo; Homarr only reads them. Never copy one into
 #     the apps domain — one credential, one home.
@@ -16,23 +19,23 @@
 # `default(undef(), true)` in front of it is load-bearing.
 #
 # The four media integration keys and the two Proxmox fields below are the
-# exceptions: empty is a supported state, and their integration entry is
-# simply omitted.
+# exceptions: empty is a supported state. The integration still renders, and
+# Homarr's own rejection names the missing credential.
 
 homarr_admin_password: >-
-  {{ bao_apps_secrets.homarr_admin_password
+  {{ bao_apps_secrets[homarr_secret_prefix ~ '_admin_password']
      | default(undef(), true)
-     | mandatory('HOMARR_ADMIN_PASSWORD missing: OpenBao fetch did not supply it') }}
+     | mandatory(homarr_secret_prefix ~ '_admin_password missing: OpenBao fetch did not supply it') }}
 
 homarr_api_key: >-
-  {{ bao_apps_secrets.homarr_api_key
+  {{ bao_apps_secrets[homarr_secret_prefix ~ '_api_key']
      | default(undef(), true)
-     | mandatory('HOMARR_API_KEY missing: OpenBao fetch did not supply it') }}
+     | mandatory(homarr_secret_prefix ~ '_api_key missing: OpenBao fetch did not supply it') }}
 
 homarr_encryption_key: >-
-  {{ bao_apps_secrets.homarr_encryption_key
+  {{ bao_apps_secrets[homarr_secret_prefix ~ '_encryption_key']
      | default(undef(), true)
-     | mandatory('HOMARR_ENCRYPTION_KEY missing: OpenBao fetch did not supply it') }}
+     | mandatory(homarr_secret_prefix ~ '_encryption_key missing: OpenBao fetch did not supply it') }}
 
 # --- SSO (Authelia OIDC) -------------------------------------------------------
 # The client secret is generated once in OpenBao and shared with Authelia,
@@ -40,33 +43,32 @@ homarr_encryption_key: >-
 # see openbao_generated_app_secrets.authelia. Same bao-first/env-fallback shape
 # as every other secret in this file, just read from a different app's path
 # since the secret's home is Authelia, not Homarr.
-homarr_oidc_issuer: "https://authelia.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+homarr_oidc_issuer: "https://{{ authelia_hostname }}.{{ ingress_domain }}"
 homarr_oidc_client_secret: >-
-  {{ bao_apps_secrets.authelia_oidc_homarr_client_secret
+  {{ bao_apps_secrets['authelia_oidc_' ~ homarr_secret_prefix ~ '_client_secret']
      | default(undef(), true)
-     | mandatory('HOMARR_OIDC_CLIENT_SECRET missing: OpenBao fetch did not supply it') }}
+     | mandatory('authelia_oidc_' ~ homarr_secret_prefix ~ '_client_secret missing: OpenBao fetch did not supply it') }}
 
 # --- Credentials of the integrated services (read-only, owned elsewhere) ------
 # Field names are the UPPERCASE ones the media-stack repo already publishes under
 # secret/apps/media/<app>; they are app-namespaced, so the flat merge into
 # bao_media_secrets cannot collide.
 
-# Empty is supported for all four — each renders only when its own key
-# resolves (homarr_media_integration_candidates), one rule, no per-app
-# exception.
+# Empty is supported for all four: each integration still renders, and Homarr
+# rejects it by name until its key exists. One rule, no per-app exception.
 homarr_sonarr_api_key: "{{ bao_media_secrets.SONARR_API_KEY | default('', true) }}"
 homarr_radarr_api_key: "{{ bao_media_secrets.RADARR_API_KEY | default('', true) }}"
 homarr_seerr_api_key: "{{ bao_media_secrets.SEERR_API_KEY | default('', true) }}"
 homarr_plex_token: "{{ bao_media_secrets.PLEX_TOKEN | default('', true) }}"
 
 # The two Proxmox fields below are the exception to the no-fallback rule above:
-# empty is a SUPPORTED state (homarr_proxmox_integration omits the integration
-# entirely when the token is empty), not a lost credential, so they keep their
-# env fallback and are not mandatory.
+# empty is a SUPPORTED state (the integration renders and Homarr rejects it),
+# not a lost credential, so they keep their env fallback and are not mandatory.
 #
 # Proxmox is a SEPARATE, audit-scoped token minted for Homarr alone — never the
 # Terraform provider's write-capable credential, because Homarr copies every
-# secret it is handed into its own SQLite. Absent = the integration is skipped.
+# secret it is handed into its own SQLite. Every Homarr instance shares this one
+# token: the fields keep their unprefixed names on purpose.
 homarr_proxmox_token_id: >-
   {{ bao_apps_secrets.homarr_proxmox_token_id
      | default(lookup('env', 'HOMARR_PROXMOX_TOKEN_ID'), true) }}

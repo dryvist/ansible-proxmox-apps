@@ -84,8 +84,7 @@
   #
   # These are what the installer genuinely depends on: the GitHub API and
   # release CDN, which `fetch_and_deploy_gh_release` uses to resolve and pull
-  # the Homarr build. Note it resolves "latest" — pinning this role's tag does
-  # not pin what lands here. That is recorded in the ADR, not hidden.
+  # the Homarr build named by homarr_version.
   #
   # The question is REACHABILITY, so any HTTP status answers it — a status code
   # of any kind proves DNS, TCP and TLS all worked. A real connectivity failure
@@ -218,37 +217,7 @@
       export FUNCTIONS_FILE_PATH="$(cat {{ homarr_cs_pinned_dir }}/misc/install.func)";
       bash {{ homarr_cs_pinned_dir }}/install/homarr-install.sh
     creates: "{{ homarr_installed_marker }}"
-  environment:
-    # Everything below is part of the contract build.func would normally have
-    # exported before calling the install script. Borrowing only the install/
-    # half means reproducing that contract by hand, and the helpers run under
-    # `set -u`, so a missing one aborts mid-install rather than degrading.
-    #
-    # APPLICATION is the display name motd_ssh() writes into the login banner;
-    # unset, the install dies at install.func line 492.
-    # `app` is what customize() interpolates into /usr/bin/update. That updater
-    # is replaced immediately after, but the variable still has to exist.
-    APPLICATION: Homarr
-    app: homarr
-    # SSH_ROOT=no is a security decision, not a default. With "yes", motd_ssh()
-    # rewrites sshd_config to PermitRootLogin yes and restarts sshd — which
-    # would quietly undo the SSH CA access model on this guest.
-    SSH_ROOT: "no"
-    # Empty, but it must EXIST. customize() guards on `[[ -n "${SSH_AUTHORIZED_KEY}" ]]`,
-    # and under `set -u` that test itself aborts when the variable is unset —
-    # the guard does not protect you, it is the thing that fails. Keys on this
-    # guest come from the SSH CA, so the value stays empty.
-    SSH_AUTHORIZED_KEY: ""
-    # Authenticates the installer's release-metadata calls when set; empty
-    # leaves them anonymous. A dedicated name, so an ambient controller token
-    # never reaches the guest.
-    GITHUB_TOKEN: "{{ lookup('env', 'HOMARR_GITHUB_TOKEN') | default('', true) }}"
-    # PASSWORD non-empty keeps customize() from adding a root autologin getty
-    # to the container console.
-    PASSWORD: managed-by-ansible
-    DIAGNOSTICS: "no"
-    tz: "{{ ansible_date_time.tz | default('UTC') }}"
-    DEBIAN_FRONTEND: noninteractive
+  environment: "{{ homarr_cs_environment }}"
   args:
     executable: /bin/bash
   timeout: "{{ homarr_install_timeout }}"
@@ -268,6 +237,11 @@
     modification_time: preserve
     access_time: preserve
 
+# A fresh install already deployed homarr_version, so this is a no-op on the
+# first converge. It acts only when the pin moves.
+- name: Move an existing install to the pinned release
+  ansible.builtin.include_tasks: upgrade.yml
+
 # =============================================================================
 # 6-7. Take ownership back from the installer
 # =============================================================================
@@ -285,7 +259,7 @@
     content: |
       #!/usr/bin/env bash
       echo "Managed by ansible-proxmox-apps (role: homarr)." >&2
-      echo "Bump homarr_cs_tag, re-checksum, review the diff, then converge." >&2
+      echo "Change homarr_version (or homarr_cs_tag, re-checksummed), then converge." >&2
       exit 1
 
 - name: Ensure Homarr and redis are enabled and running
