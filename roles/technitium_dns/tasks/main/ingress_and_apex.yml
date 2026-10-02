@@ -1,5 +1,11 @@
 ---
 
+- name: Stop the legacy apex writer before ingress takes DNS ownership
+  ansible.builtin.include_tasks: ../apex_ingress_ownership.yml
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_cluster_ingress_owned | bool
+
 # Never publish a VIP that nothing is answering on.
 #
 # The ingress VIP is bound by keepalived, which converges LATE in the site play,
@@ -163,6 +169,8 @@
     {{ technitium_dns_existing_records.json.response.records | default([])
        | selectattr('type', 'equalto', 'A')
        | selectattr('name', 'equalto', technitium_dns_zone)
+       | rejectattr('rData.ipAddress', 'equalto',
+           technitium_dns_ingress_target_ip if technitium_dns_cluster_ingress_owned | bool else '')
        | list }}
   loop_control:
     label: "{{ item.name }} -> {{ item.rData.ipAddress }}"
@@ -171,7 +179,9 @@
   failed_when: technitium_dns_proxmox_endpoint_delete_result.json.status | default('') != "ok"
   no_log: true
   when:
-    - technitium_dns_proxmox_endpoint_a_records | default([]) | length > 0
+    - >-
+      technitium_dns_proxmox_endpoint_a_records | default([]) | length > 0
+      or technitium_dns_cluster_ingress_owned | bool
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
 
@@ -199,6 +209,7 @@
     - "'already exists' not in (technitium_dns_proxmox_endpoint_result.json.errorMessage | default(''))"
   no_log: true
   when:
+    - not (technitium_dns_cluster_ingress_owned | bool)
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
 
@@ -230,10 +241,53 @@
   when:
     - technitium_dns_ingress_apex | default([]) | length > 0
     - technitium_dns_proxmox_endpoint_a_records | default([]) | length == 0
+    - not (technitium_dns_cluster_ingress_owned | bool)
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
     # Points at the ingress VIP when published, else the single Traefik LXC's IP.
     - technitium_dns_ingress_target_ip | length > 0
+
+- name: Validate explicitly named ingress DNS zones
+  ansible.builtin.assert:
+    that:
+      - >-
+        item == technitium_dns_zone or item is search('[.]' ~ (technitium_dns_zone | regex_escape) ~ '$')
+        or item is search('[.]' ~ (technitium_dns_apex_domain | regex_escape) ~ '$')
+    quiet: true
+    fail_msg: "Explicit ingress hostname is outside the managed DNS zones."
+  loop: "{{ technitium_dns_explicit_ingress_names }}"
+
+# The child zone transfers from its primary; the parent zone is independently
+# authoritative on both resolvers and must be reconciled on each one.
+- name: Create explicitly named ingress A records
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item }}"
+      zone: "{{ _ingress_record_zone }}"
+      type: A
+      ipAddress: "{{ technitium_dns_ingress_target_ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  vars:
+    _ingress_record_zone: >-
+      {{ technitium_dns_zone if (item == technitium_dns_zone
+         or item is search('[.]' ~ (technitium_dns_zone | regex_escape) ~ '$'))
+         else technitium_dns_apex_domain }}
+  loop: "{{ technitium_dns_explicit_ingress_names }}"
+  register: technitium_dns_explicit_ingress_result
+  changed_when: technitium_dns_explicit_ingress_result.json.status == 'ok'
+  failed_when: technitium_dns_explicit_ingress_result.json.status | default('') != 'ok'
+  no_log: true
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_ingress_target_ip | length > 0
+    - _ingress_record_zone != technitium_dns_zone or technitium_dns_role == 'primary'
 
 # A transfer ACL that lists the primary's own address authorises nobody: the
 # primary does not transfer from itself, so every real secondary is refused and
