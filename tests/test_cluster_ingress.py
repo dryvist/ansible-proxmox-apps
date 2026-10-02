@@ -62,6 +62,21 @@ class ClusterIngress(unittest.TestCase):
         variables = dict(self.variables, technitium_dns_existing_records={"json": {"response": {"records": records}}})
         self.assertEqual(_render(task["loop"], variables, wrap=False), records[:1])
 
+    def test_failed_probes_preserve_dns_and_existing_writer(self):
+        task = _find(DNS, "Require a reachable ingress before changing cluster DNS ownership")
+        variables = dict(self.variables, technitium_dns_ingress_target_ip="",
+                         technitium_dns_vip_probe={"failed": True},
+                         technitium_dns_ingress_fallback_probe={"failed": True})
+        self.assertFalse(_all(task["ansible.builtin.assert"]["that"], variables))
+        variables["technitium_dns_ingress_target_ip"] = "192.0.2.50"
+        self.assertFalse(_all(task["ansible.builtin.assert"]["that"], variables))
+        variables["technitium_dns_ingress_fallback_probe"] = {"failed": False}
+        self.assertTrue(_all(task["ansible.builtin.assert"]["that"], variables))
+        tasks = yaml.safe_load((ROOT / DNS).read_text())
+        names = [item["name"] for item in tasks]
+        self.assertLess(names.index(task["name"]), names.index("Stop the legacy apex writer before ingress takes DNS ownership"))
+        self.assertLess(names.index(task["name"]), names.index("Delete existing Proxmox endpoint apex A records"))
+
     def test_real_acme_default_selects_discovery_only_for_multizone(self):
         defaults = yaml.safe_load((ROOT / "roles/traefik/defaults/main.yml").read_text())
         expression = defaults["traefik_acme_route53_discovery"]

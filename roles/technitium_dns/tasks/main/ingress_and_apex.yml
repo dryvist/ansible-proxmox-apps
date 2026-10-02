@@ -1,11 +1,5 @@
 ---
 
-- name: Stop the legacy apex writer before ingress takes DNS ownership
-  ansible.builtin.include_tasks: ../apex_ingress_ownership.yml
-  when:
-    - technitium_dns_apply | bool
-    - technitium_dns_cluster_ingress_owned | bool
-
 # Never publish a VIP that nothing is answering on.
 #
 # The ingress VIP is bound by keepalived, which converges LATE in the site play,
@@ -50,6 +44,25 @@
   ignore_errors: true
   changed_when: false
   when: technitium_dns_ingress_fallback_ip | length > 0
+
+- name: Require a reachable ingress before changing cluster DNS ownership
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_ingress_target_ip | length > 0
+      - >-
+        not (technitium_dns_vip_probe.failed | default(true))
+        or not (technitium_dns_ingress_fallback_probe.failed | default(true))
+    quiet: true
+    fail_msg: "No probed ingress target answered; cluster DNS and its existing writer were preserved."
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_cluster_ingress_owned | bool
+
+- name: Stop the legacy apex writer before ingress takes DNS ownership
+  ansible.builtin.include_tasks: ../apex_ingress_ownership.yml
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_cluster_ingress_owned | bool
 
 - name: Report which address the fronted names will resolve to
   ansible.builtin.debug:
