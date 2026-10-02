@@ -58,13 +58,22 @@ unpoller_user: unpoller
 unpoller_listen_address: localhost
 
 # --- UniFi controller connection ---
-# URL: same env var, same source (the OpenBao secret/infrastructure/unifi
-# UNIFI_API field, exported into the Ansible run's environment) that
-# roles/unifi_metrics and the UniFi infrastructure repo's Terraform provider
-# already treat as the single source of truth for the controller address --
-# not a per-role OpenBao domain fetch. Must be an FQDN, never a literal IP
-# (infrastructure-conventions "Always FQDN").
-unpoller_controller_url: "{{ lookup('env', 'UNIFI_API') | default('', true) }}"
+# URL: read only from the OpenBao prefetch fact -- no env fallback, which
+# would be a hidden second source. secret/infrastructure/unifi (UNIFI_API
+# field) is the single source of truth roles/unifi_metrics and the UniFi infrastructure repo's Terraform
+# provider already treat this way; the openbao_secrets
+# "apps" domain fetches it (roles/openbao_secrets/defaults/main/01-domains.yml)
+# because that domain is already pulled for cribl_stream_group, where this
+# role runs. Nothing exported UNIFI_API into the Semaphore run's environment,
+# so the env-only lookup silently resolved empty and failed the assert below --
+# this is what makes the fetched fact the actual source instead of a second
+# copy. Must be an FQDN, never a literal IP (infrastructure-conventions
+# "Always FQDN").
+unpoller_controller_url: >-
+  {{ bao_apps_secrets.UNIFI_API
+     | default(undef(), true)
+     | mandatory('UNIFI_API missing from the apps-domain OpenBao prefetch
+       (secret/infrastructure/unifi)') }}
 
 # Read-only poller account on the controller. The ubiquiti-community and
 # filipowm UniFi Terraform providers expose no resource for a controller
@@ -79,10 +88,9 @@ unpoller_controller_url: "{{ lookup('env', 'UNIFI_API') | default('', true) }}"
 unpoller_controller_user: unpoller
 unpoller_controller_password: >-
   {{ bao_apps_secrets.unpoller_controller_password
-     | default(lookup('env', 'UNPOLLER_CONTROLLER_PASSWORD'), true)
      | default(undef(), true)
-     | mandatory('unpoller_controller_password missing: must be set in the
-       environment (UNPOLLER_CONTROLLER_PASSWORD)') }}
+     | mandatory('unpoller_controller_password missing from the apps-domain
+       OpenBao prefetch (secret/apps/unpoller)') }}
 
 # UDW/UDM ships a self-signed certificate.
 unpoller_controller_verify_ssl: false

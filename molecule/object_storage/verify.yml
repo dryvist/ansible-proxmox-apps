@@ -1,0 +1,143 @@
+---
+# Verify the per-bucket RustFS IAM users converge.yml provisioned actually
+# enforce bucket-scoped access on the real running server:
+#   - rw can put and get objects in its own bucket;
+#   - rw is denied a put into a different bucket;
+#   - ro can get from its own bucket but is denied a put there.
+# Second-converge idempotence (changed=0) is Molecule's own `idempotence`
+# step (see molecule.yml test_sequence), not re-tested here.
+- name: Verify
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    object_storage_endpoint: "http://127.0.0.1:9000"
+    object_storage_region: us-east-1
+    bucket_a: molecule-bucket-a
+    bucket_b: molecule-bucket-b
+    # Read back below (a verify play does not inherit converge.yml facts) --
+    # the exact credentials converge.yml generated and provisioned into
+    # RustFS, never a second, independently-typed copy.
+    bucket_a_rw_env:
+      AWS_ACCESS_KEY_ID: "{{ object_storage_bucket_credentials[bucket_a]['rw']['access_key'] }}"
+      AWS_SECRET_ACCESS_KEY: "{{ object_storage_bucket_credentials[bucket_a]['rw']['secret_key'] }}"
+      AWS_DEFAULT_REGION: "{{ object_storage_region }}"
+    bucket_a_ro_env:
+      AWS_ACCESS_KEY_ID: "{{ object_storage_bucket_credentials[bucket_a]['ro']['access_key'] }}"
+      AWS_SECRET_ACCESS_KEY: "{{ object_storage_bucket_credentials[bucket_a]['ro']['secret_key'] }}"
+      AWS_DEFAULT_REGION: "{{ object_storage_region }}"
+
+  tasks:
+    - name: Read back the test credentials converge.yml generated
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iam-test-credentials.json
+      register: _iam_test_credentials_raw
+      no_log: true
+
+    - name: Parse the test credentials
+      ansible.builtin.set_fact:
+        object_storage_bucket_credentials: "{{ _iam_test_credentials_raw.content | b64decode | from_json }}"
+      no_log: true
+
+    - name: Create a test object payload
+      ansible.builtin.copy:
+        content: "molecule rustfs iam scoping check\n"
+        dest: /tmp/molecule-iam-object.txt
+        mode: "0644"
+
+    - name: RW can put an object into its own bucket
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }} s3api put-object
+          --bucket {{ bucket_a }} --key iam-check.txt --body /tmp/molecule-iam-object.txt
+      environment: "{{ bucket_a_rw_env }}"
+      register: rw_put_own
+      changed_when: false
+
+    - name: Assert the rw put into its own bucket succeeded
+      ansible.builtin.assert:
+        that:
+          - rw_put_own.rc == 0
+        fail_msg: "rw could not put into its own bucket: {{ rw_put_own.stderr }}"
+
+    - name: RW can get the object back from its own bucket
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }} s3api get-object
+          --bucket {{ bucket_a }} --key iam-check.txt /tmp/molecule-iam-object-fetched.txt
+      environment: "{{ bucket_a_rw_env }}"
+      register: rw_get_own
+      changed_when: false
+
+    # lookup('file', ...) reads from the ANSIBLE CONTROLLER, never the
+    # remote host the preceding get-object command actually ran on (this
+    # play's `hosts: all` target, not localhost) -- confirmed by running
+    # this exact scenario: it fails with "File not found", because no such
+    # path exists on the controller. slurp is the correct remote-file read
+    # (same fix already applied to the credentials read-back above and in
+    # converge.yml's idempotence fix).
+    - name: Slurp the object rw fetched from its own bucket
+      ansible.builtin.slurp:
+        src: /tmp/molecule-iam-object-fetched.txt
+      register: _rw_fetched_object
+
+    - name: Assert the fetched object matches what was written
+      ansible.builtin.assert:
+        that:
+          - rw_get_own.rc == 0
+          - (_rw_fetched_object.content | b64decode | trim) == 'molecule rustfs iam scoping check'
+        fail_msg: "rw get-object did not return the object rw put"
+
+    - name: RW is denied a put into a DIFFERENT bucket
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }} s3api put-object
+          --bucket {{ bucket_b }} --key iam-check.txt --body /tmp/molecule-iam-object.txt
+      environment: "{{ bucket_a_rw_env }}"
+      register: rw_put_other
+      changed_when: false
+      failed_when: false
+
+    - name: Assert rw's put into the other bucket was denied
+      ansible.builtin.assert:
+        that:
+          - rw_put_other.rc != 0
+          - "'AccessDenied' in rw_put_other.stderr"
+        fail_msg: >-
+          rw's put into a bucket it does not own was not denied with
+          AccessDenied: rc={{ rw_put_other.rc }} stderr={{ rw_put_other.stderr }}
+
+    - name: RO can get from its own bucket
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }} s3api get-object
+          --bucket {{ bucket_a }} --key iam-check.txt /tmp/molecule-iam-object-ro-fetched.txt
+      environment: "{{ bucket_a_ro_env }}"
+      register: ro_get_own
+      changed_when: false
+
+    - name: Assert ro's get succeeded
+      ansible.builtin.assert:
+        that:
+          - ro_get_own.rc == 0
+        fail_msg: "ro could not get from its own bucket: {{ ro_get_own.stderr }}"
+
+    - name: RO is denied a put into its own bucket
+      ansible.builtin.command:
+        cmd: >-
+          aws --endpoint-url {{ object_storage_endpoint }} s3api put-object
+          --bucket {{ bucket_a }} --key iam-check-ro-write.txt --body /tmp/molecule-iam-object.txt
+      environment: "{{ bucket_a_ro_env }}"
+      register: ro_put_own
+      changed_when: false
+      failed_when: false
+
+    - name: Assert ro's put was denied
+      ansible.builtin.assert:
+        that:
+          - ro_put_own.rc != 0
+          - "'AccessDenied' in ro_put_own.stderr"
+        fail_msg: >-
+          ro's put into its own bucket was not denied with AccessDenied:
+          rc={{ ro_put_own.rc }} stderr={{ ro_put_own.stderr }}

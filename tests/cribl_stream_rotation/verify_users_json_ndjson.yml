@@ -1,0 +1,78 @@
+---
+# Exercises the production users.json template (roles/cribl_stream/templates)
+# directly, rendering it to a temp file the way rotate_admin_password.yml
+# deploys it, then verifies the output is NDJSON — one JSON object per line —
+# not the old pretty-printed array Cribl Stream never loads.
+- name: Verify the users.json template renders valid NDJSON
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    cribl_stream_admin_user: admin
+    cribl_stream_admin_password: test-only-not-a-secret
+  tasks:
+    - name: Create a temp file for the rendered template
+      ansible.builtin.tempfile:
+        state: file
+        suffix: users.json
+      register: cribl_stream_users_rendered_file
+
+    - name: Render the production users.json template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../roles/cribl_stream/templates/auth/users.json.j2"
+        dest: "{{ cribl_stream_users_rendered_file.path }}"
+        mode: "0600"
+
+    - name: Read the rendered file back
+      ansible.builtin.slurp:
+        src: "{{ cribl_stream_users_rendered_file.path }}"
+      register: cribl_stream_users_rendered
+
+    - name: Split the rendered content into non-empty lines
+      ansible.builtin.set_fact:
+        cribl_stream_users_rendered_lines: >-
+          {{ (cribl_stream_users_rendered.content | b64decode | trim).split('\n')
+             | map('trim') | reject('equalto', '') | list }}
+
+    - name: Assert the render is exactly one user line
+      ansible.builtin.assert:
+        that: cribl_stream_users_rendered_lines | length == 1
+        fail_msg: >-
+          the users.json template must render exactly one NDJSON line per user;
+          got {{ cribl_stream_users_rendered_lines | length }}.
+
+    - name: Assert the render does not start with a JSON array
+      ansible.builtin.assert:
+        that: not (cribl_stream_users_rendered.content | b64decode | trim).startswith('[')
+        fail_msg: >-
+          the users.json template regressed to the old pretty-printed array
+          format Cribl Stream never loads.
+
+    - name: Parse the single line as JSON
+      ansible.builtin.set_fact:
+        cribl_stream_users_rendered_obj: "{{ cribl_stream_users_rendered_lines[0] | from_json }}"
+
+    - name: Assert the rendered object has the fields Cribl's NDJSON loader expects
+      ansible.builtin.assert:
+        that:
+          - cribl_stream_users_rendered_obj.username == cribl_stream_admin_user
+          - cribl_stream_users_rendered_obj.roles == ['admin']
+          - cribl_stream_users_rendered_obj.disabled is sameas false
+          - cribl_stream_users_rendered_obj.password == cribl_stream_admin_password
+        fail_msg: >-
+          the rendered NDJSON object is missing or has wrong values for the
+          fields Cribl's users.json loader expects.
+
+    - name: Assert disabled did not regress to a truthy JSON string
+      ansible.builtin.assert:
+        that: cribl_stream_users_rendered_obj.disabled is not string
+        fail_msg: >-
+          "disabled" rendered as a JSON string -- Cribl treats any non-empty
+          string (including "false") as truthy and disables the admin user,
+          locking out every login. It must render as a JSON boolean.
+
+    - name: Clean up the temp file
+      ansible.builtin.file:
+        path: "{{ cribl_stream_users_rendered_file.path }}"
+        state: absent

@@ -1,0 +1,97 @@
+---
+# Render and verify the Glance board: one "Services" page carrying every
+# catalog group (network and media included) from dashboard_catalog_services.
+- name: Render and verify glance generated-services templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    glance_monitor_enabled: true
+    glance_monitor_interval: "1m"
+    dashboard_catalog_group_order:
+      - apps
+      - ai
+      - media_svc
+      - mgmt
+      - siem
+      - data
+      - nonprod
+      - other
+    # Same shape as dashboard_catalog_tasks/main.yml's set_fact — including
+    # `section: ~` on every entry, which the macro's selectattr('section')
+    # requires present (a bare dict lacking the key fails the attribute
+    # lookup, unlike the real catalog which always sets it, even to none).
+    dashboard_catalog_services:
+      - name: vikunja
+        title: Vikunja
+        group: apps
+        ui: true
+        section: ~
+        desc: "Task tracking"
+        url: "https://vikunja.example.test"
+        probe_url: ""
+      - name: technitium
+        title: Technitium
+        group: dns
+        ui: true
+        section: ~
+        desc: "DNS server"
+        url: "https://technitium.example.test"
+        probe_url: "http://192.0.2.5:5380"
+      - name: plex
+        title: Plex
+        group: media_svc
+        ui: true
+        section: ~
+        desc: "Media server"
+        url: "https://plex.example.test"
+        probe_url: ""
+      - name: sonarr
+        title: Sonarr
+        group: media_svc
+        ui: true
+        section: ~
+        desc: "TV automation"
+        url: "https://sonarr.example.test"
+        probe_url: ""
+      - name: sonarr-api
+        title: Sonarr API
+        group: media_svc
+        ui: false
+        section: ~
+        desc: ""
+        url: "https://sonarr.example.test/api"
+        probe_url: ""
+
+  tasks:
+    - name: Render generated-services.yml
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/generated-services.yml.j2"
+        dest: "{{ render_tmp }}/glance-generated-services.yml"
+        mode: "0600"
+
+    - name: Read back the rendered pages
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/glance-generated-services.yml"
+      register: _glance_raw
+
+    - name: Parse the rendered pages
+      ansible.builtin.set_fact:
+        _glance_pages: "{{ _glance_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert exactly one page renders, the Services board
+      ansible.builtin.assert:
+        that:
+          - _glance_pages | length == 1
+          - _glance_pages[0].name == 'Services'
+        fail_msg: "expected the single Services page, got {{ _glance_pages | map(attribute='name') | list }}"
+
+    - name: Assert the media and network groups render on the Services board
+      ansible.builtin.assert:
+        that:
+          - "'media_svc' in (_glance_pages[0] | string)"
+          - "'dns' in (_glance_pages[0] | string)"
+        fail_msg: "media_svc/dns groups missing from the single Services board"

@@ -245,13 +245,21 @@
   ansible.builtin.include_tasks: pipelines.yml
 
 - name: Deploy the UniFi VLAN lookup table
+  # Cribl's Lookup function crashes ("Cannot read properties of undefined
+  # (reading 'forEach')") reading a header-only CSV, so this only deploys
+  # (and the two pipelines only reference it — see their conf.yml.j2) once
+  # there is at least one row to write.
   ansible.builtin.template:
     src: lookups/unifi_vlan_map.csv.j2
     dest: "{{ cribl_stream_install_dir }}/local/cribl/lookups/unifi_vlan_map.csv"
     owner: "{{ cribl_stream_user }}"
     group: "{{ cribl_stream_group }}"
     mode: "0644"
+  when: cribl_stream_unifi_networks | default([]) | length > 0
   notify: Restart cribl stream
+
+- name: Deploy BMC hardware sensor monitoring
+  ansible.builtin.include_tasks: bmc_hw_metrics.yml
 
 - name: Enable Cribl Stream boot-start via systemd
   ansible.builtin.command:
@@ -265,5 +273,10 @@
     enabled: "{{ cribl_stream_service_enabled }}"
     daemon_reload: true
 
+# Tagged separately so a converge can `--skip-tags cribl_stream_admin` — the
+# data-path plays (pipelines, unpoller, packs) never depend on the
+# management UI credential and can converge without touching it.
 - name: Rotate the management API admin credential off the vendor default
   ansible.builtin.include_tasks: rotate_admin_password.yml
+  tags:
+    - cribl_stream_admin
