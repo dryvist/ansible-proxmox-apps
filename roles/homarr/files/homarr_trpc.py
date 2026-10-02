@@ -190,35 +190,53 @@ def write_secret_file(path, value):
 def run_onboarding(api, username, password):
     """Drive a fresh instance through onboarding to a usable admin account.
 
-    The steps are start -> import -> user -> group -> settings -> integrations
-    -> finish. `onboard.nextStep` requires an onboarding-claim cookie (Homarr
-    v2+) before it will advance, and `user.initUser` is gated on the DB
-    currently sitting at `user` — so the walk is: claim the session, advance
-    to `user`, create the admin, then advance to `finish`.
+    The steps are start -> user -> [group] -> setup -> finish (Homarr v2's
+    collapsed sequence — the old per-section "import"/"settings"/
+    "integrations" steps no longer exist as distinct states, so nextStep is
+    now a single start -> user transition rather than a repeatable walk).
 
-    Bounded rather than `while True`: a step that stops advancing (an upstream
-    change to the sequence, say) must fail loudly here instead of spinning.
+    `onboard.nextStep` requires an onboarding-claim cookie (Homarr v2+) and
+    only fires from `start`; `user.initUser` is gated on `user` and itself
+    advances the step — to `group` when LDAP/OIDC is enabled, else straight
+    to `setup`. The `group` branch (external-auth admin group creation) has
+    no exerciser here and is refused loudly rather than guessed at. `setup`
+    is completed with the minimum valid payload (empty integrations/apps;
+    board-tile sync happens separately, afterward, over the regular API).
     """
-
-    def walk_to(target):
-        for _ in range(len(ONBOARDING_STEPS) + 1):
-            if api.trpc("onboard.currentStep")["current"] == target:
-                return
-            api.trpc("onboard.nextStep", {"preferredStep": target})
-        raise HomarrError(f"onboarding never reached the {target!r} step")
-
     api.claim_onboarding()
-    walk_to("user")
-    api.trpc("user.initUser", {
-        "username": username,
-        "password": password,
-        "confirmPassword": password,
-    })
-    walk_to("finish")
 
+    if api.trpc("onboard.currentStep")["current"] == "start":
+        api.trpc("onboard.nextStep")
 
-ONBOARDING_STEPS = (
-    "start", "import", "user", "group", "settings", "integrations", "finish",
-)
+    current = api.trpc("onboard.currentStep")["current"]
+    if current == "user":
+        api.trpc("user.initUser", {
+            "username": username,
+            "password": password,
+            "confirmPassword": password,
+        })
+        current = api.trpc("onboard.currentStep")["current"]
+
+    if current == "group":
+        raise HomarrError(
+            "onboarding reached the LDAP/OIDC 'group' step, which this "
+            "converger does not drive — external-auth onboarding needs its "
+            "own completion step, not yet implemented here"
+        )
+
+    if current == "setup":
+        api.trpc("onboard.completeSetup", {
+            "server": {"defaultLocale": "en", "defaultColorScheme": "light"},
+            "board": {
+                "name": "home",
+                "primaryColor": "#1971c2",
+                "secondaryColor": "#1c7ed6",
+                "itemRadius": "md",
+            },
+        })
+        current = api.trpc("onboard.currentStep")["current"]
+
+    if current != "finish":
+        raise HomarrError(f"onboarding stalled at step {current!r} instead of reaching 'finish'")
 
 
