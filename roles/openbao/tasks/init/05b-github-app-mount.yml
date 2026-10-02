@@ -85,6 +85,25 @@
   loop_control:
     label: "{{ item.name }}"
 
+- name: "Assert the hermes sets hold exactly their declared maps on mount {{ gm.mount }}"
+  ansible.builtin.assert:
+    that:
+      - item.permissions == openbao_github_hermes_set_permissions[item.name]
+      - >-
+        item.permissions.keys()
+        | select('in', ['administration', 'workflows', 'actions', 'secrets']) | list == []
+      - item.permissions.keys() | select('match', '^organization_') | list == []
+      - item.name != 'hermes-author' or (item.repositories | default([]) | length > 0)
+    fail_msg: >-
+      {{ gm.mount }}/permissionset/{{ item.name }} must carry exactly
+      {{ openbao_github_hermes_set_permissions[item.name] | default({}) }};
+      hermes-author also needs an explicit repository list.
+    quiet: true
+  loop: "{{ gm.permission_sets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: gm.mount == openbao_github_hermes_mount
+
 - name: "Read the public repositories for sets that are public-only on mount {{ gm.mount }}"
   ansible.builtin.uri:
     url: >-

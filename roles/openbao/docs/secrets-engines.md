@@ -67,6 +67,7 @@ configuration, so each App's own grant caps every token its mount mints:
 | `github` | everyday | read sets and the raw `github/token` write endpoint |
 | `github-admin` | admin | admin, repo-create, docs-publisher, runner, exporter, open-llm |
 | `github-agents` | agents | `agents-write`, limited to the organization's public repositories |
+| `github-hermes` | hermes | `hermes-review` (installation-wide, no contents write) and `hermes-author` (allowlisted repositories); minted only by the `github-hermes` AppRole |
 
 A key is required only for first configuration or an explicit rotation; routine
 converges never rewrite it. Installation IDs come from the env document

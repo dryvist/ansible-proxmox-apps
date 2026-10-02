@@ -79,6 +79,9 @@ documented once at
 | `OPENBAO_GITHUB_ADMIN_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Admin App installations | env document |
 | `OPENBAO_GITHUB_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Everyday App installations | env document |
 | `OPENBAO_GITHUB_AGENTS_DRYVIST_INSTALLATION_ID` | Agents App installation on `dryvist` | env document |
+| `OPENBAO_GITHUB_HERMES_APP_ID` / `_PRIVATE_KEY` | Hermes App (`github-hermes` mount) | one-time environment |
+| `OPENBAO_GITHUB_HERMES_DRYVIST_INSTALLATION_ID` | Hermes App installation on `dryvist`; unset = no mount | env document |
+| `OPENBAO_GITHUB_HERMES_AUTHOR_REPOS` | Comma-separated repositories for `hermes-author`; unset = no set | env document |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | Doppler |
 | `IDRAC_R410_USER` | R410 iDRAC username | Doppler |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | Doppler |

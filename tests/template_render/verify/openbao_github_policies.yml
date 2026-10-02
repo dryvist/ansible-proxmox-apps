@@ -201,3 +201,58 @@
            | rejectattr('mount', 'equalto', openbao_github_mount) | list }}
       loop_control:
         label: "{{ item.mount }}/{{ item.name }}"
+
+    - name: Pin the hermes mount to the configured case
+      ansible.builtin.set_fact:
+        openbao_github_hermes_installation_id: "1"
+        openbao_github_hermes_author_repos: [fixture-repo]
+
+    - name: Render the hermes policy
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/github-hermes-policy.hcl.j2"
+        dest: "{{ _fixture_dir }}/github-hermes-policy.hcl"
+        mode: "0644"
+
+    - name: Read the hermes policy
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/github-hermes-policy.hcl"
+      register: _hermes_raw
+
+    - name: Assert the hermes mount, sets, maps and policy grant
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_hermes_raw.content | b64decode) | regex_findall('(?m)^path "([^"]+)"')
+            == [openbao_github_hermes_mount ~ '/token/hermes-review',
+                openbao_github_hermes_mount ~ '/token/hermes-author']
+          - openbao_github_hermes_mount in (openbao_github_app_mounts | map(attribute='mount'))
+          - >-
+            (openbao_github_hermes_permission_sets | items2dict(key_name='name', value_name='permissions'))
+            == {'hermes-review': {'pull_requests': 'write', 'issues': 'write', 'contents': 'read',
+                                  'checks': 'read', 'metadata': 'read'},
+                'hermes-author': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}}
+          - (openbao_github_hermes_permission_sets | last).repositories == ['fixture-repo']
+          - (openbao_github_hermes_permission_sets | first).repositories is not defined
+          # The converge assertion compares verbatim, so an added
+          # administration grant fails it.
+          - >-
+            (openbao_github_hermes_set_permissions['hermes-review'] | combine({'administration': 'read'}))
+            != openbao_github_hermes_set_permissions['hermes-review']
+          - _mint_paths | select('match', '^' ~ openbao_github_hermes_mount ~ '/') | list == []
+          - _read_paths | select('match', '^' ~ openbao_github_hermes_mount ~ '/') | list == []
+          - _write_paths | select('match', '^' ~ openbao_github_hermes_mount ~ '/') | list == []
+          - _agents_paths | select('match', '^' ~ openbao_github_hermes_mount ~ '/') | list == []
+        fail_msg: >-
+          github-hermes must grant exactly the hermes-review and hermes-author
+          token paths, each set must carry exactly its declared map, and no
+          other tier may reach the {{ openbao_github_hermes_mount }} mount.
+
+    - name: Pin the hermes author list to the unconfigured case
+      ansible.builtin.set_fact:
+        openbao_github_hermes_author_repos: []
+
+    - name: Assert an unconfigured author list yields no hermes-author set
+      ansible.builtin.assert:
+        that:
+          - openbao_github_hermes_permission_sets | map(attribute='name') | list == ['hermes-review']
+        fail_msg: hermes-author must not exist without an explicit repository list.
