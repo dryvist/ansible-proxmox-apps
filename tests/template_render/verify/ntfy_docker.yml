@@ -95,9 +95,99 @@
           (never a host address, never plain HTTP);
           rendered content: {{ _ntfy_server }}
 
+    # Slack fan-out: every topic reaches the all-alerts webhook, a declared
+    # per-topic route adds its own, and an unseeded key fails the converge.
+    - name: Plan the Slack fan-out with every needed webhook seeded
+      ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+      vars:
+        ntfy_docker_topics: [keystone, proxmox]
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_routes: [proxmox]
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          proxmox: https://hooks.example.test/proxmox
+
+    - name: Assert one all-alerts instance per topic plus the per-topic route
+      ansible.builtin.assert:
+        that:
+          - >-
+            ntfy_docker_slack_instances ==
+            {'all-keystone': 'keystone', 'all-proxmox': 'proxmox', 'proxmox': 'proxmox'}
+        fail_msg: "unexpected instances: {{ ntfy_docker_slack_instances }}"
+
+    - name: Render the all-alerts and per-topic env files
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-to-slack.env.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_to_slack_{{ item.key }}.env"
+        mode: "0600"
+      loop:
+        - {key: all-proxmox, value: proxmox}
+        - {key: proxmox, value: proxmox}
+      vars:
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_alerts_template: >-
+          {% raw %}[{{ .Topic }}] {{ if .Title }}*{{ .Title }}*: {{ end }}{{ .Message }}{% endraw %}
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          proxmox: https://hooks.example.test/proxmox
+
+    - name: Assert the env files carry the right webhook and Go template
+      vars:
+        _all_env: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_to_slack_all-proxmox.env') }}"
+        _topic_env: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_to_slack_proxmox.env') }}"
+      ansible.builtin.assert:
+        that:
+          - "'NTFY_TOPIC=proxmox' in _all_env"
+          - "'SLACK_WEBHOOK_URL=https://hooks.example.test/all' in _all_env"
+          - "'.Topic }}] ' in _all_env"
+          - "'SLACK_WEBHOOK_URL=https://hooks.example.test/proxmox' in _topic_env"
+          - "'POST_PROCESS_TEMPLATE' not in _topic_env"
+
+    - name: Plan the Slack fan-out with a declared route unseeded
+      block:
+        - name: Include the plan with the proxmox webhook missing
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone, proxmox]
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: [proxmox]
+            ntfy_docker_slack_webhooks:
+              keystone: https://hooks.example.test/all
+
+        - name: Fail because the unseeded route did not fail the plan
+          ansible.builtin.fail:
+            msg: an unseeded declared route must fail the converge
+      rescue:
+        - name: Assert the failure names the missing key
+          ansible.builtin.assert:
+            that:
+              - "'proxmox' in ansible_failed_result.msg"
+
+    - name: Plan the Slack fan-out with a non-URL webhook value
+      block:
+        - name: Include the plan with a channel name where the URL belongs
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone]
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: []
+            ntfy_docker_slack_webhooks:
+              keystone: keystone
+
+        - name: Fail because a non-URL webhook did not fail the plan
+          ansible.builtin.fail:
+            msg: the plan accepted a webhook value without a URL scheme
+      rescue:
+        - name: Assert the failure names the bad key
+          ansible.builtin.assert:
+            that:
+              - "'not an https URL' in ansible_failed_result.msg"
+              - "'keystone' in ansible_failed_result.msg"
+
     - name: Ntfy template rendering PASSED
       ansible.builtin.debug:
         msg: |
           Ntfy template assertions passed:
           - docker-compose.yml.j2: HTTP port 8080:80, image, config mount
           - server.yml.j2: cache-file, listen-http, cache-duration
+          - Slack fan-out: all-alerts + per-topic instances, unseeded key fails
