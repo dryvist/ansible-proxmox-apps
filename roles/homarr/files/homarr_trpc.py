@@ -199,14 +199,24 @@ def run_onboarding(api, username, password):
     only fires from `start`; `user.initUser` is gated on `user` and itself
     advances the step — to `group` when LDAP/OIDC is enabled, else straight
     to `setup`. The `group` branch (external-auth admin group creation) has
-    no exerciser here and is refused loudly rather than guessed at. `setup`
-    is completed with the minimum valid payload (empty integrations/apps;
-    board-tile sync happens separately, afterward, over the regular API).
+    no exerciser here and is refused loudly rather than guessed at.
+
+    The claim cookie stops authorizing onboarding calls the instant a user
+    row exists (`isClaimOnlyOnboardingAccessAllowedAsync` requires NO user to
+    exist) — every onboarding call from `setup` onward must instead be an
+    authenticated admin session, so this logs in as the account `initUser`
+    just created before completing setup.
+
+    `setup` is completed with the minimum valid payload (empty
+    integrations/apps; board-tile sync happens separately, afterward, over
+    the regular API).
     """
     api.claim_onboarding()
 
     if api.trpc("onboard.currentStep")["current"] == "start":
-        api.trpc("onboard.nextStep")
+        # {} (not None): nextStep takes no input but IS a mutation, and
+        # trpc() only sends POST when payload is not None.
+        api.trpc("onboard.nextStep", {})
 
     current = api.trpc("onboard.currentStep")["current"]
     if current == "user":
@@ -215,6 +225,8 @@ def run_onboarding(api, username, password):
             "password": password,
             "confirmPassword": password,
         })
+        if not api.login(username, password):
+            raise HomarrError("could not sign in as the just-created admin user")
         current = api.trpc("onboard.currentStep")["current"]
 
     if current == "group":
