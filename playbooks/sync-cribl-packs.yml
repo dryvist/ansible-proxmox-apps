@@ -1,0 +1,87 @@
+---
+# Cribl pack mirror — resolves the LATEST GitHub release of every dryvist
+# `cc-*` pack repo, mirrors its `.crbl` asset into object storage (RustFS) at
+# a version-free key, and publishes a manifest the `cribl_packs` role
+# installs from. Same shape as ansible-splunk's `sync-splunkbase.yml`:
+# version-free object keys, native S3 bucket versioning for history,
+# `channel=latest`/`version` tags, and a published manifest.json.
+#
+# Packs reuse the `splunk-addons` bucket (already anonymous-read, versioned,
+# and already carries the Cribl binary mirror — see
+# roles/object_storage/defaults/main.yml `object_storage_infra_mirrors`)
+# under a `cribl-packs/` prefix, rather than standing up a second bucket for
+# the same access pattern.
+#
+# The pack list is DERIVED from the dryvist org (repos named `cc-*`), never
+# hand-listed: a new pack repo is picked up on the next run with no edit here.
+#
+# GitHub read: unauthenticated calls to the public REST API, same as every
+# other public-release fetch in this estate (cribl_edge_tarball_url,
+# splunk_docker's `github_repo` add-ons) — dryvist/cc-* are public repos, and
+# 60 req/hour unauthenticated comfortably covers one list-org call plus one
+# release lookup per pack on an hourly schedule. An optional GITHUB_TOKEN
+# env var raises the ceiling when present; nothing requires it.
+#
+# Idempotent: skips the download+upload when object storage's `version` tag
+# already matches the resolved latest release tag.
+#
+# Credentials (Doppler/SOPS, same source as roles/object_storage):
+#   OBJECT_STORAGE_ROOT_USER / OBJECT_STORAGE_ROOT_PASSWORD — bucket write auth
+#
+# Usage:
+#   doppler run -- ansible-playbook playbooks/sync-cribl-packs.yml
+#
+# Runs entirely on localhost (the Ansible controller, which has internet
+# egress); Cribl Edge/Stream LXCs never contact GitHub directly.
+
+- name: Load OpenTofu inventory (for object-storage endpoint)
+  ansible.builtin.import_playbook: ../inventory/load_tofu.yml
+
+- name: Mirror latest dryvist cc-* Cribl pack releases into object storage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [cribl_packs]
+  vars:
+    cribl_packs_github_api: "{{ cribl_packs_github_api_url | default('https://api.github.com') }}"
+    cribl_packs_github_org: dryvist
+    cribl_packs_sync_tmpdir: /tmp/cribl-packs-sync
+    object_storage_bucket: splunk-addons
+    cribl_packs_object_storage_prefix: cribl-packs
+    s3_env:
+      AWS_ACCESS_KEY_ID: "{{ lookup('env', 'OBJECT_STORAGE_ROOT_USER') }}"
+      AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'OBJECT_STORAGE_ROOT_PASSWORD') }}"
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT_URL: >-
+        http://{{ hostvars['localhost']['tofu_data']['containers']['s3']['ip'] }}:{{
+        hostvars['localhost']['tofu_data']['constants']['service_ports']['object_storage_s3'] }}
+
+  tasks:
+    - name: Check environment and object-storage client prerequisites
+      ansible.builtin.include_tasks: tasks/sync-cribl-packs/preflight.yml
+
+    - name: Discover dryvist cc-* pack repos and resolve their latest releases
+      ansible.builtin.include_tasks: tasks/sync-cribl-packs/discover-and-resolve.yml
+
+    - name: Sync drifted packs and publish manifest
+      block:
+        - name: Sync drifted pack assets to object storage
+          ansible.builtin.include_tasks: tasks/sync-cribl-packs/sync-and-publish.yml
+      rescue:
+        - name: Stop a fail-closed pack update
+          ansible.builtin.fail:
+            msg: >-
+              cc-* pack resolve/sync failed; bucket + manifest.json were left
+              unchanged. {{ ansible_failed_result.msg | default('See preceding task.') }}
+          when: not (cribl_packs_sync_fail_open | default(true) | bool)
+
+        - name: Continue a fail-open run from existing object-storage contents
+          ansible.builtin.debug:
+            msg: >-
+              cc-* pack resolve/sync failed; leaving the bucket + manifest.json
+              as-is and proceeding with whatever is already mirrored. Error:
+              {{ ansible_failed_result.msg | default('see preceding task') }}
+          when: cribl_packs_sync_fail_open | default(true) | bool
+
+    - name: Verify published object-storage tags and manifest
+      ansible.builtin.include_tasks: tasks/sync-cribl-packs/verify-manifest.yml
