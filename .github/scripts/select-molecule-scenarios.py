@@ -62,6 +62,7 @@ SCENARIO_PATH = re.compile(r"^molecule/([^/]+)/")
 # `include_role`, and the horizontal-only whitespace stops the match running
 # across a newline into the following key. Without them, `include_role:\n
 # name: mssql_docker` captured the literal string "name" and the role was lost.
+PLAYBOOK_REF = re.compile(r"""^[ \t]+[a-z_]+[ \t]*:[ \t]*["']?(\.\./[^\s"']+\.yml)""", re.M)
 ROLE_REF = re.compile(r"""(?<![a-z_])(?:role|name)[ \t]*:[ \t]*["']?([a-z0-9_.]+)""")
 
 
@@ -105,7 +106,16 @@ def scenario_roles(known: set[str]) -> dict[str, set[str]]:
     """
     mapping: dict[str, set[str]] = {}
     for scenario in scenarios_on_disk():
-        direct = referenced_roles(sorted((SCENARIO_DIR / scenario).glob("*.yml")), known)
+        own = sorted((SCENARIO_DIR / scenario).glob("*.yml"))
+        # A scenario may run another scenario's playbooks (provisioner.playbooks);
+        # those exercise its roles exactly as its own files would.
+        reused = [
+            (SCENARIO_DIR / scenario / ref).resolve()
+            for path in own
+            if path.name == "molecule.yml"
+            for ref in PLAYBOOK_REF.findall(path.read_text(encoding="utf-8"))
+        ]
+        direct = referenced_roles(own + reused, known)
         closed = set(direct)
         pending = list(direct)
         while pending:

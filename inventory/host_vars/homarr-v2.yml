@@ -1,0 +1,91 @@
+---
+# The second Homarr guest: the 2.x line, run as a dense household dashboard.
+# Same role and group as the first guest (both carry the `homarr` tag); only
+# what differs per instance lives here. Everything instance-named (OpenBao app
+# path, published field names) derives from this guest's inventory name in
+# roles/homarr.
+
+# renovate: datasource=github-releases depName=homarr-labs/homarr
+homarr_version: "v2.0.0"
+
+# No OIDC client. The boards are public inside Homarr and the route skips the
+# Authelia gate (tofu-proxmox ingress_human_unauthed_routes), so anyone on the
+# home network views them without a login. An empty secret turns OIDC off
+# (roles/homarr homarr_oidc_enabled) and overrides homarr_group.yml's
+# mandatory lookup, so no Authelia client or secret exists for this guest.
+homarr_oidc_client_secret: ""
+
+# The 1.x media integrations plus Gatus, which 2.x adds and which needs no
+# credential. Every other estate service is a link tile (the catalog bookmarks
+# below): its own UI already shows it better than a widget would, and a widget
+# would copy one more credential into Homarr's database.
+homarr_integrations: "{{ homarr_media_integration_candidates + homarr_gatus_integration }}"
+
+# Each widget is defined once and placed on any board by key. `integrations`
+# lists Homarr integration kinds; a widget whose integrations all failed is
+# left off the board and named in the converge output.
+homarr_widgets:
+  clock:
+    kind: clock
+    options: {showDate: true, dateFormat: "dddd, MMMM D", customTimeFormat: "HH:mm"}
+    size: {base: [3, 1], mobile: [3, 1]}
+  service-health:
+    kind: stats
+    title: Service health
+    integrations: [gatus]
+    stats_metrics: {gatus: [up, down, total]}
+    options: {showIcon: true}
+    size: {base: [3, 1], mobile: [3, 1]}
+  cluster:
+    kind: healthMonitoring
+    integrations: [proxmox]
+    options: {defaultTab: cluster, visibleClusterSections: [node, qemu, lxc, storage]}
+    size: {base: [6, 3], mobile: [3, 3]}
+  now-playing:
+    kind: mediaServer
+    integrations: [plex]
+    options: {showOnlyPlaying: true}
+    size: {base: [6, 2], mobile: [3, 2]}
+  recently-added:
+    kind: mediaReleases
+    integrations: [plex]
+    size: {base: [6, 2], mobile: [3, 2]}
+  calendar:
+    kind: calendar
+    integrations: [sonarr, radarr]
+    size: {base: [4, 3], mobile: [3, 3]}
+  requests:
+    kind: mediaRequests-requestList
+    integrations: [jellyseerr]
+    size: {base: [5, 3], mobile: [3, 2]}
+  request-stats:
+    kind: mediaRequests-requestStats
+    integrations: [jellyseerr]
+    size: {base: [3, 3], mobile: [3, 2]}
+  releases:
+    kind: releases
+    title: Upstream releases
+    options:
+      repositories:
+        - {provider: github, identifier: homarr-labs/homarr, name: Homarr}
+        - {provider: github, identifier: traefik/traefik, name: Traefik}
+        - {provider: github, identifier: authelia/authelia, name: Authelia}
+        - {provider: github, identifier: openbao/openbao, name: OpenBao}
+        - {provider: github, identifier: TwiN/gatus, name: Gatus}
+    size: {base: [4, 3], mobile: [3, 3]}
+
+# `everything` is the phone-first home board: every widget, then one bookmarks
+# grid per catalog group. The wall board is the kiosk subset the server-room
+# wall rotates through (inventory/group_vars/all.yml wall_slides).
+homarr_boards:
+  - name: everything
+    columns: 12
+    public: true
+    home: true
+    apps: true
+    widgets: [clock, service-health, cluster, now-playing, calendar, requests,
+              request-stats, recently-added, releases]
+  - name: "{{ homarr_wall_board }}"
+    columns: 12
+    public: true
+    widgets: [clock, service-health, now-playing, cluster, calendar, requests]
