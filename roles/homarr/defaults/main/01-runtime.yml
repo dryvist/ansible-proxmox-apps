@@ -1,0 +1,80 @@
+---
+# --- Instance identity ----------------------------------------------------------
+# Every guest tagged `homarr` runs this role, so nothing below may assume there
+# is only one. The guest's deployment-object key (its inventory name, and also
+# its Traefik route name — tofu-proxmox generates one route per homarr-tagged
+# guest under that key) names everything per-instance: its OpenBao app path,
+# its Authelia OIDC client, and the field names it publishes. The fields carry
+# the name too, because the apps-domain prefetch merges every app path into one
+# flat bao_apps_secrets map — two instances publishing `homarr_api_key` would
+# overwrite each other. For the first instance (`homarr`) every derived name is
+# exactly what it was before a second instance existed.
+homarr_instance: "{{ inventory_hostname }}"
+homarr_secret_prefix: "{{ homarr_instance | replace('-', '_') }}"
+
+# --- Runtime -----------------------------------------------------------------
+homarr_install_dir: /opt/homarr
+homarr_env_file: /opt/homarr.env
+homarr_data_dir: /opt/homarr_db
+homarr_service_name: homarr
+homarr_port: 7575
+
+# Where tools.func records the release it deployed. tasks/upgrade.yml compares
+# it with homarr_version, so it is the one installed-version truth.
+homarr_version_file: /root/.homarr
+
+# Marker proving the borrowed installer ran TO COMPLETION. The install is a
+# one-shot bootstrap, not a reconciler: version changes after it go through
+# tasks/upgrade.yml, never a second install.
+#
+# This is our own stamp, written only after the installer exits 0, and NOT a
+# file the installer itself creates. Using one of those is a trap: the first
+# live run died at `systemctl enable redis-server`, which happens *after*
+# `chmod +x /opt/homarr/run.sh` — so a marker of `run.sh` would have made a
+# half-finished install look complete and skipped forever.
+#
+# The tag is in the path so a pin bump re-runs the install rather than silently
+# leaving the old build in place.
+homarr_installed_marker: "{{ homarr_cs_pinned_dir }}/.homarr-install-complete"
+
+# The environment the borrowed helpers run under, for the install and for
+# tasks/upgrade.yml alike.
+homarr_cs_environment:
+  # Everything below is part of the contract build.func would normally have
+  # exported before calling the install script. Borrowing only the install/
+  # half means reproducing that contract by hand, and the helpers run under
+  # `set -u`, so a missing one aborts mid-install rather than degrading.
+  #
+  # APPLICATION is the display name motd_ssh() writes into the login banner;
+  # unset, the install dies at install.func line 492.
+  # `app` is what customize() interpolates into /usr/bin/update. That updater
+  # is replaced immediately after, but the variable still has to exist.
+  APPLICATION: Homarr
+  app: homarr
+  # SSH_ROOT=no is a security decision, not a default. With "yes", motd_ssh()
+  # rewrites sshd_config to PermitRootLogin yes and restarts sshd — which
+  # would quietly undo the SSH CA access model on this guest.
+  SSH_ROOT: "no"
+  # Empty, but it must EXIST. customize() guards on `[[ -n "${SSH_AUTHORIZED_KEY}" ]]`,
+  # and under `set -u` that test itself aborts when the variable is unset —
+  # the guard does not protect you, it is the thing that fails. Keys on this
+  # guest come from the SSH CA, so the value stays empty.
+  SSH_AUTHORIZED_KEY: ""
+  # Authenticates the installer's release-metadata calls when set; empty
+  # leaves them anonymous. A dedicated name, so an ambient controller token
+  # never reaches the guest.
+  GITHUB_TOKEN: "{{ lookup('env', 'HOMARR_GITHUB_TOKEN') | default('', true) }}"
+  # PASSWORD non-empty keeps customize() from adding a root autologin getty
+  # to the container console.
+  PASSWORD: managed-by-ansible
+  DIAGNOSTICS: "no"
+  tz: "{{ ansible_facts.date_time.tz | default('UTC') }}"
+  DEBIAN_FRONTEND: noninteractive
+  # Pins the release fetch_and_deploy_gh_release deploys; tools.func gives
+  # it precedence over the hardcoded "latest" in the install script.
+  var_appversion: "{{ homarr_version }}"
+
+# Seconds to allow for the borrowed install. It runs a full `apt dist-upgrade`
+# before it starts (a side effect of the installer's `update_os()`), then
+# fetches and unpacks a prebuilt Node bundle.
+homarr_install_timeout: 1800
