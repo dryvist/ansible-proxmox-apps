@@ -321,7 +321,7 @@ seed_ticket(
   },
   articles: [
     { subject: 'Incident', body: 'Mechanism: multi-day uptime (5d) + recorder running (audio assertions block idle-sleep) + LLM weight pool loaded -> macOS expanded dynamic swap 4GB->53GB overnight while the compressor accumulated 71GB of compressed pages. At sign-in every action paid decompression latency: 75% WindowServer CPU spike, ~15 min sluggishness. Fingerprint: load avg 9+ (5/15-min), swap >95% of dynamic pool, compressor >50GB, BuiltInMicrophoneDevice assertion uptime spanning the night.' },
-    { subject: 'Status', body: 'OPEN: depends on a recorder-side fix to release audio assertions on display sleep (recorder RC10 in the nix-mac-performance operational repo).' },
+    { subject: 'Status', body: 'OPEN: depends on a recorder-side fix to release audio assertions on display sleep (recorder RC10 in the macOS performance repo).' },
   ]
 )
 
@@ -343,18 +343,18 @@ seed_ticket(
 )
 
 seed_ticket(
-  title: 'RC15: transcription backlog - UNIQUE violation aborted reconciliation loop',
+  title: 'RC15: audio-processing backlog - UNIQUE violation aborted reconciliation loop',
   group: ai, state: closed, priority: norm, customer: admin,
   created: Time.utc(2026, 5, 26, 12, 0), closed_at: Time.utc(2026, 6, 2, 12, 0),
   custom: {
     incident_start: Time.utc(2026, 5, 26, 12, 0), incident_end: Time.utc(2026, 6, 2, 12, 0),
     affected_services: ['media'],
-    root_cause: "The recorder's transcription reconciliation worker aborted on a UNIQUE-constraint violation on the audio-transcripts table, leaving ~63,000 chunks unprocessed against the 90-day retention boundary.",
+    root_cause: "The media pipeline's reconciliation worker aborted on a UNIQUE-constraint violation on the audio-processing table, leaving ~63,000 chunks unprocessed against the 90-day retention boundary.",
     detection_method: 'alert', source_issue: 'n/a',
   },
   articles: [
-    { subject: 'Incident', body: "Not the LLM stack per se: the recorder's transcription reconciliation worker (hits the local stack via Whisper/Parakeet) aborted on a UNIQUE-constraint violation on the audio-transcripts table, leaving ~63,000 untranscribed chunks accumulating against the 90-day retention boundary (data-loss countdown)." },
-    { subject: 'Resolution', at: Time.utc(2026, 6, 2, 12, 0), body: 'Structural fix in recorder v2.4.250: INSERT OR IGNORE + transcription_attempts < 5 cap. Verified 2026-06-02: 0 violations, 0 aborts; legacy backlog (10,152 chunks) draining at 628/hr.' },
+    { subject: 'Incident', body: "Not the LLM stack per se: the media pipeline's reconciliation worker (hits the local stack via Whisper/Parakeet) aborted on a UNIQUE-constraint violation on the audio-processing table, leaving ~63,000 unprocessed chunks accumulating against the 90-day retention boundary (data-loss countdown)." },
+    { subject: 'Resolution', at: Time.utc(2026, 6, 2, 12, 0), body: 'Structural fix in the media pipeline v2.4.250: INSERT OR IGNORE + processing_attempts < 5 cap. Verified 2026-06-02: 0 violations, 0 aborts; legacy backlog (10,152 chunks) draining at 628/hr.' },
   ]
 )
 
@@ -437,10 +437,10 @@ seed_ticket(
     incident_start: Time.utc(2026, 7, 17, 9, 0),
     affected_services: %w[vikunja zammad openproject postgres-apps],
     root_cause: 'Host RAM + disk exhaustion; postgres-apps DB recovered (5432 reopened) but the vikunja/zammad/openproject app services did not auto-restart. Firewall PR dryvist/tofu-proxmox#646 was already applied (repo at #683), so it was NOT the firewall this time.',
-    detection_method: 'probe', source_issue: 'dryvist/nix-mac-performance#38',
+    detection_method: 'probe', source_issue: 'the macOS performance repo, issue #38',
   },
   articles: [
-    { subject: 'Incident', body: 'Host RAM + disk exhaustion took down the apps tier: vikunja and openproject stopped answering (20s timeouts) and zammad returned 502, each on its own guest. The shared postgres-apps backend recovered on its own (port 5432 reopened, verified by probe) but the three app services did not auto-restart, so the outage outlived its cause. Ruled out this time: the firewall — dryvist/tofu-proxmox#646 ("add outbound_https rule to vikunja firewall") was already applied, with the repo at #683 and applies since, so the 2026-07-14 root cause does not apply here. Traefik itself was healthy throughout (llm.pve returned 200; ingress answered 404 on an unmatched route). Tracked in dryvist/nix-mac-performance#38.' },
+    { subject: 'Incident', body: 'Host RAM + disk exhaustion took down the apps tier: vikunja and openproject stopped answering (20s timeouts) and zammad returned 502, each on its own guest. The shared postgres-apps backend recovered on its own (port 5432 reopened, verified by probe) but the three app services did not auto-restart, so the outage outlived its cause. Ruled out this time: the firewall — dryvist/tofu-proxmox#646 ("add outbound_https rule to vikunja firewall") was already applied, with the repo at #683 and applies since, so the 2026-07-14 root cause does not apply here. Traefik itself was healthy throughout (llm.pve returned 200; ingress answered 404 on an unmatched route). Tracked in the macOS performance repo, issue #38.' },
   ]
 )
 
@@ -457,11 +457,11 @@ seed_ticket(
     incident_end: Time.utc(2026, 7, 17, 13, 0),
     affected_services: ['network'],
     root_cause: 'After standing up a dedicated Management VLAN (UniFi lan_mgmt) alongside the original management range, the operator manually deleted the Default network (UniFi lan_main) in the UniFi UI because the now-redundant range was "bothering me". That network carries the default gateway, so removing it dropped the default LAN. Restored manually in the UniFi UI.',
-    detection_method: 'user-report', source_issue: 'dryvist/tofu-unifi (lan_main / Default network)',
+    detection_method: 'user-report', source_issue: 'the network IaC repo (lan_main / Default network)',
   },
   articles: [
     { subject: 'Incident', body: 'The operator, having added a dedicated Management VLAN (UniFi lan_mgmt), deleted the original Default LAN (UniFi lan_main) directly in the UniFi UI, judging the two overlapping management ranges redundant. That network carries the default gateway, so its removal dropped the default LAN. The mistake was recognised and the network was restored in the UniFi UI (gateway back: pings ~2.7ms, http 301 -> https 200). Incident window is approximate (~1h, 2026-07-17 midday).' },
-    { subject: 'Follow-up (IaC drift)', body: 'lan_main is a tofu-managed resource (module.networks.unifi_network.this["lan_main"], from deployment/networks.json). It was never removed from code, so DESIRED state is correct — but the manual delete+restore diverged tofu STATE: the tracked network ID is stale and the restored network is an untracked new object. A future tofu-unifi plan/apply (or the periodic drift workflow) may try to RECREATE the Default LAN, re-running the outage automatically. Resolution: run a plan; if it wants to recreate lan_main, terraform state rm the stale entry and import the restored network ID so tofu re-adopts it. Runbook staged 2026-07-17.' },
+    { subject: 'Follow-up (IaC drift)', body: 'lan_main is a tofu-managed resource (module.networks.unifi_network.this["lan_main"], from deployment/networks.json). It was never removed from code, so DESIRED state is correct — but the manual delete+restore diverged tofu STATE: the tracked network ID is stale and the restored network is an untracked new object. A future network-IaC plan/apply (or the periodic drift workflow) may try to RECREATE the Default LAN, re-running the outage automatically. Resolution: run a plan; if it wants to recreate lan_main, terraform state rm the stale entry and import the restored network ID so tofu re-adopts it. Runbook staged 2026-07-17.' },
   ]
 )
 

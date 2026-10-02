@@ -1,0 +1,171 @@
+---
+# Pipeline directories + configs — ONE controller-side render, ONE remote
+# transfer, regardless of how many pipelines exist.
+#
+# Previously: one ansible.builtin.file loop created each pipeline directory
+# and a second ansible.builtin.template loop rendered each conf.yml, both
+# over the community.proxmox.proxmox_pct_remote connection, whose per-task
+# cost does not amortize across loop items (~6s per remote task, ~36s per
+# copied file; the directory loop alone measured 98s). cribl_stream_pipelines
+# (defaults/main/00-install.yml) now lists a dozen entries, so both loops
+# only got more expensive as pipelines were added. Every pipeline directory
+# and its conf.yml is instead rendered on the controller (delegate_to:
+# localhost — no pct_remote connection, so cost does not scale with pipeline
+# count), archived, and shipped to the guest as a single tar over ONE remote
+# unarchive. Same technique as the AutoKuma static-monitor render
+# (roles/status_stack/tasks/autokuma_static_monitors.yml, #2190).
+#
+# A checksum marker gates the transfer, same as that reference: unarchive's
+# own idempotency check diffs by mtime, and every controller-side render
+# lands in a brand-new tempfile with a fresh mtime, so an ungated unarchive
+# would report changed on every single converge and bounce the service every
+# run. The checksum is computed over the rendered CONTENTS only (never over
+# the .tar.gz, whose gzip header itself carries an mtime), so an unchanged
+# render is skipped entirely — the guest is never even asked to compare.
+#
+# --strip-components=1 drops the staging directory's own basename, which
+# community.general.archive always includes as the archive's sole top-level
+# entry when given a single directory path (it roots the archive at that
+# directory's parent and stores members under its basename).
+#
+# `mode` is deliberately omitted from the unarchive task: tar preserves each
+# entry's own permission bits from the archive (directories 0755 from the
+# task below, files 0644 from the copy task below) when run as root (this
+# play's `become: true`), so a single module-level mode would overwrite one
+# or the other instead of keeping both as before. owner/group ARE uniform
+# across every entry (cribl:cribl), so unarchive applies those directly via
+# its own owner/group parameters.
+
+- name: Render every pipeline conf.yml's content on the controller
+  ansible.builtin.set_fact:
+    cribl_stream_pipeline_contents: >-
+      {{ (cribl_stream_pipeline_contents | default({}))
+         | combine({item: lookup('ansible.builtin.template',
+                                  cribl_stream_role_dir ~ '/templates/pipelines/' ~ item ~ '/conf.yml.j2')}) }}
+  loop: "{{ cribl_stream_pipelines }}"
+  loop_control:
+    label: "{{ item }}"
+
+# One hash over every pipeline's rendered content, sorted by pipeline name so
+# it does not depend on loop-build order. Content only — never the archive
+# file, whose own gzip header carries an mtime that would make this compare
+# meaningless.
+- name: Compute the pipeline render checksum
+  ansible.builtin.set_fact:
+    cribl_stream_pipelines_checksum: >-
+      {{ (cribl_stream_pipeline_contents | dict2items | sort(attribute='key')
+          | map('to_json') | join('\u0000')) | hash('sha256') }}
+
+- name: Read the currently-applied pipeline render checksum
+  ansible.builtin.slurp:
+    src: "{{ cribl_stream_install_dir }}/local/cribl/.pipelines-checksum"
+  register: cribl_stream_pipelines_marker
+  failed_when: false
+
+- name: Determine whether the pipeline render actually changed
+  ansible.builtin.set_fact:
+    cribl_stream_pipelines_needs_render: >-
+      {{ (cribl_stream_pipelines_marker.content | default('') | b64decode | trim)
+         != cribl_stream_pipelines_checksum }}
+
+- name: Ensure the pipeline configs parent directory exists
+  ansible.builtin.file:
+    path: "{{ cribl_stream_install_dir }}/local/cribl/pipelines"
+    state: directory
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0755"
+
+- name: Create a local staging directory for the pipeline render (controller-side)
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: cribl-stream-pipelines-
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  register: cribl_stream_pipelines_staging
+  when: cribl_stream_pipelines_needs_render
+
+- name: Create each pipeline directory on the controller
+  ansible.builtin.file:
+    path: "{{ cribl_stream_pipelines_staging.path }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  loop: "{{ cribl_stream_pipelines }}"
+  loop_control:
+    label: "{{ item }}"
+  when: cribl_stream_pipelines_needs_render
+
+# Writes the EXACT string that was hashed above (no re-render), so the
+# shipped bytes can never drift from what the checksum decision was made on.
+- name: Write every pipeline conf.yml on the controller
+  ansible.builtin.copy:
+    content: "{{ cribl_stream_pipeline_contents[item] }}"
+    dest: "{{ cribl_stream_pipelines_staging.path }}/{{ item }}/conf.yml"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  loop: "{{ cribl_stream_pipelines }}"
+  loop_control:
+    label: "{{ item }}"
+  when: cribl_stream_pipelines_needs_render
+
+- name: Archive the rendered pipeline tree into one tarball
+  community.general.archive:
+    path: "{{ cribl_stream_pipelines_staging.path }}"
+    dest: "{{ cribl_stream_pipelines_staging.path }}.tar.gz"
+    format: gz
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: cribl_stream_pipelines_needs_render
+
+- name: Ship and extract every pipeline directory and config in one transfer
+  ansible.builtin.unarchive:
+    src: "{{ cribl_stream_pipelines_staging.path }}.tar.gz"
+    dest: "{{ cribl_stream_install_dir }}/local/cribl/pipelines"
+    remote_src: false
+    extra_opts:
+      - "--strip-components=1"
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+  when: cribl_stream_pipelines_needs_render
+  notify: Restart cribl stream
+
+- name: Persist the applied pipeline render checksum
+  ansible.builtin.copy:
+    content: "{{ cribl_stream_pipelines_checksum }}"
+    dest: "{{ cribl_stream_install_dir }}/local/cribl/.pipelines-checksum"
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0644"
+  when: cribl_stream_pipelines_needs_render
+
+- name: Remove the local pipeline-render staging files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  loop:
+    - "{{ cribl_stream_pipelines_staging.path | default('') }}"
+    - "{{ cribl_stream_pipelines_staging.path | default('') }}.tar.gz"
+  loop_control:
+    label: "{{ item | basename }}"
+  when: cribl_stream_pipelines_needs_render and (item | length > 0)

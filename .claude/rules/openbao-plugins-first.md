@@ -31,7 +31,7 @@ An engine-minted credential is short-lived, attributable to the run that asked
 for it, revocable by lease, and impossible to leak durably. A static credential
 is the opposite on all four counts: it lives until someone remembers to rotate
 it, it is attributable only to whoever pasted it in, revoking it breaks every
-unrelated consumer sharing it, and one transcript or log line leaks it forever.
+unrelated consumer sharing it, and one log line leaks it forever.
 
 The engines are already paid for — installed, version-pinned, checksum- and
 signature-verified, and mounted. Reaching past a working engine for KV

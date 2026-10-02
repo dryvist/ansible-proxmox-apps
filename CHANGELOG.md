@@ -1,5 +1,32 @@
 # Changelog
 
+## [4.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.51.0...v4.52.0) (2026-09-28)
+
+
+### Features
+
+* **glance:** one board — fold the Network + Media page into Services ([#2243](https://github.com/dryvist/ansible-proxmox-apps/issues/2243)) ([4fb059d](https://github.com/dryvist/ansible-proxmox-apps/commit/4fb059ddc5cd1ecd545a2310f10c38f6c34165e6))
+
+
+### Bug Fixes
+
+* **openbao:** keep the nodes' seal key id when the environment sets none ([#2244](https://github.com/dryvist/ansible-proxmox-apps/issues/2244)) ([b4ffde1](https://github.com/dryvist/ansible-proxmox-apps/commit/b4ffde1888f4ee436e8ad6023810b97ab671aef2))
+
+## [4.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.50.0...v4.51.0) (2026-09-27)
+
+
+### Features
+
+* **openbao:** generate a litellm-local-workstation router-key secret ([#2237](https://github.com/dryvist/ansible-proxmox-apps/issues/2237)) ([fec4fa5](https://github.com/dryvist/ansible-proxmox-apps/commit/fec4fa58cb909efd71c860340ab024383468bf71))
+
+## [4.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.49.0...v4.50.0) (2026-09-27)
+
+
+### Features
+
+* **openbao:** add the litellm-local-workstation generated field ([3d699de](https://github.com/dryvist/ansible-proxmox-apps/commit/3d699de81c944dfce1ca4c9a73a0f5709805b25b))
+* **openbao:** generate a litellm-local-workstation router-key secret ([b4a6b84](https://github.com/dryvist/ansible-proxmox-apps/commit/b4a6b8423c3c8ceb3e1768aceca63eb50ba38d37))
+
 ## [4.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.3...v4.49.0) (2026-09-25)
 
 

@@ -52,7 +52,7 @@ class InterruptedRunEvents(unittest.TestCase):
     def _plugin(self, enabled=True, token="tok"):
         # set_options(direct=...) does not populate _plugin_options outside the
         # plugin loader, so get_option raises KeyError. Same shape the rest of
-        # this suite uses (see RecordingCallback above).
+        # this suite uses (see CaptureCallback above).
         cb = telemetry.CallbackModule()
         cb._playbook_name = "site.yml"
         cb._plugin_options = {"enabled": enabled, "hec_token": token}

@@ -1,12 +1,12 @@
 # status_stack
 
-Gatus (catalog + OIDC + keystone synthetics), Uptime Kuma (operator status
+Gatus (catalog + OIDC + keystone uptime probes), Uptime Kuma (operator status
 UI) and AutoKuma (Kuma monitor sync) as one Docker-in-LXC compose project on
 the tofu `status` guest.
 
 ## Split
 
-- **Gatus** is the IaC synthetics source of record (catalog URLs, keystones,
+- **Gatus** is the IaC uptime-probe source of record (catalog URLs, keystones,
   OIDC client probes, plus the `monitor_targets`-derived ICMP/TCP/HTTP checks
   below) at `60s`, scraped by Prometheus.
 - **Uptime Kuma** is the status UI. Ansible creates the first admin via Kuma's

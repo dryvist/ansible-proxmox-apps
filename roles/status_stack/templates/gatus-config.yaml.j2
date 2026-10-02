@@ -1,5 +1,5 @@
 {{ ansible_managed | comment }}
-# Gatus — estate catalog synthetics + OIDC client registration probes.
+# Gatus — estate catalog uptime probes + OIDC client registration probes.
 # Interval is {{ status_stack_interval }} for every endpoint.
 #
 # Catalog URLs follow redirects. Authelia OAuth error pages (invalid_client)
@@ -9,6 +9,11 @@
 metrics: true
 storage:
   type: memory
+
+ui:
+  dashboard-heading: "{{ status_stack_ui_dashboard_heading }}"
+  default-sort-by: group
+  dark-mode: true
 
 # ntfy alerting — critical-infra groups (keystone/node/service) route to the
 # urgent topic; everything else (catalog/oidc/guest) uses the lower-priority
@@ -31,19 +36,26 @@ alerting:
         priority: {{ status_stack_ntfy_priority_urgent }}
 {% endfor %}
 
-# The full catalog, not the board-tiled subset: a route marked dashboard:false
-# (a compat path already tiled under a sibling name) still gets monitored — a
-# broken compat redirect is still a real outage even though it earns no tile
-# of its own.
+# Catalog services: the full set (services_monitor) plus any wall apps
+# (dashboard_catalog_services with ui:true) that don't already appear.
+# This ensures every wall app has a Gatus endpoint, derived from the same
+# catalog. A route marked dashboard:false still gets monitored — a broken
+# compat redirect is still a real outage even though it earns no tile.
 endpoints:
-{% for svc in dashboard_catalog_services_monitor | default([]) %}
+{# Build combined endpoint list: services_monitor plus wall-only apps, deduped by name and url. #}
+{% set _wall_apps = dashboard_catalog_services | default([]) | selectattr('ui') | list %}
+{% set _monitor_names = dashboard_catalog_services_monitor | default([]) | map(attribute='name') | list %}
+{% set _monitor_urls = dashboard_catalog_services_monitor | default([]) | map(attribute='url') | list %}
+{% set _wall_only = _wall_apps | rejectattr('name', 'in', _monitor_names) | rejectattr('url', 'in', _monitor_urls) | list %}
+{% set _endpoints = (dashboard_catalog_services_monitor | default([])) + _wall_only %}
+{% for svc in _endpoints %}
 {#- An SSO-gated public URL is answered by the Authelia login page, so probing
     it only proves Authelia is up. Those rows probe the guest directly
     (the catalog's probe_url); public rows keep the public URL and its
     certificate check. -#}
 {% set _direct = (svc.sso | default(true)) and (svc.probe_url | default('') | length > 0) %}
   - name: {{ svc.name }}
-    group: catalog-{{ svc.group | default('other') }}
+    group: "{{ dashboard_catalog_group_titles[svc.group | default('other')] | default(svc.group | default('other'), true) }} · {{ 'UI' if (svc.ui | default(true)) else 'API' }}"
     url: "{{ svc.probe_url if _direct else svc.url }}"
     interval: {{ status_stack_interval }}
     client:
@@ -68,7 +80,7 @@ endpoints:
 {% endfor %}
 {% for ep in status_stack_authenticated_endpoints | default([]) %}
   - name: {{ ep.name }}-authed
-    group: catalog-authed
+    group: "Catalog · Authenticated"
     url: "{{ ep.url }}"
     interval: {{ status_stack_interval }}
     headers:

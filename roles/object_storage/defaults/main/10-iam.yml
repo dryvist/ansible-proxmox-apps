@@ -1,0 +1,75 @@
+---
+# --- Per-bucket RustFS IAM credentials (ro/rw) ------------------------------
+# Every bucket above gets its own read-only and read-write RustFS user
+# (tasks/iam.yml), replacing the shared root credential every consumer uses
+# today. Bucket NAMES are derived from object_storage_default_buckets, never
+# a second hardcoded list.
+#
+# Secrets are generated at source, generate-once, using the shared
+# ansible-converge OpenBao identity — the SAME route object_storage already
+# uses for the offsite feature's credential (object_storage_offsite_bao_role_id
+# below), not a new identity and not servarr's fetch-openbao-secrets.sh.
+# roles/openbao templates/ansible-converge-policy.hcl.j2 grants that identity
+# create/update/read on secret/rustfs/* (wildcard: the whole subtree holds
+# ONLY these generated pairs, so a wildcard is already scoped to one purpose
+# and avoids needing this bucket list in scope where THAT policy renders, on
+# a host that never runs this role).
+#
+# Path grammar (the org's ratified secret-path convention, Vikunja EPIC 887):
+# <mount>/<service>/<instance>/<role>, always 4 segments --
+#   secret/rustfs/<bucket>/ro   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#                               AWS_ENDPOINT_URL, AWS_REGION
+#   secret/rustfs/<bucket>/rw   (same four fields)
+# Field names are bare (no service/instance/role prefix -- the path already
+# says all of that) and are the vendor's own S3-credential names, matching
+# the convention's own row for "anything speaking S3: Backblaze, RustFS, AWS" --
+# all four fields that row lists, not only the key pair, so a consumer on
+# another host never has to invent the endpoint or region itself.
+object_storage_iam_kv_mount: secret
+object_storage_iam_roles: [ro, rw]
+object_storage_iam_access_key_field: AWS_ACCESS_KEY_ID
+object_storage_iam_secret_key_field: AWS_SECRET_ACCESS_KEY
+object_storage_iam_endpoint_field: AWS_ENDPOINT_URL
+object_storage_iam_region_field: AWS_REGION
+object_storage_iam_access_key_length: 20
+object_storage_iam_secret_key_length: 40
+
+# The RustFS S3 API's endpoint as reached from OTHER guests -- never this
+# guest's own loopback/IP (object_storage_endpoint in 00-core.yml is loopback-
+# only, for the local admin CLI this role itself runs on). Set by tasks/iam.yml
+# from the live "s3" row in tofu_data.ingress (the same tofu-owned table
+# roles/traefik/defaults/main.yml reads as traefik_ingress_routes), asserted
+# to exist and not be SSO-gated, rather than composed here as a bare literal --
+# see tasks/iam.yml for the derivation and why.
+
+# Same route as object_storage_offsite_bao_* below: the shared ansible-converge
+# AppRole, from the environment, never a secret written to a file here.
+object_storage_iam_bao_addr: "{{ lookup('env', 'BAO_ADDR') | default('', true) }}"
+object_storage_iam_bao_role_id: >-
+  {{ lookup('env', 'CONVERGE_ROLE_ID')
+     | default(lookup('env', 'OPENBAO_APPROLE_ANSIBLE_ROLE_ID'), true) }}
+object_storage_iam_bao_secret_id: >-
+  {{ lookup('env', 'CONVERGE_SECRET_ID')
+     | default(lookup('env', 'OPENBAO_APPROLE_ANSIBLE_SECRET_ID'), true) }}
+object_storage_iam_validate_certs: true
+# community.hashi_vault's own "path is absent" message (same collection,
+# same wording roles/openbao_secrets' openbao_secrets_absent_msg_marker
+# checks -- kept as this role's own copy rather than a cross-role reference
+# so object_storage stays self-contained; a denied read must never be
+# concluded absent, exactly as elsewhere in this estate).
+object_storage_iam_absent_marker: Invalid or missing path
+
+# Bucket-scoped RustFS IAM policy actions per role. rw includes delete (the
+# secrets-separation "two keys per bucket" contract: rw = read+write,
+# including delete); ro is list+read only, never write.
+object_storage_iam_policy_actions:
+  ro:
+    - s3:GetObject
+    - s3:GetBucketLocation
+    - s3:ListBucket
+  rw:
+    - s3:GetObject
+    - s3:PutObject
+    - s3:DeleteObject
+    - s3:GetBucketLocation
+    - s3:ListBucket

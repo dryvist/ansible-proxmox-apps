@@ -1,0 +1,140 @@
+---
+# Per-bucket RustFS IAM: generate (in OpenBao) then create (in RustFS) one
+# read-only and one read-write user per bucket in object_storage_default_buckets,
+# each with its own bucket-scoped policy. Replaces the shared root credential
+# every consumer uses today.
+#
+# Two phases:
+#   1. iam_bucket.yml (this file, delegate_to localhost): generate-if-absent
+#      + read each bucket's ro/rw key pair from OpenBao via the shared
+#      ansible-converge identity, same route as object_storage_offsite's
+#      credential. Builds object_storage_bucket_credentials, keyed by bucket
+#      then role -- NOT flattened into one dict, because every bucket/role
+#      pair uses the SAME bare field names (AWS_ACCESS_KEY_ID,
+#      AWS_SECRET_ACCESS_KEY) by design (the org's secret-path convention
+#      puts the role in the PATH, not the field name), so a flat
+#      merge across paths -- what roles/openbao_secrets' shared domain
+#      fetcher does -- would silently collide every bucket's keys down to the
+#      last one read. This task file avoids that by keeping one Ansible
+#      fact per (bucket, role) instead of merging through that shared role.
+#   2. iam_provision.yml (runs on THIS host, the RustFS guest): calls the
+#      already-running RustFS server's own admin API (loopback, root creds)
+#      to create each user and bucket-scoped policy from the credentials
+#      phase 1 just resolved.
+#
+# SKIPS CLEANLY (same convention as every other OpenBao-reading role in this
+# estate) when BAO_ADDR or the ansible-converge AppRole envs are unset, so a
+# pre-migration converge keeps working and buckets keep using the root
+# credential until this is wired up.
+- name: Decide whether OpenBao is reachable for per-bucket IAM credentials
+  ansible.builtin.set_fact:
+    object_storage_iam_ready: >-
+      {{ (object_storage_iam_bao_addr | length > 0)
+         and (object_storage_iam_bao_role_id | length > 0)
+         and (object_storage_iam_bao_secret_id | length > 0) }}
+
+- name: WARN -- per-bucket RustFS IAM is not configured, buckets stay on the root credential
+  ansible.builtin.debug:
+    msg: >-
+      BAO_ADDR / CONVERGE_ROLE_ID / CONVERGE_SECRET_ID (or the
+      OPENBAO_APPROLE_ANSIBLE_* fallback) are not all set, so no per-bucket
+      RustFS IAM user was generated or created this run. Every bucket keeps
+      using the shared root credential until this is provided.
+  when: not object_storage_iam_ready
+
+- name: Generate-if-absent + read each bucket's ro/rw credentials from OpenBao
+  when: object_storage_iam_ready
+  no_log: true
+  block:
+    - name: Reset the per-bucket credential accumulator
+      ansible.builtin.set_fact:
+        object_storage_bucket_credentials: {}
+
+    # tofu_data.ingress is the SAME tofu-owned ingress table
+    # roles/traefik/defaults/main.yml reads as traefik_ingress_routes --
+    # propagated to every host in scope by inventory/load_tofu/propagate_facts.yml,
+    # no new plumbing needed here. Deriving the host from the live "s3" row
+    # (rather than composing "s3.{{ proxmox_domain }}" as a bare literal) means
+    # a route rename or an accidental sso flip in tofu-proxmox's ingress.tf
+    # fails this converge loudly instead of silently pointing every bucket's
+    # AWS_ENDPOINT_URL at a dead or SSO-gated host.
+    - name: Find the machine-S3 ingress route
+      ansible.builtin.set_fact:
+        object_storage_iam_ingress_route: >-
+          {{ (tofu_data.ingress | default([]))
+             | selectattr('name', 'equalto', 's3')
+             | list | first | default({}) }}
+
+    - name: Assert the machine-S3 ingress route exists and is not SSO-gated
+      ansible.builtin.assert:
+        that:
+          - object_storage_iam_ingress_route | length > 0
+          - not (object_storage_iam_ingress_route.sso | default(true))
+        fail_msg: >-
+          tofu_data.ingress has no "s3" route (or it is SSO-gated), so the
+          per-bucket RustFS credentials would carry a dead or wrong
+          AWS_ENDPOINT_URL. Check tofu-proxmox's ingress.tf for a rename or
+          an accidental sso flip on the machine-S3 route.
+        quiet: true
+
+    - name: Set the public S3 endpoint from the live ingress route
+      ansible.builtin.set_fact:
+        object_storage_iam_public_endpoint: >-
+          https://{{ object_storage_iam_ingress_route.hostname
+            | default(object_storage_iam_ingress_route.name, true) }}.{{ proxmox_domain }}
+
+    - name: Log in with the ansible-converge AppRole
+      community.hashi_vault.vault_login:
+        url: "{{ object_storage_iam_bao_addr }}"
+        auth_method: approle
+        role_id: "{{ object_storage_iam_bao_role_id }}"
+        secret_id: "{{ object_storage_iam_bao_secret_id }}"
+        validate_certs: "{{ object_storage_iam_validate_certs }}"
+      register: object_storage_iam_login
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_become: false
+
+    - name: Resolve each bucket's ro/rw credentials
+      ansible.builtin.include_tasks: iam_bucket.yml
+      loop: "{{ object_storage_default_buckets | map(attribute='name') | list }}"
+      loop_control:
+        loop_var: object_storage_iam_bucket
+
+  always:
+    - name: Revoke the OpenBao login token
+      community.hashi_vault.vault_write:
+        url: "{{ object_storage_iam_bao_addr }}"
+        auth_method: token
+        token: "{{ object_storage_iam_login.login.auth.client_token }}"
+        path: auth/token/revoke-self
+        data: {}
+        validate_certs: "{{ object_storage_iam_validate_certs }}"
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_become: false
+      when:
+        - object_storage_iam_login is defined
+        - object_storage_iam_login.login is defined
+      register: object_storage_iam_revoke
+      # Not fatal (same reasoning and shape as roles/openbao_secrets
+      # publish.yml): the token expires on its own TTL, and failing here
+      # would mask the real error of the block it is cleaning up.
+      ignore_errors: true
+      no_log: true
+
+    - name: Warn that the OpenBao login token was not revoked
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: revoking the per-bucket IAM login token failed; it stays
+          valid until its TTL expires. This did not affect the reads/writes
+          above.
+      when: object_storage_iam_revoke is failed
+
+- name: Create the RustFS users and bucket-scoped policies (this host's admin API)
+  ansible.builtin.include_tasks: iam_provision.yml
+  when:
+    - object_storage_iam_ready
+    - object_storage_bucket_credentials | default({}) | length > 0
