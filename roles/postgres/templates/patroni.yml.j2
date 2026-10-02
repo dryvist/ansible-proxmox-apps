@@ -55,17 +55,22 @@ bootstrap:
   initdb:
     - encoding: UTF8
     - data-checksums
-  pg_hba:
-    - local all all peer
-    - host replication {{ postgres_replication_user }} {{ postgres_replication_cidr }} scram-sha-256
-    - host all all {{ postgres_replication_cidr }} scram-sha-256
-  users:
-    {{ postgres_replication_user }}:
-      password: {{ postgres_replication_password }}
-      options:
-        - replication
 
 postgresql:
+  # Patroni writes pg_hba.conf from this list on every member (replacing the
+  # initdb default) and rewrites it on reload. The managed entries come from
+  # the same postgres_managed_databases list native mode feeds to
+  # roles_and_databases.yml. Loopback lines cover Patroni's own local
+  # superuser connection.
+  pg_hba:
+    - local all all peer
+    - host all all 127.0.0.1/32 scram-sha-256
+    - host all all ::1/128 scram-sha-256
+    - host replication {{ postgres_replication_user }} {{ postgres_replication_cidr }} scram-sha-256
+{% for db in postgres_managed_databases %}
+    - host {{ db.name }} {{ db.user }} {{ db.client_cidr }} scram-sha-256
+{% endfor %}
+    - host all all {{ postgres_replication_cidr }} scram-sha-256
   listen: 0.0.0.0:{{ postgres_port }}
   connect_address: {{ inventory_hostname }}{{ postgres_ha_fqdn_suffix }}:{{ postgres_port }}
   data_dir: {{ postgres_data_dir }}

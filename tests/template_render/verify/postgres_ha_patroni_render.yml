@@ -71,6 +71,11 @@
         postgres_ha_etcd_patroni_password: fixture-etcd-patroni-pw
         postgres_ha_patroni_api_password: fixture-patroni-api-pw
         postgres_ha_superuser_password: fixture-superuser-pw
+        postgres_managed_databases:
+          - name: fixture_db
+            user: fixture_user
+            password: fixture-db-pw
+            client_cidr: 198.51.100.0/24
 
     - name: Render etcd.yml.j2
       ansible.builtin.template:
@@ -114,6 +119,7 @@
     - name: Assert the Patroni config is scoped to the cluster and wires pgBackRest
       vars:
         patroni_content: "{{ _patroni_render.content | b64decode }}"
+        patroni_doc: "{{ patroni_content | from_yaml }}"
       ansible.builtin.assert:
         that:
           - "'scope: postgres-ai' in patroni_content"
@@ -135,6 +141,13 @@
           - "'key: /etc/patroni' not in patroni_content"
           - "'username: patroni-dcs' in patroni_content"
           - "'username: root' not in patroni_content"
+          # Patroni owns pg_hba: the managed entries render into
+          # postgresql.pg_hba, and bootstrap.users (rejected by Patroni >= 4)
+          # is gone.
+          - "'host fixture_db fixture_user 198.51.100.0/24 scram-sha-256' in patroni_doc.postgresql.pg_hba"
+          - "'host replication replicator 198.51.100.0/24 scram-sha-256' in patroni_doc.postgresql.pg_hba"
+          - "'users' not in patroni_doc.bootstrap"
+          - "'pg_hba' not in patroni_doc.bootstrap"
         fail_msg: "patroni.yml.j2 did not render the expected cluster-scoped config:\n{{ patroni_content }}"
 
     - name: Patroni/etcd template render assertions PASSED
