@@ -3,6 +3,8 @@
 from copy import deepcopy
 import unittest
 
+from ansible.template import trust_as_template
+
 from test_openbao_denied_vs_absent_writes import _all, _find, _render
 
 PROFILE = "roles/workstation_connections/tasks/main.yml"
@@ -27,8 +29,11 @@ class ConnectionProfile(unittest.TestCase):
             self.assertEqual(_all(read_gate["ansible.builtin.assert"]["that"], {"workstation_connections_existing": {"msg": message}}), expected)
         cap_gate = _find(PROFILE, "Require configuration read and create or update capability")
         for capabilities, expected in [(["read", "update"], True), (["read"], False), (["deny"], False)]:
-            variables = {"workstation_connections_capabilities": {"data": {"data": {"config/data/proxman/main": capabilities}}}}
-            self.assertEqual(_all(cap_gate["ansible.builtin.assert"]["that"], variables), expected)
+            path_capabilities = {"config/data/proxman/main": capabilities}
+            for response in [path_capabilities, {"data": path_capabilities}]:
+                variables = {"workstation_connections_capabilities": {"data": response}}
+                variables.update({key: trust_as_template(value) for key, value in cap_gate["vars"].items()})
+                self.assertEqual(_all(cap_gate["ansible.builtin.assert"]["that"], variables), expected)
 
 if __name__ == "__main__":
     unittest.main()
