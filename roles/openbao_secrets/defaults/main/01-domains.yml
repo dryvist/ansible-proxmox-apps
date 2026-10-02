@@ -138,6 +138,18 @@ openbao_secrets_domains:
       # loud on the empty values rather than the KV prefetch failing here.
       - path: apps/github-runner-arc
         optional: true
+      # UniFi controller connection (issue: unpoller/unifi_metrics silently
+      # rendered an empty controller URL under Semaphore, which never exports
+      # UNIFI_API into the run's environment). secret/infrastructure/unifi is
+      # the single source of truth the network IaC repo's Terraform provider
+      # also reads; its fields are
+      # UPPERCASE (UNIFI_API, UNIFI_USERNAME, UNIFI_PASSWORD, ...), unlike the
+      # app-namespaced lowercase fields elsewhere in this flat "apps" merge —
+      # no collision either way. The apps AppRole's policy carries the read
+      # grant for this exact path (roles/openbao templates/apps-policy.hcl.j2),
+      # so this reuses the domain already fetched for cribl_stream_group
+      # rather than minting a dedicated AppRole for one controller URL.
+      - infrastructure/unifi
   - name: ntfy
     paths:
       # Slack incoming-webhook URLs keyed by topic, for the ntfy alert hub's
@@ -184,3 +196,14 @@ openbao_secrets_operator_domains:
   - monitoring
   - local-cloud
   - observability
+
+# Optional per-run scoping (see playbooks/site/00-load-and-telemetry.yml,
+# whose pre-fetch play is the only current caller that sets these): a domain
+# is skipped only when BOTH are true -- openbao_secrets_domain_groups names
+# at least one consumer group for it, AND none of those groups appear in
+# openbao_secrets_active_groups. Left at their empty defaults, every domain
+# in openbao_secrets_domains above is fetched, exactly as before this became
+# configurable -- this is the contract every OTHER caller of this role
+# relies on.
+openbao_secrets_domain_groups: {}
+openbao_secrets_active_groups: []

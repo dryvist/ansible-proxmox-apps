@@ -1,0 +1,265 @@
+---
+# AutoKuma static-monitor render — ONE controller-side render, ONE remote
+# transfer, regardless of how many monitor targets exist.
+#
+# AutoKuma's static-monitors directory is strictly one monitor per file: the
+# filename (minus extension) becomes the AutoKuma id. Confirmed against the
+# upstream docs before writing this — packing several monitors into one file
+# is not an option:
+#   "Place .json or .toml files in the directory configured by
+#    AUTOKUMA__STATIC_MONITORS. [...] The filename (without extension)
+#    becomes the AutoKuma ID for the monitor."
+#   https://autokuma.bigboot.dev/dev/autokuma/static-monitors/ ("Setup")
+# The example file body there is a single flat object (type/name/url/...),
+# never an array of monitors, confirming the one-file-one-monitor shape.
+#
+# So every file is instead rendered on the controller (delegate_to:
+# localhost — no pct_remote connection, so cost does not scale with target
+# count) and shipped to the guest as a single tar over ONE remote unarchive.
+# A checksum marker skips that transfer entirely when the rendered set is
+# unchanged from the last applied one.
+
+- name: Ensure the AutoKuma static-monitors directory exists
+  ansible.builtin.file:
+    path: "{{ status_stack_autokuma_static_monitors_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Build the combined AutoKuma monitor list from monitor_targets
+  ansible.builtin.set_fact:
+    status_stack_autokuma_monitors: >-
+      {{ (status_stack_monitor_targets.icmp | map('combine', {'kind': 'ping'}) | list)
+         + (status_stack_monitor_targets.tcp | map('combine', {'kind': 'port'}) | list)
+         + (status_stack_monitor_targets.http | map('combine', {'kind': 'http'}) | list) }}
+
+- name: Find existing AutoKuma static-monitor files (for stale-target cleanup)
+  ansible.builtin.find:
+    paths: "{{ status_stack_autokuma_static_monitors_dir }}"
+    patterns: "*.json"
+  register: status_stack_autokuma_existing_files
+
+- name: Guard against wiping every AutoKuma monitor on a degenerate empty target list
+  ansible.builtin.assert:
+    that:
+      - status_stack_autokuma_monitors | length > 0
+    fail_msg: >-
+      status_stack_monitor_targets produced zero monitors (tofu_data or
+      monitor_targets is likely empty/malformed this run) but
+      {{ status_stack_autokuma_existing_files.files | length }} AutoKuma
+      static-monitor file(s) already exist in
+      {{ status_stack_autokuma_static_monitors_dir }}. Refusing to render a
+      replacement set that would delete all of them — regenerate the
+      published tofu inventory and re-run instead of trusting this pass.
+  when: status_stack_autokuma_existing_files.files | length > 4
+
+# One dict: filename (the AutoKuma id) -> monitor definition, built entirely
+# from local facts (set_fact never opens the remote connection). Rendered
+# and shipped as a single archive below, never one remote task per monitor.
+- name: Build the fixed (non-scaling) AutoKuma static-monitor entries
+  ansible.builtin.set_fact:
+    status_stack_autokuma_files: >-
+      {{ {
+        'ntfy.json': {
+          'type': 'notification',
+          'active': true,
+          'name': 'ntfy',
+          'config': {
+            'type': 'ntfy',
+            'ntfyserverurl': status_stack_ntfy_url,
+            'ntfytopic': status_stack_ntfy_topic_urgent,
+            'ntfyPriority': status_stack_ntfy_priority_urgent,
+            'ntfyPriorityDown': status_stack_ntfy_priority_urgent,
+            'ntfyAuthenticationMethod': 'usernamePassword' if (status_stack_ntfy_username | length > 0) else 'none',
+            'ntfyusername': status_stack_ntfy_username,
+            'ntfypassword': status_stack_ntfy_password,
+          },
+        },
+        'group-guest.json': {'type': 'group', 'name': 'Guest'},
+        'group-node.json': {'type': 'group', 'name': 'Node'},
+        'group-service.json': {'type': 'group', 'name': 'Service'},
+        'group-deadman.json': {'type': 'group', 'name': 'Deadman'},
+      } }}
+  no_log: true # the ntfy entry carries the ntfy password
+
+# accepted_statuscodes format (an array of "<code>-<code>" range strings) is
+# reasoned from Uptime Kuma's UI-driven multi-select, not exercised against a
+# live instance — flag it on first real converge if AutoKuma rejects it.
+- name: Add per-target monitors to the AutoKuma render map
+  ansible.builtin.set_fact:
+    status_stack_autokuma_files: >-
+      {{ status_stack_autokuma_files
+         | combine({(item.kind ~ '-' ~ item.name ~ '.json'): _monitor}) }}
+  vars:
+    _interval_seconds: "{{ status_stack_interval | regex_replace('s$', '') | int }}"
+    _monitor: >-
+      {{
+        {
+          'type': item.kind,
+          'name': item.name,
+          'parent_name': 'group-' ~ item.group,
+          'notification_name_list': ['ntfy'],
+          'interval': _interval_seconds,
+        }
+        | combine({'hostname': item.fqdn} if item.kind in ['ping', 'port'] else {})
+        | combine({'port': item.port} if item.kind == 'port' else {})
+        | combine({
+            'url': 'http://' ~ item.fqdn ~ ':' ~ item.port ~ item.path,
+            'accepted_statuscodes': item.expect_status
+              | map('string') | map('regex_replace', '^(.*)$', '\\1-\\1') | list,
+          } if item.kind == 'http' else {})
+      }}
+  loop: "{{ status_stack_autokuma_monitors }}"
+  loop_control:
+    label: "{{ item.kind }}-{{ item.name }}"
+
+# Deadman push monitors: one per status_stack_deadman_endpoints entry, so the
+# same pushers that report to the Gatus external endpoints also report to
+# Uptime Kuma. The push token is derived from the shared deadman token and the
+# name (sha256, first 20 chars), so every pusher can compute its own URL from
+# the one secret it already holds; `interval` is the heartbeat after which a
+# silent pusher is marked down.
+- name: Add deadman push monitors to the AutoKuma render map
+  ansible.builtin.set_fact:
+    status_stack_autokuma_files: >-
+      {{ status_stack_autokuma_files
+         | combine({('push-' ~ item.name ~ '.json'): _push_monitor}) }}
+  vars:
+    _seconds: >-
+      {{ (item.heartbeat[:-1] | int)
+         * ({'s': 1, 'm': 60, 'h': 3600}[item.heartbeat[-1]]) }}
+    _push_monitor:
+      type: push
+      name: "{{ item.name }}"
+      parent_name: group-deadman
+      notification_name_list: ["ntfy"]
+      interval: "{{ _seconds | int }}"
+      retry_interval: "{{ _seconds | int }}"
+      max_retries: 0
+      push_token: "{{ ((status_stack_deadman_token ~ ':' ~ item.name) | hash('sha256'))[:20] }}"
+  loop: "{{ status_stack_deadman_endpoints }}"
+  loop_control:
+    label: "push-{{ item.name }}"
+  no_log: true
+
+# One checksum over the whole render map, sorted by filename so it does not
+# depend on loop-build order. An unchanged monitor set is then a no-op on the
+# remote host instead of a full re-render + transfer every run.
+- name: Compute the AutoKuma render-set checksum
+  ansible.builtin.set_fact:
+    status_stack_autokuma_render_checksum: >-
+      {{ (status_stack_autokuma_files | dict2items | sort(attribute='key')
+          | map('to_json') | join('\u0000')) | hash('sha256') }}
+  no_log: true
+
+- name: Read the currently-applied AutoKuma render checksum
+  ansible.builtin.slurp:
+    src: "{{ status_stack_autokuma_static_monitors_dir | dirname }}/.rendered-checksum"
+  register: status_stack_autokuma_marker
+  failed_when: false
+
+- name: Determine whether the AutoKuma render actually changed
+  ansible.builtin.set_fact:
+    status_stack_autokuma_needs_render: >-
+      {{ (status_stack_autokuma_marker.content | default('') | b64decode | trim)
+         != status_stack_autokuma_render_checksum }}
+
+- name: Create a local staging directory for the AutoKuma render (controller-side, no remote transport)
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: autokuma-static-monitors-
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  register: status_stack_autokuma_staging
+  when: status_stack_autokuma_needs_render
+
+# One loop, but every iteration runs on the controller (delegate_to:
+# localhost) — no pct_remote connection, so its cost does not scale with the
+# monitor count the way the previous per-target `copy` over the remote
+# connection did.
+- name: Render each AutoKuma static-monitor file on the controller
+  ansible.builtin.copy:
+    dest: "{{ status_stack_autokuma_staging.path }}/{{ item.key }}"
+    content: "{{ item.value | to_nice_json }}"
+    mode: "0600"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  loop: "{{ status_stack_autokuma_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+  when: status_stack_autokuma_needs_render
+
+- name: Archive the staged AutoKuma monitor files into one tarball
+  community.general.archive:
+    path: "{{ status_stack_autokuma_staging.path }}"
+    dest: "{{ status_stack_autokuma_staging.path }}.tar.gz"
+    format: gz
+    mode: "0600" # the archive carries secrets (ntfy password, push tokens)
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: status_stack_autokuma_needs_render
+
+# ONE remote task ships and extracts every monitor file, regardless of count.
+# --strip-components=1 drops the staging directory's own basename, which
+# community.general.archive always includes as the archive's sole top-level
+# entry when given a single directory path (it roots the archive at that
+# directory's parent and stores members under its basename).
+- name: Ship and extract the AutoKuma monitor set in one transfer
+  ansible.builtin.unarchive:
+    src: "{{ status_stack_autokuma_staging.path }}.tar.gz"
+    dest: "{{ status_stack_autokuma_static_monitors_dir }}"
+    remote_src: false
+    extra_opts:
+      - "--strip-components=1"
+    owner: root
+    group: root
+  when: status_stack_autokuma_needs_render
+  notify: Restart status stack
+
+- name: Persist the applied AutoKuma render checksum
+  ansible.builtin.copy:
+    content: "{{ status_stack_autokuma_render_checksum }}"
+    dest: "{{ status_stack_autokuma_static_monitors_dir | dirname }}/.rendered-checksum"
+    owner: root
+    group: root
+    mode: "0600"
+  when: status_stack_autokuma_needs_render
+
+- name: Remove the local AutoKuma staging files (they carry secrets)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  loop:
+    - "{{ status_stack_autokuma_staging.path | default('') }}"
+    - "{{ status_stack_autokuma_staging.path | default('') }}.tar.gz"
+  loop_control:
+    label: "{{ item | basename }}"
+  when: status_stack_autokuma_needs_render and (item | length > 0)
+
+- name: Remove AutoKuma static-monitor files for decommissioned targets
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  vars:
+    _expected_files: "{{ status_stack_autokuma_files.keys() | list }}"
+  loop: "{{ status_stack_autokuma_existing_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (item.path | basename) not in _expected_files
+  notify: Restart status stack

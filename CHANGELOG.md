@@ -1,5 +1,50 @@
 # Changelog
 
+## [4.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.52.0...v4.53.0) (2026-10-02)
+
+
+### Features
+
+* **cribl_stream:** fan CriblMetrics internal metrics to VictoriaMetrics ([#2231](https://github.com/dryvist/ansible-proxmox-apps/issues/2231)) ([bf546bd](https://github.com/dryvist/ansible-proxmox-apps/commit/bf546bdfa8a68d42877b84aa1f47a2b49098e8ad))
+* **cribl:** mirror dryvist cc-* pack releases to object storage ([03b999b](https://github.com/dryvist/ansible-proxmox-apps/commit/03b999b7116b2a0ec551928232c32c9638e324fd))
+* **zammad,cribl_edge:** Security IDS group, svc-cribl identity, Edge IDS wiring ([#2257](https://github.com/dryvist/ansible-proxmox-apps/issues/2257)) ([52dd135](https://github.com/dryvist/ansible-proxmox-apps/commit/52dd135a2bb5d621cf24a642af52085eb32ec372))
+
+
+### Bug Fixes
+
+* **openbao:** bind the ai-sessions-backup AppRole to the workstation class ([7e0a7af](https://github.com/dryvist/ansible-proxmox-apps/commit/7e0a7af5490defedcbeddc2fb4decc00e7d04f6a))
+* **openbao:** bind the ai-sessions-backup AppRole to the workstation class ([aac2976](https://github.com/dryvist/ansible-proxmox-apps/commit/aac297603929c15a00c18f92cfd038fc0b44f421))
+* **openbao:** finish a rotation whose previous secret_id already expired ([#2258](https://github.com/dryvist/ansible-proxmox-apps/issues/2258)) ([c180fe9](https://github.com/dryvist/ansible-proxmox-apps/commit/c180fe954888e7431291cb812bd5c2c55697da68))
+* **playbooks:** tag ai-VLAN PostgreSQL play with postgres ([#2252](https://github.com/dryvist/ansible-proxmox-apps/issues/2252)) ([cff650b](https://github.com/dryvist/ansible-proxmox-apps/commit/cff650b91def15c43759e7963f7f2ef6f4bb6aa1))
+* **tests:** load real cribl_edge role defaults in template-render test ([#2208](https://github.com/dryvist/ansible-proxmox-apps/issues/2208)) ([04c9c38](https://github.com/dryvist/ansible-proxmox-apps/commit/04c9c381843cc49b04050ca189a8a066e9eb3579))
+
+## [4.52.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.51.0...v4.52.0) (2026-09-28)
+
+
+### Features
+
+* **glance:** one board — fold the Network + Media page into Services ([#2243](https://github.com/dryvist/ansible-proxmox-apps/issues/2243)) ([4fb059d](https://github.com/dryvist/ansible-proxmox-apps/commit/4fb059ddc5cd1ecd545a2310f10c38f6c34165e6))
+
+
+### Bug Fixes
+
+* **openbao:** keep the nodes' seal key id when the environment sets none ([#2244](https://github.com/dryvist/ansible-proxmox-apps/issues/2244)) ([b4ffde1](https://github.com/dryvist/ansible-proxmox-apps/commit/b4ffde1888f4ee436e8ad6023810b97ab671aef2))
+
+## [4.51.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.50.0...v4.51.0) (2026-09-27)
+
+
+### Features
+
+* **openbao:** generate a litellm-local-workstation router-key secret ([#2237](https://github.com/dryvist/ansible-proxmox-apps/issues/2237)) ([fec4fa5](https://github.com/dryvist/ansible-proxmox-apps/commit/fec4fa58cb909efd71c860340ab024383468bf71))
+
+## [4.50.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.49.0...v4.50.0) (2026-09-27)
+
+
+### Features
+
+* **openbao:** add the litellm-local-workstation generated field ([3d699de](https://github.com/dryvist/ansible-proxmox-apps/commit/3d699de81c944dfce1ca4c9a73a0f5709805b25b))
+* **openbao:** generate a litellm-local-workstation router-key secret ([b4a6b84](https://github.com/dryvist/ansible-proxmox-apps/commit/b4a6b8423c3c8ceb3e1768aceca63eb50ba38d37))
+
 ## [4.49.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.48.3...v4.49.0) (2026-09-25)
 
 

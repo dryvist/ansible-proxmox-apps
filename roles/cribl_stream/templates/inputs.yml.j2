@@ -55,7 +55,7 @@ inputs:
       # (sourcetype ubiquiti:firewall, already stamped at Edge — see the
       # note above) arrives here too. unifi_syslog_to_metrics drops every
       # other sourcetype up front (native Drop function) and derives
-      # unifi_firewall_action_total from the rest, fanned to both metric
+      # unifi_vlan_fw_events_total from the rest, fanned to both metric
       # stores. The raw-event path (force_splunk_meta -> splunk_hec above)
       # is untouched.
       - output: splunk_hec
@@ -109,6 +109,21 @@ inputs:
 {% endif %}
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% endfor %}
+  metrics:in_pve_metrics:
+    id: in_pve_metrics
+    # PVE's native External Metric Server (Graphite wire protocol, TCP —
+    # tofu-proxmox proxmox_metrics_server).
+    type: metrics
+    disabled: false
+    host: "0.0.0.0"
+    tcpPort: {{ cribl_stream_pve_metrics_port }}
+    sendToRoutes: false
+    connections:
+      - output: splunk_hec
+        pipeline: pve_metrics_normalize
+      - output: victoriametrics_rw
+        pipeline: pve_metrics_normalize
+    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   prometheus_rw:in_prometheus_rw:
     id: in_prometheus_rw
     type: prometheus_rw
@@ -233,3 +248,9 @@ inputs:
       - output: splunk_hec
         pipeline: cribl_internal
 {% endif %}
+{# Second leg, metrics only (CriblLogs above stays Splunk-only: logs don't
+   fit a Prometheus sink). CriblMetrics events are native metrics
+   (__criblMetrics), so they fan to victoriametrics_rw too, same pattern as
+   in_prometheus_rw/in_unpoller. This leg has no pipeline: the Splunk
+   index/sourcetype stamping pipeline does not apply to a metrics sink. #}
+      - output: victoriametrics_rw

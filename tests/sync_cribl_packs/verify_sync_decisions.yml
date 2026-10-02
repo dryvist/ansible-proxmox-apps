@@ -1,0 +1,66 @@
+---
+# Verifies the repo-name filter and the needs_sync decision logic from
+# playbooks/tasks/sync-cribl-packs/discover-and-resolve.yml and
+# sync-and-publish.yml, without touching the network or object storage.
+#
+# Run: ansible-playbook -i localhost, tests/sync_cribl_packs/verify_sync_decisions.yml
+- name: Test cc- repo-name filtering
+  hosts: localhost
+  gather_facts: false
+  vars:
+    org_repos:
+      - {name: cc-stream-unifi-firewall-io}
+      - {name: cc-edge-vscode-io}
+      - {name: not-a-pack}
+      - {name: homelab-contracts}
+      - {name: cc-stream-unifi-firewall-io} # duplicate: a second page re-listing the same repo
+  tasks:
+    - name: Filter to cc-* names, deduped and sorted
+      ansible.builtin.set_fact:
+        filtered: >-
+          {{ org_repos | map(attribute='name') | select('match', '^cc-')
+             | unique | sort | list }}
+
+    - name: Only cc-* repos survive, deduplicated
+      ansible.builtin.assert:
+        that:
+          - filtered == ['cc-edge-vscode-io', 'cc-stream-unifi-firewall-io']
+        fail_msg: "unexpected filtered set: {{ filtered }}"
+        success_msg: "cc- filter is correct: {{ filtered }}"
+
+- name: Test needs_sync decisions (object-storage tag vs resolved latest)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cases:
+      # No object in the bucket yet -> MUST sync
+      - name: missing-object
+        item: {rc: 1, stdout: "", item: {name: a, desired_version: v1.0.0}}
+        expect: true
+      # Bucket tag matches resolved latest -> already current, skip
+      - name: already-current
+        item: {rc: 0, stdout: "v1.0.0", item: {name: a, desired_version: v1.0.0}}
+        expect: false
+      # Bucket tag is an older release -> MUST sync
+      - name: drifted
+        item: {rc: 0, stdout: "v0.9.0", item: {name: a, desired_version: v1.0.0}}
+        expect: true
+      # Trailing whitespace from `aws ... --output text` must not force a
+      # spurious re-sync of an already-current pack.
+      - name: whitespace-tolerant
+        item: {rc: 0, stdout: "v1.0.0\n", item: {name: a, desired_version: v1.0.0}}
+        expect: false
+  tasks:
+    - name: Evaluate needs_sync for each case
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              item.item.rc != 0
+              or (item.item.stdout | default('') | trim) != (item.item.item.desired_version | string | trim)
+            ) == item.expect
+        fail_msg: "case {{ item.name }}: expected needs_sync={{ item.expect }}"
+        success_msg: "case {{ item.name }}: OK (needs_sync={{ item.expect }})"
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"

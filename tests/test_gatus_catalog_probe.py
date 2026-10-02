@@ -16,38 +16,55 @@ import yaml
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/status_stack/templates/gatus-config.yaml.j2"
 
 
-def render(services: list[dict]) -> dict[str, dict]:
+def render(services: list[dict], dashboard_catalog_services: list[dict] | None = None) -> dict[str, dict]:
+    # If dashboard_catalog_services not specified, default to services for backward compatibility.
+    if dashboard_catalog_services is None:
+        dashboard_catalog_services = services
+
     env = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined)
     env.filters["comment"] = lambda s: f"# {s}"
     env.filters["regex_replace"] = lambda s, pat, rep="": re.sub(pat, rep, s)
     text = env.from_string(TEMPLATE.read_text()).render(
         ansible_managed="managed",
+        dashboard_catalog_services=dashboard_catalog_services,
         dashboard_catalog_services_monitor=services,
+        dashboard_catalog_group_titles={"apps": "Apps", "media": "Media", "other": "Other"},
         status_stack_interval="60s",
         status_stack_catalog_status_overrides={},
         status_stack_authelia_error_patterns=["invalid_client"],
         status_stack_failure_threshold=3,
         status_stack_ntfy_priority_degraded=3,
         status_stack_ntfy_priority_urgent=5,
+        status_stack_ntfy_url="https://ntfy.example.test/observability",
+        status_stack_ntfy_topic_degraded="observability",
+        status_stack_ntfy_topic_urgent="keystone",
+        status_stack_ui_dashboard_heading="Homelab Status",
+        status_stack_authelia_public_url="https://authelia.example.test",
+        status_stack_deadman_token="test-token",
+        status_stack_kuma_keystones=[],
+        status_stack_oidc_clients=[],
+        status_stack_authenticated_endpoints=[],
+        status_stack_monitor_targets={"icmp": [], "tcp": [], "http": []},
+        status_stack_deadman_endpoints=[],
     )
     return {ep["name"]: ep for ep in yaml.safe_load(text)["endpoints"]}
 
 
 class GatusCatalogProbe(unittest.TestCase):
     def test_sso_row_probes_the_guest_without_a_cert_check(self):
-        ep = render([{"name": "app", "sso": True, "url": "https://app.example.test",
+        ep = render(services=[{"name": "app", "sso": True, "url": "https://app.example.test",
                       "probe_url": "http://guest:8080"}])["app"]
         self.assertEqual(ep["url"], "http://guest:8080")
         self.assertFalse(any("CERTIFICATE" in c for c in ep["conditions"]))
 
     def test_public_row_keeps_the_public_url_and_cert_check(self):
-        ep = render([{"name": "pub", "sso": False, "url": "https://pub.example.test",
+        ep = render(services=[{"name": "pub", "sso": False, "url": "https://pub.example.test",
                       "probe_url": "http://guest:80"}])["pub"]
         self.assertEqual(ep["url"], "https://pub.example.test")
         self.assertIn("[CERTIFICATE_EXPIRATION] > 240h", ep["conditions"])
 
     def test_sso_row_without_a_probe_url_falls_back_to_the_public_url(self):
-        ep = render([{"name": "pool", "sso": True, "url": "https://pool.example.test",
+        ep = render(services=[{"name": "pool", "sso": True, "url": "https://pool.example.test",
                       "probe_url": ""}])["pool"]
         self.assertEqual(ep["url"], "https://pool.example.test")
         self.assertIn("[CERTIFICATE_EXPIRATION] > 240h", ep["conditions"])
@@ -58,10 +75,34 @@ class GatusCatalogProbe(unittest.TestCase):
         # compat redirect is still a real outage, so Gatus must monitor it
         # even though dashboard_catalog_services (the board-facing fact) drops
         # it entirely.
-        eps = render([{"name": "llm-ui-legacy", "sso": True,
+        eps = render(services=[{"name": "llm-ui-legacy", "sso": True,
                        "url": "https://llm.example.test/ui",
                        "probe_url": "http://guest:4000", "dashboard": False}])
         self.assertIn("llm-ui-legacy", eps)
+
+    def test_every_wall_app_gets_a_gatus_endpoint(self):
+        # The wall shows apps from dashboard_catalog_services | selectattr('ui').
+        # Gatus must explicitly monitor each one, even if it's not in
+        # dashboard_catalog_services_monitor (a wall-only entry).
+        monitor_apps = [
+            {"name": "dash", "sso": True, "url": "https://dash.example.test",
+             "probe_url": "http://dash-guest:3000", "ui": True, "dashboard": True},
+        ]
+        wall_apps = [
+            {"name": "dash", "sso": True, "url": "https://dash.example.test",
+             "probe_url": "http://dash-guest:3000", "ui": True, "dashboard": True},
+            {"name": "wall-only", "sso": True, "url": "https://wall-only.example.test",
+             "probe_url": "http://wall-guest:8080", "ui": True, "dashboard": False},
+        ]
+        # Simulate: dashboard_catalog_services_monitor has dash; wall also includes wall-only.
+        # Wall-only must be added even though not in monitor.
+        eps = render(
+            services=monitor_apps,
+            dashboard_catalog_services=wall_apps
+        )
+        # Both wall apps must appear in endpoints; wall-only deduped into single list.
+        self.assertIn("dash", eps)
+        self.assertIn("wall-only", eps)
 
 
 if __name__ == "__main__":
