@@ -121,10 +121,28 @@ outputs:
     otlpVersion: "1.3.1"
     authType: token
     token: "{{ cribl_stream_phoenix_api_key }}"
-    # WHAT: a secondary sink dropping must not gate in_otel admission.
-    onBackpressure: drop
-    pqEnabled: true
+    # Bounded exponential backoff on retryable responses and timeouts:
+    # 1s doubling to a 60s ceiling, honoring a Retry-After header.
+    responseRetrySettings:
+{% for status in [429, 502, 503, 504] %}
+      - httpStatus: {{ status }}
+        initialBackoff: 1000
+        backoffRate: 2
+        maxBackoff: 60000
+{% endfor %}
+    timeoutRetrySettings:
+      timeoutRetry: true
+      initialBackoff: 1000
+      backoffRate: 2
+      maxBackoff: 60000
+    responseHonorRetryAfterHeader: true
+    # Batches that exhaust their retries spill to a capped disk queue (error
+    # mode: only while the destination is failing); a full queue drops new
+    # events, so this secondary sink never gates in_otel admission.
+    onBackpressure: queue
+    pqMode: error
+    pqOnBackpressure: drop
     pqPath: "$CRIBL_HOME/state/queues"
-    pqMaxFileSize: "1 GB"
-    pqMaxSize: "5 GB"
-    pqCompress: none
+    pqMaxFileSize: "100 MB"
+    pqMaxSize: "1 GB"
+    pqCompress: gzip
