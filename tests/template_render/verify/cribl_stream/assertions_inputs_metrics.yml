@@ -23,18 +23,38 @@
       - "'type: prometheus' in _cribl_stream_inputs"
       - "'discoveryType: static' in _cribl_stream_inputs"
       - "'localhost:9130' in _cribl_stream_inputs"
-      - "'pollInterval: 30' in _cribl_stream_inputs"
+      - "'targetList:' in _cribl_stream_inputs"
+      - "'interval: 1' in _cribl_stream_inputs"
+      - "'pollInterval' not in _cribl_stream_inputs"
       - "'pipeline: prometheus_to_unifi_metrics' in _cribl_stream_inputs"
-      - "_cribl_stream_inputs.count('output: victoriametrics_rw') == 7"
+      - "_cribl_stream_inputs.count('output: victoriametrics_rw') == 8"
     fail_msg: >-
       inputs.yml.j2 must include the unpoller Prometheus SCRAPER source
       (in_unpoller, static discovery, fixture target localhost:9130),
       connected to BOTH (prometheus_to_unifi_metrics -> splunk_hec) and
       victoriametrics_rw, per the operator's every-source-to-every-sink rule
-      — seven total victoriametrics_rw connections render in this fixture:
+      — eight total victoriametrics_rw connections render in this fixture:
       prometheus_rw, in_cribl_s2s_metrics, this input, unifi_syslog_to_metrics,
-      ipfix_to_metrics, in_pve_metrics and cribl:CriblMetrics, each fanning
-      its own source to that same sink
+      ipfix_to_metrics, in_pve_metrics, mlx_metrics_normalize and
+      cribl:CriblMetrics, each fanning its own source to that same sink
+
+- name: Assert mlx_metrics_normalize fans off the existing in_cribl_s2s input
+  ansible.builtin.assert:
+    that:
+      - "'pipeline: mlx_metrics_normalize' in _cribl_stream_inputs"
+      - "_cribl_stream_inputs.count('pipeline: mlx_metrics_normalize') == 2"
+    fail_msg: >-
+      inputs.yml.j2 must NOT add a new listener for the Mac Edge
+      llm_metrics traffic — it already arrives on in_cribl_s2s like every
+      other S2S-forwarded sourcetype. mlx_metrics_normalize must attach
+      there as two ADDITIONAL connections (one Splunk leg + one
+      victoriametrics_rw leg), leaving the existing force_splunk_meta
+      connection (the raw-event path, index=llm) untouched. The fixture
+      renders with cribl_stream_hec_namespace unset, so the Splunk leg
+      here is the fallback plain splunk_hec output — see
+      assertions_inputs.yml's per-index assertions for the
+      HEC_NAMESPACE-set branch (splunk_hec_llm, reused rather than a
+      dedicated splunk_hec_llm_metrics output).
 
 - name: Assert victoriametrics_rw Prometheus remote_write output renders
   ansible.builtin.assert:

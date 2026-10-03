@@ -62,6 +62,26 @@ inputs:
         pipeline: unifi_syslog_to_metrics
       - output: victoriametrics_rw
         pipeline: unifi_syslog_to_metrics
+      # Third/fourth leg, same forwarded stream: Mac Edge llm_metrics
+      # traffic (in_system_metrics + in_queue_metrics), stamped
+      # sourcetype=mlx:metrics by the Edge-local llm_metrics pipeline.
+      # mlx_metrics_normalize drops every other sourcetype up front and
+      # republishes the rest as native Cribl metrics, fanned to both
+      # metric stores per operator policy. The raw-event copy (index=llm,
+      # via force_splunk_meta above) is untouched. Per-index HEC output:
+      # this leg is single-index (llm_metrics) once the pipeline's
+      # leading Drop isolates it, and it reuses the 'llm' per-index token
+      # — Splunk grants that token extra_hec_indexes: [llm_metrics]
+      # rather than minting a dedicated one (ansible-splunk).
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      - output: splunk_hec_llm
+        pipeline: mlx_metrics_normalize
+{% else %}
+      - output: splunk_hec
+        pipeline: mlx_metrics_normalize
+{% endif %}
+      - output: victoriametrics_rw
+        pipeline: mlx_metrics_normalize
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   tcpjson:in_cribl_s2s_metrics:
     id: in_cribl_s2s_metrics
@@ -147,9 +167,10 @@ inputs:
     type: prometheus
     disabled: false
     discoveryType: static
-    targets:
+    targetList:
       - "{{ cribl_stream_unpoller_scrape_target }}"
-    pollInterval: {{ cribl_stream_unpoller_poll_interval }}
+    # Minutes (1-60, a divisor of 60).
+    interval: {{ cribl_stream_unpoller_poll_minutes }}
     sendToRoutes: false
     connections:
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}

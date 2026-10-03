@@ -176,10 +176,16 @@
       - "'splunk_hec_unifi_metrics' in _cribl_stream_outputs_pi"
       # Derived list is unique — no duplicated output ids.
       - "_cribl_stream_outputs_pi.count('id: splunk_hec_llm') == 1"
+      # mlx_metrics_normalize reuses this same splunk_hec_llm output for its
+      # llm_metrics-stamped leg rather than minting a dedicated
+      # splunk_hec_llm_metrics token — Splunk instead grants the existing
+      # llm token extra_hec_indexes: [llm_metrics] (ansible-splunk).
+      - "'splunk_hec_llm_metrics' not in _cribl_stream_outputs_pi"
     fail_msg: >-
       outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
       splunk_hec_<index> output for netflow, unifi_metrics, plus each
-      unique ai_log_routing index
+      unique ai_log_routing index, and must NOT mint a separate
+      splunk_hec_llm_metrics token
 
 - name: Assert the secondary sinks drop under backpressure, HEC sinks do not
   ansible.builtin.assert:
@@ -191,16 +197,20 @@
       # + victoriametrics_rw: the metrics fan-out must not gate the route
       # that also feeds Splunk.
       - "_cribl_stream_outputs_pi.count('type: prometheus') == 1"
-      - "_cribl_stream_outputs_pi.count('onBackpressure: drop') == 3"
+      # langfuse_otlp and victoriametrics_rw drop; phoenix_otlp queues to a
+      # capped disk queue that itself drops when full. None of them block.
+      - "_cribl_stream_outputs_pi.count('onBackpressure: drop') == 2"
+      - "_cribl_stream_outputs_pi.count('onBackpressure: queue') == 1"
+      - "_cribl_stream_outputs_pi.count('pqOnBackpressure: drop') == 1"
       # Every splunk_hec output (base + per-index) keeps its current
       # block behaviour — unchanged by this fix.
       - "_cribl_stream_outputs_pi.count('type: splunk_hec')
          == _cribl_stream_outputs_pi.count('onBackpressure: block')"
     fail_msg: >-
-      outputs.yml.j2 must render onBackpressure: drop on both open_telemetry
-      destinations (langfuse_otlp, phoenix_otlp) and on victoriametrics_rw, so
-      a dead secondary sink cannot gate its source, while every splunk_hec destination
-      keeps its current onBackpressure: block.
+      outputs.yml.j2 must render onBackpressure: drop on langfuse_otlp and
+      victoriametrics_rw, and onBackpressure: queue with pqOnBackpressure: drop
+      on phoenix_otlp, so a dead secondary sink cannot gate its source, while
+      every splunk_hec destination keeps its current onBackpressure: block.
 
 - name: Assert the built-in Cribl Internal source renders both feeds
   ansible.builtin.assert:

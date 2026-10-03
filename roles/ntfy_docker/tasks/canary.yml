@@ -1,0 +1,37 @@
+---
+# End-to-end canary: publish, read back and off-site ping in one script.
+- name: Warn that the off-site canary ping is skipped
+  ansible.builtin.debug:
+    msg: >-
+      HEALTHCHECKS_OFFSITE_PING_URL is not set; the canary publishes and
+      reads back but pings no off-site check.
+  when: not ntfy_docker_canary_offsite_url
+
+# Root-only: the script carries the off-site ping URL.
+- name: Deploy the ntfy canary script
+  ansible.builtin.template:
+    src: ntfy-canary.sh.j2
+    dest: "{{ ntfy_docker_canary_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+  no_log: true
+
+- name: Deploy the ntfy canary service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ntfy-canary.service
+    - ntfy-canary.timer
+  notify: Restart ntfy canary timer
+
+- name: Enable and start the ntfy canary timer
+  ansible.builtin.systemd:
+    name: ntfy-canary.timer
+    state: started
+    enabled: true
+    daemon_reload: true

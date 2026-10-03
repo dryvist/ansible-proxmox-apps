@@ -184,6 +184,45 @@
               - "'not an https URL' in ansible_failed_result.msg"
               - "'keystone' in ansible_failed_result.msg"
 
+    - name: Render the canary script with and without the off-site URL
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-canary.sh.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy-canary-{{ item.name }}.sh"
+        mode: "0700"
+      loop:
+        - {name: seeded, url: "https://hc-ping.example.test/key/"}
+        - {name: unseeded, url: ""}
+      vars:
+        ntfy_docker_canary_topic: canary
+        ntfy_docker_canary_check_name: ntfy-canary
+        ntfy_docker_canary_offsite_url: "{{ item.url }}"
+
+    - name: Render the canary units
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}.j2"
+        dest: "{{ _fixture_dir }}/test_{{ item }}"
+        mode: "0644"
+      loop:
+        - ntfy-canary.service
+        - ntfy-canary.timer
+      vars:
+        ntfy_docker_canary_interval: 5min
+        ntfy_docker_canary_script_path: /usr/local/bin/ntfy-canary
+
+    - name: Assert the canary publishes, reads back, and pings off-site only when seeded
+      vars:
+        _seeded: "{{ lookup('file', _fixture_dir ~ '/test_ntfy-canary-seeded.sh') }}"
+        _unseeded: "{{ lookup('file', _fixture_dir ~ '/test_ntfy-canary-unseeded.sh') }}"
+      ansible.builtin.assert:
+        that:
+          - "'topic_url=\"https://ntfy.example.test/canary\"' in _seeded"
+          - "'json?poll=1' in _seeded"
+          - "'https://hc-ping.example.test/key/ntfy-canary?create=1' in _seeded"
+          - "'hc-ping' not in _unseeded"
+          - "'json?poll=1' in _unseeded"
+          - "'ExecStart=/usr/local/bin/ntfy-canary' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.service')"
+          - "'OnUnitActiveSec=5min' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.timer')"
+
     - name: Ntfy template rendering PASSED
       ansible.builtin.debug:
         msg: |
@@ -191,3 +230,4 @@
           - docker-compose.yml.j2: HTTP port 8080:80, image, config mount
           - server.yml.j2: cache-file, listen-http, cache-duration
           - Slack fan-out: all-alerts + per-topic instances, unseeded key fails
+          - canary: fronted publish + read-back, off-site ping only when seeded
