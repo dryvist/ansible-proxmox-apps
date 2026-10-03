@@ -197,16 +197,23 @@ def run():
     # fk: token stays the exact-phrase dedup key, the summary after the dash
     # is only for a human reading the ticket list.
     summary = message.splitlines()[0] if message else title
-    # No customer field: Zammad makes the token's user (svc-ntfy) the ticket
-    # customer, the same "own actor, own token" attribution as svc-splunk.
+    me = zammad_call(zammad_base, zammad_token, "users/me")
     zammad_call(
         zammad_base, zammad_token, "tickets",
-        payload={
-            "title": "%s — %s" % (key, summary),
-            "group": group, "state": "new", "article": note(message, tags),
-        },
+        payload=new_ticket(key, summary, group, note(message, tags), me["id"]),
         method="POST",
     )
+
+
+def new_ticket(key, summary, group, article, customer_id):
+    # Zammad requires customer_id when an agent token creates a ticket; the
+    # token's own user (svc-ntfy) is the customer, so attribution stays
+    # "own actor, own token".
+    return {
+        "title": "%s — %s" % (key, summary),
+        "group": group, "state": "new", "article": article,
+        "customer_id": customer_id,
+    }
 
 
 def selftest():
@@ -224,6 +231,8 @@ def selftest():
     assert first_ticket({"tickets": []}) is None
     assert first_ticket([{"id": 7, "title": "t"}])["id"] == 7
     assert first_ticket({"tickets": [9], "assets": {}}) == {"id": 9}
+    t = new_ticket("fk:ntfy:x:y", "s", "Incidents", {"body": "b"}, 42)
+    assert t["customer_id"] == 42 and t["title"] == "fk:ntfy:x:y — s"
     n = note("body text", ["a", "b"])
     assert n["internal"] is True and "body text" in n["body"] and "a, b" in n["body"]
 
