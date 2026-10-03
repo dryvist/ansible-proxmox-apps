@@ -1,0 +1,33 @@
+---
+- name: Create an isolated controller known_hosts file
+  ansible.builtin.tempfile:
+    state: file
+  register: ssh_known_hosts_test_file
+
+- name: Verify controller pin materialization and idempotence
+  block:
+    - name: Materialize inventory pins into the empty file
+      ansible.builtin.include_tasks: ../../inventory/load_tofu/ssh_known_hosts.yml
+      vars:
+        ssh_known_hosts_file: "{{ ssh_known_hosts_test_file.path }}"
+
+    - name: Assert the resolved address and reviewed key reached the file
+      ansible.builtin.assert:
+        that:
+          - >-
+            (hostvars['ai-sandbox-01'].ansible_host ~ ' ' ~ hostvars['ai-sandbox-01'].ssh_host_key)
+            in lookup('file', ssh_known_hosts_test_file.path)
+
+    - name: Materialize the same pins again
+      ansible.builtin.include_tasks: ../../inventory/load_tofu/ssh_known_hosts.yml
+      vars:
+        ssh_known_hosts_file: "{{ ssh_known_hosts_test_file.path }}"
+
+    - name: Assert the second pass changed nothing
+      ansible.builtin.assert:
+        that: not ssh_known_hosts_pins.changed
+  always:
+    - name: Remove the isolated controller known_hosts file
+      ansible.builtin.file:
+        path: "{{ ssh_known_hosts_test_file.path }}"
+        state: absent
