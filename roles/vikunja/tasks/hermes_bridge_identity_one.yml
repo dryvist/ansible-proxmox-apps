@@ -45,11 +45,16 @@
     ansible_become: false
   no_log: true
 
+# The publish writes the minted token's Vikunja id next to the value, in
+# <kv_field>_ID, so the stored value can be tied to the titled token below.
 - name: "Resolve the stored token for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.set_fact:
     vikunja_hermes_stored_token: >-
       {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
          .get(vikunja_hermes_identity.kv_field, '') }}
+    vikunja_hermes_stored_token_id: >-
+      {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+         .get(vikunja_hermes_identity.kv_field ~ '_ID', '') }}
   no_log: true
 
 # A title match on Vikunja's own list only proves a token was minted once; it
@@ -101,8 +106,9 @@
 
 # The stored value is current only if it authenticates AND a token titled
 # hermes-bridge-<user> exists whose permissions equal the declared map
-# (action lists compared sorted). An untitled stored token, or a titled one
-# whose permissions drifted from the declaration, is replaced.
+# (action lists compared sorted) AND the stored id names that titled token.
+# An untitled stored token, a titled one whose permissions drifted from the
+# declaration, or a titled one minted but never published, is replaced.
 - name: "Record whether the stored token is current for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.set_fact:
     vikunja_hermes_existing_token_id: "{{ vikunja_hermes_titled_token.id | default('', true) }}"
@@ -111,6 +117,7 @@
       {%- set want = vikunja_hermes_identity.token_permissions -%}
       {{ vikunja_hermes_stored_token_works
          and (vikunja_hermes_titled_token | length > 0)
+         and (vikunja_hermes_stored_token_id | string) == (vikunja_hermes_titled_token.id | default('', true) | string)
          and dict(have.keys() | zip(have.values() | map('sort')))
              == dict(want.keys() | zip(want.values() | map('sort'))) }}
 
@@ -163,7 +170,8 @@
     body:
       data: >-
         {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-           | combine({vikunja_hermes_identity.kv_field: vikunja_hermes_token_mint.json.token}) }}
+           | combine({vikunja_hermes_identity.kv_field: vikunja_hermes_token_mint.json.token,
+                      (vikunja_hermes_identity.kv_field ~ '_ID'): vikunja_hermes_token_mint.json.id}) }}
     validate_certs: false
     status_code: [200, 204]
   delegate_to: localhost

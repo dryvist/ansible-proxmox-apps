@@ -6,7 +6,8 @@ then had nothing new to write — a clean recap with no real work done.
 
 A stored value that authenticates is still replaced when no token titled
 `hermes-bridge-<user>` carries the declared permissions (an untitled seed, or
-permissions that drifted from the declaration).
+permissions that drifted from the declaration, or a titled token minted but
+never published, whose id is not the one stored beside the value).
 
 These render the REAL expressions out of the task file, never a
 reimplementation.
@@ -80,6 +81,23 @@ class ResolveStoredToken(unittest.TestCase):
 
     def test_a_404_read_resolves_empty(self):
         self.assertEqual(self._resolve({"errors": []}), "")
+
+    def _resolve_id(self, bao_json):
+        return _render_template(
+            _find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_stored_token_id"],
+            {
+                "vikunja_hermes_bao_current": {"json": bao_json},
+                "vikunja_hermes_identity": {"kv_field": "DONNA_VIKUNJA_API_TOKEN"},
+            },
+        )
+
+    def test_the_id_field_resolves_from_the_sibling_key(self):
+        data = {"DONNA_VIKUNJA_API_TOKEN": "tk_live", "DONNA_VIKUNJA_API_TOKEN_ID": 7}
+        self.assertEqual(self._resolve_id({"data": {"data": data}}), 7)
+
+    def test_a_missing_id_field_resolves_empty(self):
+        data = {"DONNA_VIKUNJA_API_TOKEN": "tk_live"}
+        self.assertEqual(self._resolve_id({"data": {"data": data}}), "")
 
     def test_the_field_present_resolves_its_value(self):
         self.assertEqual(
@@ -174,8 +192,11 @@ BRIDGE = {
 }
 
 
+TITLED_ID = 7
+
+
 def _titled(permissions, title="hermes-bridge-hermes"):
-    return {"id": 7, "title": title, "permissions": permissions}
+    return {"id": TITLED_ID, "title": title, "permissions": permissions}
 
 
 class FindTitledToken(unittest.TestCase):
@@ -197,7 +218,7 @@ class FindTitledToken(unittest.TestCase):
             _titled(BRIDGE),
             {"id": 9, "title": "hermes-bridge-donna"},
         ]
-        self.assertEqual(self._find(tokens)["id"], 7)
+        self.assertEqual(self._find(tokens)["id"], TITLED_ID)
 
     def test_no_titled_token_resolves_empty(self):
         self.assertEqual(self._find([{"id": 1, "title": "seed"}]), {})
@@ -206,10 +227,11 @@ class FindTitledToken(unittest.TestCase):
 class StoredTokenIsCurrent(unittest.TestCase):
     TASK = "Record whether the stored token is current for {{ vikunja_hermes_identity.username }}"
 
-    def _facts(self, works, titled, declared=BRIDGE):
+    def _facts(self, works, titled, declared=BRIDGE, stored_id=TITLED_ID):
         facts = _find(self.TASK)["ansible.builtin.set_fact"]
         variables = {
             "vikunja_hermes_stored_token_works": works,
+            "vikunja_hermes_stored_token_id": stored_id,
             "vikunja_hermes_titled_token": titled,
             "vikunja_hermes_identity": {"token_permissions": declared},
         }
@@ -217,8 +239,22 @@ class StoredTokenIsCurrent(unittest.TestCase):
             name: _render_template(expr, variables) for name, expr in facts.items()
         }
 
-    def _current(self, works, titled, declared=BRIDGE):
-        return self._facts(works, titled, declared)["vikunja_hermes_token_current"]
+    def _current(self, works, titled, declared=BRIDGE, stored_id=TITLED_ID):
+        return self._facts(works, titled, declared, stored_id)["vikunja_hermes_token_current"]
+
+    def test_minted_but_not_published_is_not_current(self):
+        # The titled token exists and its permissions match, and the stored
+        # value (a seed minted elsewhere) still authenticates, but no id was
+        # ever published beside it.
+        self.assertFalse(self._current(True, _titled(BRIDGE), stored_id=""))
+
+    def test_a_stale_stored_id_is_not_current(self):
+        # A later mint replaced the titled token but its publish never landed.
+        self.assertFalse(self._current(True, _titled(BRIDGE), stored_id=TITLED_ID - 1))
+
+    def test_a_stored_id_that_differs_only_in_type_is_current(self):
+        # KV round-trips the id as a JSON number; compare by value.
+        self.assertTrue(self._current(True, _titled(BRIDGE), stored_id=str(TITLED_ID)))
 
     def test_matching_permissions_are_current(self):
         self.assertTrue(self._current(True, _titled(BRIDGE)))
@@ -248,41 +284,87 @@ class StoredTokenIsCurrent(unittest.TestCase):
         self.assertFalse(self._current(False, _titled(BRIDGE)))
 
     def test_the_titled_token_id_is_recorded_for_deletion(self):
-        self.assertEqual(self._facts(True, _titled(BRIDGE))["vikunja_hermes_existing_token_id"], 7)
+        self.assertEqual(
+            self._facts(True, _titled(BRIDGE))["vikunja_hermes_existing_token_id"], TITLED_ID
+        )
         self.assertEqual(self._facts(True, {})["vikunja_hermes_existing_token_id"], "")
 
 
 class ReMintDecision(unittest.TestCase):
-    """The listed tokens through to the Mint task's own `when`."""
+    """The real expressions in task order: the stored OpenBao fields and the
+    listed Vikunja tokens, through to the Mint `when` and the publish body."""
 
-    def _mints(self, works, tokens, declared=BRIDGE):
+    PUBLISH = "Publish the minted token to OpenBao for {{ vikunja_hermes_identity.username }}"
+    FIELD = "HERMES_VIKUNJA_API_TOKEN"
+
+    def _state(self, bao_data, tokens, works=True, declared=BRIDGE):
         variables = {
-            "vikunja_hermes_stored_token_works": works,
-            "vikunja_hermes_token_list": {"json": tokens},
             "vikunja_hermes_identity": {
                 "username": "hermes",
+                "kv_field": self.FIELD,
                 "token_permissions": declared,
             },
+            "vikunja_hermes_bao_current": {"json": {"data": {"data": bao_data}}},
+            "vikunja_hermes_token_list": {"json": tokens},
+            "vikunja_hermes_stored_token_works": works,
         }
-        find = _find(FindTitledToken.TASK)["ansible.builtin.set_fact"]
-        variables["vikunja_hermes_titled_token"] = _render_template(
-            find["vikunja_hermes_titled_token"], variables
+        for task in (
+            ResolveStoredToken.TASK,
+            FindTitledToken.TASK,
+            StoredTokenIsCurrent.TASK,
+        ):
+            for name, expr in _find(task)["ansible.builtin.set_fact"].items():
+                variables[name] = _render_template(expr, variables)
+        return variables
+
+    def _mints(self, bao_data, tokens, **kwargs):
+        return _all(
+            _find(MintFiresOnAStaleToken.TASK)["when"],
+            self._state(bao_data, tokens, **kwargs),
         )
-        record = _find(StoredTokenIsCurrent.TASK)["ansible.builtin.set_fact"]
-        variables["vikunja_hermes_token_current"] = _render_template(
-            record["vikunja_hermes_token_current"], variables
-        )
-        return _all(_find(MintFiresOnAStaleToken.TASK)["when"], variables)
+
+    def _published(self, bao_data, tokens, minted):
+        variables = self._state(bao_data, tokens)
+        variables["vikunja_hermes_token_mint"] = {"json": minted}
+        body = _find(self.PUBLISH)["ansible.builtin.uri"]["body"]["data"]
+        return _render_template(body, variables)
+
+    def _stored(self, token_id=TITLED_ID):
+        return {self.FIELD: "tk_live", f"{self.FIELD}_ID": token_id}
 
     def test_permission_drift_re_mints(self):
         declared = {**BRIDGE, "tasks": ["create", "read_one", "update"]}
-        self.assertTrue(self._mints(True, [_titled(BRIDGE)], declared))
+        self.assertTrue(self._mints(self._stored(), [_titled(BRIDGE)], declared=declared))
 
     def test_matching_permissions_do_not_re_mint(self):
-        self.assertFalse(self._mints(True, [_titled(BRIDGE)]))
+        self.assertFalse(self._mints(self._stored(), [_titled(BRIDGE)]))
 
     def test_an_untitled_stored_token_re_mints(self):
-        self.assertTrue(self._mints(True, [{"id": 3, "title": "seed"}]))
+        self.assertTrue(self._mints(self._stored(), [{"id": 3, "title": "seed"}]))
+
+    def test_a_titled_token_minted_but_never_published_re_mints(self):
+        # The stored value predates the mint and still authenticates; nothing
+        # at the OpenBao path names the titled token.
+        self.assertTrue(self._mints({self.FIELD: "tk_seed"}, [_titled(BRIDGE)]))
+
+    def test_a_stale_published_id_re_mints(self):
+        self.assertTrue(self._mints(self._stored(TITLED_ID - 1), [_titled(BRIDGE)]))
+
+    def test_an_empty_openbao_path_re_mints(self):
+        self.assertTrue(self._mints({}, [_titled(BRIDGE)], works=False))
+
+    def test_the_publish_records_the_token_and_its_id_and_keeps_siblings(self):
+        published = self._published(
+            {"OTHER_FIELD": "keep"}, [], {"token": "tk_new", "id": 9}
+        )
+        self.assertEqual(
+            published,
+            {"OTHER_FIELD": "keep", self.FIELD: "tk_new", f"{self.FIELD}_ID": 9},
+        )
+
+    def test_a_published_state_is_stable_on_the_next_run(self):
+        published = self._published({}, [], {"token": "tk_new", "id": TITLED_ID})
+        self.assertFalse(self._mints(published, [_titled(BRIDGE)]))
 
 
 class HermesIdentityDeclaration(unittest.TestCase):
