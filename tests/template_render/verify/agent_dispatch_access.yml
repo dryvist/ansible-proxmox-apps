@@ -8,7 +8,47 @@
   vars:
     ansible_become: false
     _dispatch_templates: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
+    _dispatch_state_task: >-
+      {{ (lookup('file', playbook_dir ~ '/../../../roles/agent_sandbox/tasks/main/deploy.yml')
+      | from_yaml | selectattr('name', 'equalto', 'Create the host dispatcher state directory')
+      | first)['ansible.builtin.file'] }}
   tasks:
+    - name: Allocate a state task render fixture
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .j2
+      register: _dispatch_state_fixture
+
+    - name: Write the state task fixture
+      ansible.builtin.copy:
+        content: "{{ _dispatch_state_task | to_yaml }}"
+        dest: "{{ _dispatch_state_fixture.path }}"
+        mode: "0600"
+
+    - name: Assert enabled dispatcher owns its state directory
+      ansible.builtin.assert:
+        that:
+          - _dispatch_state_rendered.owner == agent_sandbox_dispatch_user
+          - _dispatch_state_rendered.group == agent_sandbox_dispatch_user
+          - _dispatch_state_rendered.mode == '0700'
+      vars:
+        agent_sandbox_dispatch_access_enabled: true
+        _dispatch_state_rendered: "{{ lookup('template', _dispatch_state_fixture.path) | from_yaml }}"
+
+    - name: Assert disabled access retains the operator state directory
+      ansible.builtin.assert:
+        that:
+          - _dispatch_state_rendered.owner == agent_sandbox_operator_user
+          - _dispatch_state_rendered.group == agent_sandbox_operator_user
+      vars:
+        agent_sandbox_dispatch_access_enabled: false
+        _dispatch_state_rendered: "{{ lookup('template', _dispatch_state_fixture.path) | from_yaml }}"
+
+    - name: Remove the state task render fixture
+      ansible.builtin.file:
+        path: "{{ _dispatch_state_fixture.path }}"
+        state: absent
+
     - name: Render dispatcher access templates
       vars:
         agent_sandbox_dispatch_authorized_keys:
