@@ -75,6 +75,22 @@
           reintroduced, which silently deletes the destination instead of
           failing the converge.
 
+    - name: Assert the Phoenix output retries with bounded backoff into a capped, non-blocking queue
+      vars:
+        _phoenix: "{{ (_cribl_stream_outputs | from_yaml).outputs.phoenix_otlp }}"
+      ansible.builtin.assert:
+        that:
+          - _phoenix.responseRetrySettings | map(attribute='httpStatus') | list == [429, 502, 503, 504]
+          - _phoenix.responseRetrySettings | map(attribute='maxBackoff') | max <= 180000
+          - _phoenix.timeoutRetrySettings.timeoutRetry
+          - _phoenix.onBackpressure == 'queue'
+          - _phoenix.pqMode == 'error'
+          - _phoenix.pqOnBackpressure == 'drop'
+          - _phoenix.pqMaxSize == '1 GB'
+        fail_msg: >-
+          phoenix_otlp must retry 429/502/503/504 and timeouts with bounded
+          backoff, and queue to a capped disk queue that drops when full.
+
     # Read the defaults as TEXT, not through include_vars: this assertion is
     # about the SHIPPED expression in the file, so it must see the source text
     # rather than a rendered value that would hide a per-signal path behind
