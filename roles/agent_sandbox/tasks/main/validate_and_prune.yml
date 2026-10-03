@@ -18,7 +18,7 @@
       {{ agent_sandbox_probe_image }}
       -sS -o /dev/null -w '%{http_code}' --max-time 20
       -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
-      https://api.anthropic.com
+      https://api.z.ai
   register: agent_sandbox_allow_probe
   changed_when: false
   failed_when: agent_sandbox_allow_probe.rc != 0 or agent_sandbox_allow_probe.stdout == '000'
@@ -28,12 +28,33 @@
     cmd: >-
       docker run --rm --network {{ agent_sandbox_network }}
       {{ agent_sandbox_probe_image }}
-      -sS -o /dev/null --max-time 20
+      -sS -o /dev/null -w '%{http_connect}' --max-time 20
       -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
-      https://example.com
+      https://{{ item }}
+  loop: [cdn-zcode.z.ai, example.com]
   register: agent_sandbox_deny_probe
   changed_when: false
-  failed_when: agent_sandbox_deny_probe.rc == 0
+  failed_when: agent_sandbox_deny_probe.rc != 56 or agent_sandbox_deny_probe.stdout != '403'
+
+- name: Read squid access evidence for the egress probes
+  community.docker.docker_container_exec:
+    container: "{{ agent_sandbox_proxy_container }}"
+    command: tail -n 20 /var/log/squid/access.log
+  register: agent_sandbox_access_log
+  changed_when: false
+
+- name: Assert squid allowed the model endpoint and denied both other domains
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT api.z.ai:443')
+      - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT cdn-zcode.z.ai:443')
+      - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT example.com:443')
+
+- name: Record proxy probe evidence
+  ansible.builtin.debug:
+    msg:
+      origin_http_status: "{{ agent_sandbox_allow_probe.stdout }}"
+      squid_access: "{{ agent_sandbox_access_log.stdout_lines }}"
 
 # --- Adversarial bypass probes ----------------------------------------------
 # The two probes above test the SUPPORTED path (through the proxy). These test
@@ -195,6 +216,21 @@
   register: agent_sandbox_defaultbridge_probe
   changed_when: false
   failed_when: agent_sandbox_defaultbridge_probe.rc == 0
+
+- name: Read the host filter after the default-bridge probe
+  ansible.builtin.command:
+    cmd: "nft list table inet {{ agent_sandbox_nft_table }}"
+  register: agent_sandbox_nft_after
+  changed_when: false
+
+- name: Assert the host filter dropped the default-bridge probe packets
+  vars:
+    _counter_pattern: 'iifname "docker0" counter packets ([0-9]+)'
+    _before: "{{ agent_sandbox_nft_live.stdout | regex_findall(_counter_pattern) | first | int }}"
+    _after: "{{ agent_sandbox_nft_after.stdout | regex_findall(_counter_pattern) | first | int }}"
+  ansible.builtin.assert:
+    that: _after | int > _before | int
+    success_msg: "Default-bridge drop counter increased from {{ _before }} to {{ _after }} packets."
 
 - name: "Bypass probe — UDP egress to an external resolver (expect no route)"
   ansible.builtin.command:
