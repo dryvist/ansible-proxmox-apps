@@ -1,0 +1,40 @@
+---
+# Fails the converge before anything deploys when a webhook the fan-out needs
+# is unseeded, so a route is never skipped silently.
+- name: Assert the all-alerts and per-topic Slack webhooks are seeded
+  ansible.builtin.assert:
+    that:
+      - ntfy_docker_slack_webhooks[ntfy_docker_slack_alerts_key] | default('') | length > 0
+      - ntfy_docker_slack_routes | difference(ntfy_docker_slack_webhooks.keys() | list) | length == 0
+      - ntfy_docker_slack_routes | difference(ntfy_docker_topics) | length == 0
+    fail_msg: >-
+      Slack fan-out is not deliverable. Seed these keys at
+      secrets-external/platform/slack-webhooks:
+      {{ ([ntfy_docker_slack_alerts_key] + ntfy_docker_slack_routes)
+         | difference(ntfy_docker_slack_webhooks.keys() | list) | join(', ') or 'none' }}.
+      Routes not in ntfy_docker_topics:
+      {{ ntfy_docker_slack_routes | difference(ntfy_docker_topics) | join(', ') or 'none' }}.
+    quiet: true
+
+- name: Assert every webhook the fan-out uses is an https URL
+  ansible.builtin.assert:
+    that:
+      - ([ntfy_docker_slack_alerts_key] + ntfy_docker_slack_routes)
+        | map('extract', ntfy_docker_slack_webhooks)
+        | reject('match', 'https://') | list | length == 0
+    fail_msg: >-
+      A Slack webhook at secrets-external/platform/slack-webhooks is not an
+      https URL for key(s):
+      {{ ([ntfy_docker_slack_alerts_key] + ntfy_docker_slack_routes)
+         | reject('in', ntfy_docker_slack_webhooks | dict2items
+                        | selectattr('value', 'match', 'https://')
+                        | map(attribute='key') | list) | join(', ') }}.
+    quiet: true
+
+# instance name -> topic. "all-" instances post to the all-alerts webhook with
+# the topic-prefix template; the rest post to their topic's own webhook.
+- name: Compute the ntfy-to-slack instances
+  ansible.builtin.set_fact:
+    ntfy_docker_slack_instances: >-
+      {{ dict(ntfy_docker_topics | map('regex_replace', '^', 'all-') | zip(ntfy_docker_topics))
+         | combine(dict(ntfy_docker_slack_routes | zip(ntfy_docker_slack_routes))) }}

@@ -21,35 +21,47 @@ ntfy_docker_base_url: >-
   https://{{ ntfy_docker_container_name }}.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}
 
 # =============================================================================
-# Alert hub: Slack fan-out (one ntfy-to-slack instance per route)
+# Alert hub: Slack fan-out
 # =============================================================================
-# topic -> Slack channel. A starting point, not exhaustive — adding a route is
-# a defaults/group_vars edit, never a task change. `keystone` is the
-# "something is down" catch-all every other detector can fall back to.
-ntfy_docker_slack_routes:
-  secrets-security: secrets-security
-  observability: observability
-  network: network
-  proxmox: proxmox
-  ai: ai
-  media: media
-  hardware: hardware
-  keystone: keystone
-  # Hermes agent fleet: split by signal so a noisy channel never buries a
-  # page. Same contract as every other route above — no webhook here, only
-  # the topic name; the URL comes from secrets-external/platform/slack-webhooks
-  # once an operator seeds these four keys.
-  hermes-all: hermes-all
-  hermes-noise: hermes-noise
-  hermes-alerts: hermes-alerts
-  router-budget: router-budget
+# Every topic the hub carries. Each one is forwarded to the all-alerts Slack
+# channel and is a Zammad candidate. A publisher on a topic missing here
+# reaches neither, so adding a publisher topic is an edit to this list.
+ntfy_docker_topics:
+  - keystone
+  - secrets-security
+  - observability
+  - network
+  - proxmox
+  - ai
+  - ai-jobs
+  - openbao
+  - media
+  - hardware
+  - hermes-all
+  - hermes-noise
+  - hermes-alerts
+  - router-budget
 
-# Webhook URLs keyed by topic (same keys as ntfy_docker_slack_routes), from OpenBao
-# secrets-external/platform/slack-webhooks (openbao_secrets domain "ntfy" —
-# see roles/openbao_secrets). A topic with no webhook seeded is simply not
-# deployed (see slack_fanout.yml) rather than failing the converge, since the
-# route list here is a superset of what may be seeded so far.
+# Webhook key (in ntfy_docker_slack_webhooks) of the one high-priority channel
+# every topic above is forwarded to. Required: the converge fails while it is
+# unseeded.
+ntfy_docker_slack_alerts_key: keystone
+
+# Topics that ALSO post to a channel of their own, keyed by the same topic name
+# in ntfy_docker_slack_webhooks. Optional extras on top of the all-alerts
+# channel, but required once listed: the converge fails while any listed
+# topic's webhook is unseeded.
+ntfy_docker_slack_routes: []
+
+# Slack incoming-webhook URLs keyed by webhook key, from OpenBao
+# secrets-external/platform/slack-webhooks (openbao_secrets domain "ntfy" --
+# see roles/openbao_secrets).
 ntfy_docker_slack_webhooks: "{{ bao_ntfy_secrets | default({}, true) }}"
+
+# Slack text for the all-alerts channel (ntfy-to-slack Go template), so a
+# message there names the topic it came from.
+ntfy_docker_slack_alerts_template: >-
+  {% raw %}[{{ .Topic }}] {{ if .Title }}*{{ .Title }}*: {{ end }}{{ .Message }}{% endraw %}
 
 ntfy_docker_to_slack_version: v3.0.0
 ntfy_docker_to_slack_arch: Linux-x86_64
@@ -63,9 +75,9 @@ ntfy_docker_to_slack_env_dir: /etc/ntfy-to-slack
 # =============================================================================
 # Alert hub: Zammad subscriber (native ntfy CLI, one shared subscribe service)
 # =============================================================================
-# Same topics as the Slack routes -- every route is also a Zammad candidate;
-# ntfy_docker_zammad_topic_groups below decides where each one files.
-ntfy_docker_zammad_topics: "{{ ntfy_docker_slack_routes.keys() | list }}"
+# Every hub topic is a Zammad candidate; ntfy_docker_zammad_topic_groups below
+# decides where each one files.
+ntfy_docker_zammad_topics: "{{ ntfy_docker_topics }}"
 # low/min priority messages stay Slack-only and never open a ticket.
 ntfy_docker_zammad_priority_filter: "default,high,urgent"
 ntfy_docker_zammad_apt_keyring: /etc/apt/keyrings/ntfy.gpg
@@ -91,6 +103,8 @@ ntfy_docker_zammad_topic_groups:
   media: Media
   hardware: Homelab Infrastructure
   keystone: Incidents
+  openbao: Homelab Infrastructure
+  ai-jobs: AI/LLM Serving
 # Zammad connection for the subscriber's own token (svc-ntfy, seeded by
 # roles/zammad's zammad_bootstrap.rb). Bao-first via the apps domain,
 # matching zammad_ntfy_api_token's own source in the zammad role.

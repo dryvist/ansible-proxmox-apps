@@ -1,0 +1,92 @@
+---
+# Move an installed Homarr to homarr_version, in place.
+#
+# This mirrors upstream's own update path (ct/homarr.sh update_script, at
+# homarr_cs_tag) with the same pinned helpers the install used. We never re-run
+# the install script for this: it regenerates the env file and runs a full
+# `apt dist-upgrade`, and the role already owns both of those concerns.
+#
+# What stays untouched, and why that matters:
+#   - homarr_env_file (/opt/homarr.env) holds SECRET_ENCRYPTION_KEY. CLEAN_INSTALL
+#     wipes only homarr_install_dir, which is a different path.
+#   - homarr_data_dir holds the SQLite database. Homarr migrates its schema on
+#     start, so the copy taken below is the only way back to the old release.
+
+- name: Read the deployed Homarr release
+  ansible.builtin.slurp:
+    src: "{{ homarr_version_file }}"
+  register: homarr_deployed_version_raw
+
+# tools.func records the release without its leading `v`.
+- name: Compare the deployed release with the pin
+  ansible.builtin.set_fact:
+    homarr_deployed_version: "{{ homarr_deployed_version_raw.content | b64decode | trim }}"
+    homarr_pinned_version: "{{ homarr_version | regex_replace('^v', '') }}"
+
+- name: Upgrade Homarr to the pinned release
+  when: homarr_deployed_version != homarr_pinned_version
+  block:
+    - name: Stop Homarr and redis before replacing the build
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - "{{ homarr_service_name }}"
+        - redis-server
+
+    - name: Keep a copy of the database from before the schema migration
+      ansible.builtin.copy:
+        src: "{{ homarr_db_url }}"
+        dest: "{{ homarr_db_url }}.pre-{{ homarr_deployed_version }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+
+    # Sources the same patched install.func the install ran (core.func and
+    # error_handler.func load from the pinned copies through it), then
+    # tools.func, exactly as the installer's update_os() does.
+    #
+    # Node comes from the TARGET release's package.json. Upstream reads the
+    # `dev` branch here, which describes whatever ships next, not the release
+    # being deployed.
+    - name: Deploy the pinned Homarr release with the borrowed helpers
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          source /dev/stdin <<<"$(cat {{ homarr_cs_pinned_dir }}/misc/install.func)"
+          source {{ homarr_cs_pinned_dir }}/misc/tools.func
+          NODE_VERSION=$(curl -fsSL \
+            "https://raw.githubusercontent.com/homarr-labs/homarr/{{ homarr_version }}/package.json" \
+            | jq -r '.engines.node | split(">=")[1] | split(".")[0]')
+          setup_nodejs
+          CLEAN_INSTALL=1 fetch_and_deploy_gh_release "homarr" "homarr-labs/homarr" "prebuild" \
+            "{{ homarr_version }}" "{{ homarr_install_dir }}" "build-debian-$(arch_resolve).tar.gz"
+          cp {{ homarr_install_dir }}/redis.conf /etc/redis/redis.conf
+          sed -i -e '$a\' /etc/redis/redis.conf
+          grep -q '^bind 127.0.0.1 -::1$' /etc/redis/redis.conf \
+            || echo "bind 127.0.0.1 -::1" >>/etc/redis/redis.conf
+          cp {{ homarr_install_dir }}/nginx.conf /etc/nginx/templates/nginx.conf
+          chmod +x {{ homarr_install_dir }}/run.sh
+        executable: /bin/bash
+      environment: "{{ homarr_cs_environment }}"
+      timeout: "{{ homarr_install_timeout }}"
+      changed_when: true
+
+    # fetch_and_deploy_gh_release can fall back to an OLDER release when the
+    # requested one lacks the asset. That would look like a successful upgrade,
+    # so prove the pin landed instead of trusting the exit code.
+    - name: Read the release that actually deployed
+      ansible.builtin.slurp:
+        src: "{{ homarr_version_file }}"
+      register: homarr_upgraded_version_raw
+
+    - name: Assert the pinned release is what deployed
+      ansible.builtin.assert:
+        that:
+          - (homarr_upgraded_version_raw.content | b64decode | trim) == homarr_pinned_version
+        fail_msg: >-
+          Asked for {{ homarr_version }} but {{ homarr_version_file }} records
+          {{ homarr_upgraded_version_raw.content | b64decode | trim }}. The
+          database copy is at {{ homarr_db_url }}.pre-{{ homarr_deployed_version }}.
+        quiet: true
