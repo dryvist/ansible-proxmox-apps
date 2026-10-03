@@ -2,13 +2,10 @@
 
 ## Commands
 
-> **Every converge runs through Semaphore.** Semaphore is the execution
-> plane; its template wrapper loads the run environment from OpenBao before
-> the playbook starts. Playbooks read plain environment variables and are
-> independent of the secrets manager: `.env`, Doppler, OpenBao or any other
-> injector behaves identically. `scripts/run-ansible.sh` remains the runner
-> the wrapper calls and the break-glass path from a workstation. The commands
-> below are that break-glass path, plus local development and testing.
+> **Every converge runs through Semaphore.** Playbooks read plain environment
+> variables. `scripts/run-ansible.sh` is the runner Semaphore calls and the
+> break-glass path from a workstation. The commands below are that
+> break-glass path, plus local development and testing.
 >
 > The OpenBao-node play (`--tags openbao` on `openbao_group`) is the single
 > converge still run from a workstation under the secret-zero wrapper,
@@ -37,39 +34,38 @@
 > cap; every other branch gets the default.
 
 ```bash
-# Deploy all apps (Doppler — main pipeline does not require SOPS). A full
+# Deploy all apps (the main pipeline does not require SOPS). A full
 # site.yml is a promotion-boundary action, not a development one: scope a
 # development converge with --limit and --tags (see the budget above).
-doppler run -- scripts/run-ansible.sh playbooks/site.yml
+scripts/run-ansible.sh playbooks/site.yml
 
 # Deploy all apps including SOPS-only roles (e.g., haproxy, mailpit)
-sops exec-env secrets.enc.yaml 'doppler run -- scripts/run-ansible.sh \
+sops exec-env secrets.enc.yaml 'scripts/run-ansible.sh \
   playbooks/site.yml'
 
-# Deploy GitHub runners (requires token from gh-workflow-tokens Doppler project)
-doppler run -p gh-workflow-tokens -c prd -- \
-  doppler run -- scripts/run-ansible.sh playbooks/site.yml \
+# Deploy GitHub runners (reads the runner registration variables)
+scripts/run-ansible.sh playbooks/site.yml \
   --tags github_runner --limit docker_vms,localhost
 
 # Edit encrypted secrets
 sops secrets.enc.yaml
 
 # Validate pipeline
-doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/validate-pipeline.yml
+ansible-playbook -i inventory/hosts.yml playbooks/validate-pipeline.yml
 
 # Validate the whole *arr media stack via its APIs: indexer sync, download
 # client safety flags (never auto-delete), qBittorrent killswitch-adjacent
 # invariants (DHT/PEX/LSD off, narrow auth-bypass whitelist), media-management
 # policy, root-folder <-> Plex library path consistency, and health (read-only,
 # fails loud on any drift; a single failure never masks the rest of the report).
-sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+sops exec-env secrets.enc.yaml 'ansible-playbook \
   -i inventory/hosts.yml playbooks/validate-media.yml'
 # Scope to one app: --tags prowlarr|radarr|sonarr|qbittorrent|flaresolverr|plex|seerr|sortarr|consistency
 # Add --tags deep to actively test each indexer against its tracker (slow, live)
 
 # Re-trigger searches for pending monitored items (Sonarr + Radarr). Standalone,
 # on-demand; never part of site.yml. Scope with --tags sonarr (or --tags radarr).
-sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
+sops exec-env secrets.enc.yaml 'ansible-playbook \
   -i inventory/hosts.yml playbooks/search-missing.yml'
 
 # Assert that issued AppRole tokens honour their declared bounds. Standalone,
@@ -79,7 +75,7 @@ sops exec-env secrets.enc.yaml 'doppler run -- ansible-playbook \
 # issued token's creation TTL against the declared one, and revokes every
 # token it created. Roles with no ambient credentials are named in the
 # output and are not covered by the run.
-doppler run -- ansible-playbook playbooks/verify-approle-ttls.yml
+ansible-playbook playbooks/verify-approle-ttls.yml
 
 # Lint
 ansible-lint

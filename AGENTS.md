@@ -16,8 +16,8 @@ Full docs live under `docs/agents/`, one topic per page:
   infrastructure inventory (policy; nothing reads it yet), how `load_tofu.yml`
   resolves the dynamic inventory today, its groups, and every environment
   variable a role reads.
-- [Secrets management](docs/agents/secrets.md) — Doppler/SOPS runtime
-  injection and the OpenBao plugins-first rule.
+- [Secrets management](docs/agents/secrets.md) — at-rest encryption
+  and the rule for changes to the `openbao` role.
 - [Commands and testing](docs/agents/commands-and-testing.md) — every
   `ansible-playbook` invocation this repo supports, performance tuning, and
   the fast/extended test tiers.

@@ -25,10 +25,12 @@ ansible-playbook playbooks/site.yml --tags agent_sandbox --diff
 
 ## Usage
 
-From a workstation with the nix-agent-sandbox CLI:
+From a workstation with the nix-agent-sandbox CLI. The variables a
+`--profile` names are read from the caller's environment; `--repo` uses
+`GH_TOKEN`, or the token `$AGENT_GH_TOKEN_CMD owner/name` prints:
 
 ```sh
-BAO_ADDR=https://openbao.<domain> \
+AGENT_GH_TOKEN_CMD=./mint-repo-token \
   agent run --host <docker-host-fqdn> --profile dev \
   --repo dryvist/some-repo "task prompt"
 ```
@@ -46,7 +48,7 @@ denied by squid, and everything else has no route at all.
 nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
 ```
 
-`agent_sandbox_internal_domains` appends in-network FQDNs (the OpenBao
+`agent_sandbox_internal_domains` appends in-network FQDNs (the secret-store
 ingress route) at converge time from ambient `PROXMOX_SUBDOMAIN` — the
 sensitive domain is never committed.
 
