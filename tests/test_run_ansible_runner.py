@@ -1,183 +1,19 @@
 """Behavioral contracts for the OpenBao-aware Ansible runner."""
 
 import os
-from pathlib import Path
 import subprocess
 import tempfile
-import textwrap
 import unittest
+from pathlib import Path
+
+from run_ansible_runner_support import (
+    CALLER_TOKEN,
+    RUNNER,
+    RunnerFixture,
+)
 
 
-ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "scripts" / "run-ansible.sh"
-MINTED_TOKEN = "test-runner-owned-token"
-CALLER_TOKEN = "test-caller-owned-token"
-APPROLE_SECRET = "test-approle-secret"
-GENERIC_ENV = {
-    "SECRET_STORE_ADDR": "https://store.test",
-    "SSH_SIGNER_ROLE_ID": "test-signer-role-id",
-    "SSH_SIGNER_SECRET_ID": APPROLE_SECRET,
-    "SSH_CA_MOUNT": "test-mount",
-    "SSH_SIGNER_ROLE": "test-sign-role",
-}
-
-
-class RunAnsibleTokenContract(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.temp_path = Path(self.temp_dir.name)
-        self.bin_path = self.temp_path / "bin"
-        self.bin_path.mkdir()
-        self.event_log = self.temp_path / "events.log"
-        self.tmp_path = self.temp_path / "tmp"
-        self.tmp_path.mkdir()
-        # One fake for the OpenBao CLI. It also enforces the two contracts
-        # the runner depends on and that no assertion below could otherwise
-        # see: the secret_id arrives on stdin rather than in the argument
-        # list, and each call asks for the single response field it uses.
-        self._write_executable(
-            "bao",
-            f"""
-            #!/usr/bin/env bash
-            set -euo pipefail
-            auth=""
-            if [[ ${{BAO_TOKEN:-}} == "$EXPECTED_MINTED_TOKEN" ]]; then
-              auth=" runner-auth"
-            fi
-            if [[ -n ${{EXPECTED_BAO_ADDR:-}} && ${{BAO_ADDR:-}} != "$EXPECTED_BAO_ADDR" ]]; then
-              exit 71
-            fi
-            for arg in "$@"; do
-              if [[ $arg == *"$EXPECTED_APPROLE_SECRET"* ]]; then
-                printf 'secret_id passed as an argument\n' >&2
-                exit 64
-              fi
-            done
-            case "$*" in
-              *"auth/approle/login"*)
-                [[ " $* " == *" -field=token "* ]] || exit 65
-                [[ " $* " == *" secret_id=- "* ]] || exit 66
-                piped=""
-                IFS= read -r piped || true
-                [[ $piped == "$EXPECTED_APPROLE_SECRET" ]] || exit 67
-                if [[ -n "${{FAKE_REFUSE_ROLE_ID:-}}" && " $* " == *" role_id=$FAKE_REFUSE_ROLE_ID "* ]]; then
-                  printf 'bao write auth/approle/login refused\n' >> "$FAKE_EVENT_LOG"
-                  exit 70
-                fi
-                printf 'bao write auth/approle/login\n' >> "$FAKE_EVENT_LOG"
-                printf '%s\n' '{MINTED_TOKEN}'
-                ;;
-              *"/sign/"*)
-                [[ " $* " == *" -field=signed_key "* ]] || exit 68
-                [[ " $* " == *" public_key=@"* ]] || exit 69
-                sign_path=$(printf '%s' "$*" | grep -o '[a-z-]*/sign/[a-z-]*')
-                printf 'bao write %s%s\n' \
-                  "$sign_path" "$auth" >> "$FAKE_EVENT_LOG"
-                [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 2
-                printf '%s\n' 'test-certificate'
-                ;;
-              *"token revoke -self"*)
-                printf 'bao token revoke -self%s\n' "$auth" >> "$FAKE_EVENT_LOG"
-                ;;
-              *)
-                exit 2
-                ;;
-            esac
-            """,
-        )
-        self._write_executable(
-            "ansible-playbook",
-            """
-            #!/usr/bin/env bash
-            set -euo pipefail
-            printf 'ansible\n' >> "$FAKE_EVENT_LOG"
-            [[ ${BAO_TOKEN:-} == "$EXPECTED_CHILD_BAO_TOKEN" ]]
-            printf 'child CONVERGE_ROLE_ID=%s\n' "${CONVERGE_ROLE_ID:-}" >> "$FAKE_EVENT_LOG"
-            printf 'child received expected token\n'
-            """,
-        )
-
-    def tearDown(self):
-        self.temp_dir.cleanup()
-
-    def _write_executable(self, name: str, body: str):
-        path = self.bin_path / name
-        path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
-        path.chmod(0o700)
-
-    def _run(
-        self,
-        caller_token=None,
-        sign_failure=False,
-        declared_identity=False,
-        semaphore_identity=False,
-        node_converge_identity=False,
-        refuse_role_id=None,
-        extra_env=None,
-        legacy=True,
-    ):
-        env = {k: v for k, v in os.environ.items() if k not in GENERIC_ENV}
-        env.update(
-            {
-                "BAO_ADDR": "https://openbao.test",
-                "OPENBAO_APPROLE_ANSIBLE_ROLE_ID": "test-role-id",
-                "OPENBAO_APPROLE_ANSIBLE_SECRET_ID": APPROLE_SECRET,
-                "EXPECTED_CHILD_BAO_TOKEN": caller_token or MINTED_TOKEN,
-                "EXPECTED_MINTED_TOKEN": MINTED_TOKEN,
-                "EXPECTED_APPROLE_SECRET": APPROLE_SECRET,
-                "FAKE_EVENT_LOG": str(self.event_log),
-                "FAKE_SIGN_FAILURE": "1" if sign_failure else "0",
-                "FAKE_REFUSE_ROLE_ID": refuse_role_id or "",
-                "PATH": f"{self.bin_path}{os.pathsep}{env['PATH']}",
-                "TMPDIR": str(self.tmp_path),
-            }
-        )
-        # Two AppRoles carry an identical grant: one declared and bounded, one
-        # declared nowhere and bounded on no axis. The runner must prefer the
-        # first and say so loudly when it falls back to the second.
-        env.pop("OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID", None)
-        env.pop("OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID", None)
-        if declared_identity:
-            env["OPENBAO_APPROLE_ANSIBLE_CONVERGE_ROLE_ID"] = "test-declared-role-id"
-            env["OPENBAO_APPROLE_ANSIBLE_CONVERGE_SECRET_ID"] = APPROLE_SECRET
-        env.pop("OPENBAO_APPROLE_SEMAPHORE_ROLE_ID", None)
-        env.pop("OPENBAO_APPROLE_SEMAPHORE_SECRET_ID", None)
-        if semaphore_identity:
-            env["OPENBAO_APPROLE_SEMAPHORE_ROLE_ID"] = "test-semaphore-role-id"
-            env["OPENBAO_APPROLE_SEMAPHORE_SECRET_ID"] = APPROLE_SECRET
-        env.pop("OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID", None)
-        env.pop("OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID", None)
-        if node_converge_identity:
-            env["OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID"] = "test-node-role-id"
-            env["OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID"] = APPROLE_SECRET
-        if not legacy:
-            for name in ("BAO_ADDR", "OPENBAO_APPROLE_ANSIBLE_ROLE_ID", "OPENBAO_APPROLE_ANSIBLE_SECRET_ID"):
-                env.pop(name, None)
-        env.update(extra_env or {})
-        if caller_token is None:
-            env.pop("BAO_TOKEN", None)
-        else:
-            env["BAO_TOKEN"] = caller_token
-
-        return subprocess.run(
-            [str(RUNNER), "playbooks/site.yml", "--limit", "localhost"],
-            cwd=ROOT,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-    def _assert_no_secret_leak(self, result):
-        output = result.stdout + result.stderr
-        events = self.event_log.read_text(encoding="utf-8")
-        for secret in (MINTED_TOKEN, CALLER_TOKEN, APPROLE_SECRET):
-            self.assertNotIn(secret, output)
-            self.assertNotIn(secret, events)
-
-    def _assert_cert_cleanup(self):
-        self.assertEqual(list(self.tmp_path.glob("ansible-sshcert.*")), [])
-
+class RunAnsibleTokenContract(RunnerFixture):
     def test_minted_token_reaches_child_then_is_revoked(self):
         result = self._run()
 
@@ -308,81 +144,6 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self._assert_no_secret_leak(result)
         self._assert_cert_cleanup()
 
-    # --- generic signer names: read first, legacy names are the fallback ---
-
-    def test_generic_names_alone_sign_with_supplied_store_mount_and_role(self):
-        result = self._run(
-            extra_env={**GENERIC_ENV, "EXPECTED_BAO_ADDR": "https://store.test"},
-            legacy=False,
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("authenticated as: signer", result.stdout)
-        self.assertEqual(
-            self.event_log.read_text(encoding="utf-8").splitlines(),
-            [
-                "bao write auth/approle/login",
-                "bao write test-mount/sign/test-sign-role runner-auth",
-                "ansible",
-                "child CONVERGE_ROLE_ID=test-signer-role-id",
-                "bao token revoke -self runner-auth",
-            ],
-        )
-        self._assert_no_secret_leak(result)
-        self._assert_cert_cleanup()
-
-    def test_generic_names_win_over_legacy_tiers_below_node_converge(self):
-        result = self._run(
-            declared_identity=True,
-            semaphore_identity=True,
-            extra_env={**GENERIC_ENV, "EXPECTED_BAO_ADDR": "https://store.test"},
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("authenticated as: signer", result.stdout)
-        events = self.event_log.read_text(encoding="utf-8")
-        self.assertIn("bao write test-mount/sign/test-sign-role runner-auth", events)
-        self.assertNotIn("automation-", events)
-        self._assert_no_secret_leak(result)
-
-    def test_node_converge_still_wins_over_generic_names(self):
-        result = self._run(node_converge_identity=True, extra_env=GENERIC_ENV)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("authenticated as: openbao-node-converge", result.stdout)
-        self.assertIn("child CONVERGE_ROLE_ID=test-node-role-id", self.event_log.read_text(encoding="utf-8"))
-
-    def test_generic_login_refused_falls_through_to_legacy_tier(self):
-        result = self._run(
-            semaphore_identity=True,
-            extra_env={**GENERIC_ENV, "SSH_SIGNER_ROLE": "automation-semaphore"},
-            refuse_role_id="test-signer-role-id",
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("AppRole login refused for identity: signer", result.stderr)
-        self.assertIn("authenticated as: semaphore", result.stdout)
-        self._assert_no_secret_leak(result)
-
-    def test_generic_names_without_mount_refuse(self):
-        env = dict(GENERIC_ENV)
-        del env["SSH_CA_MOUNT"]
-        result = self._run(extra_env=env, legacy=False)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("SSH_CA_MOUNT or SSH_SIGNER_ROLE is not", result.stderr)
-        self.assertFalse(self.event_log.exists())
-
-    def test_last_tier_login_refused_stops_instead_of_looping(self):
-        result = self._run(refuse_role_id="test-role-id")
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no identity left to try", result.stderr)
-        self.assertEqual(
-            self.event_log.read_text(encoding="utf-8").splitlines(),
-            ["bao write auth/approle/login refused"],
-        )
-
     def test_caller_token_is_preserved_and_runner_token_revoked_before_child(self):
         result = self._run(caller_token=CALLER_TOKEN)
 
@@ -462,7 +223,7 @@ class CheckoutFreshnessGuard(unittest.TestCase):
     def _run_guard(self):
         return subprocess.run(
             ["bash", "scripts/run-ansible.sh", "playbooks/site.yml"],
-            cwd=str(self.clone), env=self.env, capture_output=True, text=True,
+            cwd=str(self.clone), env=self.env, capture_output=True, text=True, check=False,
         )
 
     def test_ahead_checkout_is_named_as_ahead_and_says_to_push(self):
