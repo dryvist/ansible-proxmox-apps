@@ -11,9 +11,10 @@ on the `agent_sandbox_host` inventory group (`docker_vms` members carrying the
   is the sole dual-homed member; its domain allowlist is the only egress
   policy. Converge ends with live allow/deny probes from inside the network.
 - A host nftables table (`agent_sandbox`, chain `DOCKER-USER`) drops every
-  forwarded container packet that is not bound for the proxy or DNS, and any
-  forwarding from the other container bridges, so a container that ignores
-  its proxy settings still has no way out.
+  forwarded container packet that leaves the agents bridge except the proxy
+  port, and any forwarding from the other container bridges, so a container
+  that ignores its proxy settings still has no way out. It matches interface
+  names only; Docker allocates the addresses.
 - `/var/lib/docker` sits on the guest's dedicated data disk.
 
 Agent containers are **not** managed by Ansible: the nix-agent-sandbox

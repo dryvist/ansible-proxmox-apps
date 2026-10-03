@@ -8,8 +8,11 @@
 # The allowlist is exact-host: a leading dot or an extra entry would let a CDN
 # or telemetry host ride along. Both are asserted here, positive and negative.
 #
-# The resolver address is TEST-NET-1 (RFC 5737); the role derives the live one
-# from the host's default route.
+# Neither the ruleset nor the compose file may carry an address: the filter
+# keys off interface names and Docker allocates the subnets.
+#
+# Registered and set_fact values persist into the later plays of the same run
+# and outrank their task vars, so every name here carries the _as_ prefix.
 - name: Render and verify the agent_sandbox filter and allowlist
   hosts: localhost
   connection: local
@@ -22,8 +25,6 @@
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
     _template_dir: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
-    ansible_default_ipv4:
-      gateway: 192.0.2.1
 
   tasks:
     - name: Render the ruleset, the compose file and the allowlist
@@ -39,7 +40,7 @@
     - name: Read the rendered files
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/test_agent_sandbox_{{ item }}"
-      register: _rendered
+      register: _as_rendered
       loop:
         - agent-sandbox.nft
         - docker-compose.yml
@@ -47,87 +48,89 @@
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
-        _nft: "{{ _rendered.results[0].content | b64decode }}"
-        _compose: "{{ _rendered.results[1].content | b64decode }}"
-        _domains: "{{ _rendered.results[2].content | b64decode | split('\n')
+        _as_nft: "{{ _as_rendered.results[0].content | b64decode }}"
+        _as_compose: "{{ _as_rendered.results[1].content | b64decode }}"
+        _as_domains: "{{ _as_rendered.results[2].content | b64decode | split('\n')
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
-        _agent_rules: "{{ _nft | split('\n')
+        _as_rules: "{{ _as_nft | split('\n')
           | select('search', '^[ ]*iifname \"' ~ agent_sandbox_bridge ~ '\" ')
           | map('trim') | list }}"
 
-    - name: Assert container egress is default-drop except the proxy and DNS
+    - name: Assert container egress is default-drop except the proxy port
       vars:
-        _accepts: "{{ _agent_rules | select('search', ' accept$') | list }}"
+        _as_accepts: "{{ _as_rules | select('search', ' accept$') | list }}"
+        _as_bridge: "{{ agent_sandbox_bridge }}"
       ansible.builtin.assert:
         that:
-          - "'chain DOCKER-USER {' in _nft"
-          - "'hook forward' in _nft"
-          # Exactly three allowances from the agent bridge: proxy, DNS udp, DNS tcp.
-          - _accepts | length == 3
+          - "'chain DOCKER-USER {' in _as_nft"
+          - "'hook forward' in _as_nft"
+          # Exactly one allowance from the agent bridge: the proxy port, on
+          # the bridge itself.
+          - _as_accepts | length == 1
           - >-
-            ('iifname "' ~ agent_sandbox_bridge ~ '" ip daddr ' ~ agent_sandbox_proxy_ip
-            ~ ' tcp dport ' ~ agent_sandbox_proxy_port ~ ' accept') in _accepts
-          - >-
-            ('iifname "' ~ agent_sandbox_bridge ~ '" ip daddr { 192.0.2.1 } udp dport 53 accept')
-            in _accepts
-          - >-
-            ('iifname "' ~ agent_sandbox_bridge ~ '" ip daddr { 192.0.2.1 } tcp dport 53 accept')
-            in _accepts
+            ('iifname "' ~ _as_bridge ~ '" oifname "' ~ _as_bridge ~ '" tcp dport '
+            ~ agent_sandbox_proxy_port ~ ' accept') in _as_accepts
           # The last rule for the agent bridge is the unconditional drop.
-          - _agent_rules | last is search('counter drop$')
+          - _as_rules | last is search('counter drop$')
+          # Nothing from another network is forwarded into the agent bridge.
+          - _as_nft is search('oifname "' ~ _as_bridge ~ '" counter drop')
           # Other container bridges may not forward at all.
-          - _nft is search('iifname "docker0" counter drop')
+          - _as_nft is search('iifname "docker0" counter drop')
           - >-
-            _nft is search('iifname "br-[*]" iifname != [{] "' ~ agent_sandbox_bridge
+            _as_nft is search('iifname "br-[*]" iifname != [{] "' ~ _as_bridge
             ~ '", "' ~ agent_sandbox_egress_bridge ~ '" [}] counter drop')
         fail_msg: >-
-          The container-egress ruleset must accept exactly the proxy and DNS
-          from the agent bridge and drop the rest. Rendered:
-          {{ _nft }}
+          The container-egress ruleset must accept exactly the proxy port from
+          the agent bridge and drop the rest. Rendered: {{ _as_nft }}
 
     - name: Assert the ruleset has no catch-all allowance
       ansible.builtin.assert:
         that:
-          # No accept without a destination match (bar the established-flow rule).
+          # Every accept names a port or the established-flow state.
           - >-
-            _nft | split('\n') | select('search', ' accept$')
-            | reject('search', 'daddr|ct state') | list | length == 0
-          - "'0.0.0.0/0' not in _nft"
-          - "'policy drop' not in _nft"
-          - "'flush ruleset' not in _nft"
+            _as_nft | split('\n') | select('search', ' accept$')
+            | reject('search', 'dport|ct state') | list | length == 0
+          - "'0.0.0.0/0' not in _as_nft"
+          - "'policy drop' not in _as_nft"
+          - "'flush ruleset' not in _as_nft"
         fail_msg: >-
           The container-egress ruleset must not carry a catch-all accept or
           touch rules outside its own table.
 
-    - name: Assert the bridges can be matched by name and the proxy by address
+    - name: Assert the bridges are matched by name and no address is rendered
+      vars:
+        _as_ipv4: '[0-9][0-9]?[0-9]?[.][0-9]+[.][0-9]+[.][0-9]+'
       ansible.builtin.assert:
         that:
           - agent_sandbox_bridge | length <= 15
           - agent_sandbox_egress_bridge | length <= 15
           - agent_sandbox_bridge != agent_sandbox_egress_bridge
-          - "('com.docker.network.bridge.name: ' ~ agent_sandbox_bridge) in _compose"
-          - "('com.docker.network.bridge.name: ' ~ agent_sandbox_egress_bridge) in _compose"
-          - "('ipv4_address: ' ~ agent_sandbox_proxy_ip) in _compose"
-          - "('subnet: ' ~ agent_sandbox_subnet) in _compose"
+          - "('com.docker.network.bridge.name: ' ~ agent_sandbox_bridge) in _as_compose"
+          - "('com.docker.network.bridge.name: ' ~ agent_sandbox_egress_bridge) in _as_compose"
+          - "'ipv4_address:' not in _as_compose"
+          - "'subnet:' not in _as_compose"
+          - _as_nft is not search(_as_ipv4)
+          - _as_compose is not search(_as_ipv4)
         fail_msg: >-
-          The compose network must pin the bridge names and the proxy address
-          the ruleset keys off, and each name must fit an interface name.
+          The compose network must pin the bridge names the ruleset keys off,
+          each name must fit an interface name, and neither file may carry an
+          address.
 
     # Exact-host allowlist. api.z.ai and chat.z.ai only; a CDN, object-store or
     # telemetry host must never appear, and the existing images keep theirs.
     - name: Assert the allowlist carries exactly the expected Z.ai hosts
       ansible.builtin.assert:
         that:
-          - _domains | select('search', '(^|[.])z[.]ai$') | sort | list == ['api.z.ai', 'chat.z.ai']
-          - "'cdn-zcode.z.ai' not in _domains"
-          - _domains | select('search', 'aliyuncs|oss-|sentry|telemetry|analytics') | list | length == 0
-          - _domains | select('match', '^[.]') | list | length == 0
-          - "'api.anthropic.com' in _domains"
-          - "'github.com' in _domains"
-          - "'cache.nixos.org' in _domains"
+          - _as_domains | select('search', '(^|[.])z[.]ai$') | sort | list == ['api.z.ai', 'chat.z.ai']
+          - "'cdn-zcode.z.ai' not in _as_domains"
+          - _as_domains | select('search', 'aliyuncs|oss-|sentry|telemetry|analytics') | list | length == 0
+          - _as_domains | select('match', '^[.]') | list | length == 0
+          - "'api.anthropic.com' in _as_domains"
+          - "'github.com' in _as_domains"
+          - "'cache.nixos.org' in _as_domains"
         fail_msg: >-
           The allowlist must hold exactly api.z.ai and chat.z.ai for Z.ai, no
-          wildcard entries, and keep the existing hosts. Rendered: {{ _domains }}
+          wildcard entries, and keep the existing hosts. Rendered: {{ _as_domains }}
