@@ -246,7 +246,7 @@ select_converge_identity() {
     CONVERGE_ROLE_ID=$OPERATOR_VAULT_ROLE_ID
     CONVERGE_SECRET_ID=$OPERATOR_VAULT_SECRET_ID
     CONVERGE_IDENTITY="workstation identity"
-  elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
+  elif [[ -z ${SKIP_UNDECLARED:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
     CONVERGE_IDENTITY="ansible (UNDECLARED, retiring)"
@@ -296,6 +296,9 @@ if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; the
           fi
           if [[ $CONVERGE_IDENTITY == "workstation identity" ]]; then
             SKIP_WORKSTATION_IDENTITY=1
+          fi
+          if [[ $CONVERGE_IDENTITY == "ansible (UNDECLARED"* ]]; then
+            SKIP_UNDECLARED=1
           fi
           ;;
       esac

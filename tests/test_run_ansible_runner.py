@@ -373,6 +373,16 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertIn("SSH_CA_MOUNT or SSH_SIGNER_ROLE is not", result.stderr)
         self.assertFalse(self.event_log.exists())
 
+    def test_last_tier_login_refused_stops_instead_of_looping(self):
+        result = self._run(refuse_role_id="test-role-id")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no identity left to try", result.stderr)
+        self.assertEqual(
+            self.event_log.read_text(encoding="utf-8").splitlines(),
+            ["bao write auth/approle/login refused"],
+        )
+
     def test_caller_token_is_preserved_and_runner_token_revoked_before_child(self):
         result = self._run(caller_token=CALLER_TOKEN)
 
