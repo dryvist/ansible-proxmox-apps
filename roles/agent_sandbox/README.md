@@ -2,13 +2,20 @@
 
 Egress boundary for autonomous agent containers
 ([dryvist/nix-agent-sandbox](https://github.com/dryvist/nix-agent-sandbox))
-on the docker-host VM:
+on the `agent_sandbox_host` inventory group (`docker_vms` members carrying the
+`agent-sandbox` tag):
 
 - `agents` docker network with `internal: true` — members have **no route
   out**; Docker itself enforces the default-deny.
 - A squid CONNECT proxy (`agent-squid`, alias `proxy:3128` on that network)
   is the sole dual-homed member; its domain allowlist is the only egress
   policy. Converge ends with live allow/deny probes from inside the network.
+- A host nftables table (`agent_sandbox`, chain `DOCKER-USER`) drops every
+  forwarded container packet that leaves the agents bridge except the proxy
+  port, and any forwarding from the other container bridges, so a container
+  that ignores its proxy settings still has no way out. It matches interface
+  names only; Docker allocates the addresses.
+- `/var/lib/docker` sits on the guest's dedicated data disk.
 
 Agent containers are **not** managed by Ansible: the nix-agent-sandbox
 `agent run --host <docker-host>` launcher spawns them ad hoc with plain
@@ -17,7 +24,7 @@ Agent containers are **not** managed by Ansible: the nix-agent-sandbox
 ## Installation
 
 Included via the `Deploy agent sandbox egress boundary` play in
-`playbooks/site.yml` (hosts: `docker_vms`). Converge just this role:
+`playbooks/site.yml` (hosts: `agent_sandbox_host`). Converge just this role:
 
 ```sh
 ansible-playbook playbooks/site.yml --tags agent_sandbox --diff
@@ -74,9 +81,18 @@ A daily `agent-sandbox-spool-prune.timer` drops whole runs older than
 `agent_sandbox_spool_retention_days` (7). The launcher side (the bind mounts)
 lives in `dryvist/nix-agent-sandbox`.
 
-## Later hardening
+## Container-egress filter
 
-Docker's `internal: true` is the enforcement point. If containers ever get
-host networking or the compose definition drifts, host nftables rules
-dropping forwarded traffic from the `agents` subnet (except to the proxy)
-are the belt-and-braces follow-up; not implemented in v1.
+`agent-sandbox.nft` is loaded by `agent-sandbox-nft.service` before the Docker
+daemon starts and lives in its own table, so reloading it or restarting Docker
+never touches any other rule. The chain hooks `forward` ahead of Docker's own
+rules:
+
+- established and related traffic is accepted;
+- from the `agents` bridge: TCP to the proxy, and UDP/TCP 53 to the host
+  resolver, are accepted; everything else is logged (rate-limited) and dropped;
+- from `docker0` and any other `br-*` bridge except the proxy's egress bridge:
+  dropped.
+
+The converge asserts the table is loaded and probes a default-bridge container
+for a route out.
