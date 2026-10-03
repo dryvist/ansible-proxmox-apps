@@ -1,11 +1,41 @@
 ---
 # Deploy the keystone liveness watchdog (validator script + systemd timer).
-# No-op on hosts with no matching checks, so the site.yml play can target the
-# union of keystone groups without per-host gymnastics.
+# A host with no matching checks gets any earlier validator removed, so the
+# site.yml play can target the union of keystone groups without per-host
+# gymnastics, and a check dropped from a host stops firing there.
 
-- name: Skip hosts with no keystone checks
-  ansible.builtin.meta: end_host
+- name: Retire the validator on hosts with no keystone checks
   when: service_deadman_checks | length == 0
+  block:
+    - name: Check for an earlier validator timer
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ service_deadman_service_name }}.timer"
+      register: service_deadman_existing_timer
+
+    - name: Stop and disable the earlier validator timer
+      ansible.builtin.systemd:
+        name: "{{ service_deadman_service_name }}.timer"
+        state: stopped
+        enabled: false
+      when: service_deadman_existing_timer.stat.exists
+
+    - name: Remove the validator units, script and state
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/etc/systemd/system/{{ service_deadman_service_name }}.timer"
+        - "/etc/systemd/system/{{ service_deadman_service_name }}.service"
+        - "{{ service_deadman_script_path }}"
+        - "{{ service_deadman_state_dir }}"
+
+    - name: Reload systemd after removing the validator units
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: service_deadman_existing_timer.stat.exists
+
+    - name: End the play for this host
+      ansible.builtin.meta: end_host
 
 # Root-only: the script carries the monitor push credentials.
 - name: Deploy the keystone liveness validator script
