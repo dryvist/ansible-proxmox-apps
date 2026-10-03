@@ -1,0 +1,133 @@
+---
+# =============================================================================
+# agent_sandbox — container-egress filter, compose pins and egress allowlist
+# =============================================================================
+# The nftables table is the backstop behind the internal docker network: if it
+# renders with an extra accept, or without its default drop, a container that
+# ignores its proxy settings reaches the internet and nothing else turns red.
+# The allowlist is exact-host: a leading dot or an extra entry would let a CDN
+# or telemetry host ride along. Both are asserted here, positive and negative.
+#
+# The resolver address is TEST-NET-1 (RFC 5737); the role derives the live one
+# from the host's default route.
+- name: Render and verify the agent_sandbox filter and allowlist
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
+    ansible_default_ipv4:
+      gateway: 192.0.2.1
+
+  tasks:
+    - name: Render the ruleset, the compose file and the allowlist
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/test_agent_sandbox_{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: agent-sandbox.nft.j2, dest: agent-sandbox.nft }
+        - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+        - { src: allowed-domains.txt.j2, dest: allowed-domains.txt }
+
+    - name: Read the rendered files
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_agent_sandbox_{{ item }}"
+      register: _rendered
+      loop:
+        - agent-sandbox.nft
+        - docker-compose.yml
+        - allowed-domains.txt
+
+    - name: Decode the rendered files
+      ansible.builtin.set_fact:
+        _nft: "{{ _rendered.results[0].content | b64decode }}"
+        _compose: "{{ _rendered.results[1].content | b64decode }}"
+        _domains: "{{ _rendered.results[2].content | b64decode | split('\n')
+          | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
+
+    - name: Collect the rules that match the agent bridge
+      ansible.builtin.set_fact:
+        _agent_rules: "{{ _nft | split('\n')
+          | select('search', '^[ ]*iifname \"' ~ agent_sandbox_bridge ~ '\" ')
+          | map('trim') | list }}"
+
+    - name: Assert container egress is default-drop except the proxy and DNS
+      vars:
+        _accepts: "{{ _agent_rules | select('search', ' accept$') | list }}"
+      ansible.builtin.assert:
+        that:
+          - "'chain DOCKER-USER {' in _nft"
+          - "'hook forward' in _nft"
+          # Exactly three allowances from the agent bridge: proxy, DNS udp, DNS tcp.
+          - _accepts | length == 3
+          - >-
+            ('iifname "' ~ agent_sandbox_bridge ~ '" ip daddr ' ~ agent_sandbox_proxy_ip
+            ~ ' tcp dport ' ~ agent_sandbox_proxy_port ~ ' accept') in _accepts
+          - >-
+            ('iifname "' ~ agent_sandbox_bridge ~ '" ip daddr { 192.0.2.1 } udp dport 53 accept')
+            in _accepts
+          - >-
+            ('iifname "' ~ agent_sandbox_bridge ~ '" ip daddr { 192.0.2.1 } tcp dport 53 accept')
+            in _accepts
+          # The last rule for the agent bridge is the unconditional drop.
+          - _agent_rules | last is search('counter drop$')
+          # Other container bridges may not forward at all.
+          - _nft is search('iifname "docker0" counter drop')
+          - >-
+            _nft is search('iifname "br-[*]" iifname != [{] "' ~ agent_sandbox_bridge
+            ~ '", "' ~ agent_sandbox_egress_bridge ~ '" [}] counter drop')
+        fail_msg: >-
+          The container-egress ruleset must accept exactly the proxy and DNS
+          from the agent bridge and drop the rest. Rendered:
+          {{ _nft }}
+
+    - name: Assert the ruleset has no catch-all allowance
+      ansible.builtin.assert:
+        that:
+          # No accept without a destination match (bar the established-flow rule).
+          - >-
+            _nft | split('\n') | select('search', ' accept$')
+            | reject('search', 'daddr|ct state') | list | length == 0
+          - "'0.0.0.0/0' not in _nft"
+          - "'policy drop' not in _nft"
+          - "'flush ruleset' not in _nft"
+        fail_msg: >-
+          The container-egress ruleset must not carry a catch-all accept or
+          touch rules outside its own table.
+
+    - name: Assert the bridges can be matched by name and the proxy by address
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_bridge | length <= 15
+          - agent_sandbox_egress_bridge | length <= 15
+          - agent_sandbox_bridge != agent_sandbox_egress_bridge
+          - "('com.docker.network.bridge.name: ' ~ agent_sandbox_bridge) in _compose"
+          - "('com.docker.network.bridge.name: ' ~ agent_sandbox_egress_bridge) in _compose"
+          - "('ipv4_address: ' ~ agent_sandbox_proxy_ip) in _compose"
+          - "('subnet: ' ~ agent_sandbox_subnet) in _compose"
+        fail_msg: >-
+          The compose network must pin the bridge names and the proxy address
+          the ruleset keys off, and each name must fit an interface name.
+
+    # Exact-host allowlist. api.z.ai and chat.z.ai only; a CDN, object-store or
+    # telemetry host must never appear, and the existing images keep theirs.
+    - name: Assert the allowlist carries exactly the expected Z.ai hosts
+      ansible.builtin.assert:
+        that:
+          - _domains | select('search', '(^|[.])z[.]ai$') | sort | list == ['api.z.ai', 'chat.z.ai']
+          - "'cdn-zcode.z.ai' not in _domains"
+          - _domains | select('search', 'aliyuncs|oss-|sentry|telemetry|analytics') | list | length == 0
+          - _domains | select('match', '^[.]') | list | length == 0
+          - "'api.anthropic.com' in _domains"
+          - "'github.com' in _domains"
+          - "'cache.nixos.org' in _domains"
+        fail_msg: >-
+          The allowlist must hold exactly api.z.ai and chat.z.ai for Z.ai, no
+          wildcard entries, and keep the existing hosts. Rendered: {{ _domains }}

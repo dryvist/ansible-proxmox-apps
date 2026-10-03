@@ -1,0 +1,35 @@
+{{ ansible_managed | comment }}
+# Backstop for the egress boundary. Docker's internal network already gives
+# agent containers no route out; this filter drops, on the host, any forwarded
+# packet that a container sends anywhere but the allowlist proxy and DNS —
+# even if the container ignores the proxy settings or the network definition
+# drifts. Its own table, so a docker restart or backend change never touches
+# it; the chain runs ahead of Docker's own forward rules (lower priority) and
+# plays the role of Docker's DOCKER-USER chain.
+#
+# Loaded as one transaction: the table is declared, deleted and recreated, so
+# a reload replaces it atomically and never flushes anything outside it.
+table inet {{ agent_sandbox_nft_table }}
+delete table inet {{ agent_sandbox_nft_table }}
+
+table inet {{ agent_sandbox_nft_table }} {
+  chain DOCKER-USER {
+    type filter hook forward priority -10; policy accept;
+
+    # Replies to flows this chain already admitted.
+    ct state established,related accept
+
+    # Agent containers: the proxy and DNS, nothing else.
+    iifname "{{ agent_sandbox_bridge }}" ip daddr {{ agent_sandbox_proxy_ip }} tcp dport {{ agent_sandbox_proxy_port }} accept
+    iifname "{{ agent_sandbox_bridge }}" ip daddr { {{ agent_sandbox_dns_servers | join(', ') }} } udp dport 53 accept
+    iifname "{{ agent_sandbox_bridge }}" ip daddr { {{ agent_sandbox_dns_servers | join(', ') }} } tcp dport 53 accept
+    iifname "{{ agent_sandbox_bridge }}" limit rate 6/minute log prefix "agent-sandbox-egress-drop: "
+    iifname "{{ agent_sandbox_bridge }}" counter drop
+
+    # Any other container bridge may not forward at all. The egress bridge
+    # carries only the proxy and the log shipper, which are the sanctioned
+    # way out.
+    iifname "docker0" counter drop
+    iifname "br-*" iifname != { "{{ agent_sandbox_bridge }}", "{{ agent_sandbox_egress_bridge }}" } counter drop
+  }
+}

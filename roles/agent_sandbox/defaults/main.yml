@@ -1,12 +1,12 @@
 ---
 # Egress boundary for autonomous agent containers (dryvist/nix-agent-sandbox)
-# on the docker-host VM. Creates an internal-only docker network whose sole
-# route out is an allowlisting CONNECT proxy; `agent run --host` attaches
-# fresh containers to it with plain `docker run` — no IaC in the loop.
+# on the agent_sandbox_host inventory group (docker_vms members carrying the
+# agent-sandbox tag). Creates an internal-only docker network whose sole
+# route out is an allowlisting CONNECT proxy, backed by a host nftables
+# filter that drops any container packet not bound for the proxy or DNS;
+# `agent run --host` attaches fresh containers to it with plain `docker run`
+# — no IaC in the loop.
 
-# The one docker_vms member that hosts agent sandboxes (iac-platform is the
-# IaC platform, not an agent host — the site play gates the role on this).
-agent_sandbox_host: docker-host
 # SSH user the nix-agent-sandbox launcher connects as (DOCKER_HOST=ssh://);
 # granted docker group membership so remote `docker run` works without sudo.
 agent_sandbox_operator_user: "{{ ansible_user | default('debian') }}"
@@ -30,9 +30,31 @@ agent_sandbox_egress_network: agents-egress
 agent_sandbox_proxy_alias: proxy
 agent_sandbox_proxy_port: 3128
 
+# Host-side identity of the two bridges, so the nftables filter can match them.
+# Names are fixed (max 15 characters) because rules key off the interface name;
+# the proxy address is fixed because rules key off the destination. The subnet
+# is a host-local bridge range from the block Docker's own default pools use —
+# override it if it collides with a routed range this host must reach.
+agent_sandbox_bridge: br-agents
+agent_sandbox_egress_bridge: br-agents-out
+agent_sandbox_subnet: 172.30.250.0/24
+agent_sandbox_proxy_ip: 172.30.250.2
+
+# nftables filter on forwarded container traffic (see tasks/main/nftables.yml).
+agent_sandbox_nft_table: agent_sandbox
+agent_sandbox_nft_file: "{{ agent_sandbox_dir }}/agent-sandbox.nft"
+agent_sandbox_nft_service: agent-sandbox-nft
+# Resolvers the agent network may query directly (UDP/TCP 53): the host's own
+# resolver, which is its default gateway. Never empty — an unresolvable
+# default route fails the converge instead of rendering a filter with no DNS.
+agent_sandbox_dns_servers:
+  - "{{ ansible_default_ipv4.gateway }}"
+
 # Committed mirror of dryvist/nix-agent-sandbox `lib.egressDomains` — that
 # repo is the source of truth. Regenerate with:
 #   nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
+# The `zai` group is ahead of that mirror until the upstream list carries it;
+# a regeneration must keep it.
 agent_sandbox_egress_domains:
   modelApis:
     - api.anthropic.com
@@ -51,6 +73,11 @@ agent_sandbox_egress_domains:
     - cache.nixos.org
     - channels.nixos.org
     - install.determinate.systems
+  # Exact hosts only: dstdomain without a leading dot never matches a
+  # subdomain, so no CDN, object-store or telemetry host rides along.
+  zai:
+    - api.z.ai
+    - chat.z.ai
   internal: []
 
 # In-network FQDNs appended at converge time (the OpenBao ingress route for
