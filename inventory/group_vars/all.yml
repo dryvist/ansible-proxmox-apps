@@ -18,17 +18,18 @@ plane_host: iac-platform
 # media consumer uses the same existing *arr profile.
 media_default_quality_profile: "HD - 720p/1080p"
 
-# NTP: point at the self-hosted Proxmox stratum-2 servers when Doppler
-# provides PROXMOX_NTP_SERVERS (comma-separated bare IPs/hostnames).
-# The regex_replace appends "iburst" to entries that contain no spaces
-# (i.e., bare addresses) so initial sync is fast; entries that already
-# include chrony options (e.g. "192.168.0.10 iburst prefer") are passed
-# through unchanged. Empty value falls back to the role's ntp_pools
-# default plus the public Debian pool acts as fallback when present.
 ntp_servers: >-
-  {{ lookup('env', 'PROXMOX_NTP_SERVERS')
+  {%- set servers = lookup('env', 'PROXMOX_NTP_SERVERS')
      | split(',') | map('trim') | reject('equalto', '')
-     | map('regex_replace', '^([^ ]+)$', '\1 iburst') | list }}
+     | map('regex_replace', '^([^ ]+)$', '\1 iburst') | list -%}
+  {%- if servers | length == 0 -%}
+  {%- for node in (tofu_data.nodes | default({})) | dict2items -%}
+  {%- if node.value.commissioned | default(true) -%}
+  {%- set _ = servers.append((node.value.role | default(node.key, true)) ~ '.' ~ tofu_data.domain ~ ' iburst') -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- endif -%}
+  {{ servers }}
 
 # Single org-wide Cribl version. Every Cribl consumer (cribl_stream,
 # cribl_edge, cribl_docker_stack) reads this one var rather than declaring its
