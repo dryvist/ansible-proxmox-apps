@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The unpoller unit drops mount-namespace sandboxing inside a container
-(where it fails with status=226/NAMESPACE) and keeps it elsewhere."""
+(where it fails with status=226/NAMESPACE) and keeps it elsewhere, and it
+starts unpoller with the role's config file."""
 
 import unittest
 from pathlib import Path
@@ -26,6 +27,9 @@ class UnpollerUnitContainer(unittest.TestCase):
         self.assertNotIn("ProtectSystem", unit)
         self.assertNotIn("PrivateTmp", unit)
         self.assertIn("NoNewPrivileges=true", unit)
+
+    def test_unit_names_the_config_file(self):
+        self.assertIn("ExecStart=/usr/local/bin/unpoller --config /etc/unpoller.conf", render(0))
 
     def test_host_keeps_namespace_sandboxing(self):
         unit = render(1)
