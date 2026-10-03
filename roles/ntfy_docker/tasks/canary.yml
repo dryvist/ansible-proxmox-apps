@@ -1,15 +1,21 @@
 ---
-# Publisher half of the end-to-end canary; the subscriber half is the
-# canary entry in client.yml.j2 (zammad_subscriber.yml).
-- name: Assert the off-site canary URL is present
-  ansible.builtin.assert:
-    that:
-      - ntfy_docker_canary_offsite_url is match('https://')
-    fail_msg: >-
-      ntfy_docker_canary_offsite_url is not an https URL -- seed
-      HEALTHCHECKS_OFFSITE_PING_URL in the OpenBao monitoring domain; the
-      end-to-end canary cannot report without it.
-    quiet: true
+# End-to-end canary: publish, read back and off-site ping in one script.
+- name: Warn that the off-site canary ping is skipped
+  ansible.builtin.debug:
+    msg: >-
+      HEALTHCHECKS_OFFSITE_PING_URL is unseeded in the OpenBao monitoring
+      domain; the canary publishes and reads back but pings no off-site check.
+  when: not ntfy_docker_canary_offsite_url
+
+# Root-only: the script carries the off-site ping URL.
+- name: Deploy the ntfy canary script
+  ansible.builtin.template:
+    src: ntfy-canary.sh.j2
+    dest: "{{ ntfy_docker_canary_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+  no_log: true
 
 - name: Deploy the ntfy canary service and timer
   ansible.builtin.template:
