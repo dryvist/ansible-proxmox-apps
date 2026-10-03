@@ -4,6 +4,10 @@ token" skipped whenever a titled token existed, so a missing or refused
 stored value was never replaced and "Publish the minted token to OpenBao"
 then had nothing new to write — a clean recap with no real work done.
 
+A stored value that authenticates is still replaced when no token titled
+`hermes-bridge-<user>` carries the declared permissions (an untitled seed, or
+permissions that drifted from the declaration).
+
 These render the REAL expressions out of the task file, never a
 reimplementation.
 """
@@ -84,21 +88,19 @@ class ResolveStoredToken(unittest.TestCase):
         )
 
 
-class MintFiresOnAnUnusableStoredToken(unittest.TestCase):
+class MintFiresOnAStaleToken(unittest.TestCase):
     TASK = "Mint API token for {{ vikunja_hermes_identity.username }}"
 
-    def _fires(self, stored_token_works):
+    def _fires(self, token_current):
         return _all(
             _find(self.TASK)["when"],
-            {"vikunja_hermes_stored_token_works": stored_token_works},
+            {"vikunja_hermes_token_current": token_current},
         )
 
-    def test_mint_fires_when_the_stored_token_does_not_authenticate(self):
-        # The exact defect: a titled token existing must not matter here —
-        # only whether the STORED value at openbao_path works.
+    def test_mint_fires_when_the_token_is_not_current(self):
         self.assertTrue(self._fires(False))
 
-    def test_mint_is_skipped_when_the_stored_token_authenticates(self):
+    def test_mint_is_skipped_when_the_token_is_current(self):
         self.assertFalse(self._fires(True))
 
 
@@ -131,19 +133,19 @@ class RecordStoredTokenUsable(unittest.TestCase):
 class DeleteStaleTokenOnlyWhenNeeded(unittest.TestCase):
     TASK = "Delete the stale API token for {{ vikunja_hermes_identity.username }}"
 
-    def _fires(self, stored_token_works, existing_token_id):
+    def _fires(self, token_current, existing_token_id):
         return _all(
             _find(self.TASK)["when"],
             {
-                "vikunja_hermes_stored_token_works": stored_token_works,
+                "vikunja_hermes_token_current": token_current,
                 "vikunja_hermes_existing_token_id": existing_token_id,
             },
         )
 
-    def test_fires_when_unusable_and_a_titled_token_exists(self):
+    def test_fires_when_not_current_and_a_titled_token_exists(self):
         self.assertTrue(self._fires(False, "42"))
 
-    def test_does_not_fire_when_the_stored_token_still_works(self):
+    def test_does_not_fire_when_the_token_is_current(self):
         self.assertFalse(self._fires(True, "42"))
 
     def test_does_not_fire_when_there_is_nothing_to_delete(self):
@@ -156,6 +158,178 @@ class DeleteStaleTokenOnlyWhenNeeded(unittest.TestCase):
         # only ever pass a string, which let a `| length > 0` guard on a
         # bare int ship without being caught.
         self.assertTrue(self._fires(False, 42))
+
+
+class TokenListIsAlwaysFetched(unittest.TestCase):
+    def test_listing_is_not_gated_on_the_stored_token(self):
+        # Permission drift is only visible on the list, and the stored token
+        # authenticating says nothing about it.
+        task = _find("List existing API tokens for {{ vikunja_hermes_identity.username }}")
+        self.assertNotIn("when", task)
+
+
+BRIDGE = {
+    "projects": ["read_all", "views_buckets_tasks"],
+    "tasks": ["read_one", "update"],
+}
+
+
+def _titled(permissions, title="hermes-bridge-hermes"):
+    return {"id": 7, "title": title, "permissions": permissions}
+
+
+class FindTitledToken(unittest.TestCase):
+    TASK = "Find the existing titled token for {{ vikunja_hermes_identity.username }}"
+
+    def _find(self, tokens):
+        return _render_template(
+            _find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_titled_token"],
+            {
+                "vikunja_hermes_token_list": {"json": tokens},
+                "vikunja_hermes_identity": {"username": "hermes"},
+            },
+        )
+
+    def test_picks_the_token_with_the_bridge_title(self):
+        tokens = [
+            {"id": 1, "title": "seed"},
+            {"id": 2},
+            _titled(BRIDGE),
+            {"id": 9, "title": "hermes-bridge-donna"},
+        ]
+        self.assertEqual(self._find(tokens)["id"], 7)
+
+    def test_no_titled_token_resolves_empty(self):
+        self.assertEqual(self._find([{"id": 1, "title": "seed"}]), {})
+
+
+class StoredTokenIsCurrent(unittest.TestCase):
+    TASK = "Record whether the stored token is current for {{ vikunja_hermes_identity.username }}"
+
+    def _facts(self, works, titled, declared=BRIDGE):
+        facts = _find(self.TASK)["ansible.builtin.set_fact"]
+        variables = {
+            "vikunja_hermes_stored_token_works": works,
+            "vikunja_hermes_titled_token": titled,
+            "vikunja_hermes_identity": {"token_permissions": declared},
+        }
+        return {
+            name: _render_template(expr, variables) for name, expr in facts.items()
+        }
+
+    def _current(self, works, titled, declared=BRIDGE):
+        return self._facts(works, titled, declared)["vikunja_hermes_token_current"]
+
+    def test_matching_permissions_are_current(self):
+        self.assertTrue(self._current(True, _titled(BRIDGE)))
+
+    def test_action_order_does_not_matter(self):
+        shuffled = {
+            "tasks": ["update", "read_one"],
+            "projects": ["views_buckets_tasks", "read_all"],
+        }
+        self.assertTrue(self._current(True, _titled(shuffled)))
+
+    def test_permission_drift_is_not_current(self):
+        # The declaration gained tasks.create; the minted token lacks it.
+        declared = {**BRIDGE, "tasks": ["create", "read_one", "update"]}
+        self.assertFalse(self._current(True, _titled(BRIDGE), declared))
+
+    def test_a_dropped_action_is_not_current(self):
+        declared = {**BRIDGE, "tasks": ["read_one"]}
+        self.assertFalse(self._current(True, _titled(BRIDGE), declared))
+
+    def test_an_untitled_stored_token_is_not_current(self):
+        # The stored value authenticates but no hermes-bridge-<user> token
+        # exists: a hand-seeded value is replaced.
+        self.assertFalse(self._current(True, {}))
+
+    def test_a_titled_match_whose_stored_value_is_refused_is_not_current(self):
+        self.assertFalse(self._current(False, _titled(BRIDGE)))
+
+    def test_the_titled_token_id_is_recorded_for_deletion(self):
+        self.assertEqual(self._facts(True, _titled(BRIDGE))["vikunja_hermes_existing_token_id"], 7)
+        self.assertEqual(self._facts(True, {})["vikunja_hermes_existing_token_id"], "")
+
+
+class ReMintDecision(unittest.TestCase):
+    """The listed tokens through to the Mint task's own `when`."""
+
+    def _mints(self, works, tokens, declared=BRIDGE):
+        variables = {
+            "vikunja_hermes_stored_token_works": works,
+            "vikunja_hermes_token_list": {"json": tokens},
+            "vikunja_hermes_identity": {
+                "username": "hermes",
+                "token_permissions": declared,
+            },
+        }
+        find = _find(FindTitledToken.TASK)["ansible.builtin.set_fact"]
+        variables["vikunja_hermes_titled_token"] = _render_template(
+            find["vikunja_hermes_titled_token"], variables
+        )
+        record = _find(StoredTokenIsCurrent.TASK)["ansible.builtin.set_fact"]
+        variables["vikunja_hermes_token_current"] = _render_template(
+            record["vikunja_hermes_token_current"], variables
+        )
+        return _all(_find(MintFiresOnAStaleToken.TASK)["when"], variables)
+
+    def test_permission_drift_re_mints(self):
+        declared = {**BRIDGE, "tasks": ["create", "read_one", "update"]}
+        self.assertTrue(self._mints(True, [_titled(BRIDGE)], declared))
+
+    def test_matching_permissions_do_not_re_mint(self):
+        self.assertFalse(self._mints(True, [_titled(BRIDGE)]))
+
+    def test_an_untitled_stored_token_re_mints(self):
+        self.assertTrue(self._mints(True, [{"id": 3, "title": "seed"}]))
+
+
+class HermesIdentityDeclaration(unittest.TestCase):
+    def _identity(self, username):
+        return next(
+            item
+            for item in _defaults()["vikunja_hermes_bridge_identities"]
+            if item["username"] == username
+        )
+
+    def _intake(self):
+        return _render_template(
+            _defaults()["vikunja_hermes_intake_permissions"],
+            {
+                "vikunja_hermes_bridge_permissions": _defaults()[
+                    "vikunja_hermes_bridge_permissions"
+                ]
+            },
+        )
+
+    def test_hermes_publishes_to_its_own_field(self):
+        identity = self._identity("hermes")
+        self.assertEqual(identity["openbao_mount"], "secret")
+        self.assertEqual(identity["openbao_path"], "ai/hermes")
+        self.assertEqual(identity["kv_field"], "HERMES_VIKUNJA_API_TOKEN")
+
+    def test_hermes_token_uses_the_intake_permissions(self):
+        self.assertEqual(
+            self._identity("hermes")["token_permissions"],
+            "{{ vikunja_hermes_intake_permissions }}",
+        )
+
+    def test_intake_permissions_include_task_creation(self):
+        self.assertIn("create", self._intake()["tasks"])
+
+    def test_intake_permissions_extend_the_bridge_table(self):
+        bridge = _defaults()["vikunja_hermes_bridge_permissions"]
+        intake = self._intake()
+        for group, actions in bridge.items():
+            self.assertLessEqual(set(actions), set(intake[group]), group)
+
+    def test_hermes_is_shared_on_projects_64_and_55(self):
+        shares = self._identity("hermes")["project_shares"]
+        self.assertEqual({share["project_id"] for share in shares}, {64, 55})
+        for share in shares:
+            self.assertEqual(share["owner_username"], "svc-mcp-rw")
+            self.assertEqual(share["permission"], 1)
 
 
 class ProbeEndpointStaysInScope(unittest.TestCase):
