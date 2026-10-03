@@ -119,6 +119,15 @@
   tags:
     - unpoller
 
+- name: Detect if running inside a system container
+  # systemd-detect-virt --container: exit 0 = inside a container, exit 1 = not.
+  ansible.builtin.command: systemd-detect-virt --container
+  register: _unpoller_virt_container
+  changed_when: false
+  failed_when: false
+  tags:
+    - unpoller
+
 - name: Deploy the unpoller systemd unit
   ansible.builtin.template:
     src: unpoller.service.j2
@@ -140,5 +149,15 @@
     name: unpoller
     state: started
     enabled: true
+  tags:
+    - unpoller
+
+# A started unit can still crash-loop (Restart=on-failure); the converge
+# fails unless the metrics listener actually answers.
+- name: Wait for the unpoller metrics listener
+  ansible.builtin.wait_for:
+    host: "{{ unpoller_listen_address }}"
+    port: "{{ unpoller_metrics_port }}"
+    timeout: 60
   tags:
     - unpoller
