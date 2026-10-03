@@ -70,6 +70,14 @@ def test_healthy_count_is_actually_incremented() -> None:
         )
 
 
+def test_expected_voters_comes_from_inventory() -> None:
+    for name, body in _templates():
+        summaries = [line for line in body.splitlines()
+                     if line.lstrip().startswith('log "sweep complete:')]
+        assert len(summaries) == 1, name
+        assert "expected={{ groups['openbao_group'] | length }}" in summaries[0], name
+
+
 def test_a_failed_ship_does_not_exit_zero() -> None:
     """A sweep whose ships failed must not look like a clean sweep."""
     for name, body in _templates():
