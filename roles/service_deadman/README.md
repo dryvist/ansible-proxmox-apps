@@ -29,7 +29,8 @@ monitors.
 Checks are declared per inventory group in `service_deadman_group_checks`. The
 role selects every check whose group this host belongs to (`group_names`), so a
 single `site.yml` play can target the union of keystone groups and each host
-watches only its own services. A host with no matching checks is a no-op.
+watches only its own services. A host with no matching checks gets any earlier
+validator (units, script, state) removed.
 
 Each check is a functional probe (not merely `systemctl is-active`), with unit
 names verified against the live services:

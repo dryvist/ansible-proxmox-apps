@@ -80,12 +80,51 @@
   changed_when: false
 
 # =============================================================================
-# Alert hub: Slack fan-out + Zammad subscriber
+# Alert hub: Slack fan-out, Zammad subscriber, end-to-end canary
 # =============================================================================
 
-- name: Deploy the Slack fan-out (ntfy-to-slack per route)
-  ansible.builtin.include_tasks: slack_fanout.yml
+# Each stage runs isolated so one unseeded credential cannot hold back the
+# others: Slack is the alert path that must always deploy. Failures are
+# collected and fail the converge once every stage has run.
+- name: Deploy the Slack fan-out (ntfy-to-slack per instance)
+  block:
+    - name: Include the Slack fan-out
+      ansible.builtin.include_tasks: slack_fanout.yml
+  rescue:
+    - name: Record the Slack fan-out failure
+      ansible.builtin.set_fact:
+        ntfy_docker_stage_failures: >-
+          {{ ntfy_docker_stage_failures | default([])
+             + ['slack fan-out: ' ~ (ansible_failed_result.msg | default('failed'))] }}
 
 - name: Deploy the Zammad subscriber (native ntfy CLI)
-  ansible.builtin.include_tasks: zammad_subscriber.yml
   when: ntfy_docker_zammad_manage_subscriber | bool
+  block:
+    - name: Include the Zammad subscriber
+      ansible.builtin.include_tasks: zammad_subscriber.yml
+  rescue:
+    - name: Record the Zammad subscriber failure
+      ansible.builtin.set_fact:
+        ntfy_docker_stage_failures: >-
+          {{ ntfy_docker_stage_failures | default([])
+             + ['zammad subscriber: ' ~ (ansible_failed_result.msg | default('failed'))] }}
+
+- name: Deploy the end-to-end canary
+  block:
+    - name: Include the canary
+      ansible.builtin.include_tasks: canary.yml
+  rescue:
+    - name: Record the canary failure
+      ansible.builtin.set_fact:
+        ntfy_docker_stage_failures: >-
+          {{ ntfy_docker_stage_failures | default([])
+             + ['canary: ' ~ (ansible_failed_result.msg | default('failed'))] }}
+
+# Restart what the stages that did succeed changed before failing the host.
+- name: Flush handlers for the alert-hub stages
+  ansible.builtin.meta: flush_handlers
+
+- name: Fail when an alert-hub stage failed
+  ansible.builtin.fail:
+    msg: "{{ ntfy_docker_stage_failures | join('; ') }}"
+  when: ntfy_docker_stage_failures | default([]) | length > 0

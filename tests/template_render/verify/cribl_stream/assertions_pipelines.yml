@@ -163,7 +163,7 @@
       - "'replaceExpr:' in _cribl_stream_otel_traces"
       - "'regex:' not in _cribl_stream_otel_traces"
       - "'replacement:' not in _cribl_stream_otel_traces"
-      - "'sk-REDACTED' in _cribl_stream_otel_traces"
+      - "'<redacted:github>' in _cribl_stream_otel_traces"
     fail_msg: >-
       mask rules must use matchRegex/replaceExpr — the regex/replacement
       keys are invalid and make the entire pipeline fail to load, which
@@ -171,6 +171,17 @@
       Redaction must be in place BEFORE message-content capture is enabled
       at the emitters, since server-side masking is a licensed backend
       feature and is not available to us.
+
+- name: Assert the Splunk post-processing pipeline is one this role renders
+  ansible.builtin.assert:
+    that:
+      - >-
+        _cribl_stream_defaults.cribl_stream_splunk_hec_post_processing_pipeline
+        in _cribl_stream_defaults.cribl_stream_pipelines
+    fail_msg: >-
+      Every splunk_hec output names this pipeline. If the node does not have
+      it, Cribl ships the events unmasked and logs no error, so the name must
+      be one of cribl_stream_pipelines.
 
 - name: Assert the OTLP destination endpoint carries no signal path
   ansible.builtin.assert:
@@ -196,6 +207,34 @@
       for storages, joined with '_') — taking only the last segment
       collapses distinct keys like memory.used and swap.used onto the
       same metric name.
+
+- name: Assert mlx_metrics_normalize drops every other sourcetype then republishes as a native metric
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_cribl_stream_mlx_metrics_pipeline | from_yaml).functions
+        | map(attribute='id') | list == ['drop', 'eval', 'publish_metrics']
+      - >-
+        "sourcetype !== 'mlx:metrics' || _metric === undefined"
+        in _cribl_stream_mlx_metrics_pipeline
+      - "'Number.isFinite' in _cribl_stream_mlx_metrics_pipeline"
+      - "\"'llm_metrics'\" in _cribl_stream_mlx_metrics_pipeline"
+      - >-
+        (_cribl_stream_mlx_metrics_pipeline | from_yaml).functions[2].conf
+        == {'metricNameField': '_metric', 'valueField': '_value', 'dimensions': '*'}
+    fail_msg: >-
+      mlx_metrics_normalize must lead with a native Drop function filtered
+      to sourcetype mlx:metrics AND a present _metric field (this pipeline
+      shares in_cribl_s2s with every other S2S-forwarded sourcetype, AND
+      with in_system_metrics, which shares the sourcetype but carries no
+      _metric field — confirmed live against a real standalone Edge: its
+      events name each metric as a literal field key instead), coerce
+      non-finite values, stamp index=llm_metrics, and re-publish via a
+      native Publish Metrics function keyed on _metric — without it the
+      event never regains the metric flag it lost crossing the Edge's
+      TCP JSON S2S hop, and Splunk's metric-index HEC rejects it
+      (invalid_index), same failure nix-darwin#1824 hit stamping this
+      index directly at Edge.
 
 - name: Assert slice(3)/join('_') does not collide two real PVE node keys
   vars:
