@@ -65,14 +65,19 @@
 # identity's own token_permissions actually grants (vikunja_hermes_bridge_
 # permissions always includes projects: read_all), unlike /api/v1/user,
 # which sits outside every bridge identity's scope and would read 401/403
-# even for a freshly-minted, fully working token.
+# even for a freshly-minted, fully working token. An identity whose token
+# holds no read route declares its own `probe`: a route it IS granted, and the
+# statuses that mean the token authenticated (authenticated_statuses).
 - name: "Verify the stored token still authenticates for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.uri:
-    url: "http://localhost:{{ vikunja_port }}/api/v1/projects"
-    method: GET
+    url: "http://localhost:{{ vikunja_port }}{{ vikunja_hermes_identity.probe.path | default('/api/v1/projects') }}"
+    method: "{{ vikunja_hermes_identity.probe.method | default('GET') }}"
     headers:
       Authorization: "Bearer {{ vikunja_hermes_stored_token }}"
-    status_code: [200, 401, 403]
+    body_format: json
+    body: "{{ vikunja_hermes_identity.probe.body | default(omit) }}"
+    status_code: >-
+      {{ ([200, 401, 403] + (vikunja_hermes_identity.probe.authenticated_statuses | default([]))) | unique }}
   register: vikunja_hermes_stored_token_check
   when: vikunja_hermes_stored_token | length > 0
   ignore_errors: true
@@ -82,7 +87,8 @@
   ansible.builtin.set_fact:
     vikunja_hermes_stored_token_works: >-
       {{ vikunja_hermes_stored_token_check.status is defined
-         and vikunja_hermes_stored_token_check.status == 200 }}
+         and vikunja_hermes_stored_token_check.status
+             in (vikunja_hermes_identity.probe.authenticated_statuses | default([200])) }}
 
 # Always listed: whether the stored token is current depends on the titled
 # token's declared permissions, not only on the stored value authenticating.
@@ -168,6 +174,14 @@
       X-Vault-Token: "{{ vikunja_token_openbao_token }}"
     body_format: json
     body:
+      # Check-and-set against the version read above (0 = the path must not
+      # exist yet): a writer that lands in between makes this write fail
+      # instead of dropping that writer's fields. A deleted-latest 404 body
+      # still carries the metadata version.
+      options:
+        cas: >-
+          {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('metadata', {})
+             .get('version', 0) | int }}
       data: >-
         {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
            | combine({vikunja_hermes_identity.kv_field: vikunja_hermes_token_mint.json.token,
