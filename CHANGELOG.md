@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.55.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.2...v4.55.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cribl_stream:** mask credentials on every route with a role-owned pipeline ([#2317](https://github.com/dryvist/ansible-proxmox-apps/issues/2317)) ([c4fea1e](https://github.com/dryvist/ansible-proxmox-apps/commit/c4fea1ef7281149cfb0f5c3230d9fb0cc98e1d51))
+
 ## [4.55.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.1...v4.55.2) (2026-10-03)
 
 
