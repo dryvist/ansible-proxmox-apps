@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.54.0...v4.55.0) (2026-10-03)
+
+
+### Features
+
+* **cribl_stream:** republish Mac llm_metrics as native metrics ([#2283](https://github.com/dryvist/ansible-proxmox-apps/issues/2283)) ([e5717b9](https://github.com/dryvist/ansible-proxmox-apps/commit/e5717b9dc6b5393e8f48709f0ce8bc161f45a9ae))
+* **ntfy:** add an end-to-end canary to the off-site deadman ([#2285](https://github.com/dryvist/ansible-proxmox-apps/issues/2285)) ([b38aefa](https://github.com/dryvist/ansible-proxmox-apps/commit/b38aefa221b0f7008d55cc4e6f543427ff483cec))
+
+
+### Bug Fixes
+
+* **cribl_stream:** bounded retry backoff and capped queue for phoenix_otlp ([#2296](https://github.com/dryvist/ansible-proxmox-apps/issues/2296)) ([d59ea5b](https://github.com/dryvist/ansible-proxmox-apps/commit/d59ea5b6db967cc0f4f92eec05f141576c531434))
+* **cribl_stream:** in_unpoller uses the prometheus source's targetList and interval ([#2298](https://github.com/dryvist/ansible-proxmox-apps/issues/2298)) ([b6097f3](https://github.com/dryvist/ansible-proxmox-apps/commit/b6097f3184a091d1c616b6410730e8de02f61e11))
+* **cribl_stream:** preflight the upgrade artifacts and restart on failure ([#2297](https://github.com/dryvist/ansible-proxmox-apps/issues/2297)) ([2c6f18d](https://github.com/dryvist/ansible-proxmox-apps/commit/2c6f18d9c41e1522b6a3ff8ab26c3f2c27f49885))
+* **ntfy_docker:** verify the ntfy-to-slack tarball with get_url's checksum URL ([#2295](https://github.com/dryvist/ansible-proxmox-apps/issues/2295)) ([5b6a84f](https://github.com/dryvist/ansible-proxmox-apps/commit/5b6a84f4e675c165361ee3a435833164e6f0b47e))
+* **openbao_secrets:** declare the local-cloud path optional ([#2293](https://github.com/dryvist/ansible-proxmox-apps/issues/2293)) ([f4761d3](https://github.com/dryvist/ansible-proxmox-apps/commit/f4761d3fe6a5aec876e56f9a9a8673497e69688c))
+
 ## [4.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.53.0...v4.54.0) (2026-10-03)
 
 
