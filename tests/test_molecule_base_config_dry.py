@@ -11,8 +11,8 @@ way: the base config carries exactly the keys identical across every
 scenario, and no scenario file re-declares one of them.
 
 There is no shared destroy playbook to centralize: no molecule.yml in this
-repo sets `provisioner.playbooks`, so every scenario runs the docker driver's
-own built-in destroy playbook already.
+repo sets a create or destroy playbook, so every scenario runs the docker
+driver's own built-in ones already.
 """
 
 from pathlib import Path
@@ -72,11 +72,16 @@ class MoleculeBaseConfigDry(unittest.TestCase):
         # own built-in playbook. If one ever appears, it belongs in the base
         # config alongside dependency/driver/verifier, and this test should
         # be updated to require that instead.
+        # A scenario may reuse another's prepare/converge/verify; only the
+        # driver-lifecycle playbooks are held to the driver's built-ins.
         for path in _scenario_files():
             config = yaml.safe_load(path.read_text(encoding="utf-8"))
-            playbooks = (config.get("provisioner") or {}).get("playbooks")
+            playbooks = (config.get("provisioner") or {}).get("playbooks") or {}
             with self.subTest(scenario=path.parent.name):
-                self.assertIsNone(playbooks, f"{path} now declares provisioner.playbooks")
+                self.assertFalse(
+                    {"create", "destroy"} & playbooks.keys(),
+                    f"{path} declares a create/destroy playbook",
+                )
 
 
 if __name__ == "__main__":
