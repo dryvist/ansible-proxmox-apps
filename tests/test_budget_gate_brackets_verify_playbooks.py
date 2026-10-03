@@ -12,8 +12,9 @@ only bound.
 The gate's own cap-derivation and clock-start logic live once in the
 dryvist.homelab collection (homelab-contracts, ansible/roles/converge_gate)
 and are tested there, not here — this file's job is only the wiring
-contract: that playbooks/site/budget-gate.yml delegates to that shared
-role, and that every entry point brackets its run with the gate.
+contract: that playbooks/site/budget-gate.yml runs that shared role by FQCN
+(never by importing the collection playbook), and that every entry point
+brackets its run with the gate.
 """
 
 from pathlib import Path
@@ -36,9 +37,10 @@ def _plays(rel):
 
 
 class GateDelegatesToTheSharedCollection(unittest.TestCase):
-    def test_local_gate_imports_the_collection_playbook(self):
+    def test_local_gate_runs_the_collection_role_by_fqcn(self):
         play = _plays("playbooks/site/budget-gate.yml")[0]
-        self.assertEqual(play.get("import_playbook"), "dryvist.homelab.converge_gate")
+        self.assertEqual(play.get("roles"), [{"role": "dryvist.homelab.converge_gate"}])
+        self.assertIn("always", play.get("tags", []))
         self.assertNotIn("tasks", play)
 
     def test_first_stage_starts_the_clock_the_shared_gate_reads(self):
