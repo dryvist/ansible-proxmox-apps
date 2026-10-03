@@ -1,0 +1,66 @@
+---
+- name: Validate dispatcher access configuration
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_dispatch_user is match('^[a-z_][a-z0-9_-]*$')
+      - agent_sandbox_dispatch_user != agent_sandbox_operator_user
+      - agent_sandbox_dispatch_user != 'root'
+      - agent_sandbox_dispatch_command is match('^/[a-zA-Z0-9_./-]+$')
+      - agent_sandbox_dispatch_authorized_keys is not string
+
+- name: Validate dispatcher public keys
+  ansible.builtin.assert:
+    that:
+      - item is match('^ssh-ed25519 [A-Za-z0-9+/]+={0,3}( [^\r\n]*)?$')
+  loop: "{{ agent_sandbox_dispatch_authorized_keys }}"
+
+- name: Inspect dispatcher entry point
+  ansible.builtin.stat:
+    path: "{{ agent_sandbox_dispatch_command }}"
+  register: _agent_sandbox_dispatch_entrypoint
+
+- name: Require an installed dispatcher entry point
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_dispatch_entrypoint.stat.exists
+      - _agent_sandbox_dispatch_entrypoint.stat.isreg
+      - _agent_sandbox_dispatch_entrypoint.stat.executable
+      - _agent_sandbox_dispatch_entrypoint.stat.uid == 0
+      - not _agent_sandbox_dispatch_entrypoint.stat.wgrp
+      - not _agent_sandbox_dispatch_entrypoint.stat.woth
+
+- name: Create the dispatcher account
+  ansible.builtin.user:
+    name: "{{ agent_sandbox_dispatch_user }}"
+    system: true
+    create_home: true
+    shell: /bin/sh
+    password_lock: true
+    groups: docker
+    append: true
+
+- name: Create dispatcher authorized keys directory
+  ansible.builtin.file:
+    path: /etc/ssh/agent-dispatch-keys
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install dispatcher authorized keys
+  ansible.builtin.template:
+    src: dispatch-authorized-keys.j2
+    dest: "/etc/ssh/agent-dispatch-keys/{{ agent_sandbox_dispatch_user }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install dispatcher SSH restrictions
+  ansible.builtin.template:
+    src: dispatch-sshd.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-agent-dispatch.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload dispatcher SSH access

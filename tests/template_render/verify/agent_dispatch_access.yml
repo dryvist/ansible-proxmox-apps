@@ -1,0 +1,41 @@
+---
+- name: Verify dispatcher access templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+  vars:
+    ansible_become: false
+    _dispatch_templates: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
+  tasks:
+    - name: Render dispatcher access templates
+      vars:
+        agent_sandbox_dispatch_authorized_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA client-one
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB client-two
+      ansible.builtin.set_fact:
+        _dispatch_keys: "{{ lookup('template', _dispatch_templates ~ '/dispatch-authorized-keys.j2') }}"
+        _dispatch_sshd: "{{ lookup('template', _dispatch_templates ~ '/dispatch-sshd.conf.j2') }}"
+
+    - name: Assert every key is restricted to the dispatcher
+      ansible.builtin.assert:
+        that:
+          - _dispatch_keys.splitlines() | length == 2
+          - >-
+            _dispatch_keys.splitlines() | select('match',
+            '^restrict,command="/usr/local/bin/agent-dispatch-ssh" ssh-ed25519 ') | list | length == 2
+          - "'    ForceCommand /usr/local/bin/agent-dispatch-ssh' in _dispatch_sshd"
+          - "'    DisableForwarding yes' in _dispatch_sshd"
+          - "'    PermitTTY no' in _dispatch_sshd"
+          - "'    PermitUserRC no' in _dispatch_sshd"
+          - "'    AuthenticationMethods publickey' in _dispatch_sshd"
+          - "'Match User agent-dispatch' in _dispatch_sshd"
+          - "'    AuthorizedKeysFile /etc/ssh/agent-dispatch-keys/agent-dispatch' in _dispatch_sshd"
+
+    - name: Assert an empty list revokes all keys
+      ansible.builtin.assert:
+        that:
+          - lookup('template', _dispatch_templates ~ '/dispatch-authorized-keys.j2') | default('', true) | trim == ''
+      vars:
+        agent_sandbox_dispatch_authorized_keys: []
