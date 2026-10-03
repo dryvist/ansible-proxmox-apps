@@ -18,6 +18,28 @@
       environment.
     quiet: true
 
+# An empty vikunja_hermes_bridge_usernames provisions every declared identity;
+# otherwise only the named ones, which must all be declared.
+- name: Assert the selected Hermes bridge usernames are declared identities
+  ansible.builtin.assert:
+    that:
+      - >-
+        vikunja_hermes_bridge_usernames
+        | difference(vikunja_hermes_bridge_identities | map(attribute='username') | list)
+        | length == 0
+    fail_msg: >-
+      vikunja_hermes_bridge_usernames names an identity that
+      vikunja_hermes_bridge_identities does not declare.
+    quiet: true
+
+- name: Select the Hermes bridge identities to provision
+  ansible.builtin.set_fact:
+    vikunja_hermes_bridge_selected: >-
+      {{ vikunja_hermes_bridge_identities
+         if vikunja_hermes_bridge_usernames | length == 0
+         else vikunja_hermes_bridge_identities
+              | selectattr('username', 'in', vikunja_hermes_bridge_usernames) | list }}
+
 # Resolved from the role's canonical secret sources rather than restated, so
 # the bao-first values group_vars sets for the admin and MCP service accounts
 # are picked up automatically. Same block as operator_access.yml's owner map,
@@ -33,7 +55,7 @@
 
 - name: "Resolve each identity's login password"
   ansible.builtin.include_tasks: hermes_bridge_password_one.yml
-  loop: "{{ vikunja_hermes_bridge_identities }}"
+  loop: "{{ vikunja_hermes_bridge_selected }}"
   loop_control:
     loop_var: vikunja_hermes_identity
     label: "{{ vikunja_hermes_identity.username }}"
@@ -50,7 +72,7 @@
       - "--username={{ item.username }}"
       - "--email={{ item.username }}@{{ tofu_data.domain }}"
       - "--password={{ vikunja_hermes_resolved_password[item.username] }}"
-  loop: "{{ vikunja_hermes_bridge_identities }}"
+  loop: "{{ vikunja_hermes_bridge_selected }}"
   loop_control:
     label: "{{ item.username }}"
   when: >-
@@ -61,7 +83,7 @@
 
 - name: Provision each Hermes bridge identity's shares, token, and OpenBao publish
   ansible.builtin.include_tasks: hermes_bridge_identity_one.yml
-  loop: "{{ vikunja_hermes_bridge_identities }}"
+  loop: "{{ vikunja_hermes_bridge_selected }}"
   loop_control:
     loop_var: vikunja_hermes_identity
     label: "{{ vikunja_hermes_identity.username }}"
