@@ -81,7 +81,7 @@ documented once at
 | `OPENBAO_GITHUB_ADMIN_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Admin App installations | env document |
 | `OPENBAO_GITHUB_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Everyday App installations | env document |
 | `OPENBAO_GITHUB_AGENTS_DRYVIST_INSTALLATION_ID` | Agents App installation on `dryvist`; unset = `open-llm` mints nothing | env document |
-| `OPENBAO_OPEN_LLM_SECRET_ID_CIDR` | `open-llm` bind: the dispatcher host as one /32; unset = machine class | environment |
+| `OPENBAO_AI_SANDBOX_SECRET_ID_CIDR` | `open-llm` bind: the dispatcher host as one /32; unset = machine class | environment |
 | `OPENBAO_GITHUB_HERMES_APP_ID` / `_PRIVATE_KEY` | Hermes App (`github-hermes` mount) | one-time environment |
 | `OPENBAO_GITHUB_HERMES_DRYVIST_INSTALLATION_ID` | Hermes App installation on `dryvist`; unset = no mount | env document |
 | `OPENBAO_GITHUB_HERMES_AUTHOR_{PUBLIC,PRIVATE}_REPOS` | Comma-separated repositories for `hermes-author-{public,private}`; unset = no set | env document |
