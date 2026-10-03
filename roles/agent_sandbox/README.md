@@ -26,12 +26,10 @@ ansible-playbook playbooks/site.yml --tags agent_sandbox --diff
 ## Usage
 
 From a workstation with the nix-agent-sandbox CLI. The variables a
-`--profile` names come from the caller's environment (for example a `.env`
-file); `--repo` uses `GH_TOKEN`, or the token `$AGENT_GH_TOKEN_CMD owner/name`
-prints:
+`--profile` names are read from the caller's environment; `--repo` uses
+`GH_TOKEN`, or the token `$AGENT_GH_TOKEN_CMD owner/name` prints:
 
 ```sh
-set -a; . ./.env; set +a
 AGENT_GH_TOKEN_CMD=./mint-repo-token \
   agent run --host <docker-host-fqdn> --profile dev \
   --repo dryvist/some-repo "task prompt"

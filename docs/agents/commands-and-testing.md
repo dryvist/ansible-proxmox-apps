@@ -3,10 +3,9 @@
 ## Commands
 
 > **Every converge runs through Semaphore.** Playbooks read plain environment
-> variables; load them from a `.env` file (`set -a; . ./.env; set +a`) and any
-> other way of setting the same variables behaves identically.
-> `scripts/run-ansible.sh` is the runner Semaphore calls and the path from a
-> workstation. The commands below assume the `.env` is loaded.
+> variables. `scripts/run-ansible.sh` is the runner Semaphore calls and the
+> break-glass path from a workstation. The commands below are that
+> break-glass path, plus local development and testing.
 >
 > The OpenBao-node play (`--tags openbao` on `openbao_group`) is the single
 > converge still run from a workstation under the secret-zero wrapper,
@@ -44,7 +43,7 @@ scripts/run-ansible.sh playbooks/site.yml
 sops exec-env secrets.enc.yaml 'scripts/run-ansible.sh \
   playbooks/site.yml'
 
-# Deploy GitHub runners (the runner registration variables must be in .env)
+# Deploy GitHub runners (reads the runner registration variables)
 scripts/run-ansible.sh playbooks/site.yml \
   --tags github_runner --limit docker_vms,localhost
 

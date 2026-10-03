@@ -1,6 +1,5 @@
 # Secrets Management
 
-**Runtime injection**: environment variables, loaded from a `.env` file
 **At-rest encryption**: SOPS + age (`secrets.enc.yaml`)
 
 See the [SOPS integration rule](agentsmd/rules/infra/sops-integration.md)
