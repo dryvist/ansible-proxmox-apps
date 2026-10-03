@@ -48,7 +48,7 @@ postgres_replication_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', tr
 # replicas are the only consumers, and this is the one legitimate place for
 # an (env-derived) CIDR since pg_hba cannot take an FQDN. pgvector ships as
 # a PGDG package via extensions:[vector].
-postgres_managed_databases:
+postgres_ai_base_databases:
   - name: hindsight
     user: hindsight
     password: >-
@@ -56,6 +56,7 @@ postgres_managed_databases:
          | default(undef(), true)
          | mandatory('HINDSIGHT_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
+
     extensions: [vector]
   # LiteLLM router state. The Adaptive Router learns a quality estimate per
   # model x request-type and loads it at startup; with no database it still
@@ -72,3 +73,16 @@ postgres_managed_databases:
          | default(undef(), true)
          | mandatory('LLM_ROUTER_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
     client_cidr: "{{ lookup('env', 'NETWORK_CIDR_AI') | default('', true) }}"
+
+postgres_managed_databases: >-
+  {{ postgres_ai_base_databases +
+     (postgres_ai_alert_delivery_databases if alert_delivery_enabled | default(false) | bool else []) }}
+postgres_ai_alert_delivery_databases:
+  - name: n8n_notifications
+    user: n8n_notifications
+    password: "{{ bao_apps_secrets.n8n_notifications_db_password | mandatory }}"
+    client_cidr: "{{ lookup('env', 'NETWORK_CIDR_APPS') | default('', true) }}"
+  - name: alert_delivery
+    user: alert_delivery
+    password: "{{ bao_apps_secrets.alert_delivery_db_password | mandatory }}"
+    client_cidr: "{{ lookup('env', 'NETWORK_CIDR_APPS') | default('', true) }}"

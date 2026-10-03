@@ -10,6 +10,8 @@ services:
   {{ n8n_docker_app_service }}:
     image: {{ n8n_docker_app_image }}
     container_name: "{{ n8n_docker_container_name }}"
+    mem_limit: "{{ n8n_docker_memory_limit }}"
+    cpus: "{{ n8n_docker_cpu_limit }}"
     environment:
       # Persist workflows/credentials in the shared cluster, not sqlite.
       DB_TYPE: postgresdb
@@ -32,14 +34,18 @@ services:
       N8N_PROXY_HOPS: "1"
       # Allow {{ '{{ $env.* }}' }} in node expressions so the seed workflow can read
       # the router endpoint/key from env instead of baking the key into the JSON.
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "{{ (not n8n_docker_seed_workflow) | ternary('true', 'false') }}"
+      N8N_CONCURRENCY_PRODUCTION_LIMIT: "{{ n8n_docker_execution_concurrency }}"
+      EXECUTIONS_TIMEOUT: "{{ n8n_docker_execution_timeout }}"
+{% if n8n_docker_seed_workflow %}
       # LiteLLM router (fabric front door) for the seed workflow. The seed HTTP
       # Request node references these via {{ '{{ $env.LITELLM_ROUTER_* }}' }}.
       LITELLM_ROUTER_BASE_URL: "{{ n8n_docker_llm_base_url }}"
       LITELLM_ROUTER_KEY: "{{ n8n_docker_llm_api_key }}"
       LITELLM_ROUTER_MODEL: "{{ n8n_docker_seed_model }}"
+{% endif %}
     ports:
-      - "{{ n8n_docker_web_port }}:{{ n8n_docker_web_port }}"
+      - "{{ n8n_docker_bind_address }}:{{ n8n_docker_web_port }}:{{ n8n_docker_web_port }}"
     volumes:
       - {{ n8n_docker_app_data_dir }}:{{ n8n_docker_app_internal_data }}
     restart: {{ n8n_docker_restart_policy }}

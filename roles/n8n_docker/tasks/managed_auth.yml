@@ -1,0 +1,41 @@
+---
+- name: Inspect the applied credential revision
+  ansible.builtin.stat:
+    path: "{{ n8n_docker_data_dir }}/.credentials-revision"
+  register: n8n_docker_credentials_stat
+
+- name: Read the applied credential revision
+  ansible.builtin.slurp:
+    src: "{{ n8n_docker_data_dir }}/.credentials-revision"
+  register: n8n_docker_credentials_revision
+  when: n8n_docker_credentials_stat.stat.exists
+  no_log: true
+
+- name: Converge changed managed credentials
+  when: >-
+    (n8n_docker_credentials_revision.content | default('') | b64decode | trim)
+    != (n8n_docker_managed_credentials | to_json | hash('sha256'))
+  no_log: true
+  block:
+    - name: Import credentials through the native CLI
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -i
+          - -u
+          - node
+          - "{{ n8n_docker_container_name }}"
+          - n8n
+          - import:credentials
+          - --input=/dev/stdin
+        stdin: "{{ n8n_docker_managed_credentials | to_json }}"
+      changed_when: true
+      notify: Restart n8n
+
+    - name: Queue the imported credential revision
+      ansible.builtin.set_fact:
+        n8n_docker_pending_revisions: >-
+          {{ n8n_docker_pending_revisions +
+             [{'path': '.credentials-revision',
+               'revision': n8n_docker_managed_credentials | to_json | hash('sha256')}] }}

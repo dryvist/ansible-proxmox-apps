@@ -121,10 +121,9 @@
     name: openbao_secrets
     tasks_from: publish.yml
   vars:
-    openbao_secrets_publish_app: n8n
+    openbao_secrets_publish_app: "{{ n8n_docker_secret_app }}"
     openbao_secrets_publish_reason: (credential-store encryption key)
-    openbao_secrets_publish_data:
-      n8n_encryption_key: "{{ n8n_docker_encryption_key }}"
+    openbao_secrets_publish_data: "{{ {n8n_docker_secret_encryption_field: n8n_docker_encryption_key} }}"
 
 # =============================================================================
 # Compose File + seed workflow
@@ -261,3 +260,44 @@
     - n8n_docker_seed_workflow
     - not n8n_docker_seed_marker.stat.exists
     - n8n_docker_seed_import.rc | default(1) == 0
+
+- name: Reset pending managed revisions
+  ansible.builtin.set_fact:
+    n8n_docker_pending_revisions: []
+
+- name: Import managed credentials without plaintext files
+  ansible.builtin.include_tasks: managed_auth.yml
+  when: n8n_docker_managed_credentials | length > 0
+
+- name: Converge each managed workflow
+  ansible.builtin.include_tasks: managed_workflow.yml
+  loop: "{{ n8n_docker_managed_workflows }}"
+  loop_control:
+    loop_var: n8n_docker_managed_workflow
+    label: "{{ n8n_docker_managed_workflow.id }}"
+
+- name: Activate managed workflow changes before reporting readiness
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify managed instance readiness after activation
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ n8n_docker_web_port }}/healthz/readiness"
+    status_code: 200
+  register: n8n_docker_managed_readiness
+  until: n8n_docker_managed_readiness.status == 200
+  retries: 12
+  delay: 5
+  when: n8n_docker_managed_workflows | length > 0
+  changed_when: false
+
+- name: Record managed revisions after successful activation
+  ansible.builtin.copy:
+    dest: "{{ n8n_docker_data_dir }}/{{ item.path }}"
+    content: "{{ item.revision }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ n8n_docker_pending_revisions }}"
+  loop_control:
+    label: "{{ item.path }}"
+  no_log: true

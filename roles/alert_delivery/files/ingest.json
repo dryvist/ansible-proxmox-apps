@@ -1,0 +1,164 @@
+{
+  "id": "__WORKFLOW_ID__",
+  "name": "Alert delivery / ingest",
+  "active": false,
+  "nodes": [
+    {
+      "id": "every-15-seconds",
+      "name": "Every 15 seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "replay-cursor",
+      "name": "Replay cursor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT topic,greatest(seen-120,0) AS since FROM alert_delivery.cursor ORDER BY topic",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "poll-ntfy",
+      "name": "Poll ntfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"__JS_NTFY_URL__/\" + encodeURIComponent($json.topic) + '/json' }}",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "poll",
+              "value": "1"
+            },
+            {
+              "name": "since",
+              "value": "={{ $json.since.toString() }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__NTFY_CREDENTIAL__",
+          "name": "Alert delivery httpHeaderAuth"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "persist-batch",
+      "name": "Persist batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT alert_delivery.ingest($1, $2::text[], $3::text[]) AS ingested",
+        "options": {
+          "queryReplacement": "={{ [$json.data ?? '', __IMPACTS__, __CRITICAL_RULES__] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 seconds": {
+      "main": [
+        [
+          {
+            "node": "Replay cursor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Replay cursor": {
+      "main": [
+        [
+          {
+            "node": "Poll ntfy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Poll ntfy": {
+      "main": [
+        [
+          {
+            "node": "Persist batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 100
+  },
+  "pinData": {}
+}

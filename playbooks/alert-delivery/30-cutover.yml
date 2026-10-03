@@ -1,0 +1,29 @@
+---
+- name: Retire the legacy ticket subscriber after verified delivery
+  hosts: ntfy_group
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Retire the verified legacy subscriber
+      when:
+        - alert_delivery_enabled | bool
+        - alert_delivery_cutover_verified | bool
+      block:
+        - name: Retire legacy Slack routes
+          ansible.builtin.include_role:
+            name: ntfy_docker
+            tasks_from: slack_fanout.yml
+          vars:
+            ntfy_docker_slack_delivery_verified: true
+
+        - name: Discover installed services
+          ansible.builtin.service_facts:
+
+        - name: Stop and disable the legacy ticket subscriber
+          ansible.builtin.systemd:
+            name: ntfy-subscribe.service
+            state: stopped
+            enabled: false
+          when: "'ntfy-subscribe.service' in ansible_facts.services"

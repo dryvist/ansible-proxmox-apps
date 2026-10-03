@@ -1,0 +1,50 @@
+---
+- name: Provision dedicated public alert channels when enabled
+  when: alert_delivery_channels_enabled | bool
+  block:
+    - name: Validate channel provisioning inputs
+      ansible.builtin.assert:
+        that:
+          - alert_delivery_channels_token | length > 0
+          - alert_delivery_channels_general_name is match('^[a-z0-9][a-z0-9_-]{0,79}$')
+          - alert_delivery_channels_critical_name is match('^[a-z0-9][a-z0-9_-]{0,79}$')
+          - alert_delivery_channels_general_name != alert_delivery_channels_critical_name
+        quiet: true
+      no_log: true
+
+    - name: List public channels when either channel ID is missing
+      ansible.builtin.uri:
+        url: >-
+          {{ alert_delivery_channels_api_url }}/conversations.list?types=public_channel&limit=1000&exclude_archived=true
+        headers:
+          Authorization: "Bearer {{ alert_delivery_channels_token }}"
+        return_content: true
+        timeout: 20
+      register: _alert_delivery_channels_list
+      when: alert_delivery_channels_general_id | length == 0 or alert_delivery_channels_critical_id | length == 0
+      changed_when: false
+      no_log: true
+
+    - name: Require a complete successful public channel listing
+      ansible.builtin.assert:
+        that:
+          - _alert_delivery_channels_list.json.ok | default(false) | bool
+          - _alert_delivery_channels_list.json.channels is defined
+          - _alert_delivery_channels_list.json.response_metadata.next_cursor | default('') | length == 0
+        fail_msg: Public channel discovery failed or exceeded one page; supply verified channel IDs.
+        quiet: true
+      when: alert_delivery_channels_general_id | length == 0 or alert_delivery_channels_critical_id | length == 0
+      no_log: true
+
+    - name: Resolve and verify each dedicated public channel
+      ansible.builtin.include_tasks: channel.yml
+      loop:
+        - name: "{{ alert_delivery_channels_general_name }}"
+          id: "{{ alert_delivery_channels_general_id }}"
+          fact: alert_delivery_channels_general_id
+        - name: "{{ alert_delivery_channels_critical_name }}"
+          id: "{{ alert_delivery_channels_critical_id }}"
+          fact: alert_delivery_channels_critical_id
+      loop_control:
+        loop_var: alert_delivery_channels_item
+        label: "{{ alert_delivery_channels_item.name }}"

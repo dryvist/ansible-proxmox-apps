@@ -1,0 +1,71 @@
+---
+- name: Deploy isolated notification runtime
+  hosts: ntfy_group
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Converge notification delivery
+      when: alert_delivery_enabled | bool
+      block:
+        - name: Load the existing notification topic roster
+          ansible.builtin.include_vars:
+            file: ../../roles/ntfy_docker/defaults/main.yml
+            name: alert_delivery_ntfy_defaults
+
+        - name: Resolve dedicated Slack channels
+          ansible.builtin.include_role:
+            name: alert_delivery_channels
+          vars:
+            alert_delivery_channels_enabled: true
+            alert_delivery_channels_token: "{{ bao_slack_ops_secrets.bot_token | default(undef(), true) | mandatory }}"
+            alert_delivery_channels_general_id: "{{ alert_delivery_general_channel }}"
+            alert_delivery_channels_critical_id: "{{ alert_delivery_critical_channel }}"
+
+        - name: Use the verified channel identities
+          ansible.builtin.set_fact:
+            alert_delivery_general_channel: "{{ alert_delivery_channels_general_id }}"
+            alert_delivery_critical_channel: "{{ alert_delivery_channels_critical_id }}"
+
+        - name: Require channel identities and independent storage
+          ansible.builtin.assert:
+            that:
+              - alert_delivery_general_channel | length > 0
+              - alert_delivery_critical_channel | length > 0
+              - alert_delivery_general_channel != alert_delivery_critical_channel
+              - alert_delivery_db_host != postgres_apps_primary_host ~ '.' ~ hostvars['localhost'].tofu_data.domain
+              - groups['postgres_ai_group'] | length > 0
+              - not (alert_delivery_cutover_verified | bool) or alert_delivery_critical_rules | length > 0
+            quiet: true
+
+        - name: Prepare notification ledger and workflows
+          ansible.builtin.include_role:
+            name: alert_delivery
+          vars:
+            alert_delivery_mode: notification
+
+        - name: Deploy the dedicated n8n notification instance
+          ansible.builtin.include_role:
+            name: n8n_docker
+          vars:
+            n8n_docker_container_name: n8n-notifications
+            n8n_docker_data_dir: /opt/n8n-notifications
+            n8n_docker_db_host: "{{ alert_delivery_db_host }}"
+            n8n_docker_db_name: n8n_notifications
+            n8n_docker_db_user: n8n_notifications
+            n8n_docker_db_password: >-
+              {{ bao_apps_secrets.n8n_notifications_db_password | default(undef(), true) | mandatory }}
+            n8n_docker_encryption_key: >-
+              {{ bao_apps_secrets.n8n_notifications_encryption_key | default(undef(), true) | mandatory }}
+            n8n_docker_owner_password: >-
+              {{ bao_apps_secrets.n8n_notifications_owner_password | default(undef(), true) | mandatory }}
+            n8n_docker_owner_email: "admin@n8n-notifications.{{ alert_delivery_ingress_domain }}"
+            n8n_docker_fqdn: "n8n-notifications.{{ alert_delivery_ingress_domain }}"
+            n8n_docker_secret_app: alert-delivery
+            n8n_docker_secret_encryption_field: n8n_notifications_encryption_key
+            n8n_docker_bind_address: 127.0.0.1
+            n8n_docker_seed_workflow: false
+            n8n_docker_execution_concurrency: 2
+            n8n_docker_managed_credentials: "{{ alert_delivery_notification_credentials }}"
+            n8n_docker_managed_workflows: "{{ alert_delivery_managed_workflows }}"

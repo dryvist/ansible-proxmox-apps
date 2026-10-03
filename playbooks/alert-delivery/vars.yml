@@ -1,0 +1,57 @@
+---
+alert_delivery_general_channel: ""
+alert_delivery_critical_channel: ""
+alert_delivery_ingress_domain: "{{ lookup('env', 'PROXMOX_SUBDOMAIN') | default(undef(), true) | mandatory }}"
+alert_delivery_db_host: >-
+  {{ hostvars[groups['postgres_ai_group'][0]].postgres_primary_host }}.{{ hostvars['localhost'].tofu_data.domain }}
+alert_delivery_db_port: "{{ hostvars['localhost'].tofu_data.constants.service_ports.postgres_default }}"
+alert_delivery_db_name: alert_delivery
+alert_delivery_db_user: alert_delivery
+alert_delivery_db_password: "{{ bao_apps_secrets.alert_delivery_db_password | default(undef(), true) | mandatory }}"
+alert_delivery_postgres_credential_id: alert-delivery-postgres
+alert_delivery_ntfy_credential_id: alert-delivery-ntfy
+alert_delivery_slack_credential_id: alert-delivery-slack
+alert_delivery_zammad_credential_id: alert-delivery-zammad
+alert_delivery_ai_credential_id: alert-delivery-ai
+alert_delivery_ntfy_url: "https://ntfy.{{ alert_delivery_ingress_domain }}"
+alert_delivery_zammad_url: "https://zammad.{{ alert_delivery_ingress_domain }}"
+alert_delivery_ai_url: "https://llm.{{ alert_delivery_ingress_domain }}/v1"
+alert_delivery_topics: "{{ alert_delivery_ntfy_defaults.ntfy_docker_topics }}"
+alert_delivery_postgres_credential:
+  id: "{{ alert_delivery_postgres_credential_id }}"
+  name: Alert delivery postgres
+  type: postgres
+  data:
+    host: "{{ alert_delivery_db_host }}"
+    port: "{{ alert_delivery_db_port | int }}"
+    database: "{{ alert_delivery_db_name }}"
+    user: "{{ alert_delivery_db_user }}"
+    password: "{{ alert_delivery_db_password }}"
+    ssl: disable
+alert_delivery_notification_credentials:
+  - "{{ alert_delivery_postgres_credential }}"
+  - id: "{{ alert_delivery_ntfy_credential_id }}"
+    name: Alert delivery ntfy
+    type: httpHeaderAuth
+    data:
+      name: X-Alert-Delivery
+      value: n8n
+  - id: "{{ alert_delivery_slack_credential_id }}"
+    name: Alert delivery slackApi
+    type: slackApi
+    data:
+      accessToken: "{{ bao_slack_ops_secrets.bot_token | default(undef(), true) | mandatory }}"
+alert_delivery_incident_credentials:
+  - "{{ alert_delivery_postgres_credential }}"
+  - id: "{{ alert_delivery_zammad_credential_id }}"
+    name: Alert delivery Zammad token
+    type: httpHeaderAuth
+    data:
+      name: Authorization
+      value: "Token token={{ bao_apps_secrets.zammad_ntfy_api_token | default(undef(), true) | mandatory }}"
+  - id: "{{ alert_delivery_ai_credential_id }}"
+    name: Alert delivery openAiApi
+    type: openAiApi
+    data:
+      apiKey: "{{ bao_apps_secrets.n8n_llm_router_key | default(undef(), true) | mandatory }}"
+      url: "{{ alert_delivery_ai_url }}"

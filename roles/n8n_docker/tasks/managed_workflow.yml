@@ -1,0 +1,59 @@
+---
+- name: Validate managed workflow identity
+  ansible.builtin.assert:
+    that:
+      - n8n_docker_managed_workflow.id is match('^[A-Za-z0-9_-]+$')
+      - n8n_docker_managed_workflow.definition.id == n8n_docker_managed_workflow.id
+    quiet: true
+
+- name: Inspect the applied workflow revision
+  ansible.builtin.stat:
+    path: "{{ n8n_docker_data_dir }}/.workflow-{{ n8n_docker_managed_workflow.id }}"
+  register: n8n_docker_workflow_stat
+
+- name: Read the applied workflow revision
+  ansible.builtin.slurp:
+    src: "{{ n8n_docker_data_dir }}/.workflow-{{ n8n_docker_managed_workflow.id }}"
+  register: n8n_docker_workflow_revision
+  when: n8n_docker_workflow_stat.stat.exists
+
+- name: Import and publish a changed workflow
+  when: >-
+    (n8n_docker_workflow_revision.content | default('') | b64decode | trim)
+    != (n8n_docker_managed_workflow.definition | to_json | hash('sha256'))
+  block:
+    - name: Import workflow through the native CLI
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -i
+          - -u
+          - node
+          - "{{ n8n_docker_container_name }}"
+          - n8n
+          - import:workflow
+          - --input=/dev/stdin
+        stdin: "{{ [n8n_docker_managed_workflow.definition] | to_json }}"
+      changed_when: true
+
+    - name: Publish the managed workflow version
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -u
+          - node
+          - "{{ n8n_docker_container_name }}"
+          - n8n
+          - publish:workflow
+          - "--id={{ n8n_docker_managed_workflow.id }}"
+      changed_when: true
+      notify: Restart n8n
+
+    - name: Queue the published workflow revision
+      ansible.builtin.set_fact:
+        n8n_docker_pending_revisions: >-
+          {{ n8n_docker_pending_revisions +
+             [{'path': '.workflow-' ~ n8n_docker_managed_workflow.id,
+               'revision': n8n_docker_managed_workflow.definition | to_json | hash('sha256')}] }}

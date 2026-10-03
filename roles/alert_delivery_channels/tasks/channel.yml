@@ -1,0 +1,96 @@
+---
+- name: Resolve the exact public channel name when no ID was supplied
+  ansible.builtin.set_fact:
+    _alert_delivery_channels_current_id: >-
+      {{ alert_delivery_channels_item.id or
+         (_alert_delivery_channels_list.json.channels
+          | selectattr('name', 'equalto', alert_delivery_channels_item.name)
+          | map(attribute='id') | first | default('')) }}
+  no_log: true
+
+- name: Create the absent dedicated public channel
+  ansible.builtin.uri:
+    url: "{{ alert_delivery_channels_api_url }}/conversations.create"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ alert_delivery_channels_token }}"
+    body_format: json
+    body:
+      name: "{{ alert_delivery_channels_item.name }}"
+      is_private: false
+    return_content: true
+    timeout: 20
+  register: _alert_delivery_channels_current_create
+  when: _alert_delivery_channels_current_id | length == 0
+  changed_when: _alert_delivery_channels_current_create.json.ok | default(false) | bool
+  no_log: true
+
+- name: Require successful creation before accepting its ID
+  when: _alert_delivery_channels_current_id | length == 0
+  no_log: true
+  block:
+    - name: Verify public channel creation succeeded
+      ansible.builtin.assert:
+        that:
+          - _alert_delivery_channels_current_create.json.ok | default(false) | bool
+          - _alert_delivery_channels_current_create.json.channel.id | default('') | length > 0
+        fail_msg: Slack channel creation failed; verify the bot public-channel permissions.
+        quiet: true
+
+    - name: Use the created channel ID
+      ansible.builtin.set_fact:
+        _alert_delivery_channels_current_id: "{{ _alert_delivery_channels_current_create.json.channel.id }}"
+
+- name: Read the resolved public channel
+  ansible.builtin.uri:
+    url: >-
+      {{ alert_delivery_channels_api_url ~ '/conversations.info?channel=' ~
+         (_alert_delivery_channels_current_id | urlencode) }}
+    headers:
+      Authorization: "Bearer {{ alert_delivery_channels_token }}"
+    return_content: true
+    timeout: 20
+  register: _alert_delivery_channels_current_info
+  changed_when: false
+  no_log: true
+
+- name: Verify the ID refers to the requested active public channel
+  ansible.builtin.assert:
+    that:
+      - _alert_delivery_channels_current_info.json.ok | default(false) | bool
+      - _alert_delivery_channels_current_info.json.channel.id == _alert_delivery_channels_current_id
+      - _alert_delivery_channels_current_info.json.channel.name == alert_delivery_channels_item.name
+      - not (_alert_delivery_channels_current_info.json.channel.is_archived | bool)
+      - not (_alert_delivery_channels_current_info.json.channel.is_private | bool)
+    quiet: true
+  no_log: true
+
+- name: Join the public channel when the bot is not a member
+  ansible.builtin.uri:
+    url: "{{ alert_delivery_channels_api_url }}/conversations.join"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ alert_delivery_channels_token }}"
+    body_format: json
+    body:
+      channel: "{{ _alert_delivery_channels_current_id }}"
+    return_content: true
+    timeout: 20
+  register: _alert_delivery_channels_current_join
+  when: not (_alert_delivery_channels_current_info.json.channel.is_member | default(false) | bool)
+  changed_when: _alert_delivery_channels_current_join.json.ok | default(false) | bool
+  no_log: true
+
+- name: Verify bot membership after joining
+  ansible.builtin.assert:
+    that:
+      - _alert_delivery_channels_current_join.json.ok | default(false) | bool
+      - _alert_delivery_channels_current_join.json.channel.id == _alert_delivery_channels_current_id
+      - _alert_delivery_channels_current_join.json.channel.is_member | default(false) | bool
+    quiet: true
+  when: not (_alert_delivery_channels_current_info.json.channel.is_member | default(false) | bool)
+  no_log: true
+
+- name: Publish the verified channel ID for delivery workflows
+  ansible.builtin.set_fact:
+    "{{ alert_delivery_channels_item.fact }}": "{{ _alert_delivery_channels_current_id }}"

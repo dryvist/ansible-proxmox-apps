@@ -1,0 +1,66 @@
+---
+- name: Validate alert delivery mode and credential references
+  ansible.builtin.assert:
+    that:
+      - alert_delivery_mode in ['notification', 'incident']
+      - alert_delivery_postgres_credential_id | length > 0
+      - >-
+        alert_delivery_mode != 'notification' or
+        (alert_delivery_topics | length > 0 and
+         alert_delivery_ntfy_url | length > 0 and
+         alert_delivery_general_channel | length > 0 and
+         alert_delivery_critical_channel | length > 0 and
+         alert_delivery_ntfy_credential_id | length > 0 and
+         alert_delivery_slack_credential_id | length > 0)
+      - >-
+        alert_delivery_mode != 'incident' or
+        (alert_delivery_zammad_url | length > 0 and
+         alert_delivery_ai_url | length > 0 and
+         alert_delivery_zammad_credential_id | length > 0 and
+         alert_delivery_ai_credential_id | length > 0)
+    quiet: true
+
+- name: Install native PostgreSQL Ansible adapter
+  ansible.builtin.apt:
+    name: python3-psycopg2
+    state: present
+  delegate_to: "{{ alert_delivery_db_delegate }}"
+  when: alert_delivery_mode == 'notification'
+
+- name: Bootstrap independent delivery ledger
+  community.postgresql.postgresql_query:
+    login_host: "{{ alert_delivery_db_host }}"
+    login_port: "{{ alert_delivery_db_port }}"
+    login_db: "{{ alert_delivery_db_name }}"
+    login_user: "{{ alert_delivery_db_user }}"
+    login_password: "{{ alert_delivery_db_password }}"
+    query: "{{ lookup('ansible.builtin.file', role_path ~ '/files/ledger.sql') }}"
+  delegate_to: "{{ alert_delivery_db_delegate }}"
+  when: alert_delivery_mode == 'notification'
+  no_log: true
+
+- name: Initialize persistent replay topics
+  community.postgresql.postgresql_query:
+    login_host: "{{ alert_delivery_db_host }}"
+    login_port: "{{ alert_delivery_db_port }}"
+    login_db: "{{ alert_delivery_db_name }}"
+    login_user: "{{ alert_delivery_db_user }}"
+    login_password: "{{ alert_delivery_db_password }}"
+    query: INSERT INTO alert_delivery.cursor(topic) VALUES (%s) ON CONFLICT DO NOTHING
+    positional_args: ["{{ item }}"]
+  delegate_to: "{{ alert_delivery_db_delegate }}"
+  loop: "{{ alert_delivery_topics }}"
+  when: alert_delivery_mode == 'notification'
+  no_log: true
+
+- name: Reset managed workflow selection
+  ansible.builtin.set_fact:
+    alert_delivery_managed_workflows: []
+
+- name: Render workflows for this runtime only
+  ansible.builtin.set_fact:
+    alert_delivery_managed_workflows: >-
+      {{ alert_delivery_managed_workflows +
+         [{'id': alert_delivery_workflow_ids[item],
+           'definition': lookup('ansible.builtin.template', 'workflow.json.j2') | from_json}] }}
+  loop: "{{ ['ingest', 'slack'] if alert_delivery_mode == 'notification' else ['tickets', 'enrichment'] }}"

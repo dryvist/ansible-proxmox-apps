@@ -1,0 +1,665 @@
+{
+  "id": "__WORKFLOW_ID__",
+  "name": "Alert delivery / tickets",
+  "active": false,
+  "nodes": [
+    {
+      "id": "every-15-seconds",
+      "name": "Every 15 seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "claim-ticket",
+      "name": "Claim ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.*, i.title FROM alert_delivery.claim_ticket() t JOIN alert_delivery.incident i ON i.key=t.incident_key",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "ticket-caller",
+      "name": "Ticket caller",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        330,
+        0
+      ],
+      "parameters": {
+        "url": "__ZAMMAD_URL__/api/v1/users/me",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "ticket-states",
+      "name": "Ticket states",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "url": "__ZAMMAD_URL__/api/v1/ticket_states",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "find-incident",
+      "name": "Find incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "url": "__ZAMMAD_URL__/api/v1/tickets/search",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ Array.isArray($response.body) && $response.body.length < 100 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 100
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ 'title:\"[incident:' + $('Claim ticket').item.json.incident_key + ']\"' }}"
+            },
+            {
+              "name": "expand",
+              "value": "true"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            }
+          ]
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "resolve-active-ticket",
+      "name": "Resolve active ticket",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "candidate",
+              "name": "candidate",
+              "type": "object",
+              "value": "={{ (() => { const rows = $json.pages.flatMap(p => p.body); const states = $('Ticket states').item.json.body; const types = $('Ticket state types').item.json.body; const matches = rows.filter(t => t.title?.includes('[incident:' + $('Claim ticket').item.json.incident_key + ']')); return {active: matches.find(t => !states.some(s => s.id === t.state_id && types.some(t => t.id === s.state_type_id && ['closed','removed','merged'].includes(t.name)))) || null, previous: matches[0]?.id || null}; })() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "has-active-ticket",
+      "name": "Has active ticket",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Has active ticket",
+              "leftValue": "={{ $json.candidate.active !== null }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "read-articles",
+      "name": "Read articles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "url": "={{ \"__JS_ZAMMAD_URL__/api/v1/ticket_articles/by_ticket/\" + $('Resolve active ticket').item.json.candidate.active.id }}",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "operation-exists",
+      "name": "Operation exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Operation exists",
+              "leftValue": "={{ $json.body.some(a => a.body?.includes('[operation:' + $('Claim ticket').item.json.operation_key + ']')) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "append-article",
+      "name": "Append article",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "url": "__ZAMMAD_URL__/api/v1/ticket_articles",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {ticket_id: $('Resolve active ticket').item.json.candidate.active.id, body: $('Claim ticket').item.json.body + '\\n[operation:' + $('Claim ticket').item.json.operation_key + ']', content_type:'text/plain', type:'note', internal:true} }}",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "create-ticket",
+      "name": "Create ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "url": "__ZAMMAD_URL__/api/v1/tickets",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {title: $('Claim ticket').item.json.title + ' [incident:' + $('Claim ticket').item.json.incident_key + ']', group:\"__JS_ZAMMAD_GROUP__\", customer_id:$('Ticket caller').item.json.body.id, article:{subject:'Alert observation', body: $('Claim ticket').item.json.body + '\\n[operation:' + $('Claim ticket').item.json.operation_key + ']\\nPrevious ticket: ' + ($('Resolve active ticket').item.json.candidate.previous || 'none'), type:'note', internal:true, content_type:'text/plain'}} }}",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "acknowledge-existing-ticket",
+      "name": "Acknowledge existing ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ack AS (UPDATE alert_delivery.ticket SET acknowledged_at=now(),lease_until=NULL WHERE id=$1 AND attempts=$2 RETURNING incident_key) UPDATE alert_delivery.incident i SET ticket_id=$3 FROM ack WHERE i.key=ack.incident_key",
+        "options": {
+          "queryReplacement": "={{ [$('Claim ticket').item.json.id, $('Claim ticket').item.json.attempts, $('Resolve active ticket').item.json.candidate.active.id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "acknowledge-new-ticket",
+      "name": "Acknowledge new ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ack AS (UPDATE alert_delivery.ticket SET acknowledged_at=now(),lease_until=NULL WHERE id=$1 AND attempts=$2 RETURNING incident_key) UPDATE alert_delivery.incident i SET ticket_id=$3 FROM ack WHERE i.key=ack.incident_key",
+        "options": {
+          "queryReplacement": "={{ [$('Claim ticket').item.json.id, $('Claim ticket').item.json.attempts, $json.id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "complete-search",
+      "name": "Complete search",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "complete",
+              "leftValue": "={{ Array.isArray($json.pages) && $json.pages.length > 0 && $json.pages.every(p => Array.isArray(p.body)) && $json.pages[$json.pages.length-1].body.length < 100 && Array.isArray($('Ticket states').item.json.body) && $('Ticket states').item.json.body.length > 0 && Array.isArray($('Ticket state types').item.json.body) && $('Ticket state types').item.json.body.some(t => t.name === 'closed') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ticket-state-types",
+      "name": "Ticket state types",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        200
+      ],
+      "parameters": {
+        "url": "__ZAMMAD_URL__/api/v1/ticket_state_types",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__ZAMMAD_CREDENTIAL__",
+          "name": "Alert delivery Zammad token"
+        }
+      }
+    },
+    {
+      "id": "collect-search-pages",
+      "name": "Collect search pages",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "pages",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 seconds": {
+      "main": [
+        [
+          {
+            "node": "Claim ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Claim ticket": {
+      "main": [
+        [
+          {
+            "node": "Ticket caller",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Ticket states": {
+      "main": [
+        [
+          {
+            "node": "Ticket state types",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Find incident": {
+      "main": [
+        [
+          {
+            "node": "Collect search pages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Resolve active ticket": {
+      "main": [
+        [
+          {
+            "node": "Has active ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Has active ticket": {
+      "main": [
+        [
+          {
+            "node": "Read articles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read articles": {
+      "main": [
+        [
+          {
+            "node": "Operation exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Operation exists": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge existing ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append article": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge existing ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Create ticket": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge new ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Complete search": {
+      "main": [
+        [
+          {
+            "node": "Resolve active ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Ticket state types": {
+      "main": [
+        [
+          {
+            "node": "Find incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect search pages": {
+      "main": [
+        [
+          {
+            "node": "Complete search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket caller": {
+      "main": [
+        [
+          {
+            "node": "Ticket states",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 100
+  },
+  "pinData": {}
+}

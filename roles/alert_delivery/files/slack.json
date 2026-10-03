@@ -1,0 +1,458 @@
+{
+  "id": "__WORKFLOW_ID__",
+  "name": "Alert delivery / slack",
+  "active": false,
+  "nodes": [
+    {
+      "id": "every-15-seconds",
+      "name": "Every 15 seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "periodic-summaries",
+      "name": "Periodic summaries",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT alert_delivery.periodic()",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "claim-notifications",
+      "name": "Claim notifications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT n.*,md5(delivery_key)::uuid::text AS client_id, (SELECT p.slack_ts FROM alert_delivery.notification p WHERE p.incident_key=n.incident_key AND p.channel='general' AND p.kind='initial' AND p.slack_ts NOT LIKE 'grouped:%' AND p.acknowledged_at IS NOT NULL ORDER BY p.id DESC LIMIT 1) AS parent_ts FROM (SELECT * FROM alert_delivery.claim_notification('general') UNION ALL SELECT * FROM alert_delivery.claim_notification('critical')) n",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "find-prior-slack-delivery",
+      "name": "Find prior Slack delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "url": "https://slack.com/api/conversations.history",
+        "method": "GET",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {
+          "timeout": 20000
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $('Claim notifications').item.json.channel === 'critical' ? \"__JS_CRITICAL_CHANNEL__\" : \"__JS_GENERAL_CHANNEL__\" }}"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "include_all_metadata",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "__SLACK_CREDENTIAL__",
+          "name": "Alert delivery slackApi"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "slack-search-succeeded",
+      "name": "Slack search succeeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Slack search succeeded",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "already-sent",
+      "name": "Already sent",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Already sent",
+              "leftValue": "={{ ($json.messages || []).some(m => m.client_msg_id === $('Claim notifications').item.json.client_id || m.metadata?.event_payload?.delivery_key === $('Claim notifications').item.json.delivery_key || m.text?.includes($('Claim notifications').item.json.client_id)) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "acknowledge-existing",
+      "name": "Acknowledge existing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE alert_delivery.notification SET acknowledged_at=now(),lease_until=NULL,slack_ts=$3 WHERE id=$1 AND attempts=$2",
+        "options": {
+          "queryReplacement": "={{ [$('Claim notifications').item.json.id, $('Claim notifications').item.json.attempts, $json.messages.find(m => m.client_msg_id === $('Claim notifications').item.json.client_id || m.metadata?.event_payload?.delivery_key === $('Claim notifications').item.json.delivery_key || m.text?.includes($('Claim notifications').item.json.client_id)).ts] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "post-slack",
+      "name": "Post Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "url": "https://slack.com/api/chat.postMessage",
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {channel: $('Claim notifications').item.json.channel === 'critical' ? \"__JS_CRITICAL_CHANNEL__\" : \"__JS_GENERAL_CHANNEL__\", thread_ts: $('Claim notifications').item.json.channel === 'general' && ['digest','recovery'].includes($('Claim notifications').item.json.kind) ? $('Claim notifications').item.json.parent_ts || undefined : undefined, text: $('Claim notifications').item.json.body + '\\n[delivery:' + $('Claim notifications').item.json.client_id + ']', client_msg_id: $('Claim notifications').item.json.client_id, metadata:{event_type:'alert_delivery',event_payload:{delivery_key:$('Claim notifications').item.json.delivery_key}}, unfurl_links:false, unfurl_media:false} }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "__SLACK_CREDENTIAL__",
+          "name": "Alert delivery slackApi"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "slack-accepted",
+      "name": "Slack accepted",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Slack accepted",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "acknowledge-notification",
+      "name": "Acknowledge notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE alert_delivery.notification SET acknowledged_at=now(),lease_until=NULL,slack_ts=$3 WHERE id=$1 AND attempts=$2",
+        "options": {
+          "queryReplacement": "={{ [$('Claim notifications').item.json.id, $('Claim notifications').item.json.attempts, $json.ts] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL__",
+          "name": "Alert delivery postgres"
+        }
+      }
+    },
+    {
+      "id": "uncertain-retry",
+      "name": "Uncertain retry",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Slack search succeeded",
+              "leftValue": "={{ $json.uncertain === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 seconds": {
+      "main": [
+        [
+          {
+            "node": "Periodic summaries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Periodic summaries": {
+      "main": [
+        [
+          {
+            "node": "Claim notifications",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Claim notifications": {
+      "main": [
+        [
+          {
+            "node": "Uncertain retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Find prior Slack delivery": {
+      "main": [
+        [
+          {
+            "node": "Slack search succeeded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Slack search succeeded": {
+      "main": [
+        [
+          {
+            "node": "Already sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already sent": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge existing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Slack": {
+      "main": [
+        [
+          {
+            "node": "Slack accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Slack accepted": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Uncertain retry": {
+      "main": [
+        [
+          {
+            "node": "Find prior Slack delivery",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 100
+  },
+  "pinData": {}
+}
