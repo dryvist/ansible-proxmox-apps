@@ -239,6 +239,25 @@ jobs:
       - name: Verify LXC ssh-connection ansible_host/proxmox_vmid branch
         run: ansible-playbook tests/inventory_load/verify_add_lxc_hosts_connection.yml -i localhost, -c local
 
+      - name: Verify CA-trust membership includes every active SSH VM
+        run: |
+          ansible-playbook tests/inventory_load/verify_ssh_ca_scope.yml \
+            -i localhost, -c local --tags ssh_ca_scope --skip-tags always
+          if ansible-playbook tests/inventory_load/verify_ssh_ca_scope.yml \
+            -i localhost, -c local --tags ssh_ca_scope --skip-tags always \
+            -e ssh_ca_scope_missing=true > ssh-ca-missing.log 2>&1; then
+            echo "Missing active SSH VM was accepted"
+            exit 1
+          fi
+          grep -F 'Declared active SSH VM missing-ssh is absent' ssh-ca-missing.log
+          if ansible-playbook tests/inventory_load/verify_ssh_ca_scope.yml \
+            -i localhost, -c local --tags ssh_ca_scope --skip-tags always \
+            -e converge_stopped_vms=true > ssh-ca-stopped.log 2>&1; then
+            echo "Requested stopped SSH VM was accepted without membership"
+            exit 1
+          fi
+          grep -F 'Declared active SSH VM ssh-off is absent' ssh-ca-stopped.log
+
       - name: Verify propagate_facts.yml scopes heavy facts to --limit
         run: >-
           ansible-playbook tests/inventory_load/verify_propagate_facts_limit_scope.yml
