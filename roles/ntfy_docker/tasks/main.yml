@@ -27,6 +27,15 @@
     group: root
     mode: "0755"
 
+- name: Create ntfy auth directory
+  ansible.builtin.file:
+    path: "{{ ntfy_docker_auth_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: ntfy_docker_ai_jobs_enabled | bool
+
 # =============================================================================
 # ntfy Configuration
 # =============================================================================
@@ -119,6 +128,21 @@
         ntfy_docker_stage_failures: >-
           {{ ntfy_docker_stage_failures | default([])
              + ['canary: ' ~ (ansible_failed_result.msg | default('failed'))] }}
+
+# Needs the live container: a --check run has no auth database to inspect.
+- name: Provision the ai-jobs publisher credentials
+  when:
+    - ntfy_docker_ai_jobs_enabled | bool
+    - not ansible_check_mode
+  block:
+    - name: Include the ai-jobs credentials
+      ansible.builtin.include_tasks: ai_jobs_publisher.yml
+  rescue:
+    - name: Record the ai-jobs credentials failure
+      ansible.builtin.set_fact:
+        ntfy_docker_stage_failures: >-
+          {{ ntfy_docker_stage_failures | default([])
+             + ['ai-jobs credentials: ' ~ (ansible_failed_result.msg | default('failed'))] }}
 
 # Restart what the stages that did succeed changed before failing the host.
 - name: Flush handlers for the alert-hub stages

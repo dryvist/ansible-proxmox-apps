@@ -1,0 +1,150 @@
+---
+# Publish-only ntfy user for the ai-jobs topic: one user, one write-only ACL
+# entry on that topic, one access token, and the token published to the
+# open-llm bucket. Included from main.yml when ntfy_docker_ai_jobs_enabled.
+# Every ntfy call runs inside the container against the auth database the
+# compose volume persists. That database holds the token, and the publish
+# repeats on every converge, so a failed publish is healed by the next run.
+
+- name: List ntfy users
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - user
+      - list
+  register: ntfy_docker_ai_jobs_users
+  changed_when: false
+
+# The password is random, never stored and never shown: the user is reached by
+# its token only. The docker client forwards NTFY_PASSWORD from its own
+# environment, keeping the value off every command line.
+- name: Create the publish-only ntfy user
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --env
+      - NTFY_PASSWORD
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - user
+      - add
+      - --role=user
+      - "{{ ntfy_docker_ai_jobs_user }}"
+  environment:
+    NTFY_PASSWORD: "{{ lookup('ansible.builtin.password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+  when: >-
+    not (ntfy_docker_ai_jobs_users.stdout
+         is search('(?m)^user ' ~ (ntfy_docker_ai_jobs_user | regex_escape) ~ ' '))
+  changed_when: true
+  no_log: true
+
+- name: Read the user's topic access
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - access
+      - "{{ ntfy_docker_ai_jobs_user }}"
+  register: ntfy_docker_ai_jobs_access
+  changed_when: false
+
+- name: Record the user's topic access entries
+  ansible.builtin.set_fact:
+    ntfy_docker_ai_jobs_acl_entries: >-
+      {{ ntfy_docker_ai_jobs_access.stdout_lines
+         | select('match', '^- .* access to topic ') | list }}
+    ntfy_docker_ai_jobs_acl_wanted:
+      - "- write-only access to topic {{ ntfy_docker_ai_jobs_topic }}"
+
+# The user keeps exactly one entry, write-only on the topic. Any other entry
+# is cleared first, so the token cannot gain reach by drift.
+- name: Reset the user's topic access
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - access
+      - --reset
+      - "{{ ntfy_docker_ai_jobs_user }}"
+  when:
+    - ntfy_docker_ai_jobs_acl_entries | length > 0
+    - ntfy_docker_ai_jobs_acl_entries != ntfy_docker_ai_jobs_acl_wanted
+  changed_when: true
+
+- name: Grant the user write-only access to the topic
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - access
+      - "{{ ntfy_docker_ai_jobs_user }}"
+      - "{{ ntfy_docker_ai_jobs_topic }}"
+      - write-only
+  when: ntfy_docker_ai_jobs_acl_entries != ntfy_docker_ai_jobs_acl_wanted
+  changed_when: true
+
+- name: List the user's access tokens
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - token
+      - list
+      - "{{ ntfy_docker_ai_jobs_user }}"
+  register: ntfy_docker_ai_jobs_tokens
+  changed_when: false
+  no_log: true
+
+- name: Create the user's access token
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ ntfy_docker_container_name }}"
+      - ntfy
+      - token
+      - add
+      - "--label={{ ntfy_docker_ai_jobs_token_label }}"
+      - "{{ ntfy_docker_ai_jobs_user }}"
+  register: ntfy_docker_ai_jobs_token_created
+  when: ntfy_docker_ai_jobs_tokens.stdout is not search('tk_[A-Za-z0-9]+')
+  changed_when: true
+  no_log: true
+
+# `token add` prints the new token, `token list` shows the existing one; one
+# of the two always holds it.
+- name: Resolve the access token
+  ansible.builtin.set_fact:
+    ntfy_docker_ai_jobs_token: >-
+      {{ (ntfy_docker_ai_jobs_token_created.stdout | default(ntfy_docker_ai_jobs_tokens.stdout))
+         | regex_search('tk_[A-Za-z0-9]+') | default('', true) }}
+  no_log: true
+
+- name: Assert an access token resolved
+  ansible.builtin.assert:
+    that:
+      - ntfy_docker_ai_jobs_token | length > 0
+    fail_msg: No access token exists for the ai-jobs ntfy user after creation.
+    quiet: true
+
+- name: Publish the access token to OpenBao
+  ansible.builtin.include_role:
+    name: openbao_secrets
+    tasks_from: publish.yml
+  vars:
+    openbao_secrets_publish_app: open-llm
+    openbao_secrets_publish_reason: (ntfy ai-jobs publish token)
+    openbao_secrets_publish_data:
+      NTFY_AI_JOBS_TOKEN: "{{ ntfy_docker_ai_jobs_token }}"
