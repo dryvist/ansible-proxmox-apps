@@ -7,8 +7,11 @@
 #   - healthy  -> reports success to its Gatus external endpoint and its
 #                 Uptime Kuma push monitor, and pings its healthchecks check
 #                 and its off-site (free-tier SaaS) healthchecks deadman
-#   - breached -> logs, pushes an ntfy alert, reports failure to Gatus and
-#                 Kuma, and pings the healthchecks and off-site /fail paths
+#   - breached -> logs, reports failure to Gatus and Kuma, and pings the
+#                 healthchecks and off-site /fail paths every cycle; publishes
+#                 to ntfy on the transition and then every
+#                 {{ service_deadman_ntfy_remind_minutes }} minutes, and once
+#                 more on recovery
 #
 # A missed run (validator crash / host down) also pages, because every
 # receiver expects a report every cycle. An unconfigured receiver skips only
@@ -25,7 +28,10 @@ KUMA_URL="{{ service_deadman_kuma_url }}"
 HC_URL="{{ service_deadman_hc_url }}"
 HC_PING_KEY="{{ service_deadman_hc_ping_key }}"
 OFFSITE_HC_URL="{{ service_deadman_offsite_hc_url }}"
+STATE_DIR="{{ service_deadman_state_dir }}"
+REMIND_MIN="{{ service_deadman_ntfy_remind_minutes }}"
 HOST="$(hostname)"
+mkdir -p "${STATE_DIR}"
 rc=0
 
 # Report to the Gatus external endpoint deadman_<name>; no-op without a token.
@@ -79,10 +85,25 @@ offsite_hc_ping() {
   curl -fsS --max-time 8 -d "${msg}" "${OFFSITE_HC_URL%/}/${name}${suffix}" >/dev/null 2>&1 || true
 }
 
+# Publish to the ntfy hub; returns non-zero when the publish did not land, so
+# the caller keeps its state marker unchanged and retries next cycle.
+ntfy_publish() {
+  local name="$1" priority="$2" tags="$3" msg="$4"
+  [[ -n "${NTFY_URL}" ]] || return 1
+  curl -fsS --max-time 8 -H "Title: keystone deadman: ${name}" \
+    -H "Priority: ${priority}" -H "Tags: ${tags}" \
+    -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1
+}
+
 # Healthy: signal every deadman OK so a stalled validator is also caught.
 mark_ok() {
   local name="$1"
   logger -t service-deadman "OK: ${name} healthy on ${HOST}"
+  # Recovery closes the alert (and its Zammad ticket) once, on the transition.
+  if [[ -e "${STATE_DIR}/${name}.down" ]]; then
+    ntfy_publish "${name}" default "white_check_mark,resolved" \
+      "RECOVERED: ${name} passed its liveness probe on ${HOST}" && rm -f "${STATE_DIR}/${name}.down"
+  fi
   gatus_report "${name}" true ""
   kuma_report "${name}" up OK
   hc_ping "${name}" "" "OK"
@@ -95,10 +116,10 @@ mark_fail() {
   local msg="KEYSTONE DOWN: ${name} failed its liveness probe on ${HOST}"
   rc=1
   logger -t service-deadman "${msg}"
-  if [[ -n "${NTFY_URL}" ]]; then
-    curl -fsS --max-time 8 -H "Title: keystone deadman: ${name}" \
-      -H "Priority: urgent" -H "Tags: rotating_light" \
-      -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1 || true
+  # Page on the transition to breached, then remind every REMIND_MIN minutes
+  # while it stays breached -- never on every cycle.
+  if [[ -z "$(find "${STATE_DIR}/${name}.down" -mmin -"${REMIND_MIN}" 2>/dev/null)" ]]; then
+    ntfy_publish "${name}" urgent rotating_light "${msg}" && touch "${STATE_DIR}/${name}.down"
   fi
   gatus_report "${name}" false "${msg}"
   kuma_report "${name}" down "${msg}"

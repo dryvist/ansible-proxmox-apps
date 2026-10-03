@@ -95,9 +95,139 @@
           (never a host address, never plain HTTP);
           rendered content: {{ _ntfy_server }}
 
+    # Slack fan-out: every topic reaches the all-alerts webhook, a declared
+    # per-topic route adds its own, and an unseeded key fails the converge.
+    - name: Plan the Slack fan-out with every needed webhook seeded
+      ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+      vars:
+        ntfy_docker_topics: [keystone, proxmox]
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_routes: [proxmox]
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          proxmox: https://hooks.example.test/proxmox
+
+    - name: Assert one all-alerts instance per topic plus the per-topic route
+      ansible.builtin.assert:
+        that:
+          - >-
+            ntfy_docker_slack_instances ==
+            {'all-keystone': 'keystone', 'all-proxmox': 'proxmox', 'proxmox': 'proxmox'}
+        fail_msg: "unexpected instances: {{ ntfy_docker_slack_instances }}"
+
+    - name: Render the all-alerts and per-topic env files
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-to-slack.env.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_to_slack_{{ item.key }}.env"
+        mode: "0600"
+      loop:
+        - {key: all-proxmox, value: proxmox}
+        - {key: proxmox, value: proxmox}
+      vars:
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_alerts_template: >-
+          {% raw %}[{{ .Topic }}] {{ if .Title }}*{{ .Title }}*: {{ end }}{{ .Message }}{% endraw %}
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          proxmox: https://hooks.example.test/proxmox
+
+    - name: Assert the env files carry the right webhook and Go template
+      vars:
+        _all_env: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_to_slack_all-proxmox.env') }}"
+        _topic_env: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_to_slack_proxmox.env') }}"
+      ansible.builtin.assert:
+        that:
+          - "'NTFY_TOPIC=proxmox' in _all_env"
+          - "'SLACK_WEBHOOK_URL=https://hooks.example.test/all' in _all_env"
+          - "'.Topic }}] ' in _all_env"
+          - "'SLACK_WEBHOOK_URL=https://hooks.example.test/proxmox' in _topic_env"
+          - "'POST_PROCESS_TEMPLATE' not in _topic_env"
+
+    - name: Plan the Slack fan-out with a declared route unseeded
+      block:
+        - name: Include the plan with the proxmox webhook missing
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone, proxmox]
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: [proxmox]
+            ntfy_docker_slack_webhooks:
+              keystone: https://hooks.example.test/all
+
+        - name: Fail because the unseeded route did not fail the plan
+          ansible.builtin.fail:
+            msg: an unseeded declared route must fail the converge
+      rescue:
+        - name: Assert the failure names the missing key
+          ansible.builtin.assert:
+            that:
+              - "'proxmox' in ansible_failed_result.msg"
+
+    - name: Plan the Slack fan-out with a non-URL webhook value
+      block:
+        - name: Include the plan with a channel name where the URL belongs
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone]
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: []
+            ntfy_docker_slack_webhooks:
+              keystone: keystone
+
+        - name: Fail because a non-URL webhook did not fail the plan
+          ansible.builtin.fail:
+            msg: the plan accepted a webhook value without a URL scheme
+      rescue:
+        - name: Assert the failure names the bad key
+          ansible.builtin.assert:
+            that:
+              - "'not an https URL' in ansible_failed_result.msg"
+              - "'keystone' in ansible_failed_result.msg"
+
+    - name: Render the canary script with and without the off-site URL
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-canary.sh.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy-canary-{{ item.name }}.sh"
+        mode: "0700"
+      loop:
+        - {name: seeded, url: "https://hc-ping.example.test/key/"}
+        - {name: unseeded, url: ""}
+      vars:
+        ntfy_docker_canary_topic: canary
+        ntfy_docker_canary_check_name: ntfy-canary
+        ntfy_docker_canary_offsite_url: "{{ item.url }}"
+
+    - name: Render the canary units
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}.j2"
+        dest: "{{ _fixture_dir }}/test_{{ item }}"
+        mode: "0644"
+      loop:
+        - ntfy-canary.service
+        - ntfy-canary.timer
+      vars:
+        ntfy_docker_canary_interval: 5min
+        ntfy_docker_canary_script_path: /usr/local/bin/ntfy-canary
+
+    - name: Assert the canary publishes, reads back, and pings off-site only when seeded
+      vars:
+        _seeded: "{{ lookup('file', _fixture_dir ~ '/test_ntfy-canary-seeded.sh') }}"
+        _unseeded: "{{ lookup('file', _fixture_dir ~ '/test_ntfy-canary-unseeded.sh') }}"
+      ansible.builtin.assert:
+        that:
+          - "'topic_url=\"https://ntfy.example.test/canary\"' in _seeded"
+          - "'json?poll=1' in _seeded"
+          - "'https://hc-ping.example.test/key/ntfy-canary?create=1' in _seeded"
+          - "'hc-ping' not in _unseeded"
+          - "'json?poll=1' in _unseeded"
+          - "'ExecStart=/usr/local/bin/ntfy-canary' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.service')"
+          - "'OnUnitActiveSec=5min' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.timer')"
+
     - name: Ntfy template rendering PASSED
       ansible.builtin.debug:
         msg: |
           Ntfy template assertions passed:
           - docker-compose.yml.j2: HTTP port 8080:80, image, config mount
           - server.yml.j2: cache-file, listen-http, cache-duration
+          - Slack fan-out: all-alerts + per-topic instances, unseeded key fails
+          - canary: fronted publish + read-back, off-site ping only when seeded

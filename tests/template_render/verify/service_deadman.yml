@@ -16,6 +16,8 @@
     service_deadman_hc_url: "https://healthchecks.example.test"
     service_deadman_hc_ping_key: "test-hc-ping-key"
     service_deadman_offsite_hc_url: "https://hc-ping.example.test/test-uuid"
+    service_deadman_state_dir: /var/lib/service-deadman
+    service_deadman_ntfy_remind_minutes: 360
     # Only the check this fixture needs to prove (roles/ntfy_docker's liveness).
     service_deadman_checks:
       - name: ntfy
@@ -79,3 +81,82 @@
         fail_msg: >-
           service-deadman-validate.sh.j2 did not render the ntfy hub
           liveness check; rendered content: {{ _service_deadman }}
+
+    # Behavioral: run the rendered script with a stub curl. ntfy must be
+    # published once on breach, not again on the next breached cycle, and once
+    # on recovery.
+    - name: Render a run-able validator with a file-driven probe
+      vars:
+        service_deadman_state_dir: "{{ _fixture_dir }}/deadman_state"
+        service_deadman_ntfy_remind_minutes: 360
+        service_deadman_checks:
+          - name: probe
+            probe_command: "[ -e {{ _fixture_dir }}/deadman_healthy ]"
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/service-deadman-validate.sh.j2"
+        dest: "{{ _fixture_dir }}/deadman_run.sh"
+        mode: "0755"
+
+    - name: Create the stub bin directory
+      ansible.builtin.file:
+        path: "{{ _fixture_dir }}/stubbin"
+        state: directory
+        mode: "0755"
+
+    - name: Install a stub curl that records ntfy publishes
+      ansible.builtin.copy:
+        dest: "{{ _fixture_dir }}/stubbin/curl"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          case "$*" in *ntfy.example.test*) printf '%s\n' "$*" >> "{{ _fixture_dir }}/ntfy_calls" ;; esac
+          exit 0
+
+    - name: Run breached, breached, then healthy
+      ansible.builtin.shell: |
+        set -u
+        export PATH="{{ _fixture_dir }}/stubbin:$PATH"
+        logger() { :; }; export -f logger
+        rm -f "{{ _fixture_dir }}/ntfy_calls" "{{ _fixture_dir }}/deadman_healthy"
+        "{{ _fixture_dir }}/deadman_run.sh"; "{{ _fixture_dir }}/deadman_run.sh"
+        echo "after_breach=$(wc -l < "{{ _fixture_dir }}/ntfy_calls")"
+        touch "{{ _fixture_dir }}/deadman_healthy"
+        "{{ _fixture_dir }}/deadman_run.sh"; "{{ _fixture_dir }}/deadman_run.sh"
+        echo "after_recovery=$(wc -l < "{{ _fixture_dir }}/ntfy_calls")"
+        grep -c 'resolved' "{{ _fixture_dir }}/ntfy_calls"
+      args:
+        executable: /bin/bash
+      register: _deadman_run
+      changed_when: false
+      failed_when: false
+
+    - name: Assert one page on breach and one resolve on recovery
+      ansible.builtin.assert:
+        that:
+          - "'after_breach=1' in _deadman_run.stdout_lines | map('trim') | map('regex_replace', ' ', '') | list"
+          - "'after_recovery=2' in _deadman_run.stdout_lines | map('trim') | map('regex_replace', ' ', '') | list"
+          - (_deadman_run.stdout_lines | last | trim) == '1'
+        fail_msg: "unexpected ntfy publish pattern: {{ _deadman_run.stdout_lines }}"
+
+    - name: Load the role defaults for the check-selection assertions
+      ansible.builtin.include_vars:
+        file: ../../../roles/service_deadman/defaults/main.yml
+        name: _deadman_defaults
+
+    - name: Assert a zero-replica host skips only the runner-pool probe
+      vars:
+        github_runner_replicas: 0
+        _defaults_text: "{{ lookup('file', '../../../roles/service_deadman/defaults/main.yml') }}"
+      ansible.builtin.assert:
+        that:
+          - _deadman_defaults.service_deadman_skip_checks == ['github-runner-pool']
+          - "\"rejectattr('name', 'in', service_deadman_skip_checks)\" in _defaults_text"
+        fail_msg: "skip list for 0 replicas: {{ _deadman_defaults.service_deadman_skip_checks }}"
+
+    - name: Assert a host with a runner pool skips nothing
+      vars:
+        github_runner_replicas: 3
+      ansible.builtin.assert:
+        that:
+          - _deadman_defaults.service_deadman_skip_checks == []
+        fail_msg: "skip list for 3 replicas: {{ _deadman_defaults.service_deadman_skip_checks }}"

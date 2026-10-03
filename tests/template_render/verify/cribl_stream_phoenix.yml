@@ -22,7 +22,7 @@
     # Remaining vars are fixture scaffolding, not under test.
     cribl_stream_victoriametrics_rw_url: "http://grafana.example.invalid:8428/api/v1/write"
     cribl_stream_unpoller_scrape_target: "localhost:9130"
-    cribl_stream_unpoller_poll_interval: 30
+    cribl_stream_unpoller_poll_minutes: 1
     cribl_stream_splunk_hec_url: "https://splunk.example.invalid/services/collector/event"
     cribl_stream_splunk_hec_token: "fixture-token"
     cribl_stream_splunk_hec_tls_verify: true
@@ -74,6 +74,22 @@
           with an empty credential — a credential-conditional gate has been
           reintroduced, which silently deletes the destination instead of
           failing the converge.
+
+    - name: Assert the Phoenix output retries with bounded backoff into a capped, non-blocking queue
+      vars:
+        _phoenix: "{{ (_cribl_stream_outputs | from_yaml).outputs.phoenix_otlp }}"
+      ansible.builtin.assert:
+        that:
+          - _phoenix.responseRetrySettings | map(attribute='httpStatus') | list == [429, 502, 503, 504]
+          - _phoenix.responseRetrySettings | map(attribute='maxBackoff') | max <= 180000
+          - _phoenix.timeoutRetrySettings.timeoutRetry
+          - _phoenix.onBackpressure == 'queue'
+          - _phoenix.pqMode == 'error'
+          - _phoenix.pqOnBackpressure == 'drop'
+          - _phoenix.pqMaxSize == '1 GB'
+        fail_msg: >-
+          phoenix_otlp must retry 429/502/503/504 and timeouts with bounded
+          backoff, and queue to a capped disk queue that drops when full.
 
     # Read the defaults as TEXT, not through include_vars: this assertion is
     # about the SHIPPED expression in the file, so it must see the source text

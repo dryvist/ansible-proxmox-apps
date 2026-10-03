@@ -1,5 +1,85 @@
 # Changelog
 
+## [4.55.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.2...v4.55.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cribl_stream:** mask credentials on every route with a role-owned pipeline ([#2317](https://github.com/dryvist/ansible-proxmox-apps/issues/2317)) ([c4fea1e](https://github.com/dryvist/ansible-proxmox-apps/commit/c4fea1ef7281149cfb0f5c3230d9fb0cc98e1d51))
+
+## [4.55.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.1...v4.55.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ntfy_docker:** ntfy-zammad sets customer_id on ticket create ([#2308](https://github.com/dryvist/ansible-proxmox-apps/issues/2308)) ([38a9996](https://github.com/dryvist/ansible-proxmox-apps/commit/38a999616b11fa81298147a4bf8e3c81e0e910ae))
+* **unpoller:** config file header is a static comment ([#2312](https://github.com/dryvist/ansible-proxmox-apps/issues/2312)) ([90eceef](https://github.com/dryvist/ansible-proxmox-apps/commit/90eceef808cdaa81e26c2d78ee21dd8f00b5a721))
+* **unpoller:** drop namespace sandboxing inside a container; check the listener ([#2309](https://github.com/dryvist/ansible-proxmox-apps/issues/2309)) ([7106d82](https://github.com/dryvist/ansible-proxmox-apps/commit/7106d82242384572f4e08c2a506c558a1768ebeb))
+* **unpoller:** start with a minimal config file ([#2310](https://github.com/dryvist/ansible-proxmox-apps/issues/2310)) ([79f8789](https://github.com/dryvist/ansible-proxmox-apps/commit/79f8789a6475b53b3a0a10ae627a7ff4e5fdf544))
+
+## [4.55.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.0...v4.55.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cribl_stream:** set the in_unpoller logLevel the prometheus source requires ([#2304](https://github.com/dryvist/ansible-proxmox-apps/issues/2304)) ([a9b1f01](https://github.com/dryvist/ansible-proxmox-apps/commit/a9b1f0158899dddfdd7d21388550db4a9aa7f97a))
+* **ntfy:** accept both Zammad ticket-search response shapes ([#2299](https://github.com/dryvist/ansible-proxmox-apps/issues/2299)) ([1d559ac](https://github.com/dryvist/ansible-proxmox-apps/commit/1d559ac69ffa26237509dc3f54774cb150994db8))
+* **openbao_secrets:** decide a failed AppRole login without failing the task ([#2301](https://github.com/dryvist/ansible-proxmox-apps/issues/2301)) ([77dc9fa](https://github.com/dryvist/ansible-proxmox-apps/commit/77dc9fa3cf7e89f29c25fbcd3602e81326a58d89))
+
+## [4.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.54.0...v4.55.0) (2026-10-03)
+
+
+### Features
+
+* **cribl_stream:** republish Mac llm_metrics as native metrics ([#2283](https://github.com/dryvist/ansible-proxmox-apps/issues/2283)) ([e5717b9](https://github.com/dryvist/ansible-proxmox-apps/commit/e5717b9dc6b5393e8f48709f0ce8bc161f45a9ae))
+* **ntfy:** add an end-to-end canary to the off-site deadman ([#2285](https://github.com/dryvist/ansible-proxmox-apps/issues/2285)) ([b38aefa](https://github.com/dryvist/ansible-proxmox-apps/commit/b38aefa221b0f7008d55cc4e6f543427ff483cec))
+
+
+### Bug Fixes
+
+* **cribl_stream:** bounded retry backoff and capped queue for phoenix_otlp ([#2296](https://github.com/dryvist/ansible-proxmox-apps/issues/2296)) ([d59ea5b](https://github.com/dryvist/ansible-proxmox-apps/commit/d59ea5b6db967cc0f4f92eec05f141576c531434))
+* **cribl_stream:** in_unpoller uses the prometheus source's targetList and interval ([#2298](https://github.com/dryvist/ansible-proxmox-apps/issues/2298)) ([b6097f3](https://github.com/dryvist/ansible-proxmox-apps/commit/b6097f3184a091d1c616b6410730e8de02f61e11))
+* **cribl_stream:** preflight the upgrade artifacts and restart on failure ([#2297](https://github.com/dryvist/ansible-proxmox-apps/issues/2297)) ([2c6f18d](https://github.com/dryvist/ansible-proxmox-apps/commit/2c6f18d9c41e1522b6a3ff8ab26c3f2c27f49885))
+* **ntfy_docker:** verify the ntfy-to-slack tarball with get_url's checksum URL ([#2295](https://github.com/dryvist/ansible-proxmox-apps/issues/2295)) ([5b6a84f](https://github.com/dryvist/ansible-proxmox-apps/commit/5b6a84f4e675c165361ee3a435833164e6f0b47e))
+* **openbao_secrets:** declare the local-cloud path optional ([#2293](https://github.com/dryvist/ansible-proxmox-apps/issues/2293)) ([f4761d3](https://github.com/dryvist/ansible-proxmox-apps/commit/f4761d3fe6a5aec876e56f9a9a8673497e69688c))
+
+## [4.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.53.0...v4.54.0) (2026-10-03)
+
+
+### Features
+
+* **baseline:** page the ntfy hub when rsyslog fails on infra guests ([#2279](https://github.com/dryvist/ansible-proxmox-apps/issues/2279)) ([6640cbf](https://github.com/dryvist/ansible-proxmox-apps/commit/6640cbfba02c1d7b1a1868268d215fad08ea184f))
+* **budget-gate:** delegate the wall-clock gate to the shared collection ([#2184](https://github.com/dryvist/ansible-proxmox-apps/issues/2184)) ([4bf5016](https://github.com/dryvist/ansible-proxmox-apps/commit/4bf5016f79f35b2ad2f487a4181a057d4355ebdc))
+* **homarr:** pin the app release and support multiple instances ([#2274](https://github.com/dryvist/ansible-proxmox-apps/issues/2274)) ([484fcb4](https://github.com/dryvist/ansible-proxmox-apps/commit/484fcb4eac1879aaff868243d30b817b19a2ee19))
+* **ntfy:** fan every topic out to one all-alerts Slack channel ([#2276](https://github.com/dryvist/ansible-proxmox-apps/issues/2276)) ([da6761c](https://github.com/dryvist/ansible-proxmox-apps/commit/da6761c7476cf04727686c73f6192da6d7e5e4d6))
+* **openbao:** add github-hermes App mount with visibility-split sets ([#2284](https://github.com/dryvist/ansible-proxmox-apps/issues/2284)) ([bafeb7c](https://github.com/dryvist/ansible-proxmox-apps/commit/bafeb7cc51cb0ab293a0df3f2b0a868ec2487d10))
+* **openbao:** declare disclosure-denylist secret path and read policy ([#2177](https://github.com/dryvist/ansible-proxmox-apps/issues/2177)) ([8409382](https://github.com/dryvist/ansible-proxmox-apps/commit/8409382ee9d8ee2e286a999ffe883b9cb0e7ce55))
+* **openbao:** split GitHub engine mounts per App ([#2080](https://github.com/dryvist/ansible-proxmox-apps/issues/2080)) ([1d3f421](https://github.com/dryvist/ansible-proxmox-apps/commit/1d3f42130b2cce77f4e7f1a4f07861c98d0af574))
+* **openbao:** validate GitHub App webhook and installation settings ([#2107](https://github.com/dryvist/ansible-proxmox-apps/issues/2107)) ([d930462](https://github.com/dryvist/ansible-proxmox-apps/commit/d93046271b3819b746885eaf515508c2eecbb8cb))
+* **postgres:** optional Patroni/etcd HA mode behind postgres_ha_manager ([#2189](https://github.com/dryvist/ansible-proxmox-apps/issues/2189)) ([6e2a7b6](https://github.com/dryvist/ansible-proxmox-apps/commit/6e2a7b67aae40c86310498ec4e4d4b84040b3a62))
+
+
+### Bug Fixes
+
+* **alerting:** ntfy hub stage order and deadman cleanup ([#2287](https://github.com/dryvist/ansible-proxmox-apps/issues/2287)) ([ce18276](https://github.com/dryvist/ansible-proxmox-apps/commit/ce18276d9f676fc3bc09d59762c384386256f516))
+* **budget-gate:** run converge_gate by FQCN in a local play ([#2289](https://github.com/dryvist/ansible-proxmox-apps/issues/2289)) ([76a326c](https://github.com/dryvist/ansible-proxmox-apps/commit/76a326c7581d41630aec90045d7c96fb386eac4c))
+* **homarr:** let the role-minted API and encryption keys resolve empty ([#2286](https://github.com/dryvist/ansible-proxmox-apps/issues/2286)) ([41f3aa3](https://github.com/dryvist/ansible-proxmox-apps/commit/41f3aa3ccc8e691554b03f5f037858bf7e30e88f))
+* **openbao:** ai-admin administers login MFA ([b0046af](https://github.com/dryvist/ansible-proxmox-apps/commit/b0046af6b958c35ed42db32bfff8badd97d4b9a7))
+* **openbao:** ai-admin administers login MFA ([c44e17f](https://github.com/dryvist/ansible-proxmox-apps/commit/c44e17f73f7f690d015a7b8e425c1d2e954b8d73))
+* **openbao:** create the denylist entry metadata with put when absent ([#2273](https://github.com/dryvist/ansible-proxmox-apps/issues/2273)) ([c36717c](https://github.com/dryvist/ansible-proxmox-apps/commit/c36717ca0056ff4f6a2e30795c34aa44c36ee656))
+* **openbao:** delegate the GitHub App check include to localhost ([#2270](https://github.com/dryvist/ansible-proxmox-apps/issues/2270)) ([eca5e70](https://github.com/dryvist/ansible-proxmox-apps/commit/eca5e70591d9305125c78b6e474836f8ba924a51))
+* **openbao:** read the App install allowlist from the env document ([#2268](https://github.com/dryvist/ansible-proxmox-apps/issues/2268)) ([3998b70](https://github.com/dryvist/ansible-proxmox-apps/commit/3998b70435c0bc7b01ac3566f9cfc79ab2b80fdb))
+* **openbao:** scrub environment-specific names from init tasks ([#2259](https://github.com/dryvist/ansible-proxmox-apps/issues/2259)) ([66e7ad9](https://github.com/dryvist/ansible-proxmox-apps/commit/66e7ad9b01cfad6917f13292a447bdad152ad43b))
+* **openbao:** set ansible_become false on the delegated App check include ([#2271](https://github.com/dryvist/ansible-proxmox-apps/issues/2271)) ([03b450b](https://github.com/dryvist/ansible-proxmox-apps/commit/03b450bdfc17c02812ce4e4532178a43a7dc9050))
+* replace environment-specific names with generic placeholders ([#2266](https://github.com/dryvist/ansible-proxmox-apps/issues/2266)) ([9407248](https://github.com/dryvist/ansible-proxmox-apps/commit/9407248b2593dcefccca760c94a58e61d951d9f7))
+* **service_deadman:** publish to ntfy on state change, not every cycle ([#2280](https://github.com/dryvist/ansible-proxmox-apps/issues/2280)) ([f617995](https://github.com/dryvist/ansible-proxmox-apps/commit/f61799543046847c0d1f84b036a1dee16a04f2cf))
+
+
+### Performance
+
+* **openbao:** run the AppRole, SSH role and policy writes on openbao_cli_host ([620abca](https://github.com/dryvist/ansible-proxmox-apps/commit/620abca1ce43860792cbc97383090417ac77d5fb))
+* **openbao:** run the AppRole, SSH role and policy writes on openbao_cli_host ([cc70ab6](https://github.com/dryvist/ansible-proxmox-apps/commit/cc70ab6d4222d12d8eff368ed54faa870aa841a2))
+
 ## [4.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.52.0...v4.53.0) (2026-10-02)
 
 

@@ -1,0 +1,13 @@
+#!/bin/sh
+{{ ansible_managed | comment }}
+# End-to-end canary: publish through the fronted URL, read the same message
+# back through it, then ping the off-site deadman.
+set -eu
+topic_url="{{ ntfy_docker_base_url }}/{{ ntfy_docker_canary_topic }}"
+id="$(curl -fsS --max-time 10 --retry 3 -H "Priority: min" -d "canary from $(hostname)" "$topic_url" \
+  | grep -o '"id":"[^"]*"')"
+curl -fsS --max-time 10 --retry 3 "$topic_url/json?poll=1&since=10m" | grep -qF "$id"
+{% if ntfy_docker_canary_offsite_url %}
+curl -fsS --max-time 10 --retry 3 -o /dev/null \
+  "{{ ntfy_docker_canary_offsite_url | regex_replace('/$', '') }}/{{ ntfy_docker_canary_check_name }}?create=1"
+{% endif %}

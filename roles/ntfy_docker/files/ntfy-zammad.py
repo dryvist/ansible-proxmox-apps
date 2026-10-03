@@ -100,9 +100,21 @@ def build_search_query(key):
 
 def find_ticket(base, token, key):
     query = build_search_query(key)
-    url = "tickets/search?%s" % urllib.parse.urlencode({"query": query, "limit": 1})
-    tickets = zammad_call(base, token, url).get("tickets") or []
-    return tickets[0] if tickets else None
+    url = "tickets/search?%s" % urllib.parse.urlencode(
+        {"query": query, "limit": 1, "expand": "true"}
+    )
+    return first_ticket(zammad_call(base, token, url))
+
+
+def first_ticket(found):
+    # Zammad's search answers with a list of tickets (expand=true, and an
+    # empty result) or with {"tickets": [<id>, ...], "assets": ...}. Either
+    # way the caller needs only the first ticket's id.
+    tickets = found if isinstance(found, list) else (found.get("tickets") or [])
+    if not tickets:
+        return None
+    first = tickets[0]
+    return first if isinstance(first, dict) else {"id": first}
 
 
 def publish_self_alert(ntfy_base, topic, message):
@@ -185,16 +197,23 @@ def run():
     # fk: token stays the exact-phrase dedup key, the summary after the dash
     # is only for a human reading the ticket list.
     summary = message.splitlines()[0] if message else title
-    # No customer field: Zammad makes the token's user (svc-ntfy) the ticket
-    # customer, the same "own actor, own token" attribution as svc-splunk.
+    me = zammad_call(zammad_base, zammad_token, "users/me")
     zammad_call(
         zammad_base, zammad_token, "tickets",
-        payload={
-            "title": "%s — %s" % (key, summary),
-            "group": group, "state": "new", "article": note(message, tags),
-        },
+        payload=new_ticket(key, summary, group, note(message, tags), me["id"]),
         method="POST",
     )
+
+
+def new_ticket(key, summary, group, article, customer_id):
+    # Zammad requires customer_id when an agent token creates a ticket; the
+    # token's own user (svc-ntfy) is the customer, so attribution stays
+    # "own actor, own token".
+    return {
+        "title": "%s — %s" % (key, summary),
+        "group": group, "state": "new", "article": article,
+        "customer_id": customer_id,
+    }
 
 
 def selftest():
@@ -207,6 +226,13 @@ def selftest():
     assert is_resolved(["white_check_mark", "info"]) is True
     assert is_resolved(["high"]) is False
     assert parse_tags(" a, b ,,c") == ["a", "b", "c"]
+    assert first_ticket([]) is None
+    assert first_ticket({}) is None
+    assert first_ticket({"tickets": []}) is None
+    assert first_ticket([{"id": 7, "title": "t"}])["id"] == 7
+    assert first_ticket({"tickets": [9], "assets": {}}) == {"id": 9}
+    t = new_ticket("fk:ntfy:x:y", "s", "Incidents", {"body": "b"}, 42)
+    assert t["customer_id"] == 42 and t["title"] == "fk:ntfy:x:y — s"
     n = note("body text", ["a", "b"])
     assert n["internal"] is True and "body text" in n["body"] and "a, b" in n["body"]
 
