@@ -1,0 +1,40 @@
+---
+# Host-side backstop for the egress boundary: an nftables table that drops any
+# forwarded container packet that leaves the agents bridge. It is loaded before
+# the containers exist (this file runs ahead of deploy.yml) and lives in its own
+# table, so nothing here flushes or reloads the host's other rules, and Docker
+# restarting never removes it.
+
+- name: Install nftables
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+
+- name: Deploy the container-egress ruleset
+  ansible.builtin.template:
+    src: agent-sandbox.nft.j2
+    dest: "{{ agent_sandbox_nft_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    # Parse-check the candidate before it replaces the live file.
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload agent sandbox nftables
+
+- name: Deploy the container-egress filter unit
+  ansible.builtin.template:
+    src: agent-sandbox-nft.service.j2
+    dest: "/etc/systemd/system/{{ agent_sandbox_nft_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable and start the container-egress filter
+  ansible.builtin.systemd:
+    name: "{{ agent_sandbox_nft_service }}.service"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply any ruleset change before containers are (re)created
+  ansible.builtin.meta: flush_handlers

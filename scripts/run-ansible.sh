@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Ansible runner — prefers a short-lived SSH certificate from the OpenBao CA
 # (ssh-certificate-authority ADR) over the shared static key, then runs the
-# playbook. Invoke under your secrets manager so BAO_ADDR + the
-# ansible-converge AppRole are ambient:
-#   doppler run -- scripts/run-ansible.sh playbooks/site.yml [args...]
-# Without those env vars the static PROXMOX_SSH_KEY_PATH flow is unchanged.
+# playbook. Reads SECRET_STORE_ADDR, SSH_SIGNER_ROLE_ID/SSH_SIGNER_SECRET_ID,
+# SSH_CA_MOUNT and SSH_SIGNER_ROLE from the environment.
+#   scripts/run-ansible.sh playbooks/site.yml [args...]
+# The older AppRole names are still read as a fallback. Without any signer
+# pair the static PROXMOX_SSH_KEY_PATH flow is unchanged.
 set -euo pipefail
 
 usage() {
   echo "Usage: $0 <playbook> [ansible-playbook args...]"
-  echo "Example: doppler run -- $0 playbooks/site.yml --limit vms"
+  echo "Example: $0 playbooks/site.yml --limit vms"
   exit 1
 }
 
@@ -152,6 +153,19 @@ mint_ssh_cert() {
   fi
 }
 
+# The generic store address wins over the legacy one; everything downstream
+# (the bao CLI, the inventory resolver, controller-side lookups) reads BAO_ADDR.
+if [[ -n ${SECRET_STORE_ADDR:-} ]]; then
+  export BAO_ADDR=$SECRET_STORE_ADDR
+fi
+# The generic signer pair names its mount and signing role explicitly; the
+# legacy tiers keep their built-in ones.
+if [[ -n ${SSH_SIGNER_ROLE_ID:-} && -n ${SSH_SIGNER_SECRET_ID:-} ]] &&
+   [[ -z ${SSH_CA_MOUNT:-} || -z ${SSH_SIGNER_ROLE:-} ]]; then
+  echo "ERROR: SSH_SIGNER_ROLE_ID/SSH_SIGNER_SECRET_ID are set but SSH_CA_MOUNT or SSH_SIGNER_ROLE is not." >&2
+  exit 1
+fi
+
 # The store role logs in for itself, at the point it reconciles, so this wrapper
 # neither mints nor holds a reconcile token.
 #
@@ -192,6 +206,8 @@ fi
 # the same converge grant plus its own delta and signs under its own CA role,
 # so a plane-run converge is distinguishable from every other caller in sshd
 # logs by principal alone. Preferred first when present.
+# The generic pair, SSH_SIGNER_*, is read before every legacy tier except the
+# node-converge break-glass pair below.
 # A fourth pair, OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_*, is the workstation
 # identity for the OpenBao-node play and is preferred ABOVE all of them when
 # present. It is inert and human-unlocked, so it is in an environment only
@@ -212,6 +228,11 @@ select_converge_identity() {
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID
     CONVERGE_IDENTITY="openbao-node-converge (workstation, break-glass)"
+  elif [[ -z ${SKIP_SIGNER:-} && -n ${SSH_SIGNER_ROLE_ID:-} && -n ${SSH_SIGNER_SECRET_ID:-} ]]; then
+    CONVERGE_ROLE_ID=$SSH_SIGNER_ROLE_ID
+    CONVERGE_SECRET_ID=$SSH_SIGNER_SECRET_ID
+    CONVERGE_IDENTITY="signer"
+    CONVERGE_SIGN_ROLE=$SSH_SIGNER_ROLE
   elif [[ -z ${SKIP_SEMAPHORE:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_SEMAPHORE_SECRET_ID:-} ]]; then
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_SEMAPHORE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_SEMAPHORE_SECRET_ID
@@ -225,7 +246,7 @@ select_converge_identity() {
     CONVERGE_ROLE_ID=$OPERATOR_VAULT_ROLE_ID
     CONVERGE_SECRET_ID=$OPERATOR_VAULT_SECRET_ID
     CONVERGE_IDENTITY="workstation identity"
-  elif [[ -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
+  elif [[ -z ${SKIP_UNDECLARED:-} && -n ${OPENBAO_APPROLE_ANSIBLE_ROLE_ID:-} && -n ${OPENBAO_APPROLE_ANSIBLE_SECRET_ID:-} ]]; then
     CONVERGE_ROLE_ID=$OPENBAO_APPROLE_ANSIBLE_ROLE_ID
     CONVERGE_SECRET_ID=$OPENBAO_APPROLE_ANSIBLE_SECRET_ID
     CONVERGE_IDENTITY="ansible (UNDECLARED, retiring)"
@@ -249,30 +270,39 @@ if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; the
     status=$?
     if [[ $status -ne 2 ]]; then
       echo "ERROR: OpenBao SSH cert mint FAILED and the cert env is present — refusing" >&2
-      echo "the silent static-key fallback. Fix the cert path, or unset the OPENBAO_APPROLE_ANSIBLE_*" >&2
+      echo "the silent static-key fallback. Fix the cert path, or unset the signer role/secret id" >&2
       echo "env and set PROXMOX_SSH_KEY_PATH to deliberately use the static break-glass key." >&2
       exit 1
     fi
     echo "WARNING: AppRole login refused for identity: $CONVERGE_IDENTITY — retrying with the next identity in order." >&2
-    case $CONVERGE_SIGN_ROLE in
-      automation-semaphore) SKIP_SEMAPHORE=1 ;;
-      *)
-        # Under set -e, a bare `[[ ]] && x=1` that evaluates false would end
-        # this case arm on a nonzero status and kill the script — the `if`
-        # keeps the arm's own exit status at 0 regardless of the match.
-        if [[ $CONVERGE_IDENTITY == ansible-converge* ]]; then
-          SKIP_ANSIBLE_CONVERGE=1
-        fi
-        # Same sign role as ansible-converge, so it needs its own arm here —
-        # without one a refused login re-selects the same tier forever.
-        if [[ $CONVERGE_IDENTITY == openbao-node-converge* ]]; then
-          SKIP_OPENBAO_NODE_CONVERGE=1
-        fi
-        if [[ $CONVERGE_IDENTITY == "workstation identity" ]]; then
-          SKIP_WORKSTATION_IDENTITY=1
-        fi
-        ;;
-    esac
+    # The generic tier's sign role is whatever the env names, so it is
+    # matched by identity before the sign-role arms below.
+    if [[ $CONVERGE_IDENTITY == signer ]]; then
+      SKIP_SIGNER=1
+    else
+      case $CONVERGE_SIGN_ROLE in
+        automation-semaphore) SKIP_SEMAPHORE=1 ;;
+        *)
+          # Under set -e, a bare `[[ ]] && x=1` that evaluates false would end
+          # this case arm on a nonzero status and kill the script — the `if`
+          # keeps the arm's own exit status at 0 regardless of the match.
+          if [[ $CONVERGE_IDENTITY == ansible-converge* ]]; then
+            SKIP_ANSIBLE_CONVERGE=1
+          fi
+          # Same sign role as ansible-converge, so it needs its own arm here —
+          # without one a refused login re-selects the same tier forever.
+          if [[ $CONVERGE_IDENTITY == openbao-node-converge* ]]; then
+            SKIP_OPENBAO_NODE_CONVERGE=1
+          fi
+          if [[ $CONVERGE_IDENTITY == "workstation identity" ]]; then
+            SKIP_WORKSTATION_IDENTITY=1
+          fi
+          if [[ $CONVERGE_IDENTITY == "ansible (UNDECLARED"* ]]; then
+            SKIP_UNDECLARED=1
+          fi
+          ;;
+      esac
+    fi
     [[ -n $CERT_DIR ]] && rm -rf "$CERT_DIR"
     CERT_DIR=""
     select_converge_identity
@@ -295,7 +325,7 @@ if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; the
   # to end the run it is describing.
   ssh-keygen -Lf "$CERT_DIR/id-cert.pub" 2>/dev/null | sed -n 's/^ *Valid:/  cert /p' || true
 elif [[ -z ${PROXMOX_SSH_KEY_PATH:-} ]]; then
-  echo "ERROR: no SSH auth available — set BAO_ADDR + OPENBAO_APPROLE_ANSIBLE_* for cert" >&2
+  echo "ERROR: no SSH auth available — set SECRET_STORE_ADDR + SSH_SIGNER_* for cert" >&2
   echo "minting, or PROXMOX_SSH_KEY_PATH for the static break-glass key." >&2
   exit 1
 fi
