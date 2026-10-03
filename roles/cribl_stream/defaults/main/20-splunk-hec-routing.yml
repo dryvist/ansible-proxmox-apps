@@ -49,13 +49,44 @@ cribl_stream_per_index_indexes: >-
       + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
      | unique | list }}
 # Post-processing pipeline applied to every splunk_hec output, base and
-# per-index alike. It names a pipeline inside the redaction pack, addressed
-# `<pack>/<pipeline>`; the pack is installed by dryvist.homelab.cribl_packs,
-# not by this role, so the value is declared here rather than discovered at
-# converge time and does not depend on when the pack lands. Set it to an empty
-# string to render no post-processing at all, which is the escape hatch if the
-# pack is ever unavailable on a node.
-cribl_stream_splunk_hec_post_processing_pipeline: cc-stream-secret-redaction-io/secret_redaction
+# per-index alike. It is the role-owned secret_redaction pipeline, rendered
+# with every other pipeline by this role, so it exists on the node before any
+# output names it. An output that names a pipeline the node does not have
+# ships its events unmasked, with no error.
+cribl_stream_splunk_hec_post_processing_pipeline: secret_redaction
+
+# Credential redaction, one list for every route that leaves Stream: the
+# secret_redaction pipeline (all Splunk outputs) and both trace legs
+# (otel_traces, otel_traces_phoenix). The patterns cover public, documented
+# credential formats. They match the mask the sending hosts apply, so a value
+# masked there and a value masked here carry the same marker.
+#
+# Schema note (same trap as force_splunk_meta): matchRegex/replaceExpr with a
+# regex LITERAL. The regex/replacement keys are invalid and make the whole
+# pipeline fail to load, which takes the whole leg down, not only the masking.
+cribl_stream_secret_redaction_rules:
+  # GitHub tokens (classic and App tokens) and fine-grained PATs.
+  - matchRegex: '/\b(gh[pousr]_[A-Za-z0-9_.\-]{30,}|github_pat_[A-Za-z0-9_]{40,})/g'
+    replaceExpr: "'<redacted:github>'"
+  # Secret-store tokens (service, batch and recovery prefixes).
+  - matchRegex: '/\b(hv[sbr]|s|b|r)\.[A-Za-z0-9_\-]{24,}/g'
+    replaceExpr: "'<redacted:bao>'"
+  - matchRegex: '/\bdp\.(st|pt|ct|sa|scim|audit)\.[A-Za-z0-9_.\-]{20,}/g'
+    replaceExpr: "'<redacted:doppler>'"
+  - matchRegex: '/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g'
+    replaceExpr: "'<redacted:private-key>'"
+  - matchRegex: '/\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}/g'
+    replaceExpr: "'<redacted:jwt>'"
+  - matchRegex: '/\bxox[abposr]-[A-Za-z0-9\-]{10,}/g'
+    replaceExpr: "'<redacted:slack>'"
+  - matchRegex: '/\bsk-(ant-)?[A-Za-z0-9_\-]{16,}/g'
+    replaceExpr: "'<redacted:api-key>'"
+  - matchRegex: '/\bpk-lf-[A-Za-z0-9\-]{8,}/g'
+    replaceExpr: "'<redacted:langfuse>'"
+  - matchRegex: '/\b(AKIA|ASIA)[0-9A-Z]{16}\b/g'
+    replaceExpr: "'<redacted:aws>'"
+  - matchRegex: '/Bearer\s+[A-Za-z0-9._~+\/-]{12,}/g'
+    replaceExpr: "'Bearer <redacted>'"
 cribl_stream_splunk_hec_tls: true
 cribl_stream_splunk_hec_tls_verify: false  # Self-signed cert in lab
 # Single definition shared by the template and the drift check in tasks.
