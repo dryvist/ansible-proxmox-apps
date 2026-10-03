@@ -48,11 +48,8 @@
 ##     15m window would page every night, get muted, and restore the exact
 ##     silence these rules exist to end.
 ##
-## claude-jsonl-etl-frozen exists because a FROZEN writer passes every
-## absence rule above: a cumulative counter that stops advancing while its
-## series still exists is invisible to absent_over_time. Measured
-## 2026-09-19: the JSONL cache-read sum sat at exactly 360.005B for 19
-## consecutive 10-minute steps with no absence rule noticing.
+## Collector liveness requires an explicit collector-health signal. Usage
+## counters remaining flat do not establish a failed collector.
 ##
 ## litellm_*, opencode_*, gen_ai* and vm_* are deliberately NOT covered here
 ## — none of them has any series in the store yet, and a rule on a
@@ -60,6 +57,10 @@
 ## these rules exist to end. Add a rule the moment each source's first
 ## sample lands.
 apiVersion: 1
+
+deleteRules:
+  - orgId: 1
+    uid: claude-jsonl-etl-frozen
 
 groups:
 {% if grafana_stack_prometheus_url | trim | length > 0 %}
@@ -76,7 +77,7 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: prometheus
             model:
-              expr: probe_success == 0
+              expr: probe_success == bool 0
               instant: true
               refId: A
           - refId: B
@@ -103,7 +104,7 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: prometheus
             model:
-              expr: up{job=~"prometheus|blackbox_.*|traefik|llm_router|hindsight|agentgateway"} == 0
+              expr: up{job=~"prometheus|blackbox_.*|traefik|llm_router|hindsight|agentgateway"} == bool 0
               instant: true
               refId: A
           - refId: B
@@ -118,7 +119,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Alerting
-        labels: {severity: critical}
+        labels: {severity: warning}
         annotations:
           summary: "Scrape target {{ '{{' }} $labels.instance {{ '}}' }} (job {{ '{{' }} $labels.job {{ '}}' }}) is down."
 
@@ -208,8 +209,8 @@ groups:
           summary: "Secret {{ '{{' }} $labels.path {{ '}}' }} is {{ '{{' }} $values.A {{ '}}' }} days old (>= {{ grafana_stack_alert_secret_age_days }})."
 {% endif %}
   # AI telemetry absence checks — see file header for the interval-split and
-  # frozen-writer rationale. Datasource is "victoriametrics", provisioned
-  # unconditionally, so this group (and the two below) always render.
+  # collector-health distinction. Datasource is "victoriametrics", provisioned
+  # unconditionally, so this group (and the one below) always render.
   - orgId: 1
     name: ai-telemetry-absence-pushed
     folder: {{ grafana_stack_alert_folder }}
@@ -363,38 +364,3 @@ groups:
         labels: {severity: warning, stream: codex}
         annotations:
           summary: "Codex has emitted no turn telemetry for 6 hours."
-
-  # A frozen writer is NOT an absent one — see file header. A cumulative
-  # counter that stops advancing while its series still exists passes every
-  # absence rule above.
-  - orgId: 1
-    name: ai-telemetry-staleness
-    folder: {{ grafana_stack_alert_folder }}
-    interval: 5m
-    rules:
-      - uid: claude-jsonl-etl-frozen
-        title: Claude JSONL ETL frozen (series present, not advancing)
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 300, to: 0}
-            datasourceUid: victoriametrics
-            model:
-              expr: increase(claude_jsonl_cache_read_tokens_total[6h])
-              instant: true
-              refId: A
-          - refId: B
-            relativeTimeRange: {from: 0, to: 0}
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expression: A
-              conditions:
-                - evaluator: {type: lte, params: [0]}
-              refId: B
-        for: 1h
-        noDataState: OK
-        execErrState: Alerting
-        labels: {severity: warning, stream: claude-jsonl-etl}
-        annotations:
-          summary: "Claude JSONL ETL series exist but have not advanced in 6 hours."

@@ -1,18 +1,5 @@
 ## Managed by Ansible (grafana_stack role) — do not edit by hand.
-## Grafana unified-alerting file provisioning: contact points.
-## https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
-##
-## KNOWN LIMITATION: Grafana's OSS webhook contact point always POSTs its own
-## fixed JSON envelope (receiver/status/alerts[]/title/message/...); there is
-## no way to make the request body just the rendered message text. ntfy's
-## per-topic endpoint (unlike its root JSON-publish endpoint) treats any POST
-## body as the literal notification text, so the alert fires and reaches
-## ntfy, but the notification body is the raw JSON envelope rather than the
-## clean one-line messages every other ntfy publisher in this repo sends
-## (service_deadman, openbao secret-age). Title/priority/tags are set via
-## ntfy's documented query-parameter override
-## (https://docs.ntfy.sh/publish/#query-parameters-only) since the webhook
-## type has no custom-header support to set them as headers instead.
+## A compact JSON message at the ntfy topic endpoint; no full alert envelope.
 apiVersion: 1
 
 contactPoints:
@@ -23,5 +10,28 @@ contactPoints:
         type: webhook
         settings:
           url: >-
-            {{ grafana_stack_alert_ntfy_url }}?title=Grafana+alert&priority=high&tags=warning
+            {{ grafana_stack_alert_ntfy_url }}?title=Grafana+alert&priority=default&tags=grafana
           httpMethod: POST
+          customPayload:
+            template: |-
+              {% raw %}{{- $entity := "" -}}
+              {{- $host := or .CommonLabels.host .CommonLabels.instance -}}
+              {{- if $host -}}
+                {{- $entity = printf "%.100s" (printf "%s/%s/%s" $host (or .CommonLabels.job "") (or .CommonLabels.stream "")) -}}
+              {{- end -}}
+              {{- $severity := "warning" -}}
+              {{- if eq .CommonLabels.severity "info" -}}{{- $severity = "info" -}}{{- end -}}
+              {{- if eq .CommonLabels.severity "critical" -}}{{- $severity = "critical" -}}{{- end -}}
+              {{- $details := printf "%s/alerting/list" .ExternalURL -}}
+              {{- if gt (len $details) 160 -}}{{- $details = "" -}}{{- end -}}
+              {{- coll.Dict
+                "source" "grafana"
+                "rule" (printf "%.80s" .CommonLabels.alertname)
+                "entity" $entity
+                "status" .Status
+                "severity" $severity
+                "impact" "service"
+                "summary" (printf "%.220s" (or .CommonAnnotations.summary .CommonLabels.alertname))
+                "details_url" $details
+                "alert_count" (len .Alerts)
+                | data.ToJSON -}}{% endraw %}

@@ -12,67 +12,78 @@
 # Every webhook these need must be seeded. A missing one fails the converge
 # here, before anything is deployed, so a route can never be skipped silently.
 
-- name: Validate the webhooks and compute the ntfy-to-slack instances
-  ansible.builtin.include_tasks: slack_fanout_plan.yml
+- name: Reset the desired legacy Slack instances
+  ansible.builtin.set_fact:
+    ntfy_docker_slack_instances: {}
 
-- name: Create the ntfy-to-slack env directory
-  ansible.builtin.file:
-    path: "{{ ntfy_docker_to_slack_env_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
+- name: Keep legacy Slack delivery until its replacement is verified
+  when: not (ntfy_docker_slack_delivery_verified | bool)
+  block:
+    - name: Validate the webhooks and compute the ntfy-to-slack instances
+      ansible.builtin.include_tasks: slack_fanout_plan.yml
 
-- name: Download the ntfy-to-slack release tarball
-  ansible.builtin.get_url:
-    url: "{{ ntfy_docker_to_slack_release_base }}/{{ ntfy_docker_to_slack_asset }}"
-    dest: "/tmp/{{ ntfy_docker_to_slack_asset }}"
-    # get_url reads the release's checksums file and takes the line for this
-    # asset's file name.
-    checksum: "sha256:{{ ntfy_docker_to_slack_checksums_url }}"
-    mode: "0644"
+    - name: Create the ntfy-to-slack env directory
+      ansible.builtin.file:
+        path: "{{ ntfy_docker_to_slack_env_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
 
-- name: Extract the ntfy-to-slack binary
-  ansible.builtin.unarchive:
-    src: "/tmp/{{ ntfy_docker_to_slack_asset }}"
-    remote_src: true
-    dest: "{{ ntfy_docker_to_slack_install_dir }}"
-    include: ntfy-to-slack
-    owner: root
-    group: root
-    mode: "0755"
+    - name: Download the ntfy-to-slack release tarball
+      ansible.builtin.get_url:
+        url: "{{ ntfy_docker_to_slack_release_base }}/{{ ntfy_docker_to_slack_asset }}"
+        dest: "/tmp/{{ ntfy_docker_to_slack_asset }}"
+        # get_url reads the release's checksums file and takes the line for this
+        # asset's file name.
+        checksum: "sha256:{{ ntfy_docker_to_slack_checksums_url }}"
+        mode: "0644"
 
-# Bare-value env file (no other secret shares this path), mode 0600: it holds
-# a live Slack webhook URL.
-- name: Deploy the per-instance ntfy-to-slack environment file
-  ansible.builtin.template:
-    src: ntfy-to-slack.env.j2
-    dest: "{{ ntfy_docker_to_slack_env_dir }}/{{ item.key }}.env"
-    owner: root
-    group: root
-    mode: "0600"
-  loop: "{{ ntfy_docker_slack_instances | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
-  no_log: true
-  notify: Restart ntfy-to-slack instances
+    - name: Extract the ntfy-to-slack binary
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ ntfy_docker_to_slack_asset }}"
+        remote_src: true
+        dest: "{{ ntfy_docker_to_slack_install_dir }}"
+        include: ntfy-to-slack
+        owner: root
+        group: root
+        mode: "0755"
 
-- name: Deploy the ntfy-to-slack instantiated systemd unit
-  ansible.builtin.template:
-    src: ntfy-to-slack@.service.j2
-    dest: /etc/systemd/system/ntfy-to-slack@.service
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart ntfy-to-slack instances
+    # Bare-value env file (no other secret shares this path), mode 0600: it holds
+    # a live Slack webhook URL.
+    - name: Deploy the per-instance ntfy-to-slack environment file
+      ansible.builtin.template:
+        src: ntfy-to-slack.env.j2
+        dest: "{{ ntfy_docker_to_slack_env_dir }}/{{ item.key }}.env"
+        owner: root
+        group: root
+        mode: "0600"
+      loop: "{{ ntfy_docker_slack_instances | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      notify: Restart ntfy-to-slack instances
 
-- name: Enable and start every ntfy-to-slack instance
-  ansible.builtin.systemd:
-    name: "ntfy-to-slack@{{ item }}.service"
-    state: started
-    enabled: true
-    daemon_reload: true
-  loop: "{{ ntfy_docker_slack_instances.keys() | list }}"
+    - name: Deploy the ntfy-to-slack instantiated systemd unit
+      ansible.builtin.template:
+        src: ntfy-to-slack@.service.j2
+        dest: /etc/systemd/system/ntfy-to-slack@.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart ntfy-to-slack instances
+
+    - name: Enable and start every ntfy-to-slack instance
+      ansible.builtin.systemd:
+        name: "ntfy-to-slack@{{ item }}.service"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop: "{{ ntfy_docker_slack_instances.keys() | list }}"
+
+- name: Discover legacy Slack units for verified retirement
+  ansible.builtin.service_facts:
+  when: ntfy_docker_slack_delivery_verified | bool
 
 # A retired instance (topic or route removed) must stop and disable -- otherwise
 # it keeps forwarding a topic the operator believed was retired.
@@ -87,6 +98,10 @@
     ntfy_docker_to_slack_stale: >-
       {{ (ntfy_docker_to_slack_deployed_envs.files | map(attribute='path')
          | map('basename') | map('regex_replace', '\.env$', '') | list)
+         | union((ansible_facts.services | default({}) | list
+                  | select('match', '^ntfy-to-slack@.+\.service$')
+                  | map('regex_replace', '^ntfy-to-slack@|\.service$', '') | list)
+                 if ntfy_docker_slack_delivery_verified | bool else [])
          | difference(ntfy_docker_slack_instances.keys() | list) }}
   when: ntfy_docker_to_slack_stale | length > 0
   block:
