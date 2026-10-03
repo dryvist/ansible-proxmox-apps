@@ -1,0 +1,49 @@
+---
+# The scheduled run rotates its own identity last; the name it targets comes
+# from the file the playbook's "Load the scheduled identity's own AppRole name"
+# task include_vars. Prove that file defines the variable the next task reads,
+# and that the file previously loaded does not (negative case).
+#
+# Usage: ansible-playbook tests/openbao_rotate/verify_self_rotation_name_load.yml -c local
+
+- name: Verify the scheduled self-rotation name is defined by the file the playbook loads
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _var: openbao_approle_secret_id_rotate_scheduled_approle_name
+    _names_dir: "{{ playbook_dir }}/../../roles/openbao/defaults/main"
+
+  tasks:
+    - name: Read the playbook
+      ansible.builtin.slurp:
+        src: "{{ playbook_dir }}/../../playbooks/openbao-rotate-approles.yml"
+      register: _playbook
+
+    - name: Pick the file the self-name load task includes
+      ansible.builtin.set_fact:
+        _loaded_file: >-
+          {{ ((_playbook.content | b64decode | from_yaml)[0].tasks
+             | selectattr('name', 'defined')
+             | selectattr('name', 'search', "scheduled identity's own AppRole name")
+             | first)['ansible.builtin.include_vars'].file | basename }}
+
+    - name: Read the loaded file and the file it used to load
+      ansible.builtin.slurp:
+        src: "{{ _names_dir }}/{{ item }}"
+      register: _files
+      loop:
+        - "{{ _loaded_file }}"
+        - 05b-domain-policy-approle-names.yml
+
+    - name: Assert the loaded file defines the variable and the old one does not
+      ansible.builtin.assert:
+        that:
+          - (_files.results[0].content | b64decode | from_yaml)[_var] is defined
+          - (_files.results[1].content | b64decode | from_yaml)[_var] is not defined
+        fail_msg: >-
+          {{ _loaded_file }} must define {{ _var }} (and the task must load
+          it, not a file without it).
+        quiet: true
