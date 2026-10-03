@@ -1,5 +1,42 @@
 # Changelog
 
+## [4.54.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.53.0...v4.54.0) (2026-10-03)
+
+
+### Features
+
+* **baseline:** page the ntfy hub when rsyslog fails on infra guests ([#2279](https://github.com/dryvist/ansible-proxmox-apps/issues/2279)) ([6640cbf](https://github.com/dryvist/ansible-proxmox-apps/commit/6640cbfba02c1d7b1a1868268d215fad08ea184f))
+* **budget-gate:** delegate the wall-clock gate to the shared collection ([#2184](https://github.com/dryvist/ansible-proxmox-apps/issues/2184)) ([4bf5016](https://github.com/dryvist/ansible-proxmox-apps/commit/4bf5016f79f35b2ad2f487a4181a057d4355ebdc))
+* **homarr:** pin the app release and support multiple instances ([#2274](https://github.com/dryvist/ansible-proxmox-apps/issues/2274)) ([484fcb4](https://github.com/dryvist/ansible-proxmox-apps/commit/484fcb4eac1879aaff868243d30b817b19a2ee19))
+* **ntfy:** fan every topic out to one all-alerts Slack channel ([#2276](https://github.com/dryvist/ansible-proxmox-apps/issues/2276)) ([da6761c](https://github.com/dryvist/ansible-proxmox-apps/commit/da6761c7476cf04727686c73f6192da6d7e5e4d6))
+* **openbao:** add github-hermes App mount with visibility-split sets ([#2284](https://github.com/dryvist/ansible-proxmox-apps/issues/2284)) ([bafeb7c](https://github.com/dryvist/ansible-proxmox-apps/commit/bafeb7cc51cb0ab293a0df3f2b0a868ec2487d10))
+* **openbao:** declare disclosure-denylist secret path and read policy ([#2177](https://github.com/dryvist/ansible-proxmox-apps/issues/2177)) ([8409382](https://github.com/dryvist/ansible-proxmox-apps/commit/8409382ee9d8ee2e286a999ffe883b9cb0e7ce55))
+* **openbao:** split GitHub engine mounts per App ([#2080](https://github.com/dryvist/ansible-proxmox-apps/issues/2080)) ([1d3f421](https://github.com/dryvist/ansible-proxmox-apps/commit/1d3f42130b2cce77f4e7f1a4f07861c98d0af574))
+* **openbao:** validate GitHub App webhook and installation settings ([#2107](https://github.com/dryvist/ansible-proxmox-apps/issues/2107)) ([d930462](https://github.com/dryvist/ansible-proxmox-apps/commit/d93046271b3819b746885eaf515508c2eecbb8cb))
+* **postgres:** optional Patroni/etcd HA mode behind postgres_ha_manager ([#2189](https://github.com/dryvist/ansible-proxmox-apps/issues/2189)) ([6e2a7b6](https://github.com/dryvist/ansible-proxmox-apps/commit/6e2a7b67aae40c86310498ec4e4d4b84040b3a62))
+
+
+### Bug Fixes
+
+* **alerting:** ntfy hub stage order and deadman cleanup ([#2287](https://github.com/dryvist/ansible-proxmox-apps/issues/2287)) ([ce18276](https://github.com/dryvist/ansible-proxmox-apps/commit/ce18276d9f676fc3bc09d59762c384386256f516))
+* **budget-gate:** run converge_gate by FQCN in a local play ([#2289](https://github.com/dryvist/ansible-proxmox-apps/issues/2289)) ([76a326c](https://github.com/dryvist/ansible-proxmox-apps/commit/76a326c7581d41630aec90045d7c96fb386eac4c))
+* **homarr:** let the role-minted API and encryption keys resolve empty ([#2286](https://github.com/dryvist/ansible-proxmox-apps/issues/2286)) ([41f3aa3](https://github.com/dryvist/ansible-proxmox-apps/commit/41f3aa3ccc8e691554b03f5f037858bf7e30e88f))
+* **openbao:** ai-admin administers login MFA ([b0046af](https://github.com/dryvist/ansible-proxmox-apps/commit/b0046af6b958c35ed42db32bfff8badd97d4b9a7))
+* **openbao:** ai-admin administers login MFA ([c44e17f](https://github.com/dryvist/ansible-proxmox-apps/commit/c44e17f73f7f690d015a7b8e425c1d2e954b8d73))
+* **openbao:** create the denylist entry metadata with put when absent ([#2273](https://github.com/dryvist/ansible-proxmox-apps/issues/2273)) ([c36717c](https://github.com/dryvist/ansible-proxmox-apps/commit/c36717ca0056ff4f6a2e30795c34aa44c36ee656))
+* **openbao:** delegate the GitHub App check include to localhost ([#2270](https://github.com/dryvist/ansible-proxmox-apps/issues/2270)) ([eca5e70](https://github.com/dryvist/ansible-proxmox-apps/commit/eca5e70591d9305125c78b6e474836f8ba924a51))
+* **openbao:** read the App install allowlist from the env document ([#2268](https://github.com/dryvist/ansible-proxmox-apps/issues/2268)) ([3998b70](https://github.com/dryvist/ansible-proxmox-apps/commit/3998b70435c0bc7b01ac3566f9cfc79ab2b80fdb))
+* **openbao:** scrub environment-specific names from init tasks ([#2259](https://github.com/dryvist/ansible-proxmox-apps/issues/2259)) ([66e7ad9](https://github.com/dryvist/ansible-proxmox-apps/commit/66e7ad9b01cfad6917f13292a447bdad152ad43b))
+* **openbao:** set ansible_become false on the delegated App check include ([#2271](https://github.com/dryvist/ansible-proxmox-apps/issues/2271)) ([03b450b](https://github.com/dryvist/ansible-proxmox-apps/commit/03b450bdfc17c02812ce4e4532178a43a7dc9050))
+* replace environment-specific names with generic placeholders ([#2266](https://github.com/dryvist/ansible-proxmox-apps/issues/2266)) ([9407248](https://github.com/dryvist/ansible-proxmox-apps/commit/9407248b2593dcefccca760c94a58e61d951d9f7))
+* **service_deadman:** publish to ntfy on state change, not every cycle ([#2280](https://github.com/dryvist/ansible-proxmox-apps/issues/2280)) ([f617995](https://github.com/dryvist/ansible-proxmox-apps/commit/f61799543046847c0d1f84b036a1dee16a04f2cf))
+
+
+### Performance
+
+* **openbao:** run the AppRole, SSH role and policy writes on openbao_cli_host ([620abca](https://github.com/dryvist/ansible-proxmox-apps/commit/620abca1ce43860792cbc97383090417ac77d5fb))
+* **openbao:** run the AppRole, SSH role and policy writes on openbao_cli_host ([cc70ab6](https://github.com/dryvist/ansible-proxmox-apps/commit/cc70ab6d4222d12d8eff368ed54faa870aa841a2))
+
 ## [4.53.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.52.0...v4.53.0) (2026-10-02)
 
 
