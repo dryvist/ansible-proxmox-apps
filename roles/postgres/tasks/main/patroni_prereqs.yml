@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# Patroni mode preconditions. Same shape as tasks/pgbackrest.yml's own asserts
+# above it in main.yml: fail the converge loudly and early rather than render
+# a config that silently cannot work. Runs only when postgres_ha_manager ==
+# 'patroni', so a 'native' cluster never evaluates any of this.
+# =============================================================================
+- name: Assert this cluster actually has 3 members for Patroni/etcd
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_cluster_members | length == 3
+    fail_msg: >-
+      postgres_ha_manager is 'patroni' but postgres_cluster_group
+      ({{ postgres_cluster_group }}) has {{ postgres_ha_cluster_members | length }}
+      member(s). This role co-locates a 3-member etcd cluster on the
+      cluster's postgres nodes — add or remove a member so the group has
+      exactly 3 before enabling patroni mode.
+    quiet: true
+
+- name: Assert this cluster's scope is declared for Patroni mode
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_scope in postgres_ha_patroni_scopes
+    fail_msg: >-
+      postgres_ha_manager is 'patroni' but {{ postgres_ha_scope }} is not in
+      postgres_ha_patroni_scopes (inventory/group_vars/all.yml). roles/openbao
+      derives openbao_pki_etcd_engines from that same list
+      (07b-etcd-pki-engine.yml) — add this cluster's scope there first, or the
+      PKI mount/role this cluster needs to issue from is never created and
+      every issue call below fails.
+    quiet: true
+
+- name: Assert the OpenBao converge identity is set
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_bao_addr | length > 0
+      - postgres_ha_bao_role_id | length > 0
+      - postgres_ha_bao_secret_id | length > 0
+    fail_msg: >-
+      postgres_ha_manager is 'patroni' but BAO_ADDR / CONVERGE_ROLE_ID /
+      CONVERGE_SECRET_ID (or the OPENBAO_APPROLE_ANSIBLE_* fallback) are
+      unset. etcd peer/client certificates and Patroni's own etcd credential
+      are all issued/read through this login — see patroni_etcd.yml's
+      "Resolve this cluster's etcd/Patroni PKI and KV credentials" block —
+      and roles/openbao's 05g-etcd-pki-engine.yml for how the PKI mount/role
+      this identity issues from is created.
+    quiet: true
+  no_log: true
+
+- name: Assert the etcd, Patroni REST, and superuser passwords are set
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_etcd_root_password | length > 0
+      - postgres_ha_patroni_api_password | length > 0
+      - postgres_ha_superuser_password | length > 0
+    fail_msg: >-
+      postgres_ha_manager is 'patroni' but hindsight_etcd_root_password /
+      hindsight_patroni_api_password / hindsight_patroni_superuser_password
+      did not resolve from bao_apps_secrets. Add all three field names to
+      roles/openbao's openbao_generated_app_secrets.hindsight list and
+      re-converge OpenBao before converging this role in patroni mode.
+      (Patroni's own etcd credential is a separate, per-cluster secret --
+      see patroni_etcd_credential.yml -- and is not asserted here because it
+      does not exist yet at this point in the converge.)
+    quiet: true
+  no_log: true

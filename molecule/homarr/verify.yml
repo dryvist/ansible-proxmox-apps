@@ -11,13 +11,13 @@
   become: true
   gather_facts: false
 
-  vars:
-    homarr_cs_tag: "2026-08-14"
-    homarr_cs_pinned_dir: "/opt/community-scripts/2026-08-14"
-    homarr_port: 7575
-    homarr_env_file: /opt/homarr.env
-    homarr_db_url: /opt/homarr_db/db.sqlite
-    homarr_api_key_file: /etc/homarr/api-key
+  # The role's own defaults, not copies: a pin or path change is verified
+  # against the value the converge actually used.
+  vars_files:
+    - ../../roles/homarr/defaults/main/00-pin.yml
+    - ../../roles/homarr/defaults/main/01-runtime.yml
+    - ../../roles/homarr/defaults/main/02-app.yml
+    - ../../roles/homarr/defaults/main/03-integrations.yml
 
   tasks:
     # --- The pin is real, on disk ----------------------------------------
@@ -25,13 +25,7 @@
       ansible.builtin.stat:
         path: "{{ homarr_cs_pinned_dir }}/{{ item.path }}"
         checksum_algorithm: sha256
-      loop:
-        - path: misc/tools.func
-          sha256: 57db1f715fe9e6701516583585cf09a07cc2ca0acab782323805f1b8c4f32add
-        - path: misc/error_handler.func
-          sha256: 2bf0af36fa79f176a0a326974e1c96d9e7130d047f12bdf19c05481fb1bfedc2
-        - path: install/homarr-install.sh
-          sha256: aa0be48698dca308f9256b70d12dcab08f7dbea3ab239ee2df390c660e952f7e
+      loop: "{{ homarr_cs_artifacts }}"
       loop_control:
         label: "{{ item.path }}"
       register: homarr_pinned_stat
@@ -102,7 +96,7 @@
       # claim in the role would be decorative.
       ansible.builtin.get_url:
         url: >-
-          https://raw.githubusercontent.com/community-scripts/ProxmoxVE/{{ homarr_cs_tag }}/install/homarr-install.sh
+          {{ homarr_cs_upstream_base }}/install/homarr-install.sh
         dest: /tmp/homarr-checksum-guard.sh
         checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         mode: "0644"
@@ -141,6 +135,20 @@
         fail_msg: "The unpinned /usr/bin/update survived the converge"
       vars:
         updater: "{{ homarr_updater.content | b64decode }}"
+
+    # --- The app release is the pinned one, not upstream `latest` --------
+    - name: Read the release tools.func recorded
+      ansible.builtin.slurp:
+        src: "{{ homarr_version_file }}"
+      register: homarr_deployed_release
+
+    - name: Assert the deployed release is homarr_version
+      ansible.builtin.assert:
+        that:
+          - (homarr_deployed_release.content | b64decode | trim) == (homarr_version | regex_replace('^v', ''))
+        fail_msg: >-
+          Deployed {{ homarr_deployed_release.content | b64decode | trim }},
+          pinned {{ homarr_version }}: the release pin is not reaching the installer.
 
     # --- redis can start in an unprivileged LXC ---------------------------
     - name: Read the redis LXC drop-in

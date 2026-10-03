@@ -58,7 +58,7 @@ documented once at
 | `SPLUNK_PASSWORD` | Splunk admin password (for E2E validation) | Doppler / SOPS |
 | `HAPROXY_STATS_PASSWORD` | HAProxy stats page password | SOPS |
 | `TECHNITIUM_DNS_API_TOKEN` | Technitium DNS API token | Doppler |
-| `INT_HOMELAB_HARDWARE` | Path to the generated hardware seed slice (Nautobot Devices + Modules) | env (optional) |
+| `NAUTOBOT_SEED_HARDWARE` | Path to the generated hardware seed slice (Nautobot Devices + Modules) | env (optional) |
 | `MAILPIT_RELAY_HOST` | SMTP relay hostname | SOPS |
 | `MAILPIT_RELAY_PORT` | SMTP relay port (default 587) | SOPS |
 | `MAILPIT_RELAY_USERNAME` | SMTP relay username | SOPS |
@@ -72,10 +72,17 @@ documented once at
 | `OPENBAO_AWS_ROOT_SECRET_ACCESS_KEY` | AWS engine bootstrap/rotation secret key | tier-0 injection |
 | `OPENBAO_AWS_TF_PROXMOX_ROLE_ARN` | IAM role exposed by `aws/sts/tf-proxmox` | environment |
 | `OPENBAO_AWS_IAC_ADMIN_ROLE_ARN` | IAM role exposed by `aws/sts/openbao-iac-admin` | environment |
-| `OPENBAO_GITHUB_APP_ID` | Dedicated GitHub broker App ID | one-time environment |
-| `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Dedicated GitHub broker App private key | one-time environment |
-| `OPENBAO_GITHUB_DRYVIST_INSTALLATION_ID` | GitHub App installation on `dryvist` | environment |
-| `OPENBAO_GITHUB_PERSONAL_INSTALLATION_ID` | GitHub App installation on the personal account | environment |
+| `OPENBAO_AWS_HERMES_WEBHOOK_CONSUMER_ROLE_ARN` | IAM role exposed by `aws/sts/hermes-webhook-consumer`; unset = no role | environment |
+| `OPENBAO_GITHUB_APP_ID` | Admin App ID (`github-admin` mount) | one-time environment |
+| `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Admin App private key | one-time environment |
+| `OPENBAO_GITHUB_EVERYDAY_APP_ID` / `_PRIVATE_KEY` | Everyday App (`github` mount) | one-time environment |
+| `OPENBAO_GITHUB_AGENTS_APP_ID` / `_PRIVATE_KEY` | Agents App (`github-agents` mount) | one-time environment |
+| `OPENBAO_GITHUB_ADMIN_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Admin App installations | env document |
+| `OPENBAO_GITHUB_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Everyday App installations | env document |
+| `OPENBAO_GITHUB_AGENTS_DRYVIST_INSTALLATION_ID` | Agents App installation on `dryvist` | env document |
+| `OPENBAO_GITHUB_HERMES_APP_ID` / `_PRIVATE_KEY` | Hermes App (`github-hermes` mount) | one-time environment |
+| `OPENBAO_GITHUB_HERMES_DRYVIST_INSTALLATION_ID` | Hermes App installation on `dryvist`; unset = no mount | env document |
+| `OPENBAO_GITHUB_HERMES_AUTHOR_{PUBLIC,PRIVATE}_REPOS` | Comma-separated repositories for `hermes-author-{public,private}`; unset = no set | env document |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | Doppler |
 | `IDRAC_R410_USER` | R410 iDRAC username | Doppler |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | Doppler |

@@ -981,7 +981,7 @@
 
 ### Bug Fixes
 
-* **openbao:** grant tofu-unifi read on the object-storage credential ([#1494](https://github.com/dryvist/ansible-proxmox-apps/issues/1494)) ([fb4a47f](https://github.com/dryvist/ansible-proxmox-apps/commit/fb4a47f9acd4db9ce9288377e3f47b1e1d188b38))
+* **openbao:** grant the network workspace read on the object-storage credential ([#1494](https://github.com/dryvist/ansible-proxmox-apps/issues/1494)) ([fb4a47f](https://github.com/dryvist/ansible-proxmox-apps/commit/fb4a47f9acd4db9ce9288377e3f47b1e1d188b38))
 
 ## [4.13.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.12.0...v4.13.0) (2026-08-11)
 
@@ -1396,7 +1396,7 @@
 ### Features
 
 * **agent_sandbox:** adversarial egress probe suite ([#1169](https://github.com/dryvist/ansible-proxmox-apps/issues/1169)) ([424a822](https://github.com/dryvist/ansible-proxmox-apps/commit/424a82298e20173aa06cfc5ef3557a8dae11d33d))
-* **agent_sandbox:** ship container agent transcripts to Splunk ([#1168](https://github.com/dryvist/ansible-proxmox-apps/issues/1168)) ([21c0d2b](https://github.com/dryvist/ansible-proxmox-apps/commit/21c0d2b7f25d735ff8e38db09f17ef4c79981daa))
+* **agent_sandbox:** ship container agent activity logs to Splunk ([#1168](https://github.com/dryvist/ansible-proxmox-apps/issues/1168)) ([21c0d2b](https://github.com/dryvist/ansible-proxmox-apps/commit/21c0d2b7f25d735ff8e38db09f17ef4c79981daa))
 
 
 ### Bug Fixes

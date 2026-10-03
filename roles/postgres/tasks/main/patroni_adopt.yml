@@ -1,0 +1,123 @@
+---
+# =============================================================================
+# Adoption: take over an ALREADY RUNNING native-replication primary+standby
+# cluster, in place, without touching its data. Explicit, human-invoked,
+# ordered procedure — never runs on a normal converge (see main.yml: this file
+# is only reached with --tags patroni_adopt, which also means nothing else in
+# this role runs in the same invocation, so every step this procedure needs is
+# repeated here rather than assumed from an earlier phase).
+#
+# Run once per host, IN THIS ORDER, each a SEPARATE ansible-playbook
+# invocation limited to exactly one host — Ansible gives no cross-host
+# ordering guarantee within one play, and this procedure's safety depends
+# entirely on the primary already leading in the DCS before any standby's
+# Patroni starts:
+#
+#   1. Take (or confirm a recent) pgBackRest full backup of the primary. This
+#      procedure never wipes PGDATA itself, but it does stop the native
+#      postgresql@ service — any operator mistake here is far cheaper to
+#      undo from a backup than to debug live.
+#
+#   2. On the CURRENT PRIMARY only:
+#        ansible-playbook ... --tags patroni_adopt --limit <primary-host> \
+#          -e postgres_ha_manager=patroni -e postgres_ha_patroni_adopt=true
+#      Confirm the play reports "Patroni adoption: this node is now the
+#      leader" and that the system-identifier assertion below passed.
+#
+#   3. Only after step 2 is confirmed, on EACH STANDBY in turn:
+#        ansible-playbook ... --tags patroni_adopt --limit <standby-host> \
+#          -e postgres_ha_manager=patroni -e postgres_ha_patroni_adopt=true
+#      Confirm "Patroni adoption: this node joined as a replica" and that its
+#      system identifier still matches the primary's.
+#
+#   4. Only once every member has adopted successfully, set
+#      postgres_ha_manager: patroni in this cluster's group_vars so future
+#      ordinary converges take the patroni_bootstrap.yml path instead of this
+#      one, and remove postgres_primary_host (native mode's fixed-primary var
+#      no longer applies).
+# =============================================================================
+
+- name: Re-run the discovery this file needs (install_and_create_cluster.yml)
+  ansible.builtin.include_tasks: install_and_create_cluster.yml
+
+- name: Assert Patroni-mode preconditions
+  ansible.builtin.include_tasks: patroni_prereqs.yml
+
+- name: Configure the etcd DCS member on this host
+  ansible.builtin.include_tasks: patroni_etcd.yml
+
+- name: Record the system identifier before adoption (comparison baseline)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    argv:
+      - pg_controldata
+      - "{{ postgres_data_dir }}"
+  register: postgres_ha_adopt_controldata_before
+  changed_when: false
+
+- name: Extract the pre-adoption system identifier
+  ansible.builtin.set_fact:
+    postgres_ha_adopt_system_id_before: >-
+      {{ (postgres_ha_adopt_controldata_before.stdout_lines
+          | select('match', '^Database system identifier:') | list | first)
+         .split(':')[1] | trim }}
+
+# Data untouched: this stops the SERVICE, not the storage. patroni_bootstrap.yml
+# below starts postgres itself pointed at the same postgres_data_dir.
+- name: Stop the natively-managed PostgreSQL service (data untouched)
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
+    state: stopped
+
+- name: Install and configure Patroni, then start it against the existing data
+  ansible.builtin.include_tasks: patroni_bootstrap.yml
+
+- name: Determine this node's Patroni role after adoption
+  ansible.builtin.include_tasks: patroni_leader.yml
+
+- name: Record the system identifier after adoption
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    argv:
+      - pg_controldata
+      - "{{ postgres_data_dir }}"
+  register: postgres_ha_adopt_controldata_after
+  changed_when: false
+
+- name: Extract the post-adoption system identifier
+  ansible.builtin.set_fact:
+    postgres_ha_adopt_system_id_after: >-
+      {{ (postgres_ha_adopt_controldata_after.stdout_lines
+          | select('match', '^Database system identifier:') | list | first)
+         .split(':')[1] | trim }}
+
+# The one hard safety gate. Patroni's own use_pg_rewind/adoption logic can, in
+# a failure mode (e.g. a genuinely diverged timeline), decide a member cannot
+# be reconciled and reinitialize it from scratch — which would destroy exactly
+# the data this procedure exists to preserve. A changed system identifier is
+# that failure surfacing after the fact; refuse to call the adoption
+# successful and stop before the operator moves on to the next host.
+- name: Refuse to proceed if the system identifier changed
+  ansible.builtin.assert:
+    that:
+      - postgres_ha_adopt_system_id_after == postgres_ha_adopt_system_id_before
+    fail_msg: >-
+      System identifier changed during adoption
+      ({{ postgres_ha_adopt_system_id_before }} ->
+      {{ postgres_ha_adopt_system_id_after }}). Patroni did not adopt the
+      existing data — it reinitialized this node. STOP: do not run this
+      procedure against the next host. Investigate from the pgBackRest backup
+      taken before this run; do not trust this data directory's contents.
+    quiet: true
+
+- name: Report a successful leader adoption
+  ansible.builtin.debug:
+    msg: "Patroni adoption: this node is now the leader."
+  when: postgres_role == 'primary'
+
+- name: Report a successful replica adoption
+  ansible.builtin.debug:
+    msg: "Patroni adoption: this node joined as a replica."
+  when: postgres_role == 'standby'
