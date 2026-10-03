@@ -100,9 +100,21 @@ def build_search_query(key):
 
 def find_ticket(base, token, key):
     query = build_search_query(key)
-    url = "tickets/search?%s" % urllib.parse.urlencode({"query": query, "limit": 1})
-    tickets = zammad_call(base, token, url).get("tickets") or []
-    return tickets[0] if tickets else None
+    url = "tickets/search?%s" % urllib.parse.urlencode(
+        {"query": query, "limit": 1, "expand": "true"}
+    )
+    return first_ticket(zammad_call(base, token, url))
+
+
+def first_ticket(found):
+    # Zammad's search answers with a list of tickets (expand=true, and an
+    # empty result) or with {"tickets": [<id>, ...], "assets": ...}. Either
+    # way the caller needs only the first ticket's id.
+    tickets = found if isinstance(found, list) else (found.get("tickets") or [])
+    if not tickets:
+        return None
+    first = tickets[0]
+    return first if isinstance(first, dict) else {"id": first}
 
 
 def publish_self_alert(ntfy_base, topic, message):
@@ -207,6 +219,11 @@ def selftest():
     assert is_resolved(["white_check_mark", "info"]) is True
     assert is_resolved(["high"]) is False
     assert parse_tags(" a, b ,,c") == ["a", "b", "c"]
+    assert first_ticket([]) is None
+    assert first_ticket({}) is None
+    assert first_ticket({"tickets": []}) is None
+    assert first_ticket([{"id": 7, "title": "t"}])["id"] == 7
+    assert first_ticket({"tickets": [9], "assets": {}}) == {"id": 9}
     n = note("body text", ["a", "b"])
     assert n["internal"] is True and "body text" in n["body"] and "a, b" in n["body"]
 
