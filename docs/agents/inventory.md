@@ -72,6 +72,7 @@ documented once at
 | `OPENBAO_AWS_ROOT_SECRET_ACCESS_KEY` | AWS engine bootstrap/rotation secret key | tier-0 injection |
 | `OPENBAO_AWS_TF_PROXMOX_ROLE_ARN` | IAM role exposed by `aws/sts/tf-proxmox` | environment |
 | `OPENBAO_AWS_IAC_ADMIN_ROLE_ARN` | IAM role exposed by `aws/sts/openbao-iac-admin` | environment |
+| `OPENBAO_AWS_HERMES_WEBHOOK_CONSUMER_ROLE_ARN` | IAM role exposed by `aws/sts/hermes-webhook-consumer`; unset = no role | environment |
 | `OPENBAO_GITHUB_APP_ID` | Admin App ID (`github-admin` mount) | one-time environment |
 | `OPENBAO_GITHUB_APP_PRIVATE_KEY` | Admin App private key | one-time environment |
 | `OPENBAO_GITHUB_EVERYDAY_APP_ID` / `_PRIVATE_KEY` | Everyday App (`github` mount) | one-time environment |
@@ -81,7 +82,7 @@ documented once at
 | `OPENBAO_GITHUB_AGENTS_DRYVIST_INSTALLATION_ID` | Agents App installation on `dryvist` | env document |
 | `OPENBAO_GITHUB_HERMES_APP_ID` / `_PRIVATE_KEY` | Hermes App (`github-hermes` mount) | one-time environment |
 | `OPENBAO_GITHUB_HERMES_DRYVIST_INSTALLATION_ID` | Hermes App installation on `dryvist`; unset = no mount | env document |
-| `OPENBAO_GITHUB_HERMES_AUTHOR_REPOS` | Comma-separated repositories for `hermes-author`; unset = no set | env document |
+| `OPENBAO_GITHUB_HERMES_AUTHOR_{PUBLIC,PRIVATE}_REPOS` | Comma-separated repositories for `hermes-author-{public,private}`; unset = no set | env document |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | Doppler |
 | `IDRAC_R410_USER` | R410 iDRAC username | Doppler |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | Doppler |
