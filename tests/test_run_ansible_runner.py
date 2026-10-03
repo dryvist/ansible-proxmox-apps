@@ -13,6 +13,13 @@ RUNNER = ROOT / "scripts" / "run-ansible.sh"
 MINTED_TOKEN = "test-runner-owned-token"
 CALLER_TOKEN = "test-caller-owned-token"
 APPROLE_SECRET = "test-approle-secret"
+GENERIC_ENV = {
+    "SECRET_STORE_ADDR": "https://store.test",
+    "SSH_SIGNER_ROLE_ID": "test-signer-role-id",
+    "SSH_SIGNER_SECRET_ID": APPROLE_SECRET,
+    "SSH_CA_MOUNT": "test-mount",
+    "SSH_SIGNER_ROLE": "test-sign-role",
+}
 
 
 class RunAnsibleTokenContract(unittest.TestCase):
@@ -37,6 +44,9 @@ class RunAnsibleTokenContract(unittest.TestCase):
             if [[ ${{BAO_TOKEN:-}} == "$EXPECTED_MINTED_TOKEN" ]]; then
               auth=" runner-auth"
             fi
+            if [[ -n ${{EXPECTED_BAO_ADDR:-}} && ${{BAO_ADDR:-}} != "$EXPECTED_BAO_ADDR" ]]; then
+              exit 71
+            fi
             for arg in "$@"; do
               if [[ $arg == *"$EXPECTED_APPROLE_SECRET"* ]]; then
                 printf 'secret_id passed as an argument\n' >&2
@@ -57,12 +67,12 @@ class RunAnsibleTokenContract(unittest.TestCase):
                 printf 'bao write auth/approle/login\n' >> "$FAKE_EVENT_LOG"
                 printf '%s\n' '{MINTED_TOKEN}'
                 ;;
-              *"sign/automation-ansible"*|*"sign/automation-semaphore"*)
+              *"/sign/"*)
                 [[ " $* " == *" -field=signed_key "* ]] || exit 68
                 [[ " $* " == *" public_key=@"* ]] || exit 69
-                sign_role=$(printf '%s' "$*" | grep -o 'sign/automation-[a-z]*')
-                printf 'bao write ssh-client-ca/%s%s\n' \
-                  "$sign_role" "$auth" >> "$FAKE_EVENT_LOG"
+                sign_path=$(printf '%s' "$*" | grep -o '[a-z-]*/sign/[a-z-]*')
+                printf 'bao write %s%s\n' \
+                  "$sign_path" "$auth" >> "$FAKE_EVENT_LOG"
                 [[ ${{FAKE_SIGN_FAILURE:-0}} == 0 ]] || exit 2
                 printf '%s\n' 'test-certificate'
                 ;;
@@ -103,8 +113,10 @@ class RunAnsibleTokenContract(unittest.TestCase):
         semaphore_identity=False,
         node_converge_identity=False,
         refuse_role_id=None,
+        extra_env=None,
+        legacy=True,
     ):
-        env = os.environ.copy()
+        env = {k: v for k, v in os.environ.items() if k not in GENERIC_ENV}
         env.update(
             {
                 "BAO_ADDR": "https://openbao.test",
@@ -138,6 +150,10 @@ class RunAnsibleTokenContract(unittest.TestCase):
         if node_converge_identity:
             env["OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_ROLE_ID"] = "test-node-role-id"
             env["OPENBAO_APPROLE_OPENBAO_NODE_CONVERGE_SECRET_ID"] = APPROLE_SECRET
+        if not legacy:
+            for name in ("BAO_ADDR", "OPENBAO_APPROLE_ANSIBLE_ROLE_ID", "OPENBAO_APPROLE_ANSIBLE_SECRET_ID"):
+                env.pop(name, None)
+        env.update(extra_env or {})
         if caller_token is None:
             env.pop("BAO_TOKEN", None)
         else:
@@ -291,6 +307,71 @@ class RunAnsibleTokenContract(unittest.TestCase):
         self.assertIn("authenticated as: ansible-converge", output)
         self._assert_no_secret_leak(result)
         self._assert_cert_cleanup()
+
+    # --- generic signer names: read first, legacy names are the fallback ---
+
+    def test_generic_names_alone_sign_with_supplied_store_mount_and_role(self):
+        result = self._run(
+            extra_env={**GENERIC_ENV, "EXPECTED_BAO_ADDR": "https://store.test"},
+            legacy=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("authenticated as: signer", result.stdout)
+        self.assertEqual(
+            self.event_log.read_text(encoding="utf-8").splitlines(),
+            [
+                "bao write auth/approle/login",
+                "bao write test-mount/sign/test-sign-role runner-auth",
+                "ansible",
+                "child CONVERGE_ROLE_ID=test-signer-role-id",
+                "bao token revoke -self runner-auth",
+            ],
+        )
+        self._assert_no_secret_leak(result)
+        self._assert_cert_cleanup()
+
+    def test_generic_names_win_over_legacy_tiers_below_node_converge(self):
+        result = self._run(
+            declared_identity=True,
+            semaphore_identity=True,
+            extra_env={**GENERIC_ENV, "EXPECTED_BAO_ADDR": "https://store.test"},
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("authenticated as: signer", result.stdout)
+        events = self.event_log.read_text(encoding="utf-8")
+        self.assertIn("bao write test-mount/sign/test-sign-role runner-auth", events)
+        self.assertNotIn("automation-", events)
+        self._assert_no_secret_leak(result)
+
+    def test_node_converge_still_wins_over_generic_names(self):
+        result = self._run(node_converge_identity=True, extra_env=GENERIC_ENV)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("authenticated as: openbao-node-converge", result.stdout)
+        self.assertIn("child CONVERGE_ROLE_ID=test-node-role-id", self.event_log.read_text(encoding="utf-8"))
+
+    def test_generic_login_refused_falls_through_to_legacy_tier(self):
+        result = self._run(
+            semaphore_identity=True,
+            extra_env={**GENERIC_ENV, "SSH_SIGNER_ROLE": "automation-semaphore"},
+            refuse_role_id="test-signer-role-id",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("AppRole login refused for identity: signer", result.stderr)
+        self.assertIn("authenticated as: semaphore", result.stdout)
+        self._assert_no_secret_leak(result)
+
+    def test_generic_names_without_mount_refuse(self):
+        env = dict(GENERIC_ENV)
+        del env["SSH_CA_MOUNT"]
+        result = self._run(extra_env=env, legacy=False)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SSH_CA_MOUNT or SSH_SIGNER_ROLE is not", result.stderr)
+        self.assertFalse(self.event_log.exists())
 
     def test_caller_token_is_preserved_and_runner_token_revoked_before_child(self):
         result = self._run(caller_token=CALLER_TOKEN)
