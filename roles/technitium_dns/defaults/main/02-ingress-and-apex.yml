@@ -91,13 +91,24 @@ technitium_dns_ingress_apex: >-
   {{ tofu_data.ingress | default([]) | selectattr('apex', 'defined')
      | selectattr('apex') | list }}
 
+technitium_dns_explicit_ingress_routes: >-
+  {{ tofu_data.ingress | default([]) | selectattr('fqdn', 'defined') | list }}
+technitium_dns_explicit_ingress_names: >-
+  {{ ((technitium_dns_explicit_ingress_routes | map(attribute='fqdn') | list)
+      + (technitium_dns_explicit_ingress_routes | selectattr('host_aliases', 'defined')
+         | map(attribute='host_aliases') | flatten)) | unique | list }}
+technitium_dns_cluster_ingress_owned: >-
+  {{ (technitium_dns_explicit_ingress_routes
+      | selectattr('name', 'equalto', 'proxmox') | list | length) > 0 }}
+
 # Proxmox API/UI endpoint IPs for the subdomain apex itself. When set, the
 # apex A record is published as DNS round-robin directly to the Proxmox nodes
 # instead of pointing at Traefik. Keep this sourced from the same Doppler value
 # used by terraform-proxmox/aws-infra Route53 so public and local DNS agree.
 technitium_dns_proxmox_endpoint_ips: >-
-  {{ lookup('env', 'PROXMOX_IP_ADDRESSES') | default('', true)
-     | split(',') | map('trim') | reject('equalto', '') | list }}
+  {{ [] if technitium_dns_cluster_ingress_owned | bool else
+     (lookup('env', 'PROXMOX_IP_ADDRESSES') | default('', true)
+      | split(',') | map('trim') | reject('equalto', '') | list) }}
 technitium_dns_proxmox_endpoint_a_records: []
 
 # Ingress lives under PROXMOX_SUBDOMAIN (matches the traefik role's

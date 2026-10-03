@@ -65,6 +65,15 @@ records — it cannot touch A records or any other zone.
 `{"Effect":"Allow","Action":"route53:ListHostedZonesByName","Resource":"*"}` only
 if you stop providing the zone id.
 
+Routes may supply `fqdn`, `host_aliases`, and `tls_domains` from the inventory.
+Aliases share the router and backend service. Explicit certificate names replace
+that route's wildcard request; other routes retain the ingress wildcard. When
+certificate names extend outside the ingress DNS zone, the role omits
+`AWS_HOSTED_ZONE_ID` and lego discovers each authoritative zone. Grant
+`route53:ListHostedZonesByName` on `*` for that discovery, and scope the existing
+record-list and TXT-only challenge-write statements to both hosted-zone ARNs.
+This requires updating the existing ACME principal policy; it creates no keys.
+
 ### 2. Doppler secrets
 
 | Secret | Purpose |

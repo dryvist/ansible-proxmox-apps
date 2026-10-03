@@ -1,0 +1,43 @@
+---
+
+- name: Validate explicitly named ingress DNS zones
+  ansible.builtin.assert:
+    that:
+      - >-
+        item == technitium_dns_zone or item is search('[.]' ~ (technitium_dns_zone | regex_escape) ~ '$')
+        or item is search('[.]' ~ (technitium_dns_apex_domain | regex_escape) ~ '$')
+    quiet: true
+    fail_msg: "Explicit ingress hostname is outside the managed DNS zones."
+  loop: "{{ technitium_dns_explicit_ingress_names }}"
+
+# The child zone transfers from its primary; the parent zone is independently
+# authoritative on both resolvers and must be reconciled on each one.
+- name: Create explicitly named ingress A records
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item }}"
+      zone: "{{ _ingress_record_zone }}"
+      type: A
+      ipAddress: "{{ technitium_dns_ingress_target_ip }}"
+      ttl: "{{ technitium_dns_zone_ttl }}"
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  vars:
+    _ingress_record_zone: >-
+      {{ technitium_dns_zone if (item == technitium_dns_zone
+         or item is search('[.]' ~ (technitium_dns_zone | regex_escape) ~ '$'))
+         else technitium_dns_apex_domain }}
+  loop: "{{ technitium_dns_explicit_ingress_names }}"
+  register: technitium_dns_explicit_ingress_result
+  changed_when: technitium_dns_explicit_ingress_result.json.status == 'ok'
+  failed_when: technitium_dns_explicit_ingress_result.json.status | default('') != 'ok'
+  no_log: true
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_ingress_target_ip | length > 0
+    - _ingress_record_zone != technitium_dns_zone or technitium_dns_role == 'primary'
