@@ -37,6 +37,7 @@ documented once at
 - `cribl_edge`: Cribl Edge LXC containers (syslog processing)
 - `cribl_stream_group`: Cribl Stream LXC containers (netflow/IPFIX processing)
 - `docker_vms` / `cribl_docker_group`: Docker Swarm hosts (SSH, testing/dev + CI runners)
+- `agent_sandbox_host`: `docker_vms` members tagged `agent-sandbox` (untrusted-agent Docker host; the `agent_sandbox` role's only target)
 - `idrac_kvm_group`: Docker VMs tagged `idrac` (iDRAC KVM viewer VM 251)
 - `mailpit_group`: Containers tagged `smtp` (Mailpit SMTP relay)
 - `ntfy_group`: Containers tagged `push` (ntfy push notifications)
