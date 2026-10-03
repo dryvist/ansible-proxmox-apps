@@ -31,6 +31,7 @@ OFFSITE_HC_URL="{{ service_deadman_offsite_hc_url }}"
 STATE_DIR="{{ service_deadman_state_dir }}"
 REMIND_MIN="{{ service_deadman_ntfy_remind_minutes }}"
 HOST="$(hostname)"
+SOURCE_HOST={{ inventory_hostname | quote }}
 mkdir -p "${STATE_DIR}"
 rc=0
 
@@ -88,21 +89,22 @@ offsite_hc_ping() {
 # Publish to the ntfy hub; returns non-zero when the publish did not land, so
 # the caller keeps its state marker unchanged and retries next cycle.
 ntfy_publish() {
-  local name="$1" priority="$2" tags="$3" msg="$4"
+  local name="$1" priority="$2" tags="$3" msg="$4" status="${5:-firing}" payload
   [[ -n "${NTFY_URL}" ]] || return 1
+  payload="$(python3 -c 'import json, sys; print(json.dumps(dict(source="service_deadman", rule=sys.argv[1], entity=sys.argv[2]+"/"+sys.argv[1], status=sys.argv[3], severity="warning", impact="service_unavailable", summary=sys.argv[4], details_url="")))' "${name}" "${SOURCE_HOST}" "${status}" "${msg}")" || return 1
   curl -fsS --max-time 8 -H "Title: keystone deadman: ${name}" \
     -H "Priority: ${priority}" -H "Tags: ${tags}" \
-    -d "${msg}" "${NTFY_URL}" >/dev/null 2>&1
+    --data-binary "${payload}" "${NTFY_URL}" >/dev/null 2>&1
 }
 
 # Healthy: signal every deadman OK so a stalled validator is also caught.
 mark_ok() {
   local name="$1"
   logger -t service-deadman "OK: ${name} healthy on ${HOST}"
-  # Recovery closes the alert (and its Zammad ticket) once, on the transition.
+  # Recovery updates the incident once; ticket state remains operator-owned.
   if [[ -e "${STATE_DIR}/${name}.down" ]]; then
     ntfy_publish "${name}" default "white_check_mark,resolved" \
-      "RECOVERED: ${name} passed its liveness probe on ${HOST}" && rm -f "${STATE_DIR}/${name}.down"
+      "RECOVERED: ${name} passed its liveness probe on ${HOST}" resolved && rm -f "${STATE_DIR}/${name}.down"
   fi
   gatus_report "${name}" true ""
   kuma_report "${name}" up OK
