@@ -38,6 +38,7 @@
         openbao_management_cidrs: "192.0.2.0/24"
         openbao_workstation_cidrs: "198.51.100.0/24"
         openbao_ci_cidrs: "203.0.113.0/24"
+        openbao_github_write_scopes: "{{ {openbao_github_write_work_approle_name: ['test-repo']} }}"
 
     - name: The plane identity is declared, or this test asserts nothing
       ansible.builtin.assert:
@@ -96,14 +97,21 @@
 
     - name: The write realm keeps finite credential and token bounds
       vars:
-        realm: >-
+        realms: >-
           {{ openbao_approles
-             | selectattr('name', 'equalto', openbao_github_write_work_approle_name) | first }}
+             | selectattr('name', 'equalto', openbao_github_write_work_approle_name) | list }}
       ansible.builtin.assert:
         that:
-          - realm.secret_id_num_uses == 30
-          - realm.secret_id_ttl | community.general.to_seconds | int == 86400
-          - realm.token_ttl | community.general.to_seconds | int == 1800
+          - realms | length > 0
+          - >-
+            realms | map(attribute='secret_id_num_uses', default=openbao_approle_secret_id_num_uses)
+            | unique | list == [30]
+          - >-
+            realms | map(attribute='secret_id_ttl', default=openbao_approle_secret_id_ttl)
+            | map('community.general.to_seconds') | map('int') | unique | list == [86400]
+          - >-
+            realms | map(attribute='token_ttl', default=openbao_approle_token_ttl)
+            | map('community.general.to_seconds') | map('int') | unique | list == [1800]
         fail_msg: >-
           The write realm requires a 30-use, 24-hour secret_id and a 30-minute token.
 
