@@ -38,7 +38,7 @@ BASE_VARS = {
     "cribl_stream_pve_metrics_port": 2003,
     "cribl_stream_s2s_metrics_port": 10202,
     "cribl_stream_s2s_port": 10201,
-    "cribl_stream_unpoller_poll_interval": "30s",
+    "cribl_stream_unpoller_poll_minutes": 1,
     "cribl_stream_unpoller_scrape_target": "unpoller.invalid:9130",
     "cribl_stream_ai_log_routing": {},
     "cribl_stream_ai_input_types": {},
