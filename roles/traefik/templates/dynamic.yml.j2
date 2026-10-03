@@ -36,7 +36,11 @@ http:
               - "*.{{ traefik_base_domain }}"
 {% endif %}
 {% for route in traefik_routes %}
-{% set _rule = "Host(`" ~ route.fqdn ~ "`)" ~ (" && PathPrefix(`" ~ route.path_prefix ~ "`)" if route.path_prefix | default('') | length > 0 else "") %}
+{% set _hosts = [] %}
+{% for _host in ([route.fqdn] + (route.host_aliases | default([]))) | unique %}
+{% set _ = _hosts.append('Host(`' ~ _host ~ '`)') %}
+{% endfor %}
+{% set _rule = ('(' ~ (_hosts | join(' || ')) ~ ')' if _hosts | length > 1 else _hosts[0]) ~ (" && PathPrefix(`" ~ route.path_prefix ~ "`)" if route.path_prefix | default('') | length > 0 else "") %}
 {% set _priority = route.priority | default(0) | int %}
 {# Traefik's own default priority (left unset) is the rule string's length --
    longer rules win ties. Computed here so the kiosk router below can always
@@ -69,9 +73,19 @@ http:
       tls:
         certResolver: letsencrypt
         domains:
+{% if route.tls_domains | default([]) | length > 0 %}
+          - main: "{{ route.tls_domains[0] }}"
+{% if route.tls_domains | length > 1 %}
+            sans:
+{% for _domain in route.tls_domains[1:] %}
+              - "{{ _domain }}"
+{% endfor %}
+{% endif %}
+{% else %}
           - main: "{{ traefik_base_domain }}"
             sans:
               - "*.{{ traefik_base_domain }}"
+{% endif %}
 {% if sso_enabled and route.sso | default(false) and route.name in traefik_wall_kiosk_route_names and kiosk_networks | length > 0 %}
 {# Same router as above in every way except the rule gains a ClientIP match
    and authelia is dropped from the middleware chain -- the display-only

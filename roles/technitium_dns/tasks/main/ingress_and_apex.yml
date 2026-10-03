@@ -45,6 +45,25 @@
   changed_when: false
   when: technitium_dns_ingress_fallback_ip | length > 0
 
+- name: Require a reachable ingress before changing cluster DNS ownership
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_ingress_target_ip | length > 0
+      - >-
+        not (technitium_dns_vip_probe.failed | default(true))
+        or not (technitium_dns_ingress_fallback_probe.failed | default(true))
+    quiet: true
+    fail_msg: "No probed ingress target answered; cluster DNS and its existing writer were preserved."
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_cluster_ingress_owned | bool
+
+- name: Stop the legacy apex writer before ingress takes DNS ownership
+  ansible.builtin.include_tasks: ../apex_ingress_ownership.yml
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_cluster_ingress_owned | bool
+
 - name: Report which address the fronted names will resolve to
   ansible.builtin.debug:
     msg: >-
@@ -163,6 +182,8 @@
     {{ technitium_dns_existing_records.json.response.records | default([])
        | selectattr('type', 'equalto', 'A')
        | selectattr('name', 'equalto', technitium_dns_zone)
+       | rejectattr('rData.ipAddress', 'equalto',
+           technitium_dns_ingress_target_ip if technitium_dns_cluster_ingress_owned | bool else '')
        | list }}
   loop_control:
     label: "{{ item.name }} -> {{ item.rData.ipAddress }}"
@@ -171,7 +192,9 @@
   failed_when: technitium_dns_proxmox_endpoint_delete_result.json.status | default('') != "ok"
   no_log: true
   when:
-    - technitium_dns_proxmox_endpoint_a_records | default([]) | length > 0
+    - >-
+      technitium_dns_proxmox_endpoint_a_records | default([]) | length > 0
+      or technitium_dns_cluster_ingress_owned | bool
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
 
@@ -199,6 +222,7 @@
     - "'already exists' not in (technitium_dns_proxmox_endpoint_result.json.errorMessage | default(''))"
   no_log: true
   when:
+    - not (technitium_dns_cluster_ingress_owned | bool)
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
 
@@ -230,10 +254,14 @@
   when:
     - technitium_dns_ingress_apex | default([]) | length > 0
     - technitium_dns_proxmox_endpoint_a_records | default([]) | length == 0
+    - not (technitium_dns_cluster_ingress_owned | bool)
     - technitium_dns_role == 'primary'
     - technitium_dns_apply | bool
     # Points at the ingress VIP when published, else the single Traefik LXC's IP.
     - technitium_dns_ingress_target_ip | length > 0
+
+- name: Validate and create explicitly named ingress A records
+  ansible.builtin.include_tasks: explicit_ingress_names.yml
 
 # A transfer ACL that lists the primary's own address authorises nobody: the
 # primary does not transfer from itself, so every real secondary is refused and
