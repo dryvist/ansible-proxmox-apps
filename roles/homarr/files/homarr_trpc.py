@@ -88,33 +88,6 @@ class Homarr:
                 )
             raise HomarrError(f"{procedure} returned unparseable body{hint}: {body[:200]}") from exc
 
-    def claim_onboarding(self):
-        """POST /api/onboarding/claim for the httpOnly cookie Homarr v2+
-        requires before `onboard.nextStep` (an `onboardingClaimedProcedure`)
-        will advance the walk. Not a tRPC call — a plain Next.js route that
-        returns `{status, expiresAt}` and sets the cookie via `Set-Cookie`,
-        which this instance's own cookie jar then resends automatically.
-
-        200 means "issued" or "active" (our own token already holds it, safe
-        to re-call). 423 ("locked") means a concurrent claimant holds it, and
-        403/409-not-finished are the route's other refusals — all three are
-        surfaced loudly rather than retried, since onboarding is meant to run
-        from exactly one place. 409 "finished" alone is not an error: the
-        caller only reaches here when onboarding is still open, so a `finished`
-        race is backed out of silently rather than treated as a failure.
-        """
-        status, body = self._open(
-            urllib.request.Request(
-                f"{self.base}/api/onboarding/claim",
-                data=b"",
-                headers={"Content-Type": "application/json"},
-            )
-        )
-        if status == 409 and json.loads(body).get("code") == "finished":
-            return
-        if status != 200:
-            raise HomarrError(f"onboarding claim -> HTTP {status}: {body[:400]}")
-
     def login(self, username, password):
         """NextAuth credentials sign-in. Returns True when a session results."""
         self.jar.clear()
@@ -190,65 +163,31 @@ def write_secret_file(path, value):
 def run_onboarding(api, username, password):
     """Drive a fresh instance through onboarding to a usable admin account.
 
-    The steps are start -> user -> [group] -> setup -> finish (Homarr v2's
-    collapsed sequence — the old per-section "import"/"settings"/
-    "integrations" steps no longer exist as distinct states, so nextStep is
-    now a single start -> user transition rather than a repeatable walk).
+    The steps are start -> import -> user -> group -> settings -> integrations
+    -> finish. `onboard.nextStep` is public and advances one step at a time,
+    and `user.initUser` is gated on the DB currently sitting at `user` — so the
+    walk is: advance to `user`, create the admin, then advance to `finish`.
 
-    `onboard.nextStep` requires an onboarding-claim cookie (Homarr v2+) and
-    only fires from `start`; `user.initUser` is gated on `user` and itself
-    advances the step — to `group` when LDAP/OIDC is enabled, else straight
-    to `setup`. The `group` branch (external-auth admin group creation) has
-    no exerciser here and is refused loudly rather than guessed at.
-
-    The claim cookie stops authorizing onboarding calls the instant a user
-    row exists (`isClaimOnlyOnboardingAccessAllowedAsync` requires NO user to
-    exist) — every onboarding call from `setup` onward must instead be an
-    authenticated admin session, so this logs in as the account `initUser`
-    just created before completing setup.
-
-    `setup` is completed with the minimum valid payload (empty
-    integrations/apps; board-tile sync happens separately, afterward, over
-    the regular API).
+    Bounded rather than `while True`: a step that stops advancing (an upstream
+    change to the sequence, say) must fail loudly here instead of spinning.
     """
-    api.claim_onboarding()
 
-    if api.trpc("onboard.currentStep")["current"] == "start":
-        # {} (not None): nextStep takes no input but IS a mutation, and
-        # trpc() only sends POST when payload is not None.
-        api.trpc("onboard.nextStep", {})
+    def walk_to(target):
+        for _ in range(len(ONBOARDING_STEPS) + 1):
+            if api.trpc("onboard.currentStep")["current"] == target:
+                return
+            api.trpc("onboard.nextStep", {"preferredStep": target})
+        raise HomarrError(f"onboarding never reached the {target!r} step")
 
-    current = api.trpc("onboard.currentStep")["current"]
-    if current == "user":
-        api.trpc("user.initUser", {
-            "username": username,
-            "password": password,
-            "confirmPassword": password,
-        })
-        if not api.login(username, password):
-            raise HomarrError("could not sign in as the just-created admin user")
-        current = api.trpc("onboard.currentStep")["current"]
-
-    if current == "group":
-        raise HomarrError(
-            "onboarding reached the LDAP/OIDC 'group' step, which this "
-            "converger does not drive — external-auth onboarding needs its "
-            "own completion step, not yet implemented here"
-        )
-
-    if current == "setup":
-        api.trpc("onboard.completeSetup", {
-            "server": {"defaultLocale": "en", "defaultColorScheme": "light"},
-            "board": {
-                "name": "home",
-                "primaryColor": "#1971c2",
-                "secondaryColor": "#1c7ed6",
-                "itemRadius": "md",
-            },
-        })
-        current = api.trpc("onboard.currentStep")["current"]
-
-    if current != "finish":
-        raise HomarrError(f"onboarding stalled at step {current!r} instead of reaching 'finish'")
+    walk_to("user")
+    api.trpc("user.initUser", {
+        "username": username,
+        "password": password,
+        "confirmPassword": password,
+    })
+    walk_to("finish")
 
 
+ONBOARDING_STEPS = (
+    "start", "import", "user", "group", "settings", "integrations", "finish",
+)
