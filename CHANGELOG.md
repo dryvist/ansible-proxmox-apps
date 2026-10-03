@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.55.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.1...v4.55.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ntfy_docker:** ntfy-zammad sets customer_id on ticket create ([#2308](https://github.com/dryvist/ansible-proxmox-apps/issues/2308)) ([38a9996](https://github.com/dryvist/ansible-proxmox-apps/commit/38a999616b11fa81298147a4bf8e3c81e0e910ae))
+* **unpoller:** config file header is a static comment ([#2312](https://github.com/dryvist/ansible-proxmox-apps/issues/2312)) ([90eceef](https://github.com/dryvist/ansible-proxmox-apps/commit/90eceef808cdaa81e26c2d78ee21dd8f00b5a721))
+* **unpoller:** drop namespace sandboxing inside a container; check the listener ([#2309](https://github.com/dryvist/ansible-proxmox-apps/issues/2309)) ([7106d82](https://github.com/dryvist/ansible-proxmox-apps/commit/7106d82242384572f4e08c2a506c558a1768ebeb))
+* **unpoller:** start with a minimal config file ([#2310](https://github.com/dryvist/ansible-proxmox-apps/issues/2310)) ([79f8789](https://github.com/dryvist/ansible-proxmox-apps/commit/79f8789a6475b53b3a0a10ae627a7ff4e5fdf544))
+
 ## [4.55.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.0...v4.55.1) (2026-10-03)
 
 
