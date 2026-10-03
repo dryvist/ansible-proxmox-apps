@@ -82,7 +82,10 @@ Token access is tiered; the tier IS the privilege boundary:
   converge fails when an entry is not of that visibility, and an unset list
   declares no set. `hermes-public` mints only the two public sets,
   `hermes-private` only the two private sets; both are machine-class AppRoles
-  with a 15m token. The converge asserts each map verbatim.
+  with a 15m token. The converge asserts each map verbatim. `hermes-private`
+  also reads `secret/apps/hermes-webhook` (written by the AWS Terrakube
+  workspace) and mints `aws/sts/hermes-webhook-consumer` when that role's ARN
+  is configured.
 
 Estate identities (`ai-apply-*`, `ai-orchestrator`) attach the `github-mint`
 capability policy, which grants the read-tier sets only. No policy except
