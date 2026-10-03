@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.55.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.0...v4.55.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cribl_stream:** set the in_unpoller logLevel the prometheus source requires ([#2304](https://github.com/dryvist/ansible-proxmox-apps/issues/2304)) ([a9b1f01](https://github.com/dryvist/ansible-proxmox-apps/commit/a9b1f0158899dddfdd7d21388550db4a9aa7f97a))
+* **ntfy:** accept both Zammad ticket-search response shapes ([#2299](https://github.com/dryvist/ansible-proxmox-apps/issues/2299)) ([1d559ac](https://github.com/dryvist/ansible-proxmox-apps/commit/1d559ac69ffa26237509dc3f54774cb150994db8))
+* **openbao_secrets:** decide a failed AppRole login without failing the task ([#2301](https://github.com/dryvist/ansible-proxmox-apps/issues/2301)) ([77dc9fa](https://github.com/dryvist/ansible-proxmox-apps/commit/77dc9fa3cf7e89f29c25fbcd3602e81326a58d89))
+
 ## [4.55.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.54.0...v4.55.0) (2026-10-03)
 
 
