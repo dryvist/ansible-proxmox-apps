@@ -32,8 +32,11 @@
         agent_sandbox_zcode_web_secret_gid: 1901
         agent_sandbox_zcode_web_ingress_source_ips:
           - 192.0.2.10
+        agent_sandbox_zcode_feeder_repositories:
+          - dryvist/nix-agent-sandbox
+        agent_sandbox_zcode_feeder_image: "{{ agent_sandbox_zcode_web_image }}"
 
-    - name: Render the ruleset, the compose file and the allowlist
+    - name: Render the ruleset, compose, allowlist and feeder configuration
       ansible.builtin.template:
         src: "{{ _template_dir }}/{{ item.src }}"
         dest: "{{ _fixture_dir }}/test_agent_sandbox_{{ item.dest }}"
@@ -42,6 +45,8 @@
         - { src: agent-sandbox.nft.j2, dest: agent-sandbox.nft }
         - { src: docker-compose.yml.j2, dest: docker-compose.yml }
         - { src: allowed-domains.txt.j2, dest: allowed-domains.txt }
+        - { src: zcode-feeder.json.j2, dest: zcode-feeder.json }
+        - { src: zcode-feeder.service.j2, dest: zcode-feeder.service }
 
     - name: Read the rendered files
       ansible.builtin.slurp:
@@ -51,6 +56,8 @@
         - agent-sandbox.nft
         - docker-compose.yml
         - allowed-domains.txt
+        - zcode-feeder.json
+        - zcode-feeder.service
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
@@ -58,6 +65,8 @@
         _as_compose: "{{ _as_rendered.results[1].content | b64decode }}"
         _as_domains: "{{ _as_rendered.results[2].content | b64decode | split('\n')
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
+        _as_feeder_config: "{{ _as_rendered.results[3].content | b64decode | from_json }}"
+        _as_feeder_service: "{{ _as_rendered.results[4].content | b64decode }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -174,6 +183,21 @@
         fail_msg: >-
           ZCode Web must use the immutable image digest, non-root hardening,
           persistent state mounts, and a read-only credential file mount.
+
+    - name: Assert feeder dispatcher uses the same pinned image and no Web credentials
+      ansible.builtin.assert:
+        that:
+          - _as_feeder_config.project_id == agent_sandbox_zcode_feeder_project_id | int
+          - _as_feeder_config.allowed_repositories == agent_sandbox_zcode_feeder_repositories
+          - "('Environment=AGENT_IMAGE=' ~ agent_sandbox_zcode_feeder_image) in _as_feeder_service"
+          - >-
+            ('Environment=AGENT_DISPATCH_STATE_DIR='
+            ~ agent_sandbox_zcode_feeder_dispatch_state_dir) in _as_feeder_service
+          - "'ZAI_SUBSCRIPTION_KEY' not in _as_feeder_service"
+          - "'AGENT_WEB_TOKEN' not in _as_feeder_service"
+        fail_msg: >-
+          The feeder must use the same immutable job image, the explicit
+          repository allowlist, and no Web service credentials.
 
     # Exact-host allowlist. api.z.ai, chat.z.ai and zcode.z.ai only; a CDN, object-store or
     # telemetry host must never appear, and the existing images keep theirs.

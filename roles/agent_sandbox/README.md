@@ -69,13 +69,26 @@ nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
 ingress route) at converge time from ambient `PROXMOX_SUBDOMAIN` — the
 sensitive domain is never committed.
 
-The ZCode service environment file at
-`{{ agent_sandbox_zcode_web_env_file }}` must be provisioned outside this
-role as a root-owned mode 0440 file in
-`{{ agent_sandbox_zcode_web_secret_group }}`, containing only
-`AGENT_WEB_TOKEN` and `ZAI_SUBSCRIPTION_KEY`. The role creates the otherwise
-empty host group and grants its GID only to the service container; it does not
-create or deliver credentials.
+The ZCode service mounts its credential file read-only. This role manages and
+validates the mount boundary; credential values remain outside the repository.
+
+## Optional ZCode queue feeder
+
+The host queue feeder is disabled by default. When enabled, it accepts only
+unfinished tasks with the `zcode` label and a schema-1 JSON manifest declaring
+`tool: zcode`, `kind: coding` or `review`, `sensitive: false`, an approved
+`owner/repository`, and a bounded non-empty prompt. The repository allowlist
+must be set explicitly; an empty or invalid manifest never starts a job.
+
+The feeder assigns the selected task, writes a durable launch record before
+starting the pinned host dispatcher, and serializes polls with a local lock. A
+launch interrupted before its job id is recorded is marked for manual
+reconciliation and is never started a second time automatically. Terminal
+results are added to the original task as the six-line job/tool/repo/state/PR/
+duration comment. Existing comments are checked after a lost response, so a
+retry does not post a duplicate; the task is closed only after the comment is
+confirmed. The dispatcher creates draft PRs; this feeder does not merge them.
+Its job image uses the same immutable digest as the Web service.
 
 ## Session-log shipping
 
