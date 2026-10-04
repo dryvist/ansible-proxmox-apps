@@ -1,0 +1,242 @@
+---
+- name: Inspect whether the feeder timer is installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/agent-sandbox-zcode-feeder.timer
+  register: _agent_sandbox_zcode_feeder_timer
+
+- name: Stop the ZCode feeder timer when the feeder is disabled
+  ansible.builtin.systemd_service:
+    name: agent-sandbox-zcode-feeder.timer
+    state: stopped
+    enabled: false
+  when:
+    - not (agent_sandbox_zcode_feeder_enabled | bool)
+    - _agent_sandbox_zcode_feeder_timer.stat.exists
+
+- name: Remove ZCode feeder systemd units when the feeder is disabled
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - agent-sandbox-zcode-feeder.service
+    - agent-sandbox-zcode-feeder.timer
+  when: not (agent_sandbox_zcode_feeder_enabled | bool)
+  notify: Reload systemd daemon
+
+- name: Require an explicit queue and repository allowlist before enabling the feeder
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_zcode_feeder_project_id | int > 0
+      - agent_sandbox_zcode_feeder_repositories | length > 0
+      - >-
+        agent_sandbox_zcode_feeder_repositories
+        | select('match', '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$')
+        | list | length == agent_sandbox_zcode_feeder_repositories | length
+      - agent_sandbox_zcode_feeder_image == agent_sandbox_zcode_web_image
+    fail_msg: >-
+      Enabling the feeder requires a positive queue project id, an explicit
+      owner/repository allowlist, and the same immutable image as ZCode Web.
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Require one managed feeder host
+  ansible.builtin.assert:
+    that:
+      - groups.get('agent_sandbox_host', []) | length == 1
+    fail_msg: >-
+      The local durable claim ledger supports one agent_sandbox_host; enabling
+      more feeders would require a shared claim store.
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Inspect separately provisioned feeder credential files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ agent_sandbox_zcode_feeder_env_file }}"
+    - "{{ agent_sandbox_zcode_dispatcher_env_file }}"
+  register: _agent_sandbox_zcode_feeder_env_files
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Require root-only feeder credential files
+  vars:
+    _feeder_env_stat: "{{ item.stat }}"
+  ansible.builtin.assert:
+    that:
+      - _feeder_env_stat.exists
+      - _feeder_env_stat.isreg
+      - _feeder_env_stat.pw_name == 'root'
+      - _feeder_env_stat.mode == '0600'
+    fail_msg: >-
+      Feeder credential files must be provisioned separately as root-owned
+      mode 0600 files before enabling the feeder.
+  loop: "{{ _agent_sandbox_zcode_feeder_env_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Install Python runtime for the optional ZCode queue feeder
+  ansible.builtin.apt:
+    name: python3
+    state: present
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Fetch the dispatcher source matching the merged image
+  ansible.builtin.get_url:
+    url: >-
+      {{ 'https://raw.githubusercontent.com/dryvist/nix-agent-sandbox/'
+         ~ agent_sandbox_zcode_feeder_source_commit
+         ~ '/scripts/agent-dispatch.sh' }}
+    dest: "{{ agent_sandbox_zcode_feeder_stage_file }}"
+    checksum: "sha256:{{ agent_sandbox_zcode_feeder_source_sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Create the ZCode feeder and dispatcher directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /usr/local/lib/agent-sandbox, mode: "0755" }
+    - { path: "{{ agent_sandbox_zcode_feeder_dir }}", mode: "0700" }
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Copy the pinned host dispatcher source
+  ansible.builtin.copy:
+    src: "{{ agent_sandbox_zcode_feeder_stage_file }}"
+    dest: /usr/local/lib/agent-sandbox/agent-dispatch.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Add the interpreter to the pinned host dispatcher source
+  ansible.builtin.lineinfile:
+    path: /usr/local/lib/agent-sandbox/agent-dispatch.sh
+    line: "#!/usr/bin/env bash"
+    insertbefore: BOF
+    mode: "0755"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Enable fail-fast shell handling in the pinned host dispatcher
+  ansible.builtin.lineinfile:
+    path: /usr/local/lib/agent-sandbox/agent-dispatch.sh
+    line: "set -euo pipefail"
+    insertafter: '^#!/usr/bin/env bash$'
+    mode: "0755"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Read the task profiles baked into the pinned job image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --entrypoint
+      - cat
+      - "{{ agent_sandbox_zcode_feeder_image }}"
+      - /home/agent/.agent-profiles.json
+  register: _agent_sandbox_zcode_task_profiles
+  changed_when: false
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Install the image task profiles for the dispatcher
+  ansible.builtin.copy:
+    content: "{{ _agent_sandbox_zcode_task_profiles.stdout }}\n"
+    dest: "{{ agent_sandbox_dir }}/agent-task-profiles.json"
+    owner: root
+    group: root
+    mode: "0644"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Configure profiles and limits for the host dispatcher
+  ansible.builtin.template:
+    src: agent-dispatch-profile.sh.j2
+    dest: /etc/agent-sandbox/agent-dispatch-profile.sh
+    owner: root
+    group: root
+    mode: "0644"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Load the dispatcher profile in the upstream self-waiter process
+  ansible.builtin.lineinfile:
+    path: /usr/local/lib/agent-sandbox/agent-dispatch.sh
+    line: "source /etc/agent-sandbox/agent-dispatch-profile.sh"
+    insertafter: '^#!/usr/bin/env bash$'
+    mode: "0755"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Install the host dispatcher entrypoint
+  ansible.builtin.copy:
+    dest: "{{ agent_sandbox_zcode_feeder_dispatcher }}"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      exec /usr/local/lib/agent-sandbox/agent-dispatch.sh "$@"
+    owner: root
+    group: root
+    mode: "0755"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Install the ZCode feeder program
+  ansible.builtin.copy:
+    src: zcode_feeder.py
+    dest: /usr/local/lib/agent-sandbox/zcode_feeder.py
+    owner: root
+    group: root
+    mode: "0755"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Install the ZCode feeder configuration
+  ansible.builtin.template:
+    src: zcode-feeder.json.j2
+    dest: "{{ agent_sandbox_zcode_feeder_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Install the ZCode feeder systemd service
+  ansible.builtin.template:
+    src: zcode-feeder.service.j2
+    dest: /etc/systemd/system/agent-sandbox-zcode-feeder.service
+    owner: root
+    group: root
+    mode: "0644"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+  notify: Reload systemd daemon
+
+- name: Install the ZCode feeder systemd timer
+  ansible.builtin.template:
+    src: zcode-feeder.timer.j2
+    dest: /etc/systemd/system/agent-sandbox-zcode-feeder.timer
+    owner: root
+    group: root
+    mode: "0644"
+  when: agent_sandbox_zcode_feeder_enabled | bool
+  notify: Reload systemd daemon
+
+- name: Enable the ZCode queue feeder timer
+  ansible.builtin.systemd_service:
+    name: agent-sandbox-zcode-feeder.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: agent_sandbox_zcode_feeder_enabled | bool
+
+- name: Remove the dispatcher source staging file from the controller
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_zcode_feeder_stage_file }}"
+    state: absent
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  when: agent_sandbox_zcode_feeder_enabled | bool
