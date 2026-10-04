@@ -1,0 +1,53 @@
+---
+- name: Wait for package-manager locks to clear
+  ansible.builtin.command:
+    argv:
+      - lslocks
+      - --noheadings
+      - --raw
+      - --output
+      - PID,PATH
+  register: apt_recovery_locks
+  changed_when: false
+  retries: "{{ apt_recovery_lock_retries }}"
+  delay: "{{ apt_recovery_lock_delay }}"
+  until: >-
+    apt_recovery_locks.stdout_lines
+    | select('search', '(' ~ (apt_recovery_lock_paths | join('|')) ~ ')$')
+    | list
+    | length == 0
+
+- name: Check for incomplete dpkg configuration
+  ansible.builtin.command:
+    argv:
+      - dpkg
+      - --audit
+  register: apt_recovery_audit
+  changed_when: false
+
+- name: Complete pending dpkg configuration
+  ansible.builtin.command:
+    argv:
+      - dpkg
+      - --configure
+      - -a
+  register: apt_recovery_configure
+  when: >-
+    apt_recovery_audit.stdout | trim | length > 0 or
+    apt_recovery_audit.stderr | trim | length > 0
+  changed_when: >-
+    apt_recovery_configure.stdout is
+    search('(?m)^(Setting up|Processing triggers for) ')
+
+- name: Verify dpkg configuration is complete
+  ansible.builtin.command:
+    argv:
+      - dpkg
+      - --audit
+  register: apt_recovery_post_audit
+  changed_when: false
+  failed_when: >-
+    apt_recovery_post_audit.rc != 0 or
+    apt_recovery_post_audit.stdout | trim | length > 0 or
+    apt_recovery_post_audit.stderr | trim | length > 0
+  when: apt_recovery_configure is not skipped

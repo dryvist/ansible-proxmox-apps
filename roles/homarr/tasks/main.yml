@@ -10,6 +10,10 @@
 # 0. Supply what the borrowed installer assumes it already has
 # =============================================================================
 
+- name: Wait for package locks and recover incomplete dpkg state
+  ansible.builtin.import_role:
+    name: apt_recovery
+
 - name: Install the prerequisites the borrowed installer does not install itself
   # Measured: without gnupg the install dies at `setup_nodejs` with rc=250 and
   # the misleading message "Failed to import NodeSource GPG key" — the key
@@ -220,10 +224,15 @@
   environment: "{{ homarr_cs_environment }}"
   args:
     executable: /bin/bash
+  # The build can exceed the controller's 240-second task_timeout. Polling
+  # keeps that work attached to this task; the scoped Semaphore run still has
+  # to finish within its outer 900-second ceiling.
   timeout: "{{ homarr_install_timeout }}"
+  async: "{{ homarr_install_timeout }}"
+  poll: 10
   # No changed_when: `creates` already reports unchanged when it short-circuits
-  # and changed when it actually runs, which is exactly the desired semantics.
-  # A hand-written changed_when here only got it wrong.
+  # and changed when it actually runs. Async polling waits for this same task
+  # to finish, so the install marker is stamped only after a successful result.
 
 - name: Stamp the install as complete
   # Only reachable when the task above exited 0, because a non-zero exit fails
