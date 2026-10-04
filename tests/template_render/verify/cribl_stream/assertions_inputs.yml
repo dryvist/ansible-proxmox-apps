@@ -40,7 +40,25 @@
       (prometheus_to_netmon → splunk_hec) and (victoriametrics_rw with no
       Splunk-stamp pipeline)
 
-- name: Assert OTLP input renders on the otel port with the otel_stamp pipeline
+- name: Assert OTLP traces go only to Langfuse and Phoenix
+  vars:
+    _cribl_stream_otel_connections: >-
+      {{ (_cribl_stream_inputs | from_yaml).inputs['open_telemetry:in_otel'].connections }}
+    _cribl_stream_otel_langfuse_pipeline: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('output', 'equalto', 'langfuse_otlp')
+         | map(attribute='pipeline') | list }}
+    _cribl_stream_otel_phoenix_pipeline: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('output', 'equalto', 'phoenix_otlp')
+         | map(attribute='pipeline') | list }}
+    _cribl_stream_otel_stamp_connections: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('pipeline', 'defined')
+         | selectattr('pipeline', 'equalto', 'otel_stamp') | list }}
+    _cribl_stream_otel_splunk_trace_connections: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('output', 'equalto', 'splunk_hec_otel_traces') | list }}
   ansible.builtin.assert:
     that:
       - "'open_telemetry:in_otel' in _cribl_stream_inputs"
@@ -48,17 +66,18 @@
       - "'port: 4318' in _cribl_stream_inputs"
       - "'extractSpans: true' in _cribl_stream_inputs"
       - "'extractMetrics: true' in _cribl_stream_inputs"
-      - "'pipeline: otel_stamp' in _cribl_stream_inputs"
-      - "'output: splunk_hec' in _cribl_stream_inputs"
+      - _cribl_stream_otel_langfuse_pipeline == ['otel_traces']
+      - _cribl_stream_otel_phoenix_pipeline == ['otel_traces_phoenix']
+      - _cribl_stream_otel_stamp_connections | length == 0
+      - _cribl_stream_otel_splunk_trace_connections | length == 0
+      - "'pipeline: otel_logs' in _cribl_stream_inputs"
       - "'pipeline: otel_metrics_to_splunk' in _cribl_stream_inputs"
       - "'output: victoriametrics_otlp' in _cribl_stream_inputs"
       - "'pipeline: otel_metrics_to_victoriametrics' in _cribl_stream_inputs"
-      - "\"index || 'otel_traces'\" in _cribl_stream_otel_pipeline"
-      - "\"sourcetype || 'otel:span'\" in _cribl_stream_otel_pipeline"
     fail_msg: >-
-      inputs.yml.j2 must extract spans, logs and metrics from in_otel and fan
-      metrics to their Splunk and VictoriaMetrics pipelines without changing
-      the existing otel_stamp span leg
+      inputs.yml.j2 must route spans only to Langfuse and Phoenix, retain the
+      independent Splunk log/metrics connections, and preserve the OTLP metrics
+      leg to VictoriaMetrics
 
 - name: Assert the Langfuse OTLP leg renders end to end
   ansible.builtin.assert:
@@ -178,7 +197,9 @@
       - "'splunk_hec_netflow' in _cribl_stream_outputs_pi"
       - "'splunk_hec_claude' in _cribl_stream_outputs_pi"
       - "'splunk_hec_llm' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_ai_usage' in _cribl_stream_outputs_pi"
       - "'splunk_hec_unifi_metrics' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_otel_traces' not in _cribl_stream_outputs_pi"
       # Derived list is unique — no duplicated output ids.
       - "_cribl_stream_outputs_pi.count('id: splunk_hec_llm') == 1"
       # mlx_metrics_normalize reuses this same splunk_hec_llm output for its
@@ -188,9 +209,9 @@
       - "'splunk_hec_llm_metrics' not in _cribl_stream_outputs_pi"
     fail_msg: >-
       outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
-      splunk_hec_<index> output for netflow, unifi_metrics, plus each
-      unique ai_log_routing index, and must NOT mint a separate
-      splunk_hec_llm_metrics token
+      splunk_hec_<index> output for netflow, ai_usage, unifi_metrics, plus
+      each unique ai_log_routing index; it must not create an OTLP trace
+      index output or mint a separate splunk_hec_llm_metrics token
 
 - name: Assert the secondary sinks drop under backpressure, HEC sinks do not
   ansible.builtin.assert:

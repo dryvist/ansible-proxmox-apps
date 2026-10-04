@@ -184,11 +184,10 @@ inputs:
 {% endif %}
       - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
-  # OTLP trace spans, fronted by the otel Traefik ingress on 443 (TLS
-  # terminated at Traefik; this listens plain HTTP). Claude Code and any other
-  # OTLP/HTTP producer POST /v1/traces here. extractSpans turns each OTLP span
-  # into a Splunk event; the otel_stamp connection pipeline stamps
-  # index=otel_traces / sourcetype=otel:span (single index -> dedicated HEC).
+  # OTLP traces, logs, and metrics, fronted by the otel Traefik ingress on 443
+  # (TLS terminated at Traefik; this listens plain HTTP). Claude Code and any
+  # other OTLP/HTTP producer POST /v1/traces here. Spans go to Langfuse and
+  # Phoenix; logs and metrics use their own Splunk/VictoriaMetrics legs.
   open_telemetry:in_otel:
     id: in_otel
     type: open_telemetry
@@ -214,26 +213,17 @@ inputs:
     extractLogs: true
     sendToRoutes: false
     connections:
-{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
-      # One index per HEC: OTLP traces are single-index (otel_traces).
-      - output: splunk_hec_otel_traces
-        pipeline: otel_stamp
-{% else %}
-      - output: splunk_hec
-        pipeline: otel_stamp
-{% endif %}
-      # Second leg of the same input: the otel_traces pipeline drops every
-      # non-trace signal before Langfuse (which ingests traces only and backs
-      # its queue up on anything else). Splunk leg above is unchanged.
+      # Trace destination: the otel_traces pipeline drops every non-trace
+      # signal before Langfuse, which ingests traces only.
       - output: langfuse_otlp
         pipeline: otel_traces
-      # Third leg: Arize Phoenix, the second trace sink. It runs the same
+      # Second trace sink: Arize Phoenix runs the same
       # drops and redaction as the Langfuse leg without its langfuse.*
       # identity rewrites, because Phoenix reads the emitted GenAI and
       # OpenInference attributes as they arrive.
       - output: phoenix_otlp
         pipeline: otel_traces_phoenix
-      # Fourth leg: OTLP log records only, stamped for the ai_usage index.
+      # OTLP log records only, stamped for the ai_usage index.
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
       - output: splunk_hec_ai_usage
         pipeline: otel_logs
@@ -241,7 +231,7 @@ inputs:
       - output: splunk_hec
         pipeline: otel_logs
 {% endif %}
-      # Fifth/sixth legs: extracted OTel metrics stay native metric events.
+      # Extracted OTel metrics stay native metric events.
       # Splunk gets the llm_metrics metric index; VictoriaMetrics receives
       # OTLP and applies its configured Prometheus name conversion.
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
