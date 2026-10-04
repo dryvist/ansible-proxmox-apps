@@ -1,5 +1,27 @@
 # Changelog
 
+## [4.57.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.56.0...v4.57.0) (2026-10-04)
+
+
+### Features
+
+* **agent_sandbox:** provide dispatcher alert settings ([#2382](https://github.com/dryvist/ansible-proxmox-apps/issues/2382)) ([0778f9d](https://github.com/dryvist/ansible-proxmox-apps/commit/0778f9d41e1b4df620d3b3b91029e59751090f5d))
+* **grafana_stack:** AI alert rules and dashboards from grafana-dashboards ([#2381](https://github.com/dryvist/ansible-proxmox-apps/issues/2381)) ([de20ea5](https://github.com/dryvist/ansible-proxmox-apps/commit/de20ea5957c2a03baee907831dcc098f7e8514f8))
+* **openbao:** add Cribl Edge generated fields and readers ([#2386](https://github.com/dryvist/ansible-proxmox-apps/issues/2386)) ([c047bb3](https://github.com/dryvist/ansible-proxmox-apps/commit/c047bb3026df0fdbc4bc93926a34389ec2d09e63))
+* **openbao:** add Hermes configuration ([#2379](https://github.com/dryvist/ansible-proxmox-apps/issues/2379)) ([fff756a](https://github.com/dryvist/ansible-proxmox-apps/commit/fff756a02d755e9ae928caedec5f9094a7745f8d))
+
+
+### Bug Fixes
+
+* **agent-sandbox:** derive ingress addresses from inventory ([#2378](https://github.com/dryvist/ansible-proxmox-apps/issues/2378)) ([845e910](https://github.com/dryvist/ansible-proxmox-apps/commit/845e9103c003b3197ef76d06ba33e9336e102116))
+* **cribl_stream:** report default auth status and rotate if accepted ([#2376](https://github.com/dryvist/ansible-proxmox-apps/issues/2376)) ([2a7ae16](https://github.com/dryvist/ansible-proxmox-apps/commit/2a7ae1658bc8e4a7cdab004851042f96f51aaa82))
+* **cribl_stream:** route LLM Prometheus jobs to llm_metrics ([#2380](https://github.com/dryvist/ansible-proxmox-apps/issues/2380)) ([aa0e426](https://github.com/dryvist/ansible-proxmox-apps/commit/aa0e4265d7d92476f35cb081e584e2e9c92c14c1))
+* **cribl-stream:** keep OTLP spans out of Splunk ([#2385](https://github.com/dryvist/ansible-proxmox-apps/issues/2385)) ([abf5640](https://github.com/dryvist/ansible-proxmox-apps/commit/abf564069e891cc5affe2bb8ea033d174eb90a36))
+* **cribl:** classify LlamaIndex input as syslog ([#2388](https://github.com/dryvist/ansible-proxmox-apps/issues/2388)) ([8816b90](https://github.com/dryvist/ansible-proxmox-apps/commit/8816b90fbb2740decc697065a0f1975b97a22ff2))
+* **cribl:** drop OTLP spans before Splunk HEC ([#2391](https://github.com/dryvist/ansible-proxmox-apps/issues/2391)) ([163f1b1](https://github.com/dryvist/ansible-proxmox-apps/commit/163f1b1dc06bf9a4efc08cf23638a19cfa32d82f))
+* **homarr:** inspect integration mutation results ([#2387](https://github.com/dryvist/ansible-proxmox-apps/issues/2387)) ([c505650](https://github.com/dryvist/ansible-proxmox-apps/commit/c505650fe4c8ca60a6e52fe1df292dae058713b4))
+* source the Web bind from network facts ([#2389](https://github.com/dryvist/ansible-proxmox-apps/issues/2389)) ([7e66b5f](https://github.com/dryvist/ansible-proxmox-apps/commit/7e66b5ffc9ad9042c4e40aa0874e3b78aa3eb20e))
+
 ## [4.56.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.4...v4.56.0) (2026-10-04)
 
 
