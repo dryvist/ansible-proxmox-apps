@@ -1,5 +1,41 @@
 # Changelog
 
+## [4.56.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.4...v4.56.0) (2026-10-04)
+
+
+### Features
+
+* **agent_sandbox:** add opt-in boundary probe ([#2367](https://github.com/dryvist/ansible-proxmox-apps/issues/2367)) ([7437f25](https://github.com/dryvist/ansible-proxmox-apps/commit/7437f255e4b1804a21645b0267310e48438d8263))
+* **agent_sandbox:** add persistent ZCode Web service and feeder ([#2365](https://github.com/dryvist/ansible-proxmox-apps/issues/2365)) ([2a34eb0](https://github.com/dryvist/ansible-proxmox-apps/commit/2a34eb08a10d2dee4554334a8657a1b6f6081465))
+* **agent-sandbox:** add tagged file refresh ([0bd562f](https://github.com/dryvist/ansible-proxmox-apps/commit/0bd562ff95738e61c94c430af5524b236edad9ae))
+* **openbao:** accept a pre-issued rotator token in the rotation play ([#2363](https://github.com/dryvist/ansible-proxmox-apps/issues/2363)) ([c4bde0b](https://github.com/dryvist/ansible-proxmox-apps/commit/c4bde0b7eccdee053f4bd8c8c99f22f38e347d01))
+* **openbao:** add agent-ssh-sign AppRole for workstation SSH signing ([#2359](https://github.com/dryvist/ansible-proxmox-apps/issues/2359)) ([8f99324](https://github.com/dryvist/ansible-proxmox-apps/commit/8f9932429d6785a085249c95b3ea98c52ee09e39))
+* **openbao:** add local-llm-workstation AppRole for workstation reads ([#2352](https://github.com/dryvist/ansible-proxmox-apps/issues/2352)) ([0a4bf0e](https://github.com/dryvist/ansible-proxmox-apps/commit/0a4bf0e0bbd1f92c85f3d6eb958b334eef2d1c63))
+* **openbao:** generate hindsight_api_key in apps/hindsight ([#2354](https://github.com/dryvist/ansible-proxmox-apps/issues/2354)) ([41d5563](https://github.com/dryvist/ansible-proxmox-apps/commit/41d556303fd2f937b5d6eae1983f59c048e7d372))
+* **openbao:** grant observability read on the OpenRouter usage key ([#2357](https://github.com/dryvist/ansible-proxmox-apps/issues/2357)) ([6831214](https://github.com/dryvist/ansible-proxmox-apps/commit/683121459c4c80591dbe087f8d8dbcb982c6befc))
+* **openbao:** rotate the open-llm secret_id on the scheduled cadence ([#2356](https://github.com/dryvist/ansible-proxmox-apps/issues/2356)) ([5e00cbb](https://github.com/dryvist/ansible-proxmox-apps/commit/5e00cbb99862ab8a52b96ded53f0a425ca59451b))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** accept any curl failure with a 403 in the deny probe ([29f8bc7](https://github.com/dryvist/ansible-proxmox-apps/commit/29f8bc7b78674623e71d9e64d88a58401909c02b))
+* **agent_sandbox:** accept any curl failure with a 403 in the deny probe ([d45cca9](https://github.com/dryvist/ansible-proxmox-apps/commit/d45cca9125c65fe49c435fcb7c65f0d34b3a7b36))
+* **agent_sandbox:** create the sandbox directory before the nftables ruleset ([09e703f](https://github.com/dryvist/ansible-proxmox-apps/commit/09e703f5c004adf7c44bfcddd70aabf87222df09))
+* **agent_sandbox:** create the sandbox directory before the nftables ruleset ([6898d64](https://github.com/dryvist/ansible-proxmox-apps/commit/6898d64e2b42bc22a06f4778505fdb6380fb72a0))
+* **agent_sandbox:** match tab-indented rules in the nft drop assertion ([073a1fc](https://github.com/dryvist/ansible-proxmox-apps/commit/073a1fcbd80a986ea31ce10a20d6095c30385af5))
+* **agent_sandbox:** match tab-indented rules in the nft drop assertion ([7aa67e1](https://github.com/dryvist/ansible-proxmox-apps/commit/7aa67e19fee2bb399a3ab686e7fe8ee77f366fb0))
+* **homarr:** recover dpkg state before install ([#2368](https://github.com/dryvist/ansible-proxmox-apps/issues/2368)) ([5718aac](https://github.com/dryvist/ansible-proxmox-apps/commit/5718aacea9ace89187ca335294933940339ffce2))
+* **inventory:** validate role host selection ([#2347](https://github.com/dryvist/ansible-proxmox-apps/issues/2347)) ([78412fe](https://github.com/dryvist/ansible-proxmox-apps/commit/78412fedf2c2e280a1e5a7221a90111f8d6603c2))
+* **ntfy:** allow server-only integration scope ([23e9930](https://github.com/dryvist/ansible-proxmox-apps/commit/23e993055af2772e278822881f5a72b4f69cb299))
+* **ntfy:** bound replay cache duration ([#2364](https://github.com/dryvist/ansible-proxmox-apps/issues/2364)) ([29c76a8](https://github.com/dryvist/ansible-proxmox-apps/commit/29c76a839b4b8837440954d2d567dcdb13411073))
+* **openbao:** mask the role_id read in domain rotation ([#2371](https://github.com/dryvist/ansible-proxmox-apps/issues/2371)) ([566096a](https://github.com/dryvist/ansible-proxmox-apps/commit/566096ae1e7bd5692b7fac12ee57a5710633658c))
+* **openbao:** parse the live AppRole list as a bare array ([#2351](https://github.com/dryvist/ansible-proxmox-apps/issues/2351)) ([89d37fa](https://github.com/dryvist/ansible-proxmox-apps/commit/89d37fa507251b3d39ddc78a8b2c0abac2205dae))
+* **openbao:** write KV secret values through the API, never argv ([#2370](https://github.com/dryvist/ansible-proxmox-apps/issues/2370)) ([67736f2](https://github.com/dryvist/ansible-proxmox-apps/commit/67736f224affbf46bc880d1399eac1901755dfb1))
+* **service_deadman:** name the runbook in every ntfy alert ([4fbd29e](https://github.com/dryvist/ansible-proxmox-apps/commit/4fbd29e7401df89e5b85e5e652f27ab2f667aaa0))
+* **service_deadman:** name the runbook in every ntfy alert ([9d58f18](https://github.com/dryvist/ansible-proxmox-apps/commit/9d58f180ddbb2d138137f47f261352071aee57d2))
+* **traefik:** publish dashboard credentials from one host per run ([914d831](https://github.com/dryvist/ansible-proxmox-apps/commit/914d831bedcc4b14e0a17597e73609c25e2548cf))
+* **traefik:** run the dashboard publish task on one host per play ([ad31d43](https://github.com/dryvist/ansible-proxmox-apps/commit/ad31d43d32232ec877d2768e1945f1b8afe0debc))
+
 ## [4.55.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.3...v4.55.4) (2026-10-04)
 
 
