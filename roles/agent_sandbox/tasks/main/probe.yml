@@ -25,6 +25,18 @@
   register: _agent_sandbox_zcode_web_probe
   no_log: true
 
+- name: Run the three CLI version commands in the sandbox container
+  community.docker.docker_container_exec:
+    container: "{{ agent_sandbox_zcode_web_container }}"
+    argv:
+      - /bin/sh
+      - -c
+      - set -e; zcode --version; opencode --version; cursor-agent --version
+    user: "1000:1000"
+  register: _agent_sandbox_cli_versions
+  changed_when: false
+  failed_when: false
+
 - name: Check the ZCode Web runtime fence
   vars:
     _agent_sandbox_laptop_credential_pattern: >-
@@ -46,6 +58,10 @@
       - _agent_sandbox_zcode_web_probe.container.State.Running
       - _agent_sandbox_zcode_web_probe.container.Config.Image == agent_sandbox_zcode_web_image
       - agent_sandbox_zcode_web_image is search('@sha256:[a-f0-9]{64}$')
+      - _agent_sandbox_cli_versions.rc == 0
+      - _agent_sandbox_cli_versions.stdout is search('3[.]14[.]3')
+      - _agent_sandbox_cli_versions.stdout is search('1[.]18[.]33')
+      - _agent_sandbox_cli_versions.stdout is search('2026[.]10[.]01-e373342')
       - >-
         _agent_sandbox_zcode_env | select('search', '(?i)openbao') | list | length == 0
       - >-
@@ -74,11 +90,15 @@
         | selectattr('Destination', 'equalto', '/home/agent/work')
         | map(attribute='Source') | list) == [agent_sandbox_zcode_web_work_dir]
     fail_msg: >-
-      The ZCode Web runtime is not on its pinned image or violates the
-      credential or mount boundary.
+      The ZCode Web runtime is not on its pinned image, does not expose all
+      required CLI versions, or violates the credential or mount boundary.
     success_msg: >-
       ZCode Web is running on its pinned digest with no OpenBao address,
       workstation credential variables, or extra mounts.
+
+- name: Report the sandbox CLI versions
+  ansible.builtin.debug:
+    var: _agent_sandbox_cli_versions.stdout_lines
 
 - name: Check the ZCode Web service file contains no OpenBao address or workstation credential name
   ansible.builtin.command:
