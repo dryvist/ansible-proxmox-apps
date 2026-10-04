@@ -94,19 +94,21 @@ Its job image uses the same immutable digest as the Web service.
 
 Agent containers are `--rm`, so their CLI session logs would die with the
 container. `agent run --host` bind-mounts each run's per-CLI session-log subdir
-under `{{ agent_sandbox_spool_dir }}/<run-id>/{claude,codex,gemini}/`, and this
+under `{{ agent_sandbox_spool_dir }}/<run-id>/{claude,codex,gemini,zcode}/`, and this
 role runs a **Cribl Edge container** (`agent-cribl-edge`) that tails the spool
 and ships each run's session records to Splunk before teardown:
 
-- Worker-level file inputs (one per CLI) with a 4 MiB newline breaker for the
-  oversized session-log lines and per-CLI `datatype` metadata — the same shape
-  as the Mac Edge (`dryvist/nix-darwin` `hosts/common/cribl.nix`).
+- Worker-level file inputs with a 4 MiB newline breaker for oversized records
+  and per-CLI metadata — the same shape as the Mac Edge
+  (`dryvist/nix-darwin` `hosts/common/cribl.nix`).
 - codex/gemini run their pack pipeline (`codex_sessions` / `llm_normalize`,
-  installed verbatim from the released `.crbl`s); claude ships raw and is
-  stamped Stream-side.
-- Outputs are `tcpjson` to the HAProxy-fronted Stream per-CLI frontends
-  (`agent_sandbox_cribl_ports`), with the persistent queue buffering across any
-  downtime.
+  installed verbatim from the released `.crbl`s); claude ships raw to its
+  per-CLI Stream input.
+- ZCode CLI JSONL events are stamped `index=llm`, `sourcetype=zcode:cli`, and
+  sent to Stream's generic S2S input.
+- Outputs are `tcpjson` with persistent queues; per-CLI sources use the
+  HAProxy-fronted Stream ports in `agent_sandbox_cribl_ports`, and ZCode uses
+  the shared S2S port from Tofu constants.
 
 A daily `agent-sandbox-spool-prune.timer` drops whole runs older than
 `agent_sandbox_spool_retention_days` (7). The launcher side (the bind mounts)
