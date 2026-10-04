@@ -1,0 +1,190 @@
+---
+- name: Check direct host reachability to OpenBao without a proxy
+  ansible.builtin.uri:
+    url: >-
+      https://openbao.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+      | default(undef('PROXMOX_SUBDOMAIN is empty'), true)
+      | mandatory('PROXMOX_SUBDOMAIN must be set in the environment') }}/v1/sys/health
+    method: GET
+    use_proxy: false
+    validate_certs: true
+    timeout: 10
+    status_code: [200, 429, 472, 473, 501, 503]
+  register: agent_sandbox_openbao_host_probe
+  changed_when: false
+
+- name: Record the host-only HTTPS probe status
+  ansible.builtin.debug:
+    msg: >-
+      Host-only HTTPS reachability returned HTTP
+      {{ agent_sandbox_openbao_host_probe.status }} with proxy use disabled.
+
+- name: Read the sandbox network gateways for the packet probe
+  ansible.builtin.command:
+    cmd: >-
+      docker network inspect {{ agent_sandbox_network }}
+      {{ agent_sandbox_egress_network }}
+  register: agent_sandbox_probe_networks
+  changed_when: false
+
+- name: Read the sandbox nftables drop counter before the packet probe
+  ansible.builtin.command:
+    cmd: "nft list table inet {{ agent_sandbox_nft_table }}"
+  register: agent_sandbox_probe_nft_before
+  changed_when: false
+
+- name: Allocate a unique name for the disposable packet-probe container
+  ansible.builtin.set_fact:
+    _agent_sandbox_probe_name: >-
+      agent-sandbox-nft-probe-{{ lookup('password', '/dev/null length=12 chars=ascii_lowercase,digits') }}
+
+- name: Verify the throwaway probe container name is unused
+  community.docker.docker_container_info:
+    name: "{{ _agent_sandbox_probe_name }}"
+  register: agent_sandbox_probe_existing
+
+- name: Assert there is no existing container to be affected by cleanup
+  ansible.builtin.assert:
+    that: not agent_sandbox_probe_existing.exists
+    fail_msg: >-
+      Refusing to use the reserved throwaway name
+      {{ _agent_sandbox_probe_name }} because a container already exists.
+    quiet: true
+
+- name: Exercise and verify the sandbox bridge nftables backstop
+  block:
+    - name: Create the throwaway container on the egress-capable network
+      community.docker.docker_container:
+        name: "{{ _agent_sandbox_probe_name }}"
+        image: "{{ agent_sandbox_netprobe_image }}"
+        command: sleep 300
+        state: started
+        pull: missing
+        read_only: true
+        cap_drop: [ALL]
+        capabilities: [NET_ADMIN, NET_RAW]
+        networks:
+          - name: "{{ agent_sandbox_egress_network }}"
+      register: agent_sandbox_probe_container
+
+    - name: Attach the throwaway container to the sandbox bridge
+      ansible.builtin.command:
+        cmd: >-
+          docker network connect {{ agent_sandbox_network }}
+          {{ _agent_sandbox_probe_name }}
+      changed_when: true
+
+    - name: Read the throwaway container's network endpoints
+      community.docker.docker_container_info:
+        name: "{{ _agent_sandbox_probe_name }}"
+      register: agent_sandbox_probe_attached
+
+    - name: Read the sandbox network gateways
+      ansible.builtin.set_fact:
+        _agent_sandbox_probe_agent_network: >-
+          {{ (agent_sandbox_probe_networks.stdout | from_json
+          | selectattr('Name', 'equalto', agent_sandbox_network) | first) }}
+        _agent_sandbox_probe_egress_network: >-
+          {{ (agent_sandbox_probe_networks.stdout | from_json
+          | selectattr('Name', 'equalto', agent_sandbox_egress_network) | first) }}
+        _agent_sandbox_probe_agent_ip: >-
+          {{ agent_sandbox_probe_attached.container.NetworkSettings.Networks[agent_sandbox_network].IPAddress }}
+
+    - name: Assert the throwaway container has an address on both networks
+      ansible.builtin.assert:
+        that:
+          - _agent_sandbox_probe_agent_ip | length > 0
+          - >-
+            agent_sandbox_probe_attached.container.NetworkSettings.Networks[agent_sandbox_egress_network].IPAddress
+            | length > 0
+        fail_msg: The throwaway container is missing one of its required network endpoints.
+        quiet: true
+
+    - name: Confirm the throwaway container has a routed default gateway
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_probe_name }}"
+        command: ip route show default
+      register: agent_sandbox_probe_default_route
+      changed_when: false
+
+    - name: Assert the default route uses the egress-capable network
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('via ' ~ _agent_sandbox_probe_egress_network.IPAM.Config[0].Gateway)
+            in agent_sandbox_probe_default_route.stdout
+        fail_msg: >-
+          The disposable container has no default route through the egress
+          network: {{ agent_sandbox_probe_default_route.stdout }}
+        quiet: true
+
+    - name: Route one external probe address through the internal bridge
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_probe_name }}"
+        command: >-
+          ip route replace {{ agent_sandbox_probe_external_ip }}/32 via
+          {{ _agent_sandbox_probe_agent_network.IPAM.Config[0].Gateway }}
+      changed_when: false
+
+    - name: Confirm the external probe route uses the internal bridge gateway
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_probe_name }}"
+        command: "ip route get {{ agent_sandbox_probe_external_ip }}"
+      register: agent_sandbox_probe_route
+      changed_when: false
+
+    - name: Assert the packet will leave on the sandbox interface
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('via ' ~ _agent_sandbox_probe_agent_network.IPAM.Config[0].Gateway)
+            in agent_sandbox_probe_route.stdout
+          - "('src ' ~ _agent_sandbox_probe_agent_ip) in agent_sandbox_probe_route.stdout"
+        fail_msg: >-
+          The external probe route does not use the sandbox gateway and source address:
+          {{ agent_sandbox_probe_route.stdout }}
+        quiet: true
+
+    - name: Send one direct ICMP packet through the sandbox bridge
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_probe_name }}"
+        command: >-
+          ping -n -c 1 -W 2 {{ agent_sandbox_probe_external_ip }}
+      register: agent_sandbox_probe_ping
+      changed_when: false
+      failed_when: false
+
+    - name: Read the sandbox nftables drop counter after the packet probe
+      ansible.builtin.command:
+        cmd: "nft list table inet {{ agent_sandbox_nft_table }}"
+      register: agent_sandbox_probe_nft_after
+      changed_when: false
+
+    - name: Assert the direct packet failed and the sandbox drop counter increased
+      vars:
+        _agent_sandbox_probe_counter: >-
+          iifname "{{ agent_sandbox_bridge }}" counter packets ([0-9]+)
+        _agent_sandbox_probe_before: >-
+          {{ agent_sandbox_probe_nft_before.stdout
+          | regex_findall(_agent_sandbox_probe_counter) | first | int }}
+        _agent_sandbox_probe_after: >-
+          {{ agent_sandbox_probe_nft_after.stdout
+          | regex_findall(_agent_sandbox_probe_counter) | first | int }}
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_probe_ping.rc != 0
+          - _agent_sandbox_probe_after | int > _agent_sandbox_probe_before | int
+        success_msg: >-
+          Direct ICMP failed and the sandbox drop counter increased from
+          {{ _agent_sandbox_probe_before }} to
+          {{ _agent_sandbox_probe_after }} packets.
+        fail_msg: >-
+          Expected a failed direct ICMP packet and an increased sandbox drop
+          counter; ping rc={{ agent_sandbox_probe_ping.rc }}, before={{
+          _agent_sandbox_probe_before }}, after={{ _agent_sandbox_probe_after }}.
+        quiet: true
+  always:
+    - name: Remove the throwaway nftables probe container
+      community.docker.docker_container:
+        name: "{{ _agent_sandbox_probe_name }}"
+        state: absent
