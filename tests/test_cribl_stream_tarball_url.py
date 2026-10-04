@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
-"""Cribl version/hash/checksum must never be hardcoded anywhere in the repo.
+"""Cribl release and build identity comes from the homelab-contracts catalog."""
 
-One org-wide pin, inventory/group_vars/all.yml `cribl_version`, is the only
-literal Cribl version in this repository (Renovate-managed). Every consumer
--- roles/cribl_stream/defaults/main/00-install.yml (`cribl_stream_version`),
-inventory/group_vars/cribl_edge.yml (the mirror tarball key),
-roles/cribl_docker_stack/defaults/main.yml (the image tag), and the `cribl`
-entry in roles/object_storage/defaults/main/00-core.yml's
-`object_storage_infra_mirrors` (the mirrored object's key) -- reads it
-rather than declaring its own pin, so a version bump is one edit instead of
-several that can silently drift out of step (exactly how the pre-split
-cribl_stream_build_hash/cribl_stream_tarball_sha256 pair could drift from
-cribl_stream_version if only one was bumped).
-
-No build hash or sha256 digest is committed anywhere either: Cribl's CDN
-filenames carry a per-build hash that isn't derivable from the version
-string, so it is resolved at run time (the `object_storage_infra_mirrors`
-entry's `pointer_url`, fetched by roles/object_storage/tasks/main.yml, from
-the CDN's own `dl/latest-x64` pointer) rather than pinned as a default that
-would go stale the moment the CDN rotates a build without a version bump.
-"""
-
+import json
 import re
 import unittest
 from pathlib import Path
@@ -30,6 +11,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 ALL_VARS = ROOT / "inventory" / "group_vars" / "all.yml"
 CRIBL_EDGE_VARS = ROOT / "inventory" / "group_vars" / "cribl_edge.yml"
+CRIBL_STREAM_VARS = ROOT / "inventory" / "group_vars" / "cribl_stream_group.yml"
 CRIBL_STREAM_DEFAULTS = ROOT / "roles" / "cribl_stream" / "defaults" / "main" / "00-install.yml"
 CRIBL_DOCKER_STACK_DEFAULTS = ROOT / "roles" / "cribl_docker_stack" / "defaults" / "main.yml"
 OBJECT_STORAGE_DEFAULTS = ROOT / "roles" / "object_storage" / "defaults" / "main" / "00-core.yml"
@@ -37,9 +19,8 @@ RENOVATE_JSON = ROOT / "renovate.json"
 
 # A literal version, build hash, or sha256 digest assigned to a variable
 # (not appearing only in a comment or documentation string). Matches
-# `key: "4.20.0"`, `key: "cee79842"`, `key: "8602d5...f9"` -- any quoted
-# token that looks like a bare semver, an 8-hex-char build hash, or a
-# 64-hex-char digest, sitting on a non-comment line.
+# `key: "4.20.0"`, `key: "cee79842"`, or a 64-hex digest on a non-comment
+# line.
 _LITERAL_VERSION_HASH_RE = re.compile(
     r'^\s*[A-Za-z0-9_]+:\s*"(?:\d+\.\d+\.\d+|[0-9a-f]{8}|[0-9a-f]{64})"\s*$'
 )
@@ -47,9 +28,8 @@ _LITERAL_VERSION_HASH_RE = re.compile(
 
 def _non_comment_lines(path: Path):
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("#"):
-            continue
-        yield line
+        if not line.strip().startswith("#"):
+            yield line
 
 
 class CriblNoLiteralVersionOrHash(unittest.TestCase):
@@ -66,75 +46,64 @@ class CriblNoLiteralVersionOrHash(unittest.TestCase):
                     )
 
 
-class CriblConsumersReadTheSharedVersion(unittest.TestCase):
-    def _assert_references_cribl_version(self, path: Path, var_name: str):
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        self.assertIn(var_name, data, f"{var_name} not declared in {path}")
-        value = str(data[var_name])
-        self.assertIn(
-            "cribl_version",
-            value,
-            f"{path.relative_to(ROOT)}'s {var_name} ({value!r}) does not "
-            "reference the shared cribl_version -- it can drift from the "
-            "single org-wide pin.",
-        )
+class CriblConsumersReadTheSharedCatalog(unittest.TestCase):
+    def test_catalog_path_uses_the_installed_homelab_contracts_collection(self):
+        variables = yaml.safe_load(ALL_VARS.read_text(encoding="utf-8"))
+        self.assertIn("ansible.builtin.first_found", variables["cribl_catalog_path"])
+        self.assertIn("COLLECTIONS_PATHS", variables["cribl_catalog_path"])
+        self.assertIn("cribl.json", variables["cribl_catalog_path"])
+        self.assertIn("ansible.builtin.file", variables["cribl_catalog"])
+        self.assertIn("from_json", variables["cribl_catalog"])
+        self.assertEqual(variables["cribl_version"], "{{ cribl_catalog.version }}")
+        self.assertIn("cribl_version.split('-')[0]", variables["cribl_docker_tag"])
 
-    def test_cribl_stream_defaults_read_cribl_version(self):
-        self._assert_references_cribl_version(CRIBL_STREAM_DEFAULTS, "cribl_stream_version")
+    def test_cribl_stream_uses_full_build_id_in_its_url(self):
+        defaults = yaml.safe_load(CRIBL_STREAM_DEFAULTS.read_text(encoding="utf-8"))
+        self.assertIn("cribl_version", defaults["cribl_stream_version"])
+        url = defaults["cribl_stream_tarball_url"]
+        self.assertIn("cribl_stream_version.split('-')[0]", url)
+        self.assertIn("cribl_stream_version", url)
+        self.assertNotIn("latest", url)
 
-    def test_cribl_edge_tarball_url_reads_cribl_version(self):
-        self._assert_references_cribl_version(CRIBL_EDGE_VARS, "cribl_edge_tarball_url")
+    def test_cribl_edge_mirror_key_uses_catalog_version(self):
+        variables = yaml.safe_load(CRIBL_EDGE_VARS.read_text(encoding="utf-8"))
+        self.assertIn("cribl_version", variables["cribl_edge_tarball_url"])
 
-    def test_cribl_docker_stack_image_reads_cribl_version(self):
-        self._assert_references_cribl_version(CRIBL_DOCKER_STACK_DEFAULTS, "cribl_docker_stack_image")
+    def test_docker_tag_derives_from_the_catalog_version(self):
+        variables = yaml.safe_load(ALL_VARS.read_text(encoding="utf-8"))
+        defaults = yaml.safe_load(CRIBL_DOCKER_STACK_DEFAULTS.read_text(encoding="utf-8"))
+        self.assertIn("cribl_version.split('-')[0]", variables["cribl_docker_tag"])
+        self.assertIn("cribl_docker_tag", defaults["cribl_docker_stack_image"])
 
-    def test_object_storage_cribl_mirror_key_reads_cribl_version(self):
-        data = yaml.safe_load(OBJECT_STORAGE_DEFAULTS.read_text(encoding="utf-8"))
-        mirrors = data.get("object_storage_infra_mirrors") or []
-        cribl_entries = [m for m in mirrors if m.get("name") == "cribl"]
-        self.assertTrue(
-            cribl_entries,
-            f"No 'cribl' entry in object_storage_infra_mirrors ({OBJECT_STORAGE_DEFAULTS})",
-        )
-        key = str(cribl_entries[0].get("key", ""))
-        self.assertIn(
-            "cribl_version",
-            key,
-            f"object_storage_infra_mirrors' cribl entry key ({key!r}) does not "
-            "reference the shared cribl_version -- it can drift from the "
-            "single org-wide pin.",
-        )
+    def test_object_storage_mirror_uses_the_fixed_catalog_url_and_sidecar(self):
+        defaults = yaml.safe_load(OBJECT_STORAGE_DEFAULTS.read_text(encoding="utf-8"))
+        mirrors = defaults.get("object_storage_infra_mirrors") or []
+        cribl_entries = [entry for entry in mirrors if entry.get("name") == "cribl"]
+        self.assertTrue(cribl_entries, "No 'cribl' entry in object_storage_infra_mirrors")
+        entry = cribl_entries[0]
+        self.assertIn("cribl_version", entry["key"])
+        self.assertIn("cribl_version.split('-')[0]", entry["url"])
+        self.assertIn("cribl_version", entry["url"])
+        self.assertEqual(entry["sidecar"], "sha256")
+        self.assertNotIn("pointer_url", entry)
+
+    def test_pack_sets_are_not_duplicated_in_group_vars(self):
+        edge = yaml.safe_load(CRIBL_EDGE_VARS.read_text(encoding="utf-8"))
+        stream = yaml.safe_load(CRIBL_STREAM_VARS.read_text(encoding="utf-8"))
+        self.assertNotIn("cribl_packs_for_edge", edge)
+        self.assertNotIn("cribl_packs_for_stream", stream)
 
 
-class CriblVersionIsRenovateManaged(unittest.TestCase):
-    def test_renovate_custom_manager_matches_the_all_yml_pin(self):
-        renovate_config = yaml.safe_load(RENOVATE_JSON.read_text(encoding="utf-8"))
-        managers = [
-            m
-            for m in renovate_config.get("customManagers", [])
-            if m.get("depNameTemplate") == "cribl/cribl"
-        ]
-        self.assertTrue(
-            managers,
-            "renovate.json has no customManager tracking cribl/cribl -- "
-            "cribl_version would never be flagged for a bump.",
+class CriblVersionIsNotDuplicatedInRenovate(unittest.TestCase):
+    def test_renovate_has_no_separate_cribl_version_manager(self):
+        renovate_config = json.loads(RENOVATE_JSON.read_text(encoding="utf-8"))
+        managers = renovate_config.get("customManagers", [])
+        self.assertFalse(
+            any(manager.get("depNameTemplate") == "cribl/cribl" for manager in managers)
         )
-        manager = managers[0]
-        all_yml_text = ALL_VARS.read_text(encoding="utf-8")
-        # Renovate's regex manager uses named groups as `(?<name>...)`
-        # (.NET/JS style); Python's re module requires `(?P<name>...)`.
-        matched = any(
-            re.search(pattern.replace("(?<", "(?P<"), all_yml_text)
-            for pattern in manager["matchStrings"]
+        self.assertFalse(
+            any("cribl_version" in json.dumps(manager) for manager in managers)
         )
-        self.assertTrue(
-            matched,
-            f"None of the cribl/cribl customManager's matchStrings "
-            f"{manager['matchStrings']!r} match the actual cribl_version "
-            f"line in {ALL_VARS.relative_to(ROOT)} -- Renovate would silently "
-            "stop tracking the pin.",
-        )
-        self.assertEqual(manager.get("datasourceTemplate"), "docker")
 
 
 if __name__ == "__main__":
