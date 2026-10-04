@@ -111,6 +111,14 @@ class FrontedUrlsUseIngressDomain(unittest.TestCase):
                     % (name, INGRESS, value),
                 )
 
+    def test_homarr_seerr_integration_uses_the_catalog_fqdn_and_service_port(self):
+        text = (ROOT / "roles/homarr/defaults/main/03-integrations.yml").read_text()
+        self.assertIn("dashboard_catalog_services", text)
+        self.assertIn("map(attribute='fqdn')", text)
+        self.assertIn("tofu_data.constants.media_ports.seerr_web", text)
+        self.assertIn('url: "{{ homarr_seerr_endpoint }}"', text)
+        self.assertNotIn('url: "https://seerr.{{ ingress_domain }}"', text)
+
     def test_role_defaults_fronted_urls(self):
         for rel, marker in FRONTED_ROLE_DEFAULTS:
             path = ROOT / rel
