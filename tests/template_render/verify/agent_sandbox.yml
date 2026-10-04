@@ -8,8 +8,8 @@
 # The allowlist is exact-host: a leading dot or an extra entry would let a CDN
 # or telemetry host ride along. Both are asserted here, positive and negative.
 #
-# Neither the ruleset nor the compose file may carry an address: the filter
-# keys off interface names and Docker allocates the subnets.
+# The published Web bind and ingress source are inventory-derived. No
+# container address or network subnet is hand-pinned here.
 #
 # Registered and set_fact values persist into the later plays of the same run
 # and outrank their task vars, so every name here carries the _as_ prefix.
@@ -25,8 +25,14 @@
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
     _template_dir: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
-
   tasks:
+    - name: Set the test inventory-derived addresses and secret group id
+      ansible.builtin.set_fact:
+        agent_sandbox_zcode_web_bind_address: 192.0.2.20
+        agent_sandbox_zcode_web_secret_gid: 1901
+        agent_sandbox_zcode_web_ingress_source_ips:
+          - 192.0.2.10
+
     - name: Render the ruleset, the compose file and the allowlist
       ansible.builtin.template:
         src: "{{ _template_dir }}/{{ item.src }}"
@@ -75,7 +81,7 @@
             ~ agent_sandbox_proxy_port ~ ' accept') in _as_accepts
           # The last rule for the agent bridge is the unconditional drop.
           - _as_rules | last is search('counter drop$')
-          # Nothing from another network is forwarded into the agent bridge.
+          # The default inbound drop still applies after the exact Web exception.
           - _as_nft is search('oifname "' ~ _as_bridge ~ '" counter drop')
           # Other container bridges may not forward at all.
           - _as_nft is search('iifname "docker0" counter drop')
@@ -83,8 +89,8 @@
             _as_nft is search('iifname "br-[*]" iifname != [{] "' ~ _as_bridge
             ~ '", "' ~ agent_sandbox_egress_bridge ~ '" [}] counter drop')
         fail_msg: >-
-          The container-egress ruleset must accept exactly the proxy port from
-          the agent bridge and drop the rest. Rendered: {{ _as_nft }}
+          The container-egress ruleset must accept only the proxy and exact Web
+          ingress paths and drop all other bridge traffic. Rendered: {{ _as_nft }}
 
     - name: Assert the ruleset has no catch-all allowance
       ansible.builtin.assert:
@@ -100,7 +106,26 @@
           The container-egress ruleset must not carry a catch-all accept or
           touch rules outside its own table.
 
-    - name: Assert the bridges are matched by name and no address is rendered
+    - name: Assert only inventoried Traefik may reach the published Web service
+      vars:
+        _as_ingress_rules: "{{ _as_nft | split('\\n')
+          | select('search', 'oifname \"' ~ agent_sandbox_bridge ~ '\" ip saddr ')
+          | list }}"
+      ansible.builtin.assert:
+        that:
+          - _as_ingress_rules | length == agent_sandbox_zcode_web_ingress_source_ips | length
+          - >-
+            ('oifname "' ~ agent_sandbox_bridge ~ '" ip saddr ' ~ item ~ ' tcp dport '
+            ~ agent_sandbox_zcode_web_port ~ ' ct status dnat ct original proto-dst '
+            ~ agent_sandbox_zcode_web_host_port ~ ' accept') in _as_nft
+        fail_msg: >-
+          The published Web port must be reachable only from inventoried
+          Traefik addresses through Docker's expected DNAT mapping.
+      loop: "{{ agent_sandbox_zcode_web_ingress_source_ips }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Assert bridge names and all addresses come from inventory
       vars:
         _as_ipv4: '[0-9][0-9]?[0-9]?[.][0-9]+[.][0-9]+[.][0-9]+'
       ansible.builtin.assert:
@@ -112,19 +137,50 @@
           - "('com.docker.network.bridge.name: ' ~ agent_sandbox_egress_bridge) in _as_compose"
           - "'ipv4_address:' not in _as_compose"
           - "'subnet:' not in _as_compose"
-          - _as_nft is not search(_as_ipv4)
-          - _as_compose is not search(_as_ipv4)
+          - >-
+            (_as_nft | regex_findall(_as_ipv4) | unique | sort)
+            == (agent_sandbox_zcode_web_ingress_source_ips | unique | sort)
+          - >-
+            ('"' ~ agent_sandbox_zcode_web_bind_address ~ ':'
+            ~ agent_sandbox_zcode_web_host_port ~ ':'
+            ~ agent_sandbox_zcode_web_port ~ '"') in _as_compose
         fail_msg: >-
           The compose network must pin the bridge names the ruleset keys off,
-          each name must fit an interface name, and neither file may carry an
-          address.
+          each name must fit an interface name, and every rendered IP must
+          originate in the runtime inventory.
 
-    # Exact-host allowlist. api.z.ai and chat.z.ai only; a CDN, object-store or
+    - name: Assert the Web service is pinned and hardened
+      ansible.builtin.assert:
+        that:
+          - "('image: ' ~ agent_sandbox_zcode_web_image) in _as_compose"
+          - "('container_name: ' ~ agent_sandbox_zcode_web_container) in _as_compose"
+          - "'restart: unless-stopped' in _as_compose"
+          - "'group_add:' in _as_compose"
+          - "'\"1901\"' in _as_compose"
+          - >-
+            ('user: "' ~ '1000:1000' ~ '"') in _as_compose
+          - "'read_only: true' in _as_compose"
+          - "'cap_drop: [ALL]' in _as_compose"
+          - "'no-new-privileges:true' in _as_compose"
+          - "('mem_limit: ' ~ agent_sandbox_zcode_web_memory_limit) in _as_compose"
+          - "('cpus: ' ~ agent_sandbox_zcode_web_cpus) in _as_compose"
+          - "('pids_limit: ' ~ agent_sandbox_zcode_web_pids_limit | string) in _as_compose"
+          - "('source: ' ~ agent_sandbox_zcode_web_env_file) in _as_compose"
+          - "'target: /run/agent-service.env' in _as_compose"
+          - "'target: /home/agent/.zcode' in _as_compose"
+          - "'target: /home/agent/work' in _as_compose"
+          - "'AGENT_WEB_TOKEN=' not in _as_compose"
+          - "'ZAI_SUBSCRIPTION_KEY=' not in _as_compose"
+        fail_msg: >-
+          ZCode Web must use the immutable image digest, non-root hardening,
+          persistent state mounts, and a read-only credential file mount.
+
+    # Exact-host allowlist. api.z.ai, chat.z.ai and zcode.z.ai only; a CDN, object-store or
     # telemetry host must never appear, and the existing images keep theirs.
     - name: Assert the allowlist carries exactly the expected Z.ai hosts
       ansible.builtin.assert:
         that:
-          - _as_domains | select('search', '(^|[.])z[.]ai$') | sort | list == ['api.z.ai', 'chat.z.ai']
+          - _as_domains | select('search', '(^|[.])z[.]ai$') | sort | list == ['api.z.ai', 'chat.z.ai', 'zcode.z.ai']
           - "'cdn-zcode.z.ai' not in _as_domains"
           - _as_domains | select('search', 'aliyuncs|oss-|sentry|telemetry|analytics') | list | length == 0
           - _as_domains | select('match', '^[.]') | list | length == 0
@@ -132,5 +188,5 @@
           - "'github.com' in _as_domains"
           - "'cache.nixos.org' in _as_domains"
         fail_msg: >-
-          The allowlist must hold exactly api.z.ai and chat.z.ai for Z.ai, no
+          The allowlist must hold exactly api.z.ai, chat.z.ai and zcode.z.ai for Z.ai, no
           wildcard entries, and keep the existing hosts. Rendered: {{ _as_domains }}

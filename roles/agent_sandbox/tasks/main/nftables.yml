@@ -1,14 +1,25 @@
 ---
 # Host-side backstop for the egress boundary: an nftables table that drops any
-# forwarded container packet that leaves the agents bridge. It is loaded before
-# the containers exist (this file runs ahead of deploy.yml) and lives in its own
-# table, so nothing here flushes or reloads the host's other rules, and Docker
-# restarting never removes it.
+# forwarded container packet that leaves the agents bridge, permits only the
+# published Web connection from Traefik, and denies other forwarding into the
+# bridge. It is loaded before containers exist and lives in its own table, so
+# Docker restarting never removes it or reloads other host rules.
 
 - name: Install nftables
   ansible.builtin.apt:
     name: nftables
     state: present
+
+- name: Require a published service address and inventoried Traefik ingress
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_zcode_web_bind_address is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+      - agent_sandbox_zcode_web_ingress_source_ips | length > 0
+      - agent_sandbox_zcode_web_ingress_source_ips
+        | reject('match', '^([0-9]{1,3}[.]){3}[0-9]{1,3}$') | list | length == 0
+    fail_msg: >-
+      ZCode Web ingress requires an inventory-derived IPv4 bind address and
+      at least one IPv4 address from traefik_group.
 
 - name: Deploy the container-egress ruleset
   ansible.builtin.template:

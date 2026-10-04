@@ -11,15 +11,20 @@ on the `agent_sandbox_host` inventory group (`docker_vms` members carrying the
   is the sole dual-homed member; its domain allowlist is the only egress
   policy. Converge ends with live allow/deny probes from inside the network.
 - A host nftables table (`agent_sandbox`, chain `DOCKER-USER`) drops every
-  forwarded container packet that leaves the agents bridge except the proxy
-  port, and any forwarding from the other container bridges, so a container
-  that ignores its proxy settings still has no way out. It matches interface
-  names only; Docker allocates the addresses.
+  forwarded packet that leaves the agents bridge except traffic to the proxy,
+  allows the published Web port only from inventoried Traefik addresses, and
+  denies other forwarding into the bridge. Docker allocates container addresses.
 - `/var/lib/docker` sits on the guest's dedicated data disk.
+- The always-on ZCode Web/Server container uses the published multi-architecture
+  image digest, runs as uid 1000 with a read-only root filesystem, and stores
+  Web state and workspaces on persistent host directories. Its service
+  credentials are supplied separately in a root-owned file readable by a
+  dedicated secret group; this role only mounts that file read-only.
 
-Agent containers are **not** managed by Ansible: the nix-agent-sandbox
-`agent run --host <docker-host>` launcher spawns them ad hoc with plain
-`docker run --network agents` — no IaC run per container.
+Ephemeral agent CLI containers are **not** managed by Ansible: the
+nix-agent-sandbox `agent run --host <docker-host>` launcher spawns them with
+plain `docker run --network agents` — no Ansible run per task. The persistent
+ZCode Web service below is managed by this role.
 
 ## Installation
 
@@ -46,6 +51,11 @@ The launcher attaches the container to `agents` and points
 `HTTP(S)_PROXY` at `http://proxy:3128`; everything not on the allowlist is
 denied by squid, and everything else has no route at all.
 
+The ZCode Web service uses the same `agents` network and proxy. It binds port
+443 on the address supplied by the dynamic inventory and accepts forwarded
+Web traffic only from `traefik_group`. The SSO-gated `zcode` ingress row is
+owned by OpenTofu's ingress table, which also supplies Traefik and DNS.
+
 ## Allowlist maintenance
 
 `agent_sandbox_egress_domains` mirrors nix-agent-sandbox `lib.egressDomains`
@@ -58,6 +68,14 @@ nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
 `agent_sandbox_internal_domains` appends in-network FQDNs (the secret-store
 ingress route) at converge time from ambient `PROXMOX_SUBDOMAIN` — the
 sensitive domain is never committed.
+
+The ZCode service environment file at
+`{{ agent_sandbox_zcode_web_env_file }}` must be provisioned outside this
+role as a root-owned mode 0440 file in
+`{{ agent_sandbox_zcode_web_secret_group }}`, containing only
+`AGENT_WEB_TOKEN` and `ZAI_SUBSCRIPTION_KEY`. The role creates the otherwise
+empty host group and grants its GID only to the service container; it does not
+create or deliver credentials.
 
 ## Session-log shipping
 
@@ -89,8 +107,10 @@ never touches any other rule. The chain hooks `forward` ahead of Docker's own
 rules:
 
 - established and related traffic is accepted;
-- from the `agents` bridge: TCP to the proxy, and UDP/TCP 53 to the host
-  resolver, are accepted; everything else is logged (rate-limited) and dropped;
+- from the `agents` bridge: TCP to the proxy is accepted; everything else is
+  logged (rate-limited) and dropped;
+- the published ZCode Web port is accepted only from inventoried Traefik
+  addresses after Docker's expected DNAT mapping;
 - from `docker0` and any other `br-*` bridge except the proxy's egress bridge:
   dropped.
 
