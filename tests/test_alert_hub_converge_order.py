@@ -2,7 +2,8 @@
 
 ntfy_docker: the Slack fan-out and the Zammad subscriber each run in their own
 block/rescue, Slack first, and a final task fails the converge if either one
-failed. A failing Zammad stage cannot stop Slack from deploying.
+failed. A failing Zammad stage cannot stop Slack from deploying. Independent
+ntfy integrations carry a shared tag so server-only converges can skip them.
 
 service_deadman: a host with no checks gets its earlier validator removed. If
 the role just ended the host instead, the old timer would keep firing a check
@@ -33,6 +34,19 @@ def test_ntfy_slack_stage_runs_first_and_both_stages_are_isolated():
     assert all(t.get("rescue") for t in stages), "each alert-hub stage needs its own rescue"
     final = tasks[-1]
     assert "ansible.builtin.fail" in final and "ntfy_docker_stage_failures" in final["when"]
+
+
+def test_ntfy_integrations_share_the_server_only_skip_tag():
+    tasks = _tasks("ntfy_docker/tasks/main.yml")
+    stages = {
+        "Deploy the Slack fan-out (ntfy-to-slack per instance)",
+        "Deploy the Zammad subscriber (native ntfy CLI)",
+        "Deploy the end-to-end canary",
+        "Provision the ai-jobs publisher credentials",
+    }
+    selected = [t for t in tasks if t.get("name") in stages]
+    assert {t["name"] for t in selected} == stages
+    assert all("ntfy_integrations" in t.get("tags", []) for t in selected)
 
 
 def test_deadman_retires_the_validator_on_hosts_without_checks():
