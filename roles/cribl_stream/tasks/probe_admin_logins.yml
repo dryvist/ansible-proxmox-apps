@@ -1,0 +1,31 @@
+---
+- name: Probe the vendor-default and configured admin logins without changes
+  ansible.builtin.include_tasks: probe_admin_default.yml
+  tags: [always]
+
+- name: Verify the configured admin login
+  ansible.builtin.uri:
+    url: "{{ cribl_stream_api_url }}/api/v1/auth/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ cribl_stream_admin_user }}"
+      password: "{{ cribl_stream_admin_password }}"
+    status_code: [200, 401, 403]
+    timeout: "{{ cribl_stream_api_timeout }}"
+  register: cribl_stream_admin_probe_configured_login
+  retries: 6
+  delay: 5
+  until: cribl_stream_admin_probe_configured_login.status | default(0) in [200, 401, 403]
+  changed_when: false
+  failed_when: false
+  no_log: true
+  tags: [always]
+
+- name: Assert the configured admin login works
+  ansible.builtin.assert:
+    that:
+      - cribl_stream_admin_probe_configured_login.status | default(0) == 200
+    fail_msg: The configured admin credential was not accepted.
+    quiet: true
+  tags: [always]
