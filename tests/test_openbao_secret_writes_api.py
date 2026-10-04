@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN = [ROOT / "roles", ROOT / "playbooks"]
 COMMAND_MODULES = {"command", "shell", "ansible.builtin.command", "ansible.builtin.shell"}
 URI_MODULES = {"uri", "ansible.builtin.uri"}
-# `kv put` / `kv patch` in a cmd string, or 'kv', 'put' / 'kv', 'patch' in an argv list.
 # AppRole credential endpoints: their requests or responses carry a role_id or secret_id.
 APPROLE_CREDENTIAL_URL = re.compile(r"/(role-id|secret-id)\b|auth/approle/login")
+# `kv put` / `kv patch` in a cmd string, or 'kv', 'put' / 'kv', 'patch' in an argv list.
 KV_DATA_WRITE = re.compile(r"""kv['"]?\s*,?\s*['"]?(put|patch)\b""")
 
 
@@ -41,10 +41,10 @@ def offenders(text_by_file):
             for module in URI_MODULES & task.keys():
                 spec = task[module] if isinstance(task[module], dict) else {}
                 if "/data/" in str(spec.get("url", "")) and str(spec.get("method", "GET")).upper() in {"POST", "PUT", "PATCH"}:
-                    if not (task.get("no_log") is True or inherited):
+                    if task.get("no_log", inherited) is not True:
                         unlogged_api_writes.append(f"{path}: {task.get('name')}")
                 if APPROLE_CREDENTIAL_URL.search(str(spec.get("url", ""))):
-                    if not (task.get("no_log") is True or inherited):
+                    if task.get("no_log", inherited) is not True:
                         unlogged_credentials.append(f"{path}: {task.get('name')}")
     return argv_writes, unlogged_api_writes, unlogged_credentials
 
@@ -54,7 +54,7 @@ def walk(node, inherited):
         for item in node:
             yield from walk(item, inherited)
     elif isinstance(node, dict):
-        here = inherited or node.get("no_log") is True
+        here = node.get("no_log", inherited) is True
         if any(k in node for k in COMMAND_MODULES | URI_MODULES):
             yield node, inherited
         for key in ("block", "rescue", "always", "tasks", "pre_tasks", "post_tasks", "handlers"):
@@ -89,6 +89,14 @@ class SecretWritesUseTheApi(unittest.TestCase):
     def test_logged_off_role_id_read_passes(self):
         ok = {"x.yml": "- name: read it\n  ansible.builtin.uri:\n    url: http://a/v1/auth/approle/role/r/role-id\n  no_log: true\n"}
         self.assertEqual(offenders(ok)[2], [])
+
+    def test_block_no_log_covers_a_secret_id_lookup(self):
+        ok = {"x.yml": "- block:\n    - name: look up\n      ansible.builtin.uri:\n        url: http://a/v1/auth/approle/role/r/secret-id/lookup\n  no_log: true\n"}
+        self.assertEqual(offenders(ok)[2], [])
+
+    def test_task_no_log_false_overrides_a_logged_block(self):
+        bad = {"x.yml": "- block:\n    - name: look up\n      ansible.builtin.uri:\n        url: http://a/v1/auth/approle/role/r/secret-id/lookup\n      no_log: false\n  no_log: true\n"}
+        self.assertEqual(offenders(bad)[2], ["x.yml: look up"])
 
     def test_detects_an_argv_write(self):
         bad = {"x.yml": "- name: put it\n  ansible.builtin.command:\n    argv: \"{{ ['bao', 'kv', 'put', 'secret/apps/a'] + pairs }}\"\n"}
