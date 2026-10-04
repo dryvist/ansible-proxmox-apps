@@ -6,6 +6,7 @@ address fails the converge before the role is written.
 """
 
 from pathlib import Path
+import re
 import unittest
 
 from ansible.parsing.dataloader import DataLoader
@@ -14,6 +15,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "roles" / "openbao" / "tasks" / "init" / "10-approles.yml"
+POLICY_TEMPLATE = ROOT / "roles" / "openbao" / "templates" / "open-llm-policy.hcl.j2"
 TASK = "Assert the open-llm bind, when supplied, is one address as a /32"
 
 
@@ -40,6 +42,17 @@ class OpenLlmBindIsOneHost(unittest.TestCase):
                     "0.0.0.0/0", " 192.0.2.10/32"):
             with self.subTest(bad=bad):
                 self.assertFalse(passes(bad))
+
+
+class OpenLlmPolicyScope(unittest.TestCase):
+    def test_reads_only_the_open_llm_bucket(self):
+        policy = POLICY_TEMPLATE.read_text(encoding="utf-8")
+        app_paths = re.findall(
+            r'(?m)^path "\{\{ openbao_kv_mount \}\}/(?:data|metadata)/(apps/[^\"]+)" \{',
+            policy,
+        )
+        self.assertEqual(app_paths, ["apps/open-llm", "apps/open-llm"])
+        self.assertNotIn("apps/*", policy)
 
 
 if __name__ == "__main__":

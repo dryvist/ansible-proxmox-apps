@@ -11,6 +11,7 @@ granted directly by apps-policy.hcl.j2.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -25,6 +26,16 @@ PROMOTED_FILE = DEFAULTS / "01b-app-secrets.yml"
 CRIBL_EDGE_FILE = DEFAULTS / "05h-cribl-edge-readers.yml"
 DOMAINS_FILE = ROOT / "roles" / "openbao_secrets" / "defaults" / "main" / "01-domains.yml"
 POLICY_TEMPLATE = ROOT / "roles" / "openbao" / "templates" / "apps-policy.hcl.j2"
+MIRROR_TASKS = ROOT / "roles" / "openbao" / "tasks" / "mirror_generated_app_secrets.yml"
+ROUTER_KEY_FIELDS = {
+    "agy": "agy_llm_router_key",
+    "recorder": "recorder_llm_router_key",
+    "judge": "judge_llm_router_key",
+    "hermes-private": "hermes_private_llm_router_key",
+    "donna": "donna_llm_router_key",
+    "zcode": "zcode_llm_router_key",
+    "opencode": "opencode_llm_router_key",
+}
 
 
 def _yaml(path: Path) -> dict:
@@ -84,3 +95,73 @@ def test_a_published_only_bucket_is_missing_without_the_published_list():
     read_apps = _read_apps(names)
     missing = _unreadable(_apps_domain_paths(), read_apps, POLICY_TEMPLATE.read_text(encoding="utf-8"))
     assert "apps/pve-exporter" in missing
+
+
+def test_router_consumer_keys_are_generated_and_granted_as_exact_app_paths():
+    generated = _yaml(GENERATED_FILE)["openbao_generated_app_secrets"]
+    for app, field in ROUTER_KEY_FIELDS.items():
+        fields = generated.get(app, [])
+        assert fields.count(field) == 1, f"apps/{app} must generate {field} exactly once"
+        assert [name for name in fields if name.endswith("_llm_router_key")] == [field]
+
+    read_apps = _read_apps(_yaml(NAMES_FILE))
+    allowlisted_router_paths = {f"apps/{app}" for app in ROUTER_KEY_FIELDS if app in read_apps}
+    assert allowlisted_router_paths == {f"apps/{app}" for app in ROUTER_KEY_FIELDS}
+
+    policy = POLICY_TEMPLATE.read_text(encoding="utf-8")
+    app_path_lines = [
+        line.strip()
+        for line in policy.splitlines()
+        if line.lstrip().startswith("path ") and "/apps/" in line
+    ]
+    assert app_path_lines == [
+        'path "{{ openbao_kv_mount }}/data/apps/{{ app }}" {',
+        'path "{{ openbao_kv_mount }}/metadata/apps/{{ app }}" {',
+    ]
+
+
+def test_open_llm_router_fields_mirror_existing_generated_keys():
+    generated = _yaml(GENERATED_FILE)["openbao_generated_app_secrets"]
+    promoted_defaults = _yaml(PROMOTED_FILE)
+    promoted = promoted_defaults["openbao_promoted_app_secrets"]["open-llm"]
+    mirrors = promoted_defaults["openbao_open_llm_router_key_mirrors"]
+    sources = {
+        item["target_field"]: (item["source_app"], item["source_field"], item["source_variable"])
+        for item in mirrors
+    }
+    assert sources == {
+        "ZCODE_ROUTER_KEY": ("zcode", "zcode_llm_router_key", "openbao_open_llm_zcode_router_key"),
+        "OPENCODE_ROUTER_KEY": (
+            "opencode",
+            "opencode_llm_router_key",
+            "openbao_open_llm_opencode_router_key",
+        ),
+    }
+    assert "open-llm" not in generated
+    for field, (app, source_key, source_variable) in sources.items():
+        assert generated[app].count(source_key) == 1
+        assert promoted[field] == source_variable
+
+
+def test_mirror_task_copies_the_generated_fields_without_logging_values():
+    tasks = _yaml(MIRROR_TASKS)
+    read_task = next(
+        task for task in tasks if task["name"] == "Read the generated router-key source buckets for open-llm"
+    )
+    set_task = next(
+        task for task in tasks if task["name"] == "Set source values for the open-llm promoted fields"
+    )
+    variable_expression, value_expression = next(iter(set_task["ansible.builtin.set_fact"].items()))
+    assert read_task["no_log"] is True
+    assert set_task["no_log"] is True
+
+    for mirror in _yaml(PROMOTED_FILE)["openbao_open_llm_router_key_mirrors"]:
+        synthetic_value = f"synthetic-{mirror['source_app']}-router-key"
+        source_result = {
+            "item": mirror,
+            "stdout": json.dumps({"data": {"data": {mirror["source_field"]: synthetic_value}}}),
+        }
+        templar = Templar(loader=DataLoader())
+        templar.available_variables = {"item": source_result}
+        assert templar.template(trust_as_template(variable_expression)) == mirror["source_variable"]
+        assert templar.template(trust_as_template(value_expression)) == synthetic_value
