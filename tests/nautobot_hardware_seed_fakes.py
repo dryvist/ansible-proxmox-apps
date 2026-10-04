@@ -10,11 +10,34 @@ from __future__ import annotations
 from typing import Any
 
 
+def _matches(item: Any, **kwargs: Any) -> bool:
+    """Match an item against kwargs, supporting the one lookup suffix in use.
+
+    ``field__isnull=<bool>`` mirrors Django: True when the field is unset
+    (missing or ``None``), compared against the requested boolean. Every
+    other key is a plain equality check on the attribute of the same name.
+    """
+    for key, wanted in kwargs.items():
+        field, _, suffix = key.partition("__")
+        if suffix == "isnull":
+            if (getattr(item, field, None) is None) != bool(wanted):
+                return False
+        elif getattr(item, key, None) != wanted:
+            return False
+    return True
+
+
 class Record:
     """An object with named attributes, standing in for a model instance."""
 
     def __init__(self, **attrs: Any) -> None:
         self.__dict__.update(attrs)
+        self._store: list[Record] | None = None
+
+    def delete(self) -> None:
+        """Remove self from the backing store, mirroring the real delete()."""
+        if self._store is not None and self in self._store:
+            self._store.remove(self)
 
 
 class FakeManager:
@@ -27,16 +50,13 @@ class FakeManager:
     def _match(self, **kwargs):
         wanted = {k: v for k, v in kwargs.items() if k != "defaults"}
         for item in self.store:
-            if all(getattr(item, k, None) == v for k, v in wanted.items()):
+            if _matches(item, **wanted):
                 return item
         return None
 
     def filter(self, **kwargs):
         """Return a queryset-ish list supporting .first() and .exists()."""
-        wanted = {k: v for k, v in kwargs.items()}
-        found = [
-            i for i in self.store if all(getattr(i, k, None) == v for k, v in wanted.items())
-        ]
+        found = [i for i in self.store if _matches(i, **kwargs)]
         return FakeQuerySet(found)
 
     def get_or_create(self, defaults=None, **kwargs):
@@ -45,6 +65,7 @@ class FakeManager:
         if existing is not None:
             return existing, False
         obj = Record(**{**(defaults or {}), **kwargs})
+        obj._store = self.store
         self.store.append(obj)
         self.created.append(obj)
         return obj, True
@@ -59,7 +80,7 @@ class FakeManager:
 
 
 class FakeQuerySet(list):
-    """List with the two queryset methods the job calls."""
+    """List with the queryset methods the job calls."""
 
     def first(self):
         """Return the first match or None."""
@@ -68,6 +89,10 @@ class FakeQuerySet(list):
     def exists(self) -> bool:
         """Return whether anything matched."""
         return bool(self)
+
+    def exclude(self, **kwargs):
+        """Return the items that do NOT match kwargs — the inverse of filter."""
+        return FakeQuerySet([i for i in self if not _matches(i, **kwargs)])
 
 
 class Collector:

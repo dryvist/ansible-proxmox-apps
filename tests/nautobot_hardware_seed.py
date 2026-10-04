@@ -103,6 +103,7 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
     )
     common.ensure_role = lambda n, *m: note("ensure_role", Record(name=n))
     common.ensure_status = lambda n, *m, **kw: note("ensure_status", Record(name=n))
+    common.ensure_procurement_fields = lambda: note("ensure_procurement_fields", {})
     # Mirrors the real load_seed: every slice defaults to empty, so a document
     # missing a key behaves the same here as it does on the guest.
     common.load_seed = lambda: {
