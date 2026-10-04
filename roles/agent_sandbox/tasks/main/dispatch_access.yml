@@ -1,7 +1,12 @@
 ---
-- name: Inspect dispatcher entry point
+- name: Install sudo for the root-only dispatcher alert handoff
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+
+- name: Inspect upstream dispatcher SSH entry point
   ansible.builtin.stat:
-    path: "{{ agent_sandbox_dispatch_command }}"
+    path: "{{ agent_sandbox_dispatch_upstream_command }}"
   register: _agent_sandbox_dispatch_entrypoint
 
 - name: Require an installed dispatcher entry point
@@ -13,6 +18,39 @@
       - _agent_sandbox_dispatch_entrypoint.stat.uid == 0
       - not _agent_sandbox_dispatch_entrypoint.stat.wgrp
       - not _agent_sandbox_dispatch_entrypoint.stat.woth
+
+- name: Create the dispatcher SSH helper directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_dispatch_root_command | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the root dispatcher alert helper
+  ansible.builtin.template:
+    src: dispatch-ssh-root.sh.j2
+    dest: "{{ agent_sandbox_dispatch_root_command }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the restricted dispatcher sudo wrapper
+  ansible.builtin.template:
+    src: dispatch-ssh-with-alert.sh.j2
+    dest: "{{ agent_sandbox_dispatch_command }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Permit the dispatcher account to run only the root alert helper
+  ansible.builtin.template:
+    src: dispatch-sudoers.j2
+    dest: "{{ agent_sandbox_dispatch_sudoers_file }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
 
 - name: Create dispatcher authorized keys directory
   ansible.builtin.file:

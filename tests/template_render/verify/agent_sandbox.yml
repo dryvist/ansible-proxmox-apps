@@ -38,6 +38,8 @@
         agent_sandbox_zcode_feeder_repositories:
           - dryvist/nix-agent-sandbox
         agent_sandbox_zcode_feeder_image: "{{ agent_sandbox_zcode_web_image }}"
+        agent_sandbox_dispatch_alert_url: https://ntfy.example.invalid
+        agent_sandbox_dispatch_alert_token: tk_RenderFixtureOnly987
 
     - name: Render the ruleset, compose, allowlist and feeder configuration
       ansible.builtin.template:
@@ -51,6 +53,12 @@
         - { src: zcode-feeder.json.j2, dest: zcode-feeder.json }
         - { src: zcode-feeder.service.j2, dest: zcode-feeder.service }
 
+    - name: Render the private refused-login alert environment fixture
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/dispatcher-alert.env.j2"
+        dest: "{{ _fixture_dir }}/test_agent_sandbox_dispatcher-alert.env"
+        mode: "0600"
+
     - name: Read the rendered files
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/test_agent_sandbox_{{ item }}"
@@ -61,6 +69,7 @@
         - allowed-domains.txt
         - zcode-feeder.json
         - zcode-feeder.service
+        - dispatcher-alert.env
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
@@ -70,6 +79,7 @@
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
         _as_feeder_config: "{{ _as_rendered.results[3].content | b64decode | from_json }}"
         _as_feeder_service: "{{ _as_rendered.results[4].content | b64decode }}"
+        _as_dispatcher_alert_env: "{{ _as_rendered.results[5].content | b64decode }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -198,9 +208,14 @@
             ~ agent_sandbox_zcode_feeder_dispatch_state_dir) in _as_feeder_service
           - "'ZAI_SUBSCRIPTION_KEY' not in _as_feeder_service"
           - "'AGENT_WEB_TOKEN' not in _as_feeder_service"
+          - "('EnvironmentFile=' ~ agent_sandbox_dispatch_alert_env_file) in _as_feeder_service"
+          - "'AGENT_DISPATCH_NTFY_ALERT_URL=' ~ agent_sandbox_dispatch_alert_url in _as_dispatcher_alert_env"
+          - "'AGENT_DISPATCH_NTFY_ALERT_TOKEN=' ~ agent_sandbox_dispatch_alert_token in _as_dispatcher_alert_env"
+          - agent_sandbox_dispatch_alert_token not in _as_feeder_service
         fail_msg: >-
           The feeder must use the same immutable job image, the explicit
-          repository allowlist, and no Web service credentials.
+          repository allowlist, the separately rendered refused-login alert
+          environment file, and no secret in the unit text.
 
     # Exact-host allowlist. api.z.ai, chat.z.ai and zcode.z.ai only; a CDN, object-store or
     # telemetry host must never appear, and the existing images keep theirs.

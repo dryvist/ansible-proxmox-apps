@@ -12,6 +12,14 @@
       {{ (lookup('file', playbook_dir ~ '/../../../roles/agent_sandbox/tasks/main/deploy.yml')
       | from_yaml | selectattr('name', 'equalto', 'Create the host dispatcher state directory')
       | first)['ansible.builtin.file'] }}
+    _dispatch_env_dir_task: >-
+      {{ (lookup('file', playbook_dir ~ '/../../../roles/agent_sandbox/tasks/main/deploy.yml')
+      | from_yaml | selectattr('name', 'equalto', 'Create the ZCode service credential mount directory')
+      | first) }}
+    _dispatch_profile_dir_task: >-
+      {{ (lookup('file', playbook_dir ~ '/../../../roles/agent_sandbox/tasks/main/deploy.yml')
+      | from_yaml | selectattr('name', 'equalto', 'Allow dispatcher traversal without listing secrets')
+      | first) }}
   tasks:
     - name: Allocate a state task render fixture
       ansible.builtin.tempfile:
@@ -44,6 +52,38 @@
         agent_sandbox_dispatch_access_enabled: false
         _dispatch_state_rendered: "{{ lookup('template', _dispatch_state_fixture.path) | from_yaml }}"
 
+    - name: Write the ZCode environment directory fixture
+      ansible.builtin.copy:
+        content: "{{ _dispatch_env_dir_task['ansible.builtin.file'] | to_yaml }}"
+        dest: "{{ _dispatch_state_fixture.path }}"
+        mode: "0600"
+
+    - name: Assert service credential directory defaults to root-only
+      ansible.builtin.assert:
+        that:
+          - _dispatch_env_rendered.owner == 'root'
+          - _dispatch_env_rendered.group == 'root'
+          - _dispatch_env_rendered.mode == '0700'
+          - _dispatch_env_dir_task.when == 'not agent_sandbox_dispatch_access_enabled | bool'
+      vars:
+        _dispatch_env_rendered: "{{ lookup('template', _dispatch_state_fixture.path) | from_yaml }}"
+
+    - name: Write the dispatcher profile directory fixture
+      ansible.builtin.copy:
+        content: "{{ _dispatch_profile_dir_task['ansible.builtin.file'] | to_yaml }}"
+        dest: "{{ _dispatch_state_fixture.path }}"
+        mode: "0600"
+
+    - name: Assert dispatcher access can traverse to its profile but cannot list the directory
+      ansible.builtin.assert:
+        that:
+          - _dispatch_profile_dir_rendered.owner == 'root'
+          - _dispatch_profile_dir_rendered.group == agent_sandbox_dispatch_user
+          - _dispatch_profile_dir_rendered.mode == '0710'
+          - _dispatch_profile_dir_task.when == 'agent_sandbox_dispatch_access_enabled | bool'
+      vars:
+        _dispatch_profile_dir_rendered: "{{ lookup('template', _dispatch_state_fixture.path) | from_yaml }}"
+
     - name: Remove the state task render fixture
       ansible.builtin.file:
         path: "{{ _dispatch_state_fixture.path }}"
@@ -57,6 +97,9 @@
       ansible.builtin.set_fact:
         _dispatch_keys: "{{ lookup('template', _dispatch_templates ~ '/dispatch-authorized-keys.j2') }}"
         _dispatch_sshd: "{{ lookup('template', _dispatch_templates ~ '/dispatch-sshd.conf.j2') }}"
+        _dispatch_ssh_wrapper: "{{ lookup('template', _dispatch_templates ~ '/dispatch-ssh-with-alert.sh.j2') }}"
+        _dispatch_ssh_root: "{{ lookup('template', _dispatch_templates ~ '/dispatch-ssh-root.sh.j2') }}"
+        _dispatch_sudoers: "{{ lookup('template', _dispatch_templates ~ '/dispatch-sudoers.j2') }}"
 
     - name: Assert every key is restricted to the dispatcher
       ansible.builtin.assert:
@@ -64,14 +107,31 @@
           - _dispatch_keys.splitlines() | length == 2
           - >-
             _dispatch_keys.splitlines() | select('match',
-            '^restrict,command="/usr/local/bin/agent-dispatch-ssh" ssh-ed25519 ') | list | length == 2
-          - "'    ForceCommand /usr/local/bin/agent-dispatch-ssh' in _dispatch_sshd"
+            '^restrict,command="' ~ agent_sandbox_dispatch_command ~ '" ssh-ed25519 ') | list | length == 2
+          - "('    ForceCommand ' ~ agent_sandbox_dispatch_command) in _dispatch_sshd"
           - "'    DisableForwarding yes' in _dispatch_sshd"
           - "'    PermitTTY no' in _dispatch_sshd"
           - "'    PermitUserRC no' in _dispatch_sshd"
           - "'    AuthenticationMethods publickey' in _dispatch_sshd"
           - "'Match User agent-dispatch' in _dispatch_sshd"
           - "'    AuthorizedKeysFile /etc/ssh/agent-dispatch-keys/agent-dispatch' in _dispatch_sshd"
+          - >-
+            ('/usr/bin/sudo -n ' ~ agent_sandbox_dispatch_root_command)
+            in _dispatch_ssh_wrapper
+          - "('done < \"' ~ agent_sandbox_dispatch_alert_env_file ~ '\"') in _dispatch_ssh_root"
+          - "'export AGENT_DISPATCH_NTFY_ALERT_URL=\"$alert_url\"' in _dispatch_ssh_root"
+          - "'export AGENT_DISPATCH_NTFY_ALERT_TOKEN=\"$alert_token\"' in _dispatch_ssh_root"
+          - >-
+            ('exec /usr/sbin/runuser --preserve-environment --user "'
+            ~ agent_sandbox_dispatch_user ~ '" -- "'
+            ~ agent_sandbox_dispatch_upstream_command ~ '"') in _dispatch_ssh_root
+          - "'. \"' ~ agent_sandbox_dispatch_alert_env_file ~ '\"' not in _dispatch_ssh_root"
+          - "('Defaults!' ~ agent_sandbox_dispatch_root_command) in _dispatch_sudoers"
+          - >-
+            'env_keep += "SSH_ORIGINAL_COMMAND"' in _dispatch_sudoers
+          - >-
+            ('NOPASSWD: ' ~ agent_sandbox_dispatch_root_command ~ ' ""')
+            in _dispatch_sudoers
 
     - name: Assert an empty list revokes all keys
       ansible.builtin.assert:

@@ -16,7 +16,7 @@ class DispatcherSSHConfigTest(unittest.TestCase):
         ).read_text()
         rendered = jinja2.Template(template).render(
             agent_sandbox_dispatch_user="agent-dispatch",
-            agent_sandbox_dispatch_command="/usr/local/bin/agent-dispatch-ssh",
+            agent_sandbox_dispatch_command="/usr/local/bin/agent-dispatch-ssh-with-alert",
         )
         with tempfile.TemporaryDirectory() as directory:
             host_key = pathlib.Path(directory) / "host-key"
@@ -39,7 +39,7 @@ class DispatcherSSHConfigTest(unittest.TestCase):
 
             dispatch = effective("agent-dispatch")
             for option, expected in {
-                "forcecommand": "/usr/local/bin/agent-dispatch-ssh",
+                "forcecommand": "/usr/local/bin/agent-dispatch-ssh-with-alert",
                 "disableforwarding": "yes",
                 "permittty": "no",
                 "permituserrc": "no",
