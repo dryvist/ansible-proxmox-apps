@@ -33,6 +33,11 @@
 > point, and even there is clamped to never exceed the Semaphore-derived
 > cap; every other branch gets the default.
 
+For a scoped ntfy server configuration change, append `ntfy_integrations` to
+the template's `--skip-tags` list. This skips the independent Slack fan-out,
+Zammad subscriber, canary, and ai-jobs credential stages while retaining the
+ntfy server deployment and health check. Full ntfy runs still include them.
+
 ```bash
 # Deploy all apps (the main pipeline does not require SOPS). A full
 # site.yml is a promotion-boundary action, not a development one: scope a
