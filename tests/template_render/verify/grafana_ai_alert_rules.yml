@@ -1,0 +1,49 @@
+---
+# Renders roles/grafana_stack/templates/alerting/rules-ai.yml.j2 with the role
+# defaults and checks the four AI rules and their label matchers.
+- name: Render and verify the Grafana AI alert rules
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    # group_vars/all.yml sets ansible_become for managed nodes and implicit
+    # localhost inherits it; rendering a template needs no root.
+    ansible_become: false
+    _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-ai.yml.j2"
+  tasks:
+    - name: Render the AI alert rules
+      ansible.builtin.set_fact:
+        _ai_rules: "{{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0].rules }}"
+      vars:
+        # Task vars outrank the defaults loaded through vars_files.
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+
+    - name: Assert the four rules render with their matchers
+      ansible.builtin.assert:
+        that:
+          - _ai_rules | map(attribute='uid') | list
+            == ['llm-router-down', 'llm-judge-failing', 'hermes-llm-failures', 'zdr-key-non-zdr-model']
+          - ('api_key_alias=~"litellm\\-local\\-workstation|hindsight"') in _zdr_expr
+          - ('requested_model=~"free\\-zdrless"') in _zdr_expr
+          - _hermes_threshold == grafana_stack_alert_hermes_error_count - 1
+        fail_msg: "rules-ai.yml.j2 rendered an unexpected rule set: {{ _ai_rules | map(attribute='uid') | list }}"
+      vars:
+        _zdr_expr: >-
+          {{ (_ai_rules | selectattr('uid', 'equalto', 'zdr-key-non-zdr-model')
+              | first).data[0].model.expr }}
+        _hermes_threshold: >-
+          {{ (_ai_rules | selectattr('uid', 'equalto', 'hermes-llm-failures')
+              | first).data[1].model.conditions[0].evaluator.params[0] }}
+
+    - name: Render without a Prometheus datasource
+      ansible.builtin.set_fact:
+        _ai_rules_no_prom: "{{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0].rules }}"
+      vars:
+        grafana_stack_prometheus_url: ""
+
+    - name: Assert only the router rule depends on the Prometheus datasource
+      ansible.builtin.assert:
+        that:
+          - _ai_rules_no_prom | map(attribute='uid') | list
+            == ['llm-judge-failing', 'hermes-llm-failures', 'zdr-key-non-zdr-model']
