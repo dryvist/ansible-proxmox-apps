@@ -20,6 +20,13 @@ def _task(tasks, name):
 
 
 class AgentSandboxCredentialContract(unittest.TestCase):
+    def test_dispatcher_alert_settings_follow_dispatch_access_gate(self):
+        role_tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
+        delivery = _task(role_tasks, "Deliver refused-login alert settings")
+        self.assertEqual(
+            delivery["when"], "agent_sandbox_dispatch_access_enabled | bool"
+        )
+
     def test_credentials_are_tagged_and_restricted(self):
         defaults = (ROLE / "defaults" / "main.yml").read_text()
         self.assertIn("OPENBAO_APPROLE_OPEN_LLM_ROLE_ID", defaults)

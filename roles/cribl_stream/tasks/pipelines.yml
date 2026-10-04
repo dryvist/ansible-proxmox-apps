@@ -35,6 +35,12 @@
 # or the other instead of keeping both as before. owner/group ARE uniform
 # across every entry (cribl:cribl), so unarchive applies those directly via
 # its own owner/group parameters.
+#
+# These templates use shared Cribl and inventory variables, not
+# inventory_hostname or per-worker facts. Render their contents and controller
+# staging tree once for the whole Stream play. Checksum reads, extraction and
+# marker writes remain per-worker, so a stale worker is repaired without
+# touching a current one.
 
 - name: Render every pipeline conf.yml's content on the controller
   ansible.builtin.set_fact:
@@ -45,6 +51,7 @@
   loop: "{{ cribl_stream_pipelines }}"
   loop_control:
     label: "{{ item }}"
+  run_once: true
 
 # One hash over every pipeline's rendered content, sorted by pipeline name so
 # it does not depend on loop-build order. Content only — never the archive
@@ -55,6 +62,7 @@
     cribl_stream_pipelines_checksum: >-
       {{ (cribl_stream_pipeline_contents | dict2items | sort(attribute='key')
           | map('to_json') | join('\u0000')) | hash('sha256') }}
+  run_once: true
 
 - name: Read the currently-applied pipeline render checksum
   ansible.builtin.slurp:
@@ -66,7 +74,16 @@
   ansible.builtin.set_fact:
     cribl_stream_pipelines_needs_render: >-
       {{ (cribl_stream_pipelines_marker.content | default('') | b64decode | trim)
-         != cribl_stream_pipelines_checksum }}
+         != hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_checksum }}
+
+- name: Determine whether any Stream worker needs the pipeline render
+  ansible.builtin.set_fact:
+    cribl_stream_pipelines_any_needs_render: >-
+      {{ ansible_play_hosts_all
+         | map('extract', hostvars)
+         | selectattr('cribl_stream_pipelines_needs_render', 'equalto', true)
+         | list | length > 0 }}
+  run_once: true
 
 - name: Ensure the pipeline configs parent directory exists
   ansible.builtin.file:
@@ -86,7 +103,8 @@
   vars:
     ansible_become: false
   register: cribl_stream_pipelines_staging
-  when: cribl_stream_pipelines_needs_render
+  when: hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_any_needs_render
+  run_once: true
 
 - name: Create each pipeline directory on the controller
   ansible.builtin.file:
@@ -101,7 +119,8 @@
   loop: "{{ cribl_stream_pipelines }}"
   loop_control:
     label: "{{ item }}"
-  when: cribl_stream_pipelines_needs_render
+  when: hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_any_needs_render
+  run_once: true
 
 # Writes the EXACT string that was hashed above (no re-render), so the
 # shipped bytes can never drift from what the checksum decision was made on.
@@ -118,7 +137,8 @@
   loop: "{{ cribl_stream_pipelines }}"
   loop_control:
     label: "{{ item }}"
-  when: cribl_stream_pipelines_needs_render
+  when: hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_any_needs_render
+  run_once: true
 
 - name: Archive the rendered pipeline tree into one tarball
   community.general.archive:
@@ -131,11 +151,12 @@
   become: false
   vars:
     ansible_become: false
-  when: cribl_stream_pipelines_needs_render
+  when: hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_any_needs_render
+  run_once: true
 
 - name: Ship and extract every pipeline directory and config in one transfer
   ansible.builtin.unarchive:
-    src: "{{ cribl_stream_pipelines_staging.path }}.tar.gz"
+    src: "{{ hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_staging.path }}.tar.gz"
     dest: "{{ cribl_stream_install_dir }}/local/cribl/pipelines"
     remote_src: false
     extra_opts:
@@ -147,7 +168,7 @@
 
 - name: Persist the applied pipeline render checksum
   ansible.builtin.copy:
-    content: "{{ cribl_stream_pipelines_checksum }}"
+    content: "{{ hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_checksum }}"
     dest: "{{ cribl_stream_install_dir }}/local/cribl/.pipelines-checksum"
     owner: "{{ cribl_stream_user }}"
     group: "{{ cribl_stream_group }}"
@@ -168,4 +189,7 @@
     - "{{ cribl_stream_pipelines_staging.path | default('') }}.tar.gz"
   loop_control:
     label: "{{ item | basename }}"
-  when: cribl_stream_pipelines_needs_render and (item | length > 0)
+  when:
+    - hostvars[ansible_play_hosts_all[0]].cribl_stream_pipelines_any_needs_render
+    - item | length > 0
+  run_once: true

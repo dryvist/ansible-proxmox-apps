@@ -29,10 +29,12 @@ INPUTS_TEMPLATE = ROOT / "roles/cribl_stream/templates/inputs.yml.j2"
 # Minimal variable set inputs.yml.j2 needs to render end to end (grep
 # cribl_stream_ references in the template for the full list).
 BASE_VARS = {
+    "cribl_hec_input_port": 8088,
     "cribl_stream_hec_namespace": "",
     "cribl_stream_netflow_port": 2055,
     "cribl_stream_otel_port": 4318,
     "cribl_stream_pq_enabled": True,
+    "cribl_stream_splunk_hec_token": "test-hec-token-placeholder",
     "cribl_stream_prometheus_rw_api_path": "/api/v1/write",
     "cribl_stream_prometheus_rw_port": 9090,
     "cribl_stream_pve_metrics_port": 2003,
