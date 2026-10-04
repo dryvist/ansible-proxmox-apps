@@ -55,9 +55,9 @@ denied by squid, and everything else has no route at all.
 nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
 ```
 
-`agent_sandbox_internal_domains` appends in-network FQDNs (the secret-store
-ingress route) at converge time from ambient `PROXMOX_SUBDOMAIN` — the
-sensitive domain is never committed.
+The host dispatcher completes host-side setup before creating an agent
+container. Those host-only endpoints are not part of the container-facing
+squid allowlist.
 
 ## Session-log shipping
 
@@ -95,4 +95,16 @@ rules:
   dropped.
 
 The converge asserts the table is loaded and probes a default-bridge container
-for a route out.
+for a route out. To verify host-side HTTPS reachability and exercise the
+`agents`-bridge drop counter with a routed, disposable container, run the
+opt-in probe after deployment:
+
+```sh
+ansible-playbook playbooks/site.yml \
+  --tags agent_sandbox,agent_sandbox_probe
+```
+
+The probe does not alter the nftables rules. It attaches one throwaway test
+container to both sandbox networks, routes one external packet through the
+`agents` bridge, checks that the packet fails and the matching drop counter
+increases, then removes the container.
