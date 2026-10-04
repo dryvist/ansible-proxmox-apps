@@ -32,8 +32,12 @@
     that:
       - "(_cribl_stream_prom_pipeline | from_yaml).functions | length == 2"
       - "(_cribl_stream_prom_pipeline | from_yaml).functions[0].id == 'drop'"
-      - "'^(blackbox_.*|smokeping|traefik)$' in (_cribl_stream_prom_pipeline | from_yaml).functions[0].filter"
+      - >-
+        '^(blackbox_.*|smokeping|traefik|llm_router|llama_server|guest_node_exporter)$' in
+        (_cribl_stream_prom_pipeline | from_yaml).functions[0].filter
       - "'netmon_metrics' in _cribl_stream_prom_pipeline"
+      - "\"job === 'llm_router' || job === 'llama_server'\" in _cribl_stream_prom_pipeline"
+      - "'llm_metrics' in _cribl_stream_prom_pipeline"
       - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
       - "'Number.isFinite' in _cribl_stream_prom_pipeline"
     fail_msg: >-
@@ -159,17 +163,15 @@
       and cache-creation usage. Without the mapping every generation shows zero
       usage and cost panels stay empty even though the numbers arrived.
 
-- name: Assert otel_traces drops non-LLM MCP-server plumbing from the Langfuse leg only
+- name: Assert otel_traces drops non-LLM MCP-server plumbing before either trace sink
   ansible.builtin.assert:
     that:
       - "'transport_worker' in _cribl_stream_otel_traces"
       - "'persist_rollout_items' in _cribl_stream_otel_traces"
-      - "'transport_worker' not in _cribl_stream_otel_pipeline"
     fail_msg: >-
       MCP-server internals (auth, transport_worker, rollout persistence)
-      carry no model, tokens or content and crowd out real generations.
-      They must be dropped on the Langfuse leg and RETAINED on the Splunk
-      leg (otel_stamp), so failure and latency evidence survives.
+      carry no model, tokens or content and crowd out real generations. They
+      must be dropped before either trace destination.
 
 - name: Assert otel_traces redaction uses the valid mask schema
   ansible.builtin.assert:

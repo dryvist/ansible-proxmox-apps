@@ -20,31 +20,31 @@ Ports come from the tofu `service_ports` constants
 itself comes from the `docker_engine` meta dependency; `daemon.json` is owned
 by the registry-mirror play in `site.yml`, never written here.
 
-Vendored dashboards live in `files/dashboards/`, pinned to the provisioned
-`victoriametrics` datasource uid. Add a dashboard by dropping its JSON there —
-the provider picks it up on the next converge. Provenance for each vendored
-file:
-
-- `claude-code-metrics.json` — grafana.com dashboard 25255, "Claude Code
-  Metrics (Prometheus)".
-- `litellm-prod-v2.json` — BerriAI/litellm
-  `cookbook/litellm_proxy_server/grafana_dashboard/dashboard_v2`.
-- `litellm-all-prometheus-metrics.json` — BerriAI/litellm, same path,
-  `dashboard_all_metrics`.
-- `litellm-genai-otel.json` — BerriAI/litellm, same path,
-  `dashboard_genai_otel`. Prometheus-backed (queries OTEL GenAI
-  semantic-convention metrics), no logs/traces backend needed.
-
-Every vendored file has had its upstream `__inputs`/`__requires` import
-prompts and any dashboard-level datasource template variable resolved to the
-literal `victoriametrics` uid, since a file-provisioned dashboard never gets
-an import screen to answer those from.
+Dashboards come from
+[`dryvist/grafana-dashboards`](https://github.com/dryvist/grafana-dashboards)
+at the release tag in `grafana_stack_dashboards_version` (Renovate bumps it).
+The role extracts that release's `dashboards/*.json` into the provisioned
+dashboard directory; add or change a dashboard in that repository, not here.
 
 Skipped: grafana.com dashboard 24641 ("OpenAI Codex (VictoriaStack)") — every
 panel in it queries a logs or traces datasource (VictoriaLogs / Jaeger); none
 of its panels query Prometheus-compatible metrics, so remapping it to
 `victoriametrics` would ship a dashboard where 100% of panels error rather
 than populate.
+
+## AI alert rules
+
+`templates/alerting/rules-ai.yml.j2` provisions four Grafana-managed rules in
+the `ai-observability` group, all delivered through the existing contact
+point:
+
+- `llm-router-down`: every `llm_router` scrape target is down or missing.
+- `llm-judge-failing`: at least half of the router's `judge` role requests
+  failed over 15 minutes.
+- `hermes-llm-failures`: Hermes virtual keys returned server errors over 15
+  minutes.
+- `zdr-key-non-zdr-model`: a key in `grafana_stack_alert_zdr_only_keys`
+  requested a model in `grafana_stack_alert_zdr_false_models`.
 
 ## Installation
 

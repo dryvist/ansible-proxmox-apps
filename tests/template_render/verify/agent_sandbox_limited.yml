@@ -1,0 +1,117 @@
+---
+- name: Seed inventory data for a limited sandbox render
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+  tasks:
+    - name: Confirm the limit excludes the ingress fixture
+      ansible.builtin.assert:
+        that:
+          - "'sandbox_fixture' in query('inventory_hostnames', ansible_limit)"
+          - "'localhost' in query('inventory_hostnames', ansible_limit)"
+          - "'ingress_fixture' not in query('inventory_hostnames', ansible_limit)"
+          - "'ingress_fixture' in groups['traefik_group']"
+
+    - name: Provide the loaded inventory artifact
+      ansible.builtin.set_fact:
+        tofu_data:
+          docker_vms:
+            sandbox_fixture:
+              ip: sandbox_fixture.example.invalid
+          vms:
+            sandbox_fixture:
+              ip: sandbox_fixture.example.invalid
+          containers:
+            ingress_fixture:
+              ip: "{{ [192, 0, 2, 30] | join('.') }}"
+              tags: [traefik]
+
+    - name: Create a temporary render directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: agent_sandbox_limited_
+      register: _agent_sandbox_limited_tmp
+
+    - name: Publish the temporary directory to the limited host
+      ansible.builtin.set_fact:
+        _agent_sandbox_limited_render_dir: "{{ _agent_sandbox_limited_tmp.path }}"
+
+- name: Render the sandbox templates with ingress outside the limit
+  hosts: agent_sandbox_host
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+  vars:
+    ansible_become: false
+    agent_sandbox_zcode_web_secret_gid: 1901
+  tasks:
+    - name: Assert the bind address uses the host network fact
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_zcode_web_bind_address == ansible_default_ipv4.address
+
+    - name: Assert the bind address is an IPv4 address
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_zcode_web_bind_address is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+
+    - name: Assert leased VM inventory addresses are not treated as IPv4
+      ansible.builtin.assert:
+        that:
+          - hostvars['localhost'].tofu_data.docker_vms.sandbox_fixture.ip is not match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+          - hostvars['localhost'].tofu_data.vms.sandbox_fixture.ip is not match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+
+    - name: Assert limited ingress sources come from inventory
+      vars:
+        _agent_sandbox_limited_ingress_ip: "{{ hostvars['localhost'].tofu_data.containers.ingress_fixture.ip }}"
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_zcode_web_ingress_source_ips == [_agent_sandbox_limited_ingress_ip]
+          - hostvars['ingress_fixture'].container_ip is not defined
+
+    - name: Render the compose file and nftables rules
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates/{{ item.src }}"
+        dest: "{{ hostvars['localhost']._agent_sandbox_limited_render_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+        - { src: agent-sandbox.nft.j2, dest: agent-sandbox.nft }
+
+    - name: Read the rendered files
+      ansible.builtin.slurp:
+        src: "{{ hostvars['localhost']._agent_sandbox_limited_render_dir }}/{{ item }}"
+      register: _agent_sandbox_limited_rendered
+      loop:
+        - docker-compose.yml
+        - agent-sandbox.nft
+
+    - name: Assert the rendered service bind uses the host IPv4 fact
+      vars:
+        _agent_sandbox_limited_compose: "{{ _agent_sandbox_limited_rendered.results[0].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "(ansible_default_ipv4.address ~ ':443:8080') in _agent_sandbox_limited_compose"
+
+    - name: Assert rendered ingress rules use the limited inventory source
+      vars:
+        _agent_sandbox_limited_nft: "{{ _agent_sandbox_limited_rendered.results[1].content | b64decode }}"
+        _agent_sandbox_limited_ingress_ip: "{{ hostvars['localhost'].tofu_data.containers.ingress_fixture.ip }}"
+      ansible.builtin.assert:
+        that:
+          - "('ip saddr ' ~ _agent_sandbox_limited_ingress_ip ~ ' tcp dport 8080') in _agent_sandbox_limited_nft"
+
+- name: Remove the temporary render directory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+  tasks:
+    - name: Remove the limited render fixture
+      ansible.builtin.file:
+        path: "{{ _agent_sandbox_limited_render_dir }}"
+        state: absent

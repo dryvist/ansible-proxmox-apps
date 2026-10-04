@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+alert_url=
+alert_token=
+alert_url_seen=false
+alert_token_seen=false
+while IFS= read -r line; do
+  case "$line" in
+    AGENT_DISPATCH_NTFY_ALERT_URL=*)
+      [[ "$alert_url_seen" == false ]] || { printf '%s\n' 'invalid dispatcher alert settings' >&2; exit 78; }
+      alert_url_seen=true
+      alert_url=${line#*=}
+      ;;
+    AGENT_DISPATCH_NTFY_ALERT_TOKEN=*)
+      [[ "$alert_token_seen" == false ]] || { printf '%s\n' 'invalid dispatcher alert settings' >&2; exit 78; }
+      alert_token_seen=true
+      alert_token=${line#*=}
+      ;;
+    *)
+      printf '%s\n' 'invalid dispatcher alert settings' >&2
+      exit 78
+      ;;
+  esac
+done < "{{ agent_sandbox_dispatch_alert_env_file }}"
+
+if [[ "$alert_url_seen" != true || "$alert_token_seen" != true ]] ||
+   [[ ! "$alert_url" =~ ^https://ntfy(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] ||
+   [[ ! "$alert_token" =~ ^tk_[A-Za-z0-9]+$ ]]; then
+  printf '%s\n' 'invalid dispatcher alert settings' >&2
+  exit 78
+fi
+
+export AGENT_DISPATCH_NTFY_ALERT_URL="$alert_url"
+export AGENT_DISPATCH_NTFY_ALERT_TOKEN="$alert_token"
+exec /usr/sbin/runuser --preserve-environment --user "{{ agent_sandbox_dispatch_user }}" -- "{{ agent_sandbox_dispatch_upstream_command }}"

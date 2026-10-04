@@ -4,7 +4,7 @@ openbao_secrets pre-fetch play actually publishes that fact to.
 
 Which groups *consume* bao_media_secrets (inventory/group_vars/*.yml) and
 which groups the pre-fetch play *publishes* it to
-(playbooks/site/00-load-and-telemetry.yml) are independently hand-maintained.
+(playbooks/tasks/publish_secret_domain_facts.yml) are independently maintained.
 A consumer group can fail this two different ways: it can be left out of the
 play's own hosts: list entirely, or -- the bug this test was written to catch
 -- the play can include the host but the per-host set_fact task can omit
@@ -20,8 +20,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_VARS = REPO_ROOT / "inventory" / "group_vars"
 TELEMETRY_PLAYBOOK = REPO_ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
+PUBLISH_TASK_FILE = REPO_ROOT / "playbooks" / "tasks" / "publish_secret_domain_facts.yml"
 PREFETCH_PLAY = "Pre-fetch resource-domain secrets from OpenBao"
-PUBLISH_TASK = "Publish each domain's merged secrets to every host in this play"
+PUBLISH_TASK = "Publish each domain's merged secrets to application hosts"
 
 
 def _folded_hosts(text: str, play_name: str) -> set:
@@ -64,7 +65,11 @@ class TestMediaSecretsPublishCoverage(unittest.TestCase):
         text = TELEMETRY_PLAYBOOK.read_text()
         consumer_groups = _consumer_groups()
         publisher_hosts = _folded_hosts(text, PREFETCH_PLAY)
-        published_domains = _set_fact_keys(text, PUBLISH_TASK)
+        self.assertIn(
+            "ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml",
+            text,
+        )
+        published_domains = _set_fact_keys(PUBLISH_TASK_FILE.read_text(), PUBLISH_TASK)
 
         self.assertTrue(consumer_groups, "no bao_media_secrets consumer group_vars files found")
 

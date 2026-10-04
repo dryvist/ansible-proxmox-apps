@@ -40,6 +40,7 @@ class FakeApi:
         # rows: {name: {"id","kind","url","app": {"id"} | None}}
         self.rows = {r["name"]: dict(r) for r in (rows or [])}
         self.calls = []
+        self.update_error = False
 
     def trpc(self, procedure, payload=None, api_key=None, query=False):
         self.calls.append((procedure, payload))
@@ -57,13 +58,10 @@ class FakeApi:
             return {**row, "app": row.get("app")}
         if procedure == "integration.create":
             assert payload is not None
-            # Mirrors Homarr's real behaviour: it connection-tests a secret
-            # before persisting the row and rejects an empty one.
+            # Homarr returns connection-test failures as HTTP 200 with an
+            # error object, before it persists the row.
             if any(not (s.get("value") or "").strip() for s in payload.get("secrets", [])):
-                raise homarr_api.HomarrError(
-                    f"integration.create -> HTTP 400: {payload['name']} failed "
-                    "Homarr's connection test"
-                )
+                return {"error": {"message": f"{payload['name']} connection test failed"}}
             self.rows[payload["name"]] = {
                 "id": "new1",
                 "name": payload["name"],
@@ -78,6 +76,8 @@ class FakeApi:
                 raise homarr_api.HomarrError(
                     "integration.update -> HTTP 400: appId received undefined"
                 )
+            if self.update_error:
+                return {"error": {"message": "connection test failed"}}
             row = next(r for r in self.rows.values() if r["id"] == payload["id"])
             row["url"] = payload["url"]
             # update assigns appId unconditionally, so null really does unlink.
@@ -172,3 +172,18 @@ def test_one_rejected_integration_does_not_stop_the_rest():
     assert "Sonarr" not in api.rows  # rejected, never persisted
     assert any("created Radarr" in a for a in actions)
     assert any("Sonarr" in a and "rejected by Homarr" in a for a in actions)
+
+
+def test_update_error_result_is_reported_without_claiming_a_change():
+    api = FakeApi([{"id": "i1", "name": "Sonarr", "kind": "sonarr",
+                    "url": "https://sonarr.example.test", "app": None}])
+    api.update_error = True
+    want = [{"name": "Sonarr", "kind": "sonarr",
+             "url": "https://sonarr.example.test", "secrets": SECRET}]
+
+    actions, changed = homarr_api.sync_integrations(api, "key", want, force_secret_sync=True)
+
+    assert changed is False
+    assert not any(action.startswith("updated Sonarr") for action in actions)
+    assert any("Sonarr rejected by Homarr" in action and "connection test failed" in action
+               for action in actions)

@@ -218,6 +218,7 @@
   notify: Restart cribl stream
   when:
     - cribl_stream_splunk_hec_token != ''
+    # Remove the retired per-index trace output from previously loaded config.
     - >-
       cribl_stream_hec_live.get('url', '') != cribl_stream_splunk_hec_url
       or cribl_stream_hec_live.get('token', '') != cribl_stream_splunk_hec_token
@@ -229,6 +230,7 @@
           and (cribl_stream_per_index_indexes
                | map('regex_replace', '^', 'splunk_hec_') | list)
               | difference(cribl_stream_outputs_live_ids) | length > 0)
+      or 'splunk_hec_otel_traces' in cribl_stream_outputs_live_ids
       or 'langfuse_otlp' not in cribl_stream_outputs_live_ids
       or cribl_stream_langfuse_live.get('endpoint', '') != cribl_stream_langfuse_url
       or cribl_stream_langfuse_live.get('username', '') != cribl_stream_langfuse_public_key
@@ -282,9 +284,14 @@
     enabled: "{{ cribl_stream_service_enabled }}"
     daemon_reload: true
 
-# Tagged separately so a converge can `--skip-tags cribl_stream_admin` — the
-# data-path plays (pipelines, unpoller, packs) never depend on the
-# management UI credential and can converge without touching it.
+# Keep admin checks separate from data-path changes. The probe tag runs only
+# when explicitly enabled; routine data-path converges never issue a login.
+- name: Probe Cribl admin logins without changing state
+  ansible.builtin.include_tasks: probe_admin_logins.yml
+  tags:
+    - cribl_stream_admin_probe
+  when: cribl_stream_admin_probe_only | default(false) | bool
+
 - name: Rotate the management API admin credential off the vendor default
   ansible.builtin.include_tasks: rotate_admin_password.yml
   tags:
