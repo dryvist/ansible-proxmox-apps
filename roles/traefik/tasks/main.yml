@@ -10,7 +10,7 @@
     that:
       - traefik_acme_aws_access_key_id | length > 0
       - traefik_acme_aws_secret_access_key | length > 0
-      - traefik_acme_route53_zone_id | length > 0
+      - traefik_acme_route53_zone_id | length > 0 or traefik_acme_route53_discovery | bool
       - traefik_base_domain | length > 0
     fail_msg: >-
       Traefik needs the dedicated `acme` AWS user's Route53 DNS-01 credentials and
@@ -105,53 +105,7 @@
 # servers[] normalise the same way as the primary's; an unset interval/
 # timeout falls back to the primary route's own values.
 - name: Build Traefik routers from the inventory ingress table
-  ansible.builtin.set_fact:
-    traefik_routes: >-
-      {{
-        traefik_routes | default([]) + [{
-          'name': item.name,
-          'fqdn': (item.apex | default(false)) | ternary(
-                    traefik_base_domain,
-                    (item.hostname | default(item.name, true)) ~ '.' ~ traefik_base_domain),
-          'path_prefix': item.path_prefix | default('', true),
-          'priority': item.priority | default(0, true),
-          'servers': (item.backends | default([item.ip | default('')]))
-                     | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
-                     | map('regex_replace', '$', ':' ~ (item.port | string))
-                     | list,
-          'scheme': item.scheme | default('http'),
-          'insecure_tls': item.insecure_tls | default(false),
-          'sticky': item.sticky | default(false),
-          'health_check': item.health_check | default(false),
-          'health_check_path': item.health_check_path | default('/'),
-          'health_check_port': item.health_check_port | default(0),
-          'response_header_timeout': item.response_header_timeout | default(''),
-          'health_check_interval': item.health_check_interval
-            | default(traefik_health_check_interval_overrides[item.name] | default(''), true)
-            | default(traefik_health_check_interval, true),
-          'health_check_timeout': item.health_check_timeout | default(traefik_health_check_timeout, true),
-          'sso': item.sso | default(false),
-          'root_redirect': item.root_redirect | default('', true),
-          'strategy': item.strategy | default('', true),
-          'failover_fallback': (item.failover_fallback is defined) | ternary(
-            {
-              'servers': (item.failover_fallback.backends | default([]))
-                         | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
-                         | map('regex_replace', '$', ':' ~ (item.port | string))
-                         | list,
-              'health_check_path': (item.failover_fallback.health_check_path | default('/')),
-              'health_check_interval': (item.failover_fallback.health_check_interval
-                | default(item.health_check_interval | default(traefik_health_check_interval, true), true)),
-              'health_check_timeout': (item.failover_fallback.health_check_timeout
-                | default(item.health_check_timeout | default(traefik_health_check_timeout, true), true))
-            },
-            None
-          )
-        }]
-      }}
-  loop: "{{ traefik_ingress_routes }}"
-  loop_control:
-    label: "{{ item.name }} -> {{ (item.backends | default([item.ip | default('?')])) | join(', ') }}:{{ item.port }}"
+  ansible.builtin.import_tasks: routes.yml
 
 - name: Resolve the wall kiosk client networks
   ansible.builtin.import_tasks: wall_kiosk.yml

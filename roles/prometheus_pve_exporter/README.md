@@ -24,22 +24,12 @@ dependency from `playbooks/site.yml`; nothing to install separately.
 
 ## Provisioning the PVE API token
 
-Out of scope for this role (no live converge, no credential creation here).
-An operator creates a **read-only, audit-scoped** PVE API token — never the
-Terraform provider's write-capable credential — and promotes it into OpenBao:
-
-```bash
-pveum user token add exporter@pve pve-exporter --privsep 1
-# grant PVEAuditor (or narrower) on the token, not the user
-```
-
-The token identity (`user@realm!tokenname`) and secret then get promoted to
-`secret/apps/pve-exporter` as `PVE_EXPORTER_TOKEN_ID` / `PVE_EXPORTER_TOKEN_SECRET`
-(see `roles/openbao` `openbao_promoted_app_secrets.pve-exporter` and
-`roles/openbao_secrets` `openbao_secrets_domains` → `apps` → `apps/pve-exporter`),
-the same promotion mechanism as every other externally-created credential in
-this repo. Until that exists, `bao_apps_secrets.pve_exporter_token_id`/
-`_secret` are empty and this role no-ops.
+Not created by this role. ansible-proxmox's `pve_api_tokens` role creates a
+dedicated `pve-exporter@pve` user holding `PVEAuditor` at `/`, mints its token,
+and publishes `pve_exporter_token_id` (`user@realm!tokenname`) and
+`pve_exporter_token_secret` to `secret/apps/pve-exporter`. This repo reads that
+path through `roles/openbao_secrets` (`apps` → `apps/pve-exporter`, optional).
+Until it exists, both values are empty and this role no-ops.
 
 ## Where It Runs
 

@@ -1,0 +1,34 @@
+---
+- name: Verify unconfigured clients use the published node roster for NTP
+  ansible.builtin.assert:
+    that:
+      - ntp_servers == ['node-a.' ~ tofu_data.domain ~ ' iburst']
+  when: lookup('env', 'PROXMOX_NTP_SERVERS') | trim | length == 0
+
+- name: Load the NTP role defaults for render checks
+  ansible.builtin.include_vars:
+    file: ../../roles/ntp/defaults/main.yml
+    name: ntp_render_defaults
+
+- name: Verify configured NTP sources suppress public pools
+  vars:
+    ntp_rendered: >-
+      {{ lookup('ansible.builtin.template', '../../roles/ntp/templates/chrony.conf.j2',
+         template_vars=ntp_render_defaults | combine({
+           'ansible_managed': 'NTP render verification',
+           'ntp_servers': ['time.example.test iburst']})) }}
+  ansible.builtin.assert:
+    that:
+      - "'server time.example.test iburst' in ntp_rendered"
+      - ntp_rendered is not search('(?m)^pool ')
+
+- name: Verify standalone NTP clients retain the public pool fallback
+  vars:
+    ntp_rendered: >-
+      {{ lookup('ansible.builtin.template', '../../roles/ntp/templates/chrony.conf.j2',
+         template_vars=ntp_render_defaults | combine({
+           'ansible_managed': 'NTP render verification'})) }}
+  ansible.builtin.assert:
+    that:
+      - ntp_rendered is not search('(?m)^server ')
+      - ntp_rendered | regex_findall('(?m)^pool ') | length == 4

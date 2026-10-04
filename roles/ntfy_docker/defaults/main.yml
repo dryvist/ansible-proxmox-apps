@@ -3,7 +3,10 @@ ntfy_docker_image: "binwiederhier/ntfy:v2.28.0"
 ntfy_docker_container_name: ntfy
 ntfy_docker_http_port: 8080
 ntfy_docker_data_dir: /opt/ntfy
-ntfy_docker_cache_duration: "12h"
+# Bound the messages a reconnecting ntfy-to-slack instance can catch up.
+# Five minutes covers the forwarder's two-minute idle timeout plus its retry
+# interval while limiting how much old alert traffic can replay in one burst.
+ntfy_docker_cache_duration: "5m"
 ntfy_docker_attachment_cache_dir: /var/cache/ntfy/attachments
 
 # Public URL clients reach this server on — the reverse-proxied service FQDN over
@@ -128,3 +131,21 @@ ntfy_docker_canary_interval: 5min
 ntfy_docker_canary_script_path: /usr/local/bin/ntfy-canary
 ntfy_docker_canary_offsite_url: "{{ bao_monitoring_secrets.HEALTHCHECKS_OFFSITE_PING_URL | default('', true) }}"
 ntfy_docker_canary_check_name: ntfy-canary
+
+# =============================================================================
+# ai-jobs publisher
+# =============================================================================
+# Off by default. On: the server opens its auth database, one publish-only
+# user holds write-only access to ntfy_docker_ai_jobs_topic, and that user's
+# single access token is published to the open-llm bucket.
+#
+# ponytail: server-wide default access stays read-write, so anonymous callers
+# read and publish every topic, and this token publishes to any topic. The
+# user's ACL only denies the token reads on the topic. `ntfy access everyone
+# <topic> read-only` would limit publishing on the topic to token holders.
+ntfy_docker_ai_jobs_enabled: false
+ntfy_docker_ai_jobs_topic: ai-jobs
+ntfy_docker_ai_jobs_user: ai-jobs-publisher
+ntfy_docker_ai_jobs_token_label: ai-jobs-dispatcher
+ntfy_docker_auth_dir: "{{ ntfy_docker_data_dir }}/auth"
+ntfy_docker_auth_file: /var/lib/ntfy/user.db

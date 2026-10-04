@@ -21,6 +21,9 @@ class VictoriaMetricsReconcileContract(unittest.TestCase):
         guard = _task_named("Deploy Cribl Stream outputs configuration")["when"][1]
 
         self.assertIn("cribl_stream_victoriametrics_live", facts)
+        self.assertIn("cribl_stream_victoriametrics_otlp_live", facts)
+        self.assertNotIn("cribl_stream_outputs_live.content", str(facts))
+        self.assertIn("'victoriametrics_otlp' not in cribl_stream_outputs_live_ids", guard)
         self.assertIn("'victoriametrics_rw' not in cribl_stream_outputs_live_ids", guard)
 
     def test_output_reconcile_when_victoriametrics_destination_url_drifts(self):
@@ -28,6 +31,9 @@ class VictoriaMetricsReconcileContract(unittest.TestCase):
 
         self.assertIn("cribl_stream_victoriametrics_live.get('url', '')", guard)
         self.assertIn("cribl_stream_victoriametrics_rw_url", guard)
+        self.assertIn("cribl_stream_victoriametrics_otlp_live.get('endpoint', '')", guard)
+        self.assertIn("cribl_stream_victoriametrics_otlp_endpoint", guard)
+        self.assertIn("cribl_stream_victoriametrics_otlp_live.get('systemFields', [])", guard)
 
     def test_validation_requires_live_victoriametrics_output(self):
         validation = (

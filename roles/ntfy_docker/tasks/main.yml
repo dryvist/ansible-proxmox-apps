@@ -27,6 +27,15 @@
     group: root
     mode: "0755"
 
+- name: Create ntfy auth directory
+  ansible.builtin.file:
+    path: "{{ ntfy_docker_auth_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: ntfy_docker_ai_jobs_enabled | bool
+
 # =============================================================================
 # ntfy Configuration
 # =============================================================================
@@ -86,7 +95,10 @@
 # Each stage runs isolated so one unseeded credential cannot hold back the
 # others: Slack is the alert path that must always deploy. Failures are
 # collected and fail the converge once every stage has run.
+# A server-only converge can exclude these independent integrations with
+# --skip-tags ntfy_integrations; ordinary full runs still include every stage.
 - name: Deploy the Slack fan-out (ntfy-to-slack per instance)
+  tags: [ntfy_integrations]
   block:
     - name: Include the Slack fan-out
       ansible.builtin.include_tasks: slack_fanout.yml
@@ -98,6 +110,7 @@
              + ['slack fan-out: ' ~ (ansible_failed_result.msg | default('failed'))] }}
 
 - name: Deploy the Zammad subscriber (native ntfy CLI)
+  tags: [ntfy_integrations]
   when: ntfy_docker_zammad_manage_subscriber | bool
   block:
     - name: Include the Zammad subscriber
@@ -110,6 +123,7 @@
              + ['zammad subscriber: ' ~ (ansible_failed_result.msg | default('failed'))] }}
 
 - name: Deploy the end-to-end canary
+  tags: [ntfy_integrations]
   block:
     - name: Include the canary
       ansible.builtin.include_tasks: canary.yml
@@ -119,6 +133,22 @@
         ntfy_docker_stage_failures: >-
           {{ ntfy_docker_stage_failures | default([])
              + ['canary: ' ~ (ansible_failed_result.msg | default('failed'))] }}
+
+# Needs the live container: a --check run has no auth database to inspect.
+- name: Provision the ai-jobs publisher credentials
+  tags: [ntfy_integrations]
+  when:
+    - ntfy_docker_ai_jobs_enabled | bool
+    - not ansible_check_mode
+  block:
+    - name: Include the ai-jobs credentials
+      ansible.builtin.include_tasks: ai_jobs_publisher.yml
+  rescue:
+    - name: Record the ai-jobs credentials failure
+      ansible.builtin.set_fact:
+        ntfy_docker_stage_failures: >-
+          {{ ntfy_docker_stage_failures | default([])
+             + ['ai-jobs credentials: ' ~ (ansible_failed_result.msg | default('failed'))] }}
 
 # Restart what the stages that did succeed changed before failing the host.
 - name: Flush handlers for the alert-hub stages

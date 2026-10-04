@@ -4,12 +4,18 @@
 # members no route out. The squid container is the sole dual-homed member, so
 # the allowlist in squid.conf IS the network policy for every agent container
 # launched with `--network {{ agent_sandbox_network }}`.
+# Bridge names are fixed: the host nftables filter (agent-sandbox.nft) matches
+# on them. Docker allocates the subnets.
 networks:
   {{ agent_sandbox_network }}:
     name: {{ agent_sandbox_network }}
     internal: true
+    driver_opts:
+      com.docker.network.bridge.name: {{ agent_sandbox_bridge }}
   {{ agent_sandbox_egress_network }}:
     name: {{ agent_sandbox_egress_network }}
+    driver_opts:
+      com.docker.network.bridge.name: {{ agent_sandbox_egress_bridge }}
 
 services:
   squid:
@@ -46,6 +52,57 @@ services:
       - {{ agent_sandbox_cribl_config_dir }}/pipelines:/opt/cribl/local/edge/pipelines:ro
       - {{ agent_sandbox_spool_dir }}:{{ agent_sandbox_spool_mount }}:ro
       - agent-cribl-state:/opt/cribl/state
+
+  # Authenticated native Web/Server. Credentials stay in a separately
+  # provisioned root-owned, secret-group-readable file and are mounted
+  # read-only; persistent state and workspaces are the only writable mounts.
+  zcode-web:
+    image: {{ agent_sandbox_zcode_web_image }}
+    container_name: {{ agent_sandbox_zcode_web_container }}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "1000:1000"
+    group_add:
+      - "{{ agent_sandbox_zcode_web_secret_gid }}"
+    environment:
+      - AGENT_TOOL=zcode-web
+      - AGENT_PORT={{ agent_sandbox_zcode_web_port }}
+      - AGENT_SERVER_HOST=0.0.0.0
+      - AGENT_SERVICE_ENV_FILE=/run/agent-service.env
+      - ZCODE_DATA_BASE_DIR=/home/agent/.zcode
+      - HOME=/home/agent
+      - HTTP_PROXY=http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      - HTTPS_PROXY=http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      - http_proxy=http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      - https_proxy=http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      - NO_PROXY=localhost,127.0.0.1
+      - no_proxy=localhost,127.0.0.1
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: {{ agent_sandbox_zcode_web_pids_limit }}
+    mem_limit: {{ agent_sandbox_zcode_web_memory_limit }}
+    cpus: {{ agent_sandbox_zcode_web_cpus }}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    networks:
+      {{ agent_sandbox_network }}: {}
+    ports:
+      - "{{ agent_sandbox_zcode_web_bind_address }}:{{ agent_sandbox_zcode_web_host_port }}:{{ agent_sandbox_zcode_web_port }}"
+    volumes:
+      - type: bind
+        source: {{ agent_sandbox_zcode_web_env_file }}
+        target: /run/agent-service.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: {{ agent_sandbox_zcode_web_data_dir }}
+        target: /home/agent/.zcode
+      - type: bind
+        source: {{ agent_sandbox_zcode_web_work_dir }}
+        target: /home/agent/work
 
 volumes:
   # Persistent-queue + Edge state; survives container recreate so buffered

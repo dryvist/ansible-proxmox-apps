@@ -225,7 +225,10 @@ class CiBuildCaches(unittest.TestCase):
                     self.assertEqual(platform.get("image"), BASE_IMAGE, platform["name"])
                     self.assertTrue(platform.get("pre_build_image"), platform["name"])
                     self.assertNotIn("dockerfile", platform, platform["name"])
-                tasks = list(_tasks(yaml.safe_load((scenario / "prepare.yml").read_text())))
+                # The prepare playbook molecule runs: the scenario's own, or the
+                # one provisioner.playbooks points it at.
+                prepare = ((config.get("provisioner") or {}).get("playbooks") or {}).get("prepare", "prepare.yml")
+                tasks = list(_tasks(yaml.safe_load((scenario / prepare).read_text())))
                 includes = [t.get("ansible.builtin.include_tasks") for t in tasks]
                 self.assertIn(SHARED_TASK, includes)
                 # The boot wait is the first thing after the connection wait:

@@ -18,6 +18,7 @@
     - ../../roles/homarr/defaults/main/01-runtime.yml
     - ../../roles/homarr/defaults/main/02-app.yml
     - ../../roles/homarr/defaults/main/03-integrations.yml
+    - ../../roles/homarr/defaults/main/04-boards.yml
 
   tasks:
     # --- The pin is real, on disk ----------------------------------------
@@ -277,7 +278,7 @@
           c=sqlite3.connect('file:{{ homarr_db_url }}?mode=ro',uri=True);
           fx='molecule-fixture';
           napp=\"select count(*) from app where name='\"+fx+\"'\";
-          ntile=\"select count(*) from item where kind='app' and options\"
+          ntile=\"select count(*) from item where kind in ('app','bookmarks') and options\"
           \" like '%'||(select id from app where name='\"+fx+\"')||'%'\";
           print(json.dumps({
             'onboarding': list(c.execute('select step from onboarding'))[0][0],
@@ -285,7 +286,11 @@
             'api_keys': list(c.execute('select count(*) from apiKey'))[0][0],
             'integrations': list(c.execute('select count(*) from integration'))[0][0],
             'fixture_apps': list(c.execute(napp))[0][0],
-            'fixture_tiles': list(c.execute(ntile))[0][0]}))"
+            'fixture_tiles': list(c.execute(ntile))[0][0],
+            'settings': {k: json.loads(v)['json']
+              for k, v in c.execute('select setting_key, value from serverSetting')},
+            'public_boards': [r[0] for r in c.execute('select name from board where is_public=1')],
+            'board_ids': dict(c.execute('select name, id from board'))}))"
       register: homarr_verify_db
       changed_when: false
 
@@ -317,4 +322,23 @@
           # catch a wrong wire shape, and twice did not.
           - _db['fixture_apps'] == 1
           - _db['fixture_tiles'] == 1
+          - not _db['settings']['analytics']['enableGeneral']
         fail_msg: "bootstrap state is wrong: {{ _db }}"
+
+    - name: Assert every declared board exists with its visibility and the home board is set
+      # homarr_boards comes from the scenario's extra vars (empty for 1.x).
+      vars:
+        _db: "{{ homarr_verify_db.stdout | from_json }}"
+        _home: >-
+          {{ homarr_boards | selectattr('home', 'defined') | selectattr('home')
+          | map(attribute='name') | first }}
+      ansible.builtin.assert:
+        that:
+          - item.name in _db['board_ids']
+          - (item.name in _db['public_boards']) == item.public
+          - _db['settings']['board']['homeBoardId'] == _db['board_ids'][_home]
+          - _db['settings']['board']['mobileHomeBoardId'] == _db['board_ids'][_home]
+        fail_msg: "board {{ item.name }} is wrong: {{ _db }}"
+      loop: "{{ homarr_boards }}"
+      loop_control:
+        label: "{{ item.name }}"

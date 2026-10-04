@@ -1,0 +1,34 @@
+---
+- name: Build a controller fixture
+  hosts: localhost
+  gather_facts: false
+  tags: [ssh_ca_scope]
+  vars:
+    ansible_become: false
+    ssh_ca_scope_fixture:
+      vms:
+        ssh-on: {ansible_connection: ssh, started: true}
+        ssh-off: {ansible_connection: ssh, started: false}
+        windows-on: {ansible_connection: winrm, started: true}
+      docker_vms:
+        ssh-on: {ansible_connection: ssh}
+  tasks:
+    - name: Declare the active SSH guest in both filtered views
+      ansible.builtin.add_host:
+        name: ssh-on
+        groups: [vms, docker_vms]
+
+    - name: Declare the active WinRM guest
+      ansible.builtin.add_host:
+        name: windows-on
+        groups: [vms, windows_group]
+
+    - name: Set optional contract fixture data
+      ansible.builtin.set_fact:
+        tofu_data: >-
+          {{ ssh_ca_scope_fixture | combine(
+             {'vms': {'missing-ssh': {'ansible_connection': 'ssh', 'started': true}}}
+             if ssh_ca_scope_missing | default(false) | bool else {}, recursive=true) }}
+
+- name: Exercise the real controller scope assertion
+  ansible.builtin.import_playbook: ../../playbooks/site/01-baseline-infra.yml

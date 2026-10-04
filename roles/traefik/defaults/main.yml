@@ -48,6 +48,14 @@ traefik_acme_aws_secret_access_key: "{{ lookup('env', 'AWS_ACME_SECRET_ACCESS_KE
 # Providing the zone id lets lego skip route53:ListHostedZonesByName -> the IAM
 # policy can drop that action (tighter least-privilege).
 traefik_acme_route53_zone_id: "{{ lookup('env', 'ROUTE53_ZONE_ID') | default('', true) }}"
+# A certificate containing names outside the ingress zone must let lego locate
+# each authoritative Route53 zone instead of sending all challenges to one ID.
+traefik_acme_route53_discovery: >-
+  {{ (traefik_ingress_routes | selectattr('tls_domains', 'defined')
+      | map(attribute='tls_domains') | flatten
+      | reject('equalto', traefik_base_domain)
+      | reject('search', '[.]' ~ (traefik_base_domain | regex_escape) ~ '$')
+      | list | length) > 0 }}
 traefik_acme_aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
 # DNS-01 propagation: wait before asking the CA to check the TXT record.
 traefik_acme_dns_resolvers:
@@ -151,9 +159,8 @@ traefik_wall_kiosk_clients: >-
      | map('trim') | reject('equalto', '') | list }}
 
 # traefik_routes[].name values eligible for the kiosk bypass router (not FQDNs).
-traefik_wall_kiosk_route_names:
-  - wall
-  - glance
+# Derived from the wall's slide list (inventory/group_vars/all.yml).
+traefik_wall_kiosk_route_names: "{{ wall_kiosk_route_names }}"
 
 # Resolved by tasks/wall_kiosk.yml (getent, mirrors roles/authelia's own task).
 # Empty until resolved -- empty means dynamic.yml.j2 renders no kiosk router.

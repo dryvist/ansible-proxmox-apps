@@ -1,0 +1,59 @@
+---
+# Host-side backstop for the egress boundary: an nftables table that drops any
+# forwarded container packet that leaves the agents bridge, permits only the
+# published Web connection from Traefik, and denies other forwarding into the
+# bridge. It is loaded before containers exist and lives in its own table, so
+# Docker restarting never removes it or reloads other host rules.
+
+- name: Install nftables
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+
+- name: Create agent sandbox directory for the ruleset
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Require a published service address and inventoried Traefik ingress
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_zcode_web_bind_address is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+      - agent_sandbox_zcode_web_ingress_source_ips | length > 0
+      - agent_sandbox_zcode_web_ingress_source_ips
+        | reject('match', '^([0-9]{1,3}[.]){3}[0-9]{1,3}$') | list | length == 0
+    fail_msg: >-
+      ZCode Web ingress requires an inventory-derived IPv4 bind address and
+      at least one IPv4 address from traefik_group.
+
+- name: Deploy the container-egress ruleset
+  ansible.builtin.template:
+    src: agent-sandbox.nft.j2
+    dest: "{{ agent_sandbox_nft_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    # Parse-check the candidate before it replaces the live file.
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload agent sandbox nftables
+
+- name: Deploy the container-egress filter unit
+  ansible.builtin.template:
+    src: agent-sandbox-nft.service.j2
+    dest: "/etc/systemd/system/{{ agent_sandbox_nft_service }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable and start the container-egress filter
+  ansible.builtin.systemd:
+    name: "{{ agent_sandbox_nft_service }}.service"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply any ruleset change before containers are (re)created
+  ansible.builtin.meta: flush_handlers

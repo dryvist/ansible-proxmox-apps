@@ -205,7 +205,9 @@ inputs:
     # the OTel destination cannot re-serialize the wrapped payload and drops
     # every event ("Event had no scope_metrics or __criblMetrics").
     extractSpans: true
-    extractMetrics: false
+    # Extract OTel metrics into first-class metric events so the metric-only
+    # pipelines below can forward them to both VictoriaMetrics and Splunk.
+    extractMetrics: true
     # Log records become first-class events too: the api_request event is the
     # only per-request token record the producers emit. Each leg below filters
     # to its own signal, so turning this on adds nothing to the trace legs.
@@ -239,6 +241,18 @@ inputs:
       - output: splunk_hec
         pipeline: otel_logs
 {% endif %}
+      # Fifth/sixth legs: extracted OTel metrics stay native metric events.
+      # Splunk gets the llm_metrics metric index; VictoriaMetrics receives
+      # OTLP and applies its configured Prometheus name conversion.
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      - output: splunk_hec_llm
+        pipeline: otel_metrics_to_splunk
+{% else %}
+      - output: splunk_hec
+        pipeline: otel_metrics_to_splunk
+{% endif %}
+      - output: victoriametrics_otlp
+        pipeline: otel_metrics_to_victoriametrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   # Cribl's own built-in internal source (fixed ids CriblLogs/CriblMetrics —
   # cannot be renamed or duplicated). Nothing else observes these two workers'

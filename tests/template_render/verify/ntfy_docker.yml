@@ -12,8 +12,11 @@
     ntfy_docker_container_name: ntfy
     ntfy_docker_http_port: 8080
     ntfy_docker_data_dir: /opt/ntfy
-    ntfy_docker_cache_duration: "12h"
+    ntfy_docker_cache_duration: "5m"
     ntfy_docker_attachment_cache_dir: /var/cache/ntfy/attachments
+    ntfy_docker_ai_jobs_enabled: false
+    ntfy_docker_auth_dir: /opt/ntfy/auth
+    ntfy_docker_auth_file: /var/lib/ntfy/user.db
     # Shape-mirror of the role default: service name + ingress base over HTTPS.
     # A literal placeholder domain stands in for the environment lookup so the
     # assertion below is exact rather than dependent on the runner's env.
@@ -75,7 +78,7 @@
         that:
           - "'cache-file' in _ntfy_server"
           - "'listen-http: \":80\"' in _ntfy_server"
-          - "'cache-duration' in _ntfy_server"
+          - "'cache-duration: \"5m\"' in _ntfy_server"
         fail_msg: >-
           ntfy server.yml.j2 missing expected configuration;
           rendered content: {{ _ntfy_server }}
@@ -94,6 +97,36 @@
           ntfy server.yml.j2 base-url must be the service FQDN over HTTPS
           (never a host address, never plain HTTP);
           rendered content: {{ _ntfy_server }}
+
+    # The ai-jobs publisher is opt-in: with its gate off neither file mentions
+    # the auth database; with it on the config names the file and the compose
+    # file mounts its directory.
+    - name: Assert the auth database stays closed while the ai-jobs gate is off
+      ansible.builtin.assert:
+        that:
+          - "'auth-file' not in _ntfy_server"
+          - "'/var/lib/ntfy' not in _ntfy_compose"
+
+    - name: Render ntfy compose and server config with the ai-jobs gate on
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: docker-compose.yml.j2, dest: test_ntfy_compose_ai_jobs.yml}
+        - {src: server.yml.j2, dest: test_ntfy_server_ai_jobs.yml}
+      vars:
+        ntfy_docker_ai_jobs_enabled: true
+
+    - name: Assert the ai-jobs gate adds the auth file and its volume
+      vars:
+        _compose_on: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_compose_ai_jobs.yml') }}"
+        _server_on: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_server_ai_jobs.yml') }}"
+      ansible.builtin.assert:
+        that:
+          - "'auth-file: \"/var/lib/ntfy/user.db\"' in _server_on"
+          - "'/opt/ntfy/auth:/var/lib/ntfy' in _compose_on"
+          - "'auth-default-access' not in _server_on"
 
     # Slack fan-out: every topic reaches the all-alerts webhook, a declared
     # per-topic route adds its own, and an unseeded key fails the converge.

@@ -8,62 +8,25 @@ These render the REAL expressions out of the task file, never a
 reimplementation.
 """
 
-from pathlib import Path
 import re
 import unittest
 
-import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
-
-ROOT = Path(__file__).resolve().parents[1]
-REL = "roles/vikunja/tasks/hermes_bridge_identity_one.yml"
-DEFAULTS_REL = "roles/vikunja/defaults/main.yml"
-
-
-def _tasks():
-    return yaml.safe_load((ROOT / REL).read_text(encoding="utf-8"))
-
-
-def _defaults():
-    return yaml.safe_load((ROOT / DEFAULTS_REL).read_text(encoding="utf-8"))
-
-
-def _find(name):
-    for task in _tasks():
-        if task.get("name") == name:
-            return task
-    raise AssertionError(f"task {name!r} not found in {REL}")
-
-
-def _render(expr, variables):
-    templar = Templar(loader=DataLoader())
-    templar.available_variables = variables
-    return templar.template(trust_as_template("{{ " + expr + " }}"))
-
-
-def _render_template(text, variables):
-    """Render a set_fact value: already a full `{{ ... }}` string in the
-    source, unlike a bare `when`/`failed_when` condition — do not re-wrap."""
-    templar = Templar(loader=DataLoader())
-    templar.available_variables = variables
-    return templar.template(trust_as_template(text))
-
-
-def _all(conds, variables):
-    if not isinstance(conds, list):
-        conds = [conds]
-    return all(
-        c if isinstance(c, bool) else bool(_render(c, variables)) for c in conds
-    )
+from vikunja_hermes_task_support import (
+    MINT_TASK,
+    RESOLVE_TASK,
+    all_true,
+    defaults,
+    find,
+    render_template,
+)
 
 
 class ResolveStoredToken(unittest.TestCase):
-    TASK = "Resolve the stored token for {{ vikunja_hermes_identity.username }}"
+    TASK = RESOLVE_TASK
 
     def _resolve(self, bao_json):
-        return _render_template(
-            _find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_stored_token"],
+        return render_template(
+            find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_stored_token"],
             {
                 "vikunja_hermes_bao_current": {"json": bao_json},
                 "vikunja_hermes_identity": {"kv_field": "DONNA_VIKUNJA_API_TOKEN"},
@@ -77,6 +40,23 @@ class ResolveStoredToken(unittest.TestCase):
     def test_a_404_read_resolves_empty(self):
         self.assertEqual(self._resolve({"errors": []}), "")
 
+    def _resolve_id(self, bao_json):
+        return render_template(
+            find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_stored_token_id"],
+            {
+                "vikunja_hermes_bao_current": {"json": bao_json},
+                "vikunja_hermes_identity": {"kv_field": "DONNA_VIKUNJA_API_TOKEN"},
+            },
+        )
+
+    def test_the_id_field_resolves_from_the_sibling_key(self):
+        data = {"DONNA_VIKUNJA_API_TOKEN": "tk_live", "DONNA_VIKUNJA_API_TOKEN_ID": 7}
+        self.assertEqual(self._resolve_id({"data": {"data": data}}), 7)
+
+    def test_a_missing_id_field_resolves_empty(self):
+        data = {"DONNA_VIKUNJA_API_TOKEN": "tk_live"}
+        self.assertEqual(self._resolve_id({"data": {"data": data}}), "")
+
     def test_the_field_present_resolves_its_value(self):
         self.assertEqual(
             self._resolve({"data": {"data": {"DONNA_VIKUNJA_API_TOKEN": "tk_live"}}}),
@@ -84,21 +64,19 @@ class ResolveStoredToken(unittest.TestCase):
         )
 
 
-class MintFiresOnAnUnusableStoredToken(unittest.TestCase):
-    TASK = "Mint API token for {{ vikunja_hermes_identity.username }}"
+class MintFiresOnAStaleToken(unittest.TestCase):
+    TASK = MINT_TASK
 
-    def _fires(self, stored_token_works):
-        return _all(
-            _find(self.TASK)["when"],
-            {"vikunja_hermes_stored_token_works": stored_token_works},
+    def _fires(self, token_current):
+        return all_true(
+            find(self.TASK)["when"],
+            {"vikunja_hermes_token_current": token_current},
         )
 
-    def test_mint_fires_when_the_stored_token_does_not_authenticate(self):
-        # The exact defect: a titled token existing must not matter here —
-        # only whether the STORED value at openbao_path works.
+    def test_mint_fires_when_the_token_is_not_current(self):
         self.assertTrue(self._fires(False))
 
-    def test_mint_is_skipped_when_the_stored_token_authenticates(self):
+    def test_mint_is_skipped_when_the_token_is_current(self):
         self.assertFalse(self._fires(True))
 
 
@@ -109,8 +87,8 @@ class RecordStoredTokenUsable(unittest.TestCase):
     )
 
     def _works(self, check_result):
-        return _render_template(
-            _find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_stored_token_works"],
+        return render_template(
+            find(self.TASK)["ansible.builtin.set_fact"]["vikunja_hermes_stored_token_works"],
             {"vikunja_hermes_stored_token_check": check_result},
         )
 
@@ -131,19 +109,19 @@ class RecordStoredTokenUsable(unittest.TestCase):
 class DeleteStaleTokenOnlyWhenNeeded(unittest.TestCase):
     TASK = "Delete the stale API token for {{ vikunja_hermes_identity.username }}"
 
-    def _fires(self, stored_token_works, existing_token_id):
-        return _all(
-            _find(self.TASK)["when"],
+    def _fires(self, token_current, existing_token_id):
+        return all_true(
+            find(self.TASK)["when"],
             {
-                "vikunja_hermes_stored_token_works": stored_token_works,
+                "vikunja_hermes_token_current": token_current,
                 "vikunja_hermes_existing_token_id": existing_token_id,
             },
         )
 
-    def test_fires_when_unusable_and_a_titled_token_exists(self):
+    def test_fires_when_not_current_and_a_titled_token_exists(self):
         self.assertTrue(self._fires(False, "42"))
 
-    def test_does_not_fire_when_the_stored_token_still_works(self):
+    def test_does_not_fire_when_the_token_is_current(self):
         self.assertFalse(self._fires(True, "42"))
 
     def test_does_not_fire_when_there_is_nothing_to_delete(self):
@@ -156,6 +134,14 @@ class DeleteStaleTokenOnlyWhenNeeded(unittest.TestCase):
         # only ever pass a string, which let a `| length > 0` guard on a
         # bare int ship without being caught.
         self.assertTrue(self._fires(False, 42))
+
+
+class TokenListIsAlwaysFetched(unittest.TestCase):
+    def test_listing_is_not_gated_on_the_stored_token(self):
+        # Permission drift is only visible on the list, and the stored token
+        # authenticating says nothing about it.
+        task = find("List existing API tokens for {{ vikunja_hermes_identity.username }}")
+        self.assertNotIn("when", task)
 
 
 class ProbeEndpointStaysInScope(unittest.TestCase):
@@ -172,11 +158,11 @@ class ProbeEndpointStaysInScope(unittest.TestCase):
     TASK = "Verify the stored token still authenticates for {{ vikunja_hermes_identity.username }}"
 
     def test_probe_path_is_a_granted_permission_group(self):
-        url = _find(self.TASK)["ansible.builtin.uri"]["url"]
+        url = find(self.TASK)["ansible.builtin.uri"]["url"]
         match = re.search(r"/api/v1/([a-z_]+)", url)
         assert match is not None, f"no /api/v1/<group> path in {url!r}"
         group = match.group(1)
-        permissions = _defaults()["vikunja_hermes_bridge_permissions"]
+        permissions = defaults()["vikunja_hermes_bridge_permissions"]
         self.assertIn(
             group,
             permissions,

@@ -13,7 +13,8 @@ result leaves on stdout.
 Contract
   stdin : {"api_base","admin_username","admin_password","db_path",
            "bcrypt_module","api_key","api_key_file","force_secret_sync",
-           "integrations":[...], "board":{"name","apps":[{"name","url",...}]}}
+           "major", "integrations":[...], "board":{"name","apps":[{"name","url",...}]},
+           "boards":[...], "widgets":{...}}   (boards/widgets: 2.x, homarr_boards.py)
   stdout: {"changed":bool,"actions":[str],"api_key":str}
   Exit non-zero on any failure. Homarr connection-TESTS an integration before
   it will persist it, so a bad credential surfaces here as a create failure
@@ -27,12 +28,14 @@ import os
 import subprocess
 import sys
 
+from homarr_boards import sync_boards
 from homarr_trpc import (
     DEFAULT_ICON_URL,
     Homarr,
     HomarrError,
     reset_admin_password,
     run_onboarding,
+    run_onboarding_v2,
     write_secret_file,
 )
 
@@ -61,12 +64,11 @@ def _app_payload(want, icon_url):
     }
 
 
-def sync_board(api, api_key, board_name, apps):
-    """Sync one bookmark tile per catalog service onto a board.
+def sync_apps(api, api_key, apps):
+    """Create or update one app row per catalog service.
 
-    Two diffs, both by URL — `app.create` and `board.addItem` always insert,
-    so an undiffed call doubles every tile each converge. `apps` entries are
-    dashboard_catalog rows as-is.
+    Returns (actions, changed, {catalog name: app id}). Diffed by URL, because
+    `app.create` always inserts. `apps` entries are dashboard_catalog rows as-is.
 
     Matched by `href` (the route's clean URL), not by `name`: `name` is now a
     display title (see `_app_payload`) that legitimately changes over time,
@@ -107,6 +109,16 @@ def sync_board(api, api_key, board_name, apps):
                 api.trpc("app.update", payload, api_key=api_key)
                 actions.append(f"updated app {want['name']}")
                 changed = True
+    return actions, changed, app_ids
+
+
+def sync_board(api, api_key, board_name, apps):
+    """Sync one bookmark tile per catalog service onto a board (1.x layout).
+
+    Two diffs, both by URL — `app.create` and `board.addItem` always insert,
+    so an undiffed call doubles every tile each converge.
+    """
+    actions, changed, app_ids = sync_apps(api, api_key, apps)
 
     try:
         board = api.trpc(
@@ -242,7 +254,11 @@ def main():
         #                      rewrite the stored hash.
         username = spec["admin_username"].strip().lower()  # usernameSchema lowercases
         if api.trpc("onboard.currentStep")["current"] != "finish":
-            run_onboarding(api, username, spec["admin_password"])
+            if spec.get("major", 1) >= 2:
+                home = next((b["name"] for b in spec.get("boards") or [] if b.get("home")), "default")
+                run_onboarding_v2(api, username, spec["admin_password"], home)
+            else:
+                run_onboarding(api, username, spec["admin_password"])
             actions.append("completed onboarding and created the admin user")
             changed = True
 
@@ -260,6 +276,15 @@ def main():
     if key_file:
         write_secret_file(key_file, api_key)
 
+    # Upstream defaults usage analytics to on; the guest never reports out.
+    settings = api.trpc("serverSettings.getAll", api_key=api_key, query=True)
+    if settings["analytics"]["enableGeneral"]:
+        api.trpc("serverSettings.saveSettings", {
+            "settingsKey": "analytics", "value": {"enableGeneral": False},
+        }, api_key=api_key)
+        actions.append("disabled usage analytics")
+        changed = True
+
     int_actions, int_changed = sync_integrations(
         api, api_key, spec["integrations"], spec.get("force_secret_sync")
     )
@@ -268,7 +293,16 @@ def main():
 
     board = spec.get("board") or {}
     board_apps = board.get("apps") or []
-    if board_apps:
+    if spec.get("boards"):
+        # 2.x: declared boards replace the 1.x tile placement below.
+        app_actions, app_changed, app_ids = sync_apps(api, api_key, board_apps)
+        board_actions, board_changed = sync_boards(
+            api, api_key, spec["boards"], spec.get("widgets") or {},
+            api.trpc("integration.all", api_key=api_key), board_apps, app_ids,
+        )
+        actions.extend(app_actions + board_actions)
+        changed = changed or app_changed or board_changed
+    elif board_apps:
         board_actions, board_changed = sync_board(
             api, api_key, board.get("name", "default"), board_apps
         )

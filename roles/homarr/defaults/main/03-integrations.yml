@@ -80,7 +80,13 @@ homarr_proxmox_endpoint: >-
   https://{{ ansible_host }}:{{ tofu_data.constants.service_ports.proxmox_web }}
 homarr_proxmox_token_id: ""
 homarr_proxmox_token_secret: ""
-homarr_proxmox_realm: pam
+
+# The token id is the full identity `user@realm!tokenname` (the same shape
+# roles/prometheus_pve_exporter documents). Homarr's proxmox kind wants the
+# three parts as separate secrets, plus the token value as `apiKey`.
+homarr_proxmox_token_parts: >-
+  {{ (homarr_proxmox_token_id | regex_findall('^([^@]+)@([^!]+)!(.+)$') | first)
+     | default(['', '', ''], true) }}
 
 # Always rendered too, same rule as the media candidates above.
 homarr_proxmox_integration:
@@ -88,9 +94,22 @@ homarr_proxmox_integration:
     kind: proxmox
     url: "{{ homarr_proxmox_endpoint }}"
     secrets:
+      - kind: username
+        value: "{{ homarr_proxmox_token_parts[0] }}"
       - kind: tokenId
-        value: "{{ homarr_proxmox_token_id }}"
-      - kind: personalAccessToken
+        value: "{{ homarr_proxmox_token_parts[2] }}"
+      - kind: apiKey
         value: "{{ homarr_proxmox_token_secret }}"
       - kind: realm
-        value: "{{ homarr_proxmox_realm }}"
+        value: "{{ homarr_proxmox_token_parts[1] }}"
+
+# Gatus (a 2.x integration kind) needs no credential. Homarr reads its status
+# API from the status guest directly, because the fronted route is gated; the
+# catalog row's probe_url is that direct address.
+homarr_gatus_integration:
+  - name: Gatus
+    kind: gatus
+    url: >-
+      {{ dashboard_catalog_services | selectattr('name', 'eq', 'gatus')
+         | map(attribute='probe_url') | first | default('', true) }}
+    secrets: []

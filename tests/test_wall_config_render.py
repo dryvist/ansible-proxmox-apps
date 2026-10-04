@@ -23,6 +23,7 @@ def render(**overrides) -> dict:
         "wall_refresh_seconds": "15",
         "wall_extra_nodes": [],
         "wall_slides": [],
+        "ingress_domain": "example.test",
         "dashboard_catalog_services": [
             {"name": "alpha", "group": "apps", "ui": True},
             {"name": "bravo", "group": "apps", "ui": True},
@@ -73,19 +74,22 @@ class WallConfig(unittest.TestCase):
         self.assertEqual(cfg["groups"], [])
         self.assertEqual(cfg["guestCount"], 0)
 
-    def test_glance_slide_appends_after_mc1_5_in_the_rotator_schema(self):
-        slides = [{"name": "GLANCE", "url": "https://glance.example.test"}]
+    def test_slides_append_after_mc1_5_with_derived_urls(self):
+        slides = [
+            {"name": "GLANCE", "route": "glance"},
+            {"name": "HOMARR", "route": "homarr-two", "path": "/boards/wall"},
+        ]
         cfg = render(wall_slides=slides)
         names = [s["name"] for s in cfg["slides"]]
-        self.assertEqual(names, ["MC1", "MC2", "MC3", "MC4", "MC5", "GLANCE"])
+        self.assertEqual(names, ["MC1", "MC2", "MC3", "MC4", "MC5", "GLANCE", "HOMARR"])
         for slide in cfg["slides"]:
             self.assertEqual(set(slide.keys()) - {"seconds"}, {"name", "url"})
-        glance = cfg["slides"][-1]
-        self.assertTrue(glance["url"].startswith("https://"))
-        self.assertEqual(glance["url"], "https://glance.example.test")
+        # The URL is the route under ingress_domain, plus an optional path.
+        self.assertEqual(cfg["slides"][-2]["url"], "https://glance.example.test")
+        self.assertEqual(cfg["slides"][-1]["url"], "https://homarr-two.example.test/boards/wall")
 
     def test_slide_seconds_is_optional_and_passed_through(self):
-        slides = [{"name": "GLANCE", "url": "https://glance.example.test", "seconds": 20}]
+        slides = [{"name": "GLANCE", "route": "glance", "seconds": 20}]
         cfg = render(wall_slides=slides)
         self.assertEqual(cfg["slides"][-1], {"name": "GLANCE", "url": "https://glance.example.test", "seconds": 20})
 

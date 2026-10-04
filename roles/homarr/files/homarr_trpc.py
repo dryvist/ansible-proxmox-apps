@@ -88,6 +88,18 @@ class Homarr:
                 )
             raise HomarrError(f"{procedure} returned unparseable body{hint}: {body[:200]}") from exc
 
+    def claim_onboarding(self):
+        """2.x only: claim the unfinished onboarding for this cookie jar.
+
+        Every onboarding procedure checks the `homarr-onboarding-claim` cookie
+        until the first user exists. One claim is active at a time, for four
+        hours; re-claiming with our own cookie answers `active`.
+        """
+        status, body = self._open(urllib.request.Request(
+            f"{self.base}/api/onboarding/claim", data=b"", method="POST"))
+        if status != 200:
+            raise HomarrError(f"onboarding claim -> HTTP {status}: {body[:200]}")
+
     def login(self, username, password):
         """NextAuth credentials sign-in. Returns True when a session results."""
         self.jar.clear()
@@ -186,6 +198,32 @@ def run_onboarding(api, username, password):
         "confirmPassword": password,
     })
     walk_to("finish")
+
+
+def run_onboarding_v2(api, username, password, board_name):
+    """2.x onboarding: start -> user -> setup -> finish.
+
+    `nextStep` takes no input and only leaves `start`. `initUser` moves the
+    step on to `setup` (credentials is the only provider here). From then on a
+    user exists, so the claim cookie stops working and the admin session takes
+    over. `completeSetup` is the only way to `finish`; it also creates the
+    first board and makes it the server's home board.
+    """
+    api.claim_onboarding()
+    if api.trpc("onboard.currentStep")["current"] == "start":
+        api.trpc("onboard.nextStep", {})
+    api.trpc("user.initUser", {
+        "username": username, "password": password, "confirmPassword": password,
+    })
+    if not api.login(username, password):
+        raise HomarrError("login failed right after onboarding created the admin")
+    api.trpc("onboard.completeSetup", {
+        "server": {"defaultLocale": "en", "defaultColorScheme": "dark"},
+        "board": {
+            "name": board_name, "primaryColor": "#fa5252", "secondaryColor": "#fd7e14",
+            "itemRadius": "lg", "layoutPreset": "wide",
+        },
+    })
 
 
 ONBOARDING_STEPS = (

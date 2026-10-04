@@ -45,11 +45,16 @@
     ansible_become: false
   no_log: true
 
+# The publish writes the minted token's Vikunja id next to the value, in
+# <kv_field>_ID, so the stored value can be tied to the titled token below.
 - name: "Resolve the stored token for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.set_fact:
     vikunja_hermes_stored_token: >-
       {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
          .get(vikunja_hermes_identity.kv_field, '') }}
+    vikunja_hermes_stored_token_id: >-
+      {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+         .get(vikunja_hermes_identity.kv_field ~ '_ID', '') }}
   no_log: true
 
 # A title match on Vikunja's own list only proves a token was minted once; it
@@ -60,14 +65,19 @@
 # identity's own token_permissions actually grants (vikunja_hermes_bridge_
 # permissions always includes projects: read_all), unlike /api/v1/user,
 # which sits outside every bridge identity's scope and would read 401/403
-# even for a freshly-minted, fully working token.
+# even for a freshly-minted, fully working token. An identity whose token
+# holds no read route declares its own `probe`: a route it IS granted, and the
+# statuses that mean the token authenticated (authenticated_statuses).
 - name: "Verify the stored token still authenticates for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.uri:
-    url: "http://localhost:{{ vikunja_port }}/api/v1/projects"
-    method: GET
+    url: "http://localhost:{{ vikunja_port }}{{ vikunja_hermes_identity.probe.path | default('/api/v1/projects') }}"
+    method: "{{ vikunja_hermes_identity.probe.method | default('GET') }}"
     headers:
       Authorization: "Bearer {{ vikunja_hermes_stored_token }}"
-    status_code: [200, 401, 403]
+    body_format: json
+    body: "{{ vikunja_hermes_identity.probe.body | default(omit) }}"
+    status_code: >-
+      {{ ([200, 401, 403] + (vikunja_hermes_identity.probe.authenticated_statuses | default([]))) | unique }}
   register: vikunja_hermes_stored_token_check
   when: vikunja_hermes_stored_token | length > 0
   ignore_errors: true
@@ -77,8 +87,11 @@
   ansible.builtin.set_fact:
     vikunja_hermes_stored_token_works: >-
       {{ vikunja_hermes_stored_token_check.status is defined
-         and vikunja_hermes_stored_token_check.status == 200 }}
+         and vikunja_hermes_stored_token_check.status
+             in (vikunja_hermes_identity.probe.authenticated_statuses | default([200])) }}
 
+# Always listed: whether the stored token is current depends on the titled
+# token's declared permissions, not only on the stored value authenticating.
 - name: "List existing API tokens for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/tokens"
@@ -87,21 +100,36 @@
       Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
     status_code: [200]
   register: vikunja_hermes_token_list
-  when: not vikunja_hermes_stored_token_works
   no_log: true
 
-- name: "Find the existing titled token id for {{ vikunja_hermes_identity.username }}"
+- name: "Find the existing titled token for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.set_fact:
-    vikunja_hermes_existing_token_id: >-
+    vikunja_hermes_titled_token: >-
       {{ (vikunja_hermes_token_list.json | default([], true))
          | selectattr('title', 'defined')
          | selectattr('title', 'equalto', 'hermes-bridge-' ~ vikunja_hermes_identity.username)
-         | map(attribute='id') | list | first | default('', true) }}
-  when: not vikunja_hermes_stored_token_works
+         | list | first | default({}, true) }}
 
-# A stored token that no longer authenticates is worthless; remove the
-# titled token it names (if Vikunja still has one) so a fresh mint below
-# does not accumulate an orphaned entry under the same title.
+# The stored value is current only if it authenticates AND a token titled
+# hermes-bridge-<user> exists whose permissions equal the declared map
+# (action lists compared sorted) AND the stored id names that titled token.
+# An untitled stored token, a titled one whose permissions drifted from the
+# declaration, or a titled one minted but never published, is replaced.
+- name: "Record whether the stored token is current for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.set_fact:
+    vikunja_hermes_existing_token_id: "{{ vikunja_hermes_titled_token.id | default('', true) }}"
+    vikunja_hermes_token_current: >-
+      {%- set have = vikunja_hermes_titled_token.permissions | default({}, true) -%}
+      {%- set want = vikunja_hermes_identity.token_permissions -%}
+      {{ vikunja_hermes_stored_token_works
+         and (vikunja_hermes_titled_token | length > 0)
+         and (vikunja_hermes_stored_token_id | string) == (vikunja_hermes_titled_token.id | default('', true) | string)
+         and dict(have.keys() | zip(have.values() | map('sort')))
+             == dict(want.keys() | zip(want.values() | map('sort'))) }}
+
+# A stale or drifted token is worthless; remove the titled token (if Vikunja
+# still has one) so a fresh mint below does not accumulate an orphaned entry
+# under the same title.
 - name: "Delete the stale API token for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.uri:
     url: "http://localhost:{{ vikunja_port }}/api/v1/tokens/{{ vikunja_hermes_existing_token_id }}"
@@ -110,7 +138,7 @@
       Authorization: "Bearer {{ vikunja_hermes_login.json.token }}"
     status_code: [200, 204, 404]
   when:
-    - not vikunja_hermes_stored_token_works
+    - not vikunja_hermes_token_current
     - vikunja_hermes_existing_token_id | default('', true) | string | length > 0
   no_log: true
 
@@ -129,13 +157,13 @@
            | strftime((now(utc=true).timestamp() | int) + (vikunja_token_expiry_days | int * 86400), utc=true) }}
     status_code: [200, 201]
   register: vikunja_hermes_token_mint
-  when: not vikunja_hermes_stored_token_works
+  when: not vikunja_hermes_token_current
   no_log: true
 
 # KV v2 replaces the whole secret, so merge over current data to preserve
 # siblings — this path also holds the one-time Hermes credential seed (see
 # roles/openbao/templates/hermes-write-policy.hcl.j2). Guarded on an actual
-# delta: once the stored token authenticates, later converges no-op here.
+# delta: once the stored token is current, later converges no-op here.
 - name: "Publish the minted token to OpenBao for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.uri:
     url: >-
@@ -146,9 +174,18 @@
       X-Vault-Token: "{{ vikunja_token_openbao_token }}"
     body_format: json
     body:
+      # Check-and-set against the version read above (0 = the path must not
+      # exist yet): a writer that lands in between makes this write fail
+      # instead of dropping that writer's fields. A deleted-latest 404 body
+      # still carries the metadata version.
+      options:
+        cas: >-
+          {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('metadata', {})
+             .get('version', 0) | int }}
       data: >-
         {{ (vikunja_hermes_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-           | combine({vikunja_hermes_identity.kv_field: vikunja_hermes_token_mint.json.token}) }}
+           | combine({vikunja_hermes_identity.kv_field: vikunja_hermes_token_mint.json.token,
+                      (vikunja_hermes_identity.kv_field ~ '_ID'): vikunja_hermes_token_mint.json.id}) }}
     validate_certs: false
     status_code: [200, 204]
   delegate_to: localhost
