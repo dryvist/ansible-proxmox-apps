@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.55.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.3...v4.55.4) (2026-10-04)
+
+
+### Bug Fixes
+
+* **openbao:** load the scheduled identity's name from 05g in the rotation play ([046c728](https://github.com/dryvist/ansible-proxmox-apps/commit/046c728f287ac815e14f2ddf2dce17a6cdc11c1f))
+* **openbao:** load the scheduled identity's name from 05g in the rotation play ([66941fc](https://github.com/dryvist/ansible-proxmox-apps/commit/66941fcb84c65324dfd504a79f0b303119d1998e))
+
 ## [4.55.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.55.2...v4.55.3) (2026-10-03)
 
 
