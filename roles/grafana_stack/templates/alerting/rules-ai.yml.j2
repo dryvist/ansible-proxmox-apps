@@ -1,0 +1,131 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: AI router, judge, Hermes and
+## zero-data-retention rules.
+## https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
+##
+## llm-router-down reads `up` from the "prometheus" datasource, so it renders
+## only when that datasource is provisioned. The other rules read the router's
+## litellm_* series from "victoriametrics", which this role always provisions.
+{% set _zdr_keys = grafana_stack_alert_zdr_only_keys | map('regex_escape') | join('|') %}
+{% set _zdr_false = grafana_stack_alert_zdr_false_models | map('regex_escape') | join('|') %}
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: ai-observability
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+      - uid: llm-router-down
+        title: LLM router down
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: sum(up{job="llm_router"}) or on() vector(0)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: B
+        for: 3m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "No llm_router scrape target is up."
+
+{% endif %}
+      - uid: llm-judge-failing
+        title: LLM judge failing
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: >-
+                sum(increase(litellm_proxy_failed_requests_metric_total{requested_model="judge"}[15m]))
+                / sum(increase(litellm_proxy_total_requests_metric_total{requested_model="judge"}[15m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.49]}
+              refId: B
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ '{{' }} humanizePercentage $values.A.Value {{ '}}' }} of judge requests failed over 15m."
+
+      - uid: hermes-llm-failures
+        title: Hermes LLM requests failing
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: >-
+                sum by (api_key_alias) (increase(litellm_proxy_failed_requests_metric_total{api_key_alias=~"{{ grafana_stack_alert_hermes_key_regex }}",exception_status=~"5.."}[15m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_hermes_error_count - 1 }}]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "Hermes key {{ '{{' }} $labels.api_key_alias {{ '}}' }} had {{ '{{' }} $values.A.Value {{ '}}' }} server errors in 15m."
+
+      - uid: zdr-key-non-zdr-model
+        title: ZDR-only key reached a non-ZDR model
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: >-
+                sum by (api_key_alias, requested_model) (increase(litellm_proxy_total_requests_metric_total{api_key_alias=~"{{ _zdr_keys }}",requested_model=~"{{ _zdr_false }}"}[10m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "Key {{ '{{' }} $labels.api_key_alias {{ '}}' }} sent requests to {{ '{{' }} $labels.requested_model {{ '}}' }}, which has no zero data retention."
