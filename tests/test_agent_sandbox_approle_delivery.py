@@ -147,7 +147,7 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             helper_file.chmod(0o755)
             env_file.write_text(
                 "AGENT_DISPATCH_NTFY_ALERT_URL=https://ntfy.example.invalid\n"
-                "AGENT_DISPATCH_NTFY_ALERT_TOKEN=tk_fixture123\n"
+                "AGENT_DISPATCH_NTFY_ALERT_TOKEN=test\n"
             )
             env_file.chmod(0o600)
             process_env = {
@@ -161,13 +161,13 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 result_file.read_text(),
-                "https://ntfy.example.invalid|tk_fixture123|run fixture",
+                "https://ntfy.example.invalid|test|run fixture",
             )
 
             env_file.write_text(
                 "AGENT_DISPATCH_NTFY_ALERT_URL="
                 f"https://ntfy.example.invalid/$(touch {marker})\n"
-                "AGENT_DISPATCH_NTFY_ALERT_TOKEN=tk_fixture123\n"
+                "AGENT_DISPATCH_NTFY_ALERT_TOKEN=test\n"
             )
             result = subprocess.run(
                 ["bash", str(helper_file)], env=process_env, capture_output=True, text=True
@@ -200,7 +200,7 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             result_file.chmod(0o666)
             env_file.write_text(
                 "AGENT_DISPATCH_NTFY_ALERT_URL=https://ntfy.example.invalid\n"
-                "AGENT_DISPATCH_NTFY_ALERT_TOKEN=tk_fixture123\n"
+                "AGENT_DISPATCH_NTFY_ALERT_TOKEN=test\n"
             )
             env_file.chmod(0o600)
             helper = (
@@ -222,7 +222,7 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
-                result_file.read_text(), f"{target.pw_uid}|tk_fixture123|run fixture"
+                result_file.read_text(), f"{target.pw_uid}|test|run fixture"
             )
 
     def test_missing_pair_fails_and_credential_tag_runs_alone(self):
