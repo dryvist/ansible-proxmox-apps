@@ -86,7 +86,7 @@ def _read_apps() -> set[str]:
     resolver.available_variables = values
     values["openbao_apps_read_excluded_generated_apps"] = [
         resolver.template(trust_as_template(app))
-        for app in names["openbao_apps_read_excluded_generated_apps"]
+        for app in edge["openbao_apps_read_excluded_generated_apps"]
     ]
     return set(_render(names["openbao_apps_read_apps"], values))
 
@@ -222,9 +222,27 @@ class CriblEdgeReaderContract(unittest.TestCase):
         ttl_defaults = _yaml(DEFAULTS / "08a-admin-and-ttls.yml")
         cidr_defaults = _yaml(DEFAULTS / "08b-cidr-and-unlock.yml")
         approle_defaults = _yaml(DEFAULTS / "07f-workstation-approles.yml")
-        rotation_names = _yaml(
+        rotation_names_expression = _yaml(
             DEFAULTS / "05c-terrakube-and-remaining-domain-names.yml"
         )["openbao_secrets_domain_approle_names"]
+        rotation_values = {}
+        for defaults_file in (
+            "05c-terrakube-and-remaining-domain-names.yml",
+            "05c-ai-agent-names.yml",
+            "05-ssh-ca-engine.yml",
+        ):
+            rotation_values.update(_yaml(DEFAULTS / defaults_file))
+        resolver = Templar(loader=DataLoader())
+        resolver.available_variables = {**rotation_values, **self.edge}
+        rotated_cribl_roles = [
+            resolver.template(trust_as_template(role))
+            for role in self.edge["openbao_cribl_edge_mac_approle_names"]
+        ]
+        rotation_values.update(
+            openbao_cribl_edge_mac_approle_names=rotated_cribl_roles,
+            openbao_hermes_private_agent_secret_id_cidr="",
+        )
+        rotated_roles = _render(rotation_names_expression, rotation_values)
 
         self.assertIn("OPENBAO_WORKSTATION_CIDRS", cidr_defaults["openbao_workstation_cidrs"])
         self.assertEqual(
@@ -250,7 +268,7 @@ class CriblEdgeReaderContract(unittest.TestCase):
                 )
                 self.assertEqual(_seconds(ttl_defaults["openbao_rotated_domain_secret_id_ttl"]), 129600)
                 self.assertEqual(cidr_defaults["openbao_approle_cidr_class_overrides"][role_name], "workstation")
-                self.assertIn(f"openbao_cribl_edge_mac_{suffix}_approle_name", rotation_names)
+                self.assertIn(role_name, rotated_roles)
 
     def test_bounds_contract_rejects_unbounded_or_broader_values(self):
         def valid(secret_id_ttl: str, uses: int, cidr_class: str) -> bool:

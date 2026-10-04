@@ -44,7 +44,7 @@ def _read_apps(names: dict) -> set[str]:
     templar.available_variables["openbao_apps_read_excluded_generated_apps"] = (
         [
             templar.template(trust_as_template(app))
-            for app in names["openbao_apps_read_excluded_generated_apps"]
+            for app in cribl_edge["openbao_apps_read_excluded_generated_apps"]
         ]
     )
     return set(templar.template(trust_as_template(names["openbao_apps_read_apps"])))
