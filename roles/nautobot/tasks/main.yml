@@ -3,7 +3,7 @@
 #   * always: system deps, user/dirs, Redis, SECRET_KEY, config + env + uWSGI +
 #     jobs + systemd units. Deterministic, molecule-tested.
 #   * nautobot_manage_app (default true): venv + pip install of Nautobot and
-#     apps, migrate/collectstatic, superuser, service start, export schedule,
+#     apps, migrate/post_upgrade, superuser, service start, export schedule,
 #     HTTP health. Skipped by molecule; validated live at cutover.
 
 # The database password is rendered into the config and applied to the Postgres
@@ -52,6 +52,7 @@
     name: "{{ nautobot_pip_packages }}"
     state: present
     virtualenv: "{{ nautobot_root }}"
+  register: nautobot_pip_install
   become: true
   become_user: "{{ nautobot_user }}"
   when: nautobot_manage_app | bool
@@ -133,6 +134,7 @@
     owner: "{{ nautobot_user }}"
     group: "{{ nautobot_group }}"
     mode: "0644"
+  register: nautobot_jobs_deploy
   notify: Restart nautobot services
 
 - name: Deploy the Nautobot export schema contract
@@ -185,14 +187,38 @@
       become: true
       become_user: "{{ nautobot_user }}"
 
-    - name: Collect static files
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server collectstatic --no-input"
-      environment: "{{ nautobot_env }}"
-      register: nautobot_collectstatic
-      changed_when: "'0 static files copied' not in nautobot_collectstatic.stdout"
+    # The stamp records the package pins post_upgrade last completed for. A
+    # converge that installs new packages and then fails before this point
+    # reports the install as unchanged on the rerun, so the changed flags alone
+    # would skip post_upgrade (and its collectstatic) for good.
+    - name: Check which package pins post-upgrade last completed for
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/.post_upgrade_stamp"
+        checksum_algorithm: sha1
+      register: nautobot_post_upgrade_stamp
       become: true
       become_user: "{{ nautobot_user }}"
+
+    - name: Run Nautobot post-upgrade operations after app or Job changes
+      ansible.builtin.command:
+        cmd: "{{ nautobot_root }}/bin/nautobot-server post_upgrade --no-migrate"
+      environment: "{{ nautobot_env }}"
+      changed_when: true
+      become: true
+      become_user: "{{ nautobot_user }}"
+      when: >-
+        nautobot_pip_install.changed | default(false)
+        or nautobot_jobs_deploy.changed | default(false)
+        or (nautobot_post_upgrade_stamp.stat.checksum | default(''))
+        != (nautobot_pip_packages | join(',') | hash('sha1'))
+
+    - name: Record the package pins post-upgrade completed for
+      ansible.builtin.copy:
+        content: "{{ nautobot_pip_packages | join(',') }}"
+        dest: "{{ nautobot_root }}/.post_upgrade_stamp"
+        owner: "{{ nautobot_user }}"
+        group: "{{ nautobot_group }}"
+        mode: "0644"
 
     - name: Ensure the Nautobot superuser exists
       ansible.builtin.command:
