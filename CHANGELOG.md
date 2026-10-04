@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.57.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.57.0...v4.57.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* align the domain catalog ([9ceae19](https://github.com/dryvist/ansible-proxmox-apps/commit/9ceae19f54d374d515d3161519c37fb72c3b9094))
+* bound scheduled rotation catalog ([#2399](https://github.com/dryvist/ansible-proxmox-apps/issues/2399)) ([09db846](https://github.com/dryvist/ansible-proxmox-apps/commit/09db846757ff53374e676eeecd0960824e2718e5))
+
 ## [4.57.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.56.0...v4.57.0) (2026-10-04)
 
 
