@@ -43,6 +43,62 @@
     groups: docker
     append: true
 
+- name: Create the ZCode service credential mount directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_zcode_web_env_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create the private ZCode service secret-reader group
+  ansible.builtin.group:
+    name: "{{ agent_sandbox_zcode_web_secret_group }}"
+    system: true
+
+- name: Read the private ZCode service secret-reader group
+  ansible.builtin.getent:
+    database: group
+    key: "{{ agent_sandbox_zcode_web_secret_group }}"
+  register: _agent_sandbox_zcode_secret_group
+
+- name: Require the ZCode service secret-reader group to have no host members
+  vars:
+    _zcode_secret_group_facts: "{{ _agent_sandbox_zcode_secret_group.ansible_facts.getent_group }}"
+    _zcode_secret_group_name: "{{ agent_sandbox_zcode_web_secret_group }}"
+    _zcode_secret_group_members: >-
+      {{ _zcode_secret_group_facts[_zcode_secret_group_name][3] }}
+  ansible.builtin.assert:
+    that:
+      - _zcode_secret_group_members | length == 0
+    fail_msg: >-
+      {{ agent_sandbox_zcode_web_secret_group }} must remain empty on the host;
+      only the ZCode service container receives it as a supplemental GID.
+
+- name: Set the ZCode service container's supplemental secret group
+  vars:
+    _zcode_secret_group_facts: "{{ _agent_sandbox_zcode_secret_group.ansible_facts.getent_group }}"
+    _zcode_secret_group_name: "{{ agent_sandbox_zcode_web_secret_group }}"
+  ansible.builtin.set_fact:
+    agent_sandbox_zcode_web_secret_gid: >-
+      {{ _zcode_secret_group_facts[_zcode_secret_group_name][2] }}
+
+- name: Create persistent ZCode Web data directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_zcode_web_data_dir }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0700"
+
+- name: Create persistent ZCode Web workspace directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_zcode_web_work_dir }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0700"
+
 - name: Deploy squid configuration
   ansible.builtin.template:
     src: squid.conf.j2
@@ -182,7 +238,29 @@
     mode: "0644"
   notify: Restart agent sandbox proxy
 
+- name: Inspect the externally provisioned ZCode service credential file
+  ansible.builtin.stat:
+    path: "{{ agent_sandbox_zcode_web_env_file }}"
+  register: _agent_sandbox_zcode_service_env
+
+- name: Require the ZCode service credential file to use the private secret group
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_zcode_service_env.stat.exists
+      - _agent_sandbox_zcode_service_env.stat.isreg
+      - _agent_sandbox_zcode_service_env.stat.pw_name == 'root'
+      - _agent_sandbox_zcode_service_env.stat.gr_name == agent_sandbox_zcode_web_secret_group
+      - _agent_sandbox_zcode_service_env.stat.mode == '0440'
+    fail_msg: >-
+      {{ agent_sandbox_zcode_web_env_file }} must be provisioned separately
+      as a root:{{ agent_sandbox_zcode_web_secret_group }} mode 0440 file
+      containing only the ZCode Web service credentials. This role does not
+      deliver credentials.
+
 - name: Deploy agent sandbox networks and proxy via docker compose
   community.docker.docker_compose_v2:
     project_src: "{{ agent_sandbox_dir }}"
     state: present
+
+- name: Configure the optional ZCode queue feeder
+  ansible.builtin.include_tasks: main/zcode_feeder.yml

@@ -34,6 +34,51 @@ agent_sandbox_egress_network: agents-egress
 agent_sandbox_proxy_alias: proxy
 agent_sandbox_proxy_port: 3128
 
+# Always-on authenticated ZCode Web service. The published GHCR manifest is
+# pinned here; update it only with the digest produced by the image workflow.
+agent_sandbox_zcode_web_image: >-
+  {{ 'ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
+  ~ '228819b8f7f7e26729d9d2244aa108e45c362ddf64a6999c8ada2fbdfde2ff34' }}
+agent_sandbox_zcode_web_container: agent-zcode-web
+# Docker's VM inventory address is the bind target used by Traefik.
+agent_sandbox_zcode_web_bind_address: "{{ ansible_host }}"
+agent_sandbox_zcode_web_host_port: 443
+agent_sandbox_zcode_web_port: 8080
+agent_sandbox_zcode_web_env_file: /etc/agent-sandbox/zcode-service.env
+agent_sandbox_zcode_web_secret_group: agent-sandbox-zcode
+agent_sandbox_zcode_web_data_dir: /var/lib/agent-sandbox/zcode/data
+agent_sandbox_zcode_web_work_dir: /var/lib/agent-sandbox/zcode/work
+agent_sandbox_zcode_web_memory_limit: 4g
+agent_sandbox_zcode_web_cpus: "2"
+agent_sandbox_zcode_web_pids_limit: 256
+
+# Optional single-host queue feeder. It shares the immutable job image pin with
+# the Web service; activation requires an explicit repository allowlist and
+# separately provisioned runtime credentials.
+agent_sandbox_zcode_feeder_enabled: false
+agent_sandbox_zcode_feeder_image: "{{ agent_sandbox_zcode_web_image }}"
+agent_sandbox_zcode_feeder_project_id: 55
+agent_sandbox_zcode_feeder_label: zcode
+agent_sandbox_zcode_feeder_repositories: []
+agent_sandbox_zcode_feeder_dir: /var/lib/agent-sandbox/zcode/feeder
+agent_sandbox_zcode_feeder_config_file: /etc/agent-sandbox/zcode-feeder.json
+agent_sandbox_zcode_feeder_env_file: /etc/agent-sandbox/zcode-feeder.env
+agent_sandbox_zcode_dispatcher_env_file: /etc/agent-sandbox/dispatcher.env
+agent_sandbox_zcode_feeder_dispatch_state_dir: /var/lib/agent-dispatch
+agent_sandbox_zcode_feeder_dispatcher: /usr/local/bin/agent-dispatch
+agent_sandbox_zcode_feeder_source_commit: 82d44e91da62f4b5f0abbfa67556d2bc4ebce53b
+agent_sandbox_zcode_feeder_source_sha256: 088ee2dff8675ea9e2cfa63947381f01905afdac895e385e129082a05a3bfd34
+agent_sandbox_zcode_feeder_stage_file: /tmp/agent-sandbox-agent-dispatch-82d44e91.sh
+
+# The only forwarded path into the agent bridge is the SSO proxy's published
+# Web connection. Addresses come from the same dynamic inventory that builds
+# the traefik_group; no backend address is maintained in this role.
+agent_sandbox_zcode_web_ingress_source_ips: >-
+  {{ groups.get('traefik_group', [])
+     | map('extract', hostvars)
+     | map(attribute='container_ip', default='')
+     | reject('equalto', '') | list }}
+
 # Host-side identity of the two bridges, so the nftables filter can match them.
 # Names are fixed (max 15 characters) because the rules key off the interface
 # name; Docker allocates the subnets, so the filter carries no address.
@@ -73,6 +118,7 @@ agent_sandbox_egress_domains:
   zai:
     - api.z.ai
     - chat.z.ai
+    - zcode.z.ai
   internal: []
 
 # --- Session-log shipping (Phase D) ------------------------------------------
