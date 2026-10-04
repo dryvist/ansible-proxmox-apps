@@ -111,6 +111,18 @@ systemctl status service-deadman-validate.timer
 #   - off-site healthchecks: the corresponding check flips to down (once seeded)
 ```
 
+## When it pages
+
+Each ntfy alert links here. One alert on DOWN, one reminder every
+`service_deadman_ntfy_remind_minutes` (360) while still down, one on RECOVERED.
+
+1. On the named host: `journalctl -t service-deadman` and the unit's own
+   journal (`journalctl -u <unit>`), e.g. `github-runner@*.service` for
+   `github-runner-pool`, `dns.service` for `technitium-dns`.
+2. Fix through the owning role's converge, never by hand; open an outage
+   ticket while it stays down.
+3. Recovery posts RECOVERED by itself; nothing to acknowledge.
+
 ## Contributing
 
 Edit in a worktree, pass `ansible-lint` (production profile) and the
