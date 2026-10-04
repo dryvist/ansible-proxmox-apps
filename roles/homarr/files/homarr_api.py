@@ -172,17 +172,24 @@ def sync_integrations(api, api_key, integrations, force_secret_sync=False):
     actions, changed = [], False
     existing = {row["name"]: row for row in api.trpc("integration.all", api_key=api_key)}
 
+    def check_result(result):
+        # Homarr 2.x returns failed connection tests as HTTP 200 with an
+        # {"error": ...} body, rather than raising an HTTP/tRPC error.
+        if isinstance(result, dict) and result.get("error") is not None:
+            raise HomarrError(f"connection test failed: {result['error']}")
+
     for want in integrations:
         have = existing.get(want["name"])
         try:
             if have is None:
-                api.trpc("integration.create", {
+                result = api.trpc("integration.create", {
                     "name": want["name"],
                     "kind": want["kind"],
                     "url": want["url"],
                     "secrets": want["secrets"],
                     "attemptSearchEngineCreation": False,
                 }, api_key=api_key)
+                check_result(result)
                 actions.append(f"created {want['name']}")
                 changed = True
                 continue
@@ -202,13 +209,14 @@ def sync_integrations(api, api_key, integrations, force_secret_sync=False):
             linked_app = api.trpc(
                 "integration.byId", {"id": have["id"]}, api_key=api_key, query=True
             ).get("app")
-            api.trpc("integration.update", {
+            result = api.trpc("integration.update", {
                 "id": have["id"],
                 "name": want["name"],
                 "url": want["url"],
                 "secrets": want["secrets"],
                 "appId": (linked_app or {}).get("id"),
             }, api_key=api_key)
+            check_result(result)
             actions.append(f"updated {want['name']}" + ("" if drifted else " (forced secret sync)"))
             changed = True
         except HomarrError as exc:
