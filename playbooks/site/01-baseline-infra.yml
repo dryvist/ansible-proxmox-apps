@@ -190,7 +190,7 @@
 # =============================================================================
 
 - name: Trust the OpenBao SSH client CA on VMs
-  hosts: vms:splunk_vms:docker_vms
+  hosts: vms:splunk_vms:docker_vms:!windows_group
   become: true
   gather_facts: true
   tags:
@@ -205,33 +205,36 @@
 # how two guests carried ssh_ca_trust_rollout_enabled with no trust for
 # weeks. Group membership (unlike --limit) isn't affected by how narrowly a
 # given run is scoped, so this is safe on every converge, not just a full one.
-- name: Assert the CA-trust play reached every VM the tofu contract declares
+- name: Assert CA-trust membership matches the active SSH VM contract
   hosts: localhost
   gather_facts: false
   tags:
     - ssh_ca_trust
+    - ssh_ca_scope
     - baseline
   tasks:
     - name: Compare resolved vms:splunk_vms:docker_vms membership to the tofu contract
       vars:
         _resolved: >-
           {{ (groups['vms'] | default([]))
-             + (groups['splunk_vms'] | default([]))
-             + (groups['docker_vms'] | default([]))
-             | unique }}
+             | union(groups['splunk_vms'] | default([]))
+             | union(groups['docker_vms'] | default([]))
+             | difference(groups['windows_group'] | default([])) }}
         _contracted: >-
-          {{ (tofu_data.vms | default({}) | length)
-             + (tofu_data.splunk_vm | default({}) | length)
-             + (tofu_data.docker_vms | default({}) | length) }}
+          {{ (tofu_data.vms | default({}))
+             | combine(tofu_data.splunk_vm | default({}),
+                       tofu_data.docker_vms | default({}), recursive=true) }}
       ansible.builtin.assert:
         that:
-          - _resolved | length >= _contracted | int
+          - item.key in _resolved
         fail_msg: >-
-          vms:splunk_vms:docker_vms resolved to {{ _resolved | length }} host(s)
-          ({{ _resolved | join(', ') }}) but the tofu contract declares
-          {{ _contracted }} VM(s) — inventory loading is silently dropping at
-          least one, and it will never receive the ssh_ca_trust rollout (or
-          anything else this group targets).
+          Declared active SSH VM {{ item.key }} is absent from the CA-trust host groups.
+      loop: "{{ _contracted | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - item.value.ansible_connection | default('ssh') == 'ssh'
+        - item.value.started | default(true) | bool or converge_stopped_vms | default(false) | bool
 
 # =============================================================================
 # Phase 0a2: Syslog forwarding to the central pipeline
