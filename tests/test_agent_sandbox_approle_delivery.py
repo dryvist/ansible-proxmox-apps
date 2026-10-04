@@ -20,6 +20,42 @@ def _task(tasks, name):
 
 
 class AgentSandboxCredentialContract(unittest.TestCase):
+    def test_secret_reader_group_uses_name_keyed_getent_fields(self):
+        tasks = yaml.safe_load(
+            (ROLE / "tasks" / "main" / "deploy.yml").read_text()
+        )
+        lookup = _task(tasks, "Read the private ZCode service secret-reader group")
+        self.assertEqual(
+            lookup["ansible.builtin.getent"],
+            {
+                "database": "group",
+                "key": "{{ agent_sandbox_zcode_web_secret_group }}",
+            },
+        )
+
+        guard = _task(
+            tasks, "Require the ZCode service secret-reader group to have no host members"
+        )
+        getent_facts = "{{ _agent_sandbox_zcode_secret_group.ansible_facts.getent_group }}"
+        group_name = "{{ agent_sandbox_zcode_web_secret_group }}"
+        self.assertEqual(guard["vars"]["_zcode_secret_group_facts"], getent_facts)
+        self.assertEqual(guard["vars"]["_zcode_secret_group_name"], group_name)
+        self.assertEqual(
+            guard["vars"]["_zcode_secret_group_members"],
+            "{{ _zcode_secret_group_facts[_zcode_secret_group_name][2] }}",
+        )
+        container = _task(
+            tasks, "Set the ZCode service container's supplemental secret group"
+        )
+        self.assertEqual(
+            container["vars"]["_zcode_secret_group_facts"], getent_facts
+        )
+        self.assertEqual(container["vars"]["_zcode_secret_group_name"], group_name)
+        self.assertEqual(
+            container["ansible.builtin.set_fact"]["agent_sandbox_zcode_web_secret_gid"],
+            "{{ _zcode_secret_group_facts[_zcode_secret_group_name][1] }}",
+        )
+
     def test_dispatcher_alert_settings_follow_dispatch_access_gate(self):
         role_tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
         delivery = _task(role_tasks, "Deliver refused-login alert settings")
