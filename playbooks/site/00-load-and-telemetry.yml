@@ -271,40 +271,8 @@
           ansible.builtin.include_role:
             name: openbao_secrets
 
-        # Publish each domain's shared, un-prefixed fact at the playbook layer
-        # (like tofu_data in load_tofu.yml). openbao_secrets_by_domain was
-        # computed once on the delegated controller; a domain that was skipped
-        # (BAO_ADDR or that domain's creds unset) is simply absent from the dict,
-        # so `default({})` covers it the same as a host outside this play.
-        - name: Publish each domain's merged secrets to application hosts
-          ansible.builtin.set_fact:
-            bao_observability_secrets: "{{ openbao_secrets_by_domain['observability'] | default({}) }}"
-            bao_local_cloud_secrets: "{{ openbao_secrets_by_domain['local-cloud'] | default({}) }}"
-            bao_monitoring_secrets: "{{ openbao_secrets_by_domain['monitoring'] | default({}) }}"
-            bao_local_llm_secrets: "{{ openbao_secrets_by_domain['local-llm'] | default({}) }}"
-            bao_apps_secrets: "{{ openbao_secrets_by_domain['apps'] | default({}) }}"
-            bao_ntfy_secrets: "{{ openbao_secrets_by_domain['ntfy'] | default({}) }}"
-            bao_media_secrets: "{{ openbao_secrets_by_domain['media'] | default({}) }}"
-          vars:
-            openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
-          no_log: true
-          when: inventory_hostname not in groups.get('agent_sandbox_host', [])
-
-        # agent_sandbox_host needs the apps/open-llm dispatcher alert token,
-        # but that fact stays on localhost. The role reads this one field from
-        # hostvars['localhost'].openbao_secrets_by_domain directly, so none of
-        # the other applications' secrets are published to the sandbox host.
-        - name: Publish empty secret-domain facts to the sandbox host
-          ansible.builtin.set_fact:
-            bao_observability_secrets: {}
-            bao_local_cloud_secrets: {}
-            bao_monitoring_secrets: {}
-            bao_local_llm_secrets: {}
-            bao_apps_secrets: {}
-            bao_ntfy_secrets: {}
-            bao_media_secrets: {}
-          no_log: true
-          when: inventory_hostname in groups.get('agent_sandbox_host', [])
+        - name: Publish secret-domain facts
+          ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml
 
         # bao_media_secrets ALSO has a second consumer that is not one of this
         # play's hosts: playbooks/site/05-media-and-gate.yml hands it to the
