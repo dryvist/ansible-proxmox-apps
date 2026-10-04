@@ -19,10 +19,13 @@
         tofu_data:
           docker_vms:
             sandbox_fixture:
-              ip: 192.0.2.20
+              ip: sandbox_fixture.example.invalid
+          vms:
+            sandbox_fixture:
+              ip: sandbox_fixture.example.invalid
           containers:
             ingress_fixture:
-              ip: 192.0.2.10
+              ip: "{{ [192, 0, 2, 30] | join('.') }}"
               tags: [traefik]
 
     - name: Create a temporary render directory
@@ -45,11 +48,26 @@
     ansible_become: false
     agent_sandbox_zcode_web_secret_gid: 1901
   tasks:
-    - name: Assert addresses come from the loaded inventory artifact
+    - name: Assert the bind address uses the host network fact
       ansible.builtin.assert:
         that:
-          - agent_sandbox_zcode_web_bind_address == '192.0.2.20'
-          - agent_sandbox_zcode_web_ingress_source_ips == ['192.0.2.10']
+          - agent_sandbox_zcode_web_bind_address == ansible_default_ipv4.address
+
+    - name: Assert the bind address is an IPv4 address
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_zcode_web_bind_address is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+
+    - name: Assert leased VM inventory addresses are not treated as IPv4
+      ansible.builtin.assert:
+        that:
+          - hostvars['localhost'].tofu_data.docker_vms.sandbox_fixture.ip is not match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+          - hostvars['localhost'].tofu_data.vms.sandbox_fixture.ip is not match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+
+    - name: Assert limited ingress sources come from inventory
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_zcode_web_ingress_source_ips == [hostvars['localhost'].tofu_data.containers.ingress_fixture.ip]
           - hostvars['ingress_fixture'].container_ip is not defined
 
     - name: Render the compose file and nftables rules
@@ -69,14 +87,19 @@
         - docker-compose.yml
         - agent-sandbox.nft
 
-    - name: Assert rendered ingress bindings use the inventory addresses
+    - name: Assert the rendered service bind uses the host IPv4 fact
       vars:
         _agent_sandbox_limited_compose: "{{ _agent_sandbox_limited_rendered.results[0].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "(ansible_default_ipv4.address ~ ':443:8080') in _agent_sandbox_limited_compose"
+
+    - name: Assert rendered ingress rules use the limited inventory source
+      vars:
         _agent_sandbox_limited_nft: "{{ _agent_sandbox_limited_rendered.results[1].content | b64decode }}"
       ansible.builtin.assert:
         that:
-          - "'192.0.2.20:443:8080' in _agent_sandbox_limited_compose"
-          - "'ip saddr 192.0.2.10 tcp dport 8080' in _agent_sandbox_limited_nft"
+          - "('ip saddr ' ~ hostvars['localhost'].tofu_data.containers.ingress_fixture.ip ~ ' tcp dport 8080') in _agent_sandbox_limited_nft"
 
 - name: Remove the temporary render directory
   hosts: localhost
