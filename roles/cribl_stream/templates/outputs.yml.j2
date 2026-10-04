@@ -107,6 +107,40 @@ outputs:
     # the route feeding Splunk.
     onBackpressure: drop
 
+  # OTLP metrics from in_otel. VictoriaMetrics uses Prometheus naming, so
+  # this destination keeps producer metric names and dimensions intact for
+  # dashboards while leaving the existing remote_write receiver unchanged.
+  victoriametrics_otlp:
+    id: victoriametrics_otlp
+    type: open_telemetry
+    disabled: false
+    protocol: http
+    endpoint: "{{ cribl_stream_victoriametrics_otlp_endpoint }}"
+    otlpVersion: "1.3.1"
+    # Avoid adding Cribl-only dimensions to the producer's label set.
+    systemFields: []
+    responseRetrySettings:
+{% for status in [429, 502, 503, 504] %}
+      - httpStatus: {{ status }}
+        initialBackoff: 1000
+        backoffRate: 2
+        maxBackoff: 60000
+{% endfor %}
+    timeoutRetrySettings:
+      timeoutRetry: true
+      initialBackoff: 1000
+      backoffRate: 2
+      maxBackoff: 60000
+    responseHonorRetryAfterHeader: true
+    # Bound disk use and keep VictoriaMetrics as a secondary fan-out sink.
+    onBackpressure: queue
+    pqMode: error
+    pqOnBackpressure: drop
+    pqPath: "$CRIBL_HOME/state/queues"
+    pqMaxFileSize: "100 MB"
+    pqMaxSize: "1 GB"
+    pqCompress: gzip
+
   # Arize Phoenix OTLP destination — second sink for the same LLM fabric
   # traces (bearer API key minted in the Phoenix UI). Phoenix reads the OTel
   # GenAI / OpenInference attributes as emitted, so this leg gets the
