@@ -19,6 +19,105 @@
       Host-only HTTPS reachability returned HTTP
       {{ agent_sandbox_openbao_host_probe.status }} with proxy use disabled.
 
+- name: Inspect the ZCode Web container without exposing its environment
+  community.docker.docker_container_info:
+    name: "{{ agent_sandbox_zcode_web_container }}"
+  register: _agent_sandbox_zcode_web_probe
+  no_log: true
+
+- name: Check the ZCode Web runtime fence
+  vars:
+    _agent_sandbox_laptop_credential_pattern: >-
+      (?i)(ANTHROPIC|CLAUDE|CODEX|OPENAI|OPENROUTER|ZAI|GEMINI|GOOGLE_API_KEY|MISTRAL|HUGGINGFACE|HF_TOKEN|GITHUB|GH_TOKEN|AWS_|DOPPLER|OPENBAO|VAULT|SOPS|SSH_AUTH_SOCK)
+    _agent_sandbox_zcode_env: >-
+      {{ _agent_sandbox_zcode_web_probe.container.Config.Env | default([]) }}
+    _agent_sandbox_zcode_env_names: >-
+      {{ _agent_sandbox_zcode_env | map('regex_replace', '=.*$', '') | list }}
+    _agent_sandbox_zcode_mounts: >-
+      {{ _agent_sandbox_zcode_web_probe.container.Mounts | default([]) }}
+    _agent_sandbox_zcode_mount_destinations: >-
+      {{ _agent_sandbox_zcode_mounts | map(attribute='Destination') | list }}
+    _agent_sandbox_zcode_allowed_mount_destinations:
+      - /run/agent-service.env
+      - /home/agent/.zcode
+      - /home/agent/work
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_zcode_web_probe.container.State.Running
+      - _agent_sandbox_zcode_web_probe.container.Config.Image == agent_sandbox_zcode_web_image
+      - agent_sandbox_zcode_web_image is search('@sha256:[a-f0-9]{64}$')
+      - >-
+        _agent_sandbox_zcode_env | select('search', '(?i)openbao') | list | length == 0
+      - >-
+        _agent_sandbox_zcode_env_names
+        | select('search', _agent_sandbox_laptop_credential_pattern) | list | length == 0
+      - >-
+        _agent_sandbox_zcode_mount_destinations
+        | difference(_agent_sandbox_zcode_allowed_mount_destinations) | length == 0
+      - >-
+        _agent_sandbox_zcode_allowed_mount_destinations
+        | difference(_agent_sandbox_zcode_mount_destinations) | length == 0
+      - >-
+        (_agent_sandbox_zcode_mounts
+        | selectattr('Destination', 'equalto', '/run/agent-service.env')
+        | map(attribute='RW') | list) == [false]
+      - >-
+        (_agent_sandbox_zcode_mounts
+        | selectattr('Destination', 'equalto', '/run/agent-service.env')
+        | map(attribute='Source') | list) == [agent_sandbox_zcode_web_env_file]
+      - >-
+        (_agent_sandbox_zcode_mounts
+        | selectattr('Destination', 'equalto', '/home/agent/.zcode')
+        | map(attribute='Source') | list) == [agent_sandbox_zcode_web_data_dir]
+      - >-
+        (_agent_sandbox_zcode_mounts
+        | selectattr('Destination', 'equalto', '/home/agent/work')
+        | map(attribute='Source') | list) == [agent_sandbox_zcode_web_work_dir]
+    fail_msg: >-
+      The ZCode Web runtime is not on its pinned image or violates the
+      credential or mount boundary.
+    success_msg: >-
+      ZCode Web is running on its pinned digest with no OpenBao address,
+      workstation credential variables, or extra mounts.
+
+- name: Check the ZCode Web service file contains no OpenBao address or workstation credential name
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -Eiq
+      - >-
+        openbao|^[[:space:]]*(vault|doppler|anthropic|claude|codex|openai|openrouter|zai|gemini|google_api_key|mistral|huggingface|hf_|github|gh_|aws_|sops|ssh_auth_sock)[a-z0-9_]*=
+      - "{{ agent_sandbox_zcode_web_env_file }}"
+  register: _agent_sandbox_zcode_service_file_forbidden_content
+  changed_when: false
+  failed_when: false
+
+- name: Assert the ZCode Web service file contains only service credentials
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_zcode_service_file_forbidden_content.rc == 1
+    fail_msg: >-
+      The ZCode Web service file contains an OpenBao address or a
+      workstation credential name.
+    success_msg: >-
+      The ZCode Web service file contains no OpenBao address or
+      workstation credential name.
+
+- name: Check the container-facing allowlist for an OpenBao address
+  community.docker.docker_container_exec:
+    container: "{{ agent_sandbox_proxy_container }}"
+    command: grep -iq openbao /etc/squid/allowed-domains.txt
+  register: _agent_sandbox_openbao_allowlist_match
+  changed_when: false
+  failed_when: false
+
+- name: Assert the container-facing allowlist has no OpenBao address
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_openbao_allowlist_match.rc == 1
+    fail_msg: The container-facing allowlist contains an OpenBao address.
+    success_msg: The container-facing allowlist contains no OpenBao address.
+
 - name: Read the sandbox network gateways for the packet probe
   ansible.builtin.command:
     cmd: >-
@@ -182,7 +281,6 @@
           Expected a failed direct ICMP packet and an increased sandbox drop
           counter; ping rc={{ agent_sandbox_probe_ping.rc }}, before={{
           _agent_sandbox_probe_before }}, after={{ _agent_sandbox_probe_after }}.
-        quiet: true
   always:
     - name: Remove the throwaway nftables probe container
       community.docker.docker_container:
