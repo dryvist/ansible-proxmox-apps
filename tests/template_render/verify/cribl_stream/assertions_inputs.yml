@@ -47,13 +47,18 @@
       - "'type: open_telemetry' in _cribl_stream_inputs"
       - "'port: 4318' in _cribl_stream_inputs"
       - "'extractSpans: true' in _cribl_stream_inputs"
+      - "'extractMetrics: true' in _cribl_stream_inputs"
       - "'pipeline: otel_stamp' in _cribl_stream_inputs"
+      - "'output: splunk_hec' in _cribl_stream_inputs"
+      - "'pipeline: otel_metrics_to_splunk' in _cribl_stream_inputs"
+      - "'output: victoriametrics_otlp' in _cribl_stream_inputs"
+      - "'pipeline: otel_metrics_to_victoriametrics' in _cribl_stream_inputs"
       - "\"index || 'otel_traces'\" in _cribl_stream_otel_pipeline"
       - "\"sourcetype || 'otel:span'\" in _cribl_stream_otel_pipeline"
     fail_msg: >-
-      inputs.yml.j2 must include an open_telemetry in_otel listener on the
-      otel port with extractSpans, wired to the otel_stamp pipeline that
-      stamps index=otel_traces / sourcetype=otel:span
+      inputs.yml.j2 must extract spans, logs and metrics from in_otel and fan
+      metrics to their Splunk and VictoriaMetrics pipelines without changing
+      the existing otel_stamp span leg
 
 - name: Assert the Langfuse OTLP leg renders end to end
   ansible.builtin.assert:
@@ -193,24 +198,24 @@
       # langfuse_otlp + phoenix_otlp: a dead sink must not gate in_otel
       # admission (apps: phoenix_otlp latched Red and 503'd in_otel on both
       # nodes even though the destination itself was healthy).
-      - "_cribl_stream_outputs_pi.count('type: open_telemetry') == 2"
+      - "_cribl_stream_outputs_pi.count('type: open_telemetry') == 3"
       # + victoriametrics_rw: the metrics fan-out must not gate the route
       # that also feeds Splunk.
       - "_cribl_stream_outputs_pi.count('type: prometheus') == 1"
       # langfuse_otlp and victoriametrics_rw drop; phoenix_otlp queues to a
       # capped disk queue that itself drops when full. None of them block.
       - "_cribl_stream_outputs_pi.count('onBackpressure: drop') == 2"
-      - "_cribl_stream_outputs_pi.count('onBackpressure: queue') == 1"
-      - "_cribl_stream_outputs_pi.count('pqOnBackpressure: drop') == 1"
+      - "_cribl_stream_outputs_pi.count('onBackpressure: queue') == 2"
+      - "_cribl_stream_outputs_pi.count('pqOnBackpressure: drop') == 2"
       # Every splunk_hec output (base + per-index) keeps its current
       # block behaviour — unchanged by this fix.
       - "_cribl_stream_outputs_pi.count('type: splunk_hec')
          == _cribl_stream_outputs_pi.count('onBackpressure: block')"
     fail_msg: >-
-      outputs.yml.j2 must render onBackpressure: drop on langfuse_otlp and
-      victoriametrics_rw, and onBackpressure: queue with pqOnBackpressure: drop
-      on phoenix_otlp, so a dead secondary sink cannot gate its source, while
-      every splunk_hec destination keeps its current onBackpressure: block.
+      outputs.yml.j2 must keep backpressure bounded on each secondary sink:
+      Langfuse and remote_write drop, while Phoenix and OTLP metrics use a
+      capped disk queue that drops if full. Every splunk_hec destination keeps
+      its current onBackpressure: block.
 
 - name: Assert the built-in Cribl Internal source renders both feeds
   ansible.builtin.assert:
