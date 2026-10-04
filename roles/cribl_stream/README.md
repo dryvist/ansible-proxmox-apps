@@ -54,6 +54,17 @@ Configure data pipeline via Cribl Web UI after Ansible deployment:
 - Configure persistent queue location
 - Set up processing node mode
 
+## Admin Login Checks
+
+`--tags cribl_stream_admin` makes one vendor-default login attempt and reports
+only its HTTP status. If the default is accepted, the role rotates it to the
+configured managed credential and verifies that credential.
+
+For a read-only follow-up, use
+`--tags cribl_stream_admin_probe --extra-vars cribl_stream_admin_probe_only=true`.
+It makes one vendor-default attempt, reports only its HTTP status, and verifies
+the configured credential without changing files or restarting Cribl.
+
 ## Handlers
 
 - `restart cribl stream`: Restart the Cribl Stream service
