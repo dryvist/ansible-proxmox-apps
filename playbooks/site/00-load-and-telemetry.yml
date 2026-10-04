@@ -205,7 +205,7 @@
     object_storage_group:
     netmon_group:prometheus_group:unifi_metrics_group:
     postgres_group:postgres_ai_group:hindsight_group:nautobot_group:zammad_group:vikunja_group:
-    immich_group:homarr_group:authelia_group:grafana_group:ntfy_group:status_group
+    immich_group:homarr_group:authelia_group:grafana_group:ntfy_group:status_group:agent_sandbox_host
   gather_facts: false
   # status_group: status_stack (Gatus + Uptime Kuma) reads
   # bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN via `mandatory()`, so it must
@@ -276,7 +276,7 @@
         # computed once on the delegated controller; a domain that was skipped
         # (BAO_ADDR or that domain's creds unset) is simply absent from the dict,
         # so `default({})` covers it the same as a host outside this play.
-        - name: Publish each domain's merged secrets to every host in this play
+        - name: Publish each domain's merged secrets to application hosts
           ansible.builtin.set_fact:
             bao_observability_secrets: "{{ openbao_secrets_by_domain['observability'] | default({}) }}"
             bao_local_cloud_secrets: "{{ openbao_secrets_by_domain['local-cloud'] | default({}) }}"
@@ -288,6 +288,23 @@
           vars:
             openbao_secrets_by_domain: "{{ hostvars['localhost'].openbao_secrets_by_domain | default({}) }}"
           no_log: true
+          when: inventory_hostname not in groups.get('agent_sandbox_host', [])
+
+        # agent_sandbox_host needs the apps/open-llm dispatcher alert token,
+        # but that fact stays on localhost. The role reads this one field from
+        # hostvars['localhost'].openbao_secrets_by_domain directly, so none of
+        # the other applications' secrets are published to the sandbox host.
+        - name: Publish empty secret-domain facts to the sandbox host
+          ansible.builtin.set_fact:
+            bao_observability_secrets: {}
+            bao_local_cloud_secrets: {}
+            bao_monitoring_secrets: {}
+            bao_local_llm_secrets: {}
+            bao_apps_secrets: {}
+            bao_ntfy_secrets: {}
+            bao_media_secrets: {}
+          no_log: true
+          when: inventory_hostname in groups.get('agent_sandbox_host', [])
 
         # bao_media_secrets ALSO has a second consumer that is not one of this
         # play's hosts: playbooks/site/05-media-and-gate.yml hands it to the
