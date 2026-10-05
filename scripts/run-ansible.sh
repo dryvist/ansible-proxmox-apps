@@ -166,27 +166,9 @@ if [[ -n ${SSH_SIGNER_ROLE_ID:-} && -n ${SSH_SIGNER_SECRET_ID:-} ]] &&
   exit 1
 fi
 
-# The store role logs in for itself, at the point it reconciles, so this wrapper
-# neither mints nor holds a reconcile token.
-#
-# Minting here instead put the login at the start of the run while the store play
-# executes over an hour later, and the role's token lives 30 minutes. The token
-# was therefore expired before its first use, and the store answers an expired
-# token with the same `403 permission denied` it uses for a policy denial -- so
-# the fault read as a missing grant the identity has always had. Raising the
-# lifetime to cover the gap would make the credential longer-lived to accommodate
-# a scheduling defect, and would fail again the first time a run outgrew it.
-#
-# An absent credential is NOT an error here, and the contract tests assert that:
-# a workstation caller supplies reconcile secret-zero to the role directly, and
-# the role itself refuses loudly when it is configured but cannot authenticate.
-# Say which case this is so a silent skip on the plane stays impossible.
-if [[ -n ${BAO_ADDR:-} ]] &&
-   [[ -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID:-} ||
-      -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID:-} ]]; then
-  echo "run-ansible: no reconcile identity in this environment; the store" >&2
-  echo "  role will fall back to reconcile secret-zero, or skip and say so." >&2
-fi
+# The OpenBao role obtains its reconcile identity immediately before that play.
+# Keep authentication adjacent to use instead of holding a token through the
+# earlier plays in a full site run.
 
 # WHICH IDENTITY THIS CONVERGE AUTHENTICATES AS.
 #
@@ -254,6 +236,17 @@ select_converge_identity() {
   fi
 }
 select_converge_identity
+
+# BAO_TOKEN is the runner's SSH-signing token, not a reconcile credential.
+# Check only identities the OpenBao role actually accepts.
+if [[ -n ${BAO_ADDR:-} && -z ${OPENBAO_PROVISIONING_TOKEN:-} &&
+      -z ${OPENBAO_RECONCILE_TOKEN:-} &&
+      -z $CONVERGE_ROLE_ID &&
+      ( -z ${OPENBAO_APPROLE_APPROLE_ISSUER_ROLE_ID:-} ||
+        -z ${OPENBAO_APPROLE_APPROLE_ISSUER_SECRET_ID:-} ) ]]; then
+  echo "run-ansible: no reconcile token or AppRole issuer in this environment;" >&2
+  echo "  the store role will skip reconciliation and report the missing identity." >&2
+fi
 
 if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; then
   # FAIL-LOUD: when the cert env is present, a mint failure is an error — never
