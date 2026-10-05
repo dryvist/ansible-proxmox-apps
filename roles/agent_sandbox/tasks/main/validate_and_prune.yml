@@ -36,6 +36,18 @@
   changed_when: false
   failed_when: agent_sandbox_deny_probe.rc == 0 or agent_sandbox_deny_probe.stdout != '403'
 
+- name: Probe a Cursor service domain through the proxy
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null -w '%{http_code}' --max-time 20
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://cursor.sh
+  register: agent_sandbox_cursor_probe
+  changed_when: false
+  failed_when: agent_sandbox_cursor_probe.rc != 0 or agent_sandbox_cursor_probe.stdout == '000'
+
 - name: Read squid access evidence for the egress probes
   community.docker.docker_container_exec:
     container: "{{ agent_sandbox_proxy_container }}"
@@ -47,6 +59,7 @@
   ansible.builtin.assert:
     that:
       - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT api.z.ai:443')
+      - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT cursor[.]sh:443')
       - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT cdn-zcode.z.ai:443')
       - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT example.com:443')
 
