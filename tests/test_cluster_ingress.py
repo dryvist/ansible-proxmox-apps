@@ -49,6 +49,58 @@ class ClusterIngress(unittest.TestCase):
                 self.assertEqual(_all(writer["when"], variables), role == "primary" or zone == "example.com")
                 self.assertEqual(_render(writer["ansible.builtin.uri"]["body"]["ipAddress"], variables, wrap=False), "192.0.2.50")
 
+    def test_dns_ingress_aliases_match_router_hostname_fallback(self):
+        route = dict(self.variables["tofu_data"]["ingress"][0])
+        route.pop("apex")
+        route.pop("hostname", None)
+        blank_hostname_route = dict(route, name=route["fqdn"], hostname="")
+        explicit_hostname_route = dict(route, hostname=route["host_aliases"][0])
+        variables = dict(
+            self.variables,
+            tofu_data={"ingress": [route, explicit_hostname_route, blank_hostname_route]},
+        )
+
+        self.assertEqual(
+            set(_render("technitium_dns_ingress_aliases", variables)),
+            {route["name"], explicit_hostname_route["hostname"], blank_hostname_route["name"]},
+        )
+        aliases = _render("technitium_dns_ingress_aliases", variables)
+        ingress_variables = dict(variables, technitium_dns_ingress_aliases=aliases)
+        for task_name in [
+            "Create Traefik ingress alias A records",
+            "Create Traefik ingress alias apex A records",
+        ]:
+            writer = _find("roles/technitium_dns/tasks/main/ingress_and_apex.yml", task_name)
+            writer_variables = dict(
+                ingress_variables,
+                item=route["name"],
+                technitium_dns_role="primary",
+                technitium_dns_apply=True,
+            )
+            self.assertIn(route["name"], _render(writer["loop"], writer_variables, wrap=False))
+            self.assertEqual(
+                _render(
+                    writer["ansible.builtin.uri"]["body"]["ipAddress"],
+                    writer_variables,
+                    wrap=False,
+                ),
+                self.variables["technitium_dns_ingress_target_ip"],
+            )
+
+        host_ip = self.variables["technitium_dns_ingress_target_ip"]
+        build_variables = dict(
+            ingress_variables,
+            item=route["name"],
+            hostvars={
+                route["name"]: {
+                    "hostname": route["name"],
+                    "container_ip": host_ip,
+                }
+            },
+        )
+        builder = _find("roles/technitium_dns/tasks/main/build_records.yml", "Build A records from inventory")
+        self.assertFalse(_all(builder["when"], build_variables))
+
     def test_ingress_ownership_disables_legacy_apex_writer(self):
         self.assertTrue(_render("technitium_dns_cluster_ingress_owned", self.variables))
         task = _find("roles/technitium_dns/tasks/main/health_check.yml", "Configure the health-checked zone apex")
