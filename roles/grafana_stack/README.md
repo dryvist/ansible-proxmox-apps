@@ -49,9 +49,9 @@ another relay.
 - `zdr-key-non-zdr-model`: a key in `grafana_stack_alert_zdr_only_keys`
   requested a model in `grafana_stack_alert_zdr_false_models`.
 
-The test uses Grafana 12.4.3's receiver-test API to send a synthetic alert
-carrying the corresponding rule title. It checks the notification path; it
-does not stop or change a target or evaluate the rule's metric expression.
+A receiver API request sends a sample alert with its rule title. It checks
+the notification path without stopping a target or evaluating the metric
+expression.
 
 ```sh
 GRAFANA_URL="$GRAFANA_URL" GRAFANA_API_TOKEN="$GRAFANA_API_TOKEN" \
