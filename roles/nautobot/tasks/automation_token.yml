@@ -1,0 +1,96 @@
+---
+# Mint a dedicated Nautobot automation token and publish it as a sibling key
+# under the existing apps/nautobot KV v2 secret. Nautobot 3.2.6 stores object
+# notes as extras.Note; its Notes API checks view/add on that content type and
+# view on the annotated target. Referencing Planned module status also needs
+# extras.Status view. Keep both extras permissions narrow and separate from
+# DCIM add/change permissions.
+
+- name: Assert OpenBao write credentials are present
+  ansible.builtin.assert:
+    that:
+      - nautobot_token_openbao_addr | length > 0
+      - nautobot_token_openbao_token | length > 0
+    fail_msg: >-
+      nautobot_automation_token_publish_openbao is on but BAO_ADDR/BAO_TOKEN
+      are unset. Provide a write-capable OpenBao AppRole in the converge
+      environment.
+    quiet: true
+
+- name: Resolve the OpenBao KV v2 data URL
+  ansible.builtin.set_fact:
+    nautobot_automation_bao_kv_url: >-
+      {{ nautobot_token_openbao_addr }}/v1/{{
+      nautobot_token_openbao_mount }}/data/{{ nautobot_token_openbao_path }}
+
+- name: Ensure the least-privilege automation token exists
+  ansible.builtin.command:
+    cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+    stdin: "{{ lookup('ansible.builtin.file', 'automation_token_bootstrap.py') }}"
+  environment: >-
+    {{ nautobot_env
+       | combine({'NAUTOBOT_AUTOMATION_USERNAME': nautobot_automation_username}) }}
+  register: nautobot_automation_token_run
+  changed_when: "'AUTOMATION_TOKEN_CHANGED' in nautobot_automation_token_run.stdout"
+  become: true
+  become_user: "{{ nautobot_user }}"
+  no_log: true
+
+- name: Extract the automation token from the bootstrap output
+  ansible.builtin.set_fact:
+    nautobot_automation_token: >-
+      {{ (nautobot_automation_token_run.stdout
+          | regex_search('AUTOMATION_TOKEN=(\S+)', '\1')) | first }}
+  no_log: true
+
+- name: Read current OpenBao secret at {{ nautobot_token_openbao_path }}
+  ansible.builtin.uri:
+    url: "{{ nautobot_automation_bao_kv_url }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ nautobot_token_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: nautobot_automation_bao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Capture current OpenBao data while preserving sibling keys
+  ansible.builtin.set_fact:
+    nautobot_automation_bao_data: >-
+      {{ (nautobot_automation_bao_current.json | default({}, true))
+         .get('data', {}).get('data', {}) }}
+    nautobot_automation_bao_version: >-
+      {{ (nautobot_automation_bao_current.json | default({}, true))
+         .get('data', {}).get('metadata', {}).get('version', 0) | int }}
+  no_log: true
+
+- name: Publish the automation token to OpenBao
+  ansible.builtin.uri:
+    url: "{{ nautobot_automation_bao_kv_url }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ nautobot_token_openbao_token }}"
+    body_format: json
+    body:
+      options:
+        cas: "{{ nautobot_automation_bao_version | int }}"
+      data: >-
+        {{ nautobot_automation_bao_data
+           | combine({nautobot_automation_token_openbao_key:
+                      nautobot_automation_token}) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: >-
+    nautobot_automation_bao_data.get(nautobot_automation_token_openbao_key)
+    != nautobot_automation_token
+  no_log: true

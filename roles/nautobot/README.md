@@ -75,6 +75,28 @@ ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
 
 See the flag ladder below before enabling anything that writes.
 
+## Automation API token
+
+`nautobot_automation_token_publish_openbao` defaults to `false`. Enable it
+only for a token converge with a write-capable OpenBao AppRole in `BAO_ADDR`
+and `BAO_TOKEN`:
+
+```sh
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
+  --tags nautobot --limit nautobot_group,localhost \
+  -e nautobot_automation_token_publish_openbao=true
+```
+
+The role reconciles a dedicated non-staff, non-superuser account and a
+write-enabled API token. Its object permissions allow view/add/change on DCIM
+models, with no delete action, view/add on Nautobot 3.2.6's separate
+`extras.Note` model for the Notes API, and view-only on `extras.Status` so a
+Module write can reference a status such as Planned. The Notes endpoint also
+requires view on the DCIM object receiving the note. The token is published as
+`automation_write_token` under the existing `secret/apps/nautobot` KV v2 path;
+the read-modify-write preserves the existing sibling keys. The bootstrap and
+OpenBao tasks use `no_log`, and never include the token in task output.
+
 ## Two layers
 
 `tasks/main.yml` splits into:
