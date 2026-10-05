@@ -238,14 +238,13 @@ select_converge_identity() {
 select_converge_identity
 
 # BAO_TOKEN is the runner's SSH-signing token, not a reconcile credential.
-# Check only identities the OpenBao role actually accepts.
+# Routine OpenBao reconciliation requires the declared per-call issuer path;
+# CONVERGE_* remains available to inventory and other service roles.
 if [[ -n ${BAO_ADDR:-} && -z ${OPENBAO_PROVISIONING_TOKEN:-} &&
-      -z ${OPENBAO_RECONCILE_TOKEN:-} &&
-      -z $CONVERGE_ROLE_ID &&
       ( -z ${OPENBAO_APPROLE_APPROLE_ISSUER_ROLE_ID:-} ||
         -z ${OPENBAO_APPROLE_APPROLE_ISSUER_SECRET_ID:-} ) ]]; then
-  echo "run-ansible: no reconcile token or AppRole issuer in this environment;" >&2
-  echo "  the store role will skip reconciliation and report the missing identity." >&2
+  echo "run-ansible: no AppRole issuer credentials in this environment;" >&2
+  echo "  OpenBao reconciliation on an initialized cluster will fail." >&2
 fi
 
 if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; then
