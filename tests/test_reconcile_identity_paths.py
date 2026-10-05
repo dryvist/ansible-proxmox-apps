@@ -49,14 +49,14 @@ class ReconcileIdentityPaths(unittest.TestCase):
             "{{ openbao_approle_issuer_secret_id }}",
         )
 
-        mint = tasks["Mint a one-use reconcile secret_id through the issuer"]
+        mint = tasks["Mint a single-use reconcile secret_id through the issuer"]
         self.assertEqual(
             mint["community.hashi_vault.vault_write"]["path"],
             "auth/approle/role/{{ openbao_reconcile_approle_name }}/secret-id",
         )
         self.assertIn("openbao_reconcile_issuer_login.login.auth.client_token", str(mint))
 
-        target_login = tasks["Log in as openbao-reconcile with the one-use secret_id"]
+        target_login = tasks["Log in as openbao-reconcile with the single-use secret_id"]
         self.assertIn(
             "openbao_reconcile_role_id_read.data.data.role_id", str(target_login)
         )
@@ -67,10 +67,10 @@ class ReconcileIdentityPaths(unittest.TestCase):
     def test_target_secret_id_is_destroyed_after_the_login_attempt(self):
         tasks = self.reconcile_tasks
         names = list(tasks)
-        login = names.index("Log in as openbao-reconcile with the one-use secret_id")
-        destroy = names.index("Destroy the one-use reconcile secret_id by accessor")
+        login = names.index("Log in as openbao-reconcile with the single-use secret_id")
+        destroy = names.index("Destroy the single-use reconcile secret_id by accessor")
         self.assertLess(login, destroy)
-        task = tasks["Destroy the one-use reconcile secret_id by accessor"]
+        task = tasks["Destroy the single-use reconcile secret_id by accessor"]
         write = task["community.hashi_vault.vault_write"]
         self.assertTrue(write["path"].endswith("secret-id-accessor/destroy"))
         self.assertIn("secret_id_accessor", write["data"])
@@ -78,6 +78,10 @@ class ReconcileIdentityPaths(unittest.TestCase):
 
     def test_legacy_static_target_pair_and_unsupported_flow_lock_command_are_absent(self):
         defaults = (REPO / "roles/openbao/defaults/main/08a-admin-and-ttls.yml").read_text()
+        self.assertRegex(
+            defaults,
+            r"openbao_reconcile_approle_secret_id_num_uses:\s*1(?:\s|$)",
+        )
         tasks = RECONCILE.read_text()
         self.assertNotIn("OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID", defaults)
         self.assertNotIn("OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID", defaults)
