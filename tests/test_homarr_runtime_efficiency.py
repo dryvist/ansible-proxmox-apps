@@ -2,12 +2,13 @@
 
 import importlib.util
 from pathlib import Path
+import sys
 
 import yaml
 from jinja2 import Template
+from ansible import constants as C
 from ansible.playbook.play_context import PlayContext
 from ansible.plugins.loader import connection_loader
-from ansible_collections.community.proxmox.plugins.connection import proxmox_pct_remote
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,9 +47,21 @@ def test_converger_files_deploy_in_one_copy_and_keep_the_entrypoint_executable()
 
 
 def test_pct_adapter_uses_ansible_persistent_connections():
-    spec = importlib.util.spec_from_file_location("pct_remote_persistent", PCT_ADAPTER)
-    adapter = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(adapter)
+    collection_paths = [
+        str(Path(path).expanduser())
+        for path in C.COLLECTIONS_PATHS
+        if (Path(path).expanduser() / "ansible_collections").is_dir()
+    ]
+    original_sys_path = sys.path[:]
+    sys.path[:0] = collection_paths
+    try:
+        from ansible_collections.community.proxmox.plugins.connection import proxmox_pct_remote
+
+        spec = importlib.util.spec_from_file_location("pct_remote_persistent", PCT_ADAPTER)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+    finally:
+        sys.path[:] = original_sys_path
 
     assert adapter.Connection.force_persistence is True
     expected_docs = proxmox_pct_remote.DOCUMENTATION.replace(
@@ -63,7 +76,7 @@ def test_pct_adapter_uses_ansible_persistent_connections():
 
     context = PlayContext()
     context.connection = "pct_remote_persistent"
-    connection = connection_loader.get("pct_remote_persistent", context, new_stdin=None)
+    connection = connection_loader.get(context.connection, context, new_stdin=None)
     assert connection.force_persistence is True
     assert connection.get_option("pty") is False
     assert connection.is_pipelining_enabled() is False
