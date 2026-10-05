@@ -11,6 +11,10 @@
     # localhost inherits it; rendering a template needs no root.
     ansible_become: false
     _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-ai.yml.j2"
+    _contactpoints_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/contactpoints.yml.j2"
+    _token_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/cribl-hec-token.env.j2"
+    _notification_policy_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/notification-policies.yml.j2
   tasks:
     - name: Render the AI alert rules
       ansible.builtin.set_fact:
@@ -47,3 +51,51 @@
         that:
           - _ai_rules_no_prom | map(attribute='uid') | list
             == ['llm-judge-failing', 'hermes-llm-failures', 'zdr-key-non-zdr-model']
+
+    - name: Assert the judge rule reads the Edge process metric
+      ansible.builtin.assert:
+        that:
+          - >-
+            'absent_over_time(judge_process_start_time_seconds{telemetry_role="judge",process_set="judge"}[5m])'
+            in _judge_expr
+          - "_judge_for == '1m'"
+          - "_judge_summary == 'The judge process has not reported from Cribl Edge for 6 minutes.'"
+      vars:
+        _judge_rule: "{{ _ai_rules | selectattr('uid', 'equalto', 'llm-judge-failing') | first }}"
+        _judge_expr: "{{ _judge_rule.data[0].model.expr }}"
+        _judge_for: "{{ _judge_rule.for }}"
+        _judge_summary: "{{ _judge_rule.annotations.summary }}"
+
+    - name: Render the Cribl HEC contact point with fixture values
+      ansible.builtin.set_fact:
+        _ai_contactpoint: >-
+          {{ (lookup('ansible.builtin.template', _contactpoints_template)
+              | from_yaml).contactPoints[0].receivers[0] }}
+        _ai_alert_token_env: "{{ lookup('ansible.builtin.template', _token_env_template) }}"
+        _ai_notification_policy: >-
+          {{ (lookup('ansible.builtin.template', _notification_policy_template)
+              | from_yaml).policies[0] }}
+      vars:
+        grafana_stack_alert_cribl_hec_url: >-
+          http://syslog.example.test:8088/services/collector/raw?index=ansible&source=grafana-alert&sourcetype=grafana%3Aalert
+        grafana_stack_alert_cribl_hec_token: fixture-hec-token-not-real
+
+    - name: Assert the contact point routes to Stream with an env-backed HEC credential
+      ansible.builtin.assert:
+        that:
+          - _ai_contactpoint.type == 'webhook'
+          - >-
+            _ai_contactpoint.settings.url ==
+            (
+            'http://syslog.example.test:8088/services/collector/raw?'
+            'index=ansible&source=grafana-alert&'
+            'sourcetype=grafana%3Aalert'
+            )
+          - _ai_contactpoint.settings.authorization_scheme == 'Splunk'
+          - _ai_contactpoint.secureSettings.authorization_credentials == '$GRAFANA_ALERT_CRIBL_HEC_TOKEN'
+          - "'GRAFANA_ALERT_CRIBL_HEC_TOKEN=fixture-hec-token-not-real' in _ai_alert_token_env"
+          - _ai_notification_policy.receiver == 'cribl-alerts'
+        fail_msg: >-
+          Grafana's contact point must post to the Stream HEC raw input and
+          resolve its credential from the protected env file, not contact ntfy
+          or embed the credential in provisioning YAML.

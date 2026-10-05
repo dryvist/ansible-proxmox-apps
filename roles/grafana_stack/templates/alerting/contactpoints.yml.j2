@@ -2,17 +2,10 @@
 ## Grafana unified-alerting file provisioning: contact points.
 ## https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
 ##
-## KNOWN LIMITATION: Grafana's OSS webhook contact point always POSTs its own
-## fixed JSON envelope (receiver/status/alerts[]/title/message/...); there is
-## no way to make the request body just the rendered message text. ntfy's
-## per-topic endpoint (unlike its root JSON-publish endpoint) treats any POST
-## body as the literal notification text, so the alert fires and reaches
-## ntfy, but the notification body is the raw JSON envelope rather than the
-## clean one-line messages every other ntfy publisher in this repo sends
-## (service_deadman, openbao secret-age). Title/priority/tags are set via
-## ntfy's documented query-parameter override
-## (https://docs.ntfy.sh/publish/#query-parameters-only) since the webhook
-## type has no custom-header support to set them as headers instead.
+## Grafana posts its alert envelope to Cribl Stream's HEC raw endpoint.
+## Stream stores the event in the shared alert index and fans a formatted
+## message directly to the alert webhook. The HEC credential is provisioned
+## from a root-readable env file and encrypted by Grafana's secure setting.
 apiVersion: 1
 
 contactPoints:
@@ -22,6 +15,8 @@ contactPoints:
       - uid: {{ grafana_stack_alert_contact_point_name }}
         type: webhook
         settings:
-          url: >-
-            {{ grafana_stack_alert_ntfy_url }}?title=Grafana+alert&priority=high&tags=warning
+          url: "{{ grafana_stack_alert_cribl_hec_url }}"
           httpMethod: POST
+          authorization_scheme: Splunk
+        secureSettings:
+          authorization_credentials: "$GRAFANA_ALERT_CRIBL_HEC_TOKEN"
