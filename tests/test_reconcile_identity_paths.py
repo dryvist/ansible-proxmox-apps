@@ -9,7 +9,7 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 INIT = REPO / "roles" / "openbao" / "tasks" / "init"
 RECONCILE = INIT / "02-initialize-cluster.yml"
-LIVENESS = INIT / "10b-approle-secret-ids.yml"
+LIVENESS = INIT / "10a-approle-issuer-liveness.yml"
 
 
 def _tasks(node):
@@ -120,11 +120,14 @@ class ReconcileIdentityPaths(unittest.TestCase):
         names = [task.get("name") for task in init]
         rbac = names.index("Render and reconcile the RBAC policies")
         roles = names.index("Declare AppRoles and reconcile their policy and TTL bounds")
+        liveness = names.index("Probe the per-call reconcile issuer liveness path")
         probe = names.index("Issue per-call and stored AppRole credentials")
         self.assertLess(rbac, roles)
-        self.assertLess(roles, probe)
+        self.assertLess(roles, liveness)
+        self.assertLess(liveness, probe)
         self.assertIn("openbao_rbac", init[rbac]["tags"])
         self.assertIn("openbao_approle", init[roles]["tags"])
+        self.assertIn("openbao_approle", init[liveness]["tags"])
         self.assertIn("openbao_approle", init[probe]["tags"])
 
 
