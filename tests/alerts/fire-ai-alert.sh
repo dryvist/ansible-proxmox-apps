@@ -39,7 +39,7 @@ jq -n \
   '{
     alert: {
       labels: {alertname: $alert_name, severity: $severity, test: "true"},
-      annotations: {summary: ("Synthetic alert delivery for " + $alert_name)}
+      annotations: {summary: $alert_name}
     },
     receivers: [{
       name: "cribl-alerts",
