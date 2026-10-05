@@ -56,6 +56,14 @@ before publishing to the existing ntfy `observability` topic. The notification
 path is Grafana → Cribl Stream → Splunk and ntfy → Slack; Cribl does not send
 Grafana alerts directly to Slack.
 
+## Prometheus license volume
+
+The Splunk leg keeps an explicit set of health series for PVE and guest
+node-exporter jobs. The sibling VictoriaMetrics leg remains unfiltered and
+receives all series. Maintain the metric allow-list in
+`cribl_stream_prometheus_splunk_node_metrics` rather than sending every
+node-exporter series into Splunk.
+
 ## Tasks
 
 - Install Cribl Stream package
