@@ -91,13 +91,15 @@
         dest: "{{ _fixture_dir }}/test_github-runner@.service"
         mode: "0644"
 
-    - name: Render the runner seccomp profile
-      ansible.builtin.template:
-        src: "{{ _template_dir }}/github-runner-seccomp.json.j2"
-        dest: "{{ _fixture_dir }}/test_github-runner-seccomp.json"
-        mode: "0644"
+    - name: Verify the runner seccomp profile
+      ansible.builtin.include_tasks: tasks/github_runner_seccomp.yml
       vars:
-        github_runner_container_seccomp_default_profile: "{{ _template_dir }}/../files/seccomp-default-v0.2.4.json"
+        github_runner_container_seccomp_fixture_profile:
+          defaultAction: SCMP_ACT_ERRNO
+          syscalls:
+            - names:
+                - read
+              action: SCMP_ACT_ALLOW
 
     - name: Render the runner environment file
       ansible.builtin.template:
@@ -121,33 +123,12 @@
         - test_github-runner@.service
         - test_runner.env
         - test_github-runner-diag-tmpfiles.conf
-        - test_github-runner-seccomp.json
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
         _unit_raw: "{{ _runner_raw.results[0].content | b64decode }}"
         _env_raw: "{{ _runner_raw.results[1].content | b64decode }}"
         _tmpfiles_raw: "{{ _runner_raw.results[2].content | b64decode }}"
-        _seccomp_profile: "{{ _runner_raw.results[3].content | b64decode | from_json }}"
-
-    - name: Select the rendered Bubblewrap seccomp rules
-      ansible.builtin.set_fact:
-        _seccomp_clone_rules: >-
-          {{ _seccomp_profile.syscalls
-             | selectattr('names', 'equalto', [github_runner_container_seccomp_bubblewrap_clone_syscall])
-             | selectattr('args', 'defined') | list }}
-        _seccomp_unshare_rules: >-
-          {{ _seccomp_profile.syscalls
-             | selectattr('names', 'equalto', [github_runner_container_seccomp_bubblewrap_unshare_syscall])
-             | selectattr('args', 'defined') | list }}
-        _seccomp_setns_rules: >-
-          {{ _seccomp_profile.syscalls
-             | selectattr('names', 'equalto', [github_runner_container_seccomp_bubblewrap_setns_syscall])
-             | selectattr('args', 'defined') | list }}
-        _seccomp_mount_rules: >-
-          {{ _seccomp_profile.syscalls
-             | selectattr('names', 'equalto', github_runner_container_seccomp_bubblewrap_mount_syscalls)
-             | list }}
 
     # Assert on DIRECTIVE LINES ONLY, as a list. Two traps informed this:
     #   * Both files explain themselves at length and those comments name the
@@ -237,61 +218,6 @@
         fail_msg: >-
           The runner container must use the image-resolved user and the
           configured seccomp option.
-
-    - name: Assert the runner seccomp profile renders as JSON
-      ansible.builtin.assert:
-        that:
-          - _seccomp_profile is mapping
-          - _seccomp_profile.syscalls | length > 0
-        fail_msg: >-
-          The runner seccomp profile must render as a Docker policy.
-
-    - name: Assert the Bubblewrap namespace rules use configured seccomp values
-      ansible.builtin.assert:
-        that:
-          - _seccomp_clone_rules | length >= 2
-          - _seccomp_unshare_rules | length >= 1
-          - _seccomp_setns_rules | length >= 1
-          - _seccomp_mount_rules | length == 1
-          - (_seccomp_clone_rules | last).action == github_runner_container_seccomp_allow_action
-          - (_seccomp_clone_rules | last).names == [github_runner_container_seccomp_bubblewrap_clone_syscall]
-          - >-
-            (_seccomp_clone_rules | last).args[0].index | int
-            == github_runner_container_seccomp_clone_flags_argument_index | int
-          - >-
-            (_seccomp_clone_rules | last).args[0].value | int
-            == github_runner_container_seccomp_namespace_flags_mask | int
-          - >-
-            (_seccomp_clone_rules | last).args[0].valueTwo | int
-            == github_runner_container_seccomp_clone_user_mount_namespace_flags | int
-          - (_seccomp_clone_rules | last).args[0].op == github_runner_container_seccomp_masked_equal_operator
-          - (_seccomp_unshare_rules | last).action == github_runner_container_seccomp_allow_action
-          - >-
-            (_seccomp_unshare_rules | last).args[0].index | int
-            == github_runner_container_seccomp_namespace_flags_argument_index | int
-          - >-
-            (_seccomp_unshare_rules | last).args[0].value | int
-            == github_runner_container_seccomp_namespace_flags_mask | int
-          - >-
-            (_seccomp_unshare_rules | last).args[0].valueTwo | int
-            == github_runner_container_seccomp_user_namespace_flag | int
-          - (_seccomp_unshare_rules | last).args[0].op == github_runner_container_seccomp_masked_equal_operator
-          - (_seccomp_setns_rules | last).action == github_runner_container_seccomp_allow_action
-          - >-
-            (_seccomp_setns_rules | last).args[0].index | int
-            == github_runner_container_seccomp_setns_flags_argument_index | int
-          - >-
-            (_seccomp_setns_rules | last).args[0].value | int
-            == github_runner_container_seccomp_namespace_flags_mask | int
-          - >-
-            (_seccomp_setns_rules | last).args[0].valueTwo | int
-            == github_runner_container_seccomp_user_namespace_flag | int
-          - (_seccomp_setns_rules | last).args[0].op == github_runner_container_seccomp_masked_equal_operator
-          - (_seccomp_mount_rules | first).action == github_runner_container_seccomp_allow_action
-          - (_seccomp_mount_rules | first).names == github_runner_container_seccomp_bubblewrap_mount_syscalls
-        fail_msg: >-
-          The rendered Bubblewrap seccomp rules do not match the configured
-          namespace flags, argument indexes, actions, or mount syscall list.
 
     - name: Assert nothing reintroduces a restart policy on the container
       ansible.builtin.assert:

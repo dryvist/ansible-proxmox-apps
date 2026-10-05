@@ -1,0 +1,86 @@
+---
+- name: Render the runner seccomp profile from a small fixture
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/github-runner-seccomp.json.j2"
+    dest: "{{ _fixture_dir }}/test_github-runner-seccomp.json"
+    mode: "{{ github_runner_container_seccomp_profile_file_mode }}"
+  vars:
+    github_runner_container_seccomp_default_profile_data: >-
+      {{ github_runner_container_seccomp_fixture_profile }}
+
+- name: Read the rendered runner seccomp profile
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_github-runner-seccomp.json"
+  register: _seccomp_raw
+
+- name: Decode the rendered runner seccomp profile
+  ansible.builtin.set_fact:
+    _seccomp_profile: "{{ _seccomp_raw.content | b64decode | from_json }}"
+
+- name: Select the rendered Bubblewrap seccomp rules
+  ansible.builtin.set_fact:
+    _seccomp_clone_rules: >-
+      {{ _seccomp_profile.syscalls
+         | selectattr('names', 'equalto', [github_runner_container_seccomp_bubblewrap_clone_syscall])
+         | selectattr('args', 'defined') | list }}
+    _seccomp_unshare_rules: >-
+      {{ _seccomp_profile.syscalls
+         | selectattr('names', 'equalto', [github_runner_container_seccomp_bubblewrap_unshare_syscall])
+         | selectattr('args', 'defined') | list }}
+    _seccomp_setns_rules: >-
+      {{ _seccomp_profile.syscalls
+         | selectattr('names', 'equalto', [github_runner_container_seccomp_bubblewrap_setns_syscall])
+         | selectattr('args', 'defined') | list }}
+    _seccomp_mount_rules: >-
+      {{ _seccomp_profile.syscalls
+         | selectattr('names', 'equalto', github_runner_container_seccomp_bubblewrap_mount_syscalls)
+         | list }}
+
+- name: Assert the fetched policy is preserved and the Bubblewrap allowances use configured values
+  ansible.builtin.assert:
+    that:
+      - _seccomp_profile.defaultAction == github_runner_container_seccomp_fixture_profile.defaultAction
+      - _seccomp_profile.syscalls[0] == github_runner_container_seccomp_fixture_profile.syscalls[0]
+      - _seccomp_clone_rules | length >= 1
+      - _seccomp_unshare_rules | length >= 1
+      - _seccomp_setns_rules | length >= 1
+      - _seccomp_mount_rules | length == 1
+      - (_seccomp_clone_rules | last).action == github_runner_container_seccomp_allow_action
+      - (_seccomp_clone_rules | last).names == [github_runner_container_seccomp_bubblewrap_clone_syscall]
+      - >-
+        (_seccomp_clone_rules | last).args[0].index | int
+        == github_runner_container_seccomp_clone_flags_argument_index | int
+      - >-
+        (_seccomp_clone_rules | last).args[0].value | int
+        == github_runner_container_seccomp_namespace_flags_mask | int
+      - >-
+        (_seccomp_clone_rules | last).args[0].valueTwo | int
+        == github_runner_container_seccomp_clone_user_mount_namespace_flags | int
+      - (_seccomp_clone_rules | last).args[0].op == github_runner_container_seccomp_masked_equal_operator
+      - (_seccomp_unshare_rules | last).action == github_runner_container_seccomp_allow_action
+      - >-
+        (_seccomp_unshare_rules | last).args[0].index | int
+        == github_runner_container_seccomp_namespace_flags_argument_index | int
+      - >-
+        (_seccomp_unshare_rules | last).args[0].value | int
+        == github_runner_container_seccomp_namespace_flags_mask | int
+      - >-
+        (_seccomp_unshare_rules | last).args[0].valueTwo | int
+        == github_runner_container_seccomp_user_namespace_flag | int
+      - (_seccomp_unshare_rules | last).args[0].op == github_runner_container_seccomp_masked_equal_operator
+      - (_seccomp_setns_rules | last).action == github_runner_container_seccomp_allow_action
+      - >-
+        (_seccomp_setns_rules | last).args[0].index | int
+        == github_runner_container_seccomp_setns_flags_argument_index | int
+      - >-
+        (_seccomp_setns_rules | last).args[0].value | int
+        == github_runner_container_seccomp_namespace_flags_mask | int
+      - >-
+        (_seccomp_setns_rules | last).args[0].valueTwo | int
+        == github_runner_container_seccomp_user_namespace_flag | int
+      - (_seccomp_setns_rules | last).args[0].op == github_runner_container_seccomp_masked_equal_operator
+      - (_seccomp_mount_rules | first).action == github_runner_container_seccomp_allow_action
+      - (_seccomp_mount_rules | first).names == github_runner_container_seccomp_bubblewrap_mount_syscalls
+    fail_msg: >-
+      The rendered Bubblewrap seccomp rules do not preserve the base policy or
+      match configured namespace flags, indexes, actions, and mount syscalls.
