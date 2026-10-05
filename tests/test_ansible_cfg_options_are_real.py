@@ -89,6 +89,10 @@ class ConnectionOptionsAreReal(unittest.TestCase):
         )
         self.assertIn(("ssh_connection", "pipelining"), self.declared)
 
+    def test_pipelining_is_enabled_in_a_supported_global_section(self):
+        self.assertTrue(self.parser.getboolean("defaults", "pipelining"))
+        self.assertFalse(self.parser.has_option("ssh_connection", "pipelining"))
+
     def test_collection_connection_plugins_are_scanned(self):
         # The plugin this repo actually connects LXC guests with lives in a
         # collection, not ansible-core. Missing those made the checker flag a
