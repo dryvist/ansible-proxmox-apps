@@ -1,0 +1,43 @@
+---
+# Renders the node-forensics Grafana alert rules against role defaults and
+# checks the configured PSI thresholds and datasource.
+- name: Render and verify the Grafana node-forensics alert rules
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-node-forensics.yml.j2"
+  tasks:
+    - name: Render the node-forensics rules
+      ansible.builtin.set_fact:
+        _node_forensics_rules: "{{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0].rules }}"
+
+    - name: Assert the critical and warning PSI rules and thresholds
+      ansible.builtin.assert:
+        that:
+          - _node_forensics_rules | map(attribute='uid') | list
+            == ['node-memory-psi-full-critical', 'node-memory-psi-some-warning']
+          - _full_rule.data[0].datasourceUid == 'victoriametrics'
+          - "'node_pressure_memory_stalled_seconds_total' in _full_rule.data[0].model.expr"
+          - _full_threshold == 0.1
+          - _full_rule.labels.severity == 'critical'
+          - _full_rule.for == '0s'
+          - _some_rule.data[0].datasourceUid == 'victoriametrics'
+          - "'node_pressure_memory_waiting_seconds_total' in _some_rule.data[0].model.expr"
+          - _some_threshold == 0.2
+          - _some_rule.labels.severity == 'warning'
+          - _some_rule.for == '0s'
+        fail_msg: "Unexpected node-forensics alert configuration: {{ _node_forensics_rules | to_nice_json }}"
+      vars:
+        _full_rule: >-
+          {{ _node_forensics_rules
+             | selectattr('uid', 'equalto', 'node-memory-psi-full-critical')
+             | first }}
+        _some_rule: >-
+          {{ _node_forensics_rules
+             | selectattr('uid', 'equalto', 'node-memory-psi-some-warning')
+             | first }}
+        _full_threshold: "{{ _full_rule.data[1].model.conditions[0].evaluator.params[0] }}"
+        _some_threshold: "{{ _some_rule.data[1].model.conditions[0].evaluator.params[0] }}"

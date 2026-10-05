@@ -1,0 +1,63 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Node pressure alerts use the VictoriaMetrics datasource populated through Cribl.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: node-forensics
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: node-memory-psi-full-critical
+        title: Node memory PSI full above 10 percent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 60, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: rate(node_pressure_memory_stalled_seconds_total{job=~"pve_node_exporter|guest_node_exporter"}[1m])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.1]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: critical, signal: memory_psi_full}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} memory PSI full exceeded 10% over the last minute."
+
+      - uid: node-memory-psi-some-warning
+        title: Node memory PSI some above 20 percent
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 60, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: rate(node_pressure_memory_waiting_seconds_total{job=~"pve_node_exporter|guest_node_exporter"}[1m])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.2]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning, signal: memory_psi_some}
+        annotations:
+          summary: "{{ '{{' }} $labels.instance {{ '}}' }} memory PSI some exceeded 20% over the last minute."
