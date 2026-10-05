@@ -1,0 +1,123 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: OpenBao Raft health.
+## Metrics are scraped by the `openbao` job in prometheus_stack.
+---
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: openbao-observability
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: openbao-sealed
+        title: OpenBao node sealed
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: min(vault_core_unsealed{job="openbao"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: B
+        for: 1m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "At least one OpenBao node reports sealed."
+
+      - uid: openbao-raft-unhealthy
+        title: OpenBao Raft unhealthy
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                sum(vault_autopilot_healthy{job="openbao"} == bool 0)
+                + sum(vault_autopilot_node_healthy{job="openbao"} == bool 0)
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 1m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "OpenBao Raft Autopilot reports an unhealthy cluster or member."
+
+      - uid: openbao-failure-tolerance-low
+        title: OpenBao Raft failure tolerance below two
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: min(vault_autopilot_failure_tolerance{job="openbao"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [2]}
+              refId: B
+        for: 1m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "OpenBao Raft failure tolerance fell below two."
+
+      - uid: openbao-leader-churn
+        title: OpenBao leader changes repeated
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: sum by (cluster) (changes(vault_core_active{job="openbao"}[15m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [2]}
+              refId: B
+        for: 1m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "OpenBao leader changed more than once in 15 minutes."
+{% endif %}
