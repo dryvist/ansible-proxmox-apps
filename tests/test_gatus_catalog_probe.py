@@ -104,6 +104,18 @@ class GatusCatalogProbe(unittest.TestCase):
         self.assertIn("dash", eps)
         self.assertIn("wall-only", eps)
 
+    def test_github_actions_component_status_uses_ntfy_alerts(self):
+        ep = render(services=[])["github-actions-status"]
+        self.assertEqual(ep["group"], "CI · GitHub")
+        self.assertEqual(
+            ep["url"],
+            "https://www.githubstatus.com/api/v2/components/br0l2tvcx85d.json",
+        )
+        self.assertEqual(ep["interval"], "60s")
+        self.assertIn("[STATUS] == 200", ep["conditions"])
+        self.assertIn("[BODY].component.status == operational", ep["conditions"])
+        self.assertEqual(ep["alerts"], [{"type": "ntfy"}])
+
 
 if __name__ == "__main__":
     unittest.main()

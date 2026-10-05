@@ -40,6 +40,12 @@ routing is implemented as a criticality split by endpoint group: `keystone`/
 `status_stack_ntfy_priority_urgent`), everything else to
 `status_stack_ntfy_topic_degraded`.
 
+The `CI · GitHub` endpoint checks GitHub Statuspage's Actions component API at
+the normal Gatus interval. It uses the shared failure threshold and sends
+resolution notifications through the degraded ntfy route. This reports the
+provider component status; it does not measure Actions runner queue depth or
+self-hosted runner acquisition.
+
 ## Deadman receivers
 
 `status_stack_deadman_endpoints` declares, per pusher, one Gatus external
