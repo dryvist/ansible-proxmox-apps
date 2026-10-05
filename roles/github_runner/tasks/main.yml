@@ -208,6 +208,42 @@
     mode: "0600"
     force: false
 
+# Resolve the image's runner identity at converge time. The image entrypoint
+# supports running as this named account; using its actual IDs also lets the
+# host-side _diag bind mount be writable by the runner process.
+- name: Pull the runner image
+  community.docker.docker_image:
+    name: "{{ github_runner_image }}"
+    source: pull
+    force_source: true
+
+- name: Read the runner account identity from the image
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/docker
+      - run
+      - --rm
+      - --entrypoint
+      - id
+      - "{{ github_runner_image }}"
+      - "{{ github_runner_container_user_name }}"
+  register: github_runner_container_identity
+  changed_when: false
+
+- name: Set the runner UID and GID facts from the image
+  ansible.builtin.set_fact:
+    github_runner_container_uid: >-
+      {{ github_runner_container_identity.stdout
+         | regex_findall('uid=([^ ]+)') | first | split('(') | first }}
+    github_runner_container_gid: >-
+      {{ github_runner_container_identity.stdout
+         | regex_findall('gid=([^ ]+)') | first | split('(') | first }}
+
+- name: Set the Docker user fact from the image identity
+  ansible.builtin.set_fact:
+    github_runner_container_user: >-
+      {{ github_runner_container_uid }}:{{ github_runner_container_gid }}
+
 # One directory per pooled slot, bind-mounted into that slot's container
 # below (github-runner@.service.j2) so _diag survives past --rm. Idempotent
 # and safe to run every converge, including when replicas shrinks -- a slot
@@ -216,8 +252,8 @@
   ansible.builtin.file:
     path: "{{ github_runner_diag_host_dir }}/{{ item }}"
     state: directory
-    owner: root
-    group: root
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
     mode: "0755"
   loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
 
@@ -250,6 +286,23 @@
   no_log: true
   notify: Restart github runners
 
+- name: Create the runner seccomp profile directory
+  ansible.builtin.file:
+    path: "{{ github_runner_container_seccomp_profile_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the runner seccomp profile
+  ansible.builtin.template:
+    src: github-runner-seccomp.json.j2
+    dest: "{{ github_runner_container_seccomp_profile_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart github runners
+
 - name: Deploy the runner systemd unit
   ansible.builtin.template:
     src: github-runner@.service.j2
@@ -258,12 +311,6 @@
     group: root
     mode: "0644"
   notify: Restart github runners
-
-- name: Pull the runner image
-  community.docker.docker_image:
-    name: "{{ github_runner_image }}"
-    source: pull
-    force_source: true
 
 - name: Retire the former per-host Molecule image build units
   ansible.builtin.include_tasks: retire_molecule_image_build.yml
