@@ -1,23 +1,19 @@
 ---
-# propagate_facts.yml scopes the two heavy facts (tofu_data, monitor_targets)
-# to the hosts THIS run's --limit actually targets, while still propagating
-# the cheap `hostname` scalar to every host in groups['all'] regardless of
-# --limit — hostname alone has cross-host consumers outside the limited set
-# (roles/technitium_dns/tasks/main/build_records.yml,
-# roles/openbao_voter_health/templates/openbao-voter-health.sh.j2), while
-# grepping the whole tree finds zero cross-host readers of
-# hostvars[<host>].tofu_data or .monitor_targets. Requires ansible_limit to
-# be a real magic var set by the CLI --limit flag (it cannot be shadowed by
-# a task-level `vars:`), so this file must be invoked with an actual --limit,
+# propagate_facts.yml scopes tofu_data and monitor_targets to --limit. It also
+# scopes hostname there unless this run selects DNS/OpenBao tasks that read
+# other hosts' hostvars. Always-tagged telemetry derives FQDNs from the
+# localhost OpenTofu map instead. Requires ansible_limit to be a real magic var
+# set by the CLI --limit flag, so invoke with --limit,
 # e.g.:
 #   ansible-playbook tests/inventory_load/verify_propagate_facts_limit_scope.yml
-#     -i inventory/hosts.yml -c local --limit haproxy,localhost
+#     -i inventory/hosts.yml -c local --limit haproxy,localhost --tags nautobot
 - name: Load OpenTofu inventory
   import_playbook: ../../inventory/load_tofu.yml
 
 - name: Verify propagate_facts.yml's --limit scoping of the heavy facts
   hosts: localhost
   gather_facts: false
+  tags: always
 
   tasks:
     - name: Sanity-check this run was actually invoked with the expected --limit
@@ -30,15 +26,21 @@
           ansible_limit={{ ansible_limit | default('(unset)') }}. Without a
           real --limit the scoping this file exercises never activates.
 
-    - name: Verify hostname still reaches a host OUTSIDE this run's --limit
+    - name: Verify hostname reaches out-of-limit hosts only for cross-host consumers
       ansible.builtin.assert:
         that:
-          - hostvars['immich'].hostname == 'immich'
+          - >-
+            (hostvars['immich'].hostname is defined)
+            ==
+            (ansible_run_tags | intersect([
+              'all', 'dns', 'technitium_dns', 'openbao',
+              'openbao_voter_health', 'secrets', 'secrets-management'
+            ]) | length > 0)
         fail_msg: >-
-          hostname must propagate to every host in groups['all']
-          regardless of --limit (technitium_dns/openbao_voter_health read
-          other hosts' hostname unconditionally) — got
-          {{ hostvars['immich'].hostname | default('(undefined)') }}
+          hostname scope did not match selected cross-host consumers;
+          tags={{ ansible_run_tags }}, hostname defined={{
+          hostvars['immich'].hostname is defined }}
+      when: "'immich' in groups['all']"
 
     - name: Verify tofu_data/monitor_targets are NOT copied to an out-of-limit host
       ansible.builtin.assert:
@@ -65,12 +67,32 @@
           monitor_targets={{ hostvars['haproxy'].monitor_targets is defined }}
           hostname={{ hostvars['haproxy'].hostname | default('(undefined)') }}
 
+    - name: Verify telemetry FQDNs use the localhost OpenTofu guest map
+      vars:
+        converge_telemetry_roster: >-
+          {{ groups['all'] | reject('equalto', 'localhost') | list }}
+        converge_telemetry_fqdns: >-
+          {{ dict(converge_telemetry_roster | zip(
+               converge_telemetry_roster
+               | map('extract', hostvars['localhost'].propagate_facts_guests, 'hostname')
+               | map('regex_replace', '$', '.' ~ tofu_data.domain)
+               | list)) }}
+      ansible.builtin.assert:
+        that:
+          - >-
+            converge_telemetry_fqdns['haproxy']
+            == hostvars['localhost'].propagate_facts_guests['haproxy'].hostname
+               ~ '.' ~ tofu_data.domain
+          - >-
+            converge_telemetry_fqdns['immich']
+            == hostvars['localhost'].propagate_facts_guests['immich'].hostname
+               ~ '.' ~ tofu_data.domain
+
     - name: Display propagate_facts limit-scope verification summary
       ansible.builtin.debug:
         msg: >-
-          propagate_facts.yml --limit scoping verified: hostname reached
-          immich (out of limit) and haproxy (in limit); tofu_data/
-          monitor_targets reached only haproxy.
+          propagate_facts.yml scoping verified for tags={{ ansible_run_tags }};
+          tofu_data/monitor_targets reached only the in-limit host.
 
     # omit resolved inside a set_fact argument removes that key entirely
     # rather than setting a placeholder — proves the same idiom
