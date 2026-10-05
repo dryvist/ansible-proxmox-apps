@@ -29,6 +29,27 @@ Install the collection dependencies once:
 ansible-galaxy collection install -r requirements.yml
 ```
 
+## Upgrade runbook
+
+1. Before the converge, take a custom-format `pg_dump` of the `nautobot`
+   database from the PostgreSQL primary and verify the archive with
+   `pg_restore --list`. Restoring that dump is the database rollback path.
+2. Take a Proxmox snapshot of the Nautobot LXC and retain it until the
+   post-upgrade checks pass.
+3. Converge the role through Semaphore. The Nautobot role installs the
+   pinned versions, runs `nautobot-server migrate`, and runs
+   `nautobot-server post_upgrade --no-migrate` after package or custom Job
+   changes, and again on the next converge if an earlier one failed before it
+   completed; the latter also collects static files and completes Nautobot's
+   other post-upgrade operations.
+4. Sign in through the main UI login page and confirm the dashboard loads.
+   Nautobot 3.2.6 changes the "Continue with SSO" action from GET to POST, so
+   when SSO login is enabled use the main login page, not a bookmarked SSO
+   login URL.
+5. Check `/api/status/` and confirm it reports Nautobot version `3.2.6`.
+
+Keep the database dump and LXC snapshot until both checks pass.
+
 ## Usage
 
 Converge the role:
@@ -63,8 +84,9 @@ See the flag ladder below before enabling anything that writes.
   systemd units. Idempotent, no live-DB writes. This is what Molecule validates
   (with `nautobot_manage_app: false`).
 - **Live layer (`when: nautobot_manage_app`):** venv + pip install, migrate,
-  collectstatic, superuser, service start, export/discovery schedules, health
-  check, and — only when gated on — the one-shot seed run.
+  `post_upgrade` after package or custom Job changes, superuser, service start,
+  export/discovery schedules, health check, and — only when gated on — the
+  one-shot seed run.
 
 ## Flag ladder
 
