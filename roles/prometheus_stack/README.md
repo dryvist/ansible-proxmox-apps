@@ -63,6 +63,8 @@ See `defaults/main.yml`: `prometheus_stack_image` / `prometheus_stack_blackbox_i
 (how to probe), `prometheus_stack_blackbox_address` (where Prometheus reaches the exporter;
 co-located by default), `prometheus_stack_smoke_target` (post-deploy probe check),
 and `prometheus_stack_extra_scrape_configs` (raw YAML appended for later exporters).
+`prometheus_stack_remote_write_receiver_enabled` opts into the internal
+Prometheus remote_write endpoint for declared metric sources.
 
 ## Migration
 
