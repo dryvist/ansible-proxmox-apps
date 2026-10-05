@@ -384,8 +384,13 @@
       {{ item.value.fqdn if _ssh_ready else
          ((tofu_data.nodes[_node] | default({})).role
           | default(_node, true) ~ '.' ~ tofu_data.domain) }}
+    # Homarr's PCT fallback runs many tasks; keep its Paramiko session alive
+    # through Ansible's persistent connection daemon. Other PCT users retain
+    # the upstream connection unless the SSH readiness probe succeeds.
     ansible_connection: >-
-      {{ 'ssh' if _ssh_ready else 'community.proxmox.proxmox_pct_remote' }}
+      {{ 'ssh' if _ssh_ready else
+         'pct_remote_persistent' if 'homarr' in (item.value.tags | default([]))
+         else 'community.proxmox.proxmox_pct_remote' }}
     ansible_user: root
     ansible_ssh_private_key_file: "{{ lookup('env', 'PROXMOX_SSH_KEY_PATH') }}"
     # NOTE: no `hostname:` here — add_host treats it as an alias of `name`
