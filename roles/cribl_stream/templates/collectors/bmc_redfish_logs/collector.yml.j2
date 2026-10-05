@@ -1,0 +1,49 @@
+---
+# Redfish log polling resumes from Cribl's last collected event timestamp.
+id: bmc_redfish_{{ bmc_log.id }}
+type: collection
+__scheduling:
+  stateTracking:
+    enabled: true
+    stateUpdateExpression: >-
+      {latestTime: Array.isArray(Members)
+      ? Members.reduce((latest, entry) => {
+      const created = Date.parse(entry.Created);
+      return Number.isFinite(created) ? Math.max(latest, created) : latest;
+      }, state.latestTime || 0)
+      : state.latestTime || 0}
+    stateMergeExpression: >-
+      (prevState.latestTime || 0) > (newState.latestTime || 0) ? prevState : newState
+conf:
+  type: rest
+  collectUrl: >-
+    `https://{{ cribl_stream_bmc_host }}/redfish/v1/Managers/{{
+    cribl_stream_bmc_manager }}/LogServices/{{ bmc_log.service }}/Entries`
+  collectMethod: get
+  collectRequestParams:
+    - name: "$filter"
+      value: >-
+        `Created gt '${new Date(state.latestTime || earliest * 1000).toISOString()}' and
+        Created le '${new Date(latest * 1000).toISOString()}'`
+    - name: "$top"
+      value: "1000"
+  authentication: basic
+  username: "{{ cribl_stream_bmc_username }}"
+  password: "{{ cribl_stream_bmc_password }}"
+  rejectUnauthorized: {{ cribl_stream_bmc_tls_verify | lower }}
+  disableTimeFilter: true
+  timeout: 30
+  retryRules:
+    type: static
+    interval: 1000
+    limit: 2
+    retryConnectTimeout: true
+    retryConnectReset: true
+destination:
+  connections:
+    - output: splunk_hec
+      pipeline: bmc_redfish_events
+{% if bmc_log.id == 'lifecycle' and cribl_stream_alerts_slack_webhook | default('', true) | length > 0 %}
+    - output: slack_grafana_alerts
+      pipeline: bmc_uncorrectable_memory
+{% endif %}

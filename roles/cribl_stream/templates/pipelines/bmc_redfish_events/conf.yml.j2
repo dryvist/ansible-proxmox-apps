@@ -1,0 +1,41 @@
+# Preserve the complete SEL and Lifecycle LogEntry records in the hardware index.
+output: splunk_hec
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const lifecycle = String(__inputId || '').endsWith('bmc_redfish_lifecycle');
+        const entries = Array.isArray(__e.Members) ? __e.Members : [];
+        __e.__bmcRedfishEvents = entries.map(entry => {
+          const eventTime = Date.parse(entry.Created);
+          return {
+            ...entry,
+            host: "{{ cribl_stream_bmc_node_name | default('', true) }}",
+            source: lifecycle ? 'redfish:lifecycle' : 'redfish:sel',
+            sourcetype: lifecycle ? 'redfish:lifecycle' : 'ipmi:sel',
+            index: 'hardware',
+            _raw: JSON.stringify(entry),
+            ...(Number.isFinite(eventTime) ? {_time: eventTime / 1000} : {}),
+          };
+        });
+  - id: unroll
+    filter: "true"
+    disabled: false
+    conf:
+      srcField: __bmcRedfishEvents
+      destField: __bmcRedfishEvent
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        if (__e.__bmcRedfishEvent) Object.assign(__e, __e.__bmcRedfishEvent);
+        delete __e.__bmcRedfishEvent;
+        delete __e.__bmcRedfishEvents;
+        delete __e.Members;
+        delete __e['Members@odata.count'];

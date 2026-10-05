@@ -1,0 +1,49 @@
+# The Lifecycle collector fans a second copy through this filter to the
+# existing alert webhook. The parallel HEC connection keeps every raw event.
+output: default
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const entries = Array.isArray(__e.Members) ? __e.Members : [];
+        __e.__bmcMemoryAlerts = entries.map(entry => ({
+          ...entry,
+          host: "{{ cribl_stream_bmc_node_name | default('', true) }}",
+        }));
+  - id: unroll
+    filter: "true"
+    disabled: false
+    conf:
+      srcField: __bmcMemoryAlerts
+      destField: __bmcMemoryAlert
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        if (__e.__bmcMemoryAlert) Object.assign(__e, __e.__bmcMemoryAlert);
+        delete __e.__bmcMemoryAlert;
+        delete __e.__bmcMemoryAlerts;
+        delete __e.Members;
+        delete __e['Members@odata.count'];
+  - id: drop
+    filter: "MessageId !== 'MEM0001' && MessageId !== 'UEFI0079'"
+    disabled: false
+    conf: {}
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        __e._raw = [
+          'Uncorrectable memory event',
+          __e.host,
+          __e.MessageId,
+          __e.Created,
+          __e.Message,
+        ].filter(Boolean).join(' | ');
