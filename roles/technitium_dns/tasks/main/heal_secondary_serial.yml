@@ -1,0 +1,27 @@
+---
+# Delete this secondary's zone, recreate it with the primary as master (full
+# AXFR), then re-read the serial for the post-check assert.
+- name: Delete the stale Secondary zone
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/delete?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ technitium_dns_zone }}"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_secondary_zone_delete
+  changed_when: technitium_dns_secondary_zone_delete.json.status == "ok"
+  failed_when: technitium_dns_secondary_zone_delete.json.status | default('') != "ok"
+  no_log: true
+
+- name: Mark the zone as absent so the creation path runs
+  ansible.builtin.set_fact:
+    technitium_dns_existing_zones: "{{ technitium_dns_existing_zones | reject('equalto', technitium_dns_zone) | list }}"
+
+- name: Recreate the Secondary zone with the primary as master
+  ansible.builtin.include_tasks: secondary_zone.yml
+
+- name: Read and record this node's zone SOA serial after recreation
+  ansible.builtin.include_tasks: read_soa_serial.yml
