@@ -1,0 +1,46 @@
+---
+- name: Create the runner seccomp profile directory
+  ansible.builtin.file:
+    path: "{{ github_runner_container_seccomp_profile_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ github_runner_container_seccomp_profile_directory_mode }}"
+
+- name: Read the installed Docker Engine server version
+  ansible.builtin.command:
+    argv:
+      - docker
+      - version
+      - --format
+      - "{{ '{{' }}.Server.Version{{ '}}' }}"
+  register: github_runner_container_docker_server_version
+  changed_when: false
+
+- name: Require a versioned Docker Engine release
+  ansible.builtin.assert:
+    that:
+      - github_runner_container_docker_server_version.stdout | trim is match('^[0-9]+[.][0-9]+[.][0-9]+$')
+    fail_msg: Docker Engine did not report a Moby release version.
+
+- name: Require the runner seccomp option to name the rendered profile
+  ansible.builtin.assert:
+    that:
+      - github_runner_container_seccomp_option | trim | length > 0
+      - github_runner_container_seccomp_profile_path in github_runner_container_seccomp_option
+    fail_msg: github_runner_container_seccomp_option must reference the rendered runner profile.
+
+- name: Fetch the Docker Engine default seccomp profile
+  ansible.builtin.include_tasks: seccomp_default_profile_fetch.yml
+  vars:
+    github_runner_container_docker_engine_version: >-
+      {{ github_runner_container_docker_server_version.stdout | trim }}
+
+- name: Deploy the runner seccomp profile
+  ansible.builtin.template:
+    src: github-runner-seccomp.json.j2
+    dest: "{{ github_runner_container_seccomp_profile_path }}"
+    owner: root
+    group: root
+    mode: "{{ github_runner_container_seccomp_profile_file_mode }}"
+  notify: Restart github runners
