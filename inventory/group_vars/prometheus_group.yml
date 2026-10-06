@@ -63,6 +63,9 @@ guest_node_exporter_keep_metrics:
   - node_filesystem_(avail|size)_bytes
   - node_network_(receive|transmit)_bytes_total
   - node_pressure_.*
+  - node_disk_(read|written)_bytes_total
+  - node_disk_(reads|writes)_completed_total
+  - node_disk_io_time_seconds_total
 
 # Gatus metrics on the status guest (tag `status`). Empty list when the guest
 # is absent — Prometheus accepts an empty targets list (no scrapes).
@@ -76,6 +79,27 @@ gatus_scrape_targets: >-
      | map(attribute='value.ip', default='') | reject('equalto', '')
      | map('regex_replace', '^(.+)$', '\1:' ~ (gatus_scrape_port | string))
      | list }}
+
+# cAdvisor per-container metrics on the Docker guests (roles/cadvisor, applied
+# to docker_vms). Empty list when no Docker guest exists — Prometheus accepts
+# an empty targets list (no scrapes).
+cadvisor_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['cadvisor']
+     | default(8080) }}
+cadvisor_scrape_targets: >-
+  {{ tofu_data['docker_vms'] | default({}) | dict2items
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (cadvisor_scrape_port | string))
+     | list }}
+
+# Metric families the cadvisor job keeps (regexes, joined with |).
+cadvisor_keep_metrics:
+  - container_fs_(reads|writes)_bytes_total
+  - container_fs_(reads|writes)_total
+  - container_blkio_device_usage_total
+  - container_cpu_usage_seconds_total
+  - container_memory_working_set_bytes
+  - container_last_seen
 
 # ARC (GitHub Actions self-hosted runner listener) metrics port, once that
 # guest is tagged `arc-listener` (no such guest exists yet). Empty targets
@@ -145,6 +169,14 @@ prometheus_stack_extra_scrape_configs: |
     static_configs:
       - targets: ["{{ hostvars['localhost']['tofu_data']['containers']['agentgateway']['ip'] }}:{{
           hostvars['localhost']['tofu_data']['constants']['service_ports']['agentgateway_metrics'] }}"]
+  - job_name: cadvisor
+    scrape_interval: 60s
+    static_configs:
+      - targets: {{ cadvisor_scrape_targets | to_json }}
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "{{ cadvisor_keep_metrics | join('|') }}"
+        action: keep
   - job_name: gatus
     scrape_interval: 60s
     metrics_path: /metrics
