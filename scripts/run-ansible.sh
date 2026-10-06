@@ -357,7 +357,9 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   # keys nor the connection — and reporting every target UNREACHABLE.
   #
   # Merge rather than overwrite: on a workstation this is the operator's own
-  # file. Exact-line dedupe keeps repeated runs idempotent.
+  # file. Exact-line dedupe keeps repeated runs idempotent. The pin wins: an
+  # existing line naming any host the pin names is dropped, so a rotated host
+  # key never loses to a stale copy (paramiko takes the first match).
   #
   # Marker lines (@cert-authority, @revoked) are dropped from this file, both
   # incoming and already present: paramiko cannot parse them and fails to load
@@ -368,7 +370,12 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   touch "$HOME/.ssh/known_hosts"
   chmod 600 "$HOME/.ssh/known_hosts"
   merged=$(mktemp "${TMPDIR:-/tmp}/ansible-kh.XXXXXX")
-  awk '!/^@/ && !seen[$0]++' "$HOME/.ssh/known_hosts" "$CERT_DIR/known_hosts" > "$merged"
+  awk '
+    /^@/ { next }
+    NR == FNR { n = split($1, h, ","); for (i = 1; i <= n; i++) pinned[h[i]] = 1 }
+    NR != FNR { n = split($1, h, ","); for (i = 1; i <= n; i++) if (h[i] in pinned) next }
+    !seen[$0]++
+  ' "$CERT_DIR/known_hosts" "$HOME/.ssh/known_hosts" > "$merged"
   cat "$merged" > "$HOME/.ssh/known_hosts"
   rm -f "$merged"
 fi
