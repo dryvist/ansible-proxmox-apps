@@ -219,3 +219,67 @@
           {{ (_glance_enabled_pages[0].columns[0].widgets
               | selectattr('title', 'defined')
               | selectattr('title', 'equalto', 'LLM profile') | first).template }}
+
+# The group wiring: the REAL glance_group vars (vars_files), fed by the flat
+# apps merge. Fails if the group stops enabling the tile, reads another field,
+# or stops passing the seeded value through to the unit's environment file.
+- name: Verify the glance group enables the tile and wires the seeded bearer
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "../../../roles/glance/defaults/main.yml"
+    - "../../../inventory/group_vars/glance_group.yml"
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    glance_monitor_enabled: false
+    dashboard_catalog_group_order: [ai]
+    dashboard_catalog_services:
+      - name: llm
+        title: LLM router
+        group: ai
+        ui: true
+        section: ~
+        desc: ""
+        url: "https://router.example.invalid/ui"
+        probe_url: "http://router.example.invalid"
+
+  tasks:
+    - name: Seed the tile's router key in the flat apps merge
+      ansible.builtin.set_fact:
+        bao_apps_secrets:
+          glance_llm_router_key: sk-glance-under-test
+
+    - name: Render the bearer environment file and the board with the group's vars
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/{{ item.src }}"
+        dest: "{{ render_tmp }}/{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - {src: glance-llm-profile.env.j2, dest: glance-group.env}
+        - {src: generated-services.yml.j2, dest: glance-group-services.yml}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Assert the group enables the tile and the seeded key reaches the bearer file
+      ansible.builtin.assert:
+        that:
+          - glance_llm_profile_enabled | bool
+          - glance_llm_profile_bearer_token == 'sk-glance-under-test'
+          - "'GLANCE_LLM_PROFILE_BEARER_TOKEN=sk-glance-under-test' in lookup('file', render_tmp ~ '/glance-group.env')"
+          - "'LLM profile' in lookup('file', render_tmp ~ '/glance-group-services.yml')"
+        fail_msg: "the glance group does not enable the tile or wire glance_llm_router_key into the bearer"
+
+    - name: Clear the apps merge
+      ansible.builtin.set_fact:
+        bao_apps_secrets: {}
+
+    - name: Assert an unseeded key leaves the bearer empty, which the role's input assert reports
+      ansible.builtin.assert:
+        that:
+          - glance_llm_profile_enabled | bool
+          - glance_llm_profile_bearer_token == ''
+        fail_msg: "an unseeded key must yield an empty bearer, never a fallback value"
