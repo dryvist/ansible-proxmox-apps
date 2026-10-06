@@ -26,33 +26,11 @@
 # Nothing about that is visible from the primary's side, and a secondary
 # reports no error: it simply has nothing to do. So compare the serials.
 #
-# This guard is DETECTION, not prevention — the trap returns on the next
-# primary rebuild. The durable fix is a monotonic serial floor on the primary,
-# tracked separately. Until then, this converts a silent permanent divergence
-# into a loud one.
-- name: Read this node's zone SOA serial
-  delegate_to: localhost
-  ansible.builtin.uri:
-    url: >-
-      {{ technitium_dns_api_url }}/api/zones/records/get?token={{
-      technitium_dns_api_token }}&domain={{ technitium_dns_zone | urlencode
-      }}&zone={{ technitium_dns_zone | urlencode }}
-    method: GET
-    return_content: true
-    timeout: "{{ technitium_dns_api_timeout }}"
-  register: technitium_dns_soa_read
-  changed_when: false
-  failed_when: false
-  when: technitium_dns_apply | bool
-  no_log: true
-
-- name: Record this node's SOA serial
-  ansible.builtin.set_fact:
-    technitium_dns_soa_serial: >-
-      {{ (technitium_dns_soa_read.json.response.records | default([]))
-         | selectattr('type', 'equalto', 'SOA')
-         | map(attribute='rData.serial') | first | default(0) | int }}
-  when: technitium_dns_apply | bool
+# A secondary whose serial is ahead of the primary's is healed: its zone is
+# deleted and recreated with the primary as master, which forces a full AXFR
+# regardless of serial. The assert after it stays as the post-check.
+- name: Read and record this node's zone SOA serial
+  ansible.builtin.include_tasks: read_soa_serial.yml
 
 # Ansible runs a task across every host in the play before moving on, so by this
 # point each member has published its own serial as a fact and the primary's is
@@ -77,6 +55,12 @@
       {{ (_primary_serials | max) if (_primary_serials | length > 0) else 0 }}
   when: technitium_dns_apply | bool
 
+- name: Recreate a secondary zone whose serial is ahead of the primary's
+  ansible.builtin.include_tasks: heal_secondary_serial.yml
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_serial_heal_needed | bool
+
 - name: Assert every secondary can still receive a zone transfer
   ansible.builtin.assert:
     quiet: true
@@ -90,9 +74,8 @@
       reports this — the converge stays green and the resolver keeps answering
       confidently with stale records.
       Cause: the primary's zone was recreated, which reset its serial.
-      Fix: delete this node's Secondary zone and recreate it with the primary
-      as master, which forces a full AXFR regardless of serial. The role cannot
-      do it — zone creation is skipped when the zone already exists.
+      The role deleted and recreated this node's Secondary zone, and the
+      serial is still ahead — the transfer from the primary did not complete.
     success_msg: >-
       Zone transfer is viable (secondary serial {{ technitium_dns_soa_serial }}
       <= primary {{ technitium_dns_peer_primary_serial }}).
