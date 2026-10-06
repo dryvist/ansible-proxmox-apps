@@ -4,3 +4,19 @@
 # constants (single source of truth).
 cribl_stream_pve_metrics_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['cribl_pve_metrics'] }}
+
+# vmid -> guest name, for the pve_guest_map.csv lookup the
+# pve_metrics_normalize pipeline joins against. Each item: {vmid, name}, taken
+# from every guest group in the inventory data (containers, vms, docker_vms,
+# splunk_vm). Empty when the inventory data is absent, in which case the
+# pipeline emits vmid only and skips the lookup.
+cribl_stream_pve_guests: >-
+  {%- set ns = namespace(rows=[]) -%}
+  {%- for group in ['containers', 'vms', 'docker_vms', 'splunk_vm'] -%}
+  {%- for key, guest in ((hostvars['localhost']['tofu_data'] | default({})).get(group) | default({})).items() -%}
+  {%- if guest.vmid is defined -%}
+  {%- set ns.rows = ns.rows + [{'vmid': guest.vmid | string, 'name': guest.hostname | default(key)}] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- endfor -%}
+  {{ ns.rows }}
