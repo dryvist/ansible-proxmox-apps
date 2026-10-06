@@ -358,12 +358,17 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   #
   # Merge rather than overwrite: on a workstation this is the operator's own
   # file. Exact-line dedupe keeps repeated runs idempotent.
+  #
+  # Marker lines (@cert-authority, @revoked) are dropped from this file, both
+  # incoming and already present: paramiko cannot parse them and fails to load
+  # the whole file, so one marker line makes every container host UNREACHABLE.
+  # OpenSSH runs here read the pinned file above, which keeps them.
   mkdir -p "$HOME/.ssh"
   chmod 700 "$HOME/.ssh"
   touch "$HOME/.ssh/known_hosts"
   chmod 600 "$HOME/.ssh/known_hosts"
   merged=$(mktemp "${TMPDIR:-/tmp}/ansible-kh.XXXXXX")
-  awk '!seen[$0]++' "$HOME/.ssh/known_hosts" "$CERT_DIR/known_hosts" > "$merged"
+  awk '!/^@/ && !seen[$0]++' "$HOME/.ssh/known_hosts" "$CERT_DIR/known_hosts" > "$merged"
   cat "$merged" > "$HOME/.ssh/known_hosts"
   rm -f "$merged"
 fi
