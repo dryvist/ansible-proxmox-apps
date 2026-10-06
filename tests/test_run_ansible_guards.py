@@ -344,27 +344,16 @@ class RunAnsibleGuardContract(unittest.TestCase):
         self.assertEqual(known.read_text(encoding="utf-8"), first)
 
     def test_marker_lines_never_reach_the_pct_read_path(self):
-        # paramiko cannot parse @cert-authority/@revoked lines and fails to
-        # load the whole file, so every container host goes UNREACHABLE. A
-        # marker already merged by an earlier run must be dropped as well.
+        # paramiko fails to load a file holding any marker line.
         home = self.tmp_path_home()
         known = home / ".ssh" / "known_hosts"
         known.parent.mkdir(parents=True, exist_ok=True)
-        known.write_text(
-            "@cert-authority *.example.test ssh-ed25519 AAAASTALE\n"
-            "theirs ssh-ed25519 AAAAOPERATOR\n",
-            encoding="utf-8",
-        )
-
-        self._run_with_pin(
-            home,
-            "node ssh-ed25519 AAAAPINNED\n"
-            "@cert-authority *.example.test ssh-ed25519 AAAACA\n",
-        )
-        text = known.read_text(encoding="utf-8")
+        known.write_text("@revoked * ssh-ed25519 AAAAOLD\nme ssh-ed25519 AAAAMINE\n")
+        self._run_with_pin(home, "node ssh-ed25519 AAAAPIN\n@cert-authority * ssh-ed25519 AAAACA\n")
+        text = known.read_text()
         self.assertNotIn("@", text)
-        self.assertIn("AAAAOPERATOR", text)
-        self.assertIn("AAAAPINNED", text)
+        self.assertIn("AAAAMINE", text)
+        self.assertIn("AAAAPIN", text)
 
     def tmp_path_home(self):
         home = Path(self.tmp.name) / "fake-home"
