@@ -61,6 +61,7 @@ class TestCidrClassMap(unittest.TestCase):
             {"name": "some-machine-role"},
             {"name": "flow-lock"},
             {"name": "approle-issuer"},
+            {"name": "openbao-reconcile"},
         ]
         self.variables["openbao_management_cidrs"] = "10.0.1.0/24,10.0.2.0/24"
         self.variables["openbao_workstation_cidrs"] = "10.0.9.10/32"
@@ -89,6 +90,10 @@ class TestCidrClassMap(unittest.TestCase):
     def test_approle_issuer_resolves_to_the_union_class(self):
         class_map = _render("openbao_approle_cidr_class_map", self.variables)
         self.assertEqual(class_map["approle-issuer"], "machine_or_workstation")
+
+    def test_openbao_reconcile_resolves_to_the_union_class(self):
+        class_map = _render("openbao_approle_cidr_class_map", self.variables)
+        self.assertEqual(class_map["openbao-reconcile"], "machine_or_workstation")
 
     def test_flow_lock_mints_only_short_lived_single_use_secret_ids(self):
         role = next(
