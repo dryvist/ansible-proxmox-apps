@@ -1,0 +1,68 @@
+---
+# A reviewed node host key carried on a tofu_data.nodes entry must replace
+# a stale same-type key already held for the node's connection name, and a
+# second pass must change nothing. The keys are throwaway test material.
+- name: Verify a declared node host key overrides a stale known_hosts entry
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tofu_data:
+      domain: example.test
+      nodes:
+        node-a:
+          role: pve-a
+          ssh_host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH2QDszDQwNSUqmsclrovwjRdHRbZcXG+6QXFGOp5lUJ
+        node-b:
+          role: pve-b
+          ssh_host_key: null
+        node-c:
+          role: pve-c
+    _stale_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINo11G2yHYWhTdDK5qblLccEMzebJDEhlIe1HpS4chfJ
+  tasks:
+    - name: Create a known_hosts file holding the stale key
+      ansible.builtin.tempfile:
+        state: file
+      register: node_pin_test_file
+
+    - name: Verify override and idempotence
+      block:
+        - name: Seed the stale key for the node name
+          ansible.builtin.copy:
+            dest: "{{ node_pin_test_file.path }}"
+            content: "pve-a.example.test {{ _stale_key }}\n"
+            mode: "0600"
+
+        - name: Pin the declared node keys
+          ansible.builtin.include_tasks: ../../inventory/load_tofu/pin_node_host_keys.yml
+          vars:
+            ssh_known_hosts_file: "{{ node_pin_test_file.path }}"
+
+        - name: Read the resulting file
+          ansible.builtin.set_fact:
+            _node_pin_content: "{{ lookup('file', node_pin_test_file.path) }}"
+
+        - name: Assert the declared key replaced the stale one
+          ansible.builtin.assert:
+            that:
+              - "('pve-a.example.test ' ~ tofu_data.nodes['node-a'].ssh_host_key) in _node_pin_content"
+              - _stale_key not in _node_pin_content
+
+        - name: Assert nodes without a key were not pinned
+          ansible.builtin.assert:
+            that:
+              - "'pve-b.example.test' not in _node_pin_content"
+              - "'pve-c.example.test' not in _node_pin_content"
+
+        - name: Pin the same keys again
+          ansible.builtin.include_tasks: ../../inventory/load_tofu/pin_node_host_keys.yml
+          vars:
+            ssh_known_hosts_file: "{{ node_pin_test_file.path }}"
+
+        - name: Assert the second pass changed nothing
+          ansible.builtin.assert:
+            that: pin_node_host_keys_result.changed == false
+      always:
+        - name: Remove the known_hosts test file
+          ansible.builtin.file:
+            path: "{{ node_pin_test_file.path }}"
+            state: absent

@@ -1,0 +1,21 @@
+---
+# Runs before the live-placement read: the nodes are dialed by name and are not
+# inventory hosts, so the per-host pin in ssh_known_hosts.yml never covers them.
+# known_hosts replaces a same-type key already held for the same name, so a
+# reviewed key declared on a node entry overrides a stale entry in the
+# wrapper-managed file.
+- name: Pin reviewed Proxmox node host keys in the wrapper-managed known_hosts
+  ansible.builtin.known_hosts:
+    path: "{{ ssh_known_hosts_file | default(lookup('env', 'SSH_KNOWN_HOSTS_FILE'), true) }}"
+    name: "{{ _node_name }}"
+    key: "{{ _node_name }} {{ item.value.ssh_host_key }}"
+    state: present
+  vars:
+    _node_name: "{{ (item.value.role | default(item.key, true)) ~ '.' ~ tofu_data.domain }}"
+  loop: >-
+    {{ tofu_data.nodes | default({}) | dict2items
+       | selectattr('value.ssh_host_key', 'defined')
+       | rejectattr('value.ssh_host_key', 'none') | list }}
+  loop_control:
+    label: "{{ item.key }}"
+  register: pin_node_host_keys_result
