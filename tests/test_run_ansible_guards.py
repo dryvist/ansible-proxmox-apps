@@ -133,15 +133,11 @@ class RunAnsibleGuardContract(unittest.TestCase):
     def test_behind_remote_refuses(self):
         # Simulate a teammate's push landing on origin after this checkout.
         other = self.work.parent / "other-clone"
-        subprocess.run(
-            ["git", "clone", "-q", str(self.origin), str(other)], check=True
-        )
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
         subprocess.run(
             ["git", "config", "user.email", "t2@example.com"], cwd=other, check=True
         )
-        subprocess.run(
-            ["git", "config", "user.name", "t2"], cwd=other, check=True
-        )
+        subprocess.run(["git", "config", "user.name", "t2"], cwd=other, check=True)
         (other / "README.md").write_text("newer\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=other, check=True)
         subprocess.run(
@@ -161,15 +157,11 @@ class RunAnsibleGuardContract(unittest.TestCase):
 
     def test_allow_stale_checkout_bypasses_behind_remote(self):
         other = self.work.parent / "other-clone2"
-        subprocess.run(
-            ["git", "clone", "-q", str(self.origin), str(other)], check=True
-        )
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
         subprocess.run(
             ["git", "config", "user.email", "t3@example.com"], cwd=other, check=True
         )
-        subprocess.run(
-            ["git", "config", "user.name", "t3"], cwd=other, check=True
-        )
+        subprocess.run(["git", "config", "user.name", "t3"], cwd=other, check=True)
         (other / "README.md").write_text("newer\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=other, check=True)
         subprocess.run(
@@ -303,7 +295,6 @@ class RunAnsibleGuardContract(unittest.TestCase):
         result = self._run("--limit", "localhost")
         self.assertEqual(result.returncode, 0, result.stderr)
 
-
     # --- host-key pin reaches the in-process transport --------------------
 
     def _run_with_pin(self, home, pin):
@@ -342,6 +333,20 @@ class RunAnsibleGuardContract(unittest.TestCase):
         # Repeating a run must not keep growing the file.
         self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
         self.assertEqual(known.read_text(encoding="utf-8"), first)
+
+    def test_marker_lines_never_reach_the_pct_read_path(self):
+        # paramiko fails to load a file holding any marker line.
+        home = self.tmp_path_home()
+        known = home / ".ssh" / "known_hosts"
+        known.parent.mkdir(parents=True, exist_ok=True)
+        known.write_text("@revoked * ssh-ed25519 AAAAOLD\nme ssh-ed25519 AAAAMINE\n")
+        self._run_with_pin(
+            home, "node ssh-ed25519 AAAAPIN\n@cert-authority * ssh-ed25519 AAAACA\n"
+        )
+        text = known.read_text()
+        self.assertNotIn("@", text)
+        self.assertIn("AAAAMINE", text)
+        self.assertIn("AAAAPIN", text)
 
     def tmp_path_home(self):
         home = Path(self.tmp.name) / "fake-home"
