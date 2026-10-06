@@ -9,36 +9,14 @@
   register: github_runner_container_seccomp_engine_manifests
   failed_when: false
 
-- name: Find the seccomp profile module release Docker Engine vendors
-  ansible.builtin.set_fact:
-    github_runner_container_seccomp_profile_release: >-
+- name: Resolve the seccomp profile release Docker Engine vendors
+  ansible.builtin.include_tasks: seccomp_default_profile_release.yml
+  vars:
+    github_runner_container_seccomp_engine_manifest_contents: >-
       {{ github_runner_container_seccomp_engine_manifests.results
          | selectattr('status', 'defined')
          | selectattr('status', 'equalto', 200)
-         | map(attribute='content')
-         | map('regex_search',
-               '(?m)^\s*' ~ (github_runner_container_seccomp_profile_module | regex_escape)
-               ~ '\s+(v[0-9]+[.][0-9]+[.][0-9]+)\s*$', '\1')
-         | select | map('first') | first | default('') }}
+         | map(attribute='content') | list }}
 
-- name: Require a resolved seccomp profile release
-  ansible.builtin.assert:
-    that:
-      - github_runner_container_seccomp_profile_release | length > 0
-    fail_msg: >-
-      No reachable Docker Engine {{ github_runner_container_docker_engine_version }}
-      manifest names {{ github_runner_container_seccomp_profile_module }}.
-
-- name: Download the Docker Engine default seccomp profile
-  ansible.builtin.uri:
-    url: >-
-      {{ github_runner_container_seccomp_default_profile
-         | format(github_runner_container_seccomp_profile_release) }}
-    return_content: true
-  register: github_runner_container_seccomp_profile_download
-
-- name: Validate the downloaded seccomp profile
-  ansible.builtin.include_tasks: seccomp_default_profile_validate.yml
-  vars:
-    github_runner_container_seccomp_default_profile_content: >-
-      {{ github_runner_container_seccomp_profile_download.content }}
+- name: Download and validate the Docker Engine default seccomp profile
+  ansible.builtin.include_tasks: seccomp_default_profile_download.yml
