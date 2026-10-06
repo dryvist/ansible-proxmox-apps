@@ -82,3 +82,13 @@ def test_issuer_failure_cannot_fall_back_to_a_stored_domain_pair():
         "openbao_secrets_domain_issuer_inputs_present | bool",
         "not (openbao_secrets_domain_issuer_available | bool)",
     ]
+
+
+def test_a_complete_stored_pair_takes_precedence_over_the_issuer_path():
+    tasks = list(_tasks(yaml.safe_load(FETCH_DOMAIN.read_text())))
+    derive = next(task for task in tasks if task["name"].startswith("Derive the domain login path"))
+    expression = derive["ansible.builtin.set_fact"]["openbao_secrets_domain_use_issuer"]
+
+    assert "openbao_secrets_domain_role_id | length > 0" in expression
+    assert "openbao_secrets_domain_secret_id | length > 0" in expression
+    assert "not (" in expression
