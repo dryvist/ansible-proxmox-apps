@@ -83,6 +83,37 @@
           fixture's cadvisor port (fixture values, so a typed target cannot pass).
         success_msg: One cadvisor job, docker_vms-derived targets.
 
+    - name: Seeded cadvisor job renders the keep regex built from cadvisor_keep_metrics
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs[0].metric_relabel_configs | length == 1
+          - _jobs[0].metric_relabel_configs[0].action == 'keep'
+          - _jobs[0].metric_relabel_configs[0].source_labels == ['__name__']
+          - _jobs[0].metric_relabel_configs[0].regex == (cadvisor_keep_metrics | join('|'))
+        fail_msg: >-
+          The cadvisor job must carry one keep rule on __name__ whose regex is
+          cadvisor_keep_metrics joined with |. Rendered: {{ _jobs[0].metric_relabel_configs | default('none') }}.
+        success_msg: cadvisor keep regex rendered from the keep-list variable.
+
+    - name: Rendered cadvisor keep regex keeps the listed families and drops others
+      vars:
+        _cadvisor_re: "^({{ _jobs[0].metric_relabel_configs[0].regex }})$"
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            ['container_fs_reads_bytes_total', 'container_fs_writes_bytes_total',
+             'container_fs_reads_total', 'container_fs_writes_total',
+             'container_blkio_device_usage_total', 'container_cpu_usage_seconds_total',
+             'container_memory_working_set_bytes', 'container_last_seen']
+            | map('regex_search', _cadvisor_re)
+            | select('none') | list | length == 0
+          - "'container_fs_usage_bytes' | regex_search(_cadvisor_re) is none"
+          - "'container_network_receive_bytes_total' | regex_search(_cadvisor_re) is none"
+        fail_msg: The rendered cadvisor keep regex must match exactly the listed container_* families.
+        success_msg: Listed families kept, others dropped.
+
     - name: Republish the fixture without docker_vms
       ansible.builtin.set_fact:
         tofu_data: "{{ _fixture_tofu_data | combine({'docker_vms': {}}) }}"
@@ -101,6 +132,7 @@
         that:
           - _empty_jobs | length == 1
           - _empty_jobs[0].static_configs[0].targets == []
+          - _empty_jobs[0].metric_relabel_configs[0].regex == (cadvisor_keep_metrics | join('|'))
         fail_msg: With no docker_vms the cadvisor job must carry an empty target list.
         success_msg: No docker_vms, empty target list.
 
