@@ -1,0 +1,26 @@
+---
+# Every case must fail the role's own fetch/validate tasks. A case that
+# completes means a missing or invalid default profile could reach a runner.
+- name: Run a seccomp source case that must fail
+  block:
+    - name: Run the role task file for this case
+      ansible.builtin.include_tasks: "{{ _seccomp_role_tasks_dir }}/{{ _seccomp_case.tasks }}"
+      vars:
+        github_runner_container_docker_engine_version: "{{ _seccomp_case.engine_version | default('') }}"
+        github_runner_container_seccomp_engine_manifest_urls: >-
+          {{ _seccomp_case.manifest_urls | default(github_runner_container_seccomp_engine_manifest_urls) }}
+        github_runner_container_seccomp_default_profile_content: "{{ _seccomp_case.content | default('') }}"
+
+    - name: Record that the case completed
+      ansible.builtin.set_fact:
+        _seccomp_case_outcome: completed
+  rescue:
+    - name: Record that the case failed closed
+      ansible.builtin.set_fact:
+        _seccomp_case_outcome: failed
+
+- name: Assert the case failed closed
+  ansible.builtin.assert:
+    that:
+      - _seccomp_case_outcome == 'failed'
+    fail_msg: "Seccomp source case '{{ _seccomp_case.name }}' did not fail the converge."
