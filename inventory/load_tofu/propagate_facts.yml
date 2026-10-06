@@ -64,6 +64,11 @@
 # One combined set_fact + delegate_facts loop, not two: each selected target
 # or hostname consumer is written to exactly once instead of twice, halving
 # the per-host task overhead this file previously added at fleet scale.
+# set_fact needs no connection to its delegate. For a delegate whose plugin
+# forces persistence (pct_remote_persistent, Homarr), Ansible runs it on a
+# stand-in `local` connection that rejects the delegate's remote_addr, failing
+# only runs whose tags loop the whole fleet (DNS, OpenBao). Pinning
+# `ansible_connection: local` on the task works for any host, --limit and tags.
 # `hostname` is passed through `omit` for hosts outside
 # propagate_facts_hostname_hosts and absent from propagate_facts_guests.
 # `tofu_data`/`monitor_targets` are passed through `omit` outside this run's
@@ -79,6 +84,8 @@
             and item in propagate_facts_hostname_hosts else omit }}
   delegate_to: "{{ item }}"
   delegate_facts: true
+  vars:
+    ansible_connection: local
   loop: >-
     {{ (propagate_facts_limited_hosts + propagate_facts_hostname_hosts)
        | unique | reject('equalto', 'localhost') | list }}
