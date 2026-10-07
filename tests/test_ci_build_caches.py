@@ -108,11 +108,13 @@ class CiBuildCaches(unittest.TestCase):
             (RUNNER / "defaults" / "main.yml").read_text()
         )
         apt_proxy_expr = trust_as_template(apt_proxy_defaults["github_runner_apt_proxy_url"])
+        tofu_inventory = json.loads((ROOT / "tests" / "inventory_load" / "tofu_inventory.json").read_text())
+        tofu_inventory["domain"] = "example.com"
         variables = _mark_templates(
             {
-                "groups": {"registry_group": ["registry-1"], "apt_cacher_group": ["apt-cache-1"]},
+                "groups": {"registry_group": ["registry-1"]},
                 "ingress_domain": "pve.example.com",
-                "tofu_data": {"domain": "example.com", "constants": {"service_ports": {}}},
+                "tofu_data": tofu_inventory,
             }
         )
         templar = Templar(loader=DataLoader(), variables=variables)
@@ -120,7 +122,7 @@ class CiBuildCaches(unittest.TestCase):
         apt_proxy_url = templar.template(apt_proxy_expr)
         self.assertTrue(registry_host.endswith(".example.com"), registry_host)
         self.assertNotIn("pve.", registry_host)
-        self.assertTrue(apt_proxy_url.startswith("http://apt-cache-1.example.com:"), apt_proxy_url)
+        self.assertEqual(apt_proxy_url, "http://cache-a.example.com:3142")
         self.assertNotIn("pve.", apt_proxy_url)
 
     def test_daemon_json_content_renders_as_valid_json_with_one_newline(self):
@@ -249,12 +251,25 @@ class CiBuildCaches(unittest.TestCase):
         defaults = yaml.safe_load(
             (ROOT / "roles" / "github_runner" / "defaults" / "main.yml").read_text()
         )
-        self.assertIn("tofu_data.domain", defaults["github_runner_apt_proxy_url"])
-        self.assertNotIn("ingress_domain", defaults["github_runner_apt_proxy_url"])
-        self.assertIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
+        self.assertIn("cache_proxy_urls", defaults["github_runner_apt_proxy_url"])
+        self.assertNotIn("apt_cacher_group", defaults["github_runner_apt_proxy_url"])
         # No Molecule-image variable to hand alongside it -- every scenario
         # names the upstream image directly.
         self.assertNotIn("MOLECULE_BASE_IMAGE", env)
+
+    def test_runner_proxy_uses_the_first_published_cache_url(self):
+        defaults = yaml.safe_load(
+            (ROOT / "roles" / "github_runner" / "defaults" / "main.yml").read_text()
+        )
+        expression = trust_as_template(defaults["github_runner_apt_proxy_url"])
+        inventory = json.loads((ROOT / "tests" / "inventory_load" / "tofu_inventory.json").read_text())
+        self.assertEqual(inventory["cache_proxy_urls"]["apt_cache"], [
+            "http://cache-a.example.com:3142",
+            "http://cache-b.example.com:3142",
+        ])
+        variables = _mark_templates({"tofu_data": inventory})
+        templar = Templar(loader=DataLoader(), variables=variables)
+        self.assertEqual(templar.template(expression), inventory["cache_proxy_urls"]["apt_cache"][0])
 
     def test_no_molecule_image_is_built_or_overridden_on_a_runner_host(self):
         # The host never builds or pulls a Molecule image -- there is nothing
