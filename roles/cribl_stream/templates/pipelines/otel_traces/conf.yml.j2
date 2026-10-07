@@ -51,21 +51,21 @@ functions:
     conf:
       add:
         - name: "attributes['langfuse.user.id']"
-          value: "{% for a in cribl_stream_otel_user_id_sources %}attributes['{{ a }}'] || {% endfor %}undefined"
+          value: "{% for a in cribl_stream_otel_user_id_sources %}attributes['{{ a }}'] || {% endfor %}(attributes['metadata.environment'] === 'benchmark' ? (attributes['metadata.user'] || attributes['metadata.trace_user_id']) : undefined) || undefined"
         - name: "attributes['langfuse.session.id']"
-          value: "{% for a in cribl_stream_otel_session_id_sources %}attributes['{{ a }}'] || {% endfor %}undefined"
+          value: "{% for a in cribl_stream_otel_session_id_sources %}attributes['{{ a }}'] || {% endfor %}(attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.session_id'] : undefined) || undefined"
         - name: "attributes['langfuse.environment']"
-          value: "attributes['langfuse.environment'] || attributes['litellm.metadata.environment'] || attributes['deployment.environment'] || '{{ cribl_stream_otel_default_environment }}'"
+          value: "attributes['langfuse.environment'] || attributes['litellm.metadata.environment'] || (attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.environment'] : undefined) || attributes['deployment.environment'] || '{{ cribl_stream_otel_default_environment }}'"
         - name: "attributes['langfuse.release']"
-          value: "attributes['langfuse.release'] || attributes['litellm.metadata.trace_release'] || attributes['litellm.metadata.release'] || undefined"
+          value: "attributes['langfuse.release'] || attributes['litellm.metadata.trace_release'] || attributes['litellm.metadata.release'] || (attributes['metadata.environment'] === 'benchmark' ? (attributes['metadata.trace_release'] || attributes['metadata.release']) : undefined) || undefined"
         - name: "attributes['langfuse.version']"
-          value: "attributes['langfuse.version'] || attributes['litellm.metadata.trace_version'] || attributes['litellm.metadata.release'] || undefined"
+          value: "attributes['langfuse.version'] || attributes['litellm.metadata.trace_version'] || attributes['litellm.metadata.release'] || (attributes['metadata.environment'] === 'benchmark' ? (attributes['metadata.trace_version'] || attributes['metadata.release']) : undefined) || undefined"
         - name: "attributes['langfuse.observation.type']"
           value: "attributes['langfuse.observation.type'] || ((attributes['gen_ai.request.model'] || attributes['llm.model_name'] || attributes['model']) ? 'generation' : 'span')"
         # Deduplicated so an emitter that sets both `model` and
         # `gen_ai.request.model` does not produce the same tag twice.
         - name: "attributes['langfuse.trace.tags']"
-          value: "[...new Set([].concat(attributes['langfuse.trace.tags'] || [], attributes['tag.tags'] || [], attributes['litellm.metadata.runner'], attributes['litellm.metadata.purpose'], [{% for a in cribl_stream_otel_tag_sources %}attributes['{{ a }}']{{ ', ' if not loop.last }}{% endfor %}]).filter(Boolean))]"
+          value: "[...new Set([].concat(attributes['langfuse.trace.tags'] || [], attributes['tag.tags'] || [], attributes['litellm.metadata.runner'], attributes['litellm.metadata.purpose'], [{% for a in cribl_stream_otel_tag_sources %}attributes['{{ a }}']{{ ', ' if not loop.last }}{% endfor %}], attributes['metadata.environment'] === 'benchmark' ? [].concat(attributes['metadata.tags'] || [], attributes['metadata.runner'], attributes['metadata.purpose']) : []).filter(Boolean))]"
 
   # 4. Usage and passthrough metadata.
   - id: eval
@@ -79,7 +79,7 @@ functions:
 {% endfor %}
 {% for name, source in cribl_stream_otel_metadata_passthrough.items() %}
         - name: "attributes['langfuse.trace.metadata.{{ name }}']"
-          value: "attributes['langfuse.trace.metadata.{{ name }}'] !== undefined && attributes['langfuse.trace.metadata.{{ name }}'] !== null ? attributes['langfuse.trace.metadata.{{ name }}'] : attributes['{{ source }}'] !== null ? attributes['{{ source }}'] : undefined"
+          value: "attributes['langfuse.trace.metadata.{{ name }}'] !== undefined && attributes['langfuse.trace.metadata.{{ name }}'] !== null ? attributes['langfuse.trace.metadata.{{ name }}'] : attributes['{{ source }}'] !== undefined && attributes['{{ source }}'] !== null ? attributes['{{ source }}'] : attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.{{ name }}'] : undefined"
 {% endfor %}
 
   # 5. Trace label, most specific meaningful value first. `name` is the span's
@@ -90,16 +90,16 @@ functions:
     conf:
       add:
         - name: "attributes['langfuse.trace.name']"
-          value: "attributes['langfuse.trace.name'] || attributes['litellm.metadata.trace_name'] || name || {% for a in cribl_stream_otel_trace_name_sources %}attributes['{{ a }}'] || {% endfor %}'{{ cribl_stream_otel_trace_name_fallback }}'"
+          value: "attributes['langfuse.trace.name'] || attributes['litellm.metadata.trace_name'] || (attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.trace_name'] : undefined) || name || {% for a in cribl_stream_otel_trace_name_sources %}attributes['{{ a }}'] || {% endfor %}'{{ cribl_stream_otel_trace_name_fallback }}'"
 
   # Preserve the native trace label; name inference observations independently.
   - id: eval
-    filter: "!!attributes['litellm.metadata.generation_name'] && !!(attributes['gen_ai.request.model'] || attributes['llm.model_name'])"
+    filter: "!!(attributes['litellm.metadata.generation_name'] || (attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.generation_name'] : undefined)) && !!(attributes['gen_ai.request.model'] || attributes['llm.model_name'])"
     disabled: false
     conf:
       add:
         - name: name
-          value: "attributes['litellm.metadata.generation_name'] || name"
+          value: "attributes['litellm.metadata.generation_name'] || (attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.generation_name'] : undefined) || name"
 
   # 6. Noise removal.
   - id: eval
