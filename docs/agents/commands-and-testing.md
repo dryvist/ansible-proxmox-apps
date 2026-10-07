@@ -141,7 +141,12 @@ tasks. The levers, in order of effect:
 | Playbook syntax | `ansible-playbook --syntax-check` | every PR (CI) |
 | Inventory group validation | see below | every PR (CI) |
 | Converge-telemetry contract | `python3 tests/test_converge_telemetry.py` | every PR (CI) |
-| Molecule syntax | `molecule syntax` | every PR (CI, roles/molecule changes) |
+| Molecule tests | `molecule test -s <scenario>` | develop PRs: scenarios matched by changed roles; main promotion PRs and pushes: full matrix |
+
+The shared Ansible workflow selects scenarios from the caller's role map.
+Changes to shared role dependencies, Molecule inputs, requirements, workflow
+files, or unmapped paths widen a pull request to the full matrix. The caller's
+single `Merge Gate` aggregates Molecule with the repository contract checks.
 
 **Inventory validation locally:**
 
