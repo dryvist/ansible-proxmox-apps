@@ -40,7 +40,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: dryvist/.github/.github/workflows/_ansible-ci.yml@6eb230a10737d6f95bf278160fd15bb2d366c878
+    uses: dryvist/.github/.github/workflows/_ansible-ci.yml@1ee6eaa788a7d713019c71493cd2a03b9021dc2a
     with:
       # Molecule is owned locally (see header); the shared workflow runs lint only.
       molecule: false
@@ -114,6 +114,7 @@ jobs:
           - '.github/workflows/_data-contract.yml'
           - '.github/workflows/_inventory-contract.yml'
           - '.github/workflows/_secrets-contract.yml'
+          - 'tests/test_ci_molecule_branch_policy.py'
 
   # Repository-local deployment contracts share this deterministic scope.
   # Promotion into main forces them on; Molecule selection comes from the
@@ -199,10 +200,10 @@ jobs:
     needs: ci
     if: >-
       !cancelled() &&
-      needs.ci.outputs.molecule_scenarios != '[]' &&
-      (needs.ci.outputs.molecule == 'true' ||
-       github.event_name == 'push' ||
-       github.event.pull_request.base.ref == 'main')
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (needs.ci.outputs.molecule == 'true' &&
+        needs.ci.outputs.molecule_scenarios != '' &&
+        needs.ci.outputs.molecule_scenarios != '[]'))
     uses: ./.github/workflows/_molecule.yml
     with:
       scenarios: ${{ needs.ci.outputs.molecule_scenarios }}
@@ -237,16 +238,22 @@ jobs:
       - name: Check all results
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          # Main promotions and main pushes require every contract, Molecule,
-          # and integration result. Only develop PRs can skip path-scoped jobs;
-          # forks and develop pushes may skip self-hosted E2E.
+          # Full Molecule runs only after a push to main. On PRs and develop
+          # pushes, the shared classifier returns a focused list or [] for
+          # contract-only/full-matrix paths; the latter skips Molecule while
+          # retaining the classifier and local contracts in this gate.
           allowed-skips: >-
             ${{ (github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'develop' &&
             'data-contract, inventory-contract, secrets-contract, molecule, e2e') ||
-            (((github.event_name == 'pull_request' &&
+            ((github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'main' &&
-            github.event.pull_request.head.repo.full_name != github.repository) ||
-            (github.event_name == 'push' && github.ref == 'refs/heads/develop')) &&
-            'e2e') || '' }}
+            github.event.pull_request.head.repo.full_name != github.repository) &&
+            'e2e, molecule') ||
+            ((github.event_name == 'pull_request' &&
+            github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name == github.repository) &&
+            'molecule') ||
+            ((github.event_name == 'push' && github.ref == 'refs/heads/develop') &&
+            'e2e, molecule') || '' }}
           jobs: ${{ toJSON(needs) }}
