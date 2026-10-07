@@ -141,7 +141,15 @@ tasks. The levers, in order of effect:
 | Playbook syntax | `ansible-playbook --syntax-check` | every PR (CI) |
 | Inventory group validation | see below | every PR (CI) |
 | Converge-telemetry contract | `python3 tests/test_converge_telemetry.py` | every PR (CI) |
-| Molecule syntax | `molecule syntax` | every PR (CI, roles/molecule changes) |
+| Molecule tests | `molecule test -s <scenario>` | develop PRs: scenarios matched by changed roles; main promotion PRs and pushes: full matrix |
+
+The shared Ansible workflow selects scenarios from the caller's role map.
+Changes to shared Ansible inputs, `requirements-ci.txt`, or unmapped paths
+widen a pull request to the full matrix. `requirements.yml` and contract
+workflow changes use contract-only coverage because the required contracts run
+in the same `Merge Gate`. CI gate and local Molecule harness changes run the
+default smoke scenario and selector self-check; other unmapped workflow paths
+widen to the full matrix.
 
 **Inventory validation locally:**
 

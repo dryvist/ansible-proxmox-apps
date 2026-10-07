@@ -129,6 +129,14 @@ doppler run -- ansible-playbook \
 doppler run -- ansible-playbook playbooks/sync-cribl-packs.yml
 ```
 
+## CI checks
+
+Pull requests into `develop` run shared Ansible lint and contract checks plus
+Molecule scenarios matched by the shared role map. Shared inputs and unmapped
+changes widen the matrix. Pull requests into `main` run the full Molecule
+matrix and integration suite; pushes to `main` or `develop` run the full
+Molecule matrix. `Merge Gate` aggregates the required results.
+
 ## Roles
 
 ### docker_engine (shared dependency)
@@ -318,3 +326,16 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 ---
 
 > Part of a [larger ecosystem of ~40 repos](https://docs.jacobpevans.com) — see how it all fits together.
+
+## CI
+
+Pull requests into `develop` use changed-role Molecule selection with lint,
+syntax, and contract checks. Pull requests into `main` and non-PR runs use the
+full matrix. CI gate and local Molecule harness changes run the default smoke
+scenario and selector self-check; `requirements.yml` and contract workflow
+changes use the required contract checks. Shared Ansible inputs and unclassified
+role/scenario paths widen to the full matrix. Other unmapped workflow paths
+also widen to the full matrix. Required validation is aggregated by `Merge
+Gate`. Public pull-request CI stays on GitHub-hosted runners.
+
+See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”

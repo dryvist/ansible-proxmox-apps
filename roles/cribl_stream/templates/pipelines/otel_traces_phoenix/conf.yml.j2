@@ -37,6 +37,19 @@ functions:
     conf: {}
 {% endif %}
 
+  # Consumer identity and bounded category tags are span-only enrichment.
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: "attributes['session.id']"
+          value: "attributes['session.id'] || attributes['litellm.metadata.session_id'] || undefined"
+        - name: "attributes['user.id']"
+          value: "attributes['user.id'] || attributes['litellm.metadata.trace_user_id'] || undefined"
+        - name: "attributes['tag.tags']"
+          value: "[...new Set([].concat(attributes['tag.tags'] || [], attributes['litellm.metadata.runner'], attributes['litellm.metadata.purpose']).filter(Boolean))]"
+
   # 3. Noise removal.
   - id: eval
     filter: "true"
@@ -46,6 +59,24 @@ functions:
 {% for attr in (cribl_stream_otel_noise_attributes + cribl_stream_otel_drop_attributes) %}
         - "attributes['{{ attr }}']"
 {% endfor %}
+
+  # OpenInference metadata is JSON text. Existing valid fields survive; invalid
+  # source metadata is marked explicitly, without copying its raw contents.
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: >-
+        var a = __e.attributes || {}, m = {};
+        if (a.metadata) { try { m = typeof a.metadata === 'string' ?
+        JSON.parse(a.metadata) : a.metadata;
+        if (!m || typeof m !== 'object' || Array.isArray(m)) { throw new Error('metadata-object'); }
+        } catch (err) { m = {}; a['litellm.metadata.invalid_json'] = true; } }
+        var fields = {{ cribl_stream_otel_metadata_passthrough | to_json }};
+        for (var k in fields) { var v = a[fields[k]];
+        if (v !== undefined && v !== null) { m[k] = v; } }
+        a.metadata = JSON.stringify(m);
+        for (var k in a) { if (a[k] === undefined || a[k] === null) { delete a[k]; } }
 
   # 4. Credential redaction - see defaults/main.yml for the schema trap.
   - id: mask
