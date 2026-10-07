@@ -1,5 +1,66 @@
 # Changelog
 
+## [4.58.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.57.1...v4.58.0) (2026-10-07)
+
+
+### Features
+
+* **agent-sandbox:** route CLI event logs over S2S ([#2420](https://github.com/dryvist/ansible-proxmox-apps/issues/2420)) ([dffa533](https://github.com/dryvist/ansible-proxmox-apps/commit/dffa5338f49590e47e29c0941f9ab1fcb978aeb1))
+* **config:** add exact path entries ([64c0199](https://github.com/dryvist/ansible-proxmox-apps/commit/64c019966eca197c2aa9b4b047ec83a120544a45))
+* **config:** add exact path entries ([d92137f](https://github.com/dryvist/ansible-proxmox-apps/commit/d92137f64cd478c93f96488d9cad533362222a1f))
+* **glance:** add opt-in LLM profile custom-api widget ([#2423](https://github.com/dryvist/ansible-proxmox-apps/issues/2423)) ([7e9b5a1](https://github.com/dryvist/ansible-proxmox-apps/commit/7e9b5a156de479b2f701d3beaa36ebe865c9cffe))
+* **glance:** enable the deployment-profile tile with a generated router key ([#2449](https://github.com/dryvist/ansible-proxmox-apps/issues/2449)) ([67a996a](https://github.com/dryvist/ansible-proxmox-apps/commit/67a996a8cc014ac6d63636fe0a4daa15c0dab3cf))
+* **grafana:** add OpenBao and workstation alert rules ([#2445](https://github.com/dryvist/ansible-proxmox-apps/issues/2445)) ([b9eb1ab](https://github.com/dryvist/ansible-proxmox-apps/commit/b9eb1ab256b685127e98d3eb9ac68ab7d6f3411d))
+* **metrics:** fan out Cribl GPU metrics to Prometheus ([#2435](https://github.com/dryvist/ansible-proxmox-apps/issues/2435)) ([a33dd7d](https://github.com/dryvist/ansible-proxmox-apps/commit/a33dd7d22e3aa804cc97bf8b842cfcd4e8c67960))
+* **nautobot:** add procurement CustomFields to the hardware seed job ([ef194a2](https://github.com/dryvist/ansible-proxmox-apps/commit/ef194a2b2ddd8ea3288438aad541dcd0811cb333))
+* **openbao:** add bounded admin session role ([9642c71](https://github.com/dryvist/ansible-proxmox-apps/commit/9642c7170236a46b20c68edcf1ace1b82f9dda3e))
+* **openbao:** grant read-only Splunk MCP access ([bda93ea](https://github.com/dryvist/ansible-proxmox-apps/commit/bda93eaf0975746ef478ee3237e4a8fbc7f8ed24))
+* **openbao:** grant read-only Splunk MCP access ([7759a44](https://github.com/dryvist/ansible-proxmox-apps/commit/7759a44034e755d40c792e60d5d98b729c3f72de))
+* **openbao:** use per-call AppRole credentials ([#2437](https://github.com/dryvist/ansible-proxmox-apps/issues/2437)) ([60df363](https://github.com/dryvist/ansible-proxmox-apps/commit/60df363bd6ca9f19665fbfd0dc1a7606d9a56653))
+* **prometheus:** scrape cadvisor and keep guest disk metrics ([#2454](https://github.com/dryvist/ansible-proxmox-apps/issues/2454)) ([8e602c2](https://github.com/dryvist/ansible-proxmox-apps/commit/8e602c24386b088e7322a00e4eab58aba9584c3a))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** gate dispatcher alert validation ([#2405](https://github.com/dryvist/ansible-proxmox-apps/issues/2405)) ([df7d9f9](https://github.com/dryvist/ansible-proxmox-apps/commit/df7d9f9636f5a8e31b1268beff9ca4375f4d9ca2))
+* **agent_sandbox:** read keyed getent group fields ([#2407](https://github.com/dryvist/ansible-proxmox-apps/issues/2407)) ([2dda38e](https://github.com/dryvist/ansible-proxmox-apps/commit/2dda38e97786b850a1005f0ee55cfc63fd5328dc))
+* **agent-sandbox:** allow ZCode config download ([#2444](https://github.com/dryvist/ansible-proxmox-apps/issues/2444)) ([bc634b2](https://github.com/dryvist/ansible-proxmox-apps/commit/bc634b2dafcd14c4e772b16c8a65a8d50f63c975))
+* **alerting:** route notifications through Cribl ([#2417](https://github.com/dryvist/ansible-proxmox-apps/issues/2417)) ([f1595d9](https://github.com/dryvist/ansible-proxmox-apps/commit/f1595d91f9fd67760a9e9fb405c797445fe35358))
+* **ansible-lint:** exclude local direnv ([#2412](https://github.com/dryvist/ansible-proxmox-apps/issues/2412)) ([e483ceb](https://github.com/dryvist/ansible-proxmox-apps/commit/e483ceb0d9de5b06fced63383fc37490c1b6fe80))
+* **auth:** parameterize role defaults ([#2443](https://github.com/dryvist/ansible-proxmox-apps/issues/2443)) ([6a0bb93](https://github.com/dryvist/ansible-proxmox-apps/commit/6a0bb9361a963dc9c70227b278234742a1e00f37))
+* build router key paths from the consumer catalog ([1f93077](https://github.com/dryvist/ansible-proxmox-apps/commit/1f930773b03da35c402e4e77538af9699dfada0f))
+* **cribl:** send S2S spans to trace outputs ([#2426](https://github.com/dryvist/ansible-proxmox-apps/issues/2426)) ([728dc75](https://github.com/dryvist/ansible-proxmox-apps/commit/728dc754f500519c95483e33e43a070a76a36f00))
+* **homarr:** configure trusted integration certificates ([#2406](https://github.com/dryvist/ansible-proxmox-apps/issues/2406)) ([8e010f2](https://github.com/dryvist/ansible-proxmox-apps/commit/8e010f25ecb9ba21c822e993f9f3ad6ab2be97ff))
+* **inventory:** pin node host keys declared on tofu_data.nodes ([#2453](https://github.com/dryvist/ansible-proxmox-apps/issues/2453)) ([8a3ebba](https://github.com/dryvist/ansible-proxmox-apps/commit/8a3ebba51374f8bd4cd8327433f2e8841d64d2b4))
+* **inventory:** propagate facts to force-persistence delegates ([#2460](https://github.com/dryvist/ansible-proxmox-apps/issues/2460)) ([2ad0c92](https://github.com/dryvist/ansible-proxmox-apps/commit/2ad0c92a83e3eebbd9a67a770b77720e4e966f7e))
+* **inventory:** scope fact propagation to selected tags ([f3e7790](https://github.com/dryvist/ansible-proxmox-apps/commit/f3e7790b3951c30f96399d6169ea399a9f853721))
+* **lint:** exclude environment profile directory ([#2413](https://github.com/dryvist/ansible-proxmox-apps/issues/2413)) ([85e6a58](https://github.com/dryvist/ansible-proxmox-apps/commit/85e6a58ec07dbb71197cebe859261a2bf9c49dd7))
+* **lint:** exclude local links ([#2414](https://github.com/dryvist/ansible-proxmox-apps/issues/2414)) ([471aef1](https://github.com/dryvist/ansible-proxmox-apps/commit/471aef1767ee796d4ef4a5fe815f8f5de5a9417e))
+* mint flow-lock IDs through approle-issuer ([f7d7b8e](https://github.com/dryvist/ansible-proxmox-apps/commit/f7d7b8e8add0b26b9d5409bc745399781a67bf7a))
+* **nautobot:** stub ensure_procurement_fields and add queryset exclude/delete fakes ([680440e](https://github.com/dryvist/ansible-proxmox-apps/commit/680440ea9a324cf7c8c0c11afed920c688240af7))
+* **openbao:** do not declare the Hermes policies without an installation ([#2448](https://github.com/dryvist/ansible-proxmox-apps/issues/2448)) ([1827778](https://github.com/dryvist/ansible-proxmox-apps/commit/1827778c17ca21bbfe3a763dce6dea55343e7a7b))
+* **openbao:** extend reconcile token session TTL ([0d57ffd](https://github.com/dryvist/ansible-proxmox-apps/commit/0d57ffd1640c895982ba36790f19d30678314add))
+* **openbao:** extend reconcile token session TTL ([48c4d19](https://github.com/dryvist/ansible-proxmox-apps/commit/48c4d19be5605421c95152b27d733f77293d935d))
+* **openbao:** reconcile through per-call issuer ([#2446](https://github.com/dryvist/ansible-proxmox-apps/issues/2446)) ([beb5e1c](https://github.com/dryvist/ansible-proxmox-apps/commit/beb5e1c4c164ed32d6a00f5c27c099f776ecbb82))
+* **openbao:** restore Cribl Mac rotation catalog ([310deac](https://github.com/dryvist/ansible-proxmox-apps/commit/310deace8ef8283fdfc90b1ebd128a2a9ba42abc))
+* **openbao:** run the undeclared-live AppRole calls on the CLI host ([#2450](https://github.com/dryvist/ansible-proxmox-apps/issues/2450)) ([2cfd819](https://github.com/dryvist/ansible-proxmox-apps/commit/2cfd81904580692307086d64af1f936b1fa571b5))
+* **openbao:** send the app-secret promote write from the CLI host ([#2452](https://github.com/dryvist/ansible-proxmox-apps/issues/2452)) ([5e0ae5e](https://github.com/dryvist/ansible-proxmox-apps/commit/5e0ae5e464b7b228d579bd35a8caf5119c36e75a))
+* restore Cribl Mac rotation catalog ([a728d17](https://github.com/dryvist/ansible-proxmox-apps/commit/a728d17bf2993e0feb8e7dc784d349205528c295))
+* **run-ansible:** keep known_hosts marker lines out of the pct read path ([#2456](https://github.com/dryvist/ansible-proxmox-apps/issues/2456)) ([6dae886](https://github.com/dryvist/ansible-proxmox-apps/commit/6dae886012f508c74efbeecd6509b9aca5988fb2))
+* **run-ansible:** let the reviewed host-key pin win over stale known_hosts lines ([#2459](https://github.com/dryvist/ansible-proxmox-apps/issues/2459)) ([972a4d5](https://github.com/dryvist/ansible-proxmox-apps/commit/972a4d546058455c33df11154fb5370683a48a16))
+* **runner:** start runner containers as a non-root user ([#2431](https://github.com/dryvist/ansible-proxmox-apps/issues/2431)) ([32eee6d](https://github.com/dryvist/ansible-proxmox-apps/commit/32eee6d6840c504651cceb39c1dba393a071a098))
+* **technitium_dns:** gate the secondary zone include on the secondary role ([9e92c4c](https://github.com/dryvist/ansible-proxmox-apps/commit/9e92c4c48b137973467ceb8607514409f2ad6736))
+* **technitium_dns:** recreate a secondary zone whose serial is ahead of the primary ([c94b40b](https://github.com/dryvist/ansible-proxmox-apps/commit/c94b40be1b296422e4e1025d4b530567ac9ad359))
+* **technitium_dns:** recreate a secondary zone whose serial is ahead of the primary ([b3f28b8](https://github.com/dryvist/ansible-proxmox-apps/commit/b3f28b844f1d04bfe65cbad5d0c17d5419aa3d65))
+* **technitium:** match ingress route host fallback ([#2429](https://github.com/dryvist/ansible-proxmox-apps/issues/2429)) ([547a9e8](https://github.com/dryvist/ansible-proxmox-apps/commit/547a9e81e81bc2cf3e382d7f7485eb4e86dbd0b1))
+
+
+### Performance
+
+* batch helper deploys and coalesce restarts ([e7cf7e9](https://github.com/dryvist/ansible-proxmox-apps/commit/e7cf7e9950f04bdf1df140e4dc96949c6d1ca939))
+* **dashboard:** reuse persistent sessions ([#2424](https://github.com/dryvist/ansible-proxmox-apps/issues/2424)) ([faefc46](https://github.com/dryvist/ansible-proxmox-apps/commit/faefc46112b30066987c77f4dece28f0073d608f))
+* **homarr:** batch converger deployment and coalesce restarts ([9425906](https://github.com/dryvist/ansible-proxmox-apps/commit/94259064afe1456145b27192c4b02fa520a79493))
+
 ## [4.57.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.57.0...v4.57.1) (2026-10-04)
 
 
