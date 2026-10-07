@@ -24,9 +24,10 @@ name: CI Gate
 
 on:
   pull_request:
+    branches: [develop, main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [main]
+    branches: [develop, main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -80,12 +81,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      # A push to `main` forces both true. Not a shortcut: on a push
-      # dorny/paths-filter diffs against github.event.before, which a
-      # fetch-depth:1 checkout does not contain, so every filter returned false
-      # and the whole suite skipped behind a green board. Forcing also matches
-      # the rule the trigger exists to implement — a merge into `main` runs
-      # everything, regardless of what the diff looks like.
+      # A push forces both true because paths-filter may not have the prior
+      # commit in a shallow checkout. For PRs, `main` forces a full run while
+      # `develop` follows the changed paths.
       deploy: >-
         ${{ steps.filter.outputs.deploy == 'true'
             || github.event_name == 'push'
@@ -165,20 +163,10 @@ jobs:
 
   molecule:
     name: Molecule
-    needs: [ci, scope, jev]
-    # Scenario selection happens inside the called workflow, which derives the
-    # role-to-scenario map from the tree and runs everything on a promotion.
-    # Jev is AUTHORITATIVE: runs whenever it says anything other than "none".
-    # The deterministic ci/scope filter is consulted only as the fallback
-    # when jev is unreachable (source == 'fallback') - which itself always
-    # answers molecule: full, so this OR is redundant-but-explicit defense
-    # in depth against a future change to that fallback guarantee, not
-    # load-bearing today.
-    if: >-
-      !cancelled() &&
-      (needs.jev.outputs.molecule != 'none' ||
-       (needs.jev.outputs.source == 'fallback' &&
-        (needs.ci.outputs.molecule == 'true' || needs.scope.outputs.molecule == 'true')))
+    needs: [ci, scope]
+    # The deterministic local selector derives role-to-scenario coverage. Its
+    # scope output forces the full matrix for main-target PRs and pushes.
+    if: ${{ !cancelled() && needs.scope.outputs.molecule == 'true' }}
     uses: ./.github/workflows/_molecule.yml
     secrets: inherit
 
@@ -203,6 +191,7 @@ jobs:
     if: >-
       !cancelled() &&
       github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
       vars.E2E_RUNNERS_ENABLED == 'true' &&
       needs.scope.outputs.deploy == 'true' &&
       (needs.jev.outputs.e2e != 'no' ||

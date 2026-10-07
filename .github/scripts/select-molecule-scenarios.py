@@ -37,10 +37,10 @@ REPO = Path(__file__).resolve().parents[2]
 SCENARIO_DIR = REPO / "molecule"
 ROLE_DIR = REPO / "roles"
 
-# Changes here can affect any scenario, so they select all of them. inventory/
-# is deliberately not here: no scenario reads the repo inventory (each declares
-# its own host_vars inline), and inventory changes are already covered by the
-# Inventory Contract and Template Rendering Tests jobs.
+# Changes here can affect any scenario, so they select all of them. CI harness
+# changes have a separate smoke path below. inventory/ is deliberately not
+# here: no scenario reads the repo inventory (each declares its own host_vars
+# inline), and inventory changes are covered by contract tests.
 #
 # molecule/resources/ is the Dockerfile and prep tasks every scenario imports;
 # .config/molecule/ is the Molecule base config (dependency, driver, verifier)
@@ -49,9 +49,11 @@ ROLE_DIR = REPO / "roles"
 # same as a shared playbook does.
 SHARED = re.compile(
     r"^(playbooks/|requirements\.yml$|requirements-ci\.txt$"
-    r"|\.github/workflows/(?:ci-gate|_molecule)\.yml$"
-    r"|\.github/scripts/select-molecule-scenarios\.py$"
     r"|molecule/resources/|\.config/molecule/)"
+)
+CI_HARNESS = re.compile(
+    r"^\.github/(?:workflows/(?:ci-gate|_molecule)\.yml|"
+    r"scripts/select-molecule-scenarios\.py)$"
 )
 ROLE_PATH = re.compile(r"^roles/([^/]+)/")
 SCENARIO_PATH = re.compile(r"^molecule/([^/]+)/")
@@ -236,8 +238,10 @@ def self_check() -> int:
     if selected or unrecognised != ["molecule/not-a-scenario/config.yml"]:
         failures.append("an unrecognised molecule path no longer widens the matrix")
 
-    if not SHARED.match(".github/workflows/ci-gate.yml"):
-        failures.append("the Molecule gate workflow no longer widens the matrix")
+    if SHARED.match(".github/workflows/ci-gate.yml") or not CI_HARNESS.match(
+        ".github/workflows/ci-gate.yml"
+    ):
+        failures.append("CI gate changes no longer use the smoke-scenario path")
 
     # molecule/resources/ (the shared Dockerfile + prep tasks every scenario
     # imports) and .config/molecule/ (the Molecule base config merged into
@@ -297,11 +301,22 @@ def main() -> int:
     if event != "pull_request" or not base_sha:
         emit(all_scenarios, f"full matrix: event `{event or 'unknown'}` is not a pull request")
         return 0
+    if base_ref == production:
+        emit(all_scenarios, f"full matrix: pull request targets `{production}`")
+        return 0
 
     changed = changed_files(base_sha)
     shared_hits = [f for f in changed if SHARED.match(f)]
     if shared_hits:
         emit(all_scenarios, f"full matrix: shared input changed (`{shared_hits[0]}`)")
+        return 0
+
+    ci_hits = [f for f in changed if CI_HARNESS.match(f)]
+    if ci_hits:
+        if "default" not in all_scenarios:
+            emit(all_scenarios, "full matrix: CI harness changed and no smoke scenario exists")
+        else:
+            emit(["default"], f"CI harness changed; run `default` smoke scenario (`{ci_hits[0]}`)")
         return 0
 
     scenario_hits, unknown_scenario_hits = changed_scenarios(changed, set(all_scenarios))
