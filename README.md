@@ -129,6 +129,14 @@ doppler run -- ansible-playbook \
 doppler run -- ansible-playbook playbooks/sync-cribl-packs.yml
 ```
 
+## CI checks
+
+Pull requests into `develop` run shared Ansible lint and contract checks plus
+Molecule scenarios matched by the shared role map. Shared inputs and unmapped
+changes widen the matrix. Pull requests into `main` run the full Molecule
+matrix and integration suite; pushes to `main` or `develop` run the full
+Molecule matrix. `Merge Gate` aggregates the required results.
+
 ## Roles
 
 ### docker_engine (shared dependency)

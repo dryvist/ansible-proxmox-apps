@@ -15,10 +15,8 @@
 # required "Merge Gate". All local jobs gate on the shared workflow's exported
 # filter outputs — one change-detection definition.
 #
-# E2E Runner Guard:
-# E2E tests require self-hosted runners. The e2e job checks the repository
-# variable `E2E_RUNNERS_ENABLED`; set to 'true' after deploying runners:
-# `gh variable set E2E_RUNNERS_ENABLED --body true`.
+# E2E tests require the enabled self-hosted runner pool. They run on main
+# promotions and pushes to main, and only for same-repository promotion PRs.
 
 name: CI Gate
 
@@ -38,44 +36,79 @@ permissions:
   pull-requests: read
 
 jobs:
-  # Content-aware classifier (dryvist/ai-workflows' scope-classify.yml,
-  # "Jev"). Named `jev`, not `scope` - this repo's own deterministic
-  # paths-filter job below is already named `scope`. AUTHORITATIVE for
-  # Molecule/e2e below: its `molecule`/`e2e` outputs decide on their own;
-  # the deterministic `ci`/`scope` filter outputs are consulted ONLY when
-  # `jev.outputs.source == 'fallback'` (classifier unreachable), which is
-  # also the one case scope-classify.yml's own fail-safe already forces
-  # every output to full/yes - so a jev failure or an untouched
-  # TYPESAFE_API_KEY still runs Molecule/e2e, never skips them.
-  jev:
-    name: Classify CI scope (Jev)
-    permissions:
-      contents: read
-      pull-requests: read
-    uses: dryvist/ai-workflows/.github/workflows/scope-classify.yml@main
-    secrets:
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-
   ci:
     permissions:
       contents: read
       pull-requests: read
-    uses: dryvist/.github/.github/workflows/_ansible-ci.yml@main
+    uses: dryvist/.github/.github/workflows/_ansible-ci.yml@32c70d00339a610ceaf3cfe4ef0438c76e8799fd
     with:
       # Molecule is owned locally (see header); the shared workflow runs lint only.
       molecule: false
+      molecule_scenario_filters: |
+        default:
+          - 'roles/docker_engine/**'
+          - 'roles/mssql_docker/**'
+          - 'molecule/default/**'
+        github_runner_arc:
+          - 'roles/github_runner_arc/**'
+          - 'molecule/github_runner_arc/**'
+        homarr:
+          - 'roles/apt_recovery/**'
+          - 'roles/dashboard_catalog/**'
+          - 'roles/homarr/**'
+          - 'roles/openbao_secrets/**'
+          - 'molecule/homarr/**'
+        homarr_v2:
+          - 'roles/apt_recovery/**'
+          - 'roles/dashboard_catalog/**'
+          - 'roles/homarr/**'
+          - 'roles/openbao_secrets/**'
+          - 'molecule/homarr_v2/**'
+        immich:
+          - 'roles/docker_engine/**'
+          - 'roles/immich/**'
+          - 'molecule/immich/**'
+        keepalived:
+          - 'roles/keepalived/**'
+          - 'molecule/keepalived/**'
+        nautobot:
+          - 'roles/nautobot/**'
+          - 'roles/openbao_secrets/**'
+          - 'molecule/nautobot/**'
+        netmon:
+          - 'roles/docker_engine/**'
+          - 'roles/netmon/**'
+          - 'molecule/netmon/**'
+        object_storage:
+          - 'roles/object_storage/**'
+          - 'molecule/object_storage/**'
+        openbao:
+          - 'roles/openbao/**'
+          - 'molecule/openbao/**'
+        postgres:
+          - 'roles/nautobot/**'
+          - 'roles/openbao_secrets/**'
+          - 'roles/postgres/**'
+          - 'molecule/postgres/**'
+        postgres_patroni:
+          - 'roles/postgres/**'
+          - 'molecule/postgres_patroni/**'
+        proxmox_backup_server:
+          - 'roles/proxmox_backup_server/**'
+          - 'molecule/proxmox_backup_server/**'
+        ssh_ca_trust:
+          - 'roles/ssh_ca_trust/**'
+          - 'molecule/ssh_ca_trust/**'
+        static_site:
+          - 'roles/static_site/**'
+          - 'molecule/static_site/**'
+        technitium_dns:
+          - 'roles/technitium_dns/**'
+          - 'molecule/technitium_dns/**'
 
-  # The shared `ansible` filter matches '**.yml' deliberately — it also gates
-  # lint, and narrowing it once let a test-only PR merge green having never run
-  # (see the comment on that filter upstream). It is the right filter for LINT
-  # and the wrong one for DEPLOYMENT checks: editing a workflow file made it
-  # true, which ran 5 data-contract jobs and 8 e2e jobs against infrastructure
-  # that had not changed.
-  #
-  # Deployment scope is therefore decided here, rather than by narrowing a
-  # shared filter that five repos depend on. Promotion into main forces it
-  # true — a guaranteed full sweep at that boundary is what makes narrowing
-  # safe everywhere else.
+  # Repository-local deployment contracts share this deterministic scope.
+  # Promotion into main forces them on; Molecule selection comes from the
+  # shared Ansible workflow below.
   scope:
     name: Detect deploy scope
     runs-on: ubuntu-latest
@@ -86,10 +119,6 @@ jobs:
       # `develop` follows the changed paths.
       deploy: >-
         ${{ steps.filter.outputs.deploy == 'true'
-            || github.event_name == 'push'
-            || github.event.pull_request.base.ref == 'main' }}
-      molecule: >-
-        ${{ steps.filter.outputs.molecule == 'true'
             || github.event_name == 'push'
             || github.event.pull_request.base.ref == 'main' }}
     steps:
@@ -108,23 +137,12 @@ jobs:
               - 'tests/**'
               - 'requirements.yml'
               - 'requirements-ci.txt'
-              # A PR that only edits one of these three files skipped the
-              # job it defines entirely (deploy stayed false), so the job's
-              # own definition could merge unexercised. Same reasoning as
-              # molecule's own workflow-file entries below.
+              # A PR that only edits one of these workflow files must exercise
+              # the contract job it defines.
               - '.github/workflows/ci-gate.yml'
               - '.github/workflows/_data-contract.yml'
               - '.github/workflows/_inventory-contract.yml'
               - '.github/workflows/_secrets-contract.yml'
-            molecule:
-              - 'roles/**'
-              - 'molecule/**'
-              - 'playbooks/**'
-              - 'requirements.yml'
-              - 'requirements-ci.txt'
-              - '.github/workflows/ci-gate.yml'
-              - '.github/workflows/_molecule.yml'
-              - '.github/scripts/select-molecule-scenarios.py'
 
   data-contract:
     name: Data Contract
@@ -135,7 +153,9 @@ jobs:
     # cannot answer for this event.
     if: >-
       needs.scope.outputs.deploy == 'true' &&
-      (needs.ci.outputs.ansible == 'true' || github.event_name == 'push')
+      (needs.ci.outputs.ansible == 'true' ||
+       github.event_name == 'push' ||
+       github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_data-contract.yml
 
   # The inventory half of the same contract, split out because the source file
@@ -146,7 +166,9 @@ jobs:
     needs: [ci, scope]
     if: >-
       needs.scope.outputs.deploy == 'true' &&
-      (needs.ci.outputs.ansible == 'true' || github.event_name == 'push')
+      (needs.ci.outputs.ansible == 'true' ||
+       github.event_name == 'push' ||
+       github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_inventory-contract.yml
 
   # The OpenBao/secrets half of the same contract, split out of
@@ -158,44 +180,37 @@ jobs:
     needs: [ci, scope]
     if: >-
       needs.scope.outputs.deploy == 'true' &&
-      (needs.ci.outputs.ansible == 'true' || github.event_name == 'push')
+      (needs.ci.outputs.ansible == 'true' ||
+       github.event_name == 'push' ||
+       github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_secrets-contract.yml
 
   molecule:
     name: Molecule
-    needs: [ci, scope]
-    # The deterministic local selector derives role-to-scenario coverage. Its
-    # scope output forces the full matrix for main-target PRs and pushes.
-    if: ${{ !cancelled() && needs.scope.outputs.molecule == 'true' }}
+    needs: ci
+    if: >-
+      !cancelled() &&
+      (needs.ci.outputs.molecule == 'true' ||
+       github.event_name == 'push' ||
+       github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_molecule.yml
+    with:
+      scenarios: ${{ needs.ci.outputs.molecule_scenarios }}
     secrets: inherit
 
   e2e:
     name: E2E Tests
-    needs: [ci, scope, jev]
-    # Self-hosted. e2e exercises deployed infrastructure, so it follows the
-    # deploy scope above rather than the lint filter.
-    # (PR e2e also runs on its own schedule / workflow_dispatch.)
-    #
-    # Restricted to `push` so it runs on merge into main and never blocks a PR.
-    # `Merge Gate` already forgives an e2e skip, so PRs stay green without it.
-    # Deliberately NOT gated on the shared workflow's change filter: that filter
-    # cannot answer on a push, and a post-merge sweep that silently skips is the
-    # failure this trigger exists to prevent.
-    #
-    # Jev-authoritative on `e2e`, same fallback pattern as Molecule above.
-    # In practice this never narrows anything here: every push is a
-    # non-pull_request event, which scope-classify.yml's own ALWAYS-FULL
-    # override always answers e2e: yes for - kept for consistency with
-    # Molecule's gating, not because it changes behavior today.
+    needs: scope
+    # This suite reads integrated service health through the self-hosted pool.
+    # Never run fork-controlled code on those runners.
     if: >-
       !cancelled() &&
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
       vars.E2E_RUNNERS_ENABLED == 'true' &&
       needs.scope.outputs.deploy == 'true' &&
-      (needs.jev.outputs.e2e != 'no' ||
-       (needs.jev.outputs.source == 'fallback' && needs.scope.outputs.deploy == 'true'))
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     uses: ./.github/workflows/_e2e-tests.yml
 
   gate:
@@ -204,7 +219,7 @@ jobs:
     # the deployment checks run, so a failure there skips them — and a skip the
     # gate forgives is a green board with nothing having run. The job that
     # decides what to skip can never itself be skippable.
-    needs: [ci, scope, jev, data-contract, inventory-contract, secrets-contract, molecule, e2e]
+    needs: [ci, scope, data-contract, inventory-contract, secrets-contract, molecule, e2e]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -212,13 +227,16 @@ jobs:
       - name: Check all results
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          allowed-skips: data-contract, inventory-contract, secrets-contract, molecule, e2e
-          # `jev` never skips (no `if:`), so it needs allowed-FAILURES, not
-          # allowed-skips - a classifier infra failure is visible as a red
-          # job but never blocks this gate, since Molecule/e2e above already
-          # defer to the deterministic filter whenever jev's own source
-          # isn't 'fallback' from a clean success (an outright job failure
-          # leaves `molecule`/`e2e` outputs empty, and empty != 'none'/'no'
-          # is true, so both still run - the safe direction).
-          allowed-failures: jev
+          # Main promotions and main pushes require every contract, Molecule,
+          # and integration result. Only develop PRs can skip path-scoped jobs;
+          # forks and develop pushes may skip self-hosted E2E.
+          allowed-skips: >-
+            ${{ (github.event_name == 'pull_request' &&
+            github.event.pull_request.base.ref == 'develop' &&
+            'data-contract, inventory-contract, secrets-contract, molecule, e2e') ||
+            (((github.event_name == 'pull_request' &&
+            github.event.pull_request.base.ref == 'main' &&
+            github.event.pull_request.head.repo.full_name != github.repository) ||
+            (github.event_name == 'push' && github.ref == 'refs/heads/develop')) &&
+            'e2e') || '' }}
           jobs: ${{ toJSON(needs) }}
