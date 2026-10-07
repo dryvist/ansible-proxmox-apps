@@ -96,6 +96,98 @@ class TraceContract(unittest.TestCase):
         for field, value in attrs.items():
             self.assertEqual(actual[field], value)
 
+    def test_benchmark_generic_metadata_projects_stage0_contract_and_hardware(self):
+        attrs = {
+            'metadata.environment': 'benchmark',
+            'metadata.client': 'stage0-client',
+            'metadata.runtime': 'stage0-runtime',
+            'metadata.runner': 'stage0-runner',
+            'metadata.purpose': 'stage0-purpose',
+            'metadata.tier': 'stage0-tier',
+            'metadata.user': 'stage0-user',
+            'metadata.trace_user_id': 'stage0-user-id',
+            'metadata.session_id': 'stage0-session',
+            'metadata.trace_name': 'stage0-trace',
+            'metadata.generation_name': 'stage0-generation',
+            'metadata.tags': ['stage0-tag'],
+            'metadata.release': 'stage0-release',
+            'metadata.trace_release': 'stage0-trace-release',
+            'metadata.trace_version': 'stage0-version',
+            'metadata.model_task': 'feature-extraction',
+            'metadata.host': 'fixture-mac',
+            'metadata.chip': 'fixture-chip',
+            'metadata.unified_memory_gb': 128,
+            'metadata.power_source': 'ac',
+            'metadata.power_mode': 'normal',
+            'metadata.macos_version': 'fixture-os',
+            'model': 'fixture-model',
+            'gen_ai.request.model': 'fixture-model',
+            'gen_ai.system': 'fixture-provider',
+        }
+        actual = enrich('otel_traces', attrs)
+        lf = actual['attributes']
+
+        self.assertEqual(lf['langfuse.environment'], 'benchmark')
+        self.assertEqual(lf['langfuse.user.id'], 'stage0-user')
+        self.assertEqual(lf['langfuse.session.id'], 'stage0-session')
+        self.assertEqual(lf['langfuse.trace.name'], 'stage0-trace')
+        self.assertEqual(lf['langfuse.release'], 'stage0-trace-release')
+        self.assertEqual(lf['langfuse.version'], 'stage0-version')
+        self.assertEqual(actual['name'], 'stage0-generation')
+        self.assertEqual(lf['langfuse.trace.metadata.model_task'], 'feature-extraction')
+        self.assertEqual(lf['langfuse.trace.metadata.host'], 'fixture-mac')
+        self.assertEqual(lf['langfuse.trace.metadata.chip'], 'fixture-chip')
+        self.assertEqual(lf['langfuse.trace.metadata.unified_memory_gb'], 128)
+        self.assertEqual(lf['langfuse.trace.metadata.power_source'], 'ac')
+        self.assertEqual(lf['langfuse.trace.metadata.power_mode'], 'normal')
+        self.assertEqual(lf['langfuse.trace.metadata.macos_version'], 'fixture-os')
+        self.assertEqual(lf['gen_ai.request.model'], 'fixture-model')
+        self.assertEqual(lf['gen_ai.system'], 'fixture-provider')
+        self.assertTrue({'stage0-tag', 'stage0-runner', 'stage0-purpose'}.issubset(
+            lf['langfuse.trace.tags']))
+        for field in ('client', 'runtime', 'runner', 'purpose', 'tier', 'session_id',
+                      'trace_user_id', 'trace_name', 'generation_name', 'release',
+                      'trace_release', 'trace_version'):
+            self.assertEqual(lf[f'langfuse.trace.metadata.{field}'], attrs[f'metadata.{field}'])
+
+    def test_generic_fallback_preserves_litellm_precedence_and_default(self):
+        attrs = {
+            'metadata.environment': 'benchmark',
+            'litellm.metadata.environment': 'legacy-environment',
+            'deployment.environment': 'resource-environment',
+            'metadata.client': 'generic-client',
+            'litellm.metadata.client': 'legacy-client',
+            'metadata.session_id': 'generic-session',
+            'litellm.metadata.session_id': 'legacy-session',
+            'metadata.trace_name': 'generic-trace',
+            'litellm.metadata.trace_name': 'legacy-trace',
+            'metadata.release': 'generic-release',
+            'litellm.metadata.release': 'legacy-release',
+        }
+        lf = enrich('otel_traces', attrs)['attributes']
+        self.assertEqual(lf['langfuse.environment'], 'legacy-environment')
+        self.assertEqual(lf['langfuse.session.id'], 'legacy-session')
+        self.assertEqual(lf['langfuse.trace.name'], 'legacy-trace')
+        self.assertEqual(lf['langfuse.release'], 'legacy-release')
+        self.assertEqual(lf['langfuse.trace.metadata.client'], 'legacy-client')
+        self.assertEqual(lf['langfuse.trace.metadata.session_id'], 'legacy-session')
+
+        production = enrich('otel_traces', {
+            'metadata.environment': 'production',
+            'metadata.client': 'generic-client',
+            'metadata.session_id': 'generic-session',
+            'metadata.user': 'generic-user',
+            'metadata.tags': ['generic-tag'],
+            'metadata.model_task': 'generic-task',
+            'metadata.host': 'fixture-mac',
+        })['attributes']
+        self.assertEqual(production['langfuse.environment'], 'homelab')
+        for field in ('client', 'session_id', 'model_task', 'host'):
+            self.assertNotIn(f'langfuse.trace.metadata.{field}', production)
+        self.assertNotIn('langfuse.session.id', production)
+        self.assertNotIn('langfuse.user.id', production)
+        self.assertNotIn('generic-tag', production.get('langfuse.trace.tags', []))
+
     def test_zero_usage_counts_survive_native_and_alias_sources(self):
         for attrs in [{'gen_ai.usage.input_tokens': 0, 'input_tokens': 99},
                       {'input_tokens': 0}]:
