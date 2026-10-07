@@ -26,7 +26,11 @@ Full docs live under `docs/agents/`, one topic per page:
 
 ## CI
 
-CI uses the shared Ansible workflow: pull requests into `develop` run mapped
-changed-role scenarios, while promotion pull requests into `main` run the full
-Molecule matrix and integration suite. Pushes to `main` or `develop` run the
-full matrix. `Merge Gate` includes Molecule and the repository contract checks.
+Pull requests into `develop` use changed-role Molecule selection with lint,
+syntax, and contract checks. CI-harness-only changes run the default smoke
+scenario and selector self-check; shared Ansible inputs and unclassified
+role/scenario paths widen to the full matrix. Pull requests into `main` and
+non-PR runs use the full matrix. Required validation is aggregated by `Merge
+Gate`, and public pull-request CI stays on GitHub-hosted runners.
+
+See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”

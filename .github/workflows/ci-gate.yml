@@ -25,7 +25,7 @@ on:
     branches: [develop, main]
     types: [opened, synchronize, reopened]
   push:
-    branches: [main, develop]
+    branches: [develop, main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -114,12 +114,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      # A push to `main` forces both true. Not a shortcut: on a push
-      # dorny/paths-filter diffs against github.event.before, which a
-      # fetch-depth:1 checkout does not contain, so every filter returned false
-      # and the whole suite skipped behind a green board. Forcing also matches
-      # the rule the trigger exists to implement — a merge into `main` runs
-      # everything, regardless of what the diff looks like.
+      # A push forces both true because paths-filter may not have the prior
+      # commit in a shallow checkout. For PRs, `main` forces a full run while
+      # `develop` follows the changed paths.
       deploy: >-
         ${{ steps.filter.outputs.deploy == 'true'
             || github.event_name == 'push'
@@ -192,9 +189,10 @@ jobs:
     name: Molecule
     needs: ci
     if: >-
-      needs.ci.outputs.molecule == 'true' ||
-      github.event_name == 'push' ||
-      github.event.pull_request.base.ref == 'main'
+      !cancelled() &&
+      (needs.ci.outputs.molecule == 'true' ||
+       github.event_name == 'push' ||
+       github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_molecule.yml
     with:
       scenarios: ${{ needs.ci.outputs.molecule_scenarios }}
@@ -206,7 +204,9 @@ jobs:
     # This suite reads integrated service health through the self-hosted pool.
     # Never run fork-controlled code on those runners.
     if: >-
+      !cancelled() &&
       vars.E2E_RUNNERS_ENABLED == 'true' &&
+      needs.scope.outputs.deploy == 'true' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
        (github.event_name == 'pull_request' &&
         github.event.pull_request.base.ref == 'main' &&

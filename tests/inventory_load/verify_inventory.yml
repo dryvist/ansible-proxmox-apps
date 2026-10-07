@@ -28,37 +28,12 @@
 - name: Verify dynamic group assignments
   hosts: localhost
   gather_facts: false
+  vars_files:
+    - managed_secrets_legacy_groups.yml
 
   tasks:
-    - name: Read resolved PCT transport options
-      ansible.builtin.command:
-        argv:
-          - ansible-config
-          - dump
-          - --type
-          - connection
-          - community.proxmox.proxmox_pct_remote
-          - --format
-          - json
-        chdir: "{{ playbook_dir }}/../.."
-      register: pct_transport_config
-      changed_when: false
-      vars:
-        ansible_become: false
-
-    - name: Verify PCT transport does not request a PTY
-      ansible.builtin.assert:
-        that:
-          - >-
-            (
-              pct_transport_config.stdout | from_json | first | dict2items | first
-            ).value
-            | selectattr('name', 'equalto', 'pty')
-            | map(attribute='value')
-            | list == [false]
-        fail_msg: >-
-          community.proxmox.proxmox_pct_remote must resolve pty=false because
-          automation-ansible SSH certificates intentionally omit permit-pty
+    - name: Verify PCT transport contract
+      ansible.builtin.import_tasks: verify_pct_transport.yml
 
     - name: Verify tofu_data constants were loaded
       ansible.builtin.assert:
@@ -339,6 +314,9 @@
     - name: Verify the media-stack child inherits a scoped run's limit/tags
       ansible.builtin.import_tasks: verify_media_stack_limit_passthrough.yml
 
+    - name: Verify capability group membership
+      ansible.builtin.import_tasks: verify_capability_groups.yml
+
     - name: Display group membership summary
       ansible.builtin.debug:
         msg: |
@@ -354,3 +332,5 @@
           - mailpit_group:      {{ groups['mailpit_group'] | default([]) | join(', ') }}
           - ntfy_group:         {{ groups['ntfy_group'] | default([]) | join(', ') }}
           - openproject_group:  {{ groups['openproject_group'] | default([]) | join(', ') }}
+          - managed_secrets_group: {{ groups['managed_secrets_group'] | default([]) | join(', ') }}
+          - docker_group: {{ groups['docker_group'] | default([]) | join(', ') }}
