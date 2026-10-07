@@ -3,6 +3,13 @@ name: Molecule
 
 on:
   workflow_call:
+    inputs:
+      scenarios:
+        description: >-
+          JSON scenario list from the shared Ansible CI workflow. An empty
+          string requests every scenario.
+        type: string
+        default: ""
     secrets:
       DOPPLER_TOKEN:
         description: Doppler service token
@@ -22,35 +29,44 @@ permissions:
   contents: read
 
 jobs:
-  # Which scenarios does this change actually need? Hosted, cheap, and off the
-  # fleet — deciding what to run must never queue behind the thing it decides.
+  # Resolve the shared selector output, discovering every on-disk scenario
+  # when the shared workflow signals a full-matrix run.
   scenarios:
     name: Select scenarios
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      list: ${{ steps.select.outputs.list }}
-      reason: ${{ steps.select.outputs.reason }}
+      list: ${{ inputs.scenarios != '' && inputs.scenarios || steps.list.outputs.list }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          # The selection diffs against the merge base, which shallow history
-          # cannot resolve.
-          fetch-depth: 0
-      # Fail loudly if the parser stops resolving roles. A silently-broken
-      # parser selects `default` alone: green, fast, and testing almost nothing.
-      - name: Verify the selector still resolves roles
+      # Keep the parser's role-coverage self-check, also consumed by the
+      # scenario-isolation contract tests in this repository.
+      - name: Verify the scenario role parser
         run: python3 .github/scripts/select-molecule-scenarios.py --self-check
 
-      - name: Select scenarios
-        id: select
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PRODUCTION_BRANCH: main
-        run: python3 .github/scripts/select-molecule-scenarios.py
+      - name: Discover all scenarios for a full matrix
+        id: list
+        if: ${{ inputs.scenarios == '' }}
+        run: |
+          set -euo pipefail
+          names=()
+          for directory in molecule/*/; do
+            [ -f "${directory}molecule.yml" ] || continue
+            name=${directory#molecule/}
+            name=${name%/}
+            if [[ ! "$name" =~ ^[a-z0-9_]+$ ]]; then
+              echo "::error::Rejected Molecule scenario name outside [a-z0-9_]."
+              exit 1
+            fi
+            names+=("$name")
+          done
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "::error::No Molecule scenarios discovered."
+            exit 1
+          fi
+          scenarios=$(printf '%s\n' "${names[@]}" | jq -R . | jq -sc .)
+          echo "list=$scenarios" >> "$GITHUB_OUTPUT"
 
   test:
     name: Molecule (${{ matrix.scenario }})
@@ -83,11 +99,8 @@ jobs:
       # defect: a cap fragmented across five per-repo registrations, summing to
       # more slots than the host carried.
       #
-      # The scenario list is chosen per change, not listed here. A hardcoded
-      # list ran all twenty on every pull request, and would have drifted from
-      # the scenarios that actually exist. `select-molecule-scenarios.py`
-      # explains the rules and writes its choice to the step summary, so a
-      # narrowed run says what it skipped and why.
+      # Shared change detection supplies the narrowed scenario list. Empty
+      # input means full matrix, which this job resolves from the on-disk list.
       matrix:
         scenario: ${{ fromJSON(needs.scenarios.outputs.list) }}
 
