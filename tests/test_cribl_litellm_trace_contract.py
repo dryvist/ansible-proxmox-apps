@@ -95,6 +95,12 @@ class TraceContract(unittest.TestCase):
         for field, value in attrs.items():
             self.assertEqual(actual[field], value)
 
+    def test_zero_usage_counts_survive_native_and_alias_sources(self):
+        for attrs in [{'gen_ai.usage.input_tokens': 0, 'input_tokens': 99},
+                      {'input_tokens': 0}]:
+            actual = enrich('otel_traces', attrs)['attributes']
+            self.assertEqual(actual['gen_ai.usage.input_tokens'], 0)
+
     def test_invalid_metadata_is_marked_and_unset_fields_are_removed(self):
         for value in ['malformed', '[]', 'null']:
             px = enrich('otel_traces_phoenix', {'metadata': value})['attributes']
