@@ -28,8 +28,9 @@ Full docs live under `docs/agents/`, one topic per page:
 
 Pull requests into `develop` use changed-role Molecule selection with lint,
 syntax, and contract checks. Pull requests into `main` and non-PR runs use the
-full matrix. Required validation is aggregated by `Merge Gate`; shared or
-unclassified changes widen to the full matrix. Public pull-request CI stays on
-GitHub-hosted runners.
+full matrix. CI-harness-only changes run the default smoke scenario and its
+selector self-check; shared Ansible inputs and unclassified role/scenario paths
+widen to the full matrix. Required validation is aggregated by `Merge Gate`.
+Public pull-request CI stays on GitHub-hosted runners.
 
 See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”
