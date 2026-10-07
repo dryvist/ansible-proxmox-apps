@@ -52,13 +52,14 @@ class TraceContract(unittest.TestCase):
                  'litellm.metadata.purpose': 'benchmark', 'litellm.metadata.session_id': 'run-1',
                  'litellm.metadata.trace_user_id': 'consumer', 'litellm.metadata.trace_name': 'run-trace',
                  'litellm.metadata.generation_name': 'run-generation', 'litellm.metadata.release': 'test-release',
+                 'litellm.metadata.trace_release': 'app-release', 'litellm.metadata.trace_version': 'component-version',
                  'litellm.metadata.thinking': False, 'litellm.metadata.power_limit': 0}
         lf = enrich('otel_traces', attrs)['attributes']
         self.assertEqual(lf['langfuse.session.id'], 'run-1')
         self.assertEqual(lf['langfuse.user.id'], 'consumer')
         self.assertEqual(lf['langfuse.trace.name'], 'run-trace')
-        self.assertEqual(lf['langfuse.release'], 'test-release')
-        self.assertEqual(lf['langfuse.version'], 'test-release')
+        self.assertEqual(lf['langfuse.release'], 'app-release')
+        self.assertEqual(lf['langfuse.version'], 'component-version')
         self.assertIs(lf['langfuse.trace.metadata.thinking'], False)
         self.assertEqual(lf['langfuse.trace.metadata.power_limit'], 0)
         self.assertEqual(enrich('otel_traces', attrs)['name'], 'run-generation')
