@@ -331,9 +331,11 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 Pull requests into `develop` use changed-role Molecule selection with lint,
 syntax, and contract checks. Pull requests into `main` and non-PR runs use the
-full matrix. CI-harness-only changes run the default smoke scenario and its
-selector self-check; shared Ansible inputs and unclassified role/scenario paths
-widen to the full matrix. Required validation is aggregated by `Merge Gate`.
-Public pull-request CI stays on GitHub-hosted runners.
+full matrix. CI gate and local Molecule harness changes run the default smoke
+scenario and selector self-check; `requirements.yml` and contract workflow
+changes use the required contract checks. Shared Ansible inputs and unclassified
+role/scenario paths widen to the full matrix. Other unmapped workflow paths
+also widen to the full matrix. Required validation is aggregated by `Merge
+Gate`. Public pull-request CI stays on GitHub-hosted runners.
 
 See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”

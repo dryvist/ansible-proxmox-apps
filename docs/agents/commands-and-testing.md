@@ -144,9 +144,12 @@ tasks. The levers, in order of effect:
 | Molecule tests | `molecule test -s <scenario>` | develop PRs: scenarios matched by changed roles; main promotion PRs and pushes: full matrix |
 
 The shared Ansible workflow selects scenarios from the caller's role map.
-Changes to shared role dependencies, Molecule inputs, requirements, workflow
-files, or unmapped paths widen a pull request to the full matrix. The caller's
-single `Merge Gate` aggregates Molecule with the repository contract checks.
+Changes to shared Ansible inputs, `requirements-ci.txt`, or unmapped paths
+widen a pull request to the full matrix. `requirements.yml` and contract
+workflow changes use contract-only coverage because the required contracts run
+in the same `Merge Gate`. CI gate and local Molecule harness changes run the
+default smoke scenario and selector self-check; other unmapped workflow paths
+widen to the full matrix.
 
 **Inventory validation locally:**
 
