@@ -166,27 +166,9 @@ if [[ -n ${SSH_SIGNER_ROLE_ID:-} && -n ${SSH_SIGNER_SECRET_ID:-} ]] &&
   exit 1
 fi
 
-# The store role logs in for itself, at the point it reconciles, so this wrapper
-# neither mints nor holds a reconcile token.
-#
-# Minting here instead put the login at the start of the run while the store play
-# executes over an hour later, and the role's token lives 30 minutes. The token
-# was therefore expired before its first use, and the store answers an expired
-# token with the same `403 permission denied` it uses for a policy denial -- so
-# the fault read as a missing grant the identity has always had. Raising the
-# lifetime to cover the gap would make the credential longer-lived to accommodate
-# a scheduling defect, and would fail again the first time a run outgrew it.
-#
-# An absent credential is NOT an error here, and the contract tests assert that:
-# a workstation caller supplies reconcile secret-zero to the role directly, and
-# the role itself refuses loudly when it is configured but cannot authenticate.
-# Say which case this is so a silent skip on the plane stays impossible.
-if [[ -n ${BAO_ADDR:-} ]] &&
-   [[ -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID:-} ||
-      -z ${OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID:-} ]]; then
-  echo "run-ansible: no reconcile identity in this environment; the store" >&2
-  echo "  role will fall back to reconcile secret-zero, or skip and say so." >&2
-fi
+# The OpenBao role obtains its reconcile identity immediately before that play.
+# Keep authentication adjacent to use instead of holding a token through the
+# earlier plays in a full site run.
 
 # WHICH IDENTITY THIS CONVERGE AUTHENTICATES AS.
 #
@@ -254,6 +236,16 @@ select_converge_identity() {
   fi
 }
 select_converge_identity
+
+# BAO_TOKEN is the runner's SSH-signing token, not a reconcile credential.
+# Routine OpenBao reconciliation requires the declared per-call issuer path;
+# CONVERGE_* remains available to inventory and other service roles.
+if [[ -n ${BAO_ADDR:-} && -z ${OPENBAO_PROVISIONING_TOKEN:-} &&
+      ( -z ${OPENBAO_APPROLE_APPROLE_ISSUER_ROLE_ID:-} ||
+        -z ${OPENBAO_APPROLE_APPROLE_ISSUER_SECRET_ID:-} ) ]]; then
+  echo "run-ansible: no AppRole issuer credentials in this environment;" >&2
+  echo "  OpenBao reconciliation on an initialized cluster will fail." >&2
+fi
 
 if [[ -n ${BAO_ADDR:-} && -n $CONVERGE_ROLE_ID && -n $CONVERGE_SECRET_ID ]]; then
   # FAIL-LOUD: when the cert env is present, a mint failure is an error — never
@@ -365,13 +357,25 @@ if [[ -n ${SSH_KNOWN_HOSTS:-} ]]; then
   # keys nor the connection — and reporting every target UNREACHABLE.
   #
   # Merge rather than overwrite: on a workstation this is the operator's own
-  # file. Exact-line dedupe keeps repeated runs idempotent.
+  # file. Exact-line dedupe keeps repeated runs idempotent. The pin wins: an
+  # existing line naming any host the pin names is dropped, so a rotated host
+  # key never loses to a stale copy (paramiko takes the first match).
+  #
+  # Marker lines (@cert-authority, @revoked) are dropped from this file, both
+  # incoming and already present: paramiko cannot parse them and fails to load
+  # the whole file, so one marker line makes every container host UNREACHABLE.
+  # OpenSSH runs here read the pinned file above, which keeps them.
   mkdir -p "$HOME/.ssh"
   chmod 700 "$HOME/.ssh"
   touch "$HOME/.ssh/known_hosts"
   chmod 600 "$HOME/.ssh/known_hosts"
   merged=$(mktemp "${TMPDIR:-/tmp}/ansible-kh.XXXXXX")
-  awk '!seen[$0]++' "$HOME/.ssh/known_hosts" "$CERT_DIR/known_hosts" > "$merged"
+  awk '
+    /^@/ { next }
+    NR == FNR { n = split($1, h, ","); for (i = 1; i <= n; i++) pinned[h[i]] = 1 }
+    NR != FNR { n = split($1, h, ","); for (i = 1; i <= n; i++) if (h[i] in pinned) next }
+    !seen[$0]++
+  ' "$CERT_DIR/known_hosts" "$HOME/.ssh/known_hosts" > "$merged"
   cat "$merged" > "$HOME/.ssh/known_hosts"
   rm -f "$merged"
 fi

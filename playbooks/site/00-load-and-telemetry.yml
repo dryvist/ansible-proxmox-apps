@@ -31,12 +31,13 @@
     # roster and the FQDN map.
     converge_telemetry_roster: >-
       {{ groups['all'] | default([]) | reject('equalto', 'localhost') | list }}
-    # inventory hostname -> FQDN. `hostname` is set as a real fact on every
-    # guest by inventory/load_tofu.yml, which always runs before this play.
+    # inventory hostname -> FQDN. Read the published guest map from localhost
+    # so an always-tagged telemetry setup does not force remote hostname-fact
+    # propagation to every host during an otherwise scoped converge.
     converge_telemetry_fqdns: >-
       {{ dict(converge_telemetry_roster | zip(
            converge_telemetry_roster
-           | map('extract', hostvars, 'hostname')
+           | map('extract', hostvars['localhost'].propagate_facts_guests, 'hostname')
            | map('regex_replace', '$', '.' ~ tofu_data.domain)
            | list)) }}
   tasks:
@@ -90,7 +91,11 @@
             # the CLI --check flag itself; this is the belt to that's braces,
             # and it is the only signal available to an API-driven run.
             check_mode: "{{ ansible_check_mode }}"
-            hec_url: "{{ splunk_hec_base_url }}/services/collector/event"
+            hec_url: >-
+              http://syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
+              | default(undef('PROXMOX_SUBDOMAIN is empty'), true)
+              | mandatory('PROXMOX_SUBDOMAIN must be set in the environment')
+              }}:{{ cribl_hec_input_port }}/services/collector/event
             index: "{{ converge_telemetry_index | default('ansible') }}"
             verify_tls: "{{ converge_telemetry_verify_tls | default(false) | bool }}"
             timeout: "{{ converge_telemetry_timeout | default(10) | int }}"

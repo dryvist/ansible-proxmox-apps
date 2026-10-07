@@ -83,3 +83,60 @@
 {%- if _api | length > 0 %}
 {{ audience_widget(_api, false) }}
 {%- endif %}
+{% if glance_llm_profile_enabled | bool %}
+        # Glance v0.8.6 custom-api. Named extra requests are `subrequests`,
+        # read in the template with `.Subrequest`. Environment references are
+        # substituted config-wide, headers included, from the service
+        # environment. That scan also reads comments, so no comment in this
+        # file may spell one out: a reference to an unset name aborts startup.
+        # https://github.com/glanceapp/glance/blob/v0.8.6/docs/configuration.md#custom-api
+        # Inside `range` the context is the array element (`.String`, not
+        # `.JSON.String`); `$` reaches the top level. Glance hands a non-2xx
+        # response with a JSON body to the template as data, so the template
+        # checks `.Response.StatusCode` itself:
+        # https://github.com/glanceapp/glance/blob/v0.8.6/docs/custom-api.md
+        #
+        # LiteLLM /health lists each deployment flat (`model`, `model_id`, ...)
+        # and carries no `model_info`; the profile label lives in the
+        # deployment's `model_info`, which /v2/model/info (real deployments
+        # https://docs.litellm.ai/docs/proxy/health
+        # https://docs.litellm.ai/docs/proxy/model_management
+        - type: custom-api
+          title: LLM profile
+          cache: 1m
+          url: "{{ glance_llm_profile_router_base_url }}/health"
+          headers:
+            Authorization: "Bearer ${GLANCE_LLM_PROFILE_BEARER_TOKEN}"
+          subrequests:
+            model_info:
+              url: "{{ glance_llm_profile_router_base_url }}/v2/model/info?page=1&size=100"
+              headers:
+                Authorization: "Bearer ${GLANCE_LLM_PROFILE_BEARER_TOKEN}"
+          template: |
+            {% raw %}
+            {{ $info := .Subrequest "model_info" }}
+            {{ $shown := false }}
+            <div class="flex flex-column gap-5">
+              {{ if or (ne .Response.StatusCode 200) (ne $info.Response.StatusCode 200) }}
+                <p class="color-negative">Router error: health HTTP {{ .Response.StatusCode }}, models HTTP {{ $info.Response.StatusCode }}</p>
+              {{ else }}
+                {{ range .JSON.Array "healthy_endpoints" }}
+                  {{ $id := .String "model_id" }}
+                  {{ range $info.JSON.Array "data" }}
+                    {{ $profile := .String "model_info.profile" }}
+                    {{ if and $id $profile (eq (.String "model_info.id") $id) }}
+                      {{ $shown = true }}
+                      <div class="flex justify-between">
+                        <span class="size-h4 color-primary">{{ $profile }}</span>
+                        <span class="size-h6 color-subtle">{{ .String "model_name" }}</span>
+                      </div>
+                    {{ end }}
+                  {{ end }}
+                {{ end }}
+                {{ if not $shown }}
+                  <p class="color-subtle">No healthy profile reported</p>
+                {{ end }}
+              {{ end }}
+            </div>
+            {% endraw %}
+{% endif %}

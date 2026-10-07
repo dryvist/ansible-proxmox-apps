@@ -97,3 +97,4 @@ documented once at
 | `SEERR_API_KEY` | Deterministic Seerr API key (seerr role) | SOPS |
 | `PLEX_CLAIM_TOKEN` | Optional fresh Plex claim token (~4-min); passed ad-hoc to a converge or done via the web UI, never stored | ad-hoc / web UI |
 | `PLEX_TOKEN` | Optional Plex account-token override; normally auto-discovered from the claimed server | env (optional) |
+| `GLANCE_LLM_PROFILE_BEARER_TOKEN` | Bearer token for the optional Glance LLM profile tile | env (optional; required when enabled) |

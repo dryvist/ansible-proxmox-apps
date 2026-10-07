@@ -23,6 +23,18 @@
   changed_when: false
   failed_when: agent_sandbox_allow_probe.rc != 0 or agent_sandbox_allow_probe.stdout == '000'
 
+- name: Probe the ZCode provider config download host through the proxy
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null -w '%{http_code}' --max-time 20
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://cdn-zcode.z.ai
+  register: agent_sandbox_zcode_config_probe
+  changed_when: false
+  failed_when: agent_sandbox_zcode_config_probe.rc != 0 or agent_sandbox_zcode_config_probe.stdout == '000'
+
 - name: Probe a non-allowlisted domain through the proxy (expect denial)
   ansible.builtin.command:
     cmd: >-
@@ -31,10 +43,22 @@
       -sS -o /dev/null -w '%{http_connect}' --max-time 20
       -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
       https://{{ item }}
-  loop: [cdn-zcode.z.ai, example.com]
+  loop: [example.com]
   register: agent_sandbox_deny_probe
   changed_when: false
   failed_when: agent_sandbox_deny_probe.rc == 0 or agent_sandbox_deny_probe.stdout != '403'
+
+- name: Probe a Cursor service domain through the proxy
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --network {{ agent_sandbox_network }}
+      {{ agent_sandbox_probe_image }}
+      -sS -o /dev/null -w '%{http_code}' --max-time 20
+      -x http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}
+      https://cursor.sh
+  register: agent_sandbox_cursor_probe
+  changed_when: false
+  failed_when: agent_sandbox_cursor_probe.rc != 0 or agent_sandbox_cursor_probe.stdout == '000'
 
 - name: Read squid access evidence for the egress probes
   community.docker.docker_container_exec:
@@ -43,11 +67,12 @@
   register: agent_sandbox_access_log
   changed_when: false
 
-- name: Assert squid allowed the model endpoint and denied both other domains
+- name: Assert squid allowed the model and config endpoints and denied the unrelated domain
   ansible.builtin.assert:
     that:
       - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT api.z.ai:443')
-      - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT cdn-zcode.z.ai:443')
+      - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT cursor[.]sh:443')
+      - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT cdn-zcode[.]z[.]ai:443')
       - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT example.com:443')
 
 - name: Record proxy probe evidence

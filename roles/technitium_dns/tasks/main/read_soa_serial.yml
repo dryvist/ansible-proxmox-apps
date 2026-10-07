@@ -1,0 +1,30 @@
+---
+# The retries cover the initial transfer of a freshly created Secondary zone.
+- name: Read this node's zone SOA serial
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/zones/records/get?token={{
+      technitium_dns_api_token }}&domain={{ technitium_dns_zone | urlencode
+      }}&zone={{ technitium_dns_zone | urlencode }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  register: technitium_dns_soa_read
+  until: >-
+    (technitium_dns_soa_read.json.response.records | default([])
+    | selectattr('type', 'equalto', 'SOA') | list | length) > 0
+  retries: 5
+  delay: 2
+  changed_when: false
+  failed_when: false
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Record this node's SOA serial
+  ansible.builtin.set_fact:
+    technitium_dns_soa_serial: >-
+      {{ (technitium_dns_soa_read.json.response.records | default([]))
+         | selectattr('type', 'equalto', 'SOA')
+         | map(attribute='rData.serial') | first | default(0) | int }}
+  when: technitium_dns_apply | bool

@@ -1,20 +1,23 @@
 ---
 # Metrics-fan-out assertions, split out of assertions_inputs.yml (that file
-# hit the CI token-limit gate as this group grew across three PRs). Every
-# source here shares the same shape: fan to both victoriametrics_rw and
-# Splunk, next to its own raw-event connection where it has one.
+# hit the CI token-limit gate as this group grew across three PRs). The Edge
+# S2S metrics input keeps its VictoriaMetrics leg and conditionally adds the
+# Prometheus receiver; Splunk already receives these events directly from Edge.
 
-- name: Assert the S2S metrics input goes only to victoriametrics_rw
+- name: Assert the S2S metrics input keeps both metric-store legs
   ansible.builtin.assert:
     that:
       - "'type: tcpjson' in _cribl_stream_inputs"
       - "'id: in_cribl_s2s_metrics' in _cribl_stream_inputs"
       - "'port: 10360' in _cribl_stream_inputs"
+      - >-
+        ((_cribl_stream_inputs | from_yaml).inputs['tcpjson:in_cribl_s2s_metrics'].connections
+        | map(attribute='output') | list) == ['victoriametrics_rw', 'prometheus_rw']
     fail_msg: >-
       inputs.yml.j2 must include a dedicated in_cribl_s2s_metrics tcpjson
-      input on its own port, connected only to victoriametrics_rw — it
-      must not share in_cribl_s2s's force_splunk_meta connection (Splunk
-      already receives these events directly from Edge's HEC output)
+      input on its own port, connected to victoriametrics_rw and the optional
+      prometheus_rw output — it must not share in_cribl_s2s's force_splunk_meta
+      connection (Splunk already receives these events directly from Edge's HEC output)
 
 - name: Assert unpoller scraper input fans to Splunk and VictoriaMetrics
   ansible.builtin.assert:
@@ -66,6 +69,16 @@
     fail_msg: >-
       outputs.yml.j2 must define victoriametrics_rw as type: prometheus
       targeting the fixture URL (FQDN + victoriametrics port + /api/v1/write)
+
+- name: Assert prometheus_rw output renders for Edge metrics
+  ansible.builtin.assert:
+    that:
+      - "'prometheus_rw:' in _cribl_stream_outputs_pi"
+      - "'type: prometheus' in _cribl_stream_outputs_pi"
+      - "'url: \"http://prometheus.example.invalid:9090/api/v1/write\"' in _cribl_stream_outputs_pi"
+    fail_msg: >-
+      outputs.yml.j2 must define prometheus_rw as type: prometheus and target
+      the fixture receiver URL when the inventory URL is set
 
 - name: Assert the OTLP metrics route reaches VictoriaMetrics
   ansible.builtin.assert:

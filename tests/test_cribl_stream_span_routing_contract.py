@@ -15,6 +15,29 @@ def _section(text: str, start: str, end: str) -> str:
 
 
 class CriblSpanRoutingContract(unittest.TestCase):
+    def test_s2s_spans_fan_out_to_trace_backends_and_drop_from_splunk(self):
+        inputs = (ROLE / "templates" / "inputs.yml.j2").read_text()
+        s2s_connections = _section(
+            inputs, "  tcpjson:in_cribl_s2s:\n", "  tcpjson:in_cribl_s2s_metrics:\n"
+        )
+        self.assertIn(
+            "- output: langfuse_otlp\n        pipeline: otel_traces",
+            s2s_connections,
+        )
+        self.assertIn(
+            "- output: phoenix_otlp\n        pipeline: otel_traces_phoenix",
+            s2s_connections,
+        )
+
+        splunk_pipeline = (
+            ROLE / "templates" / "pipelines" / "force_splunk_meta" / "conf.yml.j2"
+        ).read_text()
+        span_drop = f'filter: "{SPLUNK_SPAN_DROP}"'
+        self.assertIn(span_drop, splunk_pipeline)
+        self.assertLess(
+            splunk_pipeline.index(span_drop), splunk_pipeline.index("- id: eval")
+        )
+
     def test_span_drop_is_limited_to_splunk_outputs(self):
         splunk_defaults = (
             ROLE / "defaults" / "main" / "20-splunk-hec-routing.yml"

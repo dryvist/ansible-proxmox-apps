@@ -24,12 +24,15 @@ represent a part that is sitting on a shelf, which is the majority of this data.
 """
 from __future__ import annotations
 
+import re
+
 from nautobot.apps.jobs import BooleanVar, Job, register_jobs
 
 from ssot_common import (
     ensure_device_type,
     ensure_location,
     ensure_module_type,
+    ensure_procurement_fields,
     ensure_role,
     ensure_status,
     ensure_sublocation,
@@ -37,6 +40,100 @@ from ssot_common import (
 )
 
 HARDWARE_ROLE = "hardware"
+
+# Matches a month-year cell ("Oct 2026") or an exact ISO date ("2026-10-04").
+_MONTH_ABBR = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_MONTH_YEAR_RE = re.compile(r"^([A-Za-z]{3,})\s+(\d{4})$")
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# The first dollar amount in a free-text Price cell ("$45 ea" -> "45"); any
+# trailing qualifier ("ea", "lot", ...) describes the unit, not the amount.
+_PRICE_RE = re.compile(r"\$?\s*([\d,]+(?:\.\d{1,2})?)")
+
+
+def _purchase_date(raw: str) -> str | None:
+    """Parse the ledger's free-text Purchased cell into an ISO date string.
+
+    Accepts a month-year ("Oct 2026", resolved to the 1st) or an exact
+    "2026-10-04". Anything else (blank, "—", unrecognised) returns ``None`` so
+    the caller omits the field rather than writing a wrong date.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if _ISO_DATE_RE.match(text):
+        return text
+    match = _MONTH_YEAR_RE.match(text)
+    if not match:
+        return None
+    month = _MONTH_ABBR.get(match.group(1)[:3].lower())
+    if not month:
+        return None
+    return f"{match.group(2)}-{month:02d}-01"
+
+
+def _purchase_price_cents(raw: str) -> int | None:
+    """Parse a free-text Price cell ("$15,899.99", "$45 ea") into integer cents.
+
+    Returns ``None`` for blank/placeholder text so the caller omits rather
+    than records a $0.00 purchase.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    match = _PRICE_RE.search(text)
+    if not match:
+        return None
+    try:
+        return round(float(match.group(1).replace(",", "")) * 100)
+    except ValueError:
+        return None
+
+
+def _procurement_data(row) -> dict:
+    """The row's non-empty procurement CustomField values, keyed as they are stored.
+
+    Omits a key entirely when the source has nothing for it — exactly like
+    ``_serial`` below: a blank seed field must never erase a value already
+    recorded in Nautobot (e.g. one entered after a physical audit found the
+    real purchase date).
+    """
+    data = {}
+    purchase_date = _purchase_date(row.get("purchased", ""))
+    if purchase_date:
+        data["purchase_date"] = purchase_date
+    price_cents = _purchase_price_cents(row.get("price", ""))
+    if price_cents is not None:
+        data["purchase_price_cents"] = price_cents
+    vendor = str(row.get("vendor") or "").strip()
+    if vendor:
+        data["vendor"] = vendor
+    receipt_ref = str(row.get("receipt_ref") or "").strip()
+    if receipt_ref:
+        data["receipt_ref"] = receipt_ref
+    return data
+
+
+def _apply_procurement_data(obj, row) -> None:
+    """Merge this row's procurement values into ``obj.custom_field_data``.
+
+    A merge, never a replace: only the keys present in ``data`` are touched,
+    so a CustomField this job does not own is left alone, and saves only
+    happen when something actually changed.
+    """
+    data = _procurement_data(row)
+    if not data:
+        return
+    changed = False
+    for key, value in data.items():
+        if obj.custom_field_data.get(key) != value:
+            obj.custom_field_data[key] = value
+            changed = True
+    if changed:
+        obj.validated_save()
+
 
 # Nautobot's `serial` is a plain CharField, so any of None, "", "  " and the
 # placeholder dashes people type into markdown tables all have to collapse to
@@ -124,6 +221,35 @@ def _module_bay(device, name: str):
     return bay
 
 
+def _cleanup_orphan_bays(hw_id: str, keep_device, logger) -> None:
+    """Delete empty ModuleBays named ``hw_id`` on any device other than ``keep_device``.
+
+    A component that moves between chassis leaves its old ModuleBay behind —
+    Nautobot never deletes a bay on its own, and a second bay with this same
+    name is purely an orphan from the move (``_module_bay`` always names a bay
+    for the hw_id of the part placed in it, never shared). Only bays this job
+    itself could have created are considered: ``parent_device`` bays, never a
+    bay nested under another Module, which belongs to a different model of
+    recursive parentage this job does not manage. A bay still holding a
+    Module is left alone — that is a real installation, not an orphan.
+    """
+    from nautobot.dcim.models import Module, ModuleBay
+
+    orphans = ModuleBay.objects.filter(
+        name=hw_id, parent_device__isnull=False
+    ).exclude(parent_device=keep_device)
+    for bay in orphans:
+        if Module.objects.filter(parent_module_bay=bay).exists():
+            continue
+        logger.info(
+            "Deleting orphan ModuleBay %r on %s — %s is now installed elsewhere.",
+            hw_id,
+            bay.parent_device,
+            hw_id,
+        )
+        bay.delete()
+
+
 class SeedHardware(Job):
     """Upsert the hardware inventory's Devices and Modules."""
 
@@ -161,6 +287,7 @@ class SeedHardware(Job):
         if not dryrun:
             ensure_location()
             hardware_role = ensure_role(HARDWARE_ROLE, Device, Module)
+            ensure_procurement_fields()
 
         created = updated = skipped = 0
 
@@ -200,10 +327,11 @@ class SeedHardware(Job):
                 # that omitted it. Only a non-empty value overwrites.
                 **({"serial": _serial(row)} if _serial(row) else {}),
             }
-            _, was_created = Device.objects.update_or_create(
+            device, was_created = Device.objects.update_or_create(
                 name=row["hw_id"], defaults=defaults
             )
             created, updated = (created + 1, updated) if was_created else (created, updated + 1)
+            _apply_procurement_data(device, row)
 
         for row in modules:
             # Same reason as the device loop, and it matters more here:
@@ -246,10 +374,13 @@ class SeedHardware(Job):
                 defaults["parent_module_bay"] = None
                 defaults["location"] = ensure_sublocation(row["location"])
 
-            _, was_created = Module.objects.update_or_create(
+            module, was_created = Module.objects.update_or_create(
                 asset_tag=row["hw_id"], defaults=defaults
             )
             created, updated = (created + 1, updated) if was_created else (created, updated + 1)
+            _apply_procurement_data(module, row)
+            if device is not None:
+                _cleanup_orphan_bays(row["hw_id"], device, self.logger)
 
         circuit_created, circuit_updated = _upsert_circuits(self, circuits, dryrun)
         created += circuit_created

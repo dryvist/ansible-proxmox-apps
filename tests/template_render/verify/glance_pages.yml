@@ -6,6 +6,13 @@
   connection: local
   gather_facts: false
 
+  # The role's REAL defaults, so the opt-in switch under test is the one that
+  # ships. Relative to THIS file (vars_files resolve at parse time). A play-level
+  # vars_files, not an include_vars task: a task-level include_vars outranks the
+  # task `vars:` below and would silently force the "enabled" render back off.
+  vars_files:
+    - "../../../roles/glance/defaults/main.yml"
+
   vars:
     ansible_become: false
     ansible_managed: "test fixture"
@@ -65,6 +72,14 @@
         desc: ""
         url: "https://sonarr.example.test/api"
         probe_url: ""
+      - name: llm
+        title: LLM router
+        group: ai
+        ui: true
+        section: ~
+        desc: ""
+        url: "https://router.example.invalid/ui"
+        probe_url: "http://router.example.invalid"
 
   tasks:
     - name: Render generated-services.yml
@@ -82,6 +97,25 @@
       ansible.builtin.set_fact:
         _glance_pages: "{{ _glance_raw.content | b64decode | from_yaml }}"
 
+    - name: Assert the opt-in LLM profile widget is absent by default
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_glance_pages[0].columns[0].widgets
+             | selectattr('title', 'defined')
+             | selectattr('title', 'equalto', 'LLM profile') | list | length) == 0
+          - "'GLANCE_LLM_PROFILE' not in (_glance_raw.content | b64decode)"
+        fail_msg: "the LLM profile widget (or its token reference) rendered while disabled"
+
+    - name: Assert a catalog without an llm row leaves the router URL empty, never undefined
+      ansible.builtin.assert:
+        that:
+          - glance_llm_profile_router_base_url == ''
+        fail_msg: "the router base URL default must degrade to '' so the role's input assert can report it"
+      vars:
+        dashboard_catalog_services:
+          - {name: vikunja, probe_url: ""}
+
     - name: Assert exactly one page renders, the Services board
       ansible.builtin.assert:
         that:
@@ -95,3 +129,157 @@
           - "'media_svc' in (_glance_pages[0] | string)"
           - "'dns' in (_glance_pages[0] | string)"
         fail_msg: "media_svc/dns groups missing from the single Services board"
+
+    - name: Render generated-services.yml with the LLM profile widget enabled
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/generated-services.yml.j2"
+        dest: "{{ render_tmp }}/glance-generated-services-enabled.yml"
+        mode: "0600"
+      vars:
+        glance_llm_profile_enabled: true
+
+    - name: Read back the enabled LLM profile widget
+      ansible.builtin.slurp:
+        src: "{{ render_tmp }}/glance-generated-services-enabled.yml"
+      register: _glance_enabled_raw
+
+    - name: Parse the enabled Glance pages
+      ansible.builtin.set_fact:
+        _glance_enabled_pages: "{{ _glance_enabled_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert the enabled LLM profile widget calls both router endpoints
+      ansible.builtin.assert:
+        that:
+          - _glance_profile_widgets | length == 1
+          - _glance_profile_widgets[0].url == 'http://router.example.invalid/health'
+          - _glance_profile_widgets[0].headers.Authorization == _glance_profile_bearer
+          - _glance_profile_widgets[0].subrequests.model_info.url == _glance_model_info_url
+          - _glance_profile_widgets[0].subrequests.model_info.headers.Authorization == _glance_profile_bearer
+          - "'requests' not in _glance_profile_widgets[0]"
+        fail_msg: "the enabled LLM profile widget is missing an endpoint, subrequest or bearer reference"
+      vars:
+        _glance_profile_bearer: "Bearer ${GLANCE_LLM_PROFILE_BEARER_TOKEN}"
+        _glance_model_info_url: "http://router.example.invalid/v2/model/info?page=1&size=100"
+        _glance_profile_widgets: >-
+          {{ _glance_enabled_pages[0].columns[0].widgets
+             | selectattr('title', 'defined')
+             | selectattr('title', 'equalto', 'LLM profile') | list }}
+
+    # Glance rewrites every ${NAME} in the whole file, comments included, and
+    # refuses to start when a name is unset. The only reference allowed is the
+    # token the unit's environment file provides.
+    - name: Assert the only environment reference in the rendered file is the bearer token
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_glance_enabled_raw.content | b64decode
+             | regex_findall('[$][{][^}]*[}]') | unique | list)
+            == ['${GLANCE_LLM_PROFILE_BEARER_TOKEN}']
+        fail_msg: "an environment reference other than the bearer token would abort Glance at startup"
+
+    - name: Render the unit with and without the LLM profile widget
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/glance.service.j2"
+        dest: "{{ render_tmp }}/glance-{{ item.name }}.service"
+        mode: "0600"
+      vars:
+        glance_llm_profile_enabled: "{{ item.enabled }}"
+      loop:
+        - {name: disabled, enabled: false}
+        - {name: enabled, enabled: true}
+      loop_control:
+        label: "{{ item.name }}"
+
+    # systemd refuses to start a unit whose EnvironmentFile is missing, so the
+    # reference must exist exactly when the role installs the file.
+    - name: Assert the unit loads the bearer file only when the widget is enabled
+      ansible.builtin.assert:
+        that:
+          - "'EnvironmentFile=' not in lookup('file', render_tmp ~ '/glance-disabled.service')"
+          - "'EnvironmentFile=/etc/glance/llm-profile.env' in lookup('file', render_tmp ~ '/glance-enabled.service')"
+        fail_msg: "the unit's EnvironmentFile reference does not follow glance_llm_profile_enabled"
+
+    # The template runs inside Glance's Go engine: inside `range` the context is
+    # the element (`.String`), the named extra request is read with
+    # `.Subrequest`, and the /health list is flat (`model_id`), joined to the
+    # deployment's `model_info` from the second request.
+    - name: Assert the widget template reads the documented accessors
+      ansible.builtin.assert:
+        that:
+          - "'.Subrequest \"model_info\"' in _glance_profile_template"
+          - "'.JSON.Array \"healthy_endpoints\"' in _glance_profile_template"
+          - "'.String \"model_id\"' in _glance_profile_template"
+          - "'.String \"model_info.id\"' in _glance_profile_template"
+          - "'.String \"model_info.profile\"' in _glance_profile_template"
+          - "'.Response.StatusCode' in _glance_profile_template"
+          - "'.JSON.String' not in _glance_profile_template"
+        fail_msg: "the widget template uses an accessor Glance v0.8.6 or LiteLLM /health does not provide"
+      vars:
+        _glance_profile_template: >-
+          {{ (_glance_enabled_pages[0].columns[0].widgets
+              | selectattr('title', 'defined')
+              | selectattr('title', 'equalto', 'LLM profile') | first).template }}
+
+# The group wiring: the REAL glance_group vars (vars_files), fed by the flat
+# apps merge. Fails if the group stops enabling the tile, reads another field,
+# or stops passing the seeded value through to the unit's environment file.
+- name: Verify the glance group enables the tile and wires the seeded bearer
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "../../../roles/glance/defaults/main.yml"
+    - "../../../inventory/group_vars/glance_group.yml"
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    glance_monitor_enabled: false
+    dashboard_catalog_group_order: [ai]
+    dashboard_catalog_services:
+      - name: llm
+        title: LLM router
+        group: ai
+        ui: true
+        section: ~
+        desc: ""
+        url: "https://router.example.invalid/ui"
+        probe_url: "http://router.example.invalid"
+
+  tasks:
+    - name: Seed the tile's router key in the flat apps merge
+      ansible.builtin.set_fact:
+        bao_apps_secrets:
+          glance_llm_router_key: sk-glance-under-test
+
+    - name: Render the bearer environment file and the board with the group's vars
+      ansible.builtin.template:
+        src: "../../../roles/glance/templates/{{ item.src }}"
+        dest: "{{ render_tmp }}/{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - {src: glance-llm-profile.env.j2, dest: glance-group.env}
+        - {src: generated-services.yml.j2, dest: glance-group-services.yml}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Assert the group enables the tile and the seeded key reaches the bearer file
+      ansible.builtin.assert:
+        that:
+          - glance_llm_profile_enabled | bool
+          - glance_llm_profile_bearer_token == 'sk-glance-under-test'
+          - "'GLANCE_LLM_PROFILE_BEARER_TOKEN=sk-glance-under-test' in lookup('file', render_tmp ~ '/glance-group.env')"
+          - "'LLM profile' in lookup('file', render_tmp ~ '/glance-group-services.yml')"
+        fail_msg: "the glance group does not enable the tile or wire glance_llm_router_key into the bearer"
+
+    - name: Clear the apps merge
+      ansible.builtin.set_fact:
+        bao_apps_secrets: {}
+
+    - name: Assert an unseeded key leaves the bearer empty, which the role's input assert reports
+      ansible.builtin.assert:
+        that:
+          - glance_llm_profile_enabled | bool
+          - glance_llm_profile_bearer_token == ''
+        fail_msg: "an unseeded key must yield an empty bearer, never a fallback value"

@@ -1,74 +1,15 @@
 #!/usr/bin/env python3
-"""There are two ways to be the reconcile identity, and exactly one may fire.
-
-An unattended converge reconciles policies, AppRoles, TTL bounds and generated
-application secrets only if it can act as the reconcile identity. It can do that
-two ways:
-
-  * a pre-issued token that already carries the policy, maintained by an agent
-    on the host -- the intended shape for an unattended plane, because the
-    converge then never holds a secret_id at all;
-  * secret-zero in the environment, which the workstation path uses.
-
-The execution plane had NEITHER. Every routine converge skipped the whole
-provisioning path and still reported success: 66 policies, every AppRole and 13
-generated-secret apps untouched for three days, behind a green recap.
-
-These assertions cover the gating, because the failure mode is silence and
-silence is what a recap cannot show:
-
-  1. Exactly one credential path fires for any given environment. A host
-     carrying both must not mint a second credential it would then have to
-     revoke.
-  2. A provisioning token still wins over both, and turns OFF the
-     least-privilege filter -- that is its whole purpose.
-  3. With neither, both paths stay off so the loud skip is what speaks.
-  4. The login keeps its failure reason, and the failure message repeats it.
-"""
+"""Routine reconciliation uses one issuer-minted credential per run."""
 
 import unittest
 from pathlib import Path
 
 import yaml
-from jinja2 import Environment
 
-TASKS = (
-    Path(__file__).resolve().parent.parent
-    / "roles" / "openbao" / "tasks" / "init" / "02-initialize-cluster.yml"
-)
-
-TOKEN_PATH = "Use the pre-issued reconcile token when one is supplied"
-LOGIN = "Log in as the reconcile identity for routine RBAC reconciliation"
-FAILED_LOGIN = "FAIL — the reconcile identity was configured but could not authenticate"
-
-# The environments a converge actually runs in.
-PLANE_WITH_AGENT = dict(
-    openbao_provisioning_token="", openbao_reconcile_token="tok",
-    openbao_reconcile_role_id="", openbao_reconcile_secret_id="",
-    openbao_reconcile_addr="https://store.invalid",
-)
-WORKSTATION = dict(
-    openbao_provisioning_token="", openbao_reconcile_token="",
-    openbao_reconcile_role_id="rid", openbao_reconcile_secret_id="sid",
-    openbao_reconcile_addr="https://store.invalid",
-)
-BOTH = dict(
-    openbao_provisioning_token="", openbao_reconcile_token="tok",
-    openbao_reconcile_role_id="rid", openbao_reconcile_secret_id="sid",
-    openbao_reconcile_addr="https://store.invalid",
-)
-PRIVILEGED = dict(
-    openbao_provisioning_token="ptok", openbao_reconcile_token="tok",
-    openbao_reconcile_role_id="rid", openbao_reconcile_secret_id="sid",
-    openbao_reconcile_addr="https://store.invalid",
-)
-NEITHER = dict(
-    openbao_provisioning_token="", openbao_reconcile_token="",
-    openbao_reconcile_role_id="", openbao_reconcile_secret_id="",
-    openbao_reconcile_addr="https://store.invalid",
-)
-
-INITIALIZED = {"openbao_status": {"initialized": True}}
+REPO = Path(__file__).resolve().parent.parent
+INIT = REPO / "roles" / "openbao" / "tasks" / "init"
+RECONCILE = INIT / "02-initialize-cluster.yml"
+LIVENESS = INIT / "10a-approle-issuer-liveness.yml"
 
 
 def _tasks(node):
@@ -86,58 +27,112 @@ def _tasks(node):
 class ReconcileIdentityPaths(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tasks = {t["name"]: t for t in _tasks(yaml.safe_load(TASKS.read_text()))}
-        for name in (TOKEN_PATH, LOGIN, FAILED_LOGIN):
-            assert name in cls.tasks, f"{name!r} not found in {TASKS}"
-        cls.env = Environment()
-        cls.env.filters["bool"] = lambda v: str(v).strip().lower() in (
-            "true", "yes", "on", "1"
+        cls.reconcile_tasks = {
+            task["name"]: task for task in _tasks(yaml.safe_load(RECONCILE.read_text()))
+        }
+        cls.liveness_tasks = {
+            task["name"]: task for task in _tasks(yaml.safe_load(LIVENESS.read_text()))
+        }
+
+    def test_routine_reconcile_authenticates_to_issuer_and_mints_target_secret_id(self):
+        tasks = self.reconcile_tasks
+        issuer_login = tasks["Authenticate to the AppRole issuer for routine reconciliation"]
+        self.assertEqual(
+            issuer_login["community.hashi_vault.vault_login"]["auth_method"], "approle"
+        )
+        self.assertEqual(
+            issuer_login["community.hashi_vault.vault_login"]["role_id"],
+            "{{ openbao_approle_issuer_role_id }}",
+        )
+        self.assertEqual(
+            issuer_login["community.hashi_vault.vault_login"]["secret_id"],
+            "{{ openbao_approle_issuer_secret_id }}",
         )
 
-    def _fires(self, task_name, environment):
-        conds = self.tasks[task_name]["when"]
-        if isinstance(conds, str):
-            conds = [conds]
-        context = {**INITIALIZED, **environment}
-        for cond in conds:
-            rendered = self.env.from_string("{{ %s }}" % cond).render(**context)
-            if rendered.strip() != "True":
-                return False
-        return True
+        mint = tasks["Mint a single-use reconcile secret_id through the issuer"]
+        self.assertEqual(
+            mint["community.hashi_vault.vault_write"]["path"],
+            "auth/approle/role/{{ openbao_reconcile_approle_name }}/secret-id",
+        )
+        self.assertIn("openbao_reconcile_issuer_login.login.auth.client_token", str(mint))
 
-    def test_the_plane_uses_its_token_and_does_not_log_in(self):
-        self.assertTrue(self._fires(TOKEN_PATH, PLANE_WITH_AGENT))
-        self.assertFalse(self._fires(LOGIN, PLANE_WITH_AGENT))
+        target_login = tasks["Log in as openbao-reconcile with the single-use secret_id"]
+        self.assertIn(
+            "openbao_reconcile_role_id_read.data.data.role_id", str(target_login)
+        )
+        self.assertIn(
+            "openbao_reconcile_secret_id_mint.data.data.secret_id", str(target_login)
+        )
 
-    def test_the_workstation_still_logs_in(self):
-        self.assertFalse(self._fires(TOKEN_PATH, WORKSTATION))
-        self.assertTrue(self._fires(LOGIN, WORKSTATION))
+    def test_target_secret_id_is_destroyed_after_the_login_attempt(self):
+        tasks = self.reconcile_tasks
+        names = list(tasks)
+        login = names.index("Log in as openbao-reconcile with the single-use secret_id")
+        destroy = names.index("Destroy the single-use reconcile secret_id by accessor")
+        self.assertLess(login, destroy)
+        task = tasks["Destroy the single-use reconcile secret_id by accessor"]
+        write = task["community.hashi_vault.vault_write"]
+        self.assertTrue(write["path"].endswith("secret-id-accessor/destroy"))
+        self.assertIn("secret_id_accessor", write["data"])
+        self.assertTrue(task["no_log"])
 
-    def test_a_host_carrying_both_mints_nothing_extra(self):
-        # Two credentials for one run means one of them is issued and never
-        # revoked. The token wins because whatever supplies it maintains it.
-        self.assertTrue(self._fires(TOKEN_PATH, BOTH))
-        self.assertFalse(self._fires(LOGIN, BOTH))
+    def test_legacy_static_target_pair_and_unsupported_flow_lock_command_are_absent(self):
+        defaults = (REPO / "roles/openbao/defaults/main/08a-admin-and-ttls.yml").read_text()
+        self.assertRegex(
+            defaults,
+            r"openbao_reconcile_approle_secret_id_num_uses:\s*1(?:\s|$)",
+        )
+        tasks = RECONCILE.read_text()
+        self.assertNotIn("OPENBAO_APPROLE_OPENBAO_RECONCILE_ROLE_ID", defaults)
+        self.assertNotIn("OPENBAO_APPROLE_OPENBAO_RECONCILE_SECRET_ID", defaults)
+        self.assertNotIn("openbao_reconcile_role_id:", defaults)
+        self.assertNotIn("openbao_reconcile_secret_id:", defaults)
+        self.assertNotIn("flow-lock", tasks)
+        self.assertNotIn("OPENBAO_RECONCILE_TOKEN", tasks)
 
-    def test_a_provisioning_token_suppresses_both(self):
-        self.assertFalse(self._fires(TOKEN_PATH, PRIVILEGED))
-        self.assertFalse(self._fires(LOGIN, PRIVILEGED))
+    def test_routine_reconcile_attempts_issuer_login_and_fails_on_rejection(self):
+        task = self.reconcile_tasks[
+            "Authenticate to the AppRole issuer for routine reconciliation"
+        ]
+        self.assertIn("openbao_provisioning_token | length == 0", task["when"])
+        self.assertTrue(task["ignore_errors"])
+        failure = self.reconcile_tasks["FAIL — the AppRole issuer could not authenticate"]
+        self.assertIn("openbao_reconcile_issuer_login", str(failure["when"]))
+        runner = (REPO / "scripts/run-ansible.sh").read_text()
+        self.assertIn("no AppRole issuer credentials", runner)
+        self.assertNotIn("OPENBAO_RECONCILE_TOKEN", runner)
 
-    def test_with_neither_credential_nothing_fires(self):
-        # This is the state the plane was in. Both paths off, so the loud skip
-        # is the only thing that speaks -- and it must not be reachable by a
-        # path that silently succeeded.
-        self.assertFalse(self._fires(TOKEN_PATH, NEITHER))
-        self.assertFalse(self._fires(LOGIN, NEITHER))
+    def test_issuer_liveness_mints_and_revokes_even_with_a_provisioning_token(self):
+        tasks = self.liveness_tasks
+        issuer_login = tasks["Authenticate to approle-issuer for the reconcile liveness probe"]
+        mint = tasks["Mint a reconcile liveness secret_id through approle-issuer"]
+        destroy = tasks["Revoke the reconcile liveness secret_id by accessor"]
+        for task in (issuer_login, mint, destroy):
+            self.assertEqual(task["when"], "openbao_status.initialized")
+            self.assertTrue(task["no_log"])
+            self.assertNotIn("openbao_bootstrap_token", str(task["when"]))
+            self.assertNotIn("openbao_provisioning_token", str(task["when"]))
+        self.assertIn("/secret-id", mint["community.hashi_vault.vault_write"]["path"])
+        self.assertTrue(
+            destroy["community.hashi_vault.vault_write"]["path"].endswith(
+                "secret-id-accessor/destroy"
+            )
+        )
 
-    def test_the_login_keeps_its_failure_reason(self):
-        login = self.tasks[LOGIN]
-        self.assertTrue(login.get("ignore_errors"))
-        self.assertNotIn("failed_when", login)
-
-    def test_the_failure_repeats_what_the_store_said(self):
-        msg = self.tasks[FAILED_LOGIN]["ansible.builtin.fail"]["msg"]
-        self.assertIn("openbao_reconcile_login.msg", msg)
+    def test_scoped_bootstrap_orders_rbac_before_roles_and_issuer_probe(self):
+        init = yaml.safe_load((REPO / "roles/openbao/tasks/init.yml").read_text())
+        names = [task.get("name") for task in init]
+        rbac = names.index("Render and reconcile the RBAC policies")
+        roles = names.index("Declare AppRoles and reconcile their policy and TTL bounds")
+        liveness = names.index("Probe the per-call reconcile issuer liveness path")
+        probe = names.index("Issue per-call and stored AppRole credentials")
+        self.assertLess(rbac, roles)
+        self.assertLess(roles, liveness)
+        self.assertLess(liveness, probe)
+        self.assertIn("openbao_rbac", init[rbac]["tags"])
+        self.assertIn("openbao_approle", init[roles]["tags"])
+        self.assertIn("openbao_approle", init[liveness]["tags"])
+        self.assertIn("openbao_approle", init[probe]["tags"])
 
 
 if __name__ == "__main__":

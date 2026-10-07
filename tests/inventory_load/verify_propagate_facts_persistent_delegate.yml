@@ -1,0 +1,41 @@
+---
+# Regression for ../../inventory/load_tofu/propagate_facts.yml delegating
+# set_fact to a host whose connection plugin forces persistence
+# (pct_remote_persistent, assigned to Homarr by add_lxc_hosts.yml). Ansible
+# runs a connection-less action over a stand-in `local` connection in that case
+# and that connection rejected the delegate's remote_addr, failing the task
+# with "No config definition exists for 'remote_addr' for 'local' connection
+# plugin". A fleet-wide loop (DNS/OpenBao tags) reaches every host, so the
+# failure depended on --tags, not on the host. Runs the real loader files
+# against stubbed tofu_data with a Homarr-tagged container and no live nodes:
+#   ansible-playbook tests/inventory_load/verify_propagate_facts_persistent_delegate.yml -i inventory/hosts.yml -c local
+- name: Propagate facts to a force-persistence delegate for any tag set
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tofu_data:
+      domain: example.internal
+      nodes: {}
+      containers:
+        homarr-poc:
+          vmid: 192
+          ip: 192.168.0.192
+          fqdn: homarr-poc.example.internal
+          hostname: homarr-poc
+          ansible_connection: community.proxmox.proxmox_pct_remote
+          tags: [homarr]
+          node: node-a
+    monitor_targets: {}
+  tasks:
+    - name: Add the Homarr-tagged container with its real connection vars
+      ansible.builtin.include_tasks: ../../inventory/load_tofu/add_lxc_hosts.yml
+
+    - name: Propagate facts the way the loader does
+      ansible.builtin.include_tasks: ../../inventory/load_tofu/propagate_facts.yml
+
+    - name: Assert the delegate kept its persistent connection and received the facts
+      ansible.builtin.assert:
+        that:
+          - hostvars['homarr-poc'].ansible_connection == 'pct_remote_persistent'
+          - hostvars['homarr-poc'].hostname == 'homarr-poc'
+          - hostvars['homarr-poc'].tofu_data.domain == 'example.internal'

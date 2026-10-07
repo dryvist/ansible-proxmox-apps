@@ -5,8 +5,8 @@
 # The nftables table is the backstop behind the internal docker network: if it
 # renders with an extra accept, or without its default drop, a container that
 # ignores its proxy settings reaches the internet and nothing else turns red.
-# The allowlist is exact-host: a leading dot or an extra entry would let a CDN
-# or telemetry host ride along. Both are asserted here, positive and negative.
+# The allowlist contains exact hosts plus the two documented Cursor suffixes;
+# every entry is asserted here, positive and negative.
 #
 # The published Web bind and ingress source are inventory-derived. No
 # container address or network subnet is hand-pinned here.
@@ -174,6 +174,10 @@
     - name: Assert the Web service is pinned and hardened
       ansible.builtin.assert:
         that:
+          - >-
+            agent_sandbox_zcode_web_image
+            == ('ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
+            ~ '01d9b4496bce8d2794dd5cc83832287c506f120ec3e8a53d6424a3e29f864cb2')
           - "('image: ' ~ agent_sandbox_zcode_web_image) in _as_compose"
           - "('container_name: ' ~ agent_sandbox_zcode_web_container) in _as_compose"
           - "'restart: unless-stopped' in _as_compose"
@@ -217,20 +221,21 @@
           repository allowlist, the separately rendered refused-login alert
           environment file, and no secret in the unit text.
 
-    # Exact-host allowlist. api.z.ai, chat.z.ai and zcode.z.ai only; a CDN, object-store or
-    # telemetry host must never appear, and the existing images keep theirs.
-    - name: Assert the allowlist carries exactly the expected Z.ai hosts
+    # Exact-host entries plus the Cursor suffix entries required by its CLI.
+    - name: Assert the allowlist carries the Z.ai hosts and Cursor domains
       ansible.builtin.assert:
         that:
-          - _as_domains | select('search', '(^|[.])z[.]ai$') | sort | list == ['api.z.ai', 'chat.z.ai', 'zcode.z.ai']
-          - "'cdn-zcode.z.ai' not in _as_domains"
+          - agent_sandbox_egress_domains.cursorAgent == ['.cursor.sh', '.cursorapi.com']
+          - >-
+            _as_domains | select('search', '(^|[.])z[.]ai$') | sort | list ==
+            ['api.z.ai', 'cdn-zcode.z.ai', 'chat.z.ai', 'zcode.z.ai']
+          - _as_domains | select('match', '^[.]') | sort | list == ['.cursor.sh', '.cursorapi.com']
           - _as_domains | select('search', 'aliyuncs|oss-|sentry|telemetry|analytics') | list | length == 0
-          - _as_domains | select('match', '^[.]') | list | length == 0
           - "'api.anthropic.com' in _as_domains"
           - "'github.com' in _as_domains"
           - "'cache.nixos.org' in _as_domains"
           - _as_domains | select('search', 'openbao') | list | length == 0
         fail_msg: >-
-          The allowlist must hold exactly api.z.ai, chat.z.ai and zcode.z.ai for Z.ai, no
-          wildcard entries or internal secret-store hostname, and keep the
-          existing hosts. Rendered: {{ _as_domains }}
+          The allowlist must hold exactly the Z.ai hosts and the documented
+          Cursor suffixes, no CDN, telemetry host or internal secret-store
+          hostname, and keep the existing hosts. Rendered: {{ _as_domains }}

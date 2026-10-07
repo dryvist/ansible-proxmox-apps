@@ -10,21 +10,23 @@ This repo uses [Nix flakes](https://wiki.nixos.org/wiki/Flakes) + [direnv](https
 direnv allow    # one-time per worktree — auto-activates on cd
 ```
 
-The shell is provided by the `ansible-apps` shell in
-[nix-devenv](https://github.com/JacobPEvans/nix-devenv) via `.envrc`.
-There is no local `flake.nix` — direnv fetches and caches the remote shell automatically.
+The local `flake.nix` re-exports the `ansible-apps` shell from
+[nix-devenv](https://github.com/JacobPEvans/nix-devenv). `flake.lock` pins
+that shell revision and its Nixpkgs dependencies; Renovate updates the lock.
+The controller Python environment includes `hvac`, required by
+`community.hashi_vault` tasks in the inventory resolver.
 
 To activate manually without direnv:
 
 ```sh
-nix develop "github:JacobPEvans/nix-devenv#ansible-apps"
+nix develop .
 ```
 
 ### Tools provided
 
 - ansible, ansible-lint, molecule — configuration management
 - sops, age — secrets management
-- python3 with paramiko, pyyaml, jinja2, jsondiff — Ansible dependencies
+- python3 with paramiko, pyyaml, jinja2, jsondiff, boto3, botocore, and hvac — Ansible dependencies
 - jq, yq, pre-commit — utilities
 
 ## Related Repositories

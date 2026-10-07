@@ -1,0 +1,170 @@
+---
+# The cAdvisor scrape job and the guest node_exporter disk keep-list, both
+# defined in inventory/group_vars/prometheus_group.yml. Renders the REAL
+# prometheus.yml.j2 template against the REAL role defaults and the REAL
+# group_vars file (vars_files), so the expression under test is the one that
+# ships.
+#   1. A fixture with docker_vms renders one cadvisor job whose targets are
+#      the docker_vms addresses at the fixture's cadvisor port.
+#   2. A fixture with no docker_vms renders the job with an empty target list.
+#   3. The guest_node_exporter keep regex matches the node_disk_* families and
+#      still rejects an unlisted node_disk_* family.
+#   4. The Splunk keep-job list in cribl_stream_group.yml names cadvisor.
+#
+# tofu_data is set as a FACT for the same reason as prometheus_llama_server_scrape.yml
+# (the group_vars expressions read hostvars['localhost']['tofu_data']), so this
+# play belongs in the same trailing, fact-publishing block of verify_templates.yml.
+- name: Verify the cAdvisor scrape job and guest disk keep-list
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          blackbox_exporter: 9115
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          node_exporter: 9100
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+          cadvisor: 18080
+        memory_ports:
+          hindsight_api: 8888
+          hindsight_cp: 9999
+      nodes: {}
+      containers:
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+      docker_vms:
+        docker-alpha:
+          ip: docker-alpha.test.example
+        docker-beta:
+          ip: docker-beta.test.example
+        docker-noaddr: {}
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Render prometheus.yml with docker_vms present
+      ansible.builtin.set_fact:
+        _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the cadvisor job
+      ansible.builtin.set_fact:
+        _jobs: "{{ _seeded.scrape_configs | selectattr('job_name', 'equalto', 'cadvisor') | list }}"
+
+    - name: Seeded render carries one cadvisor job targeting each addressed docker_vms member
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs | length == 1
+          - _jobs[0].static_configs[0].targets == ['docker-alpha.test.example:18080', 'docker-beta.test.example:18080']
+        fail_msg: >-
+          Seeded render has {{ _jobs | length }} cadvisor job(s): {{ _jobs }}.
+          Expected one job targeting the addressed docker_vms members at the
+          fixture's cadvisor port (fixture values, so a typed target cannot pass).
+        success_msg: One cadvisor job, docker_vms-derived targets.
+
+    - name: Seeded cadvisor job renders the keep regex built from cadvisor_keep_metrics
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs[0].metric_relabel_configs | length == 1
+          - _jobs[0].metric_relabel_configs[0].action == 'keep'
+          - _jobs[0].metric_relabel_configs[0].source_labels == ['__name__']
+          - _jobs[0].metric_relabel_configs[0].regex == (cadvisor_keep_metrics | join('|'))
+        fail_msg: >-
+          The cadvisor job must carry one keep rule on __name__ whose regex is
+          cadvisor_keep_metrics joined with |. Rendered: {{ _jobs[0].metric_relabel_configs | default('none') }}.
+        success_msg: cadvisor keep regex rendered from the keep-list variable.
+
+    - name: Rendered cadvisor keep regex keeps the listed families and drops others
+      vars:
+        _cadvisor_re: "^({{ _jobs[0].metric_relabel_configs[0].regex }})$"
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            ['container_fs_reads_bytes_total', 'container_fs_writes_bytes_total',
+             'container_fs_reads_total', 'container_fs_writes_total',
+             'container_blkio_device_usage_total', 'container_cpu_usage_seconds_total',
+             'container_memory_working_set_bytes', 'container_last_seen']
+            | map('regex_search', _cadvisor_re)
+            | select('none') | list | length == 0
+          - "'container_fs_usage_bytes' | regex_search(_cadvisor_re) is none"
+          - "'container_network_receive_bytes_total' | regex_search(_cadvisor_re) is none"
+        fail_msg: The rendered cadvisor keep regex must match exactly the listed container_* families.
+        success_msg: Listed families kept, others dropped.
+
+    - name: Republish the fixture without docker_vms
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data | combine({'docker_vms': {}}) }}"
+
+    - name: Render prometheus.yml with no docker_vms
+      ansible.builtin.set_fact:
+        _empty: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the cadvisor job from the empty render
+      ansible.builtin.set_fact:
+        _empty_jobs: "{{ _empty.scrape_configs | selectattr('job_name', 'equalto', 'cadvisor') | list }}"
+
+    - name: No docker_vms renders the cadvisor job with no targets
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _empty_jobs | length == 1
+          - _empty_jobs[0].static_configs[0].targets == []
+          - _empty_jobs[0].metric_relabel_configs[0].regex == (cadvisor_keep_metrics | join('|'))
+        fail_msg: With no docker_vms the cadvisor job must carry an empty target list.
+        success_msg: No docker_vms, empty target list.
+
+    - name: Build the guest keep regex
+      ansible.builtin.set_fact:
+        _keep_re: "^({{ guest_node_exporter_keep_metrics | join('|') }})$"
+
+    - name: Guest keep regex keeps the node_disk families and drops others
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            ['node_disk_read_bytes_total', 'node_disk_written_bytes_total',
+             'node_disk_reads_completed_total', 'node_disk_writes_completed_total',
+             'node_disk_io_time_seconds_total']
+            | map('regex_search', _keep_re)
+            | select('none') | list | length == 0
+          - "'node_disk_discards_completed_total' | regex_search(_keep_re) is none"
+        fail_msg: >-
+          guest_node_exporter_keep_metrics must match the five node_disk_*
+          families and must not match unlisted node_disk_* families.
+        success_msg: Disk families kept, others dropped.
+
+    - name: Load the cribl_stream group vars
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../inventory/group_vars/cribl_stream_group.yml"
+        name: _cribl_gv
+
+    - name: Splunk keep-job list names cadvisor
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'cadvisor' in _cribl_gv.cribl_stream_prometheus_splunk_keep_jobs"
+        fail_msg: cribl_stream_prometheus_splunk_keep_jobs must include cadvisor.
+        success_msg: cadvisor passes the Splunk leg.

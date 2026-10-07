@@ -2,14 +2,19 @@
 systemd_restart_policy_services:
   - cribl
 
+# Alert events enter through the Stream HEC input and are delivered directly
+# to the shared alert webhook. The secret domain is read by this consumer;
+# no notification service is in the delivery path.
+cribl_stream_alerts_slack_webhook: >-
+  {{ bao_ntfy_secrets[platform_alerts_slack_webhook_key]
+     | default(undef('shared alert webhook is not seeded'), true)
+     | mandatory('shared alert webhook is required by Cribl Stream') }}
+
 # Cribl Stream containers have the `outbound-internal` firewall group applied
 # (RFC1918 only), so they cannot reach cdn.cribl.io directly. Serve the
-# tarball from the object-storage (RustFS) artifact store, at a key carrying
-# the version so a pin bump can never silently reuse a stale object (no
-# build hash in the key -- see roles/cribl_stream/tasks/mirror_seed.yml,
-# which is the only place that hash gets resolved). Cribl Edge reads this
-# exact same key (inventory/group_vars/cribl_edge.yml); the mirror_seed.yml
-# task seeds it once for both.
+# tarball from the object-storage artifact store, with the catalog build ID in
+# the key. roles/object_storage/tasks/infra_mirrors.yml stages the tarball and
+# checksum sidecar. Cribl Edge reads this same key.
 cribl_stream_tarball_url: >-
   http://{{ tofu_data.containers['s3'].ip }}:{{
   tofu_data.constants.service_ports.object_storage_s3 }}/splunk-addons/infra/cribl-{{
@@ -22,9 +27,6 @@ cribl_stream_tarball_url: >-
 cribl_packs_object_storage_base_url: >-
   http://{{ tofu_data.containers['s3'].ip }}:{{
   tofu_data.constants.service_ports.object_storage_s3 }}/splunk-addons/cribl-packs
-
-cribl_packs_for_stream:
-  - cc-stream-github-copilot-rest-io
 
 # Langfuse project keypair for the langfuse_otlp output — bao-first with an env
 # fallback, the same shape as zammad_group.yml. Canonical home is the
@@ -53,6 +55,15 @@ cribl_stream_victoriametrics_rw_url: >-
      | mandatory('tofu_data.domain required for victoriametrics_rw') }}:{{
        tofu_data.constants.service_ports.victoriametrics
        | mandatory('tofu_data.constants.service_ports.victoriametrics missing')
+     }}/api/v1/write
+
+# Prometheus remote_write receiver for Cribl Edge hardware metrics. Resolve
+# the guest FQDN and service port from the published OpenTofu inventory.
+cribl_stream_prometheus_rw_url: >-
+  http://{{ tofu_data.containers.prometheus.hostname }}.{{ tofu_data.domain
+     | mandatory('tofu_data.domain required for prometheus_rw') }}:{{
+       tofu_data.constants.service_ports.prometheus_web
+       | mandatory('tofu_data.constants.service_ports.prometheus_web missing')
      }}/api/v1/write
 
 # Phoenix ingest API key for the phoenix_otlp output — same bao-first/env
@@ -104,6 +115,7 @@ cribl_stream_prometheus_splunk_keep_jobs:
   - smokeping
   - pve_node_exporter
   - guest_node_exporter
+  - cadvisor
   - gatus
   - traefik
   - llm_router

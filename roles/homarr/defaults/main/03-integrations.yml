@@ -31,6 +31,16 @@ homarr_radarr_api_key: ""
 homarr_seerr_api_key: ""
 homarr_plex_token: ""
 homarr_sonarr_api_key: ""
+homarr_proxmox_ca: ""
+
+# Jellyseerr's public route is SSO-gated, including its API path. Build the
+# backend URL from the shared catalog and the published service port instead.
+homarr_seerr_endpoint: >-
+  {{ 'http://'
+     ~ (dashboard_catalog_services
+        | selectattr('name', 'equalto', 'seerr')
+        | map(attribute='fqdn') | first)
+     ~ ':' ~ tofu_data.constants.media_ports.seerr_web }}
 
 homarr_media_integration_candidates:
   - name: Radarr
@@ -39,13 +49,12 @@ homarr_media_integration_candidates:
     secrets:
       - kind: apiKey
         value: "{{ homarr_radarr_api_key }}"
-  # Jellyseerr's fronted route is SSO-gated and cannot take an Authelia
-  # bypass, because it serves its own sign-in and session routes under the
-  # same /api prefix an API bypass would open. See the seerr note in
-  # roles/authelia/defaults/main/00-core.yml.
+  # The public route is SSO-gated and cannot take an Authelia bypass because
+  # its sign-in and session routes share the /api prefix. The service FQDN and
+  # port come from the shared dashboard catalog and published inventory.
   - name: Jellyseerr
     kind: jellyseerr
-    url: "https://seerr.{{ ingress_domain }}"
+    url: "{{ homarr_seerr_endpoint }}"
     secrets:
       - kind: apiKey
         value: "{{ homarr_seerr_api_key }}"

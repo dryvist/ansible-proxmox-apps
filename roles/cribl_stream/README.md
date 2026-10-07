@@ -47,6 +47,15 @@ Configure data pipeline via Cribl Web UI after Ansible deployment:
 3. Define transformation pipelines
 4. Configure outputs (Splunk, etc.)
 
+### Grafana alert delivery
+
+Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with
+`sourcetype=grafana:alert`. The same HEC input sends the event to the `ansible`
+Splunk index and through `grafana_alerts_slack`, which drops other sourcetypes
+before delivering to the configured Slack-compatible webhook. The notification
+path is Grafana → Cribl Stream → Splunk and webhook; it does not use the ntfy
+service.
+
 ## Tasks
 
 - Install Cribl Stream package

@@ -31,7 +31,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TASKS_FILE = ROOT / "roles" / "github_runner" / "tasks" / "main.yml"
+TASKS_FILE = ROOT / "roles" / "github_runner" / "tasks" / "reconcile_runner_units.yml"
 STOP_TASK_NAME = "Stop runners above the configured replica count"
 
 

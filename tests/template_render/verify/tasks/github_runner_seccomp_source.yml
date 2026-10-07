@@ -1,0 +1,69 @@
+---
+- name: Name the fixture seccomp profile release
+  ansible.builtin.set_fact:
+    _seccomp_fixture_release: v0.0.0-fixture
+
+- name: Verify an unreachable or invalid seccomp source fails the converge
+  ansible.builtin.include_tasks: github_runner_seccomp_fail_closed.yml
+  loop_control:
+    loop_var: _seccomp_case
+    label: "{{ _seccomp_case.name }}"
+  vars:
+    _seccomp_role_tasks_dir: "{{ playbook_dir }}/../../../roles/github_runner/tasks"
+    _seccomp_unreachable_url: https://seccomp-source.invalid/%s
+  loop:
+    - name: unreachable manifest source
+      tasks: seccomp_default_profile_fetch.yml
+      engine_version: "{{ ansible_version.full | regex_search('^[0-9]+[.][0-9]+[.][0-9]+') }}"
+      manifest_urls:
+        - "{{ _seccomp_unreachable_url }}"
+    - name: manifest without the profile module release
+      tasks: seccomp_default_profile_release.yml
+      manifest_contents:
+        - "require (\n\t{{ github_runner_container_seccomp_profile_module }}-other v0.1.0\n)"
+    - name: unreachable profile download
+      tasks: seccomp_default_profile_download.yml
+      release: "{{ _seccomp_fixture_release }}"
+      profile_url: "{{ _seccomp_unreachable_url }}"
+    - name: content that is not JSON
+      tasks: seccomp_default_profile_validate.yml
+      content: "{{ _seccomp_valid_profile | to_json | reverse }}"
+    - name: allow-by-default policy
+      tasks: seccomp_default_profile_validate.yml
+      content: >-
+        {{ _seccomp_valid_profile
+           | combine({'defaultAction': github_runner_container_seccomp_allow_action}) | to_json }}
+    - name: policy without syscall rules
+      tasks: seccomp_default_profile_validate.yml
+      content: "{{ _seccomp_valid_profile | combine({'syscalls': []}) | to_json }}"
+    - name: policy whose rules are not a list
+      tasks: seccomp_default_profile_validate.yml
+      content: "{{ _seccomp_valid_profile | combine({'syscalls': 'read'}) | to_json }}"
+
+- name: Validate a well-formed deny-by-default seccomp profile
+  ansible.builtin.include_tasks: "{{ _seccomp_role_tasks_dir }}/seccomp_default_profile_validate.yml"
+  vars:
+    _seccomp_role_tasks_dir: "{{ playbook_dir }}/../../../roles/github_runner/tasks"
+    github_runner_container_seccomp_default_profile_content: >-
+      {{ _seccomp_valid_profile | to_json }}
+
+- name: Assert the validated profile is the fixture policy
+  ansible.builtin.assert:
+    that:
+      - github_runner_container_seccomp_default_profile_data == _seccomp_valid_profile
+
+- name: Resolve a release from a manifest line with a trailing comment
+  ansible.builtin.include_tasks: "{{ _seccomp_role_tasks_dir }}/seccomp_default_profile_release.yml"
+  vars:
+    _seccomp_role_tasks_dir: "{{ playbook_dir }}/../../../roles/github_runner/tasks"
+    github_runner_container_docker_engine_version: ""
+    github_runner_container_seccomp_engine_manifest_contents:
+      - |-
+        require (
+            {{ github_runner_container_seccomp_profile_module }} {{ _seccomp_fixture_release }} // indirect
+        )
+
+- name: Assert the commented manifest line resolved its release
+  ansible.builtin.assert:
+    that:
+      - github_runner_container_seccomp_profile_release == _seccomp_fixture_release

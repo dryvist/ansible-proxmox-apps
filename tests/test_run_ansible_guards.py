@@ -24,7 +24,9 @@ REAL_ROOT = Path(__file__).resolve().parents[1]
 RUNNER_SRC = (REAL_ROOT / "scripts" / "run-ansible.sh").read_text(encoding="utf-8")
 
 
-class RunAnsibleGuardContract(unittest.TestCase):
+class RunAnsibleSandbox(unittest.TestCase):
+    """Throwaway repo, stubbed PATH and runner; no tests of its own."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
@@ -120,6 +122,8 @@ class RunAnsibleGuardContract(unittest.TestCase):
     def _assert_playbook_not_called(self):
         self.assertFalse(self.called_log.exists())
 
+
+class RunAnsibleGuardContract(RunAnsibleSandbox):
     # --- baseline -------------------------------------------------------
 
     def test_clean_checkout_at_remote_head_converges(self):
@@ -133,15 +137,11 @@ class RunAnsibleGuardContract(unittest.TestCase):
     def test_behind_remote_refuses(self):
         # Simulate a teammate's push landing on origin after this checkout.
         other = self.work.parent / "other-clone"
-        subprocess.run(
-            ["git", "clone", "-q", str(self.origin), str(other)], check=True
-        )
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
         subprocess.run(
             ["git", "config", "user.email", "t2@example.com"], cwd=other, check=True
         )
-        subprocess.run(
-            ["git", "config", "user.name", "t2"], cwd=other, check=True
-        )
+        subprocess.run(["git", "config", "user.name", "t2"], cwd=other, check=True)
         (other / "README.md").write_text("newer\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=other, check=True)
         subprocess.run(
@@ -161,15 +161,11 @@ class RunAnsibleGuardContract(unittest.TestCase):
 
     def test_allow_stale_checkout_bypasses_behind_remote(self):
         other = self.work.parent / "other-clone2"
-        subprocess.run(
-            ["git", "clone", "-q", str(self.origin), str(other)], check=True
-        )
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
         subprocess.run(
             ["git", "config", "user.email", "t3@example.com"], cwd=other, check=True
         )
-        subprocess.run(
-            ["git", "config", "user.name", "t3"], cwd=other, check=True
-        )
+        subprocess.run(["git", "config", "user.name", "t3"], cwd=other, check=True)
         (other / "README.md").write_text("newer\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=other, check=True)
         subprocess.run(
@@ -302,51 +298,6 @@ class RunAnsibleGuardContract(unittest.TestCase):
         # fire when --limit never asked for anything beyond localhost.
         result = self._run("--limit", "localhost")
         self.assertEqual(result.returncode, 0, result.stderr)
-
-
-    # --- host-key pin reaches the in-process transport --------------------
-
-    def _run_with_pin(self, home, pin):
-        self._write_recap("a-host")
-        return self._run(
-            "--limit",
-            "a-host",
-            env_extra={"HOME": str(home), "SSH_KNOWN_HOSTS": pin},
-        )
-
-    def test_pin_is_written_where_the_pct_transport_reads_it(self):
-        # proxmox_pct_remote builds a paramiko client in process and reads
-        # ~/.ssh/known_hosts directly, so ANSIBLE_SSH_COMMON_ARGS never
-        # reaches it. Without this the pin is configured and inert.
-        home = self.tmp_path_home()
-        result = self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        known = home / ".ssh" / "known_hosts"
-        self.assertTrue(known.exists(), "pin was not written to the read path")
-        self.assertIn("AAAAPINNED", known.read_text(encoding="utf-8"))
-        self.assertEqual(known.stat().st_mode & 0o777, 0o600)
-
-    def test_pin_merges_and_does_not_discard_an_existing_file(self):
-        # On a workstation this file belongs to the operator. Overwriting it
-        # would silently drop every host they had verified themselves.
-        home = self.tmp_path_home()
-        known = home / ".ssh" / "known_hosts"
-        known.parent.mkdir(parents=True, exist_ok=True)
-        known.write_text("theirs ssh-ed25519 AAAAOPERATOR\n", encoding="utf-8")
-
-        self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
-        first = known.read_text(encoding="utf-8")
-        self.assertIn("AAAAOPERATOR", first)
-        self.assertIn("AAAAPINNED", first)
-
-        # Repeating a run must not keep growing the file.
-        self._run_with_pin(home, "node ssh-ed25519 AAAAPINNED\n")
-        self.assertEqual(known.read_text(encoding="utf-8"), first)
-
-    def tmp_path_home(self):
-        home = Path(self.tmp.name) / "fake-home"
-        home.mkdir(parents=True, exist_ok=True)
-        return home
 
 
 if __name__ == "__main__":

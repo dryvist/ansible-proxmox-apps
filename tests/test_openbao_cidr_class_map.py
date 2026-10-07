@@ -60,6 +60,8 @@ class TestCidrClassMap(unittest.TestCase):
         self.variables["openbao_approles"] = [
             {"name": "some-machine-role"},
             {"name": "flow-lock"},
+            {"name": "approle-issuer"},
+            {"name": "openbao-reconcile"},
         ]
         self.variables["openbao_management_cidrs"] = "10.0.1.0/24,10.0.2.0/24"
         self.variables["openbao_workstation_cidrs"] = "10.0.9.10/32"
@@ -84,6 +86,35 @@ class TestCidrClassMap(unittest.TestCase):
     def test_flow_lock_resolves_to_the_union_class(self):
         class_map = _render("openbao_approle_cidr_class_map", self.variables)
         self.assertEqual(class_map["flow-lock"], "machine_or_workstation")
+
+    def test_approle_issuer_resolves_to_the_union_class(self):
+        class_map = _render("openbao_approle_cidr_class_map", self.variables)
+        self.assertEqual(class_map["approle-issuer"], "machine_or_workstation")
+
+    def test_openbao_reconcile_resolves_to_the_union_class(self):
+        class_map = _render("openbao_approle_cidr_class_map", self.variables)
+        self.assertEqual(class_map["openbao-reconcile"], "machine_or_workstation")
+
+    def test_flow_lock_mints_only_short_lived_single_use_secret_ids(self):
+        role = next(
+            role
+            for role in self.variables["openbao_base_approles_core"]
+            if role.get("name") == "{{ openbao_flow_lock_approle_name }}"
+        )
+        self.assertEqual(
+            role["secret_id_ttl"], "{{ openbao_approle_per_call_secret_id_ttl }}"
+        )
+        self.assertEqual(
+            role["secret_id_num_uses"], "{{ openbao_approle_per_call_secret_id_num_uses }}"
+        )
+        self.assertNotIn(
+            "{{ openbao_flow_lock_approle_name }}",
+            self.variables["openbao_host_secret_zero_approle_names"],
+        )
+        self.assertIn(
+            "{{ openbao_approle_issuer_approle_name }}",
+            self.variables["openbao_host_secret_zero_approle_names"],
+        )
 
     def test_an_unoverridden_role_still_resolves_to_the_default(self):
         class_map = _render("openbao_approle_cidr_class_map", self.variables)

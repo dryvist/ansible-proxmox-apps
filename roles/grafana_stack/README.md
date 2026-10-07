@@ -32,19 +32,43 @@ of its panels query Prometheus-compatible metrics, so remapping it to
 `victoriametrics` would ship a dashboard where 100% of panels error rather
 than populate.
 
-## AI alert rules
+## AI alert rules and delivery
 
 `templates/alerting/rules-ai.yml.j2` provisions four Grafana-managed rules in
-the `ai-observability` group, all delivered through the existing contact
-point:
+the `ai-observability` group. Grafana sends notifications to the Cribl Stream
+HEC input. Stream writes each event to the `ansible` index and fans a filtered
+copy to the configured alert webhook. Notifications do not pass through
+another relay.
 
-- `llm-router-down`: every `llm_router` scrape target is down or missing.
-- `llm-judge-failing`: at least half of the router's `judge` role requests
-  failed over 15 minutes.
-- `hermes-llm-failures`: Hermes virtual keys returned server errors over 15
+- `llm-router-down`: Prometheus `up{job="llm_router"}` is zero or missing.
+- `llm-judge-failing`: the MacBook Cribl Edge judge Process Set has not
+  reported `judge_process_start_time_seconds` to VictoriaMetrics for six
   minutes.
+- `hermes-llm-failures`: Hermes virtual keys in VictoriaMetrics returned
+  server errors over 15 minutes.
 - `zdr-key-non-zdr-model`: a key in `grafana_stack_alert_zdr_only_keys`
   requested a model in `grafana_stack_alert_zdr_false_models`.
+
+A receiver API request sends a sample alert with its rule title. It checks
+the notification path without stopping a target or evaluating the metric
+expression.
+
+```sh
+GRAFANA_URL="$GRAFANA_URL" GRAFANA_API_TOKEN="$GRAFANA_API_TOKEN" \
+GRAFANA_ALERT_CRIBL_HEC_URL="$GRAFANA_ALERT_CRIBL_HEC_URL" \
+SPLUNK_HEC_TOKEN="$SPLUNK_HEC_TOKEN" \
+  tests/alerts/fire-ai-alert.sh router-down
+
+GRAFANA_URL="$GRAFANA_URL" GRAFANA_API_TOKEN="$GRAFANA_API_TOKEN" \
+GRAFANA_ALERT_CRIBL_HEC_URL="$GRAFANA_ALERT_CRIBL_HEC_URL" \
+SPLUNK_HEC_TOKEN="$SPLUNK_HEC_TOKEN" \
+  tests/alerts/fire-ai-alert.sh judge-down
+
+GRAFANA_URL="$GRAFANA_URL" GRAFANA_API_TOKEN="$GRAFANA_API_TOKEN" \
+GRAFANA_ALERT_CRIBL_HEC_URL="$GRAFANA_ALERT_CRIBL_HEC_URL" \
+SPLUNK_HEC_TOKEN="$SPLUNK_HEC_TOKEN" \
+  tests/alerts/fire-ai-alert.sh hermes-failure
+```
 
 ## Installation
 

@@ -6,6 +6,17 @@
   ansible.builtin.include_role:
     name: dashboard_catalog
 
+- name: Validate the optional LLM profile tile inputs
+  ansible.builtin.assert:
+    that:
+      - glance_llm_profile_bearer_token | length > 0
+      - glance_llm_profile_router_base_url | length > 0
+    fail_msg: >-
+      The LLM profile tile requires GLANCE_LLM_PROFILE_BEARER_TOKEN and an
+      llm router probe URL in the dashboard catalog.
+    quiet: true
+  when: glance_llm_profile_enabled | bool
+
 - name: Create the glance system user
   ansible.builtin.user:
     name: "{{ glance_user }}"
@@ -21,6 +32,24 @@
     owner: root
     group: "{{ glance_user }}"
     mode: "0750"
+
+- name: Install the LLM profile tile bearer environment file
+  ansible.builtin.template:
+    src: glance-llm-profile.env.j2
+    dest: "{{ glance_llm_profile_environment_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: glance_llm_profile_enabled | bool
+  no_log: true
+  notify: Restart glance
+
+- name: Remove the LLM profile tile bearer environment file when disabled
+  ansible.builtin.file:
+    path: "{{ glance_llm_profile_environment_file }}"
+    state: absent
+  when: not (glance_llm_profile_enabled | bool)
+  notify: Restart glance
 
 - name: Create the unpack staging directory
   ansible.builtin.file:

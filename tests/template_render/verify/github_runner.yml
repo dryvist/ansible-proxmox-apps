@@ -18,12 +18,20 @@
   connection: local
   gather_facts: false
 
+  vars_files:
+    - ../../../roles/github_runner/defaults/main.yml
+
   vars:
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
+    _seccomp_valid_profile:
+      defaultAction: SCMP_ACT_ERRNO
+      syscalls:
+        - names:
+            - read
+          action: "{{ github_runner_container_seccomp_allow_action }}"
     _template_dir: "{{ playbook_dir }}/../../../roles/github_runner/templates"
-    # Mirror roles/github_runner/defaults/main.yml, plus the facts the role
-    # sets at converge time.
+    # Role defaults plus the facts the role sets at converge time.
     github_runner_image: "myoung34/github-runner:ubuntu-noble"
     github_runner_container_prefix: "github-runner"
     github_runner_name_prefix: "proxmox-runner"
@@ -32,7 +40,6 @@
     github_runner_stop_timeout: 120
     github_runner_cpu_limit: "1.0"
     github_runner_memory_limit: "2g"
-    github_runner_docker_gid: 992
     github_runner_org: example-org
     github_runner_group: example-group
     github_runner_labels_common: "self-hosted,Linux,X64"
@@ -61,11 +68,47 @@
       --volume\s+{{ github_runner_diag_host_dir }}/%i:/actions-runner/_diag
 
   tasks:
+    - name: Read fixture identity values from the render directory
+      ansible.builtin.stat:
+        path: "{{ _fixture_dir }}"
+      register: _runner_fixture_identity
+
+    - name: Set fixture UID and GID facts
+      ansible.builtin.set_fact:
+        github_runner_container_uid: "{{ _runner_fixture_identity.stat.uid }}"
+        github_runner_container_gid: "{{ _runner_fixture_identity.stat.gid }}"
+
+    - name: Build the fixture container user fact
+      ansible.builtin.set_fact:
+        github_runner_container_user: "{{ github_runner_container_uid }}:{{ github_runner_container_gid }}"
+
+    - name: Read a fixture GID from the local filesystem
+      ansible.builtin.stat:
+        path: /etc/group
+      register: _runner_fixture_group
+
+    - name: Set the fixture group ID from the stat result
+      ansible.builtin.set_fact:
+        github_runner_docker_gid: "{{ _runner_fixture_group.stat.gid }}"
+
     - name: Render the runner systemd unit
       ansible.builtin.template:
         src: "{{ _template_dir }}/github-runner@.service.j2"
         dest: "{{ _fixture_dir }}/test_github-runner@.service"
         mode: "0644"
+
+    - name: Verify the runner seccomp profile
+      ansible.builtin.include_tasks: tasks/github_runner_seccomp.yml
+      vars:
+        github_runner_container_seccomp_fixture_profile:
+          defaultAction: SCMP_ACT_ERRNO
+          syscalls:
+            - names:
+                - read
+              action: SCMP_ACT_ALLOW
+
+    - name: Verify the seccomp default profile source fails closed
+      ansible.builtin.include_tasks: tasks/github_runner_seccomp_source.yml
 
     - name: Render the runner environment file
       ansible.builtin.template:
@@ -160,10 +203,30 @@
       ansible.builtin.assert:
         that:
           - "'EPHEMERAL=true' in _env"
+          - "'RUN_AS_ROOT=false' in _env"
+          - "'HOME=/home/runner' in _env"
         fail_msg: >-
-          EPHEMERAL is not true, so the runner never exits after a job and the
-          --rm above never fires. The two settings only bound disk growth
-          together.
+          The runner environment must enable one-job containers and start job
+          processes with the image's unprivileged user and home directory.
+
+    - name: Assert the runner container uses the resolved user and configured seccomp option
+      ansible.builtin.assert:
+        that:
+          - >-
+            _unit | select('search',
+            '(^|\\s)--user\\s+' ~ (github_runner_container_user | regex_escape) ~ '(\\s|$)')
+            | length > 0
+          - >-
+            _unit | select('search',
+            '(^|\\s)--group-add\\s+' ~ (github_runner_docker_gid | string | regex_escape) ~ '(\\s|$)')
+            | length > 0
+          - >-
+            _unit | select('search',
+            '(^|\\s)--security-opt\\s+' ~ (github_runner_container_seccomp_option | regex_escape) ~ '(\\s|$)')
+            | length > 0
+        fail_msg: >-
+          The runner container must use the image-resolved user and the
+          configured seccomp option.
 
     - name: Assert nothing reintroduces a restart policy on the container
       ansible.builtin.assert:

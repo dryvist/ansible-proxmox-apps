@@ -1,0 +1,28 @@
+---
+# Exercise the secondary serial-heal decision with the role's OWN default
+# expression, across the cases that matter. Pure fact arithmetic, no host
+# contact.
+- name: Verify the secondary is healed only when its serial is ahead of a reporting primary
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../roles/technitium_dns/defaults/main/04-ha-and-health-check.yml
+  vars:
+    cases:
+      - {name: "secondary ahead of primary", role: secondary, own: 900, primary: 300, expect: true}
+      - {name: "secondary equal to primary", role: secondary, own: 300, primary: 300, expect: false}
+      - {name: "secondary behind primary", role: secondary, own: 100, primary: 300, expect: false}
+      - {name: "no primary reported a serial", role: secondary, own: 900, primary: 0, expect: false}
+      - {name: "primary is never healed", role: primary, own: 900, primary: 300, expect: false}
+  tasks:
+    - name: Assert the heal decision for each case
+      ansible.builtin.assert:
+        that:
+          - technitium_dns_serial_heal_needed | bool == item.expect
+        fail_msg: "{{ item.name }}: expected heal={{ item.expect }}"
+        quiet: true
+      loop: "{{ cases }}"
+      vars:
+        technitium_dns_role: "{{ item.role }}"
+        technitium_dns_soa_serial: "{{ item.own }}"
+        technitium_dns_peer_primary_serial: "{{ item.primary }}"

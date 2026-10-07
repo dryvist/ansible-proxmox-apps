@@ -27,6 +27,15 @@ LOCATION_NAME = "homelab"
 LOCATION_TYPE = "Site"
 MANUFACTURER = "Generic"
 
+# Procurement CustomFields shared by the hardware seed's Devices and Modules —
+# a purchase record can describe either a chassis or a part installed in one.
+PROCUREMENT_GROUPING = "Procurement"
+PROCUREMENT_FIELDS: dict[str, dict[str, str]] = {
+    "purchase_date": {"label": "Purchase Date", "type": "date"},
+    "purchase_price_cents": {"label": "Purchase Price (cents)", "type": "integer"},
+    "vendor": {"label": "Vendor", "type": "text"},
+    "receipt_ref": {"label": "Receipt Reference", "type": "text"},
+}
 
 class AdditiveNautobotModel(NautobotModel):
     """A NautobotModel whose ``delete`` is a no-op.
@@ -154,6 +163,39 @@ def ensure_module_type(model_name: str, manufacturer_name: str = "", part_number
         defaults={"part_number": part_number or ""},
     )
     return module_type
+
+
+def ensure_procurement_fields() -> dict[str, Any]:
+    """Idempotently ensure the Device+Module procurement CustomFields.
+
+    Mirrors how ``ssot_virtualization.ensure_vmid_field`` ensures ``vmid``:
+    created via the ORM before the ingest writes any row, keyed by ``key`` so
+    re-running never duplicates. Grouped under "Procurement" in the UI; that
+    grouping is backfilled on an already-existing field too, the same way
+    ``ensure_location`` backfills ``nestable`` on a LocationType that predates
+    it.
+    """
+    from django.contrib.contenttypes.models import ContentType
+    from nautobot.dcim.models import Device, Module
+    from nautobot.extras.models import CustomField
+
+    content_types = [ContentType.objects.get_for_model(model) for model in (Device, Module)]
+    fields: dict[str, Any] = {}
+    for key, spec in PROCUREMENT_FIELDS.items():
+        field, _ = CustomField.objects.get_or_create(
+            key=key,
+            defaults={
+                "label": spec["label"],
+                "type": spec["type"],
+                "grouping": PROCUREMENT_GROUPING,
+            },
+        )
+        if field.grouping != PROCUREMENT_GROUPING:
+            field.grouping = PROCUREMENT_GROUPING
+            field.validated_save()
+        field.content_types.add(*content_types)
+        fields[key] = field
+    return fields
 
 
 def ensure_role(name: str, *models):
