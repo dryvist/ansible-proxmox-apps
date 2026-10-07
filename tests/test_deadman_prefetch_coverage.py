@@ -14,7 +14,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-PLAYBOOKS = Path(__file__).resolve().parent.parent / "playbooks" / "site"
+import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+PLAYBOOKS = ROOT / "playbooks" / "site"
+LEGACY_PREFETCH_GROUPS = (
+    ROOT / "tests" / "inventory_load" / "managed_secrets_legacy_groups.yml"
+)
 
 
 def _single_line_hosts(text: str, play_name: str) -> set[str]:
@@ -27,12 +33,15 @@ def _single_line_hosts(text: str, play_name: str) -> set[str]:
 
 
 def _folded_hosts(text: str, play_name: str) -> set[str]:
-    match = re.search(
-        rf"- name: {re.escape(play_name)}\n\s+hosts: >-\n((?:\s+[a-z0-9_:]+\n)+)",
-        text,
-    )
-    assert match, f"could not find a hosts: >- block for play {play_name!r}"
-    return {group for group in re.split(r"[\s:]+", match.group(1)) if group}
+    plays = yaml.safe_load(text)
+    play = next((play for play in plays if play.get("name") == play_name), None)
+    assert play is not None, f"could not find play {play_name!r}"
+    hosts = set(re.split(r"[\s:]+", str(play["hosts"])))
+    if "managed_secrets_group" in hosts:
+        return set(
+            yaml.safe_load(LEGACY_PREFETCH_GROUPS.read_text())["managed_secrets_legacy_groups"]
+        )
+    return hosts
 
 
 def test_every_deadman_target_group_publishes_bao_monitoring_secrets():

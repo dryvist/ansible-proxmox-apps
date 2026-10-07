@@ -17,21 +17,23 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_VARS = REPO_ROOT / "inventory" / "group_vars"
 TELEMETRY_PLAYBOOK = REPO_ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
 PUBLISH_TASK_FILE = REPO_ROOT / "playbooks" / "tasks" / "publish_secret_domain_facts.yml"
 PREFETCH_PLAY = "Pre-fetch resource-domain secrets from OpenBao"
 PUBLISH_TASK = "Publish each domain's merged secrets to application hosts"
+LEGACY_PREFETCH_GROUPS = (
+    REPO_ROOT / "tests" / "inventory_load" / "managed_secrets_legacy_groups.yml"
+)
 
 
-def _folded_hosts(text: str, play_name: str) -> set:
-    match = re.search(
-        rf"- name: {re.escape(play_name)}\n\s+hosts: >-\n((?:\s+[a-z0-9_:]+\n)+)",
-        text,
+def _legacy_prefetch_groups() -> set:
+    return set(
+        yaml.safe_load(LEGACY_PREFETCH_GROUPS.read_text())["managed_secrets_legacy_groups"]
     )
-    assert match, f"could not find a hosts: >- block for play {play_name!r}"
-    return {group for group in re.split(r"[\s:]+", match.group(1)) if group}
 
 
 def _set_fact_keys(text: str, task_name: str) -> set:
@@ -64,7 +66,10 @@ class TestMediaSecretsPublishCoverage(unittest.TestCase):
     def test_every_bao_media_secrets_consumer_is_published_by_the_prefetch_play(self):
         text = TELEMETRY_PLAYBOOK.read_text()
         consumer_groups = _consumer_groups()
-        publisher_hosts = _folded_hosts(text, PREFETCH_PLAY)
+        plays = yaml.safe_load(text)
+        prefetch = next(play for play in plays if play.get("name") == PREFETCH_PLAY)
+        self.assertEqual(set(prefetch["hosts"].split()), {"managed_secrets_group"})
+        publisher_groups = _legacy_prefetch_groups()
         self.assertIn(
             "ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml",
             text,
@@ -73,7 +78,7 @@ class TestMediaSecretsPublishCoverage(unittest.TestCase):
 
         self.assertTrue(consumer_groups, "no bao_media_secrets consumer group_vars files found")
 
-        missing_hosts = consumer_groups - publisher_hosts
+        missing_hosts = consumer_groups - publisher_groups
         self.assertFalse(
             missing_hosts,
             f"group_vars consumer group(s) {sorted(missing_hosts)} read bao_media_secrets "
