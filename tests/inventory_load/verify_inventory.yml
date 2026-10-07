@@ -339,6 +339,55 @@
     - name: Verify the media-stack child inherits a scoped run's limit/tags
       ansible.builtin.import_tasks: verify_media_stack_limit_passthrough.yml
 
+    - name: Compute the Docker fixture hosts selected by the previous host_tags guard
+      ansible.builtin.set_fact:
+        _expected_docker_group: >-
+          {%- set selected = [] -%}
+          {%- for candidate in ((groups['lxc_containers'] | default([]))
+                                + (groups['vms'] | default([]))
+                                + (groups['docker_vms'] | default([]))) | unique -%}
+            {%- if 'docker' in (hostvars[candidate].host_tags | default([])) -%}
+              {%- set _ = selected.append(candidate) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ selected | sort }}
+
+    - name: Compute the secret fixture hosts selected by the previous prefetch pattern
+      ansible.builtin.set_fact:
+        _expected_managed_secrets_group: >-
+          {%- set selected = [] -%}
+          {%- for group in ['ai_orchestration_group', 'n8n_group', 'cribl_stream_group',
+                            'cribl_edge', 'object_storage_group', 'netmon_group',
+                            'prometheus_group', 'unifi_metrics_group', 'postgres_group',
+                            'postgres_ai_group', 'hindsight_group', 'nautobot_group',
+                            'zammad_group', 'vikunja_group', 'immich_group', 'homarr_group',
+                            'authelia_group', 'grafana_group', 'ntfy_group', 'status_group',
+                            'agent_sandbox_host'] -%}
+            {%- set _ = selected.extend(groups.get(group, [])) -%}
+          {%- endfor -%}
+          {{ selected | unique | sort }}
+
+    - name: Verify managed-secrets preserves the previous prefetch membership
+      ansible.builtin.assert:
+        that:
+          - >-
+            groups['managed_secrets_group'] | default([]) | sort
+            == (_expected_managed_secrets_group | sort)
+        fail_msg: >-
+          managed_secrets_group must contain the same fixture hosts as the
+          previous resource-domain prefetch play selector. Got
+          {{ groups['managed_secrets_group'] | default([]) | sort }}; expected
+          {{ _expected_managed_secrets_group | sort }}.
+
+    - name: Verify docker capability targets the existing Docker-tagged hosts
+      ansible.builtin.assert:
+        that:
+          - groups['docker_group'] | sort == _expected_docker_group | sort
+        fail_msg: >-
+          docker_group membership must match the previous task-level Docker-tag
+          selector. Got {{ groups['docker_group'] | sort }}; expected
+          {{ _expected_docker_group | sort }}.
+
     - name: Display group membership summary
       ansible.builtin.debug:
         msg: |
@@ -354,3 +403,5 @@
           - mailpit_group:      {{ groups['mailpit_group'] | default([]) | join(', ') }}
           - ntfy_group:         {{ groups['ntfy_group'] | default([]) | join(', ') }}
           - openproject_group:  {{ groups['openproject_group'] | default([]) | join(', ') }}
+          - managed_secrets_group: {{ groups['managed_secrets_group'] | default([]) | join(', ') }}
+          - docker_group: {{ groups['docker_group'] | default([]) | join(', ') }}
