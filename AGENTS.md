@@ -23,3 +23,10 @@ Full docs live under `docs/agents/`, one topic per page:
   the fast/extended test tiers.
 - [Dev environment and related repositories](docs/agents/dev-environment.md) —
   the Nix/direnv shell and how this repo relates to its peers.
+
+## CI
+
+CI uses the shared Ansible workflow: pull requests into `develop` run mapped
+changed-role scenarios, while promotion pull requests into `main` run the full
+Molecule matrix and integration suite. Pushes to `main` or `develop` run the
+full matrix. `Merge Gate` includes Molecule and the repository contract checks.
