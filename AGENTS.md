@@ -26,11 +26,10 @@ Full docs live under `docs/agents/`, one topic per page:
 
 ## CI
 
-Pull requests and non-main pushes use the shared changed-path Molecule
-selection; unmapped changes fail, and recognized full-matrix paths defer the
-full suite to the push to `main`. An empty scenario selection skips Molecule
-inside the `Merge Gate` while the classifier and local contracts remain
-required. Only the push to `main` runs the full matrix. Public pull-request CI
-stays on GitHub-hosted runners.
+Main-target pull requests and pushes to `main` run the full Molecule matrix,
+required by `Merge Gate`. Develop pull requests and non-main pushes use the
+shared changed-path selection; unmapped changes fail. An empty development
+selection skips Molecule while the classifier and local contracts remain
+required. Public pull-request CI stays on GitHub-hosted runners.
 
 See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”
