@@ -243,3 +243,34 @@ jobs:
 
       - name: Verify budget-gate delegates to the shared collection and every entry point is bracketed
         run: python3 tests/test_budget_gate_brackets_verify_playbooks.py -v
+
+  # The template render harness is the only check of the alert hub's Slack
+  # fan-out and the other rendered roles. Molecule runs it only when a scenario
+  # is selected, so a change to a contract-only role would otherwise never
+  # reach it.
+  template-render:
+    name: Verify Template Rendering
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.14'
+
+      - name: Install Ansible
+        run: python3 -m pip install --disable-pip-version-check 'ansible-core>=2.16'
+
+      - name: Install Ansible dependencies
+        run: ansible-galaxy install -r requirements.yml
+
+      - name: Render and verify every role's templates
+        # PROXMOX_SUBDOMAIN must be set to a placeholder: several roles fail
+        # closed when it is absent, and the harness is meant to exercise them.
+        env:
+          PROXMOX_SUBDOMAIN: example.invalid
+        run: ansible-playbook tests/template_render/verify_templates.yml -c local
