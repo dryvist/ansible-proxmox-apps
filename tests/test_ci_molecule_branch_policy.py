@@ -102,7 +102,9 @@ class MoleculeBranchPolicy(unittest.TestCase):
     def test_main_push_runs_every_scenario(self):
         github = deepcopy(self.events["develop_push"])
         github["ref"] = "refs/heads/main"
-        self.assert_full_matrix(self.matrix(github, ""))
+        for scenarios in ("[]", "", '["default"]'):
+            with self.subTest(scenarios=scenarios):
+                self.assert_full_matrix(self.matrix(github, scenarios, "true"))
 
     def test_develop_push_preserves_the_shared_focused_policy(self):
         self.assertEqual(
