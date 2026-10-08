@@ -115,6 +115,7 @@ jobs:
           - '.github/workflows/_inventory-contract.yml'
           - '.github/workflows/_secrets-contract.yml'
           - 'tests/test_ci_molecule_branch_policy.py'
+          - 'tests/ci_molecule_branch_policy/**'
 
   # Repository-local deployment contracts share this deterministic scope.
   # Promotion into main forces them on; Molecule selection comes from the
@@ -201,12 +202,17 @@ jobs:
     if: >-
       !cancelled() &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main') ||
        (needs.ci.outputs.molecule == 'true' &&
         needs.ci.outputs.molecule_scenarios != '' &&
         needs.ci.outputs.molecule_scenarios != '[]'))
     uses: ./.github/workflows/_molecule.yml
     with:
-      scenarios: ${{ needs.ci.outputs.molecule_scenarios }}
+      scenarios: >-
+        ${{ !(github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main') &&
+        needs.ci.outputs.molecule_scenarios || '' }}
     secrets: inherit
 
   e2e:
@@ -238,10 +244,9 @@ jobs:
       - name: Check all results
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          # Full Molecule runs only after a push to main. On PRs and develop
-          # pushes, the shared classifier returns a focused list or [] for
-          # contract-only/full-matrix paths; the latter skips Molecule while
-          # retaining the classifier and local contracts in this gate.
+          # Main-target PRs and main pushes require the complete Molecule
+          # matrix. Develop uses the shared focused selection and retains
+          # the classifier and local contracts in this gate.
           allowed-skips: >-
             ${{ (github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'develop' &&
@@ -249,11 +254,7 @@ jobs:
             ((github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name != github.repository) &&
-            'e2e, molecule') ||
-            ((github.event_name == 'pull_request' &&
-            github.event.pull_request.base.ref == 'main' &&
-            github.event.pull_request.head.repo.full_name == github.repository) &&
-            'molecule') ||
+            'e2e') ||
             ((github.event_name == 'push' && github.ref == 'refs/heads/develop') &&
             'e2e, molecule') || '' }}
           jobs: ${{ toJSON(needs) }}
