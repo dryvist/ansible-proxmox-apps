@@ -85,6 +85,8 @@ documented once at
 | `OPENBAO_GITHUB_HERMES_APP_ID` / `_PRIVATE_KEY` | Hermes App (`github-hermes` mount) | one-time environment |
 | `OPENBAO_GITHUB_HERMES_DRYVIST_INSTALLATION_ID` | Hermes App installation on `dryvist`; unset = no mount | env document |
 | `OPENBAO_GITHUB_HERMES_AUTHOR_{PUBLIC,PRIVATE}_REPOS` | Comma-separated repositories for `hermes-author-{public,private}`; unset = no set | env document |
+| `OPENBAO_GITHUB_WORK_APP_ID` / `_PRIVATE_KEY` | Work App (`github-work` mount) | one-time environment |
+| `OPENBAO_GITHUB_WORK_INSTALLATION_ID` | Work App installation; unset = no mount | env document |
 | `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | env |
 | `IDRAC_R410_USER` | R410 iDRAC username | env |
 | `IDRAC_R410_PASSWORD` | R410 iDRAC password | env |

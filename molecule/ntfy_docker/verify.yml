@@ -1,0 +1,36 @@
+---
+# The subscriber env file is loaded by systemd EnvironmentFile=. systemd strips
+# one matching pair of outer single quotes and keeps double quotes inside them,
+# so the JSON value must be single-quoted to reach json.loads intact. Unquoted,
+# systemd treats the JSON's double quotes as quoting and the value is mangled.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Read the rendered subscriber environment file
+      ansible.builtin.slurp:
+        src: "{{ ntfy_docker_zammad_env_file }}"
+      register: ntfy_env
+
+    - name: Pick the topic-groups line out of the environment file
+      ansible.builtin.set_fact:
+        topic_groups_line: >-
+          {{ (ntfy_env.content | b64decode).splitlines()
+             | select('match', '^NTFY_ZAMMAD_TOPIC_GROUPS_JSON=')
+             | first | default('') }}
+
+    - name: Assert the topic-groups value is single-quoted and parses to the mapping
+      ansible.builtin.assert:
+        that:
+          - topic_groups_line is match("^NTFY_ZAMMAD_TOPIC_GROUPS_JSON='.*'$")
+          - >-
+            (topic_groups_line
+             | regex_replace("^NTFY_ZAMMAD_TOPIC_GROUPS_JSON='(.*)'$", "\\1")
+             | from_json) == ntfy_docker_zammad_topic_groups
+        fail_msg: "NTFY_ZAMMAD_TOPIC_GROUPS_JSON is not single-quoted or does not parse: {{ topic_groups_line }}"
+        quiet: true

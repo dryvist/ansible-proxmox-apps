@@ -134,6 +134,7 @@
       ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
       vars:
         ntfy_docker_topics: [keystone, proxmox]
+        ntfy_docker_inform_topics: []
         ntfy_docker_slack_alerts_key: keystone
         ntfy_docker_slack_routes: [proxmox]
         ntfy_docker_slack_webhooks:
@@ -147,6 +148,45 @@
             ntfy_docker_slack_instances ==
             {'all-keystone': 'keystone', 'all-proxmox': 'proxmox', 'proxmox': 'proxmox'}
         fail_msg: "unexpected instances: {{ ntfy_docker_slack_instances }}"
+
+    # An informational topic has its own channel and is kept off all-alerts.
+    - name: Plan the Slack fan-out with an informational topic
+      ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+      vars:
+        ntfy_docker_topics: [keystone, status]
+        ntfy_docker_inform_topics: [status]
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_routes: []
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          status: https://hooks.example.test/status
+
+    - name: Assert the informational topic gets only its own instance
+      ansible.builtin.assert:
+        that:
+          - "ntfy_docker_slack_instances == {'all-keystone': 'keystone', 'status': 'status'}"
+        fail_msg: "informational topic leaked into all-alerts: {{ ntfy_docker_slack_instances }}"
+
+    - name: Plan the Slack fan-out with an informational webhook unseeded
+      block:
+        - name: Include the plan with the status webhook missing
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone, status]
+            ntfy_docker_inform_topics: [status]
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: []
+            ntfy_docker_slack_webhooks:
+              keystone: https://hooks.example.test/all
+
+        - name: Fail because the unseeded informational topic did not fail the plan
+          ansible.builtin.fail:
+            msg: an unseeded informational webhook must fail the converge
+      rescue:
+        - name: Assert the failure names the missing key
+          ansible.builtin.assert:
+            that:
+              - "'status' in ansible_failed_result.msg"
 
     - name: Render the all-alerts and per-topic env files
       ansible.builtin.template:
@@ -182,6 +222,7 @@
           ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
           vars:
             ntfy_docker_topics: [keystone, proxmox]
+            ntfy_docker_inform_topics: []
             ntfy_docker_slack_alerts_key: keystone
             ntfy_docker_slack_routes: [proxmox]
             ntfy_docker_slack_webhooks:
@@ -202,6 +243,7 @@
           ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
           vars:
             ntfy_docker_topics: [keystone]
+            ntfy_docker_inform_topics: []
             ntfy_docker_slack_alerts_key: keystone
             ntfy_docker_slack_routes: []
             ntfy_docker_slack_webhooks:
