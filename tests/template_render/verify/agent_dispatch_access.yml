@@ -100,6 +100,8 @@
         _dispatch_ssh_wrapper: "{{ lookup('template', _dispatch_templates ~ '/dispatch-ssh-with-alert.sh.j2') }}"
         _dispatch_ssh_root: "{{ lookup('template', _dispatch_templates ~ '/dispatch-ssh-root.sh.j2') }}"
         _dispatch_sudoers: "{{ lookup('template', _dispatch_templates ~ '/dispatch-sudoers.j2') }}"
+        _dispatch_check_service: "{{ lookup('template', _dispatch_templates ~ '/dispatch-check.service.j2') }}"
+        _dispatch_check_timer: "{{ lookup('template', _dispatch_templates ~ '/dispatch-check.timer.j2') }}"
 
     - name: Assert every key is restricted to the dispatcher
       ansible.builtin.assert:
@@ -107,10 +109,10 @@
           - _dispatch_keys.splitlines() | length == 2
           - >-
             _dispatch_keys.splitlines() | select('match',
-            '^restrict,command="' ~ agent_sandbox_dispatch_command ~ '" ssh-ed25519 ') | list | length == 2
+            '^restrict,pty,command="' ~ agent_sandbox_dispatch_command ~ '" ssh-ed25519 ') | list | length == 2
           - "('    ForceCommand ' ~ agent_sandbox_dispatch_command) in _dispatch_sshd"
           - "'    DisableForwarding yes' in _dispatch_sshd"
-          - "'    PermitTTY no' in _dispatch_sshd"
+          - "'    PermitTTY yes' in _dispatch_sshd"
           - "'    PermitUserRC no' in _dispatch_sshd"
           - "'    AuthenticationMethods publickey' in _dispatch_sshd"
           - "'Match User agent-dispatch' in _dispatch_sshd"
@@ -132,6 +134,14 @@
           - >-
             ('NOPASSWD: ' ~ agent_sandbox_dispatch_root_command ~ ' ""')
             in _dispatch_sudoers
+
+    - name: Assert the hourly check runs as the dispatcher with the alert settings
+      ansible.builtin.assert:
+        that:
+          - "('User=' ~ agent_sandbox_dispatch_user) in _dispatch_check_service.splitlines()"
+          - "('EnvironmentFile=' ~ agent_sandbox_dispatch_alert_env_file) in _dispatch_check_service.splitlines()"
+          - "('ExecStart=' ~ agent_sandbox_dispatch_dispatcher ~ ' check') in _dispatch_check_service.splitlines()"
+          - "'OnCalendar=hourly' in _dispatch_check_timer.splitlines()"
 
     - name: Assert an empty list revokes all keys
       ansible.builtin.assert:
