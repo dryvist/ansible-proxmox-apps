@@ -66,7 +66,7 @@ documented once at
 | `MAILPIT_RELAY_PASSWORD` | SMTP relay password / app password | env / SOPS |
 | `MSSQL_SA_PASSWORD` | SQL Server SA password (for mssql_docker role) | SOPS |
 | `OPENBAO_APPROLE_GITHUB_RUNNER_ROLE_ID` | `github-runner` AppRole id; the per-host agent mints registration tokens with it | env |
-| `OPENBAO_APPROLE_GITHUB_RUNNER_SECRET_ID` | `github-runner` AppRole secret-zero (24h / 30 uses) | env |
+| `OPENBAO_APPROLE_GITHUB_RUNNER_SECRET_ID` | `github-runner` AppRole secret-zero (non-expiring, CI source class) | env |
 | `GITHUB_RUNNER_TOKEN` | (deprecated) Single-repo registration token (1h expiry) | SOPS |
 | `BAO_TOKEN` | Privileged token for reconciling an initialized OpenBao cluster | operator environment |
 | `OPENBAO_AWS_ROOT_ACCESS_KEY_ID` | AWS engine bootstrap/rotation access key | tier-0 injection |
