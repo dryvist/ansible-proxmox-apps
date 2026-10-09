@@ -29,6 +29,7 @@ directly instead of silently dropping every alert on the floor.
 import json
 import os
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -275,7 +276,9 @@ if __name__ == "__main__":
     try:
         run()
     except urllib.error.HTTPError as exc:
-        sys.stderr.write("ERROR Zammad HTTP %s: %s\n" % (exc.code, exc.read().decode()[:500]))
+        sys.stderr.write(
+            "ERROR Zammad HTTP %s %s: %s\n" % (exc.code, exc.url, exc.read().decode()[:500])
+        )
         record_failure(
             env("NTFY_ZAMMAD_STATE_DIR", "/var/lib/ntfy-zammad"),
             int(env("NTFY_ZAMMAD_FAILURE_THRESHOLD", "3")),
@@ -284,7 +287,12 @@ if __name__ == "__main__":
         )
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001 - ntfy needs a non-zero exit, not a traceback
-        sys.stderr.write("ERROR %s\n" % exc)
+        # Full traceback to stderr: the bare message alone ("Expecting property
+        # name ...") does not say which step or input failed.
+        sys.stderr.write(
+            "ERROR %s: %s (topic=%s title=%s)\n%s"
+            % (type(exc).__name__, exc, env("NTFY_TOPIC"), env("NTFY_TITLE"), traceback.format_exc())
+        )
         record_failure(
             env("NTFY_ZAMMAD_STATE_DIR", "/var/lib/ntfy-zammad"),
             int(env("NTFY_ZAMMAD_FAILURE_THRESHOLD", "3")),
