@@ -1,5 +1,46 @@
 # Changelog
 
+## [4.59.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.58.0...v4.59.0) (2026-10-09)
+
+
+### Features
+
+* add GitHub agent flow identities ([b3bd626](https://github.com/dryvist/ansible-proxmox-apps/commit/b3bd6260643c4952f6bfbb8578b81e62969cf3d2))
+* add GitHub agent flow identities ([2394ec1](https://github.com/dryvist/ansible-proxmox-apps/commit/2394ec13b3752d3909f8a3711180af15feb19303))
+* **cribl:** map Stage 0 metadata to Langfuse ([0055636](https://github.com/dryvist/ansible-proxmox-apps/commit/0055636c50968a7e699a14aec60815340a191632))
+* **cribl:** map Stage 0 metadata to Langfuse ([cc816de](https://github.com/dryvist/ansible-proxmox-apps/commit/cc816de5eebf8d0261d1e1126bd3703f07d70c95))
+* **cribl:** project consumer trace fields into native sink attributes ([#2467](https://github.com/dryvist/ansible-proxmox-apps/issues/2467)) ([ef5c7ca](https://github.com/dryvist/ansible-proxmox-apps/commit/ef5c7ca9ddcefe891fcac6c3d417e34e5261ea28))
+* **ntfy:** add informational topics with their own Slack channel ([#2491](https://github.com/dryvist/ansible-proxmox-apps/issues/2491)) ([595d818](https://github.com/dryvist/ansible-proxmox-apps/commit/595d8180fc0c3b2cc64757001e497f49e6b8284f))
+* **openbao:** add github-work App mount, policy and AppRole ([5eb0048](https://github.com/dryvist/ansible-proxmox-apps/commit/5eb0048b93d73b35a2a7f694a9e13a5aeb5308cc))
+* **openbao:** add github-work App mount, policy and AppRole ([1029bb1](https://github.com/dryvist/ansible-proxmox-apps/commit/1029bb1cbd9aba83bba4be0cd8a1c33c5f31c629))
+
+
+### Bug Fixes
+
+* assert the single benchmark router key ([#2479](https://github.com/dryvist/ansible-proxmox-apps/issues/2479)) ([af491b9](https://github.com/dryvist/ansible-proxmox-apps/commit/af491b9c4800ae407676ecf47b789ac94a1fa9c7))
+* **ci:** add Molecule scenario for ntfy_docker ([1d98f7d](https://github.com/dryvist/ansible-proxmox-apps/commit/1d98f7db5d46a81522bfc3fb41ddc4786b969f1a))
+* **ci:** add Molecule scenario for ntfy_docker ([9264e40](https://github.com/dryvist/ansible-proxmox-apps/commit/9264e40cba5890e59711f6d69cefed2514f560bf))
+* **ci:** discover the full scenario matrix on main pushes ([#2484](https://github.com/dryvist/ansible-proxmox-apps/issues/2484)) ([4ffb1e9](https://github.com/dryvist/ansible-proxmox-apps/commit/4ffb1e9eaebc60b810895859532464b1985ae179))
+* **ci:** grant actions: read to daily run limit callers ([#2495](https://github.com/dryvist/ansible-proxmox-apps/issues/2495)) ([fae0ce8](https://github.com/dryvist/ansible-proxmox-apps/commit/fae0ce81837f3a3ca2fc99e4bc142d50d82b9726))
+* **ci:** require full Molecule coverage for main PRs ([df16f66](https://github.com/dryvist/ansible-proxmox-apps/commit/df16f66cd0540c932380320325acfe4f1cab9277))
+* **ci:** require full Molecule coverage for main PRs ([0d81963](https://github.com/dryvist/ansible-proxmox-apps/commit/0d8196310e82271c5cd769968797164150c74d45))
+* **ci:** run ntfy_docker scenario's nested Docker on vfs ([feaca52](https://github.com/dryvist/ansible-proxmox-apps/commit/feaca52a689119615cfe36cfc3c06bb3298dac87))
+* generate router keys through shared catalog ([#2474](https://github.com/dryvist/ansible-proxmox-apps/issues/2474)) ([7bc0aad](https://github.com/dryvist/ansible-proxmox-apps/commit/7bc0aad95e080790c1a99c07af60f15466a71c67))
+* **github-runner:** align inventory access with container user ([#2477](https://github.com/dryvist/ansible-proxmox-apps/issues/2477)) ([fc90db1](https://github.com/dryvist/ansible-proxmox-apps/commit/fc90db1abb58efe83b1e4fa6cc5dfacd71d32e70))
+* **inventory:** preserve tag-selected secret coverage ([17c22b0](https://github.com/dryvist/ansible-proxmox-apps/commit/17c22b0cf94f327f3f1d1d1f9a5b6fb2a8c44e0b))
+* load shared role defaults from directory ([bd1b946](https://github.com/dryvist/ansible-proxmox-apps/commit/bd1b946649f3f8095b694520bd344d5062724ae9))
+* **ntfy:** log the Zammad relay exception with traceback and request URL ([#2487](https://github.com/dryvist/ansible-proxmox-apps/issues/2487)) ([94ad480](https://github.com/dryvist/ansible-proxmox-apps/commit/94ad48070779f39a117170e1e9ee7eaaaedc0ae1))
+* **ntfy:** single-quote the Zammad topic-group JSON in the subscriber env file ([#2486](https://github.com/dryvist/ansible-proxmox-apps/issues/2486)) ([d566793](https://github.com/dryvist/ansible-proxmox-apps/commit/d5667935a5b28250b82704d76aa4b1bf2f39a20f))
+* **ntfy:** sort Zammad topics so the CLI client config is idempotent ([86ea675](https://github.com/dryvist/ansible-proxmox-apps/commit/86ea6758c82da63b47b3315500e2bdf78df6d576))
+* **openbao_secrets:** take the issuer path only where flow-lock runs ([#2503](https://github.com/dryvist/ansible-proxmox-apps/issues/2503)) ([4c73731](https://github.com/dryvist/ansible-proxmox-apps/commit/4c73731ddb9b51fceff8ab7f4060ca0e54cae00f))
+* **openbao:** rotate the ai-donna AppRole secret_id with the other agent identities ([#2465](https://github.com/dryvist/ansible-proxmox-apps/issues/2465)) ([9eb8c55](https://github.com/dryvist/ansible-proxmox-apps/commit/9eb8c554fd1054be8760c5da21560ad592f2228f))
+* **openbao:** run init store calls on the CLI host ([b09dc08](https://github.com/dryvist/ansible-proxmox-apps/commit/b09dc08ab6483f4a15479fb03ae7cdfdeb88d4e2))
+* **openbao:** run init store calls on the CLI host ([204a835](https://github.com/dryvist/ansible-proxmox-apps/commit/204a835ab0afdfe4687d9dd8f4d8de543d5af804))
+* **runners:** consume published APT cache endpoint ([#2472](https://github.com/dryvist/ansible-proxmox-apps/issues/2472)) ([fcba6b8](https://github.com/dryvist/ansible-proxmox-apps/commit/fcba6b841c007854d90507ec9ece7b96ec4e0f0a))
+* scope Molecule CI to mapped coverage ([8e2157a](https://github.com/dryvist/ansible-proxmox-apps/commit/8e2157a8456d2923bcae5cc96a8c93951663c900))
+* scope Molecule CI to mapped coverage ([0570914](https://github.com/dryvist/ansible-proxmox-apps/commit/05709143593aa2249bc0e1a455731a1b1ec5e71f))
+* **tests:** load cribl edge defaults directory ([d95021d](https://github.com/dryvist/ansible-proxmox-apps/commit/d95021d8d265fdf0ca9d72d621bf6833c7109bc8))
+
 ## [4.58.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.57.1...v4.58.0) (2026-10-07)
 
 
