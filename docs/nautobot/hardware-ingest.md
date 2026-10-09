@@ -1,13 +1,22 @@
 # Hardware Inventory Ingest
 
-How a hardware inventory kept as markdown tables becomes queryable DCIM data,
-without the prose moving anywhere. The modeling decisions behind it are in
-[hardware-modeling.md](hardware-modeling.md); this page is the pipeline.
+> [!WARNING]
+> **`int_homelab` is legacy spillover only — NOT an ongoing authoring surface.**
+> **NEVER** add new hardware records to `int_homelab` that are being added to Nautobot.
+> `int_homelab` is strictly for pre-existing spillover awaiting full migration into
+> Nautobot, and will be decommissioned once that migration is complete. All new
+> infrastructure, components, and assets must be added directly and exclusively
+> to Nautobot DCIM.
+
+How historical hardware inventory kept as markdown tables in `int_homelab` becomes
+queryable DCIM data during the migration window, without the prose moving anywhere.
+The modeling decisions behind it are in [hardware-modeling.md](hardware-modeling.md);
+this page documents the legacy ingestion pipeline.
 
 ## Shape of the pipeline
 
 ```text
-inventory tables (markdown, hand-authored)
+inventory tables (markdown, legacy int_homelab spillover)
   -> converter script  -> inventory.seed.yml  (generated, committed)
     -> NAUTOBOT_SEED_HARDWARE
       -> roles/nautobot/tasks/seed_bundle.yml
@@ -16,10 +25,11 @@ inventory tables (markdown, hand-authored)
             -> Nautobot Devices and Modules
 ```
 
-The markdown stays the authoring surface. Only the **structured** columns are
-rendered into the generated YAML; the free-text notes column is deliberately
-left behind, because DCIM models none of it and absorbing it would destroy the
-most useful content in the source.
+The markdown tables in `int_homelab` served as an interim authoring surface for
+pre-existing hardware prior to direct Nautobot onboarding. Only the **structured**
+columns are rendered into the generated YAML; the free-text notes column is
+deliberately left behind, because DCIM models none of it and absorbing it would
+destroy the most useful content in the source.
 
 ## Why the generated file is committed
 
