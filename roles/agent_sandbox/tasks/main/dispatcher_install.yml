@@ -1,0 +1,98 @@
+---
+# The host dispatcher (agent-dispatch) and its SSH forced-command entry point
+# (dispatch-ssh), both from dryvist/nix-agent-sandbox at one pinned commit.
+- name: Fetch the pinned dispatcher sources on the controller
+  ansible.builtin.get_url:
+    url: >-
+      {{ 'https://raw.githubusercontent.com/dryvist/nix-agent-sandbox/'
+         ~ agent_sandbox_dispatch_source_commit ~ '/scripts/' ~ item.name }}
+    dest: "{{ agent_sandbox_dispatch_stage_prefix }}{{ item.name }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+  loop: "{{ agent_sandbox_dispatch_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+
+- name: Create the dispatcher library directory
+  ansible.builtin.file:
+    path: /usr/local/lib/agent-sandbox
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the pinned dispatcher sources
+  ansible.builtin.copy:
+    src: "{{ agent_sandbox_dispatch_stage_prefix }}{{ item.name }}"
+    dest: "/usr/local/lib/agent-sandbox/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ agent_sandbox_dispatch_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Read the task profiles baked into the pinned job image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --entrypoint
+      - cat
+      - "{{ agent_sandbox_dispatch_image }}"
+      - /home/agent/.agent-profiles.json
+  register: _agent_sandbox_task_profiles
+  changed_when: false
+
+- name: Install the image task profiles for the dispatcher
+  ansible.builtin.copy:
+    content: "{{ _agent_sandbox_task_profiles.stdout }}\n"
+    dest: "{{ agent_sandbox_dir }}/agent-task-profiles.json"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure the dispatcher's profiles, limits and endpoints
+  ansible.builtin.template:
+    src: agent-dispatch-profile.sh.j2
+    dest: /etc/agent-sandbox/agent-dispatch-profile.sh
+    owner: root
+    group: root
+    mode: "0644"
+
+# The sources carry no shebang: upstream wraps them with writeShellApplication.
+- name: Install the dispatcher and its SSH entry point
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      source /etc/agent-sandbox/agent-dispatch-profile.sh
+      source /usr/local/lib/agent-sandbox/{{ item.source }}
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { dest: "{{ agent_sandbox_dispatch_dispatcher }}", source: agent-dispatch.sh }
+    - { dest: "{{ agent_sandbox_dispatch_upstream_command }}", source: dispatch-ssh.sh }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Remove the dispatcher staging files from the controller
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_dispatch_stage_prefix }}{{ item.name }}"
+    state: absent
+  loop: "{{ agent_sandbox_dispatch_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true

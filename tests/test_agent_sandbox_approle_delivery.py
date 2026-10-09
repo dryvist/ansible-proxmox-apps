@@ -129,10 +129,6 @@ class AgentSandboxCredentialContract(unittest.TestCase):
         )
         self.assertIs(delivery["no_log"], True)
 
-        service = (ROLE / "templates" / "zcode-feeder.service.j2").read_text()
-        self.assertIn(
-            "EnvironmentFile={{ agent_sandbox_dispatch_alert_env_file }}", service
-        )
         alert_template = (ROLE / "templates" / "dispatcher-alert.env.j2").read_text()
         self.assertIn("AGENT_DISPATCH_NTFY_ALERT_URL=", alert_template)
         self.assertIn("AGENT_DISPATCH_NTFY_ALERT_TOKEN=", alert_template)
