@@ -26,12 +26,10 @@ Full docs live under `docs/agents/`, one topic per page:
 
 ## CI
 
-Pull requests into `develop` use changed-role Molecule selection with lint,
-syntax, and contract checks. CI-gate and local Molecule harness changes run the
-default smoke scenario and selector self-check. The required contract jobs
-cover `requirements.yml` and contract-workflow changes. Shared Ansible inputs
-and unclassified paths widen to the full matrix. Pull requests into `main` and
-non-PR runs use the full matrix. Required validation is aggregated by `Merge
-Gate`, and public pull-request CI stays on GitHub-hosted runners.
+Main-target pull requests and pushes to `main` run the full Molecule matrix,
+required by `Merge Gate`. Develop pull requests and non-main pushes use the
+shared changed-path selection; unmapped changes fail. An empty development
+selection skips Molecule while the classifier and local contracts remain
+required. Public pull-request CI stays on GitHub-hosted runners.
 
 See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”
