@@ -35,13 +35,10 @@
         agent_sandbox_zcode_web_secret_gid: 1901
         agent_sandbox_zcode_web_ingress_source_ips:
           - 192.0.2.10
-        agent_sandbox_zcode_feeder_repositories:
-          - dryvist/nix-agent-sandbox
-        agent_sandbox_zcode_feeder_image: "{{ agent_sandbox_zcode_web_image }}"
         agent_sandbox_dispatch_alert_url: https://ntfy.example.invalid
         agent_sandbox_dispatch_alert_token: tk_RenderFixtureOnly987
 
-    - name: Render the ruleset, compose, allowlist and feeder configuration
+    - name: Render the ruleset, compose and allowlist
       ansible.builtin.template:
         src: "{{ _template_dir }}/{{ item.src }}"
         dest: "{{ _fixture_dir }}/test_agent_sandbox_{{ item.dest }}"
@@ -50,8 +47,6 @@
         - { src: agent-sandbox.nft.j2, dest: agent-sandbox.nft }
         - { src: docker-compose.yml.j2, dest: docker-compose.yml }
         - { src: allowed-domains.txt.j2, dest: allowed-domains.txt }
-        - { src: zcode-feeder.json.j2, dest: zcode-feeder.json }
-        - { src: zcode-feeder.service.j2, dest: zcode-feeder.service }
 
     - name: Render the private refused-login alert environment fixture
       ansible.builtin.template:
@@ -67,8 +62,6 @@
         - agent-sandbox.nft
         - docker-compose.yml
         - allowed-domains.txt
-        - zcode-feeder.json
-        - zcode-feeder.service
         - dispatcher-alert.env
 
     - name: Decode the rendered files
@@ -77,9 +70,7 @@
         _as_compose: "{{ _as_rendered.results[1].content | b64decode }}"
         _as_domains: "{{ _as_rendered.results[2].content | b64decode | split('\n')
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
-        _as_feeder_config: "{{ _as_rendered.results[3].content | b64decode | from_json }}"
-        _as_feeder_service: "{{ _as_rendered.results[4].content | b64decode }}"
-        _as_dispatcher_alert_env: "{{ _as_rendered.results[5].content | b64decode }}"
+        _as_dispatcher_alert_env: "{{ _as_rendered.results[3].content | b64decode }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -201,25 +192,14 @@
           ZCode Web must use the immutable image digest, non-root hardening,
           persistent state mounts, and a read-only credential file mount.
 
-    - name: Assert feeder dispatcher uses the same pinned image and no Web credentials
+    - name: Assert the refused-login alert environment carries the alert settings
       ansible.builtin.assert:
         that:
-          - _as_feeder_config.project_id == agent_sandbox_zcode_feeder_project_id | int
-          - _as_feeder_config.allowed_repositories == agent_sandbox_zcode_feeder_repositories
-          - "('Environment=AGENT_IMAGE=' ~ agent_sandbox_zcode_feeder_image) in _as_feeder_service"
-          - >-
-            ('Environment=AGENT_DISPATCH_STATE_DIR='
-            ~ agent_sandbox_zcode_feeder_dispatch_state_dir) in _as_feeder_service
-          - "'ZAI_SUBSCRIPTION_KEY' not in _as_feeder_service"
-          - "'AGENT_WEB_TOKEN' not in _as_feeder_service"
-          - "('EnvironmentFile=' ~ agent_sandbox_dispatch_alert_env_file) in _as_feeder_service"
           - "'AGENT_DISPATCH_NTFY_ALERT_URL=' ~ agent_sandbox_dispatch_alert_url in _as_dispatcher_alert_env"
           - "'AGENT_DISPATCH_NTFY_ALERT_TOKEN=' ~ agent_sandbox_dispatch_alert_token in _as_dispatcher_alert_env"
-          - agent_sandbox_dispatch_alert_token not in _as_feeder_service
         fail_msg: >-
-          The feeder must use the same immutable job image, the explicit
-          repository allowlist, the separately rendered refused-login alert
-          environment file, and no secret in the unit text.
+          The dispatcher's refused-login alert settings render into their
+          root-only environment file.
 
     # Exact-host entries plus the Cursor suffix entries required by its CLI.
     - name: Assert the allowlist carries the Z.ai hosts and Cursor domains
