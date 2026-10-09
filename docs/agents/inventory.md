@@ -60,6 +60,7 @@ documented once at
 | `HAPROXY_STATS_PASSWORD` | HAProxy stats page password | SOPS |
 | `TECHNITIUM_DNS_API_TOKEN` | Technitium DNS API token | env |
 | `NAUTOBOT_SEED_HARDWARE` | Path to the generated hardware seed slice (Nautobot Devices + Modules) | env (optional) |
+| `AUTHELIA_APPROVE_NETWORKS` | Comma-separated CIDRs that may approve OpenBao logins (Authelia `elevate` policy); unset = converge refuses | env |
 | `MAILPIT_RELAY_HOST` | SMTP relay hostname | SOPS |
 | `MAILPIT_RELAY_PORT` | SMTP relay port (default 587) | SOPS |
 | `MAILPIT_RELAY_USERNAME` | SMTP relay username | SOPS |
