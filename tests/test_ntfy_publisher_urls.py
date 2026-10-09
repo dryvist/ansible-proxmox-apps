@@ -1,11 +1,8 @@
-"""Every ntfy publisher default targets the Traefik-fronted hub.
+"""ntfy publisher URL defaults.
 
-A publisher on another guest that defaults to a loopback URL delivers to its
-own host: Gatus once POSTed to http://127.0.0.1:8080, which is Gatus's own
-listener, so every alert failed with HTTP 405 and nothing reached ntfy. This
-test fails when an `*ntfy*url` / `*ntfy*base` default under roles/ names a
-loopback address or bypasses the ingress domain, and pins the Gatus alerting
-provider to the shared status_stack_ntfy_url variable.
+Every `*ntfy*url` / `*ntfy*base` default under roles/ (outside the hub role)
+names the ingress domain and no loopback address. The Gatus alerting provider
+reads the shared status_stack_ntfy_url variable.
 """
 
 from __future__ import annotations
