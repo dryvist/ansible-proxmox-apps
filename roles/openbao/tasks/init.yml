@@ -71,9 +71,33 @@
     - openbao_engines
   when: not (openbao_reconcile_mode | default(false))
 
-# Dynamic includes: the tag reaches the loaded tasks only via `apply:` (see the
-# rotation-exempt include below). `--tags openbao_github_mounts` scopes a run
-# to these two includes without the rest of the bootstrap phases.
+- name: Register and configure the OAuthapp secrets engine
+  ansible.builtin.import_tasks: init/06-oauth-engine.yml
+  tags:
+    - openbao_engines
+  when: not (openbao_reconcile_mode | default(false))
+
+- name: Configure the SSH CA and its signing roles
+  ansible.builtin.import_tasks: init/07-ssh-ca-engine.yml
+  tags:
+    - openbao_ssh_ca
+
+# openbao_pki_etcd_engines is empty by default (05g-etcd-pki-engine.yml) — a
+# no-op on every existing converge until a Patroni-mode cluster cutover adds
+# an entry.
+- name: Configure etcd PKI engines for Patroni HA clusters
+  ansible.builtin.include_tasks: init/07b-etcd-pki-engine.yml
+
+- name: Render and reconcile the RBAC policies
+  ansible.builtin.import_tasks: init/08-rbac-policies.yml
+  tags:
+    - openbao_rbac
+
+# After 08: a new mount's path reaches the provisioning policy only once 08
+# rewrites it. Dynamic includes: the tag reaches the loaded tasks only via
+# `apply:` (see the rotation-exempt include below). `--tags
+# openbao_github_mounts,openbao_rbac` scopes a run to these includes and the
+# policies, without the rest of the bootstrap phases.
 - name: Configure the per-App GitHub mounts
   ansible.builtin.include_tasks:
     file: init/05b-github-app-mount.yml
@@ -111,28 +135,6 @@
     loop_var: ga
     label: "{{ ga.app_id }}"
   when: not (openbao_reconcile_mode | default(false))
-
-- name: Register and configure the OAuthapp secrets engine
-  ansible.builtin.import_tasks: init/06-oauth-engine.yml
-  tags:
-    - openbao_engines
-  when: not (openbao_reconcile_mode | default(false))
-
-- name: Configure the SSH CA and its signing roles
-  ansible.builtin.import_tasks: init/07-ssh-ca-engine.yml
-  tags:
-    - openbao_ssh_ca
-
-# openbao_pki_etcd_engines is empty by default (05g-etcd-pki-engine.yml) — a
-# no-op on every existing converge until a Patroni-mode cluster cutover adds
-# an entry.
-- name: Configure etcd PKI engines for Patroni HA clusters
-  ansible.builtin.include_tasks: init/07b-etcd-pki-engine.yml
-
-- name: Render and reconcile the RBAC policies
-  ansible.builtin.import_tasks: init/08-rbac-policies.yml
-  tags:
-    - openbao_rbac
 
 - name: Enable AppRole/JWT auth and reconcile Terrakube workspace JWT roles
   ansible.builtin.import_tasks: init/09-auth-methods-and-terrakube-jwt.yml
