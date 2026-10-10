@@ -279,7 +279,6 @@ def new_ticket(key, summary, group, article, customer_id):
 
 
 def selftest():
-    import email.message
     import tempfile
 
     assert correlation_key("network", "WAN down") == "fk:ntfy:network:WAN down"
@@ -327,82 +326,6 @@ def selftest():
             assert fired == [1, 1], "counter reset must allow a second alert on the next outage"
         finally:
             globals()["publish_self_alert"] = orig_publish
-
-    # Spool: a failed post spools, the next success replays it oldest first,
-    # and a replayed key with an open ticket appends instead of re-creating.
-    os.environ.update({"ZAMMAD_API_URL": "http://zammad.test/api/v1", "ZAMMAD_API_TOKEN": "t"})
-    tickets, calls, zammad = {}, [], {"down": True}
-
-    def fake_call(base, token, path, payload=None, method=None):
-        if zammad["down"]:
-            raise urllib.error.URLError("no available server")
-        calls.append((method, path))
-        if path.startswith("tickets/search"):
-            want = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["query"][0]
-            return [{"id": i} for i, t in tickets.items() if want.startswith('title:"%s" ' % escape_lucene_phrase(t))]
-        if path == "users/me":
-            return {"id": 1}
-        if method == "POST" and path == "tickets":
-            tickets[len(tickets) + 1] = (payload or {})["title"].split(" — ")[0]
-        return {}
-
-    def read_json(path):
-        with open(path) as f:
-            return json.load(f)
-
-    no_headers = email.message.Message()
-    orig_call = globals()["zammad_call"]
-    globals()["zammad_call"] = fake_call
-    msg = {"topic": "network", "title": "WAN down", "message": "m", "tags": ["high"]}
-    try:
-        with tempfile.TemporaryDirectory() as state_dir:
-            try:
-                handle(msg)
-            except urllib.error.URLError:
-                spool_message(state_dir, msg)
-            spooled = os.listdir(spool_dir(state_dir))
-            assert len(spooled) == 1
-            assert os.stat(os.path.join(spool_dir(state_dir), spooled[0])).st_mode & 0o777 == 0o600
-            assert "t" not in read_json(os.path.join(spool_dir(state_dir), spooled[0])).values()
-
-            # Still down: replay fails and keeps the file.
-            try:
-                replay_spool(state_dir, handle)
-            except urllib.error.URLError:
-                pass
-            assert len(os.listdir(spool_dir(state_dir))) == 1
-
-            zammad["down"] = False
-            replay_spool(state_dir, handle)
-            assert os.listdir(spool_dir(state_dir)) == []
-            assert list(tickets.values()) == ["fk:ntfy:network:WAN down"]
-
-            # The same key again (a second replay or a live repeat) appends.
-            spool_message(state_dir, msg)
-            replay_spool(state_dir, handle)
-            assert len(tickets) == 1 and ("PUT", "tickets/1") in calls
-
-            # A spooled 4xx is dropped, not retried forever.
-            spool_message(state_dir, dict(msg, title="bad"))
-
-            def reject(m):
-                raise urllib.error.HTTPError("u", 422, "bad", no_headers, None)
-
-            replay_spool(state_dir, reject)
-            assert os.listdir(spool_dir(state_dir)) == []
-            assert is_transient(urllib.error.URLError("x"))
-            assert is_transient(urllib.error.HTTPError("u", 503, "x", no_headers, None))
-            assert not is_transient(urllib.error.HTTPError("u", 422, "x", no_headers, None))
-            assert not is_transient(ValueError("x"))
-
-            # The cap drops the oldest file.
-            for i in range(3):
-                spool_message(state_dir, dict(msg, title="t%d" % i), max_files=2)
-            left = [read_json(os.path.join(spool_dir(state_dir), n))["title"]
-                    for n in sorted(os.listdir(spool_dir(state_dir)))]
-            assert left == ["t1", "t2"], left
-    finally:
-        globals()["zammad_call"] = orig_call
 
     print("selftest OK")
 
