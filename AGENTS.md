@@ -10,14 +10,14 @@ this repo handles app config only.
 Full docs live under `docs/agents/`, one topic per page:
 
 - [Repo ownership and pipeline data flow](docs/agents/repo-ownership.md) —
-  what this repo owns (Cribl, HAProxy, DNS, Authelia, notification services,
+  what this repo owns (Cribl, HAProxy, DNS, notification services,
   the media stack, ...), the syslog/netflow pipeline, and prod-vs-test rules.
 - [Inventory](docs/agents/inventory.md) — Nautobot as the system of record for
   infrastructure inventory (policy; nothing reads it yet), how `load_tofu.yml`
   resolves the dynamic inventory today, its groups, and every environment
   variable a role reads.
 - [Secrets management](docs/agents/secrets.md) — at-rest encryption
-  and the rule for changes to the `openbao` role.
+  and where changes to the `openbao` role are made.
 - [Commands and testing](docs/agents/commands-and-testing.md) — every
   `ansible-playbook` invocation this repo supports, performance tuning, and
   the fast/extended test tiers.

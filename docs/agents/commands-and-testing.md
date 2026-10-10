@@ -120,7 +120,7 @@ tasks. The levers, in order of effect:
 3. **Cut the task count, not the per-task cost**: a loop of `command` tasks
    against one host pays the transport cost once per item. Run read-only
    probes on the controller (`delegate_to: localhost`) or collapse a loop of
-   `set_fact` into one expression — see `roles/openbao/tasks/init/02-initialize-cluster.yml`
+   `set_fact` into one expression — see `dryvist.secrets_management/roles/openbao/tasks/init/02-initialize-cluster.yml`
    for the shape.
 4. **Do not raise `forks`**: `ansible.cfg` sets it deliberately. A worker is a
    forked controller of ~110 MiB, the execution plane is memory-capped, and
