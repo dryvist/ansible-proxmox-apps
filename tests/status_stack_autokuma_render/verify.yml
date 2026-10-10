@@ -94,20 +94,32 @@
       register: _rendered_files
 
     - name: Assert the rendered file set matches the fixture exactly
+      # The fixed entries (ntfy + the four groups) are the render map's own
+      # constants; the push and target entries are derived from the fixture
+      # inputs, so the expected set follows the fixture instead of a count.
+      vars:
+        _expected_stems: >-
+          {{ ['ntfy', 'group-guest', 'group-node', 'group-service', 'group-deadman']
+             + (status_stack_deadman_endpoints | map(attribute='name')
+                | map('regex_replace', '^', 'push-') | list)
+             + (status_stack_monitor_targets.icmp | map(attribute='name')
+                | map('regex_replace', '^', 'ping-') | list)
+             + (status_stack_monitor_targets.tcp | map(attribute='name')
+                | map('regex_replace', '^', 'port-') | list)
+             + (status_stack_monitor_targets.http | map(attribute='name')
+                | map('regex_replace', '^', 'http-') | list) }}
+        _expected_files: "{{ _expected_stems | map('regex_replace', '$', '.json') | list }}"
+        _rendered_names: "{{ _rendered_files.files | map(attribute='path') | map('basename') | list }}"
       ansible.builtin.assert:
         quiet: true
         that:
-          # 5 fixed (ntfy + 4 groups) + 2 push + 50 targets == 57
-          - _rendered_files.files | length == 57
-          - (_rendered_files.files | map(attribute='path') | map('basename') | list)
-            is superset(['ntfy.json', 'group-guest.json', 'group-node.json',
-                          'group-service.json', 'group-deadman.json',
-                          'push-fixture-pusher-a.json', 'push-fixture-pusher-b.json',
-                          'ping-guest-1.json', 'port-node-1.json', 'http-service-1.json'])
+          - _rendered_names | length == _expected_files | length
+          - _rendered_names | sort == _expected_files | sort
         fail_msg: >-
-          Rendered {{ _rendered_files.files | length }} files, expected 57
-          (5 fixed + 2 push + 50 targets). The render map or the file-count
-          math above drifted from roles/status_stack/tasks/autokuma_static_monitors.yml.
+          Rendered {{ _rendered_names | length }} files, expected {{ _expected_files | length }}.
+          Missing: {{ _expected_files | difference(_rendered_names) }}.
+          Unexpected: {{ _rendered_names | difference(_expected_files) }}.
+          The render map drifted from roles/status_stack/tasks/autokuma_static_monitors.yml.
 
     - name: Assert the checksum marker was written outside the AutoKuma directory
       ansible.builtin.stat:

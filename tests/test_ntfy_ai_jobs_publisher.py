@@ -91,6 +91,11 @@ def test_the_gate_defaults_off():
     assert _defaults()["ntfy_docker_ai_jobs_enabled"] is False
 
 
+def test_the_ntfy_hosts_turn_the_gate_on():
+    group_vars = _yaml(ROOT / "inventory/group_vars/ntfy_group.yml")
+    assert group_vars["ntfy_docker_ai_jobs_enabled"] is True
+
+
 def test_server_config_is_unchanged_with_the_gate_off():
     assert _template("server.yml.j2", ntfy_docker_ai_jobs_enabled=False) == (
         'base-url: "https://ntfy.example.test"\n'
