@@ -14,6 +14,11 @@
 
   vars:
     _rotate_playbook_dir: "{{ playbook_dir }}/../../playbooks"
+    # The same path the playbook's secrets_roles_dir play var resolves.
+    _secrets_roles_dir: >-
+      {{ lookup('ansible.builtin.first_found',
+                files=['ansible_collections/dryvist/secrets_management/roles'],
+                paths=lookup('ansible.builtin.config', 'COLLECTIONS_PATHS')) }}
     _rotate_tasks: >-
       {{ (lookup('ansible.builtin.file', _rotate_playbook_dir ~ '/openbao-rotate-approles.yml')
           | from_yaml)[0].tasks }}
@@ -30,14 +35,17 @@
         file: "{{ _path if _src.file is defined else omit }}"
       vars:
         _src: "{{ item['ansible.builtin.include_vars'] }}"
-        _path: "{{ (_src.dir | default(_src.file)) | replace('{{ playbook_dir }}', _rotate_playbook_dir) }}"
-      # A source path built from a run-time variable (not playbook_dir) cannot
-      # name the AppRole list files, so it is skipped.
+        _path: >-
+          {{ (_src.dir | default(_src.file))
+             | replace('{{ playbook_dir }}', _rotate_playbook_dir)
+             | replace('{{ secrets_roles_dir }}', _secrets_roles_dir) }}
+      # A source path built from any other run-time variable cannot name the
+      # AppRole list files, so it is skipped.
       # selectattr cannot select on a dotted module key, so filter here.
       when:
         - "'ansible.builtin.include_vars' in item"
         - item.when is not defined or 'rotate_scheduled_mode' in (item.when | string)
-        - (_src.dir | default(_src.file)) is search('playbook_dir')
+        - (_src.dir | default(_src.file)) is search('playbook_dir|secrets_roles_dir')
       loop: "{{ _rotate_tasks }}"
       loop_control:
         label: "{{ item.name }}"
