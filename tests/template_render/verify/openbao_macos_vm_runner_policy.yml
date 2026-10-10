@@ -1,0 +1,77 @@
+---
+# The macos-vm-runner policy mints the same runner-registration set as the
+# Linux runner and nothing beyond token lookup-self. It must carry no KV bucket
+# and no other mount. Rendering the real template against the real defaults is
+# the only place that shows the grant.
+- name: Render and verify the macos-vm-runner policy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "../../../roles/openbao/templates"
+    ansible_managed: "test fixture"
+
+  tasks:
+    - name: Load the openbao role defaults
+      ansible.builtin.include_vars:
+        dir: ../../../roles/openbao/defaults/main
+
+    - name: Render the macos-vm-runner policy and the Linux runner policy
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}"
+        dest: "{{ _fixture_dir }}/{{ item | regex_replace('\\.j2$', '') }}"
+        mode: "0644"
+      loop:
+        - macos-vm-runner-policy.hcl.j2
+        - github-runner-policy.hcl.j2
+
+    - name: Read the rendered policies
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      register: _runner_raw
+      loop:
+        - macos-vm-runner-policy.hcl
+        - github-runner-policy.hcl
+
+    - name: Reduce each rendered policy to its path lines and capabilities
+      ansible.builtin.set_fact:
+        _macos_text: "{{ _runner_raw.results[0].content | b64decode }}"
+        _linux_text: "{{ _runner_raw.results[1].content | b64decode }}"
+
+    - name: Derive the runner-tier set from the real defaults
+      ansible.builtin.set_fact:
+        _runner_sets: "{{ openbao_github_permission_sets | selectattr('tier', 'equalto', 'runner') | list }}"
+
+    - name: Assert exactly one runner-tier set exists
+      ansible.builtin.assert:
+        that:
+          - _runner_sets | length == 1
+        fail_msg: "Expected exactly one runner-tier permission set, found {{ _runner_sets | length }}."
+
+    - name: Assert the policy grants only the runner-registration set and lookup-self
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_macos_text | regex_findall('(?m)^path "([^"]+)"'))
+            == [_runner_sets[0].mount ~ '/token/' ~ _runner_sets[0].name, 'auth/token/lookup-self']
+          - (_macos_text | regex_findall('capabilities = (.*)')) == ['["read", "create", "update"]', '["read"]']
+        fail_msg: >-
+          The macos-vm-runner policy must grant exactly the runner-registration
+          set (read, create, update) and token lookup-self (read), and nothing else.
+
+    - name: Assert the policy carries no KV bucket
+      ansible.builtin.assert:
+        that:
+          - _macos_text is not search(openbao_kv_mount ~ '/')
+        fail_msg: The macos-vm-runner policy reaches the KV mount.
+
+    - name: Assert the registration path is the same one the Linux runner mints
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_linux_text | regex_findall('(?m)^path "([^"]+)"') | select('search', '/token/') | list)
+            == [_runner_sets[0].mount ~ '/token/' ~ _runner_sets[0].name]
+        fail_msg: The macos-vm-runner registration path diverges from the Linux runner's.
