@@ -1,0 +1,55 @@
+---
+- name: Render and verify mcp_gateway templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    # Mirror roles/mcp_gateway/defaults/main.yml
+    mcp_gateway_port: 4444
+    mcp_gateway_db_path: /var/lib/mcp-gateway/mcp.db
+    mcp_gateway_admin_user: admin
+    mcp_gateway_admin_password: "test-placeholder"
+    mcp_gateway_jwt_secret: "test-placeholder"
+    mcp_gateway_encryption_secret: "test-placeholder"
+    mcp_gateway_upstream_servers: []
+    _template_dir: "../../../roles/mcp_gateway/templates"
+
+  tasks:
+    - name: Render mcp-gateway.env.j2 to the fixture directory
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/mcp-gateway.env.j2"
+        dest: "{{ _fixture_dir }}/test_mcp_gateway.env"
+        mode: "0644"
+
+    - name: Read rendered mcp-gateway.env
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_mcp_gateway.env"
+      register: _mcp_gateway_env_raw
+
+    - name: Decode mcp-gateway env content
+      ansible.builtin.set_fact:
+        _mcp_gateway_env: "{{ _mcp_gateway_env_raw.content | b64decode }}"
+
+    - name: Assert mcp-gateway env has the listen port and database path
+      ansible.builtin.assert:
+        that:
+          - "'PORT=4444' in _mcp_gateway_env.splitlines()"
+          - "'DATABASE_URL=sqlite:////var/lib/mcp-gateway/mcp.db' in _mcp_gateway_env.splitlines()"
+        fail_msg: "mcp-gateway.env.j2 does not render the expected port or database URL"
+
+    - name: Assert mcp-gateway env has the admin and secret keys
+      ansible.builtin.assert:
+        that:
+          - "'BASIC_AUTH_USER=admin' in _mcp_gateway_env.splitlines()"
+          - "'JWT_SECRET_KEY=test-placeholder' in _mcp_gateway_env.splitlines()"
+          - "'AUTH_ENCRYPTION_SECRET=test-placeholder' in _mcp_gateway_env.splitlines()"
+        fail_msg: "mcp-gateway.env.j2 is missing the admin or secret environment keys"
+
+    - name: MCP gateway template rendering PASSED
+      ansible.builtin.debug:
+        msg: |
+          mcp_gateway template assertions passed:
+          - mcp-gateway.env.j2: listen port, database URL, admin user, JWT and encryption secrets
