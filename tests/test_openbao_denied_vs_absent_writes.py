@@ -57,7 +57,7 @@ MOD_DENIED_MSG = "Forbidden: Permission Denied to path ['apps/nope']."
 
 
 def _tasks(path):
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
 
 
 def _find(rel, name):
