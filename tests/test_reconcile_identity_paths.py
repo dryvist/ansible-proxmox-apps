@@ -73,9 +73,9 @@ class ReconcileIdentityPaths(unittest.TestCase):
         destroy = names.index("Destroy the single-use reconcile secret_id by accessor")
         self.assertLess(login, destroy)
         task = tasks["Destroy the single-use reconcile secret_id by accessor"]
-        write = task["community.hashi_vault.vault_write"]
-        self.assertTrue(write["path"].endswith("secret-id-accessor/destroy"))
-        self.assertIn("secret_id_accessor", write["data"])
+        call = task["ansible.builtin.uri"]
+        self.assertTrue(call["url"].strip().endswith("secret-id-accessor/destroy"))
+        self.assertIn("secret_id_accessor", call["body"])
         self.assertTrue(task["no_log"])
 
     def test_legacy_static_target_pair_and_unsupported_flow_lock_command_are_absent(self):
