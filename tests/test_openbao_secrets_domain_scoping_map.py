@@ -3,16 +3,16 @@
 playbooks/site/00-load-and-telemetry.yml's "Pre-fetch resource-domain
 secrets from OpenBao" play declares openbao_secrets_domain_groups (which
 domains this run's hosts need, per group) as hand-maintained data,
-independent of the domain list in roles/openbao_secrets/defaults/main/ and
+independent of the domain list in dryvist.secrets_management/roles/openbao_secrets/defaults/main/ and
 of the group names in that same play's own `hosts:` pattern plus the two
 small scope-detection plays immediately above it (media_group; the deadman
 watchdog group set). A typo or a renamed/removed domain or group on either
-side would make roles/openbao_secrets/tasks/narrow_domains.yml silently
+side would make dryvist.secrets_management/roles/openbao_secrets/tasks/narrow_domains.yml silently
 decide a domain is never needed -- exactly the empty-secret-over-a-live-one
 failure class this scoping was built not to reintroduce.
 
 The functional behaviour of the narrowing gate itself is proven against the
-production task file in tests/openbao_secrets/verify_domain_scoping.yml;
+production task file in dryvist.secrets_management/tests/openbao_secrets/verify_domain_scoping.yml;
 this test only pins the real map's own vocabulary.
 """
 
@@ -23,10 +23,12 @@ from pathlib import Path
 
 import yaml
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parent.parent
 PLAYBOOK = ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
 DOMAIN_GROUPS_FILE = ROOT / "playbooks" / "site" / "vars" / "openbao_secrets_domain_groups.yml"
-DOMAINS_FILE = ROOT / "roles" / "openbao_secrets" / "defaults" / "main" / "01-domains.yml"
+DOMAINS_FILE = SECRETS_ROLES / "openbao_secrets" / "defaults" / "main" / "01-domains.yml"
 LEGACY_PREFETCH_GROUPS_FILE = (
     ROOT / "tests" / "inventory_load" / "managed_secrets_legacy_groups.yml"
 )
@@ -86,7 +88,7 @@ def test_every_mapped_domain_is_a_real_declared_domain():
     unknown = mapped_domains - declared_domains
     assert not unknown, (
         f"openbao_secrets_domain_groups names domain(s) {sorted(unknown)} that "
-        f"are not in roles/openbao_secrets/defaults/main/01-domains.yml's "
+        f"are not in dryvist.secrets_management/roles/openbao_secrets/defaults/main/01-domains.yml's "
         f"openbao_secrets_domains ({sorted(declared_domains)}) -- a typo here "
         "makes narrow_domains.yml silently ignore that entry."
     )

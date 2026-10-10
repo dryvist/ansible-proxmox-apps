@@ -33,6 +33,8 @@ import unittest
 
 import yaml
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PLAYBOOK = ROOT / "tests" / "tag_scope" / "fixture_playbook.yml"
 
@@ -86,7 +88,7 @@ def _declared_tags(path):
 class RealIncludeCoversEveryPhaseTag(unittest.TestCase):
     def test_04a_openbao_include_lists_every_phase_tag_the_role_declares(self):
         role_tags = set()
-        for path in sorted((ROOT / "roles" / "openbao" / "tasks").rglob("*.yml")):
+        for path in sorted((SECRETS_ROLES / "openbao" / "tasks").rglob("*.yml")):
             role_tags |= _declared_tags(path)
         role_tags.discard("always")
 
@@ -110,7 +112,7 @@ class RealIncludeCoversEveryPhaseTag(unittest.TestCase):
         self.assertEqual(
             missing,
             set(),
-            f"phase tag(s) {sorted(missing)} exist inside roles/openbao/tasks "
+            f"phase tag(s) {sorted(missing)} exist inside dryvist.secrets_management/roles/openbao/tasks "
             "but are missing from the include's own tags in "
             "playbooks/site/04a-openbao.yml -- a run scoped to one of them "
             "would skip the whole role before ever reaching it",

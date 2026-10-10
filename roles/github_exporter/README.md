@@ -27,7 +27,7 @@ tracked gap, not something a wider GitHub App permission fixes.
 
 The `runners` collector needs no webhook: it polls the GitHub API directly,
 using the `github-exporter` OpenBao tier (`organization_self_hosted_runners:
-read`, `roles/openbao` `03-github-engine.yml`).
+read`, `dryvist.secrets_management/roles/openbao` `03-github-engine.yml`).
 
 ## What it does
 

@@ -17,6 +17,8 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 NTFY = ROOT / "roles/ntfy_docker"
 USER = "ai-jobs-publisher"
@@ -258,7 +260,7 @@ def test_only_the_token_is_published_to_the_open_llm_bucket():
 
 
 def _bucket_defaults() -> dict:
-    return _yaml(ROOT / "roles/openbao/defaults/main/01b-app-secrets.yml")
+    return _yaml(SECRETS_ROLES / "openbao/defaults/main/01b-app-secrets.yml")
 
 
 def test_the_ntfy_url_is_promoted_with_the_open_llm_fields(monkeypatch):
@@ -273,7 +275,7 @@ def test_the_ntfy_url_is_promoted_with_the_open_llm_fields(monkeypatch):
 
 # --- the shared publish is a check-and-set merge --------------------------------
 
-PUBLISH = ROOT / "roles/openbao_secrets/tasks/publish.yml"
+PUBLISH = SECRETS_ROLES / "openbao_secrets/tasks/publish.yml"
 
 
 def _write_task() -> dict:

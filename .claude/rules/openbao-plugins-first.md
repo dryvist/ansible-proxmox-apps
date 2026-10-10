@@ -2,8 +2,6 @@
 name: openbao-plugins-first
 description: OpenBao secrets engines are mandatory - never manual credential control
 globs:
-  - "roles/openbao/**"
-  - "roles/openbao_secrets/**"
   - "playbooks/**openbao**"
 ---
 
@@ -46,7 +44,7 @@ re-introduces every property the engine was adopted to eliminate.
 | SSH client access | builtin `ssh` secrets engine | `ssh-client-ca` | `ssh-client-ca/sign/<role>` |
 
 Both default to enabled (`openbao_github_engine_enabled`,
-`openbao_aws_engine_enabled` in `roles/openbao/defaults/main.yml`). AWS has been
+`openbao_aws_engine_enabled` in `dryvist.secrets_management/roles/openbao/defaults/main.yml`). AWS has been
 converged and live for some time; the **GitHub engine was configured and
 converged on 2026-07-17** (App `openbao-service-broker`, both installations,
 read + per-repo-write + admin tiers). Engine-not-ready is never a licence to
@@ -102,5 +100,5 @@ Before any OpenBao change, answer in the PR body:
 
 Cannot answer 3 without inventing something new? You are almost certainly
 duplicating a grant that already exists. Re-read
-`roles/openbao/defaults/main.yml` — the base policies and capability leaves
+`dryvist.secrets_management/roles/openbao/defaults/main.yml` — the base policies and capability leaves
 cover more than they look like they do.

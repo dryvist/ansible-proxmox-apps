@@ -17,6 +17,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
+from secrets_collection_support import read_secrets_role
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DATA_PATH = 'path "{{ openbao_kv_mount }}/data/etcd/*"'
@@ -30,7 +31,7 @@ def _read(relative_path: str) -> str:
 
 def _render_engine_entry_for_scope(scope: str, suffix: str) -> dict:
     """Render the REAL derivation task for one loop iteration (one scope)."""
-    tasks = yaml.safe_load(_read("roles/openbao/tasks/init/07b-etcd-pki-engine.yml"))
+    tasks = yaml.safe_load(read_secrets_role("openbao/tasks/init/07b-etcd-pki-engine.yml"))
     task = next(t for t in tasks if t.get("name") == DERIVE_TASK_NAME)
 
     templar = Templar(loader=DataLoader())
@@ -87,7 +88,7 @@ def test_derived_etcd_pki_engine_matches_what_postgres_computes():
 
 
 def test_ansible_converge_owns_the_etcd_credential_wildcard():
-    policy = _read("roles/openbao/templates/ansible-converge-policy.hcl.j2")
+    policy = read_secrets_role("openbao/templates/ansible-converge-policy.hcl.j2")
 
     data_grant = (
         f'{CANONICAL_DATA_PATH} {{\n'
@@ -116,7 +117,7 @@ def test_ansible_converge_can_issue_from_each_cluster_pki_role():
     segment (pki-<scope>-etcd), and '+' only ever replaces a whole segment,
     so there is no valid wildcard shorthand for a per-cluster mount name.
     """
-    policy = _read("roles/openbao/templates/ansible-converge-policy.hcl.j2")
+    policy = read_secrets_role("openbao/templates/ansible-converge-policy.hcl.j2")
 
     etcd_pki_grant = (
         "{% for engine in openbao_pki_etcd_engines %}\n"
@@ -159,7 +160,7 @@ def test_patroni_pki_tls_tasks_log_in_and_revoke():
     """Each TLS/credential task file logs in once and revokes in an always:.
 
     "One login per play section, not per task" -- roles/object_storage's
-    offsite/iam tasks and roles/openbao_secrets/tasks/publish.yml establish
+    offsite/iam tasks and dryvist.secrets_management/roles/openbao_secrets/tasks/publish.yml establish
     this shape (vault_login -> block of work -> always: vault_write revoke
     auth/token/revoke-self).
     """

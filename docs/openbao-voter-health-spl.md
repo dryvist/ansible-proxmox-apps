@@ -2,7 +2,7 @@
 
 Reference SPL for the `openbao:voter:health` events shipped by the
 `openbao_voter_health` telemetry (see
-[`roles/openbao/README.md`](../roles/openbao/README.md#voter-health-scoring)
+the `openbao` role README in `dryvist.secrets_management`
 for the field reference and the keep/demote evidence thresholds these
 searches feed). Docs/code only — no dashboards or alerts are provisioned by
 this repo; paste these into Splunk (or a saved search / alert) by hand, or

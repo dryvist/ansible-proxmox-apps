@@ -42,6 +42,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 ALL_YML = ROOT / "inventory" / "group_vars" / "all.yml"
 
@@ -53,14 +55,14 @@ FRONTED_VARS = (
 
 # Role defaults that build a fronted URL inline, as (path, substring-to-find).
 FRONTED_ROLE_DEFAULTS = (
-    ("roles/openbao/defaults/main/09-snapshots-and-rotation.yml", "https://ntfy."),
-    ("roles/service_deadman/defaults/main.yml", "https://ntfy."),
-    ("roles/status_stack/defaults/main.yml", "https://ntfy."),
+    (SECRETS_ROLES / "openbao/defaults/main/09-snapshots-and-rotation.yml", "https://ntfy."),
+    (ROOT / "roles/service_deadman/defaults/main.yml", "https://ntfy."),
+    (ROOT / "roles/status_stack/defaults/main.yml", "https://ntfy."),
     # Homarr's integration URLs. Only the https:// ones are checked -- Jellyseerr
     # deliberately still uses an http:// guest address (it cannot take an API
-    # bypass; see roles/authelia/defaults/main/00-core.yml), and the marker below does
+    # bypass; see dryvist.secrets_management/roles/authelia/defaults/main/00-core.yml), and the marker below does
     # not match it, so this stays an assertion about the fronted URLs only.
-    ("roles/homarr/defaults/main/03-integrations.yml", "https://"),
+    (ROOT / "roles/homarr/defaults/main/03-integrations.yml", "https://"),
 )
 
 APEX = "tofu_data.domain"
@@ -121,7 +123,7 @@ class FrontedUrlsUseIngressDomain(unittest.TestCase):
 
     def test_role_defaults_fronted_urls(self):
         for rel, marker in FRONTED_ROLE_DEFAULTS:
-            path = ROOT / rel
+            path = rel
             with self.subTest(path=rel):
                 self.assertTrue(path.is_file(), "%s is missing" % rel)
                 offenders = [

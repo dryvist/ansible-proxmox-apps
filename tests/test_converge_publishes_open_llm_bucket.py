@@ -6,9 +6,11 @@ from pathlib import Path
 import jinja2
 import yaml
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULTS = ROOT / "roles" / "openbao" / "defaults" / "main" / "07c-base-policies.yml"
-POLICY = ROOT / "roles" / "openbao" / "templates" / "ansible-converge-policy.hcl.j2"
+DEFAULTS = SECRETS_ROLES / "openbao" / "defaults" / "main" / "07c-base-policies.yml"
+POLICY = SECRETS_ROLES / "openbao" / "templates" / "ansible-converge-policy.hcl.j2"
 
 
 def _render_policy(apps: list[str]) -> str:

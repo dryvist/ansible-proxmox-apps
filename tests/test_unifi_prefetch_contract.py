@@ -27,6 +27,8 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
+from secrets_collection_support import SECRETS_ROLES, read_secrets_role
+
 ROOT = Path(__file__).resolve().parents[1]
 
 FAKE_URL = "https://unifi.example.test"
@@ -34,18 +36,14 @@ FAKE_USER = "unifi-ro"
 FAKE_PASS = "s3cr3t"
 
 
-def _read(relative_path: str) -> str:
-    return (ROOT / relative_path).read_text(encoding="utf-8")
-
-
-def _read_role_defaults(role: str) -> dict:
+def _read_role_defaults(role: str, roles_dir: Path = ROOT / "roles") -> dict:
     """Load role defaults, merging defaults/main/*.yml like Ansible does."""
-    single = ROOT / "roles" / role / "defaults" / "main.yml"
+    single = roles_dir / role / "defaults" / "main.yml"
     if single.exists():
         return yaml.safe_load(single.read_text(encoding="utf-8"))
 
     merged: dict = {}
-    main_dir = ROOT / "roles" / role / "defaults" / "main"
+    main_dir = roles_dir / role / "defaults" / "main"
     for path in sorted(main_dir.glob("*.yml")):
         merged.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     return merged
@@ -58,7 +56,7 @@ def _render(expr: str, variables: dict):
 
 
 def test_apps_domain_declares_the_infrastructure_unifi_path():
-    defaults = _read_role_defaults("openbao_secrets")
+    defaults = _read_role_defaults("openbao_secrets", SECRETS_ROLES)
     apps_domain = next(
         domain
         for domain in defaults["openbao_secrets_domains"]
@@ -69,7 +67,7 @@ def test_apps_domain_declares_the_infrastructure_unifi_path():
 
 
 def test_apps_approle_policy_grants_read_on_infrastructure_unifi():
-    policy = _read("roles/openbao/templates/apps-policy.hcl.j2")
+    policy = read_secrets_role("openbao/templates/apps-policy.hcl.j2")
 
     data_grant = (
         'path "{{ openbao_kv_mount }}/data/infrastructure/unifi" {\n'

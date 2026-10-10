@@ -23,7 +23,7 @@ expression fails.
 
 The upstream site where the false "absent" is minted, openbao_secrets' KV read
 gate, is not covered here: it lives in its own task file and is exercised end to
-end against mock results by tests/openbao_secrets/verify_read_gate.yml.
+end against mock results by dryvist.secrets_management/tests/openbao_secrets/verify_read_gate.yml.
 """
 
 from pathlib import Path
@@ -33,14 +33,16 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # The real markers, read out of the role defaults rather than retyped.
 BAO_ABSENT = yaml.safe_load(
-    (ROOT / "roles/openbao/defaults/main/01b-app-secrets.yml").read_text()
+    (SECRETS_ROLES / "openbao/defaults/main/01b-app-secrets.yml").read_text()
 )["openbao_absent_stderr_marker"]
 MOD_ABSENT = yaml.safe_load(
-    (ROOT / "roles/openbao_secrets/defaults/main/01-domains.yml").read_text()
+    (SECRETS_ROLES / "openbao_secrets/defaults/main/01-domains.yml").read_text()
 )["openbao_secrets_absent_msg_marker"]
 
 # What the two tools actually emit, taken from the CLI and from
@@ -54,8 +56,8 @@ MOD_ABSENT_MSG = (
 MOD_DENIED_MSG = "Forbidden: Permission Denied to path ['apps/nope']."
 
 
-def _tasks(rel):
-    return yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))
+def _tasks(path):
+    return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
 
 
 def _find(rel, name):
@@ -107,7 +109,7 @@ def _cli(rc, stderr, stdout="{}"):
 class SeedGeneratedAppSecret(unittest.TestCase):
     """A denied read must not mint fresh values over live credentials."""
 
-    REL = "roles/openbao/tasks/seed_generated_app_secret.yml"
+    REL = SECRETS_ROLES / "openbao/tasks/seed_generated_app_secret.yml"
     TASK = "Read the app secret's currently-stored fields"
 
     def _fails(self, result):
@@ -137,7 +139,7 @@ class SeedGeneratedAppSecret(unittest.TestCase):
 
 
 class SeedContext7Key(unittest.TestCase):
-    REL = "roles/openbao/tasks/seed_context7_key.yml"
+    REL = SECRETS_ROLES / "openbao/tasks/seed_context7_key.yml"
 
     def test_read_distinguishes_absence_from_denial_and_connection_failure(self):
         task = _find(self.REL, "Read the current external Context7 fields")
@@ -189,7 +191,7 @@ class SeedContext7Key(unittest.TestCase):
 class PromoteAppSecret(unittest.TestCase):
     """A denied read must not wipe the siblings the merge promises to keep."""
 
-    REL = "roles/openbao/tasks/promote_app_secret.yml"
+    REL = SECRETS_ROLES / "openbao/tasks/promote_app_secret.yml"
     TASK = "Read the app's currently-stored secret fields"
 
     def _fails(self, result):
@@ -217,7 +219,7 @@ class PublishReadBeforeWrite(unittest.TestCase):
     # The read itself registers unconditionally: a bare `msg` is not injected
     # into `failed_when` on ansible-core 2.21, so the classification is the
     # separate task below it and that is what carries the discrimination.
-    REL = "roles/openbao_secrets/tasks/publish.yml"
+    REL = SECRETS_ROLES / "openbao_secrets/tasks/publish.yml"
     TASK = "Fail unless the read-before-write found the path simply absent"
 
     def _fails(self, result):
@@ -243,7 +245,7 @@ class PublishReadBeforeWrite(unittest.TestCase):
 class KvRetentionProbe(unittest.TestCase):
     """A denied config read must not fire a privileged retention write."""
 
-    REL = "roles/openbao/tasks/init/03-kv-mounts-and-seed-secrets.yml"
+    REL = SECRETS_ROLES / "openbao/tasks/init/03-kv-mounts-and-seed-secrets.yml"
     FAIL_TASK = 'FAIL -- the retention read was DENIED, so "unset" cannot be concluded'
     WRITE_TASK = "Set KV v2 version retention on the tuned mounts (write-if-changed)"
 
@@ -304,7 +306,7 @@ class KvRetentionProbe(unittest.TestCase):
 class ObjectStorageProbes(unittest.TestCase):
     """head-bucket returns 403 and 404 with no rc-level distinction."""
 
-    REL = "roles/object_storage/tasks/main.yml"
+    REL = ROOT / "roles/object_storage/tasks/main.yml"
     CASES = [
         ("Check which default buckets already exist", "object_storage_bucket_check"),
         ("Read current versioning status", "object_storage_versioning_current"),
@@ -342,7 +344,7 @@ class ObjectStorageProbes(unittest.TestCase):
 class TechnitiumZoneList(unittest.TestCase):
     """A bad token answers HTTP 200, so status is the only honest discriminator."""
 
-    REL = "roles/technitium_dns/tasks/main/build_records.yml"
+    REL = ROOT / "roles/technitium_dns/tasks/main/build_records.yml"
     TASK = "FAIL -- the zone list was not usable, so the live zone type is unknown"
 
     def _fails(self, zone_list):
