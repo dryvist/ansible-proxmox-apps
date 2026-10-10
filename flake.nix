@@ -1,7 +1,7 @@
 {
   description = "Development shell for Ansible Proxmox Apps";
 
-  inputs.nix-devenv.url = "git+https://github.com/dryvist/nix-devenv.git?ref=develop";
+  inputs.nix-devenv.url = "github:dryvist/nix-devenv?ref=v0";
 
   outputs = { nix-devenv, ... }: {
     devShells = builtins.mapAttrs (_: shells: {
