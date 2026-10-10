@@ -81,3 +81,18 @@
       ",proxmox", or ends in ",review" anyway -- the review lane would no
       longer be dedicated.
   loop: "{{ range(github_runner_review_slots | int + 1, github_runner_replicas | int + 1) | list }}"
+
+- name: Assert review slots register into github_runner_review_group and the rest into github_runner_group
+  vars:
+    _group_line: >-
+      {{ (_runner_env_by_slot.results | selectattr('item', 'equalto', item) | first).content
+         | b64decode | regex_search('^RUNNER_GROUP=.*$', multiline=True) }}
+    _expected: >-
+      {{ github_runner_review_group if item <= github_runner_review_slots | int else github_runner_group }}
+  ansible.builtin.assert:
+    that:
+      - _group_line == 'RUNNER_GROUP=' ~ _expected
+    fail_msg: >-
+      Slot {{ item }} rendered "{{ _group_line }}", expected
+      "RUNNER_GROUP={{ _expected }}".
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
