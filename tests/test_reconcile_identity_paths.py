@@ -6,8 +6,10 @@ from pathlib import Path
 
 import yaml
 
+from secrets_collection_support import SECRETS_ROLES
+
 REPO = Path(__file__).resolve().parent.parent
-INIT = REPO / "roles" / "openbao" / "tasks" / "init"
+INIT = SECRETS_ROLES / "openbao" / "tasks" / "init"
 RECONCILE = INIT / "02-initialize-cluster.yml"
 LIVENESS = INIT / "10a-approle-issuer-liveness.yml"
 
@@ -77,7 +79,7 @@ class ReconcileIdentityPaths(unittest.TestCase):
         self.assertTrue(task["no_log"])
 
     def test_legacy_static_target_pair_and_unsupported_flow_lock_command_are_absent(self):
-        defaults = (REPO / "roles/openbao/defaults/main/08a-admin-and-ttls.yml").read_text()
+        defaults = (SECRETS_ROLES / "openbao/defaults/main/08a-admin-and-ttls.yml").read_text()
         self.assertRegex(
             defaults,
             r"openbao_reconcile_approle_secret_id_num_uses:\s*1(?:\s|$)",
@@ -120,7 +122,7 @@ class ReconcileIdentityPaths(unittest.TestCase):
         )
 
     def test_scoped_bootstrap_orders_rbac_before_roles_and_issuer_probe(self):
-        init = yaml.safe_load((REPO / "roles/openbao/tasks/init.yml").read_text())
+        init = yaml.safe_load((SECRETS_ROLES / "openbao/tasks/init.yml").read_text())
         names = [task.get("name") for task in init]
         rbac = names.index("Render and reconcile the RBAC policies")
         roles = names.index("Declare AppRoles and reconcile their policy and TTL bounds")
