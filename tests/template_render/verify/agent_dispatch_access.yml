@@ -102,7 +102,7 @@
         _dispatch_sudoers: "{{ lookup('template', _dispatch_templates ~ '/dispatch-sudoers.j2') }}"
         _dispatch_check_service: "{{ lookup('template', _dispatch_templates ~ '/dispatch-check.service.j2') }}"
         _dispatch_check_timer: "{{ lookup('template', _dispatch_templates ~ '/dispatch-check.timer.j2') }}"
-        _dispatch_env: "{{ lookup('template', _dispatch_templates ~ '/dispatcher.env.j2') }}"
+        _dispatch_profile: "{{ lookup('template', _dispatch_templates ~ '/agent-dispatch-profile.sh.j2') }}"
 
     - name: Assert every key is restricted to the dispatcher
       ansible.builtin.assert:
@@ -144,24 +144,13 @@
           - "('ExecStart=' ~ agent_sandbox_dispatch_dispatcher ~ ' check') in _dispatch_check_service.splitlines()"
           - "'OnCalendar=hourly' in _dispatch_check_timer.splitlines()"
 
-    - name: Assert the dispatcher environment carries runtime settings and no credential
+    - name: Assert the dispatcher profile assigns no credential
       ansible.builtin.assert:
         that:
-          - "('AGENT_IMAGE=' ~ agent_sandbox_dispatch_image) in _dispatch_env.splitlines()"
-          - "('AGENT_DISPATCH_STATE_DIR=' ~ agent_sandbox_dispatch_state_dir) in _dispatch_env.splitlines()"
-          - "('BAO_ADDR=' ~ agent_sandbox_dispatch_bao_addr) in _dispatch_env.splitlines()"
-          - "('AGENT_ROUTER_BASE_URL=' ~ agent_sandbox_dispatch_router_base_url) in _dispatch_env.splitlines()"
-          - >-
-            ('AGENT_DISPATCH_VIKUNJA_PROJECT='
-            ~ agent_sandbox_dispatch_vikunja_project | string) in _dispatch_env.splitlines()
-          - "('AGENT_NETWORK=' ~ agent_sandbox_network) in _dispatch_env.splitlines()"
-          - >-
-            ('AGENT_PROXY_URL=http://' ~ agent_sandbox_proxy_alias ~ ':'
-            ~ agent_sandbox_proxy_port | string) in _dispatch_env.splitlines()
-          - _dispatch_env | regex_findall('(?i)(token|key|secret|password)=') | length == 0
+          - _dispatch_profile | regex_findall('(?i)[a-z_]*(token|key|secret|password)[a-z_]*=') | length == 0
         fail_msg: >-
-          The dispatcher environment must carry the non-secret runtime settings
-          and no credential.
+          The dispatcher profile must not assign a token, key, secret or
+          password; credentials come from the secret store at run time.
 
     - name: Assert an empty list revokes all keys
       ansible.builtin.assert:

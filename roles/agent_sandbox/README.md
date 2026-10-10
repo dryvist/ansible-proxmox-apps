@@ -79,11 +79,7 @@ With `agent_sandbox_dispatch_access_enabled`, the role installs the dispatcher
 pinned nix-agent-sandbox commit, each checked against its SHA-256. It also
 installs the task profiles baked into the pinned job image and a root-owned
 profile with the job image, the OpenBao address, the router endpoint and the
-results project. It writes `dispatcher.env` (mode 0600) with the non-secret
-runtime settings: image, state directory, OpenBao address, router endpoint,
-results project, and the launcher network and proxy. Credentials never go in
-that file. The refused-login alert pair stays in its own file. The
-`agent-dispatch` account accepts only keys listed in
+results project. The `agent-dispatch` account accepts only keys listed in
 `agent_sandbox_dispatch_authorized_keys`, each restricted to the forced
 command. A terminal session (`ssh -t`, verb `tty`) gets a PTY; nothing else
 does.
