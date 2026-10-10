@@ -247,7 +247,7 @@ def test_the_token_is_resolved_from_the_creation_or_the_listing():
 def test_only_the_token_is_published_to_the_open_llm_bucket():
     task = _task("Publish the access token to OpenBao")
     assert task["ansible.builtin.include_role"] == {
-        "name": "openbao_secrets",
+        "name": "dryvist.secrets_management.openbao_secrets",
         "tasks_from": "publish.yml",
     }
     assert task["vars"]["openbao_secrets_publish_app"] == "open-llm"
