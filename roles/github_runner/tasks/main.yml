@@ -247,9 +247,25 @@
 # below (github-runner@.service.j2) so _diag survives past --rm. Idempotent
 # and safe to run every converge, including when replicas shrinks -- a slot
 # no longer wanted just stops getting new files; nothing here deletes one.
+# Recursive, so files and subdirectories the runner wrote under an earlier
+# identity become writable by the current one. The symbolic mode keeps log
+# files non-executable.
 - name: Create the runner diagnostics directories
   ansible.builtin.file:
     path: "{{ github_runner_diag_host_dir }}/{{ item }}"
+    state: directory
+    recurse: true
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "u=rwX,g=rX,o=rX"
+  loop: "{{ range(1, github_runner_replicas | int + 1) | list }}"
+
+# One tool-cache directory per pooled slot, bind-mounted at the image's
+# AGENT_TOOLSDIRECTORY (github-runner@.service.j2) so downloaded Node and
+# similar toolchains survive --rm and the next job on the slot reuses them.
+- name: Create the runner tool cache directories
+  ansible.builtin.file:
+    path: "{{ github_runner_tool_cache_host_dir }}/{{ item }}"
     state: directory
     owner: "{{ github_runner_container_uid }}"
     group: "{{ github_runner_container_gid }}"

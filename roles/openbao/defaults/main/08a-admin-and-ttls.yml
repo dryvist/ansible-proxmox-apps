@@ -80,12 +80,14 @@ openbao_approle_human_secret_id_ttl: 15m
 # iac-platform tofu/semaphore/schedules.tf's openbao_rotate_scheduled
 # schedule (Semaphore project schedule id 5, template 40, resource
 # semaphoreui_project_schedule.openbao_rotate_scheduled) runs
-# openbao-rotate-approles-scheduled on cron "13 3,15 * * *" -- every 12h.
+# openbao-rotate-approles-scheduled on cron "13 3,15 * * *" -- every 12h,
+# declared once here as openbao_rotate_scheduled_interval.
 # 3x that interval is the margin for one missed run before a domain's
 # env-document credential goes stale (Vikunja 3197's isolation failure,
 # the reason #1963 made these never-expire in the first place -- scheduled
 # rotation is now the thing that re-mints them, so a finite bound no
 # longer reproduces that failure).
+openbao_rotate_scheduled_interval: 12h
 openbao_rotated_domain_secret_id_ttl: 36h
 
 # Per-role overrides, name -> value. An entry in openbao_base_approles wins over
@@ -112,19 +114,41 @@ openbao_approle_secret_id_ttl_overrides:
   hermes: "{{ openbao_rotated_domain_secret_id_ttl }}"
   hermes-private-agent: "{{ openbao_rotated_domain_secret_id_ttl }}"
   ai-donna: "{{ openbao_rotated_domain_secret_id_ttl }}"
-  # open-llm keeps the global 24h bound, not the 36h margin above;
-  # tests/plane_identity_bounds/verify.yml pins it to 24h / 30 uses.
-  open-llm: "{{ openbao_approle_secret_id_ttl }}"
+  open-llm: "{{ openbao_rotated_domain_secret_id_ttl }}"
   approle-secret-id-rotate-scheduled: "{{ openbao_rotated_domain_secret_id_ttl }}"
+  # Standing identities outside the scheduled rotation: their secret_id is
+  # rendered onto the host (or held by the operator's deploy) at converge
+  # time, and nothing re-mints it. Non-expiring, bounded by the source-address
+  # class each carries in 08b, the same shape as the roles declared "0s" in
+  # 07b/07d. slack-admin and slack-ops take the same value from 04.
+  iac-platform-deploy: "0s"
+  snapshot: "0s"
+  splunk-mcp-rotate: "0s"
+  secret-age-audit: "0s"
+  github-runner: "0s"
 # num_uses 0 (unlimited redemptions) is permitted ONLY with a reason on the line.
 openbao_approle_secret_id_num_uses_overrides:
   # Its secret_id is live, non-expiring, and in active use by every agent
   # session; capping redemptions here would strand them at an arbitrary login.
   # Bounded instead by the CIDR class below until it is deliberately re-minted.
   ai-orchestrator: 0
+  # The dispatcher redeems its secret_id once per job and once per renewal, so
+  # a use cap empties it between rotations. Bounded by the 24h ttl, the
+  # scheduled 12h rotation and its single-host CIDR instead.
+  open-llm: 0
+  # The standing, non-expiring identities above: each systemd timer, runner
+  # agent or deploy redeems its one secret_id on every run, so a redemption
+  # cap would strand it mid-schedule. Bounded by its 08b source class instead.
+  iac-platform-deploy: 0  # operator deploy, redeemed per run
+  snapshot: 0  # snapshot timer, redeemed per run
+  splunk-mcp-rotate: 0  # splunk-mcp rotator timer, redeemed per run
+  secret-age-audit: 0  # secret-age timer, redeemed per run
+  github-runner: 0  # runner bao agent, redeemed per job
+  slack-admin: 0  # slack-admin rotator timer, redeemed per run
+  slack-ops: 0  # workstation Slack helper, redeemed per call
   # github-read / github-write moved to their 07b declarations, next to the
   # secret_id_ttl they pair with.
-  # The write realm roles (github-write-work etc.) keep the default 30-use cap
+  # The per-repo write realm roles keep the default 30-use cap
   # deliberately: each is redeemed once per realm session, not once per
   # token mint, so 30 redemptions/day does not exhaust the same way.
 

@@ -68,8 +68,9 @@ openbao_packer_approle_name: packer
 #
 #   github-read  -> github/token/read-*        all-repo, read-only permission
 #                                              sets; standing ambient identity
-#   github-write -> github/token (raw)         ONE allowlisted repository per
-#                                              request (policy-pinned params) +
+#   github-write -> github/token (raw)         any repository the App
+#                                              installation covers (pinned
+#                                              installation_id) +
 #                                              the write-lease lock subtree;
 #                                              standing ambient identity
 #   github-admin -> github/token/*-full-automation  installation-wide, full
@@ -82,10 +83,13 @@ openbao_packer_approle_name: packer
 #                                              standing ambient identity, like
 #                                              github-write, so repo creation
 #                                              needs no per-call human unlock
-#   github-work  -> github-work/token/work-{read,write}  one installation;
-#                                              read and write sets, no
-#                                              administration; standing
-#                                              workstation identity
+#   github-work-read  -> github-work/token/work-read   one installation; read
+#                                              set only, no administration;
+#                                              standing workstation identity
+#   github-work-write -> github-work/token/work-write  one installation; write
+#                                              set only, no administration;
+#                                              workstation identity, each use
+#                                              sudo/Touch-ID gated
 #
 # Deliberately NOT members of openbao_ai_domains: estate AI identities mint
 # via the `github-mint` capability policy (read-tier sets only) instead.
@@ -106,8 +110,10 @@ openbao_github_runner_policy_name: github-runner
 openbao_github_runner_approle_name: github-runner
 openbao_github_exporter_policy_name: github-exporter
 openbao_github_exporter_approle_name: github-exporter
-openbao_github_work_policy_name: github-work
-openbao_github_work_approle_name: github-work
+openbao_github_work_read_policy_name: github-work-read
+openbao_github_work_read_approle_name: github-work-read
+openbao_github_work_write_policy_name: github-work-write
+openbao_github_work_write_approle_name: github-work-write
 # docs-publisher: the documentation publisher's own identity. Mints exactly
 # one repository-scoped write set and nothing else — it holds no read set, no
 # raw token path and no lock subtree, so a leaked secret-zero can open a pull
@@ -125,7 +131,9 @@ openbao_github_oidc_audience: https://github.com/dryvist
 # to the caller repository, reusable workflow identity, event name and shared
 # GitHub OIDC audience. Their policy reads only that flow's generated router
 # key; publication jobs keep their existing, separate GitHub App token.
-openbao_github_agent_flow_roles:
+openbao_github_agent_flow_roles: >-
+  {{ openbao_github_agent_flow_base_roles + openbao_github_router_snapshot_flow_roles }}
+openbao_github_agent_flow_base_roles:
   - name: github-agent-ci-fix
     policy: github-agent-ci-fix
     repository: dryvist/ansible-proxmox-ai
@@ -140,6 +148,19 @@ openbao_github_agent_flow_roles:
     event_names: [pull_request_review, pull_request_review_comment]
     token_ttl: 10m
     token_max_ttl: 15m
+# The docs site's scheduled router snapshot. Bound to the docs source
+# repository's own workflow file on its default branch; unset yields no role,
+# as for the publisher below.
+openbao_github_router_snapshot_flow_roles: >-
+  {{ [{'name': 'docs-router-snapshot',
+       'policy': 'docs-router-snapshot',
+       'repository': openbao_github_oidc_docs_repository,
+       'job_workflow_ref': openbao_github_oidc_docs_repository
+         ~ '/.github/workflows/router-snapshot.yml@' ~ openbao_github_oidc_docs_ref,
+       'event_names': ['schedule', 'workflow_dispatch'],
+       'token_ttl': '10m',
+       'token_max_ttl': '15m'}]
+     if openbao_github_oidc_docs_repository | length > 0 else [] }}
 # The one repository and the one ref a publisher token may be minted for. A
 # pull-request or branch build fails the ref bound, which is the build a fork's
 # contributor controls.
@@ -176,17 +197,10 @@ openbao_approle_issuer_approle_name: approle-issuer
 # secret_id of its own). It mints the human-gated tiers approle-issuer cannot,
 # and is what replaces the retired standing `admin` credential.
 openbao_human_unlock_policy_name: human-unlock
-# Keep the general write identity on its repository allowlist until the App
-# installation is isolated from repositories owned by narrower realms.
-openbao_github_write_installation_scope: false
-openbao_github_write_repo_allowlist: >-
-  {{ (lookup('env', 'OPENBAO_GITHUB_WRITE_REPOS') | default('', true)).split(',')
-     | map('trim') | reject('equalto', '') | list }}
 
 # Additional write realms, each an independent policy + AppRole with its own
-# repository allowlist. When installation scope is enabled, the general write
-# identity can reach every repository in its App installation, including
-# repositories also listed in a realm. Separate App installations provide
+# repository allowlist. The general write identity can reach every repository
+# in its App installation, including repositories also listed in a realm. Separate App installations provide
 # repository isolation from the general identity.
 #
 # Supplied as a JSON object in the iac secret store, NOT inline: this

@@ -38,7 +38,7 @@
         openbao_management_cidrs: "192.0.2.0/24"
         openbao_workstation_cidrs: "198.51.100.0/24"
         openbao_ci_cidrs: "203.0.113.0/24"
-        openbao_github_write_scopes: "{{ {openbao_github_write_work_approle_name: ['test-repo']} }}"
+        openbao_github_write_scopes: {"github-write-fixture": ["test-repo"]}
 
     - name: The plane identity is declared, or this test asserts nothing
       ansible.builtin.assert:
@@ -99,19 +99,19 @@
       vars:
         realms: >-
           {{ openbao_approles
-             | selectattr('name', 'equalto', openbao_github_write_work_approle_name) | list }}
+             | selectattr('name', 'equalto', 'github-write-fixture') | list }}
       ansible.builtin.assert:
         that:
           - realms | length > 0
           - >-
             realms | map(attribute='secret_id_num_uses',
                          default=openbao_approle_secret_id_num_uses_overrides.get(
-                           openbao_github_write_work_approle_name, openbao_approle_secret_id_num_uses))
+                           'github-write-fixture', openbao_approle_secret_id_num_uses))
             | unique | list == [30]
           - >-
             realms | map(attribute='secret_id_ttl',
                          default=openbao_approle_secret_id_ttl_overrides.get(
-                           openbao_github_write_work_approle_name, openbao_approle_secret_id_ttl))
+                           'github-write-fixture', openbao_approle_secret_id_ttl))
             | map('community.general.to_seconds') | map('int') | unique | list == [86400]
           - >-
             realms | map(attribute='token_ttl', default=openbao_approle_token_ttl)
@@ -122,24 +122,25 @@
     - name: The dispatcher and workstation tool identities keep finite secret_id bounds
       vars:
         rows: >-
-          {{ openbao_approles | selectattr('name', 'equalto', item) | list }}
+          {{ openbao_approles | selectattr('name', 'equalto', item.name) | list }}
       ansible.builtin.assert:
         that:
           - rows | length > 0
           - >-
             rows | map(attribute='secret_id_num_uses',
                        default=openbao_approle_secret_id_num_uses_overrides.get(
-                         item, openbao_approle_secret_id_num_uses))
-            | map('int') | unique | list == [30]
+                         item.name, openbao_approle_secret_id_num_uses))
+            | map('int') | unique | list == [item.uses]
           - >-
             rows | map(attribute='secret_id_ttl',
                        default=openbao_approle_secret_id_ttl_overrides.get(
-                         item, openbao_approle_secret_id_ttl))
-            | map('community.general.to_seconds') | map('int') | unique | list == [86400]
-        fail_msg: "{{ item }} requires a 30-use, 24-hour secret_id."
+                         item.name, openbao_approle_secret_id_ttl))
+            | map('community.general.to_seconds') | map('int') | unique | list
+            == [item.ttl | community.general.to_seconds | int]
+        fail_msg: "{{ item.name }} requires a {{ item.uses }}-use, {{ item.ttl }} secret_id (0 = unlimited)."
       loop:
-        - "{{ openbao_open_llm_approle_name }}"
-        - proxman
+        - { name: "{{ openbao_open_llm_approle_name }}", uses: 0, ttl: "{{ openbao_rotated_domain_secret_id_ttl }}" }
+        - { name: proxman, uses: 30, ttl: 24h }
 
     - name: The dispatcher pair is rotated on schedule and never republished to Doppler
       ansible.builtin.assert:
@@ -147,11 +148,57 @@
           - openbao_open_llm_approle_name in openbao_secrets_domain_approle_names
           - >-
             (openbao_approle_secret_id_ttl_overrides[openbao_open_llm_approle_name]
-             | community.general.to_seconds | int) == 86400
+             | community.general.to_seconds | int)
+            == (openbao_rotated_domain_secret_id_ttl | community.general.to_seconds | int)
           - openbao_open_llm_approle_name not in openbao_rotate_doppler_sync_domains
         fail_msg: >-
-          open-llm needs scheduled rotation with a 24h secret_id and must stay
-          out of openbao_rotate_doppler_sync_domains.
+          open-llm needs scheduled rotation with the rotated-domain secret_id ttl
+          and must stay out of openbao_rotate_doppler_sync_domains.
+
+    # A scheduled domain whose secret_id outlives fewer than three rotation
+    # intervals expires after a single missed run. 0s (never expires) is exempt.
+    - name: Every scheduled-rotation domain outlives three rotation intervals
+      vars:
+        _min_seconds: "{{ (openbao_rotate_scheduled_interval | community.general.to_seconds | int) * 3 }}"
+        _declared: "{{ openbao_approle_secret_id_ttl_overrides.get(item, openbao_approle_secret_id_ttl) }}"
+        _ttl_seconds: >-
+          {{ (openbao_approles | selectattr('name', 'equalto', item)
+              | map(attribute='secret_id_ttl', default=_declared) | first | default(_declared))
+             | community.general.to_seconds | int }}
+      ansible.builtin.assert:
+        that:
+          - (_ttl_seconds | int) == 0 or (_ttl_seconds | int) >= (_min_seconds | int)
+        fail_msg: >-
+          {{ item }} secret_id ttl {{ _ttl_seconds }}s is under 3x the
+          {{ openbao_rotate_scheduled_interval }} rotation interval ({{ _min_seconds }}s).
+        quiet: true
+      loop: "{{ openbao_secrets_domain_approle_names + [openbao_approle_secret_id_rotate_scheduled_approle_name] }}"
+
+    # Deny by default: a scheduled-rotation domain is redeemed on every converge
+    # or service start, so a use cap empties it between rotations. Only the
+    # identities listed here keep a finite cap.
+    - name: Every scheduled-rotation domain has unlimited uses unless listed as finite
+      vars:
+        # Workstation reader and per-Mac Edge readers (workstation class), the
+        # workstation certificate signer (one login per signature), and the
+        # rotate identity (redeemed twice a day).
+        _finite: >-
+          {{ [openbao_local_llm_workstation_approle_name, openbao_agent_ssh_sign_approle_name,
+              openbao_approle_secret_id_rotate_scheduled_approle_name]
+             + openbao_cribl_edge_mac_approle_names }}
+        _declared: >-
+          {{ openbao_approle_secret_id_num_uses_overrides.get(item, openbao_approle_secret_id_num_uses) }}
+        _uses: >-
+          {{ openbao_approles | selectattr('name', 'equalto', item)
+             | map(attribute='secret_id_num_uses', default=_declared) | first | default(_declared) | int }}
+      ansible.builtin.assert:
+        that:
+          - (_uses | int) > 0 if item in _finite else (_uses | int) == 0
+        fail_msg: >-
+          {{ item }} has secret_id_num_uses {{ _uses }}; scheduled-rotation domains
+          need 0 unless listed as finite, and listed ones need a cap above 0.
+        quiet: true
+      loop: "{{ openbao_secrets_domain_approle_names + [openbao_approle_secret_id_rotate_scheduled_approle_name] }}"
 
     # Workstation reads of the router credentials have their own identity, so
     # workstation logins cannot spend the plane's local-llm secret_id.

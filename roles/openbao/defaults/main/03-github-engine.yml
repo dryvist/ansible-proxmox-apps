@@ -88,12 +88,26 @@ openbao_github_docs_publisher_permissions:
 # rather than a set with an empty repository list — an omitted `repositories`
 # on a permission set means the WHOLE installation, so an unconfigured
 # publisher must not exist rather than exist unbounded. Explicit literals
-# only, never a glob, for the reason recorded with the write allowlist.
+# only, never a glob: the plugin comma-splits the value, so "a,evil" would
+# ride an "a*" prefix.
 openbao_github_docs_publisher_repos: >-
   {{ (lookup('env', 'OPENBAO_GITHUB_DOCS_PUBLISHER_REPOS') | default('', true)).split(',')
      | map('trim') | reject('equalto', '') | list }}
 # App bucket the publisher policy may read (01c-app-secrets-generated.yml).
 openbao_github_docs_publisher_kv_app: github-actions
+# The docs site's router snapshot workflow opens its pull request in the docs
+# SOURCE repository, so its set names that repository and nothing else. Same
+# rule as the publisher set: an unset repository yields no set. Tier `agents`
+# keeps it out of the ambient mint and orchestrator policies; only the
+# docs-router-snapshot policy names it.
+openbao_github_router_snapshot_set_name: docs-router-snapshot
+openbao_github_router_snapshot_permission_sets: >-
+  {{ [{'name': openbao_github_router_snapshot_set_name,
+       'tier': 'agents',
+       'installation_id': openbao_github_dryvist_installation_id,
+       'repositories': [openbao_github_oidc_docs_repository.split('/') | last],
+       'permissions': openbao_github_docs_publisher_permissions}]
+     if openbao_github_oidc_docs_repository | length > 0 else [] }}
 openbao_github_docs_publisher_permission_sets: >-
   {{ [{'name': openbao_github_docs_publisher_set_name,
        'tier': 'publish',
@@ -106,9 +120,9 @@ openbao_github_docs_publisher_permission_sets: >-
 # App ceiling) are minted only through the inert, human-gated github-admin
 # identity. Per-repo WRITE tokens intentionally have NO set here — they use
 # the raw github/token endpoint, parameter-pinned by the github-write policy
-# to exactly one allowlisted repository per request (a stored set cannot be
-# narrowed by the request body at plugin v2.3.2, so per-repo scoping must
-# ride the raw endpoint).
+# to the known installations (a stored set cannot be narrowed by the request
+# body at plugin v2.3.2, so per-repo token scoping must ride the raw
+# endpoint).
 openbao_github_base_permission_sets:
   - name: dryvist-full-automation
     tier: admin
@@ -143,7 +157,8 @@ openbao_github_base_permission_sets:
 # Sets on the admin mount only; 05-github-engine.yml reconciles exactly these.
 openbao_github_admin_permission_sets: >-
   {{ openbao_github_base_permission_sets
-     + openbao_github_docs_publisher_permission_sets }}
+     + openbao_github_docs_publisher_permission_sets
+     + openbao_github_router_snapshot_permission_sets }}
 # Every set on every GitHub mount, each tagged with its mount, for the policy
 # templates.
 openbao_github_permission_sets: >-
