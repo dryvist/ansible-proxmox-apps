@@ -13,14 +13,17 @@ from typing import Any
 def _matches(item: Any, **kwargs: Any) -> bool:
     """Match an item against kwargs, supporting the one lookup suffix in use.
 
-    ``field__isnull=<bool>`` mirrors Django: True when the field is unset
-    (missing or ``None``), compared against the requested boolean. Every
-    other key is a plain equality check on the attribute of the same name.
+    ``field__isnull=<bool>`` and ``field__startswith=<text>`` mirror Django's
+    lookups used here. Every other key is a plain equality check on the
+    attribute of the same name.
     """
     for key, wanted in kwargs.items():
         field, _, suffix = key.partition("__")
         if suffix == "isnull":
             if (getattr(item, field, None) is None) != bool(wanted):
+                return False
+        elif suffix == "startswith":
+            if not str(getattr(item, field, "") or "").startswith(wanted):
                 return False
         elif getattr(item, key, None) != wanted:
             return False
@@ -38,6 +41,10 @@ class Record:
         """Remove self from the backing store, mirroring the real delete()."""
         if self._store is not None and self in self._store:
             self._store.remove(self)
+
+    def validated_save(self) -> None:
+        """Record a model save used by the asset-tag adoption path."""
+        self.validated_saves = getattr(self, "validated_saves", 0) + 1
 
 
 class FakeManager:
