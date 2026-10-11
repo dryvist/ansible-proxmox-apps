@@ -47,28 +47,17 @@ if os.environ.get("NAUTOBOT_RUN_EXPORT", "").lower() in ("1", "true", "yes"):
 # so adding one model without that no-op silently wipes its slice.
 #
 # So a job whose slice carries no rows is dropped from the run entirely. The
-# drive sync is the sharpest case (it is the one seed job that DOES delete), but
-# the rule is the same for every slice-backed job.
+# The rule applies to every slice-backed job.
 #
 # Dropped here, BEFORE the loop, never through run_one(): its JOB_SKIPPED path
 # returns False, which would fail the converge and break the very partial-bundle
 # mode this protects.
 #
-# The drive sync also refuses an empty slice inside the job itself, which is not
-# redundant: this gate keeps a converge quiet, that one stops a hand-run from
-# the Nautobot UI.
 SLICE_JOBS = {
     "nodes": "Seed Proxmox Node Facts",
     "reservations": "Seed IP Addresses and Reservations",
     "devices": "Seed DCIM Racks and Devices",
-    "drives": "Sync Drive Inventory from Proxmox",
 }
-
-# Appended AFTER the SSoT list on purpose: a drive is an InventoryItem on its
-# node's Device, so "Seed Proxmox Node Facts" has to have created that Device
-# first, exactly as Hardware runs after DCIM above.
-SSOT_JOBS.append(SLICE_JOBS["drives"])
-SEED_JOBS.append(SLICE_JOBS["drives"])
 
 
 def _populated_slices() -> set:
@@ -138,7 +127,7 @@ def run_one(name):
     try:
         result = enqueue(job, kwargs)
     except Exception as exc:  # noqa: BLE001 - enqueue signature is version-sensitive
-        print("JOB_ERROR", name, "enqueue:%s" % exc)
+        print("JOB_ERROR", name, f"enqueue:{exc}")
         return False
     deadline = time.time() + TIMEOUT
     while time.time() < deadline:
@@ -152,5 +141,6 @@ def run_one(name):
     return False
 
 
-if not all([run_one(job_name) for job_name in SEED_JOBS]):
+results = [run_one(job_name) for job_name in SEED_JOBS]
+if not all(results):
     sys.exit(1)

@@ -52,7 +52,7 @@ def main() -> None:
             module, _ = load_runner_capturing()
             slices = dict(module.SLICE_JOBS)
             check(
-                set(slices) == {"nodes", "reservations", "devices", "drives"},
+                set(slices) == {"nodes", "reservations", "devices"},
                 f"the slice-to-job map drifted: {sorted(slices)}",
             )
 
@@ -66,7 +66,7 @@ def main() -> None:
                     "that slice silently stops being seeded",
                 )
                 check(
-                    "JOB_SKIPPED %s empty-source" % job_name not in out,
+                    f"JOB_SKIPPED {job_name} empty-source" not in out,
                     f"{job_name!r} was logged as skipped while its slice was populated",
                 )
 
@@ -81,7 +81,7 @@ def main() -> None:
                         "away from wiping the slice",
                     )
                     check(
-                        "JOB_SKIPPED %s empty-source" % job_name in out,
+                        f"JOB_SKIPPED {job_name} empty-source" in out,
                         f"{slice_name!r} {label}: the drop was not logged. Output: {out!r}",
                     )
 
@@ -93,7 +93,7 @@ def main() -> None:
                     job_name not in module.SEED_JOBS,
                     f"{job_name!r} runs against a bundle that does not exist",
                 )
-                check("JOB_SKIPPED %s empty-source" % job_name in out, f"{job_name}: unlogged")
+                check(f"JOB_SKIPPED {job_name} empty-source" in out, f"{job_name}: unlogged")
 
             # An intentional skip must not fail the converge: with every
             # remaining job registered and succeeding, an empty bundle still
@@ -103,13 +103,12 @@ def main() -> None:
             module, out = load_runner_capturing(registered=True)
             check(
                 module.TEST_EXIT_CODE == 0,
-                "an empty bundle exited %r; intentional skips must not fail the "
-                "converge, or the supported partial-bundle mode is unusable. "
-                "Output: %r" % (module.TEST_EXIT_CODE, out),
+                f"an empty bundle exited {module.TEST_EXIT_CODE!r}; intentional skips must not fail the "
+                f"converge, or the supported partial-bundle mode is unusable. Output: {out!r}",
             )
             check(
                 "JOB_DONE Seed VLANs and Prefixes SUCCESS" in out,
-                "the non-slice-backed jobs did not run: %r" % out,
+                f"the non-slice-backed jobs did not run: {out!r}",
             )
 
             # The gate must never drop a job that is not slice-backed.
@@ -127,7 +126,7 @@ def main() -> None:
             else:
                 os.environ["NAUTOBOT_SEED_FILE"] = original
 
-    print("nautobot seed slice gate: OK (%d assertions)" % CHECKS)
+    print(f"nautobot seed slice gate: OK ({CHECKS} assertions)")
 
 
 if __name__ == "__main__":

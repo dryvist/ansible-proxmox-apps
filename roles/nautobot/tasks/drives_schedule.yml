@@ -1,0 +1,27 @@
+---
+# Reconcile the daily Proxmox drive-sync ScheduledJob. Included from main.yml only
+# when the read-only PVE token, secret and CA are configured.
+- name: Schedule the Proxmox drive sync via celery beat
+  ansible.builtin.command:
+    cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+    stdin: "{{ lookup('ansible.builtin.file', 'schedule_drives.py') }}"
+  environment: "{{ nautobot_env }}"
+  register: nautobot_drives_schedule
+  changed_when: >-
+    {{ 'DRIVES_SCHEDULE_CREATED' in nautobot_drives_schedule.stdout
+       or 'DRIVES_SCHEDULE_REENABLED' in nautobot_drives_schedule.stdout }}
+  become: true
+  become_user: "{{ nautobot_user }}"
+
+- name: Assert the Proxmox drive schedule was reconciled when configured
+  ansible.builtin.assert:
+    that:
+      - "'DRIVES_SCHEDULE_SKIPPED' not in nautobot_drives_schedule.stdout"
+      - >-
+        'DRIVES_SCHEDULE_CREATED' in nautobot_drives_schedule.stdout
+        or 'DRIVES_SCHEDULE_REENABLED' in nautobot_drives_schedule.stdout
+        or 'DRIVES_SCHEDULE_EXISTS' in nautobot_drives_schedule.stdout
+    fail_msg: >-
+      The Proxmox drive ScheduledJob was not reconciled:
+      {{ nautobot_drives_schedule.stdout | trim | default('(no output)', true) }}.
+    quiet: true

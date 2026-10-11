@@ -1,47 +1,30 @@
-"""The drive sync refuses to run on an empty source, and never fakes a serial.
-
-This job is the only one in the seed set that DELETES. Every other seed is
-additive, so an absent slice harmlessly contributes nothing — here the same
-absent slice would remove every drive record in the database. Two independent
-guards exist for that, and this pins both:
-
-* the runner ENROLS the job only when the bundle actually carries drives, so an
-  estate that has not gathered them yet converges quietly;
-* the job itself RAISES on an empty slice, so a hand-run from the Nautobot UI
-  fails loudly instead of emptying the inventory.
-
-It also pins the serial rule. For SAS drives the source reports the WWN in the
-`serial` field, and writing that through would put a fabricated identity on a
-device forever, indistinguishable from a real one.
-
-The django/nautobot stubs come from nautobot_run_seed_jobs rather than being
-restated here — one stub set, one place to fix when Nautobot moves.
-"""
+"""Guard the Proxmox API source for Nautobot’s delete-capable drive sync."""
 from __future__ import annotations
 
 import importlib.util
 import inspect
 import json
 import os
+import ssl
 import sys
-import tempfile
 import types
+import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
-from nautobot_run_seed_jobs import Recorder
-from nautobot_run_seed_jobs import load as load_runner
-
-ROOT = Path(__file__).resolve().parents[1]
-JOBS = ROOT / "roles/nautobot/files/jobs"
-
-DRIVE_JOB = "Sync Drive Inventory from Proxmox"
+JOBS = Path(__file__).resolve().parents[1] / "roles/nautobot/files/jobs"
+API_ENV = {
+    "NAUTOBOT_PROXMOX_API_URL": "https://pve.example.invalid",
+    "NAUTOBOT_PROXMOX_TOKEN_ID": "nautobot@pve!inventory",
+    "NAUTOBOT_PROXMOX_TOKEN_SECRET": "test-token-secret",
+    "NAUTOBOT_PROXMOX_CA": "-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----",
+}
 
 
 def install_job_stubs() -> None:
     """Install the smallest fake modules that let ssot_drives import.
 
-    Nothing is instantiated by these tests — both guards fire before any object
-    is built — so a bare type is enough for each.
+    The API guards fail before a Nautobot model or adapter is needed.
     """
     diffsync = types.ModuleType("diffsync")
     diffsync.Adapter = type("Adapter", (), {"__init__": lambda self, *a, **k: None})
@@ -62,7 +45,6 @@ def install_job_stubs() -> None:
 
     common = types.ModuleType("ssot_common")
     common.ensure_manufacturer = lambda *a, **k: None
-    common.load_seed = lambda: {"drives": []}
     common.MANUFACTURER = "Generic"
 
     for name, mod in {
@@ -80,8 +62,18 @@ def install_job_stubs() -> None:
         sys.modules[name] = mod
 
 
+def load_api():
+    """Import the stdlib-only PVE API client."""
+    spec = importlib.util.spec_from_file_location("proxmox_disks", JOBS / "proxmox_disks.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["proxmox_disks"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_job():
-    """Import ssot_drives.py against the stubs."""
+    """Import ssot_drives.py and its API client against the stubs."""
+    load_api()
     spec = importlib.util.spec_from_file_location("ssot_drives", JOBS / "ssot_drives.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules["ssot_drives"] = module
@@ -89,22 +81,126 @@ def load_job():
     return module
 
 
-def check_refuses_empty_source(drives_mod, drives) -> None:
-    """The job must raise rather than sync an empty source."""
-    sys.modules["ssot_common"].load_seed = lambda: {"drives": drives}
-    job = drives_mod.SyncDrivesFromSeed()
-    try:
-        job.load_source_adapter()
-    except ValueError as exc:
-        assert "delete" in str(exc).lower(), (
-            "the refusal must say WHY an empty source is dangerous, or the next "
-            f"reader removes the guard as pointless: {exc}"
-        )
-        return
-    raise AssertionError(
-        f"load_source_adapter() accepted {drives!r} — an empty source against a "
-        "delete-capable target removes every drive in Nautobot."
-    )
+class FakeResponse:
+    """Minimal context-managed urllib response for a JSON API payload."""
+
+    def __init__(self, data):
+        self.body = json.dumps({"data": data}).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.body
+
+
+def fake_opener(payloads, calls):
+    """Return queued fake data and retain requests for contract assertions."""
+    def open_request(request, *, context, timeout):
+        calls.append((request, context, timeout))
+        payload = payloads.pop(0)
+        if isinstance(payload, Exception):
+            raise payload
+        return FakeResponse(payload)
+
+    return open_request
+
+
+def check_api_safety(api_mod, drives_mod) -> None:
+    """Guard the delete-capable sync against incomplete or unsafe API reads."""
+    real_context = ssl.create_default_context
+    ca_values = []
+
+    def make_context(*, cadata):
+        ca_values.append(cadata)
+        return real_context()
+
+    with patch.object(api_mod.ssl, "create_default_context", side_effect=make_context):
+        with patch.dict(os.environ, {}, clear=True):
+            try:
+                api_mod.ProxmoxDiskClient.from_env()
+            except ValueError as exc:
+                message = str(exc)
+                assert all(name in message for name in API_ENV), message
+            else:
+                raise AssertionError("missing Proxmox settings did not fail")
+
+        calls = []
+        with patch.dict(os.environ, API_ENV, clear=True), patch.object(
+            api_mod.urllib.request,
+            "urlopen",
+            side_effect=fake_opener([[{"node": "pve1", "status": "offline"}]], calls),
+        ):
+            job = drives_mod.SyncDrivesFromProxmox()
+            job.source_adapter = None
+            try:
+                job.load_source_adapter()
+            except ValueError as exc:
+                assert "not online" in str(exc), str(exc)
+            else:
+                raise AssertionError("offline node was accepted")
+            assert job.source_adapter is None, "source adapter loaded before cluster validation"
+            assert len(calls) == 1, "disk request followed an offline node response"
+
+        calls = []
+        with patch.dict(os.environ, API_ENV, clear=True), patch.object(
+            api_mod.urllib.request,
+            "urlopen",
+            side_effect=fake_opener([[{"node": "pve1", "status": "online"}], []], calls),
+        ):
+            job = drives_mod.SyncDrivesFromProxmox()
+            job.source_adapter = None
+            try:
+                job.load_source_adapter()
+            except ValueError as exc:
+                assert "zero disks" in str(exc), str(exc)
+            else:
+                raise AssertionError("empty disk list was accepted")
+            assert job.source_adapter is None, "source adapter loaded after an empty disk list"
+
+        calls = []
+        disks = [
+            {"devpath": "/dev/sda", "type": "hdd", "serial": "SERIAL1"},
+            {"devpath": "/dev/sdb", "type": "usb", "serial": "USB1"},
+        ]
+        with patch.dict(os.environ, API_ENV, clear=True), patch.object(
+            api_mod.urllib.request,
+            "urlopen",
+            side_effect=fake_opener([[{"node": "pve1", "status": "online"}], disks], calls),
+        ):
+            rows = api_mod.ProxmoxDiskClient.from_env().rows()
+        assert rows == [{**disks[0], "node": "pve1"}], rows
+        assert ca_values[-1] == API_ENV["NAUTOBOT_PROXMOX_CA"], "CA PEM was not supplied"
+        escaped = {**API_ENV, "NAUTOBOT_PROXMOX_CA": API_ENV["NAUTOBOT_PROXMOX_CA"].replace("\n", "\\n")}
+        with patch.dict(os.environ, escaped, clear=True):
+            api_mod.ProxmoxDiskClient.from_env()
+        assert ca_values[-1] == API_ENV["NAUTOBOT_PROXMOX_CA"], "escaped PEM newlines were not restored"
+        for request, context, timeout in calls:
+            assert request.get_header("Authorization") == (
+                "PVEAPIToken=nautobot@pve!inventory=test-token-secret"
+            )
+            assert context.check_hostname is True
+            assert context.verify_mode == ssl.CERT_REQUIRED
+            assert timeout == 30
+
+        calls = []
+        with patch.dict(os.environ, API_ENV, clear=True), patch.object(
+            api_mod.urllib.request,
+            "urlopen",
+            side_effect=fake_opener(
+                [urllib.error.URLError(API_ENV["NAUTOBOT_PROXMOX_TOKEN_SECRET"])], calls
+            ),
+        ):
+            try:
+                api_mod.ProxmoxDiskClient.from_env().rows()
+            except ValueError as exc:
+                assert API_ENV["NAUTOBOT_PROXMOX_TOKEN_SECRET"] not in str(exc)
+                assert exc.__suppress_context__, "raw urllib error remains in the traceback"
+            else:
+                raise AssertionError("API error did not fail the source read")
 
 
 def check_serial_rule(drives_mod) -> None:
@@ -199,63 +295,23 @@ def check_not_null_fields(drives_mod) -> None:
 
 def check_post_run_verifies(drives_mod) -> None:
     """The job must fail when the rows it reported creating are not there."""
-    assert hasattr(drives_mod.SyncDrivesFromSeed, "post_run"), (
+    assert hasattr(drives_mod.SyncDrivesFromProxmox, "post_run"), (
         "no post_run verification — nautobot_ssot reports SUCCESS even when "
         "every create raised, so the job must check the rows landed."
     )
-    source = inspect.getsource(drives_mod.SyncDrivesFromSeed.post_run)
+    source = inspect.getsource(drives_mod.SyncDrivesFromProxmox.post_run)
     assert "raise" in source, "post_run must FAIL, not just log, on a short count"
 
 
-def check_runner_gate() -> None:
-    """The runner enrols the drive job only when the bundle carries drives."""
-    original = os.environ.get("NAUTOBOT_SEED_FILE")
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "seed.json"
-        os.environ["NAUTOBOT_SEED_FILE"] = str(path)
-        try:
-            cases = [
-                (None, False, "a missing bundle"),
-                ({"nodes": [{"name": "n"}]}, False, "a bundle with no drives key"),
-                ({"drives": []}, False, "an EMPTY drives slice"),
-                ({"drives": [{"node": "n", "serial": "EXAMPLESERIAL1"}]}, True, "a populated slice"),
-            ]
-            for payload, expected, label in cases:
-                if payload is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    path.write_text(json.dumps(payload))
-                module = load_runner(Recorder(modern=True))
-                enrolled = DRIVE_JOB in module.SEED_JOBS
-                assert enrolled is expected, (
-                    f"{label}: expected enrolled={expected}, got {enrolled}. "
-                    "Enrolling on an empty slice deletes the drive inventory; "
-                    "skipping on a populated one silently stops syncing."
-                )
-                # The job must also carry dryrun=False, or it computes a diff
-                # and commits nothing while reporting SUCCESS.
-                if expected:
-                    assert DRIVE_JOB in module.SSOT_JOBS, (
-                        "the drive job is enrolled but not in SSOT_JOBS, so it "
-                        "runs as a dry run and persists nothing while passing"
-                    )
-        finally:
-            if original is None:
-                os.environ.pop("NAUTOBOT_SEED_FILE", None)
-            else:
-                os.environ["NAUTOBOT_SEED_FILE"] = original
-
 
 if __name__ == "__main__":
-    check_runner_gate()
-
     install_job_stubs()
-    job_mod = load_job()
-    check_refuses_empty_source(job_mod, [])
-    check_refuses_empty_source(job_mod, None)
-    check_serial_rule(job_mod)
-    check_manufacturer_never_placeholder(job_mod)
-    check_not_null_fields(job_mod)
-    check_post_run_verifies(job_mod)
+    drives_mod = load_job()
+    api_mod = sys.modules["proxmox_disks"]
+    check_api_safety(api_mod, drives_mod)
+    check_serial_rule(drives_mod)
+    check_manufacturer_never_placeholder(drives_mod)
+    check_not_null_fields(drives_mod)
+    check_post_run_verifies(drives_mod)
 
-    print("nautobot drive sync: OK (4 gate, 2 empty-source, 6 serial, 9 manufacturer, 7 not-null, post_run verified)")
+    print("nautobot drive sync: API guards, TLS/auth, token-redaction, model checks OK")
