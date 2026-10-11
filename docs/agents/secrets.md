@@ -13,5 +13,6 @@ never bake a specific secrets backend into a role default.
 
 ## The `openbao` role
 
-Changes to the `openbao` role follow
+The `openbao` role lives in the `dryvist.secrets_management` collection, not in
+this repository. Changes to it are made there and follow
 [`.claude/rules/openbao-plugins-first.md`](../../.claude/rules/openbao-plugins-first.md).

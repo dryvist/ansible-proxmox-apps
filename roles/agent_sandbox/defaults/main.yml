@@ -52,9 +52,12 @@ agent_sandbox_proxy_port: 3128
 
 # Always-on authenticated ZCode Web service. The published GHCR manifest is
 # pinned here; update it only with the digest produced by the image workflow.
+# Disabling it removes the service, its secret group and its credential-file
+# requirement, so the egress boundary and the dispatcher deploy without it.
+agent_sandbox_zcode_web_enabled: true
 agent_sandbox_zcode_web_image: >-
   {{ 'ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
-  ~ '01d9b4496bce8d2794dd5cc83832287c506f120ec3e8a53d6424a3e29f864cb2' }}
+  ~ 'a0d818a658dd93233623ca5523c23bfd0f7b47ec56cb60d9cbc5d05271a01868' }}
 agent_sandbox_zcode_web_container: agent-zcode-web
 # DHCP-leased Docker VMs publish an FQDN as `ip`; bind to this host's IPv4 fact.
 agent_sandbox_zcode_web_bind_address: "{{ ansible_default_ipv4.address }}"
@@ -68,24 +71,53 @@ agent_sandbox_zcode_web_memory_limit: 4g
 agent_sandbox_zcode_web_cpus: "2"
 agent_sandbox_zcode_web_pids_limit: 256
 
-# Optional single-host queue feeder. It shares the immutable job image pin with
-# the Web service; activation requires an explicit repository allowlist and
-# separately provisioned runtime credentials.
-agent_sandbox_zcode_feeder_enabled: false
-agent_sandbox_zcode_feeder_image: "{{ agent_sandbox_zcode_web_image }}"
-agent_sandbox_zcode_feeder_project_id: 55
-agent_sandbox_zcode_feeder_label: zcode
-agent_sandbox_zcode_feeder_repositories: []
-agent_sandbox_zcode_feeder_dir: /var/lib/agent-sandbox/zcode/feeder
-agent_sandbox_zcode_feeder_config_file: /etc/agent-sandbox/zcode-feeder.json
-agent_sandbox_zcode_feeder_env_file: /etc/agent-sandbox/zcode-feeder.env
-agent_sandbox_zcode_dispatcher_env_file: /etc/agent-sandbox/dispatcher.env
+# Host dispatcher (dryvist/nix-agent-sandbox agent-dispatch + dispatch-ssh),
+# installed when dispatch access is enabled. The job image and both sources
+# are pinned to one merged commit, as is the CI resolver source; update them together.
+agent_sandbox_dispatch_image: >-
+  {{ 'ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
+  ~ '2aa22ea32f6715744af3e424818e2b634e43a5d8a6ef07b68c6e50ad9aebcbbd' }}
+agent_sandbox_dispatch_source_commit: 7e2cecd35d9a42456f95e84cfd550de7def52d61
+agent_sandbox_dispatch_sources:
+  - { name: agent-dispatch.sh, sha256: 1a081818afd6012ff2ce4b6bf4b25db8becfc6a79bfad2a54cfdfb960b2ddf84 }
+  - { name: dispatch-ssh.sh, sha256: dccd0f79de8ee392fc0e9c1574b4d362e13d8b2b4d9753d9ab66bef34ad04454 }
+agent_sandbox_dispatch_stage_prefix: "/tmp/agent-sandbox-{{ agent_sandbox_dispatch_source_commit[:8] }}-"
+agent_sandbox_dispatch_dispatcher: /usr/local/bin/agent-dispatch
+agent_sandbox_dispatch_state_dir: /var/lib/agent-dispatch
 agent_sandbox_dispatch_alert_env_file: /etc/agent-sandbox/dispatcher-alert/dispatcher-alert.env
-agent_sandbox_zcode_feeder_dispatch_state_dir: /var/lib/agent-dispatch
-agent_sandbox_zcode_feeder_dispatcher: /usr/local/bin/agent-dispatch
-agent_sandbox_zcode_feeder_source_commit: dfea2a833cec02f9b96b284c26dc0cf997ba8789
-agent_sandbox_zcode_feeder_source_sha256: 3b18e8ed82dbc3768f25445c7f1ecdcbb1b63a5398fcf5e494695fb87a69b12d
-agent_sandbox_zcode_feeder_stage_file: /tmp/agent-sandbox-agent-dispatch-dfea2a83.sh
+agent_sandbox_dispatch_bao_addr: "https://openbao.{{ ingress_domain }}"
+agent_sandbox_router_host: "llm.{{ ingress_domain }}"
+agent_sandbox_dispatch_router_base_url: "https://{{ agent_sandbox_router_host }}/v1"
+# Vikunja project that receives each job's fixed-format result (AI Jobs).
+agent_sandbox_dispatch_vikunja_project: 55
+
+# CI resolver (dryvist/nix-agent-sandbox scripts/ci-resolver.py).
+agent_sandbox_ci_resolver_enabled: false
+# The resolver's own GitHub App ID; required when enabled.
+agent_sandbox_ci_resolver_app_id: ""
+agent_sandbox_ci_resolver_source_commit: "{{ agent_sandbox_dispatch_source_commit }}"
+agent_sandbox_ci_resolver_source_sha256: ce53312c38d9552ffab68a6402c00967af9985089291db66d98660288e4478c8
+agent_sandbox_ci_resolver_stage_file: >-
+  /tmp/agent-sandbox-ci-resolver-{{ agent_sandbox_ci_resolver_source_commit[:8] }}.py
+agent_sandbox_ci_resolver_script: /usr/local/lib/agent-sandbox/ci-resolver.py
+agent_sandbox_ci_resolver_secret_helper: /usr/local/lib/agent-sandbox/ci-resolver-secret
+agent_sandbox_ci_resolver_env_file: /etc/agent-sandbox/ci-resolver.env
+agent_sandbox_ci_resolver_approle_dir: /etc/agent-dispatch/approle
+agent_sandbox_ci_resolver_github_mount: github-agents
+agent_sandbox_ci_resolver_secret_path: secret/data/apps/open-llm
+agent_sandbox_ci_resolver_state_dir: /var/lib/ci-resolver
+agent_sandbox_ci_resolver_checkout_dir: "{{ agent_sandbox_ci_resolver_state_dir }}/prompts"
+agent_sandbox_ci_resolver_workbook_dir: >-
+  {{ agent_sandbox_ci_resolver_checkout_dir }}/automation/ci-workbook
+agent_sandbox_ci_resolver_org: dryvist
+agent_sandbox_ci_resolver_token_repo: "{{ agent_sandbox_ci_resolver_org }}/.github"
+agent_sandbox_ci_resolver_repos: []
+agent_sandbox_ci_resolver_max_attempts: 3
+agent_sandbox_ci_resolver_shadow: true
+agent_sandbox_ci_resolver_vikunja_project: 44
+agent_sandbox_ci_resolver_vikunja_url: "https://vikunja.{{ ingress_domain }}"
+agent_sandbox_ci_resolver_zammad_group: Homelab Infrastructure
+agent_sandbox_ci_resolver_zammad_url: "https://zammad.{{ ingress_domain }}"
 
 # The only forwarded path into the agent bridge is the SSO proxy's published
 # Web connection. Read addresses from the loaded inventory artifact on
@@ -139,7 +171,8 @@ agent_sandbox_egress_domains:
   cursorAgent:
     - .cursor.sh
     - .cursorapi.com
-  internal: []
+  internal:
+    - "{{ agent_sandbox_router_host }}"
 
 # --- Session-log shipping (Phase D) ------------------------------------------
 # nix-agent-sandbox `agent run --host` bind-mounts each run's per-CLI session-log

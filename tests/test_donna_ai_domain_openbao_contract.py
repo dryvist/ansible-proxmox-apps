@@ -4,14 +4,11 @@ from pathlib import Path
 
 import yaml
 
+from secrets_collection_support import read_secrets_role
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DATA_PATH = 'path "{{ openbao_kv_mount }}/data/ai/donna"'
 CANONICAL_METADATA_PATH = 'path "{{ openbao_kv_mount }}/metadata/ai/donna"'
-
-
-def _read(relative_path: str) -> str:
-    return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
 def _read_role_defaults(role: str) -> dict:
@@ -28,7 +25,7 @@ def _read_role_defaults(role: str) -> dict:
 
 
 def test_ansible_converge_owns_the_exact_donna_publisher_path():
-    policy = _read("roles/openbao/templates/ansible-converge-policy.hcl.j2")
+    policy = read_secrets_role("openbao/templates/ansible-converge-policy.hcl.j2")
 
     data_grant: str = (
         f'{CANONICAL_DATA_PATH} {{\n'
@@ -55,7 +52,7 @@ def test_donna_bridge_identity_publishes_to_its_own_domain():
 def test_ai_donna_reader_policy_cannot_read_ai_hermes():
     # ai-donna is donna's OWN read-only AppRole (secret/ai/donna) — it must
     # never also see the hermes agent's shared credential bundle.
-    policy = _read("roles/openbao/templates/ai-donna-policy.hcl.j2")
+    policy = read_secrets_role("openbao/templates/ai-donna-policy.hcl.j2")
 
     assert 'path "{{ openbao_kv_mount }}/data/ai/donna"' in policy
     assert "ai/hermes" not in policy

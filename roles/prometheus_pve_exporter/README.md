@@ -28,7 +28,7 @@ Not created by this role. ansible-proxmox's `pve_api_tokens` role creates a
 dedicated `pve-exporter@pve` user holding `PVEAuditor` at `/`, mints its token,
 and publishes `pve_exporter_token_id` (`user@realm!tokenname`) and
 `pve_exporter_token_secret` to `secret/apps/pve-exporter`. This repo reads that
-path through `roles/openbao_secrets` (`apps` → `apps/pve-exporter`, optional).
+path through `dryvist.secrets_management/roles/openbao_secrets` (`apps` → `apps/pve-exporter`, optional).
 Until it exists, both values are empty and this role no-ops.
 
 ## Where It Runs

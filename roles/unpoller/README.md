@@ -42,7 +42,7 @@ controller API independently.
   read-only role) — the same way the provider's own bootstrap admin exists.
   Only the **password** is automated: generated once into OpenBao
   (`secret/apps/unpoller`, field `unpoller_controller_password` —
-  `roles/openbao/defaults/main/01c-app-secrets-generated.yml`) and read here
+  `dryvist.secrets_management/roles/openbao/defaults/main/01c-app-secrets-generated.yml`) and read here
   from the apps-domain OpenBao prefetch only (no env fallback).
 
 ## Key variables

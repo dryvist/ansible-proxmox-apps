@@ -12,7 +12,7 @@ add it back, and the value they needed was sitting in a different store the
 message never mentioned. The message did not merely go stale -- it actively
 pointed away from the fix.
 
-Scope note: `roles/openbao` is exempt because the store is its PAYLOAD. A role
+Scope note: `dryvist.secrets_management/roles/openbao` is exempt because the store is its PAYLOAD. A role
 that deploys a thing must be able to name the thing it deploys. This rule is
 about where a role tells you to PUT A CREDENTIAL, not about what it installs.
 """

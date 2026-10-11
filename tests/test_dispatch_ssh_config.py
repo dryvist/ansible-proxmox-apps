@@ -41,7 +41,7 @@ class DispatcherSSHConfigTest(unittest.TestCase):
             for option, expected in {
                 "forcecommand": "/usr/local/bin/agent-dispatch-ssh-with-alert",
                 "disableforwarding": "yes",
-                "permittty": "no",
+                "permittty": "yes",
                 "permituserrc": "no",
                 "authenticationmethods": "publickey",
                 "passwordauthentication": "no",

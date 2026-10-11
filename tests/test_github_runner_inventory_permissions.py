@@ -47,3 +47,18 @@ def test_inventory_copy_matches_the_runtime_runner_identity():
     assert copy["group"] == "{{ github_runner_container_gid }}"
     assert copy["mode"] == "0400"
     assert tasks[inventory_index]["no_log"] is True
+
+
+def test_diag_directories_follow_the_runner_identity_recursively():
+    """Subdirectories written under an earlier identity must be re-owned."""
+    tasks = yaml.safe_load(TASKS_FILE.read_text(encoding="utf-8"))
+    names = [task.get("name") for task in tasks]
+    user_index = names.index("Set the Docker user fact from the image identity")
+    diag_index = names.index("Create the runner diagnostics directories")
+
+    assert user_index < diag_index
+    diag = tasks[diag_index]["ansible.builtin.file"]
+    assert diag["recurse"] is True
+    assert diag["owner"] == "{{ github_runner_container_uid }}"
+    assert diag["group"] == "{{ github_runner_container_gid }}"
+    assert "X" in diag["mode"] and "x" not in diag["mode"]

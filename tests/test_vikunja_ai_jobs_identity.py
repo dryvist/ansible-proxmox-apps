@@ -18,6 +18,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 from vikunja_hermes_task_support import PUBLISH_TASK, ROOT, defaults, find
+from secrets_collection_support import SECRETS_ROLES
 
 ROLE = ROOT / "roles/vikunja"
 
@@ -122,7 +123,7 @@ def test_the_token_lands_in_its_own_field_of_the_open_llm_bucket():
 
 def test_the_login_password_is_generated_with_the_apps_secrets():
     merged: dict = {}
-    for path in sorted((ROOT / "roles/openbao/defaults/main").glob("*.yml")):
+    for path in sorted((SECRETS_ROLES / "openbao/defaults/main").glob("*.yml")):
         merged.update(_yaml(path) or {})
     assert f"{_identity()['username']}_login_password" in merged["openbao_generated_app_secrets"]["vikunja"]
 

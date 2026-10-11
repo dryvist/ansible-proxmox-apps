@@ -67,12 +67,14 @@
   ansible.builtin.group:
     name: "{{ agent_sandbox_zcode_web_secret_group }}"
     system: true
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Read the private ZCode service secret-reader group
   ansible.builtin.getent:
     database: group
     key: "{{ agent_sandbox_zcode_web_secret_group }}"
   register: _agent_sandbox_zcode_secret_group
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Require the ZCode service secret-reader group to have no host members
   vars:
@@ -86,6 +88,7 @@
     fail_msg: >-
       {{ agent_sandbox_zcode_web_secret_group }} must remain empty on the host;
       only the ZCode service container receives it as a supplemental GID.
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Set the ZCode service container's supplemental secret group
   vars:
@@ -94,6 +97,7 @@
   ansible.builtin.set_fact:
     agent_sandbox_zcode_web_secret_gid: >-
       {{ _zcode_secret_group_facts[_zcode_secret_group_name][1] }}
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Create persistent ZCode Web data directory
   ansible.builtin.file:
@@ -102,6 +106,7 @@
     owner: "1000"
     group: "1000"
     mode: "0700"
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Create persistent ZCode Web workspace directory
   ansible.builtin.file:
@@ -110,6 +115,7 @@
     owner: "1000"
     group: "1000"
     mode: "0700"
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Deploy squid configuration
   ansible.builtin.template:
@@ -254,6 +260,7 @@
   ansible.builtin.stat:
     path: "{{ agent_sandbox_zcode_web_env_file }}"
   register: _agent_sandbox_zcode_service_env
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Require the ZCode service credential file to use the private secret group
   ansible.builtin.assert:
@@ -267,12 +274,11 @@
       {{ agent_sandbox_zcode_web_env_file }} must be provisioned separately
       as a root:{{ agent_sandbox_zcode_web_secret_group }} mode 0440 file
       containing only the ZCode Web service credentials. This role does not
-      deliver credentials.
+      deliver credentials. Set agent_sandbox_zcode_web_enabled to false to
+      deploy the boundary and the dispatcher without the Web service.
+  when: agent_sandbox_zcode_web_enabled | bool
 
 - name: Deploy agent sandbox networks and proxy via docker compose
   community.docker.docker_compose_v2:
     project_src: "{{ agent_sandbox_dir }}"
     state: present
-
-- name: Configure the optional ZCode queue feeder
-  ansible.builtin.include_tasks: main/zcode_feeder.yml

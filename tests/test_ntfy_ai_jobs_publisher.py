@@ -17,6 +17,8 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 NTFY = ROOT / "roles/ntfy_docker"
 USER = "ai-jobs-publisher"
@@ -89,6 +91,11 @@ def _template(name: str, **variables) -> str:
 
 def test_the_gate_defaults_off():
     assert _defaults()["ntfy_docker_ai_jobs_enabled"] is False
+
+
+def test_the_ntfy_hosts_turn_the_gate_on():
+    group_vars = _yaml(ROOT / "inventory/group_vars/ntfy_group.yml")
+    assert group_vars["ntfy_docker_ai_jobs_enabled"] is True
 
 
 def test_server_config_is_unchanged_with_the_gate_off():
@@ -242,7 +249,7 @@ def test_the_token_is_resolved_from_the_creation_or_the_listing():
 def test_only_the_token_is_published_to_the_open_llm_bucket():
     task = _task("Publish the access token to OpenBao")
     assert task["ansible.builtin.include_role"] == {
-        "name": "openbao_secrets",
+        "name": "dryvist.secrets_management.openbao_secrets",
         "tasks_from": "publish.yml",
     }
     assert task["vars"]["openbao_secrets_publish_app"] == "open-llm"
@@ -253,7 +260,7 @@ def test_only_the_token_is_published_to_the_open_llm_bucket():
 
 
 def _bucket_defaults() -> dict:
-    return _yaml(ROOT / "roles/openbao/defaults/main/01b-app-secrets.yml")
+    return _yaml(SECRETS_ROLES / "openbao/defaults/main/01b-app-secrets.yml")
 
 
 def test_the_ntfy_url_is_promoted_with_the_open_llm_fields(monkeypatch):
@@ -268,7 +275,7 @@ def test_the_ntfy_url_is_promoted_with_the_open_llm_fields(monkeypatch):
 
 # --- the shared publish is a check-and-set merge --------------------------------
 
-PUBLISH = ROOT / "roles/openbao_secrets/tasks/publish.yml"
+PUBLISH = SECRETS_ROLES / "openbao_secrets/tasks/publish.yml"
 
 
 def _write_task() -> dict:

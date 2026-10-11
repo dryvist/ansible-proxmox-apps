@@ -21,20 +21,25 @@ Adapted from splunk-homelab-alerts/bin/zammad.py's find-or-append pattern
 urllib, non-zero exit on failure.
 
 ponytail: stdlib only, one file, no retry/backoff -- ntfy re-delivers nothing
-on a command failure, which is exactly why the failure counter below exists:
-after NTFY_ZAMMAD_FAILURE_THRESHOLD consecutive failures it pages `keystone`
-directly instead of silently dropping every alert on the floor.
+on a command failure, so a failed message is spooled to the state dir and
+replayed (oldest first, through the same correlation-key dedup) before the
+next message is handled. After NTFY_ZAMMAD_FAILURE_THRESHOLD consecutive
+failures it also pages `keystone` directly.
 """
 
 import json
 import os
 import sys
+import time
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 
 OPEN_STATES = ("new", "open")
+# ponytail: count cap only; the oldest spooled message is dropped (and logged)
+# past it. Add an age cap if a long outage makes stale replays a problem.
+SPOOL_MAX = 200
 
 
 def env(key, default=None):
@@ -136,8 +141,9 @@ def record_failure(state_dir, threshold, ntfy_base, keystone_topic):
     os.makedirs(state_dir, exist_ok=True)
     path = counter_path(state_dir)
     try:
-        n = int(open(path).read().strip() or "0") if os.path.exists(path) else 0
-    except ValueError:
+        with open(path) as f:
+            n = int(f.read().strip() or "0")
+    except (FileNotFoundError, ValueError):
         n = 0
     n += 1
     with open(path, "w") as f:
@@ -155,16 +161,71 @@ def clear_failures(state_dir):
         os.remove(path)
 
 
+# The spool holds the alert payload only (topic, title, message, tags) -- never
+# a credential -- one 0600 JSON file per message, named so a sort is oldest
+# first.
+def spool_dir(state_dir):
+    return os.path.join(state_dir, "spool")
+
+
+def spool_message(state_dir, msg, max_files=SPOOL_MAX):
+    d = spool_dir(state_dir)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    path = os.path.join(d, "%020d-%d.json" % (time.time_ns(), os.getpid()))
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(msg, f)
+    names = sorted(os.listdir(d))
+    for name in names[: max(0, len(names) - max_files)]:
+        os.remove(os.path.join(d, name))
+        sys.stderr.write("WARN spool full (%d); dropped oldest message %s\n" % (max_files, name))
+
+
+def replay_spool(state_dir, handler):
+    """Handle each spooled message oldest first; stop (and keep the rest) at
+    the first failure, which the caller then spools behind."""
+    d = spool_dir(state_dir)
+    if not os.path.isdir(d):
+        return
+    for name in sorted(os.listdir(d)):
+        path = os.path.join(d, name)
+        with open(path) as f:
+            msg = json.load(f)
+        try:
+            handler(msg)
+        except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                raise
+            # A 4xx will fail the same way on every replay; drop it rather
+            # than let one bad payload block the messages behind it.
+            sys.stderr.write("WARN dropped spooled message %s: Zammad HTTP %s\n" % (name, exc.code))
+        os.remove(path)
+
+
+def is_transient(exc):
+    """Zammad unreachable or failing server-side: worth spooling for replay."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
 # ponytail: find_ticket-then-create below is check-then-act -- two ntfy
 # messages on the same topic|title processed concurrently could both miss
 # the existing ticket and each open a duplicate. ntfy runs this hook
 # synchronously per subscriber process, so it needs a real lock only if a
 # topic is ever fanned out to multiple concurrent workers.
-def run():
+def current_message():
     topic = env("NTFY_TOPIC")
-    title = env("NTFY_TITLE") or topic or "ntfy alert"
-    message = env("NTFY_MESSAGE", "")
-    tags = parse_tags(env("NTFY_TAGS", ""))
+    return {
+        "topic": topic,
+        "title": env("NTFY_TITLE") or topic or "ntfy alert",
+        "message": env("NTFY_MESSAGE", ""),
+        "tags": parse_tags(env("NTFY_TAGS", "")),
+    }
+
+
+def handle(msg):
+    topic, title, message, tags = msg["topic"], msg["title"], msg["message"], msg["tags"]
 
     if should_skip(tags):
         return
@@ -230,7 +291,7 @@ def selftest():
     assert first_ticket([]) is None
     assert first_ticket({}) is None
     assert first_ticket({"tickets": []}) is None
-    assert first_ticket([{"id": 7, "title": "t"}])["id"] == 7
+    assert (first_ticket([{"id": 7, "title": "t"}]) or {})["id"] == 7
     assert first_ticket({"tickets": [9], "assets": {}}) == {"id": 9}
     t = new_ticket("fk:ntfy:x:y", "s", "Incidents", {"body": "b"}, 42)
     assert t["customer_id"] == 42 and t["title"] == "fk:ntfy:x:y — s"
@@ -273,12 +334,17 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
         sys.exit(0)
+    _state_dir = env("NTFY_ZAMMAD_STATE_DIR", "/var/lib/ntfy-zammad")
+    _msg = current_message()
     try:
-        run()
+        replay_spool(_state_dir, handle)
+        handle(_msg)
     except urllib.error.HTTPError as exc:
         sys.stderr.write(
             "ERROR Zammad HTTP %s %s: %s\n" % (exc.code, exc.url, exc.read().decode()[:500])
         )
+        if is_transient(exc) and not should_skip(_msg["tags"]):
+            spool_message(_state_dir, _msg)
         record_failure(
             env("NTFY_ZAMMAD_STATE_DIR", "/var/lib/ntfy-zammad"),
             int(env("NTFY_ZAMMAD_FAILURE_THRESHOLD", "3")),
@@ -293,6 +359,8 @@ if __name__ == "__main__":
             "ERROR %s: %s (topic=%s title=%s)\n%s"
             % (type(exc).__name__, exc, env("NTFY_TOPIC"), env("NTFY_TITLE"), traceback.format_exc())
         )
+        if is_transient(exc) and not should_skip(_msg["tags"]):
+            spool_message(_state_dir, _msg)
         record_failure(
             env("NTFY_ZAMMAD_STATE_DIR", "/var/lib/ntfy-zammad"),
             int(env("NTFY_ZAMMAD_FAILURE_THRESHOLD", "3")),

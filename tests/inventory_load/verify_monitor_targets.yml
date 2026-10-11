@@ -1,0 +1,98 @@
+---
+# monitor_targets contract. Runs the real generator on an in-memory vms map
+# covering each branch: a DHCP-first guest is probed by the DNS name its
+# published ip carries, a static guest by hostname.<domain>, and the Hindsight
+# and Cribl health targets use the path and port the live services answer on.
+# The real tofu_data and monitor_targets are restored afterwards.
+
+- name: Save the real tofu_data and monitor_targets
+  ansible.builtin.set_fact:
+    _mt_saved_tofu_data: "{{ tofu_data }}"
+    _mt_saved_targets: "{{ monitor_targets | default({}) }}"
+
+- name: Replace vms with in-memory guests covering each branch
+  ansible.builtin.set_fact:
+    tofu_data: "{{ tofu_data | combine({'vms': _mt_vms}) }}"
+  vars:
+    _mt_vms:
+      mt-dhcp-guest:
+        hostname: mt-dhcp
+        ip: "mt-dhcp.mt-vlan.{{ tofu_data.domain }}"
+        tags: [terraform, vm]
+      mt-static-guest:
+        hostname: mt-static
+        ip: 192.0.2.10
+        tags: [terraform, vm]
+      mt-hindsight:
+        hostname: mt-hindsight
+        ip: 192.0.2.11
+        tags: [terraform, vm, hindsight]
+      mt-cribl-stream:
+        hostname: mt-cribl-stream
+        ip: 192.0.2.12
+        tags: [terraform, vm, cribl, stream]
+      mt-cribl-edge:
+        hostname: mt-cribl-edge
+        ip: 192.0.2.13
+        tags: [terraform, vm, cribl, edge]
+
+- name: Reset the monitor_targets accumulators before the generator runs
+  ansible.builtin.set_fact:
+    monitor_targets_icmp: []
+    monitor_targets_tcp: []
+    monitor_targets_http: []
+
+- name: Run the monitor_targets generator on the in-memory guests
+  ansible.builtin.include_tasks: ../../inventory/load_tofu/monitor_targets.yml
+
+- name: Assert a DHCP-first guest is probed by the DNS name its ip publishes
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.icmp | selectattr('name', 'equalto', 'mt-dhcp-guest')
+         | map(attribute='fqdn') | list)
+        == ['mt-dhcp.mt-vlan.' ~ tofu_data.domain]
+    fail_msg: >-
+      monitor_targets must probe a DHCP-first guest by the name its ip publishes,
+      not hostname.<domain>, which omits the VLAN subdomain.
+
+- name: Assert a static guest keeps the hostname-derived probe name
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.icmp | selectattr('name', 'equalto', 'mt-static-guest')
+         | map(attribute='fqdn') | list)
+        == ['mt-static.' ~ tofu_data.domain]
+    fail_msg: A static guest (IPv4 ip) must keep hostname.<domain> as its probe name.
+
+- name: Assert the Hindsight replica health path is /health
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'mt-hindsight-health')
+         | map(attribute='path') | list)
+        == ['/health']
+    fail_msg: The Hindsight replica health target must probe /health (/health/ready is 404 live).
+
+- name: Assert the Cribl Stream health target uses the native API port
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'mt-cribl-stream-health')
+         | map(attribute='port') | list)
+        == [9000]
+    fail_msg: The Cribl Stream health target must use the native API port the stream guests answer on.
+
+- name: Assert the Cribl Edge health target uses the Cribl Edge API port
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'mt-cribl-edge-health')
+         | map(attribute='port') | list)
+        == [9420]
+    fail_msg: The Cribl Edge health target must use the Cribl Edge API port the edge guests answer on.
+
+- name: Restore the real tofu_data and monitor_targets
+  ansible.builtin.set_fact:
+    tofu_data: "{{ _mt_saved_tofu_data }}"
+    monitor_targets: "{{ _mt_saved_targets }}"

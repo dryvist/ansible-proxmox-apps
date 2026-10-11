@@ -21,20 +21,23 @@
       {{ tofu_data.constants.service_ports.openbao_api
          | mandatory('tofu_data.constants.service_ports.openbao_api missing — regenerate the published inventory') }}
     monitor_targets_openbao_health_path: "/v1/sys/health?standbyok=true&perfstandbyok=true"
-    # cribl_docker_stack_* role defaults are out of scope here (same as the
-    # OpenBao var above) but these are genuinely static product ports, not
-    # tofu-managed — the literal is the always-correct source of truth per
-    # roles/cribl_docker_stack/defaults/main.yml:72-73, so no mandatory()/
-    # tofu_data lookup applies.
-    monitor_targets_cribl_edge_port: 9000
-    monitor_targets_cribl_stream_port: 9100
+    # Static product ports, not tofu-managed, so no mandatory()/tofu_data lookup
+    # applies. The edge guests answer on the Cribl Edge API port, the container
+    # target of the edge service in roles/cribl_docker_stack/templates/docker-stack.yml.j2.
+    # The stream guests run the native Cribl install, whose API/UI port is
+    # cribl_stream_api_url in roles/cribl_stream/defaults/main/00-install.yml.
+    # roles/cribl_docker_stack is a testing-only swarm stack with its own host
+    # publish port; it does not run on these guests.
+    monitor_targets_cribl_edge_port: 9420
+    monitor_targets_cribl_stream_port: 9000
     monitor_targets_cribl_health_path: "/api/v1/health"
     monitor_targets_splunk_mgmt_port: 8089
     monitor_targets_splunk_hec_port: 8088
     monitor_targets_hindsight_port: >-
       {{ tofu_data.constants.memory_ports.hindsight_api
          | mandatory('tofu_data.constants.memory_ports.hindsight_api missing — regenerate the published inventory') }}
-    monitor_targets_hindsight_health_path: "/health/ready"
+    # /health/ready answers 404 on the live replicas; /health answers 200.
+    monitor_targets_hindsight_health_path: "/health"
 
 - name: Combine every guest dict for ICMP/service monitoring
   ansible.builtin.set_fact:
@@ -44,12 +47,19 @@
          | combine(tofu_data.docker_vms | default({}))
          | combine(tofu_data.splunk_vm | default({})) }}
 
+# A DHCP-first guest's published ip is its DNS name (hostname.<vlan domain>),
+# which can be a different name from hostname.<domain>: the VLAN subdomain is
+# only in ip, and the inventory key and hostname can differ from the DNS label.
+# Probe that published name. A static guest's ip is an IPv4 address, so it
+# keeps the hostname-derived name.
 - name: Build ICMP targets — every guest
   ansible.builtin.set_fact:
     monitor_targets_icmp: >-
       {{ monitor_targets_icmp | default([]) + [{
            'name': item.key,
-           'fqdn': item.value.hostname ~ '.' ~ tofu_data.domain,
+           'fqdn': (item.value.ip
+                    if (item.value.ip | default('')) is match('^[a-z][a-z0-9-]*([.][a-z0-9-]+)+$')
+                    else item.value.hostname ~ '.' ~ tofu_data.domain),
            'group': 'guest',
          }] }}
   loop: "{{ monitor_targets_guests | dict2items }}"
@@ -132,7 +142,7 @@
     - "'cribl' in (item.value.tags | default([]))"
     - "'edge' in (item.value.tags | default([])) or 'stream' in (item.value.tags | default([]))"
 
-- name: Build HTTP health targets — Hindsight replicas (per-replica /health/ready)
+- name: Build HTTP health targets — Hindsight replicas (per-replica /health)
   ansible.builtin.set_fact:
     monitor_targets_http: >-
       {{ monitor_targets_http | default([]) + [{

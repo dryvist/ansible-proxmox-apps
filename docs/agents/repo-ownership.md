@@ -13,7 +13,7 @@
   -> Cribl Edge -> Splunk `os` index; the pipeline (Cribl) and LB (HAProxy) LXCs
   are excluded to avoid feedback loops)
 - **Technitium DNS** (LXC container)
-- **Authelia SSO** (`authelia` role — criticality-1 core service: passkey-first
+- **Authelia SSO** (`authelia` role in `dryvist.secrets_management` — criticality-1 core service: passkey-first
   portal + Traefik forwardAuth gate on every `sso`-flagged ingress route;
   native binary on a mgmt-VLAN LXC, local SQLite state. All its secrets are
   generated-at-source on the guest)

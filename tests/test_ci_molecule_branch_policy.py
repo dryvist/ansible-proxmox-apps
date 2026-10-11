@@ -1,6 +1,7 @@
 """Exercise the caller's matrix and gate with sanitized GitHub event metadata."""
 
 from copy import deepcopy
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -116,8 +117,10 @@ class MoleculeBranchPolicy(unittest.TestCase):
 
     def test_policy_test_and_fixture_are_covered_by_the_contract_classifier(self):
         filters = self.workflow["jobs"]["ci"]["with"]["molecule_contract_filters"]
-        self.assertIn("tests/test_ci_molecule_branch_policy.py", filters)
-        self.assertIn("tests/ci_molecule_branch_policy/**", filters)
+        patterns = yaml.safe_load(filters)["contract_only"]
+        for path in ("tests/test_ci_molecule_branch_policy.py",
+                     "tests/ci_molecule_branch_policy/fixture.yml"):
+            self.assertTrue(any(fnmatch.fnmatch(path, p.replace("**", "*")) for p in patterns), path)
 
 
 if __name__ == "__main__":

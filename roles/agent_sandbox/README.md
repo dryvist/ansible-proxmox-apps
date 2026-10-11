@@ -62,33 +62,27 @@ owned by OpenTofu's ingress table, which also supplies Traefik and DNS.
 (the source of truth). Regenerate after upstream changes:
 
 ```sh
-nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
+nix eval "github:dryvist/nix-agent-sandbox?ref=vN#lib.egressDomains" --json
 ```
 
 The host dispatcher completes host-side setup before creating an agent
-container. Those host-only endpoints are not part of the container-facing
-squid allowlist.
+container. OpenBao remains host-only; the router endpoint used by container
+profiles is included in the squid allowlist.
 
 The ZCode service mounts its credential file read-only. This role manages and
 validates the mount boundary; credential values remain outside the repository.
 
-## Optional ZCode queue feeder
+## Host dispatcher
 
-The host queue feeder is disabled by default. When enabled, it accepts only
-unfinished tasks with the `zcode` label and a schema-1 JSON manifest declaring
-`tool: zcode`, `kind: coding` or `review`, `sensitive: false`, an approved
-`owner/repository`, and a bounded non-empty prompt. The repository allowlist
-must be set explicitly; an empty or invalid manifest never starts a job.
-
-The feeder assigns the selected task, writes a durable launch record before
-starting the pinned host dispatcher, and serializes polls with a local lock. A
-launch interrupted before its job id is recorded is marked for manual
-reconciliation and is never started a second time automatically. Terminal
-results are added to the original task as the six-line job/tool/repo/state/PR/
-duration comment. Existing comments are checked after a lost response, so a
-retry does not post a duplicate; the task is closed only after the comment is
-confirmed. The dispatcher creates draft PRs; this feeder does not merge them.
-Its job image uses the same immutable digest as the Web service.
+With `agent_sandbox_dispatch_access_enabled`, the role installs the dispatcher
+(`agent-dispatch`) and its SSH entry point (`agent-dispatch-ssh`) from one
+pinned nix-agent-sandbox commit, each checked against its SHA-256. It also
+installs the task profiles baked into the pinned job image and a root-owned
+profile with the job image, the OpenBao address, the router endpoint and the
+results project. The `agent-dispatch` account accepts only keys listed in
+`agent_sandbox_dispatch_authorized_keys`, each restricted to the forced
+command. A terminal session (`ssh -t`, verb `tty`) gets a PTY; nothing else
+does.
 
 ## Session-log shipping
 
@@ -143,3 +137,18 @@ The probe does not alter the nftables rules. It attaches one throwaway test
 container to both sandbox networks, routes one external packet through the
 `agents` bridge, checks that the packet fails and the matching drop counter
 increases, then removes the container.
+
+## CI resolver
+
+When `agent_sandbox_ci_resolver_enabled` is true, `ci-resolver.service` checks
+failed CI runs and sends eligible fixes to the host dispatcher. An hourly timer
+refreshes the workbook checkout, and a daily timer learns from completed fixes
+and opens a workbook pull request. The feature is off by default and starts in
+shadow mode.
+
+Set `agent_sandbox_ci_resolver_app_id` to the resolver's GitHub App ID. Configure
+it further with `agent_sandbox_ci_resolver_repos`,
+`agent_sandbox_ci_resolver_max_attempts`,
+`agent_sandbox_ci_resolver_shadow`,
+`agent_sandbox_ci_resolver_vikunja_project`, and
+`agent_sandbox_ci_resolver_zammad_group`.

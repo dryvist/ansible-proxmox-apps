@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from secrets_collection_support import SECRETS_ROLES
+
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD_TASK = ROOT / "roles/vikunja/tasks/hermes_bridge_password_one.yml"
 
@@ -23,7 +25,7 @@ def _vikunja_identities() -> list[str]:
 
 def _generated_vikunja_fields() -> list[str]:
     merged: dict = {}
-    for path in sorted((ROOT / "roles/openbao/defaults/main").glob("*.yml")):
+    for path in sorted((SECRETS_ROLES / "openbao/defaults/main").glob("*.yml")):
         merged.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     return merged["openbao_generated_app_secrets"]["vikunja"]
 

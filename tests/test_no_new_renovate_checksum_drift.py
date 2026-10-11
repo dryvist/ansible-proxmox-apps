@@ -10,7 +10,7 @@ with no signal until something tries to run it.
 
 This broke authelia in 2026-09: Renovate bumped authelia_version 4.39.22 ->
 4.39.27 and left `authelia_release_tgz_sha256` pointing at the old tarball's
-hash. The fix (roles/authelia/tasks/main.yml) reads the expected hash from
+hash. The fix (dryvist.secrets_management/roles/authelia/tasks/main.yml) reads the expected hash from
 Authelia's own signed release manifest at converge time instead of freezing
 one in defaults -- the manifest can't go stale because it always describes
 the version currently being downloaded.
@@ -70,7 +70,7 @@ class NoNewRenovateChecksumDrift(unittest.TestCase):
             "moment the version moves (this is what broke authelia in "
             "2026-09). Verify the checksum from the vendor's own signed "
             "release manifest at converge time instead -- see "
-            "roles/authelia/tasks/main.yml for the pattern."
+            "dryvist.secrets_management/roles/authelia/tasks/main.yml for the pattern."
             % sorted(new_hits),
         )
 

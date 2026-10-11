@@ -1,0 +1,185 @@
+---
+- name: Inspect CI resolver units when the feature is disabled
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop:
+    - ci-resolver.service
+    - ci-resolver-workbook.service
+    - ci-resolver-workbook.timer
+    - ci-resolver-learn.service
+    - ci-resolver-learn.timer
+  register: _agent_sandbox_ci_resolver_units
+  when: not (agent_sandbox_ci_resolver_enabled | bool)
+
+- name: Stop and disable installed CI resolver units
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ _agent_sandbox_ci_resolver_units.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - not (agent_sandbox_ci_resolver_enabled | bool)
+    - item.stat.exists
+
+- name: Remove CI resolver files and workbook checkout when disabled
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/ci-resolver.service
+    - /etc/systemd/system/ci-resolver-workbook.service
+    - /etc/systemd/system/ci-resolver-workbook.timer
+    - /etc/systemd/system/ci-resolver-learn.service
+    - /etc/systemd/system/ci-resolver-learn.timer
+    - "{{ agent_sandbox_ci_resolver_env_file }}"
+    - "{{ agent_sandbox_ci_resolver_script }}"
+    - "{{ agent_sandbox_ci_resolver_secret_helper }}"
+    - "{{ agent_sandbox_ci_resolver_checkout_dir }}"
+  notify: Reload systemd daemon
+  when: not (agent_sandbox_ci_resolver_enabled | bool)
+
+- name: Validate CI resolver prerequisites
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_dispatch_access_enabled | bool
+      - agent_sandbox_dispatch_user != 'root'
+      - agent_sandbox_ci_resolver_app_id | string is match('^[0-9]+$')
+      - agent_sandbox_ci_resolver_max_attempts | int > 0
+      - agent_sandbox_ci_resolver_repos is not string
+      - >-
+        agent_sandbox_ci_resolver_repos
+        | reject('match', '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')
+        | list | length == 0
+    fail_msg: >-
+      CI resolver requires dispatcher access, a non-root dispatcher user,
+      a numeric GitHub App ID, a positive attempt limit, and valid
+      owner/repo entries.
+    quiet: true
+  when: agent_sandbox_ci_resolver_enabled | bool
+
+- name: Install CI resolver
+  when: agent_sandbox_ci_resolver_enabled | bool
+  block:
+    - name: Install the Python 3 runtime for CI resolver
+      ansible.builtin.apt:
+        name: python3
+        state: present
+
+    - name: Fetch the pinned CI resolver source on the controller
+      ansible.builtin.get_url:
+        url: >-
+          {{ 'https://raw.githubusercontent.com/dryvist/nix-agent-sandbox/'
+             ~ agent_sandbox_ci_resolver_source_commit
+             ~ '/scripts/ci-resolver.py' }}
+        dest: "{{ agent_sandbox_ci_resolver_stage_file }}"
+        checksum: "sha256:{{ agent_sandbox_ci_resolver_source_sha256 }}"
+        mode: "0644"
+      delegate_to: localhost
+      connection: local
+      become: false
+      run_once: true
+      vars:
+        ansible_become: false
+
+    - name: Create the CI resolver library directory
+      ansible.builtin.file:
+        path: /usr/local/lib/agent-sandbox
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the pinned CI resolver source
+      ansible.builtin.copy:
+        src: "{{ agent_sandbox_ci_resolver_stage_file }}"
+        dest: "{{ agent_sandbox_ci_resolver_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart CI resolver
+
+    - name: Install the CI resolver secret helper
+      ansible.builtin.template:
+        src: ci-resolver-secret.sh.j2
+        dest: "{{ agent_sandbox_ci_resolver_secret_helper }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create the CI resolver configuration directory
+      ansible.builtin.file:
+        path: "{{ agent_sandbox_ci_resolver_env_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the CI resolver environment file
+      ansible.builtin.template:
+        src: ci-resolver.env.j2
+        dest: "{{ agent_sandbox_ci_resolver_env_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart CI resolver
+
+    - name: Create the CI resolver state directory
+      ansible.builtin.file:
+        path: "{{ agent_sandbox_ci_resolver_state_dir }}"
+        state: directory
+        owner: "{{ agent_sandbox_dispatch_user }}"
+        group: "{{ agent_sandbox_dispatch_user }}"
+        mode: "0750"
+
+    - name: Clone the CI resolver workbook as the dispatcher user
+      ansible.builtin.git:
+        repo: https://github.com/dryvist/ai-llm-prompts.git
+        dest: "{{ agent_sandbox_ci_resolver_checkout_dir }}"
+        version: main
+        depth: 1
+        update: false
+      become: true
+      become_user: "{{ agent_sandbox_dispatch_user }}"
+
+    - name: Install the CI resolver service and timers
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "/etc/systemd/system/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - { src: ci-resolver.service.j2, dest: ci-resolver.service }
+        - { src: ci-resolver-workbook.service.j2, dest: ci-resolver-workbook.service }
+        - { src: ci-resolver-workbook.timer.j2, dest: ci-resolver-workbook.timer }
+        - { src: ci-resolver-learn.service.j2, dest: ci-resolver-learn.service }
+        - { src: ci-resolver-learn.timer.j2, dest: ci-resolver-learn.timer }
+      loop_control:
+        label: "{{ item.dest }}"
+      notify:
+        - Reload systemd daemon
+        - Restart CI resolver
+
+    - name: Enable CI resolver and its workbook timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop:
+        - ci-resolver.service
+        - ci-resolver-workbook.timer
+        - ci-resolver-learn.timer
+
+    - name: Remove the CI resolver source staging file from the controller
+      ansible.builtin.file:
+        path: "{{ agent_sandbox_ci_resolver_stage_file }}"
+        state: absent
+      delegate_to: localhost
+      connection: local
+      become: false
+      run_once: true
+      vars:
+        ansible_become: false

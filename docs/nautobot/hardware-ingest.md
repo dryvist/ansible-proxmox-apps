@@ -51,9 +51,13 @@ report; the job's dry-run flag covers the "what would this change" case.
 | --- | --- |
 | Chassis category, location is a bin | `Device`, named by its hardware ID |
 | Chassis category, location names a host | left alone — the rack-server seed owns that Device |
-| Component, location names an existing Device | `Module` in a `ModuleBay` on it, `location` cleared |
+| Component, location names an existing Device with no discovered drives | `Module` in a `ModuleBay` on it, `location` cleared |
+| Drive (SSD, HDD, NVMe), location names a Device with discovered drives | no `Module`; its stale bay Module is deleted, with a warning |
 | Component, location is a bin | `Module` at that `Location`, no parent bay |
 | Component naming a Device that does not exist | `Module` at the stated location, **with a warning** |
+
+A row with quantity N creates N Modules tagged `<hardware ID>#1` to `#N`, each
+in its own bay when installed. Quantity one keeps the plain hardware ID.
 
 The last row is the one worth stating plainly: the job never creates a
 placeholder chassis to hang an orphan component off. An invented Device is
@@ -83,12 +87,12 @@ per-device interface inventory exists yet. Creating interfaces purely to hang
 cables on would fabricate the very data the model is supposed to record. Cables
 become possible once interface data exists — not before.
 
-## Additive, like every other seed
+## Source rows do not own unrelated objects
 
-Nothing in this path deletes. A row that disappears from the source leaves its
-Nautobot object alone, because Device Onboarding, another seed job, or a human
-may own it. Removing hardware from Nautobot is a deliberate act, not a
-side effect of an edit to a markdown table.
+A row that disappears from the source leaves its Nautobot object alone, because
+Device Onboarding, another seed job, or a human may own it. This job deletes
+only its own surplus Modules when a row quantity drops, and its own drive
+Modules in bays on Devices that report discovered drives.
 
 ## Ordering
 
