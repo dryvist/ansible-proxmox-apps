@@ -140,7 +140,7 @@ def main() -> None:
     # could publish ahead of it.
     unregistered = {n for n in shipped if n.startswith("ssot_")} - set(
         module.INGEST_JOB_MODULES
-    ) - {"ssot_common"}
+    ) - {"ssot_common", "ssot_hardware_fields"}  # helper modules, no Job
     assert not unregistered, f"seed job(s) missing from INGEST_JOB_MODULES: {sorted(unregistered)}"
 
     print("nautobot export ordering guard: 4 cases OK (2 refuse, 2 pass) + modules match shipped files")
