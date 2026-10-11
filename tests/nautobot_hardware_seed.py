@@ -251,10 +251,6 @@ def check_real_ensure_status() -> None:
     assert common.ensure_status("Nope").name == "Active"
 
 
-
-
-
-
 def main() -> None:
     """Run every assertion."""
     r540 = Record(name="r540")

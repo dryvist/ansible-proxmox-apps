@@ -72,27 +72,12 @@ def _module_asset_tags(hw_id: str, quantity) -> list[str]:
 
 def _row_modules(Module, hw_id: str) -> dict[str, object]:
     """Find only Modules owned by this row, including its numeric unit tags."""
-    modules = {}
-    unsuffixed = Module.objects.filter(asset_tag=hw_id).first()
-    if unsuffixed is not None:
-        modules[hw_id] = unsuffixed
-    suffix_pattern = re.compile(rf"{re.escape(hw_id)}#\d+")
-    for module in Module.objects.filter(asset_tag__startswith=f"{hw_id}#"):
-        tag = str(module.asset_tag)
-        if suffix_pattern.fullmatch(tag):
-            modules[tag] = module
-    return modules
-
-
-def _adopt_module_tag(
-    modules: dict[str, object], old_tag: str, new_tag: str, dryrun: bool
-) -> None:
-    """Rename a row-owned legacy Module tag in place, or model it in dry-run."""
-    module = modules.pop(old_tag)
-    if not dryrun:
-        module.asset_tag = new_tag
-        module.validated_save()
-    modules[new_tag] = module
+    owned = re.compile(rf"{re.escape(hw_id)}(#\d+)?")
+    return {
+        str(module.asset_tag): module
+        for module in Module.objects.filter(asset_tag__startswith=hw_id)
+        if owned.fullmatch(str(module.asset_tag))
+    }
 
 
 def _procurement_data(row) -> dict:

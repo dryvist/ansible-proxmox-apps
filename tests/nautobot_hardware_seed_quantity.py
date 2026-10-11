@@ -22,7 +22,7 @@ def check_discovered_drives_and_quantity() -> None:
         },
         [device],
         existing_modules=[stale],
-        inventory_items=[Record(device=device, discovered=True)],
+        inventory_items=[Record(device=device, discovered=True, name="Drive SN-device")],
     )
     assert not stores["module"], "a covered device must not keep a table-owned drive Module"
     assert not stores["module_bay"], "the covered drive row must not create a bay"
@@ -40,7 +40,7 @@ def check_discovered_drives_and_quantity() -> None:
             ],
         },
         [uncovered],
-        inventory_items=[Record(device=uncovered, discovered=False)],
+        inventory_items=[Record(device=uncovered, discovered=False, name="Drive SN-uncovered")],
     )
     assert len(stores["module"]) == 1, "an uncovered device keeps the existing placement behavior"
     assert stores["module"][0].parent_module_bay.parent_device is uncovered
@@ -122,7 +122,7 @@ def check_discovered_drives_and_quantity() -> None:
         [dry_device],
         dryrun=True,
         existing_modules=[dry_stale, dry_legacy],
-        inventory_items=[Record(device=dry_device, discovered=True)],
+        inventory_items=[Record(device=dry_device, discovered=True, name="Drive SN-dry_device")],
     )
     assert stores["module"] == [dry_stale, dry_legacy]
     assert dry_stale.asset_tag == "SSD-DRY#1"

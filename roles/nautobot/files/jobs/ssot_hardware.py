@@ -41,7 +41,6 @@ from ssot_common import (
     load_seed,
 )
 from ssot_hardware_fields import (
-    _adopt_module_tag,
     _apply_procurement_data,
     _is_drive,
     _module_asset_tags,
@@ -238,7 +237,10 @@ class SeedHardware(Job):
             if (
                 _is_drive(row)
                 and device is not None
-                and InventoryItem.objects.filter(device=device, discovered=True).exists()
+                # Same selector ssot_drives syncs: discovered "Drive <serial>" items.
+                and InventoryItem.objects.filter(
+                    device=device, discovered=True, name__startswith="Drive "
+                ).exists()
             ):
                 self.logger.warning(
                     "%s: table places this drive in %s, but %s reports its own drives; "
@@ -266,10 +268,15 @@ class SeedHardware(Job):
 
             asset_tags = _module_asset_tags(hw_id, row.get("quantity"))
             stale_bay_names = (set(owned_modules) | {hw_id, f"{hw_id}#1"}) - set(asset_tags)
-            if len(asset_tags) > 1 and f"{hw_id}#1" not in owned_modules and hw_id in owned_modules:
-                _adopt_module_tag(owned_modules, hw_id, f"{hw_id}#1", dryrun)
-            elif len(asset_tags) == 1 and hw_id not in owned_modules and f"{hw_id}#1" in owned_modules:
-                _adopt_module_tag(owned_modules, f"{hw_id}#1", hw_id, dryrun)
+            # Rename the legacy tag in place when quantity crosses one, so the
+            # unit keeps its identity instead of being deleted and recreated.
+            legacy, kept = (hw_id, f"{hw_id}#1") if len(asset_tags) > 1 else (f"{hw_id}#1", hw_id)
+            if legacy in owned_modules and kept not in owned_modules:
+                module = owned_modules.pop(legacy)
+                if not dryrun:
+                    module.asset_tag = kept
+                    module.validated_save()
+                owned_modules[kept] = module
 
             desired_tags = set(asset_tags)
             for asset_tag, module in list(owned_modules.items()):
@@ -288,11 +295,9 @@ class SeedHardware(Job):
                 del owned_modules[asset_tag]
 
             if dryrun:
-                for asset_tag in asset_tags:
-                    if asset_tag in owned_modules:
-                        updated += 1
-                    else:
-                        created += 1
+                # owned_modules is now a subset of asset_tags.
+                updated += len(owned_modules)
+                created += len(asset_tags) - len(owned_modules)
                 continue
 
             defaults = {
