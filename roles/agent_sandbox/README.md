@@ -62,7 +62,7 @@ owned by OpenTofu's ingress table, which also supplies Traefik and DNS.
 (the source of truth). Regenerate after upstream changes:
 
 ```sh
-nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
+nix eval "github:dryvist/nix-agent-sandbox?ref=vN#lib.egressDomains" --json
 ```
 
 The host dispatcher completes host-side setup before creating an agent
