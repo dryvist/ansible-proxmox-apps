@@ -243,6 +243,32 @@
       collapses distinct keys like memory.used and swap.used onto the
       same metric name.
 
+- name: Assert PVE guest metrics join inventory identity
+  vars:
+    _pve_metrics_pipeline: "{{ _cribl_stream_pve_metrics_pipeline | from_yaml }}"
+    _pve_metrics_functions: "{{ _pve_metrics_pipeline.functions }}"
+    _pve_guest_map_lines: "{{ (_cribl_stream_pve_guest_map | trim).splitlines() }}"
+  ansible.builtin.assert:
+    that:
+      - "_pve_metrics_functions | map(attribute='id') | list == ['eval', 'lookup']"
+      - "_pve_metrics_functions[1].conf.file == 'pve_guest_map.csv'"
+      - "_pve_metrics_functions[1].conf.matchFields == [{'eventField': 'vmid', 'lookupField': 'vmid'}]"
+      - >-
+        _pve_metrics_functions[1].conf.outputFields
+        == [{'lookupField': 'name', 'eventField': 'name'},
+            {'lookupField': 'node', 'eventField': 'node'},
+            {'lookupField': 'type', 'eventField': 'type'}]
+      - _pve_guest_map_lines | first == 'vmid,name,node,type'
+      - _pve_guest_map_lines | length == 5
+      - "'101,guest-lxc-fixture,node-fixture,lxc' in _pve_guest_map_lines"
+      - "'102,guest-vm-fixture,node-fixture,qemu' in _pve_guest_map_lines"
+      - "'103,guest-docker-vm-fixture,node-fixture,qemu' in _pve_guest_map_lines"
+      - "'104,guest-splunk-vm-fixture,node-fixture,qemu' in _pve_guest_map_lines"
+    fail_msg: >-
+      PVE guest metrics must join vmid to the rendered Tofu guest map for
+      name, node, and type; the CSV must
+      contain its header and one row for each guest source.
+
 - name: Assert mlx_metrics_normalize drops every other sourcetype then republishes as a native metric
   ansible.builtin.assert:
     that:
