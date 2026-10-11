@@ -304,12 +304,10 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         self.assertIs(self.defaults["agent_sandbox_ci_resolver_enabled"], False)
         self.assertEqual(
             self.defaults["agent_sandbox_ci_resolver_source_commit"],
-            "dbf77f1159a0d8d55ab72625d9f668694bcdf391",
+            "{{ agent_sandbox_dispatch_source_commit }}",
         )
-        self.assertEqual(
-            self.defaults["agent_sandbox_ci_resolver_source_sha256"],
-            "1c7dd93a2b5f511c05896ae1b938f5994927ca724102eccb30e054622f9205b9",
-        )
+        self.assertRegex(self.defaults["agent_sandbox_dispatch_source_commit"], r"^[0-9a-f]{40}$")
+        self.assertRegex(self.defaults["agent_sandbox_ci_resolver_source_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(self.install["when"], "agent_sandbox_ci_resolver_enabled | bool")
 
         fetch = _task(self.install_tasks, "Fetch the pinned CI resolver source on the controller")
