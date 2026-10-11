@@ -31,6 +31,7 @@
   tasks:
     - name: Set the test inventory-derived addresses and secret group id
       ansible.builtin.set_fact:
+        ingress_domain: example.invalid
         agent_sandbox_zcode_web_bind_address: 192.0.2.20
         agent_sandbox_zcode_web_secret_gid: 1901
         agent_sandbox_zcode_web_ingress_source_ips:
@@ -54,6 +55,20 @@
         dest: "{{ _fixture_dir }}/test_agent_sandbox_dispatcher-alert.env"
         mode: "0600"
 
+    - name: Render CI resolver environment, units and helper fixtures
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/test_agent_sandbox_{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: ci-resolver.env.j2, dest: ci-resolver.env }
+        - { src: ci-resolver.service.j2, dest: ci-resolver.service }
+        - { src: ci-resolver-workbook.service.j2, dest: ci-resolver-workbook.service }
+        - { src: ci-resolver-workbook.timer.j2, dest: ci-resolver-workbook.timer }
+        - { src: ci-resolver-learn.service.j2, dest: ci-resolver-learn.service }
+        - { src: ci-resolver-learn.timer.j2, dest: ci-resolver-learn.timer }
+        - { src: ci-resolver-secret.sh.j2, dest: ci-resolver-secret }
+
     - name: Read the rendered files
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/test_agent_sandbox_{{ item }}"
@@ -63,6 +78,13 @@
         - docker-compose.yml
         - allowed-domains.txt
         - dispatcher-alert.env
+        - ci-resolver.env
+        - ci-resolver.service
+        - ci-resolver-workbook.service
+        - ci-resolver-workbook.timer
+        - ci-resolver-learn.service
+        - ci-resolver-learn.timer
+        - ci-resolver-secret
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
@@ -71,6 +93,18 @@
         _as_domains: "{{ _as_rendered.results[2].content | b64decode | split('\n')
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
         _as_dispatcher_alert_env: "{{ _as_rendered.results[3].content | b64decode }}"
+        _as_ci_resolver_env: "{{ _as_rendered.results[4].content | b64decode }}"
+        _as_ci_resolver_service: "{{ _as_rendered.results[5].content | b64decode }}"
+        _as_ci_resolver_workbook_service: "{{ _as_rendered.results[6].content | b64decode }}"
+        _as_ci_resolver_workbook_timer: "{{ _as_rendered.results[7].content | b64decode }}"
+        _as_ci_resolver_learn_service: "{{ _as_rendered.results[8].content | b64decode }}"
+        _as_ci_resolver_learn_timer: "{{ _as_rendered.results[9].content | b64decode }}"
+        _as_ci_resolver_secret_helper: "{{ _as_rendered.results[10].content | b64decode }}"
+
+    - name: Collect the CI resolver environment variable names
+      ansible.builtin.set_fact:
+        _as_ci_resolver_env_names: >-
+          {{ _as_ci_resolver_env | regex_findall('(?m)^(CI_RESOLVER_[A-Z_]+)=') | sort }}
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -200,6 +234,115 @@
         fail_msg: >-
           The dispatcher's refused-login alert settings render into their
           root-only environment file.
+
+    - name: Assert CI resolver environment names and default values
+      vars:
+        _as_expected_ci_resolver_env_names:
+          - CI_RESOLVER_APP_ID
+          - CI_RESOLVER_DISPATCH_CMD
+          - CI_RESOLVER_GH_TOKEN_CMD
+          - CI_RESOLVER_MAX_ATTEMPTS
+          - CI_RESOLVER_ORG
+          - CI_RESOLVER_REPOS
+          - CI_RESOLVER_SHADOW
+          - CI_RESOLVER_STATE_DIR
+          - CI_RESOLVER_TOKEN_REPO
+          - CI_RESOLVER_VIKUNJA_PROJECT
+          - CI_RESOLVER_VIKUNJA_TOKEN_CMD
+          - CI_RESOLVER_VIKUNJA_URL
+          - CI_RESOLVER_WORKBOOK_DIR
+          - CI_RESOLVER_ZAMMAD_GROUP
+          - CI_RESOLVER_ZAMMAD_TOKEN_CMD
+          - CI_RESOLVER_ZAMMAD_URL
+      ansible.builtin.assert:
+        that:
+          - _as_ci_resolver_env_names == _as_expected_ci_resolver_env_names | sort
+          - agent_sandbox_ci_resolver_enabled is false
+          - agent_sandbox_ci_resolver_shadow is true
+          - "'CI_RESOLVER_APP_ID=' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_ORG=dryvist' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_GH_TOKEN_CMD=/usr/local/lib/agent-sandbox/ci-resolver-secret token' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_TOKEN_REPO=dryvist/.github' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_DISPATCH_CMD=/usr/local/bin/agent-dispatch' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_WORKBOOK_DIR=/var/lib/ci-resolver/prompts/automation/ci-workbook' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_STATE_DIR=/var/lib/ci-resolver' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_MAX_ATTEMPTS=3' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_REPOS=' in _as_ci_resolver_env"
+          - "'CI_RESOLVER_SHADOW=1' in _as_ci_resolver_env"
+          - "('CI_RESOLVER_VIKUNJA_URL=https://vikunja.' ~ ingress_domain) in _as_ci_resolver_env"
+          - "'CI_RESOLVER_VIKUNJA_PROJECT=44' in _as_ci_resolver_env"
+          - "('CI_RESOLVER_ZAMMAD_URL=https://zammad.' ~ ingress_domain) in _as_ci_resolver_env"
+          - >-
+            _as_ci_resolver_env is search(
+            "CI_RESOLVER_ZAMMAD_GROUP='Homelab Infrastructure'")
+          - >-
+            _as_ci_resolver_env is not search(
+            '(?i)(tk_[A-Za-z0-9]{12,}|gh[opsu]_[A-Za-z0-9]{12,}|Bearer\\s+[A-Za-z0-9._-]{12,})')
+        fail_msg: >-
+          The CI resolver environment must contain the complete contract,
+          derived service URLs, and no token value.
+
+    - name: Assert CI resolver service uses the dispatcher account and restrictions
+      ansible.builtin.assert:
+        that:
+          - "'Type=simple' in _as_ci_resolver_service"
+          - "('User=' ~ agent_sandbox_dispatch_user) in _as_ci_resolver_service"
+          - "('Group=' ~ agent_sandbox_dispatch_user) in _as_ci_resolver_service"
+          - >-
+            ('ExecStart=/usr/bin/python3 ' ~ agent_sandbox_ci_resolver_script
+            ~ ' tick --loop 30') in _as_ci_resolver_service
+          - "'Restart=always' in _as_ci_resolver_service"
+          - "'RestartSec=30' in _as_ci_resolver_service"
+          - "'StateDirectory=ci-resolver' in _as_ci_resolver_service"
+          - "'UMask=0077' in _as_ci_resolver_service"
+          - "'NoNewPrivileges=yes' in _as_ci_resolver_service"
+          - "'ProtectSystem=full' in _as_ci_resolver_service"
+          - "'ProtectHome=yes' in _as_ci_resolver_service"
+          - "'PrivateTmp=yes' in _as_ci_resolver_service"
+        fail_msg: >-
+          The CI resolver service must run under the restricted dispatcher
+          account with the declared systemd protections.
+
+    - name: Assert workbook refresh and daily learning units
+      ansible.builtin.assert:
+        that:
+          - "'Type=oneshot' in _as_ci_resolver_workbook_service"
+          - >-
+            'git -C /var/lib/ci-resolver/prompts pull --ff-only --depth 1'
+            in _as_ci_resolver_workbook_service
+          - "'OnCalendar=hourly' in _as_ci_resolver_workbook_timer"
+          - "'RuntimeDirectory=ci-resolver-learn' in _as_ci_resolver_learn_service"
+          - >-
+            'git clone --depth 1 https://github.com/dryvist/ai-llm-prompts.git
+            /run/ci-resolver-learn/workbook' in _as_ci_resolver_learn_service
+          - >-
+            'learn --workbook-repo /run/ci-resolver-learn/workbook
+            --publish dryvist/ai-llm-prompts' in _as_ci_resolver_learn_service
+          - "'OnCalendar=daily' in _as_ci_resolver_learn_timer"
+          - "'RandomizedDelaySec=1h' in _as_ci_resolver_learn_timer"
+          - "'Persistent=true' in _as_ci_resolver_learn_timer"
+        fail_msg: >-
+          Workbook refresh must be hourly, and learning must clone a fresh
+          workbook under its runtime directory before publishing.
+
+    - name: Assert the CI resolver secret helper keeps credentials in memory
+      ansible.builtin.assert:
+        that:
+          - >-
+            '"permissions":{"checks":"write","actions":"write","contents":"write","pull_requests":"write"}'
+            in _as_ci_resolver_secret_helper
+          - "'github-agents/token' in _as_ci_resolver_secret_helper"
+          - "'auth/approle/login' in _as_ci_resolver_secret_helper"
+          - "'auth/token/revoke-self' in _as_ci_resolver_secret_helper"
+          - "'--data-binary @-' in _as_ci_resolver_secret_helper"
+          - "'--header @<(printf' in _as_ci_resolver_secret_helper"
+          - >-
+            _as_ci_resolver_secret_helper
+            | regex_findall('(?m)(?:[0-9]+)?>(?=[^=\\s])([^\\s;|)]+)')
+            | difference(['/dev/null', '&2']) | length == 0
+        fail_msg: >-
+          The secret helper must request exactly four write permissions,
+          revoke its OpenBao token, and avoid writing credentials to files.
 
     # Exact-host entries plus the Cursor suffix entries required by its CLI.
     - name: Assert the allowlist carries the Z.ai hosts and Cursor domains
