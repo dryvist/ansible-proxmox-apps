@@ -66,8 +66,8 @@ nix eval "github:dryvist/nix-agent-sandbox?ref=vN#lib.egressDomains" --json
 ```
 
 The host dispatcher completes host-side setup before creating an agent
-container. Those host-only endpoints are not part of the container-facing
-squid allowlist.
+container. OpenBao remains host-only; the router endpoint used by container
+profiles is included in the squid allowlist.
 
 The ZCode service mounts its credential file read-only. This role manages and
 validates the mount boundary; credential values remain outside the repository.
@@ -137,3 +137,18 @@ The probe does not alter the nftables rules. It attaches one throwaway test
 container to both sandbox networks, routes one external packet through the
 `agents` bridge, checks that the packet fails and the matching drop counter
 increases, then removes the container.
+
+## CI resolver
+
+When `agent_sandbox_ci_resolver_enabled` is true, `ci-resolver.service` checks
+failed CI runs and sends eligible fixes to the host dispatcher. An hourly timer
+refreshes the workbook checkout, and a daily timer learns from completed fixes
+and opens a workbook pull request. The feature is off by default and starts in
+shadow mode.
+
+Set `agent_sandbox_ci_resolver_app_id` to the resolver's GitHub App ID. Configure
+it further with `agent_sandbox_ci_resolver_repos`,
+`agent_sandbox_ci_resolver_max_attempts`,
+`agent_sandbox_ci_resolver_shadow`,
+`agent_sandbox_ci_resolver_vikunja_project`, and
+`agent_sandbox_ci_resolver_zammad_group`.
