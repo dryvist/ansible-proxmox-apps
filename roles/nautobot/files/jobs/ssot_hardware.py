@@ -12,15 +12,19 @@ that is not stable across environments and is not in the source data. An
 idempotent ORM upsert keyed on the unique ``asset_tag`` expresses the same
 additive contract without that problem.
 
-Additive, exactly like the DiffSync seeds: nothing here deletes. An object that
-disappears from the source is left alone, because a second job, Device
-Onboarding, or a human may own it.
+An object that disappears from the source is left alone, because a second job,
+Device Onboarding, or a human may own it. This job only deletes its own surplus
+Modules when a row's quantity drops, or stale drive Modules on a Device whose
+own discovered InventoryItems are authoritative.
 
 Spares are the point. An uninstalled component is a ``Module`` with a
 ``location`` and no ``parent_module_bay`` — those two are mutually exclusive by
 model constraint, and that is Nautobot's native parts-bin representation.
 ``InventoryItem`` is NOT used: it requires a parent Device, so it cannot
 represent a part that is sitting on a shelf, which is the majority of this data.
+Drives installed in a Device with discovered InventoryItems belong to
+``ssot_drives``; this job leaves no row-owned drive Module in that Device's bays.
+Rows with quantity greater than one become one Module per unit.
 """
 from __future__ import annotations
 
@@ -90,6 +94,47 @@ def _purchase_price_cents(raw: str) -> int | None:
         return round(float(match.group(1).replace(",", "")) * 100)
     except ValueError:
         return None
+
+
+def _is_drive(row) -> bool:
+    """Whether the component category is managed by the live drive gatherer."""
+    return str(row.get("category") or "").strip().lower().startswith(("ssd", "hdd", "nvme"))
+
+
+def _module_asset_tags(hw_id: str, quantity) -> list[str]:
+    """Return the row's stable Module asset tags for its unit quantity."""
+    try:
+        count = int(quantity or 1)
+    except (TypeError, ValueError):
+        count = 1
+    if count > 1:
+        return [f"{hw_id}#{index}" for index in range(1, count + 1)]
+    return [hw_id]
+
+
+def _row_modules(Module, hw_id: str) -> dict[str, object]:
+    """Find only Modules owned by this row, including its numeric unit tags."""
+    modules = {}
+    unsuffixed = Module.objects.filter(asset_tag=hw_id).first()
+    if unsuffixed is not None:
+        modules[hw_id] = unsuffixed
+    suffix_pattern = re.compile(rf"{re.escape(hw_id)}#\d+")
+    for module in Module.objects.filter(asset_tag__startswith=f"{hw_id}#"):
+        tag = str(module.asset_tag)
+        if suffix_pattern.fullmatch(tag):
+            modules[tag] = module
+    return modules
+
+
+def _adopt_module_tag(
+    modules: dict[str, object], old_tag: str, new_tag: str, dryrun: bool
+) -> None:
+    """Rename a row-owned legacy Module tag in place, or model it in dry-run."""
+    module = modules.pop(old_tag)
+    if not dryrun:
+        module.asset_tag = new_tag
+        module.validated_save()
+    modules[new_tag] = module
 
 
 def _procurement_data(row) -> dict:
@@ -224,6 +269,8 @@ def _module_bay(device, name: str):
 def _cleanup_orphan_bays(hw_id: str, keep_device, logger) -> None:
     """Delete empty ModuleBays named ``hw_id`` on any device other than ``keep_device``.
 
+    ``keep_device=None`` considers every device, for a bay name no unit uses.
+
     A component that moves between chassis leaves its old ModuleBay behind —
     Nautobot never deletes a bay on its own, and a second bay with this same
     name is purely an orphan from the move (``_module_bay`` always names a bay
@@ -235,9 +282,9 @@ def _cleanup_orphan_bays(hw_id: str, keep_device, logger) -> None:
     """
     from nautobot.dcim.models import Module, ModuleBay
 
-    orphans = ModuleBay.objects.filter(
-        name=hw_id, parent_device__isnull=False
-    ).exclude(parent_device=keep_device)
+    orphans = ModuleBay.objects.filter(name=hw_id, parent_device__isnull=False)
+    if keep_device is not None:
+        orphans = orphans.exclude(parent_device=keep_device)
     for bay in orphans:
         if Module.objects.filter(parent_module_bay=bay).exists():
             continue
@@ -266,7 +313,7 @@ class SeedHardware(Job):
         has_sensitive_variables = False
 
     def run(self, *, dryrun=False):  # noqa: D102 - see class docstring
-        from nautobot.dcim.models import Device, Module
+        from nautobot.dcim.models import Device, InventoryItem, Module
 
         seed = load_seed()
         devices = seed["hardware_devices"]
@@ -289,7 +336,7 @@ class SeedHardware(Job):
             hardware_role = ensure_role(HARDWARE_ROLE, Device, Module)
             ensure_procurement_fields()
 
-        created = updated = skipped = 0
+        created = updated = deleted = skipped = 0
 
         for row in devices:
             # A row whose Location names a host is that host — the rack-server
@@ -334,26 +381,7 @@ class SeedHardware(Job):
             _apply_procurement_data(device, row)
 
         for row in modules:
-            # Same reason as the device loop, and it matters more here:
-            # _module_bay() is a get_or_create, so a dry run would leave empty
-            # ModuleBays behind on real chassis.
-            if dryrun:
-                exists = Module.objects.filter(asset_tag=row["hw_id"]).exists()
-                created, updated = (created, updated + 1) if exists else (created + 1, updated)
-                continue
-
-            defaults = {
-                "module_type": ensure_module_type(
-                    row["model"] or row["hw_id"], row["manufacturer"], row["part_number"]
-                ),
-                "status": ensure_status(
-                    row["status"], Module, logger=self.logger, subject=row["hw_id"]
-                ),
-                # See the Device loop: omit rather than blank, so a source row
-                # without a serial never erases a discovered one.
-                **({"serial": _serial(row)} if _serial(row) else {}),
-            }
-
+            hw_id = row["hw_id"]
             parent = row.get("installed_in")
             device = Device.objects.filter(name=parent).first() if parent else None
             if parent and device is None:
@@ -367,28 +395,113 @@ class SeedHardware(Job):
                     parent,
                     row["location"],
                 )
-            if device is not None:
-                defaults["parent_module_bay"] = _module_bay(device, row["hw_id"])
-                defaults["location"] = None  # mutually exclusive by model constraint
-            else:
+
+            owned_modules = _row_modules(Module, hw_id)
+            if (
+                _is_drive(row)
+                and device is not None
+                and InventoryItem.objects.filter(device=device, discovered=True).exists()
+            ):
+                self.logger.warning(
+                    "%s: table places this drive in %s, but %s reports its own drives; "
+                    "record it at a bin location in the table if it is a spare",
+                    hw_id,
+                    device.name,
+                    device.name,
+                )
+                for asset_tag, module in owned_modules.items():
+                    bay = getattr(module, "parent_module_bay", None)
+                    if getattr(bay, "parent_device", None) != device:
+                        continue
+                    action = "Would delete" if dryrun else "Deleting"
+                    self.logger.info(
+                        "%s stale row-owned drive Module %r from %s.",
+                        action,
+                        asset_tag,
+                        device.name,
+                    )
+                    if not dryrun:
+                        module.delete()
+                        bay.delete()
+                    deleted += 1
+                continue
+
+            asset_tags = _module_asset_tags(hw_id, row.get("quantity"))
+            stale_bay_names = (set(owned_modules) | {hw_id, f"{hw_id}#1"}) - set(asset_tags)
+            if len(asset_tags) > 1 and f"{hw_id}#1" not in owned_modules and hw_id in owned_modules:
+                _adopt_module_tag(owned_modules, hw_id, f"{hw_id}#1", dryrun)
+            elif len(asset_tags) == 1 and hw_id not in owned_modules and f"{hw_id}#1" in owned_modules:
+                _adopt_module_tag(owned_modules, f"{hw_id}#1", hw_id, dryrun)
+
+            desired_tags = set(asset_tags)
+            for asset_tag, module in list(owned_modules.items()):
+                if asset_tag in desired_tags:
+                    continue
+                action = "Would delete" if dryrun else "Deleting"
+                self.logger.info(
+                    "%s surplus row-owned Module %r after quantity changed to %d.",
+                    action,
+                    asset_tag,
+                    len(asset_tags),
+                )
+                if not dryrun:
+                    module.delete()
+                deleted += 1
+                del owned_modules[asset_tag]
+
+            if dryrun:
+                for asset_tag in asset_tags:
+                    if asset_tag in owned_modules:
+                        updated += 1
+                    else:
+                        created += 1
+                continue
+
+            defaults = {
+                "module_type": ensure_module_type(
+                    row["model"] or hw_id, row["manufacturer"], row["part_number"]
+                ),
+                "status": ensure_status(
+                    row["status"], Module, logger=self.logger, subject=hw_id
+                ),
+                # See the Device loop: omit rather than blank, so a source row
+                # without a serial never erases a discovered one.
+                **({"serial": _serial(row)} if _serial(row) else {}),
+            }
+            if device is None:
                 defaults["parent_module_bay"] = None
                 defaults["location"] = ensure_sublocation(row["location"])
 
-            module, was_created = Module.objects.update_or_create(
-                asset_tag=row["hw_id"], defaults=defaults
-            )
-            created, updated = (created + 1, updated) if was_created else (created, updated + 1)
-            _apply_procurement_data(module, row)
-            if device is not None:
-                _cleanup_orphan_bays(row["hw_id"], device, self.logger)
+            for asset_tag in asset_tags:
+                if device is not None:
+                    # One bay per unit: a ModuleBay holds exactly one Module.
+                    defaults["parent_module_bay"] = _module_bay(device, asset_tag)
+                    defaults["location"] = None  # mutually exclusive by model constraint
+                module, was_created = Module.objects.update_or_create(
+                    asset_tag=asset_tag, defaults=defaults
+                )
+                created, updated = (
+                    (created + 1, updated)
+                    if was_created
+                    else (created, updated + 1)
+                )
+                _apply_procurement_data(module, row)
+                if device is not None:
+                    _cleanup_orphan_bays(asset_tag, device, self.logger)
+            # Bays named for a tag this row no longer uses (quantity changed)
+            # are empty orphans on any device, including this one.
+            for name in stale_bay_names:
+                _cleanup_orphan_bays(name, None, self.logger)
 
         circuit_created, circuit_updated = _upsert_circuits(self, circuits, dryrun)
         created += circuit_created
         updated += circuit_updated
 
         verb = "would create/update" if dryrun else "created/updated"
+        delete_verb = "would delete" if dryrun else "deleted"
         summary = (
-            f"{verb} {created} new and {updated} existing objects "
+            f"{verb} {created} new and {updated} existing objects; "
+            f"{delete_verb} {deleted} row-owned Modules "
             f"from {len(devices)} device, {len(modules)} module and "
             f"{len(circuits)} circuit rows "
             f"({skipped} chassis rows left to the rack-server seed)"

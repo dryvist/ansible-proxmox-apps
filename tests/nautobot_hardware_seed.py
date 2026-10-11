@@ -27,15 +27,21 @@ ROOT = Path(__file__).resolve().parents[1]
 JOBS = ROOT / "roles/nautobot/files/jobs"
 
 
-def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
+def install_stubs(
+    seed_path: Path,
+    devices: list[Record],
+    existing_modules: list[Record] | None = None,
+    inventory_items: list[Record] | None = None,
+) -> dict[str, Any]:
     """Install fake django/nautobot modules and return the object stores."""
     stores: dict[str, Any] = {
         "device": devices,
-        "module": [],
+        "module": list(existing_modules or []),
         "module_bay": [],
         "module_type": [],
         "location": [Record(name="homelab")],
         "circuit": [],
+        "inventory_item": list(inventory_items or []),
     }
 
     def model(name, key):
@@ -46,10 +52,19 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
     device_cls = type("Device", (), {"objects": FakeManager(stores["device"], "device")})
     module_cls = type("Module", (), {"objects": FakeManager(stores["module"], "module")})
     bay_cls = type("ModuleBay", (), {"objects": FakeManager(stores["module_bay"], "module_bay")})
-    stores["classes"] = {"Device": device_cls, "Module": module_cls, "ModuleBay": bay_cls}
+    inventory_item_cls = type(
+        "InventoryItem", (), {"objects": FakeManager(stores["inventory_item"], "inventory_item")}
+    )
+    stores["classes"] = {
+        "Device": device_cls,
+        "Module": module_cls,
+        "ModuleBay": bay_cls,
+        "InventoryItem": inventory_item_cls,
+    }
 
     dcim = types.ModuleType("nautobot.dcim.models")
     dcim.Device, dcim.Module, dcim.ModuleBay = device_cls, module_cls, bay_cls
+    dcim.InventoryItem = inventory_item_cls
     for extra in ("DeviceType", "Location", "LocationType", "Manufacturer", "ModuleType", "Rack"):
         setattr(dcim, extra, model(extra, "module_type"))
 
@@ -75,6 +90,10 @@ def install_stubs(seed_path: Path, devices: list[Record]) -> dict[str, Any]:
         "nautobot.circuits.models": circuits_mod,
     }.items():
         sys.modules[name] = mod
+
+    for key in ("module", "module_bay", "inventory_item"):
+        for obj in stores[key]:
+            obj._store = stores[key]
 
     # ssot_common's scaffolding helpers are exercised against a live Nautobot,
     # not here — but every one of them is a get_or_create, so CALLING one is a
@@ -125,12 +144,18 @@ def load_job():
     return module
 
 
-def run(seed: dict, devices: list[Record], dryrun: bool = False):
+def run(
+    seed: dict,
+    devices: list[Record],
+    dryrun: bool = False,
+    existing_modules: list[Record] | None = None,
+    inventory_items: list[Record] | None = None,
+):
     """Run the job against a seed document and return (job, stores)."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(seed, handle)
         path = Path(handle.name)
-    stores = install_stubs(path, devices)
+    stores = install_stubs(path, devices, existing_modules, inventory_items)
     module = load_job()
     job = module.SeedHardware()
     job.logger = Collector()
@@ -225,16 +250,11 @@ def check_real_ensure_status() -> None:
 
 
 def check_dmi_placeholders_are_not_serials() -> None:
-    """A DMI default must never become a device's identity.
+    """A firmware default must never become a device's identity.
 
-    These are more dangerous than "n/a": they LOOK like data, dmidecode returns
-    them confidently, and they are IDENTICAL across every board of that make —
-    so writing them gives several devices the same "serial", which then reads as
-    a real duplicate rather than as missing data.
-
-    Verified live on this estate: the workstation-class nodes report exactly
-    "System Serial Number" and "Default string" while the rack servers return
-    real service tags.
+    These values look like data and can be identical across devices, so writing
+    them gives several devices the same "serial" instead of representing it as
+    missing data.
     """
     job = load_job()
     serial = job._serial
@@ -254,11 +274,139 @@ def check_dmi_placeholders_are_not_serials() -> None:
 
     # Must-not-strip controls. Without these, a filter that returned "" for
     # everything would pass every assertion above.
-    for real in ("8SGS8N2", "774KVH1", "S7U8NJ0Y401782M"):
+    for real in ("FAKE-SERIAL-A", "FAKE-SERIAL-B", "FAKE-SERIAL-C"):
         assert serial({"serial": real}) == real, f"real serial {real!r} was discarded"
 
     # Whitespace is trimmed, not treated as content.
-    assert serial({"serial": "  8SGS8N2  "}) == "8SGS8N2"
+    assert serial({"serial": "  FAKE-SERIAL-A  "}) == "FAKE-SERIAL-A"
+
+
+def check_discovered_drives_and_quantity() -> None:
+    """Live drive discovery wins placement, and row quantities reconcile copies."""
+    device = Record(name="node-a")
+    stale = Record(
+        asset_tag="SSD-ROW#1",
+        parent_module_bay=Record(parent_device=device),
+        location=None,
+    )
+    job, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [
+                row("SSD-ROW", category="nVmE 2.5 SATA", installed_in="node-a")
+            ],
+        },
+        [device],
+        existing_modules=[stale],
+        inventory_items=[Record(device=device, discovered=True)],
+    )
+    assert not stores["module"], "a covered device must not keep a table-owned drive Module"
+    assert not stores["module_bay"], "the covered drive row must not create a bay"
+    assert any(
+        "SSD-ROW: table places this drive in node-a, but node-a reports its own drives" in warning
+        for warning in job.logger.warnings
+    ), job.logger.warnings
+
+    uncovered = Record(name="node-b")
+    _, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [
+                row("HDD-ROW", category="hDd 3.5 SATA", installed_in="node-b")
+            ],
+        },
+        [uncovered],
+        inventory_items=[Record(device=uncovered, discovered=False)],
+    )
+    assert len(stores["module"]) == 1, "an uncovered device keeps the existing placement behavior"
+    assert stores["module"][0].parent_module_bay.parent_device is uncovered
+    assert stores["module"][0].location is None
+
+    _, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [
+                row("HDD-PAIR", category="HDD 3.5 SATA", quantity=2, installed_in="node-b")
+            ],
+        },
+        [uncovered],
+        inventory_items=[],
+    )
+    bays = {module.asset_tag: module.parent_module_bay for module in stores["module"]}
+    assert set(bays) == {"HDD-PAIR#1", "HDD-PAIR#2"}
+    assert bays["HDD-PAIR#1"] is not bays["HDD-PAIR#2"], "a ModuleBay holds one Module"
+    assert {bay.name for bay in bays.values()} == {"HDD-PAIR#1", "HDD-PAIR#2"}
+
+    legacy = Record(
+        asset_tag="RAM-ROW",
+        parent_module_bay=None,
+        location=Record(name="spares"),
+    )
+    _, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [row("RAM-ROW", category="RAM", quantity=2)],
+        },
+        [],
+        existing_modules=[legacy],
+    )
+    by_tag = {module.asset_tag: module for module in stores["module"]}
+    assert set(by_tag) == {"RAM-ROW#1", "RAM-ROW#2"}
+    assert by_tag["RAM-ROW#1"] is legacy, "the existing unsuffixed Module must become #1"
+    assert legacy.validated_saves == 1
+    assert all(module.parent_module_bay is None for module in by_tag.values())
+    assert all(module.location.name == "spares" for module in by_tag.values())
+
+    surplus = Record(asset_tag="RAM-DROP#3", parent_module_bay=None, location=None)
+    _, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [row("RAM-DROP", category="RAM", quantity=2)],
+        },
+        [],
+        existing_modules=[
+            Record(asset_tag="RAM-DROP#1", parent_module_bay=None, location=None),
+            Record(asset_tag="RAM-DROP#2", parent_module_bay=None, location=None),
+            surplus,
+        ],
+    )
+    assert {module.asset_tag for module in stores["module"]} == {
+        "RAM-DROP#1",
+        "RAM-DROP#2",
+    }
+    assert surplus not in stores["module"], "copies above the current quantity must be deleted"
+
+    dry_device = Record(name="node-dry")
+    dry_stale = Record(
+        asset_tag="SSD-DRY#1",
+        parent_module_bay=Record(parent_device=dry_device),
+        location=None,
+    )
+    dry_legacy = Record(
+        asset_tag="RAM-DRY",
+        parent_module_bay=None,
+        location=Record(name="spares"),
+    )
+    job, stores = run(
+        {
+            "hardware_devices": [],
+            "hardware_modules": [
+                row("SSD-DRY", category="SSD 2.5 SATA", quantity=2, installed_in="node-dry"),
+                row("RAM-DRY", category="RAM", quantity=2),
+            ],
+        },
+        [dry_device],
+        dryrun=True,
+        existing_modules=[dry_stale, dry_legacy],
+        inventory_items=[Record(device=dry_device, discovered=True)],
+    )
+    assert stores["module"] == [dry_stale, dry_legacy]
+    assert dry_stale.asset_tag == "SSD-DRY#1"
+    assert dry_legacy.asset_tag == "RAM-DRY", "dry-run must not adopt the old tag"
+    assert not stores["module_bay"] and not stores["scaffolding"]
+    assert any("table places this drive" in warning for warning in job.logger.warnings)
+    assert any("Would delete stale row-owned drive Module" in info for info in job.logger.infos)
+    assert any("would delete 1 row-owned Modules" in info for info in job.logger.infos)
 
 
 def main() -> None:
@@ -405,8 +553,9 @@ def main() -> None:
     check_real_ensure_status()
 
     check_dmi_placeholders_are_not_serials()
+    check_discovered_drives_and_quantity()
 
-    print("nautobot_hardware_seed: OK (incl. DMI placeholder serials)")
+    print("nautobot_hardware_seed: OK (incl. placement and quantity rules)")
 
 
 if __name__ == "__main__":
