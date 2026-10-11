@@ -1,6 +1,27 @@
 ---
-- name: Assert the alert delivery pipeline filters other events
+- name: Assert the alert delivery pipeline routes critical drift and Grafana events
+  vars:
+    _cribl_stream_grafana_alerts_functions: >-
+      {{ (_cribl_stream_grafana_alerts_pipeline | from_yaml).functions }}
+    _cribl_stream_grafana_drop_filter: "{{ _cribl_stream_grafana_alerts_functions[1].filter }}"
+    _cribl_stream_grafana_summary_eval: "{{ _cribl_stream_grafana_alerts_functions[2] }}"
   ansible.builtin.assert:
     that:
       - "'grafana_alerts_slack' in _cribl_stream_defaults.cribl_stream_pipelines"
-      - (_cribl_stream_grafana_alerts_pipeline | from_yaml).functions[0].filter == "sourcetype !== 'grafana:alert'"
+      - _cribl_stream_grafana_alerts_functions[0].id == 'code'
+      - _cribl_stream_grafana_alerts_functions[0].filter == "sourcetype === 'nautobot:drift'"
+      - "'JSON.parse(__e._raw)' in _cribl_stream_grafana_alerts_functions[0].conf.code"
+      - "'catch' in _cribl_stream_grafana_alerts_functions[0].conf.code"
+      - _cribl_stream_grafana_alerts_functions[1].id == 'drop'
+      - "'grafana:alert' in _cribl_stream_grafana_drop_filter"
+      - "'nautobot:drift' in _cribl_stream_grafana_drop_filter"
+      - "'severity' in _cribl_stream_grafana_drop_filter"
+      - "'critical' in _cribl_stream_grafana_drop_filter"
+      - _cribl_stream_grafana_summary_eval.id == 'eval'
+      - _cribl_stream_grafana_summary_eval.filter == "sourcetype === 'nautobot:drift'"
+      - _cribl_stream_grafana_summary_eval.conf.add[0].name == '_raw'
+      - "'Nautobot drift (' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
+      - "'missing_in_nautobot' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
+      - "'extra_in_nautobot' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
+      - "'tag_drift' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
+      - "'.slice(0, 5).join' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
