@@ -417,7 +417,9 @@ if [[ -n $NON_LOCALHOST_LIMIT ]]; then
     echo "This says NOTHING about how much work it completed first; read the log before concluding it did nothing." >&2
     [[ $STATUS -eq 0 ]] && STATUS=1
   else
-    RECAP_HOSTS=$(awk '/^PLAY RECAP/{f=1;next} f && NF{print $1}' "$LOG_FILE")
+    # Only host rows count: callbacks such as profile_tasks print a TASKS
+    # RECAP block after it, and its words must not read as host names.
+    RECAP_HOSTS=$(awk '/^PLAY RECAP/{f=1;next} f && / ok=[0-9]/{print $1}' "$LOG_FILE")
     NON_LOCALHOST_RECAP=$(grep -vx 'localhost' <<<"$RECAP_HOSTS" || true)
     if [[ -z $NON_LOCALHOST_RECAP ]]; then
       echo "ERROR: --limit ($LIMIT_VAL) asked for hosts beyond localhost, but the play recap shows only localhost — this run did nothing." >&2

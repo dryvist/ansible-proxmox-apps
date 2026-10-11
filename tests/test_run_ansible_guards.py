@@ -253,6 +253,21 @@ class RunAnsibleGuardContract(RunAnsibleSandbox):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("this run did nothing", result.stderr)
 
+    def test_limit_beyond_localhost_with_tasks_recap_after_empty_recap_refuses(self):
+        # profile_tasks prints a TASKS RECAP block after PLAY RECAP. Its words
+        # ("TASKS", the date line, the ==== rule) must not count as hosts.
+        self.recap_file.write_text(
+            "PLAY RECAP *********************************************************\n"
+            "\n\n"
+            "TASKS RECAP ********************************************************\n"
+            "Saturday 10 October 2026  08:56:28 -0400 (0:00:00.002)       0:00:00.002 ******\n"
+            "===============================================================================\n",
+            encoding="utf-8",
+        )
+        result = self._run("--limit", "openbao_group,localhost")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("this run did nothing", result.stderr)
+
     def test_interrupted_run_is_not_reported_as_having_done_nothing(self):
         # An ABSENT recap is a different fact from a recap listing no
         # non-localhost host, and the guard used to conflate them: Ansible
