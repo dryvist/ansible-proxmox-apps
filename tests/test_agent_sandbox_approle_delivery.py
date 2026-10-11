@@ -302,6 +302,19 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
 
     def test_ci_resolver_is_off_by_default_and_pinned(self):
         self.assertIs(self.defaults["agent_sandbox_ci_resolver_enabled"], False)
+        self.assertIs(self.defaults["agent_sandbox_ci_resolver_shadow"], True)
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_app_id"], "4282473")
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_github_mount"], "github-admin")
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_permission_set"], "ci-resolver-dryvist")
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_approle_dir"], "/etc/ci-resolver/approle")
+        self.assertIn(
+            "OPENBAO_APPROLE_CI_RESOLVER_ROLE_ID",
+            self.defaults["agent_sandbox_ci_resolver_role_id"],
+        )
+        self.assertIn(
+            "OPENBAO_APPROLE_CI_RESOLVER_SECRET_ID",
+            self.defaults["agent_sandbox_ci_resolver_secret_id"],
+        )
         self.assertEqual(
             self.defaults["agent_sandbox_ci_resolver_source_commit"],
             "{{ agent_sandbox_dispatch_source_commit }}",
@@ -327,6 +340,70 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
                 source["ansible.builtin.copy"]["mode"],
             ),
             ("root", "root", "0755"),
+        )
+
+    def test_ci_resolver_delivers_its_own_approle_for_the_service_user(self):
+        validation = _task(self.tasks, "Validate CI resolver prerequisites")
+        conditions = validation["ansible.builtin.assert"]["that"]
+        self.assertIn("agent_sandbox_ci_resolver_role_id is string", conditions)
+        self.assertIn("agent_sandbox_ci_resolver_role_id | trim | length > 0", conditions)
+        self.assertIn("agent_sandbox_ci_resolver_secret_id is string", conditions)
+        self.assertIn("agent_sandbox_ci_resolver_secret_id | trim | length > 0", conditions)
+
+        service_template = (ROLE / "templates" / "ci-resolver.service.j2").read_text()
+        self.assertIn("User={{ agent_sandbox_dispatch_user }}", service_template)
+        self.assertIn("Group={{ agent_sandbox_dispatch_user }}", service_template)
+
+        directory = _task(
+            self.install_tasks, "Create the CI resolver AppRole credential directory"
+        )
+        directory_settings = directory["ansible.builtin.file"]
+        self.assertEqual(directory_settings["path"], "{{ agent_sandbox_ci_resolver_approle_dir }}")
+        self.assertEqual(
+            (directory_settings["owner"], directory_settings["group"], directory_settings["mode"]),
+            ("root", "{{ agent_sandbox_dispatch_user }}", "0750"),
+        )
+
+        deliveries = {
+            "Install the CI resolver AppRole role ID": (
+                "{{ agent_sandbox_ci_resolver_approle_dir }}/role_id",
+                "{{ agent_sandbox_ci_resolver_role_id }}",
+            ),
+            "Install the CI resolver AppRole secret ID": (
+                "{{ agent_sandbox_ci_resolver_approle_dir }}/secret_id",
+                "{{ agent_sandbox_ci_resolver_secret_id }}",
+            ),
+        }
+        for task_name, (destination, content) in deliveries.items():
+            with self.subTest(task=task_name):
+                task = _task(self.install_tasks, task_name)
+                settings = task["ansible.builtin.copy"]
+                self.assertEqual((settings["dest"], settings["content"]), (destination, content))
+                self.assertEqual(
+                    (settings["owner"], settings["group"], settings["mode"]),
+                    ("root", "{{ agent_sandbox_dispatch_user }}", "0440"),
+                )
+                self.assertIs(task["no_log"], True)
+
+        cleanup = _task(self.tasks, "Remove CI resolver files and workbook checkout when disabled")
+        self.assertIn("{{ agent_sandbox_ci_resolver_approle_dir }}", cleanup["loop"])
+
+    def test_ci_resolver_helper_uses_permission_set_without_secret_lookup(self):
+        helper = (ROLE / "templates" / "ci-resolver-secret.sh.j2").read_text()
+        self.assertIn(
+            '"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_github_mount }}/token/'
+            '{{ agent_sandbox_ci_resolver_permission_set }}"',
+            helper,
+        )
+        self.assertNotIn(
+            '"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_github_mount }}/token"',
+            helper,
+        )
+        self.assertIn("printf '{}'", helper)
+        self.assertNotIn("GITHUB_AGENTS_INSTALLATION_ID", helper)
+        self.assertIn(
+            '"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_secret_path }}"',
+            helper,
         )
 
     def test_helper_and_environment_file_are_root_owned_with_required_modes(self):

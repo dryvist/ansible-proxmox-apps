@@ -36,6 +36,7 @@
     - "{{ agent_sandbox_ci_resolver_env_file }}"
     - "{{ agent_sandbox_ci_resolver_script }}"
     - "{{ agent_sandbox_ci_resolver_secret_helper }}"
+    - "{{ agent_sandbox_ci_resolver_approle_dir }}"
     - "{{ agent_sandbox_ci_resolver_checkout_dir }}"
   notify: Reload systemd daemon
   when: not (agent_sandbox_ci_resolver_enabled | bool)
@@ -46,6 +47,10 @@
       - agent_sandbox_dispatch_access_enabled | bool
       - agent_sandbox_dispatch_user != 'root'
       - agent_sandbox_ci_resolver_app_id | string is match('^[0-9]+$')
+      - agent_sandbox_ci_resolver_role_id is string
+      - agent_sandbox_ci_resolver_role_id | trim | length > 0
+      - agent_sandbox_ci_resolver_secret_id is string
+      - agent_sandbox_ci_resolver_secret_id | trim | length > 0
       - agent_sandbox_ci_resolver_max_attempts | int > 0
       - agent_sandbox_ci_resolver_repos is not string
       - >-
@@ -54,14 +59,40 @@
         | list | length == 0
     fail_msg: >-
       CI resolver requires dispatcher access, a non-root dispatcher user,
-      a numeric GitHub App ID, a positive attempt limit, and valid
-      owner/repo entries.
+      a numeric GitHub App ID, a non-empty resolver AppRole credential pair,
+      a positive attempt limit, and valid owner/repo entries.
     quiet: true
   when: agent_sandbox_ci_resolver_enabled | bool
 
 - name: Install CI resolver
   when: agent_sandbox_ci_resolver_enabled | bool
   block:
+    - name: Create the CI resolver AppRole credential directory
+      ansible.builtin.file:
+        path: "{{ agent_sandbox_ci_resolver_approle_dir }}"
+        state: directory
+        owner: root
+        group: "{{ agent_sandbox_dispatch_user }}"
+        mode: "0750"
+
+    - name: Install the CI resolver AppRole role ID
+      ansible.builtin.copy:
+        dest: "{{ agent_sandbox_ci_resolver_approle_dir }}/role_id"
+        content: "{{ agent_sandbox_ci_resolver_role_id }}"
+        owner: root
+        group: "{{ agent_sandbox_dispatch_user }}"
+        mode: "0440"
+      no_log: true
+
+    - name: Install the CI resolver AppRole secret ID
+      ansible.builtin.copy:
+        dest: "{{ agent_sandbox_ci_resolver_approle_dir }}/secret_id"
+        content: "{{ agent_sandbox_ci_resolver_secret_id }}"
+        owner: root
+        group: "{{ agent_sandbox_dispatch_user }}"
+        mode: "0440"
+      no_log: true
+
     - name: Install the Python 3 runtime for CI resolver
       ansible.builtin.apt:
         name: python3
