@@ -1,5 +1,52 @@
 # Changelog
 
+## [5.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.59.0...v5.0.0) (2026-10-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **openbao:** drop the github-write repository allowlist ([#2528](https://github.com/dryvist/ansible-proxmox-apps/issues/2528))
+
+### Features
+
+* **agent_sandbox:** host dispatcher with terminal sessions and a login check ([4ef824a](https://github.com/dryvist/ansible-proxmox-apps/commit/4ef824aa9b24676b02b6fb9fbe4e69b6bbb86e5e))
+* **agent_sandbox:** install the pinned host dispatcher with terminal sessions ([1870757](https://github.com/dryvist/ansible-proxmox-apps/commit/1870757ad5496e19d101a6f03c3a2276ba208b80))
+* **agent_sandbox:** pin the dispatcher release and add an hourly login check ([30998c0](https://github.com/dryvist/ansible-proxmox-apps/commit/30998c0554cfe245c8126242c82948b992eda947))
+* **agent-sandbox:** deploy the CI resolver service ([#2576](https://github.com/dryvist/ansible-proxmox-apps/issues/2576)) ([c8ed2bd](https://github.com/dryvist/ansible-proxmox-apps/commit/c8ed2bda6152729acd7bada503b481b5433d2d29))
+* **ntfy_docker:** spool ntfy-zammad messages Zammad could not take ([#2522](https://github.com/dryvist/ansible-proxmox-apps/issues/2522)) ([5c25fc5](https://github.com/dryvist/ansible-proxmox-apps/commit/5c25fc51cc12666bd141a5a0c58f4aceb424f9dc))
+* **ntfy_docker:** turn on the ai-jobs publisher for the ntfy hosts ([#2525](https://github.com/dryvist/ansible-proxmox-apps/issues/2525)) ([1804887](https://github.com/dryvist/ansible-proxmox-apps/commit/18048877a81dbcb7e4cd16537ccf29d5acb3b873))
+* **openbao:** add the docs router snapshot key, set and OIDC role ([#2505](https://github.com/dryvist/ansible-proxmox-apps/issues/2505)) ([b55f9b3](https://github.com/dryvist/ansible-proxmox-apps/commit/b55f9b34145e86ae4af700894123908e1a4c4ebd))
+* **openbao:** drop the github-write repository allowlist ([#2528](https://github.com/dryvist/ansible-proxmox-apps/issues/2528)) ([e5f1d84](https://github.com/dryvist/ansible-proxmox-apps/commit/e5f1d84b8866274fcf84bf3e8d8a2f56f92157c7))
+* **openbao:** split github-work into read and write identities ([#2523](https://github.com/dryvist/ansible-proxmox-apps/issues/2523)) ([fb1ef1d](https://github.com/dryvist/ansible-proxmox-apps/commit/fb1ef1df3045bc39d93ccf765df3348b70085453))
+
+
+### Bug Fixes
+
+* **agent-sandbox:** make the ZCode Web service optional per host ([#2579](https://github.com/dryvist/ansible-proxmox-apps/issues/2579)) ([70ae4fd](https://github.com/dryvist/ansible-proxmox-apps/commit/70ae4fd7f07652c5824f7c20ef6a11df234dcccb))
+* **agent-sandbox:** stop controller-delegated tasks from escalating ([#2580](https://github.com/dryvist/ansible-proxmox-apps/issues/2580)) ([d77f8a9](https://github.com/dryvist/ansible-proxmox-apps/commit/d77f8a917111baf9bc77ea558fb5c2c1fee0f496))
+* **apt-cache:** pass through the GitHub release asset hosts ([#2581](https://github.com/dryvist/ansible-proxmox-apps/issues/2581)) ([e087372](https://github.com/dryvist/ansible-proxmox-apps/commit/e0873726eae349cce4d68f74c6d595dc786dc56b))
+* **cribl_stream:** take openbao audit `_time` from the record ([#2516](https://github.com/dryvist/ansible-proxmox-apps/issues/2516)) ([e67c38f](https://github.com/dryvist/ansible-proxmox-apps/commit/e67c38fde0e0ebe9f9734bebb1258f2d01853550))
+* **github-runner:** apply runner ownership to diagnostics dirs recursively ([#2511](https://github.com/dryvist/ansible-proxmox-apps/issues/2511)) ([0fe98cd](https://github.com/dryvist/ansible-proxmox-apps/commit/0fe98cd982b1eec855e12b0fa33ffc184adcd1e7))
+* **nautobot:** defer drives to discovered nodes and honour quantity ([#2573](https://github.com/dryvist/ansible-proxmox-apps/issues/2573)) ([6bf939f](https://github.com/dryvist/ansible-proxmox-apps/commit/6bf939fa6f52fb5796a438eb07bbd0f28ef41cef))
+* **openbao:** alert once per rotator failure streak ([#2515](https://github.com/dryvist/ansible-proxmox-apps/issues/2515)) ([f51b466](https://github.com/dryvist/ansible-proxmox-apps/commit/f51b4662c4e3387f6191f3d0a87621caee2a191e))
+* **openbao:** compare /32 AppRole binds without the prefix length ([#2526](https://github.com/dryvist/ansible-proxmox-apps/issues/2526)) ([8ab1656](https://github.com/dryvist/ansible-proxmox-apps/commit/8ab16569dae499f8aa4b7da23c70e1c0ce6a88bf))
+* **openbao:** give open-llm the rotated-domain secret_id ttl ([#2518](https://github.com/dryvist/ansible-proxmox-apps/issues/2518)) ([6e8bf60](https://github.com/dryvist/ansible-proxmox-apps/commit/6e8bf60bb59dcabdbe7a2809e3b6cb4217cc91b5))
+* **openbao:** non-expiring class-bound secret_ids for standing identities ([#2509](https://github.com/dryvist/ansible-proxmox-apps/issues/2509)) ([0b0c711](https://github.com/dryvist/ansible-proxmox-apps/commit/0b0c71163570866a8126d2902a01470567de09b9))
+* **openbao:** persist the audit imfile read offset ([#2521](https://github.com/dryvist/ansible-proxmox-apps/issues/2521)) ([3ef0f68](https://github.com/dryvist/ansible-proxmox-apps/commit/3ef0f68864c2724dd5f4bb7d175139f76616e0f1))
+* **openbao:** refuse to render the voter-health env file without a HEC token ([#2531](https://github.com/dryvist/ansible-proxmox-apps/issues/2531)) ([9d0dade](https://github.com/dryvist/ansible-proxmox-apps/commit/9d0dade2b0cdcd89e84a55ed92979bd8c3ac7f01))
+* **openbao:** restart notified voters one at a time ([#2519](https://github.com/dryvist/ansible-proxmox-apps/issues/2519)) ([213209b](https://github.com/dryvist/ansible-proxmox-apps/commit/213209b3e6d27a3e2157992ed8e4045a3aa083ed))
+* **openbao:** scheduled AppRole rotation renews itself first and survives a failed domain ([#2510](https://github.com/dryvist/ansible-proxmox-apps/issues/2510)) ([9acd47a](https://github.com/dryvist/ansible-proxmox-apps/commit/9acd47a2f528cdcbc44024a770aab31d38d10e96))
+* **openbao:** tag and order the per-App GitHub mount phase ([#2514](https://github.com/dryvist/ansible-proxmox-apps/issues/2514)) ([f6820e5](https://github.com/dryvist/ansible-proxmox-apps/commit/f6820e52b56be5a81262d31f2e2a6789ef4768ae))
+* **openbao:** unlimited secret_id uses for local-llm, hermes and ai-donna ([#2524](https://github.com/dryvist/ansible-proxmox-apps/issues/2524)) ([4064b68](https://github.com/dryvist/ansible-proxmox-apps/commit/4064b68b7a66ff3106f2b2ade7c13c3c536f2684))
+* **pre-commit:** report when the ansible-lint lock tools are missing ([#2538](https://github.com/dryvist/ansible-proxmox-apps/issues/2538)) ([c1c1471](https://github.com/dryvist/ansible-proxmox-apps/commit/c1c14716e1cdd8e8c40f236076ceffb98c4e119c))
+* **run-ansible:** count only host rows in the play recap guard ([#2566](https://github.com/dryvist/ansible-proxmox-apps/issues/2566)) ([9d89840](https://github.com/dryvist/ansible-proxmox-apps/commit/9d89840ef94e61a74cc664d7ffe13bee90bd2140))
+* **status_stack:** correct cribl, hindsight and guest ICMP probe targets ([#2517](https://github.com/dryvist/ansible-proxmox-apps/issues/2517)) ([f086305](https://github.com/dryvist/ansible-proxmox-apps/commit/f086305b174e8b935842f37f5e5788e69f01f3df))
+
+
+### Performance
+
+* **pre-commit:** lint only staged files with ansible-lint ([#2527](https://github.com/dryvist/ansible-proxmox-apps/issues/2527)) ([5e342ec](https://github.com/dryvist/ansible-proxmox-apps/commit/5e342ecfd2ea781d614695e859b1171fb9b1868c))
+
 ## [4.59.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.58.0...v4.59.0) (2026-10-09)
 
 
