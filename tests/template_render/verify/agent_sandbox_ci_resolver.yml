@@ -1,0 +1,167 @@
+---
+# =============================================================================
+# agent_sandbox CI resolver: environment, units and secret helper
+# =============================================================================
+# Registered and set_fact values persist into the later plays of the same run
+# and outrank their task vars, so every name here carries the _asr prefix.
+- name: Render and verify the agent_sandbox CI resolver units
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
+    _asr_files:
+      - ci-resolver.env
+      - ci-resolver.service
+      - ci-resolver-workbook.service
+      - ci-resolver-workbook.timer
+      - ci-resolver-learn.service
+      - ci-resolver-learn.timer
+      - ci-resolver-secret.sh
+  tasks:
+    - name: Set the test ingress domain
+      ansible.builtin.set_fact:
+        ingress_domain: example.invalid
+
+    - name: Render CI resolver environment, units and helper fixtures
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}.j2"
+        dest: "{{ _fixture_dir }}/test_agent_sandbox_{{ item }}"
+        mode: "0644"
+      loop: "{{ _asr_files }}"
+
+    - name: Read the rendered files
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_agent_sandbox_{{ item }}"
+      register: _asr_rendered
+      loop: "{{ _asr_files }}"
+
+    - name: Decode the rendered files
+      ansible.builtin.set_fact:
+        _asr_env: "{{ _asr_rendered.results[0].content | b64decode }}"
+        _asr_service: "{{ _asr_rendered.results[1].content | b64decode }}"
+        _asr_workbook_service: "{{ _asr_rendered.results[2].content | b64decode }}"
+        _asr_workbook_timer: "{{ _asr_rendered.results[3].content | b64decode }}"
+        _asr_learn_service: "{{ _asr_rendered.results[4].content | b64decode }}"
+        _asr_learn_timer: "{{ _asr_rendered.results[5].content | b64decode }}"
+        _asr_secret_helper: "{{ _asr_rendered.results[6].content | b64decode }}"
+
+    - name: Collect the CI resolver environment variable names
+      ansible.builtin.set_fact:
+        _asr_env_names: >-
+          {{ _asr_env | regex_findall('(?m)^(CI_RESOLVER_[A-Z_]+)=') | sort }}
+
+    - name: Assert CI resolver environment names and default values
+      vars:
+        _asr_expected_env_names:
+          - CI_RESOLVER_APP_ID
+          - CI_RESOLVER_DISPATCH_CMD
+          - CI_RESOLVER_GH_TOKEN_CMD
+          - CI_RESOLVER_MAX_ATTEMPTS
+          - CI_RESOLVER_ORG
+          - CI_RESOLVER_REPOS
+          - CI_RESOLVER_SHADOW
+          - CI_RESOLVER_STATE_DIR
+          - CI_RESOLVER_TOKEN_REPO
+          - CI_RESOLVER_VIKUNJA_PROJECT
+          - CI_RESOLVER_VIKUNJA_TOKEN_CMD
+          - CI_RESOLVER_VIKUNJA_URL
+          - CI_RESOLVER_WORKBOOK_DIR
+          - CI_RESOLVER_ZAMMAD_GROUP
+          - CI_RESOLVER_ZAMMAD_TOKEN_CMD
+          - CI_RESOLVER_ZAMMAD_URL
+      ansible.builtin.assert:
+        that:
+          - _asr_env_names == _asr_expected_env_names | sort
+          - agent_sandbox_ci_resolver_enabled is false
+          - agent_sandbox_ci_resolver_shadow is true
+          - "'CI_RESOLVER_APP_ID=' in _asr_env"
+          - "'CI_RESOLVER_ORG=dryvist' in _asr_env"
+          - "'CI_RESOLVER_GH_TOKEN_CMD=/usr/local/lib/agent-sandbox/ci-resolver-secret token' in _asr_env"
+          - "'CI_RESOLVER_TOKEN_REPO=dryvist/.github' in _asr_env"
+          - "'CI_RESOLVER_DISPATCH_CMD=/usr/local/bin/agent-dispatch' in _asr_env"
+          - "'CI_RESOLVER_WORKBOOK_DIR=/var/lib/ci-resolver/prompts/automation/ci-workbook' in _asr_env"
+          - "'CI_RESOLVER_STATE_DIR=/var/lib/ci-resolver' in _asr_env"
+          - "'CI_RESOLVER_MAX_ATTEMPTS=3' in _asr_env"
+          - "'CI_RESOLVER_REPOS=' in _asr_env"
+          - "'CI_RESOLVER_SHADOW=1' in _asr_env"
+          - "('CI_RESOLVER_VIKUNJA_URL=https://vikunja.' ~ ingress_domain) in _asr_env"
+          - "'CI_RESOLVER_VIKUNJA_PROJECT=44' in _asr_env"
+          - "('CI_RESOLVER_ZAMMAD_URL=https://zammad.' ~ ingress_domain) in _asr_env"
+          - >-
+            _asr_env is search(
+            "CI_RESOLVER_ZAMMAD_GROUP='Homelab Infrastructure'")
+          - >-
+            _asr_env is not search(
+            '(?i)(tk_[A-Za-z0-9]{12,}|gh[opsu]_[A-Za-z0-9]{12,}|Bearer\\s+[A-Za-z0-9._-]{12,})')
+        fail_msg: >-
+          The CI resolver environment must contain the complete contract,
+          derived service URLs, and no token value.
+
+    - name: Assert CI resolver service uses the dispatcher account and restrictions
+      ansible.builtin.assert:
+        that:
+          - "'Type=simple' in _asr_service"
+          - "('User=' ~ agent_sandbox_dispatch_user) in _asr_service"
+          - "('Group=' ~ agent_sandbox_dispatch_user) in _asr_service"
+          - >-
+            ('ExecStart=/usr/bin/python3 ' ~ agent_sandbox_ci_resolver_script
+            ~ ' tick --loop 30') in _asr_service
+          - "'Restart=always' in _asr_service"
+          - "'RestartSec=30' in _asr_service"
+          - "'StateDirectory=ci-resolver' in _asr_service"
+          - "'UMask=0077' in _asr_service"
+          - "'NoNewPrivileges=yes' in _asr_service"
+          - "'ProtectSystem=full' in _asr_service"
+          - "'ProtectHome=yes' in _asr_service"
+          - "'PrivateTmp=yes' in _asr_service"
+        fail_msg: >-
+          The CI resolver service must run under the restricted dispatcher
+          account with the declared systemd protections.
+
+    - name: Assert workbook refresh and daily learning units
+      ansible.builtin.assert:
+        that:
+          - "'Type=oneshot' in _asr_workbook_service"
+          - >-
+            'git -C /var/lib/ci-resolver/prompts pull --ff-only --depth 1'
+            in _asr_workbook_service
+          - "'OnCalendar=hourly' in _asr_workbook_timer"
+          - "'RuntimeDirectory=ci-resolver-learn' in _asr_learn_service"
+          - >-
+            'git clone --depth 1 https://github.com/dryvist/ai-llm-prompts.git
+            /run/ci-resolver-learn/workbook' in _asr_learn_service
+          - >-
+            'learn --workbook-repo /run/ci-resolver-learn/workbook
+            --publish dryvist/ai-llm-prompts' in _asr_learn_service
+          - "'OnCalendar=daily' in _asr_learn_timer"
+          - "'RandomizedDelaySec=1h' in _asr_learn_timer"
+          - "'Persistent=true' in _asr_learn_timer"
+        fail_msg: >-
+          Workbook refresh must be hourly, and learning must clone a fresh
+          workbook under its runtime directory before publishing.
+
+    - name: Assert the CI resolver secret helper keeps credentials in memory
+      ansible.builtin.assert:
+        that:
+          - >-
+            '"permissions":{"checks":"write","actions":"write","contents":"write","pull_requests":"write"}'
+            in _asr_secret_helper
+          - "'github-agents/token' in _asr_secret_helper"
+          - "'auth/approle/login' in _asr_secret_helper"
+          - "'auth/token/revoke-self' in _asr_secret_helper"
+          - "'--data-binary @-' in _asr_secret_helper"
+          - "'--header @<(printf' in _asr_secret_helper"
+          - >-
+            _asr_secret_helper
+            | regex_findall('(?m)(?:[0-9]+)?>(?=[^=\\s])([^\\s;|)]+)')
+            | difference(['/dev/null', '&2']) | length == 0
+        fail_msg: >-
+          The secret helper must request exactly four write permissions,
+          revoke its OpenBao token, and avoid writing credentials to files.
