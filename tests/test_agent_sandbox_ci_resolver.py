@@ -26,6 +26,7 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_github_mount"], "github-admin")
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_permission_set"], "ci-resolver-dryvist")
         self.assertEqual(self.defaults["agent_sandbox_ci_resolver_approle_dir"], "/etc/ci-resolver/approle")
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_secret_path"], "secret/data/apps/ci-resolver")
         self.assertIn(
             "OPENBAO_APPROLE_CI_RESOLVER_ROLE_ID",
             self.defaults["agent_sandbox_ci_resolver_role_id"],
