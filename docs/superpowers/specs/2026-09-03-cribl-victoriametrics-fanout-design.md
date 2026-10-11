@@ -1,8 +1,9 @@
 # Design: Cribl Stream metrics fan-out to VictoriaMetrics
 
-**Date:** 2026-09-03  
-**Status:** Approved  
-**Scope:** Close the AI observability contract gap — Prometheus keep-list metrics (including Gatus) already reach Splunk via Stream; they must also reach VictoriaMetrics via Stream.
+**Date:** 2026-09-03
+**Status:** Approved
+**Scope:** Close the AI observability contract gap — Prometheus keep-list metrics (including Gatus) already
+reach Splunk via Stream; they must also reach VictoriaMetrics via Stream.
 
 ## Goal
 
@@ -60,7 +61,8 @@ Dual `connections[]` on a single source is the fan-out mechanism. Same samples, 
 - `type: prometheus` (Cribl native Prometheus remote_write destination)
 - Remote write URL built from inventory FQDN + `tofu_data.constants.service_ports.victoriametrics` (never a hardcoded IP)
 - Defaults in `roles/cribl_stream/defaults/main.yml` for host/port/path knobs
-- PQ / backpressure: match existing Stream output posture (queue or block consistently with sibling outputs; prefer `onBackpressure: queue` + PQ like `langfuse_otlp` so Splunk path is not stalled by VM)
+- PQ / backpressure: match existing Stream output posture (queue or block consistently with sibling outputs;
+  prefer `onBackpressure: queue` + PQ like `langfuse_otlp` so Splunk path is not stalled by VM)
 
 ### 2. Input connection
 
@@ -84,15 +86,16 @@ Dual `connections[]` on a single source is the fan-out mechanism. Same samples, 
 ## Error handling / ops
 
 - If VictoriaMetrics is down: Stream PQ on `victoriametrics_rw` absorbs backpressure; Splunk connection continues independently
-- If `grafana` guest absent from inventory: fail closed at template render / assert (mandatory port constant), same pattern as other Stream destinations that require a peer
+- If `grafana` guest absent from inventory: fail closed at template render / assert (mandatory port constant),
+  same pattern as other Stream destinations that require a peer
 - No silent drop of metric values on the VM path (do not reuse the Splunk `-1` coercion pipeline)
 
 ## Verification (post-converge)
 
-1. Template-render assertions green  
-2. Converge `cribl_stream`  
-3. Stream destination healthy; query VictoriaMetrics for `job="gatus"` (and another keep-list job such as blackbox)  
-4. Splunk still receives `index=netmon_metrics sourcetype=prometheus:metrics` for Gatus  
+1. Template-render assertions green
+2. Converge `cribl_stream`
+3. Stream destination healthy; query VictoriaMetrics for `job="gatus"` (and another keep-list job such as blackbox)
+4. Splunk still receives `index=netmon_metrics sourcetype=prometheus:metrics` for Gatus
 
 ## Implementation boundaries
 
@@ -104,7 +107,7 @@ Dual `connections[]` on a single source is the fan-out mechanism. Same samples, 
 
 ## Success criteria
 
-- [ ] Cribl Stream config renders with `victoriametrics_rw` and dual `in_prometheus_rw` connections  
-- [ ] After converge, VictoriaMetrics holds keep-list series including Gatus  
-- [ ] Splunk path unchanged  
-- [ ] Contract docs match runtime  
+- [ ] Cribl Stream config renders with `victoriametrics_rw` and dual `in_prometheus_rw` connections
+- [ ] After converge, VictoriaMetrics holds keep-list series including Gatus
+- [ ] Splunk path unchanged
+- [ ] Contract docs match runtime
