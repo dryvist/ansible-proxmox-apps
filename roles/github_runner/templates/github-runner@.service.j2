@@ -20,13 +20,18 @@
 [Unit]
 Description=Ephemeral GitHub Actions runner %i
 After=docker.service
-Requires=docker.service
+# Wants=, not Requires=: with Requires=, a dependency whose start job fails or
+# times out once (a slow boot) fails this unit's start job with result
+# `dependency`. That job never ran ExecStart, so Restart= never applies and the
+# unit stays inactive until someone starts it. With Wants= the start proceeds,
+# `docker run` fails while the daemon is down, and Restart=always retries it.
+Wants=docker.service
 # A runner is worthless without the daemon; do not spin restarting if it dies.
 PartOf=docker.service
 # The registration token is minted by the agent, not by Ansible. Ordering alone
 # is not enough -- see the ExecStartPre wait below.
 After=openbao-github-runner-agent.service
-Requires=openbao-github-runner-agent.service
+Wants=openbao-github-runner-agent.service
 
 [Service]
 Type=exec
@@ -34,7 +39,7 @@ Type=exec
 # reset), and `docker run --name` then fails with a name conflict forever.
 # `-` so a clean start is not a failure.
 ExecStartPre=-/usr/bin/docker rm -f {{ github_runner_container_prefix }}-%i
-# Requires= only guarantees the agent PROCESS started, not that it has
+# Wants= and After= only guarantee the agent PROCESS started, not that it has
 # authenticated and rendered a token yet, so on a cold boot this unit can reach
 # `docker run` with the file still absent and register with an empty token.
 #
