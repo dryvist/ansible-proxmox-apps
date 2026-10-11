@@ -56,6 +56,11 @@ before delivering to the configured Slack-compatible webhook. The notification
 path is Grafana → Cribl Stream → Splunk and webhook; it does not use the ntfy
 service.
 
+The Nautobot drift role posts one HEC JSON event per run with its separate
+`cribl_stream_nautobot_drift_hec_token`. Every drift event continues to Splunk,
+while only `critical` events reach the chat webhook as a readable one-line
+summary.
+
 ## Tasks
 
 - Install Cribl Stream package

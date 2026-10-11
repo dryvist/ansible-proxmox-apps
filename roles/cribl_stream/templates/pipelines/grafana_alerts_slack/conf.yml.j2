@@ -1,11 +1,36 @@
-# Keep only Grafana alert envelopes on the direct alert-webhook leg.
-# The parallel Splunk leg on in_splunk_hec preserves the full HEC event.
+# Keep Grafana alerts and critical Nautobot drift events on the direct
+# alert-webhook leg. The parallel Splunk leg preserves the full HEC event.
 output: default
 streamtags: []
 groups: {}
 asyncFuncTimeout: 1000
 functions:
+  - id: code
+    filter: "sourcetype === 'nautobot:drift'"
+    disabled: false
+    conf:
+      code: |
+        try {
+          __e.nautobot_drift_event = JSON.parse(__e._raw);
+        } catch (err) {
+          __e.nautobot_drift_event = null;
+        }
   - id: drop
-    filter: "sourcetype !== 'grafana:alert'"
+    filter: "sourcetype !== 'grafana:alert' && !(sourcetype === 'nautobot:drift' && nautobot_drift_event && nautobot_drift_event.severity === 'critical')"
     disabled: false
     conf: {}
+  - id: eval
+    filter: "sourcetype === 'nautobot:drift'"
+    disabled: false
+    conf:
+      add:
+        - name: _raw
+          value: >-
+            'Nautobot drift (' + nautobot_drift_event.severity + '): missing=' +
+            (nautobot_drift_event.missing_in_nautobot || []).length + ' [' +
+            (nautobot_drift_event.missing_in_nautobot || []).slice(0, 5).join(', ') +
+            ((nautobot_drift_event.missing_in_nautobot || []).length > 5 ? ', ...' : '') +
+            '] extra=' + (nautobot_drift_event.extra_in_nautobot || []).length + ' [' +
+            (nautobot_drift_event.extra_in_nautobot || []).slice(0, 5).join(', ') +
+            ((nautobot_drift_event.extra_in_nautobot || []).length > 5 ? ', ...' : '') +
+            '] tag_drift=' + (nautobot_drift_event.tag_drift || []).length
