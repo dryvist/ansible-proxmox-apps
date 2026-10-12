@@ -1,0 +1,57 @@
+---
+# Split out of github_runner.yml to stay under the repo's per-file token
+# budget (.token-limits.yaml) -- imported by that file's own play, so it
+# shares its vars and the _unit fact (from "Reduce both files to their
+# directive lines") rather than redeclaring them.
+#
+# How the runner unit starts, waits for its dependencies, and restarts.
+- name: Assert a failed dependency start cannot leave the runner inactive
+  ansible.builtin.assert:
+    that:
+      - _unit | select('match', 'Wants=docker\\.service$') | length == 1
+      - _unit | select('match', 'Wants=openbao-github-runner-agent\\.service$') | length == 1
+      - _unit | select('match', 'PartOf=docker\\.service$') | length == 1
+      - _unit | select('match', 'Requires=') | length == 0
+      - _unit | select('match', 'Restart=always$') | length == 1
+    fail_msg: >-
+      The runner unit hard-requires a dependency. A dependency start job
+      that fails or times out once at boot then fails this unit with result
+      `dependency`, which Restart= does not retry, and the runner slot stays
+      down until someone starts it. Use Wants= with After= and keep
+      Restart=always.
+
+- name: Assert nothing reintroduces a restart policy on the container
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', '--restart') | length == 0
+    fail_msg: >-
+      The unit passes --restart to `docker run`. A Docker restart policy
+      restarts the SAME container, which is incompatible with --rm and
+      reinstates the unbounded writable layer. systemd's own Restart=
+      supplies the next container.
+
+- name: Assert systemd supplies the next container after every job
+  ansible.builtin.assert:
+    that:
+      - "'Restart=always' in _unit"
+    fail_msg: >-
+      An ephemeral runner exits NON-ZERO after a completed job (observed:
+      status=1/FAILURE right after "completed with result: Succeeded"), so
+      Restart=on-failure happens to work while meaning something it does
+      not, and no Restart= drains the pool one job at a time with no error
+      anywhere -- jobs simply start queueing.
+
+- name: Assert a runner cannot start before a token exists
+  ansible.builtin.assert:
+    that:
+      - _unit | select('search', 'openbao-github-runner-agent.service') | length > 0
+      - _unit | select('search', 'ExecStartPre=.*access-token.env') | length > 0
+      - _unit | select('search', 'ExecStartPre=.*e2e.env') | length == 0
+    fail_msg: >-
+      The unit does not both order itself after the token agent AND wait
+      for the token file. Ordering alone only proves the agent PROCESS
+      started, not that it has authenticated and rendered anything, so on a
+      cold boot the container starts with an empty ACCESS_TOKEN and fails
+      to register. The e2e env file must NOT be a start condition: it
+      feeds one test suite, and a store path that suite cannot read must
+      fail that suite, never keep every PR's CI runner from starting.
