@@ -1,60 +1,54 @@
 ---
-# Read-only Nautobot parity report, run the same way as every other template:
-# the run wrapper exports the run environment, the shared inventory_resolve
-# role fetches the published inventory artifact, and the read-only Nautobot
-# credential is read from the store for the duration of the play. Nothing here
-# reaches a managed host, and by the script's own contract it exits non-zero
-# only on an API error, never on drift.
+# Nautobot parity report through the jpe_ansible.nautobot collection: compares
+# Nautobot against the published inventory and posts one event per run to the
+# Cribl Stream HEC input. Read-only against Nautobot. Credentials come from
+# OpenBao through the run's own token
+# (playbooks/tasks/nautobot_collection_access.yml); the HEC token comes
+# from nautobot_collection_drift_hec_token and the run fails while it is empty.
 #
 # Not part of site.yml. Run directly:
 #   ansible-playbook -i inventory/hosts.yml playbooks/nautobot-drift.yml
 - name: Start the wall-clock budget
   import_playbook: site/budget-gate.yml
 
-- name: Nautobot drift report
+- name: Report Nautobot drift through the collection
   hosts: localhost
   gather_facts: false
   become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
   vars:
-    # Same reasons as inventory/load_tofu.yml: group_vars pins ansible_become
-    # for the managed hosts (a variable outranks the play keyword above), and
-    # the system python lacks boto3.
     ansible_become: false
     ansible_python_interpreter: auto_silent
 
   tasks:
-    - name: Resolve the published OpenTofu inventory
+    - name: Resolve the published inventory
       ansible.builtin.include_role:
         name: dryvist.homelab.inventory_resolve
 
-    # The run's own token: the wrapper logs in once and exports it, and the
-    # runner keeps it for the play. A workstation caller sets BAO_TOKEN by hand.
-    - name: Read the read-only Nautobot inventory credential
-      community.hashi_vault.vault_kv2_get:
-        url: "{{ lookup('env', 'BAO_ADDR') }}"
-        auth_method: token
-        token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
-        engine_mount_point: secret
-        path: apps/nautobot
-      register: nautobot_drift_credential
-      no_log: true
+    - name: Parse the published inventory
+      ansible.builtin.set_fact:
+        tofu_data: "{{ tofu_inventory_resolved | from_json }}"
 
-    - name: Compare Nautobot against the published inventory
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/../scripts/nautobot_drift.py"
-          - --tofu-inventory
-          - "{{ tofu_inventory_resolved }}"
-      environment:
-        NAUTOBOT_URL: "{{ nautobot_drift_credential.secret.inventory_url }}"
-        NAUTOBOT_TOKEN: "{{ nautobot_drift_credential.secret.inventory_ro_token }}"
-      register: nautobot_drift_report
-      changed_when: false
+    - name: Read and check the credentials
+      ansible.builtin.include_tasks: tasks/nautobot_collection_access.yml
 
-    - name: Print the report
-      ansible.builtin.debug:
-        msg: "{{ nautobot_drift_report.stdout_lines }}"
+    - name: Require a drift event token
+      ansible.builtin.assert:
+        that: nautobot_collection_drift_hec_token | length > 0
+        fail_msg: nautobot_collection_drift_hec_token must be non-empty
+
+    - name: Run the Nautobot drift role
+      ansible.builtin.include_role:
+        name: jpe_ansible.nautobot.drift
+      vars:
+        drift_nautobot_url: "{{ nautobot_collection_nautobot_url }}"
+        drift_read_token: "{{ nautobot_collection_read_token }}"
+        drift_source_inventory: "{{ tofu_data }}"
+        drift_hec_url: "{{ nautobot_collection_drift_hec_url }}"
+        drift_hec_token: "{{ nautobot_collection_drift_hec_token }}"
+        drift_source_groups: "{{ nautobot_collection_drift_source_groups }}"
+        drift_unmodelled_domains: "{{ nautobot_collection_drift_unmodelled_domains }}"
 
 - name: Refuse a run past its wall-clock budget
   import_playbook: site/budget-gate.yml
