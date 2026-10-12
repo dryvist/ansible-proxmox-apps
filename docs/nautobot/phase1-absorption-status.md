@@ -7,8 +7,8 @@ capable of**.
 
 ## Absorbed today (verified live, read-only)
 
-The converge-owned seed pipeline (`roles/nautobot`, gated by `nautobot_build_seed`
-+ `nautobot_run_seed_jobs`) imports from the sibling-repo sources via additive
+The converge-owned seed pipeline (`roles/nautobot`), gated by
+`nautobot_build_seed` and `nautobot_run_seed_jobs`, imports from the sibling-repo sources via additive
 SSoT DiffSync jobs. Current modeled coverage, all verified against source:
 
 | Domain | Nautobot model | Source | State |
@@ -29,11 +29,11 @@ inventory answers with **1:1 group parity** against the tofu inventory
 
 ## Consumption contracts (verified ready, not cut over)
 
-- **GraphQL dynamic inventory** (`inventory/nautobot.yml`): 1:1 parity confirmed.
++ **GraphQL dynamic inventory** (`inventory/nautobot.yml`): 1:1 parity confirmed.
   Local `ansible-inventory` needs `pynautobot` in the dev shell to run the plugin
   (nix-devenv gap — tracked); the converged controller has it.
-- **Export artifact** (`nautobot-export-v1`): validates against its schema.
-- Read-only token is role-managed (`nautobot_token_publish_openbao`, fail-closed
++ **Export artifact** (`nautobot-export-v1`): validates against its schema.
++ Read-only token is role-managed (`nautobot_token_publish_openbao`, fail-closed
   non-superuser + view-only ObjectPermission + `write_enabled=False`).
 
 ## Roadmap — everything Nautobot can natively model
