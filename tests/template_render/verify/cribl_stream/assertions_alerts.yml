@@ -1,31 +1,59 @@
 ---
-- name: Assert the alert delivery pipeline routes critical drift and Grafana events
+- name: Assert Grafana alert delivery is grouped and split from Nautobot Slack
   vars:
-    _cribl_stream_grafana_alerts_functions: >-
+    _cribl_stream_grafana_functions: >-
       {{ (_cribl_stream_grafana_alerts_pipeline | from_yaml).functions }}
-    _cribl_stream_grafana_drop_filter: "{{ _cribl_stream_grafana_alerts_functions[1].filter }}"
-    _cribl_stream_grafana_summary_eval: "{{ _cribl_stream_grafana_alerts_functions[2] }}"
+    _cribl_stream_nautobot_functions: >-
+      {{ (_cribl_stream_nautobot_alerts_pipeline | from_yaml).functions }}
+    _cribl_stream_verified_ntfy_functions: >-
+      {{ (_cribl_stream_grafana_alerts_ntfy_verified | from_yaml).functions }}
+    _cribl_stream_verified_slack_functions: >-
+      {{ (_cribl_stream_grafana_alerts_slack_verified | from_yaml).functions }}
+    _cribl_stream_policy: >-
+      {{ (lookup('ansible.builtin.template',
+          playbook_dir ~ '/../../../roles/grafana_stack/templates/alerting/notification-policies.yml.j2')
+          | from_yaml).policies[0] }}
   ansible.builtin.assert:
     that:
+      - "'grafana_alerts_ntfy' in _cribl_stream_defaults.cribl_stream_pipelines"
       - "'grafana_alerts_slack' in _cribl_stream_defaults.cribl_stream_pipelines"
-      - _cribl_stream_grafana_alerts_functions[0].id == 'code'
-      - _cribl_stream_grafana_alerts_functions[0].filter == "sourcetype === 'nautobot:drift'"
-      - "'JSON.parse(__e._raw)' in _cribl_stream_grafana_alerts_functions[0].conf.code"
-      - "'catch' in _cribl_stream_grafana_alerts_functions[0].conf.code"
-      - _cribl_stream_grafana_alerts_functions[1].id == 'drop'
-      - "'grafana:alert' in _cribl_stream_grafana_drop_filter"
-      - "'nautobot:drift' in _cribl_stream_grafana_drop_filter"
-      - "'severity' in _cribl_stream_grafana_drop_filter"
-      - "'critical' in _cribl_stream_grafana_drop_filter"
-      - _cribl_stream_grafana_summary_eval.id == 'eval'
-      - _cribl_stream_grafana_summary_eval.filter == "sourcetype === 'nautobot:drift'"
-      - _cribl_stream_grafana_summary_eval.conf.add[0].name == '_raw'
-      - "'Nautobot drift (' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
-      - "'missing_in_nautobot' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
-      - "'extra_in_nautobot' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
-      - "'tag_drift' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
-      - "'.slice(0, 5).join' in _cribl_stream_grafana_summary_eval.conf.add[0].value"
-      - _cribl_stream_grafana_alerts_functions[3].id == 'code'
-      - _cribl_stream_grafana_alerts_functions[3].filter == "sourcetype === 'grafana:alert'"
-      - "'alertname' in _cribl_stream_grafana_alerts_functions[3].conf.code"
-      - "'catch' in _cribl_stream_grafana_alerts_functions[3].conf.code"
+      - not (_cribl_stream_defaults.cribl_stream_grafana_ntfy_cutover_verified | bool)
+      - _cribl_stream_grafana_functions[0].id == 'drop'
+      - _cribl_stream_grafana_functions[0].filter == "sourcetype !== 'grafana:alert:canary'"
+      - _cribl_stream_grafana_functions[1].id == 'code'
+      - _cribl_stream_grafana_functions[1].filter == "sourcetype === 'grafana:alert:canary'"
+      - "'JSON.parse(__e._raw)' in _cribl_stream_grafana_functions[1].conf.code"
+      - "'sourceLinks' in _cribl_stream_grafana_functions[1].conf.code"
+      - "'__ntfyParts' in _cribl_stream_grafana_functions[1].conf.code"
+      - "'entityKeys' in _cribl_stream_grafana_functions[1].conf.code"
+      - "'grafana_state_reason' in _cribl_stream_grafana_functions[1].conf.code"
+      - _cribl_stream_grafana_functions[2].id == 'unroll'
+      - _cribl_stream_grafana_functions[2].conf.srcField == '__ntfyParts'
+      - _cribl_stream_grafana_functions[3].id == 'code'
+      - "'__ntfyPart' in _cribl_stream_grafana_functions[3].conf.code"
+      - _cribl_stream_nautobot_functions[0].filter == "sourcetype === 'nautobot:drift'"
+      - "'critical' in _cribl_stream_nautobot_functions[1].filter"
+      - >-
+        'grafana:alert' in _cribl_stream_nautobot_functions[1].filter
+        and '&& true' in _cribl_stream_nautobot_functions[1].filter
+      - >-
+        _cribl_stream_verified_ntfy_functions[0].filter ==
+        "sourcetype !== 'grafana:alert:canary' && sourcetype !== 'grafana:alert'"
+      - >-
+        _cribl_stream_verified_ntfy_functions[1].filter ==
+        "sourcetype === 'grafana:alert:canary' || sourcetype === 'grafana:alert'"
+      - >-
+        'grafana:alert' in _cribl_stream_verified_slack_functions[1].filter
+        and '&& false' in _cribl_stream_verified_slack_functions[1].filter
+      - _cribl_stream_policy.group_by == ['grafana_folder', 'alertname', 'severity']
+      - _cribl_stream_policy.group_wait == '30s'
+      - _cribl_stream_policy.group_interval == '5m'
+      - _cribl_stream_policy.repeat_interval == grafana_stack_alert_repeat_interval
+      - _cribl_stream_policy.routes[0].object_matchers == [['severity', '=', 'warning']]
+      - _cribl_stream_policy.routes[0].repeat_interval == '1h'
+      - _cribl_stream_policy.routes[1].object_matchers == [['severity', '=', 'info']]
+      - _cribl_stream_policy.routes[1].repeat_interval == '1h'
+    fail_msg: >-
+      Grafana alert deliveries must retain all details through bounded ntfy
+      continuations; critical Nautobot must remain on the separate direct Slack
+      leg, and warning and info repeats should move to one hour.

@@ -1,5 +1,5 @@
-# Keep Grafana alerts and critical Nautobot drift events on the direct
-# alert-webhook leg. The parallel Splunk leg preserves the full HEC event.
+# Preserve the existing direct Grafana Slack delivery until the ntfy cutover
+# is explicitly verified. The critical Nautobot route shares this queue.
 output: default
 streamtags: []
 groups: {}
@@ -16,7 +16,7 @@ functions:
           __e.nautobot_drift_event = null;
         }
   - id: drop
-    filter: "sourcetype !== 'grafana:alert' && !(sourcetype === 'nautobot:drift' && nautobot_drift_event && nautobot_drift_event.severity === 'critical')"
+    filter: "!(sourcetype === 'nautobot:drift' && nautobot_drift_event && nautobot_drift_event.severity === 'critical' || sourcetype === 'grafana:alert' && {{ 'true' if not (cribl_stream_grafana_ntfy_cutover_verified | bool) else 'false' }})"
     disabled: false
     conf: {}
   - id: eval
@@ -34,8 +34,8 @@ functions:
             (nautobot_drift_event.extra_in_nautobot || []).slice(0, 5).join(', ') +
             ((nautobot_drift_event.extra_in_nautobot || []).length > 5 ? ', ...' : '') +
             '] tag_drift=' + (nautobot_drift_event.tag_drift || []).length
-  # Grafana's webhook envelope becomes one readable line per alert (state,
-  # rule name, instance, summary). Unparseable payloads pass through unchanged.
+  # Production Grafana alerts stay on this existing direct route until the
+  # ntfy hub cutover flag is enabled after successful destination receipts.
   - id: code
     filter: "sourcetype === 'grafana:alert'"
     disabled: false
