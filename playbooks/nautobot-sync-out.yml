@@ -1,0 +1,36 @@
+---
+# Nautobot export through the jpe_ansible.nautobot collection: the saved
+# GraphQL query is rendered to the export contract and uploaded to the object
+# store. Read-only against Nautobot. Credentials come from OpenBao through the
+# run's own token (playbooks/tasks/nautobot_collection_access.yml).
+#
+# Not part of site.yml. Run directly:
+#   ansible-playbook -i inventory/hosts.yml playbooks/nautobot-sync-out.yml
+- name: Start the wall-clock budget
+  import_playbook: site/budget-gate.yml
+
+- name: Export Nautobot through the collection
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+
+  tasks:
+    - name: Read and check the credentials
+      ansible.builtin.include_tasks: tasks/nautobot_collection_access.yml
+
+    - name: Run the Nautobot sync-out role
+      ansible.builtin.include_role:
+        name: jpe_ansible.nautobot.sync_out
+      vars:
+        sync_out_nautobot_url: "{{ nautobot_collection_nautobot_url }}"
+        sync_out_read_token: "{{ nautobot_collection_read_token }}"
+        sync_out_query_name: "{{ nautobot_collection_export_query_name }}"
+        sync_out_object_storage_bucket: "{{ nautobot_export_s3_bucket }}"
+
+- name: Refuse a run past its wall-clock budget
+  import_playbook: site/budget-gate.yml
