@@ -1,0 +1,82 @@
+---
+# Reads the Nautobot credentials a collection flow needs from the run's own
+# OpenBao token (the run wrapper exports it; a workstation caller sets BAO_TOKEN
+# by hand) and fails before any role runs when one is empty. Secret paths and
+# fields are declared once in inventory/group_vars/nautobot_group.yml.
+#
+# Inputs: nautobot_collection_write_required (bool, default false),
+#         nautobot_collection_pve_required (bool, default false).
+# Sets:   nautobot_collection_read_token, nautobot_collection_nautobot_url,
+#         and, when required, nautobot_collection_write_token and the
+#         nautobot_collection_pve_* credentials.
+- name: Read the Nautobot read credential
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ lookup('env', 'BAO_ADDR') }}"
+    auth_method: token
+    token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
+    engine_mount_point: secret
+    path: "{{ nautobot_collection_read_token_secret.path }}"
+  register: nautobot_collection_read_credential
+  no_log: true
+
+- name: Read the Nautobot application credentials
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ lookup('env', 'BAO_ADDR') }}"
+    auth_method: token
+    token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
+    engine_mount_point: secret
+    path: "{{ nautobot_collection_app_secret.path }}"
+  register: nautobot_collection_app_credential
+  no_log: true
+
+- name: Read the Nautobot write credential
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ lookup('env', 'BAO_ADDR') }}"
+    auth_method: token
+    token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
+    engine_mount_point: secret
+    path: "{{ nautobot_collection_write_token_secret.path }}"
+  register: nautobot_collection_write_credential
+  no_log: true
+  when: nautobot_collection_write_required | default(false) | bool
+
+- name: Collect the credentials in one place
+  ansible.builtin.set_fact:
+    nautobot_collection_read_token: >-
+      {{ nautobot_collection_read_values[nautobot_collection_read_token_secret.field] | default('', true) }}
+    nautobot_collection_nautobot_url: >-
+      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.nautobot_url] | default('', true) }}
+    nautobot_collection_write_token: >-
+      {{ nautobot_collection_write_values[nautobot_collection_write_token_secret.field] | default('', true)
+         if nautobot_collection_write_required | default(false) | bool else 'unused' }}
+    nautobot_collection_pve_token_id: >-
+      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.pve_token_id] | default('', true)
+         if nautobot_collection_pve_required | default(false) | bool else 'unused' }}
+    nautobot_collection_pve_token_secret: >-
+      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.pve_token_secret] | default('', true)
+         if nautobot_collection_pve_required | default(false) | bool else 'unused' }}
+    nautobot_collection_pve_ca: >-
+      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.pve_ca] | default('', true)
+         if nautobot_collection_pve_required | default(false) | bool else 'unused' }}
+  vars:
+    nautobot_collection_read_values: "{{ nautobot_collection_read_credential.secret }}"
+    nautobot_collection_app_values: "{{ nautobot_collection_app_credential.secret }}"
+    nautobot_collection_write_values: "{{ nautobot_collection_write_credential.secret | default({}) }}"
+  no_log: true
+
+- name: Name every empty credential
+  ansible.builtin.set_fact:
+    nautobot_collection_empty_credentials: >-
+      {{ {
+           'read_token': nautobot_collection_read_token,
+           'nautobot_url': nautobot_collection_nautobot_url,
+           'write_token': nautobot_collection_write_token,
+           'pve_token_id': nautobot_collection_pve_token_id,
+           'pve_token_secret': nautobot_collection_pve_token_secret,
+           'pve_ca': nautobot_collection_pve_ca,
+         } | dict2items | selectattr('value', 'equalto', '') | map(attribute='key') | list }}
+
+- name: Require every needed credential to be non-empty
+  ansible.builtin.assert:
+    that: nautobot_collection_empty_credentials | length == 0
+    fail_msg: "Empty Nautobot collection credentials: {{ nautobot_collection_empty_credentials | join(', ') }}"
