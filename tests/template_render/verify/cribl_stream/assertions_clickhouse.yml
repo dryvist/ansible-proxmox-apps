@@ -1,0 +1,36 @@
+---
+- name: Load Cribl Stream Prometheus keep-job defaults and inventory
+  ansible.builtin.include_vars:
+    file: "../../../../roles/cribl_stream/defaults/main/30-workers-metrics.yml"
+    name: _cribl_stream_metrics_defaults
+
+- name: Load the live Cribl Stream Prometheus keep-job list
+  ansible.builtin.include_vars:
+    file: "../../../../inventory/group_vars/cribl_stream_group.yml"
+    name: _cribl_stream_group_vars
+
+- name: Assert ClickHouse is retained by the role and inventory allow-lists
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "'clickhouse' in _cribl_stream_metrics_defaults.cribl_stream_prometheus_splunk_keep_jobs"
+      - "'clickhouse' in _cribl_stream_group_vars.cribl_stream_prometheus_splunk_keep_jobs"
+
+- name: Render prometheus_to_netmon with the live ClickHouse keep-job list
+  ansible.builtin.set_fact:
+    _clickhouse_prom_pipeline: >-
+      {{ lookup('template', _template_dir ~ '/pipelines/prometheus_to_netmon/conf.yml.j2') }}
+  vars:
+    cribl_stream_prometheus_splunk_keep_jobs: >-
+      {{ _cribl_stream_group_vars.cribl_stream_prometheus_splunk_keep_jobs }}
+
+- name: Assert the ClickHouse Prometheus route uses host_metrics identity
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "'clickhouse' in (_clickhouse_prom_pipeline | from_yaml).functions[0].filter"
+      - >-
+        "(job === 'clickhouse' || job === 'pve_node_exporter' || job === 'guest_node_exporter') ? 'host_metrics'" in
+        _clickhouse_prom_pipeline
+      - "\"job === 'clickhouse' ? 'clickhouse:metrics'\" in _clickhouse_prom_pipeline"
+      - "\"job === 'clickhouse' ? 'clickhouse'\" in _clickhouse_prom_pipeline"
