@@ -1,12 +1,21 @@
 # Cribl → VictoriaMetrics Fan-out Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fan every Prometheus keep-list sample already received by Cribl Stream `in_prometheus_rw` into VictoriaMetrics as well as Splunk, so Gatus (and siblings) are queryable from both stores.
+**Goal:** Fan every Prometheus keep-list sample already received by Cribl Stream
+`in_prometheus_rw` into VictoriaMetrics as well as Splunk, so Gatus (and siblings)
+are queryable from both stores.
 
-**Architecture:** Dual `connections[]` on `prometheus_rw:in_prometheus_rw`. Existing leg keeps `pipeline: prometheus_to_netmon` → `splunk_hec`. New leg has **no** Splunk-stamp pipeline → new `type: prometheus` output `victoriametrics_rw` posting to `http://grafana.<domain>:<victoriametrics_port>/api/v1/write`.
+**Architecture:** Dual `connections[]` on `prometheus_rw:in_prometheus_rw`. Existing
+leg keeps `pipeline: prometheus_to_netmon` → `splunk_hec`. New leg has **no**
+Splunk-stamp pipeline → new `type: prometheus` output `victoriametrics_rw` posting
+to `http://grafana.<domain>:<victoriametrics_port>/api/v1/write`.
 
-**Tech Stack:** Ansible (`roles/cribl_stream`), Cribl Stream YAML configs, VictoriaMetrics remote_write, existing template-render tests under `tests/template_render/`.
+**Tech Stack:** Ansible (`roles/cribl_stream`), Cribl Stream YAML configs,
+VictoriaMetrics remote_write, existing template-render tests under
+`tests/template_render/`.
 
 **Spec:** `docs/superpowers/specs/2026-09-03-cribl-victoriametrics-fanout-design.md`
 
@@ -17,7 +26,9 @@
 - Do not attach `prometheus_to_netmon` to the VictoriaMetrics connection
 - No tofu/firewall changes (`:8428` already open from internal)
 - Work in worktree: `/Users/jevans/git/public/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis`
-- Doc touch for tofu lives under `/Users/jevans/git/public/homelab/tofu-proxmox` (checkout/worktree as needed; PR already merged for estate-health — use a small follow-up branch or amend docs on `develop`)
+- Doc touch for tofu lives under `/Users/jevans/git/public/homelab/tofu-proxmox`
+  (checkout/worktree as needed; PR already merged for estate-health — use a small
+  follow-up branch or amend docs on `develop`)
 
 ## File map
 
@@ -35,10 +46,12 @@
 ### Task 1: Failing template-render assertions
 
 **Files:**
+
 - Modify: `tests/template_render/verify/cribl_stream.yml`
 - Modify: `tests/template_render/verify/cribl_stream/assertions_inputs.yml`
 
 **Interfaces:**
+
 - Consumes: rendered `_cribl_stream_inputs`, `_cribl_stream_outputs_pi` (existing decode vars from `render_and_decode.yml`)
 - Produces: failing asserts that require `victoriametrics_rw` + dual connections
 
@@ -52,7 +65,8 @@ In `tests/template_render/verify/cribl_stream.yml`, after the existing `cribl_st
 
 - [ ] **Step 2: Extend the prometheus_rw assert and add a VM output assert**
 
-Replace the existing task named `Assert prometheus_rw input is present on port 9201 with prometheusAPI and prometheus_to_netmon pipeline` in `assertions_inputs.yml` with:
+Replace the existing task named `Assert prometheus_rw input is present on port 9201
+with prometheusAPI and prometheus_to_netmon pipeline` in `assertions_inputs.yml` with:
 
 ```yaml
 - name: Assert prometheus_rw input fans to Splunk and VictoriaMetrics
@@ -116,11 +130,13 @@ EOF
 ### Task 2: Implement Stream output + dual connection
 
 **Files:**
+
 - Modify: `roles/cribl_stream/defaults/main.yml`
 - Modify: `roles/cribl_stream/templates/outputs.yml.j2`
 - Modify: `roles/cribl_stream/templates/inputs.yml.j2`
 
 **Interfaces:**
+
 - Consumes: `PROXMOX_SUBDOMAIN`, `tofu_data.constants.service_ports.victoriametrics` (or fixture override)
 - Produces: `cribl_stream_victoriametrics_rw_url`, output id `victoriametrics_rw`, second input connection
 
@@ -141,7 +157,9 @@ cribl_stream_victoriametrics_rw_url: >-
   }}/api/v1/write
 ```
 
-**Simpler form preferred if `grafana_hostname` / port vars are already in scope on Stream hosts** — use this instead if inventory already exposes them cleanly (match sibling roles):
+**Simpler form preferred if `grafana_hostname` / port vars are already in scope on
+Stream hosts** — use this instead if inventory already exposes them cleanly (match
+sibling roles):
 
 ```yaml
 cribl_stream_victoriametrics_rw_url: >-
@@ -154,7 +172,8 @@ cribl_stream_victoriametrics_rw_url: >-
   }}/api/v1/write
 ```
 
-Pick **one** of the two blocks above when implementing; the fixture override in Task 1 must win in tests so live `tofu_data` is not required for template-render.
+Pick **one** of the two blocks above when implementing; the fixture override in
+Task 1 must win in tests so live `tofu_data` is not required for template-render.
 
 - [ ] **Step 2: Append the Prometheus destination to outputs.yml.j2**
 
@@ -230,9 +249,14 @@ EOF
 ### Task 3: Contract docs
 
 **Files:**
-- Modify: `/Users/jevans/git/public/homelab/tofu-proxmox/docs/AI_OBSERVABILITY.md` (or the estate-health worktree copy if still present; prefer the live repo `develop` / a short docs branch)
+
+- Modify: `/Users/jevans/git/public/homelab/tofu-proxmox/docs/AI_OBSERVABILITY.md`
+
+  (or the estate-health worktree copy if still present; prefer the live repo
+  `develop` / a short docs branch)
 
 **Interfaces:**
+
 - Consumes: approved design wording
 - Produces: docs that match runtime fan-out
 
@@ -287,7 +311,10 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags
 - [ ] **Step 2: Confirm both destinations**
 
 - Stream UI / destination health: `victoriametrics_rw` not failing
-- VictoriaMetrics: `curl -sG 'http://grafana.<domain>:8428/api/v1/query' --data-urlencode 'query=up{job="gatus"}'` (or equivalent) returns series once Gatus scrape + remote_write have run
+- VictoriaMetrics: `curl -sG
+  'http://grafana.<domain>:8428/api/v1/query'
+  --data-urlencode 'query=up{job="gatus"}'` (or equivalent) returns series once
+  Gatus scrape + remote_write have run
 - Splunk unchanged: `index=netmon_metrics sourcetype=prometheus:metrics job=gatus` still receives events
 
 Do not commit runtime evidence.
