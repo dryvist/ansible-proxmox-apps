@@ -28,6 +28,9 @@ INPUTS_TEMPLATE = ROOT / "roles/cribl_stream/templates/inputs.yml.j2"
 MLX_PIPELINE_TEMPLATE = (
     ROOT / "roles/cribl_stream/templates/pipelines/mlx_metrics_normalize/conf.yml.j2"
 )
+CRIBL_METRICS_PIPELINE_TEMPLATE = (
+    ROOT / "roles/cribl_stream/templates/pipelines/cribl_metrics_to_splunk/conf.yml.j2"
+)
 
 # Minimal variable set inputs.yml.j2 needs to render end to end (grep
 # cribl_stream_ references in the template for the full list).
@@ -126,6 +129,24 @@ def test_cribl_metrics_connects_to_victoriametrics_and_splunk():
         splunk_output = "splunk_hec_cribl_internal" if hec_namespace else "splunk_hec"
         splunk_conn = next(c for c in connections if c["output"] == splunk_output)
         assert splunk_conn["pipeline"] == "cribl_internal"
+
+        metrics_conn = next(
+            connection
+            for connection in connections
+            if connection.get("pipeline") == "cribl_metrics_to_splunk"
+        )
+        assert metrics_conn["output"] == "splunk_hec"
+
+
+def test_cribl_metrics_splunk_pipeline_stamps_platform_metrics_index():
+    pipeline = _render_pipeline(CRIBL_METRICS_PIPELINE_TEMPLATE)
+    functions = pipeline["functions"]
+
+    assert [function["id"] for function in functions] == ["eval"]
+    assert functions[0]["conf"]["add"] == [
+        {"name": "index", "value": "'host_metrics'"},
+        {"name": "sourcetype", "value": "sourcetype || 'cribl:metrics'"},
+    ]
 
 
 def test_cribl_logs_does_not_connect_to_victoriametrics():

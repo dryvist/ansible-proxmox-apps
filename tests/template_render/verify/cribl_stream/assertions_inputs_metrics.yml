@@ -60,6 +60,33 @@
       HEC_NAMESPACE-set branch (splunk_hec_llm, reused rather than a
       dedicated splunk_hec_llm_metrics output).
 
+- name: Assert CriblMetrics fans native metrics to Splunk and VictoriaMetrics
+  vars:
+    _cribl_metrics_connections: >-
+      {{ (_cribl_stream_inputs | from_yaml).inputs['cribl:CriblMetrics'].connections }}
+    _cribl_metrics_splunk: >-
+      {{ _cribl_metrics_connections
+         | selectattr('pipeline', 'defined')
+         | selectattr('pipeline', 'equalto', 'cribl_metrics_to_splunk') | list }}
+    _cribl_metrics_victoriametrics: >-
+      {{ _cribl_metrics_connections
+         | selectattr('output', 'equalto', 'victoriametrics_rw') | list }}
+  ansible.builtin.assert:
+    that:
+      - _cribl_metrics_splunk | length == 1
+      - _cribl_metrics_splunk[0].output == 'splunk_hec'
+      - _cribl_metrics_splunk[0].pipeline == 'cribl_metrics_to_splunk'
+      - _cribl_metrics_victoriametrics | length == 1
+      - _cribl_metrics_victoriametrics[0].output == 'victoriametrics_rw'
+      - "'pipeline' not in _cribl_metrics_victoriametrics[0]"
+      - >-
+        (_cribl_stream_inputs | from_yaml).inputs['cribl:CriblMetrics'].connections
+        | selectattr('pipeline', 'defined')
+        | selectattr('pipeline', 'equalto', 'cribl_internal') | list | length == 1
+    fail_msg: >-
+      CriblMetrics must keep its cribl_internal event and VictoriaMetrics legs
+      and add a host_metrics Splunk metrics leg through cribl_metrics_to_splunk.
+
 - name: Assert victoriametrics_rw Prometheus remote_write output renders
   ansible.builtin.assert:
     that:
