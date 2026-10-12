@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const root = `${__dirname}/..`;
+const renderedOutputsPath = process.argv[2];
+assert.ok(renderedOutputsPath, 'pass the rendered outputs.yml fixture path');
 const pipelinePath = `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_ntfy/conf.yml.j2`;
 const pipeline = fs.readFileSync(pipelinePath, 'utf8');
 const codeMarker = '      code: |\n';
@@ -151,5 +153,36 @@ assert.match(roleTasks, /when: cribl_stream_grafana_ntfy_cutover_verified \| boo
 assert.match(fs.readFileSync(`${root}/roles/cribl_stream/templates/outputs.yml.j2`, 'utf8'),
   /typeof message === 'string'[\s\S]*?typeof priority === 'number'[\s\S]*?: null/,
   'the ntfy webhook only serializes explicitly formatted fields');
+
+const renderedOutputs = fs.readFileSync(renderedOutputsPath, 'utf8');
+const ntfySection = renderedOutputs.match(/  ntfy_grafana_alerts:\n([\s\S]*?)(?=\n  [a-zA-Z0-9_]+:|$)/);
+assert.ok(ntfySection, 'the rendered ntfy output exists');
+const publishUrl = ntfySection[1].match(/^    url: "([^"]+)"$/m)?.[1];
+assert.equal(publishUrl, 'https://ntfy.example.invalid/', 'ntfy publishes to the configured root URL');
+const expressionLines = ntfySection[1].match(/^    customSourceExpression: >-\n((?:      .*\n)+)/m)?.[1];
+assert.ok(expressionLines, 'the rendered custom webhook expression exists');
+const customSourceExpression = expressionLines.split('\n').filter(Boolean).map((line) => line.trim()).join(' ');
+const webhookEvent = {
+  message: 'compact Grafana summary',
+  title: 'Grafana alerts',
+  priority: 4,
+  tags: ['warning'],
+  click: 'https://splunk.example.test/search',
+  _raw: '{"alerts":["full event remains in Splunk"]}',
+  secret: 'must not be serialized',
+};
+const webhookBody = vm.runInNewContext(customSourceExpression, webhookEvent);
+assert.deepEqual(JSON.parse(webhookBody), {
+  topic: 'observability',
+  message: 'compact Grafana summary',
+  title: 'Grafana alerts',
+  priority: 4,
+  tags: ['warning'],
+  click: 'https://splunk.example.test/search',
+}, 'the rendered webhook JSON contains only the ntfy fields, never _raw or other event data');
+assert.equal(vm.runInNewContext(customSourceExpression, { ...webhookEvent, message: '' }), null,
+  'empty summaries are dropped instead of emitting a topic-only JSON payload');
+assert.equal(vm.runInNewContext(customSourceExpression, { ...webhookEvent, message: null }), null,
+  'invalid summaries are dropped instead of emitting raw-event fallbacks');
 
 process.stdout.write('Grafana alert formatter acceptance checks passed.\n');
