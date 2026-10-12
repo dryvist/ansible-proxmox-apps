@@ -66,6 +66,11 @@ def test_the_gate_defaults_off():
     assert defaults()["vikunja_ai_jobs_publish_openbao"] is False
 
 
+def test_the_vikunja_group_enables_ai_jobs_token_publication():
+    group_vars = _yaml(ROOT / "inventory/group_vars/vikunja_group.yml")
+    assert group_vars["vikunja_ai_jobs_publish_openbao"] is True
+
+
 def test_the_identity_is_not_in_the_hermes_list():
     names = [item["username"] for item in defaults()["vikunja_hermes_bridge_identities"]]
     assert "ai_jobs" not in names
