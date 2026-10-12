@@ -1,0 +1,89 @@
+---
+# The ClickHouse scrape job in roles/prometheus_stack/templates/prometheus.yml.j2.
+# It renders the real template against role defaults and the Prometheus group vars.
+- name: Verify the ClickHouse scrape job renders from published inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          blackbox_exporter: 9115
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          node_exporter: 9100
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+        memory_ports:
+          hindsight_api: 8888
+          hindsight_cp: 9999
+      nodes: {}
+      containers:
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Render prometheus.yml without a ClickHouse-tagged guest
+      ansible.builtin.set_fact:
+        _no_clickhouse: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: No ClickHouse tag renders no ClickHouse job
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_clickhouse.scrape_configs | selectattr('job_name', 'equalto', 'clickhouse') | list | length == 0
+        fail_msg: >-
+          Without a ClickHouse-tagged inventory entry the template still
+          rendered a clickhouse job. An empty target list must omit the job.
+        success_msg: No ClickHouse tag, no job.
+
+    - name: Add a ClickHouse-tagged guest to the published inventory fixture
+      ansible.builtin.set_fact:
+        tofu_data: >-
+          {{ _fixture_tofu_data
+             | combine({'containers': _fixture_tofu_data['containers']
+               | combine({'clickhouse-under-test': {
+                   'ip': 'clickhouse-under-test.test.example',
+                   'tags': ['clickhouse']}})}) }}
+
+    - name: Render prometheus.yml with a ClickHouse-tagged guest
+      ansible.builtin.set_fact:
+        _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the ClickHouse job
+      ansible.builtin.set_fact:
+        _jobs: "{{ _seeded.scrape_configs | selectattr('job_name', 'equalto', 'clickhouse') | list }}"
+
+    - name: Seeded render targets the published ClickHouse address and labels the guest
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs | length == 1
+          - _jobs[0].metrics_path == '/metrics'
+          - _jobs[0].static_configs[0].targets == ['clickhouse-under-test.test.example:9363']
+          - _jobs[0].static_configs[0].labels.guest == 'clickhouse'
+        fail_msg: >-
+          Seeded render has {{ _jobs | length }} clickhouse job(s): {{ _jobs }}.
+          Expected one /metrics target from the ClickHouse-tagged published
+          inventory entry at port 9363 with guest=clickhouse.
+        success_msg: One ClickHouse job, published-inventory target and guest label.
