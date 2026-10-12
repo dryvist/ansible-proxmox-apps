@@ -13,9 +13,81 @@
     _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-ai.yml.j2"
     _contactpoints_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/contactpoints.yml.j2"
     _token_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/cribl-hec-token.env.j2"
+    _datasource_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/datasource.yml.j2"
+    _compose_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/docker-compose.yml.j2"
     _notification_policy_template: >-
       {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/notification-policies.yml.j2
   tasks:
+    - name: Render the LiteLLM datasource with default role settings
+      ansible.builtin.set_fact:
+        _grafana_datasources: "{{ lookup('ansible.builtin.template', _datasource_template) | from_yaml }}"
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+        grafana_stack_vm_port: 8428
+
+    - name: Assert the read-only LiteLLM datasource is constrained to its host
+      ansible.builtin.assert:
+        that:
+          - grafana_stack_litellm_prices_enabled | bool
+          - _litellm_datasource.name == 'LiteLLM prices'
+          - _litellm_datasource.uid == 'litellm-prices'
+          - _litellm_datasource.type == 'yesoreyeram-infinity-datasource'
+          - _litellm_datasource.access == 'proxy'
+          - _litellm_datasource.url == 'https://raw.githubusercontent.com'
+          - not (_litellm_datasource.isDefault | bool)
+          - not (_litellm_datasource.editable | bool)
+          - _litellm_datasource.jsonData.allowedHosts == ['https://raw.githubusercontent.com']
+          - not (_litellm_datasource.jsonData.allowDangerousHTTPMethods | bool)
+          - _litellm_datasource.secureJsonData is not defined
+        fail_msg: "LiteLLM datasource provisioning is missing or broader than its contract"
+      vars:
+        _litellm_datasource: >-
+          {{ _grafana_datasources.datasources
+             | selectattr('uid', 'equalto', 'litellm-prices') | first }}
+
+    - name: Render Grafana compose with the Infinity plugin enabled
+      ansible.builtin.set_fact:
+        _grafana_compose: "{{ lookup('ansible.builtin.template', _compose_template) | from_yaml }}"
+      vars:
+        grafana_hostname: grafana
+        ingress_domain: example.test
+        grafana_stack_oidc_issuer: https://authelia.example.test
+        grafana_stack_oidc_client_secret: fixture-oidc-client-secret
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+        grafana_stack_vm_port: 8428
+
+    - name: Assert Grafana installs Infinity with the current plugin variable
+      ansible.builtin.assert:
+        that:
+          - >-
+            _grafana_compose['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL']
+            == 'yesoreyeram-infinity-datasource'
+
+    - name: Render the datasource and compose with LiteLLM prices disabled
+      ansible.builtin.set_fact:
+        _grafana_datasources_disabled: >-
+          {{ lookup('ansible.builtin.template', _datasource_template) | from_yaml }}
+        _grafana_compose_disabled: >-
+          {{ lookup('ansible.builtin.template', _compose_template) | from_yaml }}
+      vars:
+        grafana_hostname: grafana
+        ingress_domain: example.test
+        grafana_stack_oidc_issuer: https://authelia.example.test
+        grafana_stack_oidc_client_secret: fixture-oidc-client-secret
+        grafana_stack_litellm_prices_enabled: false
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+        grafana_stack_vm_port: 8428
+
+    - name: Assert disabling LiteLLM prices omits the datasource and plugin install
+      ansible.builtin.assert:
+        that:
+          - >-
+            _grafana_datasources_disabled.datasources
+            | selectattr('uid', 'equalto', 'litellm-prices') | list | length == 0
+          - >-
+            'GF_PLUGINS_PREINSTALL' not in
+            _grafana_compose_disabled['services']['grafana']['environment']
+
     - name: Render the AI alert rules
       ansible.builtin.set_fact:
         _ai_rules: "{{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0].rules }}"
