@@ -286,10 +286,32 @@
 # =============================================================================
 
 - name: Wait for the Homarr port to accept connections
-  ansible.builtin.wait_for:
-    host: 127.0.0.1
-    port: "{{ homarr_port }}"
-    timeout: 180
+  block:
+    - name: Wait for the Homarr port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ homarr_port }}"
+        timeout: 180
+  rescue:
+    # A port that never opens says nothing about why. Print the unit state, its
+    # journal and the listening sockets before failing, so the cause is in the
+    # run log instead of needing a reproduction.
+    - name: Collect why Homarr is not listening
+      ansible.builtin.shell: |
+        systemctl status {{ homarr_service_name }} --no-pager
+        journalctl -u {{ homarr_service_name }} --no-pager -n 100
+        ss -ltn
+      register: homarr_not_listening
+      changed_when: false
+      failed_when: false
+
+    - name: Show why Homarr is not listening
+      ansible.builtin.debug:
+        msg: "{{ homarr_not_listening.stdout_lines }}"
+
+    - name: Fail the port wait
+      ansible.builtin.fail:
+        msg: "Homarr did not open port {{ homarr_port }} within 180 seconds; unit state and journal are above."
 
 - name: Verify Homarr answers over HTTP
   ansible.builtin.uri:
