@@ -80,6 +80,7 @@ documented once at
 | `OPENBAO_GITHUB_AGENTS_APP_ID` / `_PRIVATE_KEY` | Agents App (`github-agents` mount) | one-time environment |
 | `OPENBAO_GITHUB_ADMIN_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Admin App installations | env document |
 | `OPENBAO_GITHUB_{DRYVIST,PERSONAL}_INSTALLATION_ID` | Everyday App installations | env document |
+| `OPENBAO_GITHUB_EXTRA_READ_INSTALLATION_IDS` | `owner=id` list; each adds a `read-<owner>-all` set on the `github` mount | env document |
 | `OPENBAO_GITHUB_AGENTS_DRYVIST_INSTALLATION_ID` | Agents App installation on `dryvist`; unset = `open-llm` mints nothing | env document |
 | `OPENBAO_AI_SANDBOX_SECRET_ID_CIDR` | `open-llm` bind: the dispatcher host as one /32; unset = machine class | environment |
 | `OPENBAO_GITHUB_HERMES_APP_ID` / `_PRIVATE_KEY` | Hermes App (`github-hermes` mount) | one-time environment |
