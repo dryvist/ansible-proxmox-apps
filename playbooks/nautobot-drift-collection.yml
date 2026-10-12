@@ -1,0 +1,52 @@
+---
+# Nautobot parity report through the jpe_ansible.nautobot collection: compares
+# Nautobot against the published inventory and posts one event per run to the
+# Cribl Stream HEC input. Read-only against Nautobot. Credentials come from
+# OpenBao through the run's own token
+# (playbooks/tasks/nautobot_collection_access.yml); the HEC token comes
+# from nautobot_collection_drift_hec_token and the run fails while it is empty.
+#
+# Not part of site.yml. Run directly:
+#   ansible-playbook -i inventory/hosts.yml playbooks/nautobot-drift-collection.yml
+- name: Start the wall-clock budget
+  import_playbook: site/budget-gate.yml
+
+- name: Report Nautobot drift through the collection
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+
+  tasks:
+    - name: Resolve the published inventory
+      ansible.builtin.include_role:
+        name: dryvist.homelab.inventory_resolve
+
+    - name: Parse the published inventory
+      ansible.builtin.set_fact:
+        tofu_data: "{{ tofu_inventory_resolved | from_json }}"
+
+    - name: Read and check the credentials
+      ansible.builtin.include_tasks: tasks/nautobot_collection_access.yml
+
+    - name: Require a drift event token
+      ansible.builtin.assert:
+        that: nautobot_collection_drift_hec_token | length > 0
+        fail_msg: nautobot_collection_drift_hec_token must be non-empty
+
+    - name: Run the Nautobot drift role
+      ansible.builtin.include_role:
+        name: jpe_ansible.nautobot.drift
+      vars:
+        drift_nautobot_url: "{{ nautobot_collection_nautobot_url }}"
+        drift_read_token: "{{ nautobot_collection_read_token }}"
+        drift_source_inventory: "{{ tofu_data }}"
+        drift_hec_url: "{{ nautobot_collection_drift_hec_url }}"
+        drift_hec_token: "{{ nautobot_collection_drift_hec_token }}"
+
+- name: Refuse a run past its wall-clock budget
+  import_playbook: site/budget-gate.yml
