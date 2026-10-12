@@ -1,0 +1,204 @@
+# Grafana HEC events keep their full independent Splunk copy. This pipeline
+# renders a readable ntfy hub message and unrolls bounded continuations so the
+# existing hub can fan them out to Slack and Zammad without JSON attachments.
+output: default
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: drop
+    filter: "sourcetype !== 'grafana:alert'"
+    disabled: false
+    conf: {}
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        try {
+        const byteLength = (value) => {
+          const encoded = C.Encode.base64(String(value));
+          const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+          return (encoded.length / 4) * 3 - padding;
+        };
+        const escapeSlack = (value) => String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/[\\_*~`]/g, '\\$&')
+          .replace(/[\u0000-\u001f\u007f]/g, (char) => {
+            if (char === '\n') return '\\n';
+            if (char === '\r') return '\\r';
+            if (char === '\t') return '\\t';
+            return '';
+          });
+        const boundedText = (value, maxBytes) => {
+          const escaped = escapeSlack(value);
+          if (byteLength(escaped) <= maxBytes) return escaped;
+          const suffix = '… [shortened; full event link below]';
+          let prefix = '';
+          for (const char of Array.from(escaped)) {
+            if (byteLength(prefix + char + suffix) > maxBytes) break;
+            prefix += char;
+          }
+          return prefix + suffix;
+        };
+        const splunkSearchUrl = "{{ cribl_stream_alerts_splunk_search_url }}";
+        const entityKeys = [
+          'instance', 'job', 'mountpoint', 'path', 'api_key_alias',
+          'requested_model', 'stream', 'host', 'node', 'service',
+        ];
+        const sourceLinks = (alert) => {
+          const annotations = alert.annotations || {};
+          return [
+            ['source', alert.generatorURL],
+            ['dashboard', alert.dashboardURL],
+            ['panel', alert.panelURL],
+            ['silence', alert.silenceURL],
+            ['runbook', annotations.runbook_url],
+          ].filter((item) => typeof item[1] === 'string' && /^https?:\/\//i.test(item[1]));
+        };
+        const entitiesText = (labels) => entityKeys.filter((key) => labels[key] !== undefined && labels[key] !== null)
+          .map((key) => key + '=' + boundedText(labels[key], 64))
+          .join(', ');
+        const valuesText = (alert) => {
+          if (alert.valueString !== undefined && alert.valueString !== null && alert.valueString !== '') {
+            return boundedText(alert.valueString, 160);
+          }
+          const values = alert.values && typeof alert.values === 'object' ? alert.values : {};
+          const valueKeys = Object.keys(values).sort();
+          const parts = valueKeys.slice(0, 5).map((key) => {
+            const item = values[key];
+            const value = item && typeof item === 'object' && 'value' in item ? item.value : item;
+            return boundedText(key, 20) + '=' +
+              (value === null || value === undefined ? 'null' : boundedText(value, 48));
+          });
+          if (valueKeys.length > 5) parts.push('+' + (valueKeys.length - 5) + ' more; see full event');
+          return parts.length > 0 ? parts.join(', ') : '(not provided)';
+        };
+        let parsed;
+        try {
+          parsed = JSON.parse(__e._raw);
+        } catch (err) {
+          parsed = null;
+        }
+
+        const valid = parsed && Array.isArray(parsed.alerts);
+        const alerts = valid ? parsed.alerts : [];
+        const status = valid
+          ? String(parsed.status || (alerts[0] && alerts[0].status) || 'unknown').toUpperCase()
+          : 'INVALID';
+        const records = [];
+        if (!valid) {
+          records.push('Notification: state=INVALID; alert_count=0\n' +
+            'Grafana alert payload could not be parsed; retained event search: ' + splunkSearchUrl);
+        } else if (alerts.length === 0) {
+          const reason = parsed.message || parsed.title || '(no reason supplied)';
+          records.push('Notification: state=' + boundedText(status, 80) + '; alert_count=0\n' +
+            'No alert instances; reason=' + boundedText(reason, 300) + '\n' +
+            'Full event search: ' + splunkSearchUrl);
+        } else {
+          for (let index = 0; index < alerts.length; index += 1) {
+            const alert = alerts[index];
+            if (!alert || typeof alert !== 'object' || Array.isArray(alert)) {
+              records.push('[UNKNOWN] severity=unknown alert=malformed alert entry ' +
+                (index + 1) + '\nFull event search: ' + splunkSearchUrl);
+              continue;
+            }
+            const labels = alert.labels || {};
+            const annotations = alert.annotations || {};
+            const severity = String(labels.severity || 'unknown').toLowerCase();
+            const alertStatus = String(alert.status || parsed.status || 'unknown').toUpperCase();
+            const lines = [
+              '[' + boundedText(alertStatus, 32) + '] severity=' + boundedText(severity, 32) +
+                ' alert=' + boundedText(labels.alertname || 'unnamed', 100),
+            ];
+            const entities = entitiesText(labels);
+            if (entities) lines.push('Entity: ' + entities);
+            lines.push('Value: ' + valuesText(alert));
+            const reason = annotations.grafana_state_reason || annotations.description || annotations.reason;
+            lines.push('Reason: ' + boundedText(reason || '(not provided)', 300));
+            lines.push('Summary: ' + boundedText(annotations.summary || '(not provided)', 450));
+            const links = sourceLinks(alert);
+            if (links.length > 0) {
+              for (const link of links) {
+                lines.push('Evidence (' + link[0] + '): ' + boundedText(link[1], 180));
+              }
+            } else {
+              lines.push('Evidence: no source URL in this alert.');
+            }
+            lines.push('Full event search: ' + splunkSearchUrl);
+            records.push(lines.join('\n'));
+          }
+        }
+
+        const maxMessageBytes = 3500;
+        const contentBudget = 3300;
+        const chunks = [];
+        let chunkRecords = [];
+        let chunkBytes = 0;
+        for (const record of records) {
+          const recordBytes = byteLength(record);
+          if (recordBytes > contentBudget) {
+            throw new Error('A compact Grafana alert record exceeds the notification byte budget');
+          }
+          const separatorBytes = chunkRecords.length > 0 ? 2 : 0;
+          if (chunkBytes + separatorBytes + recordBytes > contentBudget) {
+            chunks.push(chunkRecords.join('\n\n'));
+            chunkRecords = [];
+            chunkBytes = 0;
+          }
+          chunkRecords.push(record);
+          chunkBytes += (chunkRecords.length > 1 ? 2 : 0) + recordBytes;
+        }
+        if (chunkRecords.length > 0 || chunks.length === 0) chunks.push(chunkRecords.join('\n\n'));
+
+        const conservative = !valid || alerts.some((alert) => {
+          if (!alert || typeof alert !== 'object' || Array.isArray(alert)) return true;
+          const severity = String((alert.labels || {}).severity || 'unknown').toLowerCase();
+          return severity !== 'warning';
+        });
+        const links = [];
+        for (const alert of alerts) {
+          if (alert && typeof alert === 'object' && !Array.isArray(alert)) {
+            for (const link of sourceLinks(alert)) links.push(link);
+          }
+        }
+        __e.__ntfyParts = chunks.map((body, index) => {
+          const message = 'Grafana alert report (part ' + (index + 1) + '/' + chunks.length + ')\n' + body;
+          const title = 'Grafana alerts';
+          if (byteLength(message) + byteLength(title) > maxMessageBytes) {
+            throw new Error('Grafana alert continuation exceeds the notification byte budget');
+          }
+          return {
+            title,
+            message,
+            priority: conservative ? 4 : 3,
+            tags: conservative ? ['warning'] : ['information_source'],
+            click: links.length > 0 ? links[0][1] : splunkSearchUrl,
+          };
+        });
+        } catch (err) {
+          const fallbackUrl = "{{ cribl_stream_alerts_splunk_search_url }}";
+          __e.__ntfyParts = [{
+            title: 'Grafana alerts',
+            message: 'Grafana alert formatter failed; inspect the retained full event: ' + fallbackUrl,
+            priority: 4,
+            tags: ['warning'],
+            click: fallbackUrl,
+          }];
+        }
+  - id: unroll
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      srcField: __ntfyParts
+      destField: __ntfyPart
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        if (__e.__ntfyPart) Object.assign(__e, __e.__ntfyPart);
+        delete __e.__ntfyPart;
+        delete __e.__ntfyParts;

@@ -50,16 +50,18 @@ Configure data pipeline via Cribl Web UI after Ansible deployment:
 ### Grafana alert delivery
 
 Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with
-`sourcetype=grafana:alert`. The same HEC input sends the event to the `ansible`
-Splunk index and through `grafana_alerts_slack`, which drops other sourcetypes
-before delivering to the configured Slack-compatible webhook. The notification
-path is Grafana → Cribl Stream → Splunk and webhook; it does not use the ntfy
-service.
+`sourcetype=grafana:alert`. The same HEC input keeps the complete envelope in
+the `ansible` Splunk index and sends a compact, byte-bounded summary through
+`grafana_alerts_ntfy` to the existing `observability` ntfy hub. The hub owns the
+existing Slack and Zammad fan-out. Large notifications become numbered
+continuations; the formatter retains every alert record and source link in the
+summary while Splunk retains the complete Grafana envelope.
 
 The Nautobot drift role posts one HEC JSON event per run with its separate
 `cribl_stream_nautobot_drift_hec_token`. Every drift event continues to Splunk,
-while only `critical` events reach the chat webhook as a readable one-line
-summary.
+while only `critical` events reach the direct Slack webhook through
+`grafana_alerts_slack` as a readable one-line summary. That direct leg keeps
+its existing persistent-queue and backpressure settings.
 
 ## Tasks
 
