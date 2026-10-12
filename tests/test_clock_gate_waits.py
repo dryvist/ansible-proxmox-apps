@@ -90,6 +90,12 @@ class ClockGateWaits(unittest.TestCase):
             self.assertNotEqual(task.get("ignore_errors"), True, task.get("name"))
             self.assertNotEqual(task.get("failed_when"), False, task.get("name"))
 
+    def test_the_wait_runs_in_check_mode(self):
+        # In check mode a skipped command leaves stdout empty, so the gate
+        # fails every --check run on a correctly synchronized host.
+        wait = _find(self.tasks, WAIT) or {}
+        self.assertIs(wait.get("check_mode"), False)
+
     def test_the_failure_names_what_it_saw(self):
         # An exhausted `until` fails with an EMPTY message, naming neither the
         # clock nor the value observed. The rescue exists to say both.
