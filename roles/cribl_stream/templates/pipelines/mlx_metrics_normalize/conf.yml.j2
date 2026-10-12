@@ -14,23 +14,17 @@
 # Metrics below re-establishes the metric flag before splunk_hec/
 # victoriametrics_rw serialize it, same technique as bmc_hw_metrics.
 #
-# Verified against a real standalone Edge 4.19.0 + a throwaway
-# edge_prometheus target (loopback, deleted after): in_queue_metrics'
-# events carry _metric/_value/<labels as plain fields>, same convention
-# in_pve_metrics already uses (pve_metrics_normalize). Most in_system_metrics
-# events still carry each metric name as a literal field (e.g.
-# node_memory_used_percent=57.5) without _metric/_value/__name__, so they
-# fall through untouched to the event-only path (index=llm). The optional
-# judge Process Set adds _metric/_value for process_start_time_seconds in the
-# Mac Edge pipeline; that signal passes the leading Drop and reaches Publish
-# Metrics with its name and dimensions intact.
+# Verified against real Splunk samples: system metrics carry top-level
+# node_* numeric fields without _metric/_value; the optional process metric
+# and the queue metrics already use _metric/_value. Publish both shapes as
+# native metrics while preserving host/model dimensions.
 output: splunk_hec
 streamtags: []
 groups: {}
 asyncFuncTimeout: 1000
 functions:
   - id: drop
-    filter: "sourcetype !== 'mlx:metrics' || _metric === undefined"
+    filter: "sourcetype !== 'mlx:metrics'"
     disabled: false
   - id: eval
     filter: "true"
@@ -45,9 +39,19 @@ functions:
         - name: index
           value: "'llm_metrics'"
   - id: publish_metrics
-    filter: "true"
+    filter: "_metric !== undefined"
     disabled: false
     conf:
       metricNameField: _metric
       valueField: _value
       dimensions: "*"
+  - id: publish_metrics
+    filter: "true"
+    disabled: false
+    conf:
+      fields:
+        - inFieldName: "node_*"
+          metricType: gauge
+      dimensions:
+        - host
+        - model

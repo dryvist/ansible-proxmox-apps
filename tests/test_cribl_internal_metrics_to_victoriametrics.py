@@ -25,6 +25,9 @@ from ansible.template import Templar, trust_as_template
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS_TEMPLATE = ROOT / "roles/cribl_stream/templates/inputs.yml.j2"
+MLX_PIPELINE_TEMPLATE = (
+    ROOT / "roles/cribl_stream/templates/pipelines/mlx_metrics_normalize/conf.yml.j2"
+)
 
 # Minimal variable set inputs.yml.j2 needs to render end to end (grep
 # cribl_stream_ references in the template for the full list).
@@ -57,8 +60,54 @@ def _render_inputs(hec_namespace: str = "") -> dict:
     return yaml.safe_load(rendered)
 
 
+def _render_pipeline(template_path: Path) -> dict:
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = {}
+    rendered = templar.template(
+        trust_as_template(template_path.read_text(encoding="utf-8"))
+    )
+    return yaml.safe_load(rendered)
+
+
 def _connections(inputs: dict, input_id: str) -> list[dict]:
     return inputs["inputs"][input_id]["connections"]
+
+
+def test_mlx_metric_pipeline_does_not_drop_events_missing_metric_fields():
+    pipeline = _render_pipeline(MLX_PIPELINE_TEMPLATE)
+    functions = pipeline["functions"]
+
+    assert [function["id"] for function in functions] == [
+        "drop",
+        "eval",
+        "publish_metrics",
+        "publish_metrics",
+    ]
+    assert functions[0]["filter"] == "sourcetype !== 'mlx:metrics'"
+    assert "_metric === undefined" not in functions[0]["filter"]
+    assert functions[2]["conf"] == {
+        "metricNameField": "_metric",
+        "valueField": "_value",
+        "dimensions": "*",
+    }
+    assert functions[3]["conf"] == {
+        "fields": [{"inFieldName": "node_*", "metricType": "gauge"}],
+        "dimensions": ["host", "model"],
+    }
+
+    for namespace in ("", "prod"):
+        inputs = _render_inputs(namespace)
+        connections = _connections(inputs, "tcpjson:in_cribl_s2s")
+        mlx_connections = [
+            connection
+            for connection in connections
+            if connection.get("pipeline") == "mlx_metrics_normalize"
+        ]
+        assert len(mlx_connections) == 2
+        assert {connection["output"] for connection in mlx_connections} == {
+            "splunk_hec_llm" if namespace else "splunk_hec",
+            "victoriametrics_rw",
+        }
 
 
 def test_cribl_metrics_connects_to_victoriametrics_and_splunk():
