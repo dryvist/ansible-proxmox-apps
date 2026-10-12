@@ -110,6 +110,10 @@ const queryError = format({ status: 'firing', alerts: [{ status: 'firing', value
 assert.match(queryError[0].message, /Reason: Error/);
 assert.match(queryError[0].message, /Value: A=null/);
 
+const summaryReason = format({ alerts: [{ labels: { alertname: 'SummaryReason' },
+  annotations: { summary: 'x' } }] });
+assert.match(summaryReason[0].message, /Reason: x/);
+
 const linkless = format({ status: 'firing', alerts: [{ labels: { alertname: 'NoLink', severity: 'warning' },
   annotations: { summary: 'still retained' } }] });
 assert.match(linkless[0].message, /no source URL in this alert/);
@@ -134,11 +138,11 @@ const inputTemplate = fs.readFileSync(`${root}/roles/cribl_stream/templates/inpu
 assert.match(inputTemplate, /output: ntfy_grafana_alerts[\s\S]*?pipeline: grafana_alerts_ntfy/);
 assert.match(inputTemplate, /output: slack_grafana_alerts[\s\S]*?pipeline: grafana_alerts_slack/);
 assert.equal((inputTemplate.match(/output: slack_grafana_alerts/g) || []).length, 1,
-  'the existing critical Nautobot output is connected exactly once');
+  'the required critical destination is connected exactly once');
 assert.match(pipeline, /grafana:alert:canary/,
-  'the ntfy pipeline only accepts the synthetic canary before cutover');
+  'only test alert types are accepted before the flag is set');
 assert.match(pipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
-  'the verified cutover flag switches the ntfy pipeline to production alerts');
+  'production alert types require the verification flag');
 const nautobotPipeline = fs.readFileSync(
   `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_slack/conf.yml.j2`, 'utf8');
 assert.match(nautobotPipeline, /severity === 'critical'/);
