@@ -1,10 +1,10 @@
 ---
 # Metrics-fan-out assertions, split out of assertions_inputs.yml (that file
 # hit the CI token-limit gate as this group grew across three PRs). The Edge
-# S2S metrics input keeps its VictoriaMetrics leg and conditionally adds the
-# Prometheus receiver; Splunk already receives these events directly from Edge.
+# S2S input fans to Splunk, VictoriaMetrics, and optional Prometheus. Its
+# external direct HEC leg remains a follow-up after Cribl delivery is verified.
 
-- name: Assert the S2S metrics input keeps both metric-store legs
+- name: Assert the S2S metrics input fans host metrics to all configured stores
   ansible.builtin.assert:
     that:
       - "'type: tcpjson' in _cribl_stream_inputs"
@@ -12,12 +12,14 @@
       - "'port: 10360' in _cribl_stream_inputs"
       - >-
         ((_cribl_stream_inputs | from_yaml).inputs['tcpjson:in_cribl_s2s_metrics'].connections
-        | map(attribute='output') | list) == ['victoriametrics_rw', 'prometheus_rw']
+        | map(attribute='output') | list) == ['splunk_hec', 'victoriametrics_rw', 'prometheus_rw']
+      - "'pipeline: edge_s2s_metrics_to_splunk' in _cribl_stream_inputs"
     fail_msg: >-
       inputs.yml.j2 must include a dedicated in_cribl_s2s_metrics tcpjson
-      input on its own port, connected to victoriametrics_rw and the optional
+      input on its own port, connected to splunk_hec via
+      edge_s2s_metrics_to_splunk, victoriametrics_rw, and the optional
       prometheus_rw output — it must not share in_cribl_s2s's force_splunk_meta
-      connection (Splunk already receives these events directly from Edge's HEC output)
+      connection.
 
 - name: Assert unpoller scraper input fans to Splunk and VictoriaMetrics
   ansible.builtin.assert:

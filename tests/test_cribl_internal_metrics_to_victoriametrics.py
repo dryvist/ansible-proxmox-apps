@@ -53,8 +53,12 @@ BASE_VARS = {
 }
 
 
-def _render_inputs(hec_namespace: str = "") -> dict:
-    variables = {**BASE_VARS, "cribl_stream_hec_namespace": hec_namespace}
+def _render_inputs(hec_namespace: str = "", prometheus_rw_url: str = "") -> dict:
+    variables = {
+        **BASE_VARS,
+        "cribl_stream_hec_namespace": hec_namespace,
+        "cribl_stream_prometheus_rw_url": prometheus_rw_url,
+    }
     templar = Templar(loader=DataLoader())
     templar.available_variables = variables
     rendered = templar.template(
@@ -147,6 +151,42 @@ def test_cribl_metrics_splunk_pipeline_stamps_platform_metrics_index():
         {"name": "index", "value": "'host_metrics'"},
         {"name": "sourcetype", "value": "sourcetype || 'cribl:metrics'"},
     ]
+
+
+def test_edge_s2s_metrics_fans_out_to_splunk_victoriametrics_and_prometheus():
+    for prometheus_rw_url in ("", "http://prometheus.invalid:9090/api/v1/write"):
+        inputs = _render_inputs(prometheus_rw_url=prometheus_rw_url)
+        connections = _connections(inputs, "tcpjson:in_cribl_s2s_metrics")
+        outputs = [connection["output"] for connection in connections]
+        expected_outputs = ["splunk_hec", "victoriametrics_rw"]
+        if prometheus_rw_url:
+            expected_outputs.append("prometheus_rw")
+        assert outputs == expected_outputs
+
+        splunk_connection = connections[0]
+        assert splunk_connection["pipeline"] == "edge_s2s_metrics_to_splunk"
+        assert "pipeline" not in connections[1]
+
+    pipeline = _render_pipeline(
+        ROOT / "roles/cribl_stream/templates/pipelines/edge_s2s_metrics_to_splunk/conf.yml.j2"
+    )
+    functions = pipeline["functions"]
+    assert functions[0]["conf"]["add"][0] == {
+        "name": "index",
+        "value": "'host_metrics'",
+    }
+    assert functions[1]["conf"] == {
+        "metricNameField": "_metric",
+        "valueField": "_value",
+        "dimensions": "*",
+    }
+    assert functions[2]["conf"] == {
+        "fields": [
+            {"inFieldName": "node_*", "metricType": "gauge"},
+            {"inFieldName": "gpu_*", "metricType": "gauge"},
+        ],
+        "dimensions": ["*"],
+    }
 
 
 def test_cribl_logs_does_not_connect_to_victoriametrics():
