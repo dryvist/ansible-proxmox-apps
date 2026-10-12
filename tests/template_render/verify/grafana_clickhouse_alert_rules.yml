@@ -1,0 +1,52 @@
+---
+# Renders roles/grafana_stack/templates/alerting/rules-clickhouse.yml.j2 with
+# the role defaults and checks the ClickHouse backlog rules.
+- name: Render and verify the Grafana ClickHouse alert rules
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-clickhouse.yml.j2"
+  tasks:
+    - name: Render the ClickHouse alert rules
+      ansible.builtin.set_fact:
+        _clickhouse_rules: "{{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0].rules }}"
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+
+    - name: Assert the three rules render with their metrics and thresholds
+      ansible.builtin.assert:
+        that:
+          - _clickhouse_rules | map(attribute='uid') | list
+            == ['clickhouse-part-count-high', 'clickhouse-inserts-rejected',
+                'clickhouse-metrics-missing']
+          - "'job=\"clickhouse\"' in _parts_expr"
+          - "'job=\"clickhouse\"' in _rejected_expr"
+          - "'job=\"clickhouse\"' in _missing_expr"
+          - _parts_threshold == 300
+          - _rejected_rule.labels.severity == 'critical'
+          - _missing_rule.noDataState == 'Alerting'
+        fail_msg: >-
+          rules-clickhouse.yml.j2 rendered an unexpected rule set:
+          {{ _clickhouse_rules | map(attribute='uid') | list }}
+      vars:
+        _parts_rule: "{{ _clickhouse_rules | selectattr('uid', 'equalto', 'clickhouse-part-count-high') | first }}"
+        _rejected_rule: "{{ _clickhouse_rules | selectattr('uid', 'equalto', 'clickhouse-inserts-rejected') | first }}"
+        _missing_rule: "{{ _clickhouse_rules | selectattr('uid', 'equalto', 'clickhouse-metrics-missing') | first }}"
+        _parts_expr: "{{ _parts_rule.data[0].model.expr }}"
+        _rejected_expr: "{{ _rejected_rule.data[0].model.expr }}"
+        _missing_expr: "{{ _missing_rule.data[0].model.expr }}"
+        _parts_threshold: "{{ _parts_rule.data[1].model.conditions[0].evaluator.params[0] }}"
+
+    - name: Render without a Prometheus datasource
+      ansible.builtin.set_fact:
+        _clickhouse_rules_no_prom: "{{ lookup('ansible.builtin.template', _rules_template) | from_yaml }}"
+      vars:
+        grafana_stack_prometheus_url: ""
+
+    - name: Assert the no-datasource render contains no alert groups
+      ansible.builtin.assert:
+        that:
+          - _clickhouse_rules_no_prom.groups | default([], true) | length == 0

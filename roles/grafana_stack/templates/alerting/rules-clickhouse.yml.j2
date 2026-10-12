@@ -1,0 +1,94 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: ClickHouse write backlog.
+## Metrics are scraped by the `clickhouse` job in prometheus_stack.
+---
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: clickhouse-observability
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: clickhouse-part-count-high
+        title: ClickHouse parts per partition high
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(ClickHouseAsyncMetrics_MaxPartCountForPartition{job="clickhouse"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [300]}
+              refId: B
+        for: 10m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "A clickhouse partition has more than 300 active parts."
+
+      - uid: clickhouse-inserts-rejected
+        title: ClickHouse rejecting inserts
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: sum(increase(ClickHouseProfileEvents_RejectedInserts{job="clickhouse"}[10m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: critical}
+        annotations:
+          summary: "The clickhouse target has rejected inserts in the last 10 minutes."
+
+      - uid: clickhouse-metrics-missing
+        title: ClickHouse metrics not scraped
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: min(up{job="clickhouse"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+              refId: B
+        for: 15m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "The clickhouse metrics scrape has been unavailable for 15 minutes."
+{% endif %}
