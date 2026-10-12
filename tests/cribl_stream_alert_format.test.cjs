@@ -19,7 +19,7 @@ const code = pipeline.slice(bodyStart, bodyEnd)
   .map((line) => line.startsWith('        ') ? line.slice(8) : line)
   .join('\n')
   .replaceAll('{{ cribl_stream_alerts_splunk_search_url }}',
-    'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert');
+    'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert%2A');
 
 function format(payload, extra = {}) {
   const __e = {
@@ -52,7 +52,7 @@ assert.ok(contents(over4k).includes('[shortened; full event link below]'), 'over
 assert.ok(contents(over4k).includes('https://grafana.example.test/alert/1'), 'source evidence link remains visible');
 assert.ok(contents(over4k).includes('https://splunk.example.test/'), 'full event search link remains visible');
 assert.equal(over4k[0].priority, 3, 'warnings use the ntfy default priority and reach Zammad');
-assert.equal(over4k[0].click, 'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert',
+assert.equal(over4k[0].click, 'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert%2A',
   'notification click uses the derived trusted full-event search, not an incoming alert URL');
 assert.match(contents(over4k), /Evidence \(source\): `https:\/\/grafana\.example\.test\/alert\/1`/,
   'incoming evidence URLs remain visible without becoming active Slack links');
