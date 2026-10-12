@@ -52,7 +52,10 @@ assert.ok(contents(over4k).includes('[shortened; full event link below]'), 'over
 assert.ok(contents(over4k).includes('https://grafana.example.test/alert/1'), 'source evidence link remains visible');
 assert.ok(contents(over4k).includes('https://splunk.example.test/'), 'full event search link remains visible');
 assert.equal(over4k[0].priority, 3, 'warnings use the ntfy default priority and reach Zammad');
-assert.equal(over4k[0].click, 'https://grafana.example.test/alert/1');
+assert.equal(over4k[0].click, 'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert',
+  'notification click uses the derived trusted full-event search, not an incoming alert URL');
+assert.match(contents(over4k), /Evidence \(source\): `https:\/\/grafana\.example\.test\/alert\/1`/,
+  'incoming evidence URLs remain visible without becoming active Slack links');
 
 const manyAlerts = Array.from({ length: 14 }, (_, index) => ({
   labels: { alertname: `Many${index}`, severity: 'warning', instance: `entity-${index}` },
@@ -111,20 +114,40 @@ assert.match(linkless[0].message, /no source URL in this alert/);
 assert.match(linkless[0].message, /Full event search:/);
 assert.match(linkless[0].click, /^https:\/\/splunk\.example\.test/);
 
+const maliciousLink = format({ status: 'firing', alerts: [{
+  labels: { alertname: 'UntrustedLink', severity: 'warning' },
+  annotations: { summary: 'link is displayed as code' },
+  generatorURL: 'https://evil.example.test/<@everyone>',
+}] });
+assert.equal(maliciousLink[0].click, over4k[0].click, 'untrusted links never control the notification click target');
+assert.match(contents(maliciousLink), /`https:\/\/evil\.example\.test\/&lt;@everyone&gt;`/,
+  'untrusted evidence is escaped and rendered as inert inline code');
+
 const unknown = format({ status: 'firing', alerts: [{ labels: { alertname: 'UnknownSeverity' }, annotations: {} }] });
 assert.equal(unknown[0].priority, 4, 'unknown severity uses conservative priority');
+const info = format({ status: 'firing', alerts: [{ labels: { alertname: 'Informational', severity: 'info' }, annotations: {} }] });
+assert.equal(info[0].priority, 3, 'informational severity remains on the noncritical ntfy priority');
 
 const inputTemplate = fs.readFileSync(`${root}/roles/cribl_stream/templates/inputs.yml.j2`, 'utf8');
 assert.match(inputTemplate, /output: ntfy_grafana_alerts[\s\S]*?pipeline: grafana_alerts_ntfy/);
 assert.match(inputTemplate, /output: slack_grafana_alerts[\s\S]*?pipeline: grafana_alerts_slack/);
 assert.equal((inputTemplate.match(/output: slack_grafana_alerts/g) || []).length, 1,
   'the existing critical Nautobot output is connected exactly once');
-assert.match(pipeline, /filter: "sourcetype !== 'grafana:alert'"/,
-  'non-Grafana HEC events are dropped before ntfy output');
+assert.match(pipeline, /grafana:alert:canary/,
+  'the ntfy pipeline only accepts the synthetic canary before cutover');
+assert.match(pipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
+  'the verified cutover flag switches the ntfy pipeline to production alerts');
 const nautobotPipeline = fs.readFileSync(
   `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_slack/conf.yml.j2`, 'utf8');
 assert.match(nautobotPipeline, /severity === 'critical'/);
-assert.doesNotMatch(nautobotPipeline, /sourcetype === 'grafana:alert'/);
+assert.match(nautobotPipeline, /sourcetype === 'grafana:alert'/,
+  'Grafana remains on its current direct delivery by default');
+assert.match(nautobotPipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
+  'the existing direct Grafana leg is retired only when cutover is verified');
+const roleTasks = fs.readFileSync(`${root}/roles/cribl_stream/tasks/main.yml`, 'utf8');
+assert.match(roleTasks, /Require the ntfy destination before enabling Grafana alert cutover/);
+assert.match(roleTasks, /when: cribl_stream_grafana_ntfy_cutover_verified \| bool/,
+  'a verified cutover cannot silently disable Grafana summaries with an empty ntfy URL');
 assert.match(fs.readFileSync(`${root}/roles/cribl_stream/templates/outputs.yml.j2`, 'utf8'),
   /typeof message === 'string'[\s\S]*?typeof priority === 'number'[\s\S]*?: null/,
   'the ntfy webhook only serializes explicitly formatted fields');

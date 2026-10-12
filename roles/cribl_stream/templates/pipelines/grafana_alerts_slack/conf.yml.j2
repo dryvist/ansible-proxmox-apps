@@ -1,5 +1,5 @@
-# Preserve the existing direct critical Nautobot Slack leg. Grafana alerts
-# now use the ntfy hub pipeline; the independent Splunk HEC leg is unchanged.
+# Preserve the existing direct Grafana Slack delivery until the ntfy cutover
+# is explicitly verified. The critical Nautobot route shares this queue.
 output: default
 streamtags: []
 groups: {}
@@ -16,11 +16,11 @@ functions:
           __e.nautobot_drift_event = null;
         }
   - id: drop
-    filter: "!(sourcetype === 'nautobot:drift' && nautobot_drift_event && nautobot_drift_event.severity === 'critical')"
+    filter: "!(sourcetype === 'nautobot:drift' && nautobot_drift_event && nautobot_drift_event.severity === 'critical' || sourcetype === 'grafana:alert' && {{ 'true' if not (cribl_stream_grafana_ntfy_cutover_verified | bool) else 'false' }})"
     disabled: false
     conf: {}
   - id: eval
-    filter: "true"
+    filter: "sourcetype === 'nautobot:drift'"
     disabled: false
     conf:
       add:
@@ -34,3 +34,23 @@ functions:
             (nautobot_drift_event.extra_in_nautobot || []).slice(0, 5).join(', ') +
             ((nautobot_drift_event.extra_in_nautobot || []).length > 5 ? ', ...' : '') +
             '] tag_drift=' + (nautobot_drift_event.tag_drift || []).length
+  # Production Grafana alerts stay on this existing direct route until the
+  # ntfy hub cutover flag is enabled after successful destination receipts.
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        try {
+          const p = JSON.parse(__e._raw);
+          const alerts = p.alerts || [];
+          const lines = alerts.slice(0, 5).map(function (a) {
+            const l = a.labels || {};
+            const s = (a.annotations || {}).summary;
+            return '[' + String(a.status || p.status || '').toUpperCase() + '] ' +
+              (l.alertname || 'unnamed') + (l.instance ? ' (' + l.instance + ')' : '') +
+              (s ? ': ' + s : '');
+          });
+          if (alerts.length > 5) lines.push('...and ' + (alerts.length - 5) + ' more');
+          __e._raw = 'Grafana: ' + (lines.length ? lines.join('\n') : (p.title || p.message || 'alert'));
+        } catch (err) {}

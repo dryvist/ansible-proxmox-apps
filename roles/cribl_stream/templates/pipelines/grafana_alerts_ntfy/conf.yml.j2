@@ -7,11 +7,11 @@ groups: {}
 asyncFuncTimeout: 1000
 functions:
   - id: drop
-    filter: "sourcetype !== 'grafana:alert'"
+    filter: "sourcetype !== 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} && sourcetype !== 'grafana:alert'{% endif %}"
     disabled: false
     conf: {}
   - id: code
-    filter: "sourcetype === 'grafana:alert'"
+    filter: "sourcetype === 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} || sourcetype === 'grafana:alert'{% endif %}"
     disabled: false
     conf:
       code: |
@@ -122,7 +122,7 @@ functions:
             const links = sourceLinks(alert);
             if (links.length > 0) {
               for (const link of links) {
-                lines.push('Evidence (' + link[0] + '): ' + boundedText(link[1], 180));
+                lines.push('Evidence (' + link[0] + '): `' + boundedText(link[1], 180) + '`');
               }
             } else {
               lines.push('Evidence: no source URL in this alert.');
@@ -156,7 +156,7 @@ functions:
         const conservative = !valid || alerts.some((alert) => {
           if (!alert || typeof alert !== 'object' || Array.isArray(alert)) return true;
           const severity = String((alert.labels || {}).severity || 'unknown').toLowerCase();
-          return severity !== 'warning';
+          return severity !== 'warning' && severity !== 'info';
         });
         const links = [];
         for (const alert of alerts) {
@@ -175,7 +175,7 @@ functions:
             message,
             priority: conservative ? 4 : 3,
             tags: conservative ? ['warning'] : ['information_source'],
-            click: links.length > 0 ? links[0][1] : splunkSearchUrl,
+            click: splunkSearchUrl,
           };
         });
         } catch (err) {
@@ -189,13 +189,13 @@ functions:
           }];
         }
   - id: unroll
-    filter: "sourcetype === 'grafana:alert'"
+    filter: "sourcetype === 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} || sourcetype === 'grafana:alert'{% endif %}"
     disabled: false
     conf:
       srcField: __ntfyParts
       destField: __ntfyPart
   - id: code
-    filter: "sourcetype === 'grafana:alert'"
+    filter: "sourcetype === 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} || sourcetype === 'grafana:alert'{% endif %}"
     disabled: false
     conf:
       code: |

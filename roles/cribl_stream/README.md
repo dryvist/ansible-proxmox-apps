@@ -57,6 +57,14 @@ existing Slack and Zammad fan-out. Large notifications become numbered
 continuations; the formatter retains every alert record and source link in the
 summary while Splunk retains the complete Grafana envelope.
 
+The ntfy leg receives only `grafana:alert:canary` events while
+`cribl_stream_grafana_ntfy_cutover_verified` is false (the default), and the
+existing direct Grafana webhook remains active. Set the flag true only after
+successful receipts confirm the ntfy hub's Slack and Zammad destinations; this
+adds production Grafana alerts to ntfy while continuing to accept canaries, and
+leaves the direct webhook for critical Nautobot drift. A verified cutover
+requires a configured ntfy URL.
+
 The Nautobot drift role posts one HEC JSON event per run with its separate
 `cribl_stream_nautobot_drift_hec_token`. Every drift event continues to Splunk,
 while only `critical` events reach the direct Slack webhook through
