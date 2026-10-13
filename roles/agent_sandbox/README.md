@@ -86,6 +86,13 @@ results project. The `agent-dispatch` account accepts only keys listed in
 command. A terminal session (`ssh -t`, verb `tty`) gets a PTY; nothing else
 does.
 
+The operator allowlist has a separate SSH identity. Set
+`agent_sandbox_allow_access_enabled` and provide its public key in
+`agent_sandbox_allow_authorized_keys`; it does not use the dispatcher job key.
+The workstation `agent-allow` command supports `add`, `rm`, and `ls`. Changes
+replace the operator list atomically, reload Squid, and append a timestamped
+state record under `agent_sandbox_allowlist_log_file`.
+
 ## Session-log shipping
 
 Agent containers are `--rm`, so their CLI session logs would die with the
