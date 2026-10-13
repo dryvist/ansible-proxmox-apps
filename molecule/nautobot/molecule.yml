@@ -1,9 +1,11 @@
 ---
-# Molecule scenario for the native nautobot role. Runs with
-# nautobot_manage_app=false: it exercises the deterministic layer (system deps,
-# nautobot user, Redis bound to loopback, SECRET_KEY generate-once, rendered
-# config/uWSGI/env, systemd units, deployed SSoT/export jobs) WITHOUT the
-# multi-minute Nautobot pip install + live database. The live application layer
+# Molecule scenario for the native nautobot role, on two containers: one runs
+# the role's own server layer, the other (group nautobot_collection_server)
+# runs the server layer through the jpe_ansible.nautobot.server collection role.
+# Both run with nautobot_manage_app=false: they exercise the deterministic layer
+# (system deps, nautobot user, Redis bound to loopback, SECRET_KEY generate-once,
+# rendered config/uWSGI/env, systemd units, deployed SSoT/export jobs) WITHOUT
+# the multi-minute Nautobot pip install + live database. The live application layer
 # (migrate, superuser, service start, HTTP 200/302) is validated at cutover
 # (issue #138 "Done when"), mirroring keepalived_manage_services.
 
@@ -23,6 +25,22 @@ platforms:
     groups:
       - nautobot_group
       - lxc_containers
+  - name: nautobot-collection-test${CI_INSTANCE_SUFFIX}
+    image: geerlingguy/docker-debian12-ansible:latest
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - nautobot_group
+      - lxc_containers
+      - nautobot_collection_server
 
 provisioner:
   name: ansible
