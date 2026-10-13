@@ -21,6 +21,7 @@ compose project.
 | `prometheus` | self | scrape health |
 | `blackbox_icmp` | blackbox `/probe?module=icmp` | loss + RTT to the modem (`192.168.100.1`) + internet |
 | `blackbox_http_2xx_tls` | blackbox | HTTPS response + TLS health |
+| `blackbox_http_401_tls` | blackbox | Expected HTTP 401 + TLS health for protected services |
 | `blackbox_dns_udp` | blackbox | DNS RTT + resolution |
 
 `probe_success` + `probe_duration_seconds` per target carry the ISP-degradation

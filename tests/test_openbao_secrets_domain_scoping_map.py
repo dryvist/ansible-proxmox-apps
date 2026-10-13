@@ -6,7 +6,7 @@ domains this run's hosts need, per group) as hand-maintained data,
 independent of the domain list in dryvist.secrets_management/roles/openbao_secrets/defaults/main/ and
 of the group names in that same play's `hosts:` pattern, the two small
 scope-detection plays immediately above it, and the tofu-tag-derived groups
-used by the AI repo's ClickHouse and Langfuse consumers. A typo or a
+used by the ClickHouse, Langfuse and Git mirror consumers. A typo or a
 renamed/removed domain or group on either side would make
 dryvist.secrets_management/roles/openbao_secrets/tasks/narrow_domains.yml silently
 decide a domain is never needed -- exactly the empty-secret-over-a-live-one
@@ -40,6 +40,7 @@ MEDIA_SCOPE_GROUP = "media_group"
 TOFU_TAG_CONSUMER_GROUPS = {
     "clickhouse_group": "clickhouse",
     "langfuse_group": "langfuse",
+    "git_mirror_group": "git-mirror",
 }
 DEADMAN_SCOPE_GROUPS = {
     "technitium_dns_group",
@@ -131,7 +132,7 @@ def test_every_mapped_group_is_reachable_by_the_scoping_gate():
         "that the scoping gate can never see as active: they are neither in "
         "the pre-fetch play's own `hosts:` pattern nor one of the two "
         "out-of-play scope groups (media_group, the deadman watchdog set) or "
-        "a tofu-tag-derived ClickHouse/Langfuse group "
+        "a tofu-tag-derived consumer group "
         "detected by the plays immediately above it -- any domain mapped "
         "ONLY to such a group would never be fetched, on any run."
     )
