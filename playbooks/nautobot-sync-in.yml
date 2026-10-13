@@ -1,0 +1,140 @@
+---
+# Nautobot sync-in through the jpe_ansible.nautobot collection. Components are
+# opt-in per run: nautobot_collection_curated_components (dcim, hardware) and
+# nautobot_collection_pve_components (virtualization, nodes, drives). Both
+# default to empty, and nautobot_collection_plan_only defaults to true, so a run
+# without explicit switches writes nothing. Credentials come from OpenBao
+# through the run's own token (playbooks/tasks/nautobot_collection_access.yml).
+#
+# Not part of site.yml. Run directly:
+#   ansible-playbook -i inventory/hosts.yml playbooks/nautobot-sync-in.yml
+- name: Start the wall-clock budget
+  import_playbook: site/budget-gate.yml
+
+- name: Synchronize selected Nautobot components
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
+  vars:
+    # Same reasons as nautobot-drift.yml: group_vars pins ansible_become for
+    # the managed hosts and the system python lacks the collection's libraries.
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+    nautobot_collection_pve_required: "{{ nautobot_collection_pve_components | length > 0 }}"
+    nautobot_collection_write_required: "{{ not nautobot_collection_plan_only }}"
+
+  tasks:
+    - name: Report when no collection components are enabled
+      ansible.builtin.debug:
+        msg: no collection components enabled
+      when:
+        - nautobot_collection_curated_components | length == 0
+        - nautobot_collection_pve_components | length == 0
+
+    - name: Run the selected collection synchronization
+      when: >-
+        nautobot_collection_curated_components | length > 0
+        or nautobot_collection_pve_components | length > 0
+      block:
+        - name: Validate the selected components and their curated inputs
+          ansible.builtin.assert:
+            that:
+              - nautobot_collection_curated_components | difference(['dcim', 'hardware']) | length == 0
+              - nautobot_collection_pve_components | difference(['virtualization', 'nodes', 'drives']) | length == 0
+              - >-
+                'dcim' not in nautobot_collection_curated_components
+                or (nautobot_collection_racks | length > 0 and nautobot_collection_devices | length > 0)
+              - >-
+                'hardware' not in nautobot_collection_curated_components
+                or nautobot_collection_hardware_devices | length > 0
+                or nautobot_collection_hardware_modules | length > 0
+                or nautobot_collection_wan_circuits | length > 0
+              - >-
+                ('dcim' not in nautobot_collection_curated_components
+                 or 'hardware' not in nautobot_collection_curated_components)
+                or (nautobot_collection_vlans | length > 0
+                    and nautobot_collection_prefixes | length > 0
+                    and nautobot_collection_reservations | length > 0)
+            fail_msg: >-
+              nautobot_collection_curated_components allows dcim and hardware;
+              nautobot_collection_pve_components allows virtualization, nodes and drives;
+              dcim needs racks and devices; hardware needs hardware devices, modules or
+              WAN circuits; both together also need VLANs, prefixes and reservations
+
+        - name: Resolve the published inventory for the Proxmox API address
+          ansible.builtin.include_role:
+            name: dryvist.homelab.inventory_resolve
+          when: nautobot_collection_pve_required
+
+        - name: Parse the published inventory
+          ansible.builtin.set_fact:
+            tofu_data: "{{ tofu_inventory_resolved | from_json }}"
+          when: nautobot_collection_pve_required
+
+        - name: Read and check the credentials
+          ansible.builtin.include_tasks: tasks/nautobot_collection_access.yml
+
+        - name: Create a temporary Proxmox CA file
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pem
+          register: nautobot_collection_pve_ca_file
+          when: nautobot_collection_pve_required
+
+        - name: Write the Proxmox CA to the temporary file
+          ansible.builtin.copy:
+            content: "{{ nautobot_collection_pve_ca }}"
+            dest: "{{ nautobot_collection_pve_ca_file.path }}"
+            mode: "0600"
+          no_log: true
+          when: nautobot_collection_pve_required
+
+        - name: Run the Nautobot sync-in role
+          ansible.builtin.include_role:
+            name: jpe_ansible.nautobot.sync_in
+          vars:
+            sync_in_stages: >-
+              {{ (['proxmox'] if nautobot_collection_pve_required else [])
+                 + (['curated'] if nautobot_collection_curated_components | length > 0 else []) }}
+            sync_in_curated_components: "{{ nautobot_collection_curated_components }}"
+            sync_in_pve_components: "{{ nautobot_collection_pve_components }}"
+            sync_in_plan_only: "{{ nautobot_collection_plan_only }}"
+            sync_in_nautobot_url: "{{ nautobot_collection_nautobot_url }}"
+            sync_in_read_token: "{{ nautobot_collection_read_token }}"
+            sync_in_write_token: "{{ '' if nautobot_collection_plan_only else nautobot_collection_write_token }}"
+            sync_in_pve_api_url: "{{ nautobot_collection_pve_api_url if nautobot_collection_pve_required else '' }}"
+            sync_in_pve_token_id: "{{ nautobot_collection_pve_token_id if nautobot_collection_pve_required else '' }}"
+            sync_in_pve_token_secret: >-
+              {{ nautobot_collection_pve_token_secret if nautobot_collection_pve_required else '' }}
+            sync_in_pve_ca_path: >-
+              {{ nautobot_collection_pve_ca_file.path if nautobot_collection_pve_required else '' }}
+            sync_in_racks: "{{ nautobot_collection_racks }}"
+            sync_in_devices: "{{ nautobot_collection_devices }}"
+            sync_in_hardware_devices: "{{ nautobot_collection_hardware_devices }}"
+            sync_in_hardware_modules: "{{ nautobot_collection_hardware_modules }}"
+            sync_in_wan_circuits: "{{ nautobot_collection_wan_circuits }}"
+            sync_in_vlans: "{{ nautobot_collection_vlans }}"
+            sync_in_prefixes: "{{ nautobot_collection_prefixes }}"
+            sync_in_reservations: "{{ nautobot_collection_reservations }}"
+
+        - name: Print the sync-in plan summary
+          ansible.builtin.debug:
+            msg: >-
+              {{ item.key }}: create={{ item.value['create'] | default([]) | length }},
+              update={{ item.value['update'] | default([]) | length }},
+              delete={{ item.value['delete'] | default([]) | length }}
+          loop: "{{ sync_in_plan | default({}) | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          when: nautobot_collection_plan_only
+      always:
+        - name: Remove the temporary Proxmox CA file
+          ansible.builtin.file:
+            path: "{{ nautobot_collection_pve_ca_file.path }}"
+            state: absent
+          when: nautobot_collection_pve_ca_file.path is defined
+
+- name: Refuse a run past its wall-clock budget
+  import_playbook: site/budget-gate.yml
