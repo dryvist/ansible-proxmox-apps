@@ -6,12 +6,16 @@ observability backend — contract in terraform-proxmox
 `docs/AI_OBSERVABILITY.md`.
 
 - **VictoriaMetrics** receives Prometheus `remote_write` from the stream
-  pipeline and is the sole Grafana datasource (provisioned, uid
+  pipeline and is the default Grafana datasource (provisioned, uid
   `victoriametrics`). Retention defaults to 2y;
   `-opentelemetry.usePrometheusNaming` keeps OTLP-originated metric names in
   the Prometheus form the dashboards query.
+- LiteLLM prices is a non-default Infinity datasource (uid litellm-prices) for
+  the public model price JSON. It is enabled by default, installs the Infinity
+  plugin with Grafana's GF_PLUGINS_PREINSTALL, and limits requests to
+  [raw.githubusercontent.com](https://raw.githubusercontent.com).
 - **Grafana** is Traefik-fronted (Authelia-gated vhost); dashboards and the
-  datasource are file-provisioned read-only, so the UI carries no hand-built
+  datasources are file-provisioned read-only, so the UI carries no hand-built
   state and rebuilds clean. The admin password is generated on first converge
   and persisted (homarr-style decide/persist pattern).
 
@@ -36,9 +40,11 @@ than populate.
 
 `templates/alerting/rules-ai.yml.j2` provisions four Grafana-managed rules in
 the `ai-observability` group. Grafana sends notifications to the Cribl Stream
-HEC input. Stream writes each event to the `ansible` index and fans a filtered
-copy to the configured alert webhook. Notifications do not pass through
-another relay.
+HEC input. Before the verified cutover flag is set, Grafana alerts use the
+direct webhook; after it is set, Cribl routes them through the ntfy push relay
+to the hub while retaining full events in Splunk. Notification groups use
+`grafana_folder`, `alertname`, and `severity`; the default repeat is 30m, with
+warning and info repeats set to 1h.
 
 - `llm-router-down`: Prometheus `up{job="llm_router"}` is zero or missing.
 - `llm-judge-failing`: the MacBook Cribl Edge judge Process Set has not

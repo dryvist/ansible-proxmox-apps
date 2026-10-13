@@ -52,3 +52,91 @@ nautobot_superuser_password: >-
 nautobot_export_s3_bucket: >-
   {{ lookup('env', 'NAUTOBOT_EXPORT_S3_BUCKET')
      | default(nautobot_export_s3_bucket_default, true) }}
+
+# Collection flows stay disabled until their switches are set explicitly.
+nautobot_collection_curated_components: []
+nautobot_collection_pve_components: []
+nautobot_collection_plan_only: true
+
+# Secret source metadata is kept here so each path and field has one owner.
+nautobot_collection_read_token_secret:
+  path: apps/nautobot/pipeline
+  field: pipeline_ro_token
+nautobot_collection_write_token_secret:
+  path: apps/nautobot/sync-write
+  field: sync_write_token
+nautobot_collection_app_secret:
+  path: apps/nautobot
+  fields:
+    nautobot_url: inventory_url
+    pve_token_id: nautobot_proxmox_token_id
+    pve_token_secret: nautobot_proxmox_token_secret
+    pve_ca: nautobot_proxmox_ca
+
+# The published inventory's node map is keyed by stable node identity. Missing
+# commissioned flags mean commissioned, matching the inventory contract.
+nautobot_collection_pve_api_url: >-
+  {{
+    'https://'
+    ~ (
+        (
+          (
+            tofu_data.nodes
+            | dict2items
+            | selectattr('value.commissioned', 'undefined')
+            | list
+          )
+          +
+          (
+            tofu_data.nodes
+            | dict2items
+            | selectattr('value.commissioned', 'equalto', true)
+            | list
+          )
+        )
+        | sort(attribute='key')
+        | first
+        | default(undef(hint='No commissioned node exists in tofu_data.nodes'))
+      ).value.role
+    ~ '.'
+    ~ tofu_data.domain
+    ~ ':8006'
+  }}
+
+# Curated inputs intentionally have no implicit source data.
+nautobot_collection_racks: []
+nautobot_collection_devices: []
+nautobot_collection_hardware_devices: []
+nautobot_collection_hardware_modules: []
+nautobot_collection_wan_circuits: []
+nautobot_collection_vlans: []
+nautobot_collection_prefixes: []
+nautobot_collection_reservations: []
+
+# Saved GraphQL query the export renders, defined by the collection's Bootstrap data.
+nautobot_collection_export_query_name: nautobot-export
+
+# Drift events post to the Cribl Stream HEC input (same listener the Grafana
+# alert path uses); the drift role appends /services/collector/event. The token
+# is the Cribl input's own drift token and stays empty until it is provisioned,
+# which makes the drift playbook fail closed.
+nautobot_collection_drift_hec_url: "http://syslog.{{ ingress_domain }}:{{ cribl_hec_input_port }}"
+nautobot_collection_drift_hec_token: "{{ lookup('env', 'NAUTOBOT_DRIFT_HEC_TOKEN') }}"
+
+# Source inventory keys that hold guests, and the source domains Nautobot has no
+# models for; the drift event lists the latter.
+nautobot_collection_drift_source_groups:
+  - containers
+  - vms
+  - docker_vms
+  - splunk_vm
+nautobot_collection_drift_unmodelled_domains:
+  - firewall groups/rules
+  - DNS records
+  - WLANs
+  - port profiles/port-forwards
+  - static + traffic routes
+  - RADIUS
+  - VPN
+  - cables
+  - physical device interfaces

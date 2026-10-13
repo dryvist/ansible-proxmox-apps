@@ -66,9 +66,41 @@ outputs:
 {% endfor %}
 {% endif %}
 
+{% if cribl_stream_alerts_ntfy_url | default('') | length > 0 %}
+  # The verified Grafana route uses the ntfy hub's existing Slack and Zammad
+  # fan-out. The independent Splunk connection keeps full events.
+  ntfy_grafana_alerts:
+    id: ntfy_grafana_alerts
+    type: webhook
+    disabled: false
+    url: "{{ cribl_stream_alerts_ntfy_publish_url }}"
+    method: POST
+    format: custom
+    customSourceExpression: >-
+      typeof message === 'string' && message.length > 0
+      && typeof title === 'string' && typeof priority === 'number'
+      ? JSON.stringify({topic: '{{ cribl_stream_alerts_ntfy_topic }}', message, title, priority, tags, click})
+      : null
+    customContentType: application/json
+    customDropWhenNull: true
+    maxPayloadEvents: 1
+    compress: false
+    rejectUnauthorized: true
+    timeoutSec: 30
+    flushPeriodSec: 1
+    concurrency: 1
+    onBackpressure: queue
+    pqMode: error
+    pqPath: "$CRIBL_HOME/state/queues"
+    pqMaxFileSize: "1 MB"
+    pqMaxSize: "100 MB"
+    pqCompress: none
+    pqOnBackpressure: drop
+{% endif %}
+
 {% if cribl_stream_alerts_slack_webhook | default('') | length > 0 %}
-  # Grafana's HEC alert leg uses the same event input as the Splunk leg, then
-  # posts one Slack-compatible JSON message per filtered alert event.
+  # Preserve the existing queue and direct Grafana route until verified
+  # cutover; afterwards this same output carries critical Nautobot drift.
   slack_grafana_alerts:
     id: slack_grafana_alerts
     type: webhook

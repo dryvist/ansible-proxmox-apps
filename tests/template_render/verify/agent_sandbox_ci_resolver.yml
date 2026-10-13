@@ -81,7 +81,7 @@
           - _asr_env_names == _asr_expected_env_names | sort
           - agent_sandbox_ci_resolver_enabled is false
           - agent_sandbox_ci_resolver_shadow is true
-          - "'CI_RESOLVER_APP_ID=' in _asr_env"
+          - "'CI_RESOLVER_APP_ID=4282473' in _asr_env"
           - "'CI_RESOLVER_ORG=dryvist' in _asr_env"
           - "'CI_RESOLVER_GH_TOKEN_CMD=/usr/local/lib/agent-sandbox/ci-resolver-secret token' in _asr_env"
           - "'CI_RESOLVER_TOKEN_REPO=dryvist/.github' in _asr_env"
@@ -151,9 +151,18 @@
       ansible.builtin.assert:
         that:
           - >-
-            '"permissions":{"checks":"write","actions":"write","contents":"write","pull_requests":"write"}'
-            in _asr_secret_helper
-          - "'github-agents/token' in _asr_secret_helper"
+            ("/v1/" ~ agent_sandbox_ci_resolver_github_mount ~ "/token/"
+            ~ agent_sandbox_ci_resolver_permission_set) in _asr_secret_helper
+          - >-
+            ('"${BAO_ADDR%/}/v1/' ~ agent_sandbox_ci_resolver_github_mount
+            ~ '/token"') not in _asr_secret_helper
+          - "\"printf '{}'\" in _asr_secret_helper"
+          - "'GITHUB_AGENTS_INSTALLATION_ID' not in _asr_secret_helper"
+          - "'permissions' not in _asr_secret_helper"
+          - "'^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$' in _asr_secret_helper"
+          - "'.data.token | strings' in _asr_secret_helper"
+          - >-
+            ('/v1/' ~ agent_sandbox_ci_resolver_secret_path) in _asr_secret_helper
           - "'auth/approle/login' in _asr_secret_helper"
           - "'auth/token/revoke-self' in _asr_secret_helper"
           - "'--data-binary @-' in _asr_secret_helper"
@@ -163,5 +172,6 @@
             | regex_findall('(?m)(?:[0-9]+)?>(?=[^=\\s])([^\\s;|)]+)')
             | difference(['/dev/null', '&2']) | length == 0
         fail_msg: >-
-          The secret helper must request exactly four write permissions,
-          revoke its OpenBao token, and avoid writing credentials to files.
+          The secret helper must request its stored permission set, keep the
+          field lookup, validate repositories, revoke its token, and keep
+          credentials out of files and process arguments.

@@ -7,29 +7,62 @@
     that:
       - _cribl_stream_hec_input.type == 'splunk_hec'
       - _cribl_stream_hec_input.port | int == 8088
+      - _cribl_stream_hec_input.authTokens | length == 1
       - _cribl_stream_hec_input.authTokens[0].token == cribl_stream_splunk_hec_token
       - _cribl_stream_hec_input.connections[0].output == 'splunk_hec'
       - _cribl_stream_hec_input.connections[0].pipeline == 'ansible_converge'
-      - _cribl_stream_hec_input.connections[1].output == 'slack_grafana_alerts'
-      - _cribl_stream_hec_input.connections[1].pipeline == 'grafana_alerts_slack'
+      - _cribl_stream_hec_input.connections[1].output == 'ntfy_grafana_alerts'
+      - _cribl_stream_hec_input.connections[1].pipeline == 'grafana_alerts_ntfy'
+      - _cribl_stream_hec_input.connections[2].output == 'slack_grafana_alerts'
+      - _cribl_stream_hec_input.connections[2].pipeline == 'grafana_alerts_slack'
+      - _cribl_stream_defaults.cribl_stream_nautobot_drift_hec_token == ''
     fail_msg: >-
       the Stream HEC input must authenticate the callback and forward through
       the Ansible marker pipeline without replacing the HEC index or sourcetype
 
-- name: Assert the alert HEC input uses the Grafana-only fan-out pipeline
+- name: Assert the optional Nautobot drift HEC token renders as a separate token
   vars:
-    _cribl_stream_alert_output: >-
+    _cribl_stream_hec_input_with_drift_token: >-
+      {{ (_cribl_stream_inputs_drift_token | from_yaml).inputs['splunk_hec:in_splunk_hec'] }}
+  ansible.builtin.assert:
+    that:
+      - _cribl_stream_hec_input_with_drift_token.authTokens | length == 2
+      - _cribl_stream_hec_input_with_drift_token.authTokens[0].token == cribl_stream_splunk_hec_token
+      - _cribl_stream_hec_input_with_drift_token.authTokens[1].token == 'fixture-nautobot-drift-token'
+      - _cribl_stream_hec_input_with_drift_token.authTokens[1].description == 'Nautobot drift'
+    fail_msg: >-
+      the drift sender must receive its own opt-in HEC token without replacing
+      the converge callback token
+
+- name: Assert the alert HEC input uses separate ntfy and critical Nautobot legs
+  vars:
+    _cribl_stream_hec_input: >-
+      {{ (_cribl_stream_inputs | from_yaml).inputs['splunk_hec:in_splunk_hec'] }}
+    _cribl_stream_ntfy_output: >-
+      {{ (_cribl_stream_outputs_pi | from_yaml).outputs.ntfy_grafana_alerts }}
+    _cribl_stream_nautobot_output: >-
       {{ (_cribl_stream_outputs_pi | from_yaml).outputs.slack_grafana_alerts }}
   ansible.builtin.assert:
     that:
-      - _cribl_stream_alert_output.type == 'webhook'
-      - _cribl_stream_alert_output.url == cribl_stream_alerts_slack_webhook
-      - _cribl_stream_alert_output.method == 'POST'
-      - _cribl_stream_alert_output.customContentType == 'application/json'
-      - "_cribl_stream_alert_output.customSourceExpression == 'JSON.stringify({text: _raw})'"
-      - _cribl_stream_alert_output.onBackpressure == 'queue'
-      - _cribl_stream_alert_output.pqMode == 'error'
-      - _cribl_stream_alert_output.pqOnBackpressure == 'drop'
+      - _cribl_stream_hec_input.connections[1].output == 'ntfy_grafana_alerts'
+      - _cribl_stream_hec_input.connections[1].pipeline == 'grafana_alerts_ntfy'
+      - _cribl_stream_hec_input.connections[2].output == 'slack_grafana_alerts'
+      - _cribl_stream_hec_input.connections[2].pipeline == 'grafana_alerts_slack'
+      - _cribl_stream_ntfy_output.type == 'webhook'
+      - _cribl_stream_ntfy_output.url == cribl_stream_alerts_ntfy_publish_url
+      - _cribl_stream_ntfy_output.method == 'POST'
+      - _cribl_stream_ntfy_output.customContentType == 'application/json'
+      - "'typeof message' in _cribl_stream_ntfy_output.customSourceExpression"
+      - "'typeof priority' in _cribl_stream_ntfy_output.customSourceExpression"
+      - _cribl_stream_ntfy_output.customDropWhenNull | bool
+      - _cribl_stream_ntfy_output.onBackpressure == 'queue'
+      - _cribl_stream_ntfy_output.pqMode == 'error'
+      - _cribl_stream_ntfy_output.pqOnBackpressure == 'drop'
+      - _cribl_stream_nautobot_output.type == 'webhook'
+      - _cribl_stream_nautobot_output.url == cribl_stream_alerts_slack_webhook
+      - _cribl_stream_nautobot_output.onBackpressure == 'queue'
+      - _cribl_stream_nautobot_output.pqMode == 'error'
+      - _cribl_stream_nautobot_output.pqOnBackpressure == 'drop'
     fail_msg: >-
-      Grafana alert envelopes must have a dedicated persistent-queue webhook
-      output in Stream, separate from any ntfy delivery path.
+      Grafana summaries must use the existing ntfy hub while critical Nautobot
+      drift keeps its direct Slack output and existing persistent queue.

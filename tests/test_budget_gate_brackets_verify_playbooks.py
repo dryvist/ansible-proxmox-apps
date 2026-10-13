@@ -29,6 +29,8 @@ BRACKETED = [
     "playbooks/verify-grafana-dashboards.yml",
     "playbooks/verify-approle-ttls.yml",
     "playbooks/nautobot-drift.yml",
+    "playbooks/nautobot-sync-in.yml",
+    "playbooks/nautobot-sync-out.yml",
 ]
 
 

@@ -146,9 +146,17 @@ refreshes the workbook checkout, and a daily timer learns from completed fixes
 and opens a workbook pull request. The feature is off by default and starts in
 shadow mode.
 
-Set `agent_sandbox_ci_resolver_app_id` to the resolver's GitHub App ID. Configure
-it further with `agent_sandbox_ci_resolver_repos`,
-`agent_sandbox_ci_resolver_max_attempts`,
-`agent_sandbox_ci_resolver_shadow`,
-`agent_sandbox_ci_resolver_vikunja_project`, and
-`agent_sandbox_ci_resolver_zammad_group`.
+| Variable | What it does |
+| --- | --- |
+| `agent_sandbox_ci_resolver_enabled` | Installs and starts the resolver when true; the default is false. |
+| `agent_sandbox_ci_resolver_shadow` | Keeps the resolver in shadow mode when true; the default is true. |
+| `agent_sandbox_ci_resolver_app_id` | Identifies the GitHub App used by the resolver. |
+| `agent_sandbox_ci_resolver_github_mount` | Selects the OpenBao GitHub mount that issues tokens. |
+| `agent_sandbox_ci_resolver_permission_set` | Selects the stored permission set requested for each token. |
+| `agent_sandbox_ci_resolver_approle_dir` | Stores the resolver's dedicated AppRole files for its service account. |
+| `agent_sandbox_ci_resolver_role_id` | Supplies the resolver AppRole role ID from the platform environment document. |
+| `agent_sandbox_ci_resolver_secret_id` | Supplies the resolver AppRole secret ID from the platform environment document. |
+| `agent_sandbox_ci_resolver_repos` | Lists repositories the resolver checks for failed runs. |
+| `agent_sandbox_ci_resolver_max_attempts` | Limits attempts to resolve each failure. |
+| `agent_sandbox_ci_resolver_vikunja_project` | Selects the Vikunja project that receives resolver results. |
+| `agent_sandbox_ci_resolver_zammad_group` | Selects the Zammad group that receives resolver reports. |
