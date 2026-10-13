@@ -82,11 +82,12 @@ packages, Redis, SECRET_KEY, venv and pinned packages, settings, environment
 file, uWSGI, units, migrations, the first superuser, service start and the
 health wait.
 
-- `true` (production, set in `inventory/group_vars/nautobot_group.yml`): the
-  `jpe_ansible.nautobot.server` collection role does all of it
-  (`tasks/server_collection.yml`). The `server_*` inputs in the group vars map
-  the `nautobot_*` inputs, and service accounts stay off
-  (`server_manage_accounts: false`) because this role still owns the tokens.
+- `true` (set per run with `-e nautobot_server_via_collection=true`, or in the
+  group vars once the cutover is accepted): the `jpe_ansible.nautobot.server`
+  collection role does all of it (`tasks/server_collection.yml`). The `server_*`
+  inputs in `inventory/group_vars/nautobot_group.yml` map the `nautobot_*`
+  inputs, and service accounts stay off (`server_manage_accounts: false`)
+  because this role still owns the tokens.
 - `false` (role default, used by the first Molecule platform): this role does it
   (`tasks/server_legacy.yml`, `tasks/server_legacy_app.yml`).
 
@@ -121,7 +122,7 @@ Rebuilding without running leaves the fresh bundle unread.
 
 | Flag | Default | What it does | Enable when |
 | --- | --- | --- | --- |
-| `nautobot_server_via_collection` | `false` | Hands the server layer to the collection server role. | Production (set in group vars). |
+| `nautobot_server_via_collection` | `false` | Hands the server layer to the collection server role. | Per run until the cutover is accepted. |
 | `nautobot_manage_app` | `true` | Runs the live layer (install/migrate/services). | Production path (default). |
 | `nautobot_build_seed` | `true` | Assembles `nautobot_seed.json` — a file only, no DB write. | Production path (default). |
 | `nautobot_run_seed_jobs` | `true` | DiffSyncs the seed into live Nautobot (additive). | Production path (default). |
