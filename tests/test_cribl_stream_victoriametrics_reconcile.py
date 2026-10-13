@@ -6,19 +6,22 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "roles" / "cribl_stream" / "tasks" / "main.yml"
+OUTPUT_TASKS = ROOT / "roles" / "cribl_stream" / "tasks" / "outputs.yml"
 
 
-def _task_named(name: str):
-    tasks = yaml.safe_load(TASKS.read_text(encoding="utf-8"))
+def _task_named(name: str, source: Path = TASKS):
+    tasks = yaml.safe_load(source.read_text(encoding="utf-8"))
     return next(task for task in tasks if task.get("name") == name)
 
 
 class VictoriaMetricsReconcileContract(unittest.TestCase):
     def test_output_reconcile_when_victoriametrics_destination_is_missing(self):
-        facts = _task_named("Extract live Splunk HEC output settings")[
-            "ansible.builtin.set_fact"
-        ]
-        guard = _task_named("Deploy Cribl Stream outputs configuration")["when"][1]
+        facts = _task_named(
+            "Extract live Splunk HEC output settings", OUTPUT_TASKS
+        )["ansible.builtin.set_fact"]
+        guard = _task_named(
+            "Deploy Cribl Stream outputs configuration", OUTPUT_TASKS
+        )["when"][1]
 
         self.assertIn("cribl_stream_victoriametrics_live", facts)
         self.assertIn("cribl_stream_victoriametrics_otlp_live", facts)
@@ -27,7 +30,9 @@ class VictoriaMetricsReconcileContract(unittest.TestCase):
         self.assertIn("'victoriametrics_rw' not in cribl_stream_outputs_live_ids", guard)
 
     def test_output_reconcile_when_victoriametrics_destination_url_drifts(self):
-        guard = _task_named("Deploy Cribl Stream outputs configuration")["when"][1]
+        guard = _task_named(
+            "Deploy Cribl Stream outputs configuration", OUTPUT_TASKS
+        )["when"][1]
 
         self.assertIn("cribl_stream_victoriametrics_live.get('url', '')", guard)
         self.assertIn("cribl_stream_victoriametrics_rw_url", guard)

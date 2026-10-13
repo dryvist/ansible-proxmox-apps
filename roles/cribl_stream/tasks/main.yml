@@ -158,7 +158,7 @@
 # wait_for, not a shell probe: it is pure Python on the target, so it needs
 # neither bash nor timeout present. A shell probe that cannot run returns
 # non-zero, marks this task changed on EVERY converge, and bounces the service
-# every run — the same defect the outputs.yml note below exists to avoid.
+# every run — the same defect the outputs.yml reconciliation below avoids.
 #
 # `msg`, NOT `.failed`, is the discriminator: with failed_when false, `.failed`
 # is always false, so a guard written against it can never fire — the exact
@@ -174,110 +174,8 @@
   failed_when: false
   notify: Restart cribl stream
 
-# Cribl Stream rewrites local/cribl/outputs.yml at startup (strips comments,
-# materializes defaults), so an unconditional template re-diffs and bounces
-# the service on every converge. Deploy only when a managed field drifts.
-- name: Read live Cribl Stream outputs configuration
-  ansible.builtin.command:
-    argv:
-      - timeout
-      - 30s
-      - cat
-      - "{{ cribl_stream_install_dir }}/local/cribl/outputs.yml"
-  register: cribl_stream_outputs_live
-  changed_when: false
-  failed_when: false
-  no_log: true  # file contains the HEC token
-
-- name: Extract live Splunk HEC output settings
-  ansible.builtin.set_fact:
-    cribl_stream_hec_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('splunk_hec', {}) }}
-    # Live output ids, so a NEW per-index output (a fresh index in
-    # ai_log_routing) counts as drift — the url/token compare below only sees
-    # the legacy shared output and left outputs.yml stale when hermes was added.
-    cribl_stream_outputs_live_ids: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).keys() | list }}
-    # The OTLP legs' live settings, so a rotated key or a moved endpoint
-    # counts as drift too — presence alone left a re-seeded PHOENIX_INGEST_API_KEY
-    # or LANGFUSE_* pair unapplied until some unrelated field changed.
-    cribl_stream_langfuse_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('langfuse_otlp', {}) }}
-    cribl_stream_phoenix_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('phoenix_otlp', {}) }}
-    cribl_stream_victoriametrics_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('victoriametrics_rw', {}) }}
-    cribl_stream_victoriametrics_otlp_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('victoriametrics_otlp', {}) }}
-    cribl_stream_ntfy_alerts_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('ntfy_grafana_alerts', {}) }}
-    cribl_stream_nautobot_slack_live: >-
-      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
-          | default({}, true)).get('outputs', {}).get('slack_grafana_alerts', {}) }}
-  no_log: true
-
-- name: Deploy Cribl Stream outputs configuration
-  ansible.builtin.template:
-    src: outputs.yml.j2
-    dest: "{{ cribl_stream_install_dir }}/local/cribl/outputs.yml"
-    owner: "{{ cribl_stream_user }}"
-    group: "{{ cribl_stream_group }}"
-    mode: "0600"
-  no_log: true
-  notify: Restart cribl stream
-  when:
-    - cribl_stream_splunk_hec_token != ''
-    # Remove the retired per-index trace output from previously loaded config.
-    - >-
-      cribl_stream_hec_live.get('url', '') != cribl_stream_splunk_hec_url
-      or cribl_stream_hec_live.get('token', '') != cribl_stream_splunk_hec_token
-      or cribl_stream_hec_live.get('rejectUnauthorized', none) | bool
-         != cribl_stream_splunk_hec_tls_verify | bool
-      or cribl_stream_hec_live.get('pqEnabled', none) | bool
-         != cribl_stream_pq_enabled | bool
-      or ((cribl_stream_hec_namespace | default('')) | length > 0
-          and (cribl_stream_per_index_indexes
-               | map('regex_replace', '^', 'splunk_hec_') | list)
-              | difference(cribl_stream_outputs_live_ids) | length > 0)
-      or 'splunk_hec_otel_traces' in cribl_stream_outputs_live_ids
-      or 'langfuse_otlp' not in cribl_stream_outputs_live_ids
-      or cribl_stream_langfuse_live.get('endpoint', '') != cribl_stream_langfuse_url
-      or cribl_stream_langfuse_live.get('username', '') != cribl_stream_langfuse_public_key
-      or cribl_stream_langfuse_live.get('password', '') != cribl_stream_langfuse_secret_key
-      or 'phoenix_otlp' not in cribl_stream_outputs_live_ids
-      or cribl_stream_phoenix_live.get('endpoint', '') != cribl_stream_phoenix_url
-      or cribl_stream_phoenix_live.get('token', '') != cribl_stream_phoenix_api_key
-      or 'victoriametrics_rw' not in cribl_stream_outputs_live_ids
-      or cribl_stream_victoriametrics_live.get('type', '') != 'prometheus'
-      or cribl_stream_victoriametrics_live.get('url', '') != cribl_stream_victoriametrics_rw_url
-      or cribl_stream_victoriametrics_live.get('onBackpressure', '') != 'drop'
-      or 'victoriametrics_otlp' not in cribl_stream_outputs_live_ids
-      or cribl_stream_victoriametrics_otlp_live.get('type', '') != 'open_telemetry'
-      or cribl_stream_victoriametrics_otlp_live.get('protocol', '') != 'http'
-      or cribl_stream_victoriametrics_otlp_live.get('endpoint', '') != cribl_stream_victoriametrics_otlp_endpoint
-      or cribl_stream_victoriametrics_otlp_live.get('otlpVersion', '') != '1.3.1'
-      or cribl_stream_victoriametrics_otlp_live.get('systemFields', []) != []
-      or 'ntfy_grafana_alerts' not in cribl_stream_outputs_live_ids
-      or cribl_stream_ntfy_alerts_live.get('type', '') != 'webhook'
-      or cribl_stream_ntfy_alerts_live.get('url', '')
-         != cribl_stream_alerts_ntfy_publish_url
-      or cribl_stream_ntfy_alerts_live.get('method', '') != 'POST'
-      or cribl_stream_ntfy_alerts_live.get('customContentType', '') != 'application/json'
-      or ("topic: '" ~ cribl_stream_alerts_ntfy_topic ~ "'")
-         not in cribl_stream_ntfy_alerts_live.get('customSourceExpression', '')
-      or (cribl_stream_alerts_slack_webhook | default('') | length > 0
-          and ('slack_grafana_alerts' not in cribl_stream_outputs_live_ids
-               or cribl_stream_nautobot_slack_live.get('url', '')
-                  != cribl_stream_alerts_slack_webhook))
-      or (cribl_stream_alerts_slack_webhook | default('') | length == 0
-          and 'slack_grafana_alerts' in cribl_stream_outputs_live_ids)
+- name: Reconcile Cribl Stream outputs configuration
+  ansible.builtin.include_tasks: outputs.yml
 
 # Pipeline directories + configs, rendered on the controller (see pipelines.yml).
 - name: Deploy pipeline directories and configurations
