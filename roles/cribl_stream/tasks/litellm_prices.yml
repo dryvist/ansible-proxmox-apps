@@ -1,0 +1,61 @@
+---
+# Scheduled REST collection of LiteLLM's official price file. The HEC
+# namespace creates the matching per-index output in outputs.yml; fail closed
+# rather than deploy a job with a missing destination.
+- name: Require the per-index HEC namespace for the LiteLLM price collector
+  ansible.builtin.assert:
+    that:
+      - cribl_stream_hec_namespace | default('') | length > 0
+    fail_msg: >-
+      HEC_NAMESPACE must be configured before enabling the LiteLLM price
+      collector, because its llm_pricefeed HEC output is derived from it.
+
+- name: Ensure the LiteLLM price collector directory exists
+  ansible.builtin.file:
+    path: "{{ cribl_stream_install_dir }}/local/cribl/collectors/litellm_prices"
+    state: directory
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0755"
+
+- name: Read the existing Cribl event breaker rulesets
+  ansible.builtin.slurp:
+    src: "{{ cribl_stream_install_dir }}/local/cribl/breakers.yml"
+  register: cribl_stream_breakers_live
+  failed_when: false
+
+- name: Merge the LiteLLM price event breaker into existing rulesets
+  ansible.builtin.set_fact:
+    cribl_stream_breakers_merged: >-
+      {{ (cribl_stream_breakers_live.content | default('') | b64decode
+          | from_yaml | default({}, true))
+         | combine((lookup('ansible.builtin.template',
+                          cribl_stream_role_dir ~ '/templates/collectors/litellm_prices/breaker.yml.j2')
+                   | from_yaml), recursive=true) }}
+
+- name: Deploy merged Cribl event breaker rulesets
+  ansible.builtin.copy:
+    content: "{{ cribl_stream_breakers_merged | to_nice_yaml }}"
+    dest: "{{ cribl_stream_install_dir }}/local/cribl/breakers.yml"
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0644"
+  notify: Restart cribl stream
+
+- name: Deploy the LiteLLM price collector configuration
+  ansible.builtin.template:
+    src: collectors/litellm_prices/collector.yml.j2
+    dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/litellm_prices/collector.yml"
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0644"
+  notify: Restart cribl stream
+
+- name: Deploy the LiteLLM price collector schedule
+  ansible.builtin.template:
+    src: collectors/litellm_prices/schedule.yml.j2
+    dest: "{{ cribl_stream_install_dir }}/local/cribl/collectors/litellm_prices/schedule.yml"
+    owner: "{{ cribl_stream_user }}"
+    group: "{{ cribl_stream_group }}"
+    mode: "0644"
+  notify: Restart cribl stream

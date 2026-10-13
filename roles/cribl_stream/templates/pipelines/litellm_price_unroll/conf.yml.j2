@@ -1,0 +1,58 @@
+---
+# Parse the complete catalog, unroll model-key/value pairs, retain only entries
+# with numeric base rates, and emit a small JSON body with Splunk metadata.
+output: splunk_hec_llm_pricefeed
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: parser
+    filter: "true"
+    disabled: false
+    conf:
+      mode: extract
+      type: json
+      srcField: _raw
+      destField: model_catalog
+  - id: unroll
+    filter: "true"
+    disabled: false
+    conf:
+      srcField: "Object.entries(model_catalog)"
+      destField: model_entry
+  - id: drop
+    filter: >-
+      !model_entry[1]
+      || typeof model_entry[1].input_cost_per_token !== 'number'
+      || typeof model_entry[1].output_cost_per_token !== 'number'
+    disabled: false
+    conf: {}
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: _raw
+          value: >-
+            JSON.stringify({
+              model: model_entry[0],
+              input_cost_per_token: model_entry[1].input_cost_per_token,
+              output_cost_per_token: model_entry[1].output_cost_per_token,
+              cache_read_input_token_cost: typeof model_entry[1].cache_read_input_token_cost === 'number'
+                ? model_entry[1].cache_read_input_token_cost : undefined,
+              cache_creation_input_token_cost: typeof model_entry[1].cache_creation_input_token_cost === 'number'
+                ? model_entry[1].cache_creation_input_token_cost : undefined
+            })
+        - name: index
+          value: "'llm_pricefeed'"
+        - name: sourcetype
+          value: "'litellm:price'"
+        - name: source
+          value: "'litellm-price-file'"
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      remove:
+        - model_catalog
+        - model_entry
