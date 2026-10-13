@@ -1,0 +1,32 @@
+---
+# DR restore drill body (docs/DATABASE_DR_STANDARD.md in ansible-proxmox).
+# pitr_and_dr.yml imports this under never/dr_restore and the var gate; it has
+# no tags or gate of its own so a molecule play can include it directly.
+- name: Stage the dump on the guest
+  ansible.builtin.copy:
+    src: "{{ postgres_dr_restore_dump }}"
+    dest: /tmp/pg-dr-restore.dump
+    owner: postgres
+    group: postgres
+    mode: "0600"
+
+- name: Ensure the restore target database exists
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ postgres_dr_restore_db }}"
+    state: present
+
+- name: Restore the dump (clean, if-exists)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: >-
+      pg_restore --clean --if-exists
+      --dbname={{ postgres_dr_restore_db }} /tmp/pg-dr-restore.dump
+  changed_when: true
+
+- name: Remove the staged dump
+  ansible.builtin.file:
+    path: /tmp/pg-dr-restore.dump
+    state: absent
