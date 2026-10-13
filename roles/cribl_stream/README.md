@@ -77,6 +77,7 @@ its existing persistent-queue and backpressure settings.
 - Ensure service is running
 - Configure persistent queue location
 - Set up processing node mode
+- Collect LiteLLM's official model price file daily as one event for Splunk
 
 ## Admin Login Checks
 

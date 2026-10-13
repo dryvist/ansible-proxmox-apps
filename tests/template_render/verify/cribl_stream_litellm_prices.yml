@@ -1,0 +1,90 @@
+---
+- name: Render and verify the LiteLLM price collector
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/cribl_stream/templates"
+    cribl_stream_litellm_prices_enabled: true
+    cribl_stream_litellm_prices_schedule: "0 4 * * *"
+    cribl_stream_litellm_prices_url: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+
+  tasks:
+    - name: Render the LiteLLM price collector configuration
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/litellm_prices/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_prices_collector.yml"
+        mode: "0644"
+
+    - name: Render the LiteLLM price collector schedule
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/litellm_prices/schedule.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_prices_schedule.yml"
+        mode: "0644"
+
+    - name: Render the LiteLLM price event breaker
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/litellm_prices/breaker.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_prices_breaker.yml"
+        mode: "0644"
+
+    - name: Load the rendered LiteLLM collector contract
+      ansible.builtin.set_fact:
+        _collector: "{{ lookup('file', _fixture_dir ~ '/litellm_prices_collector.yml') | from_yaml }}"
+        _schedule: "{{ lookup('file', _fixture_dir ~ '/litellm_prices_schedule.yml') | from_yaml }}"
+        _breaker: "{{ lookup('file', _fixture_dir ~ '/litellm_prices_breaker.yml') | from_yaml }}"
+        _metadata: >-
+          {{ (lookup('file', _fixture_dir ~ '/litellm_prices_schedule.yml')
+              | from_yaml).input.metadata
+             | items2dict(key_name='name', value_name='value') }}
+
+    - name: Assert the REST collector GETs the official unpinned URL without auth
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _collector.conf.type == 'rest'
+          - _collector.conf.discovery.discoverType == 'none'
+          - _collector.conf.collectUrl == cribl_stream_litellm_prices_url
+          - _collector.conf.collectMethod == 'get'
+          - _collector.conf.authentication == 'none'
+          - _collector.conf.disableTimeFilter | bool
+        fail_msg: "The LiteLLM collector does not render the expected REST GET contract"
+
+    - name: Assert the event breaker suppresses delimiter splits with a safe size cap
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _schedule.input.breakerRulesets == ['litellm_pricefile']
+          - _breaker.litellm_pricefile.rules[0].condition == 'true'
+          - not _breaker.litellm_pricefile.rules[0].disabled | bool
+          - _breaker.litellm_pricefile.rules[0].eventBreakerRegex == '/\\b\\B/'
+          - _breaker.litellm_pricefile.rules[0].maxEventBytes | int > 3145728
+        fail_msg: >-
+          The LiteLLM collector must use the no-match event breaker and a
+          maximum event size above 3 MiB.
+
+    - name: Assert the daily scheduled job routes the event to its dedicated HEC output
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _schedule.enabled | bool
+          - _schedule.schedule.cronSchedule == '0 4 * * *'
+          - _schedule.schedule.timezone == 'UTC'
+          - not _schedule.input.sendToRoutes | bool
+          - _schedule.input.connections[0].output == 'splunk_hec_llm_pricefeed'
+          - _metadata.index == "'llm_pricefeed'"
+          - _metadata.sourcetype == "'litellm:pricefile'"
+          - _metadata.source == "'litellm-price-file'"
+        fail_msg: >-
+          The LiteLLM schedule must run daily at 04:00 UTC and route index,
+          sourcetype, and source to the per-index Splunk HEC output.
+
+    - name: LiteLLM price collector template verification PASSED
+      ansible.builtin.debug:
+        msg: >-
+          The REST GET, no-split 3.5 MiB event breaker, daily schedule, and
+          per-index HEC metadata all render as required.
