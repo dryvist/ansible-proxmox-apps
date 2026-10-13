@@ -34,9 +34,9 @@ Until it exists, both values are empty and this role no-ops.
 ## Where It Runs
 
 Wired into `playbooks/site.yml` against `prometheus_group` (the same guest as
-`prometheus_stack`), after `network_quality`. Scraping it from Prometheus
-(the job, targets, and relabeling) is Wave 3a's responsibility, not this
-role's — this role only makes sure the exporter software runs and answers.
+`prometheus_stack`), after `network_quality`. The Prometheus scrape job,
+targets, and relabeling are defined in `inventory/group_vars/prometheus_group.yml`.
+This role deploys the exporter and verifies that it answers.
 
 ## Usage
 
