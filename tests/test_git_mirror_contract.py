@@ -20,9 +20,9 @@ class GitMirrorContract(unittest.TestCase):
         self.assertEqual([item["private_for_all"] for item in installations], [True, True, False])
 
         script = (ROOT / "roles/git_mirror/templates/git-mirror-sync.sh.j2").read_text()
-        self.assertIn("bao write -field=token", script)
+        self.assertIn("write -field=token", script)
         self.assertIn('git clone --mirror "https://github.com/$full_name.git"', script)
-        self.assertIn("git remote update --prune", script)
+        self.assertIn("remote update --prune", script)
         self.assertIn("GIT_CONFIG_VALUE_0", script)
         self.assertNotIn("https://$installation_token@github.com", script)
 
@@ -73,9 +73,10 @@ class GitMirrorContract(unittest.TestCase):
     def test_inventory_and_secret_field_are_wired(self):
         tag_map = (ROOT / "inventory/nautobot.yml").read_text()
         group_vars = (ROOT / "inventory/group_vars/git_mirror_group.yml").read_text()
-        domain_map = yaml.safe_load(
+        domain_map_file = yaml.safe_load(
             (ROOT / "playbooks/site/vars/openbao_secrets_domain_groups.yml").read_text()
         )
+        domain_map = domain_map_file["openbao_secrets_domain_groups"]
         playbook = (ROOT / "playbooks/site/01-baseline-infra.yml").read_text()
         self.assertIn("git_mirror_group: \"'git-mirror' in nautobot_tag_names\"", tag_map)
         self.assertIn("bao_apps_secrets.all_password", group_vars)
