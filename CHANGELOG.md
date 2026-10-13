@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.1.0...v5.2.0) (2026-10-13)
+
+
+### Features
+
+* **cribl_stream:** collect the LiteLLM price file as one event per model ([#2630](https://github.com/dryvist/ansible-proxmox-apps/issues/2630)) ([c421b99](https://github.com/dryvist/ansible-proxmox-apps/commit/c421b990849f354ab18f4a34a5c02afdb0a13279))
+* **postgres:** add a read-only database connection report ([660c2ff](https://github.com/dryvist/ansible-proxmox-apps/commit/660c2ff54a83e1ea08185efcf503a140791a7d9b))
+* **postgres:** restore the DR drill from the on-host dump and report connections ([#2639](https://github.com/dryvist/ansible-proxmox-apps/issues/2639)) ([c648336](https://github.com/dryvist/ansible-proxmox-apps/commit/c64833687e4492a8c090c3654eb70061d5009f70))
+* **prometheus:** scrape the Proxmox VE exporter per node ([#2638](https://github.com/dryvist/ansible-proxmox-apps/issues/2638)) ([d6137fd](https://github.com/dryvist/ansible-proxmox-apps/commit/d6137fd82d23a3f41b5c1d0f5a7de2c88fb02208))
+
 ## [5.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.0.0...v5.1.0) (2026-10-13)
 
 
