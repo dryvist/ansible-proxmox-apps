@@ -1,0 +1,147 @@
+#!/usr/bin/python3
+"""Update the operator-managed Squid domain list through the forced command."""
+
+from datetime import datetime, timezone
+import fcntl
+import ipaddress
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+ALLOWLIST_PATH = Path({{ agent_sandbox_operator_allowlist_file | to_json }})
+LOG_PATH = Path({{ agent_sandbox_allowlist_log_file | to_json }})
+LOCK_PATH = ALLOWLIST_PATH.with_name(".operator.lock")
+RECONFIGURE = [
+    "/usr/bin/sudo",
+    "-n",
+    "/usr/bin/docker",
+    "exec",
+    {{ agent_sandbox_proxy_container | to_json }},
+    "squid",
+    "-k",
+    "reconfigure",
+]
+DOMAIN_PATTERN = re.compile(
+    r"(?:\*\.)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+)
+
+
+def validate_domain(domain):
+    if len(domain) > 253 or not DOMAIN_PATTERN.fullmatch(domain):
+        raise ValueError("expected a DNS domain, optionally prefixed by *.")
+
+    address = domain[2:] if domain.startswith("*.") else domain
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        # Squid dstdomain spells "this domain and its subdomains" as a leading dot.
+        return domain.lower().replace("*.", ".", 1)
+    raise ValueError("IP addresses are not allowed")
+
+
+def read_domains():
+    return sorted(
+        {
+            line.strip().lower()
+            for line in ALLOWLIST_PATH.read_text(encoding="ascii").splitlines()
+            if line.strip()
+        }
+    )
+
+
+def write_domains(domains):
+    descriptor, temporary = tempfile.mkstemp(prefix=".operator.", dir=ALLOWLIST_PATH.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as allowlist:
+            if domains:
+                allowlist.write("".join(f"{domain}\n" for domain in sorted(domains)))
+            allowlist.flush()
+            os.fsync(allowlist.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, ALLOWLIST_PATH)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def reconfigure_squid():
+    subprocess.run(
+        RECONFIGURE,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def log_change(action, domain, old_state, new_state):
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    record = (
+        f"{timestamp} action={action} domain={domain} "
+        f"old={old_state} new={new_state}\n"
+    )
+    descriptor = os.open(LOG_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(descriptor, record.encode("ascii"))
+    finally:
+        os.close(descriptor)
+
+
+def parse_command(command):
+    parts = command.split()
+    if parts == ["ls"]:
+        return "ls", None
+    if len(parts) == 2 and parts[0] in {"add", "rm"}:
+        return parts[0], validate_domain(parts[1])
+    raise ValueError("usage: agent-allow add|rm <domain> | ls")
+
+
+def main():
+    try:
+        action, domain = parse_command(os.environ.get("SSH_ORIGINAL_COMMAND", ""))
+        if action == "ls":
+            print("\n".join(read_domains()))
+            return 0
+
+        with LOCK_PATH.open("a", encoding="ascii") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            old_domains = read_domains()
+            present = domain in old_domains
+            if (action == "add" and present) or (action == "rm" and not present):
+                print(f"{domain}: {'present' if present else 'absent'}")
+                return 0
+
+            new_domains = (
+                old_domains + [domain]
+                if action == "add"
+                else [item for item in old_domains if item != domain]
+            )
+            write_domains(new_domains)
+            try:
+                reconfigure_squid()
+            except subprocess.CalledProcessError as error:
+                write_domains(old_domains)
+                try:
+                    reconfigure_squid()
+                except subprocess.CalledProcessError:
+                    pass
+                raise RuntimeError("Squid reconfigure failed; the list was rolled back") from error
+
+            log_change(
+                action,
+                domain,
+                "absent" if action == "add" else "present",
+                "present" if action == "add" else "absent",
+            )
+            print(f"{action}: {domain}")
+            return 0
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        print(f"agent-allow: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

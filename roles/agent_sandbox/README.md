@@ -9,11 +9,15 @@ on the `agent_sandbox_host` inventory group (`docker_vms` members carrying the
   out**; Docker itself enforces the default-deny.
 - A squid CONNECT proxy (`agent-squid`, alias `proxy:3128` on that network)
   is the sole dual-homed member; its domain allowlist is the only egress
-  policy. Converge ends with live allow/deny probes from inside the network.
+  policy. The static list is managed by Ansible; the separate operator list at
+  `/etc/agent-sandbox/allowed-domains.d/operator.txt` survives converges and is
+  reloaded by Squid when an operator changes it.
 - A host nftables table (`agent_sandbox`, chain `DOCKER-USER`) drops every
   forwarded packet that leaves the agents bridge except traffic to the proxy,
   allows the published Web port only from inventoried Traefik addresses, and
-  denies other forwarding into the bridge. Docker allocates container addresses.
+  denies other forwarding into the bridge. The proxy egress bridge permits
+  HTTPS; Squid's static and operator domain lists select destinations. Docker
+  allocates container addresses.
 - `/var/lib/docker` sits on the guest's dedicated data disk.
 - The always-on ZCode Web/Server container uses the published multi-architecture
   image digest, runs as uid 1000 with a read-only root filesystem, and stores
@@ -66,11 +70,40 @@ nix eval "github:dryvist/nix-agent-sandbox?ref=vN#lib.egressDomains" --json
 ```
 
 The host dispatcher completes host-side setup before creating an agent
-container. OpenBao remains host-only; the router endpoint used by container
-profiles is included in the squid allowlist.
+container. The router endpoint and the role-configured OpenBao FQDN are in the
+static Squid allowlist; the operator list cannot add or remove OpenBao.
 
 The ZCode service mounts its credential file read-only. This role manages and
 validates the mount boundary; credential values remain outside the repository.
+
+## Public mirror and docs mount
+
+Set `agent_sandbox_mirror_docs_enabled` to enable the public mirror inputs and
+docs checkout. `agent_sandbox_git_mirror_url` must name the HTTPS `/public`
+tree; the role checks out `dryvist/docs` from that endpoint, copies it to
+`agent_sandbox_docs_checkout_path` (default `/srv/agent-docs`), and mounts that
+directory read-only at `agent_sandbox_docs_container_path` (default `/docs`).
+The `GIT_MIRROR_URL` and `AGENT_DOCS_HOST_PATH` dispatcher environment values
+are available to ephemeral container launchers. The filtered checkout refreshes
+four times daily from the mirror.
+
+`agent_sandbox_docs_exclude_paths` defaults to:
+
+- `observability/overview.mdx`
+- `repositories.mdx`
+- `.claude/skills/mintlify-docs-update/SKILL.md`
+
+The required paths must remain in the exclusion list. The feature is off by
+default and requires `agent_sandbox_git_mirror_url` when enabled.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `agent_sandbox_mirror_docs_enabled` | `false` | Enables mirror environment, the filtered docs copy, and its refresh timer. |
+| `agent_sandbox_git_mirror_url` | empty | HTTPS URL for the public mirror tree; required when the feature is enabled. |
+| `agent_sandbox_docs_checkout_path` | `/srv/agent-docs` | Host path copied into the container read-only. |
+| `agent_sandbox_docs_container_path` | `/docs` | Container path for the read-only docs mount. |
+| `agent_sandbox_docs_branch` | `main` | Branch checked out from the mirrored docs repository. |
+| `agent_sandbox_docs_exclude_paths` | Three paths above | Files removed from the filtered docs copy. |
 
 ## Host dispatcher
 
@@ -83,6 +116,13 @@ results project. The `agent-dispatch` account accepts only keys listed in
 `agent_sandbox_dispatch_authorized_keys`, each restricted to the forced
 command. A terminal session (`ssh -t`, verb `tty`) gets a PTY; nothing else
 does.
+
+The operator allowlist has a separate SSH identity. Set
+`agent_sandbox_allow_access_enabled` and provide its public key in
+`agent_sandbox_allow_authorized_keys`; it does not use the dispatcher job key.
+The workstation `agent-allow` command supports `add`, `rm`, and `ls`. Changes
+replace the operator list atomically, reload Squid, and append a timestamped
+state record under `agent_sandbox_allowlist_log_file`.
 
 ## Session-log shipping
 
@@ -118,6 +158,7 @@ rules:
 - established and related traffic is accepted;
 - from the `agents` bridge: TCP to the proxy is accepted; everything else is
   logged (rate-limited) and dropped;
+- the proxy egress bridge may send HTTPS requests to the Squid allowlist;
 - the published ZCode Web port is accepted only from inventoried Traefik
   addresses after Docker's expected DNAT mapping;
 - from `docker0` and any other `br-*` bridge except the proxy's egress bridge:

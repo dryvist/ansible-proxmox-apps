@@ -1,0 +1,223 @@
+---
+- name: Check the static container-facing allowlist for the OpenBao FQDN
+  community.docker.docker_container_exec:
+    container: "{{ agent_sandbox_proxy_container }}"
+    command: >-
+      grep -Fxi -- "{{ agent_sandbox_dispatch_bao_addr | urlsplit('hostname') }}"
+      /etc/squid/allowed-domains.txt
+  register: _agent_sandbox_openbao_static_allowlist_match
+  changed_when: false
+  failed_when: false
+
+- name: Assert OpenBao remains in the static IaC list
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_openbao_static_allowlist_match.rc == 0
+    fail_msg: The static container-facing allowlist is missing the OpenBao FQDN.
+    success_msg: The static container-facing allowlist contains the OpenBao FQDN.
+
+- name: Check the operator list does not contain the OpenBao FQDN
+  community.docker.docker_container_exec:
+    container: "{{ agent_sandbox_proxy_container }}"
+    command: >-
+      grep -Fxi -- "{{ agent_sandbox_dispatch_bao_addr | urlsplit('hostname') }}"
+      /etc/agent-sandbox/allowed-domains.d/operator.txt
+  register: _agent_sandbox_openbao_operator_allowlist_match
+  changed_when: false
+  failed_when: false
+
+- name: Assert OpenBao is not operator-editable
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_openbao_operator_allowlist_match.rc == 1
+    fail_msg: The operator allowlist contains the OpenBao FQDN.
+    success_msg: The OpenBao FQDN is only present in the static IaC list.
+
+- name: Allocate a unique name for the disposable proxy probe container
+  ansible.builtin.set_fact:
+    _agent_sandbox_proxy_probe_name: >-
+      agent-sandbox-proxy-probe-{{ lookup('password', '/dev/null length=12 chars=ascii_lowercase,digits') }}
+
+- name: Verify the throwaway proxy probe container name is unused
+  community.docker.docker_container_info:
+    name: "{{ _agent_sandbox_proxy_probe_name }}"
+  register: agent_sandbox_proxy_probe_existing
+
+- name: Assert there is no existing container to be affected by cleanup
+  ansible.builtin.assert:
+    that: not agent_sandbox_proxy_probe_existing.exists
+    fail_msg: >-
+      Refusing to use the reserved proxy probe name
+      {{ _agent_sandbox_proxy_probe_name }} because a container already exists.
+    quiet: true
+
+- name: Probe allowed and denied HTTPS destinations through Squid
+  block:
+    - name: Create the throwaway proxy probe container on the internal network
+      community.docker.docker_container:
+        name: "{{ _agent_sandbox_proxy_probe_name }}"
+        image: "{{ agent_sandbox_probe_image }}"
+        entrypoint: ["/bin/sh", "-c"]
+        command: sleep 300
+        state: started
+        pull: missing
+        read_only: true
+        cap_drop: [ALL]
+        networks:
+          - name: "{{ agent_sandbox_network }}"
+      register: agent_sandbox_proxy_probe_container
+
+    - name: Check the container can reach OpenBao through Squid
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_proxy_probe_name }}"
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --connect-timeout
+          - "5"
+          - --max-time
+          - "10"
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - --proxy
+          - "http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}"
+          - "{{ agent_sandbox_dispatch_bao_addr }}/v1/sys/health"
+      register: agent_sandbox_openbao_container_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the container received an OpenBao HTTPS response
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_openbao_container_probe.rc == 0
+          - agent_sandbox_openbao_container_probe.stdout | int in [200, 429, 472, 473, 501, 503]
+        fail_msg: >-
+          The container could not reach OpenBao through Squid; curl returned
+          {{ agent_sandbox_openbao_container_probe.stdout }}.
+        success_msg: The container reached OpenBao through Squid.
+
+    - name: Check the container cannot reach Doppler through Squid
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_proxy_probe_name }}"
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --connect-timeout
+          - "5"
+          - --max-time
+          - "10"
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - --proxy
+          - "http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}"
+          - "{{ agent_sandbox_probe_doppler_url }}"
+      register: agent_sandbox_doppler_container_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Assert Squid denies the Doppler API
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_doppler_container_probe.stdout == '403'
+        fail_msg: >-
+          Squid did not deny the Doppler API; curl returned
+          {{ agent_sandbox_doppler_container_probe.stdout }}.
+        success_msg: Squid denied the Doppler API.
+
+    - name: Check the container cannot connect directly to the Doppler API
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_proxy_probe_name }}"
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --connect-timeout
+          - "2"
+          - --max-time
+          - "5"
+          - --noproxy
+          - "*"
+          - --output
+          - /dev/null
+          - "{{ agent_sandbox_probe_doppler_url }}"
+      register: agent_sandbox_doppler_direct_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the container cannot connect directly to the Doppler API
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_doppler_direct_probe.rc != 0
+        fail_msg: The container connected directly to the Doppler API without Squid.
+        success_msg: The container could not connect directly to the Doppler API.
+
+    - name: Check the container cannot reach the laptop through Squid
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_proxy_probe_name }}"
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --connect-timeout
+          - "5"
+          - --max-time
+          - "10"
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - --proxy
+          - "http://{{ agent_sandbox_proxy_alias }}:{{ agent_sandbox_proxy_port }}"
+          - "{{ agent_sandbox_probe_laptop_url }}"
+      register: agent_sandbox_laptop_proxy_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Assert Squid denies the laptop URL
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_laptop_proxy_probe.stdout == '403'
+        fail_msg: >-
+          Squid did not deny the laptop URL; curl returned
+          {{ agent_sandbox_laptop_proxy_probe.stdout }}.
+        success_msg: Squid denied the laptop URL.
+
+    - name: Check the container cannot connect directly to the laptop
+      community.docker.docker_container_exec:
+        container: "{{ _agent_sandbox_proxy_probe_name }}"
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --connect-timeout
+          - "2"
+          - --max-time
+          - "5"
+          - --noproxy
+          - "*"
+          - --output
+          - /dev/null
+          - "{{ agent_sandbox_probe_laptop_url }}"
+      register: agent_sandbox_laptop_direct_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Assert the container cannot connect directly to the laptop
+      ansible.builtin.assert:
+        that:
+          - agent_sandbox_laptop_direct_probe.rc != 0
+        fail_msg: The container connected directly to the laptop without Squid.
+        success_msg: The container could not connect directly to the laptop.
+  always:
+    - name: Remove the throwaway proxy probe container
+      community.docker.docker_container:
+        name: "{{ _agent_sandbox_proxy_probe_name }}"
+        state: absent

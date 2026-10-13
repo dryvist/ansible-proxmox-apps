@@ -14,9 +14,15 @@ class DispatcherSSHConfigTest(unittest.TestCase):
             pathlib.Path(__file__).resolve().parents[1]
             / "roles/agent_sandbox/templates/dispatch-sshd.conf.j2"
         ).read_text()
-        rendered = jinja2.Template(template).render(
+        environment = jinja2.Environment()
+        environment.filters["bool"] = bool  # Ansible filter, absent from plain jinja2
+        rendered = environment.from_string(template).render(
             agent_sandbox_dispatch_user="agent-dispatch",
             agent_sandbox_dispatch_command="/usr/local/bin/agent-dispatch-ssh-with-alert",
+            agent_sandbox_allow_access_enabled=True,
+            agent_sandbox_allow_user="agent-allow",
+            agent_sandbox_allow_authorized_keys_file="/etc/ssh/agent-dispatch-keys/agent-allow",
+            agent_sandbox_allow_command="/usr/local/bin/agent-allow-ssh",
         )
         with tempfile.TemporaryDirectory() as directory:
             host_key = pathlib.Path(directory) / "host-key"
@@ -49,6 +55,15 @@ class DispatcherSSHConfigTest(unittest.TestCase):
                 "authorizedkeysfile": "/etc/ssh/agent-dispatch-keys/agent-dispatch",
             }.items():
                 self.assertEqual(dispatch[option], expected, option)
+            allow = effective("agent-allow")
+            for option, expected in {
+                "forcecommand": "/usr/local/bin/agent-allow-ssh",
+                "disableforwarding": "yes",
+                "permittty": "no",
+                "permituserrc": "no",
+                "authenticationmethods": "publickey",
+            }.items():
+                self.assertEqual(allow[option], expected, option)
             self.assertEqual(effective("other-user")["forcecommand"], "none")
 
 

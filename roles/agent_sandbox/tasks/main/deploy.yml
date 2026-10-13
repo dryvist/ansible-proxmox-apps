@@ -1,4 +1,7 @@
 ---
+- name: Configure the filtered public docs checkout
+  ansible.builtin.include_tasks: main/docs.yml
+
 - name: Install host dispatcher prerequisites
   ansible.builtin.apt:
     name: [curl, jq, git, util-linux]
@@ -116,6 +119,62 @@
     group: "1000"
     mode: "0700"
   when: agent_sandbox_zcode_web_enabled | bool
+
+- name: Create the dedicated Squid allowlist operator account
+  ansible.builtin.user:
+    name: "{{ agent_sandbox_allow_user }}"
+    system: true
+    home: /nonexistent
+    create_home: false
+    shell: /bin/sh
+    password_lock: true
+
+- name: Create the operator allowlist directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_operator_allowlist_dir }}"
+    state: directory
+    owner: "{{ agent_sandbox_allow_user }}"
+    group: root
+    mode: "0750"
+
+- name: Inspect the operator allowlist path before creation
+  ansible.builtin.stat:
+    path: "{{ agent_sandbox_operator_allowlist_file }}"
+  register: _agent_sandbox_operator_allowlist_file
+
+- name: Require the operator allowlist path to be a regular file
+  ansible.builtin.assert:
+    that:
+      - >-
+        not _agent_sandbox_operator_allowlist_file.stat.exists
+        or _agent_sandbox_operator_allowlist_file.stat.isreg
+    fail_msg: The operator allowlist path must be a regular file.
+
+- name: Create an empty operator allowlist only when it is absent
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ agent_sandbox_operator_allowlist_file }}"
+    force: false
+    owner: "{{ agent_sandbox_allow_user }}"
+    group: root
+    mode: "0644"
+
+- name: Set the operator allowlist ownership and permissions without changing its contents
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_operator_allowlist_file }}"
+    state: file
+    follow: false
+    owner: "{{ agent_sandbox_allow_user }}"
+    group: root
+    mode: "0644"
+
+- name: Create the operator allowlist log directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_allowlist_log_dir }}"
+    state: directory
+    owner: "{{ agent_sandbox_allow_user }}"
+    group: root
+    mode: "0700"
 
 - name: Deploy squid configuration
   ansible.builtin.template:
