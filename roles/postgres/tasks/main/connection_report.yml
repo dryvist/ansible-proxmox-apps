@@ -1,0 +1,23 @@
+---
+# Read-only report of the client addresses connected to one database, from the
+# cluster's own pg_stat_activity. main.yml imports this under
+# never/db_connection_report and the var gate; it has no tags or gate of its own.
+- name: List the client addresses connected to the database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    login_db: postgres
+    query: >-
+      SELECT coalesce(client_addr::text, 'local') AS client, count(*) AS sessions
+      FROM pg_stat_activity
+      WHERE datname = %s
+      GROUP BY 1
+      ORDER BY 1
+    positional_args:
+      - "{{ postgres_connection_report_db }}"
+  register: postgres_connection_report
+  changed_when: false
+
+- name: Show the connected clients
+  ansible.builtin.debug:
+    msg: "{{ postgres_connection_report.query_result }}"
