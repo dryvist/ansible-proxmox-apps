@@ -9,7 +9,9 @@ on the `agent_sandbox_host` inventory group (`docker_vms` members carrying the
   out**; Docker itself enforces the default-deny.
 - A squid CONNECT proxy (`agent-squid`, alias `proxy:3128` on that network)
   is the sole dual-homed member; its domain allowlist is the only egress
-  policy. Converge ends with live allow/deny probes from inside the network.
+  policy. The static list is managed by Ansible; the separate operator list at
+  `/etc/agent-sandbox/allowed-domains.d/operator.txt` survives converges and is
+  reloaded by Squid when an operator changes it.
 - A host nftables table (`agent_sandbox`, chain `DOCKER-USER`) drops every
   forwarded packet that leaves the agents bridge except traffic to the proxy,
   allows the published Web port only from inventoried Traefik addresses, and
