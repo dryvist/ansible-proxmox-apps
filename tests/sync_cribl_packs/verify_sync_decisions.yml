@@ -28,6 +28,46 @@
         fail_msg: "unexpected filtered set: {{ filtered }}"
         success_msg: "cc- filter is correct: {{ filtered }}"
 
+- name: Test org repo page continuation decisions
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cribl_packs_list_org: dryvist
+    cases:
+      - name: short-page
+        entries: 99
+        page: 1
+        expect: false
+      - name: full-first-page
+        entries: 100
+        page: 1
+        expect: true
+      - name: empty-page
+        entries: 0
+        page: 1
+        expect: false
+      - name: full-fifth-page
+        entries: 100
+        page: 5
+        expect: false
+  tasks:
+    - name: Continue only for full pages below the page cap
+      ansible.builtin.assert:
+        that:
+          - >-
+            (cribl_packs_org_page.json | length == 100
+            and cribl_packs_org_pages[cribl_packs_list_org] < 5) == item.expect
+        fail_msg: "case {{ item.name }}: unexpected page continuation decision"
+        success_msg: "case {{ item.name }}: OK"
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        cribl_packs_org_page:
+          json: "{{ range(0, item.entries) | list }}"
+        cribl_packs_org_pages:
+          dryvist: "{{ item.page }}"
+
 - name: Test needs_sync decisions (object-storage tag vs resolved latest)
   hosts: localhost
   gather_facts: false

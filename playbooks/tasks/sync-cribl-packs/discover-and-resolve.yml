@@ -1,29 +1,24 @@
 ---
-# List each pack-owning org's repos (public GitHub API, no auth required),
-# filter to the `cc-` pack-name prefix, and resolve each one's latest release +
-# `.crbl` asset. 5 pages of 100 per org comfortably covers an org's repo
-# count; a page short of 100 entries ends discovery early.
-- name: List pack-owning org repos (paginated)
-  ansible.builtin.uri:
-    url: "{{ cribl_packs_github_api }}/orgs/{{ item.0 }}/repos?type=public&per_page=100&page={{ item.1 }}"
-    method: GET
-    return_content: true
-    status_code: 200
-    headers: >-
-      {{ {'Authorization': 'Bearer ' + lookup('env', 'GITHUB_TOKEN')}
-         if (lookup('env', 'GITHUB_TOKEN') | length > 0) else {} }}
-  register: cribl_packs_org_pages
-  loop: "{{ cribl_packs_github_orgs | product(range(1, 6)) | list }}"
+# List each org's public repos a page at a time, then resolve its latest
+# release and fixed-name `.crbl` asset.
+- name: Initialize per-org repository discovery
+  ansible.builtin.set_fact:
+    cribl_packs_org_pages: {}
+    cribl_packs_org_names: {}
+
+- name: List pack-owning org repos
+  ansible.builtin.include_tasks: list-org-repos.yml
+  loop: "{{ cribl_packs_github_orgs }}"
   loop_control:
-    label: "{{ item.0 }} page {{ item.1 }}"
+    loop_var: cribl_packs_list_org
+    label: "{{ cribl_packs_list_org }}"
 
 # Full names (<org>/<repo>) so the release lookup below needs no separate org.
 - name: Flatten discovered repo names, filtered to the cc- pack prefix
   ansible.builtin.set_fact:
     cribl_packs_repo_names: >-
-      {{ cribl_packs_org_pages.results
-         | map(attribute='json') | flatten
-         | map(attribute='full_name') | select('match', '^[^/]+/cc-')
+      {{ cribl_packs_org_names.values() | list | flatten
+         | select('match', '^[^/]+/cc-')
          | unique | sort | list }}
 
 - name: Fail loudly if repo discovery came back empty
@@ -33,7 +28,7 @@
     fail_msg: >-
       No cc-* repos were discovered in {{ cribl_packs_github_orgs | join(', ') }}
       — either the orgs have none (unlikely) or the GitHub API call failed
-      silently. Check cribl_packs_org_pages above.
+      silently. Check the preceding GitHub listing tasks.
     quiet: true
 
 - name: Resolve latest release per discovered pack repo
