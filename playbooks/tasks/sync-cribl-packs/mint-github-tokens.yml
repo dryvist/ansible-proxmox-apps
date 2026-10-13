@@ -1,0 +1,108 @@
+---
+# Select one authenticated GitHub token source before making any API request.
+- name: Read GitHub token source inputs
+  ansible.builtin.set_fact:
+    cribl_packs_github_bao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+    cribl_packs_github_bao_token: >-
+      {{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}
+    cribl_packs_github_env_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+  no_log: true
+
+- name: Determine available GitHub token sources
+  ansible.builtin.set_fact:
+    cribl_packs_github_bao_enabled: >-
+      {{ cribl_packs_github_bao_addr | length > 0 and cribl_packs_github_bao_token | length > 0 }}
+    cribl_packs_github_env_enabled: "{{ cribl_packs_github_env_token | length > 0 }}"
+  no_log: true
+
+- name: Select the GitHub token source
+  ansible.builtin.set_fact:
+    cribl_packs_github_token_source: >-
+      {{ 'openbao' if cribl_packs_github_bao_enabled
+         else 'env' if cribl_packs_github_env_enabled else 'missing' }}
+  no_log: true
+
+- name: Require an available GitHub token source
+  ansible.builtin.assert:
+    that:
+      - cribl_packs_github_token_source != 'missing'
+    fail_msg: >-
+      Provide BAO_ADDR plus BAO_TOKEN/VAULT_TOKEN through the run wrapper,
+      or GITHUB_TOKEN for a workstation run.
+    quiet: true
+
+- name: Mint a GitHub read token for each org
+  community.hashi_vault.vault_write:
+    url: "{{ cribl_packs_github_bao_addr }}"
+    auth_method: token
+    token: "{{ cribl_packs_github_bao_token }}"
+    path: "{{ cribl_packs_github_mint_mount }}/token/read-{{ cribl_packs_mint_org }}-all"
+    data: {}
+  register: cribl_packs_github_mint_results
+  loop: "{{ cribl_packs_github_orgs }}"
+  loop_control:
+    loop_var: cribl_packs_mint_org
+    label: "{{ cribl_packs_mint_org }}"
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: cribl_packs_github_token_source == 'openbao'
+
+- name: Initialize the minted token map
+  ansible.builtin.set_fact:
+    cribl_packs_github_minted_tokens: {}
+  no_log: true
+  when: cribl_packs_github_token_source == 'openbao'
+
+- name: Read each minted org token
+  ansible.builtin.set_fact:
+    cribl_packs_github_minted_tokens: >-
+      {{ cribl_packs_github_minted_tokens | combine({
+        item.cribl_packs_mint_org:
+          ((item.data.data | default(item.data, true)).token | default('', true))
+      }) }}
+  loop: "{{ cribl_packs_github_mint_results.results | default([]) }}"
+  loop_control:
+    label: "{{ item.cribl_packs_mint_org }}"
+  no_log: true
+  when: cribl_packs_github_token_source == 'openbao'
+
+- name: Find missing GitHub token grants
+  ansible.builtin.set_fact:
+    cribl_packs_github_missing_orgs: >-
+      {{ cribl_packs_github_minted_tokens | dict2items
+         | selectattr('value', 'equalto', '') | map(attribute='key') | list }}
+  no_log: true
+  when: cribl_packs_github_token_source == 'openbao'
+
+- name: Require every org GitHub token grant
+  ansible.builtin.assert:
+    that:
+      - cribl_packs_github_missing_orgs | length == 0
+    fail_msg: >-
+      GitHub token mint returned no token for {{ cribl_packs_github_missing_orgs | join(', ') }}.
+      Grant create/update on {{ cribl_packs_github_missing_orgs
+      | map('regex_replace', '^', cribl_packs_github_mint_mount ~ '/token/read-')
+      | map('regex_replace', '$', '-all') | join(', ') }} for the calling identity.
+    quiet: true
+  when: cribl_packs_github_token_source == 'openbao'
+
+- name: Initialize the selected GitHub token map
+  ansible.builtin.set_fact:
+    cribl_packs_github_tokens: {}
+  no_log: true
+
+- name: Select the token used for each org
+  ansible.builtin.set_fact:
+    cribl_packs_github_tokens: >-
+      {{ cribl_packs_github_tokens | combine({
+        cribl_packs_token_org:
+          cribl_packs_github_minted_tokens[cribl_packs_token_org]
+          if cribl_packs_github_token_source == 'openbao'
+          else cribl_packs_github_env_token
+      }) }}
+  loop: "{{ cribl_packs_github_orgs }}"
+  loop_control:
+    loop_var: cribl_packs_token_org
+    label: "{{ cribl_packs_token_org }}"
+  no_log: true
