@@ -1,0 +1,102 @@
+---
+# The role's own server layer: system packages, Redis, SECRET_KEY, venv, pip
+# install, settings, environment file, uWSGI and systemd units. Included from
+# tasks/main.yml while nautobot_server_via_collection is false; the collection
+# server role owns all of it when true (tasks/server_collection.yml).
+# =============================================================================
+# Phases 1-3: system, Redis, SECRET_KEY  (see the included files)
+# =============================================================================
+- name: Install system packages, the service user, its directories and Redis
+  ansible.builtin.include_tasks: system_and_redis.yml
+
+- name: Resolve, persist and publish the SECRET_KEY
+  ansible.builtin.include_tasks: secret_key.yml
+
+# =============================================================================
+# Phase 4: Python venv + Nautobot install (heavy — gated)
+# =============================================================================
+- name: Create the Nautobot virtualenv
+  ansible.builtin.command:
+    cmd: "python3 -m venv {{ nautobot_root }}"
+    creates: "{{ nautobot_root }}/bin/python"
+  become: true
+  become_user: "{{ nautobot_user }}"
+
+- name: Install/upgrade pip tooling in the venv
+  ansible.builtin.pip:
+    name:
+      - pip
+      - wheel
+    state: latest  # noqa package-latest - pip/wheel bootstrap, not app pinning
+    virtualenv: "{{ nautobot_root }}"
+  become: true
+  become_user: "{{ nautobot_user }}"
+  when: nautobot_manage_app | bool
+
+- name: Install Nautobot and apps into the venv
+  ansible.builtin.pip:
+    name: "{{ nautobot_pip_packages }}"
+    state: present
+    virtualenv: "{{ nautobot_root }}"
+  register: nautobot_pip_install
+  become: true
+  become_user: "{{ nautobot_user }}"
+  when: nautobot_manage_app | bool
+
+- name: Pin the app packages in local_requirements for future upgrades
+  ansible.builtin.copy:
+    content: "{{ nautobot_pip_packages | join('\n') }}\n"
+    dest: "{{ nautobot_root }}/local_requirements.txt"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+
+# =============================================================================
+# Phase 5: Configuration, environment, uWSGI (always). The export guards that
+# protect the environment file live in tasks/main.yml and run before this file.
+# =============================================================================
+- name: Render nautobot_config.py
+  ansible.builtin.template:
+    src: nautobot_config.py.j2
+    dest: "{{ nautobot_root }}/nautobot_config.py"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+  notify: Restart nautobot services
+
+- name: Render the root-only environment file
+  ansible.builtin.template:
+    src: nautobot.env.j2
+    dest: "{{ nautobot_root }}/nautobot.env"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart nautobot services
+
+- name: Render the uWSGI config
+  ansible.builtin.template:
+    src: uwsgi.ini.j2
+    dest: "{{ nautobot_root }}/uwsgi.ini"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0644"
+  notify: Restart nautobot services
+
+# =============================================================================
+# Phase 6: systemd units (always deployed; started only when managing the app)
+# =============================================================================
+- name: Deploy the Nautobot systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - nautobot-server.service
+    - nautobot-worker.service
+    - nautobot-scheduler.service
+  notify:
+    - Reload systemd daemon
+    - Restart nautobot services

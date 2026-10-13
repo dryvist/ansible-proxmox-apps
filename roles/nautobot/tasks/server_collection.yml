@@ -1,0 +1,30 @@
+---
+# Server layer through the jpe_ansible.nautobot.server collection role: system
+# packages, Redis, SECRET_KEY, venv, pinned packages, settings, environment file,
+# uWSGI and units, then (nautobot_manage_app) migrations, the first superuser,
+# service start and the HTTP health wait. Service accounts and tokens stay with
+# tasks/readonly_token.yml and mcp_token.yml (server_manage_accounts is false).
+# Every server_* input is mapped from the nautobot_* inputs in
+# inventory/group_vars/nautobot_group.yml.
+- name: Converge the Nautobot server through the collection role
+  ansible.builtin.include_role:
+    name: jpe_ansible.nautobot.server
+
+# The tasks that remain in this role read the SECRET_KEY the collection resolved.
+- name: Expose the collection's effective SECRET_KEY to this role
+  ansible.builtin.set_fact:
+    nautobot_effective_secret_key: "{{ server_effective_secret_key }}"
+  no_log: true
+
+# The collection creates the root and static directories; the Jobs root and the
+# export contract directory belong to the layers this role keeps.
+- name: Create the Jobs and export contract directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0755"
+  loop:
+    - "{{ nautobot_jobs_root }}"
+    - "{{ nautobot_export_schema_dir }}"
