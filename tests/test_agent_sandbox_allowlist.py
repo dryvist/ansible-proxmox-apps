@@ -31,9 +31,12 @@ class OperatorAllowlistDomainValidation(unittest.TestCase):
         cls.validate_domain = staticmethod(domain_validator())
 
     def test_accepts_dns_domains_and_one_leading_wildcard(self):
-        for domain in ("example.org", "api.example.org", "*.example.org"):
+        for domain in ("example.org", "api.example.org"):
             with self.subTest(domain=domain):
                 self.assertEqual(self.validate_domain(domain), domain)
+
+    def test_writes_a_leading_wildcard_as_squid_leading_dot(self):
+        self.assertEqual(self.validate_domain("*.Example.org"), ".example.org")
 
     def test_normalizes_dns_names_to_lowercase(self):
         self.assertEqual(self.validate_domain("API.Example.ORG"), "api.example.org")
