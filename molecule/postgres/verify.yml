@@ -205,6 +205,26 @@
             that:
               - "'is a managed database' in ansible_failed_result.msg"
 
+    - name: Refuse a key table name that is not a plain identifier
+      block:
+        - name: Attempt a restore with an injected table name
+          ansible.builtin.include_role:
+            name: postgres
+            tasks_from: main/dr_restore.yml
+          vars:
+            postgres_dr_restore_db: nautobot_drill
+            postgres_dr_restore_source_db: nautobot
+            postgres_dr_restore_checksum_tables: ["dr_probe; SELECT 1"]
+            postgres_managed_databases: "{{ drill_managed_databases }}"
+        - name: Fail if the name check let it through
+          ansible.builtin.fail:
+            msg: the key-table name check did not fire
+      rescue:
+        - name: Assert the name check is what refused
+          ansible.builtin.assert:
+            that:
+              - "'plain identifiers' in ansible_failed_result.msg"
+
     - name: Restore the newest nautobot dump into a scratch database and compare
       ansible.builtin.include_role:
         name: postgres
@@ -213,6 +233,7 @@
         postgres_dr_restore_db: nautobot_drill
         postgres_dr_restore_source_db: nautobot
         postgres_dr_restore_drop_after: true
+        postgres_dr_restore_checksum_tables: [dr_probe]
         postgres_managed_databases: "{{ drill_managed_databases }}"
 
     - name: List databases and the live probe rows after the drill

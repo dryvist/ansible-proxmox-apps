@@ -18,6 +18,15 @@
     fail_msg: Set exactly one of postgres_dr_restore_dump and postgres_dr_restore_source_db.
     quiet: true
 
+- name: Require key table names that are plain identifiers
+  ansible.builtin.assert:
+    that:
+      - >-
+        postgres_dr_restore_checksum_tables
+        | reject('match', '^[a-z_][a-z0-9_]*([.][a-z_][a-z0-9_]*)?$') | list | length == 0
+    fail_msg: postgres_dr_restore_checksum_tables entries must be plain identifiers (table or schema.table).
+    quiet: true
+
 - name: Restore, compare with the source, clean up
   block:
     - name: Take a fresh backup so the comparison sees current data
@@ -106,6 +115,42 @@
         success_msg: >-
           {{ postgres_dr_restore_counts.results[0].query_result | length }} tables,
           row counts identical.
+
+    # The standard's second check: a content hash of each key table, so a restore
+    # that kept the row counts but altered values still fails.
+    - name: Checksum the key tables in the source and the restored database
+      when:
+        - postgres_dr_restore_source_db | length > 0
+        - postgres_dr_restore_checksum_tables | length > 0
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        login_db: "{{ item.1 }}"
+        query: >-
+          SELECT md5(coalesce(string_agg(t::text, E'\n' ORDER BY t::text), '')) AS sum
+          FROM {{ item.0 }} t
+      loop: >-
+        {{ postgres_dr_restore_checksum_tables
+           | product([postgres_dr_restore_source_db, postgres_dr_restore_db]) | list }}
+      loop_control:
+        label: "{{ item.0 }} in {{ item.1 }}"
+      register: postgres_dr_restore_sums
+      changed_when: false
+
+    # Results alternate source, restored, per table in the order given.
+    - name: Assert the key-table checksums match the source
+      when:
+        - postgres_dr_restore_source_db | length > 0
+        - postgres_dr_restore_checksum_tables | length > 0
+      ansible.builtin.assert:
+        that:
+          - sums[::2] == sums[1::2]
+        fail_msg: Key-table checksums differ; rerun with -v for the per-table values.
+        success_msg: "{{ postgres_dr_restore_checksum_tables | length }} key tables, checksums identical."
+      vars:
+        sums: >-
+          {{ postgres_dr_restore_sums.results | map(attribute='query_result')
+             | map('first') | map(attribute='sum') | list }}
 
   always:
     - name: Remove the staged dump
