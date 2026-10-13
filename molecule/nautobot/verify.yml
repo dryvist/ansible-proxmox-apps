@@ -40,6 +40,27 @@
           - nautobot_env.stat.mode == '0600'
         fail_msg: "nautobot.env missing or not 0600"
 
+    - name: Read the environment file
+      ansible.builtin.slurp:
+        src: "{{ nautobot_root }}/nautobot.env"
+      register: nautobot_env_content
+      no_log: true
+
+    # Both server layers must render the entries the Jobs, the export and the
+    # schedules read from the units' EnvironmentFile.
+    - name: Assert the env file carries the runtime and export entries
+      ansible.builtin.assert:
+        that:
+          - "'NAUTOBOT_SECRET_KEY=' in env_file"
+          - "'NAUTOBOT_DB_PASSWORD=' in env_file"
+          - "'NAUTOBOT_SEED_FILE=' in env_file"
+          - "'NAUTOBOT_EXPORT_S3_BUCKET=' in env_file"
+          - "'NAUTOBOT_EXPORT_SCHEMA=' in env_file"
+        fail_msg: "nautobot.env is missing a runtime or export entry"
+      vars:
+        env_file: "{{ nautobot_env_content.content | b64decode }}"
+      no_log: true
+
     - name: Stat the installed export schema contract
       ansible.builtin.stat:
         path: "{{ nautobot_root }}/contracts/nautobot-export-v1.json"
