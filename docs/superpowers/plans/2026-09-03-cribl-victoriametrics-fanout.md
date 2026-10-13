@@ -25,8 +25,8 @@ VictoriaMetrics remote_write, existing template-render tests under
 - Never hardcode guest IPs in new code; URL uses FQDN + `service_ports.victoriametrics`
 - Do not attach `prometheus_to_netmon` to the VictoriaMetrics connection
 - No tofu/firewall changes (`:8428` already open from internal)
-- Work in worktree: `/Users/jevans/git/public/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis`
-- Doc touch for tofu lives under `/Users/jevans/git/public/homelab/tofu-proxmox`
+- Work in worktree: `$GIT_HOME_PUBLIC/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis`
+- Doc touch for tofu lives under `$GIT_HOME_PUBLIC/homelab/tofu-proxmox`
   (checkout/worktree as needed; PR already merged for estate-health — use a small
   follow-up branch or amend docs on `develop`)
 
@@ -104,7 +104,7 @@ Also update the final debug `msg` in `cribl_stream.yml` to mention dual fan-out:
 - [ ] **Step 3: Run the render test and confirm it fails**
 
 ```bash
-cd /Users/jevans/git/public/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis
+cd $GIT_HOME_PUBLIC/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis
 ansible-playbook tests/template_render/verify/cribl_stream.yml
 ```
 
@@ -222,7 +222,7 @@ Do **not** set `pipeline:` on the VictoriaMetrics connection.
 - [ ] **Step 4: Re-run the render test**
 
 ```bash
-cd /Users/jevans/git/public/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis
+cd $GIT_HOME_PUBLIC/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis
 ansible-playbook tests/template_render/verify/cribl_stream.yml
 ```
 
@@ -250,7 +250,7 @@ EOF
 
 **Files:**
 
-- Modify: `/Users/jevans/git/public/homelab/tofu-proxmox/docs/AI_OBSERVABILITY.md`
+- Modify: `$GIT_HOME_PUBLIC/homelab/tofu-proxmox/docs/AI_OBSERVABILITY.md`
 
   (or the estate-health worktree copy if still present; prefer the live repo
   `develop` / a short docs branch)
@@ -281,7 +281,7 @@ to:
 - [ ] **Step 2: Commit in the tofu-proxmox repo**
 
 ```bash
-cd /Users/jevans/git/public/homelab/tofu-proxmox
+cd $GIT_HOME_PUBLIC/homelab/tofu-proxmox
 git switch -c docs/cribl-vm-fanout develop   # or sync-main first if needed
 git add docs/AI_OBSERVABILITY.md
 git commit -m "$(cat <<'EOF'
@@ -302,7 +302,7 @@ EOF
 - [ ] **Step 1: Converge Stream**
 
 ```bash
-cd /Users/jevans/git/public/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis
+cd $GIT_HOME_PUBLIC/homelab/ansible-proxmox-apps/.worktrees/estate-health-uis
 doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml --tags cribl_stream --limit cribl_stream_group
 ```
 
