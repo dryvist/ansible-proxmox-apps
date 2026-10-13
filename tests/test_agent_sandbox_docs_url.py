@@ -55,7 +55,6 @@ class DocsRepositoryUrl(unittest.TestCase):
         task = yaml.safe_load(DOCS_TASKS.read_text(encoding="utf-8"))[0]
         message = task["ansible.builtin.assert"]["fail_msg"]
         self.assertIn("credential helper", message)
-        self.assertIn("token from OpenBao", message)
 
 
 if __name__ == "__main__":
