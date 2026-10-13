@@ -3,7 +3,8 @@
 Deploys two read-only smart HTTP repositories on a Debian LXC:
 
 - /public serves public repositories for the approved GitHub owners without credentials.
-- /all serves those public repositories plus private repositories from the two approved work accounts. Its separate listener requires HTTP basic authentication.
+- /all serves public repositories and private repositories for configured owners.
+  Its separate listener requires HTTP basic authentication.
 
 Git mirrors are bare repositories refreshed every six hours by a systemd timer.
 The sync unit requests short-lived, read-only GitHub App installation tokens
@@ -14,7 +15,7 @@ HTTP headers; clone URLs and repository configuration remain credential-free.
 
 - Debian-based LXC with systemd.
 - A read-only OpenBao AppRole for the sync agent, with access to the configured GitHub installation-token permission sets.
-- OpenBao Apps secret git_mirror_all_password for the protected HTTP basic-auth account.
+- OpenBao Apps leaf `secret/apps/git-mirror`, field `all_password`, for the protected HTTP basic-auth account.
 - Reverse-proxy routes that publish the two listeners separately, with /all limited to trusted client networks.
 
 ## Installation
@@ -33,7 +34,7 @@ repositories only for the configured accounts.
 | --- | --- | --- |
 | git_mirror_installations | Three fixed owner/token-path pairs | OpenBao read-only token mint paths and private repository policy. |
 | git_mirror_all_username | mirror | Basic-auth username for /all. |
-| git_mirror_all_password | Empty | Required generated password from secret/apps/git-mirror. |
+| git_mirror_all_password | Empty | Required generated value from `secret/apps/git-mirror` field `all_password`. |
 | git_mirror_proxy_sources | [] | Reverse-proxy listener addresses allowed through UFW. |
 | git_mirror_public_port | 8080 | Backend port for /public. |
 | git_mirror_all_port | 8081 | Backend port for authenticated /all. |

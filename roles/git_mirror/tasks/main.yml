@@ -23,6 +23,7 @@
       - apache2-utils
       - git
       - gh
+      - python3-passlib
     state: present
     update_cache: true
 
@@ -41,13 +42,27 @@
   ansible.builtin.user:
     name: "{{ git_mirror_user }}"
     group: "{{ git_mirror_group }}"
-    groups: www-data
-    append: true
+    groups: "{{ git_mirror_group }}"
+    append: false
     system: true
     shell: /usr/sbin/nologin
     home: "{{ git_mirror_root }}"
     create_home: false
     state: present
+
+- name: Create Git mirror read group for Apache
+  ansible.builtin.group:
+    name: "{{ git_mirror_http_group }}"
+    system: true
+    state: present
+
+- name: Allow Apache to read mirrored repositories
+  ansible.builtin.user:
+    name: www-data
+    groups: "{{ git_mirror_http_group }}"
+    append: true
+    state: present
+  notify: Restart git-mirror Apache
 
 - name: Create Git mirror directories
   ansible.builtin.file:
@@ -57,11 +72,11 @@
     group: "{{ item.group | default(git_mirror_group) }}"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "{{ git_mirror_root }}", mode: "2750" }
-    - { path: "{{ git_mirror_root }}/public", mode: "2750" }
-    - { path: "{{ git_mirror_root }}/all", mode: "2750" }
-    - { path: "{{ git_mirror_config_dir }}", owner: root, group: root, mode: "0750" }
-    - { path: "{{ git_mirror_approle_dir }}", owner: root, group: git_mirror, mode: "0750" }
+    - { path: "{{ git_mirror_root }}", group: "{{ git_mirror_http_group }}", mode: "2750" }
+    - { path: "{{ git_mirror_root }}/public", group: "{{ git_mirror_http_group }}", mode: "2750" }
+    - { path: "{{ git_mirror_root }}/all", group: "{{ git_mirror_http_group }}", mode: "2750" }
+    - { path: "{{ git_mirror_config_dir }}", owner: root, group: root, mode: "0711" }
+    - { path: "{{ git_mirror_approle_dir }}", owner: root, group: "{{ git_mirror_group }}", mode: "0750" }
     - { path: "{{ git_mirror_metrics_dir }}", mode: "0755" }
   loop_control:
     label: "{{ item.path }}"
@@ -86,8 +101,8 @@
     src: openbao-agent.hcl.j2
     dest: "{{ git_mirror_config_dir }}/openbao-agent.hcl"
     owner: root
-    group: root
-    mode: "0600"
+    group: "{{ git_mirror_group }}"
+    mode: "0640"
   notify: Restart git-mirror OpenBao Agent
 
 - name: Deploy the OpenBao Agent systemd unit
