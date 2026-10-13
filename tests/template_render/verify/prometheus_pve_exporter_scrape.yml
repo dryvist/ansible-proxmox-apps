@@ -1,0 +1,93 @@
+---
+# Render the real Prometheus template and inventory vars to verify the PVE
+# exporter receives one target per commissioned node through __param_target.
+- name: Verify the PVE exporter scrape job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          blackbox_exporter: 9115
+          node_exporter: 9100
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+        memory_ports:
+          hindsight_api: 8888
+          hindsight_cp: 9999
+      nodes:
+        node-alpha:
+          commissioned: true
+        node-beta: {}
+        node-gamma:
+          commissioned: false
+      containers:
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Render prometheus.yml
+      ansible.builtin.set_fact:
+        _rendered: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the PVE exporter job
+      ansible.builtin.set_fact:
+        _jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'pve_exporter') | list }}"
+
+    - name: Assert the job uses commissioned inventory nodes and exporter relabeling
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs | length == 1
+          - _jobs[0].scrape_interval == '60s'
+          - _jobs[0].scrape_timeout == '55s'
+          - _jobs[0].metrics_path == '/pve'
+          - _jobs[0].params.module == ['default']
+          - _jobs[0].params.cluster == ['1']
+          - _jobs[0].params.node == ['1']
+          - _jobs[0].static_configs[0].targets == ['node-alpha.test.example', 'node-beta.test.example']
+          - _jobs[0].relabel_configs[0].source_labels == ['__address__']
+          - _jobs[0].relabel_configs[0].target_label == '__param_target'
+          - _jobs[0].relabel_configs[1].source_labels == ['__param_target']
+          - _jobs[0].relabel_configs[1].target_label == 'instance'
+          - _jobs[0].relabel_configs[2].target_label == '__address__'
+          - _jobs[0].relabel_configs[2].replacement == '127.0.0.1:9221'
+        fail_msg: >-
+          The PVE exporter job must query each commissioned node through the
+          local exporter and pass the node as __param_target. Rendered: {{ _jobs }}
+        success_msg: One PVE exporter scrape job with inventory targets and relabeling.
+
+    - name: Load the cribl_stream group vars
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../inventory/group_vars/cribl_stream_group.yml"
+        name: _cribl_gv
+
+    - name: Splunk keep-job list names pve_exporter
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'pve_exporter' in _cribl_gv.cribl_stream_prometheus_splunk_keep_jobs"
+        fail_msg: cribl_stream_prometheus_splunk_keep_jobs must include pve_exporter.
+        success_msg: pve_exporter passes the Splunk metrics leg.
