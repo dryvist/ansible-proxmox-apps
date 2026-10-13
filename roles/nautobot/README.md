@@ -94,6 +94,21 @@ health wait.
 Either way this role keeps the Jobs, the export contract, the seed bundle, the
 token tasks, the export and discovery schedules and the seed run.
 
+### Running the two parts separately
+
+With the flag `true`, the converge has two parts, each safe to run alone and
+each restarting the services inside itself after the files it changed:
+
+| Part | Tag | Covers | Run it alone with |
+| --- | --- | --- | --- |
+| 1 | `nautobot_server` | The collection server role and its handlers. | `--skip-tags nautobot_jobs` |
+| 2 | `nautobot_jobs` | Jobs, export contract, seed bundle, post-upgrade, tokens, schedules, seed run. | `--skip-tags nautobot_server` |
+
+Add the skip tag to the run's arguments; the template's stored `--tags` keeps
+the play selected. Part 2 alone reads the SECRET_KEY file that part 1 wrote, so
+run part 1 first on a new host. With the flag `false` the role refuses either
+skip tag.
+
 ## Two layers
 
 `tasks/main.yml` splits into:

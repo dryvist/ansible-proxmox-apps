@@ -8,6 +8,16 @@
 #   * always: jobs, export contract, seed bundle.
 #   * nautobot_manage_app (default true): tokens, export schedule, discovery
 #     schedule and the seed jobs. Skipped by molecule; validated live at cutover.
+#
+# With nautobot_server_via_collection true the converge splits into two parts
+# that each run alone, so a Semaphore task stays under its time cap:
+#   * nautobot_server: the collection server role, including its restart
+#     handlers. Run it alone with  --skip-tags nautobot_jobs
+#   * nautobot_jobs: Jobs, export contract, seed bundle, post-upgrade, tokens,
+#     schedules and seed jobs, with the restart that follows the Job files.
+#     Run it alone with  --skip-tags nautobot_server
+# Neither skip tag selects anything by itself: the template's stored --tags
+# keeps the play selected. A run with neither skip tag does both parts in order.
 
 # The database password is rendered into the config and applied to the Postgres
 # role, so an empty one locks Nautobot out of its own database while the
@@ -55,20 +65,88 @@
       ambient credentials — never one.
     quiet: true
 
-# =============================================================================
-# Server layer: one owner per run
-# =============================================================================
-- name: Converge the server layer through the collection role
-  ansible.builtin.include_tasks: server_collection.yml
-  when: nautobot_server_via_collection | bool
-
-- name: Converge the server layer in this role
-  ansible.builtin.include_tasks: server_legacy.yml
+# The legacy server layer cannot be split: its application bring-up sits after
+# the Job files. Refuse a partial run rather than half-converge it.
+- name: Refuse a partial run of the role's own server layer
+  ansible.builtin.assert:
+    that:
+      - ansible_skip_tags | intersect(['nautobot_server', 'nautobot_jobs']) | length == 0
+    fail_msg: >-
+      --skip-tags nautobot_server / nautobot_jobs split the converge only when
+      nautobot_server_via_collection is true. Drop the skip tag, or set the flag.
+    quiet: true
   when: not (nautobot_server_via_collection | bool)
 
 # =============================================================================
-# Jobs and the export contract (always)
+# Part 1, nautobot_server: one owner per run
 # =============================================================================
+- name: Converge the server layer through the collection role
+  ansible.builtin.include_tasks:
+    file: server_collection.yml
+    apply:
+      tags: [nautobot_server]
+  when: nautobot_server_via_collection | bool
+  tags: [nautobot_server]
+
+- name: Converge the server layer in this role
+  ansible.builtin.include_tasks:
+    file: server_legacy.yml
+    apply:
+      tags: [nautobot_server]
+  when: not (nautobot_server_via_collection | bool)
+  tags: [nautobot_server]
+
+# =============================================================================
+# Part 2, nautobot_jobs: Jobs and the export contract (always)
+# =============================================================================
+# A part-2-only run starts without the fact part 1 sets, so read the key the
+# collection persisted. A full run already has it and skips these two.
+- name: Read the SECRET_KEY the server layer persisted
+  ansible.builtin.slurp:
+    src: "{{ nautobot_secret_key_file }}"
+  register: nautobot_secret_key_slurp
+  no_log: true
+  failed_when: false
+  when:
+    - nautobot_server_via_collection | bool
+    - nautobot_effective_secret_key is not defined
+  tags: [nautobot_jobs]
+
+# no_log hides the module error, so the missing-file case needs its own message.
+- name: Require the persisted SECRET_KEY
+  ansible.builtin.assert:
+    that:
+      - nautobot_secret_key_slurp.content is defined
+    fail_msg: >-
+      {{ nautobot_secret_key_file }} could not be read. Run part 1
+      (--skip-tags nautobot_jobs) on this host first.
+    quiet: true
+  when: nautobot_secret_key_slurp is not skipped
+  tags: [nautobot_jobs]
+
+- name: Expose the persisted SECRET_KEY to this role
+  ansible.builtin.set_fact:
+    nautobot_effective_secret_key: "{{ nautobot_secret_key_slurp.content | b64decode | trim }}"
+  no_log: true
+  when: nautobot_secret_key_slurp is not skipped
+  tags: [nautobot_jobs]
+
+# The collection creates the root and static directories; the Jobs root and the
+# export contract directory belong to the layers this role keeps. The legacy
+# server layer creates them itself (system_and_redis.yml).
+- name: Create the Jobs and export contract directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0755"
+  loop:
+    - "{{ nautobot_jobs_root }}"
+    - "{{ nautobot_export_schema_dir }}"
+  when: nautobot_server_via_collection | bool
+  tags: [nautobot_jobs]
+
 - name: Deploy the SSoT/export/onboarding jobs into JOBS_ROOT
   ansible.builtin.copy:
     src: jobs/
@@ -78,6 +156,7 @@
     mode: "0644"
   register: nautobot_jobs_deploy
   notify: Restart nautobot services
+  tags: [nautobot_jobs]
 
 - name: Deploy the Nautobot export schema contract
   ansible.builtin.copy:
@@ -87,20 +166,27 @@
     group: "{{ nautobot_group }}"
     mode: "0644"
   notify: Restart nautobot services
+  tags: [nautobot_jobs]
 
 # =============================================================================
 # Phase 6b: Seed-bundle assembly (cutover-gated)
 # =============================================================================
 - name: Assemble and place the seed bundle
-  ansible.builtin.include_tasks: seed_bundle.yml
+  ansible.builtin.include_tasks:
+    file: seed_bundle.yml
+    apply:
+      tags: [nautobot_jobs]
   when: nautobot_build_seed | bool
+  tags: [nautobot_jobs]
 
 # =============================================================================
-# Phase 7: Live application bring-up (gated)
+# Phase 7: Live application bring-up (gated). Its handler flushes restart the
+# services after the Job files above, inside this same part.
 # =============================================================================
 - name: Bring up the Nautobot application
   when: nautobot_manage_app | bool
   become: true
+  tags: [nautobot_jobs]
   block:
     - name: Run the role's own migrations, post-upgrade and superuser bootstrap
       ansible.builtin.include_tasks: server_legacy_app.yml
@@ -120,11 +206,17 @@
         - nautobot_jobs_deploy.changed | default(false)
 
     - name: Publish a role-managed read-only inventory token to OpenBao
-      ansible.builtin.include_tasks: readonly_token.yml
+      ansible.builtin.include_tasks:
+        file: readonly_token.yml
+        apply:
+          tags: [nautobot_jobs]
       when: nautobot_token_publish_openbao | bool
 
     - name: Publish a role-managed read-only MCP token to OpenBao
-      ansible.builtin.include_tasks: mcp_token.yml
+      ansible.builtin.include_tasks:
+        file: mcp_token.yml
+        apply:
+          tags: [nautobot_jobs]
       when: nautobot_mcp_token_publish_openbao | bool
 
     - name: Apply pending systemd reload before starting services
