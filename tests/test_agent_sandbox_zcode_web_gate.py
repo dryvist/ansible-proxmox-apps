@@ -11,6 +11,7 @@ from ansible.template import Templar, trust_as_template
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "agent_sandbox"
 FLAG = "agent_sandbox_zcode_web_enabled"
+DOCS_FLAG = "agent_sandbox_mirror_docs_enabled"
 # Tasks that stay on because the dispatcher and alert settings share the directory.
 ALWAYS_ON = {
     "Create the ZCode service credential mount directory",
@@ -22,12 +23,15 @@ def load(path: Path):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def render_compose(enabled: bool) -> dict:
+def render_compose(enabled: bool, docs_enabled: bool = False) -> dict:
     variables = dict(load(ROLE / "defaults/main.yml"))
     variables.update(
         {
             "ansible_managed": "test",
             FLAG: enabled,
+            DOCS_FLAG: docs_enabled,
+            "agent_sandbox_git_mirror_url": "https://mirror.example.invalid/public",
+            "agent_sandbox_docs_checkout_path": "/srv/agent-docs",
             "agent_sandbox_zcode_web_bind_address": "192.0.2.20",
             "agent_sandbox_zcode_web_secret_gid": 1901,
         }
@@ -71,6 +75,30 @@ class ZcodeWebGate(unittest.TestCase):
         self.assertIn("zcode-web", render_compose(True)["services"])
         self.assertEqual(
             sorted(render_compose(False)["services"]), ["cribl-edge", "squid"]
+        )
+
+    def test_docs_mount_and_mirror_url_are_feature_gated(self):
+        compose = render_compose(True, docs_enabled=True)["services"]["zcode-web"]
+        self.assertIn(
+            "GIT_MIRROR_URL=https://mirror.example.invalid/public",
+            compose["environment"],
+        )
+        self.assertIn(
+            {
+                "type": "bind",
+                "source": "/srv/agent-docs",
+                "target": "/docs",
+                "read_only": True,
+                "bind": {"create_host_path": False},
+            },
+            compose["volumes"],
+        )
+        disabled = render_compose(True)["services"]["zcode-web"]
+        self.assertFalse(
+            any(item.startswith("GIT_MIRROR_URL=") for item in disabled["environment"])
+        )
+        self.assertFalse(
+            any(item.get("target") == "/docs" for item in disabled["volumes"])
         )
 
     def test_deploy_tasks_for_the_service_are_guarded(self):

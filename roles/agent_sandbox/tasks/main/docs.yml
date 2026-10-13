@@ -1,0 +1,120 @@
+---
+- name: Validate the public mirror and docs mount settings
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_git_mirror_url | urlsplit('scheme') == 'https'
+      - agent_sandbox_git_mirror_url | urlsplit('hostname') | length > 0
+      - agent_sandbox_git_mirror_url | urlsplit('path').rstrip('/') == '/public'
+      - agent_sandbox_docs_checkout_path is match('^/[^/].*')
+      - agent_sandbox_docs_container_path == '/docs'
+      - agent_sandbox_docs_exclude_paths is not string
+      - >-
+        [
+          'observability/overview.mdx',
+          'repositories.mdx',
+          '.claude/skills/mintlify-docs-update/SKILL.md'
+        ] | difference(agent_sandbox_docs_exclude_paths) | length == 0
+    fail_msg: >-
+      The docs feature requires an HTTPS public mirror URL, an absolute host
+      checkout path, and all required exclusion paths.
+    quiet: true
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Install the Git and rsync tools for docs refresh
+  ansible.builtin.apt:
+    name: [git, rsync]
+    state: present
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Create the public docs mirror source checkout
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_docs_source_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Create the filtered docs mount directory
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_docs_checkout_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Checkout the public docs repository from the mirror
+  ansible.builtin.git:
+    repo: "{{ agent_sandbox_docs_repository_url }}"
+    dest: "{{ agent_sandbox_docs_source_path }}"
+    version: "{{ agent_sandbox_docs_branch }}"
+    single_branch: true
+    force: true
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Sync the filtered docs tree into its host mount directory
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'rsync', '--archive', '--delete', '--delete-excluded',
+          '--exclude=.git/', '--itemize-changes', '--out-format=%i'
+        ]
+        + (agent_sandbox_docs_exclude_paths
+           | map('regex_replace', '^', '--exclude=') | list)
+        + [agent_sandbox_docs_source_path ~ '/', agent_sandbox_docs_checkout_path ~ '/']
+      }}
+  register: _agent_sandbox_docs_sync
+  changed_when: _agent_sandbox_docs_sync.stdout | length > 0
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Install public docs refresh service and timer
+  ansible.builtin.template:
+    src: "agent-docs-refresh.{{ item }}.j2"
+    dest: "/etc/systemd/system/agent-sandbox-docs-refresh.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  notify: Reload systemd daemon
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Enable the public docs refresh timer
+  ansible.builtin.systemd_service:
+    name: agent-sandbox-docs-refresh.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: agent_sandbox_mirror_docs_enabled | bool
+
+- name: Inspect public docs refresh units when disabled
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop:
+    - agent-sandbox-docs-refresh.service
+    - agent-sandbox-docs-refresh.timer
+  register: _agent_sandbox_docs_refresh_units
+  when: not agent_sandbox_mirror_docs_enabled | bool
+
+- name: Stop and disable public docs refresh units when disabled
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ _agent_sandbox_docs_refresh_units.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - not agent_sandbox_mirror_docs_enabled | bool
+    - item.stat.exists
+
+- name: Remove public docs refresh units when disabled
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - agent-sandbox-docs-refresh.service
+    - agent-sandbox-docs-refresh.timer
+  notify: Reload systemd daemon
+  when: not agent_sandbox_mirror_docs_enabled | bool

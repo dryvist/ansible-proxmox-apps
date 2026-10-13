@@ -76,6 +76,35 @@ static Squid allowlist; the operator list cannot add or remove OpenBao.
 The ZCode service mounts its credential file read-only. This role manages and
 validates the mount boundary; credential values remain outside the repository.
 
+## Public mirror and docs mount
+
+Set `agent_sandbox_mirror_docs_enabled` to enable the public mirror inputs and
+docs checkout. `agent_sandbox_git_mirror_url` must name the HTTPS `/public`
+tree; the role checks out `dryvist/docs` from that endpoint, copies it to
+`agent_sandbox_docs_checkout_path` (default `/srv/agent-docs`), and mounts that
+directory read-only at `agent_sandbox_docs_container_path` (default `/docs`).
+The `GIT_MIRROR_URL` and `AGENT_DOCS_HOST_PATH` dispatcher environment values
+are available to ephemeral container launchers. The filtered checkout refreshes
+four times daily from the mirror.
+
+`agent_sandbox_docs_exclude_paths` defaults to:
+
+- `observability/overview.mdx`
+- `repositories.mdx`
+- `.claude/skills/mintlify-docs-update/SKILL.md`
+
+The required paths must remain in the exclusion list. The feature is off by
+default and requires `agent_sandbox_git_mirror_url` when enabled.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `agent_sandbox_mirror_docs_enabled` | `false` | Enables mirror environment, the filtered docs copy, and its refresh timer. |
+| `agent_sandbox_git_mirror_url` | empty | HTTPS URL for the public mirror tree; required when the feature is enabled. |
+| `agent_sandbox_docs_checkout_path` | `/srv/agent-docs` | Host path copied into the container read-only. |
+| `agent_sandbox_docs_container_path` | `/docs` | Container path for the read-only docs mount. |
+| `agent_sandbox_docs_branch` | `main` | Branch checked out from the mirrored docs repository. |
+| `agent_sandbox_docs_exclude_paths` | Three paths above | Files removed from the filtered docs copy. |
+
 ## Host dispatcher
 
 With `agent_sandbox_dispatch_access_enabled`, the role installs the dispatcher
