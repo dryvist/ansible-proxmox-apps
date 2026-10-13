@@ -25,9 +25,7 @@
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
     _template_dir: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
-    # Simulate the former host-only secret-store hostname variable. The
-    # container-facing list must ignore any such ambient/internal domain.
-    agent_sandbox_internal_domains: [openbao.example.invalid]
+    agent_sandbox_dispatch_bao_addr: https://openbao.example.invalid
   tasks:
     - name: Set the test inventory-derived addresses and secret group id
       ansible.builtin.set_fact:
@@ -47,6 +45,7 @@
         - { src: agent-sandbox.nft.j2, dest: agent-sandbox.nft }
         - { src: docker-compose.yml.j2, dest: docker-compose.yml }
         - { src: allowed-domains.txt.j2, dest: allowed-domains.txt }
+        - { src: squid.conf.j2, dest: squid.conf }
 
     - name: Render the private refused-login alert environment fixture
       ansible.builtin.template:
@@ -63,6 +62,7 @@
         - docker-compose.yml
         - allowed-domains.txt
         - dispatcher-alert.env
+        - squid.conf
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
@@ -71,6 +71,7 @@
         _as_domains: "{{ _as_rendered.results[2].content | b64decode | split('\n')
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
         _as_dispatcher_alert_env: "{{ _as_rendered.results[3].content | b64decode }}"
+        _as_squid: "{{ _as_rendered.results[4].content | b64decode }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -101,6 +102,9 @@
           - >-
             _as_nft is search('iifname "br-[*]" iifname != [{] "' ~ _as_bridge
             ~ '", "' ~ agent_sandbox_egress_bridge ~ '" [}] counter drop')
+          - >-
+            _as_nft is search('iifname "' ~ agent_sandbox_egress_bridge
+            ~ '" tcp dport 443 accept')
         fail_msg: >-
           The container-egress ruleset must accept only the proxy and exact Web
           ingress paths and drop all other bridge traffic. Rendered: {{ _as_nft }}
@@ -192,6 +196,18 @@
           ZCode Web must use the immutable image digest, non-root hardening,
           persistent state mounts, and a read-only credential file mount.
 
+    - name: Assert Squid reads both allowlists and keeps the operator file read-only
+      ansible.builtin.assert:
+        that:
+          - "'acl allowed_dst_static dstdomain \"/etc/squid/allowed-domains.txt\"' in _as_squid"
+          - >-
+            'acl allowed_dst_operator dstdomain
+            "/etc/agent-sandbox/allowed-domains.d/operator.txt"' in _as_squid
+          - >-
+            (agent_sandbox_operator_allowlist_file ~
+            ':/etc/agent-sandbox/allowed-domains.d/operator.txt:ro') in _as_compose
+        fail_msg: Squid must read the static and operator lists from read-only mounts.
+
     - name: Assert the refused-login alert environment carries the alert settings
       ansible.builtin.assert:
         that:
@@ -215,9 +231,11 @@
           - "'github.com' in _as_domains"
           - "'cache.nixos.org' in _as_domains"
           - agent_sandbox_router_host in _as_domains
-          - _as_domains | select('search', 'openbao') | list | length == 0
+          - >-
+            _as_domains | select('search', 'openbao') | list ==
+            [agent_sandbox_dispatch_bao_addr | urlsplit('hostname')]
         fail_msg: >-
-          The allowlist must hold exactly the Z.ai hosts and the documented
-          Cursor suffixes and router endpoint, no CDN, telemetry host or
-          internal secret-store hostname, and keep the existing hosts.
+          The static allowlist must hold the Z.ai hosts, documented Cursor
+          suffixes, router endpoint, and configured OpenBao FQDN, without CDN
+          or telemetry hosts.
           Rendered: {{ _as_domains }}

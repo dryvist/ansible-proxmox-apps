@@ -15,7 +15,9 @@ on the `agent_sandbox_host` inventory group (`docker_vms` members carrying the
 - A host nftables table (`agent_sandbox`, chain `DOCKER-USER`) drops every
   forwarded packet that leaves the agents bridge except traffic to the proxy,
   allows the published Web port only from inventoried Traefik addresses, and
-  denies other forwarding into the bridge. Docker allocates container addresses.
+  denies other forwarding into the bridge. The proxy egress bridge permits
+  HTTPS; Squid's static and operator domain lists select destinations. Docker
+  allocates container addresses.
 - `/var/lib/docker` sits on the guest's dedicated data disk.
 - The always-on ZCode Web/Server container uses the published multi-architecture
   image digest, runs as uid 1000 with a read-only root filesystem, and stores
@@ -68,8 +70,8 @@ nix eval "github:dryvist/nix-agent-sandbox?ref=vN#lib.egressDomains" --json
 ```
 
 The host dispatcher completes host-side setup before creating an agent
-container. OpenBao remains host-only; the router endpoint used by container
-profiles is included in the squid allowlist.
+container. The router endpoint and the role-configured OpenBao FQDN are in the
+static Squid allowlist; the operator list cannot add or remove OpenBao.
 
 The ZCode service mounts its credential file read-only. This role manages and
 validates the mount boundary; credential values remain outside the repository.
@@ -127,6 +129,7 @@ rules:
 - established and related traffic is accepted;
 - from the `agents` bridge: TCP to the proxy is accepted; everything else is
   logged (rate-limited) and dropped;
+- the proxy egress bridge may send HTTPS requests to the Squid allowlist;
 - the published ZCode Web port is accepted only from inventoried Traefik
   addresses after Docker's expected DNAT mapping;
 - from `docker0` and any other `br-*` bridge except the proxy's egress bridge:
