@@ -79,7 +79,18 @@ prometheus_stack_blackbox_jobs:
          + (wan_hop_discovery_isp_hops | default([]))
          + prometheus_stack_anycast_targets }}
   - module: http_2xx_tls
-    targets: "{{ prometheus_stack_anycast_targets | map('regex_replace', '^', 'https://') | list }}"
+    targets: >-
+      {% set inventory = hostvars['localhost'].get('tofu_data', {}) %}
+      {% set urls = inventory.get('git_mirror_urls', {}) %}
+      {{ prometheus_stack_anycast_targets | map('regex_replace', '^', 'https://') | list
+         + ([urls.get('public', '') ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
+            if urls.get('public', '') | length > 0 else []) }}
+  - module: http_401_tls
+    targets: >-
+      {% set inventory = hostvars['localhost'].get('tofu_data', {}) %}
+      {% set urls = inventory.get('git_mirror_urls', {}) %}
+      {{ [urls.get('all', '') ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
+         if urls.get('all', '') | length > 0 else [] }}
   - module: dns_udp
     targets: "{{ prometheus_stack_anycast_targets }}"
 
@@ -244,6 +255,13 @@ prometheus_stack_blackbox_modules:
     http:
       preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
       fail_if_not_ssl: true
+  http_401_tls:
+    prober: http
+    timeout: "{{ prometheus_stack_probe_timeout }}"
+    http:
+      preferred_ip_protocol: "{{ prometheus_stack_ip_protocol }}"
+      fail_if_not_ssl: true
+      valid_status_codes: [401]
   dns_udp:
     prober: dns
     timeout: "{{ prometheus_stack_probe_timeout }}"

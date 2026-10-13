@@ -1,4 +1,15 @@
 ---
+- name: Require source ranges for the authenticated Git mirror route
+  ansible.builtin.assert:
+    that:
+      - item.source_ranges | default([], true) | length > 0
+    fail_msg: >-
+      The authenticated Git mirror ingress route requires trusted source ranges.
+    quiet: true
+  loop: "{{ traefik_ingress_routes | selectattr('name', 'equalto', 'git-mirror-all') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Build Traefik routers from the inventory ingress table
   ansible.builtin.set_fact:
     traefik_routes: >-
@@ -11,6 +22,7 @@
           'host_aliases': item.host_aliases | default([]),
           'tls_domains': item.tls_domains | default([]),
           'path_prefix': item.path_prefix | default('', true),
+          'source_ranges': item.source_ranges | default([], true),
           'priority': item.priority | default(0, true),
           'servers': (item.backends | default([item.ip | default('')]))
                      | map('regex_replace', '^', (item.scheme | default('http')) ~ '://')
