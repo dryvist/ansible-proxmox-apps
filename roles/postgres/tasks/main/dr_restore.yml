@@ -2,31 +2,121 @@
 # DR restore drill body (docs/DATABASE_DR_STANDARD.md in ansible-proxmox).
 # pitr_and_dr.yml imports this under never/dr_restore and the var gate; it has
 # no tags or gate of its own so a molecule play can include it directly.
-- name: Stage the dump on the guest
-  ansible.builtin.copy:
-    src: "{{ postgres_dr_restore_dump }}"
-    dest: /tmp/pg-dr-restore.dump
-    owner: postgres
-    group: postgres
-    mode: "0600"
+- name: Refuse to restore over a managed database
+  ansible.builtin.assert:
+    that:
+      - postgres_dr_restore_db not in (postgres_managed_databases | map(attribute='name') | list)
+    fail_msg: >-
+      postgres_dr_restore_db={{ postgres_dr_restore_db }} is a managed database;
+      pg_restore --clean would drop its live schema. Restore into a scratch name.
+    quiet: true
 
-- name: Ensure the restore target database exists
-  become: true
-  become_user: postgres
-  community.postgresql.postgresql_db:
-    name: "{{ postgres_dr_restore_db }}"
-    state: present
+- name: Require exactly one dump source
+  ansible.builtin.assert:
+    that:
+      - (postgres_dr_restore_dump | length > 0) != (postgres_dr_restore_source_db | length > 0)
+    fail_msg: Set exactly one of postgres_dr_restore_dump and postgres_dr_restore_source_db.
+    quiet: true
 
-- name: Restore the dump (clean, if-exists)
-  become: true
-  become_user: postgres
-  ansible.builtin.command:
-    cmd: >-
-      pg_restore --clean --if-exists
-      --dbname={{ postgres_dr_restore_db }} /tmp/pg-dr-restore.dump
-  changed_when: true
+- name: Restore, compare with the source, clean up
+  block:
+    - name: Take a fresh backup so the comparison sees current data
+      when: postgres_dr_restore_source_db | length > 0
+      ansible.builtin.systemd:
+        name: pg-backup.service
+        state: started
 
-- name: Remove the staged dump
-  ansible.builtin.file:
-    path: /tmp/pg-dr-restore.dump
-    state: absent
+    - name: Find the on-host dumps of the source database
+      when: postgres_dr_restore_source_db | length > 0
+      ansible.builtin.find:
+        paths: "{{ postgres_backup_dir }}"
+        use_regex: true
+        patterns: '^{{ postgres_dr_restore_source_db | regex_escape }}-[0-9]{8}T[0-9]{6}Z\.dump$'
+      register: postgres_dr_restore_found
+
+    - name: Assert an on-host dump exists
+      when: postgres_dr_restore_source_db | length > 0
+      ansible.builtin.assert:
+        that:
+          - postgres_dr_restore_found.matched > 0
+        fail_msg: No {{ postgres_dr_restore_source_db }} dump found in {{ postgres_backup_dir }}.
+        quiet: true
+
+    - name: Stage the dump on the guest
+      when: postgres_dr_restore_dump | length > 0
+      ansible.builtin.copy:
+        src: "{{ postgres_dr_restore_dump }}"
+        dest: /tmp/pg-dr-restore.dump
+        owner: postgres
+        group: postgres
+        mode: "0600"
+
+    - name: Ensure the restore target database exists
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ postgres_dr_restore_db }}"
+        state: present
+
+    - name: Restore the dump (clean, if-exists)
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        cmd: >-
+          pg_restore --clean --if-exists
+          --dbname={{ postgres_dr_restore_db }} {{ restore_path }}
+      vars:
+        restore_path: >-
+          {{ (postgres_dr_restore_found.files | sort(attribute='mtime') | last).path
+             if postgres_dr_restore_source_db | length > 0
+             else '/tmp/pg-dr-restore.dump' }}
+      changed_when: true
+
+    - name: Count rows per table in the source and the restored database
+      when: postgres_dr_restore_source_db | length > 0
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        login_db: "{{ item }}"
+        query: |
+          SELECT table_schema || '.' || table_name AS tbl,
+                 (xpath('/row/c/text()', query_to_xml(
+                   format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name),
+                   false, true, '')))[1]::text::bigint AS n
+          FROM information_schema.tables
+          WHERE table_type = 'BASE TABLE'
+            AND table_schema NOT IN ('pg_catalog', 'information_schema')
+          ORDER BY 1
+      loop:
+        - "{{ postgres_dr_restore_source_db }}"
+        - "{{ postgres_dr_restore_db }}"
+      register: postgres_dr_restore_counts
+      changed_when: false
+
+    # An empty-but-equal pair would pass with nothing compared.
+    - name: Assert the restored row counts match the source
+      when: postgres_dr_restore_source_db | length > 0
+      ansible.builtin.assert:
+        that:
+          - postgres_dr_restore_counts.results[0].query_result | length > 0
+          - postgres_dr_restore_counts.results[0].query_result == postgres_dr_restore_counts.results[1].query_result
+        fail_msg: >-
+          Row counts of {{ postgres_dr_restore_db }} differ from
+          {{ postgres_dr_restore_source_db }}; rerun with -v for both result sets.
+        success_msg: >-
+          {{ postgres_dr_restore_counts.results[0].query_result | length }} tables,
+          row counts identical.
+
+  always:
+    - name: Remove the staged dump
+      ansible.builtin.file:
+        path: /tmp/pg-dr-restore.dump
+        state: absent
+
+    - name: Drop the scratch database
+      when: postgres_dr_restore_drop_after | bool
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ postgres_dr_restore_db }}"
+        state: absent

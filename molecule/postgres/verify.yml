@@ -15,6 +15,11 @@
     # and asserts an S3 endpoint CI cannot supply. Set at play level so any
     # future role re-run inherits it rather than rediscovering this.
     postgres_pgbackrest_enabled: false
+    drill_managed_databases:
+      - name: nautobot
+        user: nautobot
+        password: molecule-nautobot-pw
+        client_cidr: 127.0.0.1/32
 
   tasks:
     - name: Discover installed PostgreSQL major
@@ -170,3 +175,63 @@
         # Spelled out rather than read from postgres_backup_dir: a verify play
         # does not include the role, so its defaults are not in scope here.
         backup_dir: /var/lib/postgresql/backups
+
+    # --- DR restore drill (docs/DATABASE_DR_STANDARD.md) ---
+    # The role is included for its defaults; dr_restore.yml is included directly
+    # because its never/dr_restore tags only apply on the import in pitr_and_dr.yml.
+    - name: Seed rows in the live nautobot database for the drill to compare
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        login_db: nautobot
+        query: CREATE TABLE IF NOT EXISTS dr_probe AS SELECT generate_series(1, 25) AS n
+
+    - name: Refuse to restore over the live database
+      block:
+        - name: Attempt a restore into the managed database
+          ansible.builtin.include_role:
+            name: postgres
+            tasks_from: main/dr_restore.yml
+          vars:
+            postgres_dr_restore_db: nautobot
+            postgres_dr_restore_source_db: nautobot
+            postgres_managed_databases: "{{ drill_managed_databases }}"
+        - name: Fail if the guard let it through
+          ansible.builtin.fail:
+            msg: the managed-database guard did not fire
+      rescue:
+        - name: Assert the guard is what refused
+          ansible.builtin.assert:
+            that:
+              - "'is a managed database' in ansible_failed_result.msg"
+
+    - name: Restore the newest nautobot dump into a scratch database and compare
+      ansible.builtin.include_role:
+        name: postgres
+        tasks_from: main/dr_restore.yml
+      vars:
+        postgres_dr_restore_db: nautobot_drill
+        postgres_dr_restore_source_db: nautobot
+        postgres_dr_restore_drop_after: true
+        postgres_managed_databases: "{{ drill_managed_databases }}"
+
+    - name: List databases and the live probe rows after the drill
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        login_db: "{{ item.db }}"
+        query: "{{ item.query }}"
+      loop:
+        - {db: postgres, query: "SELECT datname AS v FROM pg_database"}
+        - {db: nautobot, query: "SELECT count(*) AS v FROM dr_probe"}
+      register: postgres_drill_after
+      changed_when: false
+
+    - name: Assert the scratch database is gone and the live one is untouched
+      ansible.builtin.assert:
+        that:
+          - "'nautobot_drill' not in names"
+          - "'nautobot' in names"
+          - postgres_drill_after.results[1].query_result[0].v == 25
+      vars:
+        names: "{{ postgres_drill_after.results[0].query_result | map(attribute='v') | list }}"
