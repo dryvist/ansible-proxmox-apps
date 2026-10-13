@@ -1,5 +1,53 @@
 # Changelog
 
+## [5.1.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.0.0...v5.1.0) (2026-10-13)
+
+
+### Features
+
+* **agent-sandbox:** mint ci-resolver tokens from its own OpenBao identity ([#2590](https://github.com/dryvist/ansible-proxmox-apps/issues/2590)) ([11c7ca6](https://github.com/dryvist/ansible-proxmox-apps/commit/11c7ca6584a79fd5ed95880c0a52cf83f35ece27))
+* **alerting:** reduce Grafana notification noise ([bbc73d8](https://github.com/dryvist/ansible-proxmox-apps/commit/bbc73d823428552a19ae753f14d7d7c23c320195))
+* **alerting:** reduce Grafana notification noise ([#2617](https://github.com/dryvist/ansible-proxmox-apps/issues/2617)) ([51abdd4](https://github.com/dryvist/ansible-proxmox-apps/commit/51abdd40551e12993fbd19d31d664eb04ce8d7d2))
+* **cribl_stream:** accept and route Nautobot drift events ([#2596](https://github.com/dryvist/ansible-proxmox-apps/issues/2596)) ([801936a](https://github.com/dryvist/ansible-proxmox-apps/commit/801936ae339dce1481af4f18ba93d6d7478aa50a))
+* **cribl_stream:** join PVE guest name, node and type onto Proxmox metrics ([#2587](https://github.com/dryvist/ansible-proxmox-apps/issues/2587)) ([8cff18a](https://github.com/dryvist/ansible-proxmox-apps/commit/8cff18ab9bebf80da28f3396e4d6c535455aac74))
+* **grafana_stack:** alert on ClickHouse part backlog and rejected inserts ([#2624](https://github.com/dryvist/ansible-proxmox-apps/issues/2624)) ([f47d924](https://github.com/dryvist/ansible-proxmox-apps/commit/f47d9249270b88f4ec5ab515f998cc083a8eeec3))
+* **grafana:** provision a JSON datasource for LiteLLM model prices ([d14de3e](https://github.com/dryvist/ansible-proxmox-apps/commit/d14de3e6c680bbeb43811a14841f11ba05ae52a7))
+* **grafana:** provision a JSON datasource for LiteLLM model prices ([#2625](https://github.com/dryvist/ansible-proxmox-apps/issues/2625)) ([77c8e8d](https://github.com/dryvist/ansible-proxmox-apps/commit/77c8e8d8ca22385d8abd99569f0d25eccbf67640))
+* **nautobot:** run the nautobot collection flows from playbooks ([#2623](https://github.com/dryvist/ansible-proxmox-apps/issues/2623)) ([4c3653c](https://github.com/dryvist/ansible-proxmox-apps/commit/4c3653cfafdac6716c55e6248a250aecf234b002))
+* **openbao:** select per-engine component tags in the openbao play ([5dd4ead](https://github.com/dryvist/ansible-proxmox-apps/commit/5dd4ead110220b7d192e53a77ddabfb612da060d))
+* **openbao:** select per-engine component tags in the openbao play ([#2616](https://github.com/dryvist/ansible-proxmox-apps/issues/2616)) ([2d25e39](https://github.com/dryvist/ansible-proxmox-apps/commit/2d25e39cc82a442022419347a29d0ed7336d9427))
+* **prometheus_stack:** scrape the ClickHouse built-in metrics endpoint ([76d83d8](https://github.com/dryvist/ansible-proxmox-apps/commit/76d83d8eb666872e24ff0f7b5966118884806ccd))
+* **prometheus_stack:** scrape the ClickHouse built-in metrics endpoint ([#2614](https://github.com/dryvist/ansible-proxmox-apps/issues/2614)) ([b56f925](https://github.com/dryvist/ansible-proxmox-apps/commit/b56f925a6939301ac552dfede251bce13a2d5b02))
+* **vikunja:** enable AI Jobs token publishing ([7178447](https://github.com/dryvist/ansible-proxmox-apps/commit/7178447c9e76a0814239c9757c377e10f0022c34))
+* **vikunja:** set vikunja_ai_jobs_publish_openbao for the deployment ([#2604](https://github.com/dryvist/ansible-proxmox-apps/issues/2604)) ([c8d886f](https://github.com/dryvist/ansible-proxmox-apps/commit/c8d886f6f03f54047f97b1d5cba716f02119eab2))
+
+
+### Bug Fixes
+
+* **alerting:** gate Grafana ntfy cutover ([bfb50df](https://github.com/dryvist/ansible-proxmox-apps/commit/bfb50dfb9bfa411cc44fc57385d5fd954c572cde))
+* **alerting:** include canaries in evidence search ([f7030fe](https://github.com/dryvist/ansible-proxmox-apps/commit/f7030fea0854713f6cab3d558f0d19cdbe13c747))
+* **apt_cacher_ng:** pass through Debian HTTPS mirror and opentofu_cli repo hosts ([#2592](https://github.com/dryvist/ansible-proxmox-apps/issues/2592)) ([5fe5954](https://github.com/dryvist/ansible-proxmox-apps/commit/5fe5954932af8646b709f647347187f27cb1b70a))
+* **apt_cacher_ng:** pass through the Debian HTTPS mirror and the opentofu_cli repo hosts ([7b7b409](https://github.com/dryvist/ansible-proxmox-apps/commit/7b7b409f99ccab6a5e93c0ecd5b7fb81cd5ab5e1))
+* **apt_cacher_ng:** pass through the opentofu_cli repo redirect target ([#2593](https://github.com/dryvist/ansible-proxmox-apps/issues/2593)) ([599c0c7](https://github.com/dryvist/ansible-proxmox-apps/commit/599c0c7064ffb6e73ae0d9e66b49aee5d318e6ec))
+* **cribl_stream:** derive the alert publish URL in role vars ([41d2d5a](https://github.com/dryvist/ansible-proxmox-apps/commit/41d2d5a6aa2aec4e60edcf1b3f598c549f418b1e))
+* **cribl_stream:** publish PVE metric identity fields as dimensions ([#2602](https://github.com/dryvist/ansible-proxmox-apps/issues/2602)) ([1182770](https://github.com/dryvist/ansible-proxmox-apps/commit/11827701ea32375193e1abe3068a93d2a41dd804))
+* **cribl_stream:** read the installed version in check mode ([#2603](https://github.com/dryvist/ansible-proxmox-apps/issues/2603)) ([e69cc50](https://github.com/dryvist/ansible-proxmox-apps/commit/e69cc50edd71886959ccfaf06432c096f7aaedf8))
+* **cribl_stream:** render Grafana alerts as readable Slack text ([#2597](https://github.com/dryvist/ansible-proxmox-apps/issues/2597)) ([30c2f06](https://github.com/dryvist/ansible-proxmox-apps/commit/30c2f0612fb70f0bedb114873ed6e0bfb854eb4c))
+* **cribl_stream:** split alert render checks and tighten alert output drift ([302979c](https://github.com/dryvist/ansible-proxmox-apps/commit/302979c073359a00d09dd5d59e2281e0f251dda0))
+* **docker_vms:** apply restart policy to systemd-resolved ([5d39de1](https://github.com/dryvist/ansible-proxmox-apps/commit/5d39de185e88dbc2abe9a507f62587938cbd0d87))
+* **docker_vms:** apply restart policy to systemd-resolved ([#2586](https://github.com/dryvist/ansible-proxmox-apps/issues/2586)) ([efe8d14](https://github.com/dryvist/ansible-proxmox-apps/commit/efe8d14bec2141f9a89cd31e21ab5a0fac490b41))
+* **github_runner:** start runner units when a dependency start failed ([#2599](https://github.com/dryvist/ansible-proxmox-apps/issues/2599)) ([bf5a7ef](https://github.com/dryvist/ansible-proxmox-apps/commit/bf5a7ef02321e0426ecc52047e04c106ea9d79c7))
+* **homarr:** pin v2.4.1, whose Debian build links sqlite against glibc ([cc798c5](https://github.com/dryvist/ansible-proxmox-apps/commit/cc798c5529759ddc8366ba99195fad14d87bb2f0))
+* **homarr:** print port-wait diagnostics and pin v2.4.1 ([#2626](https://github.com/dryvist/ansible-proxmox-apps/issues/2626)) ([e806199](https://github.com/dryvist/ansible-proxmox-apps/commit/e806199087a2dc6815d99a94228ce6491fed59e1))
+* **homarr:** print the unit state and journal when the port never opens ([8b52873](https://github.com/dryvist/ansible-proxmox-apps/commit/8b528731eace2c968d381ed4431cc2b812623193))
+* **inventory:** run the live placement read in check mode ([#2598](https://github.com/dryvist/ansible-proxmox-apps/issues/2598)) ([2f2b808](https://github.com/dryvist/ansible-proxmox-apps/commit/2f2b808fd9976e65fc7664e73ca6790384e6344d))
+* **nautobot:** group the Nautobot inventory by tag names ([#2607](https://github.com/dryvist/ansible-proxmox-apps/issues/2607)) ([2f4a3b1](https://github.com/dryvist/ansible-proxmox-apps/commit/2f4a3b1986114979ff1bad8b0807772c5a34bda6))
+* **site:** load the extra GitHub installation lists from the env document ([83b432a](https://github.com/dryvist/ansible-proxmox-apps/commit/83b432a2e8d5b4926252fd4e81a1c2048aa9ad95))
+* **site:** load the extra GitHub installation lists from the env document ([#2613](https://github.com/dryvist/ansible-proxmox-apps/issues/2613)) ([0e973f8](https://github.com/dryvist/ansible-proxmox-apps/commit/0e973f82ddeb448c90e7bfc88b220dfd38bae234))
+* **site:** read the env document in check mode ([#2600](https://github.com/dryvist/ansible-proxmox-apps/issues/2600)) ([42fad5a](https://github.com/dryvist/ansible-proxmox-apps/commit/42fad5a52c4127ad0c49bbf5abcce6fa5c4a44d4))
+* **ssh_ca_trust:** run the NTP synchronization wait in check mode ([4dddf51](https://github.com/dryvist/ansible-proxmox-apps/commit/4dddf51e98de5d6d0f29deee1d452305693bf284))
+* **ssh_ca_trust:** run the NTP synchronization wait in check mode ([#2612](https://github.com/dryvist/ansible-proxmox-apps/issues/2612)) ([6557045](https://github.com/dryvist/ansible-proxmox-apps/commit/65570450355fbb02acb4d337b86177f9a02b3634))
+
 ## [5.0.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v4.59.0...v5.0.0) (2026-10-11)
 
 
