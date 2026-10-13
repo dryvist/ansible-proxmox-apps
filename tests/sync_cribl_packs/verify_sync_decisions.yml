@@ -68,6 +68,163 @@
         cribl_packs_org_pages:
           dryvist: "{{ item.page }}"
 
+- name: Test GitHub token source selection
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cases:
+      - name: mint-with-env-token
+        bao_addr: http://openbao.test
+        bao_token: test-token
+        vault_token: ''
+        github_token: FAKE-env
+        expect_source: openbao
+        expect_available: true
+      - name: mint-with-vault-token
+        bao_addr: http://openbao.test
+        bao_token: ''
+        vault_token: test-token
+        github_token: ''
+        expect_source: openbao
+        expect_available: true
+      - name: env-token
+        bao_addr: ''
+        bao_token: ''
+        vault_token: ''
+        github_token: FAKE-env
+        expect_source: env
+        expect_available: true
+      - name: incomplete-openbao-env-fallback
+        bao_addr: http://openbao.test
+        bao_token: ''
+        vault_token: ''
+        github_token: FAKE-env
+        expect_source: env
+        expect_available: true
+      - name: no-token-source
+        bao_addr: ''
+        bao_token: ''
+        vault_token: ''
+        github_token: ''
+        expect_source: missing
+        expect_available: false
+  tasks:
+    - name: Resolve source availability using the production predicates
+      ansible.builtin.assert:
+        that:
+          - >-
+            (cribl_packs_github_bao_addr | length > 0
+            and cribl_packs_github_bao_token | length > 0)
+            == cribl_packs_github_bao_enabled
+          - (cribl_packs_github_env_token | length > 0) == cribl_packs_github_env_enabled
+          - >-
+            ('openbao' if cribl_packs_github_bao_enabled
+            else 'env' if cribl_packs_github_env_enabled else 'missing')
+            == cribl_packs_github_token_source
+          - (cribl_packs_github_token_source != 'missing') == item.expect_available
+          - cribl_packs_github_token_source == item.expect_source
+        fail_msg: "case {{ item.name }}: unexpected token source decision"
+        success_msg: "case {{ item.name }}: OK (source={{ item.expect_source }})"
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        cribl_packs_github_bao_addr: "{{ item.bao_addr }}"
+        cribl_packs_github_bao_token: "{{ item.bao_token | default(item.vault_token, true) }}"
+        cribl_packs_github_env_token: "{{ item.github_token }}"
+        cribl_packs_github_bao_enabled: >-
+          {{ cribl_packs_github_bao_addr | length > 0 and cribl_packs_github_bao_token | length > 0 }}
+        cribl_packs_github_env_enabled: "{{ cribl_packs_github_env_token | length > 0 }}"
+        cribl_packs_github_token_source: >-
+          {{ 'openbao' if cribl_packs_github_bao_enabled
+             else 'env' if cribl_packs_github_env_enabled else 'missing' }}
+
+- name: Test per-org minted GitHub token selection
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cribl_packs_github_orgs: [dryvist, jpe-cribl]
+    cribl_packs_github_token_source: openbao
+    cribl_packs_github_minted_tokens:
+      dryvist: FAKE-dryvist
+      jpe-cribl: FAKE-jpe-cribl
+  tasks:
+    - name: Initialize selected test tokens
+      ansible.builtin.set_fact:
+        cribl_packs_github_tokens: {}
+      no_log: true
+
+    - name: Select minted test tokens using the production expression
+      ansible.builtin.set_fact:
+        cribl_packs_github_tokens: >-
+          {{ cribl_packs_github_tokens | combine({
+            cribl_packs_token_org:
+              cribl_packs_github_minted_tokens[cribl_packs_token_org]
+              if cribl_packs_github_token_source == 'openbao'
+              else cribl_packs_github_env_token
+          }) }}
+      loop: "{{ cribl_packs_github_orgs }}"
+      loop_control:
+        loop_var: cribl_packs_token_org
+      no_log: true
+
+    - name: Verify listing and release tokens use their owning org
+      ansible.builtin.assert:
+        that:
+          - >-
+            {'Authorization': 'Bearer ' ~ cribl_packs_github_tokens[cribl_packs_list_org]}
+            == {'Authorization': 'Bearer FAKE-dryvist'}
+          - >-
+            {'Authorization': 'Bearer ' ~ cribl_packs_github_tokens[item.split('/')[0]]}
+            == {'Authorization': 'Bearer FAKE-jpe-cribl'}
+        quiet: true
+      vars:
+        cribl_packs_list_org: dryvist
+      loop: [jpe-cribl/cc-pack]
+      no_log: true
+
+- name: Test single environment GitHub token selection
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cribl_packs_github_orgs: [dryvist, jpe-cribl]
+    cribl_packs_github_token_source: env
+    cribl_packs_github_env_token: FAKE-env
+  tasks:
+    - name: Initialize selected test tokens
+      ansible.builtin.set_fact:
+        cribl_packs_github_tokens: {}
+      no_log: true
+
+    - name: Select environment test tokens using the production expression
+      ansible.builtin.set_fact:
+        cribl_packs_github_tokens: >-
+          {{ cribl_packs_github_tokens | combine({
+            cribl_packs_token_org:
+              cribl_packs_github_minted_tokens[cribl_packs_token_org]
+              if cribl_packs_github_token_source == 'openbao'
+              else cribl_packs_github_env_token
+          }) }}
+      loop: "{{ cribl_packs_github_orgs }}"
+      loop_control:
+        loop_var: cribl_packs_token_org
+      no_log: true
+
+    - name: Verify every org uses the single environment token
+      ansible.builtin.assert:
+        that:
+          - >-
+            {'Authorization': 'Bearer ' ~ cribl_packs_github_tokens[cribl_packs_list_org]}
+            == {'Authorization': 'Bearer FAKE-env'}
+          - >-
+            {'Authorization': 'Bearer ' ~ cribl_packs_github_tokens[item.split('/')[0]]}
+            == {'Authorization': 'Bearer FAKE-env'}
+        quiet: true
+      vars:
+        cribl_packs_list_org: dryvist
+      loop: [jpe-cribl/cc-pack]
+      no_log: true
+
 - name: Test needs_sync decisions (object-storage tag vs resolved latest)
   hosts: localhost
   gather_facts: false
