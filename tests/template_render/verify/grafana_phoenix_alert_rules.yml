@@ -1,0 +1,59 @@
+---
+# Renders roles/grafana_stack/templates/alerting/rules-phoenix.yml.j2 with the
+# role defaults and checks the Phoenix database alert rules.
+- name: Render and verify the Grafana Phoenix alert rules
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-phoenix.yml.j2"
+  tasks:
+    - name: Render the Phoenix alert rules
+      ansible.builtin.set_fact:
+        _phoenix_alert_document: "{{ lookup('ansible.builtin.template', _rules_template) | from_yaml }}"
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+
+    - name: Assert the two Phoenix rules use their exporter metrics and defaults
+      ansible.builtin.assert:
+        that:
+          - _phoenix_alert_document.groups | map(attribute='name') | list == ['phoenix-database']
+          - _phoenix_rules | map(attribute='uid') | list
+            == ['phoenix-postgres-exporter-down', 'phoenix-postgres-long-transaction']
+          - "'1 - min(pg_up{job=\"phoenix_postgres\"})' in _exporter_expr"
+          - "'pg_long_running_transactions_oldest_timestamp_seconds{job=\"phoenix_postgres\"}' in _transaction_expr"
+          - _exporter_rule.for == '5m'
+          - _exporter_rule.noDataState == 'Alerting'
+          - _exporter_rule.labels.severity == 'warning'
+          - _transaction_rule.for == '10m'
+          - _transaction_rule.noDataState == 'NoData'
+          - _transaction_rule.labels.severity == 'warning'
+          - _transaction_threshold == grafana_stack_alert_phoenix_postgres_max_transaction_seconds
+          - grafana_stack_alert_phoenix_postgres_max_transaction_seconds == 600
+          - "'seconds' in _transaction_rule.annotations.summary"
+        fail_msg: >-
+          rules-phoenix.yml.j2 rendered an unexpected rule set:
+          {{ _phoenix_rules | map(attribute='uid') | list }}
+      vars:
+        _phoenix_rules: "{{ _phoenix_alert_document.groups[0].rules }}"
+        _exporter_rule: "{{ _phoenix_rules | selectattr('uid', 'equalto', 'phoenix-postgres-exporter-down') | first }}"
+        _transaction_rule: >-
+          {{ _phoenix_rules
+             | selectattr('uid', 'equalto', 'phoenix-postgres-long-transaction') | first }}
+        _exporter_expr: "{{ _exporter_rule.data[0].model.expr }}"
+        _transaction_expr: "{{ _transaction_rule.data[0].model.expr }}"
+        _transaction_threshold: "{{ _transaction_rule.data[1].model.conditions[0].evaluator.params[0] }}"
+
+    - name: Render without a Prometheus datasource
+      ansible.builtin.set_fact:
+        _phoenix_alert_document_no_prom: >-
+          {{ lookup('ansible.builtin.template', _rules_template) | from_yaml }}
+      vars:
+        grafana_stack_prometheus_url: ""
+
+    - name: Assert the no-datasource render contains no Phoenix alert groups
+      ansible.builtin.assert:
+        that:
+          - _phoenix_alert_document_no_prom.groups | default([], true) | length == 0

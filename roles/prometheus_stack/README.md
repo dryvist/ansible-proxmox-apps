@@ -23,6 +23,7 @@ compose project.
 | `blackbox_http_2xx_tls` | blackbox | HTTPS response + TLS health |
 | `blackbox_http_401_tls` | blackbox | Expected HTTP 401 + TLS health for protected services |
 | `blackbox_dns_udp` | blackbox | DNS RTT + resolution |
+| `phoenix_postgres` | Phoenix-tagged guests' PostgreSQL exporter | PostgreSQL exporter metrics |
 
 `probe_success` + `probe_duration_seconds` per target carry the ISP-degradation
 signal — this is the evidence path now that the modem exposes no DOCSIS data.
