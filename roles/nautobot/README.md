@@ -109,6 +109,19 @@ the play selected. Part 2 alone reads the SECRET_KEY file that part 1 wrote, so
 run part 1 first on a new host. With the flag `false` the role refuses either
 skip tag.
 
+Part 1 runs in three stages when one runner task must stay short. Each stage
+adds its skip tags to `--skip-tags nautobot_jobs`; run them in this order on an
+upgrade:
+
+| Stage | Collection tag | Covers | Skip tags to add |
+| --- | --- | --- | --- |
+| 1 | `server_install` | System packages, Redis, virtual environment, pinned packages. | `server_secret,server_migrate,server_config` |
+| 2 | `server_migrate` | Migrations, post-upgrade, first superuser. | `server_install,server_config` |
+| 3 | `server_config` | Settings, environment file, uWSGI, units, service restart, web wait. | `server_install,server_migrate` |
+
+Stages 2 and 3 also resolve the SECRET_KEY. A new host needs one run with no
+stage skip tags.
+
 ## Two layers
 
 `tasks/main.yml` splits into:
