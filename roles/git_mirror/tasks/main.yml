@@ -1,0 +1,282 @@
+---
+- name: Validate mirror configuration
+  ansible.builtin.assert:
+    that:
+      - git_mirror_bao_role_id | length > 0
+      - git_mirror_bao_secret_id | length > 0
+      - git_mirror_all_password | length > 0
+      - git_mirror_installations | length == 3
+      - git_mirror_proxy_sources | length > 0
+      - git_mirror_public_port | int != git_mirror_all_port | int
+      - git_mirror_installations | map(attribute='owner') | list == ['dryvist', 'JacobPEvans', 'JacobPEvans-personal']
+      - git_mirror_installations | selectattr('token_path', 'match', '^[A-Za-z0-9_/-]+$') | list | length == 3
+    fail_msg: >-
+      git_mirror requires its OpenBao AppRole pair, generated all-tree password,
+      three installation token paths, and inventory-derived proxy addresses.
+    quiet: true
+  no_log: true
+
+- name: Install Git mirror packages
+  ansible.builtin.apt:
+    name:
+      - apache2
+      - apache2-utils
+      - git
+      - gh
+      - python3-passlib
+    state: present
+    update_cache: true
+
+- name: Install the OpenBao CLI
+  ansible.builtin.apt:
+    deb: "{{ git_mirror_bao_deb_url }}"
+    state: present
+
+- name: Create git-mirror group
+  ansible.builtin.group:
+    name: "{{ git_mirror_group }}"
+    system: true
+    state: present
+
+- name: Create git-mirror service user
+  ansible.builtin.user:
+    name: "{{ git_mirror_user }}"
+    group: "{{ git_mirror_group }}"
+    groups: "{{ git_mirror_group }}"
+    append: false
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ git_mirror_root }}"
+    create_home: false
+    state: present
+
+- name: Create Git mirror read group for Apache
+  ansible.builtin.group:
+    name: "{{ git_mirror_http_group }}"
+    system: true
+    state: present
+
+- name: Allow Apache to read mirrored repositories
+  ansible.builtin.user:
+    name: www-data
+    groups: "{{ git_mirror_http_group }}"
+    append: true
+    state: present
+  notify: Restart git-mirror Apache
+
+- name: Create Git mirror directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(git_mirror_user) }}"
+    group: "{{ item.group | default(git_mirror_group) }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ git_mirror_root }}", group: "{{ git_mirror_http_group }}", mode: "2750" }
+    - { path: "{{ git_mirror_root }}/public", group: "{{ git_mirror_http_group }}", mode: "2750" }
+    - { path: "{{ git_mirror_root }}/all", group: "{{ git_mirror_http_group }}", mode: "2750" }
+    - { path: "{{ git_mirror_config_dir }}", owner: root, group: root, mode: "0711" }
+    - { path: "{{ git_mirror_approle_dir }}", owner: root, group: "{{ git_mirror_group }}", mode: "0750" }
+    - { path: "{{ git_mirror_metrics_dir }}", mode: "0755" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Deploy the OpenBao AppRole secret-zero
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ git_mirror_approle_dir }}/{{ item.name }}"
+    owner: root
+    group: "{{ git_mirror_group }}"
+    mode: "0640"
+  loop:
+    - { name: role_id, value: "{{ git_mirror_bao_role_id }}" }
+    - { name: secret_id, value: "{{ git_mirror_bao_secret_id }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  notify: Restart git-mirror OpenBao Agent
+
+- name: Deploy the OpenBao Agent configuration
+  ansible.builtin.template:
+    src: openbao-agent.hcl.j2
+    dest: "{{ git_mirror_config_dir }}/openbao-agent.hcl"
+    owner: root
+    group: "{{ git_mirror_group }}"
+    mode: "0640"
+  notify: Restart git-mirror OpenBao Agent
+
+- name: Deploy the OpenBao Agent systemd unit
+  ansible.builtin.template:
+    src: openbao-git-mirror-agent.service.j2
+    dest: /etc/systemd/system/openbao-git-mirror-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload git-mirror systemd units
+    - Restart git-mirror OpenBao Agent
+
+- name: Enable the OpenBao Agent
+  ansible.builtin.systemd:
+    name: openbao-git-mirror-agent
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Generate the protected tree htpasswd entry
+  community.general.htpasswd:
+    path: "{{ git_mirror_config_dir }}/all.htpasswd"
+    name: "{{ git_mirror_all_username }}"
+    password: "{{ git_mirror_all_password }}"
+    crypt_scheme: bcrypt
+    owner: root
+    group: www-data
+    mode: "0640"
+  no_log: true
+  notify: Restart git-mirror Apache
+
+- name: Deploy Apache listener ports
+  ansible.builtin.template:
+    src: ports.conf.j2
+    dest: /etc/apache2/ports.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart git-mirror Apache
+
+- name: Deploy Git mirror Apache virtual hosts
+  ansible.builtin.template:
+    src: git-mirror.conf.j2
+    dest: /etc/apache2/sites-available/git-mirror.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart git-mirror Apache
+
+- name: Enable CGI and environment modules
+  ansible.builtin.command:
+    cmd: a2enmod cgid env auth_basic authn_file
+  register: git_mirror_apache_modules
+  changed_when: "'already enabled' not in git_mirror_apache_modules.stdout"
+  notify: Restart git-mirror Apache
+
+- name: Disable the default Apache site
+  ansible.builtin.file:
+    path: /etc/apache2/sites-enabled/000-default.conf
+    state: absent
+  notify: Restart git-mirror Apache
+
+- name: Enable the Git mirror Apache site
+  ansible.builtin.file:
+    src: /etc/apache2/sites-available/git-mirror.conf
+    dest: /etc/apache2/sites-enabled/git-mirror.conf
+    state: link
+    owner: root
+    group: root
+  notify: Restart git-mirror Apache
+
+- name: Disable Git receive-pack for all mirror repositories
+  community.general.git_config:
+    name: http.receivepack
+    scope: system
+    value: "false"
+
+- name: Deploy the Git mirror sync wrapper
+  ansible.builtin.template:
+    src: git-mirror-sync.sh.j2
+    dest: /usr/local/libexec/git-mirror-sync
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Reload git-mirror systemd units
+
+- name: Deploy Git mirror systemd service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - git-mirror-sync.service
+    - git-mirror-sync.timer
+  notify: Reload git-mirror systemd units
+
+- name: Allow the reverse proxy to reach both mirror listeners
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.0 }}"
+    proto: tcp
+    from_ip: "{{ item.1 }}"
+    comment: Git mirror reverse proxy
+  loop: "{{ [git_mirror_public_port, git_mirror_all_port] | product(git_mirror_proxy_sources) | list }}"
+  when: git_mirror_firewall_enabled | bool
+
+- name: Create a node_exporter textfile link for Git mirror metrics
+  ansible.builtin.file:
+    src: "{{ git_mirror_metrics_file }}"
+    dest: "{{ git_mirror_node_exporter_dir }}/git_mirror.prom"
+    state: link
+    owner: root
+    group: root
+
+- name: Start Apache and apply pending configuration
+  ansible.builtin.systemd:
+    name: apache2
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: git_mirror_manage_services | bool
+
+- name: Apply pending mirror service configuration
+  ansible.builtin.meta: flush_handlers
+  when: git_mirror_manage_services | bool
+
+- name: Wait for the OpenBao Agent token sink
+  ansible.builtin.wait_for:
+    path: "{{ git_mirror_bao_token_file }}"
+    timeout: 60
+  when: git_mirror_manage_services | bool
+
+- name: Run the initial Git mirror sync
+  ansible.builtin.systemd:
+    name: git-mirror-sync.service
+    state: started
+    daemon_reload: true
+  when: git_mirror_manage_services | bool
+
+- name: Enable the Git mirror refresh timer
+  ansible.builtin.systemd:
+    name: git-mirror-sync.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: git_mirror_manage_services | bool
+
+- name: Probe the public tree without credentials
+  ansible.builtin.uri:
+    url: >-
+      {{ 'http://127.0.0.1:' ~ git_mirror_public_port
+         ~ git_mirror_public_path
+         ~ '/dryvist/docs.git/info/refs?service=git-upload-pack' }}
+    method: GET
+    status_code: 200
+    return_content: false
+  changed_when: false
+  when: git_mirror_manage_services | bool
+
+- name: Probe the all tree with HTTP basic authentication
+  ansible.builtin.uri:
+    url: >-
+      {{ 'http://127.0.0.1:' ~ git_mirror_all_port
+         ~ git_mirror_all_path
+         ~ '/dryvist/docs.git/info/refs?service=git-upload-pack' }}
+    method: GET
+    url_username: "{{ git_mirror_all_username }}"
+    url_password: "{{ git_mirror_all_password }}"
+    force_basic_auth: true
+    status_code: 200
+    return_content: false
+  changed_when: false
+  no_log: true
+  when: git_mirror_manage_services | bool

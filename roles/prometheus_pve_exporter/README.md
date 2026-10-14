@@ -34,9 +34,9 @@ Until it exists, both values are empty and this role no-ops.
 ## Where It Runs
 
 Wired into `playbooks/site.yml` against `prometheus_group` (the same guest as
-`prometheus_stack`), after `network_quality`. Scraping it from Prometheus
-(the job, targets, and relabeling) is Wave 3a's responsibility, not this
-role's — this role only makes sure the exporter software runs and answers.
+`prometheus_stack`), after `network_quality`. The Prometheus scrape job,
+targets, and relabeling are defined in `inventory/group_vars/prometheus_group.yml`.
+This role deploys the exporter and verifies that it answers.
 
 ## Usage
 
@@ -53,6 +53,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `prometheus_pve_exporter_container_name` | `pve-exporter` | Container name. |
 | `prometheus_pve_exporter_port` | `9221` | Host port the exporter's multi-target endpoint is published on. |
 | `prometheus_pve_exporter_data_dir` | `/opt/prometheus-pve-exporter` | Compose project directory. |
+| `prometheus_pve_exporter_uid` | `"101"` | Numeric uid:gid the container runs as; `pve.yml` is group-owned by it. |
 | `prometheus_pve_exporter_token_id` | `bao_apps_secrets.pve_exporter_token_id` (env fallback) | Full PVE token identity (`user@realm!tokenname`). |
 | `prometheus_pve_exporter_token_secret` | `bao_apps_secrets.pve_exporter_token_secret` (env fallback) | PVE token secret value. |
 | `prometheus_pve_exporter_verify_ssl` | `false` | PVE's self-signed cert is not distributed to this container by this role. |

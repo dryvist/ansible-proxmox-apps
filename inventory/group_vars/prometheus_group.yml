@@ -37,6 +37,20 @@ pve_node_exporter_scrape_targets: >-
   {%- endfor -%}
   {{ out }}
 
+# PVE API targets use the commissioned node names published in tofu_data.
+pve_exporter_scrape_targets: >-
+  {%- set out = [] -%}
+  {%- for name, node in (hostvars['localhost']['tofu_data']['nodes'] | default({})) | dictsort -%}
+  {%- if node.commissioned | default(true) -%}
+  {%- set _ = out.append(name ~ '.' ~ hostvars['localhost']['tofu_data']['domain']) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+
+# The exporter runs beside Prometheus and listens on its role's configured port.
+prometheus_stack_pve_exporter_address: >-
+  {{ '127.0.0.1:' ~ (prometheus_pve_exporter_port | default(9221) | string) }}
+
 # Guest node_exporter metrics: every Linux guest runs node_exporter (the
 # "Install node_exporter on every guest" play). Targets are each guest's
 # inventory address (FQDN, or its static address for critical-tier guests);
@@ -66,6 +80,7 @@ guest_node_exporter_keep_metrics:
   - node_disk_(read|written)_bytes_total
   - node_disk_(reads|writes)_completed_total
   - node_disk_io_time_seconds_total
+  - git_mirror_.*
 
 # Gatus metrics on the status guest (tag `status`). Empty list when the guest
 # is absent — Prometheus accepts an empty targets list (no scrapes).
@@ -152,6 +167,24 @@ prometheus_stack_extra_scrape_configs: |
     scrape_interval: 60s
     static_configs:
       - targets: {{ pve_node_exporter_scrape_targets | to_json }}
+  # Query the PVE API once per commissioned node through the local exporter.
+  - job_name: pve_exporter
+    scrape_interval: 60s
+    scrape_timeout: 55s
+    metrics_path: /pve
+    params:
+      module: ["default"]
+      cluster: ["1"]
+      node: ["1"]
+    static_configs:
+      - targets: {{ pve_exporter_scrape_targets | to_json }}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "{{ prometheus_stack_pve_exporter_address }}"
   - job_name: guest_node_exporter
     scrape_interval: 60s
     static_configs: {{ guest_node_exporter_static_configs | to_json }}
@@ -162,13 +195,6 @@ prometheus_stack_extra_scrape_configs: |
       - source_labels: [__name__]
         regex: "{{ guest_node_exporter_keep_metrics | join('|') }}"
         action: keep
-  - job_name: agentgateway
-    # The agentgateway DNS name is a Traefik ingress alias, so scrape the guest
-    # directly by its inventory address (no literal IP). agentgateway is
-    # critical-tier, so `ip` is its declared static address.
-    static_configs:
-      - targets: ["{{ hostvars['localhost']['tofu_data']['containers']['agentgateway']['ip'] }}:{{
-          hostvars['localhost']['tofu_data']['constants']['service_ports']['agentgateway_metrics'] }}"]
   - job_name: cadvisor
     scrape_interval: 60s
     static_configs:

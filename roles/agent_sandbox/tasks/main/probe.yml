@@ -1,10 +1,7 @@
 ---
 - name: Check direct host reachability to OpenBao without a proxy
   ansible.builtin.uri:
-    url: >-
-      https://openbao.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
-      | default(undef('PROXMOX_SUBDOMAIN is empty'), true)
-      | mandatory('PROXMOX_SUBDOMAIN must be set in the environment') }}/v1/sys/health
+    url: "{{ agent_sandbox_dispatch_bao_addr }}/v1/sys/health"
     method: GET
     use_proxy: false
     validate_certs: true
@@ -18,6 +15,15 @@
     msg: >-
       Host-only HTTPS reachability returned HTTP
       {{ agent_sandbox_openbao_host_probe.status }} with proxy use disabled.
+
+- name: Require the inventory-provided laptop URL for the sandbox probe
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_probe_laptop_url | urlsplit('scheme') == 'https'
+      - agent_sandbox_probe_laptop_url | urlsplit('hostname') | length > 0
+    fail_msg: >-
+      Set agent_sandbox_probe_laptop_url to the laptop's HTTPS URL in private
+      inventory before running the sandbox probe.
 
 - name: Inspect the ZCode Web container without exposing its environment
   community.docker.docker_container_info:
@@ -129,20 +135,8 @@
       workstation credential name.
   when: agent_sandbox_zcode_web_enabled | bool
 
-- name: Check the container-facing allowlist for an OpenBao address
-  community.docker.docker_container_exec:
-    container: "{{ agent_sandbox_proxy_container }}"
-    command: grep -iq openbao /etc/squid/allowed-domains.txt
-  register: _agent_sandbox_openbao_allowlist_match
-  changed_when: false
-  failed_when: false
-
-- name: Assert the container-facing allowlist has no OpenBao address
-  ansible.builtin.assert:
-    that:
-      - _agent_sandbox_openbao_allowlist_match.rc == 1
-    fail_msg: The container-facing allowlist contains an OpenBao address.
-    success_msg: The container-facing allowlist contains no OpenBao address.
+- name: Probe the static allowlist and the Squid destinations
+  ansible.builtin.import_tasks: probe_egress.yml
 
 - name: Read the sandbox network gateways for the packet probe
   ansible.builtin.command:

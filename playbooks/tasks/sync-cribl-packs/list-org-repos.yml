@@ -1,0 +1,48 @@
+---
+# List one org's repositories, continuing only for full pages up to page five.
+- name: List the next pack-owning org repo page
+  ansible.builtin.uri:
+    url: >-
+      {{ cribl_packs_github_api }}/orgs/{{ cribl_packs_list_org }}/repos?type=public&per_page=100&page={{
+      (cribl_packs_org_pages[cribl_packs_list_org] | default(0) | int) + 1 }}
+    method: GET
+    return_content: true
+    status_code: 200
+    headers: "{{ {'Authorization': 'Bearer ' ~ cribl_packs_github_tokens[cribl_packs_list_org]} }}"
+  register: cribl_packs_org_page
+  changed_when: false
+  # The request carries the token, so the result stays hidden; the assert below
+  # reports the failure from non-secret fields only.
+  failed_when: false
+  no_log: true
+
+- name: Require a successful org repo page
+  ansible.builtin.assert:
+    that:
+      - cribl_packs_org_page.status | default(0) == 200
+    fail_msg: >-
+      GitHub org listing failed for {{ cribl_packs_list_org }} page
+      {{ (cribl_packs_org_pages[cribl_packs_list_org] | default(0) | int) + 1 }}:
+      HTTP {{ cribl_packs_org_page.status | default('no response') }}
+      {{ cribl_packs_org_page.json.message | default('') }}
+    quiet: true
+
+- name: Accumulate discovered org repositories and page count
+  ansible.builtin.set_fact:
+    cribl_packs_org_names: >-
+      {{ cribl_packs_org_names | combine({
+        cribl_packs_list_org:
+          [cribl_packs_org_names[cribl_packs_list_org] | default([]),
+           cribl_packs_org_page.json | map(attribute='full_name') | list] | flatten
+      }) }}
+    cribl_packs_org_pages: >-
+      {{ cribl_packs_org_pages | combine({
+        cribl_packs_list_org:
+          (cribl_packs_org_pages[cribl_packs_list_org] | default(0) | int) + 1
+      }) }}
+
+- name: Continue listing full org repo pages
+  ansible.builtin.include_tasks: list-org-repos.yml
+  when:
+    - cribl_packs_org_page.json | length == 100
+    - cribl_packs_org_pages[cribl_packs_list_org] < 5

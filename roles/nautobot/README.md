@@ -75,6 +75,40 @@ ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
 
 See the flag ladder below before enabling anything that writes.
 
+## Server layer owner
+
+`nautobot_server_via_collection` picks who runs the server layer: system
+packages, Redis, SECRET_KEY, venv and pinned packages, settings, environment
+file, uWSGI, units, migrations, the first superuser, service start and the
+health wait.
+
+- `true` (set per run with `-e nautobot_server_via_collection=true`, or in the
+  group vars once the cutover is accepted): the `jpe_ansible.nautobot.server`
+  collection role does all of it (`tasks/server_collection.yml`). The `server_*`
+  inputs in `inventory/group_vars/nautobot_group.yml` map the `nautobot_*`
+  inputs, and service accounts stay off (`server_manage_accounts: false`)
+  because this role still owns the tokens.
+- `false` (role default, used by the first Molecule platform): this role does it
+  (`tasks/server_legacy.yml`, `tasks/server_legacy_app.yml`).
+
+Either way this role keeps the Jobs, the export contract, the seed bundle, the
+token tasks, the export and discovery schedules and the seed run.
+
+### Running the two parts separately
+
+With the flag `true`, the converge has two parts, each safe to run alone and
+each restarting the services inside itself after the files it changed:
+
+| Part | Tag | Covers | Run it alone with |
+| --- | --- | --- | --- |
+| 1 | `nautobot_server` | The collection server role and its handlers. | `--skip-tags nautobot_jobs` |
+| 2 | `nautobot_jobs` | Jobs, export contract, seed bundle, post-upgrade, tokens, schedules, seed run. | `--skip-tags nautobot_server` |
+
+Add the skip tag to the run's arguments; the template's stored `--tags` keeps
+the play selected. Part 2 alone reads the SECRET_KEY file that part 1 wrote, so
+run part 1 first on a new host. With the flag `false` the role refuses either
+skip tag.
+
 ## Two layers
 
 `tasks/main.yml` splits into:
@@ -103,6 +137,7 @@ Rebuilding without running leaves the fresh bundle unread.
 
 | Flag | Default | What it does | Enable when |
 | --- | --- | --- | --- |
+| `nautobot_server_via_collection` | `false` | Hands the server layer to the collection server role. | Per run until the cutover is accepted. |
 | `nautobot_manage_app` | `true` | Runs the live layer (install/migrate/services). | Production path (default). |
 | `nautobot_build_seed` | `true` | Assembles `nautobot_seed.json` — a file only, no DB write. | Production path (default). |
 | `nautobot_run_seed_jobs` | `true` | DiffSyncs the seed into live Nautobot (additive). | Production path (default). |

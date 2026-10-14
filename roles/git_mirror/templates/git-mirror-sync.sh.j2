@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 0027
+
+root="${GIT_MIRROR_ROOT:?GIT_MIRROR_ROOT must be set}"
+metrics_file="$GIT_MIRROR_METRICS_FILE"
+last_success_file="$GIT_MIRROR_LAST_SUCCESS_FILE"
+workspace="$(mktemp -d "$root/.sync.XXXXXX")"
+last_success=0
+if [[ -r "$last_success_file" ]]; then
+  read -r last_success < "$last_success_file" || true
+fi
+
+finish() {
+  local result=$?
+  trap - EXIT
+  if (( result == 0 )); then
+    last_success="$(date +%s)"
+    printf '%s\n' "$last_success" > "$last_success_file.tmp"
+    mv -f "$last_success_file.tmp" "$last_success_file"
+  fi
+  {
+    printf '# HELP git_mirror_sync_success Whether the last mirror sync succeeded.\n'
+    printf '# TYPE git_mirror_sync_success gauge\n'
+    printf 'git_mirror_sync_success %s\n' "$(( result == 0 ? 1 : 0 ))"
+    printf '# HELP git_mirror_sync_last_success_timestamp_seconds Unix time of the last successful mirror sync.\n'
+    printf '# TYPE git_mirror_sync_last_success_timestamp_seconds gauge\n'
+    printf 'git_mirror_sync_last_success_timestamp_seconds %s\n' "$last_success"
+  } > "$metrics_file.tmp"
+  chmod 0644 "$metrics_file.tmp"
+  mv -f "$metrics_file.tmp" "$metrics_file"
+  rm -rf -- "$workspace"
+  exit "$result"
+}
+trap finish EXIT
+
+if [[ ! -r "$BAO_TOKEN_FILE" ]]; then
+  printf 'OpenBao Agent token sink is unavailable\n' >&2
+  exit 1
+fi
+
+mkdir -p "$root/public" "$root/all"
+: > "$workspace/public.expected"
+: > "$workspace/all.expected"
+
+mirror_repo() {
+  local tree=$1
+  local full_name=$2
+  local destination="$root/$tree/$full_name.git"
+  mkdir -p "$(dirname "$destination")"
+  if [[ -d "$destination" ]]; then
+    if ! git -C "$destination" remote update --prune >/dev/null 2>&1; then
+      printf 'Git mirror update failed\n' >&2
+      return 1
+    fi
+  else
+    if ! git clone --mirror "https://github.com/$full_name.git" "$destination" >/dev/null 2>&1; then
+      rm -rf -- "$destination"
+      printf 'Git mirror clone failed\n' >&2
+      return 1
+    fi
+  fi
+}
+
+prune_tree() {
+  local tree=$1
+  local expected="$workspace/$tree.expected"
+  local existing="$workspace/$tree.existing"
+  find "$root/$tree" -mindepth 2 -maxdepth 2 -type d -name '*.git' -printf '%P\n' | sort > "$existing"
+  sort -u "$expected" -o "$expected"
+  comm -23 "$existing" "$expected" | while IFS= read -r stale; do
+    [[ -z "$stale" ]] || rm -rf -- "${root:?}/$tree/$stale"
+  done
+}
+
+{% for installation in git_mirror_installations %}
+owner="{{ installation.owner }}"
+token_path="{{ installation.token_path }}"
+private_for_all="{{ installation.private_for_all | bool | lower }}"
+openbao_token="$(< "$BAO_TOKEN_FILE")"
+installation_token="$(BAO_ADDR="$BAO_ADDR" BAO_TOKEN="$openbao_token" {{ git_mirror_bao_bin }} write -field=token "$token_path")"
+unset openbao_token
+export GH_TOKEN="$installation_token"
+git_auth="$(printf 'x-access-token:%s' "$installation_token" | base64 | tr -d '\n')"
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $git_auth"
+unset installation_token git_auth
+
+if ! gh api --paginate --jq \
+  '.repositories[] | select((.owner.login | ascii_downcase) == ("{{ installation.owner | lower }}" | ascii_downcase)) | [.full_name, (.private | tostring)] | @tsv' \
+  /installation/repositories > "$workspace/repos.tsv"; then
+  printf 'GitHub repository listing failed for a configured installation\n' >&2
+  exit 1
+fi
+while IFS=$'\t' read -r full_name is_private; do
+  [[ "$full_name" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+    printf 'GitHub returned an invalid repository name\n' >&2
+    exit 1
+  }
+  returned_owner="$(printf '%s' "$full_name" | cut -d/ -f1 | tr '[:upper:]' '[:lower:]')"
+  configured_owner="$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$returned_owner" != "$configured_owner" ]]; then
+    printf 'GitHub returned a repository outside the configured owner\n' >&2
+    exit 1
+  fi
+  if [[ "$is_private" == true && "$private_for_all" != true ]]; then
+    continue
+  fi
+  printf '%s\n' "$full_name" >> "$workspace/all.expected"
+  mirror_repo all "$full_name"
+  if [[ "$is_private" == false ]]; then
+    printf '%s\n' "$full_name" >> "$workspace/public.expected"
+    mirror_repo public "$full_name"
+  fi
+done < "$workspace/repos.tsv"
+unset GH_TOKEN GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+{% endfor %}
+
+prune_tree public
+prune_tree all

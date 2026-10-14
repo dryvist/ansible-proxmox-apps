@@ -1,10 +1,23 @@
 ---
-# Native Nautobot (issue #138). Two layers:
-#   * always: system deps, user/dirs, Redis, SECRET_KEY, config + env + uWSGI +
-#     jobs + systemd units. Deterministic, molecule-tested.
-#   * nautobot_manage_app (default true): venv + pip install of Nautobot and
-#     apps, migrate/post_upgrade, superuser, service start, export schedule,
-#     HTTP health. Skipped by molecule; validated live at cutover.
+# Native Nautobot (issue #138). Layers:
+#   * server: system deps, user/dirs, Redis, SECRET_KEY, venv + pip install,
+#     config + env + uWSGI + systemd units, and (nautobot_manage_app) migrate,
+#     superuser, service start and HTTP health. Owned by the collection server
+#     role when nautobot_server_via_collection is true (server_collection.yml),
+#     otherwise by this role (server_legacy.yml).
+#   * always: jobs, export contract, seed bundle.
+#   * nautobot_manage_app (default true): tokens, export schedule, discovery
+#     schedule and the seed jobs. Skipped by molecule; validated live at cutover.
+#
+# With nautobot_server_via_collection true the converge splits into two parts
+# that each run alone, so a Semaphore task stays under its time cap:
+#   * nautobot_server: the collection server role, including its restart
+#     handlers. Run it alone with  --skip-tags nautobot_jobs
+#   * nautobot_jobs: Jobs, export contract, seed bundle, post-upgrade, tokens,
+#     schedules and seed jobs, with the restart that follows the Job files.
+#     Run it alone with  --skip-tags nautobot_server
+# Neither skip tag selects anything by itself: the template's stored --tags
+# keeps the play selected. A run with neither skip tag does both parts in order.
 
 # The database password is rendered into the config and applied to the Postgres
 # role, so an empty one locks Nautobot out of its own database while the
@@ -18,65 +31,9 @@
       - nautobot_db_password
 
 # =============================================================================
-# Phases 1-3: system, Redis, SECRET_KEY  (see the included files)
+# Export guards. They run before the environment file is rendered, by either
+# server layer.
 # =============================================================================
-- name: Install system packages, the service user, its directories and Redis
-  ansible.builtin.include_tasks: system_and_redis.yml
-
-- name: Resolve, persist and publish the SECRET_KEY
-  ansible.builtin.include_tasks: secret_key.yml
-
-# =============================================================================
-# Phase 4: Python venv + Nautobot install (heavy — gated)
-# =============================================================================
-- name: Create the Nautobot virtualenv
-  ansible.builtin.command:
-    cmd: "python3 -m venv {{ nautobot_root }}"
-    creates: "{{ nautobot_root }}/bin/python"
-  become: true
-  become_user: "{{ nautobot_user }}"
-
-- name: Install/upgrade pip tooling in the venv
-  ansible.builtin.pip:
-    name:
-      - pip
-      - wheel
-    state: latest  # noqa package-latest - pip/wheel bootstrap, not app pinning
-    virtualenv: "{{ nautobot_root }}"
-  become: true
-  become_user: "{{ nautobot_user }}"
-  when: nautobot_manage_app | bool
-
-- name: Install Nautobot and apps into the venv
-  ansible.builtin.pip:
-    name: "{{ nautobot_pip_packages }}"
-    state: present
-    virtualenv: "{{ nautobot_root }}"
-  register: nautobot_pip_install
-  become: true
-  become_user: "{{ nautobot_user }}"
-  when: nautobot_manage_app | bool
-
-- name: Pin the app packages in local_requirements for future upgrades
-  ansible.builtin.copy:
-    content: "{{ nautobot_pip_packages | join('\n') }}\n"
-    dest: "{{ nautobot_root }}/local_requirements.txt"
-    owner: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    mode: "0644"
-
-# =============================================================================
-# Phase 5: Configuration, environment, uWSGI, jobs (always)
-# =============================================================================
-- name: Render nautobot_config.py
-  ansible.builtin.template:
-    src: nautobot_config.py.j2
-    dest: "{{ nautobot_root }}/nautobot_config.py"
-    owner: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    mode: "0644"
-  notify: Restart nautobot services
-
 # Guard the one value that breaks silently. An empty bucket templates into the
 # EnvironmentFile exactly like a real one, so the converge stays green and the
 # failure surfaces only in the next scheduled export's own log, while the last
@@ -108,24 +65,87 @@
       ambient credentials — never one.
     quiet: true
 
-- name: Render the root-only environment file
-  ansible.builtin.template:
-    src: nautobot.env.j2
-    dest: "{{ nautobot_root }}/nautobot.env"
-    owner: "{{ nautobot_user }}"
-    group: "{{ nautobot_group }}"
-    mode: "0600"
-  no_log: true
-  notify: Restart nautobot services
+# The legacy server layer cannot be split: its application bring-up sits after
+# the Job files. Refuse a partial run rather than half-converge it.
+- name: Refuse a partial run of the role's own server layer
+  ansible.builtin.assert:
+    that:
+      - ansible_skip_tags | intersect(['nautobot_server', 'nautobot_jobs']) | length == 0
+    fail_msg: >-
+      --skip-tags nautobot_server / nautobot_jobs split the converge only when
+      nautobot_server_via_collection is true. Drop the skip tag, or set the flag.
+    quiet: true
+  when: not (nautobot_server_via_collection | bool)
 
-- name: Render the uWSGI config
-  ansible.builtin.template:
-    src: uwsgi.ini.j2
-    dest: "{{ nautobot_root }}/uwsgi.ini"
+# =============================================================================
+# Part 1, nautobot_server: one owner per run
+# =============================================================================
+- name: Converge the server layer through the collection role
+  ansible.builtin.include_tasks:
+    file: server_collection.yml
+    apply:
+      tags: [nautobot_server]
+  when: nautobot_server_via_collection | bool
+  tags: [nautobot_server]
+
+- name: Converge the server layer in this role
+  ansible.builtin.include_tasks:
+    file: server_legacy.yml
+    apply:
+      tags: [nautobot_server]
+  when: not (nautobot_server_via_collection | bool)
+  tags: [nautobot_server]
+
+# =============================================================================
+# Part 2, nautobot_jobs: Jobs and the export contract (always)
+# =============================================================================
+# A part-2-only run starts without the fact part 1 sets, so read the key the
+# collection persisted. A full run already has it and skips these two.
+- name: Read the SECRET_KEY the server layer persisted
+  ansible.builtin.slurp:
+    src: "{{ nautobot_secret_key_file }}"
+  register: nautobot_secret_key_slurp
+  no_log: true
+  failed_when: false
+  when:
+    - nautobot_server_via_collection | bool
+    - nautobot_effective_secret_key is not defined
+  tags: [nautobot_jobs]
+
+# no_log hides the module error, so the missing-file case needs its own message.
+- name: Require the persisted SECRET_KEY
+  ansible.builtin.assert:
+    that:
+      - nautobot_secret_key_slurp.content is defined
+    fail_msg: >-
+      {{ nautobot_secret_key_file }} could not be read. Run part 1
+      (--skip-tags nautobot_jobs) on this host first.
+    quiet: true
+  when: nautobot_secret_key_slurp is not skipped
+  tags: [nautobot_jobs]
+
+- name: Expose the persisted SECRET_KEY to this role
+  ansible.builtin.set_fact:
+    nautobot_effective_secret_key: "{{ nautobot_secret_key_slurp.content | b64decode | trim }}"
+  no_log: true
+  when: nautobot_secret_key_slurp is not skipped
+  tags: [nautobot_jobs]
+
+# The collection creates the root and static directories; the Jobs root and the
+# export contract directory belong to the layers this role keeps. The legacy
+# server layer creates them itself (system_and_redis.yml).
+- name: Create the Jobs and export contract directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
     owner: "{{ nautobot_user }}"
     group: "{{ nautobot_group }}"
-    mode: "0644"
-  notify: Restart nautobot services
+    mode: "0755"
+  loop:
+    - "{{ nautobot_jobs_root }}"
+    - "{{ nautobot_export_schema_dir }}"
+  when: nautobot_server_via_collection | bool
+  tags: [nautobot_jobs]
 
 - name: Deploy the SSoT/export/onboarding jobs into JOBS_ROOT
   ansible.builtin.copy:
@@ -136,6 +156,7 @@
     mode: "0644"
   register: nautobot_jobs_deploy
   notify: Restart nautobot services
+  tags: [nautobot_jobs]
 
 - name: Deploy the Nautobot export schema contract
   ansible.builtin.copy:
@@ -145,98 +166,57 @@
     group: "{{ nautobot_group }}"
     mode: "0644"
   notify: Restart nautobot services
-
-# =============================================================================
-# Phase 6: systemd units (always deployed; started only when managing the app)
-# =============================================================================
-- name: Deploy the Nautobot systemd units
-  ansible.builtin.template:
-    src: "{{ item }}.j2"
-    dest: "/etc/systemd/system/{{ item }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop:
-    - nautobot-server.service
-    - nautobot-worker.service
-    - nautobot-scheduler.service
-  notify:
-    - Reload systemd daemon
-    - Restart nautobot services
+  tags: [nautobot_jobs]
 
 # =============================================================================
 # Phase 6b: Seed-bundle assembly (cutover-gated)
 # =============================================================================
 - name: Assemble and place the seed bundle
-  ansible.builtin.include_tasks: seed_bundle.yml
+  ansible.builtin.include_tasks:
+    file: seed_bundle.yml
+    apply:
+      tags: [nautobot_jobs]
   when: nautobot_build_seed | bool
+  tags: [nautobot_jobs]
 
 # =============================================================================
-# Phase 7: Live application bring-up (gated)
+# Phase 7: Live application bring-up (gated). Its handler flushes restart the
+# services after the Job files above, inside this same part.
 # =============================================================================
 - name: Bring up the Nautobot application
   when: nautobot_manage_app | bool
   become: true
+  tags: [nautobot_jobs]
   block:
-    - name: Apply database migrations
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server migrate"
-      environment: "{{ nautobot_env }}"
-      register: nautobot_migrate
-      changed_when: "'No migrations to apply' not in nautobot_migrate.stdout"
-      become: true
-      become_user: "{{ nautobot_user }}"
+    - name: Run the role's own migrations, post-upgrade and superuser bootstrap
+      ansible.builtin.include_tasks: server_legacy_app.yml
+      when: not (nautobot_server_via_collection | bool)
 
-    # The stamp records the package pins post_upgrade last completed for. A
-    # converge that installs new packages and then fails before this point
-    # reports the install as unchanged on the rerun, so the changed flags alone
-    # would skip post_upgrade (and its collectstatic) for good.
-    - name: Check which package pins post-upgrade last completed for
-      ansible.builtin.stat:
-        path: "{{ nautobot_root }}/.post_upgrade_stamp"
-        checksum_algorithm: sha1
-      register: nautobot_post_upgrade_stamp
-      become: true
-      become_user: "{{ nautobot_user }}"
-
-    - name: Run Nautobot post-upgrade operations after app or Job changes
+    # The collection server role has already migrated and started the services,
+    # so only the Job files this role deploys can still need registering.
+    - name: Run Nautobot post-upgrade operations after Job changes
       ansible.builtin.command:
         cmd: "{{ nautobot_root }}/bin/nautobot-server post_upgrade --no-migrate"
       environment: "{{ nautobot_env }}"
       changed_when: true
       become: true
       become_user: "{{ nautobot_user }}"
-      when: >-
-        nautobot_pip_install.changed | default(false)
-        or nautobot_jobs_deploy.changed | default(false)
-        or (nautobot_post_upgrade_stamp.stat.checksum | default(''))
-        != (nautobot_pip_packages | join(',') | hash('sha1'))
-
-    - name: Record the package pins post-upgrade completed for
-      ansible.builtin.copy:
-        content: "{{ nautobot_pip_packages | join(',') }}"
-        dest: "{{ nautobot_root }}/.post_upgrade_stamp"
-        owner: "{{ nautobot_user }}"
-        group: "{{ nautobot_group }}"
-        mode: "0644"
-
-    - name: Ensure the Nautobot superuser exists
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
-        stdin: "{{ lookup('ansible.builtin.file', 'superuser_bootstrap.py') }}"
-      environment: "{{ nautobot_env }}"
-      register: nautobot_superuser
-      changed_when: "'SUPERUSER_CHANGED' in nautobot_superuser.stdout"
-      become: true
-      become_user: "{{ nautobot_user }}"
-      no_log: true
+      when:
+        - nautobot_server_via_collection | bool
+        - nautobot_jobs_deploy.changed | default(false)
 
     - name: Publish a role-managed read-only inventory token to OpenBao
-      ansible.builtin.include_tasks: readonly_token.yml
+      ansible.builtin.include_tasks:
+        file: readonly_token.yml
+        apply:
+          tags: [nautobot_jobs]
       when: nautobot_token_publish_openbao | bool
 
     - name: Publish a role-managed read-only MCP token to OpenBao
-      ansible.builtin.include_tasks: mcp_token.yml
+      ansible.builtin.include_tasks:
+        file: mcp_token.yml
+        apply:
+          tags: [nautobot_jobs]
       when: nautobot_mcp_token_publish_openbao | bool
 
     - name: Apply pending systemd reload before starting services
@@ -251,6 +231,7 @@
         - nautobot-server
         - nautobot-worker
         - nautobot-scheduler
+      when: not (nautobot_server_via_collection | bool)
 
     - name: Schedule the export Job via celery beat
       ansible.builtin.command:

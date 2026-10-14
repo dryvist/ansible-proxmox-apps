@@ -1,0 +1,53 @@
+---
+# The pve-exporter container runs as a pinned numeric user, and the root-owned
+# config file it reads (it carries the API token) is group-owned by the same id.
+# An unprivileged image user cannot open a root:root 0640 file, which crash-loops
+# the container. Renders the REAL compose template against the REAL role
+# defaults and reads the REAL task that writes pve.yml.
+- name: Verify the PVE exporter container user and config group
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _role: "{{ playbook_dir }}/../../../roles/prometheus_pve_exporter"
+
+  vars_files:
+    - "../../../roles/prometheus_pve_exporter/defaults/main.yml"
+
+  tasks:
+    - name: Render the compose file
+      ansible.builtin.set_fact:
+        _compose: "{{ lookup('template', _role ~ '/templates/docker-compose.yml.j2') | from_yaml }}"
+
+    - name: Find the task that writes pve.yml
+      ansible.builtin.set_fact:
+        _cfg_task: >-
+          {{ (lookup('file', _role ~ '/tasks/main.yml') | from_yaml)
+             | selectattr('block', 'defined') | map(attribute='block') | flatten
+             | selectattr('name', 'equalto', 'Render pve-exporter configuration')
+             | first }}
+
+    - name: The container runs as the pinned numeric user
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _compose.services['pve-exporter'].user == (prometheus_pve_exporter_uid ~ ':' ~ prometheus_pve_exporter_uid)
+          - prometheus_pve_exporter_uid is match('^[0-9]+$')
+        fail_msg: >-
+          The pve-exporter service must pin user to the numeric uid:gid from
+          prometheus_pve_exporter_uid. Rendered: {{ _compose.services['pve-exporter'].user | default('none') }}.
+        success_msg: Container user is the pinned numeric uid:gid.
+
+    - name: The config file is group-owned by that user and not world-readable
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'prometheus_pve_exporter_uid' in _cfg_task['ansible.builtin.template'].group"
+          - _cfg_task['ansible.builtin.template'].owner == 'root'
+          - _cfg_task['ansible.builtin.template'].mode == '0640'
+        fail_msg: >-
+          pve.yml must be root-owned, 0640, with the container user as its group.
+          Task: {{ _cfg_task['ansible.builtin.template'] }}.
+        success_msg: pve.yml is root:uid 0640.

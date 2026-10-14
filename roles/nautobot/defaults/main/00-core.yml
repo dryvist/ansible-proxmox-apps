@@ -8,6 +8,15 @@ nautobot_root: /opt/nautobot
 nautobot_user: nautobot
 nautobot_group: nautobot
 
+# Server layer owner. When true, the jpe_ansible.nautobot.server collection role
+# installs, configures, migrates and starts Nautobot (tasks/server_collection.yml)
+# and this role keeps only the layers the collection does not yet own: jobs,
+# export contract, seed bundle, tokens and schedules. When false, this role runs
+# its own server layer (tasks/server_legacy.yml). A run opts in with
+# -e nautobot_server_via_collection=true; the server_* mapping it reads is in
+# inventory/group_vars/nautobot_group.yml.
+nautobot_server_via_collection: false
+
 # System packages: python build chain, libpq for psycopg, redis, git.
 nautobot_system_packages:
   - python3
@@ -48,7 +57,7 @@ nautobot_device_onboarding_version: "5.6.0"
 # migration, and pip resolves them against whatever Nautobot itself requires.
 nautobot_pip_packages:
   - "nautobot=={{ nautobot_version }}"
-  - "nautobot-ssot=={{ nautobot_ssot_version }}"
+  - "nautobot-ssot[bootstrap]=={{ nautobot_ssot_version }}"
   - "nautobot-device-onboarding=={{ nautobot_device_onboarding_version }}"
   - boto3
   - jsonschema
@@ -171,6 +180,11 @@ nautobot_export_schedule_minute: 17
 # inventory group_vars) so it resolves under molecule too. Keep in lockstep with
 # templates/nautobot.env.j2, which renders from this dict.
 nautobot_env: >-
+  {{ nautobot_env_without_secret_key
+     | combine({'NAUTOBOT_SECRET_KEY': nautobot_effective_secret_key}) }}
+# Everything in nautobot_env except the SECRET_KEY. The collection server role
+# resolves and adds the SECRET_KEY itself, so it takes this dict as server_env.
+nautobot_env_without_secret_key: >-
   {{ nautobot_env_base
      | combine({'AWS_ENDPOINT_URL_S3': nautobot_export_s3_endpoint}
                if nautobot_export_s3_endpoint | length > 0 else {})
@@ -182,7 +196,6 @@ nautobot_env: >-
                if nautobot_onboard_username | length > 0 else {}) }}
 nautobot_env_base:
   NAUTOBOT_ROOT: "{{ nautobot_root }}"
-  NAUTOBOT_SECRET_KEY: "{{ nautobot_effective_secret_key }}"
   NAUTOBOT_DB_PASSWORD: "{{ nautobot_db_password }}"
   NAUTOBOT_SUPERUSER_NAME: "{{ nautobot_superuser_name }}"
   NAUTOBOT_SUPERUSER_EMAIL: "{{ nautobot_superuser_email }}"

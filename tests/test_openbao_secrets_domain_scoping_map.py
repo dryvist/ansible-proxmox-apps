@@ -4,10 +4,11 @@ playbooks/site/00-load-and-telemetry.yml's "Pre-fetch resource-domain
 secrets from OpenBao" play declares openbao_secrets_domain_groups (which
 domains this run's hosts need, per group) as hand-maintained data,
 independent of the domain list in dryvist.secrets_management/roles/openbao_secrets/defaults/main/ and
-of the group names in that same play's own `hosts:` pattern plus the two
-small scope-detection plays immediately above it (media_group; the deadman
-watchdog group set). A typo or a renamed/removed domain or group on either
-side would make dryvist.secrets_management/roles/openbao_secrets/tasks/narrow_domains.yml silently
+of the group names in that same play's `hosts:` pattern, the two small
+scope-detection plays immediately above it, and the tofu-tag-derived groups
+used by the ClickHouse, Langfuse and Git mirror consumers. A typo or a
+renamed/removed domain or group on either side would make
+dryvist.secrets_management/roles/openbao_secrets/tasks/narrow_domains.yml silently
 decide a domain is never needed -- exactly the empty-secret-over-a-live-one
 failure class this scoping was built not to reintroduce.
 
@@ -32,9 +33,15 @@ DOMAINS_FILE = SECRETS_ROLES / "openbao_secrets" / "defaults" / "main" / "01-dom
 LEGACY_PREFETCH_GROUPS_FILE = (
     ROOT / "tests" / "inventory_load" / "managed_secrets_legacy_groups.yml"
 )
+LXC_GROUPS_FILE = ROOT / "inventory" / "load_tofu" / "add_lxc_hosts.yml"
 
 PREFETCH_PLAY_NAME = "Pre-fetch resource-domain secrets from OpenBao"
 MEDIA_SCOPE_GROUP = "media_group"
+TOFU_TAG_CONSUMER_GROUPS = {
+    "clickhouse_group": "clickhouse",
+    "langfuse_group": "langfuse",
+    "git_mirror_group": "git-mirror",
+}
 DEADMAN_SCOPE_GROUPS = {
     "technitium_dns_group",
     "traefik_group",
@@ -77,6 +84,19 @@ def _legacy_prefetch_groups() -> set[str]:
         return set(yaml.safe_load(f)["managed_secrets_legacy_groups"])
 
 
+def _tofu_tag_consumer_groups() -> set[str]:
+    source = LXC_GROUPS_FILE.read_text()
+    return {
+        group
+        for group, tag in TOFU_TAG_CONSUMER_GROUPS.items()
+        if re.search(
+            rf"\['{re.escape(group)}'\]\s*if '{re.escape(tag)}' in "
+            r"\(item\.value\.tags \| default\(\[\]\)\)",
+            source,
+        )
+    }
+
+
 def test_prefetch_play_selects_the_capability_group():
     assert _hosts_pattern_groups(_prefetch_play()["hosts"]) == {"managed_secrets_group"}
 
@@ -95,7 +115,12 @@ def test_every_mapped_domain_is_a_real_declared_domain():
 
 
 def test_every_mapped_group_is_reachable_by_the_scoping_gate():
-    reachable_groups = _legacy_prefetch_groups() | {MEDIA_SCOPE_GROUP} | DEADMAN_SCOPE_GROUPS
+    reachable_groups = (
+        _legacy_prefetch_groups()
+        | {MEDIA_SCOPE_GROUP}
+        | DEADMAN_SCOPE_GROUPS
+        | _tofu_tag_consumer_groups()
+    )
 
     all_mapped_groups: set[str] = set()
     for groups in _domain_groups().values():
@@ -106,10 +131,33 @@ def test_every_mapped_group_is_reachable_by_the_scoping_gate():
         f"openbao_secrets_domain_groups names group(s) {sorted(unreachable)} "
         "that the scoping gate can never see as active: they are neither in "
         "the pre-fetch play's own `hosts:` pattern nor one of the two "
-        "out-of-play scope groups (media_group, the deadman watchdog set) "
+        "out-of-play scope groups (media_group, the deadman watchdog set) or "
+        "a tofu-tag-derived consumer group "
         "detected by the plays immediately above it -- any domain mapped "
         "ONLY to such a group would never be fetched, on any run."
     )
+
+
+def test_clickhouse_domain_is_mapped_to_its_real_consumer_groups():
+    clickhouse_groups = _domain_groups().get("clickhouse", [])
+    assert clickhouse_groups == ["clickhouse_group", "langfuse_group"]
+    assert set(clickhouse_groups) <= _tofu_tag_consumer_groups()
+
+
+def _domains_requested_for_active_groups(active_groups: set[str]) -> set[str]:
+    domain_groups = _domain_groups()
+    return {
+        domain
+        for domain in _declared_domain_names()
+        if not domain_groups.get(domain)
+        or set(domain_groups[domain]).intersection(active_groups)
+    }
+
+
+def test_grafana_only_scope_still_fetches_apps_but_not_clickhouse():
+    requested = _domains_requested_for_active_groups({"grafana_group"})
+    assert "apps" in requested
+    assert "clickhouse" not in requested
 
 
 def test_domains_with_no_traced_consumer_are_left_unmapped_not_guessed():

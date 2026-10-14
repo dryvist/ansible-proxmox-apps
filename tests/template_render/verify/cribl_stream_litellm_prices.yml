@@ -1,0 +1,122 @@
+---
+- name: Render and verify the LiteLLM price collector
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/cribl_stream/templates"
+    cribl_stream_litellm_prices_enabled: true
+    cribl_stream_litellm_prices_schedule: "0 4 * * *"
+    cribl_stream_litellm_prices_url: >-
+      https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+
+  tasks:
+    - name: Render the LiteLLM price collector configuration
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/litellm_prices/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_prices_collector.yml"
+        mode: "0644"
+
+    - name: Render the LiteLLM price collector schedule
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/litellm_prices/schedule.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_prices_schedule.yml"
+        mode: "0644"
+
+    - name: Render the LiteLLM price unroll pipeline
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/litellm_price_unroll/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_price_unroll.yml"
+        mode: "0644"
+
+    - name: Render the LiteLLM price event breaker
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/litellm_prices/breaker.yml.j2"
+        dest: "{{ _fixture_dir }}/litellm_prices_breaker.yml"
+        mode: "0644"
+
+    - name: Load the rendered LiteLLM collector contract
+      ansible.builtin.set_fact:
+        _collector: "{{ lookup('file', _fixture_dir ~ '/litellm_prices_collector.yml') | from_yaml }}"
+        _schedule: "{{ lookup('file', _fixture_dir ~ '/litellm_prices_schedule.yml') | from_yaml }}"
+        _breaker: "{{ lookup('file', _fixture_dir ~ '/litellm_prices_breaker.yml') | from_yaml }}"
+        _pipeline: "{{ lookup('file', _fixture_dir ~ '/litellm_price_unroll.yml') | from_yaml }}"
+
+    - name: Read LiteLLM pipeline metadata expressions
+      ansible.builtin.set_fact:
+        _metadata: >-
+          {{ (_pipeline.functions | selectattr('id', 'equalto', 'eval')
+             | list | first).conf.add
+             | items2dict(key_name='name', value_name='value') }}
+
+    - name: Assert the REST collector GETs the official unpinned URL without auth
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _collector.conf.type == 'rest'
+          - _collector.conf.discovery.discoverType == 'none'
+          - _collector.conf.collectUrl == cribl_stream_litellm_prices_url
+          - _collector.conf.collectMethod == 'get'
+          - _collector.conf.authentication == 'none'
+          - _collector.conf.disableTimeFilter | bool
+        fail_msg: "The LiteLLM collector does not render the expected REST GET contract"
+
+    - name: Assert the event breaker suppresses delimiter splits with a safe size cap
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _schedule.input.breakerRulesets == ['litellm_pricefile']
+          - _breaker.litellm_pricefile.rules[0].condition == 'true'
+          - not _breaker.litellm_pricefile.rules[0].disabled | bool
+          - _breaker.litellm_pricefile.rules[0].eventBreakerRegex == '/\\b\\B/'
+          - _breaker.litellm_pricefile.rules[0].maxEventBytes | int > 3145728
+        fail_msg: >-
+          The LiteLLM response must remain one event for parsing and fit above 3 MiB.
+
+    - name: Assert the collector connection uses the unroll pipeline
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _schedule.input.connections[0].pipeline == 'litellm_price_unroll'
+          - _pipeline.output == 'splunk_hec_llm_pricefeed'
+          - (_pipeline.functions | map(attribute='id') | list) == ['parser', 'unroll', 'drop', 'eval', 'eval']
+          - _pipeline.functions[0].conf.mode == 'extract'
+          - _pipeline.functions[0].conf.type == 'json'
+          - _pipeline.functions[0].conf.srcField == '_raw'
+          - _pipeline.functions[0].conf.destField == 'model_catalog'
+          - _pipeline.functions[1].conf.srcField == 'Object.entries(model_catalog)'
+          - _pipeline.functions[1].conf.destField == 'model_entry'
+          - "'input_cost_per_token' in _pipeline.functions[2].filter"
+          - "'output_cost_per_token' in _pipeline.functions[2].filter"
+          - (_pipeline.functions[3].conf.add | selectattr('name', 'equalto', '_raw') | list | length) == 1
+          - '"JSON.stringify({" in _pipeline.functions[3].conf.add[0].value'
+          - "'cache_read_input_token_cost' in _pipeline.functions[3].conf.add[0].value"
+          - "'cache_creation_input_token_cost' in _pipeline.functions[3].conf.add[0].value"
+        fail_msg: >-
+          The collector must route each parsed model through the native
+          Parser, Unroll, Drop, and Eval pipeline in order.
+
+    - name: Assert the daily scheduled job routes the event to its dedicated HEC output
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _schedule.enabled | bool
+          - _schedule.schedule.cronSchedule == '0 4 * * *'
+          - _schedule.schedule.timezone == 'UTC'
+          - not _schedule.input.sendToRoutes | bool
+          - _schedule.input.connections[0].output == 'splunk_hec_llm_pricefeed'
+          - _metadata.index == "'llm_pricefeed'"
+          - _metadata.sourcetype == "'litellm:price'"
+          - _metadata.source == "'litellm-price-file'"
+        fail_msg: >-
+          The LiteLLM schedule must run daily at 04:00 UTC and the pipeline
+          must set index, sourcetype, and source for its per-index HEC output.
+
+    - name: LiteLLM price collector template verification PASSED
+      ansible.builtin.debug:
+        msg: >-
+          The REST GET, complete-document breaker, daily schedule, native
+          unroll pipeline, and per-index HEC metadata all render as required.

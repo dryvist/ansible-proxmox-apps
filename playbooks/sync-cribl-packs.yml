@@ -1,7 +1,7 @@
 ---
-# Cribl pack mirror — resolves the LATEST GitHub release of every dryvist
-# `cc-*` pack repo, mirrors its `.crbl` asset into object storage (RustFS) at
-# a version-free key, and publishes a manifest the `cribl_packs` role
+# Cribl pack mirror — resolves the LATEST GitHub release of every `cc-*` pack
+# repo in the pack-owning orgs (`cribl_packs_github_orgs`), mirrors its `.crbl`
+# asset into object storage (RustFS) at a version-free key, and publishes a manifest the `cribl_packs` role
 # installs from. Same shape as ansible-splunk's `sync-splunkbase.yml`:
 # version-free object keys, native S3 bucket versioning for history,
 # `channel=latest`/`version` tags, and a published manifest.json.
@@ -12,15 +12,12 @@
 # under a `cribl-packs/` prefix, rather than standing up a second bucket for
 # the same access pattern.
 #
-# The pack list is DERIVED from the dryvist org (repos named `cc-*`), never
+# The pack list is DERIVED from the pack-owning orgs (repos named `cc-*`), never
 # hand-listed: a new pack repo is picked up on the next run with no edit here.
 #
-# GitHub read: unauthenticated calls to the public REST API, same as every
-# other public-release fetch in this estate (cribl_edge_tarball_url,
-# splunk_docker's `github_repo` add-ons) — dryvist/cc-* are public repos, and
-# 60 req/hour unauthenticated comfortably covers one list-org call plus one
-# release lookup per pack on an hourly schedule. An optional GITHUB_TOKEN
-# env var raises the ceiling when present; nothing requires it.
+# GitHub read: use a short-lived OpenBao GitHub read token per org on every REST
+# API request. Workstation runs may use GITHUB_TOKEN instead. Org listings stop
+# after a short page (up to five pages); latest releases use the REST API.
 #
 # Idempotent: skips the download+upload when object storage's `version` tag
 # already matches the resolved latest release tag.
@@ -37,14 +34,18 @@
 - name: Load OpenTofu inventory (for object-storage endpoint)
   ansible.builtin.import_playbook: ../inventory/load_tofu.yml
 
-- name: Mirror latest dryvist cc-* Cribl pack releases into object storage
+- name: Mirror latest cc-* Cribl pack releases into object storage
   hosts: localhost
   connection: local
   gather_facts: false
+  become: false
   tags: [cribl_packs]
   vars:
+    # The inventory sets ansible_become for every host; the controller has no sudo.
+    ansible_become: false
     cribl_packs_github_api: "{{ cribl_packs_github_api_url | default('https://api.github.com') }}"
-    cribl_packs_github_org: dryvist
+    cribl_packs_github_orgs: [dryvist, jpe-cribl]
+    cribl_packs_github_mint_mount: github
     cribl_packs_sync_tmpdir: /tmp/cribl-packs-sync
     object_storage_bucket: splunk-addons
     cribl_packs_object_storage_prefix: cribl-packs
@@ -60,7 +61,7 @@
     - name: Check environment and object-storage client prerequisites
       ansible.builtin.include_tasks: tasks/sync-cribl-packs/preflight.yml
 
-    - name: Discover dryvist cc-* pack repos and resolve their latest releases
+    - name: Discover cc-* pack repos and resolve their latest releases
       ansible.builtin.include_tasks: tasks/sync-cribl-packs/discover-and-resolve.yml
 
     - name: Sync drifted packs and publish manifest
