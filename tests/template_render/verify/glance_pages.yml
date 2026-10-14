@@ -80,6 +80,7 @@
         desc: ""
         url: "https://router.example.invalid/ui"
         probe_url: "http://router.example.invalid"
+        probe_path: "/health/readiness"
 
   tasks:
     - name: Render generated-services.yml
@@ -96,6 +97,21 @@
     - name: Parse the rendered pages
       ansible.builtin.set_fact:
         _glance_pages: "{{ _glance_raw.content | b64decode | from_yaml }}"
+
+    - name: Read the UI monitor sites
+      ansible.builtin.set_fact:
+        _glance_monitor_sites: "{{ _glance_pages[0].columns[0].widgets[0].widgets[0].sites }}"
+
+    - name: Assert only the llm monitor appends its catalog probe path
+      ansible.builtin.assert:
+        that:
+          - _router_site.url == 'https://router.example.invalid/ui'
+          - _router_site['check-url'] == 'http://router.example.invalid/health/readiness'
+          - _dns_site['check-url'] == 'http://192.0.2.5:5380'
+        fail_msg: "Glance monitor URLs must append probe_path only for catalog entries that define it"
+      vars:
+        _router_site: "{{ _glance_monitor_sites | selectattr('title', 'equalto', 'ai · LLM router') | first }}"
+        _dns_site: "{{ _glance_monitor_sites | selectattr('title', 'equalto', 'dns · Technitium') | first }}"
 
     - name: Assert the opt-in LLM profile widget is absent by default
       ansible.builtin.assert:

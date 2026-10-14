@@ -1,0 +1,136 @@
+---
+- name: Verify the catalog uses the published router readiness path
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dashboard_catalog_base_domain: "pve.example.test"
+  tasks:
+    - name: Build a catalog with a published readiness path
+      ansible.builtin.set_fact:
+        tofu_data:
+          constants:
+            llm_router_probe_paths:
+              liveliness: "/health/liveliness"
+              readiness: "/health/readiness"
+          ingress:
+            - name: llm
+              group: ai
+              ip: "192.0.2.60"
+              port: 4000
+              sso: false
+              ui: true
+              url_path: "/ui"
+            - name: llm-ui
+              group: ai
+              ip: "192.0.2.61"
+              port: 4000
+              sso: true
+            - name: llm-ui-legacy
+              group: ai
+              ip: "192.0.2.62"
+              port: 4000
+              sso: true
+              dashboard: false
+            - name: vikunja
+              group: apps
+              ip: "192.0.2.63"
+              port: 3456
+              sso: false
+
+    - name: Build the shared dashboard catalog
+      ansible.builtin.include_role:
+        name: dashboard_catalog
+
+    - name: Index all catalog entries by name
+      ansible.builtin.set_fact:
+        _catalog_by_name: >-
+          {{ dict(dashboard_catalog_services_monitor
+             | map(attribute='name') | zip(dashboard_catalog_services_monitor)) }}
+
+    - name: Assert llm receives readiness and other entries retain their catalog data
+      ansible.builtin.assert:
+        that:
+          - _catalog_by_name.llm.probe_path == '/health/readiness'
+          - _catalog_by_name.llm.url == 'https://llm.pve.example.test/ui'
+          - _catalog_by_name.llm.probe_url == 'http://192.0.2.60:4000'
+          - _catalog_by_name['llm-ui'] == _expected_llm_ui
+          - _catalog_by_name['llm-ui-legacy'] == _expected_llm_ui_legacy
+          - _catalog_by_name.vikunja == _expected_vikunja
+          - >-
+            dashboard_catalog_services_monitor
+            | rejectattr('name', 'equalto', 'llm')
+            | selectattr('probe_path', 'defined') | list | length == 0
+        fail_msg: "Only the llm catalog entry may receive the published readiness path"
+      vars:
+        _expected_llm_ui:
+          name: llm-ui
+          title: llm-ui
+          group: ai
+          sso: true
+          ui: true
+          dashboard: true
+          section: null
+          desc: ""
+          fqdn: llm-ui.pve.example.test
+          url: https://llm-ui.pve.example.test
+          probe_url: http://192.0.2.61:4000
+        _expected_llm_ui_legacy:
+          name: llm-ui-legacy
+          title: llm-ui-legacy
+          group: ai
+          sso: true
+          ui: true
+          dashboard: false
+          section: null
+          desc: ""
+          fqdn: llm-ui-legacy.pve.example.test
+          url: https://llm-ui-legacy.pve.example.test
+          probe_url: http://192.0.2.62:4000
+        _expected_vikunja:
+          name: vikunja
+          title: vikunja
+          group: apps
+          sso: false
+          ui: true
+          dashboard: true
+          section: null
+          desc: ""
+          fqdn: vikunja.pve.example.test
+          url: https://vikunja.pve.example.test
+          probe_url: http://192.0.2.63:3456
+
+- name: Verify the catalog fails when the published readiness path is absent
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dashboard_catalog_base_domain: "pve.example.test"
+  tasks:
+    # set_fact outranks play vars and persists across plays on the same host,
+    # so the earlier play's tofu_data must be replaced the same way.
+    - name: Publish an inventory without the readiness constant
+      ansible.builtin.set_fact:
+        tofu_data:
+          ingress:
+            - name: llm
+              group: ai
+              ip: "192.0.2.60"
+              port: 4000
+              sso: false
+
+    - name: Capture the catalog failure when readiness is absent
+      block:
+        - name: Build a catalog without the readiness constant
+          ansible.builtin.include_role:
+            name: dashboard_catalog
+      rescue:
+        - name: Record the expected validation error
+          ansible.builtin.set_fact:
+            _missing_readiness_failed: true
+            _missing_readiness_message: "{{ ansible_failed_result.msg | default('') }}"
+
+    - name: Assert the missing readiness constant fails with operator guidance
+      ansible.builtin.assert:
+        that:
+          - _missing_readiness_failed | default(false)
+          - "'Re-run the tofu-proxmox workspace' in _missing_readiness_message"
+        fail_msg: "The dashboard catalog must fail when the published readiness path is absent"
