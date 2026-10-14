@@ -10,6 +10,7 @@
 #   3. The guest_node_exporter keep regex matches the node_disk_* families and
 #      still rejects an unlisted node_disk_* family.
 #   4. The Splunk keep-job list in cribl_stream_group.yml names cadvisor.
+#   5. The rendered config declares every scrape job name once.
 #
 # tofu_data is set as a FACT for the same reason as prometheus_llama_server_scrape.yml
 # (the group_vars expressions read hostvars['localhost']['tofu_data']), so this
@@ -66,6 +67,18 @@
     - name: Render prometheus.yml with docker_vms present
       ansible.builtin.set_fact:
         _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Seeded render declares every scrape job name once
+      vars:
+        _names: "{{ _seeded.scrape_configs | map(attribute='job_name') | list }}"
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _names | length == (_names | unique | length)
+        fail_msg: >-
+          Prometheus rejects a config that repeats a job name. Rendered job
+          names: {{ _names }}.
+        success_msg: Every scrape job name is unique.
 
     - name: Isolate the cadvisor job
       ansible.builtin.set_fact:
