@@ -1,5 +1,37 @@
 # Changelog
 
+## [5.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.2.0...v5.3.0) (2026-10-14)
+
+
+### Features
+
+* **agent-sandbox:** add operator domain list and docs mount ([#2637](https://github.com/dryvist/ansible-proxmox-apps/issues/2637)) ([03d57b4](https://github.com/dryvist/ansible-proxmox-apps/commit/03d57b4b70f7e62587ed4ab389fe899582693238))
+* **cribl:** authenticate the pack sync and page listings only while full ([#2648](https://github.com/dryvist/ansible-proxmox-apps/issues/2648)) ([6150acc](https://github.com/dryvist/ansible-proxmox-apps/commit/6150acc002191674fea408bd225a84e5139f7ca5))
+* **git-mirror:** add read-only git mirror role ([#2636](https://github.com/dryvist/ansible-proxmox-apps/issues/2636)) ([888a552](https://github.com/dryvist/ansible-proxmox-apps/commit/888a5526c66b9f5c96b48bd05d9ada2cb00fc373))
+* **nautobot:** converge server through collection role ([#2651](https://github.com/dryvist/ansible-proxmox-apps/issues/2651)) ([43e1ddf](https://github.com/dryvist/ansible-proxmox-apps/commit/43e1ddf5a96e2e7f58a1f0aaf0405c7a33c13f8c))
+* **nautobot:** run the server role in install, migrate and config stages ([#2667](https://github.com/dryvist/ansible-proxmox-apps/issues/2667)) ([99a44f2](https://github.com/dryvist/ansible-proxmox-apps/commit/99a44f2a431ed4f82f5ee13b84a3fa27a5a654ab))
+* **nautobot:** split the converge into tagged server and jobs parts ([7e08e99](https://github.com/dryvist/ansible-proxmox-apps/commit/7e08e9980e751ef2d9c31c7dda06c0340129d8dc))
+* **nautobot:** split the converge into tagged server and jobs parts ([#2653](https://github.com/dryvist/ansible-proxmox-apps/issues/2653)) ([df38da0](https://github.com/dryvist/ansible-proxmox-apps/commit/df38da00d38de5dfcff2f71d2732b3d11beb35db))
+* **postgres:** run the DR drill on the primary only and checksum key tables ([#2647](https://github.com/dryvist/ansible-proxmox-apps/issues/2647)) ([5154fe1](https://github.com/dryvist/ansible-proxmox-apps/commit/5154fe1768de27f8b6090996472f10512136e039))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** export the mirror, Vikunja and Zammad endpoints to the dispatcher ([#2674](https://github.com/dryvist/ansible-proxmox-apps/issues/2674)) ([4e96399](https://github.com/dryvist/ansible-proxmox-apps/commit/4e96399630878ede70773b4b823b8f6f18099b98))
+* **agent_sandbox:** export the repository owner denylist to the dispatcher ([#2672](https://github.com/dryvist/ansible-proxmox-apps/issues/2672)) ([cd07d45](https://github.com/dryvist/ansible-proxmox-apps/commit/cd07d45436955fb63a9cc280c7276561eb549f26))
+* **agent-sandbox:** poll the job image profile read past the task timeout ([#2654](https://github.com/dryvist/ansible-proxmox-apps/issues/2654)) ([51fafc9](https://github.com/dryvist/ansible-proxmox-apps/commit/51fafc971a6fca3d8492e15d731d3f0b974fe38c))
+* **ci:** avoid force reinstalling all Galaxy collections ([#2650](https://github.com/dryvist/ansible-proxmox-apps/issues/2650)) ([747d6ef](https://github.com/dryvist/ansible-proxmox-apps/commit/747d6ef437fc59d6eaa432ac296d631be72aa29f))
+* **cribl:** route vscode datatypes to the vscode index ([#2662](https://github.com/dryvist/ansible-proxmox-apps/issues/2662)) ([d4f486e](https://github.com/dryvist/ansible-proxmox-apps/commit/d4f486efd35166ef82508540eb4c389903ec4edd))
+* **cribl:** run the pack sync without privilege escalation ([784a5a0](https://github.com/dryvist/ansible-proxmox-apps/commit/784a5a07ef0b794ece44a3ef126d5a721755f2e1))
+* **cribl:** run the pack sync without privilege escalation ([#2646](https://github.com/dryvist/ansible-proxmox-apps/issues/2646)) ([784a5a0](https://github.com/dryvist/ansible-proxmox-apps/commit/784a5a07ef0b794ece44a3ef126d5a721755f2e1))
+* **grafana_stack:** evaluate the frozen ETL rule on the summed counter ([#2670](https://github.com/dryvist/ansible-proxmox-apps/issues/2670)) ([a6aa070](https://github.com/dryvist/ansible-proxmox-apps/commit/a6aa0707935ed96f962921b26cec1a3f2edf230a))
+* **grafana_stack:** provision the webhook credential in contact point settings ([#2666](https://github.com/dryvist/ansible-proxmox-apps/issues/2666)) ([1d96aac](https://github.com/dryvist/ansible-proxmox-apps/commit/1d96aac0f05cf5306d12dd36b37123a8aa2d985b))
+* **grafana_stack:** quote the ZDR rule matchers as raw strings ([096d256](https://github.com/dryvist/ansible-proxmox-apps/commit/096d2561a42b20cf0a7f85224e5d34aaeff8d67f))
+* **grafana_stack:** use raw strings for alert rule label matchers ([#2659](https://github.com/dryvist/ansible-proxmox-apps/issues/2659)) ([25d09ab](https://github.com/dryvist/ansible-proxmox-apps/commit/25d09ab505ec802a3ae07f1db2b1041cb31b6dd9))
+* **openbao:** fetch the clickhouse secret domain only for its consumer groups ([#2643](https://github.com/dryvist/ansible-proxmox-apps/issues/2643)) ([2ab8e76](https://github.com/dryvist/ansible-proxmox-apps/commit/2ab8e761f219ef16ff6be48c91f7e61b8ce5c6ac))
+* **prometheus_pve_exporter:** run the exporter as a numeric user that can read its config ([#2657](https://github.com/dryvist/ansible-proxmox-apps/issues/2657)) ([0b35419](https://github.com/dryvist/ansible-proxmox-apps/commit/0b3541904a1cf7b38428948317d29de8eddbf875))
+* **prometheus:** declare the agentgateway scrape job once ([#2656](https://github.com/dryvist/ansible-proxmox-apps/issues/2656)) ([d3323e3](https://github.com/dryvist/ansible-proxmox-apps/commit/d3323e3d19402db251a579622782e34a7cd3c400))
+
 ## [5.2.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.1.0...v5.2.0) (2026-10-13)
 
 
