@@ -225,6 +225,47 @@
       loop: [jpe-cribl/cc-pack]
       no_log: true
 
+- name: Test extra GitHub orgs from the environment
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cases:
+      - name: empty
+        raw: ''
+        expect: [dryvist, jpe-cribl]
+      - name: one-extra
+        raw: extra-one
+        expect: [dryvist, jpe-cribl, extra-one]
+      - name: whitespace-empty-entries-and-duplicate
+        raw: ' extra-one , ,extra-two,dryvist '
+        expect: [dryvist, jpe-cribl, extra-one, extra-two]
+  tasks:
+    - name: Resolve extra orgs using the production expression
+      ansible.builtin.assert:
+        that:
+          - cribl_packs_github_orgs == item.expect
+        fail_msg: "case {{ item.name }}: unexpected org list {{ cribl_packs_github_orgs }}"
+        success_msg: "case {{ item.name }}: OK"
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        cribl_packs_extra_orgs_raw: "{{ item.raw }}"
+        cribl_packs_github_orgs: >-
+          {{ (['dryvist', 'jpe-cribl'] +
+              (cribl_packs_extra_orgs_raw | split(',') | map('trim')
+               | reject('equalto', '') | list)) | unique | list }}
+
+    - name: Verify the production playbook uses the environment variable and unique filter
+      ansible.builtin.assert:
+        that:
+          - "'CRIBL_PACKS_EXTRA_GITHUB_ORGS' in cribl_packs_sync_playbook"
+          - "'unique' in cribl_packs_sync_playbook"
+        quiet: true
+      vars:
+        cribl_packs_sync_playbook: >-
+          {{ lookup('file', playbook_dir ~ '/../../playbooks/sync-cribl-packs.yml') }}
+
 - name: Test every GitHub request task hides its result
   hosts: localhost
   gather_facts: false
@@ -299,3 +340,40 @@
       loop: "{{ cases }}"
       loop_control:
         label: "{{ item.name }}"
+
+- name: Test the GitHub token mint request
+  hosts: localhost
+  gather_facts: false
+  vars:
+    task_dir: "{{ playbook_dir }}/../../playbooks/tasks/sync-cribl-packs"
+    task_files: [mint-github-tokens.yml]
+  tasks:
+    - name: Load the GitHub token mint task file
+      ansible.builtin.set_fact:
+        mint_task_file_text: "{{ lookup('ansible.builtin.file', task_dir ~ '/' ~ item) }}"
+        mint_tasks: >-
+          {{ lookup('ansible.builtin.file', task_dir ~ '/' ~ item) | from_yaml }}
+      loop: "{{ task_files }}"
+      no_log: true
+
+    - name: Find the GitHub token mint task
+      ansible.builtin.set_fact:
+        mint_request_task: >-
+          {{ mint_tasks
+             | selectattr('name', 'equalto', 'Mint a GitHub read token for each org')
+             | first }}
+      no_log: true
+
+    - name: Require the single endpoint and fixed read permissions
+      ansible.builtin.assert:
+        that:
+          - >-
+            mint_request_task['community.hashi_vault.vault_write']['path']
+            is match('.*cribl_packs_github_mint_mount.*/token$')
+          - >-
+            mint_request_task['community.hashi_vault.vault_write']['data']['org_name'] is search('cribl_packs_mint_org')
+          - >-
+            mint_request_task['community.hashi_vault.vault_write']['data']['permissions']
+            == {'contents': 'read', 'metadata': 'read'}
+          - "'token/read-' not in mint_task_file_text"
+        quiet: true
