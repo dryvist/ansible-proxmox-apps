@@ -11,6 +11,15 @@
     nautobot_root: /opt/nautobot
 
   tasks:
+    - name: Check every Nautobot role task file
+      ansible.builtin.include_tasks: tasks/task_contract_tasks.yml
+      loop: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../roles/nautobot/tasks/*.yml') }}"
+      loop_control:
+        loop_var: nautobot_task_file
+        label: "{{ nautobot_task_file | basename }}"
+      vars:
+        nautobot_tasks_to_check: "{{ lookup('ansible.builtin.file', nautobot_task_file) | from_yaml }}"
+
     - name: Read the rendered nautobot_config.py
       ansible.builtin.slurp:
         src: "{{ nautobot_root }}/nautobot_config.py"
@@ -39,6 +48,37 @@
           - nautobot_env.stat.exists
           - nautobot_env.stat.mode == '0600'
         fail_msg: "nautobot.env missing or not 0600"
+
+    - name: Stat the command environment file
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/.nautobot-cmd-env.sh"
+      register: nautobot_cmd_env
+
+    - name: Assert the command environment file is present and owner-only
+      ansible.builtin.assert:
+        that:
+          - nautobot_cmd_env.stat.exists
+          - nautobot_cmd_env.stat.mode == '0600'
+        fail_msg: "Nautobot command environment file missing or not 0600"
+
+    - name: Read the command environment file
+      ansible.builtin.slurp:
+        src: "{{ nautobot_root }}/.nautobot-cmd-env.sh"
+      register: nautobot_cmd_env_content
+      no_log: true
+
+    - name: Assert the command environment file contains only export lines
+      ansible.builtin.assert:
+        that:
+          - command_env_lines | length > 1
+          - command_env_lines[0] is match('^# ')
+          - >-
+            command_env_lines[1:] | select('match', '^export [A-Za-z_][A-Za-z0-9_]*=') | list | length
+            == command_env_lines[1:] | length
+        fail_msg: "Nautobot command environment file does not contain shell-safe export lines"
+      vars:
+        command_env_lines: "{{ (nautobot_cmd_env_content.content | b64decode).splitlines() }}"
+      no_log: true
 
     - name: Read the environment file
       ansible.builtin.slurp:
