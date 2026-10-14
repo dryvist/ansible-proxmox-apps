@@ -131,6 +131,20 @@
   when: nautobot_secret_key_slurp is not skipped
   tags: [nautobot_jobs]
 
+- name: Render the shell-safe environment for Nautobot commands
+  ansible.builtin.copy:
+    content: |-
+      # Generated from nautobot_env; keep secrets out of sudo command lines.
+      {% for key, value in nautobot_env | dictsort -%}
+      export {{ key }}={{ value | string | quote }}
+      {% endfor -%}
+    dest: "{{ nautobot_root }}/.nautobot-cmd-env.sh"
+    owner: "{{ nautobot_user }}"
+    group: "{{ nautobot_group }}"
+    mode: "0600"
+  no_log: true
+  tags: [nautobot_jobs]
+
 # The collection creates the root and static directories; the Jobs root and the
 # export contract directory belong to the layers this role keeps. The legacy
 # server layer creates them itself (system_and_redis.yml).
@@ -195,9 +209,11 @@
     # The collection server role has already migrated and started the services,
     # so only the Job files this role deploys can still need registering.
     - name: Run Nautobot post-upgrade operations after Job changes
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server post_upgrade --no-migrate"
-      environment: "{{ nautobot_env }}"
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          exec {{ nautobot_root }}/bin/nautobot-server post_upgrade --no-migrate
+        executable: /bin/bash
       changed_when: true
       become: true
       become_user: "{{ nautobot_user }}"
@@ -234,13 +250,15 @@
       when: not (nautobot_server_via_collection | bool)
 
     - name: Schedule the export Job via celery beat
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          export
+          NAUTOBOT_EXPORT_SCHEDULE_HOUR={{ nautobot_export_schedule_hour | string | quote }}
+          NAUTOBOT_EXPORT_SCHEDULE_MINUTE={{ nautobot_export_schedule_minute | string | quote }} &&
+          exec {{ nautobot_root }}/bin/nautobot-server shell --interface python
         stdin: "{{ lookup('ansible.builtin.file', 'schedule_export.py') }}"
-      environment: >-
-        {{ nautobot_env | combine({
-             'NAUTOBOT_EXPORT_SCHEDULE_HOUR': nautobot_export_schedule_hour | string,
-             'NAUTOBOT_EXPORT_SCHEDULE_MINUTE': nautobot_export_schedule_minute | string}) }}
+        executable: /bin/bash
       register: nautobot_schedule
       changed_when: >-
         {{ 'SCHEDULE_CREATED' in nautobot_schedule.stdout
@@ -275,17 +293,19 @@
     # Schedule the SSH-CLI discovery sweep (SSOTSyncDevices). Inert unless
     # NAUTOBOT_ONBOARD_TARGETS is set — see the scope note in defaults/main.yml.
     - name: Schedule the device-discovery Job via celery beat
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          export
+          NAUTOBOT_ONBOARD_TARGETS={{ nautobot_onboard_targets | string | quote }}
+          NAUTOBOT_ONBOARD_PLATFORM={{ nautobot_onboard_platform | string | quote }}
+          NAUTOBOT_ONBOARD_LOCATION={{ nautobot_onboard_location | string | quote }}
+          NAUTOBOT_ONBOARD_PORT={{ nautobot_onboard_port | string | quote }}
+          NAUTOBOT_DISCOVERY_SCHEDULE_HOUR={{ nautobot_discovery_schedule_hour | string | quote }}
+          NAUTOBOT_DISCOVERY_SCHEDULE_MINUTE={{ nautobot_discovery_schedule_minute | string | quote }} &&
+          exec {{ nautobot_root }}/bin/nautobot-server shell --interface python
         stdin: "{{ lookup('ansible.builtin.file', 'schedule_discovery.py') }}"
-      environment: >-
-        {{ nautobot_env | combine({
-             'NAUTOBOT_ONBOARD_TARGETS': nautobot_onboard_targets,
-             'NAUTOBOT_ONBOARD_PLATFORM': nautobot_onboard_platform,
-             'NAUTOBOT_ONBOARD_LOCATION': nautobot_onboard_location,
-             'NAUTOBOT_ONBOARD_PORT': nautobot_onboard_port | string,
-             'NAUTOBOT_DISCOVERY_SCHEDULE_HOUR': nautobot_discovery_schedule_hour | string,
-             'NAUTOBOT_DISCOVERY_SCHEDULE_MINUTE': nautobot_discovery_schedule_minute | string}) }}
+        executable: /bin/bash
       register: nautobot_discovery_schedule
       changed_when: "'DISCOVERY_SCHEDULED' in nautobot_discovery_schedule.stdout"
       become: true
@@ -329,11 +349,13 @@
     # executes them with the units' EnvironmentFile, so it already holds the
     # seed-file path + export S3 credentials.
     - name: Run the SSoT seed jobs (and optional export) once
-      ansible.builtin.command:
-        cmd: "{{ nautobot_root }}/bin/nautobot-server shell --interface python"
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          export NAUTOBOT_RUN_EXPORT={{ nautobot_run_export | string | quote }} &&
+          exec {{ nautobot_root }}/bin/nautobot-server shell --interface python
         stdin: "{{ lookup('ansible.builtin.file', 'run_seed_jobs.py') }}"
-      environment: >-
-        {{ nautobot_env | combine({'NAUTOBOT_RUN_EXPORT': nautobot_run_export | string}) }}
+        executable: /bin/bash
       register: nautobot_run_seed
       # A job that FAILED also prints JOB_DONE (with status FAILURE), so match
       # the status too — otherwise a failed run reports `changed`.

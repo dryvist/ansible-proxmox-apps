@@ -1,0 +1,96 @@
+---
+- name: Assert Nautobot tasks keep secrets off command inputs
+  ansible.builtin.assert:
+    that:
+      - "'environment' not in nautobot_task"
+      - >-
+        (nautobot_command_text
+        | regex_search('(?i)(password|secret|token|credential|api_key|private_key)')) is none
+      - >-
+        "lookup('ansible.builtin.file'," not in nautobot_command_stdin
+        or (
+          nautobot_command_stdin.startswith(
+            '{' ~ '{ lookup(' ~ "'ansible.builtin.file', '"
+          )
+          and nautobot_command_stdin.endswith("') " ~ '}' ~ '}')
+          and nautobot_command_stdin.count('lookup(') == 1
+        )
+    fail_msg: >-
+      Task {{ nautobot_task.name | default('unnamed task') }} in
+      {{ nautobot_task_file | basename }} has environment or sensitive command input.
+    quiet: true
+  # A file lookup in stdin names a script; its result is sent in the module
+  # payload, not as a command-line argument, and may be omitted from this scan.
+  vars:
+    nautobot_action_arguments: >-
+      {{
+        nautobot_task.get(
+          'ansible.builtin.shell',
+          nautobot_task.get(
+            'shell',
+            nautobot_task.get(
+              'ansible.builtin.command',
+              nautobot_task.get('command', {})
+            )
+          )
+        )
+      }}
+    nautobot_command_stdin: >-
+      {{
+        nautobot_action_arguments.get('stdin', '')
+        if nautobot_action_arguments is mapping
+        else ''
+      }}
+    nautobot_command_text: >-
+      {{
+        [
+          nautobot_action_arguments if nautobot_action_arguments is string else '',
+          nautobot_action_arguments.get('cmd', '')
+            if nautobot_action_arguments is mapping else '',
+          nautobot_action_arguments.get('argv', [])
+            if nautobot_action_arguments is mapping else [],
+          (
+            ''
+            if "lookup('ansible.builtin.file'," in nautobot_command_stdin
+            else nautobot_command_stdin
+          ),
+          nautobot_task.get('free_form', ''),
+          nautobot_task.get('cmd', ''),
+          nautobot_task.get('argv', []),
+          nautobot_task.get('stdin', '')
+        ]
+        | string
+        | replace('.nautobot-cmd-env.sh', '')
+        | replace('.nautobot-task-env.sh', '')
+      }}
+  loop: "{{ nautobot_tasks_to_check }}"
+  loop_control:
+    loop_var: nautobot_task
+    label: "{{ nautobot_task.name | default('unnamed task') }}"
+
+- name: Check nested block, rescue, and always tasks
+  ansible.builtin.include_tasks: task_contract_tasks.yml
+  loop: >-
+    {{
+      (
+        nautobot_tasks_to_check
+        | selectattr('block', 'defined')
+        | map(attribute='block')
+        | list
+      )
+      + (
+        nautobot_tasks_to_check
+        | selectattr('rescue', 'defined')
+        | map(attribute='rescue')
+        | list
+      )
+      + (
+        nautobot_tasks_to_check
+        | selectattr('always', 'defined')
+        | map(attribute='always')
+        | list
+      )
+    }}
+  loop_control:
+    loop_var: nautobot_tasks_to_check
+    label: "{{ nautobot_tasks_to_check | length }} nested tasks"
