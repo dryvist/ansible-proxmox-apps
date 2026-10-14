@@ -1,0 +1,70 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: Phoenix database health.
+## Metrics are scraped by the `phoenix_postgres` job in prometheus_stack.
+## pg_locks_count{datname,mode} has no waiting/granted split and remains a dashboard series.
+---
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: phoenix-database
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: phoenix-postgres-exporter-down
+        title: Phoenix database exporter down
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: 1 - min(pg_up{job="phoenix_postgres"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: 5m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "The Phoenix database exporter or database has been unavailable for 5 minutes."
+
+      - uid: phoenix-postgres-long-transaction
+        title: Phoenix database transaction running long
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: max(pg_long_running_transactions_oldest_timestamp_seconds{job="phoenix_postgres"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_phoenix_postgres_max_transaction_seconds }}]}
+              refId: B
+        for: 10m
+        noDataState: NoData
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            The oldest Phoenix database transaction has run for {{ '{{' }} $values.A {{ '}}' }}
+            seconds, above {{ grafana_stack_alert_phoenix_postgres_max_transaction_seconds }} seconds.
+{% endif %}
