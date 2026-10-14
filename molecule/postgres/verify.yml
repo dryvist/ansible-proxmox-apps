@@ -1,4 +1,65 @@
 ---
+# YAML-only source contract for the narrow Phase 4 tag. Run this play with
+# `--tags postgres_roles_contract` to verify it without a Molecule container.
+- name: Verify postgres_roles tag contract
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags:
+    - postgres_roles_contract
+  vars:
+    postgres_main_tasks_path: "{{ playbook_dir }}/../../roles/postgres/tasks/main.yml"
+    postgres_phase4_tasks_path: "{{ playbook_dir }}/../../roles/postgres/tasks/main/roles_and_databases.yml"
+    postgres_phase4_task_name: Phase 4 -- provision managed roles, databases, and pg_hba
+  tasks:
+    - name: Check the Phase 4 task file exists
+      ansible.builtin.stat:
+        path: "{{ postgres_phase4_tasks_path }}"
+      register: postgres_phase4_task_file
+
+    - name: Assert the Phase 4 task file exists
+      ansible.builtin.assert:
+        that:
+          - postgres_phase4_task_file.stat.exists
+        quiet: true
+
+    - name: Read the PostgreSQL task files as YAML
+      ansible.builtin.set_fact:
+        postgres_main_tasks: >-
+          {{ lookup('ansible.builtin.file', postgres_main_tasks_path) | from_yaml }}
+        postgres_phase4_tasks: >-
+          {{ lookup('ansible.builtin.file', postgres_phase4_tasks_path) | from_yaml }}
+
+    - name: Assert postgres_roles selects only the static Phase 4 import
+      ansible.builtin.assert:
+        that:
+          - postgres_roles_tagged_tasks | length == 1
+          - postgres_roles_tagged_tasks[0].name == postgres_phase4_task_name
+          - postgres_roles_tagged_tasks[0]['ansible.builtin.import_tasks'] == 'main/roles_and_databases.yml'
+          - postgres_roles_tagged_tasks | map(attribute='name') | list == [postgres_phase4_task_name]
+        quiet: true
+      vars:
+        postgres_roles_tagged_tasks: >-
+          {{ postgres_main_tasks
+             | selectattr('tags', 'defined')
+             | selectattr('tags', 'contains', 'postgres_roles')
+             | list }}
+
+    - name: Assert Phase 4 tasks are not tagged never
+      ansible.builtin.assert:
+        that:
+          - "'never' not in phase4_task_tags"
+        quiet: true
+      vars:
+        phase4_tasks_with_blocks: >-
+          {{ postgres_phase4_tasks
+             + (postgres_phase4_tasks | map(attribute='block', default=[]) | flatten) }}
+        phase4_task_tags: >-
+          {{ phase4_tasks_with_blocks
+             | selectattr('tags', 'defined')
+             | map(attribute='tags')
+             | flatten }}
+
 # Verify the cluster is up, the nautobot role can authenticate over TCP with
 # scram from its allowed CIDR, the database exists and is owned correctly, and
 # the backup timer is scheduled.
