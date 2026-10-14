@@ -99,7 +99,9 @@ default and requires `agent_sandbox_git_mirror_url` when enabled.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `agent_sandbox_mirror_docs_enabled` | `false` | Enables mirror environment, the filtered docs copy, and its refresh timer. |
-| `agent_sandbox_git_mirror_url` | empty | HTTPS URL for the public mirror tree; required when the feature is enabled. |
+| `agent_sandbox_git_mirror_url` | published inventory URL | HTTPS public mirror tree; the dispatcher and the docs feature require it. |
+| `agent_sandbox_dispatch_vikunja_url` | `https://vikunja.<ingress domain>/api/v1` | Vikunja API base URL the dispatcher gives each job. |
+| `agent_sandbox_dispatch_zammad_url` | `https://zammad.<ingress domain>/api/v1` | Zammad API base URL the dispatcher gives each job. |
 | `agent_sandbox_docs_checkout_path` | `/srv/agent-docs` | Host path copied into the container read-only. |
 | `agent_sandbox_docs_container_path` | `/docs` | Container path for the read-only docs mount. |
 | `agent_sandbox_docs_branch` | `main` | Branch checked out from the mirrored docs repository. |
