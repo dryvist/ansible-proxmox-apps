@@ -53,7 +53,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `prometheus_pve_exporter_container_name` | `pve-exporter` | Container name. |
 | `prometheus_pve_exporter_port` | `9221` | Host port the exporter's multi-target endpoint is published on. |
 | `prometheus_pve_exporter_data_dir` | `/opt/prometheus-pve-exporter` | Compose project directory. |
-| `prometheus_pve_exporter_uid` | `"65534"` | Numeric uid:gid the container runs as; `pve.yml` is group-owned by it. |
+| `prometheus_pve_exporter_uid` | `"101"` | Numeric uid:gid the container runs as; `pve.yml` is group-owned by it. |
 | `prometheus_pve_exporter_token_id` | `bao_apps_secrets.pve_exporter_token_id` (env fallback) | Full PVE token identity (`user@realm!tokenname`). |
 | `prometheus_pve_exporter_token_secret` | `bao_apps_secrets.pve_exporter_token_secret` (env fallback) | PVE token secret value. |
 | `prometheus_pve_exporter_verify_ssl` | `false` | PVE's self-signed cert is not distributed to this container by this role. |
