@@ -75,6 +75,15 @@ ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
 
 See the flag ladder below before enabling anything that writes.
 
+## Secrets and command lines
+
+`nautobot.env` remains the systemd `EnvironmentFile`. One-shot management
+commands use `{{ nautobot_root }}/.nautobot-cmd-env.sh`, rendered from
+`nautobot_env` with shell-quoted `export` lines. It is owned by
+`nautobot_user:nautobot_group`, has mode `0600`, and is re-rendered on each role
+run. It remains on disk between runs at the same trust boundary as
+`nautobot.env`.
+
 ## Server layer owner
 
 `nautobot_server_via_collection` picks who runs the server layer: system
