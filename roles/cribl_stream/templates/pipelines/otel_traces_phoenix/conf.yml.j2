@@ -8,9 +8,10 @@
 # rewrites — those keys mean nothing to Phoenix and would only bloat spans.
 # What stays is everything that protects the destination or the data:
 #   1. drop non-trace signals   (destination ingests traces only)
-#   2. drop non-LLM plumbing    (keeps the trace viewer readable)
-#   3. trim noise               (always-empty attrs, multi-KB stack traces)
-#   4. redact credentials       (before content capture is ever enabled)
+#   2. keep one in N traces     (reduces Phoenix ingest volume)
+#   3. drop non-LLM plumbing    (keeps the trace viewer readable)
+#   4. trim noise               (always-empty attrs, multi-KB stack traces)
+#   5. redact credentials       (before content capture is ever enabled)
 #
 # Every list this template loops over is the SAME data the Langfuse leg reads
 # from defaults/main.yml — one list, two legs, no second copy to drift.
@@ -26,9 +27,19 @@ functions:
     filter: "!__otlp || __otlp.type !== 'traces'"
     disabled: false
     conf: {}
+{% if cribl_stream_phoenix_trace_keep_one_in > 1 %}
+
+  # A traceId-derived Drop keeps every span in a trace together; event-level
+  # sampling cannot group on traceId and would retain only part of each trace.
+  # 2. Missing or malformed trace ids pass through.
+  - id: drop
+    filter: "/^[0-9a-f]{32}$/i.test(String(traceId)) && parseInt(String(traceId).slice(-8), 16) % {{ cribl_stream_phoenix_trace_keep_one_in }} !== 0"
+    disabled: false
+    conf: {}
+{% endif %}
 {% if cribl_stream_otel_drop_span_names | length > 0 %}
 
-  # 2. Non-LLM plumbing, dropped from both trace destinations.
+  # 3. Non-LLM plumbing, dropped from both trace destinations.
   # Single-quoted YAML scalar: to_json emits double quotes, which would end a
   # double-quoted scalar early and render invalid YAML.
   - id: drop
@@ -50,7 +61,7 @@ functions:
         - name: "attributes['tag.tags']"
           value: "[...new Set([].concat(attributes['tag.tags'] || [], attributes['litellm.metadata.runner'], attributes['litellm.metadata.purpose']).filter(Boolean))]"
 
-  # 3. Noise removal.
+  # 4. Noise removal.
   - id: eval
     filter: "true"
     disabled: false
@@ -78,7 +89,7 @@ functions:
         a.metadata = JSON.stringify(m);
         for (var k in a) { if (a[k] === undefined || a[k] === null) { delete a[k]; } }
 
-  # 4. Credential redaction - see defaults/main.yml for the schema trap.
+  # 5. Credential redaction - see defaults/main.yml for the schema trap.
   - id: mask
     filter: "true"
     disabled: false
