@@ -1,0 +1,28 @@
+---
+# otel_traces_phoenix assertions, split out of assertions_pipelines.yml
+# to keep that file under the CI token-limit gate.
+
+- name: Assert otel_traces_phoenix keeps the guards and none of the Langfuse rewrites
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions | length == 7"
+      - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions[0].id == 'drop'"
+      - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions[1].id == 'drop'"
+      - >-
+        'traceId' in (_cribl_stream_otel_traces_phoenix | from_yaml).functions[1].filter
+        and '% 4 !== 0' in (_cribl_stream_otel_traces_phoenix | from_yaml).functions[1].filter
+      - >-
+        '/^[0-9a-f]{32}$/i.test(String(traceId))' in
+        (_cribl_stream_otel_traces_phoenix | from_yaml).functions[1].filter
+      - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions[-1].id == 'mask'"
+      - "(_cribl_stream_otel_traces_phoenix | from_yaml).output == 'phoenix_otlp'"
+      - "'langfuse.' not in (_cribl_stream_otel_traces_phoenix | regex_replace('#.*', ''))"
+      - "(_cribl_stream_otel_traces_phoenix_keep_all | from_yaml).functions | length == 6"
+      - "'traceId' not in _cribl_stream_otel_traces_phoenix_keep_all"
+    fail_msg: >-
+      otel_traces_phoenix must be the Langfuse leg minus its langfuse.*
+      rewrites: drop non-traces first, sample whole traces, drop plumbing,
+      trim noise, redact last, keep every trace when the ratio is 1, and
+      never write a langfuse.*-prefixed attribute — Phoenix reads the
+      emitted GenAI attributes as-is, and a rewrite here would be a second
+      copy of the Langfuse mapping to drift.
