@@ -107,23 +107,18 @@ inputs:
       # Third/fourth leg, same forwarded stream: Mac Edge llm_metrics
       # traffic (in_system_metrics + in_queue_metrics), stamped
       # sourcetype=mlx:metrics by the Edge-local llm_metrics pipeline.
-      # mlx_metrics_normalize drops every other sourcetype up front and
-      # republishes the rest as native Cribl metrics, fanned to both
-      # metric stores per operator policy. The raw-event copy (index=llm,
-      # via force_splunk_meta above) is untouched. Per-index HEC output:
-      # this leg is single-index (llm_metrics) once the pipeline's
-      # leading Drop isolates it, and it reuses the 'llm' per-index token
-      # — Splunk grants that token extra_hec_indexes: [llm_metrics]
-      # rather than minting a dedicated one (ansible-splunk).
+      # The MLX metrics pack filters and republishes this stream to both
+      # metric stores. The raw-event copy (index=llm, via force_splunk_meta
+      # above) is untouched.
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
       - output: splunk_hec_llm
-        pipeline: mlx_metrics_normalize
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
 {% else %}
       - output: splunk_hec
-        pipeline: mlx_metrics_normalize
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
 {% endif %}
       - output: victoriametrics_rw
-        pipeline: mlx_metrics_normalize
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   tcpjson:in_cribl_s2s_metrics:
     id: in_cribl_s2s_metrics
@@ -200,6 +195,13 @@ inputs:
     connections:
       - output: splunk_hec
         pipeline: prometheus_to_netmon
+{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
+      - output: splunk_hec_llm
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
+{% else %}
+      - output: splunk_hec
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
+{% endif %}
       - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   # unpoller (roles/unpoller, co-located on this guest): native Prometheus
@@ -297,10 +299,8 @@ inputs:
         pipeline: otel_metrics_to_victoriametrics
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   # Cribl's own built-in internal source (fixed ids CriblLogs/CriblMetrics —
-  # cannot be renamed or duplicated). Nothing else observes these two workers'
-  # own Cribl process today; the cribl_internal pipeline stamps both onto one
-  # dedicated index so Cribl's own health becomes visible in Splunk like every
-  # other source it forwards.
+  # cannot be renamed or duplicated). The internal telemetry pack routes logs
+  # to cribl_internal and metrics to host_metrics in Splunk.
   cribl:CriblLogs:
     id: CriblLogs
     type: cribl
@@ -309,10 +309,10 @@ inputs:
     connections:
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
       - output: splunk_hec_cribl_internal
-        pipeline: cribl_internal
+        pipeline: "pack:cc-stream-cribl-internal-telemetry"
 {% else %}
       - output: splunk_hec
-        pipeline: cribl_internal
+        pipeline: "pack:cc-stream-cribl-internal-telemetry"
 {% endif %}
   cribl:CriblMetrics:
     id: CriblMetrics
@@ -321,15 +321,14 @@ inputs:
     sendToRoutes: false
     connections:
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
-      - output: splunk_hec_cribl_internal
-        pipeline: cribl_internal
+      - output: splunk_hec_host_metrics
+        pipeline: "pack:cc-stream-cribl-internal-telemetry"
 {% else %}
       - output: splunk_hec
-        pipeline: cribl_internal
+        pipeline: "pack:cc-stream-cribl-internal-telemetry"
 {% endif %}
 {# Second leg, metrics only (CriblLogs above stays Splunk-only: logs don't
    fit a Prometheus sink). CriblMetrics events are native metrics
    (__criblMetrics), so they fan to victoriametrics_rw too, same pattern as
-   in_prometheus_rw/in_unpoller. This leg has no pipeline: the Splunk
-   index/sourcetype stamping pipeline does not apply to a metrics sink. #}
+   in_prometheus_rw/in_unpoller. This leg stays a bare pass-through. #}
       - output: victoriametrics_rw

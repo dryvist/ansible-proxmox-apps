@@ -1,0 +1,75 @@
+---
+- name: Assert the built-in Cribl Internal source uses the telemetry pack
+  vars:
+    _rendered_internal_inputs: "{{ _cribl_stream_inputs | from_yaml }}"
+  ansible.builtin.assert:
+    that:
+      - "'cribl:CriblLogs' in _cribl_stream_inputs"
+      - "'cribl:CriblMetrics' in _cribl_stream_inputs"
+      - "'id: CriblLogs' in _cribl_stream_inputs"
+      - "'id: CriblMetrics' in _cribl_stream_inputs"
+      - "_cribl_stream_inputs.count('type: cribl') == 2"
+      - >-
+        _rendered_internal_inputs.inputs['cribl:CriblLogs'].connections[0].pipeline
+        == 'pack:cc-stream-cribl-internal-telemetry'
+      - >-
+        _rendered_internal_inputs.inputs['cribl:CriblMetrics'].connections[0].pipeline
+        == 'pack:cc-stream-cribl-internal-telemetry'
+      - "'splunk_hec_cribl_internal' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_host_metrics' in _cribl_stream_outputs_pi"
+    fail_msg: >-
+      inputs.yml.j2 must declare Cribl's built-in CriblLogs and CriblMetrics
+      sources (type: cribl, fixed ids) wired via the internal telemetry pack
+      to their dedicated Splunk outputs, so the workers' own process logs
+      and metrics reach Splunk like every other source
+
+- name: Assert pack connections and per-index destinations render on inputs
+  vars:
+    _rendered_per_index_inputs: "{{ _cribl_stream_inputs_per_index | from_yaml }}"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_rendered_per_index_inputs.inputs['tcpjson:in_cribl_s2s'].connections
+        | selectattr('pipeline', 'equalto', 'pack:cc-stream-apple-mlx-metrics')
+        | map(attribute='output') | list) == ['splunk_hec_llm', 'victoriametrics_rw']
+      - >-
+        _rendered_per_index_inputs.inputs['prometheus_rw:in_prometheus_rw'].connections
+        == [{'output': 'splunk_hec', 'pipeline': 'prometheus_to_netmon'},
+            {'output': 'splunk_hec_llm',
+             'pipeline': 'pack:cc-stream-apple-mlx-metrics'},
+            {'output': 'victoriametrics_rw'}]
+      - >-
+        _rendered_per_index_inputs.inputs['cribl:CriblLogs'].connections
+        == [{'output': 'splunk_hec_cribl_internal',
+             'pipeline': 'pack:cc-stream-cribl-internal-telemetry'}]
+      - >-
+        _rendered_per_index_inputs.inputs['cribl:CriblMetrics'].connections
+        == [{'output': 'splunk_hec_host_metrics',
+             'pipeline': 'pack:cc-stream-cribl-internal-telemetry'},
+            {'output': 'victoriametrics_rw'}]
+    fail_msg: >-
+      The namespaced inputs render must bind the MLX and internal telemetry
+      packs to their existing destinations, route MacMon through the MLX pack
+      to Splunk, route CriblMetrics to splunk_hec_host_metrics, and leave its
+      VictoriaMetrics leg unprocessed
+
+# Every Splunk destination, base and per-index, must carry the post-processing
+# pipeline. Counting them against the number of splunk_hec outputs rather than
+# naming the indexes keeps this true as the per-index list grows: a new index
+# that reaches Splunk around the redaction is the failure worth catching, and
+# it would otherwise render clean.
+- name: Assert every splunk_hec output carries the post-processing pipeline
+  vars:
+    _pp_line: 'pipeline: "test-pack/test_redaction"'
+  ansible.builtin.assert:
+    that:
+      - "_cribl_stream_outputs_pi.count('type: splunk_hec') > 1"
+      - "_cribl_stream_outputs_pi.count('type: splunk_hec')
+         == _cribl_stream_outputs_pi.count(_pp_line)"
+    fail_msg: >-
+      outputs.yml.j2 renders
+      {{ _cribl_stream_outputs_pi.count('type: splunk_hec') }} splunk_hec
+      output(s) but only {{ _cribl_stream_outputs_pi.count(_pp_line) }}
+      post-processing pipeline line(s). A Splunk destination without it sends
+      unredacted events.
+    success_msg: every splunk_hec output carries the post-processing pipeline

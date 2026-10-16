@@ -3,9 +3,8 @@ must fan CriblMetrics -- and only CriblMetrics -- to victoriametrics_rw.
 
 CriblMetrics events are native Cribl metrics (they carry __criblMetrics), so
 they fit the Prometheus remote-write sink; CriblLogs events are raw log
-lines and don't. The Splunk leg (cribl_internal pipeline, stamping
-index/sourcetype) is unchanged for both inputs -- this only adds a second,
-metrics-only connection.
+lines and don't. The internal telemetry pack remains on the Splunk legs;
+this test also verifies the metrics-only VictoriaMetrics connection.
 
 Exact metric names in VictoriaMetrics (Cribl docs, docs.cribl.io/stream/
 internal-metrics/ + destinations-prometheus/): the per-output counters are
@@ -71,12 +70,12 @@ def test_cribl_metrics_connects_to_victoriametrics_and_splunk():
         vm_conn = next(c for c in connections if c["output"] == "victoriametrics_rw")
         assert "pipeline" not in vm_conn, (
             "CriblMetrics -> victoriametrics_rw must be a bare passthrough "
-            "(no cribl_internal pipeline, which only stamps Splunk metadata)"
+            "(no internal telemetry pack, which stamps Splunk metadata)"
         )
 
-        splunk_output = "splunk_hec_cribl_internal" if hec_namespace else "splunk_hec"
+        splunk_output = "splunk_hec_host_metrics" if hec_namespace else "splunk_hec"
         splunk_conn = next(c for c in connections if c["output"] == splunk_output)
-        assert splunk_conn["pipeline"] == "cribl_internal"
+        assert splunk_conn["pipeline"] == "pack:cc-stream-cribl-internal-telemetry"
 
 
 def test_cribl_logs_does_not_connect_to_victoriametrics():
@@ -92,11 +91,17 @@ def test_cribl_logs_does_not_connect_to_victoriametrics():
         assert len(connections) == 1
 
         splunk_output = "splunk_hec_cribl_internal" if hec_namespace else "splunk_hec"
-        assert connections[0] == {"output": splunk_output, "pipeline": "cribl_internal"}
+        assert connections[0] == {
+            "output": splunk_output,
+            "pipeline": "pack:cc-stream-cribl-internal-telemetry",
+        }
 
 
-def test_cribl_logs_splunk_connection_is_unchanged():
+def test_cribl_logs_splunk_connection_uses_internal_pack():
     inputs = _render_inputs(hec_namespace="")
     assert _connections(inputs, "cribl:CriblLogs") == [
-        {"output": "splunk_hec", "pipeline": "cribl_internal"}
+        {
+            "output": "splunk_hec",
+            "pipeline": "pack:cc-stream-cribl-internal-telemetry",
+        }
     ]
