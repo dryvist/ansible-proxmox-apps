@@ -170,10 +170,6 @@ prometheus_stack_llm_gpu_metrics_guests: >-
   {%- endif -%}
   {%- endfor -%}
   {{ guests }}
-prometheus_stack_llm_gpu_engine_metrics_port: "{{ prometheus_stack_llama_server_metrics_port }}"
-prometheus_stack_sglang_metrics_port: "{{ prometheus_stack_llm_gpu_engine_metrics_port }}"
-prometheus_stack_vllm_metrics_port: "{{ prometheus_stack_llm_gpu_engine_metrics_port }}"
-prometheus_stack_strata_metrics_port: "{{ prometheus_stack_llm_gpu_engine_metrics_port }}"
 prometheus_stack_dcgm_exporter_metrics_port: 9400
 
 prometheus_stack_extra_scrape_configs: |
@@ -257,29 +253,16 @@ prometheus_stack_extra_scrape_configs: |
         labels:
           guest: "{{ guest.name }}"
   {% endfor %}
-  - job_name: sglang_server
-    metrics_path: /metrics
-    static_configs:
-  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
-      - targets: ["{{ guest.address }}:{{ prometheus_stack_sglang_metrics_port }}"]
-        labels:
-          guest: "{{ guest.name }}"
-  {% endfor %}
-  - job_name: vllm_server
-    metrics_path: /metrics
-    static_configs:
-  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
-      - targets: ["{{ guest.address }}:{{ prometheus_stack_vllm_metrics_port }}"]
-        labels:
-          guest: "{{ guest.name }}"
-  {% endfor %}
-  - job_name: strata_server
+  # Strata serves Prometheus text only when requested with ?format=prometheus.
+  # vLLM and SGLang use the Prometheus client ASGI handler, which ignores this
+  # unknown query parameter; llama.cpp's /metrics handler also ignores queries.
+  - job_name: llm_gpu_engine
     metrics_path: /metrics
     params:
       format: ["prometheus"]
     static_configs:
   {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
-      - targets: ["{{ guest.address }}:{{ prometheus_stack_strata_metrics_port }}"]
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_llm_gpu_engine_metrics_port }}"]
         labels:
           guest: "{{ guest.name }}"
   {% endfor %}
