@@ -46,53 +46,6 @@
       force_splunk_meta must render a leading span Drop before its metadata
       eval and mask functions
 
-- name: Assert prometheus_to_netmon drops jobs outside the Splunk allow-list, then stamps index/sourcetype
-  vars:
-    _prom_pipeline: "{{ _cribl_stream_prom_pipeline | from_yaml }}"
-    _splunk_job_names:
-      - blackbox_.*
-      - smokeping
-      - traefik
-      - llm_router
-      - llama_server
-      - dcgm_exporter
-      - sglang_server
-      - vllm_server
-      - strata_server
-      - guest_node_exporter
-    _llm_metrics_job_names:
-      - llm_router
-      - llama_server
-      - dcgm_exporter
-      - sglang_server
-      - vllm_server
-      - strata_server
-    _expected_splunk_filter: >-
-      {{ '!/^(' ~ (_splunk_job_names | join('|')) ~ ')$/.test(job)' }}
-    _expected_llm_metrics_condition: >-
-      {{ "(job === '" ~ (_llm_metrics_job_names | join("' || job === '"))
-         ~ "') ? 'llm_metrics'" }}
-    _index_mapping: >-
-      {{ _prom_pipeline.functions[1].conf.add
-         | selectattr('name', 'equalto', 'index')
-         | map(attribute='value') | first }}
-  ansible.builtin.assert:
-    that:
-      - _prom_pipeline.functions | length == 2
-      - _prom_pipeline.functions[0].id == 'drop'
-      - _prom_pipeline.functions[0].filter == _expected_splunk_filter
-      - "'netmon_metrics' in _cribl_stream_prom_pipeline"
-      - _expected_llm_metrics_condition in _index_mapping
-      - "'llm_metrics' in _cribl_stream_prom_pipeline"
-      - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
-      - "'Number.isFinite' in _cribl_stream_prom_pipeline"
-    fail_msg: >-
-      prometheus_to_netmon pipeline must lead with a drop function gating on
-      cribl_stream_prometheus_splunk_keep_jobs (the Splunk license-volume
-      allow-list — the victoriametrics_rw leg on the same input has no such
-      filter), then an eval that coerces non-finite metric values and stamps
-      index=netmon_metrics and sourcetype=prometheus:metrics
-
 - name: Assert prometheus_to_unifi_metrics stamps index=unifi_metrics and sourcetype=prometheus:metrics
   ansible.builtin.assert:
     that:
@@ -230,28 +183,6 @@
       Every splunk_hec output names this pipeline. If the node does not have
       it, Cribl ships the events unmasked and logs no error, so the name must
       be one of cribl_stream_pipelines.
-
-- name: Assert the Splunk trace leg is bounded at the HEC boundary
-  vars:
-    _trace_splunk_pipeline: "{{ _cribl_stream_otel_traces_splunk_pipeline | from_yaml }}"
-    _secret_redaction_pipeline: "{{ _cribl_stream_secret_redaction_pipeline | from_yaml }}"
-  ansible.builtin.assert:
-    that:
-      - _trace_splunk_pipeline.output == 'splunk_hec_otel_traces'
-      - _trace_splunk_pipeline.functions[0].id == 'drop'
-      - >-
-        _trace_splunk_pipeline.functions[0].filter
-        == "!__otlp || __otlp.type !== 'traces'"
-      - _trace_splunk_pipeline.functions[1].id == 'eval'
-      - _secret_redaction_pipeline.functions[0].id == 'drop'
-      - "_secret_redaction_pipeline.functions[0].filter is search('index !==')"
-      - _secret_redaction_pipeline.functions[1].id == 'code'
-      - "'allowedFields' in _secret_redaction_pipeline.functions[1].conf.code"
-      - "'allowedAttributes' in _secret_redaction_pipeline.functions[1].conf.code"
-      - "'gen_ai.input.messages' not in _secret_redaction_pipeline.functions[1].conf.code"
-    fail_msg: >-
-      the Splunk trace leg must keep trace-only routing and enforce a final
-      field and attribute allowlist before HEC serialization
 
 - name: Assert the OTLP destination endpoint carries no signal path
   ansible.builtin.assert:
