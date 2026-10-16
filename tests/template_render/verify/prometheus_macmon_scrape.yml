@@ -1,0 +1,63 @@
+---
+- name: Verify the macmon Prometheus scrape job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    llm_large_serving_host: metrics-target-under-test
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          blackbox_exporter: 9115
+          node_exporter: 9100
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+        memory_ports:
+          hindsight_api: 8888
+          hindsight_cp: 9999
+      nodes: {}
+      containers:
+        agentgateway:
+          ip: agw.test.example
+          tags: [agentgateway]
+        cribl-stream-01:
+          ip: stream.test.example
+          tags: [cribl-stream]
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish fixture inventory values
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Render prometheus.yml
+      ansible.builtin.set_fact:
+        _rendered: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the macmon job
+      ansible.builtin.set_fact:
+        _jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'macmon') | list }}"
+
+    - name: Assert the Mac metrics endpoint is scraped from derived inventory values
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _jobs | length == 1
+          - _jobs[0].scrape_interval == '60s'
+          - _jobs[0].metrics_path == '/metrics'
+          - _jobs[0].static_configs[0].targets == ['metrics-target-under-test.example.invalid:9090']
+        fail_msg: >-
+          Expected one macmon scrape at the derived Mac host and the service's
+          default metrics port. Rendered: {{ _jobs }}
