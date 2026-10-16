@@ -1,0 +1,120 @@
+---
+- name: Assert OTLP traces fan out to Langfuse, Phoenix, and bounded Splunk storage
+  vars:
+    _cribl_stream_otel_connections: >-
+      {{ (_cribl_stream_inputs | from_yaml).inputs['open_telemetry:in_otel'].connections }}
+    _cribl_stream_otel_langfuse_pipeline: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('output', 'equalto', 'langfuse_otlp')
+         | map(attribute='pipeline') | list }}
+    _cribl_stream_otel_phoenix_pipeline: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('output', 'equalto', 'phoenix_otlp')
+         | map(attribute='pipeline') | list }}
+    _cribl_stream_otel_stamp_connections: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('pipeline', 'defined')
+         | selectattr('pipeline', 'equalto', 'otel_stamp') | list }}
+    _cribl_stream_otel_splunk_trace_connections: >-
+      {{ _cribl_stream_otel_connections
+         | selectattr('pipeline', 'equalto', 'otel_traces_to_splunk') | list }}
+  ansible.builtin.assert:
+    that:
+      - "'open_telemetry:in_otel' in _cribl_stream_inputs"
+      - "'type: open_telemetry' in _cribl_stream_inputs"
+      - "'port: 4318' in _cribl_stream_inputs"
+      - "'extractSpans: true' in _cribl_stream_inputs"
+      - "'extractMetrics: true' in _cribl_stream_inputs"
+      - _cribl_stream_otel_langfuse_pipeline == ['otel_traces']
+      - _cribl_stream_otel_phoenix_pipeline == ['otel_traces_phoenix']
+      - _cribl_stream_otel_stamp_connections | length == 0
+      - _cribl_stream_otel_splunk_trace_connections | length == 1
+      - >-
+        _cribl_stream_otel_splunk_trace_connections[0].output
+        in ['splunk_hec', 'splunk_hec_otel_traces']
+      - "'pipeline: otel_logs' in _cribl_stream_inputs"
+      - "'pipeline: otel_metrics_to_splunk' in _cribl_stream_inputs"
+      - "'output: victoriametrics_otlp' in _cribl_stream_inputs"
+      - "'pipeline: otel_metrics_to_victoriametrics' in _cribl_stream_inputs"
+    fail_msg: >-
+      inputs.yml.j2 must retain Langfuse and Phoenix span delivery, add the
+      bounded Splunk trace leg, preserve independent Splunk log/metrics
+      connections, and retain the OTLP metrics leg to VictoriaMetrics
+
+- name: Assert per-index HEC outputs render for the price collector and other indexes
+  ansible.builtin.assert:
+    that:
+      - "'splunk_hec_netflow' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_claude' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_llm' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_ai_usage' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_unifi_metrics' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_llm_pricefeed' in _cribl_stream_outputs_pi"
+      - "'splunk_hec_otel_traces' in _cribl_stream_outputs_pi"
+      - "_cribl_stream_outputs_pi | regex_findall('(?m)^    id: splunk_hec_llm$') | length == 1"
+      - "'splunk_hec_llm_metrics' not in _cribl_stream_outputs_pi"
+    fail_msg: >-
+      outputs.yml.j2 with HEC_NAMESPACE set must render one dedicated
+      splunk_hec_<index> output for netflow, ai_usage, unifi_metrics,
+      llm_pricefeed, plus each unique ai_log_routing index including
+      otel_traces; it must not mint a separate splunk_hec_llm_metrics token
+
+- name: Assert prometheus_to_netmon drops jobs outside the Splunk allow-list, then stamps index/sourcetype
+  vars:
+    _prom_pipeline: "{{ _cribl_stream_prom_pipeline | from_yaml }}"
+    _splunk_job_names:
+      - blackbox_.*
+      - smokeping
+      - traefik
+      - llm_router
+      - llm_gpu_engine
+      - dcgm_exporter
+      - guest_node_exporter
+    _llm_metrics_job_names:
+      - llm_router
+      - llm_gpu_engine
+      - dcgm_exporter
+    _expected_splunk_filter: >-
+      {{ '!/^(' ~ (_splunk_job_names | join('|')) ~ ')$/.test(job)' }}
+    _expected_llm_metrics_condition: >-
+      {{ "(job === '" ~ (_llm_metrics_job_names | join("' || job === '"))
+         ~ "') ? 'llm_metrics'" }}
+    _index_mapping: >-
+      {{ _prom_pipeline.functions[1].conf.add
+         | selectattr('name', 'equalto', 'index')
+         | map(attribute='value') | first }}
+  ansible.builtin.assert:
+    that:
+      - _prom_pipeline.functions | length == 2
+      - _prom_pipeline.functions[0].id == 'drop'
+      - _prom_pipeline.functions[0].filter == _expected_splunk_filter
+      - "'netmon_metrics' in _cribl_stream_prom_pipeline"
+      - _expected_llm_metrics_condition in _index_mapping
+      - "'llm_metrics' in _cribl_stream_prom_pipeline"
+      - "'prometheus:metrics' in _cribl_stream_prom_pipeline"
+      - "'Number.isFinite' in _cribl_stream_prom_pipeline"
+    fail_msg: >-
+      prometheus_to_netmon must enforce the Splunk allow-list before stamping
+      metrics and preserve the llm_metrics index classification
+
+- name: Assert the Splunk trace leg is bounded at the HEC boundary
+  vars:
+    _trace_splunk_pipeline: "{{ _cribl_stream_otel_traces_splunk_pipeline | from_yaml }}"
+    _secret_redaction_pipeline: "{{ _cribl_stream_secret_redaction_pipeline | from_yaml }}"
+  ansible.builtin.assert:
+    that:
+      - _trace_splunk_pipeline.output == 'splunk_hec_otel_traces'
+      - _trace_splunk_pipeline.functions[0].id == 'drop'
+      - >-
+        _trace_splunk_pipeline.functions[0].filter
+        == "!__otlp || __otlp.type !== 'traces'"
+      - _trace_splunk_pipeline.functions[1].id == 'eval'
+      - _secret_redaction_pipeline.functions[0].id == 'drop'
+      - "_secret_redaction_pipeline.functions[0].filter is search('index !==')"
+      - _secret_redaction_pipeline.functions[1].id == 'code'
+      - "'allowedFields' in _secret_redaction_pipeline.functions[1].conf.code"
+      - "'allowedAttributes' in _secret_redaction_pipeline.functions[1].conf.code"
+      - "'gen_ai.input.messages' not in _secret_redaction_pipeline.functions[1].conf.code"
+    fail_msg: >-
+      the trace route must filter spans and enforce a final allowlist before
+      HEC serialization

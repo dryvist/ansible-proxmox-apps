@@ -159,6 +159,19 @@ openbao_scrape_targets: >-
 # job rather than rendering one that 401s.
 prometheus_stack_llm_router_bearer: "{{ bao_apps_secrets.prometheus_llm_router_key | default('', true) }}"
 
+# GPU guest scrape targets use the dynamically-added inventory group and its
+# resolved container address. Empty until a GPU guest is in inventory.
+prometheus_stack_llm_gpu_metrics_guests: >-
+  {%- set guests = [] -%}
+  {%- for name in groups['llm_vllm_group'] | default([]) -%}
+  {%- set address = hostvars[name].container_ip | default('', true) -%}
+  {%- if address | length > 0 -%}
+  {%- set _ = guests.append({'name': name, 'address': address}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ guests }}
+prometheus_stack_dcgm_exporter_metrics_port: 9400
+
 prometheus_stack_extra_scrape_configs: |
   - job_name: smokeping
     static_configs:
@@ -230,6 +243,30 @@ prometheus_stack_extra_scrape_configs: |
       format: ["prometheus"]
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
+  {% if prometheus_stack_llm_gpu_metrics_guests | length > 0 %}
+  # GPU and engine metrics share the inventory-derived serving guests.
+  - job_name: dcgm_exporter
+    metrics_path: /metrics
+    static_configs:
+  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
+        labels:
+          guest: "{{ guest.name }}"
+  {% endfor %}
+  # Strata serves Prometheus text only when requested with ?format=prometheus.
+  # vLLM and SGLang use the Prometheus client ASGI handler, which ignores this
+  # unknown query parameter; llama.cpp's /metrics handler also ignores queries.
+  - job_name: llm_gpu_engine
+    metrics_path: /metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_llm_gpu_engine_metrics_port }}"]
+        labels:
+          guest: "{{ guest.name }}"
+  {% endfor %}
+  {% endif %}
 
 # Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics)
 # and VictoriaMetrics (in_prometheus_rw dual connection). FQDN, not the guest

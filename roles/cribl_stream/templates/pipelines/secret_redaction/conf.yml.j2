@@ -10,12 +10,35 @@ streamtags: []
 groups: {}
 asyncFuncTimeout: 1000
 functions:
-  # Keep span events on trace-capable destinations, including spans that reach
-  # Splunk through a connection other than the OpenTelemetry input.
+  # Keep spans off other HEC legs. The bounded otel_traces index is the only
+  # Splunk trace destination.
   - id: drop
-    filter: "sourcetype === 'otel:span' || !!(__otlp && __otlp.type === 'traces')"
+    filter: "(sourcetype === 'otel:span' || !!(__otlp && __otlp.type === 'traces')) && index !== 'otel_traces'"
     disabled: false
     conf: {}
+  # Enforce a final field allowlist so request, response, prompt, completion,
+  # exception, and unrecognized attributes never reach the trace index.
+  - id: code
+    filter: "sourcetype === 'otel:span' && index === 'otel_traces'"
+    disabled: false
+    conf:
+      code: >-
+        var allowedFields = { traceId: 1, spanId: 1, parentSpanId: 1, name: 1,
+        kind: 1, startTime: 1, endTime: 1, duration: 1, status: 1, _time: 1,
+        index: 1, sourcetype: 1, host: 1, attributes: 1 };
+        for (var field in __e) { if (!allowedFields[field]) { delete __e[field]; } }
+        var attributes = __e.attributes || {};
+        var allowedAttributes = {
+{% for attribute in cribl_stream_otel_splunk_safe_attributes %}
+          '{{ attribute }}': 1,
+{% endfor %}
+        };
+        for (var attribute in attributes) {
+        if (!allowedAttributes[attribute]) { delete attributes[attribute]; } }
+        __e.attributes = attributes;
+        if (__e.status && typeof __e.status === 'object') {
+        if (__e.status.code === undefined) { delete __e.status; }
+        else { __e.status = { code: __e.status.code }; } }
   - id: mask
     filter: "true"
     disabled: false
@@ -25,8 +48,8 @@ functions:
         - matchRegex: '{{ rule.matchRegex }}'
           replaceExpr: "{{ rule.replaceExpr }}"
 {% endfor %}
-      # Every field, not only _raw: structured events (OTLP spans and log
-      # records) reach Splunk with no _raw at all.
+      # Every field, not only _raw: structured events reach Splunk with no
+      # _raw field at all.
       fields:
         - _raw
         - "*"

@@ -28,8 +28,9 @@ compose project.
 `probe_success` + `probe_duration_seconds` per target carry the ISP-degradation
 signal — this is the evidence path now that the modem exposes no DOCSIS data.
 
-The `llama_server` job scrapes the RTX 4080 serving guest's native `/metrics`
-directly.
+The `llm_gpu_engine` job scrapes the active engine's native `/metrics` endpoint
+and labels each target with its inventory guest name. `dcgm_exporter` remains a
+separate job for GPU hardware metrics.
 
 ## Networking
 

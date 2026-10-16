@@ -7,6 +7,9 @@ ROLE = ROOT / "roles" / "cribl_stream"
 SPLUNK_SPAN_DROP = (
     "sourcetype === 'otel:span' || !!(__otlp && __otlp.type === 'traces')"
 )
+SPLUNK_DROP_UNBOUNDED_SPANS = (
+    f"({SPLUNK_SPAN_DROP}) && index !== 'otel_traces'"
+)
 TRACE_FILTER = """filter: "!__otlp || __otlp.type !== 'traces'"""
 
 
@@ -38,6 +41,49 @@ class CriblSpanRoutingContract(unittest.TestCase):
             splunk_pipeline.index(span_drop), splunk_pipeline.index("- id: eval")
         )
 
+    def test_otel_spans_have_a_bounded_splunk_hec_route(self):
+        inputs = (ROLE / "templates" / "inputs.yml.j2").read_text()
+        self.assertIn(
+            "- output: splunk_hec_otel_traces\n        pipeline: otel_traces_to_splunk",
+            inputs,
+        )
+        self.assertIn(
+            "- output: splunk_hec\n        pipeline: otel_traces_to_splunk",
+            inputs,
+        )
+
+        splunk_route = (
+            ROLE
+            / "templates"
+            / "pipelines"
+            / "otel_traces_to_splunk"
+            / "conf.yml.j2"
+        ).read_text()
+        self.assertIn(TRACE_FILTER, splunk_route)
+        self.assertIn("value: \"'otel_traces'\"", splunk_route)
+        self.assertIn("value: \"'otel:span'\"", splunk_route)
+
+        redaction = (
+            ROLE / "templates" / "pipelines" / "secret_redaction" / "conf.yml.j2"
+        ).read_text()
+        self.assertIn(f'filter: "{SPLUNK_DROP_UNBOUNDED_SPANS}"', redaction)
+        self.assertIn("allowedFields", redaction)
+        self.assertIn("allowedAttributes", redaction)
+
+        defaults = (ROLE / "defaults" / "main" / "42-otel-splunk-export.yml").read_text()
+        for body_attribute in (
+            "gen_ai.prompt",
+            "gen_ai.completion",
+            "gen_ai.input.messages",
+            "gen_ai.output.messages",
+        ):
+            self.assertNotIn(body_attribute, defaults)
+
+        splunk_defaults = (
+            ROLE / "defaults" / "main" / "20-splunk-hec-routing.yml"
+        ).read_text()
+        self.assertIn("'otel_traces'", splunk_defaults)
+
     def test_span_drop_is_limited_to_splunk_outputs(self):
         splunk_defaults = (
             ROLE / "defaults" / "main" / "20-splunk-hec-routing.yml"
@@ -65,7 +111,7 @@ class CriblSpanRoutingContract(unittest.TestCase):
         redaction = (
             ROLE / "templates" / "pipelines" / "secret_redaction" / "conf.yml.j2"
         ).read_text()
-        self.assertIn(f'filter: "{SPLUNK_SPAN_DROP}"', redaction)
+        self.assertIn(f'filter: "{SPLUNK_DROP_UNBOUNDED_SPANS}"', redaction)
 
         inputs = (ROLE / "templates" / "inputs.yml.j2").read_text()
         trace_connections = _section(
