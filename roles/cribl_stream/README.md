@@ -44,7 +44,10 @@ Configure data pipeline via Cribl Web UI after Ansible deployment:
 
 1. Access Stream UI (`http://cribl-stream:9000`)
 2. Configure data sources (inputs from Edge nodes)
-3. Define transformation pipelines
+3. Use the installed `cc-stream-apple-mlx-metrics` and
+   `cc-stream-cribl-internal-telemetry` packs for generic processing. Source
+   connections select their pipelines with `pack:<pack-id>` references rather
+   than local copies.
 4. Configure outputs (Splunk, etc.)
 
 ### Grafana alert delivery
