@@ -17,6 +17,18 @@
       indistinguishable from a healthy converge — fail here instead.
     quiet: true
 
+- name: Assert the router readiness path is published
+  ansible.builtin.assert:
+    that:
+      - (tofu_data.constants.llm_router_probe_paths.readiness | default(none)) is string
+      - (tofu_data.constants.llm_router_probe_paths.readiness | default('')).startswith('/')
+    fail_msg: >-
+      Re-run the tofu-proxmox workspace so it publishes
+      pipeline_constants.llm_router_probe_paths.readiness before rendering
+      the dashboard catalog.
+    quiet: true
+  when: dashboard_catalog_ingress | selectattr('name', 'equalto', 'llm') | list | length > 0
+
 # `title` is the tile's display label. It defaults to the route name (the
 # vast majority of routes); tofu sets an explicit title on a route whose
 # name would otherwise read as indistinguishable from a sibling's (every
@@ -39,7 +51,10 @@
           'fqdn': _fqdn,
           'url': 'https://' ~ _fqdn ~ (item.url_path | default('', true)),
           'probe_url': _probe_url,
-        }]
+        } | combine(
+          {'probe_path': tofu_data.constants.llm_router_probe_paths.readiness}
+          if item.name == 'llm' else {}
+        )]
       }}
   vars:
     _host: "{{ item.hostname | default(item.name, true) }}"

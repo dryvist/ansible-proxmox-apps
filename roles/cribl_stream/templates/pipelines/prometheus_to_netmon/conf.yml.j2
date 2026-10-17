@@ -22,9 +22,9 @@ functions:
   # job unfiltered (see prometheus_stack role); only the jobs below may
   # reach Splunk through this leg. The sibling victoriametrics_rw
   # connection on the same input has no pipeline, so VictoriaMetrics still
-  # receives every job.
+  # receives every job. MacMon is sent to the metrics pack on its own leg.
   - id: drop
-    filter: "!/^({{ cribl_stream_prometheus_splunk_keep_jobs | join('|') }})$/.test(job)"
+    filter: "job === 'macmon' || !/^({{ cribl_stream_prometheus_splunk_keep_jobs | join('|') }})$/.test(job)"
     disabled: false
   - id: eval
     filter: "true"
@@ -39,7 +39,9 @@ functions:
           value: "Number.isFinite(Number(_value)) ? Number(_value) : -1"
         # Split PVE/guest exporters, ClickHouse, LLM services, and other jobs by index.
         - name: index
-          value: "(job === 'clickhouse' || job === 'pve_node_exporter' || job === 'guest_node_exporter') ? 'host_metrics' : (job === 'llm_router' || job === 'llama_server') ? 'llm_metrics' : 'netmon_metrics'"
+          value: >-
+            (job === 'clickhouse' || job === 'pve_node_exporter' || job === 'guest_node_exporter') ? 'host_metrics' :
+            (job === 'llm_router' || job === 'llm_gpu_engine' || job === 'dcgm_exporter') ? 'llm_metrics' : 'netmon_metrics'
         - name: sourcetype
           value: "job === 'clickhouse' ? 'clickhouse:metrics' : (job === 'pve_node_exporter' || job === 'guest_node_exporter') ? 'node_exporter' : 'prometheus:metrics'"
         # node_exporter identity is its instance (fqdn:port) — strip the port
@@ -47,4 +49,4 @@ functions:
         # A guest target may be a bare address, so the guest job carries the
         # guest name as its own `guest` label.
         - name: host
-          value: "job === 'clickhouse' ? 'clickhouse' : job === 'guest_node_exporter' ? guest : job === 'pve_node_exporter' ? (instance || '').replace(/:\\d+$/, '').replace(/\\..*$/, '') : (target || instance || job || 'prometheus')"
+          value: "job === 'clickhouse' ? 'clickhouse' : job === 'guest_node_exporter' ? guest : job === 'pve_node_exporter' ? (instance || '').replace(/:\\d+$/, '').replace(/\\..*$/, '') : (guest || target || instance || job || 'prometheus')"

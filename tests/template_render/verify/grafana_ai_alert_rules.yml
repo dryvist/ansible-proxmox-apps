@@ -15,6 +15,7 @@
     _token_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/cribl-hec-token.env.j2"
     _datasource_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/datasource.yml.j2"
     _compose_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/docker-compose.yml.j2"
+    _base_rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules.yml.j2"
     _notification_policy_template: >-
       {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/notification-policies.yml.j2
   tasks:
@@ -164,10 +165,28 @@
             'sourcetype=grafana%3Aalert'
             )
           - _ai_contactpoint.settings.authorization_scheme == 'Splunk'
-          - _ai_contactpoint.secureSettings.authorization_credentials == '$GRAFANA_ALERT_CRIBL_HEC_TOKEN'
+          - _ai_contactpoint.settings.authorization_credentials == '$GRAFANA_ALERT_CRIBL_HEC_TOKEN'
+          - _ai_contactpoint.secureSettings is not defined
           - "'GRAFANA_ALERT_CRIBL_HEC_TOKEN=fixture-hec-token-not-real' in _ai_alert_token_env"
           - _ai_notification_policy.receiver == 'cribl-alerts'
         fail_msg: >-
           Grafana's contact point must post to the Stream HEC raw input and
           resolve its credential from the protected env file, not contact ntfy
           or embed the credential in provisioning YAML.
+
+    - name: Render the base alert rules
+      ansible.builtin.set_fact:
+        _base_rule_groups: "{{ lookup('ansible.builtin.template', _base_rules_template) | from_yaml }}"
+
+    - name: Assert the frozen-ETL rule tests the aggregate, not every series
+      ansible.builtin.assert:
+        that:
+          - _frozen_rule_query is match('^sum\\(increase\\(claude_jsonl_cache_read_tokens_total\\[6h\\]\\)\\)$')
+        fail_msg: >-
+          claude-jsonl-etl-frozen must sum the counter over all series; a
+          per-series test fires once for every finished session.
+      vars:
+        _frozen_rule_query: >-
+          {{ (_base_rule_groups.groups | map(attribute='rules') | flatten
+              | selectattr('uid', 'equalto', 'claude-jsonl-etl-frozen') | first).data
+             | selectattr('refId', 'equalto', 'A') | map(attribute='model.expr') | first }}

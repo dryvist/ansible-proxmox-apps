@@ -69,8 +69,8 @@ git clone <repo-url> ansible-proxmox-apps
 cd ansible-proxmox-apps
 direnv allow    # one-time per worktree — auto-activates the dev shell on cd
 
-# Install the pinned Galaxy content — both sections of requirements.yml
-ansible-galaxy install -r requirements.yml
+# Install/refresh Galaxy dependencies — both sections of requirements.yml
+python3 scripts/install_galaxy_requirements.py
 
 # Configure Doppler for secrets (API keys, passwords)
 doppler configure set project ansible-proxmox-apps
@@ -338,4 +338,4 @@ role/scenario paths widen to the full matrix. Other unmapped workflow paths
 also widen to the full matrix. Required validation is aggregated by `Merge
 Gate`. Public pull-request CI stays on GitHub-hosted runners.
 
-See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”
+See the canonical policy in the `JacobPEvans/.github` README, “Ansible CI policy.”

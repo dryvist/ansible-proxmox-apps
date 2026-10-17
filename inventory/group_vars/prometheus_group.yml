@@ -132,14 +132,6 @@ arc_listener_scrape_targets: >-
      | map('regex_replace', '^(.+)$', '\1:' ~ (arc_listener_scrape_port | string))
      | list }}
 
-# github_exporter (roles/github_exporter) binds localhost-only and is scraped
-# from this same host, so the address is fixed rather than derived from
-# tofu_data. Defined here, not in the role's defaults, because this
-# group_vars file (not the role) renders the scrape job that consumes it —
-# a role default is not in scope when group_vars is evaluated outside the
-# role's own play.
-github_exporter_web_address: "127.0.0.1:9504"
-
 # OpenBao Raft peers (tag `openbao`).
 openbao_scrape_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['openbao_api']
@@ -158,6 +150,25 @@ openbao_scrape_targets: >-
 # dryvist.secrets_management/roles/openbao_secrets apps/prometheus). Empty until seeded, which omits the
 # job rather than rendering one that 401s.
 prometheus_stack_llm_router_bearer: "{{ bao_apps_secrets.prometheus_llm_router_key | default('', true) }}"
+
+# GPU guest scrape targets use the dynamically-added inventory group and its
+# resolved container address. Empty until a GPU guest is in inventory.
+prometheus_stack_llm_gpu_metrics_guests: >-
+  {%- set guests = [] -%}
+  {%- for name in groups['llm_vllm_group'] | default([]) -%}
+  {%- set address = hostvars[name].container_ip | default('', true) -%}
+  {%- if address | length > 0 -%}
+  {%- set _ = guests.append({'name': name, 'address': address}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ guests }}
+prometheus_stack_dcgm_exporter_metrics_port: 9400
+
+# Use the published short host plus local zone, or the external runner FQDN.
+prometheus_stack_macmon_target: >-
+  {{ lookup('env', 'LLM_LARGE_RUNNER_HOST')
+     or (llm_large_serving_host ~ '.' ~ (lookup('env', 'PROXMOX_SUBDOMAIN')
+     | mandatory('PROXMOX_SUBDOMAIN required'))) }}
 
 prometheus_stack_extra_scrape_configs: |
   - job_name: smokeping
@@ -195,6 +206,12 @@ prometheus_stack_extra_scrape_configs: |
       - source_labels: [__name__]
         regex: "{{ guest_node_exporter_keep_metrics | join('|') }}"
         action: keep
+  - job_name: macmon
+    scrape_interval: 60s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "{{ prometheus_stack_macmon_target }}:9090"
   - job_name: cadvisor
     scrape_interval: 60s
     static_configs:
@@ -208,14 +225,6 @@ prometheus_stack_extra_scrape_configs: |
     metrics_path: /metrics
     static_configs:
       - targets: {{ gatus_scrape_targets | to_json }}
-  # Co-located github_exporter (roles/github_exporter). 5-minute interval,
-  # not the global default: the runners collector polls the GitHub API live
-  # on every scrape, and a shorter interval risks the installation token's
-  # hourly rate limit once more collectors are enabled later.
-  - job_name: github_exporter
-    scrape_interval: 5m
-    static_configs:
-      - targets: ["{{ github_exporter_web_address }}"]
   # ARC's own listener metrics (gha_job_startup_duration_seconds and the
   # assigned/started/completed counters) — the native queue-time source for
   # the self-hosted pool once apps #1932 lands and exposes it on a
@@ -230,6 +239,30 @@ prometheus_stack_extra_scrape_configs: |
       format: ["prometheus"]
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
+  {% if prometheus_stack_llm_gpu_metrics_guests | length > 0 %}
+  # GPU and engine metrics share the inventory-derived serving guests.
+  - job_name: dcgm_exporter
+    metrics_path: /metrics
+    static_configs:
+  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
+        labels:
+          guest: "{{ guest.name }}"
+  {% endfor %}
+  # Strata serves Prometheus text only when requested with ?format=prometheus.
+  # vLLM and SGLang use the Prometheus client ASGI handler, which ignores this
+  # unknown query parameter; llama.cpp's /metrics handler also ignores queries.
+  - job_name: llm_gpu_engine
+    metrics_path: /metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_llm_gpu_engine_metrics_port }}"]
+        labels:
+          guest: "{{ guest.name }}"
+  {% endfor %}
+  {% endif %}
 
 # Forward blackbox + smokeping metrics to Cribl Stream → Splunk (index=netmon_metrics)
 # and VictoriaMetrics (in_prometheus_rw dual connection). FQDN, not the guest
@@ -244,7 +277,3 @@ prometheus_stack_remote_write_url: >-
 # Splunk-volume allow-list moved to cribl_stream_group.yml
 # (cribl_stream_prometheus_splunk_keep_jobs), which gates only the
 # splunk_hec leg of Cribl's prometheus_rw input.
-
-# Organization for github_exporter to poll — same separation
-# github_runner_org uses (roles/github_exporter defaults stay blank).
-github_exporter_org: dryvist

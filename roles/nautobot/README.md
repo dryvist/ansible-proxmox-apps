@@ -26,7 +26,7 @@ Prerequisites:
 Install the collection dependencies once:
 
 ```sh
-ansible-galaxy collection install -r requirements.yml
+python3 scripts/install_galaxy_requirements.py
 ```
 
 ## Upgrade runbook
@@ -75,6 +75,15 @@ ansible-playbook tests/nautobot_seed/verify_seed_bundle.yml -c local
 
 See the flag ladder below before enabling anything that writes.
 
+## Secrets and command lines
+
+`nautobot.env` remains the systemd `EnvironmentFile`. One-shot management
+commands use `{{ nautobot_root }}/.nautobot-cmd-env.sh`, rendered from
+`nautobot_env` with shell-quoted `export` lines. It is owned by
+`nautobot_user:nautobot_group`, has mode `0600`, and is re-rendered on each role
+run. It remains on disk between runs at the same trust boundary as
+`nautobot.env`.
+
 ## Server layer owner
 
 `nautobot_server_via_collection` picks who runs the server layer: system
@@ -108,6 +117,19 @@ Add the skip tag to the run's arguments; the template's stored `--tags` keeps
 the play selected. Part 2 alone reads the SECRET_KEY file that part 1 wrote, so
 run part 1 first on a new host. With the flag `false` the role refuses either
 skip tag.
+
+Part 1 runs in three stages when one runner task must stay short. Each stage
+adds its skip tags to `--skip-tags nautobot_jobs`; run them in this order on an
+upgrade:
+
+| Stage | Collection tag | Covers | Skip tags to add |
+| --- | --- | --- | --- |
+| 1 | `server_install` | System packages, Redis, virtual environment, pinned packages. | `server_secret,server_migrate,server_config` |
+| 2 | `server_migrate` | Migrations, post-upgrade, first superuser. | `server_install,server_config` |
+| 3 | `server_config` | Settings, environment file, uWSGI, units, service restart, web wait. | `server_install,server_migrate` |
+
+Stages 2 and 3 also resolve the SECRET_KEY. A new host needs one run with no
+stage skip tags.
 
 ## Two layers
 

@@ -1,0 +1,188 @@
+---
+- name: Render and verify the GitHub Actions collector, pipelines, and proxy templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}/github_actions"
+    _template_dir: "{{ playbook_dir }}/../../../roles/cribl_stream/templates"
+    _role_dir: "{{ playbook_dir }}/../../../roles/cribl_stream"
+    cribl_stream_api_url: "http://127.0.0.1:9000"
+    cribl_stream_github_actions_enabled: true
+    cribl_stream_github_actions_api_base_url: https://api.github.com
+    cribl_stream_github_actions_graphql_url: https://api.github.com/graphql
+    cribl_stream_github_actions_schedule: "*/5 * * * *"
+    cribl_stream_github_actions_lookback_seconds: 7200
+    cribl_stream_github_actions_repo_page_size: 100
+    cribl_stream_github_actions_max_discovery_pages: 0
+    cribl_stream_github_actions_open_pr_page_size: 100
+    cribl_stream_github_actions_commit_page_size: 5
+    cribl_stream_github_actions_suite_page_size: 5
+    cribl_stream_github_actions_check_run_page_size: 10
+    cribl_stream_github_actions_agent_proxy_address: "127.0.0.1:8200"
+    cribl_stream_github_actions_agent_proxy_url: "http://127.0.0.1:8200"
+    cribl_stream_github_actions_openbao_addr: https://openbao.example.invalid
+    cribl_stream_github_actions_approle_dir: /etc/cribl/openbao-approle
+    cribl_stream_github_actions_agent_config: /etc/cribl/openbao-agent.hcl
+    cribl_stream_github_actions_openbao_bin: /usr/bin/bao
+    cribl_stream_github_actions_agent_service: openbao-cribl-stream-agent.service
+    cribl_stream_github_actions_runners_org: dryvist
+    grafana_stack_alert_folder: Alerting
+    grafana_stack_alert_eval_interval: 1m
+
+  tasks:
+    - name: Load the GitHub Actions owner list from role defaults
+      ansible.builtin.include_vars:
+        file: "{{ _role_dir }}/defaults/main/56-github-actions.yml"
+        name: _github_actions_defaults
+
+    - name: Create the isolated template output directory
+      ansible.builtin.file:
+        path: "{{ _fixture_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the per-owner GraphQL collector
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/github_actions/collector.yml.j2"
+        dest: "{{ _fixture_dir }}/{{ cribl_stream_github_actions_owner }}_collector.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_github_actions_owner: "{{ item }}"
+      loop: "{{ _github_actions_defaults.cribl_stream_github_actions_owners }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Render each generated owner schedule
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/github_actions/schedule.yml.j2"
+        dest: "{{ _fixture_dir }}/{{ cribl_stream_github_actions_owner }}_schedule.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_github_actions_collector_id: >-
+          github_actions_{{ cribl_stream_github_actions_owner | lower | regex_replace('[^a-z0-9_]', '_') }}
+      loop: "{{ _github_actions_defaults.cribl_stream_github_actions_owners }}"
+      loop_control:
+        loop_var: cribl_stream_github_actions_owner
+        label: "{{ cribl_stream_github_actions_owner }}"
+
+    - name: Render the self-hosted runner collector
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/github_actions/runners-collector.yml.j2"
+        dest: "{{ _fixture_dir }}/runners_collector.yml"
+        mode: "0644"
+
+    - name: Render the self-hosted runner schedule
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/github_actions/schedule.yml.j2"
+        dest: "{{ _fixture_dir }}/runners_schedule.yml"
+        mode: "0644"
+      vars:
+        cribl_stream_github_actions_collector_id: github_actions_runners
+
+    - name: Render the GitHub Actions Splunk pipeline
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/github_actions/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/events_pipeline.yml"
+        mode: "0644"
+
+    - name: Render the GitHub Actions VictoriaMetrics pipeline
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/pipelines/github_actions_metrics/conf.yml.j2"
+        dest: "{{ _fixture_dir }}/metrics_pipeline.yml"
+        mode: "0644"
+
+    - name: Render the loopback OpenBao Agent proxy configuration
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/github_actions/openbao-agent.hcl.j2"
+        dest: "{{ _fixture_dir }}/openbao-agent.hcl"
+        mode: "0600"
+
+    - name: Render the OpenBao Agent systemd unit
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/collectors/github_actions/openbao-agent.service.j2"
+        dest: "{{ _fixture_dir }}/openbao-agent.service"
+        mode: "0644"
+
+    - name: Load rendered GitHub Actions YAML contracts
+      ansible.builtin.set_fact:
+        _collector: >-
+          {{ lookup('file', _fixture_dir ~ '/dryvist_collector.yml') | from_yaml }}
+        _schedule: >-
+          {{ lookup('file', _fixture_dir ~ '/dryvist_schedule.yml') | from_yaml }}
+        _runner_collector: >-
+          {{ lookup('file', _fixture_dir ~ '/runners_collector.yml') | from_yaml }}
+        _runner_schedule: >-
+          {{ lookup('file', _fixture_dir ~ '/runners_schedule.yml') | from_yaml }}
+        _events_pipeline: >-
+          {{ lookup('file', _fixture_dir ~ '/events_pipeline.yml') | from_yaml }}
+        _metrics_pipeline: >-
+          {{ lookup('file', _fixture_dir ~ '/metrics_pipeline.yml') | from_yaml }}
+
+    - name: Assert the per-owner collector uses Cribl discovery and Login
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'dryvist' in _github_actions_defaults.cribl_stream_github_actions_owners"
+          - _collector.id == 'github_actions_dryvist'
+          - _collector.conf.discovery.discoverType == 'http'
+          - _collector.conf.discovery.pagination.maxPages | int == 0
+          - "'repo.archived' in _collector.conf.discovery.discoverCode"
+          - _collector.conf.collectMethod == 'post_with_body'
+          - "'${name}' in _collector.conf.collectBody"
+          - "'refs/heads/develop' in _collector.conf.collectBody"
+          - _collector.conf.authentication == 'login'
+          - _collector.conf.tokenRespAttribute == 'data.token'
+          - "'pull_requests' in _collector.conf.loginBody"
+          - "'contents' not in _collector.conf.loginBody"
+          - _collector.conf.authHeaderExpr == '`Bearer ${token}`'
+          - _schedule.schedule.cronSchedule == '*/5 * * * *'
+          - _schedule.workerAffinity | bool
+          - _schedule.input.connections | length == 2
+          - _schedule.input.connections[0].output == 'splunk_hec_github_actions'
+          - _schedule.input.connections[1].output == 'victoriametrics_rw'
+        fail_msg: "The generated owner collector or schedule differs from the GitHub Actions contract."
+
+    - name: Assert the runner collector is REST-only and uses the admin token path
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _runner_collector.id == 'github_actions_runners'
+          - _runner_collector.conf.discovery.discoverType == 'none'
+          - _runner_collector.conf.authentication == 'login'
+          - _runner_collector.conf.loginUrl.endswith('/v1/github-admin/token/exporter-dryvist')
+          - _runner_schedule.collector == 'github_actions_runners'
+          - _runner_schedule.schedule.cronSchedule == '*/5 * * * *'
+        fail_msg: "The runner REST collector does not use the dryvist App installation token route."
+
+    - name: Assert the pipelines derive exact event and metric families
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _events_pipeline.output == 'splunk_hec_github_actions'
+          - "'github:actions:run' in lookup('file', _fixture_dir ~ '/events_pipeline.yml')"
+          - _metrics_pipeline.output == 'victoriametrics_rw'
+          - (_metrics_pipeline.functions | selectattr('id', 'equalto', 'publish_metrics') | list | length) == 6
+          - (_metrics_pipeline.functions | selectattr('id', 'equalto', 'suppress') | list | length) == 2
+          - (_metrics_pipeline.functions | selectattr('id', 'equalto', 'aggregation') | list | length) == 1
+          - >-
+            (_metrics_pipeline.functions | selectattr('id', 'equalto', 'aggregation')
+            | map(attribute='conf.cumulative') | first | bool)
+          - >-
+            not (_metrics_pipeline.functions | selectattr('id', 'equalto', 'aggregation')
+            | map(attribute='conf.flushOnInputClose') | first | bool)
+          - "'github_actions_job_queue_seconds' in (_metrics_pipeline.functions | map(attribute='filter') | join(' '))"
+          - "'github_pr_open_age_seconds' in (_metrics_pipeline.functions | map(attribute='filter') | join(' '))"
+        fail_msg: "The GitHub Actions pipelines do not render the expected split outputs and metrics."
+
+    - name: Assert the Agent is a loopback proxy with auto-auth token forwarding
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'api_proxy {' in lookup('file', _fixture_dir ~ '/openbao-agent.hcl')"
+          - "'use_auto_auth_token = true' in lookup('file', _fixture_dir ~ '/openbao-agent.hcl')"
+          - "'address     = \"127.0.0.1:8200\"' in lookup('file', _fixture_dir ~ '/openbao-agent.hcl')"
+          - "'ExecStart=/usr/bin/bao agent' in lookup('file', _fixture_dir ~ '/openbao-agent.service')"
+        fail_msg: "The OpenBao Agent templates do not render a loopback-only proxy service."

@@ -35,8 +35,10 @@
       - smokeping
       - traefik
       - llm_router
-      - llama_server
+      - llm_gpu_engine
+      - dcgm_exporter
       - guest_node_exporter
+      - macmon
     tofu_data:
       containers:
         guest_lxc_fixture:
@@ -71,7 +73,7 @@
       openbao_audit: syslog
     cribl_stream_hec_namespace: ""
     cribl_stream_per_index_indexes: >-
-      {{ (['ansible', 'netflow', 'ai_usage', 'cribl_internal', 'unifi_metrics', 'llm_pricefeed']
+      {{ (['ansible', 'netflow', 'ai_usage', 'cribl_internal', 'host_metrics', 'unifi_metrics', 'llm_pricefeed']
           + (cribl_stream_ai_log_routing.values() | map(attribute='index') | list))
          | unique | list }}
     # unpoller Prometheus scraper source (in_unpoller) fixture values.
@@ -95,8 +97,14 @@
     - name: Render all cribl_stream fixtures and decode their content
       ansible.builtin.include_tasks: cribl_stream/render_and_decode.yml
 
+    - name: Render Splunk trace fixtures
+      ansible.builtin.include_tasks: cribl_stream/render_splunk_traces.yml
+
     - name: Assert on the rendered inputs and outputs
       ansible.builtin.include_tasks: cribl_stream/assertions_inputs.yml
+
+    - name: Assert on the rendered pack inputs and outputs
+      ansible.builtin.include_tasks: cribl_stream/assertions_inputs_packs.yml
 
     - name: Assert the OpenBao audit _time expression
       ansible.builtin.include_tasks: cribl_stream/assertions_inputs_openbao_audit.yml
@@ -110,6 +118,9 @@
     - name: Assert on the rendered pipelines
       ansible.builtin.include_tasks: cribl_stream/assertions_pipelines.yml
 
+    - name: Assert the bounded Splunk trace route
+      ansible.builtin.include_tasks: cribl_stream/assertions_splunk_traces.yml
+
     - name: Assert the ClickHouse Prometheus route
       ansible.builtin.include_tasks: cribl_stream/assertions_clickhouse.yml
 
@@ -121,6 +132,12 @@
 
     - name: Assert on the PVE guest-identity lookup
       ansible.builtin.include_tasks: cribl_stream/assertions_pipelines_pve_guest.yml
+
+    - name: Assert on the vscode index routing
+      ansible.builtin.include_tasks: cribl_stream/assertions_pipelines_vscode.yml
+
+    - name: Assert on the Phoenix trace pipeline
+      ansible.builtin.include_tasks: cribl_stream/assertions_pipelines_phoenix.yml
 
     - name: Cribl Stream template rendering PASSED
       ansible.builtin.debug:

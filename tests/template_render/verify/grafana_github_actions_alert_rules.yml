@@ -1,0 +1,31 @@
+---
+- name: Render and verify the Grafana GitHub Actions alert rules
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _template_dir: "{{ playbook_dir }}/../../../roles/grafana_stack/templates"
+    grafana_stack_alert_folder: Alerting
+    grafana_stack_alert_eval_interval: 1m
+
+  tasks:
+    - name: Render and load the GitHub Actions alert rule contract
+      ansible.builtin.set_fact:
+        _rules: >-
+          {{ lookup('ansible.builtin.template', _template_dir ~ '/alerting/rules-github-actions.yml.j2')
+             | from_yaml }}
+
+    - name: Assert the three chat alerts use the existing VictoriaMetrics datasource
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _rules.groups[0].name == 'github-actions'
+          - _rules.groups[0].rules | length == 3
+          - _rules.groups[0].rules | map(attribute='labels.severity') | unique | list == ['warning']
+          - "'github_actions_job_queue_seconds[1h]' in (_rules.groups[0].rules[0].data[0].model.expr | string)"
+          - "'github_actions_runs_completed_total' in (_rules.groups[0].rules[1].data[0].model.expr | string)"
+          - _rules.groups[0].rules[2].for == '10m'
+          - "'victoriametrics' in (_rules.groups[0].rules | map(attribute='data.0.datasourceUid') | join(' '))"
+        fail_msg: "The rendered GitHub Actions alerts differ from the contract."

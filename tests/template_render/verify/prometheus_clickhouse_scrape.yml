@@ -1,7 +1,8 @@
 ---
-# The ClickHouse scrape job in roles/prometheus_stack/templates/prometheus.yml.j2.
-# It renders the real template against role defaults and the Prometheus group vars.
-- name: Verify the ClickHouse scrape job renders from published inventory
+# The ClickHouse and Phoenix scrape jobs, including the Phoenix PostgreSQL
+# exporter, in roles/prometheus_stack/templates/prometheus.yml.j2. It renders the real
+# template against role defaults and the Prometheus group vars.
+- name: Verify ClickHouse and Phoenix scrape jobs render from published inventory
   hosts: localhost
   connection: local
   gather_facts: false
@@ -21,6 +22,8 @@
           node_exporter: 9100
           gatus_web: 8080
           agentgateway_metrics: 15020
+          phoenix_metrics: 9090
+          phoenix_postgres_exporter: 9187
         memory_ports:
           hindsight_api: 8888
           hindsight_cp: 9999
@@ -57,16 +60,30 @@
           rendered a clickhouse job. An empty target list must omit the job.
         success_msg: No ClickHouse tag, no job.
 
-    - name: Add a ClickHouse-tagged guest to the published inventory fixture
+    - name: No Phoenix tag renders no Phoenix scrape jobs
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_clickhouse.scrape_configs | selectattr('job_name', 'equalto', 'phoenix') | list | length == 0
+          - _no_clickhouse.scrape_configs | selectattr('job_name', 'equalto', 'phoenix_postgres') | list | length == 0
+        fail_msg: >-
+          Without a Phoenix-tagged inventory entry the template still rendered
+          a Phoenix scrape job. Empty Phoenix target lists must omit both jobs.
+        success_msg: No Phoenix tag, no Phoenix jobs.
+
+    - name: Add ClickHouse and Phoenix tagged guests to the published inventory fixture
       ansible.builtin.set_fact:
         tofu_data: >-
           {{ _fixture_tofu_data
              | combine({'containers': _fixture_tofu_data['containers']
                | combine({'clickhouse-under-test': {
                    'ip': 'clickhouse-under-test.test.example',
-                   'tags': ['clickhouse']}})}) }}
+                   'tags': ['clickhouse']},
+                 'phoenix-under-test': {
+                   'ip': 'phoenix-under-test.test.example',
+                   'tags': ['phoenix']}})}) }}
 
-    - name: Render prometheus.yml with a ClickHouse-tagged guest
+    - name: Render prometheus.yml with ClickHouse and Phoenix tagged guests
       ansible.builtin.set_fact:
         _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
 
@@ -87,3 +104,44 @@
           Expected one /metrics target from the ClickHouse-tagged published
           inventory entry at port 9363 with guest=clickhouse.
         success_msg: One ClickHouse job, published-inventory target and guest label.
+
+    - name: Isolate the Phoenix job
+      ansible.builtin.set_fact:
+        _phoenix_jobs: "{{ _seeded.scrape_configs | selectattr('job_name', 'equalto', 'phoenix') | list }}"
+
+    - name: Seeded render targets the Phoenix metrics endpoint
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _phoenix_jobs | length == 1
+          - _phoenix_jobs[0].metrics_path is not defined
+          - _phoenix_jobs[0].static_configs[0].targets == ['phoenix-under-test.test.example:9090']
+          - _phoenix_jobs[0].authorization is not defined
+          - _phoenix_jobs[0].basic_auth is not defined
+        fail_msg: >-
+          Seeded render has {{ _phoenix_jobs | length }} phoenix job(s): {{ _phoenix_jobs }}.
+          Expected one job using Prometheus's default /metrics path, without
+          authentication, for the Phoenix-tagged published inventory entry.
+        success_msg: One Phoenix job with default /metrics and its published-inventory target.
+
+    - name: Isolate the Phoenix PostgreSQL exporter job
+      ansible.builtin.set_fact:
+        _phoenix_postgres_jobs: >-
+          {{ _seeded.scrape_configs
+             | selectattr('job_name', 'equalto', 'phoenix_postgres') | list }}
+
+    - name: Seeded render targets the Phoenix PostgreSQL exporter endpoint
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _phoenix_postgres_jobs | length == 1
+          - _phoenix_postgres_jobs[0].static_configs[0].targets == ['phoenix-under-test.test.example:9187']
+          - _phoenix_postgres_jobs[0].authorization is not defined
+          - _phoenix_postgres_jobs[0].basic_auth is not defined
+          - (_seeded.scrape_configs | map(attribute='job_name') | list).index('phoenix_postgres')
+            == (_seeded.scrape_configs | map(attribute='job_name') | list).index('phoenix') + 1
+        fail_msg: >-
+          Seeded render has {{ _phoenix_postgres_jobs | length }} Phoenix PostgreSQL job(s):
+          {{ _phoenix_postgres_jobs }}. Expected one unauthenticated target on port 9187,
+          directly after the phoenix job.
+        success_msg: One Phoenix PostgreSQL job with the inventory target after phoenix.

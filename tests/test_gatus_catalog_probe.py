@@ -61,7 +61,25 @@ class GatusCatalogProbe(unittest.TestCase):
         ep = render(services=[{"name": "pub", "sso": False, "url": "https://pub.example.test",
                       "probe_url": "http://guest:80"}])["pub"]
         self.assertEqual(ep["url"], "https://pub.example.test")
-        self.assertIn("[CERTIFICATE_EXPIRATION] > 240h", ep["conditions"])
+        self.assertEqual(ep["conditions"], [
+            "[STATUS] < 500",
+            "[STATUS] != 504",
+            "[BODY] != pat(*invalid_client*)",
+            "[RESPONSE_TIME] < 3000",
+            "[CERTIFICATE_EXPIRATION] > 240h",
+        ])
+
+    def test_readiness_path_requires_http_200(self):
+        ep = render(services=[{"name": "llm", "sso": False,
+                      "url": "https://llm.example.test",
+                      "probe_url": "http://router:4000",
+                      "probe_path": "/health/readiness"}])["llm"]
+        self.assertEqual(ep["url"], "https://llm.example.test/health/readiness")
+        self.assertEqual(ep["conditions"], [
+            "[STATUS] == 200",
+            "[RESPONSE_TIME] < 3000",
+            "[CERTIFICATE_EXPIRATION] > 240h",
+        ])
 
     def test_sso_row_without_a_probe_url_falls_back_to_the_public_url(self):
         ep = render(services=[{"name": "pool", "sso": True, "url": "https://pool.example.test",

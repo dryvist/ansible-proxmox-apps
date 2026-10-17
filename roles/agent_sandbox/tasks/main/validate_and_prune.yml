@@ -7,6 +7,7 @@
     container: "{{ agent_sandbox_proxy_container }}"
     command: squid -k parse
   changed_when: false
+  when: not ansible_check_mode
 
 # Functional probes from INSIDE the internal network — the same path agent
 # containers use. Allow = an origin HTTP status comes back through the CONNECT
@@ -66,6 +67,7 @@
     command: tail -n 20 /var/log/squid/access.log
   register: agent_sandbox_access_log
   changed_when: false
+  when: not ansible_check_mode
 
 - name: Assert squid allowed the model and config endpoints and denied the unrelated domain
   ansible.builtin.assert:
@@ -74,12 +76,14 @@
       - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT cursor[.]sh:443')
       - agent_sandbox_access_log.stdout is search('TCP_TUNNEL/200.*CONNECT cdn-zcode[.]z[.]ai:443')
       - agent_sandbox_access_log.stdout is search('TCP_DENIED/403.*CONNECT example.com:443')
+  when: not ansible_check_mode
 
 - name: Record proxy probe evidence
   ansible.builtin.debug:
     msg:
       origin_http_status: "{{ agent_sandbox_allow_probe.stdout }}"
       squid_access: "{{ agent_sandbox_access_log.stdout_lines }}"
+  when: not ansible_check_mode
 
 # --- Adversarial bypass probes ----------------------------------------------
 # The two probes above test the SUPPORTED path (through the proxy). These test
@@ -99,12 +103,14 @@
     cmd: "docker network inspect {{ agent_sandbox_egress_network }}"
   register: agent_sandbox_egress_inspect
   changed_when: false
+  when: not ansible_check_mode
 
 - name: "Egress invariant — inspect internal-network membership"
   ansible.builtin.command:
     cmd: "docker network inspect {{ agent_sandbox_network }}"
   register: agent_sandbox_internal_inspect
   changed_when: false
+  when: not ansible_check_mode
 
 # The bypass condition is DUAL-HOMING: a container on both the internal agents
 # net and the egress net bridges agents around squid. Egress-only members
@@ -135,6 +141,7 @@
       Only {{ agent_sandbox_proxy_container }} bridges the internal and egress
       networks; egress membership limited to {{ _egress_allowed }}.
     quiet: true
+  when: not ansible_check_mode
 
 - name: "Bypass probe — CONNECT to an allowlisted host on a non-TLS port (expect denial)"
   ansible.builtin.command:
@@ -214,6 +221,7 @@
     cmd: "nft list table inet {{ agent_sandbox_nft_table }}"
   register: agent_sandbox_nft_live
   changed_when: false
+  when: not ansible_check_mode
 
 - name: "Host filter — assert the proxy allowance and the default drop are loaded"
   ansible.builtin.assert:
@@ -230,6 +238,7 @@
       The container-egress table is missing its proxy-port allowance or its
       default drop: {{ agent_sandbox_nft_live.stdout }}
     quiet: true
+  when: not ansible_check_mode
 
 - name: "Bypass probe — default-bridge container, no proxy (expect no route)"
   ansible.builtin.command:
@@ -247,6 +256,7 @@
     cmd: "nft list table inet {{ agent_sandbox_nft_table }}"
   register: agent_sandbox_nft_after
   changed_when: false
+  when: not ansible_check_mode
 
 - name: Assert the host filter dropped the default-bridge probe packets
   vars:
@@ -256,6 +266,7 @@
   ansible.builtin.assert:
     that: _after | int > _before | int
     success_msg: "Default-bridge drop counter increased from {{ _before }} to {{ _after }} packets."
+  when: not ansible_check_mode
 
 - name: "Bypass probe — UDP egress to an external resolver (expect no route)"
   ansible.builtin.command:

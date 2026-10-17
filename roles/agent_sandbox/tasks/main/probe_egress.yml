@@ -8,6 +8,7 @@
   register: _agent_sandbox_openbao_static_allowlist_match
   changed_when: false
   failed_when: false
+  when: not ansible_check_mode
 
 - name: Assert OpenBao remains in the static IaC list
   ansible.builtin.assert:
@@ -15,6 +16,7 @@
       - _agent_sandbox_openbao_static_allowlist_match.rc == 0
     fail_msg: The static container-facing allowlist is missing the OpenBao FQDN.
     success_msg: The static container-facing allowlist contains the OpenBao FQDN.
+  when: not ansible_check_mode
 
 - name: Check the operator list does not contain the OpenBao FQDN
   community.docker.docker_container_exec:
@@ -25,6 +27,7 @@
   register: _agent_sandbox_openbao_operator_allowlist_match
   changed_when: false
   failed_when: false
+  when: not ansible_check_mode
 
 - name: Assert OpenBao is not operator-editable
   ansible.builtin.assert:
@@ -32,27 +35,30 @@
       - _agent_sandbox_openbao_operator_allowlist_match.rc == 1
     fail_msg: The operator allowlist contains the OpenBao FQDN.
     success_msg: The OpenBao FQDN is only present in the static IaC list.
+  when: not ansible_check_mode
 
 - name: Allocate a unique name for the disposable proxy probe container
   ansible.builtin.set_fact:
     _agent_sandbox_proxy_probe_name: >-
       agent-sandbox-proxy-probe-{{ lookup('password', '/dev/null length=12 chars=ascii_lowercase,digits') }}
 
-- name: Verify the throwaway proxy probe container name is unused
-  community.docker.docker_container_info:
-    name: "{{ _agent_sandbox_proxy_probe_name }}"
-  register: agent_sandbox_proxy_probe_existing
-
-- name: Assert there is no existing container to be affected by cleanup
-  ansible.builtin.assert:
-    that: not agent_sandbox_proxy_probe_existing.exists
-    fail_msg: >-
-      Refusing to use the reserved proxy probe name
-      {{ _agent_sandbox_proxy_probe_name }} because a container already exists.
-    quiet: true
-
+# Runtime proof of the real boundary; it cannot be simulated.
 - name: Probe allowed and denied HTTPS destinations through Squid
+  when: not ansible_check_mode
   block:
+    - name: Verify the throwaway proxy probe container name is unused
+      community.docker.docker_container_info:
+        name: "{{ _agent_sandbox_proxy_probe_name }}"
+      register: agent_sandbox_proxy_probe_existing
+
+    - name: Assert there is no existing container to be affected by cleanup
+      ansible.builtin.assert:
+        that: not agent_sandbox_proxy_probe_existing.exists
+        fail_msg: >-
+          Refusing to use the reserved proxy probe name
+          {{ _agent_sandbox_proxy_probe_name }} because a container already exists.
+        quiet: true
+
     - name: Create the throwaway proxy probe container on the internal network
       community.docker.docker_container:
         name: "{{ _agent_sandbox_proxy_probe_name }}"

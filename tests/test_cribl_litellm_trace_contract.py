@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import unittest
+import uuid
 
 from jinja2 import Environment, StrictUndefined
 import yaml
@@ -12,20 +13,26 @@ NODE = r"""
 const fs = require('fs');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const event = input.event;
-for (const step of input.pipeline.functions) {
-  const applies = new Function('attributes', 'name', '__otlp', 'return (' + step.filter + ');');
-  if (!applies(event.attributes, event.name, event.__otlp)) continue;
-  if (step.id === 'drop') { process.stdout.write('null'); process.exit(0); }
-  if (step.id === 'eval') {
-    for (const entry of step.conf.add || []) {
-      const value = new Function('attributes', 'name', 'return (' + entry.value + ');')(event.attributes, event.name);
-      new Function('event', 'value', 'event.' + entry.name + ' = value;')(event, value);
+function apply(event) {
+  for (const step of input.pipeline.functions) {
+    const applies = new Function('attributes', 'name', '__otlp', 'traceId', 'return (' + step.filter + ');');
+    if (!applies(event.attributes, event.name, event.__otlp, event.traceId)) continue;
+    if (step.id === 'drop') return null;
+    if (step.id === 'eval') {
+      for (const entry of step.conf.add || []) {
+        const value = new Function('attributes', 'name', 'return (' + entry.value + ');')(event.attributes, event.name);
+        new Function('event', 'value', 'event.' + entry.name + ' = value;')(event, value);
+      }
+      for (const field of step.conf.remove || []) new Function('event', 'delete event.' + field + ';')(event);
     }
-    for (const field of step.conf.remove || []) new Function('event', 'delete event.' + field + ';')(event);
+    if (step.id === 'code') new Function('__e', step.conf.code)(event);
   }
-  if (step.id === 'code') new Function('__e', step.conf.code)(event);
+  return event;
 }
-process.stdout.write(JSON.stringify(event));
+const result = Array.isArray(input.events)
+  ? input.events.map(event => apply(event) !== null)
+  : apply(input.event);
+process.stdout.write(JSON.stringify(result));
 """
 
 
@@ -46,7 +53,36 @@ def enrich(name, attrs):
     return json.loads(result.stdout)
 
 
+def kept_events(events, pipeline):
+    result = subprocess.run(['node', '-e', NODE], input=json.dumps({'events': events, 'pipeline': pipeline}),
+                            text=True, capture_output=True, check=True)
+    return json.loads(result.stdout)
+
+
 class TraceContract(unittest.TestCase):
+    def test_phoenix_sampling_keeps_whole_traces_and_fails_open(self):
+        trace_ids = set()
+        while len(trace_ids) < 1000:
+            trace_ids.add(uuid.uuid4().hex)
+        events = [
+            {'traceId': trace_id, 'spanId': f'{span:016x}', 'name': 'inference',
+             '__otlp': {'type': 'traces'}, 'attributes': {}}
+            for trace_id in trace_ids
+            for span in range(2)
+        ]
+        pipeline = render('otel_traces_phoenix')
+        decisions = kept_events(events, pipeline)
+        keep_by_trace = decisions[::2]
+
+        self.assertEqual(len(decisions), 2000)
+        self.assertEqual(keep_by_trace, decisions[1::2])
+        self.assertGreaterEqual(sum(keep_by_trace), 200)
+        self.assertLessEqual(sum(keep_by_trace), 300)
+        self.assertEqual(kept_events([
+            {'name': 'missing-id', '__otlp': {'type': 'traces'}, 'attributes': {}},
+            {'traceId': 'z' * 32, 'name': 'malformed-id', '__otlp': {'type': 'traces'}, 'attributes': {}},
+        ], pipeline), [True, True])
+
     def test_scalar_contract_reaches_native_fields_and_false_zero_survive(self):
         attrs = {'gen_ai.request.model': 'test-model', 'litellm.metadata.runner': 'test-runner',
                  'litellm.metadata.purpose': 'benchmark', 'litellm.metadata.session_id': 'run-1',
