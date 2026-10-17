@@ -1,5 +1,54 @@
 # Changelog
 
+## [5.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.3.0...v5.4.0) (2026-10-17)
+
+
+### Features
+
+* **agent_sandbox:** enable the operator allowlist command for the sandbox VM ([#2713](https://github.com/dryvist/ansible-proxmox-apps/issues/2713)) ([6c47cfa](https://github.com/dryvist/ansible-proxmox-apps/commit/6c47cfa5cd98f7659346a08bbb84101240509324))
+* **cribl_packs:** read extra pack orgs from the environment and mint via the raw token endpoint ([#2675](https://github.com/dryvist/ansible-proxmox-apps/issues/2675)) ([6b3822a](https://github.com/dryvist/ansible-proxmox-apps/commit/6b3822abb78217b8c55ab075b55c87c883b70b75))
+* **cribl_stream:** collect GitHub Actions telemetry for every enterprise org ([#2705](https://github.com/dryvist/ansible-proxmox-apps/issues/2705)) ([d3f2cfb](https://github.com/dryvist/ansible-proxmox-apps/commit/d3f2cfbb4a670b5f135115372b0b5e4ef9dc6695))
+* **cribl_stream:** sample Phoenix traces by trace id ([#2697](https://github.com/dryvist/ansible-proxmox-apps/issues/2697)) ([f2ced13](https://github.com/dryvist/ansible-proxmox-apps/commit/f2ced13363a44a844a06763a8c28b7e26f27f94e))
+* **dashboard_catalog:** probe the router readiness path on the status boards ([#2684](https://github.com/dryvist/ansible-proxmox-apps/issues/2684)) ([f3d6a43](https://github.com/dryvist/ansible-proxmox-apps/commit/f3d6a43a184cba4e47846c9779320ce3674d106f))
+* **grafana:** add Git mirror sync alerts ([#2712](https://github.com/dryvist/ansible-proxmox-apps/issues/2712)) ([0e3b0d8](https://github.com/dryvist/ansible-proxmox-apps/commit/0e3b0d8f3263bc6cc672398fbe1519293d4a3aec))
+* **inventory:** enable the phone-approved Authelia elevation clients ([434510a](https://github.com/dryvist/ansible-proxmox-apps/commit/434510ae3ef58fd1b84b5015bc745d98bb3705c3))
+* **inventory:** enable the phone-approved Authelia elevation clients ([#2717](https://github.com/dryvist/ansible-proxmox-apps/issues/2717)) ([d4cec31](https://github.com/dryvist/ansible-proxmox-apps/commit/d4cec3134314e25e26f22c4f218f644b56f4305f))
+* **inventory:** enable the phone-approved OpenBao elevation clients ([9b1856e](https://github.com/dryvist/ansible-proxmox-apps/commit/9b1856e3e00941294c6f2b2e16da34102f22b9d2))
+* **inventory:** enable the phone-approved OpenBao elevation clients ([#2681](https://github.com/dryvist/ansible-proxmox-apps/issues/2681)) ([656c42a](https://github.com/dryvist/ansible-proxmox-apps/commit/656c42a8374f5fe621221cfb04eb56727f0f75aa))
+* **inventory:** enable the phone-approved OpenBao elevation login ([6f8b268](https://github.com/dryvist/ansible-proxmox-apps/commit/6f8b268715efe4d9093c43da6ea4a68ecf0bb955))
+* **inventory:** enable the phone-approved OpenBao elevation login ([#2720](https://github.com/dryvist/ansible-proxmox-apps/issues/2720)) ([2af7271](https://github.com/dryvist/ansible-proxmox-apps/commit/2af72719d819e9a9c9e7980ebc6b4e4bcaaf4279))
+* **inventory:** read the trusted elevation secret from its dedicated path ([2083c68](https://github.com/dryvist/ansible-proxmox-apps/commit/2083c686b712b54889f4e401ed53484d3c60be05))
+* **inventory:** read the trusted elevation secret from its dedicated path ([#2686](https://github.com/dryvist/ansible-proxmox-apps/issues/2686)) ([415d787](https://github.com/dryvist/ansible-proxmox-apps/commit/415d787f2c214bad69598806d9fb8dc3da100a2a))
+* **postgres:** add a postgres_roles tag for Phase 4 role provisioning ([#2685](https://github.com/dryvist/ansible-proxmox-apps/issues/2685)) ([a1cb7c1](https://github.com/dryvist/ansible-proxmox-apps/commit/a1cb7c1db52be766c996a87d99055716ca70491c))
+* **prometheus_stack:** scrape the Phoenix application metrics endpoint ([2a616e3](https://github.com/dryvist/ansible-proxmox-apps/commit/2a616e31565e40b4d98bc0c0e45a46395b623337))
+* **prometheus_stack:** scrape the Phoenix application metrics endpoint ([#2677](https://github.com/dryvist/ansible-proxmox-apps/issues/2677)) ([8c695a8](https://github.com/dryvist/ansible-proxmox-apps/commit/8c695a8dfd87c35583f94caecfb0f2955ec6f485))
+* **prometheus_stack:** scrape the Phoenix database exporter and alert on it ([b5de692](https://github.com/dryvist/ansible-proxmox-apps/commit/b5de692adcfdc010c31f03c8ec3746f6bb2ce235))
+* **prometheus_stack:** scrape the Phoenix database exporter and alert on it ([#2683](https://github.com/dryvist/ansible-proxmox-apps/issues/2683)) ([7f4aa6f](https://github.com/dryvist/ansible-proxmox-apps/commit/7f4aa6fa6eb4ecc1e101b865400bdc33668c3fb3))
+* route serving logs to timing source ([80a42df](https://github.com/dryvist/ansible-proxmox-apps/commit/80a42df98aa955f944888b42e30dad0ffd696cb9))
+* scrape macmon metrics ([#2700](https://github.com/dryvist/ansible-proxmox-apps/issues/2700)) ([cd59fea](https://github.com/dryvist/ansible-proxmox-apps/commit/cd59fea6d5e9842986a3d536a98b53b78ed18da5))
+* **serving:** route serving logs to the request timing source ([#2703](https://github.com/dryvist/ansible-proxmox-apps/issues/2703)) ([80a42df](https://github.com/dryvist/ansible-proxmox-apps/commit/80a42df98aa955f944888b42e30dad0ffd696cb9))
+* **telemetry:** route bounded traces and GPU metrics ([#2701](https://github.com/dryvist/ansible-proxmox-apps/issues/2701)) ([ac3d648](https://github.com/dryvist/ansible-proxmox-apps/commit/ac3d6483c4252a7071a29478219b73f7c60b8d43))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** fall back to the public GitHub origin when no Git mirror is published ([#2676](https://github.com/dryvist/ansible-proxmox-apps/issues/2676)) ([0126781](https://github.com/dryvist/ansible-proxmox-apps/commit/0126781ea468b7cecf9cbff02cab1f783a12dad7))
+* **apt_cacher_ng:** allow the FlashInfer wheel index through the proxy ([#2702](https://github.com/dryvist/ansible-proxmox-apps/issues/2702)) ([c98b6f2](https://github.com/dryvist/ansible-proxmox-apps/commit/c98b6f22c5b2855ac843568d3ea56e5013e1674e))
+* **apt_cacher_ng:** pass HTTPS tunnels through for the uv installer, Python package and model download hosts ([#2690](https://github.com/dryvist/ansible-proxmox-apps/issues/2690)) ([e53c159](https://github.com/dryvist/ansible-proxmox-apps/commit/e53c159db326ea770766c5d0df38115cb412e3fa))
+* **cribl_stream:** drop contents from the GitHub Actions token request ([#2711](https://github.com/dryvist/ansible-proxmox-apps/issues/2711)) ([949146c](https://github.com/dryvist/ansible-proxmox-apps/commit/949146c517a36997c9bbdd359ed9e772ed642997))
+* **cribl_stream:** read the telemetry owner list from the environment ([#2709](https://github.com/dryvist/ansible-proxmox-apps/issues/2709)) ([76fc3dd](https://github.com/dryvist/ansible-proxmox-apps/commit/76fc3ddec0b175feab9d80ea2279b629c7b586a9))
+* **cribl_stream:** request no contents permission in the collector login ([949146c](https://github.com/dryvist/ansible-proxmox-apps/commit/949146c517a36997c9bbdd359ed9e772ed642997))
+* **github_runner:** run read-only state checks during check runs ([#2715](https://github.com/dryvist/ansible-proxmox-apps/issues/2715)) ([bea2d35](https://github.com/dryvist/ansible-proxmox-apps/commit/bea2d35c7ce631135eaa948611a91019180b1f87))
+* **github_runner:** run the read-only filesystem probes during check runs ([0935268](https://github.com/dryvist/ansible-proxmox-apps/commit/093526896acd94f79d318403aa29173f246f00f6))
+* **inventory:** keep the phone-approved elevation flags off ([#2708](https://github.com/dryvist/ansible-proxmox-apps/issues/2708)) ([24e678f](https://github.com/dryvist/ansible-proxmox-apps/commit/24e678f6132dd33168188ab5a8a975492d5445fc))
+* **inventory:** write and verify the pinned host keys during check runs ([#2714](https://github.com/dryvist/ansible-proxmox-apps/issues/2714)) ([623b19e](https://github.com/dryvist/ansible-proxmox-apps/commit/623b19e5d7c05550ada5c98f5da29770e6d3b33f))
+* **nautobot:** source management command environment from a protected file ([10f777c](https://github.com/dryvist/ansible-proxmox-apps/commit/10f777cd9eec255994b2440e96fff3613cf3667a))
+* **nautobot:** source management command environment from a protected file ([#2680](https://github.com/dryvist/ansible-proxmox-apps/issues/2680)) ([1815ab1](https://github.com/dryvist/ansible-proxmox-apps/commit/1815ab174df9c47b85b962c3a4e55b5d6c4cfdd8))
+* **postgres:** run read-only probe commands in check mode ([529a66b](https://github.com/dryvist/ansible-proxmox-apps/commit/529a66b460e16f7c102f1bb82c83829ffff70681))
+* **postgres:** run read-only probe commands in check mode ([#2688](https://github.com/dryvist/ansible-proxmox-apps/issues/2688)) ([c4cf342](https://github.com/dryvist/ansible-proxmox-apps/commit/c4cf34274465634125022f217b0f2ad5653f0467))
+* **roles:** download pinned pack archives during check runs ([#2719](https://github.com/dryvist/ansible-proxmox-apps/issues/2719)) ([9c5d86f](https://github.com/dryvist/ansible-proxmox-apps/commit/9c5d86fbdff961dfe33449114f0d90dcf106e937))
+* **roles:** skip runtime-only checks during check runs ([#2716](https://github.com/dryvist/ansible-proxmox-apps/issues/2716)) ([c84585c](https://github.com/dryvist/ansible-proxmox-apps/commit/c84585cf2cf92183079643041bd507c2d8c98234))
+
 ## [5.3.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.2.0...v5.3.0) (2026-10-14)
 
 
