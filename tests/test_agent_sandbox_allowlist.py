@@ -93,6 +93,15 @@ class OperatorAllowlistDomainValidation(unittest.TestCase):
         self.assertIn("DisableForwarding yes", sshd_template)
         self.assertIn("PermitTTY no", sshd_template)
 
+    def test_sandbox_inventory_enables_the_operator_allowlist_command(self):
+        host_vars = yaml.safe_load(
+            (ROOT / "inventory/host_vars/ai-sandbox-01.yml").read_text(encoding="utf-8")
+        )
+        self.assertIs(host_vars["agent_sandbox_allow_access_enabled"], True)
+        authorized_keys = host_vars["agent_sandbox_allow_authorized_keys"]
+        self.assertEqual(len(authorized_keys), 1)
+        self.assertTrue(authorized_keys[0].startswith("ssh-ed25519 "))
+
 
 if __name__ == "__main__":
     unittest.main()
