@@ -1,0 +1,82 @@
+---
+# One generated collector per owner. Cribl's REST Discover results are passed
+# to Collect as `${name}`, so each active repo makes one GraphQL request.
+# At full pages this requests about 6,160 connection nodes per repo, or at most
+# 62 primary query points under GitHub's one-point-per-100-nodes cost formula;
+# the query remains far below GitHub's 500,000-node query limit.
+id: github_actions_{{ cribl_stream_github_actions_owner | lower | regex_replace('[^a-z0-9_]', '_') }}
+type: collection
+conf:
+  type: rest
+  discovery:
+    discoverType: http
+    discoverUrl: >-
+      {{ cribl_stream_github_actions_api_base_url ~ '/orgs/' ~
+      cribl_stream_github_actions_owner ~ '/repos?per_page=' ~
+      cribl_stream_github_actions_repo_page_size }}
+    discoverMethod: get
+    discoverRequestHeaders:
+      - name: Accept
+        value: "'application/vnd.github+json'"
+      - name: X-GitHub-Api-Version
+        value: "'2022-11-28'"
+    discoverDataField: __resultOut
+    enableDiscoverCode: true
+    discoverCode: |
+      if (Array.isArray(__e)) {
+        __e['__resultOut'] = __e
+          .filter(repo => !repo.archived)
+          .map(repo => ({ org: repo.owner.login, name: repo.name }));
+      } else {
+        __e['__resultOut'] = [];
+      }
+    pagination:
+      type: response_header_link
+      nextRelationAttribute: next
+      maxPages: {{ cribl_stream_github_actions_max_discovery_pages }}
+  collectUrl: "{{ cribl_stream_github_actions_graphql_url }}"
+  collectMethod: post_with_body
+  collectBody: >-
+    `{"query":"query($owner:String!,$name:String!){
+    repository(owner:$owner,name:$name){
+    name owner{login}
+    defaultBranchRef{name target{... on Commit{
+    history(first:{{ cribl_stream_github_actions_commit_page_size }}){nodes{oid
+    checkSuites(first:{{ cribl_stream_github_actions_suite_page_size }}){nodes{...SuiteData}}}}}}}
+    developRef:ref(qualifiedName:\"refs/heads/develop\"){name target{... on Commit{
+    history(first:{{ cribl_stream_github_actions_commit_page_size }}){nodes{oid
+    checkSuites(first:{{ cribl_stream_github_actions_suite_page_size }}){nodes{...SuiteData}}}}}}}
+    pullRequests(first:{{ cribl_stream_github_actions_open_pr_page_size }},states:OPEN,
+    orderBy:{field:CREATED_AT,direction:ASC}){nodes{number createdAt baseRefName headRefName
+    headRefOid author{login} autoMergeRequest{enabledAt} mergeable commits(last:1){nodes{commit{
+    oid statusCheckRollup{state} checkSuites(first:{{ cribl_stream_github_actions_suite_page_size }}){
+    nodes{...SuiteData}}}}}}}
+    }} fragment SuiteData on CheckSuite{databaseId createdAt status conclusion commit{oid}
+    workflowRun{databaseId id runAttempt event createdAt updatedAt workflow{name}}
+    checkRuns(first:{{ cribl_stream_github_actions_check_run_page_size }}){nodes{
+    databaseId id name status conclusion createdAt startedAt completedAt}}}",
+    "variables":{"owner":"{{ cribl_stream_github_actions_owner }}","name":"${name}"}}`
+  collectRequestHeaders:
+    - name: Accept
+      value: "'application/vnd.github+json'"
+    - name: Content-Type
+      value: "'application/json'"
+    - name: X-GitHub-Api-Version
+      value: "'2022-11-28'"
+  authentication: login
+  loginUrl: "{{ cribl_stream_github_actions_agent_proxy_url }}/v1/github/token"
+  username: ""
+  password: ""
+  loginBody: >-
+    `{"org_name":"{{ cribl_stream_github_actions_owner }}","permissions":{
+    "contents":"read","metadata":"read","pull_requests":"read","issues":"read",
+    "actions":"read","checks":"read","statuses":"read","security_events":"read",
+    "vulnerability_alerts":"read"}}`
+  tokenRespAttribute: data.token
+  authHeaderExpr: '`Bearer ${token}`'
+  authRequestHeaders:
+    - name: Content-Type
+      value: "'application/json'"
+  timeout: 60
+  rejectUnauthorized: true
+  disableTimeFilter: true

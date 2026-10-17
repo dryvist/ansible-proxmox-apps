@@ -1,0 +1,156 @@
+---
+# Completed job/run samples and current PR/runner gauges to VictoriaMetrics.
+output: victoriametrics_rw
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: parser
+    filter: "true"
+    disabled: false
+    conf:
+      mode: extract
+      type: json
+      srcField: _raw
+      destField: github_payload
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const __ghaMode = 'metrics';
+        {% include "derive.js.j2" %}{{ '\n' }}
+  - id: unroll
+    filter: "true"
+    disabled: false
+    conf:
+      srcField: __ghaRows
+      destField: __ghaMetric
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const metric = __e.__ghaMetric;
+        const eventTime = __e._time;
+        for (const key of Object.keys(__e)) delete __e[key];
+        if (eventTime !== undefined) __e._time = eventTime;
+        Object.assign(__e, metric);
+  # The collector re-reads completed runs and jobs for two hours. Suppression
+  # deduplicates run attempts before counter aggregation and completed jobs
+  # before publishing one queue/duration sample; workerAffinity keeps a
+  # collector's tasks together.
+  - id: suppress
+    filter: "__e.metric === 'github_actions_runs_completed_total'"
+    disabled: false
+    conf:
+      keyExpr: "${org}:${repo}:${run_id}:${run_attempt}"
+      numAllowed: 1
+      suppressPeriodSec: {{ cribl_stream_github_actions_lookback_seconds }}
+      dropEvents: true
+  - id: suppress
+    filter: >-
+      __e.metric === 'github_actions_job_queue_seconds'
+      || __e.metric === 'github_actions_job_duration_seconds'
+    disabled: false
+    conf:
+      keyExpr: "${org}:${repo}:${job_id}"
+      numAllowed: 1
+      suppressPeriodSec: {{ cribl_stream_github_actions_lookback_seconds }}
+      dropEvents: true
+  - id: aggregation
+    filter: "__e.metric === 'github_actions_runs_completed_total'"
+    disabled: false
+    conf:
+      aggregates:
+        - "count().as(value)"
+      groupByFields:
+        - org
+        - repo
+        - event
+        - conclusion
+      timeWindow: 1m
+      lagTolerance: 10s
+      idleBucketTimeLimit: 10s
+      cumulative: true
+      flushOnInputClose: false
+  - id: publish_metrics
+    filter: "__e.metric === 'github_actions_job_queue_seconds'"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'github_actions_job_queue_seconds'"
+          type: gauge
+      dimensions:
+        - org
+        - repo
+        - workflow
+        - runner_class
+        - event
+  - id: publish_metrics
+    filter: "__e.metric === 'github_actions_job_duration_seconds'"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'github_actions_job_duration_seconds'"
+          type: gauge
+      dimensions:
+        - org
+        - repo
+        - workflow
+        - runner_class
+        - event
+        - conclusion
+  - id: publish_metrics
+    filter: "__e.metric === undefined && __e.value !== undefined"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'github_actions_runs_completed_total'"
+          type: counter
+      dimensions:
+        - org
+        - repo
+        - event
+        - conclusion
+  - id: publish_metrics
+    filter: "__e.metric === 'github_actions_runner_online'"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'github_actions_runner_online'"
+          type: gauge
+      dimensions:
+        - org
+        - runner_group
+        - runner_name
+  - id: publish_metrics
+    filter: "__e.metric === 'github_actions_runner_busy'"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'github_actions_runner_busy'"
+          type: gauge
+      dimensions:
+        - org
+        - runner_group
+        - runner_name
+  - id: publish_metrics
+    filter: "__e.metric === 'github_pr_open_age_seconds'"
+    disabled: false
+    conf:
+      metrics:
+        - field: value
+          metricName: "'github_pr_open_age_seconds'"
+          type: gauge
+      dimensions:
+        - org
+        - repo
+        - number
+        - checks_state
+        - base_ref
