@@ -1,11 +1,8 @@
 ---
-# Egress boundary for autonomous agent containers (dryvist/nix-agent-sandbox)
-# on the agent_sandbox_host inventory group (docker_vms members carrying the
-# agent-sandbox tag). Creates an internal-only docker network whose sole
-# route out is an allowlisting CONNECT proxy, backed by a host nftables
-# filter that drops any container packet leaving the agents bridge;
-# `agent run --host` attaches fresh containers to it with plain `docker run`
-# — no IaC in the loop.
+# Agent containers on `agent_sandbox_host` use an internal Docker network.
+# Its only egress route is the allowlisting CONNECT proxy; host nftables drops
+# traffic leaving the agent bridge. `agent run --host` attaches containers with
+# `docker run`; no IaC configuration is involved.
 
 # SSH user the nix-agent-sandbox launcher connects as (DOCKER_HOST=ssh://);
 # granted docker group membership so remote `docker run` works without sudo.
@@ -33,10 +30,8 @@ agent_sandbox_dispatch_authorized_keys: []
 agent_sandbox_dir: /opt/agent-sandbox
 agent_sandbox_squid_image: "ubuntu/squid:6.6-24.04_beta"
 agent_sandbox_probe_image: "curlimages/curl:8.22.0"
-# Adversarial-probe helper: busybox has nc/ping/nslookup/ip applets for the
-# UDP, ICMP, raw-DNS and IPv6-state checks curl can't do. Public well-known
-# literals below are route-existence targets (a bypass would REACH them); they
-# are NOT homelab infra, so hardcoding them is intentional, not an IP leak.
+# busybox adds nc/ping/nslookup/ip for UDP, ICMP, raw-DNS and IPv6 checks that
+# curl lacks. The public literals below test route existence, not infrastructure.
 agent_sandbox_netprobe_image: "busybox:1.38"
 agent_sandbox_probe_external_ip: "1.1.1.1"
 agent_sandbox_probe_external_ip6: "2606:4700:4700::1111"
@@ -80,10 +75,8 @@ agent_sandbox_egress_network: agents-egress
 agent_sandbox_proxy_alias: proxy
 agent_sandbox_proxy_port: 3128
 
-# Always-on authenticated ZCode Web service. The published GHCR manifest is
-# pinned here; update it only with the digest produced by the image workflow.
-# Disabling it removes the service, its secret group and its credential-file
-# requirement, so the egress boundary and the dispatcher deploy without it.
+# Authenticated ZCode Web uses the published GHCR digest. Disabling it removes
+# the service, secret group and credential-file requirement.
 agent_sandbox_zcode_web_enabled: true
 agent_sandbox_zcode_web_image: >-
   {{ 'ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
@@ -101,9 +94,8 @@ agent_sandbox_zcode_web_memory_limit: 4g
 agent_sandbox_zcode_web_cpus: "2"
 agent_sandbox_zcode_web_pids_limit: 256
 
-# Host dispatcher (dryvist/nix-agent-sandbox agent-dispatch + dispatch-ssh),
-# installed when dispatch access is enabled. The job image and both sources
-# are pinned to one merged commit, as is the CI resolver source; update them together.
+# Optional host dispatcher from dryvist/nix-agent-sandbox. Pin its job image
+# and both sources to one merged commit, matching the CI resolver source.
 agent_sandbox_dispatch_image: >-
   {{ 'ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
   ~ 'fd608b23eb4a009c0f7c88b56a39817cbeba77a0da55e00fe58510d3f877357d' }}
@@ -171,9 +163,8 @@ agent_sandbox_ci_resolver_vikunja_url: "https://vikunja.{{ ingress_domain }}"
 agent_sandbox_ci_resolver_zammad_group: Homelab Infrastructure
 agent_sandbox_ci_resolver_zammad_url: "https://zammad.{{ ingress_domain }}"
 
-# The only forwarded path into the agent bridge is the SSO proxy's published
-# Web connection. Read addresses from the loaded inventory artifact on
-# localhost: limited runs do not propagate tofu_data to out-of-limit hosts.
+# Forward only the SSO proxy addresses from localhost's loaded inventory;
+# limited runs do not propagate tofu_data to out-of-limit hosts.
 agent_sandbox_zcode_web_ingress_source_ips: >-
   {{ groups.get('traefik_group', [])
      | map('extract', hostvars['localhost']['tofu_data']['containers'])
@@ -190,11 +181,9 @@ agent_sandbox_nft_table: agent_sandbox
 agent_sandbox_nft_file: "{{ agent_sandbox_dir }}/agent-sandbox.nft"
 agent_sandbox_nft_service: agent-sandbox-nft
 
-# Committed mirror of dryvist/nix-agent-sandbox `lib.egressDomains` — that
-# repo is the source of truth. Regenerate with:
-#   nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json
-# The model API group includes deployment-specific endpoints beyond upstream;
-# a regeneration must keep them.
+# Mirror of dryvist/nix-agent-sandbox `lib.egressDomains`; regenerate with
+# `nix eval github:dryvist/nix-agent-sandbox#lib.egressDomains --json`. Keep
+# deployment-specific model API endpoints when regenerating.
 agent_sandbox_egress_domains:
   modelApis:
     - api.anthropic.com
@@ -227,12 +216,10 @@ agent_sandbox_egress_domains:
     - "{{ agent_sandbox_router_host }}"
     - "{{ agent_sandbox_dispatch_bao_addr | urlsplit('hostname') }}"
 
-# --- Session-log shipping (Phase D) ------------------------------------------
-# nix-agent-sandbox `agent run --host` bind-mounts each run's per-CLI session-log
-# subdir under {{ agent_sandbox_spool_dir }}/<run-id>/<cli>/. A Cribl Edge
-# container on this host tails the tree and ships every run's session records to
-# Splunk before the --rm agent container is destroyed. Root is mode 1777 so the
-# launcher's throwaway uid-1000 container can create the per-run leaves.
+# --- Session-log shipping ----------------------------------------------------
+# The launcher bind-mounts per-CLI logs under spool/<run-id>/<cli>. Cribl Edge
+# ships them to Splunk before the --rm agent exits. Root uses mode 1777 so the
+# launcher container's uid 1000 can create run directories.
 agent_sandbox_spool_dir: /var/lib/agent-sandbox/spool
 agent_sandbox_spool_retention_days: 7
 # Where the spool root is bind-mounted inside the Cribl Edge container (the
