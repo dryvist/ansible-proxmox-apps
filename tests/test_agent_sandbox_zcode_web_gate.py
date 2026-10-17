@@ -53,7 +53,7 @@ def render_compose(enabled: bool, docs_enabled: bool = False) -> dict:
 def guarded(task: dict) -> bool:
     conditions = task.get("when", [])
     conditions = [conditions] if isinstance(conditions, str) else conditions
-    return f"{FLAG} | bool" in conditions
+    return any(f"{FLAG} | bool" in condition for condition in conditions)
 
 
 def zcode_tasks(path: Path):
