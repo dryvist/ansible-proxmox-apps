@@ -31,6 +31,7 @@
     path: "{{ github_runner_data_device }}"
     follow: true
   register: github_runner_data_dev
+  check_mode: false
 
 - name: Assert the Docker data device is present
   ansible.builtin.assert:
@@ -50,6 +51,7 @@
   # blkid exits 2 when it finds no signature at all — the expected state for a
   # never-used disk. Any other non-zero is a real error.
   failed_when: github_runner_data_blkid.rc not in [0, 2]
+  check_mode: false
 
 - name: Refuse to format a device that already carries data
   vars:
@@ -79,6 +81,7 @@
     cmd: "blkid -s UUID -o value {{ github_runner_data_device }}"
   register: github_runner_data_uuid
   changed_when: false
+  check_mode: false
 
 - name: Check whether /var/lib/docker already has its own filesystem
   ansible.builtin.command:
@@ -86,6 +89,7 @@
   register: github_runner_docker_mount
   changed_when: false
   failed_when: false
+  check_mode: false
 
 # ---------------------------------------------------------------------------
 # One-shot migration of an existing /var/lib/docker off the boot disk.
@@ -163,6 +167,7 @@
     cmd: findmnt -no SOURCE --target /
   register: github_runner_root_fs
   changed_when: false
+  check_mode: false
 
 - name: Set the root filesystem fact
   ansible.builtin.set_fact:
@@ -182,6 +187,7 @@
   register: github_runner_containerd_mount
   changed_when: false
   failed_when: false
+  check_mode: false
 
 - name: Migrate an existing /var/lib/containerd onto the data disk
   when: >-
@@ -251,6 +257,7 @@
   loop: "{{ ['/'] + github_runner_data_paths }}"
   register: github_runner_fs_sources
   changed_when: false
+  check_mode: false
 
 - name: Assert no Docker data path is on the root filesystem
   vars:
@@ -281,6 +288,7 @@
     cmd: docker info --format '{{ "{{" }}.DockerRootDir{{ "}}" }}'
   register: github_runner_docker_root
   changed_when: false
+  check_mode: false
 
 - name: Assert Docker's reported data root is a path this role placed off the boot disk
   vars:
@@ -302,6 +310,7 @@
     cmd: "findmnt -no AVAIL,SIZE --bytes --target {{ github_runner_docker_root.stdout | trim }}"
   register: github_runner_data_free
   changed_when: false
+  check_mode: false
 
 - name: Assert the Docker data filesystem still has headroom
   vars:
@@ -346,19 +355,8 @@
       changed_when: "'Total reclaimed space: 0B' not in github_runner_prune.stdout"
 
 # ---------------------------------------------------------------------------
-# Recurring reclaim.
-#
-# The block above only fires on the one-time migration (mount not yet
-# present). Every converge after that, `docker_mount.rc == 0` forever, so it
-# never runs again — and nothing else on this host ever prunes. Every
-# Molecule scenario across every PR pulls and builds images on the SAME
-# shared daemon (siblings on docker.sock, not bounded by any one job's
-# cleanup), so unused layers grew unbounded until the data disk hit 0 bytes
-# free. At that point the runner's own container filesystem cannot write a
-# complete apt index, and apt reports a truncated file as "invalid
-# signature" — a disk problem wearing a GPG problem's clothes. This timer
-# is deployed unconditionally, every converge, independent of migration
-# state.
+# The migration block only runs while mounts are missing. This timer runs on
+# Deploy it on every converge so unused Docker data is reclaimed after the mounts exist.
 # ---------------------------------------------------------------------------
 - name: Deploy the Docker data reclaim service
   ansible.builtin.template:
