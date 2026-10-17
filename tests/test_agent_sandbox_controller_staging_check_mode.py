@@ -28,6 +28,9 @@ STAGING_TASKS = {
     ),
 }
 CHECK_MODE_GUARD_FILES = ("dispatcher_install.yml", "deploy.yml")
+CHECK_MODE_ALLOWLIST = (
+    "Read the task profiles baked into the pinned job image",
+)
 NESTED = ("block", "rescue", "always")
 
 
@@ -63,7 +66,25 @@ class AgentSandboxControllerStagingCheckMode(unittest.TestCase):
             for task in tasks_in(filename):
                 if task.get("check_mode") is False:
                     with self.subTest(file=filename, task=task.get("name")):
-                        self.assertEqual(task.get("delegate_to"), "localhost")
+                        if task.get("name") not in CHECK_MODE_ALLOWLIST:
+                            self.assertEqual(task.get("delegate_to"), "localhost")
+
+    def test_image_profiles_are_read_in_check_mode_and_installed_from_result(self):
+        tasks = tasks_in("dispatcher_install.yml")
+        read_task = task_by_name(
+            tasks, "Read the task profiles baked into the pinned job image"
+        )
+        install_task = task_by_name(
+            tasks, "Install the image task profiles for the dispatcher"
+        )
+
+        self.assertIsNotNone(read_task)
+        self.assertIs(read_task.get("check_mode"), False)
+        self.assertIsNotNone(install_task)
+        self.assertEqual(
+            install_task["ansible.builtin.copy"].get("content"),
+            "{{ _agent_sandbox_task_profiles.stdout }}\n",
+        )
 
 
 if __name__ == "__main__":
