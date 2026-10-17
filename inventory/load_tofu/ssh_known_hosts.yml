@@ -8,3 +8,118 @@
   loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
   when: hostvars[item].ssh_host_key is defined
   register: ssh_known_hosts_pins
+
+- name: Look up each pinned address in the wrapper-managed known_hosts file
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -F
+      - "{{ hostvars[item].ansible_host }}"
+      - -f
+      - "{{ ssh_known_hosts_file | default(lookup('env', 'SSH_KNOWN_HOSTS_FILE'), true) }}"
+  delegate_to: localhost
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
+  register: ssh_known_hosts_lookup
+
+- name: Require each pin to resolve in the wrapper-managed known_hosts file
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ssh_known_hosts_lookup.results
+         | selectattr('item', 'equalto', item)
+         | map(attribute='rc')
+         | first
+         | default(1)) == 0
+    fail_msg: >-
+      Host alias {{ item }} has no entry in the wrapper-managed
+      known_hosts file.
+  delegate_to: localhost
+  changed_when: false
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
+
+- name: Resolve the effective OpenSSH options for each pinned address
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['ssh', '-G']
+        + (lookup('env', 'ANSIBLE_SSH_COMMON_ARGS') | default('', true)).split()
+        + (
+          lookup(
+            'ansible.builtin.config',
+            'ssh_args',
+            plugin_type='connection',
+            plugin_name='ssh'
+          ) | default('', true)
+        ).split()
+        + (['-l', hostvars[item].ansible_user | string] if hostvars[item].ansible_user is defined else [])
+        + (['-p', hostvars[item].ansible_port | string] if hostvars[item].ansible_port is defined else [])
+        + [hostvars[item].ansible_host]
+      }}
+  delegate_to: localhost
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
+  register: ssh_known_hosts_ssh_g
+
+- name: Require OpenSSH options to resolve for each pinned address
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ssh_known_hosts_ssh_g.results
+         | selectattr('item', 'equalto', item)
+         | map(attribute='rc')
+         | first
+         | default(1)) == 0
+    fail_msg: "Could not evaluate OpenSSH options for host alias {{ item }}."
+  delegate_to: localhost
+  changed_when: false
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
+
+- name: Show only effective OpenSSH connection settings for each pinned host
+  ansible.builtin.debug:
+    msg: >-
+      {{ (
+        (ssh_known_hosts_ssh_g.results
+         | selectattr('item', 'equalto', item)
+         | map(attribute='stdout_lines')
+         | first
+         | default([])
+         | select(
+           'match',
+           '^(hostname|port|user|userknownhostsfile|'
+           ~ 'globalknownhostsfile|stricthostkeychecking|'
+           ~ 'hostkeyalias|canonicalizehostname|controlmaster|checkhostip) '
+         )
+         | list)
+        + (ssh_known_hosts_ssh_g.results
+           | selectattr('item', 'equalto', item)
+           | map(attribute='stdout_lines')
+           | first
+           | default([])
+           | select('match', '^controlpath ')
+           | map('regex_replace', '^controlpath ', '')
+           | map('regex_replace', '/[^/]+$', '')
+           | map('regex_replace', '^', 'controlpath ')
+           | list)
+      ) }}
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
+  register: ssh_known_hosts_ssh_options_debug

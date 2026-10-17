@@ -1,0 +1,100 @@
+---
+- name: Verify SSH known_hosts preflight with an ephemeral pin
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Exercise the controller known_hosts preflight
+      block:
+        - name: Create isolated SSH known_hosts preflight fixtures
+          ansible.builtin.tempfile:
+            state: directory
+          register: ssh_known_hosts_preflight_fixture
+
+        - name: Generate a throwaway ED25519 host key
+          ansible.builtin.command:
+            argv:
+              - ssh-keygen
+              - -q
+              - -t
+              - ed25519
+              - -N
+              - ""
+              - -C
+              - preflight-fixture
+              - -f
+              - "{{ ssh_known_hosts_preflight_fixture.path }}/fixture"
+          changed_when: true
+          no_log: true
+
+        - name: Add the pinned fixture host to the in-memory inventory
+          ansible.builtin.add_host:
+            name: pin-fixture
+            groups: ssh_known_hosts_preflight_fixture
+            ansible_host: preflight.example.invalid
+            ssh_host_key: >-
+              {{ lookup('file', ssh_known_hosts_preflight_fixture.path ~ '/fixture.pub').split()[0:2] | join(' ') }}
+          no_log: true
+
+        - name: Add a fixture host without a declared key
+          ansible.builtin.add_host:
+            name: unpinned-fixture
+            groups: ssh_known_hosts_preflight_fixture
+            ansible_host: unpinned.example.invalid
+
+        - name: Pin and verify the fixture host keys
+          ansible.builtin.include_tasks: ../../inventory/load_tofu/ssh_known_hosts.yml
+          vars:
+            ssh_known_hosts_file: "{{ ssh_known_hosts_preflight_fixture.path }}/known_hosts"
+
+        - name: Assert only the declared pin was checked
+          ansible.builtin.assert:
+            that:
+              - >-
+                (ssh_known_hosts_lookup.results
+                 | selectattr('rc', 'defined')
+                 | map(attribute='item')
+                 | list) == ['pin-fixture']
+              - >-
+                (ssh_known_hosts_ssh_g.results
+                 | selectattr('rc', 'defined')
+                 | map(attribute='item')
+                 | list) == ['pin-fixture']
+              - >-
+                (ssh_known_hosts_lookup.results
+                 | selectattr('rc', 'defined')
+                 | map(attribute='rc')
+                 | list) == [0]
+
+        - name: Assert the SSH option probe resolves the allowlisted fields
+          ansible.builtin.assert:
+            that:
+              - >-
+                (ssh_known_hosts_ssh_options_debug.results
+                 | selectattr('item', 'equalto', 'pin-fixture')
+                 | map(attribute='msg')
+                 | first
+                 | length) == 11
+              - >-
+                'controlpath /tmp/preflight-control' in
+                (ssh_known_hosts_ssh_options_debug.results
+                 | selectattr('item', 'equalto', 'pin-fixture')
+                 | map(attribute='msg')
+                 | first)
+              - >-
+                'controlpath /tmp/preflight-control/socket' not in
+                (ssh_known_hosts_ssh_options_debug.results
+                 | selectattr('item', 'equalto', 'pin-fixture')
+                 | map(attribute='msg')
+                 | first)
+              - >-
+                'hostkeyalias preflight.example.invalid' in
+                (ssh_known_hosts_ssh_options_debug.results
+                 | selectattr('item', 'equalto', 'pin-fixture')
+                 | map(attribute='msg')
+                 | first)
+      always:
+        - name: Remove the SSH known_hosts preflight fixtures
+          ansible.builtin.file:
+            path: "{{ ssh_known_hosts_preflight_fixture.path }}"
+            state: absent
+          when: ssh_known_hosts_preflight_fixture is defined
