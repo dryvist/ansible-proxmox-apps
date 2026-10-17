@@ -29,8 +29,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 RENOVATE_COMMENT_RE = re.compile(r"^\s*#\s*renovate:\s*datasource=", re.MULTILINE)
+RENOVATE_KEY_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:")
 STATIC_CHECKSUM_RE = re.compile(
-    r"^[^#\n]*_(?:sha256|checksum)\s*:\s*[\"']?[0-9a-f]{64}",
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*_(?:sha256|checksum))\s*:\s*[\"']?[0-9a-f]{64}",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -52,12 +53,48 @@ def _default_files():
     yield from ROOT.glob("roles/*/defaults/main/*.yml")
 
 
+def _has_renovate_checksum_pair(text):
+    """Match checksum names to the key directly following each Renovate marker."""
+    lines = text.splitlines()
+    artifact_prefixes = set()
+    for index, line in enumerate(lines):
+        if not RENOVATE_COMMENT_RE.match(line):
+            continue
+        for candidate in lines[index + 1 :]:
+            if not candidate.strip() or candidate.lstrip().startswith("#"):
+                continue
+            key = RENOVATE_KEY_RE.match(candidate)
+            if key:
+                artifact_prefixes.add(key.group(1).removesuffix("_version"))
+            break
+
+    return any(
+        checksum.group(1).startswith(prefix + "_")
+        for checksum in STATIC_CHECKSUM_RE.finditer(text)
+        for prefix in artifact_prefixes
+    )
+
+
 class NoNewRenovateChecksumDrift(unittest.TestCase):
+    def test_only_the_renovate_version_checksum_pair_is_flagged(self):
+        unrelated = """\
+# renovate: datasource=github-releases depName=openbao/openbao
+agent_sandbox_dispatch_bao_version: "2.7.1"
+agent_sandbox_ci_resolver_source_sha256: ce53312c38d9552ffab68a6402c00967af9985089291db66d98660288e4478c8
+"""
+        paired = unrelated.replace(
+            "agent_sandbox_ci_resolver_source_sha256:",
+            "agent_sandbox_dispatch_bao_sha256:",
+        )
+
+        self.assertFalse(_has_renovate_checksum_pair(unrelated))
+        self.assertTrue(_has_renovate_checksum_pair(paired))
+
     def test_no_new_offenders(self):
         hits = set()
         for path in _default_files():
             text = path.read_text()
-            if RENOVATE_COMMENT_RE.search(text) and STATIC_CHECKSUM_RE.search(text):
+            if _has_renovate_checksum_pair(text):
                 hits.add(str(path.relative_to(ROOT)))
 
         new_hits = hits - KNOWN_OFFENDERS

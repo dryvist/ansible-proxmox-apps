@@ -42,27 +42,84 @@ class AgentSandboxOpenBaoClient(unittest.TestCase):
             else []
         )
 
-    def test_pinned_archive_is_staged_with_its_sha256_in_check_mode(self):
-        task = task_by_name(self.install, "Fetch the pinned OpenBao client to controller")
+    def test_archive_checksum_comes_from_the_signed_release_manifest(self):
+        manifest = task_by_name(
+            self.install, "Stage the OpenBao release checksum manifest on controller"
+        )
+        signature = task_by_name(
+            self.install, "Stage the OpenBao release checksum manifest signature on controller"
+        )
+        verify = task_by_name(
+            self.install, "Verify the OpenBao release checksum manifest signature"
+        )
+        checksum = task_by_name(
+            self.install, "Read the expected SHA256 for OpenBao client archive"
+        )
+        checksum_assertion = task_by_name(
+            self.install, "Assert exactly one OpenBao archive checksum was found"
+        )
+        checksum_value = task_by_name(self.install, "Set OpenBao archive checksum")
+        archive = task_by_name(self.install, "Fetch the pinned OpenBao client to controller")
 
-        self.assertIsNotNone(task)
-        self.assertIn("ansible.builtin.get_url", task)
-        self.assertEqual(task.get("delegate_to"), "localhost")
-        self.assertIs(task.get("check_mode"), False)
+        self.assertIsNotNone(manifest)
+        self.assertIsNotNone(signature)
+        self.assertIsNotNone(verify)
+        self.assertIsNotNone(checksum)
+        self.assertIsNotNone(checksum_assertion)
+        self.assertIsNotNone(checksum_value)
+        self.assertIsNotNone(archive)
+        self.assertIn("ansible.builtin.get_url", manifest)
+        for task in (manifest, signature, verify):
+            self.assertEqual(task.get("delegate_to"), "localhost")
+            self.assertEqual(task.get("connection"), "local")
+            self.assertIs(task.get("check_mode"), False)
+        self.assertIn("checksums.txt", manifest["ansible.builtin.get_url"]["url"])
+        self.assertIn(
+            "{{ agent_sandbox_dispatch_bao_version }}",
+            manifest["ansible.builtin.get_url"]["url"],
+        )
+        self.assertLess(self.install.index(manifest), self.install.index(signature))
+        self.assertLess(self.install.index(signature), self.install.index(verify))
+        self.assertLess(self.install.index(verify), self.install.index(checksum))
+        self.assertLess(self.install.index(manifest), self.install.index(archive))
+        self.assertLess(self.install.index(checksum), self.install.index(archive))
+        self.assertLess(self.install.index(checksum_assertion), self.install.index(archive))
+        self.assertLess(self.install.index(checksum_value), self.install.index(archive))
+        self.assertIn("gpgv", verify["ansible.builtin.command"]["argv"])
+        self.assertEqual(archive.get("delegate_to"), "localhost")
+        self.assertIs(archive.get("check_mode"), False)
+        self.assertIn(
+            "openbao/openbao/releases/download",
+            archive["ansible.builtin.get_url"]["url"],
+        )
         self.assertEqual(
-            task["ansible.builtin.get_url"]["checksum"],
+            checksum_assertion["ansible.builtin.assert"]["that"],
+            ["_agent_sandbox_dispatch_bao_checksum_matches | length == 1"],
+        )
+        checksum_expression = checksum["ansible.builtin.set_fact"][
+            "_agent_sandbox_dispatch_bao_checksum_matches"
+        ]
+        self.assertIn("regex_findall", checksum_expression)
+        self.assertIn("openbao_", checksum_expression)
+        self.assertIn("_linux_amd64.tar.gz", checksum_expression)
+        self.assertEqual(
+            checksum_value["ansible.builtin.set_fact"]["agent_sandbox_dispatch_bao_sha256"],
+            "{{ _agent_sandbox_dispatch_bao_checksum_matches | first }}",
+        )
+        self.assertEqual(
+            archive["ansible.builtin.get_url"]["checksum"],
             "sha256:{{ agent_sandbox_dispatch_bao_sha256 }}",
         )
-        self.assertIn("openbao/openbao/releases/download", task["ansible.builtin.get_url"]["url"])
 
         version = re.search(
             r"(?m)^agent_sandbox_dispatch_bao_version: \"([^\"]+)\"$", self.defaults
         )
-        checksum = re.search(
-            r"(?m)^agent_sandbox_dispatch_bao_sha256: ([0-9a-f]{64})$", self.defaults
+        static_checksum = re.search(
+            r"(?m)^agent_sandbox_dispatch_bao_sha256:\s*[\"']?[0-9a-f]{64}[\"']?\s*$",
+            self.defaults,
         )
         self.assertIsNotNone(version)
-        self.assertIsNotNone(checksum)
+        self.assertIsNone(static_checksum)
         self.assertIn("# renovate: datasource=github-releases depName=openbao/openbao", self.defaults)
 
     def test_only_the_bao_binary_is_copied_to_the_absolute_path(self):
