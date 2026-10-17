@@ -12,7 +12,7 @@ repo and installing collection dependencies:
 ```bash
 git clone https://github.com/dryvist/ansible-proxmox-apps.git
 cd ansible-proxmox-apps
-ansible-galaxy collection install -r requirements.yml
+python3 scripts/install_galaxy_requirements.py
 ```
 
 ## Prerequisites

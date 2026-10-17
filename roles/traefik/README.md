@@ -120,8 +120,9 @@ fronted service is added/removed in exactly one place. Add it in tofu-proxmox.
 ## Installation
 
 Wired into `playbooks/site.yml` (`hosts: traefik_group`, tag `traefik`). The LXC
-joins `traefik_group` automatically via its OpenTofu `traefik` tag. Collections
-are installed once with `ansible-galaxy collection install -r requirements.yml`.
+joins `traefik_group` automatically via its OpenTofu `traefik` tag. Install or
+refresh collections with `python3 scripts/install_galaxy_requirements.py` from
+the repository root.
 
 ## Usage
 

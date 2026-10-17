@@ -31,7 +31,7 @@ Prerequisites:
 Install the collection dependencies once:
 
 ```sh
-ansible-galaxy collection install -r requirements.yml
+python3 scripts/install_galaxy_requirements.py
 ```
 
 ## Usage
