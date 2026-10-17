@@ -338,4 +338,4 @@ role/scenario paths widen to the full matrix. Other unmapped workflow paths
 also widen to the full matrix. Required validation is aggregated by `Merge
 Gate`. Public pull-request CI stays on GitHub-hosted runners.
 
-See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”
+See the canonical policy in the `JacobPEvans/.github` README, “Ansible CI policy.”

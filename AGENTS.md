@@ -32,4 +32,4 @@ shared changed-path selection; unmapped changes fail. An empty development
 selection skips Molecule while the classifier and local contracts remain
 required. Public pull-request CI stays on GitHub-hosted runners.
 
-See the canonical policy in the `dryvist/.github` README, “Ansible CI policy.”
+See the canonical policy in the `JacobPEvans/.github` README, “Ansible CI policy.”
