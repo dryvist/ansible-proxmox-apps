@@ -62,6 +62,11 @@ checks the oldest transaction age against
 `grafana_stack_alert_phoenix_postgres_max_transaction_seconds` (600 seconds by
 default).
 
+`templates/alerting/rules-git-mirror.yml.j2` provisions two warning rules in
+the `git-mirror-sync` group: `git-mirror-sync-stale` checks the last successful
+sync age against 12 hours, and `git-mirror-sync-failed` checks the sync status.
+Both require the condition to hold for 15 minutes.
+
 A receiver API request sends a sample alert with its rule title. It checks
 the notification path without stopping a target or evaluating the metric
 expression.
