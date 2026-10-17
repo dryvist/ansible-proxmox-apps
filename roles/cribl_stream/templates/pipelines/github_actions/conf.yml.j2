@@ -1,0 +1,40 @@
+---
+# One event per contract sourcetype, with its exact JSON fields in _raw.
+output: splunk_hec_github_actions
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: parser
+    filter: "true"
+    disabled: false
+    conf:
+      mode: extract
+      type: json
+      srcField: _raw
+      destField: github_payload
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const __ghaMode = 'events';
+        {% include "derive.js.j2" %}{{ '\n' }}
+  - id: unroll
+    filter: "true"
+    disabled: false
+    conf:
+      srcField: __ghaRows
+      destField: __ghaRow
+  - id: code
+    filter: "true"
+    disabled: false
+    conf:
+      code: |
+        const row = __e.__ghaRow;
+        const eventTime = __e._time;
+        for (const key of Object.keys(__e)) delete __e[key];
+        if (eventTime !== undefined) __e._time = eventTime;
+        __e._raw = JSON.stringify(row.fields);
+        __e.index = 'github_actions';
+        __e.sourcetype = row.sourcetype;

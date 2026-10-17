@@ -1,0 +1,109 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## GitHub Actions queue, pull-request failures and stalled pull requests.
+---
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: github-actions
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: github-actions-queue-p95
+        title: GitHub Actions queue delay high
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: max by (org) (quantile_over_time(0.95, github_actions_job_queue_seconds[1h]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [600]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "GitHub Actions queue p95 exceeds ten minutes for {{ '{{' }} $labels.org {{ '}}' }}."
+
+      - uid: github-actions-pr-failure-ratio
+        title: GitHub Actions pull-request failure ratio high
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: >-
+                (
+                  sum by (org) (increase(github_actions_runs_completed_total{
+                    event="pull_request",conclusion="failure"}[1h]))
+                  /
+                  sum by (org) (increase(github_actions_runs_completed_total{
+                    event="pull_request",conclusion=~"success|failure"}[1h]))
+                )
+                and on (org)
+                (
+                  sum by (org) (increase(github_actions_runs_completed_total{
+                    event="pull_request",conclusion=~"success|failure"}[1h])) >= 5
+                )
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.30]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: "GitHub Actions pull-request failure ratio exceeds 30% for {{ '{{' }} $labels.org {{ '}}' }}."
+
+      - uid: github-actions-stalled-pr
+        title: GitHub pull request stalled
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: victoriametrics
+            model:
+              expr: >-
+                github_pr_open_age_seconds{checks_state="success"} > 7200
+                or
+                github_pr_open_age_seconds{checks_state="failure"} > 0
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.5]}
+              refId: B
+        for: 10m
+        noDataState: OK
+        execErrState: Alerting
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            Pull request {{ '{{' }} $labels.org {{ '}}' }}/{{ '{{' }} $labels.repo {{ '}}' }}
+            #{{ '{{' }} $labels.number {{ '}}' }}
+            has remained stalled for ten minutes.

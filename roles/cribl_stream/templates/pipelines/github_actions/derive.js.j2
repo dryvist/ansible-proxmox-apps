@@ -1,0 +1,249 @@
+        const payload = __e.github_payload || {};
+        const eventRows = [];
+        const metricRows = [];
+        const cutoff = Date.now() - ({{ cribl_stream_github_actions_lookback_seconds }} * 1000);
+        const seenRuns = new Set();
+        const seenJobs = new Set();
+
+        const valueOr = (value, fallback = '') => value === null || value === undefined ? fallback : value;
+        const lower = value => valueOr(value, '').toString().toLowerCase();
+        const timestamp = value => {
+          const parsed = value ? Date.parse(value) : NaN;
+          return Number.isFinite(parsed) ? parsed : null;
+        };
+        const secondsBetween = (end, start) => {
+          const endMs = timestamp(end);
+          const startMs = timestamp(start);
+          return endMs === null || startMs === null ? null : Math.floor((endMs - startMs) / 1000);
+        };
+        const ageSeconds = value => {
+          const createdMs = timestamp(value);
+          return createdMs === null ? null : Math.max(0, Math.floor((Date.now() - createdMs) / 1000));
+        };
+        const recent = value => {
+          const createdMs = timestamp(value);
+          return createdMs !== null && createdMs >= cutoff;
+        };
+        const normalizeChecks = state => {
+          if (state === 'SUCCESS') return 'success';
+          if (state === 'FAILURE' || state === 'ERROR') return 'failure';
+          return 'pending';
+        };
+        const suitesFor = commit => commit && commit.checkSuites && Array.isArray(commit.checkSuites.nodes)
+          ? commit.checkSuites.nodes : [];
+
+        function addSuite(suite, context) {
+          const workflowRun = suite.workflowRun;
+          const checkRuns = suite.checkRuns && Array.isArray(suite.checkRuns.nodes) ? suite.checkRuns.nodes : [];
+          const runStartedAt = checkRuns
+            .map(checkRun => checkRun.startedAt)
+            .filter(Boolean)
+            .sort((left, right) => Date.parse(left) - Date.parse(right))[0] || '';
+          const suiteStatus = lower(suite.status);
+          const suiteConclusion = lower(suite.conclusion) || 'unknown';
+
+          if (workflowRun && recent(workflowRun.createdAt)) {
+            const runId = valueOr(workflowRun.databaseId, valueOr(workflowRun.id, ''));
+            const runAttempt = valueOr(workflowRun.runAttempt, 1);
+            const runKey = `${runId}:${runAttempt}`;
+            if (runId !== '' && !seenRuns.has(runKey)) {
+              seenRuns.add(runKey);
+              const fields = {
+                org: payload.data.repository.owner.login,
+                repo: payload.data.repository.name,
+                workflow: valueOr(workflowRun.workflow && workflowRun.workflow.name, 'unknown'),
+                run_id: runId,
+                run_attempt: runAttempt,
+                head_sha: valueOr(context.headSha, valueOr(suite.commit && suite.commit.oid, '')),
+                head_branch: valueOr(context.headBranch, ''),
+                base_branch: valueOr(context.baseBranch, ''),
+                event: lower(workflowRun.event) || 'unknown',
+                status: suiteStatus,
+                conclusion: suiteConclusion,
+                created_at: workflowRun.createdAt,
+                run_started_at: runStartedAt,
+                updated_at: valueOr(workflowRun.updatedAt, ''),
+                queue_seconds: secondsBetween(runStartedAt, workflowRun.createdAt),
+              };
+              if (suiteStatus === 'completed') {
+                fields.duration_seconds = secondsBetween(workflowRun.updatedAt, runStartedAt);
+                metricRows.push({
+                  metric: 'github_actions_runs_completed_total',
+                  value: 1,
+                  run_id: String(runId),
+                  run_attempt: String(runAttempt),
+                  org: fields.org,
+                  repo: fields.repo,
+                  event: fields.event,
+                  conclusion: suiteConclusion,
+                });
+              }
+              eventRows.push({ sourcetype: 'github:actions:run', fields });
+            }
+          }
+
+          for (const checkRun of checkRuns) {
+            if (!workflowRun || !recent(checkRun.createdAt)) continue;
+            const jobId = valueOr(checkRun.databaseId, valueOr(checkRun.id, ''));
+            const jobKey = String(jobId);
+            if (jobId === '' || seenJobs.has(jobKey)) continue;
+            seenJobs.add(jobKey);
+            const eventName = lower(workflowRun.event) || 'unknown';
+            const workflow = valueOr(workflowRun.workflow && workflowRun.workflow.name, 'unknown');
+            const queueSeconds = secondsBetween(checkRun.startedAt, suite.createdAt);
+            const durationSeconds = secondsBetween(checkRun.completedAt, checkRun.startedAt);
+            const status = lower(checkRun.status);
+            const conclusion = lower(checkRun.conclusion);
+            const fields = {
+              org: payload.data.repository.owner.login,
+              repo: payload.data.repository.name,
+              workflow,
+              run_id: valueOr(workflowRun.databaseId, valueOr(workflowRun.id, '')),
+              job_id: jobId,
+              job_name: valueOr(checkRun.name, 'unknown'),
+              head_sha: valueOr(context.headSha, valueOr(suite.commit && suite.commit.oid, '')),
+              event: eventName,
+              runner_class: 'unknown',
+              runner_group: 'unknown',
+              labels: [],
+              status,
+              conclusion,
+              created_at: valueOr(suite.createdAt, ''),
+              started_at: valueOr(checkRun.startedAt, ''),
+              completed_at: valueOr(checkRun.completedAt, ''),
+              queue_seconds: queueSeconds,
+            };
+            if (status === 'completed') {
+              fields.duration_seconds = durationSeconds;
+              if (queueSeconds !== null) {
+                metricRows.push({
+                  metric: 'github_actions_job_queue_seconds',
+                  value: queueSeconds,
+                job_id: String(jobId),
+                  org: fields.org,
+                  repo: fields.repo,
+                  workflow,
+                  runner_class: 'unknown',
+                  event: eventName,
+                });
+              }
+              if (durationSeconds !== null) {
+                metricRows.push({
+                  metric: 'github_actions_job_duration_seconds',
+                  value: durationSeconds,
+                job_id: String(jobId),
+                  org: fields.org,
+                  repo: fields.repo,
+                  workflow,
+                  runner_class: 'unknown',
+                  event: eventName,
+                  conclusion: conclusion || 'unknown',
+                });
+              }
+            }
+            eventRows.push({ sourcetype: 'github:actions:job', fields });
+          }
+        }
+
+        const repository = payload.data && payload.data.repository;
+        if (repository) {
+          const owner = valueOr(repository.owner && repository.owner.login, '');
+          const repoName = valueOr(repository.name, '');
+          const pullRequests = repository.pullRequests && Array.isArray(repository.pullRequests.nodes)
+            ? repository.pullRequests.nodes : [];
+          const seenPullRequests = new Set();
+
+          for (const pullRequest of pullRequests) {
+            const pullRequestKey = `${owner}/${repoName}/${pullRequest.number}`;
+            if (seenPullRequests.has(pullRequestKey)) continue;
+            seenPullRequests.add(pullRequestKey);
+            const commit = pullRequest.commits && pullRequest.commits.nodes && pullRequest.commits.nodes[0]
+              ? pullRequest.commits.nodes[0].commit : null;
+            const checksState = normalizeChecks(commit && commit.statusCheckRollup && commit.statusCheckRollup.state);
+            const age = ageSeconds(pullRequest.createdAt);
+            const fields = {
+              org: owner,
+              repo: repoName,
+              number: pullRequest.number,
+              head_sha: valueOr(pullRequest.headRefOid, ''),
+              base_ref: valueOr(pullRequest.baseRefName, ''),
+              author: valueOr(pullRequest.author && pullRequest.author.login, 'unknown'),
+              created_at: pullRequest.createdAt,
+              age_seconds: age,
+              checks_state: checksState,
+              mergeable_state: lower(pullRequest.mergeable) || 'unknown',
+              auto_merge: Boolean(pullRequest.autoMergeRequest),
+            };
+            eventRows.push({ sourcetype: 'github:pr', fields });
+            if (age !== null) {
+              metricRows.push({
+                metric: 'github_pr_open_age_seconds',
+                value: age,
+                org: owner,
+                repo: repoName,
+                number: String(pullRequest.number),
+                checks_state: checksState,
+                base_ref: valueOr(pullRequest.baseRefName, ''),
+              });
+            }
+            if (commit) {
+              for (const suite of suitesFor(commit)) {
+                addSuite(suite, {
+                  headSha: pullRequest.headRefOid,
+                  headBranch: pullRequest.headRefName,
+                  baseBranch: pullRequest.baseRefName,
+                });
+              }
+            }
+          }
+
+          const branchRefs = [repository.defaultBranchRef, repository.developRef].filter(Boolean);
+          for (const branchRef of branchRefs) {
+            const commits = branchRef.target && branchRef.target.history && Array.isArray(branchRef.target.history.nodes)
+              ? branchRef.target.history.nodes : [];
+            for (const commit of commits) {
+              for (const suite of suitesFor(commit)) {
+                addSuite(suite, { headSha: commit.oid, headBranch: branchRef.name, baseBranch: '' });
+              }
+            }
+          }
+        }
+
+        if (Array.isArray(payload.runners)) {
+          const runnerOrg = {{ cribl_stream_github_actions_runners_org | to_json }};
+          for (const runner of payload.runners) {
+            const status = lower(runner.status) === 'online' ? 'online' : 'offline';
+            const busy = Boolean(runner.busy);
+            const group = valueOr(runner.runner_group_name, valueOr(runner.group_name, 'unknown'));
+            const labels = Array.isArray(runner.labels) ? runner.labels.map(label => label.name).filter(Boolean) : [];
+            const name = valueOr(runner.name, 'unknown');
+            eventRows.push({
+              sourcetype: 'github:runner',
+              fields: {
+                org: runnerOrg,
+                runner_id: runner.id,
+                runner_name: name,
+                runner_group: group,
+                status,
+                busy,
+                labels,
+              },
+            });
+            metricRows.push({
+              metric: 'github_actions_runner_online',
+              value: status === 'online' ? 1 : 0,
+              org: runnerOrg,
+              runner_group: group,
+              runner_name: name,
+            });
+            metricRows.push({
+              metric: 'github_actions_runner_busy',
+              value: busy ? 1 : 0,
+              org: runnerOrg,
+              runner_group: group,
+              runner_name: name,
+            });
+          }
+        }
+
+        __e.__ghaRows = __ghaMode === 'events' ? eventRows : metricRows;
