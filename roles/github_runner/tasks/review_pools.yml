@@ -1,0 +1,49 @@
+---
+# Validates github_runner_review_orgs and selects the pools this host runs.
+- name: Validate each optional review runner pool
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.org is defined
+      - item.org is string
+      - item.org is match('^[A-Za-z0-9-]+$')
+      - (item.replicas | default(2)) is integer
+      - (item.replicas | default(2) | int) >= 1
+      - (item.group | default('pr-agent')) is string
+      - (item.group | default('pr-agent')) | length > 0
+    fail_msg: >-
+      Each github_runner_review_orgs entry needs an org matching
+      ^[A-Za-z0-9-]+$ and an integer replicas value >= 1; replicas defaults
+      to 2 and group defaults to pr-agent.
+  loop: "{{ github_runner_review_orgs }}"
+  loop_control:
+    label: "{{ item.org | default('(invalid entry)') }}"
+
+- name: Keep review pools distinct from the native runner organization
+  ansible.builtin.assert:
+    that:
+      - >-
+        (github_runner_review_orgs | map(attribute='org') | list | unique | list
+        | length) == (github_runner_review_orgs | length)
+      - github_runner_org not in (github_runner_review_orgs | map(attribute='org') | list)
+    fail_msg: >-
+      github_runner_review_orgs must contain unique organizations distinct
+      from github_runner_org.
+
+# The execution-plane exclusion is expressed by the existing replicas: 0
+# override. Do not start per-org pools there, even if the same group inventory
+# supplies a non-empty review list to other runner hosts.
+- name: Select review pools only on runner hosts
+  ansible.builtin.set_fact:
+    github_runner_active_review_orgs: >-
+      {{ github_runner_review_orgs
+         if (github_runner_replicas | int > 0) else [] }}
+
+- name: Keep the heavy-pool label off review runner hosts
+  ansible.builtin.assert:
+    that:
+      - "'proxmox' not in github_runner_labels_common.split(',')"
+    fail_msg: >-
+      Review runners inherit github_runner_labels_common and must never carry
+      the proxmox label.
+  when: github_runner_active_review_orgs | length > 0
