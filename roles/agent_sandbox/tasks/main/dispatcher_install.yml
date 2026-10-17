@@ -19,6 +19,161 @@
   vars:
     ansible_become: false
 
+- name: Stage the OpenBao release checksum manifest on controller
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/openbao/openbao/releases/download/v{{
+      agent_sandbox_dispatch_bao_version }}/checksums.txt
+    dest: >-
+      /tmp/agent-sandbox-openbao-{{ agent_sandbox_dispatch_bao_version
+      }}-checksums.txt
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  check_mode: false
+
+- name: Stage the OpenBao release checksum manifest signature on controller
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/openbao/openbao/releases/download/v{{
+      agent_sandbox_dispatch_bao_version }}/checksums.txt.gpgsig
+    dest: >-
+      /tmp/agent-sandbox-openbao-{{ agent_sandbox_dispatch_bao_version
+      }}-checksums.txt.gpgsig
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  check_mode: false
+
+- name: Build the OpenBao release verification keyring on controller
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --batch
+      - --yes
+      - --dearmor
+      - --output
+      - /tmp/agent-sandbox-openbao.gpg
+      - "{{ role_path }}/files/openbao-gpg-pub-20240618.asc"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  changed_when: false
+  check_mode: false
+
+- name: Verify the OpenBao release checksum manifest signature
+  ansible.builtin.command:
+    argv:
+      - gpgv
+      - --keyring
+      - /tmp/agent-sandbox-openbao.gpg
+      - >-
+        /tmp/agent-sandbox-openbao-{{ agent_sandbox_dispatch_bao_version
+        }}-checksums.txt.gpgsig
+      - >-
+        /tmp/agent-sandbox-openbao-{{ agent_sandbox_dispatch_bao_version
+        }}-checksums.txt
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  changed_when: false
+  check_mode: false
+
+- name: Read the expected SHA256 for OpenBao client archive
+  ansible.builtin.set_fact:
+    _agent_sandbox_dispatch_bao_checksum_matches: >-
+      {{ lookup('file', '/tmp/agent-sandbox-openbao-' ~
+          agent_sandbox_dispatch_bao_version ~ '-checksums.txt')
+         | regex_findall('(?m)^\s*([0-9a-f]{64})\s+\*?' ~
+             (('openbao_' ~ agent_sandbox_dispatch_bao_version ~
+               '_linux_amd64.tar.gz') | regex_escape) ~ '\s*$') }}
+  run_once: true
+
+- name: Assert exactly one OpenBao archive checksum was found
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_dispatch_bao_checksum_matches | length == 1
+    fail_msg: >-
+      Expected exactly one OpenBao linux_amd64 archive hash in the signed
+      checksums.txt manifest for v{{ agent_sandbox_dispatch_bao_version }}.
+  run_once: true
+
+- name: Set OpenBao archive checksum
+  ansible.builtin.set_fact:
+    agent_sandbox_dispatch_bao_sha256: "{{ _agent_sandbox_dispatch_bao_checksum_matches | first }}"
+  run_once: true
+
+- name: Fetch the pinned OpenBao client to controller
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/openbao/openbao/releases/download/v{{
+      agent_sandbox_dispatch_bao_version }}/openbao_{{
+      agent_sandbox_dispatch_bao_version }}_linux_amd64.tar.gz
+    dest: "{{ agent_sandbox_dispatch_bao_stage_file }}"
+    checksum: "sha256:{{ agent_sandbox_dispatch_bao_sha256 }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  # The target copy below needs this verified controller-side archive in check mode.
+  check_mode: false
+
+- name: Create the OpenBao client staging directory on controller
+  ansible.builtin.file:
+    path: "{{ agent_sandbox_dispatch_bao_stage_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  # unarchive requires its destination to exist in check mode.
+  check_mode: false
+
+- name: Extract the OpenBao client on controller
+  ansible.builtin.unarchive:
+    src: "{{ agent_sandbox_dispatch_bao_stage_file }}"
+    dest: "{{ agent_sandbox_dispatch_bao_stage_dir }}"
+    remote_src: true
+    include:
+      - bao
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  check_mode: false
+
+- name: Install the OpenBao client
+  ansible.builtin.copy:
+    src: "{{ agent_sandbox_dispatch_bao_stage_dir }}/bao"
+    dest: "{{ agent_sandbox_dispatch_bao_bin }}"
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Create the dispatcher library directory
   ansible.builtin.file:
     path: /usr/local/lib/agent-sandbox
@@ -84,6 +239,21 @@
     owner: root
     group: root
     mode: "0644"
+
+- name: Remove the OpenBao client staging files from controller
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ agent_sandbox_dispatch_bao_stage_file }}"
+    - "{{ agent_sandbox_dispatch_bao_stage_dir }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  run_once: true
+  vars:
+    ansible_become: false
+  check_mode: false
 
 # The sources carry no shebang: upstream wraps them with writeShellApplication.
 - name: Install the dispatcher and its SSH entry point
