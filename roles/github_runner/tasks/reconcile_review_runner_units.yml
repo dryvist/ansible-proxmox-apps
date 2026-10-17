@@ -1,0 +1,101 @@
+---
+- name: Reset the review runner instance and template names
+  ansible.builtin.set_fact:
+    github_runner_review_wanted_units: []
+    github_runner_review_wanted_templates: []
+    github_runner_review_wanted_token_files: []
+
+- name: Add desired review runner instances and templates
+  ansible.builtin.set_fact:
+    github_runner_review_wanted_units: >-
+      {{ github_runner_review_wanted_units
+         + (range(1, github_runner_review_pool.replicas | default(2) | int + 1)
+            | map('string')
+            | map('regex_replace', '^',
+                  'github-runner-review-' ~ github_runner_review_pool.org ~ '@')
+            | map('regex_replace', '$', '.service')
+            | list) }}
+    github_runner_review_wanted_templates: >-
+      {{ github_runner_review_wanted_templates
+         + ['/etc/systemd/system/github-runner-review-'
+            ~ github_runner_review_pool.org ~ '@.service'] }}
+    github_runner_review_wanted_token_files: >-
+      {{ github_runner_review_wanted_token_files
+         + [(github_runner_token_env_file | dirname)
+            ~ '/access-token-' ~ github_runner_review_pool.org ~ '.env'] }}
+  loop: "{{ github_runner_active_review_orgs }}"
+  loop_control:
+    loop_var: github_runner_review_pool
+    label: "{{ github_runner_review_pool.org }}"
+
+- name: List every review runner instance systemd currently knows about  # noqa command-instead-of-module
+  ansible.builtin.command:
+    cmd: systemctl list-units --all --plain --no-legend "github-runner-review-*@*.service"
+  changed_when: false
+  register: github_runner_installed_review_units
+
+- name: Stop review runners removed from the configured pools
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: >-
+    {{ github_runner_installed_review_units.stdout_lines | map('trim')
+       | map('regex_replace', ' .*$', '')
+       | difference(github_runner_review_wanted_units) | list }}
+
+- name: Find deployed review runner unit templates
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: "github-runner-review-*@.service"
+    file_type: file
+  register: github_runner_review_unit_files
+
+- name: Name review runner unit templates removed from inventory
+  ansible.builtin.set_fact:
+    github_runner_stale_review_unit_files: >-
+      {{ github_runner_review_unit_files.files | map(attribute='path') | list
+         | difference(github_runner_review_wanted_templates) }}
+
+- name: Remove review runner unit templates no longer configured
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ github_runner_stale_review_unit_files }}"
+
+- name: Reload systemd after removing review runner unit templates
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: github_runner_stale_review_unit_files | length > 0
+
+- name: Find deployed review registration-token files
+  ansible.builtin.find:
+    paths: "{{ github_runner_token_env_file | dirname }}"
+    patterns: "access-token-*.env"
+    file_type: file
+  register: github_runner_review_token_files
+
+- name: Name review registration-token files removed from inventory
+  ansible.builtin.set_fact:
+    github_runner_stale_review_token_files: >-
+      {{ github_runner_review_token_files.files | map(attribute='path') | list
+         | difference(github_runner_review_wanted_token_files) }}
+
+- name: Remove review registration-token files no longer configured
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ github_runner_stale_review_token_files }}"
+
+- name: Enable and start the configured review runners
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ github_runner_review_wanted_units }}"
+
+- name: Include review units in the runner health check
+  ansible.builtin.set_fact:
+    github_runner_all_wanted_units: >-
+      {{ github_runner_wanted_units + github_runner_review_wanted_units }}

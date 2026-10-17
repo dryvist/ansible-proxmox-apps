@@ -1,0 +1,88 @@
+---
+- name: Render a review runner unit for each fixture organization
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/github-runner@.service.j2"
+    dest: "{{ _fixture_dir }}/test_github-runner-review-{{ _review_pool.org }}@.service"
+    mode: "0644"
+  vars:
+    github_runner_replicas: 2
+    github_runner_container_prefix: "github-runner-review-{{ _review_pool.org }}"
+    github_runner_name_prefix: "review-{{ _review_pool.org }}"
+    github_runner_unit_env_file: "{{ github_runner_env_file }}-review-{{ _review_pool.org }}"
+    github_runner_unit_token_env_file: "/etc/github-runner/access-token-{{ _review_pool.org }}.env"
+    github_runner_unit_diag_dir: "{{ github_runner_diag_host_dir }}/review-{{ _review_pool.org }}-%i"
+    github_runner_unit_tool_cache_dir: "{{ github_runner_tool_cache_host_dir }}/review-{{ _review_pool.org }}-%i"
+  loop: "{{ _review_org_fixtures }}"
+  loop_control:
+    loop_var: _review_pool
+
+- name: Read review runner units
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_github-runner-review-{{ _review_pool.org }}@.service"
+  register: _review_unit_raw
+  loop: "{{ _review_org_fixtures }}"
+  loop_control:
+    loop_var: _review_pool
+
+- name: Assert review runner units have org-specific files and names
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.content | b64decode)
+        is search('--name github-runner-review-' ~ item._review_pool.org ~ '-%i')
+      - >-
+        (item.content | b64decode)
+        is search('--env-file /etc/github-runner/runner[.]env-review-'
+                  ~ item._review_pool.org ~ '-%i')
+      - >-
+        (item.content | b64decode)
+        is search('--env-file /etc/github-runner/access-token-'
+                  ~ item._review_pool.org ~ '[.]env')
+      - >-
+        (item.content | b64decode)
+        is search('RUNNER_NAME_PREFIX=review-' ~ item._review_pool.org ~ '-%i')
+    fail_msg: >-
+      The review unit for {{ item._review_pool.org }} must use a distinct
+      container name, runner name prefix, per-slot environment file, and
+      per-organization registration-token file.
+  loop: "{{ _review_unit_raw.results }}"
+
+- name: Pin the environment-file checks to the first fixture organization
+  ansible.builtin.set_fact:
+    _review_pool: "{{ _review_org_fixtures[0] }}"
+
+- name: Render review runner environment files for every default replica
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/runner.env.j2"
+    dest: "{{ _fixture_dir }}/test_runner-review-{{ _review_pool.org }}-{{ _review_slot }}.env"
+    mode: "0600"
+  loop: "{{ range(1, 3) | list }}"
+  loop_control:
+    loop_var: _review_slot
+  vars:
+    github_runner_org: "{{ _review_pool.org }}"
+    github_runner_group: "{{ _review_pool.group | default('pr-agent') }}"
+    github_runner_review_slots: 2
+    github_runner_slot: "{{ _review_slot }}"
+
+- name: Read review runner environment files
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_runner-review-{{ _review_pool.org }}-{{ item }}.env"
+  register: _review_env_raw
+  loop: "{{ range(1, 3) | list }}"
+
+- name: Assert review runner organization, group, and labels
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.content | b64decode)
+        is search('^ORG_NAME=' ~ _review_pool.org ~ '$', multiline=True)
+      - (item.content | b64decode) is search('^RUNNER_GROUP=pr-agent$', multiline=True)
+      - >-
+        (item.content | b64decode)
+        is search('^LABELS=self-hosted,Linux,X64,review$', multiline=True)
+      - not ((item.content | b64decode) is search('(^|,)proxmox(,|$)'))
+    fail_msg: >-
+      The review environment for {{ _review_pool.org }} must select its org,
+      the default pr-agent group, and review labels without proxmox.
+  loop: "{{ _review_env_raw.results }}"

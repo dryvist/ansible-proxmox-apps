@@ -1,0 +1,65 @@
+---
+- name: Create review runner diagnostics directories
+  ansible.builtin.file:
+    path: "{{ github_runner_diag_host_dir }}/review-{{ github_runner_review_pool.org }}-{{ github_runner_review_slot }}"
+    state: directory
+    recurse: true
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "u=rwX,g=rX,o=rX"
+  loop: "{{ range(1, github_runner_review_pool.replicas | default(2) | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_review_slot
+
+- name: Create review runner tool cache directories
+  ansible.builtin.file:
+    path: >-
+      {{ github_runner_tool_cache_host_dir ~ '/review-'
+         ~ github_runner_review_pool.org ~ '-'
+         ~ github_runner_review_slot }}
+    state: directory
+    owner: "{{ github_runner_container_uid }}"
+    group: "{{ github_runner_container_gid }}"
+    mode: "0755"
+  loop: "{{ range(1, github_runner_review_pool.replicas | default(2) | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_review_slot
+
+- name: Deploy review runner environment files
+  ansible.builtin.template:
+    src: runner.env.j2
+    dest: "{{ github_runner_env_file }}-review-{{ github_runner_review_pool.org }}-{{ github_runner_review_slot }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ range(1, github_runner_review_pool.replicas | default(2) | int + 1) | list }}"
+  loop_control:
+    loop_var: github_runner_review_slot
+  vars:
+    github_runner_org: "{{ github_runner_review_pool.org }}"
+    github_runner_group: "{{ github_runner_review_pool.group | default('pr-agent') }}"
+    github_runner_review_slots: "{{ github_runner_review_pool.replicas | default(2) }}"
+    github_runner_slot: "{{ github_runner_review_slot }}"
+  no_log: true
+  notify: Restart review github runners
+
+- name: Deploy review runner systemd unit template
+  ansible.builtin.template:
+    src: github-runner@.service.j2
+    dest: "/etc/systemd/system/github-runner-review-{{ github_runner_review_pool.org }}@.service"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    github_runner_replicas: "{{ github_runner_review_pool.replicas | default(2) }}"
+    github_runner_container_prefix: "github-runner-review-{{ github_runner_review_pool.org }}"
+    github_runner_name_prefix: "review-{{ github_runner_review_pool.org }}"
+    github_runner_unit_env_file: "{{ github_runner_env_file }}-review-{{ github_runner_review_pool.org }}"
+    github_runner_unit_token_env_file: >-
+      {{ (github_runner_token_env_file | dirname) ~ '/access-token-'
+         ~ github_runner_review_pool.org ~ '.env' }}
+    github_runner_unit_diag_dir: "{{ github_runner_diag_host_dir }}/review-{{ github_runner_review_pool.org }}-%i"
+    github_runner_unit_tool_cache_dir: >-
+      {{ github_runner_tool_cache_host_dir ~ '/review-'
+         ~ github_runner_review_pool.org ~ '-%i' }}
+  notify: Restart review github runners
