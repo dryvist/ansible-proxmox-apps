@@ -3,6 +3,7 @@
 from pathlib import Path
 import unittest
 
+from jinja2 import Environment
 import yaml
 
 
@@ -69,6 +70,56 @@ class GitMirrorContract(unittest.TestCase):
         self.assertIn("Probe the public tree without credentials", task_text)
         self.assertIn("Probe the all tree with HTTP basic authentication", task_text)
         self.assertIn("http_401_tls", (ROOT / "roles/prometheus_stack/defaults/main.yml").read_text())
+
+    def test_grafana_git_mirror_alerts_check_freshness_and_sync_status(self):
+        defaults = yaml.safe_load((ROOT / "roles/grafana_stack/defaults/main.yml").read_text())
+        template = Environment().from_string(
+            (ROOT / "roles/grafana_stack/templates/alerting/rules-git-mirror.yml.j2").read_text()
+        )
+        render_vars = {
+            "grafana_stack_alert_folder": "Alerting",
+            "grafana_stack_alert_eval_interval": "1m",
+            "grafana_stack_alert_git_mirror_max_age_seconds": defaults[
+                "grafana_stack_alert_git_mirror_max_age_seconds"
+            ],
+        }
+        rules_config = yaml.safe_load(
+            template.render(
+                grafana_stack_prometheus_url="http://prometheus.example.test:9090",
+                **render_vars,
+            )
+        )
+        grafana_tasks = yaml.safe_load((ROOT / "roles/grafana_stack/tasks/main.yml").read_text())
+        alert_task = next(
+            task for task in grafana_tasks if task["name"] == "Render grafana unified-alerting provisioning"
+        )
+        self.assertIn("rules-git-mirror", alert_task["loop"])
+        groups = rules_config["groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["name"], "git-mirror-sync")
+        rules = groups[0]["rules"]
+        self.assertEqual(
+            [rule["uid"] for rule in rules],
+            ["git-mirror-sync-stale", "git-mirror-sync-failed"],
+        )
+        stale, failed = rules
+        self.assertEqual(
+            stale["data"][0]["model"]["expr"],
+            "time() - git_mirror_sync_last_success_timestamp_seconds > 43200",
+        )
+        self.assertEqual(
+            failed["data"][0]["model"]["expr"],
+            "git_mirror_sync_success == bool 0",
+        )
+        for rule in rules:
+            self.assertEqual(rule["for"], "15m")
+            self.assertEqual(rule["labels"]["severity"], "warning")
+            self.assertEqual(rule["noDataState"], "Alerting")
+
+        no_prometheus = yaml.safe_load(
+            template.render(grafana_stack_prometheus_url="", **render_vars)
+        )
+        self.assertIsNone(no_prometheus["groups"])
 
     def test_inventory_and_secret_field_are_wired(self):
         tag_map = (ROOT / "inventory/nautobot.yml").read_text()
