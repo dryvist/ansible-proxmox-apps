@@ -105,12 +105,13 @@ class GitMirrorContract(unittest.TestCase):
         stale, failed = rules
         self.assertEqual(
             stale["data"][0]["model"]["expr"],
-            "time() - git_mirror_sync_last_success_timestamp_seconds > 43200",
+            "(time() - git_mirror_sync_last_success_timestamp_seconds) > bool 43200",
         )
         self.assertEqual(
             failed["data"][0]["model"]["expr"],
             "git_mirror_sync_success == bool 0",
         )
+        self.assertTrue(all("bool" in rule["data"][0]["model"]["expr"] for rule in rules))
         for rule in rules:
             self.assertEqual(rule["for"], "15m")
             self.assertEqual(rule["labels"]["severity"], "warning")
