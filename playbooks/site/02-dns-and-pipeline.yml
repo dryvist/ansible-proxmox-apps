@@ -238,22 +238,51 @@
     - role: prometheus_pve_exporter
 
 # =============================================================================
-# Phase 3b5: GitHub CI-metrics exporter (co-located on the prometheus LXC).
-# Same pattern as prometheus_pve_exporter above — see
-# roles/github_exporter/README.md for exactly which metrics this ships
-# today. The scrape job is wired via prometheus_stack_extra_scrape_configs
-# (inventory/group_vars/prometheus_group.yml), same as smokeping/pve/gatus.
+# Phase 3b5: remove the retired exporter from its former host. GitHub Actions
+# telemetry now comes from the Cribl Stream REST collectors. One-shot: delete
+# this play after one clean converge.
 # =============================================================================
 
-- name: Deploy the GitHub CI-metrics exporter
+- name: Clean up the retired github_exporter deployment
   hosts: prometheus_group
   become: true
   gather_facts: false
   tags:
-    - github_exporter
     - monitoring
-  roles:
-    - role: github_exporter
+  tasks:
+    - name: Read installed services before removing retired units
+      ansible.builtin.service_facts:
+
+    - name: Stop and disable retired exporter services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - github-exporter.service
+        - openbao-github-exporter-agent.service
+      when: item in ansible_facts.services
+
+    - name: Remove the retired exporter package
+      ansible.builtin.apt:
+        name: github-exporter
+        state: absent
+        purge: true
+
+    - name: Remove retired exporter configuration, state, and agent unit
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/default/github-exporter
+        - /etc/sysconfig/github-exporter
+        - /etc/github-exporter
+        - /var/lib/github-exporter
+        - /etc/systemd/system/openbao-github-exporter-agent.service
+
+    - name: Reload systemd after removing the retired agent unit
+      ansible.builtin.systemd:
+        daemon_reload: true
 
 # =============================================================================
 # Phase 3c: UniFi controller telemetry

@@ -25,8 +25,8 @@ Prerequisites:
   `IDRAC_R410_*` / `IDRAC_R710_*` variables (see Secrets table below).
 - The Dell AVCT client artifact staged in private storage and
   `idrac_kvm_docker_avct_artifact_url` set (see "Viewer image" below).
-- `community.docker` Ansible collection installed (`ansible-galaxy collection
-  install -r requirements.yml` from the repo root).
+- `community.docker` Ansible collection installed with
+  `python3 scripts/install_galaxy_requirements.py` from the repo root.
 
 The role installs Docker CE + Compose plugin, `fuse-overlayfs` for ZFS-backed
 LXC hosts, `ipmitool`, and a Python venv for the `community.docker` modules

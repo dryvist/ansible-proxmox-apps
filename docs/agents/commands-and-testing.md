@@ -166,8 +166,8 @@ starts SQL Server, and verifies port 1433 is accepting connections.
 Requires Docker on the local machine (~5-10 min).
 
 ```bash
-# Install Ansible Galaxy dependencies (once)
-ansible-galaxy install -r requirements.yml
+# Install or refresh Ansible Galaxy dependencies
+python3 scripts/install_galaxy_requirements.py
 
 # Run full test cycle (create -> converge -> idempotence -> verify -> destroy)
 molecule test

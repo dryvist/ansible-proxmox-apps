@@ -64,7 +64,7 @@ def main() -> None:
             # Default resolution skips installed versions that satisfy the pin.
             _run("collection", "install", "-r", str(galaxy_file))
         if git_collections:
-            # Git commit pins do not match collection metadata versions.
+            # Git refs do not match installed collection metadata versions.
             _run("collection", "install", "-r", str(git_file), "--force")
         if stale_roles:
             _run("role", "install", "-r", str(roles_file), "--force")

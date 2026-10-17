@@ -2,7 +2,7 @@
 
 The OpenBao and Authelia roles live in that collection, not in this repository.
 Contract tests read their sources from SECRETS_ROLES, the roles directory of the
-installed collection. Install it with `ansible-galaxy install -r requirements.yml`
+installed collection. Run `python3 scripts/install_galaxy_requirements.py`
 before running pytest.
 """
 
@@ -20,7 +20,7 @@ def _installed_roles_dir() -> Path:
             return candidate
     raise RuntimeError(
         "dryvist.secrets_management is not installed; "
-        "run `ansible-galaxy install -r requirements.yml` first"
+        "run `python3 scripts/install_galaxy_requirements.py` first"
     )
 
 

@@ -5,6 +5,46 @@
     name: "{{ hostvars[item].ansible_host }}"
     key: "{{ hostvars[item].ansible_host }} {{ hostvars[item].ssh_host_key }}"
     state: present
+  # This pin writes only the per-run temporary file later strict connections depend on.
+  check_mode: false
   loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
   when: hostvars[item].ssh_host_key is defined
   register: ssh_known_hosts_pins
+
+- name: Look up each pinned address in the wrapper-managed known_hosts file
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -F
+      - "{{ hostvars[item].ansible_host }}"
+      - -f
+      - "{{ ssh_known_hosts_file | default(lookup('env', 'SSH_KNOWN_HOSTS_FILE'), true) }}"
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
+  register: ssh_known_hosts_lookup
+
+- name: Require each pin to resolve in the wrapper-managed known_hosts file
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ssh_known_hosts_lookup.results
+         | selectattr('item', 'equalto', item)
+         | map(attribute='rc')
+         | first
+         | default(1)) == 0
+    fail_msg: >-
+      Host alias {{ item }} has no entry in the wrapper-managed
+      known_hosts file.
+  delegate_to: localhost
+  changed_when: false
+  loop: "{{ groups['all'] | reject('equalto', 'localhost') | list }}"
+  when: hostvars[item].ssh_host_key is defined
+  loop_control:
+    label: "{{ item }}"
