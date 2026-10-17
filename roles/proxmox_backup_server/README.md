@@ -19,7 +19,7 @@ The role ships with this repository; no external role dependency. Collections
 come from the repository requirements file:
 
 ```bash
-ansible-galaxy install -r requirements.yml
+python3 scripts/install_galaxy_requirements.py
 ```
 
 ## Usage
