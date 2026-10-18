@@ -82,6 +82,10 @@ sops exec-env secrets.enc.yaml 'ansible-playbook \
 # output and are not covered by the run.
 ansible-playbook playbooks/verify-approle-ttls.yml
 
+# Upgrade Debian guests monthly. Semaphore schedules this standalone playbook
+# for the first Saturday; the playbook skips later Saturdays in UTC.
+ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml
+
 # Lint
 ansible-lint
 ```
