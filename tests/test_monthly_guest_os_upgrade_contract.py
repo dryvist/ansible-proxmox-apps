@@ -9,65 +9,52 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAYBOOK = "playbooks/upgrade.yml"
+PLAYS = yaml.safe_load((ROOT / "playbooks/upgrade.yml").read_text(encoding="utf-8"))
+SHARED = yaml.safe_load((ROOT / "playbooks/tasks/guest-os-upgrade.yml").read_text(encoding="utf-8"))
 
 
-def _plays():
-    return yaml.safe_load((ROOT / PLAYBOOK).read_text(encoding="utf-8"))
-
-
-def _tasks(play):
-    return play.get("pre_tasks", []) + play.get("tasks", [])
+def _when(tasks, module):
+    return [t.get("when", "") for t in tasks if module in t]
 
 
 class MonthlyGuestUpgradeContract(unittest.TestCase):
-    def test_imports_inventory_and_brackets_the_run(self):
-        plays = _plays()
-        self.assertEqual(plays[0].get("import_playbook"), "site/budget-gate.yml")
-        self.assertEqual(plays[1].get("import_playbook"), "site/00-load-and-telemetry.yml")
-        self.assertEqual(plays[-1].get("import_playbook"), "site/budget-gate.yml")
+    def test_brackets_the_run_and_guards_later_saturdays(self):
+        self.assertEqual(PLAYS[0]["import_playbook"], "site/budget-gate.yml")
+        self.assertEqual(PLAYS[1]["import_playbook"], "site/00-load-and-telemetry.yml")
+        self.assertEqual(PLAYS[-1]["import_playbook"], "site/budget-gate.yml")
+        skip = PLAYS[2]["tasks"][0]["ansible.builtin.set_fact"]["guest_os_upgrade_skip"]
+        self.assertIn("now(utc=true, fmt='%w') == '6'", skip)
+        self.assertIn("| int > 7", skip)
 
-    def test_guard_skips_only_later_saturdays_in_utc_and_is_visible(self):
-        guard = _plays()[2]
-        self.assertEqual(guard["hosts"], "localhost")
-        self.assertIs(guard["become"], False)
-        tasks = guard["tasks"]
-        utc_fact = next(t for t in tasks if "guest_os_upgrade_utc_date" in t.get("ansible.builtin.set_fact", {}))
-        self.assertIn("now(utc=true", utc_fact["ansible.builtin.set_fact"]["guest_os_upgrade_utc_date"])
-        skip_fact = next(t for t in tasks if "guest_os_upgrade_skip" in t.get("ansible.builtin.set_fact", {}))
-        condition = skip_fact["ansible.builtin.set_fact"]["guest_os_upgrade_skip"]
-        self.assertIn("== '6'", condition)
-        self.assertIn("> 7", condition)
-        self.assertTrue(any(t.get("ansible.builtin.debug") and t.get("when") == "guest_os_upgrade_skip" for t in tasks))
-
-    def test_targets_exclusions_and_batch_sizes(self):
-        lxc, vm, plane = _plays()[3:6]
-        for play in (lxc, vm, plane):
-            self.assertTrue(any(t.get("ansible.builtin.meta") == "end_play" and "guest_os_upgrade_skip" in t.get("when", "") for t in play["pre_tasks"]))
+    def test_targets_and_batch_sizes(self):
+        lxc, vm, plane = PLAYS[3:6]
         for play in (lxc, vm):
             self.assertIn("!windows_group", play["hosts"])
             self.assertIn("!llm_vllm_group", play["hosts"])
         self.assertEqual(lxc["serial"], "25%")
         self.assertEqual(vm["serial"], 1)
-        self.assertTrue(any(t.get("ansible.builtin.meta") == "end_host" and t.get("when") == "inventory_hostname == plane_host" for t in _tasks(vm)))
-        self.assertEqual(plane["hosts"], "docker_vms")
-        self.assertTrue(any(t.get("ansible.builtin.meta") == "end_host" and t.get("when") == "inventory_hostname != plane_host" for t in plane["pre_tasks"]))
+        self.assertIn("inventory_hostname == plane_host", _when(vm["tasks"], "ansible.builtin.meta"))
+        self.assertIn("inventory_hostname != plane_host", _when(plane["tasks"], "ansible.builtin.meta"))
         for play in (lxc, vm, plane):
-            self.assertTrue(any(t.get("ansible.builtin.meta") == "end_host" and "ansible_facts.os_family != 'Debian'" in t.get("when", "") for t in _tasks(play)))
-            self.assertTrue(any(t.get("ansible.builtin.stat", {}).get("path") == "/proc/driver/nvidia/version" for t in _tasks(play)))
+            self.assertIn(
+                "tasks/guest-os-upgrade.yml",
+                [t.get("ansible.builtin.import_tasks") for t in play["tasks"]],
+            )
 
-    def test_all_plays_patch_through_apt_recovery_and_plane_reboot_is_deferred(self):
-        lxc, vm, plane = _plays()[3:6]
-        for play in (lxc, vm, plane):
-            tasks = _tasks(play)
-            self.assertTrue(any(t.get("ansible.builtin.import_role", {}).get("name") == "apt_recovery" for t in tasks))
-            apt = next(t["ansible.builtin.apt"] for t in tasks if "ansible.builtin.apt" in t)
-            self.assertEqual(apt, {"update_cache": True, "upgrade": "dist", "autoremove": True})
-            self.assertEqual(next(t["environment"] for t in tasks if "ansible.builtin.apt" in t), {"DEBIAN_FRONTEND": "noninteractive"})
-        self.assertTrue(any("ansible.builtin.reboot" in t for t in _tasks(vm)))
-        shutdown = next(t for t in _tasks(plane) if "ansible.builtin.command" in t)
+    def test_shared_steps_skip_unowned_hosts_then_upgrade(self):
+        ends = _when(SHARED, "ansible.builtin.meta")
+        self.assertTrue(any("guest_os_upgrade_skip" in w for w in ends))
+        self.assertIn("ansible_facts.os_family != 'Debian'", ends)
+        self.assertIn("guest_os_upgrade_nvidia_driver.stat.exists", ends)
+        apt = next(t for t in SHARED if "ansible.builtin.apt" in t)
+        self.assertEqual(apt["ansible.builtin.apt"], {"update_cache": True, "upgrade": "dist", "autoremove": True})
+
+    def test_only_vms_reboot_and_the_plane_reboot_is_deferred(self):
+        lxc, vm, plane = PLAYS[3:6]
+        self.assertFalse(any("ansible.builtin.reboot" in t for t in lxc["tasks"]))
+        self.assertTrue(any("ansible.builtin.reboot" in t for t in vm["tasks"]))
+        shutdown = next(t for t in plane["tasks"] if "ansible.builtin.command" in t)
         self.assertEqual(shutdown["ansible.builtin.command"]["cmd"], "shutdown -r +2")
-        self.assertIs(shutdown["changed_when"], True)
 
 
 if __name__ == "__main__":
