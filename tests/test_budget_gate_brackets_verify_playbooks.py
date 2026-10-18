@@ -31,6 +31,7 @@ BRACKETED = [
     "playbooks/nautobot-drift.yml",
     "playbooks/nautobot-sync-in.yml",
     "playbooks/nautobot-sync-out.yml",
+    "playbooks/upgrade.yml",
 ]
 
 

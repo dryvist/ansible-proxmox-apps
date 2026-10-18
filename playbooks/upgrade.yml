@@ -1,0 +1,181 @@
+---
+- name: Start the wall-clock budget
+  import_playbook: site/budget-gate.yml
+
+- name: Load infrastructure inventory
+  import_playbook: site/00-load-and-telemetry.yml
+
+- name: Guard the monthly guest upgrade schedule
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Gather minimal controller facts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    - name: Read the current UTC weekday and day of month
+      ansible.builtin.set_fact:
+        guest_os_upgrade_utc_date: "{{ now(utc=true, fmt='%w %d') }}"
+
+    - name: Mark scheduled Saturday runs after the first
+      ansible.builtin.set_fact:
+        guest_os_upgrade_skip: >-
+          {{ guest_os_upgrade_utc_date.split()[0] == '6'
+             and (guest_os_upgrade_utc_date.split()[1] | int) > 7 }}
+
+    - name: Report a skipped scheduled upgrade
+      ansible.builtin.debug:
+        msg: "Skipping the monthly guest OS upgrade because this is a later Saturday in UTC."
+      when: guest_os_upgrade_skip
+
+- name: Upgrade Debian LXC containers
+  hosts: "lxc_containers:!windows_group:!llm_vllm_group"
+  serial: "25%"
+  gather_facts: false
+  pre_tasks:
+    - name: End this play when the schedule guard requested a skip
+      ansible.builtin.meta: end_play
+      when: hostvars['localhost'].guest_os_upgrade_skip | default(false)
+
+    - name: Gather minimal guest facts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    - name: End the play on non-Debian guests
+      ansible.builtin.meta: end_host
+      when: ansible_facts.os_family != 'Debian'
+
+    - name: Check for an NVIDIA driver
+      ansible.builtin.stat:
+        path: /proc/driver/nvidia/version
+      register: guest_os_upgrade_nvidia_driver
+
+    - name: End the play on NVIDIA driver guests
+      ansible.builtin.meta: end_host
+      when: guest_os_upgrade_nvidia_driver.stat.exists
+
+  tasks:
+    - name: Wait for package locks and recover incomplete dpkg state
+      ansible.builtin.import_role:
+        name: apt_recovery
+
+    - name: Apply Debian distribution upgrades
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        autoremove: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+- name: Upgrade Debian virtual machines
+  hosts: "vms:docker_vms:splunk_vms:!windows_group:!llm_vllm_group"
+  serial: 1
+  gather_facts: false
+  pre_tasks:
+    - name: End this play when the schedule guard requested a skip
+      ansible.builtin.meta: end_play
+      when: hostvars['localhost'].guest_os_upgrade_skip | default(false)
+
+    - name: Gather minimal guest facts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    - name: End the play on non-Debian guests
+      ansible.builtin.meta: end_host
+      when: ansible_facts.os_family != 'Debian'
+
+    - name: End the play on the execution plane
+      ansible.builtin.meta: end_host
+      when: inventory_hostname == plane_host
+
+    - name: Check for an NVIDIA driver
+      ansible.builtin.stat:
+        path: /proc/driver/nvidia/version
+      register: guest_os_upgrade_nvidia_driver
+
+    - name: End the play on NVIDIA driver guests
+      ansible.builtin.meta: end_host
+      when: guest_os_upgrade_nvidia_driver.stat.exists
+
+  tasks:
+    - name: Wait for package locks and recover incomplete dpkg state
+      ansible.builtin.import_role:
+        name: apt_recovery
+
+    - name: Apply Debian distribution upgrades
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        autoremove: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Check whether a reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: guest_os_upgrade_reboot_required
+
+    - name: Reboot the virtual machine when required
+      ansible.builtin.reboot:
+      when: guest_os_upgrade_reboot_required.stat.exists
+
+- name: Upgrade the Debian execution plane
+  hosts: docker_vms
+  gather_facts: false
+  pre_tasks:
+    - name: End this play when the schedule guard requested a skip
+      ansible.builtin.meta: end_play
+      when: hostvars['localhost'].guest_os_upgrade_skip | default(false)
+
+    - name: End the play on Docker guests outside the execution plane
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != plane_host
+
+    - name: Gather minimal guest facts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
+    - name: End the play on non-Debian guests
+      ansible.builtin.meta: end_host
+      when: ansible_facts.os_family != 'Debian'
+
+    - name: Check for an NVIDIA driver
+      ansible.builtin.stat:
+        path: /proc/driver/nvidia/version
+      register: guest_os_upgrade_nvidia_driver
+
+    - name: End the play on NVIDIA driver guests
+      ansible.builtin.meta: end_host
+      when: guest_os_upgrade_nvidia_driver.stat.exists
+
+  tasks:
+    - name: Wait for package locks and recover incomplete dpkg state
+      ansible.builtin.import_role:
+        name: apt_recovery
+
+    - name: Apply Debian distribution upgrades
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        autoremove: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Check whether a reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: guest_os_upgrade_reboot_required
+
+    - name: Schedule the execution plane reboot after the run
+      ansible.builtin.command:
+        cmd: shutdown -r +2
+      changed_when: true
+      when: guest_os_upgrade_reboot_required.stat.exists
+
+- name: Enforce the wall-clock budget
+  import_playbook: site/budget-gate.yml
