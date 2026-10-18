@@ -1,0 +1,70 @@
+---
+# Monthly Debian guest OS upgrade: LXC containers, then VMs one at a time, then
+# the execution plane last with a deferred reboot. Scheduled every Saturday;
+# acts only on the first Saturday of the month (UTC). Manual runs on any other
+# day proceed.
+- name: Start the wall-clock budget
+  import_playbook: site/budget-gate.yml
+
+- name: Load infrastructure inventory
+  import_playbook: site/00-load-and-telemetry.yml
+
+- name: Guard the monthly guest upgrade schedule
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Skip scheduled Saturday runs after the first
+      ansible.builtin.set_fact:
+        guest_os_upgrade_skip: >-
+          {{ now(utc=true, fmt='%w') == '6' and now(utc=true, fmt='%d') | int > 7 }}
+
+    - name: Report a skipped scheduled upgrade
+      ansible.builtin.debug:
+        msg: "Skipping the monthly guest OS upgrade: not the first Saturday of the month (UTC)."
+      when: guest_os_upgrade_skip | bool
+
+- name: Upgrade Debian LXC containers
+  hosts: "lxc_containers:!windows_group:!llm_vllm_group"
+  serial: "25%"
+  gather_facts: false
+  tasks:
+    - name: Upgrade the container
+      ansible.builtin.import_tasks: tasks/guest-os-upgrade.yml
+
+- name: Upgrade Debian virtual machines
+  hosts: "vms:docker_vms:splunk_vms:!windows_group:!llm_vllm_group"
+  serial: 1
+  gather_facts: false
+  tasks:
+    - name: Leave the execution plane to the last play
+      ansible.builtin.meta: end_host
+      when: inventory_hostname == plane_host
+
+    - name: Upgrade the virtual machine
+      ansible.builtin.import_tasks: tasks/guest-os-upgrade.yml
+
+    - name: Reboot the virtual machine when required
+      ansible.builtin.reboot:
+      when: guest_os_upgrade_reboot_required.stat.exists
+
+- name: Upgrade the execution plane
+  hosts: docker_vms
+  gather_facts: false
+  tasks:
+    - name: End the host outside the execution plane
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != plane_host
+
+    - name: Upgrade the execution plane
+      ansible.builtin.import_tasks: tasks/guest-os-upgrade.yml
+
+    # A deferred reboot lets the running Semaphore task finish first.
+    - name: Schedule the execution plane reboot after the run
+      ansible.builtin.command:
+        cmd: shutdown -r +2
+      changed_when: true
+      when: guest_os_upgrade_reboot_required.stat.exists
+
+- name: Enforce the wall-clock budget
+  import_playbook: site/budget-gate.yml

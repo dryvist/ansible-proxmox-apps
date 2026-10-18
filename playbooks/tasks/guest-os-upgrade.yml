@@ -1,0 +1,43 @@
+---
+# Shared steps of playbooks/upgrade.yml: skip hosts the monthly guest upgrade
+# does not own, then apply the Debian distribution upgrade.
+- name: End the host when the schedule guard requested a skip
+  ansible.builtin.meta: end_host
+  when: hostvars['localhost'].guest_os_upgrade_skip | default(false)
+
+- name: Gather minimal guest facts
+  ansible.builtin.setup:
+    gather_subset:
+      - min
+
+# NixOS and other non-Debian guests have their own update path.
+- name: End the host on non-Debian guests
+  ansible.builtin.meta: end_host
+  when: ansible_facts.os_family != 'Debian'
+
+- name: Check for an NVIDIA driver
+  ansible.builtin.stat:
+    path: /proc/driver/nvidia/version
+  register: guest_os_upgrade_nvidia_driver
+
+# GPU-driver guests are upgraded by the AI serving and benchmark flow.
+- name: End the host on NVIDIA driver guests
+  ansible.builtin.meta: end_host
+  when: guest_os_upgrade_nvidia_driver.stat.exists
+
+- name: Wait for package locks and recover incomplete dpkg state
+  ansible.builtin.import_role:
+    name: apt_recovery
+
+- name: Apply Debian distribution upgrades
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    autoremove: true
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Check whether a reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: guest_os_upgrade_reboot_required
