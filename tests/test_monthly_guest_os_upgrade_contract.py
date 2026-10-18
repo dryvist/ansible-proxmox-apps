@@ -42,6 +42,7 @@ class MonthlyGuestUpgradeContract(unittest.TestCase):
             )
 
     def test_shared_steps_skip_unowned_hosts_then_upgrade(self):
+        self.assertEqual(_when(SHARED[:1], "ansible.builtin.debug"), _when(SHARED[1:2], "ansible.builtin.meta"))
         ends = _when(SHARED, "ansible.builtin.meta")
         self.assertTrue(any("guest_os_upgrade_skip" in w for w in ends))
         self.assertIn("ansible_facts.os_family != 'Debian'", ends)
