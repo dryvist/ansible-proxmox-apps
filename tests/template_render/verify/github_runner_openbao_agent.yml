@@ -20,6 +20,8 @@
     github_runner_agent_config: /etc/github-runner/openbao-agent.hcl
     github_runner_token_env_file: /etc/github-runner/access-token.env
     github_runner_token_path: github-admin/token/runner-register-dryvist
+    github_runner_review_token_path: github-runner/token
+    github_runner_active_review_orgs: []
     github_runner_openbao_role_id: "role-id-not-a-real-credential"
     github_runner_openbao_secret_id: "secret-id-not-a-real-credential"
     github_runner_kv_mount: secret
@@ -37,6 +39,16 @@
         - src: openbao-github-runner-agent.service.j2
           dest: test_openbao-github-runner-agent.service
 
+    - name: Render the agent config with two review organizations
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/openbao-agent-review-orgs.hcl.j2"
+        dest: "{{ _fixture_dir }}/test_openbao-agent-review.hcl"
+        mode: "0600"
+      vars:
+        github_runner_active_review_orgs:
+          - org: example-org-a
+          - org: example-org-b
+
     - name: Read the rendered files
       ansible.builtin.slurp:
         src: "{{ _fixture_dir }}/{{ item }}"
@@ -44,19 +56,25 @@
       loop:
         - test_openbao-agent.hcl
         - test_openbao-github-runner-agent.service
+        - test_openbao-agent-review.hcl
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
         _hcl_raw: "{{ _agent_raw.results[0].content | b64decode }}"
         _svc_raw: "{{ _agent_raw.results[1].content | b64decode }}"
+        _hcl_review_raw: "{{ _agent_raw.results[2].content | b64decode }}"
 
-    # Directive lines only: both files explain themselves at length and the
-    # prose names the very strings asserted below, so a whole-file search
-    # passes with the directive absent.
-    - name: Reduce both files to their directive lines
+    # Directive lines only: the files explain themselves at length and the
+    # prose names the strings asserted below.
+    - name: Reduce rendered files to their directive lines
       ansible.builtin.set_fact:
         _hcl: "{{ _hcl_raw.splitlines() | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
         _svc: "{{ _svc_raw.splitlines() | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+        _hcl_review: "{{ _hcl_review_raw.splitlines() | reject('match', '\\s*#') | reject('match', '\\s*$') | list }}"
+
+    - name: Collect the review token template lines
+      ansible.builtin.set_fact:
+        _review_token_lines: "{{ _hcl_review | select('search', 'github-runner/token') | list }}"
 
     - name: Assert the agent authenticates from files, never an inlined secret
       ansible.builtin.assert:
@@ -93,6 +111,39 @@
           grants, and its stored permission map is
           organization_self_hosted_runners:write and nothing else -- any other
           path is both denied and a wider credential than the fleet needs.
+
+    - name: Assert empty review configuration keeps the existing token source
+      ansible.builtin.assert:
+        that:
+          - _hcl | select('search', 'github-admin/token/runner-register-dryvist') | length == 1
+          - _hcl | select('search', 'github-runner/token') | length == 0
+          - _hcl | select('search', 'destination\\s*=\\s*"/etc/github-runner/access-token.env"') | length == 1
+        fail_msg: >-
+          An empty review-org list must leave the existing runner token stanza
+          and destination intact without adding the new mount.
+
+    - name: Assert review tokens use one org_name parameter per organization
+      ansible.builtin.assert:
+        that:
+          - _hcl_review | select('search', 'github-runner/token.*org_name=example-org-a') | length == 1
+          - _hcl_review | select('search', 'github-runner/token.*org_name=example-org-b') | length == 1
+          - _hcl_review | select('search', 'github-runner/token') | length == 2
+          - >-
+            _hcl_review | select('search',
+            'destination\\s*=\\s*"/etc/github-runner/access-token-example-org-a.env"')
+            | length == 1
+          - >-
+            _hcl_review | select('search',
+            'destination\\s*=\\s*"/etc/github-runner/access-token-example-org-b.env"')
+            | length == 1
+          - _hcl_review | select('search', 'perms\\s*=\\s*"0600"') | length == 4
+          - _hcl_review | select('search', 'error_on_missing_key\\s*=\\s*true') | length == 4
+          - _review_token_lines | length == 2
+          - _review_token_lines[0].count('=') == 3
+          - _review_token_lines[1].count('=') == 3
+        fail_msg: >-
+          Each review organization must render its own token stanza using only
+          its org_name parameter and write to a mode-protected per-org file.
 
     - name: Assert the e2e credentials are rendered from the one Splunk bucket
       ansible.builtin.assert:
