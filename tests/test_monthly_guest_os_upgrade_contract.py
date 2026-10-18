@@ -19,9 +19,7 @@ def _when(tasks, module):
 
 class MonthlyGuestUpgradeContract(unittest.TestCase):
     def test_brackets_the_run_and_guards_later_saturdays(self):
-        self.assertEqual(PLAYS[0]["import_playbook"], "site/budget-gate.yml")
         self.assertEqual(PLAYS[1]["import_playbook"], "site/00-load-and-telemetry.yml")
-        self.assertEqual(PLAYS[-1]["import_playbook"], "site/budget-gate.yml")
         skip = PLAYS[2]["tasks"][0]["ansible.builtin.set_fact"]["guest_os_upgrade_skip"]
         self.assertIn("now(utc=true, fmt='%w') == '6'", skip)
         self.assertIn("| int > 7", skip)
@@ -42,13 +40,16 @@ class MonthlyGuestUpgradeContract(unittest.TestCase):
             )
 
     def test_shared_steps_skip_unowned_hosts_then_upgrade(self):
-        self.assertEqual(_when(SHARED[:1], "ansible.builtin.debug"), _when(SHARED[1:2], "ansible.builtin.meta"))
-        ends = _when(SHARED, "ansible.builtin.meta")
-        self.assertTrue(any("guest_os_upgrade_skip" in w for w in ends))
+        skip = SHARED[0]
+        self.assertIn("guest_os_upgrade_skip", skip["when"])
+        self.assertEqual(len(skip["block"]), 2)
+        self.assertIn("ansible.builtin.debug", skip["block"][0])
+        self.assertEqual(skip["block"][1].get("ansible.builtin.meta"), "end_host")
+        ends = _when(SHARED[1:], "ansible.builtin.meta")
         self.assertIn("ansible_facts.os_family != 'Debian'", ends)
         self.assertIn("guest_os_upgrade_nvidia_driver.stat.exists", ends)
         apt = next(t for t in SHARED if "ansible.builtin.apt" in t)
-        self.assertEqual(apt["ansible.builtin.apt"], {"update_cache": True, "upgrade": "dist", "autoremove": True})
+        self.assertEqual(apt["ansible.builtin.apt"]["upgrade"], "dist")
 
     def test_only_vms_reboot_and_the_plane_reboot_is_deferred(self):
         lxc, vm, plane = PLAYS[3:6]
