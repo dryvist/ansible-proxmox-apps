@@ -1,5 +1,27 @@
 # Changelog
 
+## [5.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.4.0...v5.5.0) (2026-10-18)
+
+
+### Features
+
+* **github-runner:** optional per-org review runner pools ([#2748](https://github.com/dryvist/ansible-proxmox-apps/issues/2748)) ([4602207](https://github.com/dryvist/ansible-proxmox-apps/commit/46022077fcfd243c1a89cbd09648cb4ee792da0a))
+* **playbooks:** add monthly guest OS upgrade ([67e1a36](https://github.com/dryvist/ansible-proxmox-apps/commit/67e1a36f6aeff7bc308405f270223d7acb278ff5))
+* **playbooks:** add monthly guest OS upgrade ([#2755](https://github.com/dryvist/ansible-proxmox-apps/issues/2755)) ([ce7d1e3](https://github.com/dryvist/ansible-proxmox-apps/commit/ce7d1e3a6bf3c3c392cd56f99402ffc0956e5893))
+* **roles:** install the pinned OpenBao client for the sandbox dispatcher ([#2727](https://github.com/dryvist/ansible-proxmox-apps/issues/2727)) ([2b6dbdf](https://github.com/dryvist/ansible-proxmox-apps/commit/2b6dbdfec84077f24003341756aed6cadf93f28d))
+
+
+### Bug Fixes
+
+* **deps:** pin ansible-secrets-management to 36f9354 ([#2751](https://github.com/dryvist/ansible-proxmox-apps/issues/2751)) ([7212108](https://github.com/dryvist/ansible-proxmox-apps/commit/7212108cc60b8ab1c75a7bacaac1dbe2f7c987a2))
+* **deps:** pin ansible-secrets-management to 6806548 ([#2746](https://github.com/dryvist/ansible-proxmox-apps/issues/2746)) ([c3c331b](https://github.com/dryvist/ansible-proxmox-apps/commit/c3c331b498d6e0650d15cb6cfc219479c29e5cd7))
+* **deps:** pin ansible-secrets-management to 9fd0b5e ([#2749](https://github.com/dryvist/ansible-proxmox-apps/issues/2749)) ([b38ff02](https://github.com/dryvist/ansible-proxmox-apps/commit/b38ff0253e0da44ef531bd03003b87e678c9a8df))
+* **deps:** pin dryvist.secrets_management to efdd85e ([#2744](https://github.com/dryvist/ansible-proxmox-apps/issues/2744)) ([337d563](https://github.com/dryvist/ansible-proxmox-apps/commit/337d563ac36e10a3e4e106327f4c69648d87a78f))
+* **github_runner:** raise the runner container memory cap to 4g ([#2733](https://github.com/dryvist/ansible-proxmox-apps/issues/2733)) ([469aa9c](https://github.com/dryvist/ansible-proxmox-apps/commit/469aa9cdbc6a8bdba5c903175423be7b55503902))
+* **roles:** download pinned dispatcher sources during check runs ([#2739](https://github.com/dryvist/ansible-proxmox-apps/issues/2739)) ([c13bb66](https://github.com/dryvist/ansible-proxmox-apps/commit/c13bb669091432f70232b822030cf2512aee77f7))
+* **roles:** read the image task profiles during check runs ([#2741](https://github.com/dryvist/ansible-proxmox-apps/issues/2741)) ([61a0ec7](https://github.com/dryvist/ansible-proxmox-apps/commit/61a0ec7bfc51727056fe358221e690a2c0db99d9))
+* **upgrade:** keep skipped guests in the play recap ([#2757](https://github.com/dryvist/ansible-proxmox-apps/issues/2757)) ([722b84e](https://github.com/dryvist/ansible-proxmox-apps/commit/722b84e91c4a1e71cfa032dfb0d2fab3c928572e))
+
 ## [5.4.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.3.0...v5.4.0) (2026-10-17)
 
 
