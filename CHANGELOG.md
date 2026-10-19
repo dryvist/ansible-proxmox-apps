@@ -1,5 +1,21 @@
 # Changelog
 
+## [5.6.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.5.1...v5.6.0) (2026-10-19)
+
+
+### Features
+
+* **agent-sandbox:** ship the allow-list change log through the log pipeline ([#2774](https://github.com/dryvist/ansible-proxmox-apps/issues/2774)) ([9284665](https://github.com/dryvist/ansible-proxmox-apps/commit/9284665acefa32e2bd0a228253e609c3d6b894f9))
+
+
+### Bug Fixes
+
+* **agent-sandbox:** let check runs pass the operator allow-list ownership task ([#2771](https://github.com/dryvist/ansible-proxmox-apps/issues/2771)) ([4ad8c8d](https://github.com/dryvist/ansible-proxmox-apps/commit/4ad8c8d0b67b58e55d747c307b32ae814c9d0f01))
+* **agent-sandbox:** scope S2S egress to Cribl Edge ([#2776](https://github.com/dryvist/ansible-proxmox-apps/issues/2776)) ([4afd042](https://github.com/dryvist/ansible-proxmox-apps/commit/4afd042aecc8c9a75e2ee6f24f4517d6e80fbecc))
+* **deps:** bump the secrets-management collection pin ([#2769](https://github.com/dryvist/ansible-proxmox-apps/issues/2769)) ([dd7f67c](https://github.com/dryvist/ansible-proxmox-apps/commit/dd7f67c4e6898d874eead897a5b35c4aacb86f83))
+* **deps:** bump the secrets-management collection pin ([#2772](https://github.com/dryvist/ansible-proxmox-apps/issues/2772)) ([74035c7](https://github.com/dryvist/ansible-proxmox-apps/commit/74035c760e6c4a1aa1343c48117e0623f39ad7fe))
+* **deps:** pin the agent-sandbox image and dispatcher to 1.5.4 ([#2773](https://github.com/dryvist/ansible-proxmox-apps/issues/2773)) ([d835aea](https://github.com/dryvist/ansible-proxmox-apps/commit/d835aea497b0de77d8d9a90ac9ee19789a5c8204))
+
 ## [5.5.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.5.0...v5.5.1) (2026-10-19)
 
 
