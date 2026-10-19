@@ -11,12 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "agent_sandbox"
 
 
-def render(path: Path, variables: dict) -> dict:
+def render_text(path: Path, variables: dict) -> str:
     templar = Templar(loader=DataLoader())
     templar.available_variables = variables
-    return yaml.safe_load(
-        templar.template(trust_as_template(path.read_text(encoding="utf-8")))
-    )
+    return templar.template(trust_as_template(path.read_text(encoding="utf-8")))
+
+
+def render(path: Path, variables: dict) -> dict:
+    return yaml.safe_load(render_text(path, variables))
 
 
 class AgentSandboxCriblRoute(unittest.TestCase):
@@ -85,6 +87,51 @@ class AgentSandboxCriblRoute(unittest.TestCase):
         self.assertEqual(output["type"], "tcpjson")
         self.assertEqual(output["host"], "syslog.example.invalid")
         self.assertEqual(output["port"], 10300)
+
+    def test_s2s_firewall_destination_uses_existing_tofu_inventory(self):
+        defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+
+        self.assertIn(
+            "hostvars['localhost']['tofu_data']['containers']['haproxy']['ip']",
+            defaults["agent_sandbox_cribl_stream_address"],
+        )
+        self.assertIn(
+            "hostvars['localhost']['tofu_data']['constants']['service_ports']['cribl_s2s']",
+            defaults["agent_sandbox_cribl_s2s_port"],
+        )
+
+    def test_s2s_firewall_rule_keeps_the_existing_https_rule_only(self):
+        rendered = render_text(
+            ROLE / "templates/agent-sandbox.nft.j2",
+            {
+                "ansible_managed": "test",
+                "agent_sandbox_nft_table": "agent_sandbox",
+                "agent_sandbox_bridge": "br-agents",
+                "agent_sandbox_egress_bridge": "br-agents-out",
+                "agent_sandbox_zcode_web_ingress_source_ips": [],
+                "agent_sandbox_zcode_web_port": 8080,
+                "agent_sandbox_zcode_web_host_port": 443,
+                "agent_sandbox_proxy_port": 3128,
+                "agent_sandbox_cribl_edge_mac_address": "edge_mac_fixture",
+                "agent_sandbox_cribl_stream_address": "stream_address_fixture",
+                "agent_sandbox_cribl_s2s_port": 10300,
+            },
+        )
+        egress_accepts = [
+            line.strip()
+            for line in rendered.splitlines()
+            if line.strip().startswith('iifname "br-agents-out"')
+            and line.strip().endswith(" accept")
+        ]
+
+        self.assertEqual(
+            egress_accepts,
+            [
+                "iifname \"br-agents-out\" tcp dport 443 accept",
+                "iifname \"br-agents-out\" ether saddr edge_mac_fixture "
+                "ip daddr stream_address_fixture tcp dport 10300 accept",
+            ],
+        )
 
 
 if __name__ == "__main__":
