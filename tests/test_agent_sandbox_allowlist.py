@@ -15,7 +15,7 @@ TEMPLATE = ROOT / "roles" / "agent_sandbox" / "templates" / "agent-allow.py.j2"
 def domain_validator():
     templar = Templar(loader=DataLoader())
     templar.available_variables = {
-        "agent_sandbox_operator_allowlist_file": "/etc/agent-sandbox/allowed-domains.d/operator.txt",
+        "agent_sandbox_operator_allowlist_file": "/etc/agent-sandbox-allowlist/operator.txt",
         "agent_sandbox_allowlist_log_file": "/var/log/agent-sandbox/allowed-domains.log",
         "agent_sandbox_proxy_container": "agent-squid",
     }
