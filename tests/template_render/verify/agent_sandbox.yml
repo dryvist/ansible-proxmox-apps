@@ -46,6 +46,7 @@
         - { src: docker-compose.yml.j2, dest: docker-compose.yml }
         - { src: allowed-domains.txt.j2, dest: allowed-domains.txt }
         - { src: squid.conf.j2, dest: squid.conf }
+        - { src: cribl/inputs.yml.j2, dest: inputs.yml }
 
     - name: Render the private refused-login alert environment fixture
       ansible.builtin.template:
@@ -63,6 +64,7 @@
         - allowed-domains.txt
         - dispatcher-alert.env
         - squid.conf
+        - inputs.yml
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
@@ -72,6 +74,7 @@
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
         _as_dispatcher_alert_env: "{{ _as_rendered.results[3].content | b64decode }}"
         _as_squid: "{{ _as_rendered.results[4].content | b64decode }}"
+        _as_inputs: "{{ _as_rendered.results[5].content | b64decode | from_yaml }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -195,6 +198,32 @@
         fail_msg: >-
           ZCode Web must use the immutable image digest, non-root hardening,
           persistent state mounts, and a read-only credential file mount.
+
+    - name: Assert the allow-list audit log is read-only and shipped to Stream
+      vars:
+        _as_allowlist_input: "{{ _as_inputs.inputs.in_agent_allowlist }}"
+      ansible.builtin.assert:
+        that:
+          - _as_allowlist_input.type == 'file'
+          - _as_allowlist_input.path == agent_sandbox_allowlist_log_dir
+          - _as_allowlist_input.filenames == ['*/allowed-domains.log']
+          - >-
+            _as_allowlist_input.connections == [{'output': 'cribl_stream_s2s'}]
+          - >-
+            (agent_sandbox_allowlist_log_dir ~ ':' ~ agent_sandbox_allowlist_log_dir
+            ~ ':ro') in _as_compose
+          - >-
+            _as_allowlist_input.metadata | selectattr('name', 'equalto', 'index')
+            | map(attribute='value') | first == "'llm'"
+          - >-
+            _as_allowlist_input.metadata | selectattr('name', 'equalto', 'sourcetype')
+            | map(attribute='value') | first == "'agent-sandbox:allowlist'"
+          - >-
+            _as_allowlist_input.metadata | selectattr('name', 'equalto', 'source')
+            | map(attribute='value') | first == "'allowed-domains.log'"
+        fail_msg: >-
+          The allow-list audit file must reach the generic Stream S2S output
+          with its LLM index and explicit source and sourcetype metadata.
 
     - name: Assert the operator allowlist is outside the protected service directory
       ansible.builtin.assert:
