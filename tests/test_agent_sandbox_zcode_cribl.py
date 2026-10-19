@@ -1,4 +1,4 @@
-"""Render the ZCode spool input and generic Cribl Stream destination."""
+"""Render agent-sandbox Cribl inputs and the generic Stream destination."""
 
 from pathlib import Path
 import unittest
@@ -19,7 +19,7 @@ def render(path: Path, variables: dict) -> dict:
     )
 
 
-class ZcodeCriblRoute(unittest.TestCase):
+class AgentSandboxCriblRoute(unittest.TestCase):
     def test_s2s_port_uses_the_shared_tofu_constant(self):
         defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
 
@@ -34,6 +34,7 @@ class ZcodeCriblRoute(unittest.TestCase):
             {
                 "ansible_managed": "test",
                 "agent_sandbox_spool_mount": "/spool",
+                "agent_sandbox_allowlist_log_dir": "/var/log/agent-sandbox",
             },
         )["inputs"]["in_agent_zcode"]
 
@@ -41,6 +42,28 @@ class ZcodeCriblRoute(unittest.TestCase):
         self.assertEqual(
             {item["name"]: item["value"] for item in inputs["metadata"]},
             {"index": "'llm'", "sourcetype": "'zcode:cli'", "source": "'zcode-cli'"},
+        )
+        self.assertEqual(inputs["connections"], [{"output": "cribl_stream_s2s"}])
+
+    def test_allowlist_log_uses_generic_s2s_with_splunk_metadata(self):
+        inputs = render(
+            ROLE / "templates/cribl/inputs.yml.j2",
+            {
+                "ansible_managed": "test",
+                "agent_sandbox_spool_mount": "/spool",
+                "agent_sandbox_allowlist_log_dir": "/var/log/agent-sandbox",
+            },
+        )["inputs"]["in_agent_allowlist"]
+
+        self.assertEqual(inputs["path"], "/var/log/agent-sandbox")
+        self.assertEqual(inputs["filenames"], ["*/allowed-domains.log"])
+        self.assertEqual(
+            {item["name"]: item["value"] for item in inputs["metadata"]},
+            {
+                "index": "'llm'",
+                "sourcetype": "'agent-sandbox:allowlist'",
+                "source": "'allowed-domains.log'",
+            },
         )
         self.assertEqual(inputs["connections"], [{"output": "cribl_stream_s2s"}])
 
