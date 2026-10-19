@@ -46,6 +46,7 @@
         - { src: docker-compose.yml.j2, dest: docker-compose.yml }
         - { src: allowed-domains.txt.j2, dest: allowed-domains.txt }
         - { src: squid.conf.j2, dest: squid.conf }
+        - { src: cribl/inputs.yml.j2, dest: inputs.yml }
 
     - name: Render the private refused-login alert environment fixture
       ansible.builtin.template:
@@ -63,6 +64,7 @@
         - allowed-domains.txt
         - dispatcher-alert.env
         - squid.conf
+        - inputs.yml
 
     - name: Decode the rendered files
       ansible.builtin.set_fact:
@@ -72,6 +74,7 @@
           | reject('match', '^[ ]*(#|$)') | map('trim') | list }}"
         _as_dispatcher_alert_env: "{{ _as_rendered.results[3].content | b64decode }}"
         _as_squid: "{{ _as_rendered.results[4].content | b64decode }}"
+        _as_inputs: "{{ _as_rendered.results[5].content | b64decode | from_yaml }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
@@ -172,7 +175,7 @@
           - >-
             agent_sandbox_zcode_web_image
             == ('ghcr.io/dryvist/nix-agent-sandbox/agent@sha256:'
-            ~ 'a80e790df31a646bcd22a9a0a6e3295dfe73bbb120e5b41f93617983508b9653')
+            ~ '5da4830562a518bdc1463d9e5c0d72d7eecdd2bc32c1c5f51fda98562b7a2437')
           - "('image: ' ~ agent_sandbox_zcode_web_image) in _as_compose"
           - "('container_name: ' ~ agent_sandbox_zcode_web_container) in _as_compose"
           - "'restart: unless-stopped' in _as_compose"
@@ -196,6 +199,43 @@
           ZCode Web must use the immutable image digest, non-root hardening,
           persistent state mounts, and a read-only credential file mount.
 
+    - name: Assert the allow-list audit log is read-only and shipped to Stream
+      vars:
+        _as_allowlist_input: "{{ _as_inputs.inputs.in_agent_allowlist }}"
+      ansible.builtin.assert:
+        that:
+          - _as_allowlist_input.type == 'file'
+          - _as_allowlist_input.path == agent_sandbox_allowlist_log_dir
+          - _as_allowlist_input.filenames == ['*/allowed-domains.log']
+          - >-
+            _as_allowlist_input.connections == [{'output': 'cribl_stream_s2s'}]
+          - >-
+            (agent_sandbox_allowlist_log_dir ~ ':' ~ agent_sandbox_allowlist_log_dir
+            ~ ':ro') in _as_compose
+          - >-
+            _as_allowlist_input.metadata | selectattr('name', 'equalto', 'index')
+            | map(attribute='value') | first == "'llm'"
+          - >-
+            _as_allowlist_input.metadata | selectattr('name', 'equalto', 'sourcetype')
+            | map(attribute='value') | first == "'agent-sandbox:allowlist'"
+          - >-
+            _as_allowlist_input.metadata | selectattr('name', 'equalto', 'source')
+            | map(attribute='value') | first == "'allowed-domains.log'"
+        fail_msg: >-
+          The allow-list audit file must reach the generic Stream S2S output
+          with its LLM index and explicit source and sourcetype metadata.
+
+    - name: Assert the operator allowlist is outside the protected service directory
+      ansible.builtin.assert:
+        that:
+          - >-
+            agent_sandbox_operator_allowlist_dir is not search(
+            '^' ~ (agent_sandbox_zcode_web_env_file | dirname | regex_escape)
+            ~ '(/|$)')
+        fail_msg: >-
+          The operator allowlist directory must be outside the protected
+          service directory.
+
     - name: Assert Squid reads both allowlists and keeps the operator file read-only
       ansible.builtin.assert:
         that:
@@ -204,8 +244,8 @@
             'acl allowed_dst_operator dstdomain
             "/etc/agent-sandbox/allowed-domains.d/operator.txt"' in _as_squid
           - >-
-            (agent_sandbox_operator_allowlist_file ~
-            ':/etc/agent-sandbox/allowed-domains.d/operator.txt:ro') in _as_compose
+            (agent_sandbox_operator_allowlist_dir ~
+            ':/etc/agent-sandbox/allowed-domains.d:ro') in _as_compose
         fail_msg: Squid must read the static and operator lists from read-only mounts.
 
     - name: Assert the refused-login alert environment carries the alert settings

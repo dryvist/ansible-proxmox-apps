@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.5.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.5.0...v5.5.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **agent-sandbox:** make operator allow-list updates reach Squid ([#2768](https://github.com/dryvist/ansible-proxmox-apps/issues/2768)) ([0aaf83c](https://github.com/dryvist/ansible-proxmox-apps/commit/0aaf83c19d7f1e513bca93e6e2147872cc27e082))
+
 ## [5.5.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.4.0...v5.5.0) (2026-10-18)
 
 

@@ -15,7 +15,7 @@ TEMPLATE = ROOT / "roles" / "agent_sandbox" / "templates" / "agent-allow.py.j2"
 def domain_validator():
     templar = Templar(loader=DataLoader())
     templar.available_variables = {
-        "agent_sandbox_operator_allowlist_file": "/etc/agent-sandbox/allowed-domains.d/operator.txt",
+        "agent_sandbox_operator_allowlist_file": "/etc/agent-sandbox-allowlist/operator.txt",
         "agent_sandbox_allowlist_log_file": "/var/log/agent-sandbox/allowed-domains.log",
         "agent_sandbox_proxy_container": "agent-squid",
     }
@@ -80,6 +80,10 @@ class OperatorAllowlistDomainValidation(unittest.TestCase):
         )
         self.assertEqual(metadata["ansible.builtin.file"]["state"], "file")
         self.assertIs(metadata["ansible.builtin.file"]["follow"], False)
+        self.assertEqual(
+            metadata["when"],
+            "not ansible_check_mode or _agent_sandbox_operator_allowlist_file.stat.exists",
+        )
 
     def test_forced_command_key_and_ssh_match_disable_interactive_access(self):
         key_template = (ROLE / "templates/agent-allow-authorized-keys.j2").read_text(
