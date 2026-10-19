@@ -1,0 +1,94 @@
+---
+# =============================================================================
+# agent_sandbox — Cribl Edge S2S egress on the egress bridge
+# =============================================================================
+# The egress bridge keeps its HTTPS rule and adds exactly one TCP rule: from
+# the Cribl Edge container's fixed MAC to the log-hub address on the S2S port.
+# Only Cribl Edge carries a fixed identity on that network.
+#
+# Registered and set_fact values persist into the later plays of the same run
+# and outrank their task vars, so every name here carries the _ace_ prefix.
+- name: Render and verify the agent_sandbox Cribl Edge egress rule
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "{{ playbook_dir }}/../../../roles/agent_sandbox/templates"
+  tasks:
+    - name: Set the test inventory-derived addresses and secret group id
+      ansible.builtin.set_fact:
+        agent_sandbox_zcode_web_bind_address: 192.0.2.20
+        agent_sandbox_zcode_web_secret_gid: 1901
+        agent_sandbox_zcode_web_ingress_source_ips:
+          - 192.0.2.10
+        agent_sandbox_cribl_s2s_port: 10300
+        agent_sandbox_cribl_stream_address: 192.0.2.20
+
+    - name: Render the ruleset and compose
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/test_agent_sandbox_egress_{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: agent-sandbox.nft.j2, dest: agent-sandbox.nft }
+        - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+
+    - name: Read the rendered files
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_agent_sandbox_egress_{{ item }}"
+      register: _ace_rendered
+      loop:
+        - agent-sandbox.nft
+        - docker-compose.yml
+
+    - name: Decode the rendered files and collect egress bridge allow rules
+      ansible.builtin.set_fact:
+        _ace_nft: "{{ _ace_rendered.results[0].content | b64decode }}"
+        _ace_compose: "{{ _ace_rendered.results[1].content | b64decode }}"
+        _ace_compose_data: "{{ _ace_rendered.results[1].content | b64decode | from_yaml }}"
+        _ace_egress_accepts: "{{ _ace_rendered.results[0].content | b64decode | split('\n')
+          | select('search', '^[ ]*iifname \"' ~ agent_sandbox_egress_bridge ~ '\" .* accept$')
+          | map('trim') | list }}"
+
+    - name: Assert S2S egress is limited to Cribl Edge and the log-hub endpoint
+      vars:
+        _ace_s2s_rule: >-
+          iifname "{{ agent_sandbox_egress_bridge }}" ether saddr
+          {{ agent_sandbox_cribl_edge_mac_address }} ip daddr
+          {{ agent_sandbox_cribl_stream_address }} tcp dport
+          {{ agent_sandbox_cribl_s2s_port }} accept
+        _ace_https_rule: >-
+          iifname "{{ agent_sandbox_egress_bridge }}" tcp dport 443 accept
+      ansible.builtin.assert:
+        that:
+          - _ace_egress_accepts | length == 2
+          - _ace_s2s_rule in _ace_egress_accepts
+          - _ace_https_rule in _ace_egress_accepts
+          - _ace_nft.index(_ace_https_rule) < _ace_nft.index(_ace_s2s_rule)
+        fail_msg: >-
+          The egress bridge must keep its existing HTTPS rule and add exactly
+          one Edge-only TCP rule to the log-hub address and shared S2S port.
+          Rendered accepts: {{ _ace_egress_accepts }}
+
+    - name: Assert only Cribl Edge has a fixed identity on the egress network
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ace_compose_data.services['cribl-edge'].networks[
+            agent_sandbox_egress_network].mac_address
+            == agent_sandbox_cribl_edge_mac_address
+          - >-
+            _ace_compose_data.services.squid.networks[
+            agent_sandbox_egress_network] == {}
+          - _ace_compose_data.networks[agent_sandbox_network].internal | bool
+          - "'ipv4_address:' not in _ace_compose"
+          - "'subnet:' not in _ace_compose"
+        fail_msg: >-
+          Only Cribl Edge may carry the fixed network identity; Squid and the
+          job-container network must retain their existing network settings.

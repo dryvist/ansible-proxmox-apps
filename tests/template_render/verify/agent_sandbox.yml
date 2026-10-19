@@ -80,18 +80,11 @@
         _as_dispatcher_alert_env: "{{ _as_rendered.results[3].content | b64decode }}"
         _as_squid: "{{ _as_rendered.results[4].content | b64decode }}"
         _as_inputs: "{{ _as_rendered.results[5].content | b64decode | from_yaml }}"
-        _as_compose_data: "{{ _as_rendered.results[1].content | b64decode | from_yaml }}"
 
     - name: Collect the rules that match the agent bridge
       ansible.builtin.set_fact:
         _as_rules: "{{ _as_nft | split('\n')
           | select('search', '^[ ]*iifname \"' ~ agent_sandbox_bridge ~ '\" ')
-          | map('trim') | list }}"
-
-    - name: Collect egress bridge allow rules
-      ansible.builtin.set_fact:
-        _as_egress_accepts: "{{ _as_nft | split('\n')
-          | select('search', '^[ ]*iifname \"' ~ agent_sandbox_egress_bridge ~ '\" .* accept$')
           | map('trim') | list }}"
 
     - name: Assert container egress is default-drop except the proxy port
@@ -123,43 +116,6 @@
         fail_msg: >-
           The container-egress ruleset must accept only the proxy and exact Web
           ingress paths and drop all other bridge traffic. Rendered: {{ _as_nft }}
-
-    - name: Assert S2S egress is limited to Cribl Edge and the log-hub endpoint
-      vars:
-        _as_s2s_rule: >-
-          iifname "{{ agent_sandbox_egress_bridge }}" ether saddr
-          {{ agent_sandbox_cribl_edge_mac_address }} ip daddr
-          {{ agent_sandbox_cribl_stream_address }} tcp dport
-          {{ agent_sandbox_cribl_s2s_port }} accept
-        _as_https_rule: >-
-          iifname "{{ agent_sandbox_egress_bridge }}" tcp dport 443 accept
-      ansible.builtin.assert:
-        that:
-          - _as_egress_accepts | length == 2
-          - _as_s2s_rule in _as_egress_accepts
-          - _as_https_rule in _as_egress_accepts
-          - _as_nft.index(_as_https_rule) < _as_nft.index(_as_s2s_rule)
-        fail_msg: >-
-          The egress bridge must keep its existing HTTPS rule and add exactly
-          one Edge-only TCP rule to the log-hub address and shared S2S port.
-          Rendered accepts: {{ _as_egress_accepts }}
-
-    - name: Assert only Cribl Edge has a fixed identity on the egress network
-      ansible.builtin.assert:
-        that:
-          - >-
-            _as_compose_data.services['cribl-edge'].networks[
-            agent_sandbox_egress_network].mac_address
-            == agent_sandbox_cribl_edge_mac_address
-          - >-
-            _as_compose_data.services.squid.networks[
-            agent_sandbox_egress_network] == {}
-          - _as_compose_data.networks[agent_sandbox_network].internal | bool
-          - "'ipv4_address:' not in _as_compose"
-          - "'subnet:' not in _as_compose"
-        fail_msg: >-
-          Only Cribl Edge may carry the fixed network identity; Squid and the
-          job-container network must retain their existing network settings.
 
     - name: Assert the ruleset has no catch-all allowance
       ansible.builtin.assert:
