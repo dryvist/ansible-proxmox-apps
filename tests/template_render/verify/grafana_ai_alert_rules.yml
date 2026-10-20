@@ -11,6 +11,8 @@
     # localhost inherits it; rendering a template needs no root.
     ansible_become: false
     _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-ai.yml.j2"
+    _workstation_rules_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-workstation.yml.j2
     _contactpoints_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/contactpoints.yml.j2"
     _token_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/cribl-hec-token.env.j2"
     _datasource_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/datasource.yml.j2"
@@ -114,6 +116,7 @@
           - _zdr_rule.noDataState == 'OK'
           - _zdr_rule.execErrState == 'Error'
           - _hermes_threshold == grafana_stack_alert_hermes_error_count - 1
+          - _hermes_rule.execErrState == 'Error'
         fail_msg: >-
           The ZDR alert must require populated key/model labels, stay OK with
           no matching data, and expose query errors without firing a breach.
@@ -123,6 +126,22 @@
         _hermes_threshold: >-
           {{ (_ai_rules | selectattr('uid', 'equalto', 'hermes-llm-failures')
               | first).data[1].model.conditions[0].evaluator.params[0] }}
+        _hermes_rule: >-
+          {{ _ai_rules | selectattr('uid', 'equalto', 'hermes-llm-failures') | first }}
+
+    - name: Render the workstation alert rule
+      ansible.builtin.set_fact:
+        _workstation_rules: >-
+          {{ (lookup('ansible.builtin.template', _workstation_rules_template) | from_yaml).groups[0].rules }}
+
+    - name: Assert query errors do not masquerade as workstation state
+      ansible.builtin.assert:
+        that:
+          - _workstation_rule.execErrState == 'Error'
+          - _workstation_rule.noDataState == 'Alerting'
+      vars:
+        _workstation_rule: >-
+          {{ _workstation_rules | selectattr('uid', 'equalto', 'workstation-load5-high') | first }}
 
     - name: Render without a Prometheus datasource
       ansible.builtin.set_fact:
