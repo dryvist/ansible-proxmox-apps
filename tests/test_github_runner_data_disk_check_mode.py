@@ -8,6 +8,9 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 READ_ONLY_PROBES = {
+    "roles/github_runner/tasks/main.yml": (
+        "Read the runner account identity from the image",
+    ),
     "roles/github_runner/tasks/data_disk.yml": (
         "Resolve the Docker data device",
         "Read existing signatures on the Docker data device",
@@ -21,6 +24,9 @@ READ_ONLY_PROBES = {
     ),
     "roles/agent_sandbox/tasks/main/probe.yml": (
         "Check the ZCode Web service file contains no OpenBao address or workstation credential name",
+    ),
+    "roles/github_runner_arc/tasks/main.yml": (
+        "Read the filesystem backing the data directory's parent and root",
     ),
 }
 STATE_CHANGING_MODULES = {
