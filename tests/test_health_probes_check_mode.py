@@ -68,6 +68,14 @@ PROBES = (
         "roles/status_stack/tasks/main.yml",
         "Probe whether Uptime Kuma still needs initial setup",
     ),
+    (
+        "roles/object_storage/tasks/iam_provision_bucket_role.yml",
+        "Read the current canned policies for this bucket",
+    ),
+    (
+        "roles/object_storage/tasks/infra_mirrors.yml",
+        "Resolve pointer URLs for missing pointer-based infra artifacts",
+    ),
 )
 
 
