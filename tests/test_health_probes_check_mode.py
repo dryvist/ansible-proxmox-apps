@@ -84,6 +84,14 @@ PROBES = (
         "roles/ssh_ca_trust/tasks/main.yml",
         "Assert a static authorized_key still exists for the converge user",
     ),
+    (
+        "roles/proxmox_backup_server/tasks/main.yml",
+        "List the configured datastores",
+    ),
+    (
+        "roles/proxmox_backup_server/tasks/main.yml",
+        "Re-read the datastores after creation",
+    ),
 )
 
 
@@ -114,3 +122,11 @@ def test_read_only_health_probes_run_in_check_mode(relative_path, task_name):
         condition = " ".join(when) if isinstance(when, list) else when
         assert "not ansible_check_mode" in condition
         assert "grafana_stack_compose" in condition
+    if (
+        relative_path == "roles/proxmox_backup_server/tasks/main.yml"
+        and task_name == "Re-read the datastores after creation"
+    ):
+        when = task.get("when", "")
+        condition = " ".join(when) if isinstance(when, list) else when
+        assert "not ansible_check_mode" in condition
+        assert "proxmox_backup_server_datastore_list" in condition
