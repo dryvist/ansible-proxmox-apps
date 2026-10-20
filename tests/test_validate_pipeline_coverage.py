@@ -79,7 +79,7 @@ class ValidatePipelineCoverage(unittest.TestCase):
         result = _run(
             SKIPPED_GROUPS_FIXTURE,
             facts,
-            "Log declared containers skipped because they are not running",
+            "Load shared LXC group expression",
         )
         output = result.stdout + result.stderr
 
