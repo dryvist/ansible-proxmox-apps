@@ -1,0 +1,22 @@
+---
+- name: Render and verify Grafana alert state events in Cribl's Splunk pipeline
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    _pipeline_template: >-
+      {{ playbook_dir }}/../../../roles/cribl_stream/templates/pipelines/ansible_converge/conf.yml.j2
+  tasks:
+    - name: Render the HEC pipeline
+      ansible.builtin.set_fact:
+        _grafana_alert_pipeline: "{{ lookup('ansible.builtin.template', _pipeline_template) | from_yaml }}"
+
+    - name: Assert Grafana notifications become individual searchable alert events
+      ansible.builtin.assert:
+        that:
+          - _grafana_alert_pipeline.functions[1].id == 'json_unroll'
+          - _grafana_alert_pipeline.functions[1].filter == "sourcetype === 'grafana:alert'"
+          - _grafana_alert_pipeline.functions[1].conf.path == 'alerts'
+        fail_msg: >-
+          Grafana HEC notifications must use JSON Unroll on the alerts array.

@@ -120,3 +120,57 @@
     fail_msg: >-
       the trace route must filter spans and enforce a final allowlist before
       HEC serialization
+
+- name: Assert the shared source Mask function strips ANSI CSI sequences
+  vars:
+    _ansi_csi_strip: "{{ _cribl_stream_ansi_csi_strip_pipeline | from_yaml }}"
+    _ansi_rule: "{{ _ansi_csi_strip.functions[0].conf.rules[0] }}"
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - >-
+        _ansi_rule.matchRegex
+        == '/' ~ _cribl_stream_defaults.cribl_stream_ansi_csi_pattern ~ '/g'
+      - _ansi_rule.replaceExpr == "''"
+      - _ansi_csi_strip.functions[0].conf.fields == ['_raw', '*']
+      - "'pipeline: ansi_csi_strip' in _cribl_stream_inputs"
+      - >-
+        _cribl_stream_inputs | regex_findall(
+        '(?m)^    pipeline: ansi_csi_strip$') | length >= 5
+      - "'ansi_csi_strip' in _cribl_stream_defaults.cribl_stream_pipelines"
+    fail_msg: >-
+      the shared source pre-processing mask must remove CSI sequences from raw
+      and structured fields before output selection
+
+- name: Assert Traefik, LiteLLM, and plain samples retain expected text
+  vars:
+    _ansi_samples:
+      - name: Traefik raw ESC
+        raw: "time=2026-10-20 level=info msg=\"Handled request\" color=\u001b[32mgreen\u001b[0m"
+        expected_raw: 'time=2026-10-20 level=info msg="Handled request" color=green'
+        message: "GET /health \u001b[32m200\u001b[0m"
+        expected_message: "GET /health 200"
+      - name: LiteLLM rsyslog escape
+        raw: "INFO #033[36mPOST /v1/chat/completions#033[0m status=200"
+        expected_raw: "INFO POST /v1/chat/completions status=200"
+        message: "#033[33mcompleted#033[0m"
+        expected_message: "completed"
+      - name: Plain text marker
+        raw: "application marker=#033 field=kept"
+        expected_raw: "application marker=#033 field=kept"
+        message: "literal #033 stays without a CSI bracket"
+        expected_message: "literal #033 stays without a CSI bracket"
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - >-
+        item.raw | regex_replace(
+          _cribl_stream_defaults.cribl_stream_ansi_csi_pattern, '')
+        == item.expected_raw
+      - >-
+        item.message | regex_replace(
+          _cribl_stream_defaults.cribl_stream_ansi_csi_pattern, '')
+        == item.expected_message
+  loop: "{{ _ansi_samples }}"
+  loop_control:
+    label: "{{ item.name }}"

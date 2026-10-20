@@ -1,0 +1,40 @@
+---
+# Render every Grafana-managed rule and keep evaluation errors out of Alerting.
+- name: Render and verify Grafana alert execution error states
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    grafana_stack_prometheus_url: http://prometheus.example.test:9090
+    tofu_data:
+      containers: {}
+    _rules_template_glob: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules*.yml.j2
+  tasks:
+    - name: Render all Grafana alert rule templates
+      ansible.builtin.set_fact:
+        _rendered_grafana_alert_rule_docs: >-
+          {{ (_rendered_grafana_alert_rule_docs | default([]))
+             + [lookup('ansible.builtin.template', item) | from_yaml] }}
+      loop: "{{ query('ansible.builtin.fileglob', _rules_template_glob) | sort }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Assert no rendered Grafana rule treats evaluation errors as alerting
+      ansible.builtin.assert:
+        that:
+          - >-
+            _rendered_grafana_alert_rule_docs
+            | map(attribute='groups')
+            | flatten
+            | map(attribute='rules')
+            | flatten
+            | selectattr('execErrState', 'defined')
+            | selectattr('execErrState', 'equalto', 'Alerting')
+            | list
+            | length == 0
+        fail_msg: >-
+          At least one rendered Grafana rule uses execErrState: Alerting.

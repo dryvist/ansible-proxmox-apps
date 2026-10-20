@@ -46,6 +46,10 @@ class MoleculeBranchPolicy(unittest.TestCase):
                     "molecule": relevant, "molecule_scenarios": scenarios,
                     "tiny": tiny, "ansible": "true",
                 }},
+                "changes": {"outputs": {
+                    "molecule": relevant, "molecule_scenarios": scenarios,
+                    "tiny": tiny,
+                }},
                 "scope": {"outputs": {"deploy": "true"}},
             },
             vars={"E2E_RUNNERS_ENABLED": "true"},
@@ -93,6 +97,7 @@ class MoleculeBranchPolicy(unittest.TestCase):
         github = self.events["main_pull_request"]
         self.assertNotIn("molecule", self.allowed_skips(github))
         self.assertIn("molecule", self.workflow["jobs"]["gate"]["needs"])
+        self.assertIn("changes", self.workflow["jobs"]["gate"]["needs"])
 
     def test_fork_main_pr_runs_full_matrix_and_only_waives_live_e2e(self):
         github = deepcopy(self.events["main_pull_request"])
@@ -112,7 +117,13 @@ class MoleculeBranchPolicy(unittest.TestCase):
         }
         for job_id in heavy_jobs:
             condition = self.workflow["jobs"][job_id]["if"]
-            self.assertIn("needs.ci.outputs.tiny != 'true'", condition, job_id)
+            source = "changes" if job_id == "molecule" else "ci"
+            self.assertIn(f"needs.{source}.outputs.tiny != 'true'", condition, job_id)
+
+        molecule = self.workflow["jobs"]["molecule"]
+        molecule_needs = molecule["needs"] if isinstance(molecule["needs"], list) else [molecule["needs"]]
+        self.assertIn("changes", molecule_needs)
+        self.assertIn("needs.changes.outputs.molecule_scenarios", molecule["with"]["scenarios"])
 
         develop_pr = deepcopy(self.events["main_pull_request"])
         develop_pr["event"]["pull_request"]["base"]["ref"] = "develop"
@@ -171,6 +182,15 @@ class MoleculeBranchPolicy(unittest.TestCase):
         for path in ("tests/test_ci_molecule_branch_policy.py",
                      "tests/ci_molecule_branch_policy/fixture.yml"):
             self.assertTrue(any(fnmatch.fnmatch(path, p.replace("**", "*")) for p in patterns), path)
+
+    def test_changes_reuses_ci_filter_maps_by_yaml_alias(self):
+        ci = self.workflow["jobs"]["ci"]
+        changes = self.workflow["jobs"]["changes"]
+        self.assertEqual(
+            changes["uses"], "JacobPEvans/.github/.github/workflows/_ansible-changes.yml@v1"
+        )
+        for name in ("molecule_scenario_filters", "molecule_contract_filters"):
+            self.assertIs(changes["with"][name], ci["with"][name])
 
 
 if __name__ == "__main__":

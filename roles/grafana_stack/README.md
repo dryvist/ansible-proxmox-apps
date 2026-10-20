@@ -40,9 +40,13 @@ than populate.
 
 `templates/alerting/rules-ai.yml.j2` provisions four Grafana-managed rules in
 the `ai-observability` group. Grafana sends notifications to the Cribl Stream
-HEC input. Before the verified cutover flag is set, Grafana alerts use the
-direct webhook; after it is set, Cribl routes them through the ntfy push relay
-to the hub while retaining full events in Splunk. Notification groups use
+HEC input, where JSON Unroll emits one Splunk event per `alerts` item while
+retaining the webhook's top-level fields. Splunk can extract each nested
+alert's `status`, `labels.alertname`, `startsAt`, `endsAt`, and `fingerprint`
+from the JSON. Before
+the verified cutover flag is set, Grafana alerts use the direct webhook; after
+it is set, Cribl routes them through the ntfy push relay to the hub while
+retaining the unrolled alert events in Splunk. Notification groups use
 `grafana_folder`, `alertname`, and `severity`; the default repeat is 30m, with
 warning and info repeats set to 1h.
 
@@ -65,6 +69,9 @@ default).
 `templates/alerting/rules-git-mirror.yml.j2` provisions two warning rules in
 the `git-mirror-sync` group: `git-mirror-sync-stale` checks the last successful
 sync age against 12 hours, and `git-mirror-sync-failed` checks the sync status.
+The group is rendered only when inventory contains a host in
+`git_mirror_group`; both rules keep `noDataState: Alerting` so a deployed mirror
+that goes silent still alerts.
 Both require the condition to hold for 15 minutes.
 
 A receiver API request sends a sample alert with its rule title. It checks

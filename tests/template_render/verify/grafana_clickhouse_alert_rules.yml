@@ -16,16 +16,20 @@
       vars:
         grafana_stack_prometheus_url: http://prometheus.example.test:9090
 
-    - name: Assert the three rules render with their metrics and thresholds
+    - name: Assert the three rules render with their metrics, thresholds, and error handling
       ansible.builtin.assert:
         that:
           - _clickhouse_rules | map(attribute='uid') | list
             == ['clickhouse-part-count-high', 'clickhouse-inserts-rejected',
                 'clickhouse-metrics-missing']
           - "'job=\"clickhouse\"' in _parts_expr"
-          - "'job=\"clickhouse\"' in _rejected_expr"
+          - _rejected_expr == 'sum(increase(ClickHouseProfileEvents_RejectedInserts{job="clickhouse"}[10m]))'
           - "'job=\"clickhouse\"' in _missing_expr"
           - _parts_threshold == 300
+          - _rejected_rule.data[1].model.conditions[0].evaluator.type == 'gt'
+          - _rejected_threshold == 0
+          - _rejected_rule.for == '0s'
+          - _rejected_rule.execErrState == 'Error'
           - _rejected_rule.labels.severity == 'critical'
           - _missing_rule.noDataState == 'Alerting'
         fail_msg: >-
@@ -39,6 +43,7 @@
         _rejected_expr: "{{ _rejected_rule.data[0].model.expr }}"
         _missing_expr: "{{ _missing_rule.data[0].model.expr }}"
         _parts_threshold: "{{ _parts_rule.data[1].model.conditions[0].evaluator.params[0] }}"
+        _rejected_threshold: "{{ _rejected_rule.data[1].model.conditions[0].evaluator.params[0] }}"
 
     - name: Render without a Prometheus datasource
       ansible.builtin.set_fact:
