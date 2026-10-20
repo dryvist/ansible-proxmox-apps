@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.1...v5.6.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* include localhost in effective Ansible limits ([#2788](https://github.com/dryvist/ansible-proxmox-apps/issues/2788)) ([450105e](https://github.com/dryvist/ansible-proxmox-apps/commit/450105e59735336fe8bb80ea1cc523e0fac5d4e3))
+
 ## [5.6.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.0...v5.6.1) (2026-10-20)
 
 
