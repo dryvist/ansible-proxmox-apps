@@ -44,6 +44,9 @@ READ_ONLY_PROBES = {
         "Read the running server version",
         "Verify Technitium DNS is healthy",
     ),
+    "roles/github_runner/tasks/seccomp_profile.yml": (
+        "Read the installed Docker Engine server version",
+    ),
 }
 STATE_CHANGING_MODULES = {
     "ansible.builtin.file",
