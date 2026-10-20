@@ -1,12 +1,10 @@
 """Read-only health probes that must execute in Ansible check mode."""
 
-from pathlib import Path
-
 import pytest
 import yaml
 
+from health_probes_check_mode_support import REPO, _tasks_in
 
-REPO = Path(__file__).resolve().parents[1]
 PROBES = (
     (
         "roles/grafana_stack/tasks/main.yml",
@@ -367,18 +365,6 @@ SKIPPED_PROBE_FOLLOWUPS = (
 )
 
 
-def _tasks_in(value):
-    if isinstance(value, list):
-        for item in value:
-            yield from _tasks_in(item)
-    elif isinstance(value, dict):
-        if "name" in value:
-            yield value
-        for key in ("block", "rescue", "always"):
-            if key in value:
-                yield from _tasks_in(value[key])
-
-
 @pytest.mark.parametrize(("relative_path", "task_name"), PROBES)
 def test_read_only_health_probes_run_in_check_mode(relative_path, task_name):
     tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
@@ -429,81 +415,3 @@ def test_check_mode_skipped_probes_skip_their_followups(relative_path, task_name
     when = task.get("when", "")
     condition = " ".join(when) if isinstance(when, list) else when
     assert ".skipped | default(false)" in condition
-
-
-def test_node_exporter_stage_result_gates_check_mode_unpack_and_binary_copy():
-    relative_path = "roles/node_exporter/tasks/main.yml"
-    tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
-    task_by_name = {task.get("name"): task for task in _tasks_in(tasks)}
-
-    stage = task_by_name["Stage the pinned node_exporter release tarball on the controller"]
-    assert stage.get("register") == "node_exporter_release_stage"
-    assert stage.get("run_once") is True
-    assert "throttle" not in stage
-    assert "ansible_play_hosts" in stage["loop"]
-    assert "unique(attribute='node_exporter_release')" in stage["loop"]
-    assert "item.node_exporter_download_url" in stage["ansible.builtin.get_url"]["url"]
-    assert "item.node_exporter_release" in stage["ansible.builtin.get_url"]["dest"]
-    assert "item.node_exporter_sha256sums_url" in stage["ansible.builtin.get_url"]["checksum"]
-
-    critical_assert = task_by_name["Assert critical variables are defined and valid"]
-    assert "ansible_facts['architecture'] in ['x86_64', 'aarch64']" in critical_assert["ansible.builtin.assert"]["that"]
-    assert any("node_exporter_version is defined" in condition for condition in critical_assert["ansible.builtin.assert"]["that"])
-    assert any("node_exporter_port is defined" in condition for condition in critical_assert["ansible.builtin.assert"]["that"])
-    assert all(
-        "default_ipv4" not in condition
-        for condition in critical_assert["ansible.builtin.assert"]["that"]
-    )
-
-    for task_name in (
-        "Unpack the node_exporter release",
-        "Install the node_exporter binary",
-    ):
-        condition = task_by_name[task_name].get("when", "")
-        assert "not ansible_check_mode" in condition
-        assert "node_exporter_release_stage.changed" in condition
-
-
-def test_technitium_check_mode_skips_query_log_followups_when_install_is_skipped():
-    tasks = yaml.safe_load((REPO / "roles/technitium_dns/tasks/query_log.yml").read_text(encoding="utf-8"))
-    task_by_name = {task.get("name"): task for task in _tasks_in(tasks)}
-
-    guarded_tasks = (
-        "Re-read the DNS app list after install or update",
-        "Require the Log Exporter app to have actually loaded",
-        "Read the live Log Exporter app config",
-        "Compute the desired Log Exporter config (app config + our syslog block)",
-    )
-    for task_name in guarded_tasks:
-        when = task_by_name[task_name].get("when", "")
-        condition = " ".join(when) if isinstance(when, list) else when
-        assert "not ansible_check_mode" in condition
-        assert "technitium_dns_query_log_app_installed" in condition
-
-    for task_name in (
-        "Install the Log Exporter app from the internal object-storage mirror",
-        "Update the Log Exporter app to the pinned version",
-        "Configure Log Exporter syslog export (drift-gated)",
-    ):
-        when = task_by_name[task_name].get("when", "")
-        condition = " ".join(when) if isinstance(when, list) else when
-        assert "not ansible_check_mode" in condition
-        assert task_by_name[task_name].get("check_mode") is not False
-
-    # A real run configures the app it just installed, so the write must not
-    # gate on the fact read before the install.
-    when = task_by_name["Configure Log Exporter syslog export (drift-gated)"].get("when", "")
-    assert "technitium_dns_query_log_app_installed" not in " ".join(when)
-
-
-def test_technitium_write_result_assertion_skips_check_mode():
-    tasks = yaml.safe_load(
-        (REPO / "roles/technitium_dns/tasks/main/infra_a_records.yml").read_text(encoding="utf-8")
-    )
-    task = next(
-        task for task in _tasks_in(tasks)
-        if task.get("name") == "Assert the infrastructure A records were actually written"
-    )
-    when = task.get("when", "")
-    condition = " ".join(when) if isinstance(when, list) else when
-    assert "not ansible_check_mode" in condition
