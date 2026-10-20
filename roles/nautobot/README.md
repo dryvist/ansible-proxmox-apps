@@ -170,8 +170,10 @@ Caveats:
 
 - **`manage_app`** — idempotent; Molecule pins it `false` to skip the multi-minute install and live DB.
 - **`build_seed`** — every source is independent, so any subset builds a valid
-  bundle covering just those slices; the run fails only when no source at all is
-  available. The tofu inventory is resolved on every run, so a seed carrying the
+  bundle covering just those slices; a core slice whose source is absent is left
+  out and its seed job skipped, and with no source at all the seed step is
+  skipped. A supplied source that assembles a core array empty still fails the
+  run. The tofu inventory is resolved on every run, so a seed carrying the
   guest slice alone needs nothing extra on the controller. Never enable in
   Molecule (it stamps `generated_at`, breaking idempotence) —
   `tests/nautobot_seed/verify_seed_bundle.yml` covers assembly instead.

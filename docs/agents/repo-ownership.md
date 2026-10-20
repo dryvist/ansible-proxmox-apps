@@ -8,10 +8,10 @@
     (the LXC/VM nodes this repo deploys). macOS hosts run standalone,
     GitOps-managed Edge nodes (see nix-darwin docs/CRIBL-GITOPS.md).
 - **HAProxy** (LXC container, syslog/netflow VIP forwarding to Cribl LXCs)
-- **Syslog forwarding** (`syslog_forwarder` role — rsyslog on every infra LXC
-  ships host + native-service logs to the HAProxy syslog VIP on the Linux port
-  -> Cribl Edge -> Splunk `os` index; the pipeline (Cribl) and LB (HAProxy) LXCs
-  are excluded to avoid feedback loops)
+- **Syslog forwarding** (`syslog_forwarder` role — every managed Linux guest
+  ships host + native-service logs on the Linux syslog port -> Cribl Edge ->
+  Splunk `os` index; HAProxy sends directly to an Edge backend to avoid
+  hairpinning its own messages through the syslog VIP)
 - **Technitium DNS** (LXC container)
 - **Authelia SSO** (`authelia` role in `dryvist.secrets_management` — criticality-1 core service: passkey-first
   portal + Traefik forwardAuth gate on every `sso`-flagged ingress route;
@@ -61,7 +61,7 @@
 ## Pipeline Data Flow
 
 ```text
-Sources: external (network gear, OS hosts) + infra LXCs self-logging
+Sources: external network gear + managed Linux guest OS logs
          (syslog_forwarder role, Linux port 1517)
          -> HAProxy LXC (175, TCP+UDP 514-518, 1514-1518, 2055)
            |

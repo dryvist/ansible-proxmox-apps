@@ -68,7 +68,7 @@ class TestMediaSecretsPublishCoverage(unittest.TestCase):
         consumer_groups = _consumer_groups()
         plays = yaml.safe_load(text)
         prefetch = next(play for play in plays if play.get("name") == PREFETCH_PLAY)
-        self.assertEqual(set(prefetch["hosts"].split()), {"managed_secrets_group"})
+        self.assertIn("managed_secrets_group", prefetch["hosts"])
         publisher_groups = _legacy_prefetch_groups()
         self.assertIn(
             "ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml",

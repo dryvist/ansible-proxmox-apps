@@ -205,8 +205,20 @@
 # =============================================================================
 
 - name: Pre-fetch resource-domain secrets from OpenBao
+  # The runner adds localhost to every scoped --limit. When a limit selects
+  # only an out-of-play consumer, add localhost so the controller-delegated
+  # fetch still runs; retain the original host set for full and managed-host
+  # limits so they publish facts to the same hosts as before.
   hosts: >-
-    managed_secrets_group
+    {{
+      (['managed_secrets_group']
+       + (['localhost']
+          if ((hostvars['localhost'].openbao_secrets_media_group_in_scope | default(false))
+              or (hostvars['localhost'].openbao_secrets_deadman_group_in_scope | default(false)))
+              and not (hostvars['localhost'].openbao_secrets_managed_group_in_scope | default(false))
+          else []))
+      | join(':')
+    }}
   gather_facts: false
   # status_group: status_stack (Gatus + Uptime Kuma) reads
   # bao_monitoring_secrets.GATUS_EXTERNAL_TOKEN via `mandatory()`, so it must
@@ -238,9 +250,9 @@
         - name: Determine which declared consumer groups have a host in this run
           # groups[...] (unaffected by --limit) intersected with this play's
           # own ansible_play_hosts_all (affected by --limit) tells us whether
-          # --limit kept that group. Only covers groups in THIS play's own
-          # hosts: pattern; media_group and the deadman set are corrected by
-          # the two tasks below instead.
+          # --limit kept that group. The explicit media/deadman scope facts
+          # below still cover those groups when this play runs only on the
+          # controller as a fallback.
           ansible.builtin.set_fact:
             openbao_secrets_active_groups: >-
               {{ (openbao_secrets_active_groups | default([]))
