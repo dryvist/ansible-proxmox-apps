@@ -47,6 +47,7 @@
   community.docker.docker_compose_v2:
     project_src: "{{ netmon_data_dir }}"
     state: present
+  register: netmon_compose
 
 # =============================================================================
 # Health check
@@ -56,11 +57,18 @@
   ansible.builtin.command: >-
     docker ps -q --filter name={{ netmon_telegraf_container_name }} --filter status=running
   register: netmon_telegraf_running
+  check_mode: false
   changed_when: false
   failed_when: false
   retries: 6
   delay: 5
   until: netmon_telegraf_running.stdout != ''
+  when: >-
+    not ansible_check_mode or
+    (
+      not (netmon_compose.skipped | default(false)) and
+      (netmon_compose.actions | default([]) | length == 0)
+    )
 
 # Surface WHY telegraf is not up (state + logs + a one-shot run) instead of a
 # bare timeout. Telegraf logs to stderr, so merge 2>&1 — the previous diagnostic
@@ -78,11 +86,15 @@
   register: netmon_telegraf_diag
   changed_when: false
   failed_when: false
-  when: netmon_telegraf_running.stdout == ''
+  when:
+    - not (netmon_telegraf_running.skipped | default(false))
+    - netmon_telegraf_running.stdout == ''
 
 - name: Fail with Telegraf diagnostics when the container is not running
   ansible.builtin.fail:
     msg: |-
       Telegraf container '{{ netmon_telegraf_container_name }}' is not running after deploy.
       {{ netmon_telegraf_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
-  when: netmon_telegraf_running.stdout == ''
+  when:
+    - not (netmon_telegraf_running.skipped | default(false))
+    - netmon_telegraf_running.stdout == ''
