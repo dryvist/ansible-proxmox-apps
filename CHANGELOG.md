@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.7.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.5...v5.7.6) (2026-10-20)
+
+
+### Bug Fixes
+
+* **nautobot:** skip seed kinds with absent sources ([#2872](https://github.com/dryvist/ansible-proxmox-apps/issues/2872)) ([ded0c11](https://github.com/dryvist/ansible-proxmox-apps/commit/ded0c1177a7522f5ed3f329d38be0d3564147396))
+* **site:** prefetch secrets for media-only limits ([#2875](https://github.com/dryvist/ansible-proxmox-apps/issues/2875)) ([3fdd287](https://github.com/dryvist/ansible-proxmox-apps/commit/3fdd287724e9033934afb5b1e256ebd3c711d259))
+
 ## [5.7.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.4...v5.7.5) (2026-10-20)
 
 
