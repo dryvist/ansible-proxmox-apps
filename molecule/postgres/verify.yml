@@ -11,6 +11,7 @@
     postgres_role_path: "{{ playbook_dir }}/../../roles/postgres"
     postgres_main_tasks_path: "{{ playbook_dir }}/../../roles/postgres/tasks/main.yml"
     postgres_phase4_tasks_path: "{{ playbook_dir }}/../../roles/postgres/tasks/main/roles_and_databases.yml"
+    postgres_version_discovery_path: "{{ postgres_role_path }}/tasks/main/discover_cluster_version.yml"
     postgres_phase4_task_name: Phase 4 -- provision managed roles, databases, and pg_hba
   tasks:
     - name: Check the Phase 4 task file exists
@@ -30,6 +31,8 @@
           {{ lookup('ansible.builtin.file', postgres_main_tasks_path) | from_yaml }}
         postgres_phase4_tasks: >-
           {{ lookup('ansible.builtin.file', postgres_phase4_tasks_path) | from_yaml }}
+        postgres_version_discovery_tasks: >-
+          {{ lookup('ansible.builtin.file', postgres_version_discovery_path) | from_yaml }}
 
     - name: Assert postgres_roles selects only the static Phase 4 import
       ansible.builtin.assert:
@@ -61,13 +64,21 @@
              | map(attribute='tags')
              | flatten }}
 
-    - name: Assert Phase 4 starts by requiring a known PostgreSQL major version
+    - name: Assert the tags-only path discovers the PostgreSQL major before its guard
       ansible.builtin.assert:
         that:
-          - (postgres_phase4_tasks | first)['ansible.builtin.assert'] is defined
+          - postgres_phase4_tasks[0]['ansible.builtin.import_tasks'] == 'discover_cluster_version.yml'
+          - "'postgres_roles' in postgres_phase4_tasks[0].tags"
+          - "'postgres_cluster_version' in (postgres_phase4_tasks[0].when | string)"
+          - postgres_phase4_tasks[1]['ansible.builtin.assert'] is defined
           - >-
-            (postgres_phase4_tasks | first)['ansible.builtin.assert']['that']
+            postgres_phase4_tasks[1]['ansible.builtin.assert']['that']
             | join(' ') is search('postgres_cluster_version')
+          - postgres_version_discovery_tasks[0]['ansible.builtin.command'].argv == ['psql', '--version']
+          - postgres_version_discovery_tasks[1]['ansible.builtin.set_fact'].postgres_cluster_version is defined
+          - postgres_version_discovery_tasks[0].check_mode is false
+          - postgres_version_discovery_tasks[0].changed_when is false
+          - postgres_version_discovery_tasks[0].failed_when is false
         quiet: true
 
     - name: Assert read-only probes run in check mode
@@ -88,7 +99,7 @@
           {{ [postgres_check_mode_task_file,
               postgres_check_mode_task_file | map(attribute='block', default=[]) | flatten] | flatten }}
       loop:
-        - file: tasks/main/install_and_create_cluster.yml
+        - file: tasks/main/discover_cluster_version.yml
           name: Discover installed PostgreSQL major
         - file: tasks/main/cluster_config.yml
           name: List the bound PostgreSQL sockets

@@ -7,15 +7,22 @@
 # through streaming (they are catalog state carried in the WAL), so running
 # these writes there would fail against the read-only replica.
 # =============================================================================
-# A run that skips Phase 2 (--tags postgres_roles) never discovers the major
-# version; fail here instead of building empty config paths.
+# A standalone postgres_roles run still discovers the installed major without
+# running Phase 2's package installation; the assertion fails if it cannot.
+- name: Discover the PostgreSQL major for tagged role runs
+  ansible.builtin.import_tasks: discover_cluster_version.yml
+  when: postgres_cluster_version | default('', true) | string | length == 0
+  tags:
+    - postgres_roles
+
 - name: Assert the PostgreSQL major version is known before provisioning
   ansible.builtin.assert:
     that:
-      - (postgres_cluster_version | default(postgres_version, true) | string) is match('^[0-9]+$')
+      - (postgres_cluster_version | default('', true) | string) is match('^[0-9]+$')
     fail_msg: >-
-      postgres_cluster_version is not set. A run that skips Phase 2, such as
-      --tags postgres_roles, must pass -e postgres_cluster_version=<installed major>.
+      postgres_cluster_version is not set and psql --version did not identify
+      an installed major. Install PostgreSQL or pass
+      -e postgres_cluster_version=<installed major>.
     quiet: true
 
 - name: Provision managed roles and databases
