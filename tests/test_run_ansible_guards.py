@@ -50,7 +50,7 @@ class RunAnsibleSandbox(unittest.TestCase):
         self.runner = scripts_dir / "run-ansible.sh"
         self.runner.write_text(RUNNER_SRC, encoding="utf-8")
         self.runner.chmod(0o700)
-        self._commit("init")
+        self._commit("test: initialize sandbox")
         self._git("push", "-q", "-u", "origin", "develop")
         # A fresh bare repo's HEAD defaults to whatever init.defaultBranch
         # says (often "master"/"main"), which was never pushed here — left
@@ -145,7 +145,7 @@ class RunAnsibleGuardContract(RunAnsibleSandbox):
         (other / "README.md").write_text("newer\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=other, check=True)
         subprocess.run(
-            ["git", "commit", "-q", "-m", "someone else's push"], cwd=other, check=True
+            ["git", "commit", "-q", "-m", "test: simulate another push"], cwd=other, check=True
         )
         subprocess.run(["git", "push", "-q"], cwd=other, check=True)
 
@@ -169,7 +169,7 @@ class RunAnsibleGuardContract(RunAnsibleSandbox):
         (other / "README.md").write_text("newer\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=other, check=True)
         subprocess.run(
-            ["git", "commit", "-q", "-m", "someone else's push"], cwd=other, check=True
+            ["git", "commit", "-q", "-m", "test: simulate another push"], cwd=other, check=True
         )
         subprocess.run(["git", "push", "-q"], cwd=other, check=True)
 
@@ -313,6 +313,29 @@ class RunAnsibleGuardContract(RunAnsibleSandbox):
         # fire when --limit never asked for anything beyond localhost.
         result = self._run("--limit", "localhost")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_task_limits_include_localhost(self):
+        cases = (
+            ((), ""),
+            (("--limit", "group"), "--limit group --limit group,localhost"),
+            (("--limit=group",), "--limit=group --limit group,localhost"),
+            (
+                ("--limit", "template_group", "--limit", "task_group"),
+                "--limit template_group --limit task_group "
+                "--limit task_group,localhost",
+            ),
+            (("--limit", "group,localhost"), "--limit group,localhost"),
+        )
+        for supplied, expected in cases:
+            with self.subTest(supplied=supplied):
+                self.called_log.write_text("", encoding="utf-8")
+                self._write_recap("localhost", "group", "template_group", "task_group")
+                result = self._run(*supplied)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    self.called_log.read_text(encoding="utf-8").strip(),
+                    f"called: playbooks/site.yml {expected}".rstrip(),
+                )
 
 
 if __name__ == "__main__":
