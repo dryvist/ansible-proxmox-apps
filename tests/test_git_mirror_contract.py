@@ -122,13 +122,21 @@ class GitMirrorContract(unittest.TestCase):
             self.assertEqual(rule["labels"]["severity"], "warning")
             self.assertEqual(rule["noDataState"], "Alerting")
 
+        self.assertNotIn("deleteRules", rules_config)
+
+        deleted = [
+            {"orgId": 1, "uid": "git-mirror-sync-stale"},
+            {"orgId": 1, "uid": "git-mirror-sync-failed"},
+        ]
         no_mirror = render_rules({})
         self.assertIsNone(no_mirror["groups"])
+        self.assertEqual(no_mirror["deleteRules"], deleted)
 
         no_prometheus = render_rules(
             {"git_mirror_group": ["git-mirror-101"]}, prometheus_url=""
         )
         self.assertIsNone(no_prometheus["groups"])
+        self.assertEqual(no_prometheus["deleteRules"], deleted)
 
     def test_inventory_and_secret_field_are_wired(self):
         tag_map = (ROOT / "inventory/nautobot.yml").read_text()
