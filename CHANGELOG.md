@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.6.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.6...v5.6.7) (2026-10-20)
+
+
+### Bug Fixes
+
+* **ansible:** use supported modules and explicit fact access ([#2809](https://github.com/dryvist/ansible-proxmox-apps/issues/2809)) ([be039b8](https://github.com/dryvist/ansible-proxmox-apps/commit/be039b8d6a61bc649c434c204d90c0be42dac413))
+* **docker_engine:** skip the service restart when check mode skipped the install ([#2814](https://github.com/dryvist/ansible-proxmox-apps/issues/2814)) ([fef4541](https://github.com/dryvist/ansible-proxmox-apps/commit/fef45417743fced26c288aa12d4d66d331f48944))
+* **zammad:** run the package-state probes in check mode ([#2816](https://github.com/dryvist/ansible-proxmox-apps/issues/2816)) ([7296df9](https://github.com/dryvist/ansible-proxmox-apps/commit/7296df9c77973f62f9349c79fc020df2dc03014b))
+
 ## [5.6.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.5...v5.6.6) (2026-10-20)
 
 
