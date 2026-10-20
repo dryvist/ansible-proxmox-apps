@@ -33,7 +33,7 @@ DOMAINS_FILE = SECRETS_ROLES / "openbao_secrets" / "defaults" / "main" / "01-dom
 LEGACY_PREFETCH_GROUPS_FILE = (
     ROOT / "tests" / "inventory_load" / "managed_secrets_legacy_groups.yml"
 )
-LXC_GROUPS_FILE = ROOT / "inventory" / "load_tofu" / "add_lxc_hosts.yml"
+LXC_GROUPS_FILE = ROOT / "inventory" / "load_tofu" / "lxc_groups.yml"
 
 PREFETCH_PLAY_NAME = "Pre-fetch resource-domain secrets from OpenBao"
 MEDIA_SCOPE_GROUP = "media_group"
