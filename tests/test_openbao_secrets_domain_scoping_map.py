@@ -4,8 +4,8 @@ playbooks/site/00-load-and-telemetry.yml's "Pre-fetch resource-domain
 secrets from OpenBao" play declares openbao_secrets_domain_groups (which
 domains this run's hosts need, per group) as hand-maintained data,
 independent of the domain list in dryvist.secrets_management/roles/openbao_secrets/defaults/main/ and
-of the group names in that same play's `hosts:` pattern, the two small
-scope-detection plays immediately above it, and the tofu-tag-derived groups
+of the group names in that same play's `hosts:` pattern, the scope-detection
+plays immediately above it, and the tofu-tag-derived groups
 used by the ClickHouse, Langfuse and Git mirror consumers. A typo or a
 renamed/removed domain or group on either side would make
 dryvist.secrets_management/roles/openbao_secrets/tasks/narrow_domains.yml silently
@@ -23,11 +23,13 @@ import re
 from pathlib import Path
 
 import yaml
+from jinja2 import Template
 
 from secrets_collection_support import SECRETS_ROLES
 
 ROOT = Path(__file__).resolve().parent.parent
 PLAYBOOK = ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
+SCOPE_DETECT_PLAYBOOK = ROOT / "playbooks" / "site" / "00a-secrets-scope-detect.yml"
 DOMAIN_GROUPS_FILE = ROOT / "playbooks" / "site" / "vars" / "openbao_secrets_domain_groups.yml"
 DOMAINS_FILE = SECRETS_ROLES / "openbao_secrets" / "defaults" / "main" / "01-domains.yml"
 LEGACY_PREFETCH_GROUPS_FILE = (
@@ -68,6 +70,19 @@ def _hosts_pattern_groups(hosts_value: str) -> set[str]:
     return {group for group in re.split(r"[\s:]+", hosts_value) if group}
 
 
+def _render_prefetch_hosts(*, managed=False, media=False, deadman=False) -> str:
+    scope_facts = {}
+    if managed:
+        scope_facts["openbao_secrets_managed_group_in_scope"] = True
+    if media:
+        scope_facts["openbao_secrets_media_group_in_scope"] = True
+    if deadman:
+        scope_facts["openbao_secrets_deadman_group_in_scope"] = True
+    return Template(_prefetch_play()["hosts"]).render(
+        hostvars={"localhost": scope_facts}
+    ).strip()
+
+
 def _domain_groups() -> dict:
     with DOMAIN_GROUPS_FILE.open() as f:
         return yaml.safe_load(f)["openbao_secrets_domain_groups"]
@@ -98,7 +113,79 @@ def _tofu_tag_consumer_groups() -> set[str]:
 
 
 def test_prefetch_play_selects_the_capability_group():
-    assert _hosts_pattern_groups(_prefetch_play()["hosts"]) == {"managed_secrets_group"}
+    assert _hosts_pattern_groups(
+        _render_prefetch_hosts(managed=True, media=True, deadman=True)
+    ) == {"managed_secrets_group"}
+
+
+def test_media_only_limit_fetches_media_domain_and_publishes_it_to_localhost():
+    # scripts/run-ansible.sh adds localhost to Semaphore's --limit, so the
+    # fallback play runs on the controller while the media detector supplies
+    # media_group as the active consumer group.
+    prefetch_hosts = _hosts_pattern_groups(_render_prefetch_hosts(media=True))
+    assert prefetch_hosts == {"managed_secrets_group", "localhost"}
+    assert prefetch_hosts & {"localhost", "media_group"} == {"localhost"}
+    assert "media" in _domains_requested_for_active_groups({"media_group"})
+
+    detect_plays = yaml.safe_load(SCOPE_DETECT_PLAYBOOK.read_text())
+    media_detect = next(
+        play
+        for play in detect_plays
+        if play.get("name") == "Detect whether this run's --limit includes a media-stack host"
+    )
+    assert media_detect["hosts"] == "media_group"
+    assert media_detect["tasks"][0]["ansible.builtin.set_fact"] == {
+        "openbao_secrets_media_group_in_scope": True
+    }
+
+    play = _prefetch_play()
+    block = next(task["block"] for task in play["tasks"] if "block" in task)
+    publish = next(
+        task
+        for task in block
+        if task.get("name") == "Publish the media domain's secrets to localhost too"
+    )
+    assert publish["ansible.builtin.set_fact"]["bao_media_secrets"]
+    assert publish["delegate_to"] == "localhost"
+    assert publish["delegate_facts"] is True
+    assert publish["run_once"] is True
+
+
+def test_deadman_only_limit_uses_controller_fallback_too():
+    assert _hosts_pattern_groups(_render_prefetch_hosts(deadman=True)) == {
+        "managed_secrets_group",
+        "localhost",
+    }
+
+    detect_plays = yaml.safe_load(SCOPE_DETECT_PLAYBOOK.read_text())
+    deadman_detect = next(
+        play
+        for play in detect_plays
+        if play.get("name") == "Detect whether this run's --limit includes a deadman watchdog host"
+    )
+    assert deadman_detect["hosts"] == (
+        "technitium_dns_group:traefik_group:haproxy_group:openbao_group:docker_vms"
+    )
+    assert deadman_detect["tasks"][0]["ansible.builtin.set_fact"] == {
+        "openbao_secrets_deadman_group_in_scope": True
+    }
+
+
+def test_managed_host_limit_keeps_the_original_prefetch_hosts():
+    assert _hosts_pattern_groups(_render_prefetch_hosts(managed=True, media=True)) == {
+        "managed_secrets_group"
+    }
+
+    detect_plays = yaml.safe_load(SCOPE_DETECT_PLAYBOOK.read_text())
+    managed_detect = next(
+        play
+        for play in detect_plays
+        if play.get("name") == "Detect whether this run's --limit includes a managed secrets host"
+    )
+    assert managed_detect["hosts"] == "managed_secrets_group"
+    assert managed_detect["tasks"][0]["ansible.builtin.set_fact"] == {
+        "openbao_secrets_managed_group_in_scope": True
+    }
 
 
 def test_every_mapped_domain_is_a_real_declared_domain():

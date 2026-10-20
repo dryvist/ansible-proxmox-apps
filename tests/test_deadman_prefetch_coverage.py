@@ -37,7 +37,7 @@ def _folded_hosts(text: str, play_name: str) -> set[str]:
     play = next((play for play in plays if play.get("name") == play_name), None)
     assert play is not None, f"could not find play {play_name!r}"
     hosts = set(re.split(r"[\s:]+", str(play["hosts"])))
-    if "managed_secrets_group" in hosts:
+    if any("managed_secrets_group" in host for host in hosts):
         return set(
             yaml.safe_load(LEGACY_PREFETCH_GROUPS.read_text())["managed_secrets_legacy_groups"]
         )
