@@ -120,6 +120,14 @@ PROBES = (
         "roles/technitium_dns/tasks/main/read_soa_serial.yml",
         "Read this node's zone SOA serial",
     ),
+    (
+        "roles/technitium_install/tasks/main.yml",
+        "Read the frameworks the active muxer can resolve",
+    ),
+    (
+        "roles/technitium_install/tasks/main.yml",
+        "Wait for Technitium to start",
+    ),
 )
 
 
