@@ -35,14 +35,30 @@ syslog_forwarder_queue_max_disk_space: 256m
 # applies maxMessageSize only to inputs and actions defined AFTER it.
 syslog_forwarder_max_message_size: 64k
 
-# Optional per-program routes rendered ABOVE the catch-all rule: logs whose
-# $programname matches go to the SAME syslog target but on a family-specific
-# port (then `stop`, so they never also hit the catch-all). Lets one guest
-# split a service's logs into its own syslog family (e.g. traefik -> the
-# proxy family port) while everything else keeps flowing to the linux/os port.
-# Format: [{program: <rsyslog $programname>, port: <target port>}]. Ports come
-# from tofu constants (syslog_port_map / ai_log_routing), never literals.
-syslog_forwarder_program_routes: []
+# Set `syslog_forwarder_program_names` to Docker `$programname` values; the
+# role derives `<program>_docker` ports from tofu `ai_log_routing` and skips
+# absent entries.
+_syslog_forwarder_ai_log_routing: >-
+  {{ (tofu_data | default({})).get('constants', {}).get('ai_log_routing', {}) }}
+_syslog_forwarder_program_route_keys: >-
+  {{
+    syslog_forwarder_program_names | default([])
+    | map('regex_replace', '$', '_docker')
+    | select('in', _syslog_forwarder_ai_log_routing)
+    | list
+  }}
+syslog_forwarder_program_routes: >-
+  {{
+    dict(
+      _syslog_forwarder_program_route_keys
+      | map('regex_replace', '_docker$', '')
+      | zip(
+          _syslog_forwarder_program_route_keys
+          | map('extract', _syslog_forwarder_ai_log_routing)
+          | map(attribute='port')
+        )
+    ) | dict2items(key_name='program', value_name='port')
+  }}
 
 # Optional imfile inputs: tail a service's own log FILE into rsyslog for apps
 # that only log to a file (no journald/console path), so those lines still ride
