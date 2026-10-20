@@ -293,9 +293,49 @@
       ansible.builtin.set_fact:
         bao_apps_secrets: {}
 
-    - name: Assert an unseeded key leaves the bearer empty, which the role's input assert reports
+    - name: Resolve the optional profile tile without its bearer
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../roles/glance/tasks/resolve_optional_profile.yml"
+
+    - name: Assert a missing bearer disables the optional profile tile
       ansible.builtin.assert:
         that:
-          - glance_llm_profile_enabled | bool
+          - not (glance_llm_profile_enabled | bool)
           - glance_llm_profile_bearer_token == ''
-        fail_msg: "an unseeded key must yield an empty bearer, never a fallback value"
+        fail_msg: "a missing bearer must disable the optional tile without a fallback value"
+
+    - name: Restore the tile request with a bearer and without a router catalog row
+      ansible.builtin.set_fact:
+        glance_llm_profile_enabled: true
+        bao_apps_secrets:
+          glance_llm_router_key: sk-glance-under-test
+        dashboard_catalog_services: >-
+          {{ dashboard_catalog_services
+             | rejectattr('name', 'equalto', 'llm') | list }}
+
+    - name: Resolve the optional profile tile without a router URL
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../roles/glance/tasks/resolve_optional_profile.yml"
+
+    - name: Assert a missing router URL disables the optional profile tile
+      ansible.builtin.assert:
+        that:
+          - not (glance_llm_profile_enabled | bool)
+          - glance_llm_profile_router_base_url == ''
+        fail_msg: "a missing router URL must disable the optional tile"
+
+    - name: Render the profile files after resolving unavailable inputs
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../roles/glance/templates/{{ item.src }}"
+        dest: "{{ render_tmp }}/{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - {src: generated-services.yml.j2, dest: glance-unavailable-services.yml}
+        - {src: glance.service.j2, dest: glance-unavailable.service}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Assert unavailable profile inputs omit the widget and its env file reference
+      ansible.builtin.assert:
+        that:
+          - "'LLM profile' not in lookup('file', render_tmp ~ '/glance-unavailable-services.yml')"
+          - "'EnvironmentFile=' not in lookup('file', render_tmp ~ '/glance-unavailable.service')"
+        fail_msg: "the disabled optional tile must not render a widget or missing EnvironmentFile"
