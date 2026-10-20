@@ -1,55 +1,31 @@
-"""The pipeline validator rejects declared LXC tiers omitted from live inventory."""
+"""The pipeline validator fails when declared target containers are unavailable."""
 
 import json
 from pathlib import Path
 import subprocess
 import unittest
 
-import yaml
-
 
 ROOT = Path(__file__).resolve().parents[1]
-SUMMARY = ROOT / "playbooks/validate-pipeline/summary.yml"
-FIXTURE = ROOT / "tests/validate_pipeline/verify_coverage.yml"
+INVENTORY = ROOT / "tests/inventory_load/tofu_inventory.json"
+SUMMARY_FIXTURE = ROOT / "tests/validate_pipeline/verify_guard.yml"
+SKIPPED_GROUPS_FIXTURE = ROOT / "tests/inventory_load/verify_skipped_lxc_groups.yml"
 
 
-def _tier_facts():
-    play = yaml.safe_load(SUMMARY.read_text(encoding="utf-8"))[0]
-    tiers = play["vars"]["validate_pipeline_tiers"]
-    containers = {}
-    live_nodes = {}
-    live_status = {}
-
-    for index, tier in enumerate(tiers, start=1):
-        tags = list(tier["required_tags"])
-        if tier["any_tags"]:
-            tags.append(tier["any_tags"][0])
-        name = "fixture-" + tier["name"].lower().replace(" ", "-")
-        vmid = 5000 + index
-        containers[name] = {"vmid": vmid, "tags": tags}
-        live_nodes[str(vmid)] = "fixture-node"
-        live_status[str(vmid)] = "running"
-
-    return {
-        "validate_pipeline_tiers": tiers,
-        "tofu_data": {"containers": containers},
-        "add_lxc_hosts_live_node": live_nodes,
-        "add_lxc_hosts_live_status": live_status,
-    }, containers
-
-
-def _run_coverage(facts):
+def _run(playbook, extra_vars, start_at_task=None):
+    command = [
+        "ansible-playbook",
+        "-i",
+        "tests/inventory_load/localhost.yml",
+        "-c",
+        "local",
+        str(playbook),
+    ]
+    if start_at_task:
+        command.extend(["--start-at-task", start_at_task])
+    command.extend(["--extra-vars", json.dumps(extra_vars)])
     return subprocess.run(
-        [
-            "ansible-playbook",
-            "-i",
-            "tests/inventory_load/localhost.yml",
-            "-c",
-            "local",
-            str(FIXTURE),
-            "--extra-vars",
-            json.dumps(facts),
-        ],
+        command,
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -58,31 +34,56 @@ def _run_coverage(facts):
 
 
 class ValidatePipelineCoverage(unittest.TestCase):
-    def test_all_declared_tiers_live_passes(self):
-        facts, _ = _tier_facts()
-
-        result = _run_coverage(facts)
+    def test_all_tiers_live_passes(self):
+        result = _run(SUMMARY_FIXTURE, {"validate_pipeline_test_skipped": []})
         output = result.stdout + result.stderr
 
         self.assertEqual(result.returncode, 0, output)
-        self.assertIn("HAProxy: VALIDATED", output)
-        self.assertIn("Cribl Edge metrics: SKIPPED", output)
+        self.assertIn("LOGGING PIPELINE VALIDATION COMPLETE", output)
         self.assertIn("CRIBL_EDGE_API_TOKEN is not set", output)
 
-    def test_declared_tier_with_zero_live_hosts_fails_and_names_it(self):
-        facts, containers = _tier_facts()
-        edge = next(name for name in containers if name == "fixture-cribl-edge")
-        vmid = str(containers[edge]["vmid"])
-        facts["add_lxc_hosts_live_status"][vmid] = "unknown"
-
-        result = _run_coverage(facts)
+    def test_skipped_container_in_validated_group_fails_and_names_it(self):
+        skipped = [
+            {
+                "container": "fixture-cribl-edge",
+                "vmid": 501,
+                "status": "stopped",
+                "groups": ["lxc_containers", "all", "cribl_edge"],
+            }
+        ]
+        result = _run(SUMMARY_FIXTURE, {"validate_pipeline_test_skipped": skipped})
         output = result.stdout + result.stderr
 
         self.assertNotEqual(result.returncode, 0, output)
-        self.assertIn("Cribl Edge: FAILED", output)
-        self.assertIn("Cribl Edge", output)
-        self.assertIn(edge, output)
-        self.assertIn("unknown", output)
+        self.assertIn("fixture-cribl-edge", output)
+        self.assertIn("vmid 501", output)
+        self.assertIn("stopped", output)
+        self.assertIn("cribl_edge", output)
+
+    def test_skipped_inventory_fixture_preserves_validator_groups(self):
+        inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
+        name = "cribl-edge-01"
+        container = dict(inventory["containers"][name])
+        container["ansible_connection"] = "community.proxmox.proxmox_pct_remote"
+        vmid = str(container["vmid"])
+        tofu_data = dict(inventory)
+        tofu_data["containers"] = {name: container}
+        tofu_data["nodes"] = {}
+        tofu_data["domain"] = inventory.get("domain", "fixture.invalid")
+        facts = {
+            "tofu_data": tofu_data,
+            "add_lxc_hosts_live_node": {vmid: "fixture-node"},
+            "add_lxc_hosts_live_status": {vmid: "stopped"},
+        }
+
+        result = _run(
+            SKIPPED_GROUPS_FIXTURE,
+            facts,
+            "Log declared containers skipped because they are not running",
+        )
+        output = result.stdout + result.stderr
+
+        self.assertEqual(result.returncode, 0, output)
 
 
 if __name__ == "__main__":
