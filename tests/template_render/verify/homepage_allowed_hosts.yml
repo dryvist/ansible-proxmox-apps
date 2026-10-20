@@ -1,0 +1,67 @@
+---
+# Render Homepage's container settings with the catalog's direct probe URL.
+- name: Render and verify Homepage allowed hosts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+
+  tasks:
+    - name: Create a private Homepage fixture directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: homepage_allowed_hosts_
+      register: _homepage_render_tmp
+
+    - name: Publish the Homepage catalog and inventory fixtures
+      ansible.builtin.set_fact:
+        tofu_data:
+          constants:
+            service_ports:
+              homepage_web: 3000
+        dashboard_catalog_services_monitor:
+          - name: homepage
+            url: "https://homepage.example.test"
+            probe_url: "http://homepage-guest.example.test:3000"
+
+    - name: Load Homepage role defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../roles/homepage/defaults/main.yml"
+
+    - name: Render Homepage container settings
+      ansible.builtin.template:
+        src: "../../../roles/homepage/templates/docker-compose.yml.j2"
+        dest: "{{ _homepage_render_tmp.path }}/homepage-compose.yml"
+        mode: "0600"
+
+    - name: Read and parse rendered Homepage settings
+      ansible.builtin.slurp:
+        src: "{{ _homepage_render_tmp.path }}/homepage-compose.yml"
+      register: _homepage_compose_raw
+
+    - name: Decode the rendered Homepage settings
+      ansible.builtin.set_fact:
+        _homepage_compose: "{{ _homepage_compose_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert Homepage allows the exact direct probe authority
+      ansible.builtin.assert:
+        that:
+          - "'homepage-guest.example.test:3000' in _homepage_allowed_hosts"
+          - "'localhost:3000' in _homepage_allowed_hosts"
+          - "('homepage.' ~ lookup('env', 'PROXMOX_SUBDOMAIN')) in _homepage_allowed_hosts"
+          - _homepage_allowed_hosts | length == _homepage_allowed_hosts | unique | length
+        fail_msg: >-
+          HOMEPAGE_ALLOWED_HOSTS must retain the public and inventory entries
+          and include the exact netloc from the catalog probe_url.
+        success_msg: "Homepage allows the catalog probe authority without duplicate entries."
+      vars:
+        _homepage_allowed_hosts: >-
+          {{ _homepage_compose.services.homepage.environment.HOMEPAGE_ALLOWED_HOSTS.split(',') }}
+
+    - name: Remove the Homepage fixture directory
+      ansible.builtin.file:
+        path: "{{ _homepage_render_tmp.path }}"
+        state: absent

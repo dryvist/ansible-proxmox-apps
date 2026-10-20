@@ -22,12 +22,26 @@ homepage_port: >-
   {{ tofu_data.constants.service_ports.homepage_web
      | mandatory('tofu_data.constants.service_ports.homepage_web missing — regenerate the published inventory') }}
 
+# Use the catalog's direct probe authority, including its port, so the
+# container allowlist matches the Host header sent by Gatus.
+homepage_direct_probe_host_port: >-
+  {{ dashboard_catalog_services_monitor | default([])
+     | selectattr('name', 'equalto', 'homepage')
+     | map(attribute='probe_url')
+     | first
+     | default('', true)
+     | urlsplit('netloc') }}
+
 # Required since upstream v1.0: homepage rejects any request whose Host header
 # is not listed, so without the public vhost every proxied request 400s while
 # the container stays healthy. localhost:3000 is always allowed implicitly; the
-# guest's own name is added so a direct probe works too. Never "*".
+# inventory name and catalog probe authority are allowed for direct requests.
+# Never "*".
 homepage_allowed_hosts: >-
-  homepage.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }},{{ inventory_hostname }}:{{ homepage_port | trim }}
+  {{ (['homepage.' ~ lookup('env', 'PROXMOX_SUBDOMAIN'),
+       inventory_hostname ~ ':' ~ (homepage_port | trim),
+       homepage_direct_probe_host_port]
+      | reject('equalto', '') | unique | join(',')) }}
 
 homepage_title: "Homelab"
 
