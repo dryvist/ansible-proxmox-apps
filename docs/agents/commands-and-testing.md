@@ -111,9 +111,9 @@ ansible-lint
 
 A full `site.yml` evaluates 55+ hosts, and every task pays transport cost
 even when it changes nothing. The PCT connection uses Paramiko directly, so
-OpenSSH multiplexing does not reuse its sessions. Homarr's PCT fallback now
-uses an Ansible persistent connection adapter to keep its session across
-tasks. The levers, in order of effect:
+OpenSSH multiplexing does not reuse its sessions. Homarr uses the upstream
+Proxmox connection plugin, with its role minimizing repeated API calls. The
+levers, in order of effect:
 
 1. **Scope with `--limit`**: the host group you are working on plus
    localhost (e.g., `--limit sortarr,localhost`). This is the lever that
@@ -130,9 +130,8 @@ tasks. The levers, in order of effect:
    OpenSSH penalises a source that opens too many connections at once. The
    value moves only with the plane's memory limit, never from a command line.
 5. **SSH pipelining and multiplexing** are enabled in `ansible.cfg` for the
-   OpenSSH connection. Pipelining does not apply to PCT; its Homarr adapter
-   reuses the Paramiko session. Plays that need no facts already set
-   `gather_facts: false`.
+   OpenSSH connection. Pipelining does not apply to PCT. Plays that need no
+   facts already set `gather_facts: false`.
 
 ## Testing
 

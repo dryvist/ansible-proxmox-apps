@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.10](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.9...v5.6.10) (2026-10-20)
+
+
+### Bug Fixes
+
+* **postgres:** discover installed version for tagged runs ([#2828](https://github.com/dryvist/ansible-proxmox-apps/issues/2828)) ([f576949](https://github.com/dryvist/ansible-proxmox-apps/commit/f576949490e637ec36504ce507887648d8a35a03))
+
 ## [5.6.9](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.8...v5.6.9) (2026-10-20)
 
 

@@ -1,0 +1,35 @@
+---
+# Renders roles/grafana_stack/templates/alerting/rules-openbao.yml.j2 with
+# the role defaults and checks that the autopilot rules read the active node.
+- name: Render and verify the Grafana OpenBao alert rules
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-openbao.yml.j2"
+    _active_filter: 'and on (instance) (vault_core_active{job="openbao"} == 1)'
+  tasks:
+    - name: Render the OpenBao alert rules
+      ansible.builtin.set_fact:
+        _openbao_rules: "{{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0].rules }}"
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+
+    - name: Assert the autopilot rules read only the active node
+      ansible.builtin.assert:
+        that:
+          - _openbao_rules | map(attribute='uid') | list
+            == ['openbao-sealed', 'openbao-raft-unhealthy',
+                'openbao-failure-tolerance-low', 'openbao-leader-churn']
+          - _expr['openbao-raft-unhealthy'].count(_active_filter) == 2
+          - _expr['openbao-failure-tolerance-low'].count(_active_filter) == 1
+          - _active_filter not in _expr['openbao-sealed']
+        fail_msg: >-
+          rules-openbao.yml.j2 rendered autopilot rules that do not read the
+          active node: {{ _expr }}
+      vars:
+        _expr: >-
+          {{ dict(_openbao_rules | map(attribute='uid')
+                  | zip(_openbao_rules | map(attribute='data.0.model.expr'))) }}
