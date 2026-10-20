@@ -28,6 +28,10 @@ PROBES = (
         "roles/grafana_stack/tasks/main.yml",
         "Capture stack diagnostics on failure",
     ),
+    (
+        "roles/apt_recovery/tasks/main.yml",
+        "Wait for package-manager locks to clear",
+    ),
 )
 
 
