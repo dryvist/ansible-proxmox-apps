@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.4...v5.7.5) (2026-10-20)
+
+
+### Bug Fixes
+
+* **baseline:** forward OS logs from every managed guest ([#2868](https://github.com/dryvist/ansible-proxmox-apps/issues/2868)) ([cfbdbd2](https://github.com/dryvist/ansible-proxmox-apps/commit/cfbdbd2e3ef635cb8430f30338a3ae9d6cc1e5c6))
+
 ## [5.7.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.3...v5.7.4) (2026-10-20)
 
 
