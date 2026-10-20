@@ -203,7 +203,7 @@ class CheckoutFreshnessGuard(unittest.TestCase):
         self._git("init", "-q", "-b", "main", str(self.upstream), cwd=root)
         (self.upstream / "seed").write_text("1\n", encoding="utf-8")
         self._git("add", "-A", cwd=self.upstream)
-        self._git("commit", "-qm", "seed", cwd=self.upstream)
+        self._git("commit", "-qm", "test: seed", cwd=self.upstream)
         self._git("clone", "-q", str(self.upstream), str(self.clone), cwd=root)
         scripts = self.clone / "scripts"
         scripts.mkdir(parents=True, exist_ok=True)
@@ -229,7 +229,7 @@ class CheckoutFreshnessGuard(unittest.TestCase):
     def test_ahead_checkout_is_named_as_ahead_and_says_to_push(self):
         (self.clone / "local-only").write_text("x\n", encoding="utf-8")
         self._git("add", "-A", cwd=self.clone)
-        self._git("commit", "-qm", "local only", cwd=self.clone)
+        self._git("commit", "-qm", "test: local only", cwd=self.clone)
 
         result = self._run_guard()
 
@@ -243,7 +243,7 @@ class CheckoutFreshnessGuard(unittest.TestCase):
     def test_behind_checkout_still_says_to_pull(self):
         (self.upstream / "newer").write_text("y\n", encoding="utf-8")
         self._git("add", "-A", cwd=self.upstream)
-        self._git("commit", "-qm", "newer", cwd=self.upstream)
+        self._git("commit", "-qm", "test: newer", cwd=self.upstream)
 
         result = self._run_guard()
 
