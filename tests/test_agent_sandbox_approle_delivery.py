@@ -99,11 +99,20 @@ class AgentSandboxCredentialContract(unittest.TestCase):
 
         site = yaml.safe_load((ROOT / "playbooks/site/03-notifications-and-core-apps.yml").read_text())
         play = next(play for play in site if play.get("hosts") == "agent_sandbox_host")
-        self.assertIn("agent_sandbox_credentials", play["tags"])
+        self.assertNotIn("agent_sandbox_credentials", play["tags"])
         block = next(task for task in play["tasks"] if "block" in task)
-        self.assertIn("agent_sandbox_credentials", block["tags"])
+        self.assertNotIn("agent_sandbox_credentials", block["tags"])
         include = _task(block["block"], "Include agent_sandbox role")
         self.assertIn("agent_sandbox_credentials", include["tags"])
+        credential_tagged = [
+            task
+            for task in block["block"]
+            if "agent_sandbox_credentials" in task.get("tags", [])
+        ]
+        self.assertEqual(
+            credential_tagged,
+            [include],
+        )
         self.assertEqual(
             include["ansible.builtin.include_role"]["apply"]["tags"], ["agent_sandbox"]
         )
