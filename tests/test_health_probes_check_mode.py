@@ -117,6 +117,31 @@ PROBES = (
         "Read this node's live zone type (authoritative over any heuristic)",
     ),
     (
+        "roles/technitium_dns/tasks/main/validate_and_auth.yml",
+        "Authenticate to this node's Technitium API (per-host session token)",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/build_records.yml",
+        "Check if DNS zone exists",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/infra_a_records.yml",
+        "Get existing A records for zone",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/infra_a_records.yml",
+        "Look up retired guest A records",
+    ),
+    ("roles/technitium_dns/tasks/query_log.yml", "List installed DNS apps"),
+    (
+        "roles/technitium_dns/tasks/query_log.yml",
+        "Re-read the DNS app list after install or update",
+    ),
+    (
+        "roles/technitium_dns/tasks/query_log.yml",
+        "Read the live Log Exporter app config",
+    ),
+    (
         "roles/technitium_dns/tasks/main/read_soa_serial.yml",
         "Read this node's zone SOA serial",
     ),
@@ -437,3 +462,44 @@ def test_node_exporter_stage_result_gates_check_mode_unpack_and_binary_copy():
         condition = task_by_name[task_name].get("when", "")
         assert "not ansible_check_mode" in condition
         assert "node_exporter_release_stage.changed" in condition
+
+
+def test_technitium_check_mode_skips_query_log_followups_when_install_is_skipped():
+    tasks = yaml.safe_load((REPO / "roles/technitium_dns/tasks/query_log.yml").read_text(encoding="utf-8"))
+    task_by_name = {task.get("name"): task for task in _tasks_in(tasks)}
+
+    guarded_tasks = (
+        "Re-read the DNS app list after install or update",
+        "Require the Log Exporter app to have actually loaded",
+        "Read the live Log Exporter app config",
+        "Compute the desired Log Exporter config (app config + our syslog block)",
+        "Configure Log Exporter syslog export (drift-gated)",
+    )
+    for task_name in guarded_tasks:
+        when = task_by_name[task_name].get("when", "")
+        condition = " ".join(when) if isinstance(when, list) else when
+        assert "not ansible_check_mode" in condition
+        assert "technitium_dns_query_log_app_installed" in condition
+
+    for task_name in (
+        "Install the Log Exporter app from the internal object-storage mirror",
+        "Update the Log Exporter app to the pinned version",
+        "Configure Log Exporter syslog export (drift-gated)",
+    ):
+        when = task_by_name[task_name].get("when", "")
+        condition = " ".join(when) if isinstance(when, list) else when
+        assert "not ansible_check_mode" in condition
+        assert task_by_name[task_name].get("check_mode") is not False
+
+
+def test_technitium_write_result_assertion_skips_check_mode():
+    tasks = yaml.safe_load(
+        (REPO / "roles/technitium_dns/tasks/main/infra_a_records.yml").read_text(encoding="utf-8")
+    )
+    task = next(
+        task for task in _tasks_in(tasks)
+        if task.get("name") == "Assert the infrastructure A records were actually written"
+    )
+    when = task.get("when", "")
+    condition = " ".join(when) if isinstance(when, list) else when
+    assert "not ansible_check_mode" in condition
