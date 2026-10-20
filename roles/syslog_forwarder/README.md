@@ -17,9 +17,10 @@ this LXC (journald + rsyslog)
 
 `rsyslog` reads the systemd journal (`imjournal`) by default on Debian, so a
 single forward rule captures host logs plus every native systemd service. The
-rule uses `omfwd` with a disk-assisted action queue, so a HAProxy/Cribl outage
-buffers (up to `syslog_forwarder_queue_max_disk_space`) instead of dropping
-logs.
+rule uses `omfwd` with a disk-assisted action queue that buffers up to
+`syslog_forwarder_queue_max_disk_space`; if full, enqueue can time out. TCP
+keepalive detects stale idle connections so forwarding can resume after the
+receiver returns.
 
 Debian's `rsyslog.service` ships systemd sandboxing (`PrivateDevices`,
 `ProtectKernelTunables`, `ProtectControlGroups`, …) that an unprivileged LXC
@@ -72,7 +73,11 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `syslog_forwarder_target_host` | `syslog.{{ PROXMOX_SUBDOMAIN }}` | The `syslog` CNAME (→ HAProxy VIP). Never a literal. |
 | `syslog_forwarder_target_port` | `tofu_data.constants.syslog_ports.linux` | Linux syslog port (→ Splunk `os` index). |
 | `syslog_forwarder_protocol` | `tcp` | `tcp` (reliable) or `udp`. |
-| `syslog_forwarder_queue_max_disk_space` | `256m` | Disk-queue cap so a receiver outage buffers instead of dropping. |
+| `syslog_forwarder_queue_max_disk_space` | `256m` | Disk-queue cap during a receiver outage. |
+| `syslog_forwarder_keepalive` | `on` | Enables TCP keepalive for both forwarding actions. |
+| `syslog_forwarder_keepalive_time` | `120` | Idle seconds before the first keepalive probe. |
+| `syslog_forwarder_keepalive_interval` | `30` | Seconds between unanswered keepalive probes. |
+| `syslog_forwarder_keepalive_probes` | `3` | Unanswered probes before the connection is declared dead. |
 
 Port and target are sourced from the inventory / `PROXMOX_SUBDOMAIN`, never
 hardcoded (see `.claude/rules/ip-addressing.md`).
