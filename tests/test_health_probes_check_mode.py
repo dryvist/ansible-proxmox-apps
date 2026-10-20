@@ -112,6 +112,14 @@ PROBES = (
         "roles/postgres/tasks/main/patroni_bootstrap.yml",
         "Wait for the cluster to elect a leader",
     ),
+    (
+        "roles/technitium_dns/tasks/main/build_records.yml",
+        "Read this node's live zone type (authoritative over any heuristic)",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/read_soa_serial.yml",
+        "Read this node's zone SOA serial",
+    ),
 )
 
 
