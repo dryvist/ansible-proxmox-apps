@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.6.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.2...v5.6.3) (2026-10-20)
+
+
+### Bug Fixes
+
+* **deps:** require amazon.aws 11.3.0 without deprecated text imports ([#2794](https://github.com/dryvist/ansible-proxmox-apps/issues/2794)) ([f786328](https://github.com/dryvist/ansible-proxmox-apps/commit/f7863281114aad58cd3572010a740d4a7e6ccf9e))
+* **roles:** stage controller downloads in check mode ([#2793](https://github.com/dryvist/ansible-proxmox-apps/issues/2793)) ([b9f631d](https://github.com/dryvist/ansible-proxmox-apps/commit/b9f631d4fa5137c11b1926956e3e2e15952f19d3))
+* **technitium:** stage verified builds with rollback ([#2790](https://github.com/dryvist/ansible-proxmox-apps/issues/2790)) ([c082eb9](https://github.com/dryvist/ansible-proxmox-apps/commit/c082eb975760f2179b3ef03ae141037de917d2c5))
+* **vikunja:** skip token publishing includes in check mode ([#2795](https://github.com/dryvist/ansible-proxmox-apps/issues/2795)) ([65aa59d](https://github.com/dryvist/ansible-proxmox-apps/commit/65aa59de309efd657ab9b493d10fa21dd7b736be))
+
 ## [5.6.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.1...v5.6.2) (2026-10-20)
 
 
