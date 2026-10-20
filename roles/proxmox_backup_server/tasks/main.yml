@@ -139,6 +139,7 @@
 - name: List the configured datastores
   ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
   register: proxmox_backup_server_datastore_list
+  check_mode: false
   changed_when: false
 
 # `proxmox-backup-manager datastore create` spawns a worker task and polls it.
@@ -177,8 +178,14 @@
     - name: Re-read the datastores after creation
       ansible.builtin.command: proxmox-backup-manager datastore list --output-format json
       register: proxmox_backup_server_datastore_recheck
+      check_mode: false
       changed_when: false
       failed_when: false
+      when: >-
+        not ansible_check_mode or
+        proxmox_backup_server_datastore_name in
+        (proxmox_backup_server_datastore_list.stdout | from_json
+         | map(attribute='name') | list)
       until: >-
         proxmox_backup_server_datastore_name in
         (proxmox_backup_server_datastore_recheck.stdout | default('[]') | from_json
@@ -199,3 +206,8 @@
           stderr={{ proxmox_backup_server_create.stderr }}.
       vars:
         declared: "{{ proxmox_backup_server_datastore_recheck.stdout | from_json }}"
+      when: >-
+        not ansible_check_mode or
+        proxmox_backup_server_datastore_name in
+        (proxmox_backup_server_datastore_list.stdout | from_json
+         | map(attribute='name') | list)
