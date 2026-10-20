@@ -52,6 +52,14 @@ PROBES = (
         "roles/healthchecks_docker/tasks/main.yml",
         "Verify healthchecks login page renders",
     ),
+    (
+        "roles/n8n_docker/tasks/main.yml",
+        "Verify n8n /healthz endpoint",
+    ),
+    (
+        "roles/n8n_docker/tasks/main.yml",
+        "Read n8n frontend settings (owner-setup state)",
+    ),
 )
 
 
