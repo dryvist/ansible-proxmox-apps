@@ -26,7 +26,7 @@ vendor the role or reference it via `requirements.yml` pointing at this repo.
 The role's behavior is driven entirely by the variables documented below.
 Mode selection (client / server / hybrid) is variable-driven, but a small
 number of tasks are fact-gated: the systemd task is skipped under Docker
-(`ansible_virtualization_type != 'docker'`) so the role can be molecule-tested
+(`ansible_facts['virtualization_type'] != 'docker'`) so the role can be molecule-tested
 in containers.
 
 ### Modes
@@ -111,7 +111,7 @@ the rendered config; a syntax error fails the play before chronyd is told to
 restart. Restart fires only via the `Restart chrony` handler — when the file
 actually changes.
 
-The systemd task is skipped under Docker (`ansible_virtualization_type !=
+The systemd task is skipped under Docker (`ansible_facts['virtualization_type'] !=
 'docker'`) so the role can be molecule-tested in containers.
 
 ## Contributing

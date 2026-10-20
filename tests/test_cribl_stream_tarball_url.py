@@ -65,9 +65,14 @@ class CriblConsumersReadTheSharedCatalog(unittest.TestCase):
         self.assertIn("cribl_stream_version", url)
         self.assertNotIn("latest", url)
 
-    def test_cribl_edge_mirror_key_uses_catalog_version(self):
-        variables = yaml.safe_load(CRIBL_EDGE_VARS.read_text(encoding="utf-8"))
-        self.assertIn("cribl_version", variables["cribl_edge_tarball_url"])
+    def test_cribl_edge_and_stream_share_catalog_versioned_mirror_key(self):
+        all_variables = yaml.safe_load(ALL_VARS.read_text(encoding="utf-8"))
+        edge = yaml.safe_load(CRIBL_EDGE_VARS.read_text(encoding="utf-8"))
+        stream = yaml.safe_load(CRIBL_STREAM_VARS.read_text(encoding="utf-8"))
+
+        self.assertIn("cribl_version", all_variables["cribl_tarball_url"])
+        self.assertEqual(edge["cribl_edge_tarball_url"], "{{ cribl_tarball_url }}")
+        self.assertEqual(stream["cribl_stream_tarball_url"], "{{ cribl_tarball_url }}")
 
     def test_docker_tag_derives_from_the_catalog_version(self):
         variables = yaml.safe_load(ALL_VARS.read_text(encoding="utf-8"))

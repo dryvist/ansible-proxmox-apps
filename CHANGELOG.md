@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.5...v5.6.6) (2026-10-20)
+
+
+### Bug Fixes
+
+* **deps:** pin ansible-secrets-management to 5b2055c ([#2810](https://github.com/dryvist/ansible-proxmox-apps/issues/2810)) ([1d77ba3](https://github.com/dryvist/ansible-proxmox-apps/commit/1d77ba384b36b2f52f56f8ce9005ed14dcc32963))
+
 ## [5.6.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.4...v5.6.5) (2026-10-20)
 
 

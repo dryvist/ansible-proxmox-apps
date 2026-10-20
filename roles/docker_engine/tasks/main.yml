@@ -9,8 +9,8 @@
 # =============================================================================
 
 # Gather every fact the role uses so it is safe under gather_facts: false plays:
-# ansible_distribution* (GPG/repo), ansible_architecture (repo arch), and
-# ansible_virtualization_type (the fuse-overlayfs LXC guard).
+# distribution (GPG/repo), architecture (repo arch), and virtualization_type
+# (the fuse-overlayfs LXC guard) from ansible_facts.
 - name: Gather OS facts
   ansible.builtin.setup:
     filter:
@@ -48,7 +48,7 @@
 
 - name: Set Docker repository distribution
   ansible.builtin.set_fact:
-    docker_engine_distro: "{{ ansible_distribution | lower }}"
+    docker_engine_distro: "{{ ansible_facts['distribution'] | lower }}"
   when: docker_engine_installed.rc | default(1) != 0
 
 - name: Add Docker GPG key
@@ -62,10 +62,10 @@
 - name: Add Docker repository
   ansible.builtin.apt_repository:
     repo: >-
-      deb [arch={{ 'arm64' if ansible_architecture in ['aarch64', 'arm64']
+      deb [arch={{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64']
         else 'amd64' }} signed-by=/etc/apt/keyrings/docker.asc]
       https://download.docker.com/linux/{{ docker_engine_distro }}
-      {{ ansible_distribution_release }} stable
+      {{ ansible_facts['distribution_release'] }} stable
     state: present
     filename: docker
   when: docker_engine_installed.rc | default(1) != 0
@@ -90,7 +90,7 @@
     state: present
   when:
     - docker_engine_install_fuse_overlayfs | bool
-    - ansible_virtualization_type | default('') == 'lxc'
+    - ansible_facts['virtualization_type'] | default('') == 'lxc'
 
 # A virtual machine keeps the image store it already runs on: pinning a driver
 # it does not have starts the daemon against an empty store, or not at all. The
@@ -129,7 +129,7 @@
   register: docker_engine_daemon_config
   when:
     - docker_engine_configure_daemon_json | bool
-    - ansible_virtualization_type | default('') not in docker_engine_vm_virtualization_types
+    - ansible_facts['virtualization_type'] | default('') not in docker_engine_vm_virtualization_types
 
 - name: Remove the storage-driver pin from a virtual machine
   ansible.builtin.file:
@@ -138,7 +138,7 @@
   register: docker_engine_daemon_unpin
   when:
     - docker_engine_configure_daemon_json | bool
-    - ansible_virtualization_type | default('') in docker_engine_vm_virtualization_types
+    - ansible_facts['virtualization_type'] | default('') in docker_engine_vm_virtualization_types
 
 - name: Restart Docker to apply the storage-driver configuration
   # Never on the plane host (inventory/group_vars/all.yml plane_host): this
@@ -155,12 +155,14 @@
     - docker_engine_configure_daemon_json | bool
     - docker_engine_daemon_config.changed | default(false) or docker_engine_daemon_unpin.changed | default(false)
     - inventory_hostname != plane_host
+    - not ansible_check_mode
 
 - name: Ensure Docker service is running
   ansible.builtin.systemd:
     name: docker
     state: started
     enabled: true
+  when: not ansible_check_mode
 
 # =============================================================================
 # Python venv for the SDK-based community.docker modules (default off)
