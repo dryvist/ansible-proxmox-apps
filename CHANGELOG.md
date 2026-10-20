@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.1...v5.7.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **syslog_forwarder:** enable TCP keepalive probes ([#2860](https://github.com/dryvist/ansible-proxmox-apps/issues/2860)) ([8c4794e](https://github.com/dryvist/ansible-proxmox-apps/commit/8c4794ecf53592517a2e9c3b01f0b93238314cd3))
+
 ## [5.7.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.0...v5.7.1) (2026-10-20)
 
 
