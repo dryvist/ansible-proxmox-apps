@@ -66,6 +66,7 @@
   community.docker.docker_compose_v2:
     project_src: "{{ unifi_metrics_data_dir }}"
     state: present
+  register: unifi_metrics_compose
 
 # =============================================================================
 # Health check
@@ -78,11 +79,18 @@
     - "{{ unifi_metrics_unpoller_container_name }}"
     - "{{ unifi_metrics_telegraf_container_name }}"
   register: unifi_metrics_running
+  check_mode: false
   changed_when: false
   failed_when: false
   retries: 6
   delay: 5
   until: unifi_metrics_running.stdout != ''
+  when: >-
+    not ansible_check_mode or
+    (
+      not (unifi_metrics_compose.skipped | default(false)) and
+      (unifi_metrics_compose.actions | default([]) | length == 0)
+    )
 
 - name: Capture diagnostics when a container is not running
   ansible.builtin.shell: "{{ item }} 2>&1"
@@ -94,11 +102,15 @@
   register: unifi_metrics_diag
   changed_when: false
   failed_when: false
-  when: unifi_metrics_running.results | selectattr('stdout', 'equalto', '') | list | length > 0
+  when:
+    - not (unifi_metrics_running.skipped | default(false))
+    - unifi_metrics_running.results | selectattr('stdout', 'equalto', '') | list | length > 0
 
 - name: Fail with diagnostics when a container is not running
   ansible.builtin.fail:
     msg: |-
       unifi_metrics containers are not all running after deploy.
       {{ unifi_metrics_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}
-  when: unifi_metrics_running.results | selectattr('stdout', 'equalto', '') | list | length > 0
+  when:
+    - not (unifi_metrics_running.skipped | default(false))
+    - unifi_metrics_running.results | selectattr('stdout', 'equalto', '') | list | length > 0
