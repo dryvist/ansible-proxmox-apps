@@ -28,6 +28,16 @@ READ_ONLY_PROBES = {
     "roles/github_runner_arc/tasks/main.yml": (
         "Read the filesystem backing the data directory's parent and root",
     ),
+    "roles/proxmox_backup_server/tasks/datastore_disk.yml": (
+        "Read existing signatures on the datastore device",
+        "Read the datastore filesystem UUID",
+    ),
+    "roles/opentofu_cli/tasks/main.yml": (
+        "Record the installed OpenTofu version",
+    ),
+    "roles/mssql_docker/tasks/main.yml": (
+        "Verify SQL Server is accepting connections",
+    ),
 }
 STATE_CHANGING_MODULES = {
     "ansible.builtin.file",
