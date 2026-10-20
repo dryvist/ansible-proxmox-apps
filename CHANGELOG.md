@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.6.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.4...v5.6.5) (2026-10-20)
+
+
+### Bug Fixes
+
+* **roles:** preview the Docker version read and the traefik install in check mode ([#2806](https://github.com/dryvist/ansible-proxmox-apps/issues/2806)) ([dca5794](https://github.com/dryvist/ansible-proxmox-apps/commit/dca57940e6d533629a172914d6512495f20938e2))
+* **roles:** run remaining read-only probes in check mode ([#2803](https://github.com/dryvist/ansible-proxmox-apps/issues/2803)) ([2d025f2](https://github.com/dryvist/ansible-proxmox-apps/commit/2d025f287d51dc7fec2eb3c1008bdaa3a604e0c2))
+* **technitium_install:** run the read-only API probes in check mode ([#2804](https://github.com/dryvist/ansible-proxmox-apps/issues/2804)) ([c24f241](https://github.com/dryvist/ansible-proxmox-apps/commit/c24f24187fe1b9f9dc41a2f4d843ce8ef25a3882))
+* **zammad:** pin the current packager.io signing key ([#2805](https://github.com/dryvist/ansible-proxmox-apps/issues/2805)) ([6f398fc](https://github.com/dryvist/ansible-proxmox-apps/commit/6f398fc79842718e37db0597113a048ec69eb160))
+
 ## [5.6.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.3...v5.6.4) (2026-10-20)
 
 
