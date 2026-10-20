@@ -473,7 +473,6 @@ def test_technitium_check_mode_skips_query_log_followups_when_install_is_skipped
         "Require the Log Exporter app to have actually loaded",
         "Read the live Log Exporter app config",
         "Compute the desired Log Exporter config (app config + our syslog block)",
-        "Configure Log Exporter syslog export (drift-gated)",
     )
     for task_name in guarded_tasks:
         when = task_by_name[task_name].get("when", "")
@@ -490,6 +489,11 @@ def test_technitium_check_mode_skips_query_log_followups_when_install_is_skipped
         condition = " ".join(when) if isinstance(when, list) else when
         assert "not ansible_check_mode" in condition
         assert task_by_name[task_name].get("check_mode") is not False
+
+    # A real run configures the app it just installed, so the write must not
+    # gate on the fact read before the install.
+    when = task_by_name["Configure Log Exporter syslog export (drift-gated)"].get("when", "")
+    assert "technitium_dns_query_log_app_installed" not in " ".join(when)
 
 
 def test_technitium_write_result_assertion_skips_check_mode():
