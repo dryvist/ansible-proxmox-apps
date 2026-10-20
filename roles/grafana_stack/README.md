@@ -69,6 +69,9 @@ default).
 `templates/alerting/rules-git-mirror.yml.j2` provisions two warning rules in
 the `git-mirror-sync` group: `git-mirror-sync-stale` checks the last successful
 sync age against 12 hours, and `git-mirror-sync-failed` checks the sync status.
+The group is rendered only when inventory contains a host in
+`git_mirror_group`; both rules keep `noDataState: Alerting` so a deployed mirror
+that goes silent still alerts.
 Both require the condition to hold for 15 minutes.
 
 A receiver API request sends a sample alert with its rule title. It checks

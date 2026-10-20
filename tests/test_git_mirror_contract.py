@@ -83,12 +83,17 @@ class GitMirrorContract(unittest.TestCase):
                 "grafana_stack_alert_git_mirror_max_age_seconds"
             ],
         }
-        rules_config = yaml.safe_load(
-            template.render(
-                grafana_stack_prometheus_url="http://prometheus.example.test:9090",
-                **render_vars,
+
+        def render_rules(groups, prometheus_url="http://prometheus.example.test:9090"):
+            return yaml.safe_load(
+                template.render(
+                    grafana_stack_prometheus_url=prometheus_url,
+                    groups=groups,
+                    **render_vars,
+                )
             )
-        )
+
+        rules_config = render_rules({"git_mirror_group": ["git-mirror-101"]})
         grafana_tasks = yaml.safe_load((ROOT / "roles/grafana_stack/tasks/main.yml").read_text())
         alert_task = next(
             task for task in grafana_tasks if task["name"] == "Render grafana unified-alerting provisioning"
@@ -117,8 +122,11 @@ class GitMirrorContract(unittest.TestCase):
             self.assertEqual(rule["labels"]["severity"], "warning")
             self.assertEqual(rule["noDataState"], "Alerting")
 
-        no_prometheus = yaml.safe_load(
-            template.render(grafana_stack_prometheus_url="", **render_vars)
+        no_mirror = render_rules({})
+        self.assertIsNone(no_mirror["groups"])
+
+        no_prometheus = render_rules(
+            {"git_mirror_group": ["git-mirror-101"]}, prometheus_url=""
         )
         self.assertIsNone(no_prometheus["groups"])
 
