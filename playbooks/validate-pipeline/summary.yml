@@ -5,7 +5,30 @@
   tags:
     - summary
 
+  vars:
+    cribl_edge_metrics_api_token: >-
+      {{ lookup('env', 'CRIBL_EDGE_API_TOKEN') | default('', true) }}
+    # These groups are the hosts patterns in the validation play files.
+    validate_pipeline_groups:
+      - haproxy_group
+      - cribl_edge
+      - cribl_stream_group
+      - mailpit_group
+      - ntfy_group
+      - mssql_group
+
   tasks:
+    - name: Fail when a skipped container is targeted by validation
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.container }} (vmid {{ item.vmid }}) has status
+          '{{ item.status }}' and would join validation group(s)
+          {{ item.groups | intersect(validate_pipeline_groups) | join(', ') }}.
+      loop: "{{ hostvars['localhost'].get('add_lxc_hosts_skipped_containers', []) }}"
+      loop_control:
+        label: "{{ item.container }} ({{ item.status }})"
+      when: item.groups | intersect(validate_pipeline_groups) | length > 0
+
     - name: Display pipeline validation summary
       ansible.builtin.debug:
         msg: |
@@ -15,7 +38,11 @@
           HAProxy:      Config valid, ports listening
           Cribl Edge:   LXC services healthy, APIs responding
           Cribl Stream: LXC services healthy, APIs responding
+          {% if cribl_edge_metrics_api_token | length > 0 -%}
           Cribl Edge:   Metrics API responding
+          {% else -%}
+          Cribl Edge:   Metrics API skipped (CRIBL_EDGE_API_TOKEN is not set)
+          {% endif -%}
           Mailpit:      Docker running, SMTP+Web healthy
           ntfy:         Docker running, health endpoint healthy
           MSSQL:        Docker running, port 1433 listening
