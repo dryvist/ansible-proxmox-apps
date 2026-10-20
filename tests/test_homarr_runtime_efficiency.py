@@ -1,19 +1,13 @@
 """Keep Homarr's slow module loops and duplicate restarts out of the converge."""
 
-import importlib.util
 from pathlib import Path
-import sys
 
 import yaml
 from jinja2 import Template
-from ansible import constants as C
-from ansible.playbook.play_context import PlayContext
-from ansible.plugins.loader import connection_loader
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/homarr"
-PCT_ADAPTER = ROOT / "plugins/connection/pct_remote_persistent.py"
 
 
 def _named(tasks, name):
@@ -46,90 +40,18 @@ def test_converger_files_deploy_in_one_copy_and_keep_the_entrypoint_executable()
     assert (ROLE / "files/homarr_api.py").stat().st_mode & 0o111
 
 
-def test_pct_adapter_uses_ansible_persistent_connections():
-    collection_paths = [
-        str(Path(path).expanduser())
-        for path in C.COLLECTIONS_PATHS
-        if (Path(path).expanduser() / "ansible_collections").is_dir()
-    ]
-    original_sys_path = sys.path[:]
-    sys.path[:0] = collection_paths
-    try:
-        from ansible_collections.community.proxmox.plugins.connection import proxmox_pct_remote
-
-        spec = importlib.util.spec_from_file_location("pct_remote_persistent", PCT_ADAPTER)
-        adapter = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(adapter)
-    finally:
-        sys.path[:] = original_sys_path
-
-    assert adapter.Connection.force_persistence is True
-    expected_docs = proxmox_pct_remote.DOCUMENTATION.replace(
-        "name: proxmox_pct_remote", "name: pct_remote_persistent", 1
-    )
-    expected_docs = expected_docs.replace(
-        'description: "Toggles the use of persistence for connections."',
-        'description: "This adapter always uses persistence; this option cannot disable it."',
-        1,
-    )
-    expected_docs = yaml.safe_load(expected_docs)
-    actual_docs = yaml.safe_load(adapter.DOCUMENTATION)
-    persistent_options = {
-        "persistent_command_timeout": {
-            "type": "int",
-            "default": 30,
-            "ini": [{"section": "persistent_connection", "key": "command_timeout"}],
-            "env": [{"name": "ANSIBLE_PERSISTENT_COMMAND_TIMEOUT"}],
-            "vars": [{"name": "ansible_command_timeout"}],
-        },
-        "persistent_connect_timeout": {
-            "type": "int",
-            "default": 30,
-            "ini": [{"section": "persistent_connection", "key": "connect_timeout"}],
-            "env": [{"name": "ANSIBLE_PERSISTENT_CONNECT_TIMEOUT"}],
-            "vars": [{"name": "ansible_connect_timeout"}],
-        },
-        "persistent_log_messages": {
-            "type": "boolean",
-            "default": False,
-            "ini": [{"section": "persistent_connection", "key": "log_messages"}],
-            "env": [{"name": "ANSIBLE_PERSISTENT_LOG_MESSAGES"}],
-            "vars": [{"name": "ansible_persistent_log_messages"}],
-        },
-    }
-    for name, expected in persistent_options.items():
-        option = actual_docs["options"][name]
-        assert {key: option[key] for key in expected} == expected
-        expected_docs["options"][name] = option
-    assert actual_docs == expected_docs
-
-    context = PlayContext()
-    context.connection = "pct_remote_persistent"
-    connection = connection_loader.get(context.connection, context, new_stdin=None)
-    assert connection.force_persistence is True
-    assert connection.get_option("pty") is False
-    assert connection.get_option("persistent_command_timeout") is not None
-    assert connection.get_option("persistent_connect_timeout") is not None
-    assert connection.get_option("persistent_log_messages") is not None
-    assert connection.is_pipelining_enabled() is False
-
-    ssh_context = PlayContext()
-    ssh_context.connection = "ssh"
-    ssh_connection = connection_loader.get("ssh", ssh_context, new_stdin=None)
-    assert ssh_connection.is_pipelining_enabled() is True
-
-
-def test_pct_persistence_is_scoped_by_the_real_inventory_connection_expression():
+def test_pct_transport_uses_upstream_plugin_for_homarr():
     loader = yaml.safe_load((ROOT / "inventory/load_tofu/add_lxc_hosts.yml").read_text())
     add_host = next(task["ansible.builtin.add_host"] for task in loader
                     if "ansible.builtin.add_host" in task)
     connection = Template(add_host["ansible_connection"])
 
     cases = (
-        (False, ["homarr"], "pct_remote_persistent"),
+        (False, ["homarr"], "community.proxmox.proxmox_pct_remote"),
         (True, ["homarr"], "ssh"),
         (False, [], "community.proxmox.proxmox_pct_remote"),
     )
-    for ssh_ready, tags, expected in cases:
-        rendered = connection.render(_ssh_ready=ssh_ready, item={"value": {"tags": tags}})
-        assert rendered.strip() == expected
+    for ssh_ready, tags, expected_connection in cases:
+        context = {"_ssh_ready": ssh_ready, "item": {"value": {"tags": tags}}}
+        assert connection.render(**context).strip() == expected_connection
+    assert not (ROOT / "plugins/connection/pct_remote_persistent.py").exists()
