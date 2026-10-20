@@ -1,29 +1,24 @@
 ---
 # Per-array non-empty guard on the assembled seed bundle.
 #
-# seed_sources.yml already refuses a run where NO source contributes, but that
-# check is an OR across every source: one available source satisfies it while a
-# different slice is still empty. That is the real failure shape — the hosts
-# inventory resolves to nothing because its path variable is unset, `nodes`
-# assembles as [], and the bundle ships. DiffSync then reads an empty array as
-# "this model class has no members" and proposes deleting every one of them,
-# while the converge reports SUCCESS.
+# seed_sources.yml skips a run where NO source is available and omits core keys
+# whose sources are absent. A supplied source that assembles its core array as
+# [] must still stop the bundle before it is written.
 #
-# So the guard has to be per array. An empty core array IS the diff that deletes
-# a whole model class; refusing to write it here is the same protection as
-# refusing the diff, one step earlier and without a round trip to Nautobot.
+# Check only core keys that are present. The runner skips absent slices; an empty
+# present array is still rejected before it can reach a sync.
 #
 # Set nautobot_seed_allow_empty for a genuine first seed into an empty Nautobot,
 # where some class legitimately has no members yet. It names the classes that
 # may be empty rather than switching the guard off wholesale.
 - name: Resolve core seed arrays that assembled empty
   ansible.builtin.set_fact:
-    # "core arrays we must check, minus the bundle keys that carry something".
-    # A key that is MISSING from the bundle lands in the result too, which is
-    # correct: it reaches the sync as an absent class, not as a skipped one.
+    # "present core arrays that are empty, minus explicitly allowed classes".
     nautobot_seed_empty_arrays: >-
       {{ nautobot_seed_core_arrays
          | reject('in', nautobot_seed_allow_empty)
+         | select('in', (nautobot_seed_bundle | dict2items
+                         | map(attribute='key') | list))
          | reject('in', (nautobot_seed_bundle | dict2items
                          | rejectattr('value', 'eq', [])
                          | map(attribute='key') | list))

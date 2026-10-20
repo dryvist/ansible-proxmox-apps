@@ -6,9 +6,9 @@
 # only resolves each source into a parsed fact plus the guards that say whether
 # that fact can be trusted.
 #
-# Sources are independent: the resolved tofu inventory is present on every run,
-# while the sibling-repo sources reach the controller only at cutover. Any
-# subset produces a valid bundle covering just those slices.
+# Sources are independent. A core slice is added to the bundle only when its
+# source is supplied; the runner skips absent slices. No available source skips
+# the whole seed step so an older bundle cannot be replayed.
 #
 # Source shapes: rack_servers (SOPS-encrypted in terraform-proxmox) is known —
 # chassis/bmc_ip/bmc_mac/service_tag/mgmt_ip, keyed by node name. VLAN/prefix
@@ -17,10 +17,10 @@
 # shapes, isolated here so confirming them is a one-place edit.
 #
 # Every source is independently optional and contributes only its own slice.
-# The seed jobs are additive and tolerate an absent slice (ssot_common.load_seed
-# defaults each key to an empty array), so a partial bundle never deletes what
-# another source owns. The ONE exception is `drives`, which feeds a sync that
-# deletes — see the assert below.
+# The `nodes`, `devices`, and `virtual_machines` keys are emitted only when their
+# source is available. run_seed_jobs.py skips their jobs when those keys are
+# absent; `drives` also requires a non-empty supplied slice because its sync
+# deletes.
 - name: Merge every tofu guest kind into one map
   vars:
     nautobot_seed_tofu: "{{ hostvars['localhost'].tofu_data | default({}, true) }}"
@@ -31,24 +31,25 @@
          | combine(nautobot_seed_tofu.docker_vms | default({}, true))
          | combine(nautobot_seed_tofu.splunk_vm | default({}, true)) }}
 
-# Fail only when no source at all would contribute. That writes an empty bundle
-# over whatever is already on the guest, which is always an operator mistake.
-- name: Assert at least one seed source is available
-  ansible.builtin.assert:
-    that:
-      - >-
-        (nautobot_seed_guests | length) > 0
-        or (nautobot_seed_networks | length) > 0
-        or (nautobot_seed_fixed_ips_path | length) > 0
-        or (nautobot_seed_hosts_yml_path | length) > 0
-        or (nautobot_seed_sops_path | length) > 0
-        or (nautobot_seed_hardware_path | length) > 0
-    fail_msg: >-
-      nautobot_build_seed is true but no seed source is available: the tofu
-      inventory resolved no guests and NAUTOBOT_SEED_NETWORKS,
-      TOFU_UNIFI_FIXED_IPS, ANSIBLE_PROXMOX_HOSTS and TERRAFORM_PROXMOX_SOPS
-      are all unset. The bundle would be empty.
-    quiet: true
+# A configured source with empty content still counts as supplied; its slice
+# reaches seed_guard.yml and fails there if it is one of the protected classes.
+- name: Determine whether at least one seed source is available
+  ansible.builtin.set_fact:
+    nautobot_seed_sources_available: >-
+      {{ (nautobot_seed_guests | length) > 0
+         or (nautobot_seed_networks | length) > 0
+         or (nautobot_seed_fixed_ips_path | length) > 0
+         or (nautobot_seed_hosts_yml_path | length) > 0
+         or (nautobot_seed_sops_path | length) > 0
+         or (nautobot_seed_hardware_path | length) > 0
+         or (nautobot_seed_drives_path | length) > 0 }}
+
+- name: Skip Nautobot seed when no source is available
+  ansible.builtin.debug:
+    msg: >-
+      No Nautobot seed source is available; the bundle and seed jobs are skipped
+      and no bundle is written.
+  when: not (nautobot_seed_sources_available | bool)
 
 # Warn per absent source so a thin bundle is never silent.
 - name: Warn when an optional seed source is absent
@@ -74,7 +75,9 @@
       missing: "{{ (nautobot_seed_drives_path | length) == 0 }}"
   loop_control:
     label: "{{ item.env }}"
-  when: item.missing | bool
+  when:
+    - nautobot_seed_sources_available | bool
+    - item.missing | bool
 
 # --- Read + decrypt the sources on the controller --------------------------
 - name: Decrypt rack_servers from the terraform-proxmox SOPS file
@@ -150,6 +153,7 @@
       {{ ((nautobot_seed_drives_raw.content | b64decode | from_json).drives | default([], true))
          if (nautobot_seed_drives_path | length) > 0 else [] }}
   no_log: true
+  when: nautobot_seed_sources_available | bool
 
 # Unlike every other slice, an empty `drives` slice is DESTRUCTIVE downstream:
 # that sync deletes drives it stops seeing, so publishing an empty one would

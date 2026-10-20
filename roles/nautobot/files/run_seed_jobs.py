@@ -61,6 +61,7 @@ SLICE_JOBS = {
     "nodes": "Seed Proxmox Node Facts",
     "reservations": "Seed IP Addresses and Reservations",
     "devices": "Seed DCIM Racks and Devices",
+    "virtual_machines": "SSoT: Virtualization (Proxmox guests)",
     "drives": "Sync Drive Inventory from Proxmox",
 }
 
