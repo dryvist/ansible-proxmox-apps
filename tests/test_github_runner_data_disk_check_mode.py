@@ -38,6 +38,12 @@ READ_ONLY_PROBES = {
     "roles/mssql_docker/tasks/main.yml": (
         "Verify SQL Server is accepting connections",
     ),
+    "roles/technitium_install/tasks/main.yml": (
+        "Try login with default password",
+        "Verify login with configured password",
+        "Read the running server version",
+        "Verify Technitium DNS is healthy",
+    ),
 }
 STATE_CHANGING_MODULES = {
     "ansible.builtin.file",
