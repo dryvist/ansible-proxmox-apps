@@ -92,6 +92,26 @@ PROBES = (
         "roles/proxmox_backup_server/tasks/main.yml",
         "Re-read the datastores after creation",
     ),
+    (
+        "roles/postgres/handlers/main.yml",
+        "Wait for etcd to answer after a restart",
+    ),
+    (
+        "roles/postgres/handlers/main.yml",
+        "Wait for patroni to answer after a restart",
+    ),
+    (
+        "roles/postgres/tasks/main/patroni_bootstrap.yml",
+        "Wait for this node's Patroni process to come up",
+    ),
+    (
+        "roles/postgres/tasks/main/patroni_bootstrap.yml",
+        "Wait for this node's Patroni REST API to report PostgreSQL running",
+    ),
+    (
+        "roles/postgres/tasks/main/patroni_bootstrap.yml",
+        "Wait for the cluster to elect a leader",
+    ),
 )
 
 

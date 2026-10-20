@@ -126,11 +126,15 @@
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/liveness"
   register: postgres_ha_patroni_liveness
+  check_mode: false
   until: (postgres_ha_patroni_liveness.status | default(0)) == 200
   retries: 10
   delay: 3
   changed_when: false
   failed_when: false
+  when: >-
+    not ansible_check_mode or
+    (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active'
 
 # /health is 200 only once PostgreSQL itself is up under Patroni -- unlike
 # the old `is defined` check (satisfied by any response, including a 503
@@ -143,11 +147,15 @@
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/health"
   register: postgres_ha_patroni_health
+  check_mode: false
   until: (postgres_ha_patroni_health.status | default(0)) == 200
   retries: 60
   delay: 10
   changed_when: false
   failed_when: false
+  when: >-
+    not ansible_check_mode or
+    (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active'
 
 # Runs on one member only -- "does a leader exist" is a whole-cluster fact,
 # not a per-host one (same reasoning as postgres_ha_patroni_cluster_already_up
@@ -162,6 +170,7 @@
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ postgres_ha_patroni_rest_port }}/cluster"
   register: postgres_ha_patroni_cluster_status
+  check_mode: false
   until: >-
     ((postgres_ha_patroni_cluster_status.json | default({})).members | default([])
     | selectattr('role', 'in', ['leader', 'standby_leader']) | list | length) > 0
@@ -169,4 +178,8 @@
   delay: 5
   changed_when: false
   failed_when: false
-  when: inventory_hostname == (postgres_ha_cluster_members | first)
+  when:
+    - inventory_hostname == (postgres_ha_cluster_members | first)
+    - >-
+      not ansible_check_mode or
+      (postgres_ha_patroni_unit_status.status.ActiveState | default('inactive')) == 'active'
