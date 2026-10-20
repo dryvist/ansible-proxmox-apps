@@ -25,7 +25,8 @@
     status_stack_authelia_error_patterns:
       - "invalid_client"
     status_stack_authelia_public_url: "https://authelia.example.test"
-    status_stack_catalog_status_overrides: {}
+    status_stack_catalog_status_overrides:
+      override-check: [200, 302]
     status_stack_authenticated_endpoints: []
     status_stack_kuma_keystones:
       - name: Traefik HTTPS
@@ -72,6 +73,32 @@
         sso: true
         url: "https://litellm.example.test"
         probe_url: ""
+      - name: nautobot
+        title: Nautobot
+        group: apps
+        ui: true
+        sso: true
+        url: "https://nautobot.example.test"
+        probe_url: "http://nautobot-guest.example.test:8080"
+      - name: public-check
+        group: apps
+        ui: true
+        sso: false
+        url: "https://public-check.example.test"
+        probe_url: "http://public-check-guest.example.test:8080"
+      - name: override-check
+        group: apps
+        ui: true
+        sso: true
+        url: "https://override-check.example.test"
+        probe_url: "http://override-check-guest.example.test:8080"
+      - name: probe-path-check
+        group: apps
+        ui: true
+        sso: true
+        url: "https://probe-path-check.example.test"
+        probe_url: "http://probe-path-check-guest.example.test:8080"
+        probe_path: "/health"
 
   tasks:
     - name: Render gatus-config.yaml
@@ -99,6 +126,23 @@
           Catalog endpoints must group as "<dashboard_catalog_group_titles
           label> · UI/API", mirroring the Glance board's audience split:
           {{ _gatus.endpoints | map(attribute='group') | list }}
+
+    - name: Assert direct defaults reject 400 without changing other branches
+      ansible.builtin.assert:
+        that:
+          - "'[STATUS] != 400' in _by_name.plex.conditions"
+          - "'[STATUS] != 400' in _by_name.nautobot.conditions"
+          - "'[STATUS] != 400' not in _by_name['public-check'].conditions"
+          - _by_name['override-check'].conditions == ['[STATUS] == any(200, 302)', '[RESPONSE_TIME] < 3000']
+          - _by_name['probe-path-check'].conditions == ['[STATUS] == 200', '[RESPONSE_TIME] < 3000']
+        fail_msg: >-
+          Only default direct probes must reject HTTP 400. Public rows, status
+          overrides, and probe_path rows retain their existing conditions.
+        success_msg: >-
+          Direct defaults reject HTTP 400; public, override, and probe_path
+          conditions are unchanged.
+      vars:
+        _by_name: "{{ dict(_gatus.endpoints | map(attribute='name') | zip(_gatus.endpoints)) }}"
 
     - name: Assert ntfy urgent-topic routing still targets the real endpoint groups
       ansible.builtin.assert:
