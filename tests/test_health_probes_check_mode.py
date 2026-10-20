@@ -76,6 +76,14 @@ PROBES = (
         "roles/object_storage/tasks/infra_mirrors.yml",
         "Resolve pointer URLs for missing pointer-based infra artifacts",
     ),
+    (
+        "roles/ssh_ca_trust/tasks/main.yml",
+        "Read the effective sshd configuration",
+    ),
+    (
+        "roles/ssh_ca_trust/tasks/main.yml",
+        "Assert a static authorized_key still exists for the converge user",
+    ),
 )
 
 
