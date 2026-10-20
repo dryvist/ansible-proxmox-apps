@@ -128,6 +128,217 @@ PROBES = (
         "roles/technitium_install/tasks/main.yml",
         "Wait for Technitium to start",
     ),
+    ("roles/cadvisor/tasks/main.yml", "Verify cAdvisor metrics endpoint"),
+    ("roles/haproxy/tasks/main.yml", "Verify Nginx is listening on UDP ports"),
+    (
+        "roles/homeassistant/tasks/main.yml",
+        "Verify Home Assistant is responding",
+    ),
+    ("roles/homarr/tasks/main.yml", "Verify Homarr answers over HTTP"),
+    (
+        "roles/idrac_kvm_docker/tasks/main.yml",
+        "Verify each iDRAC KVM HTTP endpoint responds",
+    ),
+    ("roles/immich/tasks/main.yml", "Verify the Immich server responds"),
+    (
+        "roles/mailpit_docker/tasks/main.yml",
+        "Verify Mailpit web UI health",
+    ),
+    (
+        "roles/mcp_gateway/tasks/main.yml",
+        "Wait for the gateway to answer its health endpoint",
+    ),
+    (
+        "roles/nautobot/tasks/main.yml",
+        "Wait for the Nautobot web UI to answer",
+    ),
+    ("roles/netmon/tasks/main.yml", "Verify the Telegraf container is running"),
+    (
+        "roles/network_quality/tasks/main.yml",
+        "Verify the smokeping_prober container is running",
+    ),
+    (
+        "roles/network_quality/tasks/main.yml",
+        "Verify smokeping_prober is serving metrics",
+    ),
+    ("roles/ntfy_docker/tasks/main.yml", "Verify ntfy health endpoint"),
+    (
+        "roles/openproject_docker/tasks/main.yml",
+        "Verify OpenProject health endpoint",
+    ),
+    ("roles/phpipam/tasks/main.yml", "Verify phpIPAM is responding"),
+    (
+        "roles/prometheus_pve_exporter/tasks/main.yml",
+        "Verify pve-exporter answers its health endpoint",
+    ),
+    (
+        "roles/prometheus_stack/tasks/main.yml",
+        "Verify both stack containers are running",
+    ),
+    (
+        "roles/prometheus_stack/tasks/main.yml",
+        "Verify prometheus is healthy and ready",
+    ),
+    (
+        "roles/prometheus_stack/tasks/main.yml",
+        "Verify the blackbox exporter answers /-/healthy",
+    ),
+    (
+        "roles/prometheus_stack/tasks/main.yml",
+        "Verify the blackbox exporter completes an ICMP probe",
+    ),
+    (
+        "roles/prometheus_stack/tasks/main.yml",
+        "Verify Prometheus has scraped probe_success into the TSDB",
+    ),
+    (
+        "roles/unifi_metrics/tasks/main.yml",
+        "Verify the unpoller and telegraf containers are running",
+    ),
+    (
+        "roles/vikunja/tasks/main.yml",
+        "Wait for Vikunja to answer its info endpoint",
+    ),
+    (
+        "roles/wall/tasks/main.yml",
+        "Wait for the reloaded workers to serve a relative directory redirect",
+    ),
+    (
+        "roles/zammad/tasks/main/search_and_health.yml",
+        "Wait for the Zammad web UI to answer through nginx",
+    ),
+    (
+        "roles/zammad/tasks/main/search_and_health.yml",
+        "Wait for the Zammad web UI to answer after the restart",
+    ),
+    (
+        "roles/zammad/tasks/main/elasticsearch_and_package.yml",
+        "Wait for Elasticsearch to answer",
+    ),
+    (
+        "roles/zot_registry/tasks/main.yml",
+        "Wait for zot registry API to be ready",
+    ),
+    (
+        "roles/technitium_install/tasks/upgrade.yml",
+        "Wait for Technitium to come back after the upgrade",
+    ),
+    (
+        "roles/cribl_stream/tasks/upgrade.yml",
+        "Wait for Cribl Stream to come back after the upgrade",
+    ),
+)
+
+FIRST_INSTALL_GUARDS = {
+    ("roles/cadvisor/tasks/main.yml", "Verify cAdvisor metrics endpoint"): "cadvisor_compose",
+    ("roles/homeassistant/tasks/main.yml", "Verify Home Assistant is responding"): "homeassistant_compose",
+    ("roles/homarr/tasks/main.yml", "Verify Homarr answers over HTTP"): "homarr_installer",
+    ("roles/idrac_kvm_docker/tasks/main.yml", "Verify each iDRAC KVM HTTP endpoint responds"): "idrac_kvm_docker_compose",
+    ("roles/immich/tasks/main.yml", "Verify the Immich server responds"): "immich_compose",
+    ("roles/mailpit_docker/tasks/main.yml", "Verify Mailpit web UI health"): "mailpit_docker_compose",
+    ("roles/mcp_gateway/tasks/main.yml", "Wait for the gateway to answer its health endpoint"): "mcp_gateway_service",
+    ("roles/nautobot/tasks/main.yml", "Wait for the Nautobot web UI to answer"): "nautobot_server_binary",
+    ("roles/netmon/tasks/main.yml", "Verify the Telegraf container is running"): "netmon_compose",
+    ("roles/network_quality/tasks/main.yml", "Verify the smokeping_prober container is running"): "network_quality_compose",
+    ("roles/network_quality/tasks/main.yml", "Verify smokeping_prober is serving metrics"): "network_quality_compose",
+    ("roles/ntfy_docker/tasks/main.yml", "Verify ntfy health endpoint"): "ntfy_docker_compose",
+    ("roles/openproject_docker/tasks/main.yml", "Verify OpenProject health endpoint"): "openproject_docker_compose",
+    ("roles/phpipam/tasks/main.yml", "Verify phpIPAM is responding"): "phpipam_compose",
+    ("roles/prometheus_pve_exporter/tasks/main.yml", "Verify pve-exporter answers its health endpoint"): "prometheus_pve_exporter_compose",
+    ("roles/prometheus_stack/tasks/main.yml", "Verify both stack containers are running"): "prometheus_stack_compose",
+    ("roles/prometheus_stack/tasks/main.yml", "Verify prometheus is healthy and ready"): "prometheus_stack_compose",
+    ("roles/prometheus_stack/tasks/main.yml", "Verify the blackbox exporter answers /-/healthy"): "prometheus_stack_compose",
+    ("roles/prometheus_stack/tasks/main.yml", "Verify the blackbox exporter completes an ICMP probe"): "prometheus_stack_compose",
+    ("roles/prometheus_stack/tasks/main.yml", "Verify Prometheus has scraped probe_success into the TSDB"): "prometheus_stack_compose",
+    ("roles/unifi_metrics/tasks/main.yml", "Verify the unpoller and telegraf containers are running"): "unifi_metrics_compose",
+    ("roles/vikunja/tasks/main.yml", "Wait for Vikunja to answer its info endpoint"): "vikunja_service",
+    ("roles/wall/tasks/main.yml", "Wait for the reloaded workers to serve a relative directory redirect"): "wall_nginx_service",
+    ("roles/zammad/tasks/main/search_and_health.yml", "Wait for the Zammad web UI to answer through nginx"): "zammad_searchindex_marker",
+    ("roles/zammad/tasks/main/search_and_health.yml", "Wait for the Zammad web UI to answer after the restart"): "zammad_searchindex_marker",
+    ("roles/zot_registry/tasks/main.yml", "Wait for zot registry API to be ready"): "zot_registry_service",
+    ("roles/zammad/tasks/main/elasticsearch_and_package.yml", "Wait for Elasticsearch to answer"): "zammad_es_service",
+}
+
+REGISTERED_RESULTS = (
+    ("roles/cadvisor/tasks/main.yml", "Deploy cAdvisor via docker compose", "cadvisor_compose"),
+    (
+        "roles/homeassistant/tasks/main.yml",
+        "Deploy Home Assistant via docker compose",
+        "homeassistant_compose",
+    ),
+    (
+        "roles/homarr/tasks/main.yml",
+        "Install Homarr via the pinned community-scripts installer",
+        "homarr_installer",
+    ),
+    (
+        "roles/idrac_kvm_docker/tasks/main.yml",
+        "Deploy idrac-kvm containers via docker compose",
+        "idrac_kvm_docker_compose",
+    ),
+    ("roles/immich/tasks/main.yml", "Deploy the Immich stack via docker compose", "immich_compose"),
+    ("roles/mailpit_docker/tasks/main.yml", "Deploy Mailpit via docker compose", "mailpit_docker_compose"),
+    ("roles/mcp_gateway/tasks/main.yml", "Enable and start mcp-gateway", "mcp_gateway_service"),
+    (
+        "roles/nautobot/tasks/main.yml",
+        "Read whether the Nautobot server binary exists",
+        "nautobot_server_binary",
+    ),
+    ("roles/netmon/tasks/main.yml", "Deploy netmon stack via docker compose", "netmon_compose"),
+    (
+        "roles/network_quality/tasks/main.yml",
+        "Deploy the network_quality stack via docker compose",
+        "network_quality_compose",
+    ),
+    ("roles/ntfy_docker/tasks/main.yml", "Deploy ntfy via docker compose", "ntfy_docker_compose"),
+    (
+        "roles/openproject_docker/tasks/main.yml",
+        "Deploy OpenProject via docker compose",
+        "openproject_docker_compose",
+    ),
+    ("roles/phpipam/tasks/main.yml", "Deploy phpipam via docker compose", "phpipam_compose"),
+    (
+        "roles/prometheus_pve_exporter/tasks/main.yml",
+        "Deploy pve-exporter via docker compose",
+        "prometheus_pve_exporter_compose",
+    ),
+    (
+        "roles/prometheus_stack/tasks/main.yml",
+        "Deploy the prometheus stack via docker compose",
+        "prometheus_stack_compose",
+    ),
+    (
+        "roles/unifi_metrics/tasks/main.yml",
+        "Deploy unifi_metrics stack via docker compose",
+        "unifi_metrics_compose",
+    ),
+    ("roles/vikunja/tasks/main.yml", "Enable and start Vikunja", "vikunja_service"),
+    ("roles/wall/tasks/main.yml", "Enable and start nginx", "wall_nginx_service"),
+    ("roles/zot_registry/tasks/main.yml", "Enable and start zot service", "zot_registry_service"),
+    (
+        "roles/zammad/tasks/main/elasticsearch_and_package.yml",
+        "Enable and start Elasticsearch",
+        "zammad_es_service",
+    ),
+)
+
+SKIPPED_PROBE_FOLLOWUPS = (
+    (
+        "roles/netmon/tasks/main.yml",
+        "Capture Telegraf diagnostics when it is not running",
+    ),
+    (
+        "roles/netmon/tasks/main.yml",
+        "Fail with Telegraf diagnostics when the container is not running",
+    ),
+    (
+        "roles/unifi_metrics/tasks/main.yml",
+        "Capture diagnostics when a container is not running",
+    ),
+    (
+        "roles/unifi_metrics/tasks/main.yml",
+        "Fail with diagnostics when a container is not running",
+    ),
 )
 
 
@@ -150,6 +361,7 @@ def test_read_only_health_probes_run_in_check_mode(relative_path, task_name):
 
     assert task is not None, f"Task not found: {task_name}"
     assert task.get("check_mode") is False
+    assert task.get("changed_when") is False
     if (
         relative_path == "roles/grafana_stack/tasks/main.yml"
         and task_name != "Capture stack diagnostics on failure"
@@ -166,3 +378,46 @@ def test_read_only_health_probes_run_in_check_mode(relative_path, task_name):
         condition = " ".join(when) if isinstance(when, list) else when
         assert "not ansible_check_mode" in condition
         assert "proxmox_backup_server_datastore_list" in condition
+    guard = FIRST_INSTALL_GUARDS.get((relative_path, task_name))
+    if guard:
+        when = task.get("when", "")
+        condition = " ".join(when) if isinstance(when, list) else when
+        assert "not ansible_check_mode" in condition
+        assert guard in condition
+
+
+@pytest.mark.parametrize(("relative_path", "task_name", "register_name"), REGISTERED_RESULTS)
+def test_first_install_probe_guards_use_registered_results(relative_path, task_name, register_name):
+    tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
+    task = next((task for task in _tasks_in(tasks) if task.get("name") == task_name), None)
+
+    assert task is not None, f"Task not found: {task_name}"
+    assert task.get("register") == register_name
+
+
+@pytest.mark.parametrize(("relative_path", "task_name"), SKIPPED_PROBE_FOLLOWUPS)
+def test_check_mode_skipped_probes_skip_their_followups(relative_path, task_name):
+    tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
+    task = next((task for task in _tasks_in(tasks) if task.get("name") == task_name), None)
+
+    assert task is not None, f"Task not found: {task_name}"
+    when = task.get("when", "")
+    condition = " ".join(when) if isinstance(when, list) else when
+    assert ".skipped | default(false)" in condition
+
+
+def test_node_exporter_stage_result_gates_check_mode_unpack_and_binary_copy():
+    relative_path = "roles/node_exporter/tasks/main.yml"
+    tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
+    task_by_name = {task.get("name"): task for task in _tasks_in(tasks)}
+
+    stage = task_by_name["Stage the pinned node_exporter release tarball on the controller"]
+    assert stage.get("register") == "node_exporter_release_stage"
+
+    for task_name in (
+        "Unpack the node_exporter release",
+        "Install the node_exporter binary",
+    ):
+        condition = task_by_name[task_name].get("when", "")
+        assert "not ansible_check_mode" in condition
+        assert "node_exporter_release_stage.changed" in condition

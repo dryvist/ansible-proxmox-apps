@@ -98,6 +98,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ prometheus_stack_data_dir }}"
         state: present
+      register: prometheus_stack_compose
 
     # =========================================================================
     # Health checks — prove BOTH containers run, both serve, the exporter
@@ -108,10 +109,17 @@
       ansible.builtin.command: >-
         docker ps -q --filter name={{ item }} --filter status=running
       register: prometheus_stack_running
+      check_mode: false
       changed_when: false
       retries: 6
       delay: 5
       until: prometheus_stack_running.stdout != ''
+      when: >-
+        not ansible_check_mode or
+        (
+          not (prometheus_stack_compose.skipped | default(false)) and
+          (prometheus_stack_compose.actions | default([]) | length == 0)
+        )
       loop:
         - "{{ prometheus_stack_container_name }}"
         - "{{ prometheus_stack_blackbox_container_name }}"
@@ -121,20 +129,34 @@
         url: "http://127.0.0.1:{{ prometheus_stack_port }}/-/ready"
         status_code: 200
       register: prometheus_stack_ready
+      check_mode: false
       retries: 12
       delay: 5
       until: prometheus_stack_ready.status | default(0) == 200
       changed_when: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (prometheus_stack_compose.skipped | default(false)) and
+          (prometheus_stack_compose.actions | default([]) | length == 0)
+        )
 
     - name: Verify the blackbox exporter answers /-/healthy
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ prometheus_stack_blackbox_port }}/-/healthy"
         status_code: 200
       register: prometheus_stack_bb_healthy
+      check_mode: false
       retries: 6
       delay: 5
       until: prometheus_stack_bb_healthy.status | default(0) == 200
       changed_when: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (prometheus_stack_compose.skipped | default(false)) and
+          (prometheus_stack_compose.actions | default([]) | length == 0)
+        )
 
     # Real probe: the exporter must run a module and emit metrics, not just answer
     # its own health endpoint. A broken module config or missing NET_RAW fails here.
@@ -145,10 +167,17 @@
         return_content: true
         status_code: 200
       register: prometheus_stack_probe
+      check_mode: false
       retries: 6
       delay: 5
       until: "'probe_success' in (prometheus_stack_probe.content | default(''))"
       changed_when: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (prometheus_stack_compose.skipped | default(false)) and
+          (prometheus_stack_compose.actions | default([]) | length == 0)
+        )
 
     # End-to-end: Prometheus must have scraped the exporter and stored
     # probe_success. Exercises scrape + relabel + TSDB, not just service liveness.
@@ -157,10 +186,17 @@
         url: "http://127.0.0.1:{{ prometheus_stack_port }}/api/v1/query?query=probe_success"
         status_code: 200
       register: prometheus_stack_query
+      check_mode: false
       retries: 12
       delay: 5
       until: (prometheus_stack_query.json.data.result | default([]) | length) > 0
       changed_when: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (prometheus_stack_compose.skipped | default(false)) and
+          (prometheus_stack_compose.actions | default([]) | length == 0)
+        )
 
   rescue:
     - name: Capture stack diagnostics on failure

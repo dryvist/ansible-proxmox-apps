@@ -1,0 +1,61 @@
+---
+# Render Nautobot's settings with a fixture ingress row that mirrors the
+# dashboard catalog probe source.
+- name: Render and verify Nautobot allowed hosts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+
+  tasks:
+    - name: Create a private Nautobot fixture directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: nautobot_allowed_hosts_
+      register: _nautobot_render_tmp
+
+    - name: Publish the fixture ingress row
+      ansible.builtin.set_fact:
+        tofu_data:
+          ingress:
+            - name: nautobot
+              ip: nautobot-guest.example.test
+
+    - name: Load Nautobot role defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../roles/nautobot/defaults/main/00-core.yml"
+
+    - name: Render Nautobot settings
+      ansible.builtin.template:
+        src: "../../../roles/nautobot/templates/nautobot_config.py.j2"
+        dest: "{{ _nautobot_render_tmp.path }}/nautobot_config.py"
+        mode: "0600"
+
+    - name: Read back Nautobot settings
+      ansible.builtin.slurp:
+        src: "{{ _nautobot_render_tmp.path }}/nautobot_config.py"
+      register: _nautobot_config_raw
+
+    - name: Assert direct probe host is allowed and trusted origins render
+      ansible.builtin.assert:
+        that:
+          - >-
+            'ALLOWED_HOSTS = ["localhost", "nautobot-guest.example.test", "127.0.0.1"]'
+            in _nautobot_config
+          - "'    \"https://nautobot-guest.example.test\",' in _nautobot_config"
+          - "'    \"https://localhost\",' not in _nautobot_config"
+          - "'    \"https://127.0.0.1\",' not in _nautobot_config"
+        fail_msg: >-
+          Nautobot settings must allow the direct catalog host and include it
+          in CSRF trusted origins.
+        success_msg: "Nautobot direct probe host and CSRF trusted origin render correctly."
+      vars:
+        _nautobot_config: "{{ _nautobot_config_raw.content | b64decode }}"
+
+    - name: Remove the Nautobot fixture directory
+      ansible.builtin.file:
+        path: "{{ _nautobot_render_tmp.path }}"
+        state: absent

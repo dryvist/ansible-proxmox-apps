@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.7.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.3...v5.7.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* accept direct probe hosts and mark 400 down ([#2867](https://github.com/dryvist/ansible-proxmox-apps/issues/2867)) ([83ae7f7](https://github.com/dryvist/ansible-proxmox-apps/commit/83ae7f7150dcee03e75ffb02048820c7b72da593))
+* run remaining read-only probes in check mode ([#2866](https://github.com/dryvist/ansible-proxmox-apps/issues/2866)) ([cde4a13](https://github.com/dryvist/ansible-proxmox-apps/commit/cde4a139b1ca75d4b2ddbcdbb5f30f94622e139c))
+
 ## [5.7.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.2...v5.7.3) (2026-10-20)
 
 
