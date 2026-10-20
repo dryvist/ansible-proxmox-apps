@@ -55,12 +55,13 @@ Every log-bearing input uses `ansi_csi_strip` before routing; Splunk HEC outputs
 ### Grafana alert delivery
 
 Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with
-`sourcetype=grafana:alert`. The same HEC input keeps the complete envelope in
-the `ansible` Splunk index and sends a compact, byte-bounded summary through
-`grafana_alerts_ntfy` to the existing `observability` ntfy hub. The hub owns the
+`sourcetype=grafana:alert`. JSON Unroll emits one Splunk event per alert while
+retaining the webhook's top-level fields, and the same HEC input sends a
+compact, byte-bounded summary through `grafana_alerts_ntfy` to the existing
+`observability` ntfy hub. The hub owns the
 existing Slack and Zammad fan-out. Large notifications become numbered
 continuations; the formatter retains every alert record and source link in the
-summary while Splunk retains the complete Grafana envelope.
+summary.
 
 The ntfy leg receives only `grafana:alert:canary` events while
 `cribl_stream_grafana_ntfy_cutover_verified` is false (the default), and the
