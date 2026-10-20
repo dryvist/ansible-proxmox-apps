@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.2...v5.7.3) (2026-10-20)
+
+
+### Bug Fixes
+
+* run read-only probes in check mode ([#2863](https://github.com/dryvist/ansible-proxmox-apps/issues/2863)) ([11eee7c](https://github.com/dryvist/ansible-proxmox-apps/commit/11eee7cf1babbe85fc97a4c9c32eb71967cae5c8))
+
 ## [5.7.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.1...v5.7.2) (2026-10-20)
 
 
