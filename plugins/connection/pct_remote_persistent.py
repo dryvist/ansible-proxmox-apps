@@ -157,6 +157,42 @@ options:
     ini:
       - section: defaults
         key: use_persistent_connections
+  persistent_command_timeout:
+    description:
+      - Configures, in seconds, how long to wait for a command to return from the remote device.
+    type: int
+    default: 30
+    ini:
+      - section: persistent_connection
+        key: command_timeout
+    env:
+      - name: ANSIBLE_PERSISTENT_COMMAND_TIMEOUT
+    vars:
+      - name: ansible_command_timeout
+  persistent_connect_timeout:
+    description:
+      - Configures, in seconds, how long to wait when establishing the persistent connection.
+    type: int
+    default: 30
+    ini:
+      - section: persistent_connection
+        key: connect_timeout
+    env:
+      - name: ANSIBLE_PERSISTENT_CONNECT_TIMEOUT
+    vars:
+      - name: ansible_connect_timeout
+  persistent_log_messages:
+    description:
+      - Whether persistent connection commands and responses are written to the Ansible log.
+    type: boolean
+    default: false
+    ini:
+      - section: persistent_connection
+        key: log_messages
+    env:
+      - name: ANSIBLE_PERSISTENT_LOG_MESSAGES
+    vars:
+      - name: ansible_persistent_log_messages
   forward_agent:
     description: "Enable SSH agent forwarding."
     type: boolean
