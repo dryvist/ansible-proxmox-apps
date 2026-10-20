@@ -62,7 +62,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `node_exporter_version` | sourced from `inventory/group_vars/all.yml` (org-wide, Renovate-managed) | Pinned upstream release. |
 | `node_exporter_download_url` | GitHub releases URL | Fetched once on the controller; guests never use this URL directly. |
 | `node_exporter_sha256sums_url` | upstream `sha256sums.txt` URL | Passed to `get_url`'s `checksum:` — matched by filename at run time, never a literal hash. |
-| `node_exporter_listen_address` | guest's mgmt IP (`ansible_default_ipv4.address`) | Bind address; set `0.0.0.0` for all interfaces. |
+| `node_exporter_listen_address` | guest's management IP (`ansible_facts['default_ipv4']['address']`) | Bind address; set `0.0.0.0` for all interfaces. |
 | `node_exporter_port` | `9100` | Listen port. |
 | `node_exporter_user` | `node-exporter` | Service account. |
 | `node_exporter_install_dir` | `/opt/node_exporter` | Versioned install root. |

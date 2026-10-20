@@ -142,7 +142,7 @@ class CiBuildCaches(unittest.TestCase):
                 "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}},
             },
             "tofu_data": {"domain": "example.com"},
-            "ansible_virtualization_type": "kvm",
+            "ansible_facts": {"virtualization_type": "kvm"},
             "host_tags": ["docker"],
         }
         variables = {**fixture, **task["vars"]}
@@ -206,7 +206,9 @@ class CiBuildCaches(unittest.TestCase):
         content_expr = trust_as_template(task["ansible.builtin.copy"]["content"])
         variables = _mark_templates(
             {
-                "ansible_default_ipv4": {"interface": "eth0", "gateway": "10.20.0.1"},
+                "ansible_facts": {
+                    "default_ipv4": {"interface": "eth0", "gateway": "192.0.2.1"}
+                },
                 "tofu_data": {"domain": "example.com"},
             }
         )
@@ -214,7 +216,7 @@ class CiBuildCaches(unittest.TestCase):
         rendered = templar.template(content_expr)
         parsed = yaml.safe_load(rendered)
         iface = parsed["network"]["ethernets"]["eth0"]
-        self.assertEqual(iface["nameservers"]["addresses"], ["10.20.0.1"])
+        self.assertEqual(iface["nameservers"]["addresses"], ["192.0.2.1"])
         self.assertEqual(iface["nameservers"]["search"], ["example.com"])
 
     def test_every_scenario_runs_on_the_upstream_image(self):
