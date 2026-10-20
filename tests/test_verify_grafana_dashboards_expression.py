@@ -20,6 +20,16 @@ class VerifyGrafanaDashboardsExpression(unittest.TestCase):
 
         self.assertNotIn("#", expression)
 
+    def test_read_only_api_calls_run_in_check_mode(self):
+        plays = yaml.safe_load(PLAYBOOK.read_text(encoding="utf-8"))
+        tasks = [task for play in plays for task in play.get("tasks", [])]
+        uri_tasks = [task for task in tasks if "ansible.builtin.uri" in task]
+
+        self.assertTrue(uri_tasks)
+        for task in uri_tasks:
+            with self.subTest(task=task["name"]):
+                self.assertIs(task.get("check_mode"), False)
+
 
 if __name__ == "__main__":
     unittest.main()
