@@ -55,6 +55,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ network_quality_data_dir }}"
         state: present
+      register: network_quality_compose
 
     # =========================================================================
     # Health checks — the container runs AND smokeping_prober is actually
@@ -64,12 +65,19 @@
       community.docker.docker_container_info:
         name: "{{ network_quality_smokeping_container_name }}"
       register: network_quality_container_info
+      check_mode: false
       retries: 6
       delay: 5
       until: >-
         network_quality_container_info.exists
         and (network_quality_container_info.container.State.Running | default(false))
       changed_when: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (network_quality_compose.skipped | default(false)) and
+          (network_quality_compose.actions | default([]) | length == 0)
+        )
 
     # Real check: the exporter must serve its own metrics with smokeping_* series
     # (proves the config parsed and the prober is running).
@@ -79,10 +87,17 @@
         return_content: true
         status_code: 200
       register: network_quality_smokeping_metrics
+      check_mode: false
       retries: 12
       delay: 5
       until: "'smokeping_' in (network_quality_smokeping_metrics.content | default(''))"
       changed_when: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (network_quality_compose.skipped | default(false)) and
+          (network_quality_compose.actions | default([]) | length == 0)
+        )
 
   rescue:
     # Use docker compose (not a hardcoded container name) so diagnostics cover every
