@@ -72,13 +72,45 @@ def test_pct_adapter_uses_ansible_persistent_connections():
         'description: "This adapter always uses persistence; this option cannot disable it."',
         1,
     )
-    assert adapter.DOCUMENTATION == expected_docs
+    expected_docs = yaml.safe_load(expected_docs)
+    actual_docs = yaml.safe_load(adapter.DOCUMENTATION)
+    persistent_options = {
+        "persistent_command_timeout": {
+            "type": "int",
+            "default": 30,
+            "ini": [{"section": "persistent_connection", "key": "command_timeout"}],
+            "env": [{"name": "ANSIBLE_PERSISTENT_COMMAND_TIMEOUT"}],
+            "vars": [{"name": "ansible_command_timeout"}],
+        },
+        "persistent_connect_timeout": {
+            "type": "int",
+            "default": 30,
+            "ini": [{"section": "persistent_connection", "key": "connect_timeout"}],
+            "env": [{"name": "ANSIBLE_PERSISTENT_CONNECT_TIMEOUT"}],
+            "vars": [{"name": "ansible_connect_timeout"}],
+        },
+        "persistent_log_messages": {
+            "type": "boolean",
+            "default": False,
+            "ini": [{"section": "persistent_connection", "key": "log_messages"}],
+            "env": [{"name": "ANSIBLE_PERSISTENT_LOG_MESSAGES"}],
+            "vars": [{"name": "ansible_persistent_log_messages"}],
+        },
+    }
+    for name, expected in persistent_options.items():
+        option = actual_docs["options"][name]
+        assert {key: option[key] for key in expected} == expected
+        expected_docs["options"][name] = option
+    assert actual_docs == expected_docs
 
     context = PlayContext()
     context.connection = "pct_remote_persistent"
     connection = connection_loader.get(context.connection, context, new_stdin=None)
     assert connection.force_persistence is True
     assert connection.get_option("pty") is False
+    assert connection.get_option("persistent_command_timeout") is not None
+    assert connection.get_option("persistent_connect_timeout") is not None
+    assert connection.get_option("persistent_log_messages") is not None
     assert connection.is_pipelining_enabled() is False
 
     ssh_context = PlayContext()

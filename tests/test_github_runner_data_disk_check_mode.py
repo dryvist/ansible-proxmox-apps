@@ -8,6 +8,9 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 READ_ONLY_PROBES = {
+    "roles/github_runner/tasks/main.yml": (
+        "Read the runner account identity from the image",
+    ),
     "roles/github_runner/tasks/data_disk.yml": (
         "Resolve the Docker data device",
         "Read existing signatures on the Docker data device",
@@ -21,6 +24,25 @@ READ_ONLY_PROBES = {
     ),
     "roles/agent_sandbox/tasks/main/probe.yml": (
         "Check the ZCode Web service file contains no OpenBao address or workstation credential name",
+    ),
+    "roles/github_runner_arc/tasks/main.yml": (
+        "Read the filesystem backing the data directory's parent and root",
+    ),
+    "roles/proxmox_backup_server/tasks/datastore_disk.yml": (
+        "Read existing signatures on the datastore device",
+        "Read the datastore filesystem UUID",
+    ),
+    "roles/opentofu_cli/tasks/main.yml": (
+        "Record the installed OpenTofu version",
+    ),
+    "roles/mssql_docker/tasks/main.yml": (
+        "Verify SQL Server is accepting connections",
+    ),
+    "roles/technitium_install/tasks/main.yml": (
+        "Try login with default password",
+        "Verify login with configured password",
+        "Read the running server version",
+        "Verify Technitium DNS is healthy",
     ),
 }
 STATE_CHANGING_MODULES = {

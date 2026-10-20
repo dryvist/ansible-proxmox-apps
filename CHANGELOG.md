@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.3...v5.6.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* **ansible:** declare persistent settings and guard check-mode tasks ([#2798](https://github.com/dryvist/ansible-proxmox-apps/issues/2798)) ([0c36b04](https://github.com/dryvist/ansible-proxmox-apps/commit/0c36b04f6f24787042256895a76b907543470789))
+
 ## [5.6.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.2...v5.6.3) (2026-10-20)
 
 
