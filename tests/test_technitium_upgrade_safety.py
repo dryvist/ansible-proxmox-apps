@@ -20,6 +20,7 @@ class TechnitiumUpgradeSafety(unittest.TestCase):
         cls.main = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text(encoding="utf-8"))
         cls.upgrade = yaml.safe_load((ROLE / "tasks" / "upgrade.yml").read_text(encoding="utf-8"))
         cls.download = yaml.safe_load((ROLE / "tasks" / "download_app.yml").read_text(encoding="utf-8"))
+        cls.defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text(encoding="utf-8"))
 
     def test_download_is_checksum_pinned_before_install_mutates_the_host(self):
         preflight = _task(self.main, "Download and verify the pinned Technitium app build before installation")
@@ -29,6 +30,16 @@ class TechnitiumUpgradeSafety(unittest.TestCase):
         self.assertEqual(preflight["ansible.builtin.include_tasks"], "download_app.yml")
         self.assertEqual(names[0], "Deploy the pinned Technitium app build")
         self.assertIn("checksum", self.download[0]["ansible.builtin.get_url"])
+
+    def test_pinned_version_has_a_recorded_mirror_digest(self):
+        version = self.defaults["technitium_install_app_version"]
+        digests = self.defaults["technitium_install_app_sha256s"]
+        self.assertIn(version, digests)
+        self.assertRegex(digests[version], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            self.defaults["technitium_install_app_sha256"],
+            "{{ technitium_install_app_sha256s[technitium_install_app_version] }}",
+        )
 
     def test_upgrade_download_is_first_and_precedes_the_stop(self):
         upgrade_include = _task(self.main, "Upgrade Technitium DNS server to the pinned version")
