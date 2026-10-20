@@ -31,6 +31,17 @@ CHECK_MODE_GUARD_FILES = ("dispatcher_install.yml", "deploy.yml")
 CHECK_MODE_ALLOWLIST = (
     "Read the task profiles baked into the pinned job image",
 )
+# These mirror downloads can omit a checksum, so check mode must not fetch them.
+CHECK_MODE_STAGING_EXCLUSIONS = {
+    (
+        "roles/object_storage/tasks/infra_mirrors.yml",
+        "Stage missing infra artifacts on controller",
+    ),
+    (
+        "roles/object_storage/tasks/infra_mirrors.yml",
+        "Stage the sha256 sidecar for missing checksummed infra artifacts",
+    ),
+}
 NESTED = ("block", "rescue", "always")
 
 
@@ -68,6 +79,26 @@ class AgentSandboxControllerStagingCheckMode(unittest.TestCase):
                     with self.subTest(file=filename, task=task.get("name")):
                         if task.get("name") not in CHECK_MODE_ALLOWLIST:
                             self.assertEqual(task.get("delegate_to"), "localhost")
+
+    def test_controller_get_url_staging_runs_in_check_mode(self):
+        roles = ROOT / "roles"
+        for path in sorted(roles.rglob("*.yml")):
+            if "tasks" not in path.relative_to(roles).parts:
+                continue
+            relative_path = path.relative_to(ROOT).as_posix()
+            tasks = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for task in walk(tasks):
+                if (
+                    "ansible.builtin.get_url" in task
+                    and task.get("delegate_to") == "localhost"
+                ):
+                    if (
+                        relative_path,
+                        task.get("name"),
+                    ) in CHECK_MODE_STAGING_EXCLUSIONS:
+                        continue
+                    with self.subTest(file=relative_path, task=task.get("name")):
+                        self.assertIs(task.get("check_mode"), False)
 
     def test_image_profiles_are_read_in_check_mode_and_installed_from_result(self):
         tasks = tasks_in("dispatcher_install.yml")
