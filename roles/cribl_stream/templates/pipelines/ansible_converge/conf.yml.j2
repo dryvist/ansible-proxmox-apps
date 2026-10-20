@@ -8,3 +8,58 @@ functions:
       add:
         - name: cribl_route
           value: "'ansible_converge'"
+  # Grafana sends grouped webhook envelopes. Split alerts into individual
+  # Splunk events and expose their state fields for direct alert-state queries.
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        try {
+          const notification = JSON.parse(__e._raw);
+          if (!notification || typeof notification !== 'object' || Array.isArray(notification)) {
+            __e.__grafanaAlertEvents = [null];
+          } else {
+            const { alerts, ...envelope } = notification;
+            const alertList = Array.isArray(alerts) ? alerts : [];
+            __e.__grafanaAlertEvents = alertList.length
+              ? alertList.map((alert) => {
+                  const item = alert && typeof alert === 'object' && !Array.isArray(alert)
+                    ? alert
+                    : { alert };
+                  const labels = item.labels && typeof item.labels === 'object' && !Array.isArray(item.labels)
+                    ? item.labels
+                    : {};
+                  return {
+                    ...envelope,
+                    ...item,
+                    alertname: labels.alertname || 'unknown',
+                    state: String(item.status || notification.status || 'unknown').toLowerCase(),
+                    labels,
+                    startsAt: item.startsAt || '',
+                    endsAt: item.endsAt || '',
+                    fingerprint: item.fingerprint || '',
+                  };
+                })
+              : [notification];
+          }
+        } catch (err) {
+          __e.__grafanaAlertEvents = [null];
+        }
+  - id: unroll
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      srcField: __grafanaAlertEvents
+      destField: __grafanaAlertEvent
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        if (__e.__grafanaAlertEvent && typeof __e.__grafanaAlertEvent === 'object') {
+          Object.assign(__e, __e.__grafanaAlertEvent);
+          __e._raw = JSON.stringify(__e.__grafanaAlertEvent);
+        }
+        delete __e.__grafanaAlertEvent;
+        delete __e.__grafanaAlertEvents;

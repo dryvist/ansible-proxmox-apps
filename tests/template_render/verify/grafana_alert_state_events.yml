@@ -1,0 +1,33 @@
+---
+- name: Render and verify Grafana alert state events in Cribl's Splunk pipeline
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    _pipeline_template: >-
+      {{ playbook_dir }}/../../../roles/cribl_stream/templates/pipelines/ansible_converge/conf.yml.j2
+  tasks:
+    - name: Render the HEC pipeline
+      ansible.builtin.set_fact:
+        _grafana_alert_pipeline: "{{ lookup('ansible.builtin.template', _pipeline_template) | from_yaml }}"
+
+    - name: Assert Grafana notifications become individual searchable alert events
+      ansible.builtin.assert:
+        that:
+          - _grafana_alert_pipeline.functions[1].filter == "sourcetype === 'grafana:alert'"
+          - "'JSON.parse(__e._raw)' in _grafana_alert_pipeline.functions[1].conf.code"
+          - "'state:' in _grafana_alert_pipeline.functions[1].conf.code"
+          - "'alertname:' in _grafana_alert_pipeline.functions[1].conf.code"
+          - "'labels,' in _grafana_alert_pipeline.functions[1].conf.code"
+          - "'startsAt:' in _grafana_alert_pipeline.functions[1].conf.code"
+          - "'endsAt:' in _grafana_alert_pipeline.functions[1].conf.code"
+          - "'fingerprint:' in _grafana_alert_pipeline.functions[1].conf.code"
+          - _grafana_alert_pipeline.functions[2].id == 'unroll'
+          - _grafana_alert_pipeline.functions[2].conf.srcField == '__grafanaAlertEvents'
+          - _grafana_alert_pipeline.functions[2].conf.destField == '__grafanaAlertEvent'
+          - "'Object.assign(__e, __e.__grafanaAlertEvent)' in _grafana_alert_pipeline.functions[3].conf.code"
+          - "'JSON.stringify(__e.__grafanaAlertEvent)' in _grafana_alert_pipeline.functions[3].conf.code"
+        fail_msg: >-
+          Grafana HEC notifications must be split into individual events with
+          searchable alert state, labels, times, and fingerprint fields.
