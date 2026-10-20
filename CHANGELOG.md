@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.6.8](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.7...v5.6.8) (2026-10-20)
+
+
+### Bug Fixes
+
+* **cribl_stream:** stage the pipeline render under check mode ([#2818](https://github.com/dryvist/ansible-proxmox-apps/issues/2818)) ([d7b30c9](https://github.com/dryvist/ansible-proxmox-apps/commit/d7b30c9a6495117fc083326eec903bac25951c59))
+* **status_stack:** stage the AutoKuma render under check mode ([#2819](https://github.com/dryvist/ansible-proxmox-apps/issues/2819)) ([2afa5cd](https://github.com/dryvist/ansible-proxmox-apps/commit/2afa5cd1cdd5d2abf7239d1cfb8d5dcc30e4832c))
+
 ## [5.6.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.6...v5.6.7) (2026-10-20)
 
 
