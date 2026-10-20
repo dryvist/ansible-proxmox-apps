@@ -1,5 +1,30 @@
 # Changelog
 
+## [5.7.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.11...v5.7.0) (2026-10-20)
+
+
+### Features
+
+* **cribl_stream:** emit individual Grafana alert events ([#2840](https://github.com/dryvist/ansible-proxmox-apps/issues/2840)) ([647229d](https://github.com/dryvist/ansible-proxmox-apps/commit/647229d3bee32e3661105854bee723aacebf597f))
+
+
+### Bug Fixes
+
+* **cribl_stream:** make the GitHub Actions collector opt-in ([#2850](https://github.com/dryvist/ansible-proxmox-apps/issues/2850)) ([6611922](https://github.com/dryvist/ansible-proxmox-apps/commit/66119220defa09851dd8826d083d11a6a71839a9))
+* **cribl_stream:** run the admin login probes under --check ([#2847](https://github.com/dryvist/ansible-proxmox-apps/issues/2847)) ([3f1ebfa](https://github.com/dryvist/ansible-proxmox-apps/commit/3f1ebfafffbc00cf9bc2a221a201e4aad063698b))
+* **cribl:** strip ANSI CSI sequences from Splunk logs ([#2843](https://github.com/dryvist/ansible-proxmox-apps/issues/2843)) ([d9f2921](https://github.com/dryvist/ansible-proxmox-apps/commit/d9f29219046eca6a1d7783358799b87b8d94274f))
+* **glance:** scope glance to the apps secret domain ([#2832](https://github.com/dryvist/ansible-proxmox-apps/issues/2832)) ([0c83859](https://github.com/dryvist/ansible-proxmox-apps/commit/0c83859220f694b4b1864d40d3bce763109bc1fe))
+* **grafana_stack:** enable SQLite WAL retries ([#2841](https://github.com/dryvist/ansible-proxmox-apps/issues/2841)) ([b980ca9](https://github.com/dryvist/ansible-proxmox-apps/commit/b980ca96e5510df54a3da034d2ecd9d6a693496a))
+* **grafana_stack:** gate Git mirror alerts on inventory ([#2849](https://github.com/dryvist/ansible-proxmox-apps/issues/2849)) ([2ec89d8](https://github.com/dryvist/ansible-proxmox-apps/commit/2ec89d8b828ff9a0a6eb36178112e1cbb751673b))
+* **grafana_stack:** preview community dashboard downloads in check mode ([3e04a30](https://github.com/dryvist/ansible-proxmox-apps/commit/3e04a30490fe25bf1305a0f6a26a50fd29866a09))
+* **grafana_stack:** preview dashboard downloads in check mode ([#2845](https://github.com/dryvist/ansible-proxmox-apps/issues/2845)) ([3e04a30](https://github.com/dryvist/ansible-proxmox-apps/commit/3e04a30490fe25bf1305a0f6a26a50fd29866a09))
+* **grafana_stack:** separate eval errors from rejection alerts ([#2836](https://github.com/dryvist/ansible-proxmox-apps/issues/2836)) ([21c5d17](https://github.com/dryvist/ansible-proxmox-apps/commit/21c5d174f492073fd425b18ddb58a9ce94ae9b30))
+* **grafana_stack:** use Error for rule evaluation failures ([#2844](https://github.com/dryvist/ansible-proxmox-apps/issues/2844)) ([2dae75a](https://github.com/dryvist/ansible-proxmox-apps/commit/2dae75a90ad221a43d09bc151a19ba81f4a5c2a0))
+* **grafana:** distinguish evaluation errors from condition alerts ([0c69d27](https://github.com/dryvist/ansible-proxmox-apps/commit/0c69d27a6c89f5b90a9075d338df5c54468ea68e))
+* **grafana:** report query errors separately from rule conditions ([#2842](https://github.com/dryvist/ansible-proxmox-apps/issues/2842)) ([0c69d27](https://github.com/dryvist/ansible-proxmox-apps/commit/0c69d27a6c89f5b90a9075d338df5c54468ea68e))
+* **grafana:** require populated labels for ZDR alerts ([#2835](https://github.com/dryvist/ansible-proxmox-apps/issues/2835)) ([588d8f3](https://github.com/dryvist/ansible-proxmox-apps/commit/588d8f3803887c57daa59297d20f00a8d0bd012b))
+* **traefik:** disable color in application logs ([#2839](https://github.com/dryvist/ansible-proxmox-apps/issues/2839)) ([bf4bdf1](https://github.com/dryvist/ansible-proxmox-apps/commit/bf4bdf1254d74c0fc23ebb7e87d026c4bfb40ab6))
+
 ## [5.6.11](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.10...v5.6.11) (2026-10-20)
 
 
