@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.6.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.0...v5.6.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **agent-sandbox:** scope credential tag to delivery tasks ([#2783](https://github.com/dryvist/ansible-proxmox-apps/issues/2783)) ([87bce2b](https://github.com/dryvist/ansible-proxmox-apps/commit/87bce2b8e4abcc4d9639ee0d577b1a3584c43d69))
+* **agent-sandbox:** scope credential tag to role include ([87bce2b](https://github.com/dryvist/ansible-proxmox-apps/commit/87bce2b8e4abcc4d9639ee0d577b1a3584c43d69))
+* **check-mode:** run read-only probes in check mode ([8adb314](https://github.com/dryvist/ansible-proxmox-apps/commit/8adb31488ff51fddcd2c26f1dcda81ea38430c29))
+* **grafana:** keep comments outside Jinja assertions ([bba6cba](https://github.com/dryvist/ansible-proxmox-apps/commit/bba6cba629276f2d7af487047245952f5f921cd6))
+* keep comments outside Grafana Jinja expressions ([#2781](https://github.com/dryvist/ansible-proxmox-apps/issues/2781)) ([bba6cba](https://github.com/dryvist/ansible-proxmox-apps/commit/bba6cba629276f2d7af487047245952f5f921cd6))
+* **nautobot:** use parsed inventory from resolver ([ae4f8e3](https://github.com/dryvist/ansible-proxmox-apps/commit/ae4f8e3ef426e337f769d862b5ba48f12acb0b13))
+* run read-only probes in check mode ([#2782](https://github.com/dryvist/ansible-proxmox-apps/issues/2782)) ([8adb314](https://github.com/dryvist/ansible-proxmox-apps/commit/8adb31488ff51fddcd2c26f1dcda81ea38430c29))
+* use resolved inventory for Nautobot collections ([#2780](https://github.com/dryvist/ansible-proxmox-apps/issues/2780)) ([ae4f8e3](https://github.com/dryvist/ansible-proxmox-apps/commit/ae4f8e3ef426e337f769d862b5ba48f12acb0b13))
+
 ## [5.6.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.5.1...v5.6.0) (2026-10-19)
 
 
