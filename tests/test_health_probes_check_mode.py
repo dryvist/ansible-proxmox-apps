@@ -60,6 +60,14 @@ PROBES = (
         "roles/n8n_docker/tasks/main.yml",
         "Read n8n frontend settings (owner-setup state)",
     ),
+    (
+        "roles/status_stack/tasks/main.yml",
+        "Verify Gatus answers /",
+    ),
+    (
+        "roles/status_stack/tasks/main.yml",
+        "Probe whether Uptime Kuma still needs initial setup",
+    ),
 )
 
 
