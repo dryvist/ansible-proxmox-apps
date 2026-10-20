@@ -32,6 +32,22 @@ PROBES = (
         "roles/apt_recovery/tasks/main.yml",
         "Wait for package-manager locks to clear",
     ),
+    (
+        "roles/cribl_docker_stack/tasks/main.yml",
+        "Wait for Cribl Edge services to be ready",
+    ),
+    (
+        "roles/cribl_docker_stack/tasks/main.yml",
+        "Wait for Cribl Stream services to be ready",
+    ),
+    (
+        "roles/cribl_docker_stack/tasks/main.yml",
+        "Verify Cribl Edge health",
+    ),
+    (
+        "roles/cribl_docker_stack/tasks/main.yml",
+        "Verify Cribl Stream health",
+    ),
 )
 
 
