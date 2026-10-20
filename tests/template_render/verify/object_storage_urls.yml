@@ -1,0 +1,99 @@
+---
+- name: Render and verify object-storage URL inputs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/cribl_stream/defaults/main/00-install.yml"
+    - "{{ playbook_dir }}/../../../roles/idrac_kvm_docker/defaults/main.yml"
+    - "{{ playbook_dir }}/../../../roles/technitium_install/defaults/main.yml"
+    - "{{ playbook_dir }}/../../../inventory/group_vars/cribl_edge.yml"
+    - "{{ playbook_dir }}/../../../inventory/group_vars/cribl_stream_group.yml"
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    cribl_version: "5.0.0-fixture"
+    _tofu_fixture: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../inventory_load/tofu_inventory.json') | from_json }}
+    _object_storage_tofu_data: >-
+      {{
+        _tofu_fixture
+        | combine(
+            {
+              'containers': {'s3': {'ip': '192.0.2.42'}},
+              'constants': {'service_ports': {'object_storage_s3': 9000}}
+            },
+            recursive=true
+          )
+      }}
+    _object_storage_url_prefix: >-
+      http://{{ _object_storage_tofu_data.containers.s3.ip }}:{{
+      _object_storage_tofu_data.constants.service_ports.object_storage_s3 }}
+
+  tasks:
+    - name: Preserve the current fixture data
+      ansible.builtin.set_fact:
+        _object_storage_previous_tofu_data: "{{ hostvars['localhost']['tofu_data'] | default(none) }}"
+
+    - name: Load the object-storage test fixture
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _object_storage_tofu_data }}"
+
+    - name: Load global inventory variables for this contract
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../inventory/group_vars/all.yml"
+        name: _inventory_all
+
+    - name: Render and assert the object-storage URL contract
+      vars:
+        object_storage_url: "{{ _inventory_all.object_storage_url }}"
+      block:
+        - name: Render affected object-storage URLs
+          ansible.builtin.copy:
+            dest: "{{ _fixture_dir }}/object-storage-urls.txt"
+            content: |
+              cribl_edge_tarball_url={{ cribl_edge_tarball_url }}
+              cribl_stream_tarball_url={{ cribl_stream_tarball_url }}
+              cribl_packs_object_storage_base_url={{ cribl_packs_object_storage_base_url }}
+              idrac_kvm_docker_avct_artifact_url={{ idrac_kvm_docker_avct_artifact_url }}
+              technitium_install_mirror_endpoint={{ technitium_install_mirror_endpoint }}
+              technitium_install_app_url={{ technitium_install_app_url }}
+            mode: "0644"
+
+        - name: Assert affected object-storage URLs retain their rendered values
+          ansible.builtin.assert:
+            that:
+              - >-
+                cribl_edge_tarball_url ==
+                _object_storage_url_prefix ~ '/splunk-addons/infra/cribl-' ~
+                cribl_version ~ '-linux-x64.tgz'
+              - >-
+                cribl_stream_tarball_url ==
+                _object_storage_url_prefix ~ '/splunk-addons/infra/cribl-' ~
+                cribl_stream_version ~ '-linux-x64.tgz'
+              - >-
+                cribl_packs_object_storage_base_url ==
+                _object_storage_url_prefix ~ '/splunk-addons/cribl-packs'
+              - idrac_kvm_docker_avct_artifact_url == _object_storage_url_prefix ~ '/idrac/app.tar'
+              - technitium_install_mirror_endpoint == _object_storage_url_prefix ~ '/artifacts'
+              - >-
+                technitium_install_app_url ==
+                _object_storage_url_prefix ~ '/artifacts/technitium/' ~
+                technitium_install_app_filename
+            fail_msg: "An affected object-storage URL did not render from the inventory fixture."
+
+        - name: Assert the shared object-storage URL equals the rendered prefix
+          ansible.builtin.assert:
+            that:
+              - object_storage_url == _object_storage_url_prefix
+
+        - name: Object-storage URL render contract PASSED
+          ansible.builtin.debug:
+            msg: "The six affected object-storage URL values render from the fixture."
+
+    - name: Restore the previous fixture data
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _object_storage_previous_tofu_data }}"
+      when: _object_storage_previous_tofu_data is not none

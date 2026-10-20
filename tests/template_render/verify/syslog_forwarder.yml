@@ -199,3 +199,54 @@
         fail_msg: >-
           Every published Docker route must render before the catch-all, and
           an unpublished name must not produce a route.
+
+- name: Render and verify the host's Docker syslog program route
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/syslog_forwarder/defaults/main.yml"
+    - "{{ playbook_dir }}/../../../inventory/host_vars/iac-platform.yml"
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _sf_template_dir: "{{ playbook_dir }}/../../../roles/syslog_forwarder/templates"
+    tofu_data: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../inventory_load/tofu_inventory.json') | from_json }}
+    _expected_host_program_routes:
+      - program: semaphore
+        port: 10352
+
+  tasks:
+    - name: Assert the host program name resolves to its published route
+      ansible.builtin.assert:
+        that:
+          - syslog_forwarder_program_routes == _expected_host_program_routes
+        fail_msg: "The host program name must resolve to its matching published route."
+
+    - name: Render the host program route
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/10-forward-cribl.conf.j2"
+        dest: "{{ _fixture_dir }}/test_syslog_forward_host.conf"
+        mode: "0644"
+
+    - name: Read rendered host program route
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_syslog_forward_host.conf"
+      register: _sf_host_raw
+
+    - name: Decode rendered host program route
+      ansible.builtin.set_fact:
+        _sf_host: "{{ _sf_host_raw.content | b64decode }}"
+
+    - name: Assert the host route renders before the catch-all
+      ansible.builtin.assert:
+        that:
+          - "'Program route: semaphore' in _sf_host"
+          - "'port=\"10352\"' in _sf_host"
+          - "_sf_host.index(\"$programname == 'semaphore'\") < _sf_host.index('*.*')"
+        fail_msg: >-
+          The host's Docker program route must render before the catch-all
+          and use the published port.
