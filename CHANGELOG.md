@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.7.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.0...v5.7.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **cribl_stream:** run the declared admin login probe in check mode ([#2855](https://github.com/dryvist/ansible-proxmox-apps/issues/2855)) ([d3aca23](https://github.com/dryvist/ansible-proxmox-apps/commit/d3aca2360f7e2ede01ac5474d8f25379056919e5))
+* **grafana_stack:** delete the Git mirror rules when no mirror is inventoried ([#2852](https://github.com/dryvist/ansible-proxmox-apps/issues/2852)) ([f754e4f](https://github.com/dryvist/ansible-proxmox-apps/commit/f754e4fe2b4ec3b0116e8333b1b1d0f9bd4ce7b6))
+
 ## [5.7.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.11...v5.7.0) (2026-10-20)
 
 
