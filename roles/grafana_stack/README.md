@@ -40,9 +40,13 @@ than populate.
 
 `templates/alerting/rules-ai.yml.j2` provisions four Grafana-managed rules in
 the `ai-observability` group. Grafana sends notifications to the Cribl Stream
-HEC input. Before the verified cutover flag is set, Grafana alerts use the
-direct webhook; after it is set, Cribl routes them through the ntfy push relay
-to the hub while retaining full events in Splunk. Notification groups use
+HEC input, where JSON Unroll emits one Splunk event per `alerts` item while
+retaining the webhook's top-level fields. Splunk can extract each nested
+alert's `status`, `labels.alertname`, `startsAt`, `endsAt`, and `fingerprint`
+from the JSON. Before
+the verified cutover flag is set, Grafana alerts use the direct webhook; after
+it is set, Cribl routes them through the ntfy push relay to the hub while
+retaining the unrolled alert events in Splunk. Notification groups use
 `grafana_folder`, `alertname`, and `severity`; the default repeat is 30m, with
 warning and info repeats set to 1h.
 
