@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.6.11](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.10...v5.6.11) (2026-10-20)
+
+
+### Bug Fixes
+
+* **grafana_stack:** read OpenBao autopilot alerts from the active node ([#2830](https://github.com/dryvist/ansible-proxmox-apps/issues/2830)) ([75dcd3a](https://github.com/dryvist/ansible-proxmox-apps/commit/75dcd3ac99624d6aea6427175e8802f5c238ade8))
+* **grafana:** run verifier API reads in check mode ([#2829](https://github.com/dryvist/ansible-proxmox-apps/issues/2829)) ([d17defc](https://github.com/dryvist/ansible-proxmox-apps/commit/d17defcfa2f1b911cae11af954a4ee2888eca86f))
+* **homarr:** use upstream PCT connection ([#2831](https://github.com/dryvist/ansible-proxmox-apps/issues/2831)) ([fa31c63](https://github.com/dryvist/ansible-proxmox-apps/commit/fa31c639c2660043aa2c8fbbb3db2c3a19dff57d))
+
 ## [5.6.10](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.9...v5.6.10) (2026-10-20)
 
 
