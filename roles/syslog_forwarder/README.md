@@ -85,7 +85,7 @@ hardcoded (see `.claude/rules/ip-addressing.md`).
 ## Verification
 
 ```bash
-# On a forwarding LXC: the drop-in exists and rsyslog is happy.
+# On a forwarding guest: the drop-in exists and rsyslog is happy.
 cat /etc/rsyslog.d/10-forward-cribl.conf
 rsyslogd -N1
 systemctl is-active rsyslog

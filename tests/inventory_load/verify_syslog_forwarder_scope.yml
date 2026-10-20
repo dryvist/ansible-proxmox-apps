@@ -1,0 +1,43 @@
+---
+- name: Verify supported Linux guest classes join managed_linux_guests
+  ansible.builtin.assert:
+    that:
+      - groups['managed_linux_guests'] is defined
+      - "'haproxy' in groups['managed_linux_guests']"
+      - "'cribl-edge-01' in groups['managed_linux_guests']"
+      - "'cribl-edge-02' in groups['managed_linux_guests']"
+      - "'cribl-stream-01' in groups['managed_linux_guests']"
+      - "'cribl-stream-02' in groups['managed_linux_guests']"
+      - "'download-vpn' in groups['managed_linux_guests']"
+      - "'docker-host' in groups['managed_linux_guests']"
+      - "'iac-platform' in groups['managed_linux_guests']"
+      - "'ai-sandbox-01' in groups['managed_linux_guests']"
+      - "'splunk' in groups['managed_linux_guests']"
+      - "'fixture-linux-vm' in groups['managed_linux_guests']"
+      - syslog_forwarder_exclusions.winrm | length > 0
+    fail_msg: >-
+      managed_linux_guests must include Linux LXC, Docker VM, and Splunk VM
+      inventory sources; exclusions must state why WinRM guests are omitted.
+
+- name: Verify HAProxy forwards directly to an Edge backend
+  ansible.builtin.assert:
+    that:
+      - >-
+        hostvars['haproxy']['syslog_forwarder_target_host']
+        == tofu_data.containers[groups['cribl_edge'] | first]['ip']
+      - >-
+        hostvars['haproxy']['syslog_forwarder_program_routes'][0]['port'] | int
+        == tofu_data.constants.syslog_port_map.get(
+          'proxy', tofu_data.constants.syslog_port_map.linux).high
+    fail_msg: >-
+      HAProxy's forwarder must use an Edge backend and its high syslog
+      listener, bypassing the VIP that HAProxy serves.
+
+- name: Verify haproxy_group contains 'haproxy'-tagged container
+  ansible.builtin.assert:
+    that:
+      - groups['haproxy_group'] is defined
+      - "'haproxy' in groups['haproxy_group']"
+    fail_msg: >-
+      haproxy_group should contain 'haproxy' (haproxy tag);
+      got {{ groups['haproxy_group'] | default([]) }}

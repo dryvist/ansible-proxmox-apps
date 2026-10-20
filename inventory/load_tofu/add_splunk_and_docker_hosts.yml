@@ -2,10 +2,14 @@
 - name: Add Splunk VM to inventory (SSH connection)
   ansible.builtin.add_host:
     name: splunk
-    groups:
-      - splunk_group
-      - splunk_vms
-      - all
+    groups: >-
+      {{
+        ['splunk_group', 'splunk_vms', 'all'] +
+        (['managed_linux_guests']
+         if tofu_data.splunk_vm.splunk.ansible_connection | default('ssh')
+         not in syslog_forwarder_exclusions
+         else [])
+      }}
     ansible_host: "{{ tofu_data.splunk_vm.splunk.ip }}"
     ansible_connection: "{{ tofu_data.splunk_vm.splunk.ansible_connection }}"
     ansible_user: debian
@@ -24,6 +28,9 @@
     groups: >-
       {{
         ['docker_vms', 'cribl_docker_group', 'all']
+        + (['managed_linux_guests']
+           if item.value.ansible_connection | default('ssh') not in syslog_forwarder_exclusions
+           else [])
         + (['docker_group'] if 'docker' in (item.value.tags | default([])) else [])
         + (['managed_secrets_group'] if 'managed-secrets' in (item.value.tags | default([])) else [])
         + (['agent_sandbox_host'] if 'agent-sandbox' in (item.value.tags | default([])) else [])
