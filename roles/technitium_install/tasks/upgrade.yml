@@ -1,0 +1,119 @@
+---
+- name: Upgrade Technitium DNS server to the pinned version
+  vars:
+    technitium_install_upgrade_backups:
+      - path: "{{ technitium_install_app_dir }}/dns"
+        archive: >-
+          {{ technitium_install_backup_dir }}/dns-app-{{
+          technitium_install_session.json.info.version | default('unknown', true) }}-{{
+          ansible_facts.date_time.epoch }}.tgz
+      - path: "{{ technitium_install_data_dir }}"
+        archive: >-
+          {{ technitium_install_backup_dir }}/dns-data-{{
+          technitium_install_session.json.info.version | default('unknown', true) }}-{{
+          ansible_facts.date_time.epoch }}.tgz
+  block:
+    - name: Download and verify the pinned Technitium app build before upgrade
+      ansible.builtin.include_tasks: download_app.yml
+
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ technitium_install_backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Stop dns.service before swapping the app binaries
+      ansible.builtin.systemd_service:
+        name: dns.service
+        state: stopped
+
+    - name: Back up the existing Technitium app build and data for rollback
+      community.general.archive:
+        path: "{{ item.path }}"
+        dest: "{{ item.archive }}"
+        format: gz
+        mode: "0600"
+      loop: "{{ technitium_install_upgrade_backups }}"
+      register: technitium_install_upgrade_backup
+
+    - name: Deploy the pinned Technitium app build
+      ansible.builtin.include_tasks: deploy_app.yml
+
+    - name: Start Technitium DNS
+      ansible.builtin.systemd_service:
+        name: dns.service
+        state: started
+
+    - name: Wait for Technitium to come back after the upgrade
+      ansible.builtin.uri:
+        url: "{{ technitium_install_api_url }}"
+        method: GET
+        status_code: [200, 301, 302]
+        timeout: "{{ technitium_install_api_timeout }}"
+      register: technitium_install_upgrade_wait
+      retries: 12
+      delay: 5
+      until: technitium_install_upgrade_wait.status in [200, 301, 302]
+
+    - name: Log in to the upgraded server
+      # A fresh login: the pre-upgrade session token does not survive the
+      # restart, so it cannot be reused to read the new version.
+      ansible.builtin.uri:
+        url: "{{ technitium_install_api_url }}/api/user/login"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          user: "{{ technitium_install_admin_user }}"
+          pass: "{{ technitium_install_admin_password }}"
+        return_content: true
+        timeout: "{{ technitium_install_api_timeout }}"
+      register: technitium_install_upgrade_login
+      changed_when: false
+      failed_when: technitium_install_upgrade_login.json.status | default('') != "ok"
+      no_log: true
+
+    - name: Confirm the upgraded server reports the pinned version
+      # Answering on the port is not proof the new build loaded — a runtime
+      # mismatch fails at assembly load, not at startup. Assert the version.
+      ansible.builtin.uri:
+        url: >-
+          {{ technitium_install_api_url }}/api/user/session/get?token={{
+          technitium_install_upgrade_login.json.token }}
+        method: GET
+        return_content: true
+        timeout: "{{ technitium_install_api_timeout }}"
+      register: technitium_install_upgrade_verify
+      changed_when: false
+      failed_when: >-
+        (technitium_install_upgrade_verify.json.status | default('')) != "ok" or
+        (technitium_install_upgrade_verify.json.info.version | default('')) !=
+        (technitium_install_app_version_clean | trim)
+      no_log: true
+
+  rescue:
+    - name: Remove the failed Technitium app and data paths
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ technitium_install_upgrade_backups }}"
+      when: technitium_install_upgrade_backup is defined and technitium_install_upgrade_backup is succeeded
+
+    # The archive roots entries at the parent directory.
+    - name: Restore the pre-upgrade Technitium app and data
+      ansible.builtin.unarchive:
+        src: "{{ item.archive }}"
+        dest: "{{ item.path | dirname }}"
+        remote_src: true
+      loop: "{{ technitium_install_upgrade_backups }}"
+      when: technitium_install_upgrade_backup is defined and technitium_install_upgrade_backup is succeeded
+
+    - name: Start dns.service after the failed upgrade
+      ansible.builtin.systemd_service:
+        name: dns.service
+        state: started
+
+    - name: Report the failed Technitium upgrade
+      ansible.builtin.fail:
+        msg: >-
+          Technitium upgrade failed at '{{ ansible_failed_task.name }}'; restored the pre-upgrade
+          build and data when they were archived, and started dns.service.

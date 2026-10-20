@@ -25,6 +25,10 @@
   # Read-only; the install condition needs a status result in check mode.
   check_mode: false
 
+- name: Download and verify the pinned Technitium app build before installation
+  ansible.builtin.include_tasks: download_app.yml
+  when: technitium_install_check.status == -1
+
 # The runtime tasks below are idempotent and run on EVERY converge, not just
 # the fresh-install path: a server bump onto a newer target framework (15.x is
 # net10.0, 14.x was net9.0) needs the new runtime present BEFORE the binaries
@@ -221,96 +225,15 @@
   failed_when: technitium_install_session.json.status | default('') != "ok"
   no_log: true
 
-# The install block above only fires when the API is unreachable, so an
-# already-running server would never pick up a version bump — the pins could
-# advance while the fleet silently stayed put. This is the upgrade path. It is
-# gated on the version the server actually reports, so a converge with no bump
-# pending is a no-op. Runs here (not next to the install block) because the
-# running version comes from the authenticated session lookup above.
+# Upgrade only when the authenticated session reports a version different from
+# the pinned build.
 - name: Upgrade Technitium DNS server to the pinned version
+  ansible.builtin.include_tasks: upgrade.yml
   when:
     - technitium_install_check.status != -1
     - >-
       (technitium_install_session.json.info.version | default('', true)) !=
       (technitium_install_app_version_clean | trim)
-  block:
-    - name: Ensure the backup directory exists
-      ansible.builtin.file:
-        path: "{{ technitium_install_backup_dir }}"
-        state: directory
-        mode: "0700"
-
-    - name: Stop dns.service before swapping the app binaries
-      ansible.builtin.systemd_service:
-        name: dns.service
-        state: stopped
-
-    - name: Back up the data directory (rollback point)
-      # Taken while stopped, so the on-disk config/zones are quiescent. Named
-      # for the version being replaced — that is the build this archive pairs
-      # with if the upgrade has to be rolled back.
-      community.general.archive:
-        path: "{{ technitium_install_data_dir }}"
-        dest: >-
-          {{ technitium_install_backup_dir }}/dns-data-{{
-          technitium_install_session.json.info.version | default('unknown', true) }}-{{
-          ansible_facts.date_time.epoch }}.tgz
-        format: gz
-        mode: "0600"
-
-    - name: Deploy the pinned Technitium app build
-      ansible.builtin.include_tasks: deploy_app.yml
-
-    - name: Start Technitium DNS
-      ansible.builtin.systemd_service:
-        name: dns.service
-        state: started
-
-    - name: Wait for Technitium to come back after the upgrade
-      ansible.builtin.uri:
-        url: "{{ technitium_install_api_url }}"
-        method: GET
-        status_code: [200, 301, 302]
-        timeout: "{{ technitium_install_api_timeout }}"
-      register: technitium_install_upgrade_wait
-      retries: 12
-      delay: 5
-      until: technitium_install_upgrade_wait.status in [200, 301, 302]
-
-    - name: Log in to the upgraded server
-      # A fresh login: the pre-upgrade session token does not survive the
-      # restart, so it cannot be reused to read the new version.
-      ansible.builtin.uri:
-        url: "{{ technitium_install_api_url }}/api/user/login"
-        method: POST
-        body_format: form-urlencoded
-        body:
-          user: "{{ technitium_install_admin_user }}"
-          pass: "{{ technitium_install_admin_password }}"
-        return_content: true
-        timeout: "{{ technitium_install_api_timeout }}"
-      register: technitium_install_upgrade_login
-      changed_when: false
-      failed_when: technitium_install_upgrade_login.json.status | default('') != "ok"
-      no_log: true
-
-    - name: Confirm the upgraded server reports the pinned version
-      # Answering on the port is not proof the new build loaded — a runtime
-      # mismatch fails at assembly load, not at startup. Assert the version.
-      ansible.builtin.uri:
-        url: >-
-          {{ technitium_install_api_url }}/api/user/session/get?token={{
-          technitium_install_upgrade_login.json.token }}
-        method: GET
-        return_content: true
-        timeout: "{{ technitium_install_api_timeout }}"
-      register: technitium_install_upgrade_verify
-      changed_when: false
-      failed_when: >-
-        (technitium_install_upgrade_verify.json.status | default('')) != "ok" or
-        (technitium_install_upgrade_verify.json.info.version | default('')) !=
-        (technitium_install_app_version_clean | trim)
-      no_log: true
 
 # NOTE: this role deliberately does NOT create an API token. It used to call
 # /api/user/createToken on every converge, which mints a NEW long-lived token
