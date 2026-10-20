@@ -50,6 +50,8 @@ Configure data pipeline via Cribl Web UI after Ansible deployment:
    than local copies.
 4. Configure outputs (Splunk, etc.)
 
+Every log-bearing input uses `ansi_csi_strip` before routing; Splunk HEC outputs keep `secret_redaction` for credentials.
+
 ### Grafana alert delivery
 
 Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with
