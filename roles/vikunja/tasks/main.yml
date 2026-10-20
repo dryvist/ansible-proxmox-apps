@@ -251,7 +251,9 @@
 # AppRole (BAO_ADDR/BAO_TOKEN) is in the controller environment.
 - name: Mint MCP API tokens and publish to OpenBao
   ansible.builtin.include_tasks: mcp_tokens.yml
-  when: vikunja_token_publish_openbao | bool
+  when:
+    - vikunja_token_publish_openbao | bool
+    - not ansible_check_mode
   tags: vikunja_mcp_tokens
 
 - name: Note MCP token minting is deferred
@@ -275,6 +277,7 @@
   when:
     - vikunja_hermes_bridge_publish_openbao | bool
     - vikunja_hermes_bridge_identities | length > 0
+    - not ansible_check_mode
   tags: vikunja_hermes_bridge
 
 # The AI Jobs dispatcher identity reuses the bridge tasks with its own list. A
@@ -284,8 +287,25 @@
   vars:
     vikunja_hermes_bridge_identities: "{{ vikunja_ai_jobs_identities }}"
     vikunja_hermes_bridge_usernames: []
-  when: vikunja_ai_jobs_publish_openbao | bool
+  when:
+    - vikunja_ai_jobs_publish_openbao | bool
+    - not ansible_check_mode
   tags: vikunja_ai_jobs
+
+# Same reason as the operator-sharing note: these includes are uri chains
+# whose registered results check mode would leave undefined.
+- name: Note API token publishing is not evaluated in check mode
+  ansible.builtin.debug:
+    msg: >-
+      MCP, Hermes bridge and AI Jobs token publishing is skipped in check mode
+      (ansible.builtin.uri does not support it). Run without --check to
+      reconcile the tokens.
+  when:
+    - ansible_check_mode
+    - vikunja_token_publish_openbao | bool
+      or vikunja_hermes_bridge_publish_openbao | bool
+      or vikunja_ai_jobs_publish_openbao | bool
+  tags: [vikunja_mcp_tokens, vikunja_hermes_bridge, vikunja_ai_jobs]
 
 - name: Note Hermes bridge identity provisioning is deferred
   ansible.builtin.debug:
