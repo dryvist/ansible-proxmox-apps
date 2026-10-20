@@ -39,7 +39,7 @@ MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
 BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
 RUNNER = ROOT / "roles" / "github_runner"
-BASE_IMAGE = "geerlingguy/docker-debian12-ansible:latest"
+BASE_IMAGE = "mirror.gcr.io/geerlingguy/docker-debian12-ansible:latest"
 
 
 def _play(name):
