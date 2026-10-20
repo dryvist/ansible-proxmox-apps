@@ -123,3 +123,79 @@
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:
         msg: "syslog_forwarder: omfwd rule -> syslog.pve.example.com:1517/tcp with disk queue"
+
+- name: Derive Docker program routes from published AI constants
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/syslog_forwarder/defaults/main.yml"
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _sf_template_dir: "{{ playbook_dir }}/../../../roles/syslog_forwarder/templates"
+    tofu_data: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../inventory_load/tofu_inventory.json') | from_json }}
+    syslog_forwarder_program_names:
+      - agentgateway
+      - dify
+      - hindsight
+      - langflow
+      - langfuse
+      - langgraph
+      - phoenix
+      - qdrant
+      - unpublished
+    _syslog_forwarder_expected_program_routes:
+      - program: agentgateway
+        port: 10341
+      - program: dify
+        port: 10342
+      - program: hindsight
+        port: 10343
+      - program: langflow
+        port: 10344
+      - program: langfuse
+        port: 10345
+      - program: langgraph
+        port: 10346
+      - program: phoenix
+        port: 10351
+      - program: qdrant
+        port: 10347
+
+  tasks:
+    - name: Assert published Docker programs resolve to their constants and missing routes are skipped
+      ansible.builtin.assert:
+        that:
+          - syslog_forwarder_program_routes == _syslog_forwarder_expected_program_routes
+        fail_msg: >-
+          Docker program routes must use the matching published `<program>_docker`
+          port, and omit names without a published route.
+
+    - name: Render all derived program routes
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/10-forward-cribl.conf.j2"
+        dest: "{{ _fixture_dir }}/test_syslog_forward_derived.conf"
+        mode: "0644"
+
+    - name: Read rendered derived program routes
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_syslog_forward_derived.conf"
+      register: _sf_derived_raw
+
+    - name: Decode rendered derived program routes
+      ansible.builtin.set_fact:
+        _sf_derived: "{{ _sf_derived_raw.content | b64decode }}"
+
+    - name: Assert every derived program route renders before the catch-all
+      ansible.builtin.assert:
+        that:
+          - "_sf_derived.count('# Program route:') == 8"
+          - "_sf_derived.index('Program route:') < _sf_derived.index('*.*')"
+          - "'unpublished' not in _sf_derived"
+        fail_msg: >-
+          Every published Docker route must render before the catch-all, and
+          an unpublished name must not produce a route.
