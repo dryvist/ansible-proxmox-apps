@@ -48,6 +48,10 @@ PROBES = (
         "roles/cribl_docker_stack/tasks/main.yml",
         "Verify Cribl Stream health",
     ),
+    (
+        "roles/healthchecks_docker/tasks/main.yml",
+        "Verify healthchecks login page renders",
+    ),
 )
 
 
