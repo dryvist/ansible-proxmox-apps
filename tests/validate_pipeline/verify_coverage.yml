@@ -1,0 +1,33 @@
+---
+- name: Add local fixture hosts to validation target groups
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Add one local fixture member to each validation tier group
+      ansible.builtin.add_host:
+        name: validate-pipeline-fixture
+        groups: "{{ validate_pipeline_tiers | map(attribute='group') | list }}"
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: Record validation outcomes for the synthetic targets
+  hosts: validate-pipeline-fixture
+  gather_facts: false
+  tasks:
+    - name: Register each synthetic validation outcome
+      ansible.builtin.include_tasks: ../../playbooks/validate-pipeline/record_result.yml
+      vars:
+        validate_pipeline_result_key: "{{ validate_pipeline_test_check.1.key }}"
+        validate_pipeline_result_status: >-
+          {{ 'skipped' if validate_pipeline_test_check.1.key == 'cribl_edge_metrics'
+             else 'validated' }}
+        validate_pipeline_result_reason: >-
+          {{ 'CRIBL_EDGE_API_TOKEN is not set'
+             if validate_pipeline_test_check.1.key == 'cribl_edge_metrics' else '' }}
+      loop: "{{ query('subelements', validate_pipeline_tiers, 'checks') }}"
+      loop_control:
+        loop_var: validate_pipeline_test_check
+        label: "{{ validate_pipeline_test_check.1.key }}"
+
+- name: Run the production summary and coverage guard
+  import_playbook: ../../playbooks/validate-pipeline/summary.yml
