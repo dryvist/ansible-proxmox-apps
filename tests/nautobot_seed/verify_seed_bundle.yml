@@ -14,7 +14,7 @@
 #   - the nodes slice takes `commissioned` and the emitted `name` from the
 #     desired-state object, keyed by the live node name rather than the
 #     inventory host key
-#   - an all-sources-absent run fails loudly instead of writing an empty bundle
+#   - an all-sources-absent run skips without writing a bundle
 #
 # The bundle is written to a temp path, never to a real Nautobot guest.
 
@@ -137,26 +137,25 @@
               The tofu inventory did not survive assembly into virtual_machines.
             quiet: true
 
-        - name: Slices with no source are present and empty, never missing
+        - name: Absent core slices are omitted while non-core slices stay shaped
           ansible.builtin.assert:
             that:
-              - seed_bundle.devices | length == 0
-              - seed_bundle.nodes | length == 0
+              - "'devices' not in seed_bundle"
+              - "'nodes' not in seed_bundle"
+              - seed_bundle.virtual_machines | length == 2
               - seed_bundle.reservations | length == 0
               - seed_bundle.vlans | length == 0
               - seed_bundle.prefixes | length == 0
               - seed_bundle.drives | length == 0
               - seed_bundle.schema_version == '1.0.0'
             fail_msg: >-
-              An absent source must yield an empty slice, not a missing key —
-              ssot_common.load_seed keys off these names.
+              An absent core source must not publish an empty core slice; the
+              sync runner uses absent keys to leave those kinds untouched.
             quiet: true
 
         # `drives` is the one slice whose emptiness is dangerous rather than
-        # inert: its sync deletes what it stops seeing. An absent path must
-        # still produce the KEY (so load_seed does not invent it) while the
-        # runner leaves the job unenrolled — the two together are what make an
-        # ungathered estate converge quietly instead of wiping the inventory.
+        # inert: its sync deletes what it stops seeing. Keep its key and let the
+        # runner leave the job unenrolled when no drives were gathered.
         - name: The drives key exists even with no source
           ansible.builtin.assert:
             that:
@@ -232,6 +231,17 @@
             nodes_bundle: >-
               {{ lookup('ansible.builtin.file', nodes_tmp.path ~ '/nautobot_seed.json') | from_json }}
 
+        - name: An absent DCIM and guest source does not add empty core arrays
+          ansible.builtin.assert:
+            that:
+              - "'devices' not in nodes_bundle"
+              - "'virtual_machines' not in nodes_bundle"
+              - nodes_bundle.nodes | length == 3
+            fail_msg: >-
+              the bundle did not retain the supplied node slice while omitting
+              the absent DCIM and guest slices.
+            quiet: true
+
         - name: Commissioning and name follow the desired state, and the rest of the node fields survive
           vars:
             nodes_by_name: >-
@@ -270,10 +280,16 @@
             state: absent
           when: nodes_tmp.path is defined
 
-    - name: An all-sources-absent build fails instead of writing an empty bundle
+    - name: An all-sources-absent build skips without writing a bundle
       vars:
-        nautobot_seed_file: /dev/null
+        nautobot_seed_file: "{{ no_source_tmp.path }}/nautobot_seed.json"
       block:
+        - name: Create a temporary output directory
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: nautobot-no-source
+          register: no_source_tmp
+
         - name: Drop the tofu inventory so no source remains
           ansible.builtin.set_fact:
             tofu_data: {}
@@ -281,17 +297,69 @@
         - name: Assemble with every source absent
           ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_bundle.yml
 
-        - name: Reaching here means the guard did not fire
-          ansible.builtin.fail:
-            msg: >-
-              seed_bundle.yml built a bundle with no source available; the
-              "at least one seed source" assert should have failed the run.
-      rescue:
-        - name: Confirm the failure was the source guard, not an unrelated error
+        - name: Confirm the source-less run skips without writing a bundle
+          ansible.builtin.stat:
+            path: "{{ nautobot_seed_file }}"
+          register: no_source_bundle
+
+        - name: Assert the seed was skipped
           ansible.builtin.assert:
             that:
-              - "'no seed source is available' in (ansible_failed_result.msg | default('') | string)"
+              - not (nautobot_seed_sources_available | bool)
+              - not no_source_bundle.stat.exists
             fail_msg: >-
-              Expected the "no seed source is available" assert, got:
-              {{ ansible_failed_result.msg | default('(no message)') }}
+              no-source seed execution wrote a bundle or did not set its skip
+              state.
             quiet: true
+      always:
+        - name: Remove the no-source temp directory
+          ansible.builtin.file:
+            path: "{{ no_source_tmp.path }}"
+            state: absent
+          when: no_source_tmp.path is defined
+
+    - name: A supplied empty node source fails the core-array guard
+      vars:
+        nautobot_seed_hosts_yml_path: "{{ empty_nodes_tmp.path }}/hosts.yml"
+        nautobot_seed_file: "{{ empty_nodes_tmp.path }}/nautobot_seed.json"
+        nautobot_seed_allow_empty: []
+      block:
+        - name: Create a temporary directory for the empty source
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: nautobot-empty-nodes
+          register: empty_nodes_tmp
+
+        - name: Write an explicitly empty hosts source
+          ansible.builtin.copy:
+            dest: "{{ empty_nodes_tmp.path }}/hosts.yml"
+            mode: "0600"
+            content: "all:\n  children:\n    proxmox:\n      hosts: {}\n"
+
+        - name: Assemble and reject the empty supplied core source
+          ansible.builtin.include_tasks: ../../roles/nautobot/tasks/seed_bundle.yml
+
+        - name: Reaching here means the empty core source passed the guard
+          ansible.builtin.fail:
+            msg: The supplied empty node source was accepted.
+      rescue:
+        - name: Confirm the failure names nodes and the bundle was not written
+          ansible.builtin.stat:
+            path: "{{ nautobot_seed_file }}"
+          register: empty_nodes_bundle
+
+        - name: Assert the supplied empty source was rejected
+          ansible.builtin.assert:
+            that:
+              - "'nodes' in (ansible_failed_result.msg | default('') | string)"
+              - not empty_nodes_bundle.stat.exists
+            fail_msg: >-
+              the failure did not come from the empty node guard, or the bundle
+              was written: {{ ansible_failed_result.msg | default('(no message)') }}
+            quiet: true
+      always:
+        - name: Remove the empty-source temp directory
+          ansible.builtin.file:
+            path: "{{ empty_nodes_tmp.path }}"
+            state: absent
+          when: empty_nodes_tmp.path is defined

@@ -52,7 +52,8 @@ def main() -> None:
             module, _ = load_runner_capturing()
             slices = dict(module.SLICE_JOBS)
             check(
-                set(slices) == {"nodes", "reservations", "devices", "drives"},
+                set(slices)
+                == {"nodes", "reservations", "devices", "virtual_machines", "drives"},
                 f"the slice-to-job map drifted: {sorted(slices)}",
             )
 
