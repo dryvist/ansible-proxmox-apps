@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.6.9](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.8...v5.6.9) (2026-10-20)
+
+
+### Bug Fixes
+
+* run read-only probes in check mode ([#2825](https://github.com/dryvist/ansible-proxmox-apps/issues/2825)) ([63ee551](https://github.com/dryvist/ansible-proxmox-apps/commit/63ee5514194cb8460cf9a5648d38560b35a8e1e5))
+* **validate-pipeline:** fail when target containers are skipped ([#2821](https://github.com/dryvist/ansible-proxmox-apps/issues/2821)) ([944c578](https://github.com/dryvist/ansible-proxmox-apps/commit/944c5786b98635a5be06db554e71ac84f4aff85a))
+
 ## [5.6.8](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.6.7...v5.6.8) (2026-10-20)
 
 
