@@ -1,13 +1,14 @@
 ---
 # Render the real Prometheus template and inventory vars to verify the PVE
-# exporter receives one target per commissioned node through __param_target.
-- name: Verify the PVE exporter scrape job
+# and guest exporter scrape jobs receive their inventory targets.
+- name: Verify the PVE and guest exporter scrape jobs
   hosts: localhost
   connection: local
   gather_facts: false
 
   vars:
     ansible_become: false
+    llm_large_serving_host: llm-large-under-test
     _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
     _fixture_tofu_data:
       domain: test.example
@@ -24,6 +25,8 @@
         memory_ports:
           hindsight_api: 8888
           hindsight_cp: 9999
+        serving:
+          host: llm-large-under-test
       nodes:
         node-alpha:
           commissioned: true
@@ -37,6 +40,9 @@
         cribl-stream-01:
           ip: stream.test.example
           tags: [cribl-stream]
+        object-store-under-test:
+          ip: object-store.test.example
+          ansible_connection: ssh
 
   vars_files:
     - "../../../roles/prometheus_stack/defaults/main.yml"
@@ -78,6 +84,28 @@
           The PVE exporter job must query each commissioned node through the
           local exporter and pass the node as __param_target. Rendered: {{ _jobs }}
         success_msg: One PVE exporter scrape job with inventory targets and relabeling.
+
+    - name: Isolate the guest node_exporter job
+      ansible.builtin.set_fact:
+        _guest_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'guest_node_exporter') | list }}"
+
+    - name: Assert the guest job scrapes the inventory guest and keeps filesystem series
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _guest_jobs | length == 1
+          - _guest_jobs[0].scrape_interval == '60s'
+          - >-
+            _guest_jobs[0].static_configs
+            | selectattr('labels.guest', 'equalto', 'object-store-under-test')
+            | selectattr('targets', 'equalto', ['object-store.test.example:9100'])
+            | list | length == 1
+          - _guest_jobs[0].metric_relabel_configs[0].action == 'keep'
+          - "'node_filesystem_(avail|size)_bytes' in _guest_jobs[0].metric_relabel_configs[0].regex"
+        fail_msg: >-
+          The guest exporter job must target inventory guests and keep filesystem
+          metrics. Rendered: {{ _guest_jobs }}
+        success_msg: Guest target and filesystem metrics render in guest_node_exporter.
 
     - name: Load the cribl_stream group vars
       ansible.builtin.include_vars:
