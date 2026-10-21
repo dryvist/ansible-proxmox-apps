@@ -85,6 +85,16 @@
             | map(attribute='changed') | first | default(false)))
   notify: Reload nginx
 
+# Under --check, archive extraction is only previewed, so check each source first.
+- name: Check for the unpacked gateway configs
+  ansible.builtin.stat:
+    path: "{{ wall_feed_dir }}/{{ item }}"
+  register: wall_gateway_config_sources
+  when: ansible_check_mode
+  loop:
+    - wall-feed.conf
+    - wall-feed-proxy.conf
+
 # wall-feed.conf includes wall-feed-proxy.conf by a relative path, which nginx
 # resolves against its config directory.
 - name: Install the gateway config
@@ -99,6 +109,11 @@
     - wall-feed.conf
     - wall-feed-proxy.conf
   notify: Reload nginx
+  when: >-
+    not ansible_check_mode or
+    (wall_gateway_config_sources.results
+     | selectattr('item', 'equalto', item)
+     | map(attribute='stat.exists') | first | default(false))
 
 - name: Render config.json
   ansible.builtin.template:
