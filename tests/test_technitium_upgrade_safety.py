@@ -104,7 +104,9 @@ class TechnitiumUpgradeSafety(unittest.TestCase):
         self.assertEqual(restore["ansible.builtin.unarchive"]["dest"], "{{ item.path | dirname }}")
         self.assertIs(restore["ansible.builtin.unarchive"]["remote_src"], True)
         self.assertEqual(restore["loop"], backup_list)
-        self.assertEqual(restore["when"], remove["when"])
+        self.assertEqual(restore["when"][0], remove["when"])
+        self.assertIn("ansible_check_mode", restore["when"][1])
+        self.assertIn("technitium_install_upgrade_backup is changed", restore["when"][1])
         self.assertEqual(start["ansible.builtin.systemd_service"]["state"], "started")
         self.assertEqual(
             fail["ansible.builtin.fail"]["msg"],
