@@ -120,13 +120,19 @@ def test_docker_daemon_play_skips_hosts_without_dockerd_in_both_modes():
 
     configure = _task(tasks, "Configure Docker daemon on installed Docker hosts")
     ensure = _task(tasks, "Ensure Docker is running")
+    assert configure["ansible.builtin.include_role"]["tasks_from"] == "daemon_json.yml"
     for task in (configure, ensure):
         conditions = _conditions(task)
         assert any("docker_daemon_dockerd.stat.exists" in condition for condition in conditions)
+        assert "ansible_check_mode" not in str(conditions)
         assert any(
             "inventory_hostname in groups.get('docker_group', [])" in condition
             for condition in conditions
         )
+
+    engine_tasks = _role_yaml("docker_engine", "tasks/main.yml")
+    install = _task(engine_tasks, "Configure the Docker daemon before installing Docker packages")
+    assert install["ansible.builtin.import_tasks"] == configure["ansible.builtin.include_role"]["tasks_from"]
 
     handlers = _role_yaml("docker_engine", "handlers/main.yml")
     restart = _task(handlers, "Restart docker")

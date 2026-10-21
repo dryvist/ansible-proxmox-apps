@@ -144,65 +144,25 @@ class CiBuildCaches(unittest.TestCase):
         self.assertNotIn("pve.", apt_proxy_url)
 
     def test_daemon_json_content_renders_as_valid_json_with_one_newline(self):
-        # A real render of the WHOLE content: expression, not a
-        # reimplementation -- a `>-` folded scalar with a trailing
-        # `{{ "\n" }}` renders the two characters backslash-n literally
-        # instead of a real newline, which is invalid JSON and leaves dockerd
-        # refusing to start. json.loads() and an exact-newline check catch
-        # that the string-matching tests above cannot.
         task = _daemon_json_task()
         content_expr = task["ansible.builtin.copy"]["content"]
         defaults = yaml.safe_load((DOCKER_ENGINE / "defaults" / "main.yml").read_text())
-        for virtualization_type, expect_storage in (("lxc", True), ("kvm", False)):
-            with self.subTest(virtualization_type=virtualization_type):
-                fixture = {
-                    "groups": {"registry_group": ["registry-1"]},
-                    "hostvars": {
-                        "registry-1": {},
-                        "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}},
-                    },
-                    "tofu_data": {"domain": "example.com"},
-                    "ansible_facts": {"virtualization_type": virtualization_type},
-                    "host_tags": ["docker"],
-                }
-                variables = {**defaults, **fixture}
-                templar = Templar(loader=DataLoader(), variables=_mark_templates(variables))
-                rendered = templar.template(trust_as_template(content_expr))
-                self.assertTrue(rendered.endswith("\n"))
-                self.assertFalse(rendered.endswith("\n\n"))
-                self.assertNotIn("\\n", rendered)
-                parsed = json.loads(rendered)
-                self.assertEqual(
-                    parsed["registry-mirrors"],
-                    ["http://registry-1.example.com:5000"],
-                )
-                self.assertEqual(parsed["insecure-registries"], ["registry-1.example.com:5000"])
-                self.assertEqual(parsed["log-driver"], "journald")
-                self.assertEqual(parsed["log-opts"]["tag"], "{{.Name}}")
-                if expect_storage:
-                    self.assertEqual(parsed["storage-driver"], "fuse-overlayfs")
-                    self.assertIs(parsed["features"]["containerd-snapshotter"], False)
-                else:
-                    self.assertNotIn("storage-driver", parsed)
-                    self.assertNotIn("features", parsed)
-
-    def test_site_and_first_install_use_the_shared_daemon_renderer(self):
-        play = _play("Configure Docker registry mirror on docker hosts")
-        site_include = next(
-            task for task in _tasks(play)
-            if task["name"] == "Configure Docker daemon on installed Docker hosts"
+        variables = _mark_templates(
+            {
+                **defaults,
+                "groups": {"registry_group": ["registry-1"]},
+                "hostvars": {"localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}}},
+                "tofu_data": {"domain": "example.com"},
+                "ansible_facts": {"virtualization_type": "lxc"},
+            }
         )
-        self.assertEqual(site_include["ansible.builtin.include_role"]["name"], "docker_engine")
-        self.assertEqual(
-            site_include["ansible.builtin.include_role"]["tasks_from"],
-            "daemon_json.yml",
-        )
-        engine_tasks = yaml.safe_load((DOCKER_ENGINE / "tasks" / "main.yml").read_text())
-        install_include = next(
-            task for task in engine_tasks
-            if task["name"] == "Configure the Docker daemon before installing Docker packages"
-        )
-        self.assertEqual(install_include["ansible.builtin.import_tasks"], "daemon_json.yml")
+        templar = Templar(loader=DataLoader(), variables=variables)
+        rendered = templar.template(trust_as_template(content_expr))
+        self.assertTrue(rendered.endswith("\n"))
+        self.assertFalse(rendered.endswith("\n\n"))
+        parsed = json.loads(rendered)
+        self.assertEqual(parsed["registry-mirrors"], ["http://registry-1.example.com:5000"])
+        self.assertEqual(parsed["storage-driver"], "fuse-overlayfs")
 
     def test_docker_vms_gather_the_facts_the_netplan_override_needs(self):
         # The netplan override is templated from facts (the VM's own default

@@ -1,15 +1,52 @@
 """The single Docker daemon renderer keeps storage pins effective."""
 
+import json
 from pathlib import Path
 import unittest
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SEARCH_DIRS = ("roles", "playbooks")
 SHARED_WRITER = ROOT / "roles" / "docker_engine" / "tasks" / "daemon_json.yml"
 ENGINE_DEFAULTS = ROOT / "roles" / "docker_engine" / "defaults" / "main.yml"
+
+
+def _daemon_copy_content(task_file):
+    tasks = yaml.safe_load(task_file.read_text(encoding="utf-8"))
+    task = next(task for task in tasks if task.get("name") == "Configure Docker daemon JSON")
+    return task["ansible.builtin.copy"]["content"]
+
+
+def _mark_templates(value):
+    if isinstance(value, str):
+        return trust_as_template(value)
+    if isinstance(value, dict):
+        return {key: _mark_templates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_mark_templates(item) for item in value]
+    return value
+
+
+def _rendered_daemon_config(virtualization_type, task_file):
+    defaults = yaml.safe_load(ENGINE_DEFAULTS.read_text(encoding="utf-8"))
+    variables = _mark_templates(
+        {
+            **defaults,
+            "groups": {"registry_group": ["registry-1"]},
+            "hostvars": {
+                "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}}
+            },
+            "tofu_data": {"domain": "example.com"},
+            "ansible_facts": {"virtualization_type": virtualization_type},
+        }
+    )
+    return Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(_daemon_copy_content(task_file))
+    )
 
 
 def _copy_task_nodes(node):
@@ -48,6 +85,56 @@ def _daemon_json_writers():
 
 
 class DaemonJsonPinsImageStore(unittest.TestCase):
+    def test_site_and_first_install_render_the_same_lxc_and_vm_config(self):
+        site = yaml.safe_load(
+            (ROOT / "playbooks" / "site" / "01a-docker-daemon.yml").read_text(
+                encoding="utf-8"
+            )
+        )[0]
+        site_call = next(
+            task for task in site["tasks"]
+            if task.get("name") == "Configure Docker daemon on installed Docker hosts"
+        )
+        install_tasks = yaml.safe_load(
+            (ROOT / "roles" / "docker_engine" / "tasks" / "main.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        install_call = next(
+            task for task in install_tasks
+            if task.get("name") == "Configure the Docker daemon before installing Docker packages"
+        )
+        self.assertEqual(site_call["ansible.builtin.include_role"]["name"], "docker_engine")
+        site_task_file = (
+            ROOT
+            / "roles"
+            / site_call["ansible.builtin.include_role"]["name"]
+            / "tasks"
+            / site_call["ansible.builtin.include_role"]["tasks_from"]
+        )
+        install_task_file = ROOT / "roles" / "docker_engine" / "tasks" / install_call[
+            "ansible.builtin.import_tasks"
+        ]
+        self.assertEqual(site_task_file, install_task_file)
+
+        for kind, expect_storage in (("lxc", True), ("kvm", False)):
+            with self.subTest(virtualization_type=kind):
+                rendered = _rendered_daemon_config(kind, site_task_file)
+                installed_rendered = _rendered_daemon_config(kind, install_task_file)
+                self.assertEqual(rendered, installed_rendered)
+                config = json.loads(rendered)
+                self.assertTrue(rendered.endswith("\n"))
+                self.assertEqual(config["registry-mirrors"], ["http://registry-1.example.com:5000"])
+                self.assertEqual(config["insecure-registries"], ["registry-1.example.com:5000"])
+                self.assertEqual(config["log-driver"], "journald")
+                self.assertEqual(config["log-opts"]["tag"], "{{.Name}}")
+                if expect_storage:
+                    self.assertEqual(config["storage-driver"], "fuse-overlayfs")
+                    self.assertIs(config["features"]["containerd-snapshotter"], False)
+                else:
+                    self.assertNotIn("storage-driver", config)
+                    self.assertNotIn("features", config)
+
     def test_every_writer_pins_the_image_store_with_the_driver(self):
         writers = list(_daemon_json_writers())
         self.assertTrue(writers, "no /etc/docker/daemon.json writer was found")
