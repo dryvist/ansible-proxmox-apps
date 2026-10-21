@@ -16,10 +16,14 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "roles/github_runner/tasks/main.yml"
+RECONCILE = ROOT / "roles/github_runner/tasks/reconcile_service_units.yml"
 
 
 def _tasks():
-    return yaml.safe_load(MAIN.read_text(encoding="utf-8"))
+    main_tasks = yaml.safe_load(MAIN.read_text(encoding="utf-8"))
+    include = next(t for t in main_tasks if t.get("name") == "Reconcile the runner systemd units")
+    assert include["ansible.builtin.include_tasks"] == "reconcile_service_units.yml"
+    return yaml.safe_load(RECONCILE.read_text(encoding="utf-8"))
 
 
 class RestartAppliedBeforeTheAssert(unittest.TestCase):

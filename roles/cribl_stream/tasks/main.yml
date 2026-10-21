@@ -229,6 +229,13 @@
   ansible.builtin.include_tasks: github_actions.yml
   when: cribl_stream_github_actions_enabled | bool
 
+# Under --check a first install only previews the unit creation, so service steps skip.
+- name: Check for the Cribl Stream systemd unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cribl.service
+  register: cribl_stream_unit_file
+  when: ansible_check_mode
+
 - name: Enable Cribl Stream boot-start via systemd
   ansible.builtin.command:
     cmd: "{{ cribl_stream_install_dir }}/bin/cribl boot-start enable -m systemd -u {{ cribl_stream_user }}"
@@ -240,6 +247,7 @@
     state: "{{ cribl_stream_service_state }}"
     enabled: "{{ cribl_stream_service_enabled }}"
     daemon_reload: true
+  when: not ansible_check_mode or cribl_stream_unit_file.stat.exists
 
 # Keep admin checks separate from data-path changes. The probe tag runs only
 # when explicitly enabled; routine data-path converges never issue a login.
@@ -251,5 +259,6 @@
 
 - name: Rotate the management API admin credential off the vendor default
   ansible.builtin.include_tasks: rotate_admin_password.yml
+  when: not ansible_check_mode or cribl_stream_unit_file.stat.exists
   tags:
     - cribl_stream_admin
