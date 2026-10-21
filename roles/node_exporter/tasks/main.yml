@@ -73,7 +73,6 @@
   loop_control:
     label: "{{ item.node_exporter_release }}"
   check_mode: false
-  register: node_exporter_release_stage
   tags:
     - node_exporter
 
@@ -84,9 +83,12 @@
     owner: root
     group: root
     mode: "0644"
+  register: node_exporter_tarball_copy
   tags:
     - node_exporter
 
+# Under --check the copy and unpack write nothing, so each step reading their
+# output runs only when that output already exists on the guest.
 - name: Unpack the node_exporter release
   ansible.builtin.unarchive:
     src: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}.tar.gz"
@@ -97,7 +99,15 @@
     creates: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}/node_exporter"
   when: >-
     not ansible_check_mode or
-    not (node_exporter_release_stage.changed | default(false))
+    not (node_exporter_tarball_copy.changed | default(false))
+  tags:
+    - node_exporter
+
+- name: Check for the unpacked node_exporter binary
+  ansible.builtin.stat:
+    path: "{{ node_exporter_install_dir }}/{{ node_exporter_release }}/node_exporter"
+  register: node_exporter_unpacked_binary
+  when: ansible_check_mode
   tags:
     - node_exporter
 
@@ -110,9 +120,7 @@
     group: root
     mode: "0755"
   notify: Restart node_exporter
-  when: >-
-    not ansible_check_mode or
-    not (node_exporter_release_stage.changed | default(false))
+  when: not ansible_check_mode or node_exporter_unpacked_binary.stat.exists
   tags:
     - node_exporter
 
