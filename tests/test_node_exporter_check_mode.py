@@ -16,6 +16,14 @@ def test_node_exporter_stage_result_gates_check_mode_unpack_and_binary_copy():
     assert "throttle" not in stage
     assert "ansible_play_hosts" in stage["loop"]
     assert "unique(attribute='node_exporter_release')" in stage["loop"]
+    # Role defaults are absent from hostvars, so the loop must extract a fact.
+    assert "map('extract', hostvars, 'node_exporter_stage_item')" in stage["loop"]
+    record = task_by_name["Record this host's pinned node_exporter release for controller staging"]
+    assert set(record["ansible.builtin.set_fact"]["node_exporter_stage_item"]) == {
+        "node_exporter_release",
+        "node_exporter_download_url",
+        "node_exporter_sha256sums_url",
+    }
     assert "item.node_exporter_download_url" in stage["ansible.builtin.get_url"]["url"]
     assert "item.node_exporter_release" in stage["ansible.builtin.get_url"]["dest"]
     assert "item.node_exporter_sha256sums_url" in stage["ansible.builtin.get_url"]["checksum"]
