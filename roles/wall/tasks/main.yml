@@ -32,6 +32,7 @@
     - "{{ wall_config_dir }}"
     - "{{ wall_site_dir }}"
     - "{{ wall_feed_dir }}"
+  register: wall_directories
 
 # The checksum comes from the release's own .sha256 asset, fetched at the same
 # pinned tag, so nothing here stores a digest that could drift.
@@ -74,7 +75,14 @@
   loop: "{{ wall_fetch.results }}"
   loop_control:
     label: "{{ item.item.repo }}"
-  when: item.changed or not (item.item.dir ~ '/index.html') is exists
+  when:
+    - item.changed or not (item.item.dir ~ '/index.html') is exists
+    - not (ansible_check_mode and item.changed)
+    - >-
+      not (ansible_check_mode and
+           (wall_directories.results
+            | selectattr('item', 'equalto', item.item.dir)
+            | map(attribute='changed') | first | default(false)))
   notify: Reload nginx
 
 # wall-feed.conf includes wall-feed-proxy.conf by a relative path, which nginx
