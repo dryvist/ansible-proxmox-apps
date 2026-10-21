@@ -88,12 +88,8 @@ documented once at
 | `OPENBAO_GITHUB_HERMES_AUTHOR_{PUBLIC,PRIVATE}_REPOS` | Comma-separated repositories for `hermes-author-{public,private}`; unset = no set | env document |
 | `OPENBAO_GITHUB_WORK_APP_ID` / `_PRIVATE_KEY` | Work App (`github-work` mount) | one-time environment |
 | `OPENBAO_GITHUB_WORK_INSTALLATION_ID` | Work App installation; unset = no mount | env document |
-| `IDRAC_R410_HOST` | R410 iDRAC IP/hostname | env |
-| `IDRAC_R410_USER` | R410 iDRAC username | env |
-| `IDRAC_R410_PASSWORD` | R410 iDRAC password | env |
-| `IDRAC_R710_HOST` | R710 iDRAC IP/hostname | env |
-| `IDRAC_R710_USER` | R710 iDRAC username | env |
-| `IDRAC_R710_PASSWORD` | R710 iDRAC password | env |
+| `idrac_kvm_r410_*` | Console fields in `secret/apps/idrac-kvm-r410` | OpenBao apps prefetch |
+| `idrac_kvm_r710_*` | Optional console fields while the target is disabled | OpenBao apps prefetch |
 | `SONARR_API_KEY` | Deterministic Sonarr API key (servarr_wiring/seerr) | SOPS |
 | `RADARR_API_KEY` | Deterministic Radarr API key (servarr_wiring/seerr) | SOPS |
 | `PROWLARR_API_KEY` | Deterministic Prowlarr API key (servarr_wiring) | SOPS |
@@ -101,3 +97,5 @@ documented once at
 | `PLEX_CLAIM_TOKEN` | Optional fresh Plex claim token (~4-min); passed ad-hoc to a converge or done via the web UI, never stored | ad-hoc / web UI |
 | `PLEX_TOKEN` | Optional Plex account-token override; normally auto-discovered from the claimed server | env (optional) |
 | `GLANCE_LLM_PROFILE_BEARER_TOKEN` | Bearer token for the optional Glance LLM profile tile | env (optional; required when enabled) |
+
+The iDRAC console fields are target-prefixed `host`, `user`, and `password` values so the flat apps-secret merge stays unambiguous.

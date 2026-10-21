@@ -6,7 +6,7 @@ domains this run's hosts need, per group) as hand-maintained data,
 independent of the domain list in dryvist.secrets_management/roles/openbao_secrets/defaults/main/ and
 of the group names in that same play's `hosts:` pattern, the scope-detection
 plays immediately above it, and the tofu-tag-derived groups
-used by the ClickHouse, Langfuse and Git mirror consumers. A typo or a
+used by the ClickHouse, Langfuse, Git mirror, and iDRAC KVM consumers. A typo or a
 renamed/removed domain or group on either side would make
 dryvist.secrets_management/roles/openbao_secrets/tasks/narrow_domains.yml silently
 decide a domain is never needed -- exactly the empty-secret-over-a-live-one
@@ -43,6 +43,7 @@ TOFU_TAG_CONSUMER_GROUPS = {
     "clickhouse_group": "clickhouse",
     "langfuse_group": "langfuse",
     "git_mirror_group": "git-mirror",
+    "idrac_kvm_group": "idrac",
 }
 DEADMAN_SCOPE_GROUPS = {
     "technitium_dns_group",
