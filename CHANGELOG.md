@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.16](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.15...v5.7.16) (2026-10-21)
+
+
+### Bug Fixes
+
+* **node_exporter:** skip service steps for a missing unit in check mode ([#2911](https://github.com/dryvist/ansible-proxmox-apps/issues/2911)) ([ca1ec07](https://github.com/dryvist/ansible-proxmox-apps/commit/ca1ec07687250da8a4fbd7b13bd4a86f2b6ab9d1))
+
 ## [5.7.15](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.14...v5.7.15) (2026-10-21)
 
 
