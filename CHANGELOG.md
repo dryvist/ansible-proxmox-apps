@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.8](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.7...v5.7.8) (2026-10-21)
+
+
+### Bug Fixes
+
+* guard check-mode unarchive steps on their staging results ([#2882](https://github.com/dryvist/ansible-proxmox-apps/issues/2882)) ([4fa8522](https://github.com/dryvist/ansible-proxmox-apps/commit/4fa8522e99965c9e9d7621927fd2499b3bed91a1))
+
 ## [5.7.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.6...v5.7.7) (2026-10-21)
 
 
