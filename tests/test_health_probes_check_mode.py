@@ -172,7 +172,7 @@ PROBES = (
         "Wait for the gateway to answer its health endpoint",
     ),
     (
-        "roles/nautobot/tasks/main.yml",
+        "roles/nautobot/tasks/application_bringup.yml",
         "Wait for the Nautobot web UI to answer",
     ),
     ("roles/netmon/tasks/main.yml", "Verify the Telegraf container is running"),
@@ -260,7 +260,7 @@ FIRST_INSTALL_GUARDS = {
     ("roles/immich/tasks/main.yml", "Verify the Immich server responds"): "immich_compose",
     ("roles/mailpit_docker/tasks/main.yml", "Verify Mailpit web UI health"): "mailpit_docker_compose",
     ("roles/mcp_gateway/tasks/main.yml", "Wait for the gateway to answer its health endpoint"): "mcp_gateway_service",
-    ("roles/nautobot/tasks/main.yml", "Wait for the Nautobot web UI to answer"): "nautobot_server_binary",
+    ("roles/nautobot/tasks/application_bringup.yml", "Wait for the Nautobot web UI to answer"): "nautobot_server_binary",
     ("roles/netmon/tasks/main.yml", "Verify the Telegraf container is running"): "netmon_compose",
     ("roles/network_quality/tasks/main.yml", "Verify the smokeping_prober container is running"): "network_quality_compose",
     ("roles/network_quality/tasks/main.yml", "Verify smokeping_prober is serving metrics"): "network_quality_compose",
@@ -303,7 +303,7 @@ REGISTERED_RESULTS = (
     ("roles/mailpit_docker/tasks/main.yml", "Deploy Mailpit via docker compose", "mailpit_docker_compose"),
     ("roles/mcp_gateway/tasks/main.yml", "Enable and start mcp-gateway", "mcp_gateway_service"),
     (
-        "roles/nautobot/tasks/main.yml",
+        "roles/nautobot/tasks/application_bringup.yml",
         "Read whether the Nautobot server binary exists",
         "nautobot_server_binary",
     ),

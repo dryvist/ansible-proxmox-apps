@@ -1,0 +1,68 @@
+---
+# The migration block only runs while mounts are missing. This timer runs on
+# every converge so unused Docker data is reclaimed after the mounts exist.
+- name: Deploy the Docker data reclaim service
+  ansible.builtin.template:
+    src: docker-prune.service.j2
+    dest: /etc/systemd/system/github-runner-docker-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Check for the Docker data reclaim systemd timer unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/github-runner-docker-prune.timer
+  register: github_runner_docker_prune_timer_unit_file
+  when: ansible_check_mode
+
+- name: Deploy the Docker data reclaim timer
+  ansible.builtin.template:
+    src: docker-prune.timer.j2
+    dest: /etc/systemd/system/github-runner-docker-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the Docker data reclaim timer
+  ansible.builtin.systemd:
+    name: github-runner-docker-prune.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: not ansible_check_mode or github_runner_docker_prune_timer_unit_file.stat.exists
+
+# A cancelled/timed-out job never runs `molecule destroy`, so its container
+# (and anything a role deployed as a docker-compose sibling inside it) is
+# invisible to the prune timer above — prune only touches images/build cache,
+# never a still-running container. Reaped by label (`owner=molecule`, stamped
+# by molecule-plugins on everything it creates), so this can never touch one
+# of the platform services sharing this host.
+- name: Deploy the Molecule orphan-container reaper service
+  ansible.builtin.template:
+    src: molecule-reaper.service.j2
+    dest: /etc/systemd/system/github-runner-molecule-reaper.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Check for the Molecule orphan-container reaper systemd timer unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/github-runner-molecule-reaper.timer
+  register: github_runner_molecule_reaper_timer_unit_file
+  when: ansible_check_mode
+
+- name: Deploy the Molecule orphan-container reaper timer
+  ansible.builtin.template:
+    src: molecule-reaper.timer.j2
+    dest: /etc/systemd/system/github-runner-molecule-reaper.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the Molecule orphan-container reaper timer
+  ansible.builtin.systemd:
+    name: github-runner-molecule-reaper.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: not ansible_check_mode or github_runner_molecule_reaper_timer_unit_file.stat.exists

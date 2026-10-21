@@ -217,6 +217,15 @@
         group: root
         mode: "0644"
 
+    - name: Check for pgBackRest backup timer unit files
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/pgbackrest-backup@{{ item.type }}.timer"
+      loop: "{{ postgres_pgbackrest_schedules }}"
+      loop_control:
+        label: "{{ item.type }}"
+      register: postgres_pgbackrest_timer_unit_files
+      when: ansible_check_mode
+
     - name: Deploy a pgBackRest backup timer per schedule
       ansible.builtin.template:
         src: pgbackrest-backup@.timer.j2
@@ -237,6 +246,11 @@
       loop: "{{ postgres_pgbackrest_schedules }}"
       loop_control:
         label: "{{ item.type }}"
+      when: >-
+        not ansible_check_mode or
+        (postgres_pgbackrest_timer_unit_files.results | default([])
+         | selectattr('stat.exists') | list | length)
+        == (postgres_pgbackrest_schedules | length)
 
 # A primary that cannot archive runs with archiving off. Native mode only:
 # in Patroni mode patroni.yml.j2 applies the same gate to archive_mode at
@@ -358,6 +372,7 @@
       ansible.builtin.systemd:
         name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
         state: stopped
+      when: not (ansible_check_mode and postgres_package_install is changed)
 
     - name: Restore the repository into PGDATA (delta)
       become: true
@@ -374,3 +389,4 @@
       ansible.builtin.systemd:
         name: "postgresql@{{ postgres_cluster_version }}-{{ postgres_cluster_name }}"
         state: started
+      when: not (ansible_check_mode and postgres_package_install is changed)

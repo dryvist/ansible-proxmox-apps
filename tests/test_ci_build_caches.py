@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """The CI build caches must reach every consumer, by name.
 
-Two caches serve the Molecule matrix: the registry mirror (every image the
-runner hosts' daemons pull) and the apt cache (every package a test container
-installs). Each is wired at exactly one place per consumer, and a scenario
-that misses the wiring silently pays the cold-download minutes the caches
-exist to remove -- so the wiring is asserted structurally here.
+The registry mirror serves runner daemons; the apt cache serves test packages.
+These tests verify each consumer's wiring.
 
   * The registry-mirror and apt-proxy plays in site.yml target the docker VMs
     (the runner hosts), not only the LXC containers.
@@ -291,13 +288,11 @@ class CiBuildCaches(unittest.TestCase):
         self.assertNotIn("github_runner_molecule_image", defaults)
 
     def test_the_role_retires_the_old_molecule_image_build_units(self):
-        # The role must remove github-runner-molecule-image.{service,timer}
-        # where present, not just stop deploying them, or an enabled timer
-        # keeps firing a build nothing consumes.
-        main_tasks = list(_tasks(yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())))
-        include = next(
-            t for t in main_tasks if t["name"] == "Retire the former per-host Molecule image build units"
-        )
+        main_tasks = yaml.safe_load((RUNNER / "tasks" / "main.yml").read_text())
+        reconcile = next(t for t in _tasks(main_tasks) if t["name"] == "Reconcile the runner systemd units")
+        self.assertEqual(reconcile["ansible.builtin.include_tasks"], "reconcile_service_units.yml")
+        service_tasks = yaml.safe_load((RUNNER / "tasks" / "reconcile_service_units.yml").read_text())
+        include = next(t for t in _tasks(service_tasks) if t["name"] == "Retire the former per-host Molecule image build units")
         self.assertEqual(include["ansible.builtin.include_tasks"], "retire_molecule_image_build.yml")
 
         tasks = list(
