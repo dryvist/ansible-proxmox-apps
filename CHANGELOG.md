@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.20](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.19...v5.7.20) (2026-10-21)
+
+
+### Bug Fixes
+
+* **homeassistant:** poll the compose deploy past the task timeout ([#2928](https://github.com/dryvist/ansible-proxmox-apps/issues/2928)) ([a9606c2](https://github.com/dryvist/ansible-proxmox-apps/commit/a9606c29ff37808f446d576e5475c41ebe782da3))
+
 ## [5.7.19](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.18...v5.7.19) (2026-10-21)
 
 
