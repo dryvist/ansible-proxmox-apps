@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.14](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.13...v5.7.14) (2026-10-21)
+
+
+### Bug Fixes
+
+* gate check-mode binary installs on guest state ([#2904](https://github.com/dryvist/ansible-proxmox-apps/issues/2904)) ([5324392](https://github.com/dryvist/ansible-proxmox-apps/commit/5324392105fa58a3ec174866d919e1290c34dde9))
+
 ## [5.7.13](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.12...v5.7.13) (2026-10-21)
 
 
