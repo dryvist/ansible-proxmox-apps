@@ -43,8 +43,18 @@
 
 # Staged once per distinct release on the controller (unrestricted egress),
 # never downloaded by the guest itself -- see node_exporter_download_url in
-# defaults/main.yml for why. Each loop item is a hostvars entry so its release,
-# URL, and checksum stay paired across architectures and version overrides.
+# defaults/main.yml for why. Each loop item is one host's recorded release, URL,
+# and checksum, so they stay paired across architectures and version overrides.
+# Role defaults are not in hostvars; the set_fact below puts them there.
+- name: Record this host's pinned node_exporter release for controller staging
+  ansible.builtin.set_fact:
+    node_exporter_stage_item:
+      node_exporter_release: "{{ node_exporter_release }}"
+      node_exporter_download_url: "{{ node_exporter_download_url }}"
+      node_exporter_sha256sums_url: "{{ node_exporter_sha256sums_url }}"
+  tags:
+    - node_exporter
+
 - name: Stage the pinned node_exporter release tarball on the controller
   ansible.builtin.get_url:
     url: "{{ item.node_exporter_download_url }}"
@@ -58,7 +68,7 @@
     ansible_become: false
   run_once: true
   loop: >-
-    {{ ansible_play_hosts | map('extract', hostvars)
+    {{ ansible_play_hosts | map('extract', hostvars, 'node_exporter_stage_item')
        | unique(attribute='node_exporter_release') | list }}
   loop_control:
     label: "{{ item.node_exporter_release }}"

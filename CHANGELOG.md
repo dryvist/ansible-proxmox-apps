@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.11](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.10...v5.7.11) (2026-10-21)
+
+
+### Bug Fixes
+
+* **node_exporter:** stage releases from a recorded per-host fact ([#2894](https://github.com/dryvist/ansible-proxmox-apps/issues/2894)) ([b6bcc2b](https://github.com/dryvist/ansible-proxmox-apps/commit/b6bcc2ba7f24be1ef7620f3db2d4d04041cb4698))
+
 ## [5.7.10](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.9...v5.7.10) (2026-10-21)
 
 
