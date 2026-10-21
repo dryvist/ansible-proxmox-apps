@@ -1,0 +1,42 @@
+## Grafana unified-alerting file provisioning: PVE host load.
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: pve-host-load
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: pve-host-load-high
+        title: PVE host load per core high
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                node_load15{job="pve_node_exporter"}
+                / on (instance)
+                count by (instance) (node_cpu_seconds_total{job="pve_node_exporter", mode="idle"})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [{{ grafana_stack_alert_pve_load_per_core_ratio }}]}
+              refId: B
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: >-
+            PVE host {{ '{{' }} $labels.instance {{ '}}' }} 15-minute load
+            average per core exceeds {{ grafana_stack_alert_pve_load_per_core_ratio }}.
+{% endif %}
