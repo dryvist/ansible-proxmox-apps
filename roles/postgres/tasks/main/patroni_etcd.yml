@@ -112,6 +112,16 @@
     - not postgres_ha_etcd_already_installed
     - not (ansible_check_mode and postgres_ha_etcd_archive_copy is changed)
 
+# Under --check, extraction can be previewed without creating these binaries.
+- name: Check for the extracted etcd binaries
+  ansible.builtin.stat:
+    path: "/tmp/etcd-v{{ postgres_ha_etcd_version }}-linux-amd64/{{ item }}"
+  register: postgres_ha_etcd_binary_sources
+  when: ansible_check_mode
+  loop:
+    - etcd
+    - etcdctl
+
 - name: Install the etcd and etcdctl binaries
   ansible.builtin.copy:
     src: "/tmp/etcd-v{{ postgres_ha_etcd_version }}-linux-amd64/{{ item }}"
@@ -123,7 +133,12 @@
   loop:
     - etcd
     - etcdctl
-  when: not postgres_ha_etcd_already_installed
+  when: >-
+    not postgres_ha_etcd_already_installed and
+    (not ansible_check_mode or
+     (postgres_ha_etcd_binary_sources.results
+      | selectattr('item', 'equalto', item)
+      | map(attribute='stat.exists') | first | default(false)))
   notify: Restart etcd
 
 - name: Remove the staged etcd archive and extracted directory from the target
