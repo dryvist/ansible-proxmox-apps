@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.7.19](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.18...v5.7.19) (2026-10-21)
+
+
+### Bug Fixes
+
+* **mssql_docker:** fetch the Northwind script from a pinned repository commit ([#2919](https://github.com/dryvist/ansible-proxmox-apps/issues/2919)) ([7c54a33](https://github.com/dryvist/ansible-proxmox-apps/commit/7c54a33097418c98a2ea3401aee45888d3194d0c))
+* **site:** bound the media child converge by the Semaphore rail ([#2921](https://github.com/dryvist/ansible-proxmox-apps/issues/2921)) ([042484f](https://github.com/dryvist/ansible-proxmox-apps/commit/042484f489ff135240f8231ca1ce82f549995cf2))
+* skip check-mode first-install steps in nautobot, zammad and docker_engine ([#2923](https://github.com/dryvist/ansible-proxmox-apps/issues/2923)) ([c0eb48b](https://github.com/dryvist/ansible-proxmox-apps/commit/c0eb48bd99abf6bb37b6908ca195f830a340e4fa))
+* skip check-mode service steps for first installs ([#2917](https://github.com/dryvist/ansible-proxmox-apps/issues/2917)) ([e0499d6](https://github.com/dryvist/ansible-proxmox-apps/commit/e0499d66e28742608046107d5702158860cf9e90))
+* **verify-grafana-dashboards:** parse rule timestamps without backreferences ([#2925](https://github.com/dryvist/ansible-proxmox-apps/issues/2925)) ([51b4445](https://github.com/dryvist/ansible-proxmox-apps/commit/51b4445792ad714e6f940d71ab23e9b783f60f1f))
+
 ## [5.7.18](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.17...v5.7.18) (2026-10-21)
 
 
