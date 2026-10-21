@@ -1,14 +1,17 @@
 ---
+# Under --check a first install only previews, so the service steps below skip.
 - name: Install HAProxy package
   ansible.builtin.apt:
     name: "{{ haproxy_package_name }}"
     state: present
     update_cache: true
+  register: haproxy_package_install
 
 - name: Install Nginx packages
   ansible.builtin.apt:
     name: "{{ haproxy_nginx_packages }}"
     state: present
+  register: haproxy_nginx_install
 
 - name: Ensure Nginx streams.d directory exists
   ansible.builtin.file:
@@ -141,6 +144,7 @@
     state: "{{ haproxy_service_state }}"
     enabled: "{{ haproxy_service_enabled }}"
     daemon_reload: true
+  when: not (ansible_check_mode and haproxy_package_install is changed)
 
 - name: Start Nginx service
   ansible.builtin.systemd:
@@ -148,6 +152,7 @@
     state: "{{ haproxy_nginx_service_state }}"
     enabled: "{{ haproxy_nginx_service_enabled }}"
     daemon_reload: true
+  when: not (ansible_check_mode and haproxy_nginx_install is changed)
 
 - name: Verify HAProxy is running
   ansible.builtin.systemd:
@@ -155,6 +160,7 @@
   register: haproxy_status
   changed_when: false
   failed_when: haproxy_status.status.ActiveState != 'active'
+  when: not (ansible_check_mode and haproxy_package_install is changed)
 
 - name: Verify Nginx is running
   ansible.builtin.systemd:
@@ -162,6 +168,7 @@
   register: haproxy_nginx_status
   changed_when: false
   failed_when: haproxy_nginx_status.status.ActiveState != 'active'
+  when: not (ansible_check_mode and haproxy_nginx_install is changed)
 
 - name: Verify HAProxy is listening on TCP ports
   ansible.builtin.wait_for:
@@ -205,7 +212,9 @@
     name: "{{ haproxy_nginx_service_name }}"
     state: restarted
     daemon_reload: true
-  when: (haproxy_nginx_udp_missing.stdout | trim | int) > 0
+  when:
+    - (haproxy_nginx_udp_missing.stdout | trim | int) > 0
+    - not (ansible_check_mode and haproxy_nginx_install is changed)
 
 - name: Verify Nginx is listening on UDP ports
   ansible.builtin.shell: |
