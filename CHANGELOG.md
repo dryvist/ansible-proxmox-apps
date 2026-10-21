@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.18](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.17...v5.7.18) (2026-10-21)
+
+
+### Bug Fixes
+
+* **n8n_docker:** point the seed workflow at the router under ingress_domain ([#2918](https://github.com/dryvist/ansible-proxmox-apps/issues/2918)) ([e4ed9bd](https://github.com/dryvist/ansible-proxmox-apps/commit/e4ed9bd0ea63f2d572c9b2b955df70819e404d6f))
+
 ## [5.7.17](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.16...v5.7.17) (2026-10-21)
 
 
