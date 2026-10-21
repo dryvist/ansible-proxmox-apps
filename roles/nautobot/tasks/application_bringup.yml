@@ -1,0 +1,191 @@
+---
+# =============================================================================
+# Phase 7: Live application bring-up (gated). Its handler flushes restart the
+# services after the Job files above, inside this same part.
+# =============================================================================
+- name: Bring up the Nautobot application
+  when: nautobot_manage_app | bool
+  become: true
+  tags: [nautobot_jobs]
+  block:
+    - name: Run the role's own migrations, post-upgrade and superuser bootstrap
+      ansible.builtin.include_tasks: server_legacy_app.yml
+      when: not (nautobot_server_via_collection | bool)
+
+    # The collection server role has already migrated and started the services,
+    # so only the Job files this role deploys can still need registering.
+    - name: Run Nautobot post-upgrade operations after Job changes
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          exec {{ nautobot_root }}/bin/nautobot-server post_upgrade --no-migrate
+        executable: /bin/bash
+      changed_when: true
+      become: true
+      become_user: "{{ nautobot_user }}"
+      when:
+        - nautobot_server_via_collection | bool
+        - nautobot_jobs_deploy.changed | default(false)
+
+    - name: Publish a role-managed read-only inventory token to OpenBao
+      ansible.builtin.include_tasks:
+        file: readonly_token.yml
+        apply:
+          tags: [nautobot_jobs]
+      when: nautobot_token_publish_openbao | bool
+
+    - name: Publish a role-managed read-only MCP token to OpenBao
+      ansible.builtin.include_tasks:
+        file: mcp_token.yml
+        apply:
+          tags: [nautobot_jobs]
+      when: nautobot_mcp_token_publish_openbao | bool
+
+    - name: Apply pending systemd reload before starting services
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the Nautobot services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - nautobot-server
+        - nautobot-worker
+        - nautobot-scheduler
+      when:
+        - not (nautobot_server_via_collection | bool)
+        - >-
+          not ansible_check_mode or
+          (
+            (item == 'nautobot-server' and nautobot_server_unit_file.stat.exists) or
+            (item == 'nautobot-worker' and nautobot_worker_unit_file.stat.exists) or
+            (item == 'nautobot-scheduler' and nautobot_scheduler_unit_file.stat.exists)
+          )
+
+    - name: Schedule the export Job via celery beat
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          export
+          NAUTOBOT_EXPORT_SCHEDULE_HOUR={{ nautobot_export_schedule_hour | string | quote }}
+          NAUTOBOT_EXPORT_SCHEDULE_MINUTE={{ nautobot_export_schedule_minute | string | quote }} &&
+          exec {{ nautobot_root }}/bin/nautobot-server shell --interface python
+        stdin: "{{ lookup('ansible.builtin.file', 'schedule_export.py') }}"
+        executable: /bin/bash
+      register: nautobot_schedule
+      changed_when: >-
+        {{ 'SCHEDULE_CREATED' in nautobot_schedule.stdout
+           or 'SCHEDULE_REENABLED' in nautobot_schedule.stdout }}
+      become: true
+      become_user: "{{ nautobot_user }}"
+
+    # The export is the only thing that publishes this instance's inventory, and
+    # its ordering guard is what makes a stale artifact loud. Both are inert if
+    # the schedule is absent. Printing SCHEDULE_SKIPPED and letting the converge
+    # continue green lets the export stop publishing with nothing reporting it.
+    # A gate that reports its own failure as success is worse than no gate, so
+    # the converge fails here instead.
+    - name: Assert the export schedule was reconciled
+      ansible.builtin.assert:
+        that:
+          # Both halves are load-bearing. The negative catches a printed
+          # SCHEDULE_SKIPPED; the positive catches empty stdout, which would
+          # otherwise satisfy the negative and pass on no evidence at all.
+          - "'SCHEDULE_SKIPPED' not in nautobot_schedule.stdout"
+          - >-
+            'SCHEDULE_CREATED' in nautobot_schedule.stdout
+            or 'SCHEDULE_REENABLED' in nautobot_schedule.stdout
+            or 'SCHEDULE_EXISTS' in nautobot_schedule.stdout
+        fail_msg: >-
+          The export ScheduledJob was not reconciled: {{
+          nautobot_schedule.stdout | trim | default('(no output)', true) }}.
+          Without it nothing publishes the inventory artifact and the ordering
+          guard cannot fire. Fix the cause — do not skip this task.
+        quiet: true
+      when: not ansible_check_mode
+
+    # Schedule the SSH-CLI discovery sweep (SSOTSyncDevices). Inert unless
+    # NAUTOBOT_ONBOARD_TARGETS is set — see the scope note in defaults/main.yml.
+    - name: Schedule the device-discovery Job via celery beat
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          export
+          NAUTOBOT_ONBOARD_TARGETS={{ nautobot_onboard_targets | string | quote }}
+          NAUTOBOT_ONBOARD_PLATFORM={{ nautobot_onboard_platform | string | quote }}
+          NAUTOBOT_ONBOARD_LOCATION={{ nautobot_onboard_location | string | quote }}
+          NAUTOBOT_ONBOARD_PORT={{ nautobot_onboard_port | string | quote }}
+          NAUTOBOT_DISCOVERY_SCHEDULE_HOUR={{ nautobot_discovery_schedule_hour | string | quote }}
+          NAUTOBOT_DISCOVERY_SCHEDULE_MINUTE={{ nautobot_discovery_schedule_minute | string | quote }} &&
+          exec {{ nautobot_root }}/bin/nautobot-server shell --interface python
+        stdin: "{{ lookup('ansible.builtin.file', 'schedule_discovery.py') }}"
+        executable: /bin/bash
+      register: nautobot_discovery_schedule
+      changed_when: "'DISCOVERY_SCHEDULED' in nautobot_discovery_schedule.stdout"
+      become: true
+      become_user: "{{ nautobot_user }}"
+
+    - name: Read whether the Nautobot server binary exists
+      ansible.builtin.stat:
+        path: "{{ nautobot_root }}/bin/nautobot-server"
+      register: nautobot_server_binary
+
+    - name: Wait for the Nautobot web UI to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ nautobot_web_port }}/"
+        status_code: [200, 302]
+        follow_redirects: none
+      register: nautobot_health
+      until: nautobot_health.status in [200, 302]
+      retries: 20
+      delay: 6
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode or nautobot_server_binary.stat.exists
+
+    # The seed jobs enqueue to the worker, which executes them with its
+    # EnvironmentFile. Flush any pending restart handler first (covers the
+    # nautobot.env-changed case)...
+    - name: Restart nautobot services before enqueuing jobs
+      ansible.builtin.meta: flush_handlers
+
+    # ...and that is the whole mechanism. An unconditional worker restart used
+    # to follow, gated on nautobot_run_seed_jobs "so ordinary converges are
+    # untouched". Now that the flag defaults on, every converge is a seed run,
+    # so that restart would fire every time: permanently `changed`, and able to
+    # kill a scheduled job mid-flight.
+    #
+    # It is not needed. nautobot.env notifies the restart handler, so a changed
+    # env always bounces the worker in the same converge that changed it. A
+    # worker running stale env is therefore a real fault, and run_seed_jobs.py
+    # exits non-zero when any job is skipped, fails or times out — so it now
+    # surfaces as a failed converge instead of being papered over by a restart
+    # on every pass.
+
+    # Load the seed bundle into Nautobot by running the additive SSoT DiffSync
+    # jobs (and, when NAUTOBOT_RUN_EXPORT is set, the export) once. On by
+    # default, paired with nautobot_build_seed, so every converge ingests the
+    # inventory it just resolved rather than replaying an aging bundle. The jobs
+    # are additive (create/update only), so re-running is safe. The worker
+    # executes them with the units' EnvironmentFile, so it already holds the
+    # seed-file path + export S3 credentials.
+    - name: Run the SSoT seed jobs (and optional export) once
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ nautobot_root }}/.nautobot-cmd-env.sh &&
+          export NAUTOBOT_RUN_EXPORT={{ nautobot_run_export | string | quote }} &&
+          exec {{ nautobot_root }}/bin/nautobot-server shell --interface python
+        stdin: "{{ lookup('ansible.builtin.file', 'run_seed_jobs.py') }}"
+        executable: /bin/bash
+      register: nautobot_run_seed
+      # A job that FAILED also prints JOB_DONE (with status FAILURE), so match
+      # the status too — otherwise a failed run reports `changed`.
+      changed_when: nautobot_run_seed.stdout is search('JOB_DONE .+ SUCCESS')
+      become: true
+      become_user: "{{ nautobot_user }}"
+      when:
+        - nautobot_run_seed_jobs | bool
+        - >-
+          not (nautobot_build_seed | bool)
+          or (nautobot_seed_sources_available | default(false) | bool)
