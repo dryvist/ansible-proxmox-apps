@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.9](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.8...v5.7.9) (2026-10-21)
+
+
+### Bug Fixes
+
+* **site:** report media-stack child stderr and rc ([#2885](https://github.com/dryvist/ansible-proxmox-apps/issues/2885)) ([d73ba6f](https://github.com/dryvist/ansible-proxmox-apps/commit/d73ba6f916fb22524bef44c4c3576b2874024425))
+
 ## [5.7.8](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.7...v5.7.8) (2026-10-21)
 
 
