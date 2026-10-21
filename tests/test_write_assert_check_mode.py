@@ -52,7 +52,7 @@ WRITE_RESULT_ASSERTIONS = (
         (),
     ),
     (
-        "roles/nautobot/tasks/main.yml",
+        "roles/nautobot/tasks/application_bringup.yml",
         "Assert the export schedule was reconciled",
         "Schedule the export Job via celery beat",
         "nautobot_schedule",
