@@ -14,6 +14,9 @@
   vars:
     ansible_become: false
     ansible_managed: "test fixture"
+    status_stack_data_dir: /opt/status-stack
+    status_stack_gatus_data_dir: "{{ status_stack_data_dir }}/gatus/data"
+    status_stack_gatus_storage_path: /data/gatus.db
     status_stack_interval: "60s"
     status_stack_ui_dashboard_heading: "Homelab Status"
     status_stack_ntfy_url: "https://ntfy.example.test/observability"
@@ -115,6 +118,47 @@
     - name: Parse the rendered config
       ansible.builtin.set_fact:
         _gatus: "{{ _gatus_raw.content | b64decode | from_yaml }}"
+
+    - name: Assert Gatus stores alert history in SQLite
+      ansible.builtin.assert:
+        that:
+          - _gatus.storage.type == 'sqlite'
+          - _gatus.storage.path == status_stack_gatus_storage_path
+        fail_msg: >-
+          Gatus alert history must use the SQLite database at
+          {{ status_stack_gatus_storage_path }}.
+
+    - name: Render and parse the status stack compose definition
+      ansible.builtin.set_fact:
+        _status_stack_compose: >-
+          {{ lookup('ansible.builtin.template', _compose_template) | from_yaml }}
+      vars:
+        _compose_template: >-
+          {{ playbook_dir }}/../../../roles/status_stack/templates/docker-compose.yml.j2
+        status_stack_gatus_image: fixture/gatus
+        status_stack_gatus_container_name: gatus
+        status_stack_kuma_image: fixture/uptime-kuma
+        status_stack_kuma_container_name: uptime-kuma
+        status_stack_kuma_port: "3001"
+        status_stack_autokuma_image: fixture/autokuma
+        status_stack_autokuma_container_name: autokuma
+        status_stack_autokuma_static_monitors_dir: >-
+          {{ status_stack_data_dir }}/autokuma/static-monitors
+        status_stack_autokuma_kuma_url: http://127.0.0.1:3001
+        status_stack_kuma_admin_username: fixture
+        status_stack_effective_kuma_password: fixture-kuma-password
+
+    - name: Assert Gatus data survives a container replacement
+      ansible.builtin.assert:
+        that:
+          - >-
+            status_stack_data_dir ~ '/gatus/config.yaml:/config/config.yaml:ro'
+            in _status_stack_compose.services.gatus.volumes
+          - status_stack_gatus_data_dir ~ ':/data'
+            in _status_stack_compose.services.gatus.volumes
+        fail_msg: >-
+          Gatus must keep its read-only config mount and persist the SQLite
+          data directory at {{ status_stack_gatus_data_dir }}:/data.
 
     - name: Assert catalog endpoints group as "Category · UI/API"
       ansible.builtin.assert:
