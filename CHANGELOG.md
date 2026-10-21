@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.7.15](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.14...v5.7.15) (2026-10-21)
+
+
+### Bug Fixes
+
+* **homarr:** skip converger output consumers in check mode ([#2908](https://github.com/dryvist/ansible-proxmox-apps/issues/2908)) ([1ea2e22](https://github.com/dryvist/ansible-proxmox-apps/commit/1ea2e22d164d54b1d01ec83b5a376eab80156355))
+* **scripts:** sync the media submodule before the dirty-tree guard ([#2905](https://github.com/dryvist/ansible-proxmox-apps/issues/2905)) ([67fe475](https://github.com/dryvist/ansible-proxmox-apps/commit/67fe4759827863488e601c0cd6d0e819140f20bd))
+
 ## [5.7.14](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.13...v5.7.14) (2026-10-21)
 
 
