@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.7.10](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.9...v5.7.10) (2026-10-21)
+
+
+### Bug Fixes
+
+* **nautobot:** skip the export schedule assertion in check mode ([#2886](https://github.com/dryvist/ansible-proxmox-apps/issues/2886)) ([a126179](https://github.com/dryvist/ansible-proxmox-apps/commit/a12617935a081a4f22f43f7b93e985d9837b95dd))
+* skip write-result assertions in check mode ([#2889](https://github.com/dryvist/ansible-proxmox-apps/issues/2889)) ([9db2894](https://github.com/dryvist/ansible-proxmox-apps/commit/9db289492655967c1246b276558c024ebcf2acbd))
+
 ## [5.7.9](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.8...v5.7.9) (2026-10-21)
 
 
