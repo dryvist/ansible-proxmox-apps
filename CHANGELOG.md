@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.8.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.22...v5.8.0) (2026-10-21)
+
+
+### Features
+
+* **idrac-kvm:** read target credentials from OpenBao ([#2938](https://github.com/dryvist/ansible-proxmox-apps/issues/2938)) ([2d99957](https://github.com/dryvist/ansible-proxmox-apps/commit/2d99957c1870f5f8eabde7ffcfda60dcd0f33412))
+
 ## [5.7.22](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.21...v5.7.22) (2026-10-21)
 
 

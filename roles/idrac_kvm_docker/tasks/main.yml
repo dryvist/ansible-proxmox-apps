@@ -1,36 +1,23 @@
 ---
 # =============================================================================
-# Preflight: assert all iDRAC credentials are present in the environment
+# Preflight: require the prefetched OpenBao credentials for enabled targets
 # =============================================================================
 
-- name: Assert iDRAC credentials are set for each target
+- name: Assert iDRAC credentials are available for each enabled target
   ansible.builtin.assert:
     that:
-      - lookup('env', item.env_prefix ~ '_HOST') | length > 0
-      - lookup('env', item.env_prefix ~ '_USER') | length > 0
-      - lookup('env', item.env_prefix ~ '_PASSWORD') | length > 0
-    fail_msg: "{{ item.env_prefix }}_HOST/USER/PASSWORD must all be set in the environment"
-  loop: "{{ idrac_kvm_docker_targets }}"
+      - item.host | length > 0
+      - item.user | length > 0
+      - item.password | length > 0
+    fail_msg: "OpenBao console credentials are incomplete for {{ item.name }}"
+    quiet: true
+  loop: "{{ idrac_kvm_docker_targets | selectattr('enabled', 'equalto', true) | list }}"
   no_log: true
 
 # Docker itself (docker-ce + compose plugin, LXC-conditional fuse-overlayfs, the
 # fuse-overlayfs daemon.json) is installed by the docker_engine meta dependency
 # (meta/main.yml), which also creates the SDK venv used by the docker_image /
 # docker_prune tasks below (scoped per-task, see their ansible_python_interpreter).
-
-# =============================================================================
-# Host-side CLI fallback (ipmitool over IPMI LAN)
-# =============================================================================
-
-# ipmitool gives a non-Java path to chassis power, SEL, sensor reads against
-# each iDRAC over IPMI 2.0 LAN. Useful when the HTML5 KVM viewer fails (stale
-# session, firmware quirk) and you only need to power-cycle or read the SEL.
-# Installed on the host VM so it's reachable via SSH; the IPMI target is the
-# iDRAC itself (per-target host/user/password from the role-managed .env).
-- name: Install ipmitool for IPMI-over-LAN CLI fallback (power, SEL, sensors)
-  ansible.builtin.apt:
-    name: ipmitool
-    state: present
 
 # =============================================================================
 # Data directories
@@ -168,7 +155,7 @@
     host: 127.0.0.1
     port: "{{ item.host_port }}"
     timeout: 120
-  loop: "{{ idrac_kvm_docker_targets }}"
+  loop: "{{ idrac_kvm_docker_targets | selectattr('enabled', 'equalto', true) | list }}"
 
 - name: Verify each iDRAC KVM HTTP endpoint responds
   ansible.builtin.uri:
@@ -187,4 +174,4 @@
       not (idrac_kvm_docker_compose.skipped | default(false)) and
       (idrac_kvm_docker_compose.actions | default([]) | length == 0)
     )
-  loop: "{{ idrac_kvm_docker_targets }}"
+  loop: "{{ idrac_kvm_docker_targets | selectattr('enabled', 'equalto', true) | list }}"
