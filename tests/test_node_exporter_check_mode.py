@@ -46,3 +46,17 @@ def test_node_exporter_guest_copy_gates_check_mode_unpack_and_binary_copy():
     assert task_by_name["Install the node_exporter binary"].get("when") == (
         "not ansible_check_mode or node_exporter_unpacked_binary.stat.exists"
     )
+
+
+def test_node_exporter_service_steps_skip_a_missing_unit_in_check_mode():
+    tasks = yaml.safe_load((REPO / "roles/node_exporter/tasks/main.yml").read_text(encoding="utf-8"))
+    handlers = yaml.safe_load((REPO / "roles/node_exporter/handlers/main.yml").read_text(encoding="utf-8"))
+    task_by_name = {task.get("name"): task for task in _tasks_in(tasks)}
+    names = [task.get("name") for task in _tasks_in(tasks)]
+
+    probe = task_by_name["Check for the node_exporter systemd unit"]
+    assert probe.get("register") == "node_exporter_unit_file"
+    assert names.index("Check for the node_exporter systemd unit") < names.index("Deploy the node_exporter systemd unit")
+    gate = "not ansible_check_mode or node_exporter_unit_file.stat.exists"
+    assert task_by_name["Enable and start node_exporter"].get("when") == gate
+    assert handlers[0].get("when") == gate
