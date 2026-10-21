@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.22](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.21...v5.7.22) (2026-10-21)
+
+
+### Bug Fixes
+
+* **mssql_docker:** map sample backup files and guard check mode ([#2934](https://github.com/dryvist/ansible-proxmox-apps/issues/2934)) ([e50f5f6](https://github.com/dryvist/ansible-proxmox-apps/commit/e50f5f6362c13f7791d24533e5af072d608f62a1))
+
 ## [5.7.21](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.20...v5.7.21) (2026-10-21)
 
 
