@@ -104,3 +104,55 @@ def test_docker_engine_skips_venv_consumers_after_a_previewed_prerequisite_insta
     )
     assert gate in _conditions(_task(tasks, "Create virtualenv for Ansible Python dependencies"))
     assert gate in _conditions(_task(tasks, "Set Python interpreter to use the venv for subsequent tasks"))
+
+
+def test_docker_daemon_play_skips_hosts_without_dockerd_in_both_modes():
+    play = yaml.safe_load(
+        (REPO / "playbooks" / "site" / "01a-docker-daemon.yml").read_text(
+            encoding="utf-8"
+        )
+    )[0]
+    tasks = play["tasks"]
+    probe = _task(tasks, "Check whether the Docker daemon binary is installed")
+    assert probe["ansible.builtin.stat"]["path"] == "/usr/bin/dockerd"
+    assert probe["register"] == "docker_daemon_dockerd"
+    assert "ansible_check_mode" not in str(probe.get("when", ""))
+
+    configure = _task(tasks, "Configure Docker daemon on installed Docker hosts")
+    ensure = _task(tasks, "Ensure Docker is running")
+    assert configure["ansible.builtin.include_role"]["tasks_from"] == "daemon_json.yml"
+    for task in (configure, ensure):
+        conditions = _conditions(task)
+        assert any("docker_daemon_dockerd.stat.exists" in condition for condition in conditions)
+        assert "ansible_check_mode" not in str(conditions)
+        assert any(
+            "inventory_hostname in groups.get('docker_group', [])" in condition
+            for condition in conditions
+        )
+
+    engine_tasks = _role_yaml("docker_engine", "tasks/main.yml")
+    install = _task(engine_tasks, "Configure the Docker daemon before installing Docker packages")
+    assert install["ansible.builtin.import_tasks"] == configure["ansible.builtin.include_role"]["tasks_from"]
+
+    handlers = _role_yaml("docker_engine", "handlers/main.yml")
+    restart = _task(handlers, "Restart docker")
+    restart_conditions = _conditions(restart)
+    assert any("docker_daemon_dockerd.stat.exists" in condition for condition in restart_conditions)
+    assert "inventory_hostname != (plane_host | default(''))" in restart_conditions
+
+    daemon_tasks = _role_yaml("docker_engine", "tasks/daemon_json.yml")
+    directory_probe = _task(daemon_tasks, "Check whether the Docker configuration directory exists")
+    assert directory_probe["ansible.builtin.stat"]["path"] == "/etc/docker"
+    config_write = _task(daemon_tasks, "Configure Docker daemon JSON")
+    assert config_write["when"] == (
+        "not (ansible_check_mode and not docker_engine_config_directory.stat.exists)"
+    )
+
+    engine_tasks = _role_yaml("docker_engine", "tasks/main.yml")
+    task_names = [task.get("name") for task in _tasks_in(engine_tasks)]
+    assert task_names.index("Install fuse-overlayfs for Docker on ZFS-backed LXC") < task_names.index(
+        "Configure the Docker daemon before installing Docker packages"
+    )
+    assert task_names.index("Configure the Docker daemon before installing Docker packages") < task_names.index(
+        "Install Docker packages"
+    )

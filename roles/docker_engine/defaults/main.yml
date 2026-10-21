@@ -14,14 +14,60 @@ docker_engine_set_global_interpreter: false
 # LXC; disable for roles that run Docker where the host storage driver is fine.
 docker_engine_install_fuse_overlayfs: true
 
-# When true, write /etc/docker/daemon.json to pin the storage driver. Leave
-# false to use Docker's auto-selected driver.
+# On non-VM Docker-in-Docker hosts, write the storage pin when enabled. LXC
+# hosts always receive their required storage pin in the shared daemon config.
 docker_engine_configure_daemon_json: false
 
-# Storage driver written to /etc/docker/daemon.json when
-# docker_engine_configure_daemon_json is true. fuse-overlayfs is required for
-# Docker on ZFS-backed LXC; molecule scenarios override this with vfs.
+# fuse-overlayfs is required for Docker on ZFS-backed LXC; Molecule scenarios
+# override this with vfs.
 docker_engine_storage_driver: fuse-overlayfs
+
+# The shared daemon renderer reads the registry guest from this inventory group
+# and falls back to this port when service_ports.registry is absent.
+docker_engine_registry_group: registry_group
+docker_engine_registry_default_port: 5000
+docker_engine_registry_hosts: "{{ groups[docker_engine_registry_group] | default([]) }}"
+docker_engine_registry_name: "{{ docker_engine_registry_hosts | sort | first | default('') }}"
+docker_engine_registry_port: >-
+  {{ hostvars.get('localhost', {}).get('tofu_data', {})
+     .get('constants', {}).get('service_ports', {})
+     .get('registry', docker_engine_registry_default_port) }}
+
+# Common daemon settings rendered by both the site play and this install role.
+docker_engine_daemon_json_base:
+  log-driver: journald
+  log-opts:
+    tag: "{{ '{{' }}.Name{{ '}}' }}"
+
+docker_engine_daemon_json_registry: >-
+  {{ ({
+       'registry-mirrors': [
+         'http://' ~ docker_engine_registry_name ~ '.' ~ tofu_data.domain ~ ':' ~ (docker_engine_registry_port | string)
+       ],
+       'insecure-registries': [
+         docker_engine_registry_name ~ '.' ~ tofu_data.domain ~ ':' ~ (docker_engine_registry_port | string)
+       ]
+     }) if docker_engine_registry_hosts | length > 0 else {} }}
+
+docker_engine_daemon_json_storage:
+  storage-driver: "{{ docker_engine_storage_driver }}"
+  features:
+    containerd-snapshotter: false
+
+docker_engine_daemon_json_storage_config: >-
+  {{ docker_engine_daemon_json_storage
+     if (
+       ansible_facts['virtualization_type'] | default('') == 'lxc'
+       or (
+         docker_engine_configure_daemon_json | bool
+         and ansible_facts['virtualization_type'] | default('') not in docker_engine_vm_virtualization_types
+       )
+     ) else {} }}
+
+docker_engine_daemon_json: >-
+  {{ docker_engine_daemon_json_base
+     | combine(docker_engine_daemon_json_registry)
+     | combine(docker_engine_daemon_json_storage_config) }}
 
 # Extra pip packages installed into the venv alongside the docker SDK (only when
 # docker_engine_manage_venv is true). Roles whose SDK modules need more than the
@@ -30,7 +76,7 @@ docker_engine_storage_driver: fuse-overlayfs
 docker_engine_venv_extra_packages: []
 
 # Virtualization types from ansible_facts['virtualization_type'] that are virtual machines.
-# A VM is never pinned to a storage driver; see tasks/main.yml.
+# A VM is never pinned to a storage driver; see tasks/daemon_json.yml.
 docker_engine_vm_virtualization_types:
   - kvm
   - qemu

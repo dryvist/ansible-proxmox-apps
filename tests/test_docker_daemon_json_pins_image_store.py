@@ -1,41 +1,52 @@
-"""A pinned Docker storage driver must be written with the legacy image store.
-
-The containerd image store replaces the graph-driver stack, so with it enabled
-`storage-driver` is parsed and then has no effect. A file that pins a driver
-and says nothing about the image store therefore reads as a decision that is
-not in force. On the Docker guests that means fuse-overlayfs, which the ZFS-backed
-containers need, is asked for and not used.
-
-Every writer under roles and playbooks is checked, so a new one cannot
-reintroduce the gap. The Molecule scenarios are out of scope: their instances
-give the inner daemon a volume for its layer root, so the driver it ends up on
-is a real filesystem either way. Jinja expressions are stubbed before parsing
--- the assertion is about the JSON shape, not about any rendered value.
-
-One writer (playbooks/site/01a-docker-daemon.yml) wraps its ENTIRE content in
-one Jinja expression (`content: "{{ (_daemon_json | combine(...)) |
-to_nice_json }}\n"`) rather than embedding `{{ vars }}` inside literal JSON
-text -- the two writers have genuinely different shapes. The stub-and-parse
-approach above silently produced a JSONDecodeError for that writer (an
-uncaught exception counts as a subTest failure, so this was not a quiet
-pass -- but nothing invokes this file from CI today, so it went unnoticed).
-`_daemon_json_writers` falls back to reading that task's own `vars:` dict
-structurally in that case: this test only ever asserts on KEY PRESENCE, never
-on a rendered value, so the unrendered YAML dict already carries everything
-the assertions need.
-"""
+"""The single Docker daemon renderer keeps storage pins effective."""
 
 import json
 from pathlib import Path
-import re
 import unittest
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SEARCH_DIRS = ("roles", "playbooks")
-JINJA = re.compile(r"{{.*?}}", re.S)
+SHARED_WRITER = ROOT / "roles" / "docker_engine" / "tasks" / "daemon_json.yml"
+ENGINE_DEFAULTS = ROOT / "roles" / "docker_engine" / "defaults" / "main.yml"
+
+
+def _daemon_copy_content(task_file):
+    tasks = yaml.safe_load(task_file.read_text(encoding="utf-8"))
+    task = next(task for task in tasks if task.get("name") == "Configure Docker daemon JSON")
+    return task["ansible.builtin.copy"]["content"]
+
+
+def _mark_templates(value):
+    if isinstance(value, str):
+        return trust_as_template(value)
+    if isinstance(value, dict):
+        return {key: _mark_templates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_mark_templates(item) for item in value]
+    return value
+
+
+def _rendered_daemon_config(virtualization_type, task_file):
+    defaults = yaml.safe_load(ENGINE_DEFAULTS.read_text(encoding="utf-8"))
+    variables = _mark_templates(
+        {
+            **defaults,
+            "groups": {"registry_group": ["registry-1"]},
+            "hostvars": {
+                "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}}
+            },
+            "tofu_data": {"domain": "example.com"},
+            "ansible_facts": {"virtualization_type": virtualization_type},
+        }
+    )
+    return Templar(loader=DataLoader(), variables=variables).template(
+        trust_as_template(_daemon_copy_content(task_file))
+    )
 
 
 def _copy_task_nodes(node):
@@ -50,26 +61,6 @@ def _copy_task_nodes(node):
             yield from _copy_task_nodes(item)
 
 
-def _config_from_vars(task_vars):
-    """Reconstruct the daemon.json shape from a task's own `vars:` dict.
-
-    Only ever used as a fallback (below) for a writer whose `content` is not
-    itself parseable JSON once Jinja expressions are stubbed -- i.e. one that
-    wraps its ENTIRE content in a single Jinja expression rather than
-    embedding `{{ vars }}` inside literal JSON text. Every value read here is
-    the raw, unrendered YAML dict Ansible would `combine()` at runtime;
-    unrendered leaf strings are fine because this test only asserts on which
-    KEYS are present, never on a rendered value.
-    """
-    if not isinstance(task_vars, dict):
-        return None
-    combined = {}
-    for key, value in task_vars.items():
-        if key.startswith("_") and isinstance(value, dict):
-            combined.update(value)
-    return combined or None
-
-
 def _daemon_json_writers():
     for directory in SEARCH_DIRS:
         for path in sorted((ROOT / directory).rglob("*.yml")):
@@ -82,21 +73,72 @@ def _daemon_json_writers():
                     continue
                 if copy_args.get("dest") != "/etc/docker/daemon.json":
                     continue
-                content = copy_args.get("content")
-                if not isinstance(content, str):
-                    continue
-                try:
-                    config = json.loads(JINJA.sub("stub", content))
-                except json.JSONDecodeError:
-                    config = _config_from_vars(task.get("vars"))
-                if config is not None:
-                    yield path, config
+                if path == SHARED_WRITER:
+                    defaults = yaml.safe_load(ENGINE_DEFAULTS.read_text(encoding="utf-8"))
+                    config = {
+                        **defaults["docker_engine_daemon_json_base"],
+                        **defaults["docker_engine_daemon_json_storage"],
+                    }
+                else:
+                    config = None
+                yield path, config
 
 
 class DaemonJsonPinsImageStore(unittest.TestCase):
+    def test_site_and_first_install_render_the_same_lxc_and_vm_config(self):
+        site = yaml.safe_load(
+            (ROOT / "playbooks" / "site" / "01a-docker-daemon.yml").read_text(
+                encoding="utf-8"
+            )
+        )[0]
+        site_call = next(
+            task for task in site["tasks"]
+            if task.get("name") == "Configure Docker daemon on installed Docker hosts"
+        )
+        install_tasks = yaml.safe_load(
+            (ROOT / "roles" / "docker_engine" / "tasks" / "main.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        install_call = next(
+            task for task in install_tasks
+            if task.get("name") == "Configure the Docker daemon before installing Docker packages"
+        )
+        self.assertEqual(site_call["ansible.builtin.include_role"]["name"], "docker_engine")
+        site_task_file = (
+            ROOT
+            / "roles"
+            / site_call["ansible.builtin.include_role"]["name"]
+            / "tasks"
+            / site_call["ansible.builtin.include_role"]["tasks_from"]
+        )
+        install_task_file = ROOT / "roles" / "docker_engine" / "tasks" / install_call[
+            "ansible.builtin.import_tasks"
+        ]
+        self.assertEqual(site_task_file, install_task_file)
+
+        for kind, expect_storage in (("lxc", True), ("kvm", False)):
+            with self.subTest(virtualization_type=kind):
+                rendered = _rendered_daemon_config(kind, site_task_file)
+                installed_rendered = _rendered_daemon_config(kind, install_task_file)
+                self.assertEqual(rendered, installed_rendered)
+                config = json.loads(rendered)
+                self.assertTrue(rendered.endswith("\n"))
+                self.assertEqual(config["registry-mirrors"], ["http://registry-1.example.com:5000"])
+                self.assertEqual(config["insecure-registries"], ["registry-1.example.com:5000"])
+                self.assertEqual(config["log-driver"], "journald")
+                self.assertEqual(config["log-opts"]["tag"], "{{.Name}}")
+                if expect_storage:
+                    self.assertEqual(config["storage-driver"], "fuse-overlayfs")
+                    self.assertIs(config["features"]["containerd-snapshotter"], False)
+                else:
+                    self.assertNotIn("storage-driver", config)
+                    self.assertNotIn("features", config)
+
     def test_every_writer_pins_the_image_store_with_the_driver(self):
         writers = list(_daemon_json_writers())
         self.assertTrue(writers, "no /etc/docker/daemon.json writer was found")
+        self.assertEqual([path for path, _config in writers], [SHARED_WRITER])
         for path, config in writers:
             with self.subTest(path=str(path.relative_to(ROOT))):
                 if "storage-driver" not in config:
@@ -115,7 +157,7 @@ class DaemonJsonPinsImageStore(unittest.TestCase):
         container's short ID, which nobody can search on without first
         looking the ID up. log-opts.tag is what makes a container's own
         output findable by name in the journal (and, downstream, in
-        Splunk) -- see playbooks/site/01a-docker-daemon.yml.
+        Splunk) -- see roles/docker_engine/tasks/daemon_json.yml.
         """
         writers = list(_daemon_json_writers())
         self.assertTrue(writers, "no /etc/docker/daemon.json writer was found")

@@ -36,6 +36,8 @@ MOLECULE = ROOT / "molecule"
 SHARED_TASK = "../resources/tasks/apt_proxy.yml"
 BOOT_WAIT = "../resources/tasks/wait_for_boot.yml"
 RUNNER = ROOT / "roles" / "github_runner"
+DOCKER_ENGINE = ROOT / "roles" / "docker_engine"
+DOCKER_DAEMON_TASKS = DOCKER_ENGINE / "tasks" / "daemon_json.yml"
 BASE_IMAGE = "mirror.gcr.io/geerlingguy/docker-debian12-ansible:latest"
 
 
@@ -45,6 +47,11 @@ def _play(name):
             if play.get("name") == name:
                 return play
     raise AssertionError(f"play {name!r} not found in {SITE} or {DOCKER_DAEMON_SITE}")
+
+
+def _daemon_json_task():
+    tasks = yaml.safe_load(DOCKER_DAEMON_TASKS.read_text(encoding="utf-8"))
+    return next(task for task in tasks if task["name"] == "Configure Docker daemon JSON")
 
 
 def _tasks(node):
@@ -84,13 +91,13 @@ class CiBuildCaches(unittest.TestCase):
         # Guest names resolve under the estate domain; the ingress subdomain
         # carries only ingress vhosts. tofu_data.domain matches the apt
         # Proxy-Auto-Detect hook, which addresses its own guest the same way.
-        play = _play("Configure Docker registry mirror on docker hosts")
-        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
-        host = task["vars"]["_registry_host"]
-        self.assertIn("tofu_data.domain", host)
-        self.assertNotIn("ingress_domain", host)
-        self.assertNotIn("container_ip", host)
-        self.assertIn("groups['registry_group']", str(task["when"]))
+        defaults = yaml.safe_load((DOCKER_ENGINE / "defaults" / "main.yml").read_text())
+        registry_config = defaults["docker_engine_daemon_json_registry"]
+        self.assertIn("docker_engine_registry_group", defaults["docker_engine_registry_hosts"])
+        self.assertIn("docker_engine_registry_name", registry_config)
+        self.assertIn("tofu_data.domain", registry_config)
+        self.assertNotIn("ingress_domain", registry_config)
+        self.assertNotIn("container_ip", registry_config)
 
     def test_the_mirror_host_and_apt_proxy_url_render_under_the_estate_domain(self):
         # A real Templar render of the ACTUAL expressions, not a
@@ -98,61 +105,64 @@ class CiBuildCaches(unittest.TestCase):
         # set to two DIFFERENT values, each URL must land on the estate
         # domain, never the ingress one -- the bug this guards was a guest
         # name built from the wrong one, which resolves to nothing.
-        play = _play("Configure Docker registry mirror on docker hosts")
-        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
-        registry_host_expr = trust_as_template(task["vars"]["_registry_host"])
+        task = _daemon_json_task()
+        defaults = yaml.safe_load((DOCKER_ENGINE / "defaults" / "main.yml").read_text())
         apt_proxy_defaults = yaml.safe_load(
             (RUNNER / "defaults" / "main.yml").read_text()
         )
+        content_expr = trust_as_template(task["ansible.builtin.copy"]["content"])
         apt_proxy_expr = trust_as_template(apt_proxy_defaults["github_runner_apt_proxy_url"])
         tofu_inventory = json.loads((ROOT / "tests" / "inventory_load" / "tofu_inventory.json").read_text())
         tofu_inventory["domain"] = "example.com"
         variables = _mark_templates(
             {
+                **defaults,
                 "groups": {"registry_group": ["registry-1"]},
                 "ingress_domain": "pve.example.com",
                 "tofu_data": tofu_inventory,
+                "hostvars": {
+                    "localhost": {
+                        "tofu_data": {"constants": {"service_ports": {"registry": 5000}}}
+                    }
+                },
+                "ansible_facts": {"virtualization_type": "kvm"},
             }
         )
         templar = Templar(loader=DataLoader(), variables=variables)
-        registry_host = templar.template(registry_host_expr)
+        parsed_daemon_json = json.loads(templar.template(content_expr))
         apt_proxy_url = templar.template(apt_proxy_expr)
-        self.assertTrue(registry_host.endswith(".example.com"), registry_host)
-        self.assertNotIn("pve.", registry_host)
+        self.assertEqual(
+            parsed_daemon_json["registry-mirrors"],
+            ["http://registry-1.example.com:5000"],
+        )
+        self.assertEqual(
+            parsed_daemon_json["insecure-registries"],
+            ["registry-1.example.com:5000"],
+        )
         self.assertEqual(apt_proxy_url, "http://cache-a.example.com:3142")
+        self.assertNotIn("pve.", str(parsed_daemon_json))
         self.assertNotIn("pve.", apt_proxy_url)
 
     def test_daemon_json_content_renders_as_valid_json_with_one_newline(self):
-        # A real render of the WHOLE content: expression, not a
-        # reimplementation -- a `>-` folded scalar with a trailing
-        # `{{ "\n" }}` renders the two characters backslash-n literally
-        # instead of a real newline, which is invalid JSON and leaves dockerd
-        # refusing to start. json.loads() and an exact-newline check catch
-        # that the string-matching tests above cannot.
-        play = _play("Configure Docker registry mirror on docker hosts")
-        task = next(t for t in _tasks(play) if t["name"] == "Configure Docker registry mirror")
+        task = _daemon_json_task()
         content_expr = task["ansible.builtin.copy"]["content"]
-        fixture = {
-            "groups": {"registry_group": ["registry-1"]},
-            "hostvars": {
-                "registry-1": {},
-                "localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}},
-            },
-            "tofu_data": {"domain": "example.com"},
-            "ansible_facts": {"virtualization_type": "kvm"},
-            "host_tags": ["docker"],
-        }
-        variables = {**fixture, **task["vars"]}
-        templar = Templar(loader=DataLoader(), variables=_mark_templates(variables))
+        defaults = yaml.safe_load((DOCKER_ENGINE / "defaults" / "main.yml").read_text())
+        variables = _mark_templates(
+            {
+                **defaults,
+                "groups": {"registry_group": ["registry-1"]},
+                "hostvars": {"localhost": {"tofu_data": {"constants": {"service_ports": {"registry": 5000}}}}},
+                "tofu_data": {"domain": "example.com"},
+                "ansible_facts": {"virtualization_type": "lxc"},
+            }
+        )
+        templar = Templar(loader=DataLoader(), variables=variables)
         rendered = templar.template(trust_as_template(content_expr))
         self.assertTrue(rendered.endswith("\n"))
         self.assertFalse(rendered.endswith("\n\n"))
-        self.assertNotIn("\\n", rendered)
-        parsed = json.loads(rendered)  # raises if the daemon.json this writes is invalid
-        # Containers inherit the host's own upstream resolvers by default
-        # (dockerd's documented behavior); the daemon config does not pin a
-        # resolver.
-        self.assertNotIn("dns", parsed)
+        parsed = json.loads(rendered)
+        self.assertEqual(parsed["registry-mirrors"], ["http://registry-1.example.com:5000"])
+        self.assertEqual(parsed["storage-driver"], "fuse-overlayfs")
 
     def test_docker_vms_gather_the_facts_the_netplan_override_needs(self):
         # The netplan override is templated from facts (the VM's own default
