@@ -134,6 +134,13 @@
   ansible.builtin.import_tasks: install.yml
   when: traefik_manage_services | bool
 
+# Under --check a first install only previews, so the service steps below skip.
+- name: Check for the Traefik systemd unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/traefik.service
+  register: traefik_unit_file
+  when: ansible_check_mode
+
 - name: Render the Traefik systemd unit
   ansible.builtin.template:
     src: traefik.service.j2
@@ -150,7 +157,9 @@
     state: started
     enabled: true
     daemon_reload: true
-  when: traefik_manage_services | bool
+  when:
+    - traefik_manage_services | bool
+    - not ansible_check_mode or traefik_unit_file.stat.exists
 
 # --- Post-deploy: verify Traefik actually ACCEPTED the dynamic config --------
 # Traefik's file provider hot-reloads dynamic.yml and, on a parse/build error,
