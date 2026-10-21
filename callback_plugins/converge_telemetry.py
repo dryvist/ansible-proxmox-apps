@@ -22,6 +22,8 @@ DOCUMENTATION = """
       - Emits one C(ansible:converge) event per host processed by the run,
         carrying the host FQDN, playbook name, repository git SHA and the
         per-host ok/changed/failed/unreachable/rescued counters.
+      - Emits one C(ansible:converge:run) event at normal playbook end with the
+        resolved roster count and playbook name.
       - Emits one C(ansible:converge:roster) event per inventory host so a
         Splunk alert can detect hosts that exist in inventory but have never
         reported a converge (orphans).
@@ -82,6 +84,7 @@ _spec.loader.exec_module(_events)
 STATS_KEY = _events.STATS_KEY
 CHECK_MODE_KEY = _events.CHECK_MODE_KEY
 SOURCETYPE_CONVERGE = _events.SOURCETYPE_CONVERGE
+SOURCETYPE_RUN = _events.SOURCETYPE_RUN
 SOURCETYPE_ROSTER = _events.SOURCETYPE_ROSTER
 SOURCETYPE_TASK = _events.SOURCETYPE_TASK
 SOURCETYPE_INTERRUPTED = _events.SOURCETYPE_INTERRUPTED

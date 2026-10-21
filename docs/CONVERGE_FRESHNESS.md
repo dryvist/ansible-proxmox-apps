@@ -99,7 +99,25 @@ Telemetry that can break a converge is worse than no telemetry.
 
 ### Events
 
-Both sourcetypes set the HEC `host` field to the guest **FQDN**.
+The run event has no HEC `host` field. Per-host converge and roster events set
+it to the guest **FQDN**.
+
+`sourcetype="ansible:converge:run"` — one event at normal playbook end, even
+when the resolved inventory has no converge targets:
+
+```json
+{
+  "hosts": 0,
+  "playbook": "site.yml",
+  "repo": "ansible-proxmox-apps",
+  "git_sha": "<40-char sha>"
+}
+```
+
+`hosts` counts the published roster (which excludes the controller), so an
+empty inventory is distinct from missing telemetry. The low-host-count alert
+uses the prior seven days for that playbook and requires three prior runs
+before comparing with the median. A zero-host run alerts without history.
 
 `sourcetype="ansible:converge"` — one per host processed by the run:
 
@@ -160,9 +178,9 @@ different name; nothing else in this repo hard-codes it.
 
 ## Alerts
 
-Both alerts avoid `tstats`: accelerated/indexed-field searches hide dormant
-data, and an alert whose entire purpose is to detect **absence** must never be
-built on a search path that can silently return nothing.
+The alerts use raw events rather than `tstats`: accelerated/indexed-field
+searches hide dormant data, and an alert whose purpose is to detect **absence**
+must never use a search path that can silently return nothing.
 
 ### Alert 1 — stale converge (no successful converge in 7 days)
 
@@ -205,14 +223,34 @@ Runs daily. The `last_in_inventory > -7d` clause scopes the alert to hosts
 instead of alerting forever. No `join` and no subsearch, so neither the
 subsearch result cap nor an autofinalize can silently truncate the answer.
 
+### Alert 3 — low host count (zero or less than half the seven-day median)
+
+```spl
+index=ansible sourcetype="ansible:converge:run" earliest=-7d
+| eval host_count=tonumber(hosts)
+| where isnum(host_count) AND isnotnull(playbook)
+| sort 0 playbook _time
+| streamstats current=f window=0 count as history_count
+             median(host_count) as median_hosts by playbook
+| where host_count=0
+    OR (history_count>=3 AND host_count < median_hosts * 0.5)
+| table _time, playbook, host_count, median_hosts, history_count, repo, git_sha
+```
+
+`window=0` uses all earlier rows in the bounded seven-day search range, while
+`current=f` excludes the run being evaluated. The median comparison requires
+three prior runs; the zero-host branch does not. It runs every 15 minutes and
+suppresses repeated dispatches of the same run for one hour.
+
 ## Where this lands
 
-`docs/splunk/converge_freshness_savedsearches.conf` carries both alerts as
-ready-to-deploy `savedsearches.conf` stanzas. They now also ship as code in
+`docs/splunk/converge_freshness_savedsearches.conf` carries the stale, orphan,
+and low-host saved searches as portable `savedsearches.conf` stanzas. The same
+alerts, plus `ansible_apply_owed`, ship as code in
 `ansible-splunk` (`roles/splunk_docker/templates/savedsearches.conf.j2`,
-stanzas `ansible_stale_converge`, `ansible_orphan_host`, `ansible_apply_owed`),
-which is what actually deploys them; keep the two in sync or retire this copy
-once that has converged.
+stanzas `ansible_stale_converge`, `ansible_orphan_host`, `ansible_apply_owed`,
+and `ansible_converge_host_count`), which is what actually deploys them. Keep
+the shared stanzas in sync or retire this copy once that has converged.
 
 `ansible-splunk` owns the Splunk deployment, so it must:
 
