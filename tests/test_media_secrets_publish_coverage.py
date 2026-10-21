@@ -22,6 +22,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GROUP_VARS = REPO_ROOT / "inventory" / "group_vars"
 TELEMETRY_PLAYBOOK = REPO_ROOT / "playbooks" / "site" / "00-load-and-telemetry.yml"
+MEDIA_CONVERGE_PLAYBOOK = REPO_ROOT / "playbooks" / "site" / "05-media-and-gate.yml"
 PUBLISH_TASK_FILE = REPO_ROOT / "playbooks" / "tasks" / "publish_secret_domain_facts.yml"
 PREFETCH_PLAY = "Pre-fetch resource-domain secrets from OpenBao"
 PUBLISH_TASK = "Publish each domain's merged secrets to application hosts"
@@ -91,6 +92,43 @@ class TestMediaSecretsPublishCoverage(unittest.TestCase):
             f"but its {PUBLISH_TASK!r} task does not set bao_media_secrets -- it will "
             "render {} on those hosts",
         )
+
+    def test_media_child_diagnostics_include_rc_and_both_output_tails(self):
+        plays = yaml.safe_load(MEDIA_CONVERGE_PLAYBOOK.read_text())
+        play = next(
+            item
+            for item in plays
+            if item.get("name")
+            == "Converge the media stack from its own repository"
+        )
+        converge = next(
+            task
+            for task in play["tasks"]
+            if task.get("name", "").startswith("Converge the media stack")
+        )
+        run = next(
+            task
+            for task in converge["block"]
+            if task.get("name") == "Run the media stack's own site.yml"
+        )
+        recap = next(
+            task
+            for task in converge["block"]
+            if task.get("name") == "Report the media stack's recap"
+        )
+        rescue = next(
+            task
+            for task in converge["rescue"]
+            if task.get("name")
+            == "Surface the media-stack converge output before logging the failure"
+        )
+
+        self.assertTrue(run["no_log"])
+        for task in (recap, rescue):
+            message = task["ansible.builtin.debug"]["msg"]
+            for field in ("rc", "stdout_lines", "stderr_lines", "[-20:]"):
+                with self.subTest(task=task["name"], field=field):
+                    self.assertIn(field, message)
 
 
 if __name__ == "__main__":
