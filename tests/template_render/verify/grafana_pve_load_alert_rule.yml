@@ -1,0 +1,65 @@
+---
+- name: Render and verify the Grafana PVE host load alert
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-pve-load.yml.j2
+    _contactpoints_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/contactpoints.yml.j2
+    _notification_policy_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/notification-policies.yml.j2
+  tasks:
+    - name: Render the PVE load alert, contact point, and notification policy
+      ansible.builtin.set_fact:
+        _pve_load_group: >-
+          {{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0] }}
+        _pve_contact_point: >-
+          {{ (lookup('ansible.builtin.template', _contactpoints_template)
+              | from_yaml).contactPoints[0].receivers[0] }}
+        _pve_policy: >-
+          {{ (lookup('ansible.builtin.template', _notification_policy_template)
+              | from_yaml).policies[0] }}
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+        grafana_stack_alert_cribl_hec_url: >-
+          http://syslog.example.test:8088/services/collector/raw?index=ansible&source=grafana-alert&sourcetype=grafana%3Aalert
+        grafana_stack_alert_cribl_hec_token: fixture-hec-token-not-real
+
+    - name: Assert the rule measures load per CPU core and waits 15 minutes
+      ansible.builtin.assert:
+        that:
+          - _pve_load_group.interval == grafana_stack_alert_eval_interval
+          - _pve_load_rule.uid == 'pve-host-load-high'
+          - _pve_load_rule.for == '15m'
+          - _pve_load_rule.labels.severity == 'warning'
+          - "'node_load1{job=\"pve_node_exporter\"}' in _pve_load_expr"
+          - "'node_cpu_seconds_total' in _pve_load_expr"
+          - "'mode=\"idle\"' in _pve_load_expr"
+          - >-
+            _pve_load_rule.data[1].model.conditions[0].evaluator.params[0]
+            | float == grafana_stack_alert_pve_load_per_core_ratio | float
+        fail_msg: >-
+          PVE load alert must use the PVE node exporter metrics, normalize by
+          idle CPU series, and hold the warning for the declared interval.
+      vars:
+        _pve_load_rule: "{{ _pve_load_group.rules[0] }}"
+        _pve_load_expr: "{{ _pve_load_rule.data[0].model.expr }}"
+
+    - name: Assert delivery schedule, throttling, and destination
+      ansible.builtin.assert:
+        that:
+          - _pve_contact_point.type == 'webhook'
+          - _pve_contact_point.settings.url is search('index=ansible&source=grafana-alert')
+          - _pve_contact_point.settings.authorization_scheme == 'Splunk'
+          - _pve_policy.receiver == grafana_stack_alert_contact_point_name
+          - _pve_policy.group_interval == '5m'
+          - _pve_policy.repeat_interval == grafana_stack_alert_repeat_interval
+          - _pve_policy.routes[0].object_matchers == [['severity', '=', 'warning']]
+          - _pve_policy.routes[0].repeat_interval == grafana_stack_alert_warning_repeat_interval
+        fail_msg: >-
+          PVE load alerts must use the existing grouped Grafana-to-Cribl route
+          and its warning throttle.
