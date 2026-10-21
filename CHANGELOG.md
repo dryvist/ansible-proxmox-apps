@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.12](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.11...v5.7.12) (2026-10-21)
+
+
+### Bug Fixes
+
+* **node_exporter:** gate check-mode unpack and install on guest state ([#2898](https://github.com/dryvist/ansible-proxmox-apps/issues/2898)) ([d272da6](https://github.com/dryvist/ansible-proxmox-apps/commit/d272da65b8c06c5219d17d5806b31a817e01e6d3))
+
 ## [5.7.11](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.10...v5.7.11) (2026-10-21)
 
 
