@@ -231,6 +231,13 @@ def test_clickhouse_domain_is_mapped_to_its_real_consumer_groups():
     assert set(clickhouse_groups) <= _tofu_tag_consumer_groups()
 
 
+def test_postgres_backup_s3_domain_is_mapped_to_both_postgres_groups():
+    assert _domain_groups().get("postgres_backup_s3") == [
+        "postgres_group",
+        "postgres_ai_group",
+    ]
+
+
 def _domains_requested_for_active_groups(active_groups: set[str]) -> set[str]:
     domain_groups = _domain_groups()
     return {

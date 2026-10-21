@@ -174,3 +174,34 @@ def test_patroni_pki_tls_tasks_log_in_and_revoke():
         assert "auth/token/revoke-self" in contents, relative_path
         assert "always:" in contents, relative_path
         assert "postgres_ha_bao_addr" in contents, relative_path
+
+
+def test_pgbackrest_s3_inputs_use_optional_openbao_domain_values():
+    defaults = yaml.safe_load(_read("roles/postgres/defaults/main/02-pgbackrest.yml"))
+    expected = {
+        "postgres_backup_s3_endpoint":
+            "{{ bao_postgres_backup_s3_secrets.AWS_ENDPOINT_URL | default('', true) }}",
+        "postgres_backup_s3_access_key_id":
+            "{{ bao_postgres_backup_s3_secrets.AWS_ACCESS_KEY_ID | default('', true) }}",
+        "postgres_backup_s3_secret_access_key":
+            "{{ bao_postgres_backup_s3_secrets.AWS_SECRET_ACCESS_KEY | default('', true) }}",
+    }
+
+    assert {name: defaults[name] for name in expected} == expected
+    assert defaults["postgres_backup_s3_region"] == (
+        "{{ bao_postgres_backup_s3_secrets.AWS_REGION | default('us-east-1', true) }}"
+    )
+    assert all(
+        "lookup('env', 'POSTGRES_BACKUP_S3_" not in str(value)
+        for value in defaults.values()
+    )
+
+    guard = defaults["postgres_pgbackrest_credentials_present"]
+    assert all(
+        f"({name} | length > 0)" in guard
+        for name in (
+            "postgres_backup_s3_endpoint",
+            "postgres_backup_s3_access_key_id",
+            "postgres_backup_s3_secret_access_key",
+        )
+    )

@@ -24,6 +24,7 @@
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_apps_installed
+  check_mode: false
   changed_when: false
   failed_when: >-
     technitium_dns_apps_installed.failed or
@@ -65,6 +66,7 @@
     technitium_dns_query_log_install.json is not defined or
     technitium_dns_query_log_install.json.status != "ok"
   when:
+    - not ansible_check_mode
     - technitium_dns_apply | bool
     - not technitium_dns_query_log_app_installed
   no_log: true
@@ -93,6 +95,7 @@
     technitium_dns_query_log_update.json is not defined or
     technitium_dns_query_log_update.json.status != "ok"
   when:
+    - not ansible_check_mode
     - technitium_dns_apply | bool
     - technitium_dns_query_log_app_installed
     - technitium_dns_query_log_app_live_version != technitium_dns_query_log_app_version
@@ -113,12 +116,15 @@
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_apps_verify
+  check_mode: false
   changed_when: false
   failed_when: >-
     technitium_dns_apps_verify.failed or
     technitium_dns_apps_verify.json is not defined or
     technitium_dns_apps_verify.json.status != "ok"
-  when: technitium_dns_apply | bool
+  when:
+    - technitium_dns_apply | bool
+    - not ansible_check_mode or technitium_dns_query_log_app_installed | bool
   no_log: true
 
 - name: Require the Log Exporter app to have actually loaded
@@ -140,7 +146,9 @@
       DNS server log for an assembly load exception, and pin a version whose
       OFFICIAL vendor-built zip is mirrored (never a hand-built one).
     quiet: true
-  when: technitium_dns_apply | bool
+  when:
+    - technitium_dns_apply | bool
+    - not ansible_check_mode or technitium_dns_query_log_app_installed | bool
 
 - name: Read the live Log Exporter app config
   delegate_to: localhost
@@ -153,12 +161,15 @@
     return_content: true
     timeout: "{{ technitium_dns_api_timeout }}"
   register: technitium_dns_query_log_live
+  check_mode: false
   changed_when: false
   failed_when: >-
     technitium_dns_query_log_live.failed or
     technitium_dns_query_log_live.json is not defined or
     technitium_dns_query_log_live.json.status != "ok"
-  when: technitium_dns_apply | bool
+  when:
+    - technitium_dns_apply | bool
+    - not ansible_check_mode or technitium_dns_query_log_app_installed | bool
   no_log: true
 
 # Manage ONLY the syslog exporter block: merge our syslog settings over the
@@ -176,7 +187,9 @@
       {{ (technitium_dns_query_log_live.json.response.config
           | default('{}', true) | from_json)
          | combine({'syslog': technitium_dns_query_log_syslog}, recursive=true) }}
-  when: technitium_dns_apply | bool
+  when:
+    - technitium_dns_apply | bool
+    - not ansible_check_mode or technitium_dns_query_log_app_installed | bool
 
 # config/set is an unconditional overwrite on the Technitium side — the drift
 # compare (merged desired vs live) is what keeps re-runs change-free.
@@ -200,6 +213,7 @@
     technitium_dns_query_log_set.json is not defined or
     technitium_dns_query_log_set.json.status != "ok"
   when:
+    - not ansible_check_mode
     - technitium_dns_apply | bool
     - technitium_dns_query_log_desired_config != technitium_dns_query_log_live_config
   no_log: true

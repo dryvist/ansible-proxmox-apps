@@ -1,12 +1,10 @@
 """Read-only health probes that must execute in Ansible check mode."""
 
-from pathlib import Path
-
 import pytest
 import yaml
 
+from health_probes_check_mode_support import REPO, _tasks_in
 
-REPO = Path(__file__).resolve().parents[1]
 PROBES = (
     (
         "roles/grafana_stack/tasks/main.yml",
@@ -115,6 +113,31 @@ PROBES = (
     (
         "roles/technitium_dns/tasks/main/build_records.yml",
         "Read this node's live zone type (authoritative over any heuristic)",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/validate_and_auth.yml",
+        "Authenticate to this node's Technitium API (per-host session token)",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/build_records.yml",
+        "Check if DNS zone exists",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/infra_a_records.yml",
+        "Get existing A records for zone",
+    ),
+    (
+        "roles/technitium_dns/tasks/main/infra_a_records.yml",
+        "Look up retired guest A records",
+    ),
+    ("roles/technitium_dns/tasks/query_log.yml", "List installed DNS apps"),
+    (
+        "roles/technitium_dns/tasks/query_log.yml",
+        "Re-read the DNS app list after install or update",
+    ),
+    (
+        "roles/technitium_dns/tasks/query_log.yml",
+        "Read the live Log Exporter app config",
     ),
     (
         "roles/technitium_dns/tasks/main/read_soa_serial.yml",
@@ -342,18 +365,6 @@ SKIPPED_PROBE_FOLLOWUPS = (
 )
 
 
-def _tasks_in(value):
-    if isinstance(value, list):
-        for item in value:
-            yield from _tasks_in(item)
-    elif isinstance(value, dict):
-        if "name" in value:
-            yield value
-        for key in ("block", "rescue", "always"):
-            if key in value:
-                yield from _tasks_in(value[key])
-
-
 @pytest.mark.parametrize(("relative_path", "task_name"), PROBES)
 def test_read_only_health_probes_run_in_check_mode(relative_path, task_name):
     tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
@@ -404,20 +415,3 @@ def test_check_mode_skipped_probes_skip_their_followups(relative_path, task_name
     when = task.get("when", "")
     condition = " ".join(when) if isinstance(when, list) else when
     assert ".skipped | default(false)" in condition
-
-
-def test_node_exporter_stage_result_gates_check_mode_unpack_and_binary_copy():
-    relative_path = "roles/node_exporter/tasks/main.yml"
-    tasks = yaml.safe_load((REPO / relative_path).read_text(encoding="utf-8"))
-    task_by_name = {task.get("name"): task for task in _tasks_in(tasks)}
-
-    stage = task_by_name["Stage the pinned node_exporter release tarball on the controller"]
-    assert stage.get("register") == "node_exporter_release_stage"
-
-    for task_name in (
-        "Unpack the node_exporter release",
-        "Install the node_exporter binary",
-    ):
-        condition = task_by_name[task_name].get("when", "")
-        assert "not ansible_check_mode" in condition
-        assert "node_exporter_release_stage.changed" in condition
