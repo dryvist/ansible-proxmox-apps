@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.13](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.12...v5.7.13) (2026-10-21)
+
+
+### Bug Fixes
+
+* **unpoller:** skip the check-mode binary install until the binary exists ([#2901](https://github.com/dryvist/ansible-proxmox-apps/issues/2901)) ([46f4d13](https://github.com/dryvist/ansible-proxmox-apps/commit/46f4d138dfa7806c5370912e24923a8276335217))
+
 ## [5.7.12](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.11...v5.7.12) (2026-10-21)
 
 
