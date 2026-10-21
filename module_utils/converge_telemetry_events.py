@@ -125,7 +125,7 @@ def build_events(summaries, config, playbook, now):
         return result
 
     events = []
-    # stats.processed also includes the controller setup play.
+    # The published roster excludes localhost; stats.processed does not.
     events.append(
         envelope(
             None,
