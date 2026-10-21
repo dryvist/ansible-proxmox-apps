@@ -23,18 +23,6 @@
     - docker_vms
     - baseline
   handlers:
-    - name: Restart docker
-      # Never on the plane host (inventory/group_vars/all.yml plane_host):
-      # this play targets docker_vms, which includes the host running the
-      # Semaphore compose stack. Restarting Docker there tears down the
-      # Semaphore container mid-task (task 278 hung on exactly this handler).
-      # The plane host still gets its daemon.json written above; it just
-      # picks up the mirror config on its next restart for some other reason.
-      when: inventory_hostname != plane_host
-      ansible.builtin.systemd:
-        name: docker
-        state: restarted
-
     - name: Apply netplan
       ansible.builtin.command:
         cmd: netplan apply
@@ -143,76 +131,28 @@
           getent hosts {{ groups['apt_cacher_group'] | sort | first }}.{{ tofu_data.domain }}
       changed_when: false
 
-    # This play is the single owner of /etc/docker/daemon.json on docker LXCs
-    # and on the docker VMs. roles/idrac_kvm_docker no longer writes the
-    # storage-driver here (removed on a separate branch) to avoid two writers
-    # fighting over the same file; roles/github_runner's docker_engine
-    # dependency leaves the file alone for the same reason.
-    #
-    # The mirror is addressed by name: the registry guest is whichever host
-    # carries the `registry` tag, reached at its own FQDN under the estate
-    # domain (guest names resolve there; the ingress subdomain carries only
-    # ingress vhosts). The daemon speaks plain HTTP to it, which is why the
-    # same name:port is also listed as an insecure registry.
-    - name: Configure Docker registry mirror
+    # docker_engine is the single renderer. Hosts without dockerd skip this
+    # play's file and service tasks; their app role writes the complete config
+    # before installing Docker so the daemon starts with its final settings.
+    - name: Check whether the Docker daemon binary is installed
+      when: inventory_hostname in groups.get('docker_group', [])
+      ansible.builtin.stat:
+        path: /usr/bin/dockerd
+      register: docker_daemon_dockerd
+
+    - name: Configure Docker daemon on installed Docker hosts
+      ansible.builtin.include_role:
+        name: docker_engine
+        tasks_from: daemon_json.yml
       when:
         - groups['registry_group'] | default([]) | length > 0
         - inventory_hostname in groups.get('docker_group', [])
-      vars:
-        # A guest name resolves under the estate domain, never the ingress
-        # subdomain -- that one carries only ingress vhosts (see the apt
-        # Proxy-Auto-Detect hook above, which addresses its own guest the
-        # same way).
-        _registry_host: "{{ groups['registry_group'] | sort | first }}.{{ tofu_data.domain }}"
-        _registry_port: >-
-          {{ hostvars['localhost']['tofu_data']
-             ['constants']['service_ports']['registry']
-             | default(5000) }}
-        _is_lxc: "{{ ansible_facts['virtualization_type'] | default('') == 'lxc' }}"
-        _daemon_json:
-          registry-mirrors: ["http://{{ _registry_host }}:{{ _registry_port }}"]
-          insecure-registries: ["{{ _registry_host }}:{{ _registry_port }}"]
-          log-driver: journald
-          # Docker's journald driver otherwise tags every entry with the
-          # container's short ID, so a container's own output is findable in
-          # the journal only by first looking up that ID. {{.Name}} is
-          # Docker's own log-opts template syntax (not Jinja); the {{ '{{' }}
-          # escape produces that literal string in the rendered JSON, the
-          # same escape this repo already uses for a Go template inside a
-          # Jinja file (roles/cribl_docker_stack/templates/docker-stack.yml.j2
-          # hostname:). This is a DAEMON DEFAULT: it takes effect for a
-          # container created after this file changes and the daemon
-          # restarts (handler below) -- it does not retag a container
-          # already running under the previous (or no) daemon.json. Compose
-          # only recreates a container when ITS OWN rendered file changes, so
-          # nothing here forces that; each already-running container adopts
-          # this default the next time something else recreates it.
-          log-opts:
-            tag: "{{ '{{' }}.Name{{ '}}' }}"
-        _lxc_storage:
-          storage-driver: fuse-overlayfs
-          features:
-            containerd-snapshotter: false
-        # A double-quoted YAML scalar is required here: only that form lets
-        # the trailing \n be a YAML escape for a real newline. The folded
-        # (>-) block scalar this replaced instead passed {{ "\n" }} through
-        # Jinja literally, writing the two characters backslash-n into the
-        # file and making it invalid JSON -- dockerd then refuses to start.
-        _daemon_json_final: >-
-          {{ (_daemon_json | combine(_lxc_storage if _is_lxc else {}))
-             | to_nice_json }}
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        content: "{{ _daemon_json_final }}\n"
-        owner: root
-        group: root
-        mode: '0644'
-      notify: Restart docker
+        - docker_daemon_dockerd.stat.exists | default(false)
 
-    # A daemon that failed on an unmet pin stays down (start-limit-hit) until
-    # something starts it again; an unchanged daemon.json fires no handler.
     - name: Ensure Docker is running
-      when: inventory_hostname in groups.get('docker_group', [])
+      when:
+        - inventory_hostname in groups.get('docker_group', [])
+        - docker_daemon_dockerd.stat.exists | default(false)
       ansible.builtin.systemd:
         name: docker
         state: started

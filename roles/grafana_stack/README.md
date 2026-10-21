@@ -21,8 +21,8 @@ observability backend — contract in terraform-proxmox
 
 Ports come from the tofu `service_ports` constants
 (`grafana_web`/`victoriametrics`) with upstream defaults as fallback. Docker
-itself comes from the `docker_engine` meta dependency; `daemon.json` is owned
-by the registry-mirror play in `site.yml`, never written here.
+and its shared `daemon.json` renderer come from the `docker_engine` meta
+dependency; this role does not write the file.
 
 Dashboards come from
 [`dryvist/grafana-dashboards`](https://github.com/dryvist/grafana-dashboards)

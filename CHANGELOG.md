@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.21](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.20...v5.7.21) (2026-10-21)
+
+
+### Bug Fixes
+
+* **docker_engine:** configure daemon before install ([#2931](https://github.com/dryvist/ansible-proxmox-apps/issues/2931)) ([84f719c](https://github.com/dryvist/ansible-proxmox-apps/commit/84f719cc4342ef8b9b7595d1833831cd2197a2e4))
+
 ## [5.7.20](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.19...v5.7.20) (2026-10-21)
 
 
