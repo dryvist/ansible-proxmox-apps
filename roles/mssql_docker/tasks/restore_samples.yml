@@ -18,6 +18,7 @@
     label: "{{ item.name }}"
   register: mssql_docker_db_exists
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Download sample database files
@@ -45,13 +46,16 @@
       - >-
         RESTORE DATABASE [{{ item.name }}]
         FROM DISK = '/var/opt/mssql/backup/{{ item.name }}.bak'
-        WITH MOVE '{{ item.name }}' TO '/var/opt/mssql/data/{{ item.name }}.mdf',
-             MOVE '{{ item.name }}_log' TO '/var/opt/mssql/data/{{ item.name }}_log.ldf',
-             REPLACE, STATS = 10
+        WITH
+        {% for file in item.logical_files %}
+        MOVE '{{ file.name }}' TO '/var/opt/mssql/data/{{ item.name }}{{ file.suffix }}',
+        {% endfor %}
+        REPLACE, STATS = 10
     env:
       SQLCMDPASSWORD: "{{ mssql_docker_sa_password }}"
   loop: "{{ mssql_docker_sample_databases }}"
   when:
+    - not ansible_check_mode
     - item.type | default('bak') == 'bak'
     - item.name not in mssql_docker_db_exists.results[ansible_loop.index0].stdout | default('')
   loop_control:
@@ -81,10 +85,13 @@
     {{ mssql_docker_sample_databases
        | selectattr('type', 'defined')
        | selectattr('type', 'eq', 'sql') | list }}
-  when: item.name not in mssql_docker_db_exists.results |
-        selectattr('item.name', 'defined') |
-        map(attribute='stdout') |
-        join('')
+  when:
+    - not ansible_check_mode
+    - >-
+      item.name not in mssql_docker_db_exists.results |
+      selectattr('item.name', 'defined') |
+      map(attribute='stdout') |
+      join('')
   loop_control:
     label: "{{ item.name }}"
   changed_when: false
@@ -108,6 +115,7 @@
       SQLCMDPASSWORD: "{{ mssql_docker_sa_password }}"
   register: mssql_docker_db_list
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Show restored databases
