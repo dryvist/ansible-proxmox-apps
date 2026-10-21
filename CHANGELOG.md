@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.7.7](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.6...v5.7.7) (2026-10-21)
+
+
+### Bug Fixes
+
+* **homarr:** skip post-upgrade assertion in check mode ([#2874](https://github.com/dryvist/ansible-proxmox-apps/issues/2874)) ([f428fc3](https://github.com/dryvist/ansible-proxmox-apps/commit/f428fc3a6d651820b9cdd16c4c691745fe47fced))
+* **postgres:** read pgBackRest S3 inputs from OpenBao domain ([#2878](https://github.com/dryvist/ansible-proxmox-apps/issues/2878)) ([b14a615](https://github.com/dryvist/ansible-proxmox-apps/commit/b14a6155298575f2ba2ad846205eaadc30c61629))
+* stage pinned app assets and run read-only checks in check mode ([#2873](https://github.com/dryvist/ansible-proxmox-apps/issues/2873)) ([8a83a93](https://github.com/dryvist/ansible-proxmox-apps/commit/8a83a93e741cfeee4cf983d622cd3ca474b0dab8))
+
 ## [5.7.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.5...v5.7.6) (2026-10-20)
 
 
