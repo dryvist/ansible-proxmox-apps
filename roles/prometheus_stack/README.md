@@ -42,10 +42,9 @@ bridge — that would break ICMP source-routing.
 
 ## daemon.json ownership
 
-This role does **not** write `/etc/docker/daemon.json`. The registry-mirror play in
-`playbooks/site.yml` is the single owner of that file on docker LXCs (it sets the
-`fuse-overlayfs` storage driver and the pull-through mirror together). A per-role
-write would clobber the mirror.
+This role does **not** write `/etc/docker/daemon.json`. Its `docker_engine` meta
+dependency supplies the shared renderer, which sets the mirror and LXC storage
+driver together; the site play reuses it for already-installed Docker hosts.
 
 ## Targets / privacy
 

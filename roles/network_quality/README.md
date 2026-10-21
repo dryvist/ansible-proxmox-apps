@@ -22,8 +22,9 @@ would break ICMP source-routing (same rationale as `prometheus_stack`).
 
 ## daemon.json ownership
 
-This role does **not** write `/etc/docker/daemon.json`. The registry-mirror play in
-`playbooks/site.yml` is the single owner of that file on docker LXCs.
+This role does **not** write `/etc/docker/daemon.json`. Its `docker_engine` meta
+dependency supplies the shared renderer, which the site play also uses for
+already-installed Docker hosts.
 
 ## Wiring smokeping into Prometheus
 
