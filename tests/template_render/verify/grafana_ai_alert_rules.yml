@@ -207,6 +207,40 @@
     - name: Render the base alert rules
       ansible.builtin.set_fact:
         _base_rule_groups: "{{ lookup('ansible.builtin.template', _base_rules_template) | from_yaml }}"
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+
+    - name: Assert disk alerts cover PVE and guest filesystems at the escalation levels
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            _disk_rules | map(attribute='uid') | list
+            == ['disk-usage-warning', 'disk-usage-high', 'disk-usage-critical']
+          - _disk_rules | map(attribute='labels.severity') | list == ['info', 'warning', 'critical']
+          - >-
+            _disk_rules | map(attribute='data') | map('last') | map(attribute='model')
+            | map(attribute='conditions') | map('first') | map(attribute='evaluator')
+            | map(attribute='params') | map('first') | list == [80, 90, 95]
+          - _disk_rules | selectattr('for', 'equalto', '15m') | list | length == 3
+          - >-
+            _disk_rules | map(attribute='data') | map('first') | map(attribute='model')
+            | map(attribute='expr') | unique | list | length == 1
+          - "'job=~' in _disk_rules[0].data[0].model.expr"
+          - "'pve_node_exporter' in _disk_rules[0].data[0].model.expr"
+          - "'guest_node_exporter' in _disk_rules[0].data[0].model.expr"
+          - "'node_filesystem_avail_bytes' in _disk_rules[0].data[0].model.expr"
+          - "'node_filesystem_size_bytes' in _disk_rules[0].data[0].model.expr"
+          - "'fstype!~' in _disk_rules[0].data[0].model.expr"
+          - "'tmpfs|overlay' in _disk_rules[0].data[0].model.expr"
+        fail_msg: >-
+          Disk alerts must cover real filesystems from both exporter jobs at
+          80/90/95 percent with info/warning/critical escalation.
+        success_msg: Three disk alert levels cover PVE and guest filesystems.
+      vars:
+        _disk_rules: >-
+          {{ _base_rule_groups.groups | map(attribute='rules') | flatten
+             | selectattr('uid', 'match', '^disk-usage-') | list }}
 
     - name: Assert the frozen-ETL rule tests the aggregate, not every series
       ansible.builtin.assert:
