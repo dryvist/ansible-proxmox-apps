@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.17](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.16...v5.7.17) (2026-10-21)
+
+
+### Bug Fixes
+
+* **syslog_forwarder:** skip rsyslog service steps for a previewed install ([#2914](https://github.com/dryvist/ansible-proxmox-apps/issues/2914)) ([26a3ecb](https://github.com/dryvist/ansible-proxmox-apps/commit/26a3ecba5f208db1ccd5cb9ac3dc8536fa2af2e0))
+
 ## [5.7.16](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.15...v5.7.16) (2026-10-21)
 
 
