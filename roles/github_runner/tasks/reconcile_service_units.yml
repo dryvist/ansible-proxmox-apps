@@ -1,0 +1,104 @@
+---
+- name: Check for optional organization review runner systemd unit templates
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/github-runner-review-{{ item.org }}@.service"
+  loop: "{{ github_runner_active_review_orgs }}"
+  register: github_runner_review_unit_file_checks
+  when: ansible_check_mode
+
+- name: Deploy optional organization review runner pools
+  ansible.builtin.include_tasks: deploy_review_pool.yml
+  loop: "{{ github_runner_active_review_orgs }}"
+  loop_control:
+    loop_var: github_runner_review_pool
+    label: "{{ github_runner_review_pool.org }}"
+
+- name: Fetch and deploy the runner seccomp profile
+  ansible.builtin.include_tasks: seccomp_profile.yml
+
+- name: Check for the standard GitHub runner systemd unit template
+  ansible.builtin.stat:
+    path: /etc/systemd/system/github-runner@.service
+  register: github_runner_unit_file
+  when: ansible_check_mode
+
+- name: Deploy the runner systemd unit
+  ansible.builtin.template:
+    src: github-runner@.service.j2
+    dest: /etc/systemd/system/github-runner@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart github runners
+
+- name: Retire the former per-host Molecule image build units
+  ansible.builtin.include_tasks: retire_molecule_image_build.yml
+
+- name: Reconcile the runner systemd instances
+  ansible.builtin.include_tasks: reconcile_runner_units.yml
+
+- name: Reconcile optional review runner systemd instances
+  ansible.builtin.include_tasks: reconcile_review_runner_units.yml
+
+# A changed unit file or env file has notified a pool restart. Apply it BEFORE
+# the assertion below: a failed assert ends the play for this host, and
+# handlers flush only at the end of a play that reaches it, so a unit still
+# running the previous unit file would keep running it on every later converge
+# too -- each one failing the same assert, none ever restarting the pool.
+- name: Apply any pending runner restart before checking the pool
+  ansible.builtin.meta: flush_handlers
+
+# Re-read after the changes above so the assertion sees current state rather
+# than the snapshot taken before the pool was started. An ephemeral runner
+# leaves `running` for RestartSec after every job it finishes, so a single
+# read can catch a healthy unit between jobs; keep reading until every wanted
+# unit is up, and only then judge.
+- name: Re-read the installed services
+  ansible.builtin.service_facts:
+  register: github_runner_service_read
+  until: >-
+    github_runner_all_wanted_units
+    | reject('in', github_runner_service_read.ansible_facts.services
+                   | dict2items
+                   | selectattr('value.state', 'in', ['running', 'activating'])
+                   | map(attribute='key') | list)
+    | list | length == 0
+  retries: 6
+  delay: 10
+  failed_when: false
+
+- name: Assert every pooled runner unit is running
+  vars:
+    # `activating` counts: systemd reports it while `docker run` is pulling the
+    # image or the runner is registering, which a converge passes through
+    # normally. Anything else -- failed, inactive, absent -- is a real fault.
+    _bad: >-
+      {{ github_runner_all_wanted_units
+         | reject('in', ansible_facts.services
+                        | dict2items
+                        | selectattr('value.state', 'in', ['running', 'activating'])
+                        | map(attribute='key') | list)
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - _bad | length == 0
+    fail_msg: >-
+      Runner unit(s) not running: {{ _bad | join(', ') }}. Check
+      `journalctl -u github-runner@N` on the host; a failed `docker run` here
+      means the pool is smaller than {{ github_runner_replicas }} and jobs will
+      queue without any other symptom.
+
+# Runs LAST, after every wanted-unit stop above: a unit stop sends the
+# container SIGTERM, and the image's own entrypoint deregisters from GitHub
+# on that signal using the token this agent renders -- stopping the agent
+# first would leave nothing to deregister with. At 0 replicas nothing will
+# ever consume a fresh token again, so the agent itself is torn down too,
+# rather than left polling OpenBao and minting tokens no container reads.
+- name: Stop the runner token agent when no replicas are wanted
+  ansible.builtin.systemd:
+    name: openbao-github-runner-agent.service
+    state: stopped
+    enabled: false
+  when:
+    - github_runner_replicas | int == 0
+    - not ansible_check_mode or github_runner_agent_unit_file.stat.exists
