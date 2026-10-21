@@ -156,3 +156,53 @@ def test_docker_daemon_play_skips_hosts_without_dockerd_in_both_modes():
     assert task_names.index("Configure the Docker daemon before installing Docker packages") < task_names.index(
         "Install Docker packages"
     )
+
+
+def test_mssql_sample_database_execs_handle_check_mode():
+    tasks = _role_yaml("mssql_docker", "tasks/restore_samples.yml")
+    probe = _task(tasks, "Check if sample databases already exist")
+    restore_bak = _task(tasks, "Restore .bak sample databases")
+    run_sql = _task(tasks, "Run SQL script databases")
+    verify = _task(tasks, "Verify sample databases were restored")
+
+    assert probe["check_mode"] is False
+    assert "not ansible_check_mode" in _conditions(restore_bak)
+    assert "not ansible_check_mode" in _conditions(run_sql)
+    assert verify["check_mode"] is False
+    assert all(task["no_log"] is True for task in (probe, restore_bak, run_sql, verify))
+
+
+def test_mssql_sample_backup_restore_maps_each_logical_file():
+    defaults = _role_yaml("mssql_docker", "defaults/main.yml")
+    databases = defaults["mssql_docker_sample_databases"]
+    logical_files = {
+        database["name"]: [(file["name"], file["suffix"]) for file in database["logical_files"]]
+        for database in databases
+        if database.get("type", "bak") == "bak"
+    }
+
+    assert logical_files == {
+        "AdventureWorksLT2022": [
+            ("AdventureWorksLT2022_Data", ".mdf"),
+            ("AdventureWorksLT2022_Log", "_log.ldf"),
+        ],
+        "AdventureWorks2022": [
+            ("AdventureWorks2022_Data", ".mdf"),
+            ("AdventureWorks2022_Log", "_log.ldf"),
+        ],
+        "AdventureWorksDW2022": [
+            ("AdventureWorksDW2022_data", ".mdf"),
+            ("AdventureWorksDW2022_Log", "_log.ldf"),
+        ],
+        "WideWorldImporters-Full": [
+            ("WWI_Primary", ".mdf"),
+            ("WWI_UserData", "_UserData.ndf"),
+            ("WWI_Log", "_log.ldf"),
+            ("WWI_InMemory_Data_1", "_InMemory_Data_1"),
+        ],
+    }
+
+    restore = _task(_role_yaml("mssql_docker", "tasks/restore_samples.yml"), "Restore .bak sample databases")
+    query = restore["community.docker.docker_container_exec"]["argv"][-1]
+    assert "{% for file in item.logical_files %}" in query
+    assert "{{ item.name }}{{ file.suffix }}" in query
