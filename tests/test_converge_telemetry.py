@@ -51,6 +51,22 @@ class EventShapeContract(unittest.TestCase):
             ["alpha.example.test", "bravo.example.test"],
         )
 
+    def test_run_event_reports_resolved_roster_count(self):
+        run_events = [e for e in self.events if e["sourcetype"] == telemetry.SOURCETYPE_RUN]
+        self.assertEqual(len(run_events), 1)
+        envelope = run_events[0]
+        self.assertEqual(envelope["index"], "ansible")
+        self.assertNotIn("host", envelope)
+        self.assertEqual(
+            envelope["event"],
+            {
+                "hosts": 3,
+                "playbook": "site.yml",
+                "repo": telemetry.SOURCE,
+                "git_sha": CONFIG["git_sha"],
+            },
+        )
+
     def test_roster_covers_every_inventory_host(self):
         self.assertEqual(
             sorted(e["host"] for e in self.roster),
@@ -93,15 +109,15 @@ class EventShapeContract(unittest.TestCase):
 class FakeStats(object):
     """Minimal stand-in for Ansible's end-of-run ``AggregateStats``."""
 
-    def __init__(self, config):
+    def __init__(self, config, processed=None):
         self.custom = {"_run": {telemetry.STATS_KEY: config}}
-        self.processed = {"alpha": 1}
+        self.processed = {"alpha": 1} if processed is None else processed
 
     def summarize(self, host):  # noqa: ARG002 - one fixed clean host is enough
         return summary()
 
 
-def emit_and_capture(config, cliargs):
+def emit_and_capture(config, cliargs, processed=None, playbook="unknown"):
     """Run the callback's emit path; return every ``open_url`` call it made."""
     posted = []
     original_open_url = telemetry.open_url
@@ -110,7 +126,8 @@ def emit_and_capture(config, cliargs):
     context.CLIARGS = ImmutableDict(cliargs)
     try:
         callback = CaptureCallback()
-        callback.v2_playbook_on_stats(FakeStats(config))
+        callback._playbook_name = playbook
+        callback.v2_playbook_on_stats(FakeStats(config, processed))
     finally:
         telemetry.open_url = original_open_url
         context.CLIARGS = original_cliargs
@@ -150,6 +167,28 @@ class CheckModeContract(unittest.TestCase):
             self.assertFalse(telemetry.is_check_mode(CONFIG))
         finally:
             context.CLIARGS = original
+
+
+class EmptyInventoryContract(unittest.TestCase):
+    def test_controller_only_run_publishes_zero_resolved_hosts(self):
+        config = dict(CONFIG, roster=[])
+        posted = emit_and_capture(
+            config, {}, processed={"localhost": 1}, playbook="site.yml"
+        )
+        self.assertEqual(len(posted), 1)
+
+        body = posted[0][1]["data"]
+        decoder = json.JSONDecoder()
+        index = 0
+        events = []
+        while index < len(body):
+            event, index = decoder.raw_decode(body, index)
+            events.append(event)
+
+        run_events = [e for e in events if e["sourcetype"] == telemetry.SOURCETYPE_RUN]
+        self.assertEqual(len(run_events), 1)
+        self.assertEqual(run_events[0]["event"]["hosts"], 0)
+        self.assertEqual(run_events[0]["event"]["playbook"], "site.yml")
 
 
 class DesiredStateFieldsContract(unittest.TestCase):
