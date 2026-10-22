@@ -1,0 +1,161 @@
+---
+# Homebox native install. The controller stages the checksum-verified release
+# archive (LXCs here are firewalled outbound-internal-only), extracts the single
+# binary, and copies it to the target — the same controller-staging pattern as
+# roles/vikunja.
+
+- name: Validate Homebox secrets are set
+  ansible.builtin.include_role:
+    name: dryvist.secrets_management.openbao_secrets
+    tasks_from: assert_nonempty.yml
+  vars:
+    openbao_secrets_required_vars:
+      - homebox_db_password
+  when: homebox_database_driver == 'postgres'
+
+- name: Create homebox system group
+  ansible.builtin.group:
+    name: "{{ homebox_system_group }}"
+    system: true
+    state: present
+
+- name: Create homebox system user
+  ansible.builtin.user:
+    name: "{{ homebox_user }}"
+    group: "{{ homebox_system_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ homebox_install_dir }}"
+    create_home: false
+    state: present
+
+# The data directory is a persistent mount provisioned by tofu-proxmox. These
+# tasks set ownership and mode on it and never create the mount itself.
+- name: Create Homebox directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ homebox_install_dir }}", owner: root, group: root, mode: "0755" }
+    - { path: "{{ homebox_config_dir }}", owner: root, group: root, mode: "0750" }
+    - { path: "{{ homebox_data_dir }}", owner: "{{ homebox_user }}", group: "{{ homebox_system_group }}", mode: "0750" }
+  loop_control:
+    label: "{{ item.path }}"
+
+# ansible_become: false on the delegated tasks is REQUIRED — Ansible inherits
+# the play's become: true on delegated tasks regardless of task-level become,
+# which fails with "sudo: a password is required" on the controller.
+- name: Stage the Homebox release archive on controller (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ homebox_archive_url }}"
+    dest: "/tmp/{{ homebox_archive }}"
+    checksum: "sha256:{{ homebox_archive_sha256 }}"
+    mode: "0644"
+    force: true
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+
+- name: Create the controller extraction directory for Homebox
+  ansible.builtin.file:
+    path: "/tmp/homebox-{{ homebox_version }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+
+- name: Extract the Homebox binary on controller
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ homebox_archive }}"
+    dest: "/tmp/homebox-{{ homebox_version }}"
+    remote_src: true
+    include:
+      - "{{ homebox_binary_name }}"
+    # unarchive re-extracts (and reports changed) every run without this guard;
+    # the archive is checksum-pinned, so an existing extract is always current.
+    creates: "/tmp/homebox-{{ homebox_version }}/{{ homebox_binary_name }}"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  check_mode: false
+
+- name: Copy the Homebox binary to the target
+  ansible.builtin.copy:
+    src: "/tmp/homebox-{{ homebox_version }}/{{ homebox_binary_name }}"
+    dest: "{{ homebox_binary_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart homebox
+
+# Holds the database password and every backup credential, so it is root-only
+# (systemd reads EnvironmentFile before it drops privileges).
+- name: Render the Homebox environment file
+  ansible.builtin.template:
+    src: homebox.env.j2
+    dest: "{{ homebox_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart homebox
+
+# Under --check a first install only previews, so the service steps below skip.
+- name: Check for the Homebox systemd unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/homebox.service
+  register: homebox_unit_file
+  when: ansible_check_mode
+
+- name: Install the homebox systemd unit
+  ansible.builtin.template:
+    src: homebox.service.j2
+    dest: /etc/systemd/system/homebox.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart homebox
+
+- name: Enable and start Homebox
+  ansible.builtin.systemd:
+    name: homebox
+    state: started
+    enabled: true
+    daemon_reload: true
+  register: homebox_service
+  when: not ansible_check_mode or homebox_unit_file.stat.exists
+
+# Flush so a config/unit/binary change is live before the health check runs.
+- name: Apply any pending Homebox restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Homebox to answer its status endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ homebox_port }}/api/v1/status"
+    method: GET
+    status_code: [200]
+    timeout: "{{ homebox_api_timeout }}"
+  register: homebox_health
+  until: homebox_health.status == 200
+  retries: 10
+  delay: 3
+  changed_when: false
+  check_mode: false
+  when: >-
+    not ansible_check_mode or
+    not (homebox_service.changed | default(false))
