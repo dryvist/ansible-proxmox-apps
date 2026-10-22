@@ -12,10 +12,10 @@ an HTML5 stream.
 ## Credentials
 
 `inventory/group_vars/idrac_kvm_group.yml` reads target credentials from the
-prefetched `bao_apps_secrets` fact. The apps domain reads the KV paths
-`secret/apps/idrac-kvm-r410` and `secret/apps/idrac-kvm-r710`; each path uses
-target-prefixed `host`, `user`, and `password` fields so the flat domain merge
-does not overwrite another target. R410 is enabled, and R710 remains disabled.
+prefetched `bao_apps_secrets` fact. Each target uses target-prefixed `host`,
+`user`, and `password` fields so the flat domain merge does not overwrite
+another target. All targets are disabled by default; an enabled target must
+have its credential fields in the prefetch result.
 
 The role asserts credentials for enabled targets, writes them to a root-owned
 `.env` file with mode `0600`, and passes those values to Compose. The account
