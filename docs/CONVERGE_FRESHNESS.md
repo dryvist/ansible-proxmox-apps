@@ -232,15 +232,17 @@ index=ansible sourcetype="ansible:converge:run" earliest=-7d
 | sort 0 playbook _time
 | streamstats current=f window=0 count as history_count
              median(host_count) as median_hosts by playbook
-| where host_count=0
-    OR (history_count>=3 AND host_count < median_hosts * 0.5)
+| where _time >= relative_time(now(), "-15m")
+    AND (host_count=0
+         OR (history_count>=3 AND host_count < median_hosts * 0.5))
 | table _time, playbook, host_count, median_hosts, history_count, repo, git_sha
 ```
 
 `window=0` uses all earlier rows in the bounded seven-day search range, while
 `current=f` excludes the run being evaluated. The median comparison requires
-three prior runs; the zero-host branch does not. It runs every 15 minutes and
-suppresses repeated dispatches of the same run for one hour.
+three prior runs; the zero-host branch does not. It runs every 15 minutes,
+alerts only on runs from the last 15 minutes, and suppresses repeats per
+playbook for one hour.
 
 ## Where this lands
 
