@@ -21,34 +21,46 @@
 # non-root become-user's 0700 home (e.g. /home/debian/.ansible/tmp). The
 # staged file lives in chronyd's own config dir and is world-readable (0644),
 # so the privilege-dropped validator can read it.
-- name: Render the chrony configuration to a staging file
-  ansible.builtin.template:
-    src: chrony.conf.j2
-    dest: "{{ ntp_config_file }}.staged"
-    owner: root
-    group: root
-    mode: "0644"
+- name: Render, validate, and promote the chrony configuration
+  vars:
+    # Check mode gets an isolated temporary file so it cannot disturb a stage
+    # left by a real converge.
+    ntp_staged_config: "{{ ntp_config_file }}{{ '.check' if ansible_check_mode else '' }}.staged"
   tags:
     - ntp
+  block:
+    - name: Render the chrony configuration to a staging file
+      ansible.builtin.template:
+        src: chrony.conf.j2
+        dest: "{{ ntp_staged_config }}"
+        owner: root
+        group: root
+        mode: "0644"
+      check_mode: false
 
-- name: Validate the staged chrony configuration
-  ansible.builtin.command: "chronyd -p -f {{ ntp_config_file }}.staged"
-  changed_when: false
-  check_mode: false
-  tags:
-    - ntp
+    - name: Validate the staged chrony configuration
+      ansible.builtin.command: "chronyd -p -f {{ ntp_staged_config }}"
+      changed_when: false
+      check_mode: false
 
-- name: Promote the validated chrony configuration
-  ansible.builtin.copy:
-    src: "{{ ntp_config_file }}.staged"
-    dest: "{{ ntp_config_file }}"
-    remote_src: true
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart chrony
-  tags:
-    - ntp
+    - name: Promote the validated chrony configuration
+      ansible.builtin.copy:
+        src: "{{ ntp_staged_config }}"
+        dest: "{{ ntp_config_file }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart chrony
+
+  always:
+    - name: Remove the check-mode staging file
+      ansible.builtin.file:
+        path: "{{ ntp_staged_config }}"
+        state: absent
+      check_mode: false
+      changed_when: false
+      when: ansible_check_mode
 
 - name: Detect if running inside a system container
   # systemd-detect-virt --container: exit 0 = inside a container, exit 1 = not.
