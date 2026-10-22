@@ -24,3 +24,62 @@ homebox_db_host: >-
 # Robust auto-restart, as vikunja_group.yml does for vikunja.
 systemd_restart_policy_services:
   - homebox
+
+# --- Backup credentials ---------------------------------------------------------
+# restic password, shared by both repositories. It encrypts every repository, so
+# it must never change after the first backup. Mandatory, read only when backups
+# are enabled.
+homebox_restic_password: >-
+  {{ bao_apps_secrets.homebox_restic_password
+     | default(undef(), true)
+     | mandatory('HOMEBOX_RESTIC_PASSWORD missing: OpenBao fetch did not supply it') }}
+
+# Local RustFS repository, always configured. The endpoint and key pair come from
+# the RustFS record that object storage writes for this bucket, the same kind of
+# record pgBackRest reads for its own repository. Each value is mandatory.
+homebox_backup_rustfs_endpoint: >-
+  {{ (bao_homebox_backup_rustfs_secrets | default({})).AWS_ENDPOINT_URL
+     | default(undef(), true)
+     | mandatory('HOMEBOX_BACKUP_RUSTFS_ENDPOINT missing: OpenBao fetch did not supply it') }}
+homebox_backup_rustfs_access_key_id: >-
+  {{ (bao_homebox_backup_rustfs_secrets | default({})).AWS_ACCESS_KEY_ID
+     | default(undef(), true)
+     | mandatory('HOMEBOX_BACKUP_RUSTFS_ACCESS_KEY_ID missing: OpenBao fetch did not supply it') }}
+homebox_backup_rustfs_secret_access_key: >-
+  {{ (bao_homebox_backup_rustfs_secrets | default({})).AWS_SECRET_ACCESS_KEY
+     | default(undef(), true)
+     | mandatory('HOMEBOX_BACKUP_RUSTFS_SECRET_ACCESS_KEY missing: OpenBao fetch did not supply it') }}
+homebox_backup_rustfs_region: >-
+  {{ (bao_homebox_backup_rustfs_secrets | default({})).AWS_REGION | default('us-east-1', true) }}
+
+# Offsite Backblaze B2 repository. Configured only when the endpoint and the key
+# pair are all set; otherwise the role logs a debug message and skips it. The
+# endpoint is the B2 S3 host name, passed in the converge environment.
+homebox_backup_b2_endpoint: "{{ lookup('env', 'HOMEBOX_BACKUP_B2_S3_ENDPOINT') | default('', true) }}"
+homebox_backup_b2_access_key_id: >-
+  {{ (bao_homebox_backup_b2_secrets | default({})).AWS_ACCESS_KEY_ID | default('', true) }}
+homebox_backup_b2_secret_access_key: >-
+  {{ (bao_homebox_backup_b2_secrets | default({})).AWS_SECRET_ACCESS_KEY | default('', true) }}
+# B2's S3 host embeds its region, so derive the region rather than asking for it.
+homebox_backup_b2_region: >-
+  {{ homebox_backup_b2_endpoint | regex_replace('^s3\.([^.]+)\..*$', '\1') | default('us-east-1', true) }}
+homebox_backup_b2_enabled: >-
+  {{ (homebox_backup_b2_endpoint | length > 0)
+     and (homebox_backup_b2_access_key_id | length > 0)
+     and (homebox_backup_b2_secret_access_key | length > 0) }}
+
+# One entry per restic repository. The backup tasks render an environment file
+# and start a timer for each entry whose `enabled` is true.
+homebox_backup_repositories:
+  - name: rustfs
+    enabled: true
+    endpoint: "{{ homebox_backup_rustfs_endpoint }}"
+    access_key_id: "{{ homebox_backup_rustfs_access_key_id }}"
+    secret_access_key: "{{ homebox_backup_rustfs_secret_access_key }}"
+    region: "{{ homebox_backup_rustfs_region }}"
+  - name: b2
+    enabled: "{{ homebox_backup_b2_enabled | bool }}"
+    endpoint: "{{ homebox_backup_b2_endpoint }}"
+    access_key_id: "{{ homebox_backup_b2_access_key_id }}"
+    secret_access_key: "{{ homebox_backup_b2_secret_access_key }}"
+    region: "{{ homebox_backup_b2_region }}"
