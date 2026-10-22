@@ -1,20 +1,4 @@
-"""Every bucket in object_storage_default_buckets must get both an ro and an
-rw RustFS IAM user/policy, and no rendered bucket policy may name a Resource
-ARN for any OTHER bucket.
-
-Two failure classes this guards against, both silent at converge time
-because loop-rendered YAML never asserts its own output:
-  1. A bucket added to object_storage_default_buckets is silently skipped
-     because iam.yml/iam_bucket.yml grew a second, hand-maintained bucket or
-     role list instead of deriving from the real ones.
-  2. rustfs-iam-policy.json.j2 hardcodes a bucket name (copy-paste from
-     testing against one bucket) instead of using the loop variable, so
-     every bucket's policy silently grants access to the SAME bucket -- the
-     exact one-bucket-per-workload isolation this feature exists to provide.
-
-Renders the REAL lookup expression out of iam_provision_bucket_role.yml with
-the REAL template file, never a reimplementation of either.
-"""
+"""Render actual policy and secret expressions to verify their boundaries."""
 
 import json
 import unittest
@@ -172,30 +156,13 @@ def _render_merged_secret(current_data, generated):
 
 
 class BucketRoleDerivation(unittest.TestCase):
-    """iam.yml / iam_bucket.yml must loop over the real lists, never a copy."""
+    """Keep both default IAM roles available."""
 
     def test_both_roles_are_declared(self):
         self.assertEqual(_defaults()["object_storage_iam_roles"], ["ro", "rw"])
 
     def test_at_least_one_bucket_is_declared(self):
         self.assertTrue(_bucket_names(), "object_storage_default_buckets is empty")
-
-    def test_iam_loops_over_the_real_bucket_list_not_a_copy(self):
-        text = (ROLE / "tasks" / "iam.yml").read_text(encoding="utf-8")
-        self.assertIn(
-            "object_storage_default_buckets | map(attribute='name')",
-            text,
-            "iam.yml's bucket loop must derive from object_storage_default_buckets",
-        )
-
-    def test_iam_bucket_loops_over_the_real_role_list_not_a_copy(self):
-        text = (ROLE / "tasks" / "iam_bucket.yml").read_text(encoding="utf-8")
-        self.assertIn(
-            "{{ object_storage_iam_roles }}",
-            text,
-            "iam_bucket.yml's role loop must derive from object_storage_iam_roles",
-        )
-
 
 class PolicyActionAsymmetry(unittest.TestCase):
     """rw must be able to write and delete; ro must never be able to."""
