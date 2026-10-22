@@ -1,0 +1,46 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: PVE cluster quorum.
+---
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: pve-cluster-quorum
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: pve-cluster-quorum-lost
+        title: PVE cluster quorum lost or nodes unavailable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                count(pve_cluster_info{job="pve_exporter",quorate="0"}) > bool 0
+                or
+                (
+                  (count(max by (id) (pve_up{job="pve_exporter",id=~"node/.+"} == 1)) or vector(0))
+                  < bool {{ grafana_stack_alert_pve_expected_nodes }})
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+              refId: B
+        for: {{ grafana_stack_alert_pve_quorum_for }}
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: >-
+            PVE cluster quorum is lost or fewer than
+            {{ grafana_stack_alert_pve_expected_nodes }} expected nodes are online.
+{% endif %}

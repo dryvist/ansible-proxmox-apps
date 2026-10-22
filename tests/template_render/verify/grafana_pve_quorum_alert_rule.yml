@@ -1,0 +1,73 @@
+---
+- name: Render and verify the Grafana PVE quorum alert
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _rules_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-pve-quorum.yml.j2
+    _contactpoints_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/contactpoints.yml.j2
+    _notification_policy_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/notification-policies.yml.j2
+    pve_exporter_scrape_targets:
+      - pve-1.example.test
+      - pve-2.example.test
+      - pve-3.example.test
+      - pve-4.example.test
+  tasks:
+    - name: Render the PVE quorum rule, contact point, and notification policy
+      ansible.builtin.set_fact:
+        _pve_quorum_group: >-
+          {{ (lookup('ansible.builtin.template', _rules_template) | from_yaml).groups[0] }}
+        _pve_contact_point: >-
+          {{ (lookup('ansible.builtin.template', _contactpoints_template)
+              | from_yaml).contactPoints[0].receivers[0] }}
+        _pve_policy: >-
+          {{ (lookup('ansible.builtin.template', _notification_policy_template)
+              | from_yaml).policies[0] }}
+      vars:
+        grafana_stack_prometheus_url: http://prometheus.example.test:9090
+        grafana_stack_alert_cribl_hec_url: >-
+          http://syslog.example.test:8088/services/collector/raw?index=ansible&source=grafana-alert&sourcetype=grafana%3Aalert
+        grafana_stack_alert_cribl_hec_token: fixture-hec-token-not-real
+
+    - name: Assert the rule checks quorum and the commissioned node count
+      ansible.builtin.assert:
+        that:
+          - _pve_quorum_group.interval == grafana_stack_alert_eval_interval
+          - _pve_quorum_rule.uid == 'pve-cluster-quorum-lost'
+          - _pve_quorum_rule.for == grafana_stack_alert_pve_quorum_for
+          - _pve_quorum_rule.labels.severity == 'critical'
+          - "'count(pve_cluster_info{job=\"pve_exporter\",quorate=\"0\"}) > bool 0' in _pve_quorum_expr"
+          - "'pve_up{job=\"pve_exporter\",id=~\"node/.+\"}' in _pve_quorum_expr"
+          - "'max by (id)' in _pve_quorum_expr"
+          - "'< bool ' in _pve_quorum_expr"
+          - _pve_quorum_expr.count('(') == _pve_quorum_expr.count(')')
+          - grafana_stack_alert_pve_expected_nodes | string in _pve_quorum_expr
+          - >-
+            grafana_stack_alert_pve_expected_nodes | int
+            == pve_exporter_scrape_targets | length
+          - _pve_quorum_rule.noDataState == 'Alerting'
+          - _pve_quorum_rule.execErrState == 'Error'
+        fail_msg: >-
+          PVE quorum alerts must use the declared quorum metric and the
+          commissioned PVE exporter inventory count.
+      vars:
+        _pve_quorum_rule: "{{ _pve_quorum_group.rules[0] }}"
+        _pve_quorum_expr: "{{ _pve_quorum_rule.data[0].model.expr }}"
+
+    - name: Assert the critical alert schedule, throttle, and destination
+      ansible.builtin.assert:
+        that:
+          - _pve_contact_point.type == 'webhook'
+          - _pve_contact_point.settings.url is search('index=ansible&source=grafana-alert')
+          - _pve_contact_point.settings.authorization_scheme == 'Splunk'
+          - _pve_policy.receiver == grafana_stack_alert_contact_point_name
+          - _pve_policy.group_interval == '5m'
+          - _pve_policy.repeat_interval == grafana_stack_alert_repeat_interval
+        fail_msg: >-
+          PVE quorum alerts must use the existing grouped Grafana-to-Cribl
+          route and the declared critical repeat interval.
