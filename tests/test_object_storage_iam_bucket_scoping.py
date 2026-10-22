@@ -1,5 +1,5 @@
-"""Every bucket in object_storage_default_buckets must get both an ro and an
-rw RustFS IAM user/policy, and no rendered bucket policy may name a Resource
+"""Every bucket in object_storage_default_buckets must get its selected
+RustFS IAM users/policies, and no rendered bucket policy may name a Resource
 ARN for any OTHER bucket.
 
 Two failure classes this guards against, both silent at converge time
@@ -33,6 +33,7 @@ BUCKET_ROLE_TASKS = ROLE / "tasks" / "iam_bucket_role.yml"
 ENDPOINT_REGION_TASK = "Compute this credential's endpoint and region fields"
 MERGE_TASK = "Merge generated + derived fields over the stored secret"
 IAM_TASKS = ROLE / "tasks" / "iam.yml"
+BUCKET_TASKS = ROLE / "tasks" / "main.yml"
 INGRESS_ROUTE_TASK = "Find the machine-S3 ingress route"
 INGRESS_ASSERT_TASK = "Assert the machine-S3 ingress route exists and is not SSO-gated"
 PUBLIC_ENDPOINT_TASK = "Set the public S3 endpoint from the live ingress route"
@@ -58,6 +59,16 @@ def _defaults():
 
 def _bucket_names():
     return [b["name"] for b in _defaults()["object_storage_default_buckets"]]
+
+
+def _bucket(bucket_name):
+    return next(
+        bucket for bucket in _defaults()["object_storage_default_buckets"] if bucket["name"] == bucket_name
+    )
+
+
+def _bucket_roles(bucket):
+    return bucket.get("iam_roles", _defaults()["object_storage_iam_roles"])
 
 
 def _policy_lookup_expr():
@@ -102,6 +113,13 @@ def _iam_task(name):
         if task.get("name") == name:
             return task
     raise AssertionError(f"task {name!r} not found in {IAM_TASKS}")
+
+
+def _bucket_task(name):
+    for task in yaml.safe_load(BUCKET_TASKS.read_text(encoding="utf-8")):
+        if task.get("name") == name:
+            return task
+    raise AssertionError(f"task {name!r} not found in {BUCKET_TASKS}")
 
 
 def _render_ingress_endpoint(ingress, proxmox_domain="pve.example.test"):
@@ -177,24 +195,58 @@ class BucketRoleDerivation(unittest.TestCase):
     def test_both_roles_are_declared(self):
         self.assertEqual(_defaults()["object_storage_iam_roles"], ["ro", "rw"])
 
+    def test_terrakube_has_only_the_read_only_role(self):
+        bucket = _bucket("terrakube")
+        self.assertEqual(bucket["iam_roles"], ["ro"])
+
+    def test_terrakube_does_not_declare_bucket_policy_or_versioning(self):
+        bucket = _bucket("terrakube")
+        self.assertNotIn("policy", bucket)
+        self.assertNotIn("versioning", bucket)
+
+    def test_existing_bucket_is_created_only_when_missing(self):
+        create = _bucket_task("Create missing default buckets")
+        self.assertEqual(create["when"], "item.rc != 0")
+        self.assertIn("create-bucket", create["ansible.builtin.command"]["cmd"])
+
+    def test_bucket_policy_and_versioning_are_opt_in(self):
+        versioning = _bucket_task("Read current versioning status")
+        policy = _bucket_task("Read current bucket policy")
+        self.assertIn("selectattr('versioning', 'defined')", versioning["loop"])
+        self.assertIn("selectattr('policy', 'defined')", policy["loop"])
+
+    def test_bucket_converge_does_not_delete_buckets_or_objects(self):
+        commands = [
+            task.get("ansible.builtin.command", {}).get("cmd", "")
+            for task in yaml.safe_load(BUCKET_TASKS.read_text(encoding="utf-8"))
+        ]
+        self.assertFalse(any("delete-bucket" in command or "s3 rm" in command for command in commands))
+
     def test_at_least_one_bucket_is_declared(self):
         self.assertTrue(_bucket_names(), "object_storage_default_buckets is empty")
 
     def test_iam_loops_over_the_real_bucket_list_not_a_copy(self):
-        text = (ROLE / "tasks" / "iam.yml").read_text(encoding="utf-8")
+        task = _iam_task("Resolve each bucket's configured credentials")
+        self.assertEqual(task["loop"], "{{ object_storage_default_buckets }}")
+        self.assertEqual(task["loop_control"]["loop_var"], "object_storage_iam_bucket_config")
         self.assertIn(
-            "object_storage_default_buckets | map(attribute='name')",
-            text,
-            "iam.yml's bucket loop must derive from object_storage_default_buckets",
+            "object_storage_iam_bucket_config.name",
+            task["vars"]["object_storage_iam_bucket"],
         )
 
     def test_iam_bucket_loops_over_the_real_role_list_not_a_copy(self):
-        text = (ROLE / "tasks" / "iam_bucket.yml").read_text(encoding="utf-8")
-        self.assertIn(
-            "{{ object_storage_iam_roles }}",
-            text,
-            "iam_bucket.yml's role loop must derive from object_storage_iam_roles",
+        task = yaml.safe_load((ROLE / "tasks" / "iam_bucket.yml").read_text(encoding="utf-8"))[0]
+        self.assertEqual(
+            task["loop"],
+            "{{ object_storage_iam_bucket_config.iam_roles | default(object_storage_iam_roles) }}",
         )
+
+    def test_only_terrakube_overrides_the_default_roles(self):
+        defaults = _defaults()["object_storage_iam_roles"]
+        for bucket in _defaults()["object_storage_default_buckets"]:
+            expected = ["ro"] if bucket["name"] == "terrakube" else defaults
+            with self.subTest(bucket=bucket["name"]):
+                self.assertEqual(_bucket_roles(bucket), expected)
 
 
 class PolicyActionAsymmetry(unittest.TestCase):
@@ -221,7 +273,7 @@ class PolicyResourceScoping(unittest.TestCase):
             len(buckets), 2, "need >= 2 buckets in fixtures to prove cross-bucket isolation"
         )
         for bucket in buckets:
-            for role in ("ro", "rw"):
+            for role in _bucket_roles(_bucket(bucket)):
                 with self.subTest(bucket=bucket, role=role):
                     policy = _render_policy(bucket, role, actions)
                     resources = policy["Statement"][0]["Resource"]
@@ -294,8 +346,9 @@ class SecretFieldCompleteness(unittest.TestCase):
         self.assertFalse(assert_holds)
         self.assertIsNone(endpoint)
 
-    def test_a_freshly_generated_secret_carries_all_four_fields_on_both_roles(self):
-        for role in _defaults()["object_storage_iam_roles"]:
+    def test_a_freshly_generated_secret_carries_all_four_fields_on_selected_roles(self):
+        roles = {role for bucket in _defaults()["object_storage_default_buckets"] for role in _bucket_roles(bucket)}
+        for role in sorted(roles):
             with self.subTest(role=role):
                 merged = _render_merged_secret(
                     current_data={},
