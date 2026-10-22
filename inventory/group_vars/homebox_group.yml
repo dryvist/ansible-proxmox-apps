@@ -1,0 +1,26 @@
+---
+# Homebox home inventory (sysadminsmedia/homebox) — OpenBao-sourced secrets
+# (apps domain). Same contract as vikunja_group.yml: OpenBao is the only
+# source, and each secret ends in `| default(undef(), true) | mandatory(...)`,
+# so an absent or empty value aborts the play instead of being rendered over a
+# live credential.
+#
+# The database password is app-namespaced (homebox_db_password) so the flat
+# merge into bao_apps_secrets never collides with a sibling app. It MUST match
+# the postgres side: postgres_managed_databases (group_vars/postgres_group.yml)
+# reads the same bao_apps_secrets.homebox_db_password, so both ends resolve one
+# canonical value.
+homebox_db_password: >-
+  {{ bao_apps_secrets.homebox_db_password
+     | default(undef(), true)
+     | mandatory('HOMEBOX_DB_PASSWORD missing: OpenBao fetch did not supply it') }}
+
+# Postgres has no ingress; reach it by the shared apps cluster's declared
+# primary FQDN, resolved the same way vikunja_group.yml resolves its database
+# host. A guest hostname is a stable service identifier here, not an address.
+homebox_db_host: >-
+  {{ postgres_apps_primary_host }}.{{ hostvars['localhost']['tofu_data']['domain'] }}
+
+# Robust auto-restart, as vikunja_group.yml does for vikunja.
+systemd_restart_policy_services:
+  - homebox
