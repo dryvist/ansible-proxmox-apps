@@ -36,7 +36,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `cadvisor_image` | `gcr.io/cadvisor/cadvisor:v0.49.1` | Pinned upstream image. |
+| `cadvisor_image` | `ghcr.io/google/cadvisor:v0.60.6` (digest-pinned) | Pinned upstream image. |
 | `cadvisor_container_name` | `cadvisor` | Container name. |
 | `cadvisor_port` | `8080` | Host port the metrics endpoint is published on. |
 | `cadvisor_data_dir` | `/opt/cadvisor` | Compose project directory. |
