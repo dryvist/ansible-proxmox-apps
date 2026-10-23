@@ -1,5 +1,28 @@
 # Changelog
 
+## [5.9.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.8.1...v5.9.0) (2026-10-23)
+
+
+### Features
+
+* **grafana_stack:** add PVE host load alert ([#2944](https://github.com/dryvist/ansible-proxmox-apps/issues/2944)) ([416f063](https://github.com/dryvist/ansible-proxmox-apps/commit/416f063090e0fa2d7b9c6d569c59c3372032b83f))
+* **grafana_stack:** add PVE quorum alert ([#2945](https://github.com/dryvist/ansible-proxmox-apps/issues/2945)) ([54f765a](https://github.com/dryvist/ansible-proxmox-apps/commit/54f765ac6784f1ac5c04ec2cc5b33a0e4aab83b0))
+* **homebox:** deploy Homebox as a native service with restic backups ([#2965](https://github.com/dryvist/ansible-proxmox-apps/issues/2965)) ([eb5d9aa](https://github.com/dryvist/ansible-proxmox-apps/commit/eb5d9aaf14e2bf5e74d8df114e5467fc33f8ad94))
+* publish run-level converge counts ([#2947](https://github.com/dryvist/ansible-proxmox-apps/issues/2947)) ([d2b1799](https://github.com/dryvist/ansible-proxmox-apps/commit/d2b1799b917010b8e894bd18381c641934a522b7))
+* support per-bucket object storage IAM roles ([#2951](https://github.com/dryvist/ansible-proxmox-apps/issues/2951)) ([d3bd735](https://github.com/dryvist/ansible-proxmox-apps/commit/d3bd735ce0b857f40880d709e43a4feafd470abb))
+
+
+### Bug Fixes
+
+* disable console streaming targets by default ([#2953](https://github.com/dryvist/ansible-proxmox-apps/issues/2953)) ([1e6c9f1](https://github.com/dryvist/ansible-proxmox-apps/commit/1e6c9f16ccfdd24fbb9bc2fa2a6d6b710c81ac0a))
+* **grafana_stack:** cover guest filesystem usage ([#2948](https://github.com/dryvist/ansible-proxmox-apps/issues/2948)) ([50bbe43](https://github.com/dryvist/ansible-proxmox-apps/commit/50bbe437120a804b44ecbe052839a32a0f9fd18b))
+* **grafana_stack:** include guest filesystem thresholds ([50bbe43](https://github.com/dryvist/ansible-proxmox-apps/commit/50bbe437120a804b44ecbe052839a32a0f9fd18b))
+* **ntfy:** point platform alerts at the homelab_ops webhook field ([#2952](https://github.com/dryvist/ansible-proxmox-apps/issues/2952)) ([ab4396f](https://github.com/dryvist/ansible-proxmox-apps/commit/ab4396f2d16f208ee0efda2e6a63cba12ff0f842))
+* **ntfy:** use guarded Docker restart handler ([#2963](https://github.com/dryvist/ansible-proxmox-apps/issues/2963)) ([ad82c63](https://github.com/dryvist/ansible-proxmox-apps/commit/ad82c6363a2151234b4dcfb3e6cbb86d61709e96))
+* **ntp:** validate staged config in check mode ([#2950](https://github.com/dryvist/ansible-proxmox-apps/issues/2950)) ([b0d3089](https://github.com/dryvist/ansible-proxmox-apps/commit/b0d3089db51e8ddd9f4c844e2b6fbd2042cf9ef8))
+* **openproject:** read signing key from prefetched secrets ([#2949](https://github.com/dryvist/ansible-proxmox-apps/issues/2949)) ([c70b45f](https://github.com/dryvist/ansible-proxmox-apps/commit/c70b45f19263b14043166b3fac3ae435f665f6c0))
+* **phpipam:** pin www and cron images by digest ([#2955](https://github.com/dryvist/ansible-proxmox-apps/issues/2955)) ([ef5ed05](https://github.com/dryvist/ansible-proxmox-apps/commit/ef5ed053f537ce04a5ba2198fc1f3b50c4a7795a))
+
 ## [5.8.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.8.0...v5.8.1) (2026-10-21)
 
 
