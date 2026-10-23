@@ -50,9 +50,19 @@ const over4k = format({
     annotations: { summary: longSummary }, generatorURL: 'https://grafana.example.test/alert/1' }],
 });
 assert.equal(over4k.length, 1, 'one compact alert record stays whole');
-assert.ok(contents(over4k).includes('[shortened; full event link below]'), 'oversized summaries get an explicit marker');
-assert.ok(contents(over4k).includes('https://grafana.example.test/alert/1'), 'source evidence link remains visible');
-assert.ok(contents(over4k).includes('https://splunk.example.test/'), 'full event search link remains visible');
+const rendered = contents(over4k);
+assert.ok(rendered.includes('[shortened; full event link below]'), 'oversized summaries get an explicit marker');
+const sourceEvidence = rendered.match(/Evidence \(source\): `([^`\n]+)`/);
+assert.ok(sourceEvidence, 'source evidence link remains visible');
+const sourceEvidenceUrl = new URL(sourceEvidence[1]);
+assert.equal(sourceEvidenceUrl.protocol, 'https:');
+assert.equal(sourceEvidenceUrl.hostname, 'grafana.example.test');
+assert.equal(sourceEvidenceUrl.pathname, '/alert/1');
+const fullEventSearch = rendered.match(/Full event search: (\S+)/);
+assert.ok(fullEventSearch, 'full event search link remains visible');
+const fullEventSearchUrl = new URL(fullEventSearch[1]);
+assert.equal(fullEventSearchUrl.protocol, 'https:');
+assert.equal(fullEventSearchUrl.hostname, 'splunk.example.test');
 assert.equal(over4k[0].priority, 3, 'warnings use the ntfy default priority and reach Zammad');
 assert.equal(over4k[0].click, 'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert%2A',
   'notification click uses the derived trusted full-event search, not an incoming alert URL');
