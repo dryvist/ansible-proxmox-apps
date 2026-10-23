@@ -87,13 +87,15 @@ Postgres database and a copy of `/var/lib/homebox`. Each repository has its own
 template service instance, so one failing does not skip the other. A weekly
 `restic check` runs per repository. The local RustFS repository is always
 configured. The offsite Backblaze B2 repository is configured only when its
-variables are set. Otherwise the role logs a debug message and skips it. See
-the backup section of the role's tasks for the exact units.
+record supplies an endpoint, a bucket and a key pair. Otherwise the role logs a
+debug message and skips it. See the backup section of the role's tasks for the
+exact units.
 
-## Variables the operator supplies
+## Secrets the operator supplies
 
-- `HOMEBOX_BACKUP_B2_S3_ENDPOINT`: the Backblaze B2 S3 endpoint, read from the
-  converge environment. Leave it empty to skip the offsite repository.
+The offsite repository reads its record from OpenBao (`homebox_backup_b2`):
+`AWS_ENDPOINT_URL`, `BUCKET`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+No environment variable sets it.
 
 The RustFS endpoint comes from the same OpenBao record that carries the RustFS
 keys (`AWS_ENDPOINT_URL`), as the pgBackRest repository does. Nothing needs to
