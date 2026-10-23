@@ -123,10 +123,18 @@ checkout_servarr_pin() {
   fi
 }
 
+# A direct media run needs the checkout. site.yml runs every tagged play, so a
+# failed checkout only warns there; the media play's own stat check fails when
+# media is in scope.
 case "$PLAYBOOK" in
-  site.yml|*/site.yml|05-media-and-gate.yml|*/05-media-and-gate.yml)
+  05-media-and-gate.yml|*/05-media-and-gate.yml)
     if [[ -f "$REPO_ROOT/servarr.pin" ]]; then
       checkout_servarr_pin || exit 1
+    fi
+    ;;
+  site.yml|*/site.yml)
+    if [[ -f "$REPO_ROOT/servarr.pin" ]]; then
+      checkout_servarr_pin || echo "run-ansible: media-stack checkout failed — the media stack will not converge" >&2
     elif [[ -f "$REPO_ROOT/.gitmodules" ]] && ! git -C "$REPO_ROOT" submodule update --init --recursive --checkout; then
       echo "run-ansible: legacy submodule checkout failed — the media stack will not converge" >&2
     fi

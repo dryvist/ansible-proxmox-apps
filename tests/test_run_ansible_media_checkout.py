@@ -32,6 +32,9 @@ class ServarrPinMetadataContract(unittest.TestCase):
         )
 
 
+MEDIA_PLAYBOOK = "playbooks/site/05-media-and-gate.yml"
+
+
 class RunAnsiblePinnedMediaCheckout(RunAnsibleSandbox):
     def setUp(self):
         super().setUp()
@@ -127,11 +130,21 @@ class RunAnsiblePinnedMediaCheckout(RunAnsibleSandbox):
     def test_missing_runtime_url_fails_for_the_media_play(self):
         self._write_recap("localhost")
         env = self.git_config | {"MEDIA_STACK_REPO_URL": ""}
-        result = self._run("--limit", "localhost", env_extra=env)
+        result = self._run(
+            "--limit", "localhost", env_extra=env, playbook=MEDIA_PLAYBOOK
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MEDIA_STACK_REPO_URL must be set", result.stderr)
         self._assert_playbook_not_called()
+
+    def test_site_run_without_runtime_url_warns_and_continues(self):
+        self._write_recap("localhost")
+        env = self.git_config | {"MEDIA_STACK_REPO_URL": ""}
+        result = self._run("--limit", "localhost", env_extra=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("the media stack will not converge", result.stderr)
 
     def test_non_media_play_does_not_require_runtime_url(self):
         self._write_recap("localhost")
@@ -146,7 +159,9 @@ class RunAnsiblePinnedMediaCheckout(RunAnsibleSandbox):
 
     def test_invalid_pin_fails_before_running_ansible(self):
         self._write_pin("not-a-commit")
-        result = self._run("--limit", "localhost", env_extra=self.git_config)
+        result = self._run(
+            "--limit", "localhost", env_extra=self.git_config, playbook=MEDIA_PLAYBOOK
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
@@ -160,7 +175,9 @@ class RunAnsiblePinnedMediaCheckout(RunAnsibleSandbox):
         env = self.git_config | {
             "GIT_CONFIG_VALUE_1": (self.work.parent / "missing-media-origin.git").as_uri()
         }
-        result = self._run("--limit", "localhost", env_extra=env)
+        result = self._run(
+            "--limit", "localhost", env_extra=env, playbook=MEDIA_PLAYBOOK
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unable to clone the pinned media-stack repository", result.stderr)
