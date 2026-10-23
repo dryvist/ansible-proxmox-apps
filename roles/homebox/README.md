@@ -9,16 +9,17 @@ creates it.
 
 ## Installation
 
-Run the role through the `homebox` play in `playbooks/site/04-secrets-and-collab-apps.yml`.
+Run the role through the `homebox` play in `playbooks/site/04d-homebox.yml`.
 The play targets `homebox_group`. Membership comes from the `homebox` guest tag.
 
 ```bash
-scripts/run-ansible.sh playbooks/site/04-secrets-and-collab-apps.yml \
+scripts/run-ansible.sh playbooks/site/04d-homebox.yml \
   --tags homebox --limit homebox_group,localhost
 ```
 
-- The controller downloads the release archive and checks it against the pinned
-  sha256 before anything is extracted. The guest has no route to GitHub.
+- The controller downloads the release archive and checks it against the
+  release's `checksums.txt`, fetched at the pinned version, before anything is
+  extracted. The guest has no route to GitHub.
 - The pin is `homebox_version`. Renovate bumps it through the annotation on that
   line.
 - The archive is pinned to the newest stable release at least 7 days old. The
