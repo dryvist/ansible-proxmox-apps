@@ -47,6 +47,23 @@ class WeeklyGuestUpgradeContract(unittest.TestCase):
         apt = next(t for t in SHARED if "ansible.builtin.apt" in t)
         self.assertEqual(apt["ansible.builtin.apt"]["upgrade"], "dist")
 
+    def test_distribution_upgrade_runs_async_and_waits_for_completion(self):
+        apt = next(t for t in SHARED if "ansible.builtin.apt" in t)
+        self.assertEqual(apt["ansible.builtin.apt"], {
+            "update_cache": True, "upgrade": "dist", "autoremove": True,
+        })
+        self.assertEqual(apt["async"], 1800)
+        self.assertEqual(apt["poll"], 0)
+        self.assertEqual(apt["register"], "guest_os_upgrade_job")
+        wait = SHARED[SHARED.index(apt) + 1]
+        self.assertEqual(wait["ansible.builtin.async_status"]["jid"],
+                         "{{ guest_os_upgrade_job.ansible_job_id }}")
+        self.assertEqual(wait["register"], "guest_os_upgrade_status")
+        self.assertEqual(wait["until"], "guest_os_upgrade_status.finished")
+        self.assertGreaterEqual(wait["retries"] * wait["delay"], apt["async"])
+        self.assertEqual(apt["environment"], {"DEBIAN_FRONTEND": "noninteractive"})
+        self.assertEqual(wait["environment"], apt["environment"])
+
     def test_only_vms_reboot_and_the_plane_reboot_is_deferred(self):
         lxc, vm, plane = PLAYS[2:5]
         self.assertFalse(any("ansible.builtin.reboot" in t for t in lxc["tasks"]))
