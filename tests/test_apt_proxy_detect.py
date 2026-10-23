@@ -68,6 +68,18 @@ class AptProxyDetect(unittest.TestCase):
             _apt_cache_port="3142",
         )
 
+    def test_homebox_tags_include_the_apt_proxy_setup(self):
+        playbook = yaml.safe_load(PLAY.read_text(encoding="utf-8"))
+        proxy_play = next(
+            play
+            for play in playbook
+            if play.get("name") == "Configure apt proxy on LXC containers and docker VMs"
+        )
+        self.assertTrue(
+            {"homebox", "homebox_backup"}.issubset(set(proxy_play.get("tags", []))),
+            "Homebox installs packages through the shared apt proxy",
+        )
+
     def test_the_rendered_script_is_valid_shell(self):
         with tempfile.NamedTemporaryFile("w", suffix=".sh") as handle:
             handle.write(self.script)
