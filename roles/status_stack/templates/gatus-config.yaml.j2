@@ -2,9 +2,10 @@
 # Gatus — estate catalog uptime probes + OIDC client registration probes.
 # Interval is {{ status_stack_interval }} for every endpoint.
 #
-# Catalog URLs follow redirects. Authelia OAuth error pages (invalid_client)
-# fail the body conditions even when HTTP status is 200/302. Gateway timeouts
-# (504) fail the status condition.
+# Catalog endpoints use their public HTTPS ingress URLs. Auth-gate responses
+# remain healthy under the <500 condition; Authelia OAuth error pages
+# (invalid_client) fail the body condition even when HTTP status is 200/302.
+# Gateway timeouts (504) fail the status condition.
 
 metrics: true
 storage:
@@ -50,14 +51,15 @@ endpoints:
 {% set _wall_only = _wall_apps | rejectattr('name', 'in', _monitor_names) | rejectattr('url', 'in', _monitor_urls) | list %}
 {% set _endpoints = (dashboard_catalog_services_monitor | default([])) + _wall_only %}
 {% for svc in _endpoints %}
-{#- An SSO-gated public URL is answered by the Authelia login page, so probing
-    it only proves Authelia is up. Those rows probe the guest directly
-    (the catalog's probe_url); public rows keep the public URL and its
-    certificate check. -#}
-{% set _direct = (svc.sso | default(true)) and (svc.probe_url | default('') | length > 0) %}
+{% set _url = svc.url %}
+{#- Apex catalog routes have a service-name alias under the ingress domain.
+    Probe that public alias so every catalog probe uses a service subdomain. -#}
+{% if svc.fqdn | default('') == dashboard_catalog_base_domain %}
+{% set _url = 'https://' ~ svc.name ~ '.' ~ dashboard_catalog_base_domain ~ (svc.url | regex_replace('^https?://[^/]+', '')) %}
+{% endif %}
   - name: {{ svc.name }}
     group: "{{ dashboard_catalog_group_titles[svc.group | default('other')] | default(svc.group | default('other'), true) }} · {{ 'UI' if (svc.ui | default(true)) else 'API' }}"
-    url: "{{ (svc.probe_url if _direct else svc.url) ~ (svc.probe_path | default('', true)) }}"
+    url: "{{ _url ~ (svc.probe_path | default('', true)) }}"
     interval: {{ status_stack_interval }}
     client:
       timeout: 15s
@@ -69,18 +71,13 @@ endpoints:
       - "[STATUS] == any({{ status_stack_catalog_status_overrides[svc.name] | join(', ') }})"
 {% else %}
       - "[STATUS] < 500"
-{% if _direct %}
-      - "[STATUS] != 400"
-{% endif %}
       - "[STATUS] != 504"
 {% for pat in status_stack_authelia_error_patterns %}
       - "[BODY] != pat(*{{ pat }}*)"
 {% endfor %}
 {% endif %}
       - "[RESPONSE_TIME] < 3000"
-{% if not _direct %}
       - "[CERTIFICATE_EXPIRATION] > 240h"
-{% endif %}
     alerts:
       - type: ntfy
 {% endfor %}
