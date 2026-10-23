@@ -140,6 +140,10 @@ def test_docker_daemon_play_skips_hosts_without_dockerd_in_both_modes():
     assert any("docker_daemon_dockerd.stat.exists" in condition for condition in restart_conditions)
     assert "inventory_hostname != (plane_host | default(''))" in restart_conditions
 
+    # Keep the dependency's guarded first-install handler from being shadowed.
+    ntfy_handlers = _role_yaml("ntfy_docker", "handlers/main.yml")
+    assert all(task.get("name") != "Restart docker" for task in ntfy_handlers)
+
     daemon_tasks = _role_yaml("docker_engine", "tasks/daemon_json.yml")
     directory_probe = _task(daemon_tasks, "Check whether the Docker configuration directory exists")
     assert directory_probe["ansible.builtin.stat"]["path"] == "/etc/docker"

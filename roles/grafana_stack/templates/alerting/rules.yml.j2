@@ -23,9 +23,9 @@
 ##                                    rule and its DORMANT-alert notes.
 ##   - wan-latency-high      READY  — probe_duration_seconds{job="blackbox_icmp"}
 ##                                    is scraped today.
-##   - disk-usage-high       READY  — node_filesystem_avail_bytes /
+##   - disk-usage-*          READY  — node_filesystem_avail_bytes /
 ##                                    node_filesystem_size_bytes are scraped
-##                                    today under job="pve_node_exporter"
+##                                    under both PVE and guest exporter jobs
 ##                                    (inventory/group_vars/prometheus_group.yml).
 ##   - secret-rotation-overdue DORMANT — depends on a node_exporter textfile
 ##                                     collector metric from the secret-age
@@ -151,8 +151,9 @@ groups:
         annotations:
           summary: "WAN ICMP latency to {{ '{{' }} $labels.instance {{ '}}' }} averaged above {{ grafana_stack_alert_wan_latency_seconds }}s over 5m."
 
-      - uid: disk-usage-high
-        title: Disk usage high
+{% for disk in grafana_stack_alert_disk_levels %}
+      - uid: {{ disk.uid }}
+        title: {{ disk.title }}
         condition: B
         data:
           - refId: A
@@ -160,8 +161,8 @@ groups:
             datasourceUid: prometheus
             model:
               expr: >-
-                100 * (1 - node_filesystem_avail_bytes{job="pve_node_exporter", fstype!~"tmpfs|overlay"}
-                / node_filesystem_size_bytes{job="pve_node_exporter", fstype!~"tmpfs|overlay"})
+                100 * (1 - node_filesystem_avail_bytes{job=~"pve_node_exporter|guest_node_exporter", fstype!~"tmpfs|overlay"}
+                / node_filesystem_size_bytes{job=~"pve_node_exporter|guest_node_exporter", fstype!~"tmpfs|overlay"})
               instant: true
               refId: A
           - refId: B
@@ -171,14 +172,15 @@ groups:
               type: threshold
               expression: A
               conditions:
-                - evaluator: {type: gt, params: [{{ grafana_stack_alert_disk_pct }}]}
+                - evaluator: {type: gt, params: [{{ disk.pct }}]}
               refId: B
         for: 15m
         noDataState: OK
         execErrState: Error
-        labels: {severity: warning}
+        labels: {severity: {{ disk.severity }}}
         annotations:
-          summary: "Disk usage on {{ '{{' }} $labels.instance {{ '}}' }} ({{ '{{' }} $labels.mountpoint {{ '}}' }}) above {{ grafana_stack_alert_disk_pct }}%."
+          summary: "Disk usage on {{ '{{' }} $labels.instance {{ '}}' }} ({{ '{{' }} $labels.mountpoint {{ '}}' }}) above {{ disk.pct }}%."
+{% endfor %}
 
       # DORMANT — see file header. secret_age_days is a future textfile-collector
       # metric from a separate secret-age-audit package, not present in develop.

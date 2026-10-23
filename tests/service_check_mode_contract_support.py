@@ -32,6 +32,10 @@ def assert_case(case):
         task = _named_tasks(f"{role}/{relative_path}")[task_name]
         assert gate in _conditions(task)
 
+    for relative_path, task_name, expected in case.get("check_mode", []):
+        task = _named_tasks(f"{role}/{relative_path}")[task_name]
+        assert task.get("check_mode") is expected
+
     if case.get("handlers"):
         handlers = _named_tasks(f"{role}/handlers/main.yml")
         for task_name, gate in case["handlers"]:

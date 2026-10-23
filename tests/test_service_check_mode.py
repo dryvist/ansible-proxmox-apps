@@ -20,7 +20,14 @@ CASES = [
     {
         "role": "ntp",
         "installs": [("tasks/main.yml", "Install chrony and tzdata", "ntp_chrony_install")],
-        "tasks": [("tasks/main.yml", "Set the chrony service state for this host type", "not (ansible_check_mode and ntp_chrony_install is changed)")],
+        "tasks": [
+            ("tasks/main.yml", "Set the chrony service state for this host type", "not (ansible_check_mode and ntp_chrony_install is changed)"),
+            ("tasks/main.yml", "Remove the check-mode staging file", "ansible_check_mode"),
+        ],
+        "check_mode": [
+            ("tasks/main.yml", "Render the chrony configuration to a staging file", False),
+            ("tasks/main.yml", "Remove the check-mode staging file", False),
+        ],
         "handlers": [("Restart chrony", "not (ansible_check_mode and ntp_chrony_install is changed)")],
     },
     {

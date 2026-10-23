@@ -1,12 +1,11 @@
 ---
-# Per-bucket RustFS IAM: generate (in OpenBao) then create (in RustFS) one
-# read-only and one read-write user per bucket in object_storage_default_buckets,
-# each with its own bucket-scoped policy. Replaces the shared root credential
-# every consumer uses today.
+# Per-bucket RustFS IAM: generate selected roles (in OpenBao) then create
+# matching users (in RustFS), each with its own bucket-scoped policy. The
+# default role list is ro/rw; a bucket can narrow it with `iam_roles`.
 #
 # Two phases:
 #   1. iam_bucket.yml (this file, delegate_to localhost): generate-if-absent
-#      + read each bucket's ro/rw key pair from OpenBao via the shared
+#      + read each bucket's selected keys from OpenBao via the shared
 #      ansible-converge identity, same route as object_storage_offsite's
 #      credential. Builds object_storage_bucket_credentials, keyed by bucket
 #      then role -- NOT flattened into one dict, because every bucket/role
@@ -42,7 +41,7 @@
       using the shared root credential until this is provided.
   when: not object_storage_iam_ready
 
-- name: Generate-if-absent + read each bucket's ro/rw credentials from OpenBao
+- name: Generate-if-absent + read each bucket's configured credentials from OpenBao
   when: object_storage_iam_ready
   no_log: true
   block:
@@ -96,11 +95,14 @@
       vars:
         ansible_become: false
 
-    - name: Resolve each bucket's ro/rw credentials
+    - name: Resolve each bucket's configured credentials
       ansible.builtin.include_tasks: iam_bucket.yml
-      loop: "{{ object_storage_default_buckets | map(attribute='name') | list }}"
+      loop: "{{ object_storage_default_buckets }}"
       loop_control:
-        loop_var: object_storage_iam_bucket
+        loop_var: object_storage_iam_bucket_config
+        label: "{{ object_storage_iam_bucket_config.name }}"
+      vars:
+        object_storage_iam_bucket: "{{ object_storage_iam_bucket_config.name }}"
 
   always:
     - name: Revoke the OpenBao login token

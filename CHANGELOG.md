@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.8.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.8.0...v5.8.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **status_stack:** persist Gatus alert state ([#2943](https://github.com/dryvist/ansible-proxmox-apps/issues/2943)) ([dc638ab](https://github.com/dryvist/ansible-proxmox-apps/commit/dc638ab4c8343e09743f76e67fd8b2b1bd0b300c))
+
 ## [5.8.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.7.22...v5.8.0) (2026-10-21)
 
 

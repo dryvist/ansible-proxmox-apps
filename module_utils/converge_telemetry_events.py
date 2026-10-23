@@ -26,6 +26,7 @@ STATS_KEY = "converge_telemetry"
 CHECK_MODE_KEY = "check_mode"
 
 SOURCETYPE_CONVERGE = "ansible:converge"
+SOURCETYPE_RUN = "ansible:converge:run"
 SOURCETYPE_ROSTER = "ansible:converge:roster"
 SOURCETYPE_TASK = "ansible:converge:task"
 SOURCETYPE_INTERRUPTED = "ansible:converge:interrupted"
@@ -112,16 +113,31 @@ def build_events(summaries, config, playbook, now):
     desired_state = _desired_state_fields(config)
 
     def envelope(host, sourcetype, event):
-        return {
+        result = {
             "time": now,
-            "host": host,
             "source": SOURCE,
             "sourcetype": sourcetype,
             "index": index,
             "event": event,
         }
+        if host is not None:
+            result["host"] = host
+        return result
 
     events = []
+    # The published roster excludes localhost; stats.processed does not.
+    events.append(
+        envelope(
+            None,
+            SOURCETYPE_RUN,
+            {
+                "hosts": len(roster),
+                "playbook": playbook,
+                "repo": SOURCE,
+                "git_sha": git_sha,
+            },
+        )
+    )
     for hostname in sorted(summaries):
         summary = summaries[hostname]
         fqdn = fqdns.get(hostname, hostname)

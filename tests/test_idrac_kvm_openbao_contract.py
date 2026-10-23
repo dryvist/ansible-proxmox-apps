@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 import yaml
 
 
@@ -11,14 +13,30 @@ TASKS = yaml.safe_load((ROOT / "roles/idrac_kvm_docker/tasks/main.yml").read_tex
 DEFAULTS = yaml.safe_load((ROOT / "roles/idrac_kvm_docker/defaults/main.yml").read_text())
 
 
-def test_only_r410_is_enabled_and_values_come_from_prefetch():
+def test_targets_are_disabled_and_values_come_from_prefetch():
     targets = {target["name"]: target for target in GROUP_VARS["idrac_kvm_docker_targets"]}
-    assert targets["r410"]["enabled"] is True
+    assert targets["r410"]["enabled"] is False
     assert targets["r710"]["enabled"] is False
     assert targets["r410"]["host"].endswith("bao_apps_secrets.idrac_kvm_r410_host | default('', true) }}")
     assert targets["r410"]["user"].endswith("bao_apps_secrets.idrac_kvm_r410_user | default('', true) }}")
     assert targets["r410"]["password"].endswith("bao_apps_secrets.idrac_kvm_r410_password | default('', true) }}")
     assert DEFAULTS["idrac_kvm_docker_targets"] == []
+
+
+def test_missing_prefetch_fields_render_empty_for_disabled_targets():
+    templar = Templar(loader=DataLoader())
+    templar.available_variables = {}
+    targets = []
+    for target in GROUP_VARS["idrac_kvm_docker_targets"]:
+        rendered = dict(target)
+        for field in ("host", "user", "password"):
+            rendered[field] = templar.template(trust_as_template(target[field]))
+        targets.append(rendered)
+
+    assert all(target["host"] == "" for target in targets)
+    assert all(target["user"] == "" for target in targets)
+    assert all(target["password"] == "" for target in targets)
+    assert not [target for target in targets if target["enabled"]]
 
 
 def test_preflight_checks_only_enabled_prefetched_values():
