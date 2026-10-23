@@ -97,5 +97,6 @@ documented once at
 | `PLEX_CLAIM_TOKEN` | Optional fresh Plex claim token (~4-min); passed ad-hoc to a converge or done via the web UI, never stored | ad-hoc / web UI |
 | `PLEX_TOKEN` | Optional Plex account-token override; normally auto-discovered from the claimed server | env (optional) |
 | `GLANCE_LLM_PROFILE_BEARER_TOKEN` | Bearer token for the optional Glance LLM profile tile | env (optional; required when enabled) |
+| `HOMEBOX_BACKUP_B2_S3_ENDPOINT` | Backblaze B2 S3 host for the Homebox offsite restic repository; unset = offsite repository skipped | env (optional) |
 
 The iDRAC console fields are target-prefixed `host`, `user`, and `password` values so the flat apps-secret merge stays unambiguous.
