@@ -82,7 +82,7 @@ sops exec-env secrets.enc.yaml 'ansible-playbook \
 # output and are not covered by the run.
 ansible-playbook playbooks/verify-approle-ttls.yml
 
-# Monthly Debian guest OS upgrade; Semaphore runs it every Saturday and it acts on the first Saturday (UTC).
+# Weekly Debian guest OS upgrade; Semaphore runs it every Saturday and every run upgrades its targets.
 ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml
 
 # Lint
