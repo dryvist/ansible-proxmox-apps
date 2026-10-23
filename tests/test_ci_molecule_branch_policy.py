@@ -48,7 +48,7 @@ class MoleculeBranchPolicy(unittest.TestCase):
                 }},
                 "changes": {"outputs": {
                     "molecule": relevant, "molecule_scenarios": scenarios,
-                    "tiny": tiny,
+                    "tiny": tiny, "ansible": "true",
                 }},
                 "scope": {"outputs": {"deploy": "true"}},
             },
@@ -117,8 +117,7 @@ class MoleculeBranchPolicy(unittest.TestCase):
         }
         for job_id in heavy_jobs:
             condition = self.workflow["jobs"][job_id]["if"]
-            source = "changes" if job_id == "molecule" else "ci"
-            self.assertIn(f"needs.{source}.outputs.tiny != 'true'", condition, job_id)
+            self.assertIn("needs.changes.outputs.tiny != 'true'", condition, job_id)
 
         molecule = self.workflow["jobs"]["molecule"]
         molecule_needs = molecule["needs"] if isinstance(molecule["needs"], list) else [molecule["needs"]]
