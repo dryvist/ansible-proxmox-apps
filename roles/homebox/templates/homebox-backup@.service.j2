@@ -1,0 +1,23 @@
+{{ ansible_managed | comment }}
+# One instance per restic repository (%i is the repository name). Each instance
+# reads its own environment file, so a failure on one repository fails only its
+# unit. Every command must exit 0; otherwise the unit fails and journald keeps the
+# reason.
+[Unit]
+Description=Homebox backup to the %i repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ homebox_config_dir }}/backup-%i.env
+Environment=PGHOST={{ homebox_db_host }}
+Environment=PGPORT={{ homebox_db_port }}
+Environment=PGUSER={{ homebox_db_user }}
+Environment=PGPASSFILE={{ homebox_pgpass_file }}
+# Create the repository only when its config cannot be read. A wrong password or
+# an unreachable endpoint then fails here, and nothing is re-initialized.
+ExecStartPre=/bin/bash -c 'restic cat config >/dev/null 2>&1 || restic init'
+ExecStart=/bin/bash -o pipefail -c 'pg_dump -Fc {{ homebox_db_name }} | restic backup --stdin --stdin-filename homebox.dump'
+ExecStart=/usr/bin/restic backup {{ homebox_data_dir }}
+ExecStart=/usr/bin/restic forget --keep-daily {{ homebox_restic_keep_daily }} --keep-weekly {{ homebox_restic_keep_weekly }} --keep-monthly {{ homebox_restic_keep_monthly }} --prune

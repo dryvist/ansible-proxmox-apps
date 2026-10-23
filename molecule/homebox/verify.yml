@@ -1,0 +1,111 @@
+---
+# Verify the converged Homebox install from inside the container: the binary, the
+# environment file names and its mode, the unit state, the status endpoint, the
+# data directory's owner, and the absence of backup artifacts while backups are
+# disabled.
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    homebox_verify_port: 7745
+
+  tasks:
+    - name: Stat the installed binary
+      ansible.builtin.stat:
+        path: /opt/homebox/homebox
+      register: homebox_verify_binary
+
+    - name: Assert the binary is installed and executable
+      ansible.builtin.assert:
+        that:
+          - homebox_verify_binary.stat.exists
+          - homebox_verify_binary.stat.mode == '0755'
+        fail_msg: "Homebox binary missing or not executable at /opt/homebox/homebox"
+
+    - name: Stat the environment file
+      ansible.builtin.stat:
+        path: /etc/homebox/homebox.env
+      register: homebox_verify_env_file
+
+    - name: Assert the environment file is root-only
+      ansible.builtin.assert:
+        that:
+          - homebox_verify_env_file.stat.exists
+          - homebox_verify_env_file.stat.mode == '0600'
+          - homebox_verify_env_file.stat.pw_name == 'root'
+        fail_msg: "Homebox environment file missing or not root-only 0600"
+
+    - name: Read the environment file
+      ansible.builtin.slurp:
+        src: /etc/homebox/homebox.env
+      register: homebox_verify_env
+      no_log: true
+
+    - name: Assert the environment file carries the expected HBOX_ names
+      ansible.builtin.assert:
+        that:
+          - "'HBOX_MODE=production' in homebox_verify_env_text"
+          - "'HBOX_WEB_PORT=7745' in homebox_verify_env_text"
+          - "'HBOX_WEB_MAX_UPLOAD_SIZE=100' in homebox_verify_env_text"
+          - "'HBOX_STORAGE_CONN_STRING=file:///var/lib/homebox' in homebox_verify_env_text"
+          - "'HBOX_DATABASE_DRIVER=sqlite3' in homebox_verify_env_text"
+          - "'HBOX_AUTH_API_KEY_PEPPER=' in homebox_verify_env_text"
+          - "'HBOX_OPTIONS_TRUST_PROXY=true' in homebox_verify_env_text"
+          - "'HBOX_OPTIONS_ALLOW_REGISTRATION=true' in homebox_verify_env_text"
+          - "'HBOX_OPTIONS_ALLOW_ANALYTICS=false' in homebox_verify_env_text"
+          - "'HBOX_OPTIONS_GITHUB_RELEASE_CHECK=false' in homebox_verify_env_text"
+        fail_msg: "Homebox environment file is missing an expected HBOX_ variable"
+      vars:
+        homebox_verify_env_text: "{{ homebox_verify_env.content | b64decode }}"
+      no_log: true
+
+    - name: Read the unit state
+      ansible.builtin.systemd:
+        name: homebox
+      register: homebox_verify_unit
+
+    - name: Assert the unit is active and enabled
+      ansible.builtin.assert:
+        that:
+          - homebox_verify_unit.status.ActiveState == 'active'
+          - homebox_verify_unit.status.UnitFileState == 'enabled'
+        fail_msg: "homebox.service is not active and enabled"
+
+    - name: Probe the status endpoint from inside the container
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ homebox_verify_port }}/api/v1/status"
+        method: GET
+        status_code: 200
+        timeout: 30
+      register: homebox_verify_status
+      changed_when: false
+
+    - name: Stat the data directory
+      ansible.builtin.stat:
+        path: /var/lib/homebox
+      register: homebox_verify_data
+
+    - name: Assert the data directory is owned by the homebox user
+      ansible.builtin.assert:
+        that:
+          - homebox_verify_data.stat.pw_name == 'homebox'
+          - homebox_verify_data.stat.gr_name == 'homebox'
+        fail_msg: "/var/lib/homebox is not owned by homebox:homebox"
+
+    - name: Stat the backup artifacts that must not exist while backups are disabled
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: homebox_verify_backup_artifacts
+      loop:
+        - /etc/homebox/restic-password
+        - /etc/homebox/pgpass
+        - /etc/homebox/backup-rustfs.env
+        - /etc/systemd/system/homebox-backup@.service
+
+    - name: Assert no backup artifacts were rendered
+      ansible.builtin.assert:
+        that:
+          - homebox_verify_backup_artifacts.results | selectattr('stat.exists') | list | length == 0
+        fail_msg: "Backup artifacts were rendered although homebox_backup_enabled is false"
