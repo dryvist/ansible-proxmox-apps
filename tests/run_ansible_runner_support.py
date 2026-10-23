@@ -31,6 +31,41 @@ class RunnerFixture(unittest.TestCase):
         self.event_log = self.temp_path / "events.log"
         self.tmp_path = self.temp_path / "tmp"
         self.tmp_path.mkdir()
+        self.repo_origin = self.temp_path / "origin.git"
+        self.repo = self.temp_path / "repo"
+        subprocess.run(["git", "init", "--bare", "-q", str(self.repo_origin)], check=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.repo_origin), str(self.repo)], check=True
+        )
+        for args in (
+            ("config", "user.email", "test@example.com"),
+            ("config", "user.name", "test"),
+            ("checkout", "-q", "-b", "develop"),
+        ):
+            subprocess.run(["git", "-C", str(self.repo), *args], check=True)
+        (self.repo / "README.md").write_text("sandbox\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(self.repo), "add", "README.md"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "test: sandbox"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "push", "-q", "-u", "origin", "develop"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "--git-dir",
+                str(self.repo_origin),
+                "symbolic-ref",
+                "HEAD",
+                "refs/heads/develop",
+            ],
+            check=True,
+        )
         # One fake for the OpenBao CLI. It also enforces the two contracts
         # the runner depends on and that no assertion below could otherwise
         # see: the secret_id arrives on stdin rather than in the argument
@@ -117,6 +152,8 @@ class RunnerFixture(unittest.TestCase):
         legacy=True,
     ):
         env = {k: v for k, v in os.environ.items() if k not in GENERIC_ENV}
+        for name in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+            env.pop(name, None)
         env.update(
             {
                 "BAO_ADDR": "https://openbao.test",
@@ -161,7 +198,7 @@ class RunnerFixture(unittest.TestCase):
 
         return subprocess.run(
             [str(RUNNER), "playbooks/site.yml", "--limit", "localhost"],
-            cwd=ROOT,
+            cwd=self.repo,
             env=env,
             check=False,
             capture_output=True,

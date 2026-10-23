@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Ansible runner — prefers a short-lived SSH certificate from the OpenBao CA
 # (ssh-certificate-authority ADR) over the shared static key, then runs the
-# playbook. Reads SECRET_STORE_ADDR, SSH_SIGNER_ROLE_ID/SSH_SIGNER_SECRET_ID,
-# SSH_CA_MOUNT and SSH_SIGNER_ROLE from the environment.
+# playbook. Reads MEDIA_STACK_REPO_URL for the media play and the OpenBao/SSH
+# signer settings from the runtime environment.
 #   scripts/run-ansible.sh playbooks/site.yml [args...]
 # The older AppRole names are still read as a fallback. Without any signer
 # pair the static PROXMOX_SSH_KEY_PATH flow is unchanged.
@@ -53,28 +53,85 @@ if [[ -n $BRANCH ]]; then
   fi
 fi
 
-# The media stack lives in a pinned submodule that site.yml converges as its
-# own process. Checking it out here means a bare clone converges the whole
-# estate with no preparatory step; `--init` takes the recorded SHA, never a
-# branch tip. Failing loudly beats converging a partial estate silently.
-# Best-effort, not fatal: a checkout without access to the submodule must still
-# be able to run every other playbook. site.yml's media play checks for the
-# checkout itself and fails there, where the consequence is actually media.
-#
-# --checkout is what makes this work at all now. .gitmodules marks the
-# submodule `update = none`, because Semaphore clones a repository with an
-# unconditional `git submodule update --init --recursive` it offers no way to
-# disable, and that step is fatal: one private submodule the execution plane
-# cannot read failed EVERY template at clone time, before any playbook ran.
-# `update = none` makes that step skip it; --checkout overrides the setting
-# here, so a caller that CAN read the submodule still gets it and still warns
-# when the checkout fails.
-#
-# It runs before the dirty-tree guard below: a pointer bump leaves an already
-# checked-out submodule on the old commit, which status reports as a change.
-if [[ -f .gitmodules ]] && ! git submodule update --init --recursive --checkout; then
-  echo "run-ansible: submodule checkout failed — the media stack will not converge" >&2
-fi
+# servarr.pin holds the reviewed media-stack commit. Fetch it here, where the
+# runner's Git credential helper is available, before the media playbook runs.
+# Keep the old submodule path for callers that have not adopted the pin file.
+checkout_servarr_pin() {
+  local pin_file="$REPO_ROOT/servarr.pin"
+  local checkout="$REPO_ROOT/servarr"
+  local remote="${MEDIA_STACK_REPO_URL:-}"
+  local pin current_remote actual
+
+  if [[ -z $remote ]]; then
+    echo "run-ansible: MEDIA_STACK_REPO_URL must be set for the media play" >&2
+    return 1
+  fi
+
+  {
+    IFS= read -r pin
+    if IFS= read -r; then
+      pin=""
+    fi
+  } < "$pin_file"
+  if [[ ! $pin =~ ^[0-9a-f]{40}$ ]]; then
+    echo "run-ansible: servarr.pin must contain a 40-character lowercase hexadecimal commit SHA" >&2
+    return 1
+  fi
+
+  if [[ -e "$checkout" ]] && [[ ! -e "$checkout/.git" ]]; then
+    if ! rmdir "$checkout"; then
+      echo "run-ansible: servarr exists but is not an empty Git checkout" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -e "$checkout/.git" ]]; then
+    current_remote=$(git -C "$checkout" remote get-url origin) || {
+      echo "run-ansible: unable to read the servarr checkout origin" >&2
+      return 1
+    }
+    if [[ $current_remote != "$remote" ]]; then
+      echo "run-ansible: servarr checkout origin does not match servarr.pin" >&2
+      return 1
+    fi
+    if ! git -C "$checkout" diff --quiet || ! git -C "$checkout" diff --cached --quiet; then
+      echo "run-ansible: servarr checkout has local tracked changes" >&2
+      return 1
+    fi
+  else
+    git clone --no-checkout --single-branch --branch main "$remote" "$checkout" || {
+      echo "run-ansible: unable to clone the pinned media-stack repository" >&2
+      return 1
+    }
+  fi
+
+  git -C "$checkout" fetch --no-tags origin "$pin" || {
+    echo "run-ansible: unable to fetch the pinned media-stack commit" >&2
+    return 1
+  }
+  git -C "$checkout" checkout --detach "$pin" || {
+    echo "run-ansible: unable to check out the pinned media-stack commit" >&2
+    return 1
+  }
+  actual=$(git -C "$checkout" rev-parse HEAD) || {
+    echo "run-ansible: unable to verify the media-stack checkout" >&2
+    return 1
+  }
+  if [[ $actual != "$pin" ]]; then
+    echo "run-ansible: media-stack checkout does not match servarr.pin" >&2
+    return 1
+  fi
+}
+
+case "$PLAYBOOK" in
+  site.yml|*/site.yml|05-media-and-gate.yml|*/05-media-and-gate.yml)
+    if [[ -f "$REPO_ROOT/servarr.pin" ]]; then
+      checkout_servarr_pin || exit 1
+    elif [[ -f "$REPO_ROOT/.gitmodules" ]] && ! git -C "$REPO_ROOT" submodule update --init --recursive --checkout; then
+      echo "run-ansible: legacy submodule checkout failed — the media stack will not converge" >&2
+    fi
+    ;;
+esac
 
 # The SHA check above only proves the CHECKED-OUT COMMIT matches origin — it
 # is blind to uncommitted edits to tracked files, which deploy content that
