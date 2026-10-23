@@ -38,6 +38,7 @@
     status_stack_deadman_endpoints:
       - { name: technitium-dns, heartbeat: 5m }
     status_stack_deadman_token: "test-deadman-token"
+    dashboard_catalog_base_domain: example.test
     status_stack_monitor_targets:
       icmp:
         - { name: pve-node-1, fqdn: pve-node-1.example.test, group: node }
@@ -102,6 +103,12 @@
         url: "https://probe-path-check.example.test"
         probe_url: "http://probe-path-check-guest.example.test:8080"
         probe_path: "/health"
+      - name: proxmox
+        group: apps
+        ui: true
+        sso: false
+        fqdn: example.test
+        url: "http://example.test:8006/"
 
   tasks:
     - name: Render gatus-config.yaml
@@ -172,22 +179,41 @@
           label> · UI/API", mirroring the Glance board's audience split:
           {{ _gatus.endpoints | map(attribute='group') | list }}
 
-    - name: Assert direct defaults reject 400 without changing other branches
+    - name: Assert catalog checks use public URLs and preserve status branches
       ansible.builtin.assert:
         that:
-          - "'[STATUS] != 400' in _by_name.plex.conditions"
-          - "'[STATUS] != 400' in _by_name.nautobot.conditions"
-          - "'[STATUS] != 400' not in _by_name['public-check'].conditions"
-          - _by_name['override-check'].conditions == ['[STATUS] == any(200, 302)', '[RESPONSE_TIME] < 3000']
-          - _by_name['probe-path-check'].conditions == ['[STATUS] == 200', '[RESPONSE_TIME] < 3000']
+          - _by_name.plex.url == 'https://plex.example.test'
+          - _by_name.nautobot.url == 'https://nautobot.example.test'
+          - _by_name.proxmox.url == 'https://proxmox.example.test/'
+          - _by_name.plex.conditions == _default_conditions
+          - _by_name.nautobot.conditions == _by_name.plex.conditions
+          - _by_name['public-check'].conditions == _by_name.plex.conditions
+          - _by_name['override-check'].conditions == _override_conditions
+          - _by_name['probe-path-check'].url == 'https://probe-path-check.example.test/health'
+          - _by_name['probe-path-check'].conditions == _health_conditions
         fail_msg: >-
-          Only default direct probes must reject HTTP 400. Public rows, status
-          overrides, and probe_path rows retain their existing conditions.
+          Catalog probes must use their public URLs, including the subdomain
+          alias for apex rows, while status overrides and health paths keep
+          their specific conditions.
         success_msg: >-
-          Direct defaults reject HTTP 400; public, override, and probe_path
-          conditions are unchanged.
+          Catalog probes use public URLs; overrides, health paths, and
+          certificate checks render as configured.
       vars:
         _by_name: "{{ dict(_gatus.endpoints | map(attribute='name') | zip(_gatus.endpoints)) }}"
+        _default_conditions:
+          - "[STATUS] < 500"
+          - "[STATUS] != 504"
+          - "[BODY] != pat(*invalid_client*)"
+          - "[RESPONSE_TIME] < 3000"
+          - "[CERTIFICATE_EXPIRATION] > 240h"
+        _override_conditions:
+          - "[STATUS] == any(200, 302)"
+          - "[RESPONSE_TIME] < 3000"
+          - "[CERTIFICATE_EXPIRATION] > 240h"
+        _health_conditions:
+          - "[STATUS] == 200"
+          - "[RESPONSE_TIME] < 3000"
+          - "[CERTIFICATE_EXPIRATION] > 240h"
 
     - name: Assert ntfy urgent-topic routing still targets the real endpoint groups
       ansible.builtin.assert:
