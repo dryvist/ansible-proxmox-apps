@@ -82,8 +82,9 @@ new sign-ups.
 
 ## Backups
 
-`tasks/backup.yml` runs restic from the Debian package, with a daily dump of the
-Postgres database and a copy of `/var/lib/homebox`. Each repository has its own
+`tasks/backup.yml` runs restic from the Debian package and `pg_dump` from the
+PGDG client, which matches the shared server's major version. Each run dumps the
+Postgres database and copies `/var/lib/homebox`. Each repository has its own
 template service instance, so one failing does not skip the other. A weekly
 `restic check` runs per repository. The local RustFS repository is always
 configured. The offsite Backblaze B2 repository is configured only when its
