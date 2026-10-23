@@ -89,7 +89,9 @@ class RunAnsibleSandbox(unittest.TestCase):
         path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
         path.chmod(0o700)
 
-    def _run(self, *args, allow_stale=False, env_extra=None):
+    def _run(
+        self, *args, allow_stale=False, env_extra=None, playbook="playbooks/site.yml"
+    ):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         env["PROXMOX_SSH_KEY_PATH"] = "/nonexistent-static-key"
@@ -98,6 +100,7 @@ class RunAnsibleSandbox(unittest.TestCase):
             "OPENBAO_APPROLE_ANSIBLE_ROLE_ID",
             "OPENBAO_APPROLE_ANSIBLE_SECRET_ID",
             "SSH_KNOWN_HOSTS",
+            "MEDIA_STACK_REPO_URL",
         ):
             env.pop(var, None)
         env["FAKE_CALLED_LOG"] = str(self.called_log)
@@ -106,7 +109,7 @@ class RunAnsibleSandbox(unittest.TestCase):
             env["ALLOW_STALE_CHECKOUT"] = "1"
         env.update(env_extra or {})
         return subprocess.run(
-            [str(self.runner), "playbooks/site.yml", *args],
+            [str(self.runner), playbook, *args],
             cwd=self.work,
             env=env,
             check=False,

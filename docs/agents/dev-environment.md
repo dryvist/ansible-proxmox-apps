@@ -36,5 +36,5 @@ nix develop .
 | tofu-proxmox | Upstream: provisions VMs/containers |
 | ansible-splunk | Peer: owns Splunk Enterprise deployment |
 | ansible-proxmox | Peer: owns Proxmox host config (kernel, ZFS, firewall) |
-| the media-stack repo | Consumed: pinned as the `servarr/` submodule and converged by a final `site.yml` play |
+| the media-stack repo | Consumed: SHA in `servarr.pin`; clone URL from `MEDIA_STACK_REPO_URL`; checked out to `servarr/` for the final `site.yml` play |
 | ansible-proxmox-ai | Peer: owns the AI/LLM roles split out in #996 (llm_router, hermes_agent, qdrant, ...) with its own site.yml/inventory loader |
