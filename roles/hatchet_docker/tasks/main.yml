@@ -1,0 +1,39 @@
+---
+# Hatchet Lite runs the control plane in one container. Workflow data and the
+# Postgres-backed queue are stored in the shared PostgreSQL cluster.
+
+- name: Create Hatchet deployment directory
+  ansible.builtin.file:
+    path: "{{ hatchet_docker_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Render Hatchet docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ hatchet_docker_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Hatchet
+
+- name: Deploy Hatchet via Docker Compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ hatchet_docker_data_dir }}"
+    state: present
+  register: hatchet_docker_compose_result
+  changed_when: >-
+    (hatchet_docker_compose_result.actions | default([]))
+    | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
+    | list | length > 0
+  no_log: true
+
+- name: Wait for Hatchet web port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: localhost
+    port: "{{ hatchet_docker_web_port }}"
+    timeout: 220
+  changed_when: false

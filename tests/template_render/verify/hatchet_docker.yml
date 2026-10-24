@@ -1,0 +1,108 @@
+---
+- name: Render and verify hatchet_docker templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    hatchet_docker_image: >-
+      ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.23@sha256:d4c8e8234d423cc93ba20f3dad7ac30de71a836e9c5888a7ebdf76dc2e417e13
+    hatchet_docker_container_name: hatchet
+    hatchet_docker_db_host: POSTGRES_HOST
+    hatchet_docker_db_port: 5432
+    hatchet_docker_db_user: hatchet
+    hatchet_docker_db_password: render-test-placeholder
+    hatchet_docker_db_name: hatchet
+    hatchet_docker_db_ssl_mode: disable
+    hatchet_docker_server_auth_cookie_secrets: render-cookie-placeholder-a render-cookie-placeholder-b
+    hatchet_docker_fqdn: HATCHET_UI_HOST
+    hatchet_docker_server_encryption_master_keyset: render-master-keyset-placeholder
+    hatchet_docker_server_encryption_jwt_private_keyset: render-private-keyset-placeholder
+    hatchet_docker_server_encryption_jwt_public_keyset: render-public-keyset-placeholder
+    hatchet_docker_server_url: https://HATCHET_UI_HOST
+    hatchet_docker_grpc_container_port: 7070
+    hatchet_docker_engine_broadcast_address: HATCHET_ENGINE_HOST:443
+    hatchet_docker_admin_email: ADMIN_EMAIL
+    hatchet_docker_admin_password: render-admin-placeholder
+    hatchet_docker_admin_name: Hatchet Admin
+    hatchet_docker_web_port: 8888
+    hatchet_docker_web_container_port: 8888
+    hatchet_docker_grpc_port: 7077
+    hatchet_docker_restart_policy: unless-stopped
+    _template_dir: "../../../roles/hatchet_docker/templates"
+
+  tasks:
+    - name: Render Hatchet docker-compose.yml.j2
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _fixture_dir }}/hatchet-docker-compose.yml"
+        mode: "0600"
+
+    - name: Read rendered Hatchet docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/hatchet-docker-compose.yml"
+      register: _hatchet_compose_raw
+
+    - name: Decode Hatchet compose content
+      ansible.builtin.set_fact:
+        _hatchet_compose: "{{ _hatchet_compose_raw.content | b64decode }}"
+
+    - name: Assert Hatchet Lite image is pinned
+      ansible.builtin.assert:
+        that:
+          - >-
+            'ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.23'
+            ~ '@sha256:d4c8e8234d423cc93ba20f3dad7ac30de71a836e9c5888a7ebdf76dc2e417e13' in _hatchet_compose
+        fail_msg: Hatchet compose does not use the pinned Hatchet Lite image
+
+    - name: Assert Hatchet uses shared PostgreSQL and its queue backend
+      ansible.builtin.assert:
+        that:
+          - "'DATABASE_POSTGRES_HOST: \"POSTGRES_HOST\"' in _hatchet_compose"
+          - "'DATABASE_POSTGRES_DB_NAME: \"hatchet\"' in _hatchet_compose"
+          - "'SERVER_MSGQUEUE_KIND: postgres' in _hatchet_compose"
+          - "'SERVER_MSGQUEUE_PUBSUB_KIND: postgres' in _hatchet_compose"
+          - "'rabbitmq' not in _hatchet_compose"
+        fail_msg: Hatchet compose is missing shared PostgreSQL or Postgres queue settings
+
+    - name: Assert Hatchet ingress and worker endpoints
+      ansible.builtin.assert:
+        that:
+          - "'8888:8888' in _hatchet_compose"
+          - "'7077:7070' in _hatchet_compose"
+          - "'SERVER_GRPC_PORT: \"7070\"' in _hatchet_compose"
+          - "'SERVER_URL: \"https://HATCHET_UI_HOST\"' in _hatchet_compose"
+          - "'SERVER_GRPC_BROADCAST_ADDRESS: \"HATCHET_ENGINE_HOST:443\"' in _hatchet_compose"
+          - "'SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: \"localhost:7070\"' in _hatchet_compose"
+          - "'SERVER_GRPC_INSECURE: \"true\"' in _hatchet_compose"
+        fail_msg: Hatchet compose is missing the expected UI or h2c gRPC settings
+
+    - name: Assert Hatchet readiness healthcheck
+      ansible.builtin.assert:
+        that:
+          - >-
+            'test: ["CMD-SHELL", "curl -f http://localhost:8733/ready || exit 1"]'
+            in _hatchet_compose
+          - "'interval: 2s' in _hatchet_compose"
+          - "'timeout: 5s' in _hatchet_compose"
+          - "'retries: 5' in _hatchet_compose"
+          - "'start_period: 5s' in _hatchet_compose"
+        fail_msg: Hatchet compose does not contain the Hatchet Lite readiness check
+
+    - name: Assert required secrets are injected by environment
+      ansible.builtin.assert:
+        that:
+          - "'SERVER_AUTH_COOKIE_SECRETS:' in _hatchet_compose"
+          - "'SERVER_ENCRYPTION_MASTER_KEYSET:' in _hatchet_compose"
+          - "'SERVER_ENCRYPTION_JWT_PRIVATE_KEYSET:' in _hatchet_compose"
+          - "'SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET:' in _hatchet_compose"
+          - "'ADMIN_PASSWORD:' in _hatchet_compose"
+        fail_msg: Hatchet compose is missing required OpenBao-backed credentials
+
+    - name: Hatchet template rendering PASSED
+      ansible.builtin.debug:
+        msg: >-
+          Hatchet Lite compose assertions passed: pinned image, shared PostgreSQL,
+          Postgres queue, UI and gRPC ports, and required credential settings.
