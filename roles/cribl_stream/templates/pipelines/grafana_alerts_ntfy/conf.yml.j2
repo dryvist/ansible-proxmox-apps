@@ -1,17 +1,36 @@
 # Grafana HEC events keep their full independent Splunk copy. This pipeline
 # renders a readable ntfy hub message and unrolls bounded continuations so the
 # existing hub can fan them out to Slack and Zammad without JSON attachments.
+---
 output: default
 streamtags: []
 groups: {}
 asyncFuncTimeout: 1000
 functions:
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        try {
+          const payload = JSON.parse(__e._raw);
+          __e.github_actions_ntfy = Array.isArray(payload.alerts) && payload.alerts.some((alert) =>
+            alert && typeof alert === 'object' && alert.labels && alert.labels.ntfy === 'true');
+        } catch (err) {
+          __e.github_actions_ntfy = false;
+        }
   - id: drop
-    filter: "sourcetype !== 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} && sourcetype !== 'grafana:alert'{% endif %}"
+    filter: >-
+      sourcetype !== 'grafana:alert:canary' &&
+      {{ "sourcetype !== 'grafana:alert'" if cribl_stream_grafana_ntfy_cutover_verified | bool
+         else "!(sourcetype === 'grafana:alert' && github_actions_ntfy)" }}
     disabled: false
     conf: {}
   - id: code
-    filter: "sourcetype === 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} || sourcetype === 'grafana:alert'{% endif %}"
+    filter: >-
+      sourcetype === 'grafana:alert:canary' ||
+      {{ "sourcetype === 'grafana:alert'" if cribl_stream_grafana_ntfy_cutover_verified | bool
+         else "(sourcetype === 'grafana:alert' && github_actions_ntfy)" }}
     disabled: false
     conf:
       code: |
@@ -116,7 +135,8 @@ functions:
             const entities = entitiesText(labels);
             if (entities) lines.push('Entity: ' + entities);
             lines.push('Value: ' + valuesText(alert));
-            const reason = annotations.grafana_state_reason || annotations.description || annotations.reason || annotations.summary;
+            const reason = annotations.grafana_state_reason || annotations.description ||
+              annotations.reason || annotations.summary;
             lines.push('Reason: ' + boundedText(reason || '(not provided)', 300));
             lines.push('Summary: ' + boundedText(annotations.summary || '(not provided)', 450));
             const links = sourceLinks(alert);
@@ -189,16 +209,23 @@ functions:
           }];
         }
   - id: unroll
-    filter: "sourcetype === 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} || sourcetype === 'grafana:alert'{% endif %}"
+    filter: >-
+      sourcetype === 'grafana:alert:canary' ||
+      {{ "sourcetype === 'grafana:alert'" if cribl_stream_grafana_ntfy_cutover_verified | bool
+         else "(sourcetype === 'grafana:alert' && github_actions_ntfy)" }}
     disabled: false
     conf:
       srcField: __ntfyParts
       destField: __ntfyPart
   - id: code
-    filter: "sourcetype === 'grafana:alert:canary'{% if cribl_stream_grafana_ntfy_cutover_verified | bool %} || sourcetype === 'grafana:alert'{% endif %}"
+    filter: >-
+      sourcetype === 'grafana:alert:canary' ||
+      {{ "sourcetype === 'grafana:alert'" if cribl_stream_grafana_ntfy_cutover_verified | bool
+         else "(sourcetype === 'grafana:alert' && github_actions_ntfy)" }}
     disabled: false
     conf:
       code: |
         if (__e.__ntfyPart) Object.assign(__e, __e.__ntfyPart);
+        delete __e.github_actions_ntfy;
         delete __e.__ntfyPart;
         delete __e.__ntfyParts;
