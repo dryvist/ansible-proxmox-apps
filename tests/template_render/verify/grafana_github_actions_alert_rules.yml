@@ -9,6 +9,7 @@
     _template_dir: "{{ playbook_dir }}/../../../roles/grafana_stack/templates"
     grafana_stack_alert_folder: Alerting
     grafana_stack_alert_eval_interval: 1m
+    grafana_stack_github_actions_open_pr_count_threshold: 40
 
   tasks:
     - name: Render and load the GitHub Actions alert rule contract
@@ -17,15 +18,26 @@
           {{ lookup('ansible.builtin.template', _template_dir ~ '/alerting/rules-github-actions.yml.j2')
              | from_yaml }}
 
-    - name: Assert the three chat alerts use the existing VictoriaMetrics datasource
+    - name: Assert GitHub Actions alerts use the existing VictoriaMetrics datasource
       ansible.builtin.assert:
         quiet: true
         that:
           - _rules.groups[0].name == 'github-actions'
-          - _rules.groups[0].rules | length == 3
+          - _rules.groups[0].rules | length == 4
           - _rules.groups[0].rules | map(attribute='labels.severity') | unique | list == ['warning']
+          - _rules.groups[0].rules[0].labels.ntfy is undefined
+          - _rules.groups[0].rules[2].labels.ntfy is undefined
           - "'github_actions_job_queue_seconds[1h]' in (_rules.groups[0].rules[0].data[0].model.expr | string)"
           - "'github_actions_runs_completed_total' in (_rules.groups[0].rules[1].data[0].model.expr | string)"
           - _rules.groups[0].rules[2].for == '10m'
+          - _rules.groups[0].rules[3].uid == 'github-actions-open-pr-count-high'
+          - _rules.groups[0].rules[3].for == '30m'
+          - _rules.groups[0].rules[3].labels.ntfy == 'true'
+          - _rules.groups[0].rules[3].data[1].model.conditions[0].evaluator.params == [40]
+          - "'sum by (org) (github_pr_open_count)' == _rules.groups[0].rules[3].data[0].model.expr"
+          - >-
+            (lookup('ansible.builtin.file',
+             playbook_dir ~ '/../../../roles/grafana_stack/defaults/main.yml') | from_yaml)
+            .grafana_stack_github_actions_open_pr_count_threshold == 40
           - "'victoriametrics' in (_rules.groups[0].rules | map(attribute='data.0.datasourceUid') | join(' '))"
         fail_msg: "The rendered GitHub Actions alerts differ from the contract."
