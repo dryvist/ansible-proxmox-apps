@@ -1,17 +1,7 @@
 ---
-# Shared steps of playbooks/upgrade.yml: skip hosts the monthly guest upgrade
-# does not own, then apply the Debian distribution upgrade.
-- name: Skip guests when the schedule guard requests it
-  when: hostvars['localhost'].guest_os_upgrade_skip | default(false)
-  block:
-    # The report keeps a skipped guest in the play recap; end_host alone drops it.
-    - name: Report a skipped scheduled upgrade
-      ansible.builtin.debug:
-        msg: "Skipping the monthly guest OS upgrade: not the first Saturday of the month (UTC)."
-
-    - name: End the host when the schedule guard requested a skip
-      ansible.builtin.meta: end_host
-
+# Shared steps of playbooks/upgrade.yml: end the hosts this upgrade does not
+# own (non-Debian and NVIDIA-driver guests), then apply the Debian distribution
+# upgrade.
 - name: Gather minimal guest facts
   ansible.builtin.setup:
     gather_subset:
@@ -41,6 +31,19 @@
     update_cache: true
     upgrade: dist
     autoremove: true
+  async: 1800
+  poll: 0
+  register: guest_os_upgrade_job
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+- name: Wait for Debian distribution upgrades
+  ansible.builtin.async_status:
+    jid: "{{ guest_os_upgrade_job.ansible_job_id }}"
+  register: guest_os_upgrade_status
+  until: guest_os_upgrade_status.finished
+  retries: 180
+  delay: 10
   environment:
     DEBIAN_FRONTEND: noninteractive
 

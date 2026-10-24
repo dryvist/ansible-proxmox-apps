@@ -33,9 +33,10 @@ python3 scripts/install_galaxy_requirements.py
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `immich_version` | `release` | Server/ML image tag — pin to `vX.Y.Z` in production |
-| `immich_postgres_image` | pinned vectorchord image | Immich's required Postgres image |
-| `immich_redis_image` | `valkey/valkey:9` | Redis-compatible cache |
+| `immich_server_image` | pinned tag and digest | Immich server image |
+| `immich_machine_learning_image` | pinned tag and digest | Immich machine-learning image |
+| `immich_postgres_image` | pinned tag and digest | Immich's required Postgres image |
+| `immich_redis_image` | pinned tag and digest | Redis-compatible Valkey image |
 | `immich_library_dir` | `/mnt/photos` | Host ZFS dataset (bind-mount) for the library |
 | `immich_data_dir` | `/opt/immich` | Compose project dir + Postgres data |
 | `immich_web_port` | `2283` | Host port published for the web UI/API |

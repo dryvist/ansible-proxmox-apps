@@ -13,3 +13,18 @@
     project_src: "{{ prometheus_stack_data_dir }}"
     state: present
     recreate: always
+
+# The rules are mounted as a directory, so a git checkout update is visible in
+# the running container without recreating it. Validate before this handler can
+# run, then use the lifecycle API enabled by docker-compose.yml.j2.
+- name: Reload Prometheus rules
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ prometheus_stack_port }}/-/reload"
+    method: POST
+    status_code: 200
+  register: prometheus_stack_rules_reload
+  # A recreate notified in the same run may still be starting Prometheus.
+  until: prometheus_stack_rules_reload.status == 200
+  retries: 10
+  delay: 3
+  changed_when: false

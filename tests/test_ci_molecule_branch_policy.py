@@ -3,11 +3,8 @@
 from copy import deepcopy
 import fnmatch
 import json
-import os
 from pathlib import Path
 import re
-import subprocess
-import tempfile
 import unittest
 
 from jinja2 import Environment, StrictUndefined
@@ -23,16 +20,9 @@ class MoleculeBranchPolicy(unittest.TestCase):
     def setUp(self):
         self.workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         self.events = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        molecule = yaml.safe_load(
-            (ROOT / ".github/workflows/_molecule.yml").read_text(encoding="utf-8")
-        )
-        self.discovery = next(
-            step["run"] for step in molecule["jobs"]["scenarios"]["steps"]
-            if step.get("name") == "Discover all scenarios for a full matrix"
-        )
 
     def expression(self, expression, github, scenarios="[]", relevant="false",
-                   cancelled=False, tiny="false"):
+                   cancelled=False, tiny="false", molecule_workflow="false"):
         # These clauses use only boolean/string operations shared by GitHub
         # expressions and Jinja. Execute the source clauses, rather than
         # asserting their spelling or reproducing their branch decisions.
@@ -48,30 +38,39 @@ class MoleculeBranchPolicy(unittest.TestCase):
                 }},
                 "changes": {"outputs": {
                     "molecule": relevant, "molecule_scenarios": scenarios,
-                    "tiny": tiny,
+                    "tiny": tiny, "ansible": "true",
                 }},
-                "scope": {"outputs": {"deploy": "true"}},
+                "scope": {"outputs": {
+                    "deploy": "true", "molecule_workflow": molecule_workflow,
+                }},
             },
             vars={"E2E_RUNNERS_ENABLED": "true"},
             cancelled=lambda: cancelled,
         )
 
-    def matrix(self, github, scenarios="[]", relevant="false", cancelled=False):
+    def matrix(self, github, scenarios="[]", relevant="false", cancelled=False,
+               molecule_workflow="false"):
         job = self.workflow["jobs"]["molecule"]
-        if not self.expression(job["if"], github, scenarios, relevant, cancelled):
+        if not self.expression(
+            job["if"], github, scenarios, relevant, cancelled,
+            molecule_workflow=molecule_workflow,
+        ):
             return None
-        selected = self.expression(job["with"]["scenarios"], github, scenarios, relevant)
+        full_suite = self.expression(
+            job["with"]["full_suite"], github, scenarios, relevant,
+            molecule_workflow=molecule_workflow,
+        )
+        if full_suite:
+            return self.all_scenarios()
+        selected = self.expression(
+            job["with"]["scenarios"], github, scenarios, relevant,
+            molecule_workflow=molecule_workflow,
+        )
         if selected:
             return json.loads(selected)
-        # Run the workflow's actual full-matrix discovery, without Docker.
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "output"
-            subprocess.run(
-                ["bash", "-c", self.discovery], cwd=ROOT, check=True,
-                env={**os.environ, "GITHUB_OUTPUT": str(output)},
-                capture_output=True, text=True,
-            )
-            return json.loads(output.read_text(encoding="utf-8").removeprefix("list="))
+        # The shared workflow discovers all scenarios by directory when the
+        # caller supplies no focused selection (main promotion/push policy).
+        return self.all_scenarios()
 
     def allowed_skips(self, github):
         gate = self.workflow["jobs"]["gate"]
@@ -82,9 +81,12 @@ class MoleculeBranchPolicy(unittest.TestCase):
         return {item.strip() for item in self.expression(policy, github).split(",") if item.strip()}
 
     def assert_full_matrix(self, actual):
-        expected = sorted(path.parent.name for path in (ROOT / "molecule").glob("*/molecule.yml"))
+        expected = self.all_scenarios()
         self.assertGreater(len(expected), 1)
         self.assertEqual(actual, expected)
+
+    def all_scenarios(self):
+        return sorted(path.parent.name for path in (ROOT / "molecule").glob("*/molecule.yml"))
 
     def test_main_promotion_runs_every_scenario_for_empty_or_focused_classifier_outputs(self):
         github = self.events["main_pull_request"]
@@ -111,14 +113,24 @@ class MoleculeBranchPolicy(unittest.TestCase):
         self.assertEqual(self.matrix(github, '["default"]', "true"), ["default"])
         self.assertIsNone(self.matrix(github))
 
+    def test_molecule_workflow_changes_run_the_full_scenario_list(self):
+        github = deepcopy(self.events["main_pull_request"])
+        github["event"]["pull_request"]["base"]["ref"] = "develop"
+        self.assert_full_matrix(
+            self.matrix(
+                github, '["default"]', "true", molecule_workflow="true",
+            )
+        )
+
     def test_tiny_develop_pr_only_skips_local_suites(self):
         heavy_jobs = {
             "data-contract", "inventory-contract", "secrets-contract", "molecule", "e2e",
+            "template-render", "nautobot-seed", "status-stack-autokuma-render",
+            "agent-sandbox-limited-render",
         }
         for job_id in heavy_jobs:
             condition = self.workflow["jobs"][job_id]["if"]
-            source = "changes" if job_id == "molecule" else "ci"
-            self.assertIn(f"needs.{source}.outputs.tiny != 'true'", condition, job_id)
+            self.assertIn("needs.changes.outputs.tiny != 'true'", condition, job_id)
 
         molecule = self.workflow["jobs"]["molecule"]
         molecule_needs = molecule["needs"] if isinstance(molecule["needs"], list) else [molecule["needs"]]

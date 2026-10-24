@@ -5,16 +5,10 @@
 # JacobPEvans/.github/.github/workflows/_ansible-ci.yml so lint runs identically
 # across ansible-proxmox, ansible-splunk and this repo.
 #
-# Molecule stays LOCAL here: this repo's molecule job has a deliberate
-# least-privilege Doppler handling (it maps only the three secrets the scenarios
-# consume into the test step, never inject-env-vars) plus a wide scenario matrix
-# and a template-render job. Routing it through the shared molecule (which uses
-# inject-env-vars) would regress that. So the shared CI workflow runs lint only
-# (molecule:false), while a parallel changes call runs the same filters. This
-# wrapper keeps _molecule.yml, _data-contract.yml, and
-# the self-hosted _e2e-tests.yml local, aggregating everything in its own
-# required "Merge Gate". Molecule consumes the changes call's filter outputs;
-# other local jobs retain their existing dependencies on CI.
+# The shared Molecule workflow runs the selected scenarios with mapped secrets.
+# This caller retains its scenario filters, repository-specific checks, and
+# required "Merge Gate". The shared CI workflow runs lint only (molecule:false),
+# while a parallel changes call supplies the scenario selection.
 #
 # E2E tests require the enabled self-hosted runner pool. They run on main
 # promotions and pushes to main, and only for same-repository promotion PRs.
@@ -179,6 +173,7 @@ jobs:
         ${{ steps.filter.outputs.deploy == 'true'
             || github.event_name == 'push'
             || github.event.pull_request.base.ref == 'main' }}
+      molecule_workflow: ${{ steps.filter.outputs.molecule_workflow == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -201,18 +196,19 @@ jobs:
               - '.github/workflows/_data-contract.yml'
               - '.github/workflows/_inventory-contract.yml'
               - '.github/workflows/_secrets-contract.yml'
+            molecule_workflow:
+              - '.github/workflows/ci-gate.yml'
+              - '.github/workflows/_molecule.yml'
 
   data-contract:
     name: Data Contract
-    needs: [ci, scope]
-    # `ci.outputs.ansible` comes from the shared workflow, whose own change
-    # filter is shallow-checkout bound and therefore false on a push. Accept a
-    # push directly so the post-merge sweep is not gated on a filter that
-    # cannot answer for this event.
+    needs: [changes, scope]
+    # `changes.outputs.ansible` identifies Ansible-relevant changes; the push
+    # condition keeps the post-merge contract sweep running.
     if: >-
-      needs.ci.outputs.tiny != 'true' &&
+      needs.changes.outputs.tiny != 'true' &&
       needs.scope.outputs.deploy == 'true' &&
-      (needs.ci.outputs.ansible == 'true' ||
+      (needs.changes.outputs.ansible == 'true' ||
        github.event_name == 'push' ||
        github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_data-contract.yml
@@ -222,11 +218,11 @@ jobs:
   # they are one contract in two files, not two policies.
   inventory-contract:
     name: Inventory Contract
-    needs: [ci, scope]
+    needs: [changes, scope]
     if: >-
-      needs.ci.outputs.tiny != 'true' &&
+      needs.changes.outputs.tiny != 'true' &&
       needs.scope.outputs.deploy == 'true' &&
-      (needs.ci.outputs.ansible == 'true' ||
+      (needs.changes.outputs.ansible == 'true' ||
        github.event_name == 'push' ||
        github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_inventory-contract.yml
@@ -237,19 +233,19 @@ jobs:
   # policies.
   secrets-contract:
     name: Secrets Contract
-    needs: [ci, scope]
+    needs: [changes, scope]
     if: >-
-      needs.ci.outputs.tiny != 'true' &&
+      needs.changes.outputs.tiny != 'true' &&
       needs.scope.outputs.deploy == 'true' &&
-      (needs.ci.outputs.ansible == 'true' ||
+      (needs.changes.outputs.ansible == 'true' ||
        github.event_name == 'push' ||
        github.event.pull_request.base.ref == 'main')
     uses: ./.github/workflows/_secrets-contract.yml
 
   molecule:
     name: Molecule
-    needs: changes
-    if: >-
+    needs: [changes, scope]
+    if: &molecule_condition >-
       needs.changes.outputs.tiny != 'true' &&
       !cancelled() &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
@@ -258,22 +254,75 @@ jobs:
        (needs.changes.outputs.molecule == 'true' &&
         needs.changes.outputs.molecule_scenarios != '' &&
         needs.changes.outputs.molecule_scenarios != '[]'))
-    uses: ./.github/workflows/_molecule.yml
+    uses: JacobPEvans/.github/.github/workflows/_molecule.yml@v1
     with:
       scenarios: >-
         ${{ !((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
         (github.event_name == 'pull_request' &&
         github.event.pull_request.base.ref == 'main')) &&
         needs.changes.outputs.molecule_scenarios || '' }}
-    secrets: inherit
+      # Workflow changes validate the complete scenario matrix.
+      full_suite: ${{ needs.scope.outputs.molecule_workflow == 'true' }}
+      scenario_discovery: directories
+      scenario_require_molecule_yml: true
+      preflight_command: python3 .github/scripts/select-molecule-scenarios.py --self-check
+      runner_label: proxmox
+      public_and_fork_hosted: true
+      discover_timeout_minutes: 5
+      pull_request_discover_timeout_minutes: 5
+      timeout_minutes: 45
+      pull_request_timeout_minutes: 45
+      ansible_home_mode: runner_temp
+      molecule_roles_path: roles
+      galaxy_cache_restore_prefix: ansible-galaxy-v2-Linux-
+      galaxy_install_mode: repo_script
+      # Keep the repo installer running on cache hits, as it does locally.
+      galaxy_force_install: true
+      galaxy_retry_attempts: 4
+      galaxy_retry_wait_seconds: 15
+      galaxy_step_timeout_minutes: 10
+      docker_timeout_seconds: 300
+      docker_prune: true
+      instance_suffix: true
+      isolate_ephemeral_directory: true
+      doppler_enabled: true
+      test_secret_env_map: '{"MSSQL_SA_PASSWORD":"MSSQL_SA_PASSWORD"}'
+      use_homarr_token: true
+    secrets:
+      DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      HOMARR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  template-render:
+    name: Molecule
+    needs: changes
+    if: *molecule_condition
+    uses: ./.github/workflows/_template-render.yml
+
+  nautobot-seed:
+    name: Molecule / Nautobot Seed Bundle Tests
+    needs: changes
+    if: *molecule_condition
+    uses: ./.github/workflows/_nautobot-seed.yml
+
+  status-stack-autokuma-render:
+    name: Molecule / status_stack AutoKuma Bulk Render Tests
+    needs: changes
+    if: *molecule_condition
+    uses: ./.github/workflows/_status-stack-autokuma-render.yml
+
+  agent-sandbox-limited-render:
+    name: Molecule / Agent Sandbox Limited Inventory Render
+    needs: changes
+    if: *molecule_condition
+    uses: ./.github/workflows/_agent-sandbox-limited-render.yml
 
   e2e:
     name: E2E Tests
-    needs: [ci, scope]
+    needs: [changes, scope]
     # This suite reads integrated service health through the self-hosted pool.
     # Never run fork-controlled code on those runners.
     if: >-
-      needs.ci.outputs.tiny != 'true' &&
+      needs.changes.outputs.tiny != 'true' &&
       !cancelled() &&
       vars.E2E_RUNNERS_ENABLED == 'true' &&
       needs.scope.outputs.deploy == 'true' &&
@@ -289,7 +338,7 @@ jobs:
     # the deployment checks run, so a failure there skips them — and a skip the
     # gate forgives is a green board with nothing having run. The job that
     # decides what to skip can never itself be skippable.
-    needs: [ci, changes, scope, data-contract, inventory-contract, secrets-contract, molecule, e2e]
+    needs: [ci, changes, scope, data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -303,11 +352,11 @@ jobs:
           allowed-skips: >-
             ${{ (github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'develop' &&
-            'data-contract, inventory-contract, secrets-contract, molecule, e2e') ||
+            'data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e') ||
             ((github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name != github.repository) &&
             'e2e') ||
             ((github.event_name == 'push' && github.ref == 'refs/heads/develop') &&
-            'e2e, molecule') || '' }}
+            'e2e, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render') || '' }}
           jobs: ${{ toJSON(needs) }}

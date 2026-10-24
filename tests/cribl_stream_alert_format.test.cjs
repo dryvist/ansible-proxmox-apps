@@ -11,8 +11,9 @@ assert.ok(renderedOutputsPath, 'pass the rendered outputs.yml fixture path');
 const pipelinePath = `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_ntfy/conf.yml.j2`;
 const pipeline = fs.readFileSync(pipelinePath, 'utf8');
 const codeMarker = '      code: |\n';
-const codeStart = pipeline.indexOf(codeMarker);
-assert.notEqual(codeStart, -1, 'Grafana formatter Code function exists');
+const formatterOffset = pipeline.indexOf('        const byteLength =');
+const codeStart = pipeline.lastIndexOf(codeMarker, formatterOffset);
+assert.notEqual(formatterOffset, -1, 'Grafana formatter Code function exists');
 const bodyStart = codeStart + codeMarker.length;
 const bodyEnd = pipeline.indexOf('\n  - id: unroll', bodyStart);
 assert.notEqual(bodyEnd, -1, 'Grafana formatter is followed by native Unroll');
@@ -33,8 +34,77 @@ function format(payload, extra = {}) {
   vm.runInNewContext(code, { __e, C: { Encode: {
     base64: (value) => Buffer.from(String(value), 'utf8').toString('base64'),
   } } });
-  return __e.__ntfyParts;
+  return __e.ntfy_parts;
 }
+
+const unroll = pipeline.match(/  - id: unroll\n([\s\S]*?)\n  - id: code\n/);
+assert.ok(unroll, 'Grafana ntfy pipeline has a native Unroll function');
+const unrollSource = unroll[1].match(/^\s+srcExpr: (\S+)$/m)?.[1];
+const unrollDestination = unroll[1].match(/^\s+dstField: (\S+)$/m)?.[1];
+assert.ok(unrollSource && unrollDestination, 'Unroll source and destination fields are configured');
+assert.ok(!unrollSource.startsWith('__') && !unrollDestination.startsWith('__'),
+  'the Unroll srcExpr and dstField use no __-prefixed fields');
+
+const pipelineTemplatesDirectory = `${root}/roles/cribl_stream/templates/pipelines`;
+const pipelineTemplates = fs.readdirSync(pipelineTemplatesDirectory, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => `${pipelineTemplatesDirectory}/${entry.name}/conf.yml.j2`)
+  .filter((path) => fs.existsSync(path));
+assert.ok(pipelineTemplates.length > 0, 'Cribl pipeline templates exist');
+for (const templatePath of pipelineTemplates) {
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const functions = template.split(/^  - id: /m).slice(1);
+  for (const block of functions) {
+    const [id, ...bodyLines] = block.split('\n');
+    const body = bodyLines.join('\n');
+    assert.notEqual(id, 'parser', `${templatePath} uses the serde id, not parser`);
+    if (id === 'unroll') {
+      assert.match(body, /^      srcExpr: /m, `${templatePath} Unroll has srcExpr`);
+      assert.match(body, /^      dstField: /m, `${templatePath} Unroll has dstField`);
+      assert.doesNotMatch(body, /^      (?:srcField|destField): /m,
+        `${templatePath} Unroll has no Parser field keys`);
+    }
+    if (id === 'serde') {
+      assert.match(body, /^      srcField: /m, `${templatePath} serde has srcField`);
+      assert.match(body, /^      dstField: /m, `${templatePath} serde has dstField`);
+      assert.doesNotMatch(body, /^      destField: /m,
+        `${templatePath} serde has no destField key`);
+    }
+  }
+}
+
+function classifierCode(source) {
+  const marker = '          const payload = JSON.parse(__e._raw);';
+  const markerOffset = source.indexOf(marker);
+  assert.notEqual(markerOffset, -1, 'Grafana ntfy label classifier exists');
+  const start = source.lastIndexOf(codeMarker, markerOffset) + codeMarker.length;
+  const end = source.indexOf('\n  - id: drop', start);
+  assert.notEqual(end, -1, 'Grafana ntfy label classifier precedes route selection');
+  return source.slice(start, end)
+    .split('\n')
+    .map((line) => line.startsWith('        ') ? line.slice(8) : line)
+    .join('\n');
+}
+
+const slackPipeline = fs.readFileSync(
+  `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_slack/conf.yml.j2`, 'utf8');
+const ntfyClassifier = classifierCode(pipeline);
+assert.equal(classifierCode(slackPipeline), ntfyClassifier,
+  'direct Slack and ntfy pipelines select the same Grafana alerts');
+function routesToNtfy(payload) {
+  const __e = {
+    sourcetype: 'grafana:alert',
+    _raw: typeof payload === 'string' ? payload : JSON.stringify(payload),
+  };
+  vm.runInNewContext(ntfyClassifier, { __e });
+  return __e.github_actions_ntfy;
+}
+assert.equal(routesToNtfy({ alerts: [{ labels: { ntfy: 'true' } }] }), true,
+  'alerts with the ntfy route label use the ntfy path');
+assert.equal(routesToNtfy({ alerts: [{ labels: { severity: 'warning' } }] }), false,
+  'unlabeled alerts stay on the existing direct path');
+assert.equal(routesToNtfy('{"alerts":['), false,
+  'malformed envelopes remain on the existing direct path');
 
 function contents(parts) {
   for (const part of parts) {
@@ -50,10 +120,21 @@ const over4k = format({
     annotations: { summary: longSummary }, generatorURL: 'https://grafana.example.test/alert/1' }],
 });
 assert.equal(over4k.length, 1, 'one compact alert record stays whole');
-assert.ok(contents(over4k).includes('[shortened; full event link below]'), 'oversized summaries get an explicit marker');
-assert.ok(contents(over4k).includes('https://grafana.example.test/alert/1'), 'source evidence link remains visible');
-assert.ok(contents(over4k).includes('https://splunk.example.test/'), 'full event search link remains visible');
+const rendered = contents(over4k);
+assert.ok(rendered.includes('[shortened; full event link below]'), 'oversized summaries get an explicit marker');
+const sourceEvidence = rendered.match(/Evidence \(source\): `([^`\n]+)`/);
+assert.ok(sourceEvidence, 'source evidence link remains visible');
+const sourceEvidenceUrl = new URL(sourceEvidence[1]);
+assert.equal(sourceEvidenceUrl.protocol, 'https:');
+assert.equal(sourceEvidenceUrl.hostname, 'grafana.example.test');
+assert.equal(sourceEvidenceUrl.pathname, '/alert/1');
+const fullEventSearch = rendered.match(/Full event search: (\S+)/);
+assert.ok(fullEventSearch, 'full event search link remains visible');
+const fullEventSearchUrl = new URL(fullEventSearch[1]);
+assert.equal(fullEventSearchUrl.protocol, 'https:');
+assert.equal(fullEventSearchUrl.hostname, 'splunk.example.test');
 assert.equal(over4k[0].priority, 3, 'warnings use the ntfy default priority and reach Zammad');
+assert.equal(over4k[0].title, 'Grafana alerts', 'formatted alert title reaches the ntfy part');
 assert.equal(over4k[0].click, 'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert%2A',
   'notification click uses the derived trusted full-event search, not an incoming alert URL');
 assert.match(contents(over4k), /Evidence \(source\): `https:\/\/grafana\.example\.test\/alert\/1`/,
@@ -140,30 +221,44 @@ assert.match(inputTemplate, /output: slack_grafana_alerts[\s\S]*?pipeline: grafa
 assert.equal((inputTemplate.match(/output: slack_grafana_alerts/g) || []).length, 1,
   'the required critical destination is connected exactly once');
 assert.match(pipeline, /grafana:alert:canary/,
-  'only test alert types are accepted before the flag is set');
+  'canary alert delivery stays available before the flag is set');
+assert.match(pipeline, /labels\.ntfy === 'true'/,
+  'selected Grafana alerts can use ntfy before the global cutover');
 assert.match(pipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
-  'production alert types require the verification flag');
-const nautobotPipeline = fs.readFileSync(
-  `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_slack/conf.yml.j2`, 'utf8');
+  'the global cutover still controls all other production alerts');
+assert.match(slackPipeline, /github_actions_ntfy/,
+  'selected alerts leave the direct Slack path to avoid duplicate delivery');
+const nautobotPipeline = slackPipeline;
 assert.match(nautobotPipeline, /severity === 'critical'/);
 assert.match(nautobotPipeline, /sourcetype === 'grafana:alert'/,
   'Grafana remains on its current direct delivery by default');
 assert.match(nautobotPipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
   'the existing direct Grafana leg is retired only when cutover is verified');
 const roleTasks = fs.readFileSync(`${root}/roles/cribl_stream/tasks/main.yml`, 'utf8');
-assert.match(roleTasks, /Require the ntfy destination before enabling Grafana alert cutover/);
-assert.match(roleTasks, /when: cribl_stream_grafana_ntfy_cutover_verified \| bool/,
-  'a verified cutover cannot silently disable Grafana summaries with an empty ntfy URL');
+assert.match(roleTasks, /Require the ntfy destination for Grafana alert delivery/);
+assert.match(roleTasks, /cribl_stream_alerts_ntfy_publish_url/,
+  'Grafana alert delivery requires both ntfy endpoint URLs');
 assert.match(fs.readFileSync(`${root}/roles/cribl_stream/templates/outputs.yml.j2`, 'utf8'),
   /typeof message === 'string'[\s\S]*?typeof priority === 'number'[\s\S]*?: null/,
   'the ntfy webhook only serializes explicitly formatted fields');
 
 const renderedOutputs = fs.readFileSync(renderedOutputsPath, 'utf8');
-const ntfySection = renderedOutputs.match(/  ntfy_grafana_alerts:\n([\s\S]*?)(?=\n  [a-zA-Z0-9_]+:|$)/);
-assert.ok(ntfySection, 'the rendered ntfy output exists');
-const publishUrl = ntfySection[1].match(/^    url: "([^"]+)"$/m)?.[1];
+const outputSections = new Map();
+for (const outputId of ['ntfy_grafana_alerts', 'slack_grafana_alerts']) {
+  const section = renderedOutputs.match(
+    new RegExp(`  ${outputId}:\\n([\\s\\S]*?)(?=\\n  [a-zA-Z0-9_]+:|$)`),
+  );
+  assert.ok(section, `the rendered ${outputId} output exists`);
+  assert.match(section[1], /^    customPayloadExpression: "`\$\{events\}`"$/m,
+    `${outputId} renders the Cribl batch payload expression`);
+  assert.match(section[1], /^    customEventDelimiter: "\\n"$/m,
+    `${outputId} renders the newline event delimiter`);
+  outputSections.set(outputId, section[1]);
+}
+const ntfySection = outputSections.get('ntfy_grafana_alerts');
+const publishUrl = ntfySection.match(/^    url: "([^"]+)"$/m)?.[1];
 assert.equal(publishUrl, 'https://ntfy.example.invalid/', 'ntfy publishes to the configured root URL');
-const expressionLines = ntfySection[1].match(/^    customSourceExpression: >-\n((?:      .*\n)+)/m)?.[1];
+const expressionLines = ntfySection.match(/^    customSourceExpression: >-\n((?:      .*\n)+)/m)?.[1];
 assert.ok(expressionLines, 'the rendered custom webhook expression exists');
 const customSourceExpression = expressionLines.split('\n').filter(Boolean).map((line) => line.trim()).join(' ');
 const webhookEvent = {

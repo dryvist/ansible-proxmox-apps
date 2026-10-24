@@ -59,6 +59,10 @@ beside it.
 > Every consumer that read it had also grown its own copy of the same "prefer the
 > reservation, else the name" branch. Deleting the field deleted eight of those.
 
+Technitium keeps no second address for a leased guest. It creates an exact-name
+conditional forwarder to its default gateway, which answers from the DHCP lease
+table and any MAC-pinned reservation.
+
 The `mac` stays, for a reason that is not addressing: **lease stability**. A
 stable MAC means a rebuilt guest renews the same lease, so it keeps its address
 and its lease-table name.
