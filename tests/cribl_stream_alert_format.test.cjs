@@ -206,11 +206,22 @@ assert.match(fs.readFileSync(`${root}/roles/cribl_stream/templates/outputs.yml.j
   'the ntfy webhook only serializes explicitly formatted fields');
 
 const renderedOutputs = fs.readFileSync(renderedOutputsPath, 'utf8');
-const ntfySection = renderedOutputs.match(/  ntfy_grafana_alerts:\n([\s\S]*?)(?=\n  [a-zA-Z0-9_]+:|$)/);
-assert.ok(ntfySection, 'the rendered ntfy output exists');
-const publishUrl = ntfySection[1].match(/^    url: "([^"]+)"$/m)?.[1];
+const outputSections = new Map();
+for (const outputId of ['ntfy_grafana_alerts', 'slack_grafana_alerts']) {
+  const section = renderedOutputs.match(
+    new RegExp(`  ${outputId}:\\n([\\s\\S]*?)(?=\\n  [a-zA-Z0-9_]+:|$)`),
+  );
+  assert.ok(section, `the rendered ${outputId} output exists`);
+  assert.match(section[1], /^    customPayloadExpression: "`\$\{events\}`"$/m,
+    `${outputId} renders the Cribl batch payload expression`);
+  assert.match(section[1], /^    customEventDelimiter: "\\n"$/m,
+    `${outputId} renders the newline event delimiter`);
+  outputSections.set(outputId, section[1]);
+}
+const ntfySection = outputSections.get('ntfy_grafana_alerts');
+const publishUrl = ntfySection.match(/^    url: "([^"]+)"$/m)?.[1];
 assert.equal(publishUrl, 'https://ntfy.example.invalid/', 'ntfy publishes to the configured root URL');
-const expressionLines = ntfySection[1].match(/^    customSourceExpression: >-\n((?:      .*\n)+)/m)?.[1];
+const expressionLines = ntfySection.match(/^    customSourceExpression: >-\n((?:      .*\n)+)/m)?.[1];
 assert.ok(expressionLines, 'the rendered custom webhook expression exists');
 const customSourceExpression = expressionLines.split('\n').filter(Boolean).map((line) => line.trim()).join(' ');
 const webhookEvent = {
