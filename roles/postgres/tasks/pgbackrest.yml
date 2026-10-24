@@ -128,6 +128,37 @@
     - name: Apply pending archiving restart
       ansible.builtin.meta: flush_handlers
 
+    # archive_mode is set at server start, not reload. A primary with
+    # pgBackRest enabled but archive_mode off accepts the archive_command
+    # config and never calls it, so backups look configured and no WAL is ever
+    # shipped. Checked here, after the restart above, so a host that just
+    # gained credentials converges instead of failing before archiving is on.
+    # Check mode skips the assert: it never runs the restart.
+    - name: Verify WAL archiving is live (native mode only)
+      when: postgres_ha_manager != 'patroni'
+      become: true
+      become_user: postgres
+      block:
+        - name: Read archive_mode
+          community.postgresql.postgresql_query:
+            login_db: postgres
+            query: SHOW archive_mode
+          register: postgres_live_archive_mode
+          changed_when: false
+          check_mode: false
+
+        - name: Assert archive_mode is on when pgBackRest is enabled and credentialed
+          ansible.builtin.assert:
+            that:
+              - postgres_live_archive_mode.query_result[0].archive_mode == 'on'
+            fail_msg: >-
+              pgBackRest is enabled and credentialed but archive_mode is
+              '{{ postgres_live_archive_mode.query_result[0].archive_mode }}'.
+              No WAL is being shipped, so PITR is silently impossible.
+              archive_mode requires a full restart, not a reload.
+            quiet: true
+          when: not ansible_check_mode
+
     # stanza-create is idempotent and PER-REPO: on an existing host it reports
     # "stanza '<name>' already exists on repo1 and is valid" (rc=0) while still
     # initializing any repo that lacks it. So it runs unconditionally.
