@@ -152,6 +152,18 @@ prometheus_stack_llm_gpu_metrics_guests: >-
   {%- endif -%}
   {%- endfor -%}
   {{ guests }}
+# DCGM targets: the serving group plus the nvidia-gpu tagged guests (the RTX PRO 6000
+# Blackwell guests carry nvidia-gpu, not llm-vllm). Same address rule as above.
+prometheus_stack_dcgm_exporter_guests: >-
+  {%- set guests = [] -%}
+  {%- set guest_names = (groups['llm_vllm_group'] | default([])) + (groups['nvidia_gpu_group'] | default([])) -%}
+  {%- for name in guest_names | unique | list -%}
+  {%- set address = hostvars[name].container_ip | default('', true) -%}
+  {%- if address | length > 0 -%}
+  {%- set _ = guests.append({'name': name, 'address': address}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ guests }}
 prometheus_stack_dcgm_exporter_metrics_port: 9400
 
 # Use the published short host plus local zone, or the external runner FQDN.
@@ -229,16 +241,23 @@ prometheus_stack_extra_scrape_configs: |
       format: ["prometheus"]
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
-  {% if prometheus_stack_llm_gpu_metrics_guests | length > 0 %}
-  # GPU and engine metrics share the inventory-derived serving guests.
+  {% if prometheus_stack_dcgm_exporter_guests | length > 0 %}
+  # Native DCGM exporter on the NVIDIA guests. The llm-vllm guest is the RTX 4080
+  # (accelerator label); the Blackwell guests are selected by guest name in rules.
   - job_name: dcgm_exporter
     metrics_path: /metrics
     static_configs:
-  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
+  {% for guest in prometheus_stack_dcgm_exporter_guests %}
       - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
         labels:
           guest: "{{ guest.name }}"
+  {% if guest.name in (groups['llm_vllm_group'] | default([])) %}
+          accelerator: rtx-4080
+  {% endif %}
   {% endfor %}
+  {% endif %}
+  {% if prometheus_stack_llm_gpu_metrics_guests | length > 0 %}
+  # GPU engine metrics share the inventory-derived serving guests.
   # Strata serves Prometheus text only when requested with ?format=prometheus.
   # vLLM and SGLang use the Prometheus client ASGI handler, which ignores this
   # unknown query parameter; llama.cpp's /metrics handler also ignores queries.
