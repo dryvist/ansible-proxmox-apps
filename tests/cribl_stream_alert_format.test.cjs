@@ -34,8 +34,16 @@ function format(payload, extra = {}) {
   vm.runInNewContext(code, { __e, C: { Encode: {
     base64: (value) => Buffer.from(String(value), 'utf8').toString('base64'),
   } } });
-  return __e.__ntfyParts;
+  return __e.ntfy_parts;
 }
+
+const unroll = pipeline.match(/  - id: unroll\n([\s\S]*?)\n  - id: code\n/);
+assert.ok(unroll, 'Grafana ntfy pipeline has a native Unroll function');
+const unrollSource = unroll[1].match(/^\s+srcField: (\S+)$/m)?.[1];
+const unrollDestination = unroll[1].match(/^\s+destField: (\S+)$/m)?.[1];
+assert.ok(unrollSource && unrollDestination, 'Unroll source and destination fields are configured');
+assert.ok(!unrollSource.startsWith('__') && !unrollDestination.startsWith('__'),
+  'the Unroll srcField and destField use no __-prefixed fields');
 
 function classifierCode(source) {
   const marker = '          const payload = JSON.parse(__e._raw);';
@@ -98,6 +106,7 @@ const fullEventSearchUrl = new URL(fullEventSearch[1]);
 assert.equal(fullEventSearchUrl.protocol, 'https:');
 assert.equal(fullEventSearchUrl.hostname, 'splunk.example.test');
 assert.equal(over4k[0].priority, 3, 'warnings use the ntfy default priority and reach Zammad');
+assert.equal(over4k[0].title, 'Grafana alerts', 'formatted alert title reaches the ntfy part');
 assert.equal(over4k[0].click, 'https://splunk.example.test/en-US/app/search/search?q=search%20sourcetype%3Dgrafana%3Aalert%2A',
   'notification click uses the derived trusted full-event search, not an incoming alert URL');
 assert.match(contents(over4k), /Evidence \(source\): `https:\/\/grafana\.example\.test\/alert\/1`/,
