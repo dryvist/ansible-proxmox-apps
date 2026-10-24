@@ -39,11 +39,39 @@ function format(payload, extra = {}) {
 
 const unroll = pipeline.match(/  - id: unroll\n([\s\S]*?)\n  - id: code\n/);
 assert.ok(unroll, 'Grafana ntfy pipeline has a native Unroll function');
-const unrollSource = unroll[1].match(/^\s+srcField: (\S+)$/m)?.[1];
-const unrollDestination = unroll[1].match(/^\s+destField: (\S+)$/m)?.[1];
+const unrollSource = unroll[1].match(/^\s+srcExpr: (\S+)$/m)?.[1];
+const unrollDestination = unroll[1].match(/^\s+dstField: (\S+)$/m)?.[1];
 assert.ok(unrollSource && unrollDestination, 'Unroll source and destination fields are configured');
 assert.ok(!unrollSource.startsWith('__') && !unrollDestination.startsWith('__'),
-  'the Unroll srcField and destField use no __-prefixed fields');
+  'the Unroll srcExpr and dstField use no __-prefixed fields');
+
+const pipelineTemplatesDirectory = `${root}/roles/cribl_stream/templates/pipelines`;
+const pipelineTemplates = fs.readdirSync(pipelineTemplatesDirectory, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => `${pipelineTemplatesDirectory}/${entry.name}/conf.yml.j2`)
+  .filter((path) => fs.existsSync(path));
+assert.ok(pipelineTemplates.length > 0, 'Cribl pipeline templates exist');
+for (const templatePath of pipelineTemplates) {
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const functions = template.split(/^  - id: /m).slice(1);
+  for (const block of functions) {
+    const [id, ...bodyLines] = block.split('\n');
+    const body = bodyLines.join('\n');
+    assert.notEqual(id, 'parser', `${templatePath} uses the serde id, not parser`);
+    if (id === 'unroll') {
+      assert.match(body, /^      srcExpr: /m, `${templatePath} Unroll has srcExpr`);
+      assert.match(body, /^      dstField: /m, `${templatePath} Unroll has dstField`);
+      assert.doesNotMatch(body, /^      (?:srcField|destField): /m,
+        `${templatePath} Unroll has no Parser field keys`);
+    }
+    if (id === 'serde') {
+      assert.match(body, /^      srcField: /m, `${templatePath} serde has srcField`);
+      assert.match(body, /^      dstField: /m, `${templatePath} serde has dstField`);
+      assert.doesNotMatch(body, /^      destField: /m,
+        `${templatePath} serde has no destField key`);
+    }
+  }
+}
 
 function classifierCode(source) {
   const marker = '          const payload = JSON.parse(__e._raw);';
