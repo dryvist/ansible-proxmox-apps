@@ -5,16 +5,10 @@
 # JacobPEvans/.github/.github/workflows/_ansible-ci.yml so lint runs identically
 # across ansible-proxmox, ansible-splunk and this repo.
 #
-# Molecule stays LOCAL here: this repo's molecule job has a deliberate
-# least-privilege Doppler handling (it maps only the three secrets the scenarios
-# consume into the test step, never inject-env-vars) plus a wide scenario matrix
-# and a template-render job. Routing it through the shared molecule (which uses
-# inject-env-vars) would regress that. So the shared CI workflow runs lint only
-# (molecule:false), while a parallel changes call runs the same filters. This
-# wrapper keeps _molecule.yml, _data-contract.yml, and
-# the self-hosted _e2e-tests.yml local, aggregating everything in its own
-# required "Merge Gate". Molecule consumes the changes call's filter outputs;
-# other local jobs retain their existing dependencies on CI.
+# The shared Molecule workflow runs the selected scenarios with mapped secrets.
+# This caller retains its scenario filters, repository-specific checks, and
+# required "Merge Gate". The shared CI workflow runs lint only (molecule:false),
+# while a parallel changes call supplies the scenario selection.
 #
 # E2E tests require the enabled self-hosted runner pool. They run on main
 # promotions and pushes to main, and only for same-repository promotion PRs.
@@ -179,6 +173,7 @@ jobs:
         ${{ steps.filter.outputs.deploy == 'true'
             || github.event_name == 'push'
             || github.event.pull_request.base.ref == 'main' }}
+      molecule_workflow: ${{ steps.filter.outputs.molecule_workflow == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -201,6 +196,9 @@ jobs:
               - '.github/workflows/_data-contract.yml'
               - '.github/workflows/_inventory-contract.yml'
               - '.github/workflows/_secrets-contract.yml'
+            molecule_workflow:
+              - '.github/workflows/ci-gate.yml'
+              - '.github/workflows/_molecule.yml'
 
   data-contract:
     name: Data Contract
@@ -246,6 +244,68 @@ jobs:
 
   molecule:
     name: Molecule
+    needs: [changes, scope]
+    if: >-
+      needs.changes.outputs.tiny != 'true' &&
+      !cancelled() &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main') ||
+       (needs.changes.outputs.molecule == 'true' &&
+        needs.changes.outputs.molecule_scenarios != '' &&
+        needs.changes.outputs.molecule_scenarios != '[]'))
+    uses: JacobPEvans/.github/.github/workflows/_molecule.yml@v1
+    with:
+      scenarios: >-
+        ${{ !((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main')) &&
+        needs.changes.outputs.molecule_scenarios || '' }}
+      # Workflow changes validate the complete scenario matrix.
+      full_suite: ${{ needs.scope.outputs.molecule_workflow == 'true' }}
+      scenario_discovery: directories
+      scenario_name_profile: lower_underscore
+      scenario_require_molecule_yml: true
+      preflight_command: python3 .github/scripts/select-molecule-scenarios.py --self-check
+      discover_runner: ubuntu-latest
+      runner_label: proxmox
+      public_and_fork_hosted: true
+      discover_timeout_minutes: 5
+      pull_request_discover_timeout_minutes: 5
+      timeout_minutes: 45
+      pull_request_timeout_minutes: 45
+      python_version: "3.14"
+      python_install_mode: uv_packages
+      uv_cache: false
+      ansible_home_mode: runner_temp
+      galaxy_cache_enabled: true
+      galaxy_cache_prefix: ansible-galaxy-v2-
+      galaxy_cache_restore_prefix: ansible-galaxy-v2-Linux-
+      galaxy_install_mode: repo_script
+      galaxy_install_script: scripts/install_galaxy_requirements.py
+      # Keep the repo installer running on cache hits, as it does locally.
+      galaxy_force_install: true
+      galaxy_retry_attempts: 4
+      galaxy_retry_wait_seconds: 15
+      galaxy_step_timeout_minutes: 10
+      galaxy_server_timeout_seconds: 60
+      docker_timeout_seconds: 300
+      docker_prune: true
+      fail_fast: false
+      instance_suffix: true
+      isolate_ephemeral_directory: true
+      extra_env: |
+        PY_COLORS=1
+        ANSIBLE_FORCE_COLOR=1
+      doppler_enabled: true
+      test_secret_env_map: '{"MSSQL_SA_PASSWORD":"MSSQL_SA_PASSWORD"}'
+      use_homarr_token: true
+    secrets:
+      DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+      HOMARR_GITHUB_TOKEN: ${{ github.token }}
+
+  template-render:
+    name: Molecule / Template Rendering Tests
     needs: changes
     if: >-
       needs.changes.outputs.tiny != 'true' &&
@@ -256,14 +316,102 @@ jobs:
        (needs.changes.outputs.molecule == 'true' &&
         needs.changes.outputs.molecule_scenarios != '' &&
         needs.changes.outputs.molecule_scenarios != '[]'))
-    uses: ./.github/workflows/_molecule.yml
-    with:
-      scenarios: >-
-        ${{ !((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (github.event_name == 'pull_request' &&
-        github.event.pull_request.base.ref == 'main')) &&
-        needs.changes.outputs.molecule_scenarios || '' }}
-    secrets: inherit
+    runs-on: >-
+      ${{ (github.event.repository.private == false ||
+      github.event.pull_request.head.repo.fork) &&
+      'ubuntu-latest' || 'proxmox' }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Isolate per-job ANSIBLE_HOME
+        run: echo "ANSIBLE_HOME=$RUNNER_TEMP/ansible-home" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "latest"
+
+      - name: Install Ansible and dependencies
+        run: |
+          uv pip install --system \
+            'ansible-core>=2.16'
+
+      - name: Cache Ansible Galaxy content
+        id: galaxy-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ env.ANSIBLE_HOME }}/collections
+            ${{ env.ANSIBLE_HOME }}/roles
+          key: ansible-galaxy-v2-${{ runner.os }}-${{ hashFiles('requirements.yml') }}
+          restore-keys: |
+            ansible-galaxy-v2-${{ runner.os }}-
+
+      - name: Install Ansible collections
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          max_attempts: 4
+          retry_wait_seconds: 15
+          timeout_minutes: 10
+          command: python3 scripts/install_galaxy_requirements.py
+        env:
+          ANSIBLE_GALAXY_SERVER_TIMEOUT: "60"
+
+      - name: Run template rendering tests
+        run: ansible-playbook tests/template_render/verify_templates.yml -c local
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"
+          PROXMOX_SUBDOMAIN: example.invalid
+
+  nautobot-seed:
+    name: Molecule / Nautobot Seed Bundle Tests
+    needs: changes
+    if: >-
+      needs.changes.outputs.tiny != 'true' &&
+      !cancelled() &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main') ||
+       (needs.changes.outputs.molecule == 'true' &&
+        needs.changes.outputs.molecule_scenarios != '' &&
+        needs.changes.outputs.molecule_scenarios != '[]'))
+    uses: ./.github/workflows/_nautobot-seed.yml
+
+  status-stack-autokuma-render:
+    name: Molecule / status_stack AutoKuma Bulk Render Tests
+    needs: changes
+    if: >-
+      needs.changes.outputs.tiny != 'true' &&
+      !cancelled() &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main') ||
+       (needs.changes.outputs.molecule == 'true' &&
+        needs.changes.outputs.molecule_scenarios != '' &&
+        needs.changes.outputs.molecule_scenarios != '[]'))
+    uses: ./.github/workflows/_status-stack-autokuma-render.yml
+
+  agent-sandbox-limited-render:
+    name: Molecule / Agent Sandbox Limited Inventory Render
+    needs: changes
+    if: >-
+      needs.changes.outputs.tiny != 'true' &&
+      !cancelled() &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main') ||
+       (needs.changes.outputs.molecule == 'true' &&
+        needs.changes.outputs.molecule_scenarios != '' &&
+        needs.changes.outputs.molecule_scenarios != '[]'))
+    uses: ./.github/workflows/_agent-sandbox-limited-render.yml
 
   e2e:
     name: E2E Tests
@@ -287,7 +435,7 @@ jobs:
     # the deployment checks run, so a failure there skips them — and a skip the
     # gate forgives is a green board with nothing having run. The job that
     # decides what to skip can never itself be skippable.
-    needs: [ci, changes, scope, data-contract, inventory-contract, secrets-contract, molecule, e2e]
+    needs: [ci, changes, scope, data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -301,11 +449,11 @@ jobs:
           allowed-skips: >-
             ${{ (github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'develop' &&
-            'data-contract, inventory-contract, secrets-contract, molecule, e2e') ||
+            'data-contract, inventory-contract, secrets-contract, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render, e2e') ||
             ((github.event_name == 'pull_request' &&
             github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name != github.repository) &&
             'e2e') ||
             ((github.event_name == 'push' && github.ref == 'refs/heads/develop') &&
-            'e2e, molecule') || '' }}
+            'e2e, molecule, template-render, nautobot-seed, status-stack-autokuma-render, agent-sandbox-limited-render') || '' }}
           jobs: ${{ toJSON(needs) }}
