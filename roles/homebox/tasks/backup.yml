@@ -1,0 +1,122 @@
+---
+# Backups run restic from the Debian archive and are driven by systemd units
+# only: a template service and timer per repository, and a weekly check. There
+# is no custom script. Two repositories, two template instances
+# (homebox-backup@rustfs, homebox-backup@b2), so one failure does not skip the
+# other.
+
+# The PGDG repository and key come from the postgres role, so pg_dump matches the
+# shared server's major version. Debian's client trails that major.
+- name: Add the PGDG repository the shared PostgreSQL server uses
+  ansible.builtin.include_role:
+    name: postgres
+    tasks_from: main/install_pgdg.yml
+
+- name: Install restic and the PostgreSQL client for Homebox backups
+  ansible.builtin.apt:
+    name:
+      - restic
+      - postgresql-client
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Write the pgpass file that lets pg_dump authenticate as the homebox role
+  ansible.builtin.template:
+    src: pgpass.j2
+    dest: "{{ homebox_pgpass_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write the restic repository password file
+  ansible.builtin.template:
+    src: restic-password.j2
+    dest: "{{ homebox_restic_password_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Debug why the offsite Backblaze B2 backup is skipped
+  ansible.builtin.debug:
+    msg: >-
+      Homebox offsite backup (Backblaze B2) is skipped: its endpoint, bucket and
+      key pair must all be set. The local RustFS backup is still configured.
+  when: not (homebox_backup_b2_enabled | bool)
+
+- name: Render the restic environment file for each enabled repository
+  ansible.builtin.template:
+    src: homebox-backup.env.j2
+    dest: "{{ homebox_config_dir }}/backup-{{ item.name }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ homebox_backup_repositories | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Remove the restic environment file for each disabled repository
+  ansible.builtin.file:
+    path: "{{ homebox_config_dir }}/backup-{{ item.name }}.env"
+    state: absent
+  loop: "{{ homebox_backup_repositories | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install the Homebox backup and check units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: homebox-backup@.service.j2, dest: homebox-backup@.service }
+    - { src: homebox-backup@.timer.j2, dest: homebox-backup@.timer }
+    - { src: homebox-check@.service.j2, dest: homebox-check@.service }
+    - { src: homebox-check@.timer.j2, dest: homebox-check@.timer }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Enable the daily backup timer for each enabled repository
+  ansible.builtin.systemd:
+    name: "homebox-backup@{{ item.name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ homebox_backup_repositories | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable the weekly check timer for each enabled repository
+  ansible.builtin.systemd:
+    name: "homebox-check@{{ item.name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ homebox_backup_repositories | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# A repository that was configured and then had its variables removed must stop
+# backing up. Its timers are stopped and disabled here.
+- name: Stop and disable the backup timer for each disabled repository
+  ansible.builtin.systemd:
+    name: "homebox-backup@{{ item.name }}.timer"
+    state: stopped
+    enabled: false
+  loop: "{{ homebox_backup_repositories | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Stop and disable the check timer for each disabled repository
+  ansible.builtin.systemd:
+    name: "homebox-check@{{ item.name }}.timer"
+    state: stopped
+    enabled: false
+  loop: "{{ homebox_backup_repositories | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"

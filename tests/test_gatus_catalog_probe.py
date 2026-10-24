@@ -1,4 +1,4 @@
-"""Catalog endpoints behind SSO probe the guest, not the Authelia login page.
+"""Catalog endpoints probe their public ingress URLs, including SSO routes.
 
 Renders roles/status_stack/templates/gatus-config.yaml.j2 with Ansible's
 template defaults (trim_blocks on, lstrip_blocks off) and parses the YAML.
@@ -16,7 +16,8 @@ import yaml
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/status_stack/templates/gatus-config.yaml.j2"
 
 
-def render(services: list[dict], dashboard_catalog_services: list[dict] | None = None) -> dict[str, dict]:
+def render(services: list[dict], dashboard_catalog_services: list[dict] | None = None,
+           dashboard_catalog_base_domain: str = "example.test") -> dict[str, dict]:
     # If dashboard_catalog_services not specified, default to services for backward compatibility.
     if dashboard_catalog_services is None:
         dashboard_catalog_services = services
@@ -28,6 +29,7 @@ def render(services: list[dict], dashboard_catalog_services: list[dict] | None =
         ansible_managed="managed",
         dashboard_catalog_services=dashboard_catalog_services,
         dashboard_catalog_services_monitor=services,
+        dashboard_catalog_base_domain=dashboard_catalog_base_domain,
         dashboard_catalog_group_titles={"apps": "Apps", "media": "Media", "other": "Other"},
         status_stack_interval="60s",
         status_stack_catalog_status_overrides={},
@@ -51,11 +53,19 @@ def render(services: list[dict], dashboard_catalog_services: list[dict] | None =
 
 
 class GatusCatalogProbe(unittest.TestCase):
-    def test_sso_row_probes_the_guest_without_a_cert_check(self):
+    def test_sso_row_uses_public_https_url_and_accepts_auth_gate(self):
         ep = render(services=[{"name": "app", "sso": True, "url": "https://app.example.test",
                       "probe_url": "http://guest:8080"}])["app"]
-        self.assertEqual(ep["url"], "http://guest:8080")
-        self.assertFalse(any("CERTIFICATE" in c for c in ep["conditions"]))
+        self.assertEqual(ep["url"], "https://app.example.test")
+        self.assertIn("[STATUS] < 500", ep["conditions"])
+        self.assertIn("[CERTIFICATE_EXPIRATION] > 240h", ep["conditions"])
+
+    def test_apex_row_uses_the_service_name_subdomain(self):
+        ep = render(services=[{
+            "name": "proxmox", "fqdn": "example.test",
+            "url": "http://example.test:8006/", "probe_url": "https://node:8006",
+        }])["proxmox"]
+        self.assertEqual(ep["url"], "https://proxmox.example.test/")
 
     def test_public_row_keeps_the_public_url_and_cert_check(self):
         ep = render(services=[{"name": "pub", "sso": False, "url": "https://pub.example.test",
@@ -81,7 +91,19 @@ class GatusCatalogProbe(unittest.TestCase):
             "[CERTIFICATE_EXPIRATION] > 240h",
         ])
 
-    def test_sso_row_without_a_probe_url_falls_back_to_the_public_url(self):
+    def test_homebox_api_path_requires_http_200(self):
+        ep = render(services=[{"name": "homebox", "sso": True,
+                      "url": "https://homebox.example.test",
+                      "probe_url": "http://homebox:7745",
+                      "probe_path": "/api/v1/status"}])["homebox"]
+        self.assertEqual(ep["url"], "https://homebox.example.test/api/v1/status")
+        self.assertEqual(ep["conditions"], [
+            "[STATUS] == 200",
+            "[RESPONSE_TIME] < 3000",
+            "[CERTIFICATE_EXPIRATION] > 240h",
+        ])
+
+    def test_sso_row_without_a_probe_url_uses_the_public_url(self):
         ep = render(services=[{"name": "pool", "sso": True, "url": "https://pool.example.test",
                       "probe_url": ""}])["pool"]
         self.assertEqual(ep["url"], "https://pool.example.test")

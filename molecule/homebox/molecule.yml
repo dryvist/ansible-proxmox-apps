@@ -1,0 +1,55 @@
+---
+# Molecule scenario for the homebox role. A single privileged systemd container
+# downloads the pinned release on the controller (the container host), installs
+# the binary, renders the unit and environment file, and waits for the status
+# endpoint.
+#
+# The database and backup network paths are swapped out with variables, not
+# mocked: homebox_database_driver is sqlite3 and homebox_backup_enabled is false
+# (see converge.yml). Everything else runs for real. The controller needs
+# outbound access to GitHub for the release archive.
+#
+# No secrets: the scenario sets no OpenBao value, and the role reads none while
+# its database and backups are disabled.
+
+platforms:
+  - name: homebox-test${CI_INSTANCE_SUFFIX}
+    image: mirror.gcr.io/geerlingguy/docker-debian12-ansible:latest
+    # The release archive this role installs is linux/amd64 only. On an arm64
+    # workstation the scenario runs emulated, as proxmox_backup_server does.
+    platform: linux/amd64
+    privileged: true
+    command: ""
+    pre_build_image: true
+    tmpfs:
+      - /run
+      - /tmp
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    groups:
+      - homebox_group
+      - lxc_containers
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+
+scenario:
+  name: homebox
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

@@ -22,6 +22,53 @@
     group: root
     mode: "0755"
 
+- name: Install Git for the pinned Prometheus rules checkout
+  ansible.builtin.apt:
+    name: git
+    state: present
+
+- name: Check out the pinned Prometheus homelab rules
+  ansible.builtin.git:
+    repo: "{{ prometheus_stack_rules_repository }}"
+    dest: "{{ prometheus_stack_rules_checkout_dir }}"
+    version: "{{ prometheus_stack_rules_version }}"
+  notify: Reload Prometheus rules
+
+- name: Find Prometheus homelab rule files
+  ansible.builtin.find:
+    paths: "{{ prometheus_stack_rules_checkout_dir }}/rules"
+    patterns: "*.yml"
+    file_type: file
+  register: prometheus_stack_rules
+
+- name: Require Prometheus homelab rule files
+  ansible.builtin.assert:
+    that:
+      - prometheus_stack_rules.matched | int > 0
+    fail_msg: >-
+      No YAML rule files were found in
+      {{ prometheus_stack_rules_checkout_dir }}/rules.
+    quiet: true
+
+- name: Validate Prometheus homelab rules with promtool
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --volume
+      - "{{ prometheus_stack_rules_checkout_dir }}/rules:/etc/prometheus/rules:ro"
+      - --entrypoint
+      - promtool
+      - "{{ prometheus_stack_image }}"
+      - check
+      - rules
+      - "/etc/prometheus/rules/{{ item.path | basename }}"
+  loop: "{{ prometheus_stack_rules.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  changed_when: false
+
 # Carries the router bearer when seeded, so: not world-readable, group-readable
 # by the container's default user (prometheus_stack_config_group), and no_log so
 # a diff never prints it.

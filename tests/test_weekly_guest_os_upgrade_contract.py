@@ -1,6 +1,6 @@
 # Copyright (c) 2026 JacobPEvans
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-"""Contract for the standalone monthly Debian guest upgrade playbook."""
+"""Contract for the standalone weekly Debian guest upgrade playbook."""
 
 from pathlib import Path
 import unittest
@@ -17,15 +17,16 @@ def _when(tasks, module):
     return [t.get("when", "") for t in tasks if module in t]
 
 
-class MonthlyGuestUpgradeContract(unittest.TestCase):
-    def test_brackets_the_run_and_guards_later_saturdays(self):
+class WeeklyGuestUpgradeContract(unittest.TestCase):
+    def test_brackets_the_run_with_the_inventory_load(self):
         self.assertEqual(PLAYS[1]["import_playbook"], "site/00-load-and-telemetry.yml")
-        skip = PLAYS[2]["tasks"][0]["ansible.builtin.set_fact"]["guest_os_upgrade_skip"]
-        self.assertIn("now(utc=true, fmt='%w') == '6'", skip)
-        self.assertIn("| int > 7", skip)
+
+    def test_every_run_upgrades_no_play_skips_a_schedule(self):
+        self.assertFalse(any(p.get("hosts") == "localhost" for p in PLAYS))
+        self.assertFalse(any("guest_os_upgrade_skip" in t.get("when", "") for t in SHARED))
 
     def test_targets_and_batch_sizes(self):
-        lxc, vm, plane = PLAYS[3:6]
+        lxc, vm, plane = PLAYS[2:5]
         for play in (lxc, vm):
             self.assertIn("!windows_group", play["hosts"])
             self.assertIn("!llm_vllm_group", play["hosts"])
@@ -39,20 +40,32 @@ class MonthlyGuestUpgradeContract(unittest.TestCase):
                 [t.get("ansible.builtin.import_tasks") for t in play["tasks"]],
             )
 
-    def test_shared_steps_skip_unowned_hosts_then_upgrade(self):
-        skip = SHARED[0]
-        self.assertIn("guest_os_upgrade_skip", skip["when"])
-        self.assertEqual(len(skip["block"]), 2)
-        self.assertIn("ansible.builtin.debug", skip["block"][0])
-        self.assertEqual(skip["block"][1].get("ansible.builtin.meta"), "end_host")
-        ends = _when(SHARED[1:], "ansible.builtin.meta")
+    def test_shared_steps_end_unowned_hosts_then_upgrade(self):
+        ends = _when(SHARED, "ansible.builtin.meta")
         self.assertIn("ansible_facts.os_family != 'Debian'", ends)
         self.assertIn("guest_os_upgrade_nvidia_driver.stat.exists", ends)
         apt = next(t for t in SHARED if "ansible.builtin.apt" in t)
         self.assertEqual(apt["ansible.builtin.apt"]["upgrade"], "dist")
 
+    def test_distribution_upgrade_runs_async_and_waits_for_completion(self):
+        apt = next(t for t in SHARED if "ansible.builtin.apt" in t)
+        self.assertEqual(apt["ansible.builtin.apt"], {
+            "update_cache": True, "upgrade": "dist", "autoremove": True,
+        })
+        self.assertEqual(apt["async"], 1800)
+        self.assertEqual(apt["poll"], 0)
+        self.assertEqual(apt["register"], "guest_os_upgrade_job")
+        wait = SHARED[SHARED.index(apt) + 1]
+        self.assertEqual(wait["ansible.builtin.async_status"]["jid"],
+                         "{{ guest_os_upgrade_job.ansible_job_id }}")
+        self.assertEqual(wait["register"], "guest_os_upgrade_status")
+        self.assertEqual(wait["until"], "guest_os_upgrade_status.finished")
+        self.assertGreaterEqual(wait["retries"] * wait["delay"], apt["async"])
+        self.assertEqual(apt["environment"], {"DEBIAN_FRONTEND": "noninteractive"})
+        self.assertEqual(wait["environment"], apt["environment"])
+
     def test_only_vms_reboot_and_the_plane_reboot_is_deferred(self):
-        lxc, vm, plane = PLAYS[3:6]
+        lxc, vm, plane = PLAYS[2:5]
         self.assertFalse(any("ansible.builtin.reboot" in t for t in lxc["tasks"]))
         self.assertTrue(any("ansible.builtin.reboot" in t for t in vm["tasks"]))
         shutdown = next(t for t in plane["tasks"] if "ansible.builtin.command" in t)

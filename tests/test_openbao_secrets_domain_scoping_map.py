@@ -44,6 +44,7 @@ TOFU_TAG_CONSUMER_GROUPS = {
     "langfuse_group": "langfuse",
     "git_mirror_group": "git-mirror",
     "idrac_kvm_group": "idrac",
+    "homebox_group": "homebox",
 }
 DEADMAN_SCOPE_GROUPS = {
     "technitium_dns_group",

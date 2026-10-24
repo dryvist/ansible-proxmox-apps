@@ -20,7 +20,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SUFFIX = "${CI_INSTANCE_SUFFIX}"
-WORKFLOW = ROOT / ".github" / "workflows" / "_molecule.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "ci-gate.yml"
 
 
 def _scenarios():
@@ -59,13 +59,7 @@ class MoleculeInstanceNamesAreUniquePerJob(unittest.TestCase):
 
     def test_ci_sets_the_suffix(self):
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-        env = next(
-            step["env"]
-            for step in workflow["jobs"]["test"]["steps"]
-            if "molecule test" in step.get("run", "")
-        )
-        self.assertIn("CI_INSTANCE_SUFFIX", env)
-        self.assertNotEqual(env["CI_INSTANCE_SUFFIX"].strip(), "")
+        self.assertTrue(workflow["jobs"]["molecule"]["with"]["instance_suffix"])
 
 
 if __name__ == "__main__":

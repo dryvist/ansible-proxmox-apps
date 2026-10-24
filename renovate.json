@@ -7,6 +7,17 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Track the digest-only agent sandbox image assembled from an Ansible Jinja expression; the shared Docker manager only parses literal image values.",
+      "managerFilePatterns": ["/^roles/agent_sandbox/defaults/main\\.yml$/"],
+      "matchStrings": [
+        "agent_sandbox_zcode_web_image:\\s*>-\\s*\\n\\s*\\{\\{\\s*'ghcr\\.io/dryvist/nix-agent-sandbox/agent@'\\s*~\\s*'(?<currentDigest>sha256:[A-Fa-f0-9]{64})'\\s*\\}\\}"
+      ],
+      "currentValueTemplate": "latest",
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/dryvist/nix-agent-sandbox/agent"
+    },
+    {
+      "customType": "regex",
       "description": "ARC Helm charts are OCI refs consumed as a plain Ansible variable (kubernetes.core.helm chart_ref/chart_version), not a Chart.yaml/values.yaml Renovate's native Helm managers scan. Tracked against the GitHub release tag both charts share (gha-runner-scale-set-<version>).",
       "managerFilePatterns": ["^roles/github_runner_arc/defaults/main\\.yml$"],
       "matchStrings": ["github_runner_arc_chart_version: \"(?<currentValue>[^\"]+)\""],
@@ -24,6 +35,14 @@
     },
     {
       "customType": "regex",
+      "description": "k3s server release installed by github_runner_arc.",
+      "managerFilePatterns": ["^roles/github_runner_arc/defaults/main\\.yml$"],
+      "matchStrings": ["# renovate: datasource=github-releases depName=k3s-io/k3s\\s+github_runner_arc_k3s_version: \"(?<currentValue>v[^\"]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "k3s-io/k3s"
+    },
+    {
+      "customType": "regex",
       "description": "Single org-wide node_exporter version, consumed by roles/node_exporter via node_exporter_version rather than a literal pin in the role. Tracked against upstream's GitHub releases; the role re-derives the tarball checksum from the release's own sha256sums.txt on every converge, so a bump here is never inert.",
       "managerFilePatterns": ["^inventory/group_vars/all\\.yml$"],
       "matchStrings": ["node_exporter_version: \"(?<currentValue>[^\"]+)\""],
@@ -32,6 +51,30 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Keep current SHA pins when the annotated release version is unchanged.",
+      "matchDatasources": [
+        "github-releases",
+        "github-tags"
+      ],
+      "matchPackageNames": [
+        "viniciussaporto/community.proxmox",
+        "dryvist/ansible-secrets-management",
+        "jpe-ansible/ansible-nautobot"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Apply the seven-day release soak to first-party GitHub dependencies.",
+      "matchPackageNames": [
+        "dryvist/ansible-secrets-management",
+        "jpe-ansible/ansible-nautobot"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
     {
       "description": "Object-storage upgrades can rewrite on-disk metadata that an older release cannot read, so they open as pull requests without auto-merge.",
       "matchDatasources": ["github-releases"],

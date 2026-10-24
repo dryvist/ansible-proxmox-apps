@@ -1,0 +1,84 @@
+---
+# Homebox home inventory (sysadminsmedia/homebox) — a single native Go binary
+# (web + API on one port). State lives in the shared native Postgres cluster;
+# uploaded documents (manuals, receipts) live on a persistent bind mount.
+
+# --- Version / controller-staged, checksum-verified download ----------------
+# LXCs in this repo are firewalled outbound-internal-only, so the release
+# archive is fetched and verified on the CONTROLLER (unrestricted egress), then
+# the extracted binary is copied to the target — the same pattern as
+# roles/vikunja. get_url reads the release's checksums.txt and verifies the
+# archive against its line before anything is extracted.
+#
+# v0.26.2, not v0.27.0: the shared Renovate preset enforces a 7-day
+# minimumReleaseAge, and v0.27.0 was published 5 days before this pin.
+# v0.26.2 is the newest stable release that satisfies that rule.
+# renovate: datasource=github-releases depName=sysadminsmedia/homebox
+homebox_version: "0.26.2"
+homebox_archive: "homebox_Linux_x86_64.tar.gz"
+homebox_archive_url: >-
+  https://github.com/sysadminsmedia/homebox/releases/download/v{{ homebox_version }}/{{ homebox_archive }}
+# Upstream's combined checksums manifest, passed to get_url's `checksum:` as a
+# URL (the roles/node_exporter pattern), so no literal hash is pinned here.
+homebox_checksums_url: >-
+  https://github.com/sysadminsmedia/homebox/releases/download/v{{ homebox_version }}/checksums.txt
+homebox_binary_name: homebox
+
+# --- System user / paths ------------------------------------------------------
+homebox_user: homebox
+homebox_system_group: homebox
+homebox_install_dir: /opt/homebox
+homebox_binary_path: "{{ homebox_install_dir }}/homebox"
+homebox_config_dir: /etc/homebox
+homebox_env_file: "{{ homebox_config_dir }}/homebox.env"
+# Persistent data directory, provisioned as a bind mount by tofu-proxmox. The
+# role ensures ownership and mode only; it never creates the mount itself.
+homebox_data_dir: /var/lib/homebox
+
+# --- Network -------------------------------------------------------------------
+homebox_port: 7745
+homebox_api_timeout: 30
+# Ordinary uploads are capped at this many MB; manuals and receipts are PDFs.
+homebox_web_max_upload_size: 100
+
+# --- Database: the shared native Postgres cluster ------------------------------
+# homebox_database_driver: postgres in production. The molecule scenario swaps
+# in sqlite3 so the binary, unit and health check can be verified without a
+# database server; the Postgres variables below are then not rendered.
+homebox_database_driver: postgres
+# FQDN + port are derived, never literals. group_vars/homebox_group.yml
+# overrides homebox_db_host with the shared apps cluster's primary, exactly as
+# group_vars/vikunja_group.yml does for vikunja.
+homebox_db_host: "postgres.{{ tofu_data.domain }}"
+homebox_db_port: "{{ tofu_data.constants.service_ports.postgres_default }}"
+homebox_db_name: homebox
+homebox_db_user: homebox
+# Set from OpenBao in group_vars/homebox_group.yml; never defaulted here.
+homebox_db_password: ""
+# The shared cluster's listener is plain TCP (roles/postgres pg_hba uses `host`
+# lines with scram-sha-256 and configures no server TLS), so `require` cannot
+# connect. Vikunja's config carries no TLS setting and uses the same listener.
+homebox_db_ssl_mode: disable
+homebox_sqlite_path: >-
+  {{ homebox_data_dir }}/homebox.db?_pragma=busy_timeout=999&_pragma=journal_mode=WAL&_fk=1&_time_format=sqlite
+
+# --- Access ---------------------------------------------------------------------
+# Self-registration is on so the first account can be created. Set this to
+# false once that account exists (see README).
+homebox_options_allow_registration: true
+# Set from OpenBao in group_vars/homebox_group.yml; never defaulted here. Homebox
+# refuses to start without it, and rotating it invalidates every issued API key.
+homebox_api_key_pepper: ""
+
+# --- Backups: restic from the Debian archive -----------------------------------
+# Two repositories, each with its own template unit instance, so a failure on
+# one does not skip the other: a local RustFS repository (always configured) and
+# an offsite Backblaze B2 repository (configured only when its variables are
+# set, see group_vars/homebox_group.yml). The secrets come from OpenBao there.
+homebox_backup_enabled: true
+homebox_backup_bucket: dryvist-homebox-backups
+homebox_restic_password_file: "{{ homebox_config_dir }}/restic-password"
+homebox_pgpass_file: "{{ homebox_config_dir }}/pgpass"
+homebox_restic_keep_daily: 14
+homebox_restic_keep_weekly: 8
+homebox_restic_keep_monthly: 24
