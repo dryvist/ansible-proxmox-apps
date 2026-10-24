@@ -91,6 +91,18 @@ class GatusCatalogProbe(unittest.TestCase):
             "[CERTIFICATE_EXPIRATION] > 240h",
         ])
 
+    def test_homebox_api_path_requires_http_200(self):
+        ep = render(services=[{"name": "homebox", "sso": True,
+                      "url": "https://homebox.example.test",
+                      "probe_url": "http://homebox:7745",
+                      "probe_path": "/api/v1/status"}])["homebox"]
+        self.assertEqual(ep["url"], "https://homebox.example.test/api/v1/status")
+        self.assertEqual(ep["conditions"], [
+            "[STATUS] == 200",
+            "[RESPONSE_TIME] < 3000",
+            "[CERTIFICATE_EXPIRATION] > 240h",
+        ])
+
     def test_sso_row_without_a_probe_url_uses_the_public_url(self):
         ep = render(services=[{"name": "pool", "sso": True, "url": "https://pool.example.test",
                       "probe_url": ""}])["pool"]
