@@ -1,0 +1,128 @@
+---
+- name: Gather the resolver's default IPv4 gateway
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+      - "!min"
+      - network
+    filter: ansible_default_ipv4
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_dhcp_guest_fqdns | length > 0
+
+- name: Require a default gateway for DHCP guest forwarding
+  ansible.builtin.assert:
+    that:
+      - ansible_default_ipv4.gateway is defined
+      - ansible_default_ipv4.gateway is match('^\d{1,3}(\.\d{1,3}){3}$')
+    fail_msg: >-
+      The resolver has DHCP guest FQDNs to forward but no IPv4 default gateway.
+  when:
+    - technitium_dns_apply | bool
+    - technitium_dns_dhcp_guest_fqdns | length > 0
+
+- name: Protect existing DHCP guest DNS zones
+  ansible.builtin.assert:
+    that:
+      - >-
+        (technitium_dns_existing_zone_types
+         | selectattr('name', 'equalto', item)
+         | map(attribute='type') | first | default('')) == 'Forwarder'
+    fail_msg: >-
+      The DHCP guest name {{ item }} is already owned by a non-forwarder zone.
+      Resolve the zone ownership before configuring conditional forwarding.
+  loop: "{{ technitium_dns_dhcp_guest_fqdns }}"
+  loop_control:
+    label: DHCP guest
+  when:
+    - technitium_dns_apply | bool
+    - item in technitium_dns_existing_zones
+
+- name: Read existing DHCP guest conditional-forwarder records
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_dns_api_url }}/api/zones/records/get?token={{
+      technitium_dns_api_token }}&domain={{ item }}&zone={{ item }}
+    method: GET
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_dhcp_guest_fqdns | intersect(technitium_dns_existing_zones) }}"
+  loop_control:
+    label: DHCP guest
+  register: technitium_dns_dhcp_forwarder_records
+  failed_when: technitium_dns_dhcp_forwarder_records.json.status | default('') != "ok"
+  changed_when: false
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Build DHCP guest forwarders that need updating
+  ansible.builtin.set_fact:
+    technitium_dns_dhcp_forwarders_to_update: >-
+      {{ technitium_dns_dhcp_forwarders_to_update | default([]) + [item.item] }}
+  loop: "{{ technitium_dns_dhcp_forwarder_records.results | default([]) }}"
+  when:
+    - >-
+      item.json.response.records | default([])
+      | selectattr('type', 'equalto', 'FWD')
+      | selectattr('rData.Forwarder', 'equalto', ansible_default_ipv4.gateway)
+      | selectattr('rData.Protocol', 'equalto', 'Udp')
+      | selectattr('rData.DnssecValidation', 'equalto', false)
+      | selectattr('rData.ProxyType', 'equalto', 'NoProxy')
+      | list | length == 0
+  loop_control:
+    label: DHCP guest
+
+- name: Create missing DHCP guest conditional-forwarder zones
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/create?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      zone: "{{ item }}"
+      type: Forwarder
+      initializeForwarder: "true"
+      protocol: Udp
+      forwarder: "{{ ansible_default_ipv4.gateway }}"
+      dnssecValidation: "false"
+      proxyType: NoProxy
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+    status_code: [200, 400]
+  loop: "{{ technitium_dns_dhcp_guest_fqdns | difference(technitium_dns_existing_zones) }}"
+  loop_control:
+    label: DHCP guest
+  register: technitium_dns_dhcp_forwarder_create
+  changed_when: technitium_dns_dhcp_forwarder_create.json.status == "ok"
+  failed_when:
+    - technitium_dns_dhcp_forwarder_create.json.status | default('') != "ok"
+    - "'already exists' not in (technitium_dns_dhcp_forwarder_create.json.errorMessage | default(''))"
+  when: technitium_dns_apply | bool
+  no_log: true
+
+- name: Update existing DHCP guest conditional-forwarder targets
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ technitium_dns_api_url }}/api/zones/records/add?token={{ technitium_dns_api_token }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      domain: "{{ item }}"
+      zone: "{{ item }}"
+      type: FWD
+      protocol: Udp
+      forwarder: "{{ ansible_default_ipv4.gateway }}"
+      dnssecValidation: "false"
+      proxyType: NoProxy
+      overwrite: "true"
+    return_content: true
+    timeout: "{{ technitium_dns_api_timeout }}"
+  loop: "{{ technitium_dns_dhcp_forwarders_to_update | default([]) }}"
+  loop_control:
+    label: DHCP guest
+  register: technitium_dns_dhcp_forwarder_update
+  changed_when: technitium_dns_dhcp_forwarder_update.json.status == "ok"
+  failed_when: technitium_dns_dhcp_forwarder_update.json.status | default('') != "ok"
+  when: technitium_dns_apply | bool
+  no_log: true

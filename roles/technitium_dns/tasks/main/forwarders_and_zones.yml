@@ -22,7 +22,7 @@
   when: technitium_dns_apply | bool
   no_log: true
 
-# NOTE: this role deliberately does NOT delete the apex zone (jacobpevans.com).
+# NOTE: this role deliberately does NOT delete the apex zone.
 # A prior "remove stale apex Primary zone" task deleted the WHOLE apex zone
 # whenever it existed, on the false premise that (a) a pre-existing apex zone
 # was leftover cruft and (b) the subdomain-zone create would 400 while it
@@ -31,21 +31,13 @@
 # (this server runs both the apex zone and its child subdomain zone
 # simultaneously
 # today). Deleting the apex was purely destructive and once caused a live
-# outage. Non-authoritative apex names already FORWARD to the upstream
-# resolvers (configured above) whether or not any apex zone exists locally, so
-# there is nothing to "clean up" here.
+# outage. Other non-authoritative apex names already FORWARD to the upstream
+# resolvers (configured above). More-specific DHCP guest FQDN zones forward to
+# the resolver's default gateway; see dhcp_guest_forwarders.yml.
 #
-# CANONICAL ZONE FOR A GUEST HOSTNAME: technitium_dns_zone (the subdomain)
-# only. The per-guest A-record builder above writes exclusively into that
-# zone — it has never written per-guest records into the apex zone. A guest
-# created before this role became subdomain-only kept whatever apex-zone
-# record it already had (frozen there, unmaintained, per the NOTE above);
-# every guest created since has NO apex-zone record, by design. So an
-# apex-zone NXDOMAIN for a guest hostname means only "this guest postdates
-# the migration to a subdomain-only zone" — it is NOT a liveness signal and
-# must never be read as "this guest is down". Any health check, monitor, or
-# runbook resolving a GUEST hostname must query technitium_dns_zone, never
-# the apex.
+# STATIC GUEST A RECORDS live only in technitium_dns_zone (the subdomain).
+# DHCP-first guest FQDNs use exact-name Conditional Forwarder zones created
+# from inventory and are never published as duplicate A records.
 #
 # EXCEPTION — the cluster nodes themselves are the opposite: they have NO
 # record in the subdomain zone at all. Their only A-records are the apex
@@ -56,16 +48,9 @@
 # the node is missing from that record set, and the subdomain zone has
 # nothing to fall back to.
 #
-# THIRD CASE — a Traefik-fronted SERVICE name's apex record is not merely
-# stale, it is actively wrong: it still holds the direct pre-migration
-# backend address instead of the Traefik VIP its subdomain alias correctly
-# points at, and the old backend no longer terminates TLS there. The apex
-# form of the name therefore resolves, then hangs until timeout — it does
-# not NXDOMAIN, so it reads as "service is down" while both the service and
-# the name are otherwise healthy. Same root cause as the guest case above
-# (this role has never written into the apex zone since narrowing to the
-# subdomain), different symptom because these names predate the migration
-# with a real value instead of no value at all.
+# Older Traefik-fronted service names can still have an apex record from before
+# the subdomain zone became canonical. That historical record is independent of
+# DHCP guest forwarding above and is not changed by this role.
 - name: Create authoritative subdomain DNS zone (primary)
   delegate_to: localhost
   ansible.builtin.uri:
