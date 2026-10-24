@@ -1,5 +1,5 @@
-# Preserve the existing direct Grafana Slack delivery until the ntfy cutover
-# is explicitly verified. The critical Nautobot route shares this queue.
+# Grafana alerts labeled ntfy=true use the hub; critical Nautobot stays direct.
+---
 output: default
 streamtags: []
 groups: {}
@@ -15,8 +15,25 @@ functions:
         } catch (err) {
           __e.nautobot_drift_event = null;
         }
+  - id: code
+    filter: "sourcetype === 'grafana:alert'"
+    disabled: false
+    conf:
+      code: |
+        try {
+          const payload = JSON.parse(__e._raw);
+          __e.github_actions_ntfy = Array.isArray(payload.alerts) && payload.alerts.some((alert) =>
+            alert && typeof alert === 'object' && alert.labels && alert.labels.ntfy === 'true');
+        } catch (err) {
+          __e.github_actions_ntfy = false;
+        }
   - id: drop
-    filter: "!(sourcetype === 'nautobot:drift' && nautobot_drift_event && nautobot_drift_event.severity === 'critical' || sourcetype === 'grafana:alert' && {{ 'true' if not (cribl_stream_grafana_ntfy_cutover_verified | bool) else 'false' }})"
+    filter: >-
+      !(sourcetype === 'nautobot:drift' && nautobot_drift_event
+      && nautobot_drift_event.severity === 'critical'
+      || sourcetype === 'grafana:alert'
+      && !({{ 'true' if cribl_stream_grafana_ntfy_cutover_verified | bool else 'false' }}
+      || github_actions_ntfy))
     disabled: false
     conf: {}
   - id: eval
@@ -43,6 +60,7 @@ functions:
       code: |
         try {
           const p = JSON.parse(__e._raw);
+          delete __e.github_actions_ntfy;
           const alerts = p.alerts || [];
           const lines = alerts.slice(0, 5).map(function (a) {
             const l = a.labels || {};

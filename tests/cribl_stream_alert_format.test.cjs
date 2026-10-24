@@ -11,8 +11,9 @@ assert.ok(renderedOutputsPath, 'pass the rendered outputs.yml fixture path');
 const pipelinePath = `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_ntfy/conf.yml.j2`;
 const pipeline = fs.readFileSync(pipelinePath, 'utf8');
 const codeMarker = '      code: |\n';
-const codeStart = pipeline.indexOf(codeMarker);
-assert.notEqual(codeStart, -1, 'Grafana formatter Code function exists');
+const formatterOffset = pipeline.indexOf('        const byteLength =');
+const codeStart = pipeline.lastIndexOf(codeMarker, formatterOffset);
+assert.notEqual(formatterOffset, -1, 'Grafana formatter Code function exists');
 const bodyStart = codeStart + codeMarker.length;
 const bodyEnd = pipeline.indexOf('\n  - id: unroll', bodyStart);
 assert.notEqual(bodyEnd, -1, 'Grafana formatter is followed by native Unroll');
@@ -35,6 +36,39 @@ function format(payload, extra = {}) {
   } } });
   return __e.__ntfyParts;
 }
+
+function classifierCode(source) {
+  const marker = '          const payload = JSON.parse(__e._raw);';
+  const markerOffset = source.indexOf(marker);
+  assert.notEqual(markerOffset, -1, 'Grafana ntfy label classifier exists');
+  const start = source.lastIndexOf(codeMarker, markerOffset) + codeMarker.length;
+  const end = source.indexOf('\n  - id: drop', start);
+  assert.notEqual(end, -1, 'Grafana ntfy label classifier precedes route selection');
+  return source.slice(start, end)
+    .split('\n')
+    .map((line) => line.startsWith('        ') ? line.slice(8) : line)
+    .join('\n');
+}
+
+const slackPipeline = fs.readFileSync(
+  `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_slack/conf.yml.j2`, 'utf8');
+const ntfyClassifier = classifierCode(pipeline);
+assert.equal(classifierCode(slackPipeline), ntfyClassifier,
+  'direct Slack and ntfy pipelines select the same Grafana alerts');
+function routesToNtfy(payload) {
+  const __e = {
+    sourcetype: 'grafana:alert',
+    _raw: typeof payload === 'string' ? payload : JSON.stringify(payload),
+  };
+  vm.runInNewContext(ntfyClassifier, { __e });
+  return __e.github_actions_ntfy;
+}
+assert.equal(routesToNtfy({ alerts: [{ labels: { ntfy: 'true' } }] }), true,
+  'alerts with the ntfy route label use the ntfy path');
+assert.equal(routesToNtfy({ alerts: [{ labels: { severity: 'warning' } }] }), false,
+  'unlabeled alerts stay on the existing direct path');
+assert.equal(routesToNtfy('{"alerts":['), false,
+  'malformed envelopes remain on the existing direct path');
 
 function contents(parts) {
   for (const part of parts) {
@@ -150,20 +184,23 @@ assert.match(inputTemplate, /output: slack_grafana_alerts[\s\S]*?pipeline: grafa
 assert.equal((inputTemplate.match(/output: slack_grafana_alerts/g) || []).length, 1,
   'the required critical destination is connected exactly once');
 assert.match(pipeline, /grafana:alert:canary/,
-  'only test alert types are accepted before the flag is set');
+  'canary alert delivery stays available before the flag is set');
+assert.match(pipeline, /labels\.ntfy === 'true'/,
+  'selected Grafana alerts can use ntfy before the global cutover');
 assert.match(pipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
-  'production alert types require the verification flag');
-const nautobotPipeline = fs.readFileSync(
-  `${root}/roles/cribl_stream/templates/pipelines/grafana_alerts_slack/conf.yml.j2`, 'utf8');
+  'the global cutover still controls all other production alerts');
+assert.match(slackPipeline, /github_actions_ntfy/,
+  'selected alerts leave the direct Slack path to avoid duplicate delivery');
+const nautobotPipeline = slackPipeline;
 assert.match(nautobotPipeline, /severity === 'critical'/);
 assert.match(nautobotPipeline, /sourcetype === 'grafana:alert'/,
   'Grafana remains on its current direct delivery by default');
 assert.match(nautobotPipeline, /cribl_stream_grafana_ntfy_cutover_verified/,
   'the existing direct Grafana leg is retired only when cutover is verified');
 const roleTasks = fs.readFileSync(`${root}/roles/cribl_stream/tasks/main.yml`, 'utf8');
-assert.match(roleTasks, /Require the ntfy destination before enabling Grafana alert cutover/);
-assert.match(roleTasks, /when: cribl_stream_grafana_ntfy_cutover_verified \| bool/,
-  'a verified cutover cannot silently disable Grafana summaries with an empty ntfy URL');
+assert.match(roleTasks, /Require the ntfy destination for Grafana alert delivery/);
+assert.match(roleTasks, /cribl_stream_alerts_ntfy_publish_url/,
+  'Grafana alert delivery requires both ntfy endpoint URLs');
 assert.match(fs.readFileSync(`${root}/roles/cribl_stream/templates/outputs.yml.j2`, 'utf8'),
   /typeof message === 'string'[\s\S]*?typeof priority === 'number'[\s\S]*?: null/,
   'the ntfy webhook only serializes explicitly formatted fields');
