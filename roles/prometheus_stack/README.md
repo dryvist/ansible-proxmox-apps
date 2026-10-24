@@ -32,6 +32,12 @@ The `llm_gpu_engine` job scrapes the active engine's native `/metrics` endpoint
 and labels each target with its inventory guest name. `dcgm_exporter` remains a
 separate job for GPU hardware metrics.
 
+Prometheus also loads every `rules/*.yml` file from the pinned
+[`dryvist/prometheus-homelab-rules`](https://github.com/dryvist/prometheus-homelab-rules)
+checkout. The role validates each file with `promtool check rules` in the
+Prometheus image before a rules update can trigger the lifecycle reload. The
+checkout commit is `prometheus_stack_rules_version` in `defaults/main.yml`.
+
 ## Networking
 
 Both services run on `network_mode: host`. blackbox needs it so ICMP probes egress
@@ -103,6 +109,9 @@ Or include the role directly against the metrics host:
 
 ## Handlers
 
+- `Reload Prometheus rules` — posts to the lifecycle API after a validated
+  rules checkout change. The rules directory is bind-mounted read-only, so its
+  updated contents are visible to the running container.
 - `Restart prometheus stack` — recreates the compose stack (TSDB persists in
   the named volume). Every rendered file is bind-mounted as a single file, so
   only a recreate — not the `/-/reload` lifecycle API — actually picks up a
