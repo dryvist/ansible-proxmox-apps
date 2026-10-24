@@ -64,11 +64,8 @@
         fail_msg: >-
           A-records not built as expected: {{ technitium_dns_a_records }}.
 
-    # A leased guest (leasedguest40) advertises an FQDN, because its address lives
-    # only in the DHCP lease and the gateway answers for it. Publishing a record
-    # here would be a second copy of that address with nothing keeping the two in
-    # agreement, so the builder must skip it entirely. Both resolvers are static
-    # and DO belong in the zone — hence a separate fixture host for this case.
+    # A leased guest advertises an FQDN; it must not become an A record here.
+    # Technitium forwards that exact FQDN to the gateway, which owns the lease.
     - name: Assert leased guests are skipped, not published with a name
       ansible.builtin.assert:
         that:
@@ -77,6 +74,15 @@
         fail_msg: >-
           a leased guest reached the zone, or a static resolver was dropped from
           it: {{ technitium_dns_a_records }}.
+
+    - name: Assert leased guest names are routed without publishing an address
+      ansible.builtin.assert:
+        that:
+          - "'leasedguest40.example.net' in technitium_dns_dhcp_guest_fqdns"
+          - "'leasedguest40' not in (technitium_dns_a_records | map(attribute='name') | list)"
+        fail_msg: >-
+          DHCP guest FQDN forwarding did not preserve the single DHCP address
+          source: {{ technitium_dns_dhcp_guest_fqdns }}.
 
     - name: Assert the query-log export target derives from the syslog CNAME + tofu port
       ansible.builtin.assert:
