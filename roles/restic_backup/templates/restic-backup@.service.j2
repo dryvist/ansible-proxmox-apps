@@ -1,0 +1,29 @@
+{{ ansible_managed | comment }}
+# One instance per restic repository (%i is the repository name). Each instance
+# reads its own environment file, so a failure on one repository fails only its
+# unit. Every command must exit 0; otherwise the unit fails and journald keeps the
+# reason.
+[Unit]
+Description={{ restic_backup_name }} backup to the %i repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ restic_backup_config_dir }}/backup-%i.env
+{% if restic_backup_db_name | length > 0 %}
+Environment=PGHOST={{ restic_backup_db_host }}
+Environment=PGPORT={{ restic_backup_db_port }}
+Environment=PGUSER={{ restic_backup_db_user }}
+Environment=PGPASSFILE={{ restic_backup_pgpass_file }}
+{% endif %}
+# Create the repository only when its config cannot be read. A wrong password or
+# an unreachable endpoint then fails here, and nothing is re-initialized.
+ExecStartPre=/bin/bash -c 'restic cat config >/dev/null 2>&1 || restic init'
+{% if restic_backup_db_name | length > 0 %}
+ExecStart=/bin/bash -o pipefail -c 'pg_dump -Fc {{ restic_backup_db_name }} | restic backup --stdin --stdin-filename {{ restic_backup_name }}.dump'
+{% endif %}
+{% for path in restic_backup_paths %}
+ExecStart=/usr/bin/restic backup {{ path }}
+{% endfor %}
+ExecStart=/usr/bin/restic forget --keep-daily {{ restic_backup_keep_daily }} --keep-weekly {{ restic_backup_keep_weekly }} --keep-monthly {{ restic_backup_keep_monthly }} --prune
