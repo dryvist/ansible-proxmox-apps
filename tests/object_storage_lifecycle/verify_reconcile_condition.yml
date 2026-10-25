@@ -11,6 +11,10 @@
     live_30: >-
       {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
       "NoncurrentVersionExpiration":{"NoncurrentDays":30}}]}
+    live_30_markers: >-
+      {"Rules":[{"ID":"expire-noncurrent","Status":"Enabled",
+      "NoncurrentVersionExpiration":{"NoncurrentDays":30},
+      "Expiration":{"ExpiredObjectDeleteMarker":true}}]}
     cases:
       # backups bucket declares 30 but live is 3650 -> MUST fire
       - name: declared-30-live-3650
@@ -33,6 +37,24 @@
       - name: config-without-rule
         item: {rc: 0, stdout: '{"Rules":[]}', item: {name: a}}
         expect: true
+      # delete-marker expiry declared but live rule lacks it -> MUST fire
+      - name: markers-declared-live-without
+        item:
+          rc: 0
+          stdout: "{{ live_30 }}"
+          item: {name: b, noncurrent_expiration_days: 30, expire_delete_markers: true}
+        expect: true
+      # delete-marker expiry declared and already live -> must NOT fire
+      - name: markers-declared-live-with
+        item:
+          rc: 0
+          stdout: "{{ live_30_markers }}"
+          item: {name: b, noncurrent_expiration_days: 30, expire_delete_markers: true}
+        expect: false
+      # delete-marker expiry not declared -> a live marker rule is left alone
+      - name: markers-undeclared-live-with
+        item: {rc: 0, stdout: "{{ live_30_markers }}", item: {name: b, noncurrent_expiration_days: 30}}
+        expect: false
   tasks:
     - name: Evaluate the condition for each case
       ansible.builtin.assert:
@@ -49,6 +71,10 @@
                   | map(attribute='NoncurrentVersionExpiration.NoncurrentDays')
                   | first | default(-1)
                 ) != item.item.item.noncurrent_expiration_days
+              ) or
+              (
+                (item.item.item.expire_delete_markers | default(false)) and
+                (item.item.stdout | default('')) is not search('ExpiredObjectDeleteMarker')
               )
             ) == item.expect
         fail_msg: "case {{ item.name }}: expected fires={{ item.expect }}"
