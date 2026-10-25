@@ -186,3 +186,38 @@ server_superuser_password: "{{ nautobot_superuser_password }}"
 server_openbao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
 server_openbao_token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
 server_openbao_ca_file: "{{ lookup('env', 'BAO_CACERT') | default('/etc/ssl/certs/ca-certificates.crt', true) }}"
+
+# Nightly offsite backup of the nautobot database (restic_backup role).
+# The restic password encrypts the repository and must never change once the
+# first backup has run. Both are optional: the role does nothing until the
+# password and the B2 record are seeded in OpenBao.
+nautobot_restic_password: >-
+  {{ bao_apps_secrets.nautobot_restic_password | default('', true) }}
+
+# Backblaze B2 repository, from the nautobot_backup_b2 record: the S3-compatible
+# endpoint, a bucket of its own and a key limited to that bucket. The region is
+# part of the endpoint host.
+nautobot_backup_b2_endpoint: >-
+  {{ (bao_nautobot_backup_b2_secrets | default({})).AWS_ENDPOINT_URL | default('', true) }}
+nautobot_backup_b2_bucket: >-
+  {{ (bao_nautobot_backup_b2_secrets | default({})).BUCKET | default('', true) }}
+nautobot_backup_b2_access_key_id: >-
+  {{ (bao_nautobot_backup_b2_secrets | default({})).AWS_ACCESS_KEY_ID | default('', true) }}
+nautobot_backup_b2_secret_access_key: >-
+  {{ (bao_nautobot_backup_b2_secrets | default({})).AWS_SECRET_ACCESS_KEY | default('', true) }}
+nautobot_backup_b2_region: >-
+  {{ nautobot_backup_b2_endpoint | regex_replace('^(https?://)?s3\.([^.]+)\..*$', '\2') | default('us-east-1', true) }}
+nautobot_backup_b2_enabled: >-
+  {{ (nautobot_backup_b2_endpoint | length > 0)
+     and (nautobot_backup_b2_bucket | length > 0)
+     and (nautobot_backup_b2_access_key_id | length > 0)
+     and (nautobot_backup_b2_secret_access_key | length > 0) }}
+
+nautobot_backup_repositories:
+  - name: b2
+    enabled: "{{ nautobot_backup_b2_enabled | bool }}"
+    bucket: "{{ nautobot_backup_b2_bucket }}"
+    endpoint: "{{ nautobot_backup_b2_endpoint }}"
+    access_key_id: "{{ nautobot_backup_b2_access_key_id }}"
+    secret_access_key: "{{ nautobot_backup_b2_secret_access_key }}"
+    region: "{{ nautobot_backup_b2_region }}"
