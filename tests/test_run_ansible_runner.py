@@ -14,6 +14,42 @@ from run_ansible_runner_support import (
 
 
 class RunAnsibleTokenContract(RunnerFixture):
+    def test_limit_is_normalized_before_ansible(self):
+        cases = (
+            (
+                ("--limit", "grp:!h,localhost"),
+                [
+                    "playbooks/site.yml",
+                    "--limit",
+                    "grp:!h,localhost",
+                    "--limit",
+                    "grp,!h,localhost",
+                ],
+            ),
+            (
+                ("--limit", "grp"),
+                [
+                    "playbooks/site.yml",
+                    "--limit",
+                    "grp",
+                    "--limit",
+                    "grp,localhost",
+                ],
+            ),
+            (
+                ("--limit", "grp,localhost"),
+                ["playbooks/site.yml", "--limit", "grp,localhost"],
+            ),
+        )
+        for supplied, expected in cases:
+            with self.subTest(supplied=supplied):
+                result = self._run(runner_args=supplied)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    self.ansible_argv_log.read_text(encoding="utf-8").splitlines(),
+                    expected,
+                )
+
     def test_minted_token_reaches_child_then_is_revoked(self):
         result = self._run()
 
