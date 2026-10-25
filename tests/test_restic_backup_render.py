@@ -65,6 +65,14 @@ class ResticBackupRender(unittest.TestCase):
         self.assertNotIn("PGPASSFILE", unit)
         self.assertIn("ExecStart=/usr/bin/restic backup /var/lib/svc", unit)
 
+    def test_prune_runs_after_every_combination_of_dump_and_paths(self):
+        paths = {"restic_backup_paths": ["/var/lib/svc"]}
+        for name, extra in {"dump": DB, "paths": paths, "both": {**DB, **paths}}.items():
+            with self.subTest(name):
+                unit = render("restic-backup@.service.j2", **extra)
+                self.assertTrue(unit.rstrip().endswith("--prune"))
+                self.assertEqual(unit.count("restic forget"), 1)
+
     def test_timers_are_daily_and_weekly_with_catch_up(self):
         backup = render("restic-backup@.timer.j2")
         check = render("restic-check@.timer.j2")
