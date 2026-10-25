@@ -7,9 +7,16 @@
   vars:
     ansible_become: false
     _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
-    llm_large_serving_host: metrics-target-under-test
+    _fixture_mac_workstations:
+      mac-primary:
+        host: mac-primary.example.invalid
+        roles: [mac-primary-serving]
+      mac-secondary:
+        host: mac-secondary.example.invalid
+        roles: [mac-secondary-serving]
     _fixture_tofu_data:
       domain: test.example
+      workstations: "{{ _fixture_mac_workstations }}"
       constants:
         service_ports:
           prometheus_web: 9090
@@ -41,7 +48,6 @@
       ansible.builtin.set_fact:
         tofu_data: "{{ _fixture_tofu_data }}"
         wan_hop_discovery_isp_hops: []
-        prometheus_stack_macmon_secondary_target: secondary-target-under-test.example.invalid
 
     - name: Render prometheus.yml
       ansible.builtin.set_fact:
@@ -59,17 +65,27 @@
           - _jobs[0].scrape_interval == '60s'
           - _jobs[0].metrics_path == '/metrics'
           - _jobs[0].static_configs | length == 2
-          - _jobs[0].static_configs[0].targets == ['metrics-target-under-test.example.invalid:9090']
+          - _jobs[0].static_configs[0].targets == ['mac-primary.example.invalid:9090']
           - _jobs[0].static_configs[0].labels.accelerator == 'mac-primary'
-          - _jobs[0].static_configs[1].targets == ['secondary-target-under-test.example.invalid:9090']
+          - _jobs[0].static_configs[1].targets == ['mac-secondary.example.invalid:9090']
           - _jobs[0].static_configs[1].labels.accelerator == 'mac-secondary'
         fail_msg: >-
           Expected two role-labelled macmon scrapes at the default metrics port.
           Rendered: {{ _jobs }}
 
-    - name: Drop the secondary Mac host
+    - name: Drop the secondary Mac workstation from the fixture inventory
       ansible.builtin.set_fact:
-        prometheus_stack_macmon_secondary_target: ""
+        tofu_data: >-
+          {{ _fixture_tofu_data | combine({
+            'workstations': _fixture_mac_workstations
+              | dict2items
+              | rejectattr('key', 'equalto', 'mac-secondary')
+              | items2dict
+          }) }}
+
+    - name: Report the missing Mac role through the shared warning task
+      ansible.builtin.include_tasks: >-
+        {{ playbook_dir }}/../../../roles/prometheus_stack/tasks/macmon_inventory_warnings.yml
 
     - name: Render prometheus.yml without the secondary Mac
       ansible.builtin.set_fact:
@@ -77,10 +93,16 @@
           {{ (lookup('template', _pst_tpl) | from_yaml).scrape_configs
              | selectattr('job_name', 'equalto', 'macmon') | list }}
 
-    - name: Assert an unset secondary host renders only the primary Mac
+    - name: Assert a missing workstation role omits only its Mac target
       ansible.builtin.assert:
         quiet: true
         that:
           - _jobs_primary_only[0].static_configs | length == 1
           - _jobs_primary_only[0].static_configs[0].labels.accelerator == 'mac-primary'
-        fail_msg: "Expected only the mac-primary scrape. Rendered: {{ _jobs_primary_only }}"
+          - _jobs_primary_only[0].static_configs[0].targets == ['mac-primary.example.invalid:9090']
+          - prometheus_stack_macmon_missing_roles == ['mac-secondary-serving']
+          - prometheus_stack_macmon_missing_role_warnings.results | length == 1
+          - "'mac-secondary-serving' in prometheus_stack_macmon_missing_role_warnings.results[0].msg"
+        fail_msg: >-
+          Expected the missing mac-secondary-serving role to be logged and omitted.
+          Rendered: {{ _jobs_primary_only }}
