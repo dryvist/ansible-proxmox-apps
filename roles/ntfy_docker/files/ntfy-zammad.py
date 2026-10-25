@@ -3,18 +3,21 @@
 message (see roles/ntfy_docker templates/client.yml.j2).
 
 Contract: ntfy's own CLI runs this once per matching message (already
-priority-filtered by client.yml's `if:` clause) with the message fields as
-env vars (NTFY_TOPIC, NTFY_TITLE, NTFY_MESSAGE, NTFY_TAGS, NTFY_ID -- see
-https://docs.ntfy.sh/subscribe/cli/), plus the connection settings from
-/etc/ntfy-zammad/ntfy-zammad.env (deployed alongside this script, inherited
+priority-filtered by client.yml's if: clause) with the message fields as
+env vars (NTFY_TOPIC, NTFY_TITLE, NTFY_MESSAGE, NTFY_PRIORITY, NTFY_TAGS,
+NTFY_ID -- see the ntfy CLI documentation), plus the connection settings from
+the subscriber environment file (deployed alongside this script and inherited
 because both run under the same systemd service).
 
-Dedup is by "topic|title" (the correlation key): an open ticket with that
-exact title gets an appended article instead of a new ticket. A `resolved` or
-`white_check_mark` tag closes the matching open ticket. A `no-zammad` tag
-skips ticket action entirely -- this is how the subscriber's OWN failure
-alert (published back to the keystone topic below) avoids opening a ticket
-about itself.
+Dedup uses the stable topic|title correlation key: the first firing creates a
+ticket, then the bridge appends unchanged firing repeats at most once per
+configured interval. Tag or priority changes append immediately; suppressed
+repeat counts appear in the next article. A resolved or white_check_mark tag
+always appends a recovery article, but closes only a ticket marked with the
+bridge's ntfy-zammad-managed tag and absent from the close denylist. A
+no-zammad tag skips ticket action entirely -- this is how the subscriber's OWN
+failure alert (published back to the keystone topic below) avoids opening a
+ticket about itself.
 
 Adapted from splunk-homelab-alerts/bin/zammad.py's find-or-append pattern
 (same estate, same Zammad instance) -- title-search dedup, stdlib-only
@@ -27,9 +30,11 @@ next message is handled. After NTFY_ZAMMAD_FAILURE_THRESHOLD consecutive
 failures it also pages `keystone` directly.
 """
 
+import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 import traceback
 import urllib.error
@@ -37,6 +42,8 @@ import urllib.parse
 import urllib.request
 
 OPEN_STATES = ("new", "open")
+MANAGED_TAG = "ntfy-zammad-managed"
+DEFAULT_REPEAT_INTERVAL_SECONDS = 3600
 # ponytail: count cap only; the oldest spooled message is dropped (and logged)
 # past it. Add an age cap if a long outage makes stale replays a problem.
 SPOOL_MAX = 200
@@ -55,6 +62,15 @@ def is_resolved(tags):
     return "resolved" in tags or "white_check_mark" in tags
 
 
+def alert_state(tags, priority=None):
+    """Fingerprint tags and ntfy priority so state and severity changes append."""
+    return {
+        "resolved": is_resolved(tags),
+        "tags": sorted(set(tags)),
+        "priority": str(priority or ""),
+    }
+
+
 def should_skip(tags):
     return "no-zammad" in tags
 
@@ -70,12 +86,84 @@ def correlation_key(topic, title):
     return "fk:ntfy:%s:%s" % (topic, title)
 
 
-def note(message, tags):
+def format_utc(timestamp):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
+
+
+def note(message, tags, priority=None, suppressed_count=0, suppressed_since=None):
     lines = [message or ""]
     if tags:
         lines.append("")
         lines.append("Tags: %s" % ", ".join(tags))
+    if priority not in (None, ""):
+        lines.append("Priority: %s" % priority)
+    if suppressed_count:
+        lines.extend([
+            "",
+            "%d repeats suppressed since %s" % (
+                suppressed_count, format_utc(suppressed_since)
+            ),
+        ])
     return {"body": "\n".join(lines), "type": "note", "internal": True}
+
+
+def repeat_state_path(state_dir):
+    return os.path.join(state_dir, "repeat-state.json")
+
+
+def repeat_state_key(key):
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def load_repeat_state(state_dir):
+    try:
+        with open(repeat_state_path(state_dir)) as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(state, dict):
+        raise ValueError("repeat state file must contain a JSON object")
+    return state
+
+
+def save_repeat_state(state_dir, state, key, record):
+    os.makedirs(state_dir, mode=0o700, exist_ok=True)
+    state[repeat_state_key(key)] = record
+    fd, temp_path = tempfile.mkstemp(prefix=".repeat-state-", dir=state_dir)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(state, f, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, repeat_state_path(state_dir))
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def close_denylist():
+    values = json.loads(env("NTFY_ZAMMAD_CLOSE_DENYLIST", '["1000854"]'))
+    if not isinstance(values, list):
+        raise ValueError("NTFY_ZAMMAD_CLOSE_DENYLIST must be a JSON array")
+    return {str(value) for value in values}
+
+
+def bridge_opened_ticket(base, token, ticket):
+    """Require a known non-denied number and the bridge's persistent tag."""
+    ticket_id = ticket["id"]
+    number = ticket.get("number")
+    if number is None:
+        details = zammad_call(base, token, "tickets/%s" % ticket_id)
+        number = details.get("number") if isinstance(details, dict) else None
+    if number is None or str(number) in close_denylist():
+        return False
+    tags = zammad_call(
+        base,
+        token,
+        "tags?%s" % urllib.parse.urlencode({"object": "Ticket", "o_id": ticket_id}),
+    )
+    return isinstance(tags, dict) and MANAGED_TAG in (tags.get("tags") or [])
 
 
 def zammad_call(base, token, path, payload=None, method=None):
@@ -221,11 +309,13 @@ def current_message():
         "title": env("NTFY_TITLE") or topic or "ntfy alert",
         "message": env("NTFY_MESSAGE", ""),
         "tags": parse_tags(env("NTFY_TAGS", "")),
+        "priority": env("NTFY_PRIORITY", ""),
     }
 
 
 def handle(msg):
     topic, title, message, tags = msg["topic"], msg["title"], msg["message"], msg["tags"]
+    priority = msg.get("priority")
 
     if should_skip(tags):
         return
@@ -235,22 +325,70 @@ def handle(msg):
     if not zammad_base or not zammad_token:
         raise RuntimeError("ZAMMAD_API_URL/ZAMMAD_API_TOKEN not set")
 
+    state_dir = env("NTFY_ZAMMAD_STATE_DIR", "/var/lib/ntfy-zammad")
+    repeat_interval = int(
+        env("NTFY_ZAMMAD_REPEAT_INTERVAL_SECONDS", str(DEFAULT_REPEAT_INTERVAL_SECONDS))
+    )
+    if repeat_interval < 0:
+        raise ValueError("NTFY_ZAMMAD_REPEAT_INTERVAL_SECONDS must be non-negative")
+
     key = correlation_key(topic, title)
     existing = find_ticket(zammad_base, zammad_token, key)
+    records = load_repeat_state(state_dir)
+    record_key = repeat_state_key(key)
+    record = records.get(record_key, {})
+    now = time.time()
+    current_state = alert_state(tags, priority)
 
     if is_resolved(tags):
         if existing:
+            # Avoid reading article history: it may be too large for the API.
+            close_ticket = bridge_opened_ticket(zammad_base, zammad_token, existing)
+            payload = {"article": note(
+                message, tags, priority,
+                record.get("suppressed_count", 0), record.get("suppressed_since"),
+            )}
+            if close_ticket:
+                payload["state"] = "closed"
             zammad_call(
                 zammad_base, zammad_token, "tickets/%s" % existing["id"],
-                payload={"state": "closed", "article": note(message, tags)}, method="PUT",
+                payload=payload, method="PUT",
             )
+            save_repeat_state(state_dir, records, key, {
+                "state": current_state,
+                "last_article_at": now,
+                "suppressed_count": 0,
+                "suppressed_since": None,
+            })
         return
 
     if existing:
+        same_state = record.get("state") == current_state
+        last_article_at = record.get("last_article_at")
+        if (
+            same_state
+            and last_article_at is not None
+            and now - float(last_article_at) < repeat_interval
+        ):
+            record["suppressed_count"] = int(record.get("suppressed_count", 0)) + 1
+            if record.get("suppressed_since") is None:
+                record["suppressed_since"] = now
+            save_repeat_state(state_dir, records, key, record)
+            return
+
         zammad_call(
             zammad_base, zammad_token, "tickets/%s" % existing["id"],
-            payload={"article": note(message, tags)}, method="PUT",
+            payload={"article": note(
+                message, tags, priority,
+                record.get("suppressed_count", 0), record.get("suppressed_since"),
+            )}, method="PUT",
         )
+        save_repeat_state(state_dir, records, key, {
+            "state": current_state,
+            "last_article_at": now,
+            "suppressed_count": 0,
+            "suppressed_since": None,
+        })
         return
 
     groups = json.loads(env("NTFY_ZAMMAD_TOPIC_GROUPS_JSON", "{}"))
@@ -260,11 +398,23 @@ def handle(msg):
     # is only for a human reading the ticket list.
     summary = message.splitlines()[0] if message else title
     me = zammad_call(zammad_base, zammad_token, "users/me")
-    zammad_call(
+    created = zammad_call(
         zammad_base, zammad_token, "tickets",
-        payload=new_ticket(key, summary, group, note(message, tags), me["id"]),
+        payload=new_ticket(key, summary, group, note(message, tags, priority), me["id"]),
         method="POST",
     )
+    if isinstance(created, dict) and created.get("id") is not None:
+        zammad_call(
+            zammad_base, zammad_token, "tags/add",
+            payload={"item": MANAGED_TAG, "object": "Ticket", "o_id": created["id"]},
+            method="POST",
+        )
+    save_repeat_state(state_dir, records, key, {
+        "state": current_state,
+        "last_article_at": now,
+        "suppressed_count": 0,
+        "suppressed_since": None,
+    })
 
 
 def new_ticket(key, summary, group, article, customer_id):

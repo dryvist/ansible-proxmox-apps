@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""ntfy-zammad spool: a failed post spools, the next success replays it oldest
-first, and a replayed key with an open ticket appends instead of re-creating.
-Loads the deployed script itself and fakes only the Zammad API call."""
+"""ntfy-zammad spool: a failed post spools, then an immediate duplicate replay
+is suppressed on the existing ticket. Loads the deployed script itself and
+fakes only the Zammad API call."""
 
 import email.message
 import importlib.util
@@ -43,6 +43,7 @@ class NtfyZammadSpool(unittest.TestCase):
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
         self.state_dir = state.name
+        os.environ["NTFY_ZAMMAD_STATE_DIR"] = self.state_dir
         self.msg = {"topic": "network", "title": "WAN down", "message": "m", "tags": ["high"]}
 
     def _fake_call(self, base, token, path, payload=None, method=None):
@@ -87,7 +88,7 @@ class NtfyZammadSpool(unittest.TestCase):
         nz.spool_message(self.state_dir, self.msg)
         nz.replay_spool(self.state_dir, nz.handle)
         self.assertEqual(len(self.tickets), 1)
-        self.assertIn(("PUT", "tickets/1"), self.calls)
+        self.assertNotIn(("PUT", "tickets/1"), self.calls)
 
     def test_spooled_4xx_is_dropped(self):
         nz = self.nz
