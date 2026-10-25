@@ -85,6 +85,15 @@ ansible-playbook playbooks/verify-approle-ttls.yml
 # Weekly Debian guest OS upgrade; Semaphore runs it every Saturday and every run upgrades its targets.
 ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml
 
+# Feed Homebox from Nautobot (one-way CSV import, standalone, never part of
+# site.yml). Without the flag it only renders the feed and logs its size: no
+# Homebox credential is read and no Homebox call is made. Targets and scope are
+# the homebox_feed_* variables in inventory/group_vars/homebox_group.yml.
+scripts/run-ansible.sh playbooks/homebox-feed.yml --limit localhost
+# Post the import to every target:
+scripts/run-ansible.sh playbooks/homebox-feed.yml --limit localhost \
+  -e homebox_feed_apply=true
+
 # Lint
 ansible-lint
 ```
