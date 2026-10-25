@@ -34,7 +34,13 @@ class TechnitiumUpgradeSafety(unittest.TestCase):
     def test_pinned_version_has_a_recorded_mirror_digest(self):
         version = self.defaults["technitium_install_app_version"]
         digests = self.defaults["technitium_install_app_sha256s"]
-        self.assertIn(version, digests)
+        self.assertIn(
+            version,
+            digests,
+            "Re-seed artifacts/technitium/ from the official image, run "
+            "`sha256sum <seeded-tarball>` on the mirrored archive, then add its "
+            "64-hex output under this version in roles/technitium_install/defaults/main.yml.",
+        )
         self.assertRegex(digests[version], r"^[0-9a-f]{64}$")
         self.assertEqual(
             self.defaults["technitium_install_app_sha256"],
