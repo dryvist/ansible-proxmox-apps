@@ -1,0 +1,92 @@
+---
+# ClickHouse copies of the AI coding-agent session events. Each session source
+# keeps its Splunk leg unchanged and gets one extra connection to a native
+# click_house output, which writes one table in the llm database through a
+# per-harness mapping pipeline.
+cribl_stream_clickhouse_http_port: 8123
+# HTTP interface of the tofu-published ClickHouse guest, resolved from the
+# inventory tag the same way prometheus_stack derives its clickhouse scrape
+# targets. Never a literal host or IP.
+cribl_stream_clickhouse_url: >-
+  http://{{ hostvars['localhost']['tofu_data']['containers'] | default({})
+     | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'clickhouse')
+     | map(attribute='value.ip') | list | first
+     | mandatory('no clickhouse-tagged container in the tofu inventory') }}:{{ cribl_stream_clickhouse_http_port }}
+cribl_stream_clickhouse_database: llm
+cribl_stream_clickhouse_user: cribl
+# Password is set in inventory/group_vars/cribl_stream_group.yml from OpenBao.
+
+# One table per harness, named in the llm database. Each gets an output named
+# clickhouse_llm_<table>.
+cribl_stream_clickhouse_tables:
+  - claude
+  - codex
+  - gemini
+  - antigravity
+  - zcode
+
+# Explicit column list. ingest_time is left out on purpose: ClickHouse fills it
+# with its own DEFAULT. Every value expression reads a field that the matching
+# llm_to_clickhouse_<harness> pipeline sets (ch_*), except the literal ingest.
+cribl_stream_clickhouse_columns:
+  - name: event_time
+    type: "DateTime64(3)"
+    value: ch_event_time
+  - name: ingest
+    type: "LowCardinality(String)"
+    value: "'live'"
+  - name: session_id
+    type: "String"
+    value: ch_session_id
+  - name: message_id
+    type: "String"
+    value: ch_message_id
+  - name: role
+    type: "LowCardinality(String)"
+    value: ch_role
+  - name: model
+    type: "String"
+    value: ch_model
+  - name: repo
+    type: "String"
+    value: ch_repo
+  - name: cwd
+    type: "String"
+    value: ch_cwd
+  - name: tool_name
+    type: "LowCardinality(String)"
+    value: ch_tool_name
+  - name: content
+    type: "String"
+    value: ch_content
+  - name: raw
+    type: "String"
+    value: ch_raw
+  - name: host
+    type: "String"
+    value: ch_host
+
+# Input-to-output routes for the AI session inputs in ai_log_routing. The key is
+# the ai_log_routing name. A single source can feed more than one harness table;
+# agy_cli carries both Gemini and Antigravity sessions, and each copy filters
+# on datatype inside its own pipeline.
+cribl_stream_clickhouse_ai_routes:
+  claude_code:
+    - output: clickhouse_llm_claude
+      pipeline: llm_to_clickhouse_claude
+  codex_cli:
+    - output: clickhouse_llm_codex
+      pipeline: llm_to_clickhouse_codex
+  agy_cli:
+    - output: clickhouse_llm_gemini
+      pipeline: llm_to_clickhouse_gemini
+    - output: clickhouse_llm_antigravity
+      pipeline: llm_to_clickhouse_antigravity
+
+# zcode arrives on the S2S input from the agent sandbox, so it routes there
+# rather than through an in_ai_* input.
+cribl_stream_clickhouse_s2s_routes:
+  - output: clickhouse_llm_zcode
+    pipeline: llm_to_clickhouse_zcode
