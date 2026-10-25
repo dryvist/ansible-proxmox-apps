@@ -1,5 +1,40 @@
 # Changelog
 
+## [5.10.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.9.0...v5.10.0) (2026-10-25)
+
+
+### Features
+
+* add DHCP guest name forwarding ([19aa9d0](https://github.com/dryvist/ansible-proxmox-apps/commit/19aa9d090d7181efb755614242bf1047fc3171d4))
+* **cribl_stream:** copy AI session events to ClickHouse llm tables ([#3006](https://github.com/dryvist/ansible-proxmox-apps/issues/3006)) ([100403a](https://github.com/dryvist/ansible-proxmox-apps/commit/100403addf0cfb1ccffe5ee972c3190c4042f762))
+* **hatchet:** add the hatchet_docker batch workflow role ([#2994](https://github.com/dryvist/ansible-proxmox-apps/issues/2994)) ([10742c1](https://github.com/dryvist/ansible-proxmox-apps/commit/10742c1eaf6557134302a90396b02ec0583c1693))
+* **prometheus:** load the pinned homelab rule files ([#2995](https://github.com/dryvist/ansible-proxmox-apps/issues/2995)) ([b339c47](https://github.com/dryvist/ansible-proxmox-apps/commit/b339c47fa9ffcd4f9c952a4f9b649b559bcc3bb4))
+* **prometheus:** scrape both Macs with accelerator role labels ([#2993](https://github.com/dryvist/ansible-proxmox-apps/issues/2993)) ([e044a10](https://github.com/dryvist/ansible-proxmox-apps/commit/e044a10df9bfa61bded8767a1cb984a9c3a710a9))
+* **prometheus:** scrape DCGM on every nvidia-gpu tagged guest ([#2988](https://github.com/dryvist/ansible-proxmox-apps/issues/2988)) ([a24781a](https://github.com/dryvist/ansible-proxmox-apps/commit/a24781aa6d09be4e10de25a7218b7a4afa23da74))
+* **prometheus:** send remote_write through the remote-write front door ([#3002](https://github.com/dryvist/ansible-proxmox-apps/issues/3002)) ([c09f26b](https://github.com/dryvist/ansible-proxmox-apps/commit/c09f26beabdb1c6c278855a66026c16ee8cb759b))
+* route DHCP guest FQDNs to the gateway ([#2980](https://github.com/dryvist/ansible-proxmox-apps/issues/2980)) ([19aa9d0](https://github.com/dryvist/ansible-proxmox-apps/commit/19aa9d090d7181efb755614242bf1047fc3171d4))
+* **upgrade:** upgrade guests on every scheduled run ([#2964](https://github.com/dryvist/ansible-proxmox-apps/issues/2964)) ([a12be94](https://github.com/dryvist/ansible-proxmox-apps/commit/a12be94feaf77aeb9906c3ec133185ebacf6b17d))
+
+
+### Bug Fixes
+
+* **apt_cacher_ng:** allow HTTPS tunnels to the ntfy apt repo ([#2981](https://github.com/dryvist/ansible-proxmox-apps/issues/2981)) ([714a049](https://github.com/dryvist/ansible-proxmox-apps/commit/714a049d26c9d3fd2bac27e6e61d5aad214019be))
+* **ci:** use shared Molecule workflow for apps ([448d935](https://github.com/dryvist/ansible-proxmox-apps/commit/448d93572ce3325eceef9515d7e83c8444eafb70))
+* fetch the media stack from its pinned commit ([#2977](https://github.com/dryvist/ansible-proxmox-apps/issues/2977)) ([d0dad35](https://github.com/dryvist/ansible-proxmox-apps/commit/d0dad3519735549b2fb394f78813ab85ed66c198))
+* **homebox:** close registration after the first account ([#2998](https://github.com/dryvist/ansible-proxmox-apps/issues/2998)) ([3af9e28](https://github.com/dryvist/ansible-proxmox-apps/commit/3af9e286efe4404c5ac30c9413dbbf1aa7009091))
+* include Homebox runs in apt proxy setup ([7bb2abb](https://github.com/dryvist/ansible-proxmox-apps/commit/7bb2abb1849880bf146e6c3f504f58425d3058ee))
+* **mssql_docker:** index the existence check with a named loop index ([#2982](https://github.com/dryvist/ansible-proxmox-apps/issues/2982)) ([5cafa2f](https://github.com/dryvist/ansible-proxmox-apps/commit/5cafa2f03e781e39e568ba5da6ceab4c065f2e0c))
+* **postgres:** check archive_mode after the archiving restart ([#2983](https://github.com/dryvist/ansible-proxmox-apps/issues/2983)) ([fbe99ea](https://github.com/dryvist/ansible-proxmox-apps/commit/fbe99eadfb6b15e5663d07f0194aa28e2e769a39))
+* probe Homebox API health endpoints ([#2991](https://github.com/dryvist/ansible-proxmox-apps/issues/2991)) ([6fc3ed4](https://github.com/dryvist/ansible-proxmox-apps/commit/6fc3ed4193f314c0cf1fcad39c8d1a3025f46873))
+* publish backup secret domains to app hosts ([#2976](https://github.com/dryvist/ansible-proxmox-apps/issues/2976)) ([5ebe218](https://github.com/dryvist/ansible-proxmox-apps/commit/5ebe2188d6e1282a5bd8f98333a05b60e6b5c9a1))
+* reject inventory without managed guests ([#2973](https://github.com/dryvist/ansible-proxmox-apps/issues/2973)) ([b737336](https://github.com/dryvist/ansible-proxmox-apps/commit/b7373367c71d3501f56eb7551d5ecf175e6e17b5))
+* **renovate:** give Technitium updates their own PR ([#3003](https://github.com/dryvist/ansible-proxmox-apps/issues/3003)) ([03d09ed](https://github.com/dryvist/ansible-proxmox-apps/commit/03d09ed60334ac80a4bdac7c65ee62b58e095e6e))
+* **renovate:** track app dependency pins ([88fc95e](https://github.com/dryvist/ansible-proxmox-apps/commit/88fc95e95fca6e8e48e06c653c3d28ef03782d32))
+* **status:** probe catalog services through public ingress ([f942ec2](https://github.com/dryvist/ansible-proxmox-apps/commit/f942ec225777c290ea8065a003614b0074bed901))
+* **status:** use public ingress URLs for Gatus catalog probes ([#2968](https://github.com/dryvist/ansible-proxmox-apps/issues/2968)) ([f942ec2](https://github.com/dryvist/ansible-proxmox-apps/commit/f942ec225777c290ea8065a003614b0074bed901))
+* track released versions for Git collections ([#2979](https://github.com/dryvist/ansible-proxmox-apps/issues/2979)) ([b9dd490](https://github.com/dryvist/ansible-proxmox-apps/commit/b9dd490957ed38042d34f593d848e73a678b3759))
+* **upgrade:** run distribution upgrades asynchronously ([#2969](https://github.com/dryvist/ansible-proxmox-apps/issues/2969)) ([2dc25e5](https://github.com/dryvist/ansible-proxmox-apps/commit/2dc25e5582469ecee041afd31f498b11179d81d3))
+
 ## [5.9.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.8.1...v5.9.0) (2026-10-23)
 
 
