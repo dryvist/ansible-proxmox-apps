@@ -35,8 +35,8 @@ class FakeZammad:
             return [
                 {"id": ticket["id"], "number": ticket["number"], "title": ticket["title"]}
                 for ticket in self.tickets.values()
-                if ticket["state"] in self.bridge.OPEN_STATES
-                and query == self.bridge.build_search_query(ticket["key"])
+                if ticket["state"] in self.bridge.ntfy_zammad_repeat.OPEN_STATES
+                and query == self.bridge.ntfy_zammad_repeat.build_search_query(ticket["key"])
             ]
         if path == "users/me":
             return {"id": 1}
@@ -120,7 +120,7 @@ class NtfyZammadDedupe(unittest.TestCase):
         self.send(at=1000)
         self.send(at=1200)
         self.assertEqual(len(self.open_ticket()["articles"]), 1)
-        with open(self.nz.repeat_state_path(self.state.name)) as f:
+        with open(self.nz.ntfy_zammad_repeat.repeat_state_path(self.state.name)) as f:
             state = json.load(f)
         record = next(iter(state.values()))
         self.assertEqual(record["suppressed_count"], 1)
@@ -147,7 +147,7 @@ class NtfyZammadDedupe(unittest.TestCase):
         self.assertIn("Priority: 5", articles[-1]["body"])
 
     def test_resolved_to_firing_appends_immediately_on_an_open_ticket(self):
-        key = self.nz.correlation_key(self.msg["topic"], self.msg["title"])
+        key = self.nz.ntfy_zammad_repeat.correlation_key(self.msg["topic"], self.msg["title"])
         self.client.tickets[1] = {
             "id": 1, "number": "1000200", "title": key, "key": key,
             "state": "open", "articles": [{"body": "human opened"}], "tags": [],
@@ -178,7 +178,7 @@ class NtfyZammadDedupe(unittest.TestCase):
         self.assertIn("worker recovered", ticket["articles"][-1]["body"])
 
     def test_recovery_does_not_close_ticket_without_bridge_marker(self):
-        key = self.nz.correlation_key(self.msg["topic"], self.msg["title"])
+        key = self.nz.ntfy_zammad_repeat.correlation_key(self.msg["topic"], self.msg["title"])
         self.client.tickets[1] = {
             "id": 1, "number": "1000200", "title": key, "key": key,
             "state": "open", "articles": [{"body": "human opened"}], "tags": [],
