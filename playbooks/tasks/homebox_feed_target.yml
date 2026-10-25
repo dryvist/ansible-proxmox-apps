@@ -1,0 +1,55 @@
+---
+# Feeds one Homebox instance from Nautobot through the jpe_ansible.nautobot
+# sync_out_homebox role. The play reads the Nautobot credentials once
+# (nautobot_collection_access.yml); this file reads the Homebox API key for the
+# target, and only when the run applies the feed, so a render-only run needs no
+# Homebox credential and makes no Homebox call.
+#
+# Inputs: homebox_feed_target (name, url, api_key_secret.path and .field),
+#         nautobot_collection_nautobot_url, nautobot_collection_read_token,
+#         homebox_feed_apply and the homebox_feed_* scope variables
+#         (inventory/group_vars/homebox_group.yml).
+- name: Read the Homebox API key
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ lookup('env', 'BAO_ADDR') }}"
+    auth_method: token
+    token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
+    engine_mount_point: secret
+    path: "{{ homebox_feed_target.api_key_secret.path }}"
+  register: homebox_feed_api_key_credential
+  no_log: true
+  # no_log hides the error text, so a missing or denied path is reported by name below.
+  failed_when: false
+  when: homebox_feed_apply | bool
+
+- name: Check the Homebox API key is present
+  ansible.builtin.set_fact:
+    homebox_feed_api_key_present: >-
+      {{ (homebox_feed_api_key_credential.secret | default({}))[homebox_feed_target.api_key_secret.field]
+         | default('', true) | length > 0 }}
+  no_log: true
+  when: homebox_feed_apply | bool
+
+- name: Require a non-empty Homebox API key
+  ansible.builtin.assert:
+    that: homebox_feed_api_key_present | bool
+    fail_msg: >-
+      Homebox API key missing, empty or unreadable for target {{ homebox_feed_target.name }}
+      ({{ homebox_feed_target.api_key_secret.path }}, field {{ homebox_feed_target.api_key_secret.field }}).
+    quiet: true
+  when: homebox_feed_apply | bool
+
+- name: Run the Homebox feed for {{ homebox_feed_target.name }}
+  ansible.builtin.include_role:
+    name: jpe_ansible.nautobot.sync_out_homebox
+  vars:
+    sync_out_homebox_nautobot_url: "{{ nautobot_collection_nautobot_url }}"
+    sync_out_homebox_read_token: "{{ nautobot_collection_read_token }}"
+    sync_out_homebox_apply: "{{ homebox_feed_apply | bool }}"
+    sync_out_homebox_url: "{{ homebox_feed_target.url }}"
+    sync_out_homebox_api_key: >-
+      {{ homebox_feed_api_key_credential.secret[homebox_feed_target.api_key_secret.field]
+         if homebox_feed_apply | bool else '' }}
+    sync_out_homebox_min_price_cents: "{{ homebox_feed_min_price_cents }}"
+    sync_out_homebox_always_include_asset_tag_prefixes: "{{ homebox_feed_always_include_asset_tag_prefixes }}"
+    sync_out_homebox_exclude_asset_tag_patterns: "{{ homebox_feed_exclude_asset_tag_patterns }}"

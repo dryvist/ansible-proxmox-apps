@@ -1,0 +1,38 @@
+---
+# Nautobot -> Homebox feed through the jpe_ansible.nautobot collection: devices,
+# modules and inventory items are read from Nautobot, rendered to one Homebox CSV
+# import and, when the run applies it, posted to every Homebox target in
+# inventory/group_vars/homebox_group.yml. One way: Nautobot owns every column the
+# CSV carries. Read-only against Nautobot. Credentials come from OpenBao through
+# the run's own token (tasks/nautobot_collection_access.yml, tasks/homebox_feed_target.yml).
+#
+# Not part of site.yml. Renders and logs the feed size without calling Homebox
+# unless the run passes -e homebox_feed_apply=true:
+#   scripts/run-ansible.sh playbooks/homebox-feed.yml --limit localhost
+- name: Start the wall-clock budget
+  import_playbook: site/budget-gate.yml
+
+- name: Feed Homebox from Nautobot
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
+    - ../inventory/group_vars/homebox_group.yml
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+
+  tasks:
+    - name: Read and check the Nautobot credentials
+      ansible.builtin.include_tasks: tasks/nautobot_collection_access.yml
+
+    - name: Feed each Homebox target
+      ansible.builtin.include_tasks: tasks/homebox_feed_target.yml
+      loop: "{{ homebox_feed_targets }}"
+      loop_control:
+        loop_var: homebox_feed_target
+        label: "{{ homebox_feed_target.name }}"
+
+- name: Refuse a run past its wall-clock budget
+  import_playbook: site/budget-gate.yml
