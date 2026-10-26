@@ -77,9 +77,16 @@ to the same listener.
 ### First account, then close registration
 
 `homebox_options_allow_registration` defaults to `true` so the first account can
-be created. Once that account exists, set it to `false` in the inventory and
-converge. Registration then closes, and the environment file no longer allows
-new sign-ups.
+be created. The inventory (`group_vars/homebox_group.yml`) derives it from
+`homebox_first_account_created`, which is `true` once the account exists, so
+sign-ups are closed.
+
+To bootstrap a fresh instance:
+
+1. Set `homebox_first_account_created` to `false` and converge. Sign-ups open.
+2. Create the first account.
+3. Set `homebox_first_account_created` back to `true` and converge. Registration
+   closes, and the environment file no longer allows new sign-ups.
 
 ## Backups
 
