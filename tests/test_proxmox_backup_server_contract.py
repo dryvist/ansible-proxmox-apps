@@ -109,6 +109,15 @@ class SecretHandling(unittest.TestCase):
 
 
 class PublishGate(unittest.TestCase):
+    def test_status_timer_enable_survives_check_mode_on_a_fresh_host(self):
+        tasks = load_yaml(TASKS / "status_file.yml")
+        unit = next(t for t in tasks if t["name"] == "Install the hourly PBS status timer unit")
+        enable = next(t for t in tasks if t["name"] == "Enable the hourly PBS status timer")
+        self.assertEqual(unit["register"], "proxmox_backup_server_status_timer_unit")
+        self.assertEqual(
+            enable["when"], "not ansible_check_mode or not proxmox_backup_server_status_timer_unit.changed"
+        )
+
     def test_identity_include_requires_publish_and_skips_check_mode(self):
         main = load_yaml(TASKS / "main.yml")
         includes = [t for t in main if t.get("ansible.builtin.include_tasks") == "backup_identity.yml"]
