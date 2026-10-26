@@ -80,6 +80,17 @@ class HomeboxAPIKeyContract(unittest.TestCase):
             ["homebox_api_key_publish_openbao | bool", "not ansible_check_mode"],
         )
 
+    def test_mint_and_publish_report_changed(self):
+        # uri reports ok on a POST; both tasks run only when they write.
+        for name in (
+            "Mint the Homebox service API key",
+            "Publish the freshly minted Homebox service API key to OpenBao",
+        ):
+            task = next(task for task in API_KEY_TASKS if task["name"] == name)
+            with self.subTest(task=name):
+                self.assertIs(task.get("changed_when"), True)
+                self.assertIn("when", task)
+
 
 if __name__ == "__main__":
     unittest.main()
