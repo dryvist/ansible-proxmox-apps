@@ -1,0 +1,163 @@
+---
+# Mint one Homebox API key for the admin user and publish its one-time value to
+# OpenBao. Existing keys are reused; a missing published value with an existing
+# key is treated as a lost secret, never a reason to mint a duplicate name.
+#
+# Credential presence is computed in no_log set_facts and checked by asserts.
+# Asserts stay visible, because no_log would hide their fail_msg.
+
+- name: Check the OpenBao write credentials are present
+  ansible.builtin.set_fact:
+    homebox_api_key_openbao_ready: >-
+      {{ (homebox_api_key_openbao_addr | length > 0)
+         and (homebox_api_key_openbao_token | length > 0) }}
+  no_log: true
+
+- name: Assert OpenBao write credentials are present
+  ansible.builtin.assert:
+    that:
+      - homebox_api_key_openbao_ready | bool
+    fail_msg: >-
+      homebox_api_key_publish_openbao is on but BAO_ADDR/BAO_TOKEN are unset.
+      Provide a write-capable OpenBao AppRole in the converge environment.
+    quiet: true
+
+- name: Check the Homebox admin credentials are present
+  ansible.builtin.set_fact:
+    homebox_api_key_admin_ready: >-
+      {{ ((bao_apps_secrets | default({})).homebox_admin_email | default('', true) | length > 0)
+         and ((bao_apps_secrets | default({})).homebox_admin_password | default('', true) | length > 0) }}
+  no_log: true
+
+- name: Assert the Homebox admin credentials are present
+  ansible.builtin.assert:
+    that:
+      - homebox_api_key_admin_ready | bool
+    fail_msg: >-
+      homebox_api_key_publish_openbao is on but bao_apps_secrets does not supply
+      homebox_admin_email and homebox_admin_password (OpenBao apps/homebox).
+    quiet: true
+
+- name: Log in to Homebox as the admin user
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ homebox_port }}/api/v1/users/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ bao_apps_secrets.homebox_admin_email }}"
+      password: "{{ bao_apps_secrets.homebox_admin_password }}"
+      stayLoggedIn: false
+    status_code: [200]
+    timeout: "{{ homebox_api_timeout }}"
+  register: homebox_api_key_login
+  no_log: true
+
+- name: List existing Homebox API keys
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ homebox_port }}/api/v1/users/self/api-keys"
+    method: GET
+    headers:
+      # The login response's token field already includes the Bearer prefix.
+      Authorization: "{{ homebox_api_key_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ homebox_api_timeout }}"
+  register: homebox_api_key_list
+  no_log: true
+
+- name: Detect the named Homebox service API key
+  ansible.builtin.set_fact:
+    homebox_api_key_exists: >-
+      {{ (homebox_api_key_list.json | default([], true))
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', homebox_api_key_name)
+         | list | length > 0 }}
+
+- name: Read current OpenBao secret for the Homebox service API key
+  ansible.builtin.uri:
+    url: >-
+      {{ homebox_api_key_openbao_addr }}/v1/{{ homebox_api_key_openbao_mount }}/data/{{
+         homebox_api_key_openbao_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ homebox_api_key_openbao_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: homebox_api_key_openbao_current
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+# KV v2 returns data.data as null for a soft-deleted secret, so each level is
+# read with `or {}` instead of assuming a dict.
+- name: Read the Homebox service API key fields already in OpenBao
+  ansible.builtin.set_fact:
+    homebox_api_key_openbao_data: >-
+      {{ ((homebox_api_key_openbao_current.json | default({}, true)).get('data') or {}).get('data') or {} }}
+  no_log: true
+
+- name: Determine whether OpenBao has the Homebox service API key
+  ansible.builtin.set_fact:
+    homebox_api_key_openbao_field_present: >-
+      {{ homebox_api_key_openbao_data.get(homebox_api_key_openbao_field) | default('', true) | string | length > 0 }}
+  no_log: true
+
+- name: Fail when the named Homebox API key has been lost
+  ansible.builtin.assert:
+    that:
+      - homebox_api_key_openbao_field_present
+    fail_msg: >-
+      Homebox API key '{{ homebox_api_key_name }}' exists, but OpenBao field
+      '{{ homebox_api_key_openbao_field }}' at
+      '{{ homebox_api_key_openbao_mount }}/{{ homebox_api_key_openbao_path }}'
+      is empty. Delete the '{{ homebox_api_key_name }}' key in Homebox, then
+      re-converge to mint and publish a replacement.
+    quiet: true
+  when: homebox_api_key_exists
+
+- name: Mint the Homebox service API key
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ homebox_port }}/api/v1/users/self/api-keys"
+    method: POST
+    headers:
+      Authorization: "{{ homebox_api_key_login.json.token }}"
+    body_format: json
+    body:
+      name: "{{ homebox_api_key_name }}"
+      expiresAt: >-
+        {{ '%Y-%m-%dT%H:%M:%SZ'
+           | strftime((now(utc=true).timestamp() | int)
+                      + (homebox_api_key_expiry_days | int * 86400), utc=true) }}
+    status_code: [201]
+    timeout: "{{ homebox_api_timeout }}"
+  register: homebox_api_key_mint
+  when: not homebox_api_key_exists
+  no_log: true
+
+# KV v2 replaces the whole secret, so merge the new field over the current data
+# to preserve sibling fields. Homebox returns the raw key only at creation. The
+# feed adds the Bearer prefix itself, so the raw value is what gets stored.
+- name: Publish the freshly minted Homebox service API key to OpenBao
+  ansible.builtin.uri:
+    url: >-
+      {{ homebox_api_key_openbao_addr }}/v1/{{ homebox_api_key_openbao_mount }}/data/{{
+         homebox_api_key_openbao_path }}
+    method: POST
+    headers:
+      X-Vault-Token: "{{ homebox_api_key_openbao_token }}"
+    body_format: json
+    body:
+      data: >-
+        {{ homebox_api_key_openbao_data
+           | combine({homebox_api_key_openbao_field: homebox_api_key_mint.json.token}) }}
+    validate_certs: false
+    status_code: [200, 204]
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: homebox_api_key_mint is not skipped
+  no_log: true
