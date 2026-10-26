@@ -92,6 +92,18 @@
         groups: llm_vllm_group
         container_ip: vllm-under-test.test.example
 
+    - name: Add the primary GPU guest to the NVIDIA GPU group
+      ansible.builtin.add_host:
+        name: llm-gpu-primary-under-test
+        groups: nvidia_gpu_group
+        container_ip: gpu-primary.test.example
+
+    - name: Add the classify guest to the NVIDIA GPU and classify groups
+      ansible.builtin.add_host:
+        name: llm-gpu-classify-under-test
+        groups: [nvidia_gpu_group, llm_gpu_classify_group]
+        container_ip: gpu-classify.test.example
+
     - name: Render prometheus.yml with the group populated
       ansible.builtin.set_fact:
         _seeded: "{{ lookup('template', _pst_tpl) | from_yaml }}"
@@ -103,6 +115,21 @@
         _legacy_engine_jobs: >-
           {{ _seeded.scrape_configs
              | selectattr('job_name', 'in', _legacy_engine_job_names)
+             | list }}
+
+    - name: Isolate the DCGM targets by accelerator guest
+      ansible.builtin.set_fact:
+        _dcgm_primary_configs: >-
+          {{ _dcgm_jobs[0].static_configs
+             | selectattr('labels.guest', 'equalto', 'llm-gpu-primary-under-test')
+             | list }}
+        _dcgm_secondary_configs: >-
+          {{ _dcgm_jobs[0].static_configs
+             | selectattr('labels.guest', 'equalto', 'llm-gpu-classify-under-test')
+             | list }}
+        _dcgm_vllm_configs: >-
+          {{ _dcgm_jobs[0].static_configs
+             | selectattr('labels.guest', 'equalto', 'llm-vllm-under-test')
              | list }}
 
     - name: Seeded render carries exactly one job with the group-derived target
@@ -128,7 +155,15 @@
         that:
           - _dcgm_jobs | length == 1
           - _dcgm_jobs[0].metrics_path == '/metrics'
-          - _dcgm_jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:9400']
-          - _dcgm_jobs[0].static_configs[0].labels.guest == 'llm-vllm-under-test'
+          - _dcgm_jobs[0].static_configs | length == 3
+          - _dcgm_vllm_configs | length == 1
+          - _dcgm_vllm_configs[0].targets == ['vllm-under-test.test.example:9400']
+          - _dcgm_vllm_configs[0].labels.accelerator == 'gpu-secondary'
+          - _dcgm_primary_configs | length == 1
+          - _dcgm_primary_configs[0].targets == ['gpu-primary.test.example:9400']
+          - _dcgm_primary_configs[0].labels.accelerator is not defined
+          - _dcgm_secondary_configs | length == 1
+          - _dcgm_secondary_configs[0].targets == ['gpu-classify.test.example:9400']
+          - _dcgm_secondary_configs[0].labels.accelerator == 'gpu-secondary'
           - _engine_jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:10434']
-        success_msg: GPU exporter and unified engine job use the group-derived guest.
+        success_msg: GPU exporter labels secondary-GPU guests and keeps the primary unlabeled.

@@ -165,6 +165,14 @@ prometheus_stack_dcgm_exporter_guests: >-
   {%- endfor -%}
   {{ guests }}
 prometheus_stack_dcgm_exporter_metrics_port: 9400
+# Guests in these groups serve from the secondary GPU. The primary stays
+# unlabeled because the dashboard selects it with accelerator="".
+prometheus_stack_dcgm_exporter_secondary_groups:
+  - llm_vllm_group
+  - llm_gpu_classify_group
+prometheus_stack_dcgm_exporter_secondary_guests: >-
+  {{ prometheus_stack_dcgm_exporter_secondary_groups
+     | map('extract', groups) | select('defined') | flatten | unique | list }}
 
 # Mac scrape targets come from the published workstation inventory by role.
 prometheus_stack_macmon_workstation_roles:
@@ -270,8 +278,8 @@ prometheus_stack_extra_scrape_configs: |
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
   {% if prometheus_stack_dcgm_exporter_guests | length > 0 %}
-  # Native DCGM exporter on the NVIDIA guests. The llm-vllm guest carries the
-  # gpu-secondary accelerator label; rules select the primary GPU guests by name.
+  # Native DCGM exporter on the NVIDIA guests. Secondary-GPU guests carry the
+  # gpu-secondary label; the primary stays unlabeled for existing dashboard selectors.
   - job_name: dcgm_exporter
     metrics_path: /metrics
     static_configs:
@@ -279,7 +287,7 @@ prometheus_stack_extra_scrape_configs: |
       - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
         labels:
           guest: "{{ guest.name }}"
-  {% if guest.name in (groups['llm_vllm_group'] | default([])) %}
+  {% if guest.name in prometheus_stack_dcgm_exporter_secondary_guests %}
           accelerator: gpu-secondary
   {% endif %}
   {% endfor %}
