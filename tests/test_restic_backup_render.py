@@ -73,6 +73,13 @@ class ResticBackupRender(unittest.TestCase):
                 self.assertTrue(unit.rstrip().endswith("--prune"))
                 self.assertEqual(unit.count("restic forget"), 1)
 
+    def test_units_give_restic_a_cache_directory_because_a_unit_has_no_home(self):
+        for template in ("restic-backup@.service.j2", "restic-check@.service.j2"):
+            with self.subTest(template):
+                unit = render(template)
+                self.assertIn("CacheDirectory=restic\n", unit)
+                self.assertIn("Environment=RESTIC_CACHE_DIR=%C/restic\n", unit)
+
     def test_timers_are_daily_and_weekly_with_catch_up(self):
         backup = render("restic-backup@.timer.j2")
         check = render("restic-check@.timer.j2")
