@@ -191,6 +191,16 @@ class LxcGroups(unittest.TestCase):
         self.assertIn("pbs_group", groups(["pbs"]))
         self.assertNotIn("pbs_group", groups(["docker"]))
 
+    def test_classify_tag_derives_classify_gpu_group(self):
+        expr = load_yaml(REPO / "inventory" / "load_tofu" / "lxc_groups.yml")["add_lxc_hosts_groups"]
+        template = Environment().from_string(expr)
+
+        def groups(tags):
+            return ast.literal_eval(template.render(item={"value": {"tags": tags}}).strip())
+
+        self.assertIn("llm_gpu_classify_group", groups(["gpu-passthrough", "llm-gpu-classify"]))
+        self.assertNotIn("llm_gpu_classify_group", groups(["gpu-passthrough"]))
+
 
 class StatusCollector(unittest.TestCase):
     def render(self, status_dir, datastore_path):
