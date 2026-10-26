@@ -74,6 +74,13 @@ class NautobotServiceTokensContract(unittest.TestCase):
         )
         self.assertEqual(service_tasks[0]["name"], "Require the human-unlocked publisher token before any account API call")
 
+    def test_controller_play_adds_the_api_target_without_reading_tofu_inventory(self):
+        local_tasks = self.local_play["tasks"]
+        self.assertNotIn("inventory_resolve", str(local_tasks))
+        add_host = next(t["ansible.builtin.add_host"] for t in local_tasks if "ansible.builtin.add_host" in t)
+        self.assertEqual(add_host["groups"], "nautobot_group")
+        self.assertEqual(add_host["ansible_connection"], "local")
+
     def test_playbook_is_not_scheduled_or_referenced_by_semaphore_templates(self):
         site = (REPO / "playbooks/site.yml").read_text(encoding="utf-8")
         self.assertNotIn(PLAYBOOK.name, site)
