@@ -1,0 +1,90 @@
+---
+# One-off workstation publisher for the Nautobot pipeline and sync-write
+# service-account tokens. Not imported by site.yml or any scheduled playbook.
+# First export BAO_TOKEN from the human-unlocked nautobot-token-publisher
+# AppRole, then run:
+#   direnv exec . ansible-playbook -i inventory/hosts.yml playbooks/nautobot-service-tokens.yml
+- name: Load the Nautobot source secret on the controller
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+    # The accounts role needs the existing Nautobot superuser password. Read
+    # only apps/nautobot through the workstation apps identity; BAO_TOKEN below
+    # remains the separate, narrow publisher identity.
+    openbao_secrets_domains:
+      - name: apps
+        workstation_issuer_role: apps-workstation
+        paths:
+          - apps/nautobot
+
+  tasks:
+    - name: Require the human-unlocked publisher token
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'BAO_TOKEN') | length > 0
+        fail_msg: BAO_TOKEN must contain the human-unlocked Nautobot token-publisher token.
+        quiet: true
+
+    - name: Resolve the published inventory for the OpenBao reader
+      ansible.builtin.include_role:
+        name: dryvist.homelab.inventory_resolve
+
+    - name: Load the shared OpenBao domain-to-group map
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/site/vars/openbao_secrets_domain_groups.yml"
+
+    - name: Fetch only the Nautobot app secret through the workstation reader
+      ansible.builtin.include_role:
+        name: dryvist.secrets_management.openbao_secrets
+      vars:
+        openbao_secrets_active_groups:
+          - nautobot_group
+
+- name: Publish only the pipeline and sync-write Nautobot service-account tokens
+  hosts: nautobot_group
+  connection: local
+  gather_facts: false
+  become: false
+  vars_files:
+    - ../inventory/group_vars/nautobot_group.yml
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+    server_manage_accounts: true
+    server_managed_account_names:
+      - pipeline
+      - writer
+    server_ui_fqdn: "{{ nautobot_ui_fqdn }}"
+    server_superuser_name: "{{ nautobot_superuser_name }}"
+    server_superuser_password: "{{ nautobot_superuser_password }}"
+    server_openbao_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+    server_openbao_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    server_openbao_ca_file: >-
+      {{ lookup('env', 'BAO_CACERT')
+         | default('/etc/ssl/certs/ca-certificates.crt', true) }}
+    server_pipeline_token_path: "{{ nautobot_collection_read_token_secret.path }}"
+    server_pipeline_token_key: "{{ nautobot_collection_read_token_secret.field }}"
+    server_write_token_path: "{{ nautobot_collection_write_token_secret.path }}"
+    server_write_token_key: "{{ nautobot_collection_write_token_secret.field }}"
+
+  tasks:
+    - name: Require the human-unlocked publisher token before any account API call
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'BAO_TOKEN') | length > 0
+        fail_msg: BAO_TOKEN must contain the human-unlocked Nautobot token-publisher token.
+        quiet: true
+
+    - name: Publish the controller-loaded app secrets to this host
+      ansible.builtin.import_tasks: tasks/publish_secret_domain_facts.yml
+
+    - name: Mint and publish the selected Nautobot service-account tokens
+      ansible.builtin.include_role:
+        name: jpe_ansible.nautobot.server
+        tasks_from: accounts.yml
