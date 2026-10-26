@@ -88,6 +88,21 @@ To bootstrap a fresh instance:
 3. Set `homebox_first_account_created` back to `true` and converge. Registration
    closes, and the environment file no longer allows new sign-ups.
 
+## Service API key
+
+When `homebox_api_key_publish_openbao` is enabled, the role creates an
+API key named `automation-rw` for the Homebox admin account. The key expires
+after `homebox_api_key_expiry_days` (default 365). The role stores the key in
+OpenBao KV v2 at path `homebox/main/rw`, field `API_KEY`. Later converges reuse
+that named key. Check mode skips this step.
+
+To rotate the key, or after it expires, delete the `automation-rw` key in
+Homebox and re-converge. If the key exists but the OpenBao field is empty, the
+converge fails with the same instruction.
+
+`homebox_api_key_pepper` is Homebox's server-side API-key hashing secret. It is
+not the API key and is not part of routine key rotation.
+
 ## Backups
 
 `tasks/backup.yml` runs restic from the Debian package and `pg_dump` from the
