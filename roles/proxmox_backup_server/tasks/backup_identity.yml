@@ -1,0 +1,312 @@
+---
+- name: Read controller OpenBao configuration
+  ansible.builtin.set_fact:
+    proxmox_backup_server_bao_url: >-
+      {{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') ~ '/v1/'
+         ~ proxmox_backup_server_openbao_mount ~ '/data/'
+         ~ proxmox_backup_server_openbao_path }}
+    proxmox_backup_server_bao_token_present: >-
+      {{ lookup('env', 'BAO_TOKEN') | length > 0 }}
+  no_log: true
+
+- name: Assert the controller has OpenBao connection settings
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'BAO_ADDR') | length > 0
+      - proxmox_backup_server_bao_token_present | bool
+    fail_msg: BAO_ADDR and BAO_TOKEN must be set in the Ansible controller environment.
+
+- name: Read the PBS PVE-node secret from OpenBao
+  ansible.builtin.uri:
+    url: "{{ proxmox_backup_server_bao_url }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    validate_certs: false
+    status_code:
+      - 200
+      - 404
+  register: proxmox_backup_server_bao_read
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Extract the current OpenBao fields without logging their values
+  ansible.builtin.set_fact:
+    proxmox_backup_server_bao_data: >-
+      {{ (proxmox_backup_server_bao_read.json | default({}, true))
+         .get('data', {}).get('data', {}) }}
+    proxmox_backup_server_bao_token_secret_present: >-
+      {{ ((proxmox_backup_server_bao_read.json | default({}, true))
+          .get('data', {}).get('data', {}).get('PBS_TOKEN_SECRET', '')
+          | string | length) > 0 }}
+  no_log: true
+
+- name: List configured PBS users
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - user
+      - list
+      - --output-format
+      - json
+  register: proxmox_backup_server_user_list
+  changed_when: false
+  check_mode: false
+
+- name: Find the PVE backup user
+  ansible.builtin.set_fact:
+    proxmox_backup_server_user_current: >-
+      {{ (proxmox_backup_server_user_list.stdout | from_json
+          | selectattr('userid', 'equalto', proxmox_backup_server_backup_user_id)
+          | list | first) | default({}) }}
+
+- name: Create the PVE backup user when absent
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - user
+      - create
+      - "{{ proxmox_backup_server_backup_user_id }}"
+  when: proxmox_backup_server_user_current | length == 0
+  changed_when: true
+
+- name: List tokens for the PVE backup user
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - user
+      - list-tokens
+      - "{{ proxmox_backup_server_backup_user_id }}"
+      - --output-format
+      - json
+  register: proxmox_backup_server_token_list
+  changed_when: false
+  check_mode: false
+
+- name: Find the PVE backup token
+  ansible.builtin.set_fact:
+    proxmox_backup_server_token_current: >-
+      {{ (proxmox_backup_server_token_list.stdout | from_json
+          | selectattr('tokenid', 'equalto',
+              proxmox_backup_server_backup_user_id ~ '!'
+              ~ proxmox_backup_server_backup_token_name)
+          | list | first) | default({}) }}
+
+- name: Assert an existing PBS token still has its OpenBao secret
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_server_bao_token_secret_present | bool
+      - (proxmox_backup_server_bao_data.get('PBS_TOKEN_ID', '')
+         == proxmox_backup_server_token_current.get('tokenid', ''))
+    fail_msg: >-
+      Token pve-backup@pbs!pve exists in PBS, but its matching PBS_TOKEN_SECRET
+      and token ID are not present in the secret store. Rotate it with
+      `proxmox-backup-manager user delete-token pve-backup@pbs pve`, then
+      re-converge.
+  when: proxmox_backup_server_token_current | length > 0
+
+- name: Generate the PVE API token only when it is absent
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - user
+      - generate-token
+      - "{{ proxmox_backup_server_backup_user_id }}"
+      - "{{ proxmox_backup_server_backup_token_name }}"
+  register: proxmox_backup_server_token_create
+  when: proxmox_backup_server_token_current | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Record whether this run minted the PVE API token
+  ansible.builtin.set_fact:
+    proxmox_backup_server_token_is_fresh: "{{ proxmox_backup_server_token_create is changed }}"
+  no_log: true
+
+- name: Parse the freshly generated PVE API token
+  when: proxmox_backup_server_token_is_fresh | bool
+  block:
+    - name: Parse the generate-token JSON payload
+      ansible.builtin.set_fact:
+        proxmox_backup_server_generated_token: >-
+          {{ proxmox_backup_server_token_create.stdout
+             | regex_replace('^\s*Result:\s*', '') | from_json }}
+      no_log: true
+
+    - name: Extract token ID, secret, and non-empty indicators
+      ansible.builtin.set_fact:
+        proxmox_backup_server_generated_token_id: >-
+          {{ proxmox_backup_server_generated_token.get('tokenid', '') | string }}
+        proxmox_backup_server_generated_token_secret: >-
+          {{ proxmox_backup_server_generated_token.get('value', '') | string }}
+        proxmox_backup_server_generated_token_id_present: >-
+          {{ (proxmox_backup_server_generated_token.get('tokenid', '')
+              | string | length) > 0 }}
+        proxmox_backup_server_generated_token_secret_present: >-
+          {{ (proxmox_backup_server_generated_token.get('value', '')
+              | string | length) > 0 }}
+      no_log: true
+  rescue:
+    - name: Fail safely when the generated token could not be parsed
+      ansible.builtin.fail:
+        msg: >-
+          token was created but its value could not be parsed; run
+          user delete-token and re-converge
+
+- name: Assert both generated token fields are non-empty
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_server_generated_token_id_present | bool
+      - proxmox_backup_server_generated_token_secret_present | bool
+    fail_msg: >-
+      token was created but its value could not be parsed; run
+      user delete-token and re-converge
+  when: proxmox_backup_server_token_is_fresh | bool
+
+- name: Resolve the full PVE auth ID
+  ansible.builtin.set_fact:
+    proxmox_backup_server_pve_auth_id: >-
+      {{ proxmox_backup_server_generated_token_id
+         if proxmox_backup_server_token_is_fresh | bool
+         else proxmox_backup_server_token_current.get('tokenid', '') }}
+  no_log: true
+
+- name: Assert the PVE token has a full auth ID
+  ansible.builtin.assert:
+    that: proxmox_backup_server_pve_auth_id | length > 0
+    fail_msg: PBS did not report the configured PVE token ID.
+
+- name: List PBS access-control entries
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - acl
+      - list
+      - --output-format
+      - json
+  register: proxmox_backup_server_acl_list
+  changed_when: false
+  check_mode: false
+
+- name: Ensure both the user and token have DatastoreBackup permission
+  ansible.builtin.include_tasks: backup_identity_acl.yml
+  loop:
+    - "{{ proxmox_backup_server_backup_user_id }}"
+    - "{{ proxmox_backup_server_pve_auth_id }}"
+  loop_control:
+    loop_var: proxmox_backup_server_acl_auth_id
+
+- name: Read the PBS certificate fingerprint
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - cert
+      - info
+  register: proxmox_backup_server_cert_info
+  changed_when: false
+  check_mode: false
+
+- name: Extract the PBS SHA-256 fingerprint
+  ansible.builtin.set_fact:
+    proxmox_backup_server_fingerprint: >-
+      {{ proxmox_backup_server_cert_info.stdout
+         | regex_findall('(?m)^Fingerprint \(sha256\):\s*((?:[0-9a-f]{2}:){31}[0-9a-f]{2})$')
+         | first | default('') }}
+
+- name: Assert the PBS fingerprint is a SHA-256 fingerprint
+  ansible.builtin.assert:
+    that:
+      - proxmox_backup_server_fingerprint is match('^([0-9a-f]{2}:){31}[0-9a-f]{2}$')
+    fail_msg: >-
+      proxmox-backup-manager cert info did not report a valid
+      Fingerprint (sha256): value.
+
+- name: Merge the desired PBS fields over the current OpenBao secret
+  ansible.builtin.set_fact:
+    proxmox_backup_server_bao_merged_data: >-
+      {{ proxmox_backup_server_bao_data
+         | combine({'PBS_TOKEN_ID': proxmox_backup_server_pve_auth_id}
+                   if (proxmox_backup_server_token_is_fresh | bool
+                       or proxmox_backup_server_bao_data.get('PBS_TOKEN_ID', '')
+                          != proxmox_backup_server_pve_auth_id) else {})
+         | combine({'PBS_TOKEN_SECRET': proxmox_backup_server_generated_token_secret}
+                   if proxmox_backup_server_token_is_fresh | bool else {})
+         | combine({'PBS_FINGERPRINT': proxmox_backup_server_fingerprint}
+                   if proxmox_backup_server_bao_data.get('PBS_FINGERPRINT', '')
+                      != proxmox_backup_server_fingerprint else {})
+         | combine({'PBS_DATASTORE': proxmox_backup_server_datastore_name}
+                   if proxmox_backup_server_bao_data.get('PBS_DATASTORE', '')
+                      != proxmox_backup_server_datastore_name else {}) }}
+    proxmox_backup_server_bao_needs_update: >-
+      {{ proxmox_backup_server_token_is_fresh | bool
+         or proxmox_backup_server_bao_data.get('PBS_TOKEN_ID', '')
+            != proxmox_backup_server_pve_auth_id
+         or proxmox_backup_server_bao_data.get('PBS_FINGERPRINT', '')
+            != proxmox_backup_server_fingerprint
+         or proxmox_backup_server_bao_data.get('PBS_DATASTORE', '')
+            != proxmox_backup_server_datastore_name }}
+  no_log: true
+
+- name: Write changed PBS fields to OpenBao KV v2
+  ansible.builtin.uri:
+    url: "{{ proxmox_backup_server_bao_url }}"
+    method: POST
+    headers:
+      X-Vault-Token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    body_format: json
+    body:
+      data: "{{ proxmox_backup_server_bao_merged_data }}"
+    validate_certs: false
+    status_code:
+      - 200
+      - 204
+  register: proxmox_backup_server_bao_write
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  when: proxmox_backup_server_bao_needs_update | bool
+  no_log: true
+
+- name: Read the PBS fields back from OpenBao
+  ansible.builtin.uri:
+    url: "{{ proxmox_backup_server_bao_url }}"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    validate_certs: false
+    status_code:
+      - 200
+  register: proxmox_backup_server_bao_readback
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Check the OpenBao fields read back correctly
+  ansible.builtin.set_fact:
+    proxmox_backup_server_bao_readback_valid: >-
+      {{ (proxmox_backup_server_bao_readback.json.data.data.PBS_TOKEN_ID
+          | default('')) == proxmox_backup_server_pve_auth_id
+         and (proxmox_backup_server_bao_readback.json.data.data.PBS_TOKEN_SECRET
+              | default('') | length) > 0
+         and (not (proxmox_backup_server_token_is_fresh | bool)
+              or proxmox_backup_server_bao_readback.json.data.data.PBS_TOKEN_SECRET
+                 == proxmox_backup_server_generated_token_secret)
+         and (proxmox_backup_server_bao_readback.json.data.data.PBS_FINGERPRINT
+              | default('')) == proxmox_backup_server_fingerprint
+         and (proxmox_backup_server_bao_readback.json.data.data.PBS_DATASTORE
+              | default('')) == proxmox_backup_server_datastore_name }}
+  no_log: true
+
+- name: Assert the PBS connection fields were published to OpenBao
+  ansible.builtin.assert:
+    that: proxmox_backup_server_bao_readback_valid | bool
+    fail_msg: PBS connection fields did not read back correctly from the secret store.

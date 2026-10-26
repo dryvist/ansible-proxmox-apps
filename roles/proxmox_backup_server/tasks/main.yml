@@ -13,6 +13,7 @@
   ansible.builtin.assert:
     that:
       - proxmox_backup_server_datastore_name | length > 0
+      - proxmox_backup_server_datastore_name is match('^[A-Za-z0-9_.-]+$')
       - proxmox_backup_server_datastore_path | length > 0
       - proxmox_backup_server_datastore_path is match('/')
     fail_msg: >-
@@ -28,13 +29,15 @@
       Proxmox Backup Server is published for amd64 only; this host is
       {{ ansible_facts['architecture'] }}.
 
-# Done before any package work: a missing or unsafe datastore device should
-# fail the play before apt is touched, not after PBS is installed. The mount
-# also has to exist before the datastore directory is created and chowned, so
-# the ownership lands on the datastore disk rather than on the boot-disk
-# directory it would otherwise sit under.
-- name: Give the datastore its own filesystem
+# A VM can use a dedicated disk; an LXC can use a pre-mounted host dataset.
+# Both paths are verified before package work, and only the VM path formats.
+- name: Prepare a dedicated datastore disk
   ansible.builtin.include_tasks: datastore_disk.yml
+  when: proxmox_backup_server_datastore_device | default('') | length > 0
+
+- name: Verify the pre-mounted datastore
+  ansible.builtin.include_tasks: datastore_mount.yml
+  when: proxmox_backup_server_datastore_device | default('') | length == 0
 
 - name: Install apt transport prerequisites
   ansible.builtin.apt:
@@ -115,21 +118,6 @@
     - name: Re-raise the original failure
       ansible.builtin.fail:
         msg: "{{ ansible_failed_result.msg | default('Service start failed; see journal above.') }}"
-
-# TEMPORARY verification, removed before merge: proves the FQDN and cert CN
-# on the hosted runner.
-- name: TEMP - show hostname -f and the generated cert CN
-  ansible.builtin.command: "{{ item }}"
-  loop:
-    - hostname -f
-    - openssl x509 -in /etc/proxmox-backup/proxy.pem -noout -subject
-  changed_when: false
-  failed_when: false
-  register: proxmox_backup_server_temp_verify
-
-- name: TEMP - show hostname -f and the generated cert CN
-  ansible.builtin.debug:
-    var: proxmox_backup_server_temp_verify.results
 
 - name: Create the datastore directory
   ansible.builtin.file:
@@ -214,3 +202,33 @@
         proxmox_backup_server_datastore_name in
         (proxmox_backup_server_datastore_list.stdout | from_json
          | map(attribute='name') | list)
+
+- name: Assert an existing datastore uses the declared path
+  ansible.builtin.assert:
+    that:
+      - (existing | map(attribute='path') | first) == proxmox_backup_server_datastore_path
+    fail_msg: >-
+      Existing datastore {{ proxmox_backup_server_datastore_name }} uses
+      {{ existing | map(attribute='path') | first }}, not
+      {{ proxmox_backup_server_datastore_path }}.
+  vars:
+    existing: >-
+      {{ proxmox_backup_server_datastore_list.stdout | from_json
+         | selectattr('name', 'equalto', proxmox_backup_server_datastore_name)
+         | list }}
+  when: >-
+    proxmox_backup_server_datastore_name in
+    (proxmox_backup_server_datastore_list.stdout | from_json
+     | map(attribute='name') | list)
+
+- name: Reconcile PBS prune, verify, and garbage-collection jobs
+  ansible.builtin.include_tasks: maintenance_jobs.yml
+
+- name: Configure the PVE backup identity and publish it to OpenBao
+  ansible.builtin.include_tasks: backup_identity.yml
+  when:
+    - proxmox_backup_server_publish_openbao | bool
+    - not ansible_check_mode
+
+- name: Install the PBS data-protection status service
+  ansible.builtin.include_tasks: status_file.yml

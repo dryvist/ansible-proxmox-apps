@@ -1,0 +1,191 @@
+---
+- name: List PBS prune jobs
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - prune-job
+      - list
+      - --output-format
+      - json
+  register: proxmox_backup_server_prune_list
+  changed_when: false
+  check_mode: false
+
+- name: Find the configured prune job
+  ansible.builtin.set_fact:
+    proxmox_backup_server_prune_current: >-
+      {{ (proxmox_backup_server_prune_list.stdout | from_json
+          | selectattr('id', 'equalto', proxmox_backup_server_prune_job_id)
+          | list | first) | default({}) }}
+
+- name: Detect prune job drift
+  ansible.builtin.set_fact:
+    proxmox_backup_server_prune_drift: >-
+      {{
+        proxmox_backup_server_prune_current.get('store', '') != proxmox_backup_server_datastore_name
+        or proxmox_backup_server_prune_current.get('schedule', '') != proxmox_backup_server_prune_schedule
+        or (proxmox_backup_server_prune_current.get('keep-daily',
+            proxmox_backup_server_prune_current.get('keep_daily', 0)) | int)
+          != (proxmox_backup_server_prune_keep_daily | int)
+        or (proxmox_backup_server_prune_current.get('keep-weekly',
+            proxmox_backup_server_prune_current.get('keep_weekly', 0)) | int)
+          != (proxmox_backup_server_prune_keep_weekly | int)
+        or (proxmox_backup_server_prune_current.get('keep-monthly',
+            proxmox_backup_server_prune_current.get('keep_monthly', 0)) | int)
+          != (proxmox_backup_server_prune_keep_monthly | int)
+      }}
+
+- name: Create the PBS prune job
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - prune-job
+      - create
+      - "{{ proxmox_backup_server_prune_job_id }}"
+      - --store
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --schedule
+      - "{{ proxmox_backup_server_prune_schedule }}"
+      - --keep-daily
+      - "{{ proxmox_backup_server_prune_keep_daily | string }}"
+      - --keep-weekly
+      - "{{ proxmox_backup_server_prune_keep_weekly | string }}"
+      - --keep-monthly
+      - "{{ proxmox_backup_server_prune_keep_monthly | string }}"
+  when:
+    - proxmox_backup_server_prune_current | length == 0
+    - not ansible_check_mode
+  changed_when: true
+
+- name: Update the PBS prune job when its settings differ
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - prune-job
+      - update
+      - "{{ proxmox_backup_server_prune_job_id }}"
+      - --store
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --schedule
+      - "{{ proxmox_backup_server_prune_schedule }}"
+      - --keep-daily
+      - "{{ proxmox_backup_server_prune_keep_daily | string }}"
+      - --keep-weekly
+      - "{{ proxmox_backup_server_prune_keep_weekly | string }}"
+      - --keep-monthly
+      - "{{ proxmox_backup_server_prune_keep_monthly | string }}"
+  when:
+    - proxmox_backup_server_prune_current | length > 0
+    - proxmox_backup_server_prune_drift | bool
+    - not ansible_check_mode
+  changed_when: true
+
+- name: List PBS verification jobs
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - verify-job
+      - list
+      - --output-format
+      - json
+  register: proxmox_backup_server_verify_list
+  changed_when: false
+  check_mode: false
+
+- name: Find the configured verification job
+  ansible.builtin.set_fact:
+    proxmox_backup_server_verify_current: >-
+      {{ (proxmox_backup_server_verify_list.stdout | from_json
+          | selectattr('id', 'equalto', proxmox_backup_server_verify_job_id)
+          | list | first) | default({}) }}
+
+- name: Detect verification job drift
+  ansible.builtin.set_fact:
+    proxmox_backup_server_verify_drift: >-
+      {{
+        proxmox_backup_server_verify_current.get('store', '') != proxmox_backup_server_datastore_name
+        or proxmox_backup_server_verify_current.get('schedule', '') != proxmox_backup_server_verify_schedule
+        or (proxmox_backup_server_verify_current.get('ignore-verified',
+            proxmox_backup_server_verify_current.get('ignore_verified', false)) | bool)
+          != (proxmox_backup_server_verify_ignore_verified | bool)
+        or (proxmox_backup_server_verify_current.get('outdated-after',
+            proxmox_backup_server_verify_current.get('outdated_after', -1)) | int)
+          != (proxmox_backup_server_verify_outdated_after | int)
+      }}
+
+- name: Create the PBS verification job
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - verify-job
+      - create
+      - "{{ proxmox_backup_server_verify_job_id }}"
+      - --store
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --schedule
+      - "{{ proxmox_backup_server_verify_schedule }}"
+      - --ignore-verified
+      - "{{ proxmox_backup_server_verify_ignore_verified | string | lower }}"
+      - --outdated-after
+      - "{{ proxmox_backup_server_verify_outdated_after | string }}"
+  when:
+    - proxmox_backup_server_verify_current | length == 0
+    - not ansible_check_mode
+  changed_when: true
+
+- name: Update the PBS verification job when its settings differ
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - verify-job
+      - update
+      - "{{ proxmox_backup_server_verify_job_id }}"
+      - --store
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --schedule
+      - "{{ proxmox_backup_server_verify_schedule }}"
+      - --ignore-verified
+      - "{{ proxmox_backup_server_verify_ignore_verified | string | lower }}"
+      - --outdated-after
+      - "{{ proxmox_backup_server_verify_outdated_after | string }}"
+  when:
+    - proxmox_backup_server_verify_current | length > 0
+    - proxmox_backup_server_verify_drift | bool
+    - not ansible_check_mode
+  changed_when: true
+
+- name: Read the PBS datastore configuration
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - datastore
+      - show
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --output-format
+      - json
+  register: proxmox_backup_server_datastore_config
+  changed_when: false
+  check_mode: false
+  # Absent on a --check run of a first install, where the create was skipped.
+  # Only a successful read is parsed below.
+  failed_when: false
+
+- name: Find the datastore garbage-collection schedule
+  ansible.builtin.set_fact:
+    proxmox_backup_server_gc_current: >-
+      {{ ((proxmox_backup_server_datastore_config.stdout | from_json).get('gc-schedule') or '')
+         if proxmox_backup_server_datastore_config.rc == 0 else '' }}
+
+- name: Update the datastore garbage-collection schedule when it differs
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - datastore
+      - update
+      - "{{ proxmox_backup_server_datastore_name }}"
+      - --gc-schedule
+      - "{{ proxmox_backup_server_gc_schedule }}"
+  when:
+    - proxmox_backup_server_gc_current != proxmox_backup_server_gc_schedule
+    - not ansible_check_mode
+  changed_when: true

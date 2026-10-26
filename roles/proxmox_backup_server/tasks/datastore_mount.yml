@@ -1,0 +1,44 @@
+---
+- name: Read the root filesystem source
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - -n
+      - -o
+      - SOURCE
+      - --target
+      - /
+  register: proxmox_backup_server_root_source
+  changed_when: false
+  check_mode: false
+
+- name: Read the source and mountpoint for the datastore path
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - -n
+      - -o
+      - SOURCE,TARGET
+      - --target
+      - "{{ proxmox_backup_server_datastore_path }}"
+  register: proxmox_backup_server_datastore_mount
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Assert the datastore is a separate mount
+  ansible.builtin.assert:
+    that:
+      - mount_fields | length == 2
+      - mount_fields[0] != (proxmox_backup_server_root_source.stdout | trim)
+      - mount_fields[1] == proxmox_backup_server_datastore_path
+    fail_msg: >-
+      {{ proxmox_backup_server_datastore_path }} must be a mountpoint whose
+      source differs from /. findmnt returned
+      {{ proxmox_backup_server_datastore_mount.stdout | default('') }} and /
+      resolves to {{ proxmox_backup_server_root_source.stdout | trim }}.
+    success_msg: >-
+      {{ proxmox_backup_server_datastore_path }} is mounted from
+      {{ mount_fields[0] }}, separately from /.
+  vars:
+    mount_fields: "{{ proxmox_backup_server_datastore_mount.stdout.split() }}"
