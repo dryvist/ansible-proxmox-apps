@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Appends one line per check to the data-protection status file:
+#   ts host mechanism job class outcome age_seconds
+# age_seconds=-1 means never. A job with no matching task reports fail, never ok.
+set -euo pipefail
+
+readonly datastore={{ proxmox_backup_server_datastore_name | quote }}
+readonly datastore_path={{ proxmox_backup_server_datastore_path | quote }}
+readonly verify_job={{ proxmox_backup_server_verify_job_id | quote }}
+readonly prune_job={{ proxmox_backup_server_prune_job_id | quote }}
+readonly status_file={{ (proxmox_backup_server_status_directory ~ '/pbs.status') | quote }}
+readonly now=$(date +%s)
+readonly timestamp=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+readonly host=$(hostname -f 2>/dev/null || hostname)
+
+umask 022
+mkdir -p "$(dirname "$status_file")"
+touch "$status_file"
+chmod 0644 "$status_file"
+
+emit_status() {
+  local job=$1
+  local outcome=$2
+  local age_seconds=$3
+  printf '%s %s pbs %s P2 %s %s\n' \
+    "$timestamp" "$host" "$job" "$outcome" "$age_seconds" >> "$status_file"
+}
+
+# A snapshot is a directory holding manifest.blob, named by its UTC timestamp.
+# The chunk store is pruned from the walk: it holds millions of files and no
+# manifests.
+newest_snapshot_epoch=-1
+while IFS= read -r -d '' manifest; do
+  snapshot_time=$(basename "$(dirname "$manifest")")
+  if [[ "$snapshot_time" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    snapshot_epoch=$(date --utc --date="$snapshot_time" +%s 2>/dev/null || true)
+    if [[ "$snapshot_epoch" =~ ^[0-9]+$ ]] && (( snapshot_epoch > newest_snapshot_epoch )); then
+      newest_snapshot_epoch=$snapshot_epoch
+    fi
+  fi
+done < <(find "$datastore_path" -path "$datastore_path/.chunks" -prune -o -type f -name manifest.blob -print0 2>/dev/null)
+
+if (( newest_snapshot_epoch < 0 )); then
+  emit_status snapshot-age fail -1
+else
+  snapshot_age=$((now - newest_snapshot_epoch))
+  if (( snapshot_age < 0 )); then
+    snapshot_age=0
+  fi
+  emit_status snapshot-age ok "$snapshot_age"
+fi
+
+if task_json=$(proxmox-backup-manager task list --all true --limit 1000 --output-format json 2>/dev/null); then
+  :
+else
+  task_json='[]'
+fi
+
+# Newest task for one job, matched on its worker type and its exact worker ID
+# (the job ID, or the datastore name for garbage collection).
+record_job_status() {
+  local label=$1
+  local worker_id=$2
+  local worker_types=$3
+  local result
+  local outcome
+  local age_seconds
+
+  if result=$(python3 -c '
+import json
+import sys
+
+worker_types = set(sys.argv[1].split(","))
+expected_id, now = sys.argv[2], int(sys.argv[3])
+rows = json.load(sys.stdin)
+if isinstance(rows, dict):
+    rows = rows.get("data", [])
+
+def upid_hex(parts, index):
+    return int(parts[index], 16) if len(parts) > index and parts[index] else 0
+
+matches = []
+for row in rows:
+    parts = str(row.get("upid", "")).split(":")
+    worker_type = str(row.get("worker_type") or (parts[5] if len(parts) > 5 else ""))
+    worker_id = str(row.get("worker_id") or (parts[6] if len(parts) > 6 else ""))
+    if worker_type not in worker_types or worker_id != expected_id:
+        continue
+    start = int(row.get("starttime") or 0) or upid_hex(parts, 4)
+    end = int(row.get("endtime") or 0)
+    matches.append((max(start, end), end or start, str(row.get("status") or "")))
+
+if not matches:
+    print("fail -1")
+    raise SystemExit(0)
+
+_, finished, status = max(matches, key=lambda item: item[0])
+outcome = "ok" if status == "OK" else "fail"
+age = max(0, now - finished) if finished else -1
+print(outcome, age)
+' "$worker_types" "$worker_id" "$now" <<< "$task_json"); then
+    read -r outcome age_seconds <<< "$result"
+  else
+    outcome=fail
+    age_seconds=-1
+  fi
+
+  emit_status "$label" "$outcome" "$age_seconds"
+}
+
+record_job_status "verify-$verify_job" "$verify_job" "verificationjob,verify"
+record_job_status "prune-$prune_job" "$prune_job" "prunejob,prune"
+record_job_status "garbage-collection-$datastore" "$datastore" "garbage_collection"
