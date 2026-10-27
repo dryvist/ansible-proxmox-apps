@@ -42,6 +42,10 @@ path. The role does not format anything in this mode.
 
 The `pbs_group` inventory group sets these values for every guest tagged `pbs`.
 
+PBS calendar events do not accept a timezone suffix; they use the server's
+timezone. The role sets `Etc/UTC` before declaring maintenance jobs,
+so the schedule values below are UTC.
+
 ### Datastore on a dedicated disk (VM)
 
 Set the device to the disk's stable path. The role formats it and mounts it.
@@ -67,16 +71,17 @@ and never prints them.
 | `proxmox_backup_server_datastore_path` | *(required)* | Absolute datastore path |
 | `proxmox_backup_server_datastore_device` | `""` | Empty: pre-mounted path. Set: a `/dev/disk/by-*` device to format and mount |
 | `proxmox_backup_server_datastore_fstype` | `ext4` | Filesystem for a dedicated datastore disk |
+| `proxmox_backup_server_timezone` | `Etc/UTC` | Required PBS calendar timezone |
 | `proxmox_backup_server_datastore_create_retries` | `90` | Read-back attempts after `datastore create` |
 | `proxmox_backup_server_datastore_create_delay` | `10` | Seconds between read-back attempts |
 | `proxmox_backup_server_prune_job_id` | `pve-backups-prune` | Prune job ID |
-| `proxmox_backup_server_prune_schedule` | `03:30` | Prune job calendar event |
+| `proxmox_backup_server_prune_schedule` | `06:55` | Prune job calendar event |
 | `proxmox_backup_server_prune_keep_daily` | `7` | Daily snapshots to keep |
 | `proxmox_backup_server_prune_keep_weekly` | `4` | Weekly snapshots to keep |
 | `proxmox_backup_server_prune_keep_monthly` | `6` | Monthly snapshots to keep |
-| `proxmox_backup_server_gc_schedule` | `sat 04:00` | Datastore garbage-collection calendar event |
+| `proxmox_backup_server_gc_schedule` | `sat 08:00` | Datastore garbage-collection calendar event |
 | `proxmox_backup_server_verify_job_id` | `pve-backups-verify` | Verify job ID |
-| `proxmox_backup_server_verify_schedule` | `sun 05:00` | Verify job calendar event |
+| `proxmox_backup_server_verify_schedule` | `sun 08:00` | Verify job calendar event |
 | `proxmox_backup_server_verify_ignore_verified` | `true` | Skip snapshots verified recently |
 | `proxmox_backup_server_verify_outdated_after` | `30` | Days after which a verified snapshot is verified again |
 | `proxmox_backup_server_publish_openbao` | `false` | Create the PVE backup identity and publish it to OpenBao |
@@ -85,6 +90,7 @@ and never prints them.
 | `proxmox_backup_server_backup_user_id` | `pve-backup@pbs` | PBS user for Proxmox VE nodes |
 | `proxmox_backup_server_backup_token_name` | `pve` | Token name under that user |
 | `proxmox_backup_server_status_directory` | `/var/log/data-protection` | Directory for the status file |
+| `proxmox_backup_server_snapshot_max_age_hours` | `26` | Newest snapshot age above which the status outcome is `fail` |
 | `proxmox_backup_server_repo_url` | vendor URL | Repository base |
 | `proxmox_backup_server_repo_component` | `pbs-no-subscription` | Repository component |
 | `proxmox_backup_server_repo_suite` | host release codename | Repository suite |
@@ -175,11 +181,13 @@ Each run writes four lines:
 - `garbage-collection-<datastore>`, for the last garbage-collection task.
 
 A job with no matching task reports `fail` and `-1`. A datastore with no
-snapshots reports `fail` and `-1` for `snapshot-age`. The first line is
-written at the next hourly tick.
+snapshots reports `fail` and `-1` for `snapshot-age`; the same outcome is
+reported when its newest snapshot is older than
+`proxmox_backup_server_snapshot_max_age_hours`. The first line is written at
+the next hourly tick.
 
-PBS sends its own notifications by email or Gotify. This status file is what
-the log pipeline ships.
+PBS sends its own notifications by email or Gotify. The `pbs_group` syslog
+forwarder ships this status file and the PBS task logs.
 
 ## Testing
 
