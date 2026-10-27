@@ -1,0 +1,24 @@
+---
+# Every guest loader names its host from the map key, so a key published in
+# more than one guest map would let the later loader silently overwrite the
+# earlier host's connection vars, and a converge would reach the wrong guest.
+# Such keys are left out of inventory entirely; every other host is unaffected.
+- name: Find guest keys published in more than one guest map
+  ansible.builtin.set_fact:
+    load_tofu_ambiguous_host_keys: >-
+      {%- set c = _guest_maps.containers | default({}) | list -%}
+      {%- set v = _guest_maps.vms | default({}) | list -%}
+      {%- set d = _guest_maps.docker_vms | default({}) | list -%}
+      {{ (c | intersect(v)) | union(c | intersect(d)) | union(v | intersect(d)) | sort }}
+  vars:
+    # Tests pass load_tofu_guest_maps; the set_fact'd tofu_data outranks play vars.
+    _guest_maps: "{{ load_tofu_guest_maps | default(tofu_data) }}"
+
+- name: Warn about guest keys left out of inventory because they are ambiguous
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: guest key '{{ item }}' is published in more than one of
+      containers, vms and docker_vms. Neither guest is added to inventory, so
+      nothing converges against an ambiguous name. Remove the stale
+      declaration in tofu-proxmox.
+  loop: "{{ load_tofu_ambiguous_host_keys }}"
