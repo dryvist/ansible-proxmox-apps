@@ -80,13 +80,15 @@ class ResticBackupRender(unittest.TestCase):
                 self.assertIn("CacheDirectory=restic\n", unit)
                 self.assertIn("Environment=RESTIC_CACHE_DIR=%C/restic\n", unit)
 
-    def test_timers_are_daily_and_weekly_with_catch_up(self):
+    def test_timers_use_the_utc_maintenance_window_and_catch_up(self):
         backup = render("restic-backup@.timer.j2")
         check = render("restic-check@.timer.j2")
-        self.assertIn("OnCalendar=daily", backup)
-        self.assertIn("OnCalendar=weekly", check)
-        for timer in (backup, check):
-            self.assertIn("Persistent=true", timer)
+        self.assertIn("OnCalendar=*-*-* 06:10:00 UTC", backup)
+        self.assertIn("RandomizedDelaySec=600", backup)
+        self.assertIn("OnCalendar=Mon *-*-* 06:35:00 UTC", check)
+        self.assertIn("RandomizedDelaySec=300", check)
+        self.assertIn("Persistent=true", backup)
+        self.assertIn("Persistent=true", check)
         self.assertIn("ExecStart=/usr/bin/restic check", render("restic-check@.service.j2"))
 
     def test_environment_file_adds_the_scheme_once_and_carries_the_key_pair(self):

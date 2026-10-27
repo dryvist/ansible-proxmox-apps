@@ -109,7 +109,11 @@ not the API key and is not part of routine key rotation.
 PGDG client, which matches the shared server's major version. Each run dumps the
 Postgres database and copies `/var/lib/homebox`. Each repository has its own
 template service instance, so one failing does not skip the other. A weekly
-`restic check` runs per repository. The local RustFS repository is always
+`restic check` runs per repository. Backups default to 06:10 UTC daily with a
+10-minute splay; checks default to Monday 06:35 UTC with a 5-minute splay.
+`homebox_backup_on_calendar`, `homebox_check_on_calendar`,
+`homebox_randomized_delay_sec`, and `homebox_check_randomized_delay_sec`
+configure those timers. The local RustFS repository is always
 configured. The offsite Backblaze B2 repository is configured only when its
 record supplies an endpoint, a bucket and a key pair. Otherwise the role logs a
 debug message and skips it. See the backup section of the role's tasks for the
