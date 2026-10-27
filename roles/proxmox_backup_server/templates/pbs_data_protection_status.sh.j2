@@ -9,6 +9,7 @@ readonly datastore_path={{ proxmox_backup_server_datastore_path | quote }}
 readonly verify_job={{ proxmox_backup_server_verify_job_id | quote }}
 readonly prune_job={{ proxmox_backup_server_prune_job_id | quote }}
 readonly status_file={{ (proxmox_backup_server_status_directory ~ '/pbs.status') | quote }}
+readonly snapshot_max_age_seconds=$(( {{ proxmox_backup_server_snapshot_max_age_hours }} * 3600 ))
 readonly now=$(date +%s)
 readonly timestamp=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
 readonly host=$(hostname -f 2>/dev/null || hostname)
@@ -47,7 +48,11 @@ else
   if (( snapshot_age < 0 )); then
     snapshot_age=0
   fi
-  emit_status snapshot-age ok "$snapshot_age"
+  if (( snapshot_age > snapshot_max_age_seconds )); then
+    emit_status snapshot-age fail "$snapshot_age"
+  else
+    emit_status snapshot-age ok "$snapshot_age"
+  fi
 fi
 
 if task_json=$(proxmox-backup-manager task list --all true --limit 1000 --output-format json 2>/dev/null); then

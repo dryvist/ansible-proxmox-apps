@@ -215,12 +215,16 @@ class StatusCollector(unittest.TestCase):
     def render(self, status_dir, datastore_path):
         env = Environment(keep_trailing_newline=True)
         env.filters["quote"] = shlex.quote
+        defaults = load_yaml(ROLE / "defaults" / "main.yml")
         return env.from_string((TEMPLATES / "pbs_data_protection_status.sh.j2").read_text()).render(
             proxmox_backup_server_datastore_name="backup",
             proxmox_backup_server_datastore_path=str(datastore_path),
             proxmox_backup_server_status_directory=str(status_dir),
             proxmox_backup_server_verify_job_id="pve-backups-verify",
             proxmox_backup_server_prune_job_id="pve-backups-prune",
+            proxmox_backup_server_snapshot_max_age_hours=defaults[
+                "proxmox_backup_server_snapshot_max_age_hours"
+            ],
         )
 
     def run_collector(self, task_json, snapshot_time=None):
@@ -279,6 +283,17 @@ class StatusCollector(unittest.TestCase):
         self.assertGreaterEqual(int(by_job["snapshot-age"][1]), 0)
         self.assertEqual(by_job["verify-pve-backups-verify"][0], "ok")
         self.assertEqual(by_job["prune-pve-backups-prune"], ["fail", "-1"])
+
+    def test_snapshot_older_than_max_age_reports_fail(self):
+        defaults = load_yaml(ROLE / "defaults" / "main.yml")
+        self.assertEqual(defaults["proxmox_backup_server_snapshot_max_age_hours"], 26)
+        snapshot = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 27 * 3600))
+        by_job = {
+            row[3]: row[5:]
+            for row in self.run_collector("[]", snapshot_time=snapshot)
+        }
+        self.assertEqual(by_job["snapshot-age"][0], "fail")
+        self.assertGreater(int(by_job["snapshot-age"][1]), 26 * 3600)
 
 
 if __name__ == "__main__":

@@ -29,8 +29,8 @@ For a service named `svc` and a repository named `b2`, the role installs these u
 
 | Unit | Schedule | Runs |
 | --- | --- | --- |
-| `svc-backup@b2.timer` | daily, `RandomizedDelaySec=1h`, `Persistent=true` | `svc-backup@b2.service` |
-| `svc-check@b2.timer` | weekly, `RandomizedDelaySec=1h`, `Persistent=true` | `svc-check@b2.service` (`restic check`) |
+| `svc-backup@b2.timer` | daily at 06:10 UTC, `RandomizedDelaySec=600`, `Persistent=true` | `svc-backup@b2.service` |
+| `svc-check@b2.timer` | Monday at 06:35 UTC, `RandomizedDelaySec=300`, `Persistent=true` | `svc-check@b2.service` (`restic check`) |
 
 `svc-backup@b2.service` creates the repository when `restic cat config` cannot read it. It streams
 `pg_dump -Fc <db>` into `restic backup --stdin` (file name `<name>.dump`), backs up
@@ -47,6 +47,8 @@ repository has its own instance, so one failing does not skip another.
 | `restic_backup_db_host`, `_port`, `_user`, `_password` | none | Connection for `pg_dump`, through a root-only `pgpass` file. |
 | `restic_backup_paths` | `[]` | Extra paths to back up. |
 | `restic_backup_repositories` | `[]` | `name`, `enabled`, `bucket`, `endpoint`, `access_key_id`, `secret_access_key`, `region`. |
+| `restic_backup_backup_on_calendar` / `_check_on_calendar` | daily 06:10 UTC / Monday 06:35 UTC | Timer `OnCalendar` values. |
+| `restic_backup_randomized_delay_sec` / `restic_backup_check_randomized_delay_sec` | `600` / `300` | Backup and check timer splay in seconds. |
 | `restic_backup_keep_daily` / `_weekly` / `_monthly` | `14` / `8` / `24` | Retention. |
 
 A repository that is not `enabled` gets no environment file or timers. If an earlier run installed

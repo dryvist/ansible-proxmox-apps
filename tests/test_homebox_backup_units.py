@@ -8,13 +8,16 @@ from pathlib import Path
 import unittest
 
 from jinja2 import Environment, StrictUndefined
+import yaml
 
 ROLE = Path(__file__).resolve().parents[1] / "roles" / "homebox"
 
 ENV = Environment(undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True)
 ENV.filters["comment"] = lambda text: "# " + text
+DEFAULTS = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
 
 CONTEXT = {
+    **DEFAULTS,
     "ansible_managed": "managed",
     "homebox_config_dir": "/etc/homebox",
     "homebox_db_host": "db.example.test",
