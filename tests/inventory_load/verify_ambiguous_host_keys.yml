@@ -7,18 +7,23 @@
       The fixture inventory reported ambiguous guest keys:
       {{ load_tofu_ambiguous_host_keys | join(', ') }}
 
-- name: Find ambiguous keys in a fixture with one key in two guest maps
+- name: Find ambiguous keys in a fixture with keys shared across guest maps
   ansible.builtin.import_tasks: ../../inventory/load_tofu/ambiguous_host_keys.yml
   vars:
     load_tofu_guest_maps:
-      containers: {pbs: {}, alone: {}}
-      vms: {pbs: {}, splunk-like: {}}
+      containers: {pbs: {}, dup: {}, alone: {}}
+      vms: {pbs: {}, dup: {}, splunk-like: {}}
       docker_vms: {other: {}}
+    load_tofu_ambiguous_host_key_owners:
+      pbs: containers
 
-- name: Assert only the shared key is excluded
+- name: Assert shared keys are excluded except from their declared owner
   ansible.builtin.assert:
     that:
-      - load_tofu_ambiguous_host_keys == ['pbs']
+      - load_tofu_ambiguous_host_keys == ['dup', 'pbs']
+      - load_tofu_excluded_host_keys.containers == ['dup']
+      - load_tofu_excluded_host_keys.vms == ['dup', 'pbs']
+      - load_tofu_excluded_host_keys.docker_vms == ['dup', 'pbs']
     fail_msg: >-
-      Expected only 'pbs' to be ambiguous, got
-      {{ load_tofu_ambiguous_host_keys | join(', ') }}
+      Unexpected exclusions: ambiguous={{ load_tofu_ambiguous_host_keys }},
+      excluded={{ load_tofu_excluded_host_keys }}
