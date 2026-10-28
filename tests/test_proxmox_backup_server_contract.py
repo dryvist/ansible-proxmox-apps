@@ -235,7 +235,7 @@ class StatusCollector(unittest.TestCase):
             if snapshot_time:
                 snapshot = datastore / "ct" / "100" / snapshot_time
                 snapshot.mkdir(parents=True)
-                (snapshot / "manifest.blob").write_bytes(b"x")
+                (snapshot / "index.json.blob").write_bytes(b"x")
 
             stub_dir = root / "bin"
             stub_dir.mkdir()
