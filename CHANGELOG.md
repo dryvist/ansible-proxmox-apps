@@ -1,5 +1,46 @@
 # Changelog
 
+## [5.11.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.10.0...v5.11.0) (2026-10-28)
+
+
+### Features
+
+* **grafana_stack:** deploy grafana-dashboards v1.11.0 ([#3046](https://github.com/dryvist/ansible-proxmox-apps/issues/3046)) ([9fac067](https://github.com/dryvist/ansible-proxmox-apps/commit/9fac0674d961af13ad0ef16877c60d9c9d821cf6))
+* **homebox:** add the Nautobot to Homebox feed playbook ([#3021](https://github.com/dryvist/ansible-proxmox-apps/issues/3021)) ([25d9f21](https://github.com/dryvist/ansible-proxmox-apps/commit/25d9f215536aa62adc1159b4a83d4dbf0d8c6245))
+* **homebox:** mint and publish a service API key ([#3032](https://github.com/dryvist/ansible-proxmox-apps/issues/3032)) ([c7103c4](https://github.com/dryvist/ansible-proxmox-apps/commit/c7103c405849012a8e7bee955cd385f774358be1))
+* **inventory:** let group_vars name the guest map that owns an ambiguous key ([#3043](https://github.com/dryvist/ansible-proxmox-apps/issues/3043)) ([aceb872](https://github.com/dryvist/ansible-proxmox-apps/commit/aceb872a602043cee8a22d30c35e798e8f7521bb))
+* **nautobot:** add the workstation one-off that publishes the pipeline and sync-write tokens ([#3039](https://github.com/dryvist/ansible-proxmox-apps/issues/3039)) ([c99418d](https://github.com/dryvist/ansible-proxmox-apps/commit/c99418d3533995b5b99c8df13eac42b18adf29fd))
+* **nautobot:** back up the database offsite every night ([#3022](https://github.com/dryvist/ansible-proxmox-apps/issues/3022)) ([fe27d3b](https://github.com/dryvist/ansible-proxmox-apps/commit/fe27d3b2d1be562990852276622bccd4d4a46af2))
+* **ntfy:** rate-limit repeat alert articles and close only bridge-opened tickets ([#3010](https://github.com/dryvist/ansible-proxmox-apps/issues/3010)) ([93a9664](https://github.com/dryvist/ansible-proxmox-apps/commit/93a96646aa7e854fddc68d49018d44053f775af8))
+* **prometheus:** derive Mac scrape targets from published workstations ([#3009](https://github.com/dryvist/ansible-proxmox-apps/issues/3009)) ([50f6ffe](https://github.com/dryvist/ansible-proxmox-apps/commit/50f6ffe66c4931b9f95d9ae0d9f8eba76761b2fb))
+* **proxmox_backup_server:** datastore jobs, PVE token and status file ([#3033](https://github.com/dryvist/ansible-proxmox-apps/issues/3033)) ([5fcce15](https://github.com/dryvist/ansible-proxmox-apps/commit/5fcce154c714646ce7aad829b9f83030ee153161))
+* **timers:** move backup and PBS jobs into the UTC maintenance window ([#3045](https://github.com/dryvist/ansible-proxmox-apps/issues/3045)) ([a2188ed](https://github.com/dryvist/ansible-proxmox-apps/commit/a2188ed30f7b0cd0546f02fb5a92da7616a8cb5d))
+
+
+### Bug Fixes
+
+* **cribl_stream:** set ClickHouse LLM output format and code-function fields ([#3025](https://github.com/dryvist/ansible-proxmox-apps/issues/3025)) ([453b055](https://github.com/dryvist/ansible-proxmox-apps/commit/453b05524bb768ec61291bcdae4212bdc88c64fa))
+* **cribl_stream:** use the ClickHouse format enum value ([#3026](https://github.com/dryvist/ansible-proxmox-apps/issues/3026)) ([9d15a46](https://github.com/dryvist/ansible-proxmox-apps/commit/9d15a46140c78fa27e2c392c12a075f249d63f7c))
+* **cribl_stream:** wire ClickHouse ingest secret domain and fix LLM field maps ([#3018](https://github.com/dryvist/ansible-proxmox-apps/issues/3018)) ([b156a17](https://github.com/dryvist/ansible-proxmox-apps/commit/b156a17e6efb10bd4f3566bad46dba9a7d5f5de4))
+* **deps:** pin dryvist.secrets_management to v0.46.0 ([#3034](https://github.com/dryvist/ansible-proxmox-apps/issues/3034)) ([d0c2804](https://github.com/dryvist/ansible-proxmox-apps/commit/d0c280493e08c4e612c70046408ddcb404c78e05))
+* **deps:** pin dryvist.secrets_management v0.41.1 ([#3013](https://github.com/dryvist/ansible-proxmox-apps/issues/3013)) ([9d88c0f](https://github.com/dryvist/ansible-proxmox-apps/commit/9d88c0faeac9048f1ebd559d42af2278dfbfbf09))
+* **deps:** pin homelab-contracts to v5.21.0 ([#3012](https://github.com/dryvist/ansible-proxmox-apps/issues/3012)) ([b3c60ad](https://github.com/dryvist/ansible-proxmox-apps/commit/b3c60add6383ead77e5abe1d7f66a3a9172d2bee))
+* **github_runner:** reuse the pinned runner image and allow a slow pull ([#3014](https://github.com/dryvist/ansible-proxmox-apps/issues/3014)) ([4f67acc](https://github.com/dryvist/ansible-proxmox-apps/commit/4f67acc15f84db368b3eff1052f7bbfd2f7c593c))
+* **homarr:** accept the session user id returned by homarr v2.7 ([#3048](https://github.com/dryvist/ansible-proxmox-apps/issues/3048)) ([d69ddc2](https://github.com/dryvist/ansible-proxmox-apps/commit/d69ddc21ecf74593f19c70ee39c9cad49203330a))
+* **homebox:** derive sign-up state from a first-account flag ([#3029](https://github.com/dryvist/ansible-proxmox-apps/issues/3029)) ([af64aa5](https://github.com/dryvist/ansible-proxmox-apps/commit/af64aa5c106555a472084c1529a99f0bd96b8194))
+* **homebox:** report the API key mint and publish as changed ([#3035](https://github.com/dryvist/ansible-proxmox-apps/issues/3035)) ([7f5f76d](https://github.com/dryvist/ansible-proxmox-apps/commit/7f5f76d3b6481caeba4b0f1bfd0da1b05d15b1a4))
+* **inventory:** derive llm_gpu_classify_group from the llm-gpu-classify tag ([#3037](https://github.com/dryvist/ansible-proxmox-apps/issues/3037)) ([8fc2a0d](https://github.com/dryvist/ansible-proxmox-apps/commit/8fc2a0d43e5af9bf02b6fe701361e09fd0ee8fbe))
+* **inventory:** exclude guests whose host key is published in more than one guest map ([#3042](https://github.com/dryvist/ansible-proxmox-apps/issues/3042)) ([4adb723](https://github.com/dryvist/ansible-proxmox-apps/commit/4adb723af4dca0330400e77a16e060747612e4bf))
+* **inventory:** treat a guest key as ambiguous only when it names different vmids ([#3044](https://github.com/dryvist/ansible-proxmox-apps/issues/3044)) ([a56da03](https://github.com/dryvist/ansible-proxmox-apps/commit/a56da036d37ef5635c4ec4f5969dab3a47b8a401))
+* **nautobot:** add the local API target instead of resolving tofu inventory in the token one-off ([#3041](https://github.com/dryvist/ansible-proxmox-apps/issues/3041)) ([4d821d1](https://github.com/dryvist/ansible-proxmox-apps/commit/4d821d14934982acd5ff8700fcc365fd6a104179))
+* **object_storage:** expire delete markers on the backups bucket ([#3023](https://github.com/dryvist/ansible-proxmox-apps/issues/3023)) ([ae21b8f](https://github.com/dryvist/ansible-proxmox-apps/commit/ae21b8fced894670c1ef0cf6960608d39bb1fe50))
+* **prometheus:** label secondary-GPU DCGM targets by group ([#3030](https://github.com/dryvist/ansible-proxmox-apps/issues/3030)) ([2adb523](https://github.com/dryvist/ansible-proxmox-apps/commit/2adb523571573a647a01f4390379f335a6e52f5d))
+* **proxmox_backup_server:** find snapshots by the index.json.blob manifest ([#3049](https://github.com/dryvist/ansible-proxmox-apps/issues/3049)) ([74191c1](https://github.com/dryvist/ansible-proxmox-apps/commit/74191c13a844be897052b8e3e3d748ed7600ffec))
+* **proxmox_backup_server:** skip the status timer enable in check mode on a fresh host ([#3038](https://github.com/dryvist/ansible-proxmox-apps/issues/3038)) ([0b54e1c](https://github.com/dryvist/ansible-proxmox-apps/commit/0b54e1c189d64d816d9a3a4fa9ae2c5012f875ab))
+* **renovate:** give Technitium its own PR by dependency name ([#3008](https://github.com/dryvist/ansible-proxmox-apps/issues/3008)) ([d23b7ac](https://github.com/dryvist/ansible-proxmox-apps/commit/d23b7ac32292f76fbc49f67e600c5598916b6559))
+* **restic:** set a cache directory for backup and check units ([#3028](https://github.com/dryvist/ansible-proxmox-apps/issues/3028)) ([7ae1ec1](https://github.com/dryvist/ansible-proxmox-apps/commit/7ae1ec17d4bcefabda5bc50b573717088c5eb663))
+* **run-ansible:** pass Ansible a comma-only limit ([#3016](https://github.com/dryvist/ansible-proxmox-apps/issues/3016)) ([aab800c](https://github.com/dryvist/ansible-proxmox-apps/commit/aab800cbe921070339ca2037ed02695ff585e6e2))
+
 ## [5.10.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.9.0...v5.10.0) (2026-10-25)
 
 
