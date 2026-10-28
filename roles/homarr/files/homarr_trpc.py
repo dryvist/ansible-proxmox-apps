@@ -124,7 +124,18 @@ class Homarr:
             )
         )
         status, body = self._open(urllib.request.Request(f"{self.base}/api/auth/session"))
-        return status == 200 and bool(body.strip()) and "userId" in body
+        if status != 200:
+            return False
+        try:
+            session = json.loads(body)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(session, dict):
+            return False
+        user = session.get("user")
+        return bool(session.get("userId")) or (
+            isinstance(user, dict) and bool(user.get("id"))
+        )
 
 
 def reset_admin_password(db_path, bcrypt_module, username, password):
