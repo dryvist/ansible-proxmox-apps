@@ -1,0 +1,65 @@
+---
+# Every guest loader names its host from the map key, so a key published for
+# two DIFFERENT guests (different vmids) would let the later loader silently
+# overwrite the earlier host's connection vars, and a converge would reach the
+# wrong guest. One guest listed in two maps (a docker_vms member is also in vms)
+# keeps one vmid and is not ambiguous.
+# Ambiguous keys are left out of inventory; every other host is unaffected.
+# load_tofu_ambiguous_host_key_owners (group_vars/all.yml) may name the map that
+# owns a key; only that entry is then added. pbs: the LXC replaced the old PBS
+# VM, which stays declared in tofu until it is retired.
+- name: Find guest keys published for more than one guest
+  ansible.builtin.set_fact:
+    load_tofu_ambiguous_host_keys: "{{ _ambiguous }}"
+    # Each ambiguous key leaves every map except the one group_vars declares as
+    # its owner; with no owner, it leaves all of them.
+    load_tofu_excluded_host_keys: >-
+      {%- set out = {} -%}
+      {%- for m in _maps -%}
+      {%- set _ = out.update({m: _ambiguous | reject('in', _owners | dict2items
+                                                   | selectattr('value', 'equalto', m)
+                                                   | map(attribute='key') | list) | list}) -%}
+      {%- endfor -%}
+      {{ out }}
+  vars:
+    _maps: [containers, vms, docker_vms]
+    # Tests pass load_tofu_guest_maps; the set_fact'd tofu_data outranks play vars.
+    _guest_maps: "{{ load_tofu_guest_maps | default(tofu_data) }}"
+    _owners: "{{ load_tofu_ambiguous_host_key_owners | default({}) }}"
+    _ambiguous: >-
+      {%- set vmids = {} -%}
+      {%- for m in _maps -%}
+      {%- for k, g in (_guest_maps[m] | default({})).items() -%}
+      {%- set _ = vmids.update({k: vmids.get(k, []) + [g.vmid | default(m ~ ':' ~ k) | string]}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {%- set out = [] -%}
+      {%- for k, ids in vmids.items() if ids | unique | length > 1 -%}
+      {%- set _ = out.append(k) -%}
+      {%- endfor -%}
+      {{ out | sort }}
+
+- name: Assert every declared owner holds its ambiguous key
+  ansible.builtin.assert:
+    that:
+      - item.value in ['containers', 'vms', 'docker_vms']
+      - item.key in ((load_tofu_guest_maps | default(tofu_data))[item.value] | default({}))
+    fail_msg: >-
+      load_tofu_ambiguous_host_key_owners names '{{ item.value }}' for guest
+      key '{{ item.key }}', but that map does not publish it.
+    quiet: true
+  # An owner whose key is no longer ambiguous is inert, so only live ones are checked.
+  loop: >-
+    {{ load_tofu_ambiguous_host_key_owners | default({}) | dict2items
+       | selectattr('key', 'in', load_tofu_ambiguous_host_keys) | list }}
+
+- name: Warn about guest keys left out of inventory because they are ambiguous
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: guest key '{{ item }}' is published for more than one guest
+      across containers, vms and docker_vms.
+      {{ ('Only the ' ~ load_tofu_ambiguous_host_key_owners[item] ~ ' entry is added to inventory.')
+         if item in (load_tofu_ambiguous_host_key_owners | default({}))
+         else 'Neither guest is added to inventory, so nothing converges against an ambiguous name.' }}
+      Remove the stale declaration in tofu-proxmox.
+  loop: "{{ load_tofu_ambiguous_host_keys }}"

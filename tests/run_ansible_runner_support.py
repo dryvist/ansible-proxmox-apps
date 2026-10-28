@@ -29,6 +29,7 @@ class RunnerFixture(unittest.TestCase):
         self.bin_path = self.temp_path / "bin"
         self.bin_path.mkdir()
         self.event_log = self.temp_path / "events.log"
+        self.ansible_argv_log = self.temp_path / "ansible-argv.log"
         self.tmp_path = self.temp_path / "tmp"
         self.tmp_path.mkdir()
         self.repo_origin = self.temp_path / "origin.git"
@@ -125,10 +126,14 @@ class RunnerFixture(unittest.TestCase):
             """
             #!/usr/bin/env bash
             set -euo pipefail
+            printf '%s\n' "$@" > "$FAKE_ANSIBLE_ARGV_LOG"
             printf 'ansible\n' >> "$FAKE_EVENT_LOG"
             [[ ${BAO_TOKEN:-} == "$EXPECTED_CHILD_BAO_TOKEN" ]]
             printf 'child CONVERGE_ROLE_ID=%s\n' "${CONVERGE_ROLE_ID:-}" >> "$FAKE_EVENT_LOG"
             printf 'child received expected token\n'
+            printf 'PLAY RECAP *******************************************************\n'
+            printf 'localhost : ok=1 changed=0 unreachable=0 failed=0\n'
+            printf 'grp : ok=1 changed=0 unreachable=0 failed=0\n'
             """,
         )
 
@@ -150,6 +155,7 @@ class RunnerFixture(unittest.TestCase):
         refuse_role_id=None,
         extra_env=None,
         legacy=True,
+        runner_args=None,
     ):
         env = {k: v for k, v in os.environ.items() if k not in GENERIC_ENV}
         for name in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
@@ -163,6 +169,7 @@ class RunnerFixture(unittest.TestCase):
                 "EXPECTED_MINTED_TOKEN": MINTED_TOKEN,
                 "EXPECTED_APPROLE_SECRET": APPROLE_SECRET,
                 "FAKE_EVENT_LOG": str(self.event_log),
+                "FAKE_ANSIBLE_ARGV_LOG": str(self.ansible_argv_log),
                 "FAKE_SIGN_FAILURE": "1" if sign_failure else "0",
                 "FAKE_REFUSE_ROLE_ID": refuse_role_id or "",
                 "PATH": f"{self.bin_path}{os.pathsep}{env['PATH']}",
@@ -197,7 +204,11 @@ class RunnerFixture(unittest.TestCase):
             env["BAO_TOKEN"] = caller_token
 
         return subprocess.run(
-            [str(RUNNER), "playbooks/site.yml", "--limit", "localhost"],
+            [
+                str(RUNNER),
+                "playbooks/site.yml",
+                *(runner_args or ("--limit", "localhost")),
+            ],
             cwd=self.repo,
             env=env,
             check=False,

@@ -1,0 +1,26 @@
+---
+- name: Find the current PBS datastore ACL
+  ansible.builtin.set_fact:
+    proxmox_backup_server_acl_current: >-
+      {{ (proxmox_backup_server_acl_list.stdout | from_json
+          | selectattr('path', 'equalto',
+              '/datastore/' ~ proxmox_backup_server_datastore_name)
+          | selectattr('ugid', 'equalto', proxmox_backup_server_acl_auth_id)
+          | list | first) | default({}) }}
+
+- name: Set the PBS datastore backup ACL when it differs
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - acl
+      - update
+      - "/datastore/{{ proxmox_backup_server_datastore_name }}"
+      - DatastoreBackup
+      - --auth-id
+      - "{{ proxmox_backup_server_acl_auth_id }}"
+      - --propagate
+      - "true"
+  when: >-
+    proxmox_backup_server_acl_current.get('roleid', '') != 'DatastoreBackup'
+    or not (proxmox_backup_server_acl_current.get('propagate', false) | bool)
+  changed_when: true

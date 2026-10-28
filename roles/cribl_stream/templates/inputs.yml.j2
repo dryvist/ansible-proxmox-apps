@@ -121,6 +121,15 @@ inputs:
 {% endif %}
       - output: victoriametrics_rw
         pipeline: "pack:cc-stream-apple-mlx-metrics"
+{% if cribl_stream_clickhouse_url | default('') | length > 0 %}
+      # zcode sessions arrive from the agent sandbox over this S2S hop. The
+      # ClickHouse copy keeps only zcode:cli events; the Splunk connections above
+      # are unchanged.
+{% for route in cribl_stream_clickhouse_s2s_routes | default([]) %}
+      - output: {{ route.output }}
+        pipeline: {{ route.pipeline }}
+{% endfor %}
+{% endif %}
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
   tcpjson:in_cribl_s2s_metrics:
     id: in_cribl_s2s_metrics
@@ -169,6 +178,14 @@ inputs:
 {% else %}
       - output: splunk_hec
         pipeline: ai_stamp
+{% endif %}
+{% if cribl_stream_clickhouse_url | default('') | length > 0 %}
+      # Non-final copies to the ClickHouse llm tables. Each one runs its own
+      # mapping pipeline, so the Splunk connection above is unchanged.
+{% for route in (cribl_stream_clickhouse_ai_routes | default({})).get(name, []) %}
+      - output: {{ route.output }}
+        pipeline: {{ route.pipeline }}
+{% endfor %}
 {% endif %}
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
 {% endfor %}

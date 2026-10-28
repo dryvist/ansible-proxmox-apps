@@ -1,0 +1,51 @@
+---
+# PBS notifications go to email or Gotify, while this standard needs a shipped status file.
+- name: Install python3 for the PBS status collector
+  ansible.builtin.apt:
+    name: python3
+    state: present
+
+- name: Create the data-protection log directory
+  ansible.builtin.file:
+    path: "{{ proxmox_backup_server_status_directory }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the PBS status collector
+  ansible.builtin.template:
+    src: pbs_data_protection_status.sh.j2
+    dest: /usr/local/sbin/pbs-data-protection-status
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the PBS status service unit
+  ansible.builtin.template:
+    src: pbs-data-protection-status.service.j2
+    dest: /etc/systemd/system/pbs-data-protection-status.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the hourly PBS status timer unit
+  ansible.builtin.template:
+    src: pbs-data-protection-status.timer.j2
+    dest: /etc/systemd/system/pbs-data-protection-status.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: proxmox_backup_server_status_timer_unit
+
+# The first status line is written at the next hourly tick. Starting the
+# service here would report a change on every converge, since a oneshot unit
+# is inactive between runs.
+- name: Enable the hourly PBS status timer
+  ansible.builtin.systemd_service:
+    name: pbs-data-protection-status.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+  # Check mode cannot enable a unit whose file it has not written yet.
+  when: not ansible_check_mode or not proxmox_backup_server_status_timer_unit.changed

@@ -1,0 +1,29 @@
+---
+- name: Assert the fixture publishes no ambiguous guest key
+  ansible.builtin.assert:
+    that:
+      - load_tofu_ambiguous_host_keys == []
+    fail_msg: >-
+      The fixture inventory reported ambiguous guest keys:
+      {{ load_tofu_ambiguous_host_keys | join(', ') }}
+
+- name: Find ambiguous keys in a fixture with keys shared across guest maps
+  ansible.builtin.import_tasks: ../../inventory/load_tofu/ambiguous_host_keys.yml
+  vars:
+    load_tofu_guest_maps:
+      containers: {pbs: {vmid: 212000}, dup: {vmid: 10}, alone: {vmid: 11}}
+      vms: {pbs: {vmid: 240}, dup: {vmid: 20}, docker-host: {vmid: 30}}
+      docker_vms: {docker-host: {vmid: 30}}
+    load_tofu_ambiguous_host_key_owners:
+      pbs: containers
+
+- name: Assert different guests are excluded except from their owner, one guest in two maps is kept
+  ansible.builtin.assert:
+    that:
+      - load_tofu_ambiguous_host_keys == ['dup', 'pbs']
+      - load_tofu_excluded_host_keys.containers == ['dup']
+      - load_tofu_excluded_host_keys.vms == ['dup', 'pbs']
+      - load_tofu_excluded_host_keys.docker_vms == ['dup', 'pbs']
+    fail_msg: >-
+      Unexpected exclusions: ambiguous={{ load_tofu_ambiguous_host_keys }},
+      excluded={{ load_tofu_excluded_host_keys }}

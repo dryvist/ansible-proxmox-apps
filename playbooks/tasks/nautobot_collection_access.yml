@@ -1,7 +1,10 @@
 ---
-# Reads the Nautobot credentials a collection flow needs from the run's own
-# OpenBao token (the run wrapper exports it; a workstation caller sets BAO_TOKEN
-# by hand) and fails before any role runs when one is empty. Secret paths and
+# Reads the Nautobot credentials a collection flow needs and fails before any
+# role runs when one is empty. The application fields (Nautobot URL and the
+# Proxmox credentials) come from the shared apps domain facts. This file fetches
+# that domain itself, because the collection playbooks run on localhost with no
+# pre-fetch. The read and write credentials under apps/nautobot/pipeline and
+# apps/nautobot/sync-write still come from the run's own token. Secret paths and
 # fields are declared once in inventory/group_vars/nautobot_group.yml.
 #
 # Inputs: nautobot_collection_write_required (bool, default false),
@@ -9,6 +12,20 @@
 # Sets:   nautobot_collection_read_token, nautobot_collection_nautobot_url,
 #         and, when required, nautobot_collection_write_token and the
 #         nautobot_collection_pve_* credentials.
+- name: Load the shared OpenBao domain-to-group map
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/site/vars/openbao_secrets_domain_groups.yml"
+
+- name: Fetch the OpenBao apps domain for Nautobot
+  ansible.builtin.include_role:
+    name: dryvist.secrets_management.openbao_secrets
+  vars:
+    openbao_secrets_active_groups:
+      - nautobot_group
+
+- name: Publish the shared secret-domain facts
+  ansible.builtin.import_tasks: publish_secret_domain_facts.yml
+
 - name: Read the Nautobot read credential
   community.hashi_vault.vault_kv2_get:
     url: "{{ lookup('env', 'BAO_ADDR') }}"
@@ -17,16 +34,6 @@
     engine_mount_point: secret
     path: "{{ nautobot_collection_read_token_secret.path }}"
   register: nautobot_collection_read_credential
-  no_log: true
-
-- name: Read the Nautobot application credentials
-  community.hashi_vault.vault_kv2_get:
-    url: "{{ lookup('env', 'BAO_ADDR') }}"
-    auth_method: token
-    token: "{{ lookup('env', 'BAO_TOKEN') | default(lookup('env', 'VAULT_TOKEN'), true) }}"
-    engine_mount_point: secret
-    path: "{{ nautobot_collection_app_secret.path }}"
-  register: nautobot_collection_app_credential
   no_log: true
 
 - name: Read the Nautobot write credential
@@ -45,22 +52,21 @@
     nautobot_collection_read_token: >-
       {{ nautobot_collection_read_values[nautobot_collection_read_token_secret.field] | default('', true) }}
     nautobot_collection_nautobot_url: >-
-      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.nautobot_url] | default('', true) }}
+      {{ bao_apps_secrets[nautobot_collection_app_secret.fields.nautobot_url] | default('', true) }}
     nautobot_collection_write_token: >-
       {{ nautobot_collection_write_values[nautobot_collection_write_token_secret.field] | default('', true)
          if nautobot_collection_write_required | default(false) | bool else 'unused' }}
     nautobot_collection_pve_token_id: >-
-      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.pve_token_id] | default('', true)
+      {{ bao_apps_secrets[nautobot_collection_app_secret.fields.pve_token_id] | default('', true)
          if nautobot_collection_pve_required | default(false) | bool else 'unused' }}
     nautobot_collection_pve_token_secret: >-
-      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.pve_token_secret] | default('', true)
+      {{ bao_apps_secrets[nautobot_collection_app_secret.fields.pve_token_secret] | default('', true)
          if nautobot_collection_pve_required | default(false) | bool else 'unused' }}
     nautobot_collection_pve_ca: >-
-      {{ nautobot_collection_app_values[nautobot_collection_app_secret.fields.pve_ca] | default('', true)
+      {{ bao_apps_secrets[nautobot_collection_app_secret.fields.pve_ca] | default('', true)
          if nautobot_collection_pve_required | default(false) | bool else 'unused' }}
   vars:
     nautobot_collection_read_values: "{{ nautobot_collection_read_credential.secret }}"
-    nautobot_collection_app_values: "{{ nautobot_collection_app_credential.secret }}"
     nautobot_collection_write_values: "{{ nautobot_collection_write_credential.secret | default({}) }}"
   no_log: true
 

@@ -3,7 +3,8 @@
 # service, not one per topic: the CLI's own client.yml already multiplexes
 # every subscription over a single connection. Each matching message invokes
 # ntfy-zammad (files/ntfy-zammad.py), which opens/appends/closes a Zammad
-# ticket keyed by "topic|title".
+# ticket keyed by "topic|title", rate-limits repeats, and closes only
+# tickets it marked as bridge-owned on recovery.
 
 - name: Ensure the apt keyring directory exists
   ansible.builtin.file:
@@ -62,6 +63,17 @@
     group: root
     mode: "0755"
 
+- name: Deploy the ntfy-zammad support modules
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ ntfy_docker_zammad_script_path | dirname }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - ntfy_zammad_repeat.py
+    - ntfy_zammad_spool.py
+
 - name: Deploy the ntfy-zammad environment file
   ansible.builtin.copy:
     content: |
@@ -69,6 +81,8 @@
       ZAMMAD_API_TOKEN={{ ntfy_docker_zammad_api_token }}
       NTFY_BASE_URL={{ ntfy_docker_base_url }}
       NTFY_ZAMMAD_STATE_DIR={{ ntfy_docker_zammad_state_dir }}
+      NTFY_ZAMMAD_REPEAT_INTERVAL_SECONDS={{ ntfy_docker_zammad_repeat_interval_seconds }}
+      NTFY_ZAMMAD_CLOSE_DENYLIST='{{ ntfy_docker_zammad_close_denylist | to_json }}'
       NTFY_ZAMMAD_FAILURE_THRESHOLD={{ ntfy_docker_zammad_failure_threshold }}
       NTFY_ZAMMAD_KEYSTONE_TOPIC={{ ntfy_docker_zammad_keystone_topic }}
       NTFY_ZAMMAD_TOPIC_GROUPS_JSON='{{ ntfy_docker_zammad_topic_groups | to_json }}'

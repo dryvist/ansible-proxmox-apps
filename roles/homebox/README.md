@@ -77,9 +77,31 @@ to the same listener.
 ### First account, then close registration
 
 `homebox_options_allow_registration` defaults to `true` so the first account can
-be created. Once that account exists, set it to `false` in the inventory and
-converge. Registration then closes, and the environment file no longer allows
-new sign-ups.
+be created. The inventory (`group_vars/homebox_group.yml`) derives it from
+`homebox_first_account_created`, which is `true` once the account exists, so
+sign-ups are closed.
+
+To bootstrap a fresh instance:
+
+1. Set `homebox_first_account_created` to `false` and converge. Sign-ups open.
+2. Create the first account.
+3. Set `homebox_first_account_created` back to `true` and converge. Registration
+   closes, and the environment file no longer allows new sign-ups.
+
+## Service API key
+
+When `homebox_api_key_publish_openbao` is enabled, the role creates an
+API key named `automation-rw` for the Homebox admin account. The key expires
+after `homebox_api_key_expiry_days` (default 365). The role stores the key in
+OpenBao KV v2 at path `homebox/main/rw`, field `API_KEY`. Later converges reuse
+that named key. Check mode skips this step.
+
+To rotate the key, or after it expires, delete the `automation-rw` key in
+Homebox and re-converge. If the key exists but the OpenBao field is empty, the
+converge fails with the same instruction.
+
+`homebox_api_key_pepper` is Homebox's server-side API-key hashing secret. It is
+not the API key and is not part of routine key rotation.
 
 ## Backups
 
@@ -87,7 +109,11 @@ new sign-ups.
 PGDG client, which matches the shared server's major version. Each run dumps the
 Postgres database and copies `/var/lib/homebox`. Each repository has its own
 template service instance, so one failing does not skip the other. A weekly
-`restic check` runs per repository. The local RustFS repository is always
+`restic check` runs per repository. Backups default to 06:10 UTC daily with a
+10-minute splay; checks default to Monday 06:35 UTC with a 5-minute splay.
+`homebox_backup_on_calendar`, `homebox_check_on_calendar`,
+`homebox_randomized_delay_sec`, and `homebox_check_randomized_delay_sec`
+configure those timers. The local RustFS repository is always
 configured. The offsite Backblaze B2 repository is configured only when its
 record supplies an endpoint, a bucket and a key pair. Otherwise the role logs a
 debug message and skips it. See the backup section of the role's tasks for the

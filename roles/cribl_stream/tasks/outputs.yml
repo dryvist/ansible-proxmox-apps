@@ -46,6 +46,11 @@
     cribl_stream_nautobot_slack_live: >-
       {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('slack_grafana_alerts', {}) }}
+    # One ClickHouse output stands in for all five: they share a URL and a
+    # credential, so a changed value on any of them shows up here.
+    cribl_stream_clickhouse_live: >-
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
+          | default({}, true)).get('outputs', {}).get('clickhouse_llm_claude', {}) }}
   no_log: true
 
 - name: Deploy Cribl Stream outputs configuration
@@ -103,3 +108,10 @@
                   != cribl_stream_alerts_slack_webhook))
       or (cribl_stream_alerts_slack_webhook | default('') | length == 0
           and 'slack_grafana_alerts' in cribl_stream_outputs_live_ids)
+      or ((cribl_stream_clickhouse_url | default('')) | length > 0
+          and ((cribl_stream_clickhouse_tables
+                | map('regex_replace', '^', 'clickhouse_llm_') | list)
+               | difference(cribl_stream_outputs_live_ids) | length > 0
+               or cribl_stream_clickhouse_live.get('url', '') != cribl_stream_clickhouse_url
+               or cribl_stream_clickhouse_live.get('format', '') != 'json-compact-each-row-with-names'
+               or cribl_stream_clickhouse_live.get('password', '') != cribl_stream_clickhouse_password))

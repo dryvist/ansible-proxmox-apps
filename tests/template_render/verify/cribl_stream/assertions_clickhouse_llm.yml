@@ -1,0 +1,234 @@
+---
+# ClickHouse LLM copies. Checks the five native click_house outputs, the
+# explicit column list, the per-harness mapping pipelines, and the routes that
+# feed them. The Splunk connections of the same inputs must stay exactly as
+# they were before the ClickHouse copies were added.
+#
+# Every ClickHouse value is scoped to the task that renders it. A set_fact here
+# would persist for the host into the later plays of this run, and the Langfuse
+# play renders outputs.yml.j2 without a password.
+
+- name: Load the ClickHouse LLM defaults under a scoped name
+  ansible.builtin.include_vars:
+    file: "../../../../roles/cribl_stream/defaults/main/44-clickhouse-llm.yml"
+    name: _ch
+
+- name: Render outputs.yml.j2 with the ClickHouse copies
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/outputs.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_clickhouse_outputs.yml"
+    mode: "0644"
+  # The tofu-derived URL is not exercised here: the guest map fixture is shared
+  # with the PVE metrics checks, and a second container would change its count.
+  vars:
+    cribl_stream_clickhouse_url: "http://clickhouse.example.invalid:8123"
+    cribl_stream_clickhouse_database: "{{ _ch.cribl_stream_clickhouse_database }}"
+    cribl_stream_clickhouse_user: "{{ _ch.cribl_stream_clickhouse_user }}"
+    cribl_stream_clickhouse_tables: "{{ _ch.cribl_stream_clickhouse_tables }}"
+    cribl_stream_clickhouse_columns: "{{ _ch.cribl_stream_clickhouse_columns }}"
+    cribl_stream_victoriametrics_otlp_endpoint: >-
+      {{ _cribl_stream_defaults.cribl_stream_victoriametrics_otlp_endpoint }}
+
+- name: Render inputs.yml.j2 with the AI routes for every routed harness
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/inputs.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_clickhouse_inputs.yml"
+    mode: "0644"
+  vars:
+    cribl_stream_clickhouse_url: "http://clickhouse.example.invalid:8123"
+    cribl_stream_clickhouse_ai_routes: "{{ _ch.cribl_stream_clickhouse_ai_routes }}"
+    cribl_stream_clickhouse_s2s_routes: "{{ _ch.cribl_stream_clickhouse_s2s_routes }}"
+    cribl_stream_ai_log_routing:
+      claude_code: { port: 10311, index: claude, sourcetype: "claude:code" }
+      codex_cli: { port: 10312, index: codex, sourcetype: "codex:cli" }
+      agy_cli: { port: 10313, index: gemini, sourcetype: "antigravity:cli" }
+
+- name: Render each ClickHouse mapping pipeline
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/pipelines/llm_to_clickhouse_{{ item }}/conf.yml.j2"
+    dest: "{{ _fixture_dir }}/test_llm_to_clickhouse_{{ item }}.yml"
+    mode: "0644"
+  vars:
+    cribl_stream_clickhouse_columns: "{{ _ch.cribl_stream_clickhouse_columns }}"
+    cribl_stream_secret_redaction_rules: "{{ _cribl_stream_defaults.cribl_stream_secret_redaction_rules }}"
+  loop: "{{ _ch.cribl_stream_clickhouse_tables }}"
+
+- name: Decode the rendered ClickHouse outputs and inputs
+  ansible.builtin.set_fact:
+    _ch_outputs: >-
+      {{ (lookup('file', _fixture_dir ~ '/test_cribl_stream_clickhouse_outputs.yml') | from_yaml).outputs }}
+    _ch_inputs: >-
+      {{ (lookup('file', _fixture_dir ~ '/test_cribl_stream_clickhouse_inputs.yml') | from_yaml).inputs }}
+
+- name: Every harness has a native ClickHouse output on its own table
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "('clickhouse_llm_' ~ item) in _ch_outputs"
+      - "_ch_outputs['clickhouse_llm_' ~ item].type == 'click_house'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].database == 'llm'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].tableName == item"
+      - "_ch_outputs['clickhouse_llm_' ~ item].format == 'json-compact-each-row-with-names'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].username == 'cribl'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].authType == 'basic'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].password == cribl_stream_clickhouse_password"
+      - "_ch_outputs['clickhouse_llm_' ~ item].mappingType == 'custom'"
+      - "'pipeline' not in _ch_outputs['clickhouse_llm_' ~ item]"
+      - "_ch_outputs['clickhouse_llm_' ~ item].onBackpressure == 'queue'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].pqOnBackpressure == 'drop'"
+      - "_ch_outputs['clickhouse_llm_' ~ item].pqMaxSize == '1 GB'"
+    fail_msg: "clickhouse_llm_{{ item }} is missing or misconfigured in the rendered outputs"
+  loop: "{{ _ch.cribl_stream_clickhouse_tables }}"
+  loop_control:
+    loop_var: item
+
+- name: Every ClickHouse output maps the explicit column list and never ingest_time
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "_columns == _expected_columns"
+      - "'ingest_time' not in _columns"
+      - "_event_time_type == 'DateTime64(3)'"
+    fail_msg: "clickhouse_llm_{{ item }} must map exactly {{ _expected_columns }}, without ingest_time"
+  loop: "{{ _ch.cribl_stream_clickhouse_tables }}"
+  loop_control:
+    loop_var: item
+  vars:
+    _columns: "{{ _ch_outputs['clickhouse_llm_' ~ item].columnMappings | map(attribute='columnName') | list }}"
+    _event_time_type: >-
+      {{ _ch_outputs['clickhouse_llm_' ~ item].columnMappings
+         | selectattr('columnName', 'equalto', 'event_time') | map(attribute='columnType') | first }}
+    _expected_columns:
+      - event_time
+      - ingest
+      - session_id
+      - message_id
+      - role
+      - model
+      - repo
+      - cwd
+      - tool_name
+      - content
+      - raw
+      - host
+
+- name: Splunk outputs keep their blocking backpressure and HEC pipeline
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "_ch_outputs.splunk_hec.onBackpressure == 'block'"
+      - "_ch_outputs.splunk_hec.pipeline == cribl_stream_splunk_hec_post_processing_pipeline"
+    fail_msg: "the Splunk output changed when the ClickHouse copies were added"
+
+- name: Each AI session input keeps its Splunk connection unchanged
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "_claude_splunk == _ai_splunk_baseline"
+      - "_codex_splunk == _ai_splunk_baseline"
+      - "_agy_splunk == _ai_splunk_baseline"
+    fail_msg: "an AI input's Splunk connection changed; only clickhouse_llm_ connections may be added"
+  vars:
+    _claude_splunk: >-
+      {{ _ch_inputs['tcpjson:in_ai_claude_code'].connections | rejectattr('output', 'match', '^clickhouse_llm_') |
+      list }}
+    _codex_splunk: >-
+      {{ _ch_inputs['tcpjson:in_ai_codex_cli'].connections | rejectattr('output', 'match', '^clickhouse_llm_') | list }}
+    _agy_splunk: >-
+      {{ _ch_inputs['tcpjson:in_ai_agy_cli'].connections | rejectattr('output', 'match', '^clickhouse_llm_') | list }}
+    _ai_splunk_baseline:
+      - output: splunk_hec
+        pipeline: ai_stamp
+
+- name: The S2S input keeps every Splunk connection unchanged
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "_s2s_splunk == _s2s_baseline"
+    fail_msg: "in_cribl_s2s connections other than the ClickHouse copies changed"
+  vars:
+    _s2s_splunk: >-
+      {{ _ch_inputs['tcpjson:in_cribl_s2s'].connections | rejectattr('output', 'match', '^clickhouse_llm_') | list }}
+    _s2s_baseline:
+      - output: langfuse_otlp
+        pipeline: otel_traces
+      - output: phoenix_otlp
+        pipeline: otel_traces_phoenix
+      - output: splunk_hec
+        pipeline: force_splunk_meta
+      - output: splunk_hec
+        pipeline: unifi_syslog_to_metrics
+      - output: victoriametrics_rw
+        pipeline: unifi_syslog_to_metrics
+      - output: splunk_hec
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
+      - output: victoriametrics_rw
+        pipeline: "pack:cc-stream-apple-mlx-metrics"
+
+- name: Each AI session input copies to its harness table through its mapping pipeline
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "_claude_routes == [{'output': 'clickhouse_llm_claude', 'pipeline': 'llm_to_clickhouse_claude'}]"
+      - "_codex_routes == [{'output': 'clickhouse_llm_codex', 'pipeline': 'llm_to_clickhouse_codex'}]"
+      - "_agy_routes == _agy_expected"
+      - "_s2s_routes == [{'output': 'clickhouse_llm_zcode', 'pipeline': 'llm_to_clickhouse_zcode'}]"
+    fail_msg: "a session input is not routed to its ClickHouse table through its mapping pipeline"
+  vars:
+    _claude_routes: >-
+      {{ _ch_inputs['tcpjson:in_ai_claude_code'].connections | selectattr('output', 'match', '^clickhouse_llm_') |
+      list }}
+    _codex_routes: >-
+      {{ _ch_inputs['tcpjson:in_ai_codex_cli'].connections | selectattr('output', 'match', '^clickhouse_llm_') | list }}
+    _agy_routes: >-
+      {{ _ch_inputs['tcpjson:in_ai_agy_cli'].connections | selectattr('output', 'match', '^clickhouse_llm_') | list }}
+    _agy_expected:
+      - output: clickhouse_llm_gemini
+        pipeline: llm_to_clickhouse_gemini
+      - output: clickhouse_llm_antigravity
+        pipeline: llm_to_clickhouse_antigravity
+    _s2s_routes: >-
+      {{ _ch_inputs['tcpjson:in_cribl_s2s'].connections | selectattr('output', 'match', '^clickhouse_llm_') | list }}
+
+- name: Every ClickHouse route names a rendered output and a declared pipeline
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - "item.output in _ch_outputs"
+      - "item.pipeline in _cribl_stream_defaults.cribl_stream_pipelines"
+    fail_msg: "route {{ item }} names an undeclared output or pipeline"
+  loop: >-
+    {{ (_ch.cribl_stream_clickhouse_ai_routes.values() | list | flatten)
+       + _ch.cribl_stream_clickhouse_s2s_routes }}
+
+- name: Every mapping pipeline masks credentials before the columns are read
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - >-
+        lookup('file', _fixture_dir ~ '/test_llm_to_clickhouse_' ~ item ~ '.yml')
+        is search('redacted:github')
+      - >-
+        lookup('file', _fixture_dir ~ '/test_llm_to_clickhouse_' ~ item ~ '.yml')
+        is search('redacted:bao')
+    fail_msg: "llm_to_clickhouse_{{ item }} does not mask credentials"
+  loop: "{{ _ch.cribl_stream_clickhouse_tables }}"
+
+- name: Every mapping pipeline defines each ch_* field its columns read
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - >-
+        lookup('file', _fixture_dir ~ '/test_llm_to_clickhouse_' ~ item.0 ~ '.yml') is search('(- name: ' ~
+        item.1.value ~ '\n|__e\\.' ~ item.1.value ~ ' =)')
+    fail_msg: "llm_to_clickhouse_{{ item.0 }} does not set {{ item.1.value }}"
+  loop: >-
+    {{ _ch.cribl_stream_clickhouse_tables
+       | product(_ch.cribl_stream_clickhouse_columns | selectattr('value', 'match', '^ch_') | list) | list }}
+
+- name: ClickHouse LLM copies render and route as asserted
+  ansible.builtin.debug:
+    msg: >-
+      {{ _ch.cribl_stream_clickhouse_tables | length }} ClickHouse outputs, each with
+      {{ _ch.cribl_stream_clickhouse_columns | length }} mapped columns, routed from the
+      AI inputs and the S2S input.

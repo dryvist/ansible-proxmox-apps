@@ -165,20 +165,50 @@ prometheus_stack_dcgm_exporter_guests: >-
   {%- endfor -%}
   {{ guests }}
 prometheus_stack_dcgm_exporter_metrics_port: 9400
+# Guests in these groups serve from the secondary GPU. The primary stays
+# unlabeled because the dashboard selects it with accelerator="".
+prometheus_stack_dcgm_exporter_secondary_groups:
+  - llm_vllm_group
+  - llm_gpu_classify_group
+prometheus_stack_dcgm_exporter_secondary_guests: >-
+  {{ prometheus_stack_dcgm_exporter_secondary_groups
+     | map('extract', groups) | select('defined') | flatten | unique | list }}
 
-# Use the published short host plus local zone, or the external runner FQDN.
-prometheus_stack_macmon_target: >-
-  {{ lookup('env', 'LLM_LARGE_RUNNER_HOST')
-     or (llm_large_serving_host ~ '.' ~ (lookup('env', 'PROXMOX_SUBDOMAIN')
-     | mandatory('PROXMOX_SUBDOMAIN required'))) }}
-# Optional: the second Mac is scraped only when its host is supplied.
-prometheus_stack_macmon_secondary_target: "{{ lookup('env', 'MAC_SECONDARY_RUNNER_HOST') }}"
+# Mac scrape targets come from the published workstation inventory by role.
+prometheus_stack_macmon_workstation_roles:
+  - role: mac-primary-serving
+    accelerator: mac-primary
+  - role: mac-secondary-serving
+    accelerator: mac-secondary
+prometheus_stack_macmon_workstations: >-
+  {{ hostvars['localhost'].tofu_data.workstations | default({}) }}
+prometheus_stack_macmon_missing_roles: >-
+  {%- set missing = [] -%}
+  {%- for expected in prometheus_stack_macmon_workstation_roles -%}
+  {%- set found = [] -%}
+  {%- for workstation in prometheus_stack_macmon_workstations | dict2items -%}
+  {%- if expected.role in (workstation.value.roles | default([])) -%}
+  {%- set _ = found.append(workstation.value.host) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- if found | length == 0 -%}
+  {%- set _ = missing.append(expected.role) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ missing }}
 prometheus_stack_macmon_static_configs: >-
-  {{ [{'targets': [prometheus_stack_macmon_target ~ ':9090'],
-       'labels': {'accelerator': 'mac-primary'}}]
-     + ([{'targets': [prometheus_stack_macmon_secondary_target ~ ':9090'],
-          'labels': {'accelerator': 'mac-secondary'}}]
-        if prometheus_stack_macmon_secondary_target | length > 0 else []) }}
+  {%- set configs = [] -%}
+  {%- for expected in prometheus_stack_macmon_workstation_roles -%}
+  {%- for workstation in prometheus_stack_macmon_workstations | dict2items -%}
+  {%- if expected.role in (workstation.value.roles | default([])) -%}
+  {%- set _ = configs.append({
+    'targets': [workstation.value.host ~ ':9090'],
+    'labels': {'accelerator': expected.accelerator}
+  }) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- endfor -%}
+  {{ configs }}
 
 prometheus_stack_extra_scrape_configs: |
   - job_name: smokeping
@@ -248,8 +278,8 @@ prometheus_stack_extra_scrape_configs: |
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
   {% if prometheus_stack_dcgm_exporter_guests | length > 0 %}
-  # Native DCGM exporter on the NVIDIA guests. The llm-vllm guest carries the
-  # gpu-secondary accelerator label; rules select the primary GPU guests by name.
+  # Native DCGM exporter on the NVIDIA guests. Secondary-GPU guests carry the
+  # gpu-secondary label; the primary stays unlabeled for existing dashboard selectors.
   - job_name: dcgm_exporter
     metrics_path: /metrics
     static_configs:
@@ -257,7 +287,7 @@ prometheus_stack_extra_scrape_configs: |
       - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
         labels:
           guest: "{{ guest.name }}"
-  {% if guest.name in (groups['llm_vllm_group'] | default([])) %}
+  {% if guest.name in prometheus_stack_dcgm_exporter_secondary_guests %}
           accelerator: gpu-secondary
   {% endif %}
   {% endfor %}

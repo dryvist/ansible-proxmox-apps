@@ -31,6 +31,9 @@ local copy. The upstream desired-state's ACID single-writer contract is
 documented once at
 [Deployment state contract](https://docs.jacobpevans.com/infrastructure/deployment-state-contract).
 
+Prometheus Macmon targets come from `tofu_data.workstations`, selected by role.
+A missing role omits its target and emits a warning.
+
 ## Groups (from tofu inventory)
 
 - `lxc_containers`: All LXC containers (`proxmox_pct_remote` connection)
@@ -59,7 +62,6 @@ documented once at
 | `SPLUNK_PASSWORD` | Splunk admin password (for E2E validation) | env / SOPS |
 | `HAPROXY_STATS_PASSWORD` | HAProxy stats page password | SOPS |
 | `TECHNITIUM_DNS_API_TOKEN` | Technitium DNS API token | env |
-| `MAC_SECONDARY_RUNNER_HOST` | Prometheus scrape target for `mac-secondary`; unset skips that target | env (optional) |
 | `NAUTOBOT_SEED_HARDWARE` | Path to the generated hardware seed slice (Nautobot Devices + Modules) | env (optional) |
 | `MAILPIT_RELAY_HOST` | SMTP relay hostname | SOPS |
 | `MAILPIT_RELAY_PORT` | SMTP relay port (default 587) | SOPS |

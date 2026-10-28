@@ -1,0 +1,162 @@
+---
+# Backups run restic from the Debian archive and are driven by systemd units
+# only: a template service and timer per repository, and a weekly check. There
+# is no custom script. One template instance per repository
+# (<name>-backup@<repository>), so one failure does not skip another.
+
+- name: Require a service name for the unit and directory names
+  ansible.builtin.assert:
+    that:
+      - restic_backup_name | length > 0
+    fail_msg: restic_backup_name must be set; it prefixes the units and the config directory.
+    quiet: true
+
+- name: Debug why no restic repository is configured
+  ansible.builtin.debug:
+    msg: >-
+      {{ restic_backup_name }} backup is skipped: no repository has its endpoint,
+      bucket and key pair all set.
+  when: restic_backup_repositories | selectattr('enabled') | list | length == 0
+
+- name: Require the restic password once a repository is enabled
+  ansible.builtin.assert:
+    that:
+      - restic_backup_password | length > 0
+    fail_msg: >-
+      restic_backup_password must be set before a repository is enabled; it
+      encrypts the repository and must never change afterwards.
+    quiet: true
+  when: restic_backup_repositories | selectattr('enabled') | list | length > 0
+
+# The PGDG repository and key come from the postgres role, so pg_dump matches the
+# shared server's major version. Debian's client trails that major.
+- name: Add the PGDG repository the shared PostgreSQL server uses
+  ansible.builtin.include_role:
+    name: postgres
+    tasks_from: main/install_pgdg.yml
+  when:
+    - restic_backup_db_name | length > 0
+    - restic_backup_repositories | selectattr('enabled') | list | length > 0
+
+- name: Install restic and the PostgreSQL client
+  ansible.builtin.apt:
+    name: "{{ ['restic'] + (['postgresql-client'] if restic_backup_db_name | length > 0 else []) }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: restic_backup_repositories | selectattr('enabled') | list | length > 0
+
+- name: Create the backup configuration directory
+  ansible.builtin.file:
+    path: "{{ restic_backup_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: restic_backup_repositories | selectattr('enabled') | list | length > 0
+
+- name: Write the pgpass file that lets pg_dump authenticate
+  ansible.builtin.template:
+    src: pgpass.j2
+    dest: "{{ restic_backup_pgpass_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - restic_backup_db_name | length > 0
+    - restic_backup_repositories | selectattr('enabled') | list | length > 0
+  no_log: true
+
+- name: Write the restic repository password file
+  ansible.builtin.template:
+    src: restic-password.j2
+    dest: "{{ restic_backup_password_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: restic_backup_repositories | selectattr('enabled') | list | length > 0
+  no_log: true
+
+- name: Render the restic environment file for each enabled repository
+  ansible.builtin.template:
+    src: restic-backup.env.j2
+    dest: "{{ restic_backup_config_dir }}/backup-{{ item.name }}.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ restic_backup_repositories | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Remove the restic environment file for each disabled repository
+  ansible.builtin.file:
+    path: "{{ restic_backup_config_dir }}/backup-{{ item.name }}.env"
+    state: absent
+  loop: "{{ restic_backup_repositories | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install the backup and check units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ restic_backup_name }}-{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: restic-backup@.service.j2, dest: backup@.service }
+    - { src: restic-backup@.timer.j2, dest: backup@.timer }
+    - { src: restic-check@.service.j2, dest: check@.service }
+    - { src: restic-check@.timer.j2, dest: check@.timer }
+  loop_control:
+    label: "{{ restic_backup_name }}-{{ item.dest }}"
+  when: restic_backup_repositories | selectattr('enabled') | list | length > 0
+
+- name: Enable the daily backup timer for each enabled repository
+  ansible.builtin.systemd:
+    name: "{{ restic_backup_name }}-backup@{{ item.name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ restic_backup_repositories | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable the weekly check timer for each enabled repository
+  ansible.builtin.systemd:
+    name: "{{ restic_backup_name }}-check@{{ item.name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ restic_backup_repositories | selectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# A repository that was configured and then had its variables removed must stop
+# backing up. The timers exist only after a first enabled run installed the
+# template units, so a host that never had one has nothing to stop.
+- name: Look for the installed backup timer template
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ restic_backup_name }}-backup@.timer"
+  register: restic_backup_timer_template
+
+- name: Stop and disable the backup timer for each disabled repository
+  ansible.builtin.systemd:
+    name: "{{ restic_backup_name }}-backup@{{ item.name }}.timer"
+    state: stopped
+    enabled: false
+  loop: "{{ restic_backup_repositories | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: restic_backup_timer_template.stat.exists
+
+- name: Stop and disable the check timer for each disabled repository
+  ansible.builtin.systemd:
+    name: "{{ restic_backup_name }}-check@{{ item.name }}.timer"
+    state: stopped
+    enabled: false
+  loop: "{{ restic_backup_repositories | rejectattr('enabled') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: restic_backup_timer_template.stat.exists

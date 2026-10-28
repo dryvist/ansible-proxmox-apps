@@ -264,3 +264,49 @@ outputs:
     pqMaxFileSize: "100 MB"
     pqMaxSize: "1 GB"
     pqCompress: gzip
+
+{% if cribl_stream_clickhouse_url | default('') | length > 0 %}
+{% for table in cribl_stream_clickhouse_tables %}
+  # ClickHouse copy of the AI session events: one table per harness in the llm
+  # database. Native click_house output with custom column mapping, so no
+  # DESCRIBE runs and the column list is explicit. The output is its own
+  # persistent queue that drops when full, so an outage here never blocks the
+  # Splunk legs. Credential masking happens in the llm_to_clickhouse_<harness>
+  # mapping pipeline, before the columns are read. Failed requests are not logged,
+  # because the payload is session content.
+  clickhouse_llm_{{ table }}:
+    id: clickhouse_llm_{{ table }}
+    type: click_house
+    disabled: false
+    url: "{{ cribl_stream_clickhouse_url }}"
+    database: "{{ cribl_stream_clickhouse_database }}"
+    tableName: "{{ table }}"
+    format: json-compact-each-row-with-names
+    authType: basic
+    username: "{{ cribl_stream_clickhouse_user }}"
+    password: "{{ cribl_stream_clickhouse_password }}"
+    mappingType: custom
+    columnMappings:
+{% for column in cribl_stream_clickhouse_columns %}
+      - columnName: {{ column.name }}
+        columnType: "{{ column.type }}"
+        columnValueExpression: "{{ column.value }}"
+{% endfor %}
+    asyncInserts: false
+    concurrency: 2
+    maxPayloadSizeKB: 4096
+    maxPayloadEvents: 0
+    compress: true
+    timeoutSec: 30
+    flushPeriodSec: 1
+    useRoundRobinDns: false
+    failedRequestLoggingMode: none
+    onBackpressure: queue
+    pqMode: error
+    pqOnBackpressure: drop
+    pqPath: "$CRIBL_HOME/state/queues"
+    pqMaxFileSize: "100 MB"
+    pqMaxSize: "1 GB"
+    pqCompress: gzip
+{% endfor %}
+{% endif %}
