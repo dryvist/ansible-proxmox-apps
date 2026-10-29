@@ -13,7 +13,7 @@ def test_traefik_dashboard_credential_publish_is_skipped_in_check_mode():
     publish = next(
         task
         for task in tasks
-        if task.get("name") == "Publish the dashboard credentials to OpenBao"
+        if task.get("name") == "Publish Traefik dashboard metadata to OpenBao"
     )
 
     assert "not ansible_check_mode" in publish["when"]
