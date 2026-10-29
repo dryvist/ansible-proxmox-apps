@@ -226,30 +226,27 @@
           ansible.builtin.set_fact:
             rotate_now: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
 
-        - name: Generate the replacement value
-          ansible.builtin.set_fact:
-            rotate_new_value: >-
-              {{ rotate_prefix }}{{ lookup('community.general.random_string', length=rotate_length, special=false)
-                 | lower }}
-          no_log: true
-
-        # cas pins the write to the version just read, so a concurrent rotation
-        # fails loudly instead of one silently overwriting the other.
-        - name: Write the rotated entry, siblings preserved
-          ansible.builtin.uri:
-            url: "{{ rotate_bao_addr }}/v1/{{ rotate_mount }}/data/{{ rotate_path }}"
-            method: POST
-            headers:
-              X-Vault-Token: "{{ rotate_login.json.auth.client_token }}"
-            body_format: json
-            body:
-              options:
-                cas: "{{ rotate_current.json.data.metadata.version | int }}"
-              data: >-
-                {{ rotate_current.json.data.data | combine({rotate_field: rotate_new_value}) }}
-            status_code: 200
-          register: rotate_written
-          changed_when: true
+        # The shared seed_generated task regenerates only rotate_field (listed in
+        # rotate_fields), with the same lowercase alphanumeric alphabet and the
+        # rotate_prefix, and writes the entry check-and-set on the version it
+        # reads. A concurrent rotation fails loudly, and every sibling field is
+        # merged back unchanged.
+        - name: Regenerate the rotated field and write the entry, siblings preserved
+          ansible.builtin.include_role:
+            name: dryvist.homelab.openbao_secrets
+            tasks_from: seed_generated
+          vars:
+            openbao_secrets_seed_addr: "{{ rotate_bao_addr }}"
+            openbao_secrets_seed_token: "{{ rotate_login.json.auth.client_token }}"
+            openbao_secrets_seed_mount: "{{ rotate_mount }}"
+            openbao_secrets_seed_path: "{{ rotate_path }}"
+            openbao_secrets_seed_fields:
+              - name: "{{ rotate_field }}"
+                length: "{{ rotate_length }}"
+                charset: lower
+                prefix: "{{ rotate_prefix }}"
+            openbao_secrets_seed_rotate_fields:
+              - "{{ rotate_field }}"
           no_log: true
 
         # RFC 7396 merge-patch: OpenBao merges this into the existing
