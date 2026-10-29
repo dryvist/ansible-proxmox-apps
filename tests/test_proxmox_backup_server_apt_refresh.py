@@ -5,7 +5,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS_DIR = ROOT / "roles" / "proxmox_backup_server" / "tasks"
-ENTERPRISE_LIST = "/etc/apt/sources.list.d/pbs-enterprise.list"
+REMOVAL_FILE = "remove_enterprise_sources.yml"
+REFRESH_FILE = "apt_refresh.yml"
 
 
 def _load(name):
@@ -16,19 +17,18 @@ def _index(tasks, predicate):
     return next(index for index, task in enumerate(tasks) if predicate(task))
 
 
+def _imports(tasks, name):
+    return [
+        index
+        for index, task in enumerate(tasks)
+        if task.get("ansible.builtin.import_tasks") == name
+    ]
+
+
 def test_apt_cache_is_refreshed_by_cli_after_each_source_change():
     tasks = _load("main.yml")
-    removals = [
-        index
-        for index, task in enumerate(tasks)
-        if task.get("ansible.builtin.file", {}).get("path") == ENTERPRISE_LIST
-        and task["ansible.builtin.file"].get("state") == "absent"
-    ]
-    refreshes = [
-        index
-        for index, task in enumerate(tasks)
-        if task.get("ansible.builtin.import_tasks") == "apt_refresh.yml"
-    ]
+    refreshes = _imports(tasks, REFRESH_FILE)
+    removals = _imports(tasks, REMOVAL_FILE)
     prerequisites = _index(
         tasks, lambda t: t.get("name") == "Install apt transport prerequisites"
     )
@@ -37,20 +37,22 @@ def test_apt_cache_is_refreshed_by_cli_after_each_source_change():
         tasks, lambda t: t.get("name") == "Install Proxmox Backup Server"
     )
 
-    assert len(removals) == 2
     assert len(refreshes) == 2
-    assert removals[0] < refreshes[0] < prerequisites < repository
-    assert repository < refreshes[1] < install < removals[1]
+    assert len(removals) == 1
+    assert refreshes[0] < prerequisites < repository < refreshes[1] < install
+    assert install < removals[0]
     assert tasks[prerequisites]["ansible.builtin.apt"]["update_cache"] is False
     assert tasks[repository]["ansible.builtin.apt_repository"]["update_cache"] is False
     assert tasks[install]["ansible.builtin.apt"]["update_cache"] is False
 
 
-def test_refresh_fails_on_any_fetch_error_and_prints_the_reason():
-    tasks = _load("apt_refresh.yml")
-    refresh = tasks[0]
-    failure = tasks[1]
+def test_refresh_removes_enterprise_sources_then_fails_on_any_fetch_error():
+    tasks = _load(REFRESH_FILE)
+    removal = tasks[0]
+    refresh = tasks[1]
+    failure = tasks[2]
 
+    assert removal["ansible.builtin.import_tasks"] == REMOVAL_FILE
     assert refresh["ansible.builtin.command"]["argv"] == [
         "apt-get",
         "update",
@@ -66,3 +68,19 @@ def test_refresh_fails_on_any_fetch_error_and_prints_the_reason():
     assert failure["when"][0] == "not ansible_check_mode"
     assert "stderr" in failure["ansible.builtin.fail"]["msg"]
     assert "stdout" in failure["ansible.builtin.fail"]["msg"]
+
+
+def test_enterprise_sources_are_matched_by_vendor_host_in_both_formats():
+    tasks = _load(REMOVAL_FILE)
+    find = tasks[0]["ansible.builtin.find"]
+    removal = tasks[1]
+
+    assert find["paths"] == "/etc/apt/sources.list.d"
+    assert set(find["patterns"]) == {"*.list", "*.sources"}
+    assert find["contains"] == r"enterprise\.proxmox\.com"
+    assert tasks[0]["register"] == "proxmox_backup_server_enterprise_sources"
+    assert removal["ansible.builtin.file"]["state"] == "absent"
+    assert removal["ansible.builtin.file"]["path"] == "{{ item.path }}"
+    assert (
+        removal["loop"] == "{{ proxmox_backup_server_enterprise_sources.files }}"
+    )
