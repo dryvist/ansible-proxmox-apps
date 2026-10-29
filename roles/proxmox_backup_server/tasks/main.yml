@@ -43,13 +43,49 @@
   ansible.builtin.include_tasks: datastore_mount.yml
   when: proxmox_backup_server_datastore_device | default('') | length == 0
 
+# Remove the enterprise source before the first apt refresh; package install may recreate it.
+- name: Remove the enterprise repository before the first apt refresh
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
+
+- name: Refresh the apt package cache
+  ansible.builtin.command:
+    argv:
+      - apt-get
+      - update
+  register: proxmox_backup_server_apt_update
+  retries: 3
+  delay: 5
+  until: proxmox_backup_server_apt_update.rc == 0
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Fail when the apt package cache refresh fails
+  ansible.builtin.fail:
+    msg: >-
+      apt-get update failed with return code
+      {{ proxmox_backup_server_apt_update.rc }}. Last 20 lines of combined
+      stderr and stdout:
+      {{
+        (
+          (proxmox_backup_server_apt_update.stderr | default(''))
+          ~ '\n'
+          ~ (proxmox_backup_server_apt_update.stdout | default(''))
+        ).splitlines()[-20:] | join('\n')
+      }}
+  when:
+    - not ansible_check_mode
+    - proxmox_backup_server_apt_update.rc != 0
+
 - name: Install apt transport prerequisites
   ansible.builtin.apt:
     name:
       - ca-certificates
       - gnupg
     state: present
-    update_cache: true
+    update_cache: false
 
 - name: Create keyrings directory
   ansible.builtin.file:
