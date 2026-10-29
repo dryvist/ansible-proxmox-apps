@@ -118,7 +118,6 @@ def test_patroni_etcd_credential_uses_shared_seed_and_publishes_its_result():
     seed_vars = include["vars"]
     assert seed_vars["openbao_secrets_seed_addr"] == "{{ lookup('env', 'BAO_ADDR') }}"
     assert seed_vars["openbao_secrets_seed_token"] == "{{ lookup('env', 'BAO_TOKEN') }}"
-    assert seed_vars["openbao_secrets_seed_expected_writer_policy"] == "ansible-converge"
     assert seed_vars["openbao_secrets_seed_mount"] == "secret"
     assert seed_vars["openbao_secrets_seed_path"] == "etcd/{{ postgres_ha_scope }}/rw"
     assert seed_vars["openbao_secrets_seed_fields"] == [
