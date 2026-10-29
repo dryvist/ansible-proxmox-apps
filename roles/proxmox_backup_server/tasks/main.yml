@@ -96,6 +96,30 @@
 - name: Remove the vendor-shipped enterprise repository
   ansible.builtin.import_tasks: remove_enterprise_sources.yml
 
+# The proxy runs as the backup user and writes its pid file under this
+# directory, but any root process that touches it first (a persistent timer
+# catching up at boot) creates it root-owned and the proxy then fails with
+# EACCES. tmpfiles fixes it before any service starts; the file task fixes the
+# running system.
+- name: Declare the Proxmox Backup Server runtime directory at boot
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/proxmox-backup-run.conf
+    content: >-
+      d /run/proxmox-backup 0755
+      {{ proxmox_backup_server_user }} {{ proxmox_backup_server_group }} -
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Own the Proxmox Backup Server runtime directory now
+  ansible.builtin.file:
+    path: /run/proxmox-backup
+    state: directory
+    owner: "{{ proxmox_backup_server_user }}"
+    group: "{{ proxmox_backup_server_group }}"
+    mode: "0755"
+  when: not (ansible_check_mode and proxmox_backup_server_package_install is changed)
+
 # Wrapped in block/rescue purely for diagnosability: a failed control
 # process gives Ansible/systemd's own error, never the journal line that
 # says why. On failure, dump each service's journal before re-raising so CI
