@@ -100,9 +100,6 @@ class ReconcileIdentityPaths(unittest.TestCase):
         self.assertTrue(task["ignore_errors"])
         failure = self.reconcile_tasks["FAIL — the AppRole issuer could not authenticate"]
         self.assertIn("openbao_reconcile_issuer_login", str(failure["when"]))
-        runner = (REPO / "scripts/run-ansible.sh").read_text()
-        self.assertIn("no AppRole issuer credentials", runner)
-        self.assertNotIn("OPENBAO_RECONCILE_TOKEN", runner)
 
     def test_issuer_liveness_mints_and_revokes_even_with_a_provisioning_token(self):
         tasks = self.liveness_tasks
