@@ -49,35 +49,8 @@
     path: /etc/apt/sources.list.d/pbs-enterprise.list
     state: absent
 
-- name: Refresh the apt package cache
-  ansible.builtin.command:
-    argv:
-      - apt-get
-      - update
-  register: proxmox_backup_server_apt_update
-  retries: 3
-  delay: 5
-  until: proxmox_backup_server_apt_update.rc == 0
-  changed_when: false
-  failed_when: false
-  when: not ansible_check_mode
-
-- name: Fail when the apt package cache refresh fails
-  ansible.builtin.fail:
-    msg: >-
-      apt-get update failed with return code
-      {{ proxmox_backup_server_apt_update.rc }}. Last 20 lines of combined
-      stderr and stdout:
-      {{
-        (
-          (proxmox_backup_server_apt_update.stderr | default(''))
-          ~ '\n'
-          ~ (proxmox_backup_server_apt_update.stdout | default(''))
-        ).splitlines()[-20:] | join('\n')
-      }}
-  when:
-    - not ansible_check_mode
-    - proxmox_backup_server_apt_update.rc != 0
+- name: Refresh the apt package cache before the prerequisites
+  ansible.builtin.import_tasks: apt_refresh.yml
 
 - name: Install apt transport prerequisites
   ansible.builtin.apt:
@@ -108,13 +81,17 @@
       {{ proxmox_backup_server_repo_component }}
     state: present
     filename: proxmox-backup-server
+    update_cache: false
+
+- name: Refresh the apt package cache after the repository change
+  ansible.builtin.import_tasks: apt_refresh.yml
 
 # Under --check a first install only previews, so the service steps below skip.
 - name: Install Proxmox Backup Server
   ansible.builtin.apt:
     name: proxmox-backup-server
     state: present
-    update_cache: true
+    update_cache: false
   register: proxmox_backup_server_package_install
 
 # The package ships /etc/apt/sources.list.d/pbs-enterprise.list ENABLED as one

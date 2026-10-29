@@ -1,0 +1,33 @@
+---
+# --error-on=any makes transient fetch failures fatal: plain `apt-get update`
+# exits 0 on them, and the apt module then fails later with an empty reason.
+- name: Refresh the apt package cache
+  ansible.builtin.command:
+    argv:
+      - apt-get
+      - update
+      - --error-on=any
+  register: proxmox_backup_server_apt_update
+  retries: 3
+  delay: 5
+  until: proxmox_backup_server_apt_update.rc == 0
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Fail when the apt package cache refresh fails
+  ansible.builtin.fail:
+    msg: >-
+      apt-get update failed with return code
+      {{ proxmox_backup_server_apt_update.rc }}. Last 20 lines of combined
+      stderr and stdout:
+      {{
+        (
+          (proxmox_backup_server_apt_update.stderr | default(''))
+          ~ '\n'
+          ~ (proxmox_backup_server_apt_update.stdout | default(''))
+        ).splitlines()[-20:] | join('\n')
+      }}
+  when:
+    - not ansible_check_mode
+    - proxmox_backup_server_apt_update.rc != 0
