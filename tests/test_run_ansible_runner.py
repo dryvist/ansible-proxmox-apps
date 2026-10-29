@@ -68,7 +68,7 @@ class RunAnsibleShimContract(unittest.TestCase):
             [
                 "set -euo pipefail",
                 *EXPORT_LINES,
-                "HOMELAB_CONTRACTS_REF=v5.33.0",
+                "HOMELAB_CONTRACTS_REF=v5.34.0",
                 'exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"',
             ],
         )
@@ -119,7 +119,7 @@ class RunAnsibleShimContract(unittest.TestCase):
             captured_args,
             [
                 "run",
-                "github:dryvist/homelab-contracts/v5.33.0#run-ansible",
+                "github:dryvist/homelab-contracts/v5.34.0#run-ansible",
                 "--",
                 "playbooks/site.yml",
                 "--limit",
