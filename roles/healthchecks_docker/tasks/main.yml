@@ -23,61 +23,80 @@
     mode: "0755"
 
 # =============================================================================
-# Django SECRET_KEY (generate-once, persist on disk)
+# Django SECRET_KEY (OpenBao authoritative)
 # =============================================================================
-# The image needs a SECRET_KEY at boot; if we randomized it per play, every
-# deployment would invalidate all active sessions. Persist it in a root-only
-# file the first time the role runs and reuse it thereafter.
+# The existing file seeds a missing OpenBao field. Once stored, KV is
+# authoritative and an on-disk mismatch fails before the compose template runs.
 
 - name: Check for existing Django SECRET_KEY
   ansible.builtin.stat:
     path: "{{ healthchecks_docker_data_dir }}/.secret_key"
   register: healthchecks_docker_secret_key_stat
 
-- name: Generate Django SECRET_KEY (first run only)
-  ansible.builtin.copy:
-    dest: "{{ healthchecks_docker_data_dir }}/.secret_key"
-    # 50 alphanumeric chars (matches Django get_random_secret_key length).
-    # Using community.general.random_string instead of the password lookup's
-    # 'chars=ascii_letters,digits' shortcut so the character set is
-    # specified by unambiguous boolean flags rather than relying on
-    # implicit keyword expansion in a free-form lookup argument string.
-    content: >-
-      {{ lookup('community.general.random_string',
-                length=50,
-                upper=true, lower=true, numbers=true,
-                special=false) }}
-    owner: root
-    group: root
-    mode: "0600"
-  when: not healthchecks_docker_secret_key_stat.stat.exists
-  no_log: true
-
-- name: Read Django SECRET_KEY into memory
+- name: Read the existing Django SECRET_KEY
   ansible.builtin.slurp:
     src: "{{ healthchecks_docker_data_dir }}/.secret_key"
   register: healthchecks_docker_secret_key_file
+  when: healthchecks_docker_secret_key_stat.stat.exists
   no_log: true
 
-- name: Resolve effective SECRET_KEY (inventory override or persisted file)
-  ansible.builtin.set_fact:
-    healthchecks_docker_secret_key: >-
-      {{ healthchecks_docker_secret_key
-         if healthchecks_docker_secret_key | length > 0
-         else (healthchecks_docker_secret_key_file.content | b64decode | trim) }}
-  no_log: true
-
-# Back the key up into OpenBao. Generated here on first run, so the guest holds
-# the only copy — and a rotated Django SECRET_KEY invalidates every session.
-- name: Publish the healthchecks SECRET_KEY to OpenBao
-  ansible.builtin.include_role:
-    name: dryvist.secrets_management.openbao_secrets
-    tasks_from: publish.yml
+# The writes run on the controller: the writer token must never reach the guest.
+- name: Seed Healthchecks SECRET_KEY in OpenBao
+  delegate_to: localhost
+  connection: local
+  become: false
   vars:
-    openbao_secrets_publish_app: healthchecks
-    openbao_secrets_publish_reason: (Django SECRET_KEY)
-    openbao_secrets_publish_data:
-      secret_key: "{{ healthchecks_docker_secret_key }}"
+    ansible_become: false
+  no_log: true
+  block:
+    - name: Seed the Healthchecks SECRET_KEY through the shared seed_generated task
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        openbao_secrets_seed_path: apps/healthchecks
+        openbao_secrets_seed_fields:
+          - name: secret_key
+            length: 50
+            charset: alnum
+            value: >-
+              {{ healthchecks_docker_secret_key
+                 or (healthchecks_docker_secret_key_file.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_local_values:
+          secret_key: >-
+            {{ healthchecks_docker_secret_key
+               or (healthchecks_docker_secret_key_file.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_register: healthchecks_docker_secret_seed
+
+- name: Resolve Healthchecks SECRET_KEY from OpenBao
+  ansible.builtin.set_fact:
+    healthchecks_docker_secret_key: "{{ healthchecks_docker_secret_seed.secret_key }}"
+  no_log: true
+
+- name: Require the persisted SECRET_KEY to match OpenBao
+  ansible.builtin.assert:
+    that:
+      - >-
+        not healthchecks_docker_secret_key_stat.stat.exists
+        or (healthchecks_docker_secret_key_file.content | b64decode | trim)
+           == healthchecks_docker_secret_key
+    fail_msg: "Healthchecks secret file differs from the stored field secret_key"
+  when:
+    - healthchecks_docker_secret_seed.secret_key != '(placeholder in check mode)'
+  no_log: true
+
+- name: Persist Healthchecks SECRET_KEY
+  ansible.builtin.copy:
+    content: "{{ healthchecks_docker_secret_key }}"
+    dest: "{{ healthchecks_docker_data_dir }}/.secret_key"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - healthchecks_docker_secret_seed.secret_key != '(placeholder in check mode)'
+  no_log: true
 
 # =============================================================================
 # Compose Deployment
