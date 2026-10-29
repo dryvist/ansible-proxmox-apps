@@ -33,23 +33,67 @@
     path: /usr/local/sbin/homarr-api
     state: absent
 
-# Three sources, in order: OpenBao, a 0600 file on the guest, then generate.
-# The file is what makes this idempotent when OpenBao cannot be read — without
-# it the role would mint a new password and reset the local admin on EVERY
-# converge, which is both noisy and a moving credential.
-- name: Read any persisted admin password
+# OpenBao owns the admin password. A persisted file seeds a missing field and
+# must match the value returned from KV on every later converge.
+- name: Check for the persisted Homarr admin password
+  ansible.builtin.stat:
+    path: "{{ homarr_admin_password_file }}"
+  register: homarr_admin_pw_stat
+
+- name: Read the persisted Homarr admin password
   ansible.builtin.slurp:
     src: "{{ homarr_admin_password_file }}"
   register: homarr_admin_pw_stored
-  failed_when: false
+  when: homarr_admin_pw_stat.stat.exists
   no_log: true
 
-- name: Decide the admin password to converge on
+# The writes run on the controller: the writer token must never reach the guest.
+- name: Seed Homarr's admin password in OpenBao
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+  block:
+    - name: Seed the Homarr admin password through the shared seed_generated task
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        openbao_secrets_seed_path: "apps/{{ homarr_instance }}"
+        openbao_secrets_seed_fields:
+          - name: "{{ homarr_secret_prefix }}_admin_password"
+            length: 40
+            charset: alnum
+            value: >-
+              {{ homarr_admin_password
+                 or (homarr_admin_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_local_values: >-
+          {{ {homarr_secret_prefix ~ '_admin_password':
+               (homarr_admin_password
+                or (homarr_admin_pw_stored.content | default('') | b64decode | trim))} }}
+        openbao_secrets_seed_register: homarr_admin_password_seed
+
+- name: Resolve Homarr's admin password from OpenBao
   ansible.builtin.set_fact:
-    homarr_effective_admin_password: >-
-      {{ homarr_admin_password
-         or (homarr_admin_pw_stored.content | default('') | b64decode | trim)
-         or lookup('community.general.random_string', length=40, special=false) }}
+    homarr_effective_admin_password: "{{ homarr_admin_password_seed[homarr_secret_prefix ~ '_admin_password'] }}"
+  no_log: true
+
+- name: Require the persisted admin password to match OpenBao
+  ansible.builtin.assert:
+    that:
+      - >-
+        not homarr_admin_pw_stat.stat.exists
+        or (homarr_admin_pw_stored.content | b64decode | trim)
+           == homarr_effective_admin_password
+    fail_msg: >-
+      Homarr admin password file differs from the stored field
+      {{ homarr_secret_prefix }}_admin_password
+  when:
+    - homarr_effective_admin_password != '(placeholder in check mode)'
   no_log: true
 
 - name: Ensure the credential directory exists
@@ -67,6 +111,8 @@
     owner: root
     group: root
     mode: '0600'
+  when:
+    - homarr_effective_admin_password != '(placeholder in check mode)'
   no_log: true
 
 - name: Converge the API key, every integration, and the board tiles
@@ -142,16 +188,15 @@
       list above.{%- else -%}
       Every integration has a credential.{%- endif %}
 
-- name: Publish the Homarr admin password and API key to OpenBao
+- name: Publish the Homarr API key to OpenBao
   ansible.builtin.include_role:
     name: dryvist.secrets_management.openbao_secrets
     tasks_from: publish.yml
   vars:
     openbao_secrets_publish_app: "{{ homarr_instance }}"
-    openbao_secrets_publish_reason: (admin service account + API key)
+    openbao_secrets_publish_reason: (API key issued by Homarr)
     openbao_secrets_publish_data: >-
-      {{ {homarr_secret_prefix ~ '_admin_password': homarr_effective_admin_password,
-          homarr_secret_prefix ~ '_api_key': (homarr_api_result.stdout | from_json).api_key} }}
+      {{ {homarr_secret_prefix ~ '_api_key': (homarr_api_result.stdout | from_json).api_key} }}
   when:
     - not ansible_check_mode
     - homarr_publish_credentials | bool

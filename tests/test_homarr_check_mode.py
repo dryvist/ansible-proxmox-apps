@@ -21,5 +21,5 @@ def test_homarr_converger_output_consumers_skip_check_mode():
 
     report = task_by_name["Report what the converger did"]
     assert report.get("when") == "not ansible_check_mode"
-    publish = task_by_name["Publish the Homarr admin password and API key to OpenBao"]
+    publish = task_by_name["Publish the Homarr API key to OpenBao"]
     assert "not ansible_check_mode" in publish.get("when")
