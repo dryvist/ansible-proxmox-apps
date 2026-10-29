@@ -124,6 +124,27 @@
       ansible.builtin.debug:
         var: proxmox_backup_server_journal.results
 
+    # The proxy writes its pid file under the runtime directory as the backup
+    # user; the journal reports only EACCES, not who owns that directory.
+    - name: Capture the runtime directory and the unit identity
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [stat, --format, "%U:%G %a %n", /run/proxmox-backup]
+        - [id, "{{ proxmox_backup_server_user }}"]
+        - - systemctl
+          - show
+          - proxmox-backup.service
+          - proxmox-backup-proxy.service
+          - --property=User,Group,RuntimeDirectory,PIDFile,ExecStartPre
+      changed_when: false
+      failed_when: false
+      register: proxmox_backup_server_rundir
+
+    - name: Show the runtime directory and the unit identity
+      ansible.builtin.debug:
+        msg: "{{ proxmox_backup_server_rundir.results | map(attribute='stdout_lines') | list }}"
+
     - name: Re-raise the original failure
       ansible.builtin.fail:
         msg: "{{ ansible_failed_result.msg | default('Service start failed; see journal above.') }}"
