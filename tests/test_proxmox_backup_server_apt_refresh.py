@@ -77,7 +77,7 @@ def test_enterprise_sources_are_matched_by_vendor_host_in_both_formats():
 
     assert find["paths"] == "/etc/apt/sources.list.d"
     assert set(find["patterns"]) == {"*.list", "*.sources"}
-    assert find["contains"] == r"enterprise\.proxmox\.com"
+    assert find["contains"] == r".*enterprise\.proxmox\.com"
     assert tasks[0]["register"] == "proxmox_backup_server_enterprise_sources"
     assert removal["ansible.builtin.file"]["state"] == "absent"
     assert removal["ansible.builtin.file"]["path"] == "{{ item.path }}"
