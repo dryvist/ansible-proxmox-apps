@@ -85,17 +85,14 @@ postgres_ha_fqdn_suffix: >-
 # only calls the issue endpoint. Injection-agnostic per AGENTS.md: read from
 # env, same shape as the pgBackRest S3 endpoint/credentials above.
 #
-# Every PKI issue call (etcd server/peer cert, Patroni's own client cert) and
-# the secret/etcd/<scope>/rw KV read/write below authenticate as the shared
-# ansible-converge identity -- the SAME route
-# roles/object_storage/tasks/offsite.yml and dryvist.secrets_management/roles/openbao_secrets/tasks/
-# publish.yml already use, not a dedicated postgres_ha credential. A prior
-# revision of this file carried a POSTGRES_HA_PKI_ADDR/_TOKEN placeholder pair
-# that named a requirement without supplying it -- no wrapper ever set those,
-# so the first live converge would have failed at the first PKI/KV call. This
-# is a login (role_id/secret_id), not a standing token, because a standing
-# token in the environment never expires on its own; patroni_etcd.yml logs in
-# once per host per converge and revokes it in an always: block.
+# PKI issue calls (etcd server/peer cert, Patroni's own client cert) log in as
+# the shared ansible-converge identity. The secret/etcd/<scope>/rw password is
+# seeded with that identity's BAO_TOKEN through seed_generated on the
+# controller. Both use the same identity as
+# roles/object_storage/tasks/offsite.yml and
+# dryvist.secrets_management/roles/openbao_secrets/tasks/publish.yml, not a
+# dedicated postgres_ha identity. The PKI task files revoke their own login
+# tokens; seed_generated uses the runner's short-lived converge token.
 # dryvist.secrets_management/roles/openbao/templates/ansible-converge-policy.hcl.j2 grants this identity
 # create/update/read on secret/data/etcd/* + metadata/etcd/* (KV) and, per
 # openbao_pki_etcd_engines entry, create/update on that cluster's own
@@ -183,14 +180,14 @@ postgres_ha_etcd_root_password: >-
 # at secret/etcd/{{ postgres_ha_scope }}/rw (the ratified <mount>/<service>/
 # <instance>/<role> grammar, EPIC 887 — docs d/conventions/secret-paths) —
 # see patroni_etcd_credential.yml, included from patroni_etcd.yml. Empty
-# string here only so that task file's own generate-if-absent gate, and a
-# Molecule/test override (converge.yml sets this directly, same as the three
-# passwords above), both have a defined value to check.
+# string here lets that task seed through the shared helper; Molecule/test
+# overrides (converge.yml sets this directly, like the three passwords above)
+# bypass the OpenBao call.
 postgres_ha_etcd_patroni_user: patroni-dcs
 postgres_ha_etcd_patroni_password: ""
-# Random length for the etcd credential patroni_etcd_credential.yml
-# generates — matches dryvist.secrets_management/roles/openbao's own openbao_app_secret_length (defined
-# locally rather than depending on that role's defaults being loaded here).
+# Length for the alphanumeric etcd password declared in the shared
+# seed_generated call (kept local so this role does not depend on another
+# role's defaults being loaded).
 postgres_ha_etcd_credential_length: 40
 postgres_ha_patroni_api_password: >-
   {{ bao_apps_secrets.hindsight_patroni_api_password | default('', true) }}

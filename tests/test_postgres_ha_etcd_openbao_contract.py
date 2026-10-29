@@ -1,14 +1,11 @@
 """Static contract check for Patroni's per-cluster etcd/PKI credentials.
 
-roles/postgres's patroni_etcd_credential.yml generates and reads back
-Patroni's own etcd password at secret/etcd/<postgres_ha_scope>/rw, and
-patroni_etcd_tls.yml / patroni_client_tls.yml issue this cluster's etcd
-server/peer and Patroni-client certificates from OpenBao's PKI secrets
-engine. All three log in as the shared ansible-converge identity -- that
-token must resolve to an identity the ansible-converge policy actually
-grants secret/etcd/* (KV) and pki-*-etcd/issue/* (PKI) to, or the first live
-converge fails at that task -- this asserts both grants exist, the same
-shape as test_donna_ai_domain_openbao_contract.py's check for ai/donna.
+roles/postgres's patroni_etcd_credential.yml seeds Patroni's own etcd
+password at secret/etcd/<postgres_ha_scope>/rw through the shared
+seed_generated task. patroni_etcd_tls.yml / patroni_client_tls.yml issue
+this cluster's etcd server/peer and Patroni-client certificates from
+OpenBao's PKI secrets engine using the same ansible-converge identity. This
+asserts that the identity has the KV and PKI grants those calls require.
 """
 
 from pathlib import Path
@@ -103,10 +100,41 @@ def test_ansible_converge_owns_the_etcd_credential_wildcard():
     assert metadata_grant in policy
 
 
-def test_patroni_etcd_credential_task_uses_the_documented_scope_path():
-    task_file = _read("roles/postgres/tasks/main/patroni_etcd_credential.yml")
+def test_patroni_etcd_credential_uses_shared_seed_and_publishes_its_result():
+    tasks = yaml.safe_load(_read("roles/postgres/tasks/main/patroni_etcd_credential.yml"))
+    resolve = tasks[0]
+    assert resolve["name"] == "Resolve Patroni's own etcd credential"
 
-    assert "secret/data/etcd/{{ postgres_ha_scope }}/rw" in task_file
+    seed = resolve["block"][0]
+    assert seed["throttle"] == 1
+    assert seed["delegate_to"] == "localhost"
+    assert seed["no_log"] is True
+
+    include = seed["block"][0]
+    assert include["ansible.builtin.include_role"] == {
+        "name": "dryvist.homelab.openbao_secrets",
+        "tasks_from": "seed_generated",
+    }
+    seed_vars = include["vars"]
+    assert seed_vars["openbao_secrets_seed_addr"] == "{{ lookup('env', 'BAO_ADDR') }}"
+    assert seed_vars["openbao_secrets_seed_token"] == "{{ lookup('env', 'BAO_TOKEN') }}"
+    assert seed_vars["openbao_secrets_seed_expected_writer_policy"] == "ansible-converge"
+    assert seed_vars["openbao_secrets_seed_mount"] == "secret"
+    assert seed_vars["openbao_secrets_seed_path"] == "etcd/{{ postgres_ha_scope }}/rw"
+    assert seed_vars["openbao_secrets_seed_fields"] == [
+        {
+            "name": "PASSWORD",
+            "length": "{{ postgres_ha_etcd_credential_length }}",
+            "charset": "alnum",
+        }
+    ]
+    assert seed_vars.get("openbao_secrets_seed_rotate_fields", []) == []
+
+    publish = resolve["block"][1]["ansible.builtin.set_fact"]["postgres_ha_etcd_patroni_password"]
+    assert publish == "{{ postgres_ha_etcd_credential_seed.PASSWORD }}"
+    contents = _read("roles/postgres/tasks/main/patroni_etcd_credential.yml")
+    assert "random_string" not in contents
+    assert "ansible.builtin.uri:" not in contents
 
 
 def test_ansible_converge_can_issue_from_each_cluster_pki_role():
@@ -157,7 +185,7 @@ def test_postgres_ha_pki_placeholders_are_gone():
 
 
 def test_patroni_pki_tls_tasks_log_in_and_revoke():
-    """Each TLS/credential task file logs in once and revokes in an always:.
+    """Each PKI task file logs in once and revokes in an always:.
 
     "One login per play section, not per task" -- roles/object_storage's
     offsite/iam tasks and dryvist.secrets_management/roles/openbao_secrets/tasks/publish.yml establish
@@ -167,7 +195,6 @@ def test_patroni_pki_tls_tasks_log_in_and_revoke():
     for relative_path in (
         "roles/postgres/tasks/main/patroni_etcd_tls.yml",
         "roles/postgres/tasks/main/patroni_client_tls.yml",
-        "roles/postgres/tasks/main/patroni_etcd_credential.yml",
     ):
         contents = _read(relative_path)
         assert contents.count("community.hashi_vault.vault_login:") == 1, relative_path
