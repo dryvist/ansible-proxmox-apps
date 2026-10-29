@@ -31,27 +31,75 @@
     - "{{ status_stack_data_dir }}/uptime-kuma"
 
 - name: Read any persisted Uptime Kuma admin password
+  ansible.builtin.stat:
+    path: "{{ status_stack_kuma_admin_password_file }}"
+  register: status_stack_kuma_pw_stat
+
+- name: Read the persisted Uptime Kuma admin password
   ansible.builtin.slurp:
     src: "{{ status_stack_kuma_admin_password_file }}"
   register: status_stack_kuma_pw_stored
-  failed_when: false
+  when: status_stack_kuma_pw_stat.stat.exists
   no_log: true
 
-- name: Decide the Uptime Kuma admin password
+# The writes run on the controller: the writer token must never reach the guest.
+- name: Seed Uptime Kuma's admin password in OpenBao
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+  block:
+    - name: Seed the Uptime Kuma admin password through the shared seed_generated task
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        openbao_secrets_seed_path: apps/status-stack
+        openbao_secrets_seed_fields:
+          - name: status_stack_kuma_admin_password
+            length: 32
+            charset: alnum
+            value: >-
+              {{ status_stack_kuma_admin_password
+                 or (status_stack_kuma_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_local_values:
+          status_stack_kuma_admin_password: >-
+            {{ status_stack_kuma_admin_password
+               or (status_stack_kuma_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_register: status_stack_kuma_password_seed
+
+- name: Resolve Uptime Kuma's admin password from OpenBao
   ansible.builtin.set_fact:
-    status_stack_effective_kuma_password: >-
-      {{ status_stack_kuma_admin_password
-         or (status_stack_kuma_pw_stored.content | default('') | b64decode | trim)
-         or lookup('community.general.random_string', length=32, special=false) }}
+    status_stack_effective_kuma_password: "{{ status_stack_kuma_password_seed.status_stack_kuma_admin_password }}"
   no_log: true
 
-- name: Persist the Uptime Kuma admin password
+- name: Require the persisted Uptime Kuma password to match OpenBao
+  ansible.builtin.assert:
+    that:
+      - >-
+        not status_stack_kuma_pw_stat.stat.exists
+        or (status_stack_kuma_pw_stored.content | b64decode | trim)
+           == status_stack_effective_kuma_password
+    fail_msg: >-
+      Uptime Kuma password file differs from the stored field
+      status_stack_kuma_admin_password
+  when:
+    - status_stack_kuma_password_seed.status_stack_kuma_admin_password != '(placeholder in check mode)'
+  no_log: true
+
+- name: Persist Uptime Kuma's admin password
   ansible.builtin.copy:
     content: "{{ status_stack_effective_kuma_password }}\n"
     dest: "{{ status_stack_kuma_admin_password_file }}"
     owner: root
     group: root
     mode: "0400"
+  when:
+    - status_stack_kuma_password_seed.status_stack_kuma_admin_password != '(placeholder in check mode)'
   no_log: true
 
 # Root-only: the config carries the external-endpoint bearer token.
