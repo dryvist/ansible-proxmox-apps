@@ -43,12 +43,7 @@
   ansible.builtin.include_tasks: datastore_mount.yml
   when: proxmox_backup_server_datastore_device | default('') | length == 0
 
-# Remove the enterprise source before the first apt refresh; package install may recreate it.
-- name: Remove the enterprise repository before the first apt refresh
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/pbs-enterprise.list
-    state: absent
-
+# The refresh removes the enterprise sources first; package install may recreate them.
 - name: Refresh the apt package cache before the prerequisites
   ansible.builtin.import_tasks: apt_refresh.yml
 
@@ -94,15 +89,12 @@
     update_cache: false
   register: proxmox_backup_server_package_install
 
-# The package ships /etc/apt/sources.list.d/pbs-enterprise.list ENABLED as one
-# of its own conffiles. Without a subscription that repository answers 401, and
-# every subsequent `apt update` on the host fails outright — including the next
-# converge. Removing it is part of installing the community build, not an
-# optional tidy-up.
+# The package ships its enterprise repository ENABLED as one of its own
+# conffiles. Without a subscription that repository fails every subsequent
+# `apt update` on the host, including the next converge. Removing it is part of
+# installing the community build, not an optional tidy-up.
 - name: Remove the vendor-shipped enterprise repository
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/pbs-enterprise.list
-    state: absent
+  ansible.builtin.import_tasks: remove_enterprise_sources.yml
 
 # Wrapped in block/rescue purely for diagnosability: a failed control
 # process gives Ansible/systemd's own error, never the journal line that
