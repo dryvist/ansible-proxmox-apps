@@ -1,0 +1,23 @@
+---
+- name: Set desired state and reset the target accumulators
+  ansible.builtin.set_fact:
+    tofu_data: >-
+      {{ tofu_data | combine({'constants': _constants | combine(
+           {'service_state': monitor_fixture.state} if monitor_fixture.state is not none else {})}) }}
+    monitor_targets_icmp: []
+    monitor_targets_tcp: []
+    monitor_targets_http: []
+  vars:
+    _constants: "{{ tofu_data.constants | dict2items | rejectattr('key', 'equalto', 'service_state') | items2dict }}"
+
+- name: Run the real target generator
+  ansible.builtin.include_tasks: ../../inventory/load_tofu/monitor_targets.yml
+
+- name: Require the expected Hindsight health target and preserve other probes
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'mt-hindsight-health') | list | length)
+        == monitor_fixture.expected
+      - (monitor_targets.http | selectattr('name', 'equalto', 'mt-cribl-stream-health') | list | length) == 1
+      - (monitor_targets.icmp | selectattr('name', 'equalto', 'mt-hindsight') | list | length) == 1

@@ -1,0 +1,35 @@
+---
+- name: Set the fixture inventory
+  ansible.builtin.set_fact:
+    tofu_data: "{{ fixture.inventory }}"
+
+- name: Validate the inventory through the Grafana role guard
+  ansible.builtin.include_tasks: ../../../roles/grafana_stack/tasks/assert_hindsight_state.yml
+
+- name: Validate the inventory through the Prometheus role guard
+  ansible.builtin.include_tasks: ../../../roles/prometheus_stack/tasks/assert_hindsight_state.yml
+
+- name: Render the production Hindsight and generic alert rules
+  ansible.builtin.set_fact:
+    _hindsight_rules: >-
+      {{ lookup('ansible.builtin.template', '../../../roles/grafana_stack/templates/alerting/rules-hindsight.yml.j2')
+         | from_yaml }}
+    _generic_rules: >-
+      {{ lookup('ansible.builtin.template', '../../../roles/grafana_stack/templates/alerting/rules.yml.j2')
+         | from_yaml }}
+  vars:
+    grafana_stack_prometheus_url: http://prometheus.example.test:9090
+    grafana_stack_alert_hindsight_min_replicas: 2
+
+- name: Require only Hindsight expectations to follow desired state
+  ansible.builtin.assert:
+    that:
+      - _hindsight_rule.isPaused == fixture.paused
+      - "('hindsight' in _infra_rule.data[0].model.expr) != fixture.paused"
+      - "'blackbox_.*' in _infra_rule.data[0].model.expr"
+      - "'llm_router' in _infra_rule.data[0].model.expr"
+      - "'agentgateway' in _infra_rule.data[0].model.expr"
+  vars:
+    _hindsight_rule: >-
+      {{ _hindsight_rules.groups[0].rules | selectattr('uid', 'equalto', 'hindsight-replica-count-low') | first }}
+    _infra_rule: "{{ _generic_rules.groups[0].rules | selectattr('uid', 'equalto', 'infra-targets-down') | first }}"

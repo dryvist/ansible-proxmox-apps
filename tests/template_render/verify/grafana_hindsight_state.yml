@@ -1,0 +1,34 @@
+---
+- name: Verify Hindsight monitoring follows published desired state
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    grafana_stack_prometheus_url: http://prometheus.example.test:9090
+    grafana_stack_alert_hindsight_min_replicas: 2
+  tasks:
+    - name: Save the inventory used by earlier render tests
+      ansible.builtin.set_fact:
+        _hindsight_saved_inventory: "{{ tofu_data | default({}) }}"
+
+    - name: Check enabled, disabled, and legacy inventory states
+      ansible.builtin.include_tasks: grafana_hindsight_state_case.yml
+      loop:
+        - {inventory: {}, paused: false}
+        - {inventory: {constants: {service_state: {hindsight_enabled: true}}}, paused: false}
+        - {inventory: {constants: {service_state: {hindsight_enabled: false}}}, paused: true}
+      loop_control:
+        loop_var: fixture
+
+    - name: Require both production guards to reject a malformed value
+      ansible.builtin.include_tasks: grafana_hindsight_state_invalid.yml
+      loop: [grafana_stack, prometheus_stack]
+      loop_control:
+        loop_var: guarded_role
+
+    - name: Restore the earlier inventory
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _hindsight_saved_inventory }}"
