@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.13.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.6...v5.13.0) (2026-10-30)
+
+
+### Features
+
+* **cribl_stream:** enable the Mac Edge fan-out pack connections by default ([#3112](https://github.com/dryvist/ansible-proxmox-apps/issues/3112)) ([0085e05](https://github.com/dryvist/ansible-proxmox-apps/commit/0085e055a4c21f9c1ccc3675b594144574f94cff))
+
 ## [5.12.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.5...v5.12.6) (2026-10-30)
 
 
