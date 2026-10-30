@@ -54,7 +54,7 @@ def find_ticket(base, token, key, zammad_call):
     active = _search_tickets(base, token, key, ACTIVE_STATES, zammad_call)
     for result in active:
         ticket = _expanded_ticket(base, token, result, zammad_call)
-        if ticket and _ticket_key(ticket) == key:
+        if ticket and ticket.get("id") is not None and _ticket_key(ticket) == key:
             ticket["state"] = ticket.get("state") or "open"
             return ticket
 
@@ -62,7 +62,7 @@ def find_ticket(base, token, key, zammad_call):
     matches = []
     for result in closed:
         ticket = _expanded_ticket(base, token, result, zammad_call)
-        if ticket and _ticket_key(ticket) == key:
+        if ticket and ticket.get("id") is not None and _ticket_key(ticket) == key:
             ticket["state"] = ticket.get("state") or "closed"
             matches.append(ticket)
     if not matches:
