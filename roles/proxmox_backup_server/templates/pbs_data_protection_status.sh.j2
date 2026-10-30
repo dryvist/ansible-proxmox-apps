@@ -64,7 +64,7 @@ else
 fi
 
 # Newest task for one job, matched on its worker type and its exact worker ID
-# (the job ID, or the datastore name for garbage collection).
+# (the job ID, the datastore name, or <datastore>:<job ID>).
 record_job_status() {
   local label=$1
   local worker_id=$2
@@ -80,6 +80,8 @@ import sys
 worker_types = set(sys.argv[1].split(","))
 expected_id, now = sys.argv[2], int(sys.argv[3])
 label, list_rc = sys.argv[4], sys.argv[5]
+datastore = sys.argv[6]
+accepted_ids = {expected_id, datastore, datastore + ":" + expected_id}
 rows = json.load(sys.stdin)
 if isinstance(rows, dict):
     rows = rows.get("data", [])
@@ -99,7 +101,7 @@ def task_time(row):
 matches = []
 for row in rows:
     parts, worker_type, worker_id = identify(row)
-    if worker_type not in worker_types or worker_id != expected_id:
+    if worker_type not in worker_types or worker_id not in accepted_ids:
         continue
     start = int(row.get("starttime") or 0) or upid_hex(parts, 4)
     end = int(row.get("endtime") or 0)
@@ -119,7 +121,7 @@ _, finished, status = max(matches, key=lambda item: item[0])
 outcome = "ok" if status == "OK" else "fail"
 age = max(0, now - finished) if finished else -1
 print(outcome, age)
-' "$worker_types" "$worker_id" "$now" "$label" "$task_list_rc" <<< "$task_json"); then
+' "$worker_types" "$worker_id" "$now" "$label" "$task_list_rc" "$datastore" <<< "$task_json"); then
     read -r outcome age_seconds <<< "$result"
   else
     outcome=fail
