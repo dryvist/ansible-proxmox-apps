@@ -27,7 +27,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-from secrets_collection_support import SECRETS_ROLES, read_secrets_role
+from secrets_collection_support import SECRETS_DOMAIN_CATALOG, read_secrets_role
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,7 +56,7 @@ def _render(expr: str, variables: dict):
 
 
 def test_apps_domain_declares_the_infrastructure_unifi_path():
-    defaults = _read_role_defaults("openbao_secrets", SECRETS_ROLES)
+    defaults = yaml.safe_load(SECRETS_DOMAIN_CATALOG.read_text(encoding="utf-8"))
     apps_domain = next(
         domain
         for domain in defaults["openbao_secrets_domains"]

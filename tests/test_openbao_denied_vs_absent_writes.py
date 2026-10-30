@@ -8,7 +8,8 @@ are the remaining six, and two of them are DESTRUCTIVE rather than merely loud:
     undefined, `default({}, true)` contributes no siblings, and the anti-clobber
     merge BECOMES the clobber. Authelia's storage encryption key travels this
     path and is unrecoverable if lost.
-  * openbao/tasks/seed_generated_app_secret.yml -- a denied read collapses to
+  * the shared dryvist.homelab.openbao_secrets seed_generated.yml, which the app-secret
+    seeding calls -- a denied read collapses to
     {}, so EVERY declared field looks unset, fresh values are minted for all of
     them, and the write rotates live credentials the file's own header promises
     are "never rewritten".
@@ -33,7 +34,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-from secrets_collection_support import SECRETS_ROLES
+from secrets_collection_support import HOMELAB_ROLES, SECRETS_DOMAIN_CATALOG, SECRETS_ROLES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,9 +42,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BAO_ABSENT = yaml.safe_load(
     (SECRETS_ROLES / "openbao/defaults/main/01b-app-secrets.yml").read_text()
 )["openbao_absent_stderr_marker"]
-MOD_ABSENT = yaml.safe_load(
-    (SECRETS_ROLES / "openbao_secrets/defaults/main/01-domains.yml").read_text()
-)["openbao_secrets_absent_msg_marker"]
+MOD_ABSENT = yaml.safe_load(SECRETS_DOMAIN_CATALOG.read_text(encoding="utf-8"))[
+    "openbao_secrets_absent_msg_marker"
+]
 
 # What the two tools actually emit, taken from the CLI and from
 # community.hashi_vault's vault_kv2_get source.
@@ -106,36 +107,64 @@ def _cli(rc, stderr, stdout="{}"):
     return {"rc": rc, "stderr": stderr, "stdout": stdout}
 
 
+OPENBAO_WRITE_METHODS = {"POST", "PUT", "PATCH"}
+OPENBAO_WRITE_COMMANDS = ("bao kv put", "bao kv patch", "bao write", "vault kv put", "vault kv patch", "vault write")
+
+
+def _writes_to_openbao(items):
+    """Names of the tasks under items, recursively, that write to OpenBao."""
+    found = []
+    for task in items or []:
+        for key in ("block", "rescue", "always"):
+            found += _writes_to_openbao(task.get(key))
+        request = task.get("ansible.builtin.uri") or task.get("uri")
+        if request and str(request.get("method", "GET")).upper() in OPENBAO_WRITE_METHODS:
+            found.append(task.get("name", "?"))
+        for module in ("ansible.builtin.command", "ansible.builtin.shell", "command", "shell"):
+            body = task.get(module)
+            if body is not None and any(w in str(body).lower() for w in OPENBAO_WRITE_COMMANDS):
+                found.append(task.get("name", "?"))
+        if "community.hashi_vault.vault_write" in task:
+            found.append(task.get("name", "?"))
+    return found
+
+
 class SeedGeneratedAppSecret(unittest.TestCase):
-    """A denied read must not mint fresh values over live credentials."""
+    """A denied read must not mint fresh values over live credentials.
 
-    REL = SECRETS_ROLES / "openbao/tasks/seed_generated_app_secret.yml"
-    TASK = "Read the app secret's currently-stored fields"
+    Checked against the shared dryvist.homelab.openbao_secrets seed_generated.yml,
+    which the app-secret seeding calls. Its stored-secret read is a uri task.
+    """
 
-    def _fails(self, result):
-        return _all(
-            _find(self.REL, self.TASK)["failed_when"],
-            {
-                "openbao_seed_current": result,
-                "openbao_absent_stderr_marker": BAO_ABSENT,
-            },
-        )
+    REL = HOMELAB_ROLES / "openbao_secrets/tasks/seed_generated.yml"
+    READ = "Read the stored secret and its version"
+    ROUTE = "Return local values when OpenBao is unavailable"
+
+    def _read_fails(self, status):
+        # ansible.builtin.uri fails the task for any status outside status_code.
+        return status not in _find(self.REL, self.READ)["ansible.builtin.uri"]["status_code"]
 
     def test_a_DENIED_read_fails_the_task(self):
-        # The one that matters. Before the fix this was swallowed, every field
-        # looked unset, and the write rotated the live secret.
-        self.assertTrue(self._fails(_cli(2, CLI_DENIED)))
+        # The one that matters. A 403 must fail the run, never collapse to "unset".
+        self.assertTrue(self._read_fails(403))
 
     def test_a_genuinely_absent_path_does_NOT_fail(self):
         # Generate-if-absent must still work on a first converge.
-        self.assertFalse(self._fails(_cli(2, CLI_ABSENT)))
+        self.assertFalse(self._read_fails(404))
 
     def test_a_successful_read_does_NOT_fail(self):
-        self.assertFalse(self._fails(_cli(0, "")))
+        # Exactly [200, 404], so a 500 or any other status still fails the read.
+        self.assertEqual(_find(self.REL, self.READ)["ansible.builtin.uri"]["status_code"], [200, 404])
+        self.assertFalse(self._read_fails(200))
+        self.assertTrue(self._read_fails(500))
 
-    def test_an_unreachable_server_fails_rather_than_seeding(self):
-        # Neither absent nor denied -- anything unrecognised must fail closed.
-        self.assertTrue(self._fails(_cli(1, "connection refused")))
+    def test_an_unreachable_server_routes_to_local_values_and_never_writes(self):
+        # The health gate sends an unavailable OpenBao to the local-values block, which must not write.
+        route = _find(self.REL, self.ROUTE)
+        self.assertTrue(route["block"], "the local-values block has no tasks to check")
+        self.assertTrue(_all(route["when"], {"openbao_secrets_seed_available": False}))
+        self.assertFalse(_all(route["when"], {"openbao_secrets_seed_available": True}))
+        self.assertEqual(_writes_to_openbao(route["block"]), [])
 
 
 class SeedContext7Key(unittest.TestCase):
@@ -219,16 +248,13 @@ class PublishReadBeforeWrite(unittest.TestCase):
     # The read itself registers unconditionally: a bare `msg` is not injected
     # into `failed_when` on ansible-core 2.21, so the classification is the
     # separate task below it and that is what carries the discrimination.
-    REL = SECRETS_ROLES / "openbao_secrets/tasks/publish.yml"
+    REL = HOMELAB_ROLES / "openbao_secrets/tasks/publish.yml"
     TASK = "Fail unless the read-before-write found the path simply absent"
 
     def _fails(self, result):
         return _all(
             _find(self.REL, self.TASK)["when"],
-            {
-                "openbao_secrets_publish_existing": result,
-                "openbao_secrets_absent_msg_marker": MOD_ABSENT,
-            },
+            {"openbao_secrets_publish_existing": result},
         )
 
     def test_a_DENIED_read_fails_rather_than_clobbering(self):
