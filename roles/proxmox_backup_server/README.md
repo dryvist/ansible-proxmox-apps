@@ -180,7 +180,8 @@ Each run writes four lines:
 - `prune-<job>`, for the last prune task.
 - `garbage-collection-<datastore>`, for the last garbage-collection task.
 
-A job with no matching task reports `fail` and `-1`. A datastore with no
+A job with no matching task reports `fail` and `-1`. When no task matches,
+a `pbs-status-diag:` line goes to the journal. A datastore with no
 snapshots reports `fail` and `-1` for `snapshot-age`; the same outcome is
 reported when its newest snapshot is older than
 `proxmox_backup_server_snapshot_max_age_hours`. The first line is written at
