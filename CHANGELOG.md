@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.12.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.4...v5.12.5) (2026-10-30)
+
+
+### Bug Fixes
+
+* **glance:** pin the published v0.8.7 release checksum ([#3102](https://github.com/dryvist/ansible-proxmox-apps/issues/3102)) ([fc9f72e](https://github.com/dryvist/ansible-proxmox-apps/commit/fc9f72efffd20e7dd55bd0341287fc66098e6c52))
+
 ## [5.12.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.3...v5.12.4) (2026-10-30)
 
 
