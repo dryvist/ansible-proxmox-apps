@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.12.4](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.3...v5.12.4) (2026-10-30)
+
+
+### Bug Fixes
+
+* **github_runner:** give job environments the configured OpenBao address ([#3095](https://github.com/dryvist/ansible-proxmox-apps/issues/3095)) ([a01aa35](https://github.com/dryvist/ansible-proxmox-apps/commit/a01aa359e9bcdf2a3d8447b3f6597da5bc7ea7e8))
+* **ntfy_docker:** skip search matches that have no ticket id ([#3093](https://github.com/dryvist/ansible-proxmox-apps/issues/3093)) ([0f3fb16](https://github.com/dryvist/ansible-proxmox-apps/commit/0f3fb1625bb54ab73f200a922ca5a187f5b8f1cf))
+
 ## [5.12.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.2...v5.12.3) (2026-10-30)
 
 
