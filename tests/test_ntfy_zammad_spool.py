@@ -52,10 +52,17 @@ class NtfyZammadSpool(unittest.TestCase):
         self.calls.append((method, path))
         if path.startswith("tickets/search"):
             want = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["query"][0]
-            return [{"id": i} for i, t in self.tickets.items()
-                    if want.startswith(
-                        'title:"%s" ' % self.nz.ntfy_zammad_repeat.escape_lucene_phrase(t)
-                    )]
+            repeat = self.nz.ntfy_zammad_repeat
+            return [
+                {
+                    "id": i,
+                    "title": "%s — summary" % key,
+                    "state": "open",
+                    "close_at": None,
+                }
+                for i, key in self.tickets.items()
+                if want == repeat.build_search_query(key, repeat.ACTIVE_STATES)
+            ]
         if path == "users/me":
             return {"id": 1}
         if method == "POST" and path == "tickets":
