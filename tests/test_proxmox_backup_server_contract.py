@@ -312,13 +312,13 @@ class StatusCollector(unittest.TestCase):
 
     def test_no_matching_task_logs_the_wanted_id_and_newest_tasks(self):
         now = int(time.time())
-        upid = "UPID:pbs:00000001:00000002:00000003:prunejob:backup:root@pam:"
+        upid = "UPID:pbs:00000001:00000002:00000003:prunejob:other-datastore:root@pam:"
         tasks = json.dumps(
             [
                 {
                     "upid": upid,
                     "worker_type": "prunejob",
-                    "worker_id": "backup",
+                    "worker_id": "other-datastore",
                     "status": "OK",
                     "starttime": now - 3700,
                     "endtime": now - 3600,
@@ -330,7 +330,39 @@ class StatusCollector(unittest.TestCase):
         self.assertEqual(by_job["prune-pve-backups-prune"], ["fail", "-1"])
         self.assertIn("pbs-status-diag: no task matched job=prune-pve-backups-prune", stderr)
         self.assertIn("want_id=pve-backups-prune", stderr)
-        self.assertIn("list_rc=0 total_tasks=1 newest=[prunejob/backup/OK]", stderr)
+        self.assertIn("list_rc=0 total_tasks=1 newest=[prunejob/other-datastore/OK]", stderr)
+
+    def test_prune_row_matches_a_prune_task_named_by_datastore(self):
+        now = int(time.time())
+        tasks = json.dumps(
+            [
+                {
+                    "worker_type": "prunejob",
+                    "worker_id": "backup",
+                    "status": "OK",
+                    "starttime": now - 21000,
+                    "endtime": now - 20900,
+                    "upid": "UPID:pbs:00000001:00000001:00000001:6A1B2C3D:prunejob:backup:root@pam:",
+                },
+                {
+                    "worker_type": "backup",
+                    "worker_id": "backup:ct/505040",
+                    "status": "OK",
+                    "starttime": now - 600,
+                    "endtime": now - 500,
+                    "upid": "UPID:pbs:00000002:00000002:00000002:6A1B2C3E:backup:backup:ct/505040:root@pam:",
+                },
+            ]
+        )
+        rows, stderr = self.collect(tasks)
+        by_job = {row[3]: row[5:] for row in rows}
+        outcome, age_seconds = by_job["prune-pve-backups-prune"]
+        self.assertEqual(outcome, "ok")
+        self.assertGreaterEqual(int(age_seconds), 20900)
+        self.assertLess(int(age_seconds), 20900 + 300)
+        self.assertEqual(by_job["garbage-collection-backup"], ["fail", "-1"])
+        self.assertEqual(by_job["verify-pve-backups-verify"], ["fail", "-1"])
+        self.assertNotIn("no task matched job=prune-pve-backups-prune", stderr)
 
 
 if __name__ == "__main__":
