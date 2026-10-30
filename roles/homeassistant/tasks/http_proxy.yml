@@ -1,0 +1,61 @@
+---
+# Owns one managed block (`# BEGIN/END ansible homeassistant http`) in Home
+# Assistant's configuration.yaml. Refuses to write when the file already has a
+# top-level http: key outside that block, because a second http: key breaks HA's YAML.
+# HA writes configuration.yaml on first start, so a fresh host skips this until
+# the next converge instead of failing before the container is deployed.
+- name: Check whether Home Assistant configuration.yaml exists
+  ansible.builtin.stat:
+    path: "{{ homeassistant_data_dir }}/config/configuration.yaml"
+  register: homeassistant_configuration_stat
+  changed_when: false
+
+- name: Manage Home Assistant trusted proxy configuration
+  when:
+    - homeassistant_http_proxy_enabled
+    - homeassistant_configuration_stat.stat.exists
+  block:
+    - name: Assert Home Assistant has at least one trusted ingress proxy
+      ansible.builtin.assert:
+        that:
+          - homeassistant_trusted_proxies | length > 0
+        fail_msg: >-
+          homeassistant_trusted_proxies must include at least one Traefik
+          ingress address before managing
+          {{ homeassistant_data_dir }}/config/configuration.yaml.
+
+    - name: Read Home Assistant configuration.yaml
+      ansible.builtin.slurp:
+        src: "{{ homeassistant_data_dir }}/config/configuration.yaml"
+      register: homeassistant_configuration_slurp
+      changed_when: false
+
+    - name: Refuse an unmanaged top-level Home Assistant http section
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              homeassistant_configuration_slurp.content
+              | b64decode
+              | regex_replace(
+                  '(?ms)^# BEGIN ansible homeassistant http\r?\n.*?^# END ansible homeassistant http(?:\r?\n|$)',
+                  ''
+                )
+              | regex_search('(?m)^http:')
+            ) is none
+        fail_msg: >-
+          Home Assistant configuration
+          {{ homeassistant_data_dir }}/config/configuration.yaml contains a
+          top-level http: key outside this role's managed block.
+
+    - name: Write Home Assistant trusted proxy configuration
+      ansible.builtin.blockinfile:
+        path: "{{ homeassistant_data_dir }}/config/configuration.yaml"
+        marker: "# {mark} ansible homeassistant http"
+        block: |
+          http:
+            use_x_forwarded_for: true
+            trusted_proxies: {{ homeassistant_trusted_proxies | to_json }}
+        backup: true
+        create: false
+      notify: Restart homeassistant
