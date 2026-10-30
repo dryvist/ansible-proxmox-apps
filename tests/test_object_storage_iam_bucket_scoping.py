@@ -1,6 +1,7 @@
 """Render actual policy and secret expressions to verify their boundaries."""
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -14,8 +15,7 @@ DEFAULTS_DIR = ROLE / "defaults" / "main"
 PROVISION_TASKS = ROLE / "tasks" / "iam_provision_bucket_role.yml"
 RENDER_TASK = "Render the bucket-scoped policy for this role"
 BUCKET_ROLE_TASKS = ROLE / "tasks" / "iam_bucket_role.yml"
-ENDPOINT_REGION_TASK = "Compute this credential's endpoint and region fields"
-MERGE_TASK = "Merge generated + derived fields over the stored secret"
+SEED_BLOCK_TASK = "Seed this bucket/role's RustFS credential through the shared task"
 IAM_TASKS = ROLE / "tasks" / "iam.yml"
 INGRESS_ROUTE_TASK = "Find the machine-S3 ingress route"
 INGRESS_ASSERT_TASK = "Assert the machine-S3 ingress route exists and is not SSO-gated"
@@ -123,36 +123,37 @@ def _render_ingress_endpoint(ingress, proxmox_domain="pve.example.test"):
     return route, assert_holds, endpoint
 
 
-def _render_merged_secret(current_data, generated):
-    """Render the REAL endpoint/region + merge expressions from
-    iam_bucket_role.yml, exactly as a real converge would build them. The
-    endpoint/region fixture values stand in for what proxmox_domain /
-    object_storage_region resolve to live -- this test covers the merge
-    logic, not the endpoint string's own construction (see
-    test_public_endpoint_is_derived_from_proxmox_domain below for that)."""
-    defaults = _defaults()
+def _seed_fields():
+    """Render the field spec iam_bucket_role.yml passes to seed_generated. The
+    public endpoint fixture stands in for what the live s3 ingress route
+    resolves to (see test_public_endpoint_is_derived_from_the_live_s3_ingress_route)."""
+    include = _bucket_role_task(SEED_BLOCK_TASK)["block"][0]
     templar = Templar(loader=DataLoader())
     templar.available_variables = {
-        "object_storage_iam_endpoint_field": defaults["object_storage_iam_endpoint_field"],
-        "object_storage_iam_region_field": defaults["object_storage_iam_region_field"],
+        **_defaults(),
         "object_storage_iam_public_endpoint": "https://s3.pve.example.test",
-        "object_storage_region": "us-east-1",
     }
     templar._loader.set_basedir(str(ROLE))
-    endpoint_region_expr = _bucket_role_task(ENDPOINT_REGION_TASK)["ansible.builtin.set_fact"][
-        "object_storage_iam_endpoint_region"
-    ]
-    endpoint_region = templar.template(trust_as_template(endpoint_region_expr))
-
-    templar.available_variables.update(
+    return [
         {
-            "object_storage_iam_current_data": current_data,
-            "object_storage_iam_generated": generated,
-            "object_storage_iam_endpoint_region": endpoint_region,
+            key: templar.template(trust_as_template(value)) if isinstance(value, str) else value
+            for key, value in field.items()
         }
-    )
-    merge_expr = _bucket_role_task(MERGE_TASK)["ansible.builtin.set_fact"]["object_storage_iam_merged"]
-    return templar.template(trust_as_template(merge_expr))
+        for field in include["vars"]["openbao_secrets_seed_fields"]
+    ]
+
+
+def _planned_fields(fields, stored):
+    """Names seed_generated would write for a stored map: a field that is absent,
+    or whose valid_pattern rejects the stored value. Mirrors the plan predicate in
+    homelab-contracts v5.36.0 ansible/roles/openbao_secrets/tasks/seed_generated.yml."""
+    planned = []
+    for field in fields:
+        current = stored.get(field["name"], "")
+        pattern = field.get("valid_pattern", "")
+        if not current or (pattern and not re.match(pattern, current)):
+            planned.append(field["name"])
+    return planned
 
 
 class BucketRoleDerivation(unittest.TestCase):
@@ -261,38 +262,59 @@ class SecretFieldCompleteness(unittest.TestCase):
         self.assertFalse(assert_holds)
         self.assertIsNone(endpoint)
 
-    def test_a_freshly_generated_secret_carries_all_four_fields_on_both_roles(self):
-        for role in _defaults()["object_storage_iam_roles"]:
-            with self.subTest(role=role):
-                merged = _render_merged_secret(
-                    current_data={},
-                    generated={"AWS_ACCESS_KEY_ID": "AKFIXTURE", "AWS_SECRET_ACCESS_KEY": "SKFIXTURE"},
-                )
-                self.assertEqual(set(merged), EXPECTED_S3_CREDENTIAL_FIELDS)
-                self.assertEqual(merged["AWS_ACCESS_KEY_ID"], "AKFIXTURE")
-                self.assertEqual(merged["AWS_SECRET_ACCESS_KEY"], "SKFIXTURE")
-                self.assertEqual(merged["AWS_ENDPOINT_URL"], "https://s3.pve.example.test")
-                self.assertEqual(merged["AWS_REGION"], "us-east-1")
-
-    def test_an_existing_secret_missing_endpoint_and_region_gets_backfilled(self):
-        # A secret stored before this change carries only the key pair. The
-        # next converge must reconcile it to all four fields without touching
-        # the (never-rotated-here) key pair itself.
-        merged = _render_merged_secret(
-            current_data={"AWS_ACCESS_KEY_ID": "EXISTINGAK", "AWS_SECRET_ACCESS_KEY": "EXISTINGSK"},
-            generated={},
+    def test_a_fresh_secret_plans_all_four_fields_with_the_derived_endpoint_and_region(self):
+        fields = _seed_fields()
+        by_name = {field["name"]: field for field in fields}
+        self.assertEqual(set(by_name), EXPECTED_S3_CREDENTIAL_FIELDS)
+        self.assertEqual(
+            _planned_fields(fields, {}),
+            ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL", "AWS_REGION"],
         )
-        self.assertEqual(merged["AWS_ACCESS_KEY_ID"], "EXISTINGAK")
-        self.assertEqual(merged["AWS_SECRET_ACCESS_KEY"], "EXISTINGSK")
-        self.assertEqual(set(merged), EXPECTED_S3_CREDENTIAL_FIELDS)
+        defaults = _defaults()
+        self.assertEqual(by_name["AWS_ACCESS_KEY_ID"]["charset"], "upper_numeric")
+        self.assertEqual(by_name["AWS_ACCESS_KEY_ID"]["length"], defaults["object_storage_iam_access_key_length"])
+        self.assertEqual(by_name["AWS_SECRET_ACCESS_KEY"]["charset"], "alnum")
+        self.assertEqual(by_name["AWS_SECRET_ACCESS_KEY"]["length"], defaults["object_storage_iam_secret_key_length"])
+        self.assertEqual(by_name["AWS_ENDPOINT_URL"]["value"], "https://s3.pve.example.test")
+        self.assertEqual(by_name["AWS_REGION"]["value"], "us-east-1")
 
-    def test_an_up_to_date_secret_is_unchanged_by_a_second_render(self):
-        # Proves the write-if-changed guard (object_storage_iam_needs_write =
-        # merged != current_data) actually reaches changed=0 on a second
-        # converge once endpoint/region are already stored.
-        first = _render_merged_secret(current_data={}, generated={"AWS_ACCESS_KEY_ID": "AK", "AWS_SECRET_ACCESS_KEY": "SK"})
-        second = _render_merged_secret(current_data=first, generated={})
-        self.assertEqual(first, second)
+    def test_an_existing_key_pair_missing_endpoint_and_region_gets_backfilled(self):
+        # A secret stored before this change carries only the key pair. Only the
+        # endpoint and region are planned; the key pair is left as stored.
+        self.assertEqual(
+            _planned_fields(
+                _seed_fields(),
+                {"AWS_ACCESS_KEY_ID": "EXISTINGAK", "AWS_SECRET_ACCESS_KEY": "EXISTINGSK"},
+            ),
+            ["AWS_ENDPOINT_URL", "AWS_REGION"],
+        )
+
+    def test_a_stale_endpoint_is_reconciled_and_a_stored_key_is_never_planned(self):
+        # The key pair has no valid_pattern, so a stored value is never rewritten,
+        # even one that would not match the generator's alphabet.
+        self.assertEqual(
+            _planned_fields(
+                _seed_fields(),
+                {
+                    "AWS_ACCESS_KEY_ID": "AK",
+                    "AWS_SECRET_ACCESS_KEY": "not-the-generator-alphabet!",
+                    "AWS_ENDPOINT_URL": "https://old.example.test",
+                    "AWS_REGION": "us-east-1",
+                },
+            ),
+            ["AWS_ENDPOINT_URL"],
+        )
+
+    def test_an_up_to_date_secret_plans_no_write_on_a_second_run(self):
+        # After the first run every field is stored and matches, so the second
+        # run plans nothing and seed_generated issues no KV write.
+        after_first_run = {
+            "AWS_ACCESS_KEY_ID": "AK",
+            "AWS_SECRET_ACCESS_KEY": "SK",
+            "AWS_ENDPOINT_URL": "https://s3.pve.example.test",
+            "AWS_REGION": "us-east-1",
+        }
+        self.assertEqual(_planned_fields(_seed_fields(), after_first_run), [])
 
 
 if __name__ == "__main__":

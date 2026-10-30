@@ -83,6 +83,10 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(404, {"errors": ["unhandled path: " + self.path]})
 
     def do_GET(self):
+        if self.path.startswith("/v1/sys/health"):
+            # seed_generated probes health before its read and write.
+            self._reply(200, {"initialized": True, "sealed": False, "standby": False})
+            return
         if self.path == "/v1/secret/data/apps/test/entry":
             state = load()
             self._reply(200, {"data": {"data": state["data"], "metadata": {"version": state["version"]}}})
