@@ -180,6 +180,8 @@ Each run writes four lines:
 - `prune-<job>`, for the last prune task.
 - `garbage-collection-<datastore>`, for the last garbage-collection task.
 
+The prune row matches its task by job ID or datastore name.
+
 A job with no matching task reports `fail` and `-1`. When no task matches,
 a `pbs-status-diag:` line goes to the journal. A datastore with no
 snapshots reports `fail` and `-1` for `snapshot-age`; the same outcome is
