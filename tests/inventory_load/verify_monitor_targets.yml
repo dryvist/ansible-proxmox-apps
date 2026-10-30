@@ -12,7 +12,9 @@
 
 - name: Replace vms with in-memory guests covering each branch
   ansible.builtin.set_fact:
-    tofu_data: "{{ tofu_data | combine({'vms': _mt_vms}) }}"
+    tofu_data: >-
+      {{ tofu_data | combine({'vms': _mt_vms, 'constants': {'service_state': {'hindsight_enabled': true}}},
+                             recursive=true) }}
   vars:
     _mt_vms:
       mt-dhcp-guest:
@@ -91,6 +93,36 @@
          | map(attribute='port') | list)
         == [9420]
     fail_msg: The Cribl Edge health target must use the Cribl Edge API port the edge guests answer on.
+
+- name: Verify Hindsight target projection for enabled, disabled, and legacy inventory
+  ansible.builtin.include_tasks: hindsight_monitor_state_case.yml
+  loop:
+    - {state: null, expected: 1}
+    - {state: {}, expected: 1}
+    - {state: {hindsight_enabled: true}, expected: 1}
+    - {state: {hindsight_enabled: false}, expected: 0}
+  loop_control:
+    loop_var: monitor_fixture
+
+- name: Verify malformed state is rejected before target generation
+  block:
+    - name: Set a malformed desired state
+      ansible.builtin.set_fact:
+        tofu_data: >-
+          {{ tofu_data | combine({'constants': {'service_state': {'hindsight_enabled': 'false'}}}, recursive=true) }}
+        monitor_targets_http: []
+    - name: Run the generator with malformed state
+      ansible.builtin.include_tasks: ../../inventory/load_tofu/monitor_targets.yml
+  rescue:
+    - name: Record the expected rejection
+      ansible.builtin.set_fact:
+        _mt_malformed_rejected: true
+
+- name: Require the malformed state to have failed before producing targets
+  ansible.builtin.assert:
+    that:
+      - _mt_malformed_rejected | default(false) | bool
+      - monitor_targets_http | length == 0
 
 - name: Restore the real tofu_data and monitor_targets
   ansible.builtin.set_fact:

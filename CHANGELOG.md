@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.12.6](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.5...v5.12.6) (2026-10-30)
+
+
+### Bug Fixes
+
+* align Hindsight monitoring with shared desired state ([b90446f](https://github.com/dryvist/ansible-proxmox-apps/commit/b90446f9eefa9ca058cbbfa909febe5e5a24856c))
+* **glance:** pin the published v0.8.7 release checksum ([#3103](https://github.com/dryvist/ansible-proxmox-apps/issues/3103)) ([1823ea0](https://github.com/dryvist/ansible-proxmox-apps/commit/1823ea019ee215c8fb8b08b18c70a4acdef69bc2))
+
 ## [5.12.5](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.4...v5.12.5) (2026-10-30)
 
 
