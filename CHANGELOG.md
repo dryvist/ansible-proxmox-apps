@@ -1,5 +1,28 @@
 # Changelog
 
+## [5.12.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.11.0...v5.12.0) (2026-10-30)
+
+
+### Features
+
+* **ansible-proxmox-apps:** use shared Ansible runner ([#3052](https://github.com/dryvist/ansible-proxmox-apps/issues/3052)) ([4643fbc](https://github.com/dryvist/ansible-proxmox-apps/commit/4643fbcd5f907f8de1aedefb8fc42828c81db7e3))
+* route Mac Edge events through the macOS fan-out pack ([#3051](https://github.com/dryvist/ansible-proxmox-apps/issues/3051)) ([bcc464f](https://github.com/dryvist/ansible-proxmox-apps/commit/bcc464f46fe29d13a7601a1d59a047390581f652))
+
+
+### Bug Fixes
+
+* **cribl_stream:** drop raw session files from Splunk ([#3069](https://github.com/dryvist/ansible-proxmox-apps/issues/3069)) ([5da4580](https://github.com/dryvist/ansible-proxmox-apps/commit/5da45800187bb5d491a9ea0c99006074c44677ec))
+* **haproxy:** turn off the UDP stream access log ([#3053](https://github.com/dryvist/ansible-proxmox-apps/issues/3053)) ([4fb07ef](https://github.com/dryvist/ansible-proxmox-apps/commit/4fb07ef24b9fb91594d16665d9a5cdbf637eb276))
+* **homarr:** default key lookup before first ([#3063](https://github.com/dryvist/ansible-proxmox-apps/issues/3063)) ([67ccc39](https://github.com/dryvist/ansible-proxmox-apps/commit/67ccc3907e1df70a68ee5f31ec6d295a6f4caccd))
+* **homarr:** read the existing key from the pre-install snapshot only ([#3071](https://github.com/dryvist/ansible-proxmox-apps/issues/3071)) ([d2529da](https://github.com/dryvist/ansible-proxmox-apps/commit/d2529da4ac18df8741b6d12f16362a62ac26533c))
+* **proxmox_backup_server:** drop the enterprise source before the first apt refresh ([#3057](https://github.com/dryvist/ansible-proxmox-apps/issues/3057)) ([daf80ac](https://github.com/dryvist/ansible-proxmox-apps/commit/daf80ac2665b03b90514154d442dd18b771d1202))
+* **proxmox_backup_server:** own the runtime directory as the service user before the services start ([#3066](https://github.com/dryvist/ansible-proxmox-apps/issues/3066)) ([e4625d3](https://github.com/dryvist/ansible-proxmox-apps/commit/e4625d3a56cd8e3c7fbeff9f961c91c41c44781c))
+* **proxmox_backup_server:** refresh apt with --error-on=any after each source change ([#3060](https://github.com/dryvist/ansible-proxmox-apps/issues/3060)) ([d6f038f](https://github.com/dryvist/ansible-proxmox-apps/commit/d6f038fe0b1b382313da1d61a8b22e3a8d226871))
+* **proxmox_backup_server:** remove enterprise repository sources by vendor host ([#3062](https://github.com/dryvist/ansible-proxmox-apps/issues/3062)) ([36af72a](https://github.com/dryvist/ansible-proxmox-apps/commit/36af72a18751052f5cbc71badf768e5eb0756372))
+* **proxmox_backup_server:** report runtime directory and unit identity when the services fail to start ([#3064](https://github.com/dryvist/ansible-proxmox-apps/issues/3064)) ([4517494](https://github.com/dryvist/ansible-proxmox-apps/commit/4517494cb2a75ebbab2b71d8b7ed236512e393b5))
+* **schedules:** move scheduled jobs off the grid ([#3058](https://github.com/dryvist/ansible-proxmox-apps/issues/3058)) ([b5c2f6c](https://github.com/dryvist/ansible-proxmox-apps/commit/b5c2f6c05c5caea8a25002be3e0c89f731127031))
+* **secrets:** drop the expected writer policy assertion from seed_generated callers ([#3067](https://github.com/dryvist/ansible-proxmox-apps/issues/3067)) ([0cdf1e2](https://github.com/dryvist/ansible-proxmox-apps/commit/0cdf1e27cbbeee2d1cab60300c1b1dd8c7613bb4))
+
 ## [5.11.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.10.0...v5.11.0) (2026-10-28)
 
 
