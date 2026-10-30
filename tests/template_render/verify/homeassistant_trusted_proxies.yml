@@ -1,0 +1,150 @@
+---
+- name: Render and verify Home Assistant trusted proxies
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    homeassistant_data_dir: "{{ render_tmp }}/homeassistant"
+    homeassistant_http_proxy_enabled: true
+    homeassistant_trusted_proxies:
+      - 192.0.2.10
+      - 192.0.2.11
+    homeassistant_test_config_path: >-
+      {{ homeassistant_data_dir }}/config/configuration.yaml
+    homeassistant_test_conflict_dir: "{{ render_tmp }}/homeassistant_conflict"
+    homeassistant_test_conflict_path: >-
+      {{ homeassistant_test_conflict_dir }}/config/configuration.yaml
+
+  tasks:
+    - name: Create the Home Assistant fixture config directory
+      ansible.builtin.file:
+        path: "{{ homeassistant_data_dir }}/config"
+        state: directory
+        mode: "0755"
+
+    - name: Seed the Home Assistant fixture configuration
+      ansible.builtin.copy:
+        dest: "{{ homeassistant_test_config_path }}"
+        content: |
+          default_config:
+        mode: "0644"
+
+    - name: Start with no Home Assistant restart notifications
+      ansible.builtin.set_fact:
+        homeassistant_test_restart_count: 0
+
+    - name: Add the trusted proxy block
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/homeassistant/tasks/http_proxy.yml"
+
+    - name: Run the notified restart handler
+      ansible.builtin.meta: flush_handlers
+
+    - name: Read the rendered Home Assistant fixture configuration
+      ansible.builtin.slurp:
+        src: "{{ homeassistant_test_config_path }}"
+      register: homeassistant_test_config
+
+    - name: Parse the rendered Home Assistant fixture configuration
+      ansible.builtin.set_fact:
+        homeassistant_test_document: >-
+          {{ homeassistant_test_config.content | b64decode | from_yaml }}
+
+    - name: Assert the managed block contains the non-empty trusted proxy list
+      ansible.builtin.assert:
+        that:
+          - homeassistant_trusted_proxies | length > 0
+          - "'# BEGIN ansible homeassistant http' in (homeassistant_test_config.content | b64decode)"
+          - "'# END ansible homeassistant http' in (homeassistant_test_config.content | b64decode)"
+          - homeassistant_test_document.http.use_x_forwarded_for
+          - homeassistant_test_document.http.trusted_proxies == homeassistant_trusted_proxies
+          - homeassistant_test_restart_count | int == 1
+
+    - name: Reconcile the unchanged Home Assistant configuration
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/homeassistant/tasks/http_proxy.yml"
+
+    - name: Flush any restart caused by the unchanged configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Assert unchanged configuration did not notify a second restart
+      ansible.builtin.assert:
+        that:
+          - homeassistant_test_restart_count | int == 1
+
+    - name: Create the conflict fixture config directory
+      ansible.builtin.file:
+        path: "{{ homeassistant_test_conflict_dir }}/config"
+        state: directory
+        mode: "0755"
+
+    - name: Seed an unmanaged top-level http section
+      ansible.builtin.copy:
+        dest: "{{ homeassistant_test_conflict_path }}"
+        content: |
+          default_config:
+          http:
+            use_x_forwarded_for: false
+        mode: "0644"
+
+    - name: Confirm an unmanaged top-level http section is refused before writing
+      block:
+        - name: Run proxy tasks against the conflicting fixture
+          ansible.builtin.include_tasks:
+            file: "{{ playbook_dir }}/../../../roles/homeassistant/tasks/http_proxy.yml"
+          vars:
+            homeassistant_data_dir: "{{ homeassistant_test_conflict_dir }}"
+
+        - name: Fail if the unmanaged http guard did not trigger
+          ansible.builtin.fail:
+            msg: HOMEASSISTANT_UNMANAGED_HTTP_GUARD_NOT_TRIGGERED
+      rescue:
+        - name: Assert the conflict failure names the file and managed block
+          ansible.builtin.assert:
+            that:
+              - >-
+                "contains a top-level http: key outside this role's managed block"
+                in (ansible_failed_result.msg | default(''))
+              - "homeassistant_test_conflict_path in (ansible_failed_result.msg | default(''))"
+
+    # Uses the conflict fixture: the empty-list assert runs before any read or
+    # write, so the fixture must still be byte-identical in the assert below.
+    - name: Confirm an empty trusted proxy list is refused before writing
+      block:
+        - name: Run proxy tasks with no trusted ingress addresses
+          ansible.builtin.include_tasks:
+            file: "{{ playbook_dir }}/../../../roles/homeassistant/tasks/http_proxy.yml"
+          vars:
+            homeassistant_data_dir: "{{ homeassistant_test_conflict_dir }}"
+            homeassistant_trusted_proxies: []
+
+        - name: Fail if the empty-list assert did not trigger
+          ansible.builtin.fail:
+            msg: HOMEASSISTANT_EMPTY_PROXY_GUARD_NOT_TRIGGERED
+      rescue:
+        - name: Assert the empty-list failure names the variable
+          ansible.builtin.assert:
+            that:
+              - >-
+                'homeassistant_trusted_proxies must include at least one Traefik'
+                in (ansible_failed_result.msg | default(''))
+
+    - name: Read the unchanged conflict fixture configuration
+      ansible.builtin.slurp:
+        src: "{{ homeassistant_test_conflict_path }}"
+      register: homeassistant_test_conflict_config
+
+    - name: Assert the conflict fixture was not modified
+      ansible.builtin.assert:
+        that:
+          - >-
+            (homeassistant_test_conflict_config.content | b64decode)
+            == "default_config:\nhttp:\n  use_x_forwarded_for: false\n"
+          - homeassistant_test_restart_count | int == 1
+
+  handlers:
+    - name: Restart homeassistant
+      ansible.builtin.set_fact:
+        homeassistant_test_restart_count: "{{ homeassistant_test_restart_count | int + 1 }}"

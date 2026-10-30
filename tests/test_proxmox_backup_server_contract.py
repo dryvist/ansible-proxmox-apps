@@ -228,6 +228,9 @@ class StatusCollector(unittest.TestCase):
         )
 
     def run_collector(self, task_json, snapshot_time=None):
+        return self.collect(task_json, snapshot_time)[0]
+
+    def collect(self, task_json, snapshot_time=None, list_rc=0):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             datastore = root / "datastore"
@@ -240,11 +243,14 @@ class StatusCollector(unittest.TestCase):
             stub_dir = root / "bin"
             stub_dir.mkdir()
             stub = stub_dir / "proxmox-backup-manager"
+            if list_rc:
+                listing = "echo 'task list rejected' >&2\nexit %d\n" % list_rc
+            else:
+                listing = "cat <<'JSON'\n" + task_json + "\nJSON\nexit 0\n"
             stub.write_text(
                 "#!/usr/bin/env bash\n"
                 'if [[ "$1" == task && "$2" == list ]]; then\n'
-                "cat <<'JSON'\n" + task_json + "\nJSON\n"
-                "exit 0\nfi\nexit 1\n"
+                + listing + "fi\nexit 1\n"
             )
             stub.chmod(0o755)
 
@@ -260,7 +266,7 @@ class StatusCollector(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = (status_dir / "pbs.status").read_text().splitlines()
-        return [line.split() for line in lines]
+        return [line.split() for line in lines], result.stderr
 
     def test_zero_snapshots_and_no_tasks_emit_fail_never_pass(self):
         rows = self.run_collector("[]")
@@ -294,6 +300,37 @@ class StatusCollector(unittest.TestCase):
         }
         self.assertEqual(by_job["snapshot-age"][0], "fail")
         self.assertGreater(int(by_job["snapshot-age"][1]), 26 * 3600)
+
+    def test_failed_task_list_is_logged_and_rows_stay_fail(self):
+        rows, stderr = self.collect("[]", list_rc=1)
+        self.assertIn("task list rejected", stderr)
+        self.assertIn("pbs-status-diag: task list failed rc=1", stderr)
+        self.assertEqual(len(rows), 4)
+        for row in rows:
+            with self.subTest(job=row[3]):
+                self.assertEqual(row[5:], ["fail", "-1"])
+
+    def test_no_matching_task_logs_the_wanted_id_and_newest_tasks(self):
+        now = int(time.time())
+        upid = "UPID:pbs:00000001:00000002:00000003:prunejob:backup:root@pam:"
+        tasks = json.dumps(
+            [
+                {
+                    "upid": upid,
+                    "worker_type": "prunejob",
+                    "worker_id": "backup",
+                    "status": "OK",
+                    "starttime": now - 3700,
+                    "endtime": now - 3600,
+                }
+            ]
+        )
+        rows, stderr = self.collect(tasks)
+        by_job = {row[3]: row[5:] for row in rows}
+        self.assertEqual(by_job["prune-pve-backups-prune"], ["fail", "-1"])
+        self.assertIn("pbs-status-diag: no task matched job=prune-pve-backups-prune", stderr)
+        self.assertIn("want_id=pve-backups-prune", stderr)
+        self.assertIn("list_rc=0 total_tasks=1 newest=[prunejob/backup/OK]", stderr)
 
 
 if __name__ == "__main__":

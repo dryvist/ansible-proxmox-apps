@@ -9,6 +9,7 @@ so a sibling writer's fields survive and a racing writer makes the write fail.
 These render the REAL expressions and templates, never a reimplementation.
 """
 
+import json
 from pathlib import Path
 
 import jinja2
@@ -291,19 +292,16 @@ def _write_task() -> dict:
 
     task = walk(_yaml(PUBLISH))
     assert task, "write task not found"
-    return task["community.hashi_vault.vault_write"]["data"]
+    return task["ansible.builtin.uri"]["body"]
 
 
 def _payload(existing: dict, effective: dict) -> dict:
-    data = _write_task()
     variables = {
         "openbao_secrets_publish_existing": existing,
         "openbao_secrets_publish_effective": effective,
     }
-    return {
-        "cas": _render(data["options"]["cas"], variables),
-        "data": _render(data["data"], variables),
-    }
+    body = json.loads(_render(_write_task(), variables))
+    return {"cas": body["options"]["cas"], "data": body["data"]}
 
 
 def test_the_write_preserves_every_sibling_field():
