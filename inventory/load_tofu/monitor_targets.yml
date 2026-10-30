@@ -14,6 +14,15 @@
 # DNS query checks are out of scope: no existing Gatus/Prometheus DNS-check
 # pattern exists in this repo to reuse.
 
+- name: Validate the published Hindsight desired state
+  ansible.builtin.assert:
+    that:
+      - _service_state is mapping
+      - "'hindsight_enabled' not in _service_state or _service_state.hindsight_enabled is boolean"
+    fail_msg: The published Hindsight desired state must be Boolean when present.
+  vars:
+    _service_state: "{{ (tofu_data | default({})).get('constants', {}).get('service_state', {}) }}"
+
 - name: Declare monitor-target constants (product-fixed ports/paths, not tofu-managed)
   ansible.builtin.set_fact:
     monitor_targets_node_exporter_port: 9100
@@ -156,7 +165,9 @@
   loop: "{{ monitor_targets_guests | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
-  when: "'hindsight' in (item.value.tags | default([]))"
+  when:
+    - "'hindsight' in (item.value.tags | default([]))"
+    - (tofu_data.constants.get('service_state', {}).get('hindsight_enabled', true)) is not sameas false
 
 - name: Assemble the monitor_targets fact
   ansible.builtin.set_fact:
