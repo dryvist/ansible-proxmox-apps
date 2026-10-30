@@ -4,6 +4,35 @@
 # S2S metrics input keeps its VictoriaMetrics leg and conditionally adds the
 # Prometheus receiver; Splunk already receives these events directly from Edge.
 
+- name: Render inputs with the default Mac Edge pack gate
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/inputs.yml.j2"
+    dest: "{{ _fixture_dir }}/test_cribl_stream_inputs_macos_fanout_default.yml"
+    mode: "0644"
+  vars:
+    cribl_stream_macos_fanout_enabled: "{{ _cribl_stream_defaults.cribl_stream_macos_fanout_enabled }}"
+
+- name: Assert the Mac Edge fan-out pack is disabled by its role default
+  vars:
+    _default_macos_fanout_inputs_text: >-
+      {{ lookup('file', _fixture_dir ~ '/test_cribl_stream_inputs_macos_fanout_default.yml') }}
+    _default_macos_fanout_inputs: "{{ _default_macos_fanout_inputs_text | from_yaml }}"
+    _default_macos_s2s_connections: >-
+      {{ _default_macos_fanout_inputs.inputs['tcpjson:in_cribl_s2s'].connections }}
+  ansible.builtin.assert:
+    that:
+      - _cribl_stream_defaults.cribl_stream_macos_fanout_enabled is false
+      - >-
+        (_default_macos_s2s_connections
+        | selectattr('pipeline', 'equalto', 'pack:cc-stream-macos-fanout-io')
+        | list | length) == 0
+      - >-
+        _default_macos_fanout_inputs_text.count('output: victoriametrics_rw')
+        == _cribl_stream_inputs.count('output: victoriametrics_rw') - 1
+    fail_msg: >-
+      The Mac Edge fan-out pack must remain absent until it is installed,
+      leaving one fewer victoriametrics_rw connection in the default render.
+
 - name: Assert the S2S metrics input keeps both metric-store legs
   ansible.builtin.assert:
     that:
