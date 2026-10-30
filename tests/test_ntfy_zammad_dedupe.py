@@ -30,13 +30,23 @@ class FakeZammad:
 
     def call(self, _base, _token, path, payload=None, method=None):
         self.calls.append((method, path, payload))
+        payload = payload or {}
         if path.startswith("tickets/search?"):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)["query"][0]
+            repeat = self.bridge.ntfy_zammad_repeat
             return [
-                {"id": ticket["id"], "number": ticket["number"], "title": ticket["title"]}
+                {
+                    "id": ticket["id"],
+                    "number": ticket["number"],
+                    "title": ticket["title"],
+                    "state": ticket["state"],
+                    "close_at": ticket.get("close_at"),
+                }
                 for ticket in self.tickets.values()
-                if ticket["state"] in self.bridge.ntfy_zammad_repeat.OPEN_STATES
-                and query == self.bridge.ntfy_zammad_repeat.build_search_query(ticket["key"])
+                if ticket["state"] in repeat.ACTIVE_STATES + repeat.CLOSED_STATES
+                and query == repeat.build_search_query(ticket["key"], (
+                    repeat.CLOSED_STATES if ticket["state"] == "closed" else repeat.ACTIVE_STATES
+                ))
             ]
         if path == "users/me":
             return {"id": 1}
@@ -50,6 +60,7 @@ class FakeZammad:
                 "title": title,
                 "key": key,
                 "state": payload["state"],
+                "close_at": None,
                 "articles": [payload["article"]],
                 "tags": [],
             }
@@ -68,8 +79,13 @@ class FakeZammad:
             ticket_id = int(path.split("/", 1)[1])
             ticket = self.tickets[ticket_id]
             if method == "PUT":
-                ticket["articles"].append(payload["article"])
-                ticket["state"] = payload.get("state", ticket["state"])
+                if "article" in payload:
+                    ticket["articles"].append(payload["article"])
+                if "state" in payload:
+                    ticket["state"] = payload["state"]
+                    ticket["close_at"] = (
+                        self.bridge.time.time() if payload["state"] == "closed" else None
+                    )
                 return {"id": ticket_id}
             return {"id": ticket_id, "number": ticket["number"]}
         raise AssertionError("unexpected Zammad call: %s %s" % (method, path))
@@ -115,6 +131,37 @@ class NtfyZammadDedupe(unittest.TestCase):
         self.assertIn(self.nz.MANAGED_TAG, ticket["tags"])
         self.assertIn("worker probe failed", ticket["articles"][0]["body"])
         self.assertIn("Priority: 4", ticket["articles"][0]["body"])
+
+    def test_names_that_differ_by_an_identifier_stay_distinct(self):
+        for first, other in (
+            ("Disk 1 failed — smart error", "Disk 2 failed — smart error"),
+            ("Service deadbeef down — probe", "Service cafe1234 down — probe"),
+            ("Backup job failed — x", "Backup job succeeded — x"),
+        ):
+            self.assertNotEqual(
+                self.nz.ntfy_zammad_repeat.correlation_key("status", first),
+                self.nz.ntfy_zammad_repeat.correlation_key("status", other),
+            )
+
+    def test_stable_alert_key_ignores_the_detail_after_the_separator(self):
+        first = "Gatus: API slow — 12 checks failed run-456"
+        repeat = "Gatus: API slow — 19 checks failed run_id=789"
+        self.assertEqual(
+            self.nz.ntfy_zammad_repeat.correlation_key("status", first),
+            self.nz.ntfy_zammad_repeat.correlation_key("status", repeat),
+        )
+        self.send(dict(self.msg, title=first), at=1000)
+        self.send(dict(self.msg, title=repeat), at=5000)
+        self.assertEqual(len(self.client.tickets), 1)
+        self.assertEqual(len(self.open_ticket()["articles"]), 2)
+
+    def test_different_alert_name_does_not_match(self):
+        self.send(dict(self.msg, title="Gatus: API slow — 3 checks failed"), at=1000)
+        self.send(dict(self.msg, title="Gatus: Database down — connection refused"), at=1001)
+        self.assertEqual(len(self.client.tickets), 2)
+        self.assertNotEqual(
+            self.client.tickets[1]["key"], self.client.tickets[2]["key"]
+        )
 
     def test_repeat_within_interval_is_suppressed_and_persisted(self):
         self.send(at=1000)
@@ -176,6 +223,38 @@ class NtfyZammadDedupe(unittest.TestCase):
         self.assertEqual(ticket["state"], "closed")
         self.assertEqual(len(ticket["articles"]), 2)
         self.assertIn("worker recovered", ticket["articles"][-1]["body"])
+
+    def test_recent_closed_managed_ticket_reopens_with_one_internal_note(self):
+        self.send(at=1000)
+        recovered = dict(self.msg, message="worker recovered", tags=["resolved"])
+        self.send(recovered, at=1100)
+        self.send(dict(self.msg, message="worker failed again"), at=1200)
+
+        ticket = self.open_ticket()
+        self.assertEqual(len(self.client.tickets), 1)
+        self.assertEqual(ticket["state"], "reopened")
+        self.assertEqual(ticket["close_at"], None)
+        self.assertEqual(len(ticket["articles"]), 3)
+        self.assertIn("worker failed again", ticket["articles"][-1]["body"])
+        self.assertEqual(ticket["articles"][-1]["type"], "note")
+        self.assertTrue(ticket["articles"][-1]["internal"])
+        reopen_payloads = [
+            payload
+            for method, path, payload in self.client.calls
+            if method == "PUT" and path == "tickets/1" and payload.get("state") == "reopened"
+        ]
+        self.assertEqual(len(reopen_payloads), 1)
+        self.assertEqual(set(reopen_payloads[0]), {"state", "article"})
+
+    def test_firing_after_25_hour_closure_creates_new_ticket(self):
+        self.send(at=1000)
+        recovered = dict(self.msg, message="worker recovered", tags=["resolved"])
+        self.send(recovered, at=1100)
+        self.send(dict(self.msg, message="worker failed again"), at=1100 + 25 * 60 * 60)
+
+        self.assertEqual(len(self.client.tickets), 2)
+        self.assertEqual(self.client.tickets[1]["state"], "closed")
+        self.assertEqual(self.client.tickets[2]["state"], "new")
 
     def test_recovery_does_not_close_ticket_without_bridge_marker(self):
         key = self.nz.ntfy_zammad_repeat.correlation_key(self.msg["topic"], self.msg["title"])
