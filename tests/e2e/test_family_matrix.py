@@ -49,6 +49,9 @@ SYSLOG_FAMILIES_NOT_LIVE = {
 # before anyone removed the gate, and leaving it here meant the matrix stayed
 # silent through a four-hour outage of the audit trail.
 AI_SOURCES_NOT_LIVE: set[str] = set()
+# AI sources whose events the ai_stamp pipeline drops on purpose, so no
+# sentinel can land (raw session files stay out of Splunk; OTLP is separate).
+AI_SOURCES_DROPPED = {"claude_code"}
 # UDP-only families (datagram senders relayed by Nginx, not HAProxy TCP).
 UDP_FAMILIES = {"macos"}
 # rsyslog-fed AI sources: syslog-type Stream inputs — send RFC3164, not JSON.
@@ -121,6 +124,8 @@ class TestAiFamilyMatrix:
     ):
         if key in AI_SOURCES_NOT_LIVE:
             pytest.skip(f"{key}: ingest path not converged yet (see skip list)")
+        if key in AI_SOURCES_DROPPED:
+            pytest.skip(f"{key}: dropped by the ai_stamp pipeline by design")
 
         mgmt_url, user, password = splunk_creds
         sentinel = _sentinel(key)
