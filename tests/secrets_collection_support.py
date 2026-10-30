@@ -1,30 +1,36 @@
-"""Roles of the dryvist.secrets_management collection.
+"""Roles and catalogs of the dryvist collections that the contract tests read.
 
-The OpenBao and Authelia roles live in that collection, not in this repository.
-Contract tests read their sources from SECRETS_ROLES, the roles directory of the
-installed collection. Run `python3 scripts/install_galaxy_requirements.py`
-before running pytest.
+The OpenBao and Authelia roles live in dryvist.secrets_management, and the
+resource-domain reader role lives in dryvist.homelab. Contract tests read their
+sources from the installed collections. Run
+`python3 scripts/install_galaxy_requirements.py` before running pytest.
 """
 
 from pathlib import Path
 
 from ansible import constants as C
 
-COLLECTION_ROLES = Path("ansible_collections", "dryvist", "secrets_management", "roles")
+COLLECTION_ROOT = Path("ansible_collections", "dryvist")
 
 
-def _installed_roles_dir() -> Path:
+def _installed_collection(name: str) -> Path:
     for entry in C.COLLECTIONS_PATHS:
-        candidate = Path(entry).expanduser() / COLLECTION_ROLES
+        candidate = Path(entry).expanduser() / COLLECTION_ROOT / name
         if candidate.is_dir():
             return candidate
     raise RuntimeError(
-        "dryvist.secrets_management is not installed; "
+        f"dryvist.{name} is not installed; "
         "run `python3 scripts/install_galaxy_requirements.py` first"
     )
 
 
-SECRETS_ROLES = _installed_roles_dir()
+SECRETS_COLLECTION = _installed_collection("secrets_management")
+SECRETS_ROLES = SECRETS_COLLECTION / "roles"
+# The OpenBao resource-domain catalog: each domain and its KV paths.
+SECRETS_DOMAIN_CATALOG = (
+    SECRETS_COLLECTION / "playbooks" / "group_vars" / "all" / "openbao_secrets.yml"
+)
+HOMELAB_ROLES = _installed_collection("homelab") / "roles"
 
 
 def read_secrets_role(rel: str) -> str:

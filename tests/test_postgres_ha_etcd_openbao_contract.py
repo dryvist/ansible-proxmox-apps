@@ -187,7 +187,7 @@ def test_patroni_pki_tls_tasks_log_in_and_revoke():
     """Each PKI task file logs in once and revokes in an always:.
 
     "One login per play section, not per task" -- roles/object_storage's
-    offsite/iam tasks and dryvist.secrets_management/roles/openbao_secrets/tasks/publish.yml establish
+    offsite/iam tasks and dryvist.homelab.openbao_secrets/tasks/publish.yml establish
     this shape (vault_login -> block of work -> always: vault_write revoke
     auth/token/revoke-self).
     """

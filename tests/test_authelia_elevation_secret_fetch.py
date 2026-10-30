@@ -27,7 +27,7 @@ def test_authelia_fetches_elevation_secret_from_dedicated_required_path():
     domain = fetch["vars"]["openbao_secrets_domains"][0]
 
     assert fetch["ansible.builtin.include_role"]["name"] == (
-        "dryvist.secrets_management.openbao_secrets"
+        "dryvist.homelab.openbao_secrets"
     )
     assert domain["name"] == "apps"
     assert domain["paths"] == ["core/client"]
