@@ -55,9 +55,11 @@ else
   fi
 fi
 
-if task_json=$(proxmox-backup-manager task list --all true --limit 1000 --output-format json 2>/dev/null); then
-  :
+if task_json=$(proxmox-backup-manager task list --all true --limit 1000 --output-format json); then
+  task_list_rc=0
 else
+  task_list_rc=$?
+  printf 'pbs-status-diag: task list failed rc=%s\n' "$task_list_rc" >&2
   task_json='[]'
 fi
 
@@ -77,6 +79,7 @@ import sys
 
 worker_types = set(sys.argv[1].split(","))
 expected_id, now = sys.argv[2], int(sys.argv[3])
+label, list_rc = sys.argv[4], sys.argv[5]
 rows = json.load(sys.stdin)
 if isinstance(rows, dict):
     rows = rows.get("data", [])
@@ -84,11 +87,18 @@ if isinstance(rows, dict):
 def upid_hex(parts, index):
     return int(parts[index], 16) if len(parts) > index and parts[index] else 0
 
-matches = []
-for row in rows:
+def identify(row):
     parts = str(row.get("upid", "")).split(":")
     worker_type = str(row.get("worker_type") or (parts[5] if len(parts) > 5 else ""))
     worker_id = str(row.get("worker_id") or (parts[6] if len(parts) > 6 else ""))
+    return parts, worker_type, worker_id
+
+def task_time(row):
+    return max(int(row.get("starttime") or 0), int(row.get("endtime") or 0))
+
+matches = []
+for row in rows:
+    parts, worker_type, worker_id = identify(row)
     if worker_type not in worker_types or worker_id != expected_id:
         continue
     start = int(row.get("starttime") or 0) or upid_hex(parts, 4)
@@ -96,6 +106,12 @@ for row in rows:
     matches.append((max(start, end), end or start, str(row.get("status") or "")))
 
 if not matches:
+    newest = []
+    for row in sorted(rows, key=task_time, reverse=True)[:5]:
+        _, worker_type, worker_id = identify(row)
+        newest.append("%s/%s/%s" % (worker_type, worker_id, row.get("status") or ""))
+    print("pbs-status-diag: no task matched job=%s want_id=%s want_types=%s list_rc=%s total_tasks=%d newest=[%s]"
+          % (label, expected_id, sys.argv[1], list_rc, len(rows), ";".join(newest)), file=sys.stderr)
     print("fail -1")
     raise SystemExit(0)
 
@@ -103,7 +119,7 @@ _, finished, status = max(matches, key=lambda item: item[0])
 outcome = "ok" if status == "OK" else "fail"
 age = max(0, now - finished) if finished else -1
 print(outcome, age)
-' "$worker_types" "$worker_id" "$now" <<< "$task_json"); then
+' "$worker_types" "$worker_id" "$now" "$label" "$task_list_rc" <<< "$task_json"); then
     read -r outcome age_seconds <<< "$result"
   else
     outcome=fail
