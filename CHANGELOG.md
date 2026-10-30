@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.12.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.1...v5.12.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **cribl:** scan only the owned pack orgs by default ([#3080](https://github.com/dryvist/ansible-proxmox-apps/issues/3080)) ([1ed5c01](https://github.com/dryvist/ansible-proxmox-apps/commit/1ed5c016afbccfceec699b778b3242151609307e))
+* **homeassistant:** trust the Traefik ingress as a reverse proxy ([#3081](https://github.com/dryvist/ansible-proxmox-apps/issues/3081)) ([d4e3d3d](https://github.com/dryvist/ansible-proxmox-apps/commit/d4e3d3d21939abc181a27b6eb96fa6d5001eb301))
+* **proxmox_backup_server:** log why a status row found no task ([#3079](https://github.com/dryvist/ansible-proxmox-apps/issues/3079)) ([7d600bf](https://github.com/dryvist/ansible-proxmox-apps/commit/7d600bfac81cd12dd16d788b89626513b7d371ea))
+* **proxmox_backup_server:** match the prune task by datastore name ([#3085](https://github.com/dryvist/ansible-proxmox-apps/issues/3085)) ([e6b0a0f](https://github.com/dryvist/ansible-proxmox-apps/commit/e6b0a0f021ffb4a2dd6c1404b82579377a5cd950))
+
 ## [5.12.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.0...v5.12.1) (2026-10-30)
 
 
