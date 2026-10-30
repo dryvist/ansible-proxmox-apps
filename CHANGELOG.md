@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.12.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.2...v5.12.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **apt_cacher_ng:** allow pytorch.org HTTPS tunnels ([#3089](https://github.com/dryvist/ansible-proxmox-apps/issues/3089)) ([3d1d93c](https://github.com/dryvist/ansible-proxmox-apps/commit/3d1d93c915425bf78b28e83893d159f0bc2dadcd))
+* **ntfy_docker:** key alert tickets on the alert name and reopen recent ones ([#3091](https://github.com/dryvist/ansible-proxmox-apps/issues/3091)) ([811317c](https://github.com/dryvist/ansible-proxmox-apps/commit/811317c2bdb30560753061cc6d6332ee2985a6c9))
+* **pbs_group:** read PBS task logs from two-character directories only ([#3086](https://github.com/dryvist/ansible-proxmox-apps/issues/3086)) ([77bac5e](https://github.com/dryvist/ansible-proxmox-apps/commit/77bac5e6d4d7dc5fc9a514e3380410caed7f0a13))
+
 ## [5.12.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.1...v5.12.2) (2026-10-30)
 
 
