@@ -30,32 +30,75 @@
           | list) }}
   register: grafana_stack_directories
 
-# Same decide/persist pattern as the homarr role: an inventory-supplied value
-# wins, else the previously persisted one, else generate. Grafana honors the
-# file only at first init, so regeneration on a fresh guest is the only time
-# the value actually changes.
-- name: Read any persisted admin password
+# OpenBao owns the admin password. The existing file is only used to seed a
+# missing KV field; once stored, a differing file is an error.
+- name: Check for the persisted admin password
+  ansible.builtin.stat:
+    path: "{{ grafana_stack_admin_password_file }}"
+  register: grafana_stack_admin_pw_stat
+
+- name: Read the persisted admin password
   ansible.builtin.slurp:
     src: "{{ grafana_stack_admin_password_file }}"
   register: grafana_stack_admin_pw_stored
-  failed_when: false
+  when: grafana_stack_admin_pw_stat.stat.exists
   no_log: true
 
-- name: Decide the admin password to converge on
+# The writes run on the controller: the writer token must never reach the guest.
+- name: Seed Grafana's admin password in OpenBao
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+  block:
+    - name: Seed the Grafana admin password through the shared seed_generated task
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        openbao_secrets_seed_path: apps/grafana
+        openbao_secrets_seed_fields:
+          - name: grafana_admin_password
+            length: 40
+            value: >-
+              {{ grafana_stack_admin_password
+                 or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_local_values:
+          grafana_admin_password: >-
+            {{ grafana_stack_admin_password
+               or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_register: grafana_stack_admin_seed
+
+- name: Resolve Grafana's admin password from OpenBao
   ansible.builtin.set_fact:
-    grafana_stack_effective_admin_password: >-
-      {{ grafana_stack_admin_password
-         or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim)
-         or lookup('community.general.random_string', length=40, special=false) }}
+    grafana_stack_effective_admin_password: "{{ grafana_stack_admin_seed.grafana_admin_password }}"
   no_log: true
 
-- name: Persist the admin password for first init and the next converge
+- name: Require the persisted password to match OpenBao
+  ansible.builtin.assert:
+    that:
+      - >-
+        not grafana_stack_admin_pw_stat.stat.exists
+        or (grafana_stack_admin_pw_stored.content | b64decode | trim)
+           == grafana_stack_effective_admin_password
+    fail_msg: "Grafana password file differs from the stored field grafana_admin_password"
+  when:
+    - grafana_stack_admin_seed.grafana_admin_password != '(placeholder in check mode)'
+  no_log: true
+
+- name: Persist Grafana's admin password
   ansible.builtin.copy:
     content: "{{ grafana_stack_effective_admin_password }}\n"
     dest: "{{ grafana_stack_admin_password_file }}"
     owner: "{{ grafana_stack_grafana_uid }}"
     group: root
     mode: "0400"
+  when:
+    - grafana_stack_admin_seed.grafana_admin_password != '(placeholder in check mode)'
   no_log: true
 
 - name: Persist the Cribl HEC credential for Grafana's webhook integration

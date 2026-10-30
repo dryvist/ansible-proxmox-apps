@@ -121,6 +121,11 @@ inputs:
 {% endif %}
       - output: victoriametrics_rw
         pipeline: "pack:cc-stream-apple-mlx-metrics"
+      # Fan out Mac Edge events to derived metrics on both metric stores.
+      - output: splunk_hec
+        pipeline: "pack:cc-stream-macos-fanout-io"
+      - output: victoriametrics_rw
+        pipeline: "pack:cc-stream-macos-fanout-io"
 {% if cribl_stream_clickhouse_url | default('') | length > 0 %}
       # zcode sessions arrive from the agent sandbox over this S2S hop. The
       # ClickHouse copy keeps only zcode:cli events; the Splunk connections above
@@ -251,74 +256,7 @@ inputs:
 {% endif %}
       - output: victoriametrics_rw
     pqEnabled: {{ cribl_stream_pq_enabled | lower }}
-  # OTLP traces, logs, and metrics, fronted by the otel Traefik ingress on 443
-  # (TLS terminated at Traefik; this listens plain HTTP). Claude Code and any
-  # other OTLP/HTTP producer POST /v1/traces here. Spans go to Langfuse and
-  # Phoenix; logs and metrics use their own Splunk/VictoriaMetrics legs.
-  open_telemetry:in_otel:
-    id: in_otel
-    type: open_telemetry
-    disabled: false
-    host: "0.0.0.0"
-    port: {{ cribl_stream_otel_port }}
-    protocol: http
-    # Must match the destination's OTLP version: the input's default (0.10.0)
-    # decodes into instrumentation_library_* field names that a 1.3.1
-    # destination cannot re-serialize ("Event had no scope_spans"), silently
-    # dropping every span.
-    otlpVersion: "1.3.1"
-    # Spans must be extracted into first-class span events: with extraction off
-    # the OTel destination cannot re-serialize the wrapped payload and drops
-    # every event ("Event had no scope_metrics or __criblMetrics").
-    extractSpans: true
-    # Extract OTel metrics into first-class metric events so the metric-only
-    # pipelines below can forward them to both VictoriaMetrics and Splunk.
-    extractMetrics: true
-    # Log records become first-class events too: the api_request event is the
-    # only per-request token record the producers emit. Each leg below filters
-    # to its own signal, so turning this on adds nothing to the trace legs.
-    extractLogs: true
-    pipeline: ansi_csi_strip
-    sendToRoutes: false
-    connections:
-      # Trace destination: the otel_traces pipeline drops every non-trace
-      # signal before Langfuse, which ingests traces only.
-      - output: langfuse_otlp
-        pipeline: otel_traces
-      # Second trace sink: Arize Phoenix runs the same
-      # drops and redaction as the Langfuse leg without its langfuse.*
-      # identity rewrites, because Phoenix reads the emitted GenAI and
-      # OpenInference attributes as they arrive.
-      - output: phoenix_otlp
-        pipeline: otel_traces_phoenix
-{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
-      - output: splunk_hec_otel_traces
-        pipeline: otel_traces_to_splunk
-{% else %}
-      - output: splunk_hec
-        pipeline: otel_traces_to_splunk
-{% endif %}
-      # OTLP log records only, stamped for the ai_usage index.
-{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
-      - output: splunk_hec_ai_usage
-        pipeline: otel_logs
-{% else %}
-      - output: splunk_hec
-        pipeline: otel_logs
-{% endif %}
-      # Extracted OTel metrics stay native metric events.
-      # Splunk gets the llm_metrics metric index; VictoriaMetrics receives
-      # OTLP and applies its configured Prometheus name conversion.
-{% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
-      - output: splunk_hec_llm
-        pipeline: otel_metrics_to_splunk
-{% else %}
-      - output: splunk_hec
-        pipeline: otel_metrics_to_splunk
-{% endif %}
-      - output: victoriametrics_otlp
-        pipeline: otel_metrics_to_victoriametrics
-    pqEnabled: {{ cribl_stream_pq_enabled | lower }}
+{% include "inputs/open_telemetry.yml.j2" %}{{ '\n' }}{# Jinja strips the included file's final newline #}
   # Cribl's own built-in internal source (fixed ids CriblLogs/CriblMetrics —
   # cannot be renamed or duplicated). The internal telemetry pack routes logs
   # to cribl_internal and metrics to host_metrics in Splunk.

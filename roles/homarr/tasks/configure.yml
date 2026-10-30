@@ -1,31 +1,70 @@
 ---
 # Own the runtime environment file the borrowed installer wrote once.
 
-- name: Read the existing environment file
-  ansible.builtin.slurp:
-    src: "{{ homarr_env_file }}"
-  register: homarr_env_existing
-  failed_when: false
+# The encryption key decrypts every integrationSecret row. Seed the existing
+# key into OpenBao only when the field is absent; never replace a stored value.
+# Existing means the pre-install snapshot: the installer writes a fresh random
+# key into a new guest, and that key is never imported or compared.
+- name: Extract the existing Homarr encryption key
+  ansible.builtin.set_fact:
+    homarr_existing_encryption_key: >-
+      {{ homarr_env_preinstall.content | default('') | b64decode
+         | regex_search("SECRET_ENCRYPTION_KEY='([^']+)'", '\1')
+         | default([], true)
+         | first | default('', true) }}
   no_log: true
 
-# The encryption key is DATA, not a credential. It decrypts every row in
-# `integrationSecret` (AES-256-CBC), so a fresh one does not invalidate those
-# rows — it makes them permanently undecryptable, and the only symptom is every
-# integration failing at once with no obvious cause. OpenBao comes first: every
-# converge publishes the key in use, so the stored copy is the one the database
-# was written with. The on-disk file is NOT safe to trust first: when a
-# homarr_cs_tag bump re-runs the borrowed installer, it rewrites this file with
-# a fresh random key before this task runs. Mint only when neither exists.
-- name: Determine the effective encryption key
+# The writes run on the controller: the writer token must never reach the guest.
+- name: Seed Homarr's encryption key in OpenBao
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+  block:
+    - name: Seed the Homarr encryption key through the shared seed_generated task
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        openbao_secrets_seed_path: "apps/{{ homarr_instance }}"
+        openbao_secrets_seed_fields:
+          - name: "{{ homarr_secret_prefix }}_encryption_key"
+            length: 64
+            charset: lower
+            value: "{{ homarr_encryption_key or homarr_existing_encryption_key }}"
+        openbao_secrets_seed_local_values: >-
+          {{ {homarr_secret_prefix ~ '_encryption_key':
+               (homarr_encryption_key or homarr_existing_encryption_key)} }}
+        openbao_secrets_seed_register: homarr_encryption_seed
+
+- name: Resolve Homarr's encryption key from OpenBao
   ansible.builtin.set_fact:
     homarr_effective_encryption_key: >-
-      {{ homarr_encryption_key
-         or (homarr_env_existing.content | default('') | b64decode
-             | regex_search("SECRET_ENCRYPTION_KEY='([^']+)'", '\1')
-             | first | default('', true))
-         or (lookup('community.general.random_string',
-                    length=64, upper=false, special=false, numbers=true)
-             | lower) }}
+      {{ homarr_encryption_seed[homarr_secret_prefix ~ '_encryption_key']
+         | default(homarr_encryption_key or homarr_existing_encryption_key, true) }}
+  no_log: true
+
+- name: Require the existing Homarr encryption key to match OpenBao
+  ansible.builtin.assert:
+    that:
+      - homarr_existing_encryption_key == homarr_effective_encryption_key
+    fail_msg: >-
+      Homarr environment file differs from the stored field
+      {{ homarr_secret_prefix }}_encryption_key
+  when:
+    - homarr_encryption_seed[homarr_secret_prefix ~ '_encryption_key'] != '(placeholder in check mode)'
+    - homarr_existing_encryption_key | length > 0
+  no_log: true
+
+- name: Require a Homarr encryption key
+  ansible.builtin.assert:
+    that:
+      - homarr_effective_encryption_key | length > 0
+    fail_msg: "Homarr encryption key is empty"
   no_log: true
 
 - name: Deploy the Homarr environment file
@@ -41,14 +80,3 @@
 # The API calls that follow must not race a restarting service.
 - name: Apply any environment change before touching the API
   ansible.builtin.meta: flush_handlers
-
-- name: Publish the Homarr encryption key to OpenBao
-  ansible.builtin.include_role:
-    name: dryvist.secrets_management.openbao_secrets
-    tasks_from: publish.yml
-  vars:
-    openbao_secrets_publish_app: "{{ homarr_instance }}"
-    openbao_secrets_publish_reason: (integration secret encryption key)
-    openbao_secrets_publish_data: >-
-      {{ {homarr_secret_prefix ~ '_encryption_key': homarr_effective_encryption_key} }}
-  when: homarr_publish_credentials | bool

@@ -42,7 +42,7 @@ class CriblSpanRoutingContract(unittest.TestCase):
         )
 
     def test_otel_spans_have_a_bounded_splunk_hec_route(self):
-        inputs = (ROLE / "templates" / "inputs.yml.j2").read_text()
+        inputs = (ROLE / "templates" / "inputs" / "open_telemetry.yml.j2").read_text()
         self.assertIn(
             "- output: splunk_hec_otel_traces\n        pipeline: otel_traces_to_splunk",
             inputs,
@@ -113,7 +113,7 @@ class CriblSpanRoutingContract(unittest.TestCase):
         ).read_text()
         self.assertIn(f'filter: "{SPLUNK_DROP_UNBOUNDED_SPANS}"', redaction)
 
-        inputs = (ROLE / "templates" / "inputs.yml.j2").read_text()
+        inputs = (ROLE / "templates" / "inputs" / "open_telemetry.yml.j2").read_text()
         trace_connections = _section(
             inputs, "      # Trace destination", "      # OTLP log records"
         )

@@ -43,13 +43,17 @@
   ansible.builtin.include_tasks: datastore_mount.yml
   when: proxmox_backup_server_datastore_device | default('') | length == 0
 
+# The refresh removes the enterprise sources first; package install may recreate them.
+- name: Refresh the apt package cache before the prerequisites
+  ansible.builtin.import_tasks: apt_refresh.yml
+
 - name: Install apt transport prerequisites
   ansible.builtin.apt:
     name:
       - ca-certificates
       - gnupg
     state: present
-    update_cache: true
+    update_cache: false
 
 - name: Create keyrings directory
   ansible.builtin.file:
@@ -72,24 +76,49 @@
       {{ proxmox_backup_server_repo_component }}
     state: present
     filename: proxmox-backup-server
+    update_cache: false
+
+- name: Refresh the apt package cache after the repository change
+  ansible.builtin.import_tasks: apt_refresh.yml
 
 # Under --check a first install only previews, so the service steps below skip.
 - name: Install Proxmox Backup Server
   ansible.builtin.apt:
     name: proxmox-backup-server
     state: present
-    update_cache: true
+    update_cache: false
   register: proxmox_backup_server_package_install
 
-# The package ships /etc/apt/sources.list.d/pbs-enterprise.list ENABLED as one
-# of its own conffiles. Without a subscription that repository answers 401, and
-# every subsequent `apt update` on the host fails outright — including the next
-# converge. Removing it is part of installing the community build, not an
-# optional tidy-up.
+# The package ships its enterprise repository ENABLED as one of its own
+# conffiles. Without a subscription that repository fails every subsequent
+# `apt update` on the host, including the next converge. Removing it is part of
+# installing the community build, not an optional tidy-up.
 - name: Remove the vendor-shipped enterprise repository
+  ansible.builtin.import_tasks: remove_enterprise_sources.yml
+
+# The proxy runs as the backup user and writes its pid file under this
+# directory, but any root process that touches it first (a persistent timer
+# catching up at boot) creates it root-owned and the proxy then fails with
+# EACCES. tmpfiles fixes it before any service starts; the file task fixes the
+# running system.
+- name: Declare the Proxmox Backup Server runtime directory at boot
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/proxmox-backup-run.conf
+    content: >-
+      d /run/proxmox-backup 0755
+      {{ proxmox_backup_server_user }} {{ proxmox_backup_server_group }} -
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Own the Proxmox Backup Server runtime directory now
   ansible.builtin.file:
-    path: /etc/apt/sources.list.d/pbs-enterprise.list
-    state: absent
+    path: /run/proxmox-backup
+    state: directory
+    owner: "{{ proxmox_backup_server_user }}"
+    group: "{{ proxmox_backup_server_group }}"
+    mode: "0755"
+  when: not (ansible_check_mode and proxmox_backup_server_package_install is changed)
 
 # Wrapped in block/rescue purely for diagnosability: a failed control
 # process gives Ansible/systemd's own error, never the journal line that
@@ -118,6 +147,27 @@
     - name: Show the journal
       ansible.builtin.debug:
         var: proxmox_backup_server_journal.results
+
+    # The proxy writes its pid file under the runtime directory as the backup
+    # user; the journal reports only EACCES, not who owns that directory.
+    - name: Capture the runtime directory and the unit identity
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [stat, --format, "%U:%G %a %n", /run/proxmox-backup]
+        - [id, "{{ proxmox_backup_server_user }}"]
+        - - systemctl
+          - show
+          - proxmox-backup.service
+          - proxmox-backup-proxy.service
+          - --property=User,Group,RuntimeDirectory,PIDFile,ExecStartPre
+      changed_when: false
+      failed_when: false
+      register: proxmox_backup_server_rundir
+
+    - name: Show the runtime directory and the unit identity
+      ansible.builtin.debug:
+        msg: "{{ proxmox_backup_server_rundir.results | map(attribute='stdout_lines') | list }}"
 
     - name: Re-raise the original failure
       ansible.builtin.fail:

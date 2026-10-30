@@ -48,7 +48,10 @@ BASE_VARS = {
 
 def _render_inputs(hec_namespace: str = "") -> dict:
     variables = {**BASE_VARS, "cribl_stream_hec_namespace": hec_namespace}
-    templar = Templar(loader=DataLoader())
+    loader = DataLoader()
+    # inputs.yml.j2 includes inputs/open_telemetry.yml.j2 from its own directory.
+    loader.set_basedir(str(INPUTS_TEMPLATE.parent))
+    templar = Templar(loader=loader)
     templar.available_variables = variables
     rendered = templar.template(
         trust_as_template(INPUTS_TEMPLATE.read_text(encoding="utf-8"))
