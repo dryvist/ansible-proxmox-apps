@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.12.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.0...v5.12.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **cribl_packs:** mirror the packs published under the JacobPEvans org ([#3074](https://github.com/dryvist/ansible-proxmox-apps/issues/3074)) ([1f15a57](https://github.com/dryvist/ansible-proxmox-apps/commit/1f15a5735a72e78de395a5fe2b2283374a7941f8))
+* **cribl_stream:** gate the Mac Edge fan-out pack connections behind a flag ([#3075](https://github.com/dryvist/ansible-proxmox-apps/issues/3075)) ([b714851](https://github.com/dryvist/ansible-proxmox-apps/commit/b7148516dc6374ed496197becf1c56a65d21de1c))
+* **pbs:** give the status timer delay in seconds ([#3059](https://github.com/dryvist/ansible-proxmox-apps/issues/3059)) ([e5df6c4](https://github.com/dryvist/ansible-proxmox-apps/commit/e5df6c4009a2bc9683f937eb6cdd771520c7ca84))
+
 ## [5.12.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.11.0...v5.12.0) (2026-10-30)
 
 
