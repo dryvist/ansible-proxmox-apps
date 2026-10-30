@@ -6,6 +6,7 @@ on PATH, which needs bash and GNU date.
 """
 
 import ast
+import fnmatch
 import json
 import os
 import shlex
@@ -130,6 +131,16 @@ class PublishGate(unittest.TestCase):
         group = load_yaml(REPO / "inventory" / "group_vars" / "pbs_group.yml")
         self.assertIs(defaults["proxmox_backup_server_publish_openbao"], False)
         self.assertIs(group["proxmox_backup_server_publish_openbao"], True)
+
+    def test_task_log_input_skips_the_active_and_archive_files(self):
+        group = load_yaml(REPO / "inventory" / "group_vars" / "pbs_group.yml")
+        pattern = next(
+            i["file"] for i in group["syslog_forwarder_imfile_inputs"] if i["tag"] == "pbs-task"
+        )
+        base = "/var/log/proxmox-backup/tasks"
+        for name in ("active", "archive"):
+            self.assertFalse(fnmatch.fnmatchcase(f"{base}/{name}", pattern), name)
+        self.assertTrue(fnmatch.fnmatchcase(f"{base}/3F/UPID:pbs:0001:0002:0003:6A1B2C3D:prunejob:backup:", pattern))
 
 
 class DatastoreMode(unittest.TestCase):
