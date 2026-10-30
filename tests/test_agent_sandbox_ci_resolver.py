@@ -43,6 +43,12 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         self.assertRegex(self.defaults["agent_sandbox_ci_resolver_source_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(self.install["when"], "agent_sandbox_ci_resolver_enabled | bool")
 
+        cli = _task(self.install_tasks, "Install the shared bao-approle CLI")
+        self.assertEqual(
+            cli["ansible.builtin.include_role"]["name"],
+            "dryvist.homelab.bao_approle_cli",
+        )
+
         fetch = _task(self.install_tasks, "Fetch the pinned CI resolver source on the controller")
         self.assertEqual(
             fetch["ansible.builtin.get_url"]["checksum"],
@@ -110,21 +116,24 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
 
     def test_ci_resolver_helper_uses_permission_set_without_secret_lookup(self):
         helper = (ROLE / "templates" / "ci-resolver-secret.sh.j2").read_text()
-        self.assertIn(
-            '"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_github_mount }}/token/'
-            '{{ agent_sandbox_ci_resolver_permission_set }}"',
-            helper,
-        )
-        self.assertNotIn(
-            '"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_github_mount }}/token"',
-            helper,
-        )
-        self.assertIn("printf '{}'", helper)
+        self.assertIn("bao-approle login", helper)
+        self.assertIn("--role-id-file", helper)
+        self.assertIn("--secret-id-file", helper)
+        self.assertIn("bao-approle gh-token", helper)
+        self.assertIn("bao-approle revoke-self", helper)
+        self.assertNotIn("auth/approle/login", helper)
+        self.assertIn("{{ agent_sandbox_ci_resolver_github_mount }}", helper)
+        self.assertIn("{{ agent_sandbox_ci_resolver_permission_set }}", helper)
         self.assertNotIn("GITHUB_AGENTS_INSTALLATION_ID", helper)
-        self.assertIn(
-            '"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_secret_path }}"',
-            helper,
-        )
+        self.assertIn('"${BAO_ADDR%/}/v1/{{ agent_sandbox_ci_resolver_secret_path }}"', helper)
+
+    def test_agent_sandbox_role_has_no_direct_approle_login(self):
+        offenders = [
+            path.relative_to(ROOT).as_posix()
+            for path in ROLE.rglob("*")
+            if path.is_file() and b"auth/approle/login" in path.read_bytes()
+        ]
+        self.assertEqual(offenders, [])
 
     def test_helper_and_environment_file_are_root_owned_with_required_modes(self):
         expected = {
