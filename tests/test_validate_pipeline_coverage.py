@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = ROOT / "tests/inventory_load/tofu_inventory.json"
 SUMMARY_FIXTURE = ROOT / "tests/validate_pipeline/verify_guard.yml"
 SKIPPED_GROUPS_FIXTURE = ROOT / "tests/inventory_load/verify_skipped_lxc_groups.yml"
+VALIDATE_PIPELINE = ROOT / "playbooks/validate-pipeline.yml"
 
 
 def _run(playbook, extra_vars, start_at_task=None):
@@ -34,6 +35,22 @@ def _run(playbook, extra_vars, start_at_task=None):
 
 
 class ValidatePipelineCoverage(unittest.TestCase):
+    def test_live_validation_checks_ssh_known_hosts_coverage(self):
+        playbook = VALIDATE_PIPELINE.read_text(encoding="utf-8")
+
+        inventory_load = "import_playbook: ../inventory/load_tofu.yml"
+        coverage_play = "- name: Validate SSH known_hosts coverage for CA-rollout VMs"
+        self.assertLess(playbook.index(inventory_load), playbook.index(coverage_play))
+        self.assertIn("  hosts: localhost\n  gather_facts: false", playbook)
+        self.assertIn(
+            "lookup('env', 'SSH_KNOWN_HOSTS_FILE') | length > 0",
+            playbook,
+        )
+        self.assertIn(
+            "ansible.builtin.import_tasks: ../tests/inventory_load/verify_ssh_known_hosts_coverage.yml",
+            playbook,
+        )
+
     def test_all_tiers_live_passes(self):
         result = _run(SUMMARY_FIXTURE, {"validate_pipeline_test_skipped": []})
         output = result.stdout + result.stderr
