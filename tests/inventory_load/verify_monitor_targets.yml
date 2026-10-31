@@ -1,8 +1,9 @@
 ---
 # monitor_targets contract. Runs the real generator on an in-memory vms map
 # covering each branch: a DHCP-first guest is probed by the DNS name its
-# published ip carries, a static guest by hostname.<domain>, and the Hindsight
-# and Cribl health targets use the path and port the live services answer on.
+# published ip carries and a static guest by hostname.<domain>. The fixture
+# Home Assistant and in-memory Hindsight/Cribl guests cover the HTTP health
+# paths and ports each service answers on.
 # The real tofu_data and monitor_targets are restored afterwards.
 
 - name: Save the real tofu_data and monitor_targets
@@ -75,6 +76,29 @@
          | map(attribute='path') | list)
         == ['/health']
     fail_msg: The Hindsight replica health target must probe /health (/health/ready is 404 live).
+
+- name: Assert the Home Assistant health target uses its published contract
+  ansible.builtin.assert:
+    that:
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'homeassistant-health')
+         | map(attribute='fqdn') | list)
+        == [tofu_data.containers.homeassistant.hostname ~ '.' ~ tofu_data.domain]
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'homeassistant-health')
+         | map(attribute='port') | list)
+        == [tofu_data.constants.service_ports.homeassistant_web]
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'homeassistant-health')
+         | map(attribute='path') | list)
+        == ['/']
+      - >-
+        (monitor_targets.http | selectattr('name', 'equalto', 'homeassistant-health')
+         | map(attribute='expect_status') | list)
+        == [[200, 302]]
+    fail_msg: >-
+      The Home Assistant target must use its published hostname, web port, root path,
+      and accepted response statuses.
 
 - name: Assert the Cribl Stream health target uses the native API port
   ansible.builtin.assert:
