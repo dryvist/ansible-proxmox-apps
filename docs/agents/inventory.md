@@ -44,6 +44,11 @@ A missing role omits its target and emits a warning.
 - `idrac_kvm_group`: Docker VMs tagged `idrac` (iDRAC KVM viewer VM 251)
 - `mailpit_group`: Containers tagged `smtp` (Mailpit SMTP relay)
 - `ntfy_group`: Containers tagged `push` (ntfy push notifications)
+- `upgrade_wave_<n>`: LXC containers, computed by the loader from every declared
+  container (running or not), not from a tag. `n` is the container's position in
+  the sorted container keys, floor-divided by 12, so each wave holds at most 12
+  containers and numbering starts at 0. A new key shifts the waves of the keys
+  sorted after it.
 
 ## Environment Variables
 
