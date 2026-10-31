@@ -30,7 +30,7 @@ class WeeklyGuestUpgradeContract(unittest.TestCase):
         for play in (lxc, vm):
             self.assertIn("!windows_group", play["hosts"])
             self.assertIn("!llm_vllm_group", play["hosts"])
-        self.assertEqual(lxc["serial"], "25%")
+        self.assertEqual(lxc["serial"], 14)
         self.assertEqual(vm["serial"], 1)
         self.assertIn("inventory_hostname == plane_host", _when(vm["tasks"], "ansible.builtin.meta"))
         self.assertIn("inventory_hostname != plane_host", _when(plane["tasks"], "ansible.builtin.meta"))
