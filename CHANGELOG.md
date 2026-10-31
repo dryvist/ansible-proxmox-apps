@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.14.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.13.0...v5.14.0) (2026-10-31)
+
+
+### Features
+
+* **upgrade:** group LXC guests into upgrade waves and batch by 14 ([#3118](https://github.com/dryvist/ansible-proxmox-apps/issues/3118)) ([bc8134f](https://github.com/dryvist/ansible-proxmox-apps/commit/bc8134fa3ed2b278d45d02e1ee0f53f267fd726b))
+
+
+### Bug Fixes
+
+* **postgres:** start the ai-cluster pg_dump timers inside the maintenance window ([#3117](https://github.com/dryvist/ansible-proxmox-apps/issues/3117)) ([1eb40ac](https://github.com/dryvist/ansible-proxmox-apps/commit/1eb40acf00141cabe446d317e8bca8daf8b9d6a2))
+
 ## [5.13.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.12.6...v5.13.0) (2026-10-30)
 
 
