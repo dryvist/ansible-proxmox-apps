@@ -2,52 +2,6 @@
 # Hatchet Lite runs the control plane in one container. Workflow data and the
 # Postgres-backed queue are stored in the shared PostgreSQL cluster.
 
-# =============================================================================
-# Preflight: Docker-in-LXC needs the root-only LXC features fuse=1 and keyctl=1
-# (set on the Proxmox host by ansible-proxmox `docker_lxc_features`). Without
-# them the compose deploy fails inside no_log with a misleading fuse-overlayfs
-# message, so check both before touching Docker.
-# =============================================================================
-
-- name: Check for /dev/fuse inside the container
-  ansible.builtin.stat:
-    path: /dev/fuse
-  register: hatchet_docker_dev_fuse
-  when: ansible_virtualization_type | default('') == 'lxc'
-
-# Proxmox makes keyctl() return ENOSYS when the keyctl feature is off; any other
-# result (a keyring id, or ENOKEY) means the syscall is allowed.
-- name: Probe whether the keyctl syscall is allowed
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -c
-      - |
-        import ctypes, errno, os, sys
-        libc = ctypes.CDLL(None, use_errno=True)
-        nr = {"x86_64": 250, "aarch64": 219}[os.uname().machine]
-        rc = libc.syscall(nr, 0, -3, 0)
-        sys.exit(3 if rc < 0 and ctypes.get_errno() == errno.ENOSYS else 0)
-  register: hatchet_docker_keyctl_probe
-  changed_when: false
-  failed_when: hatchet_docker_keyctl_probe.rc not in [0, 3]
-  check_mode: false
-  when: ansible_virtualization_type | default('') == 'lxc'
-
-- name: Require the LXC features Docker needs
-  ansible.builtin.assert:
-    that:
-      - hatchet_docker_dev_fuse.stat.ischr | default(false)
-      - hatchet_docker_keyctl_probe.rc == 0
-    fail_msg: >-
-      This LXC lacks fuse=1 and/or keyctl=1 (/dev/fuse present:
-      {{ hatchet_docker_dev_fuse.stat.exists | default(false) }}, keyctl allowed:
-      {{ hatchet_docker_keyctl_probe.rc == 0 }}). Run the ansible-proxmox
-      docker_lxc_features converge for this container's node
-      (playbooks/site.yml --tags docker_lxc_features --limit <node>,localhost), then rerun.
-    quiet: true
-  when: ansible_virtualization_type | default('') == 'lxc'
-
 - name: Create Hatchet deployment directory
   ansible.builtin.file:
     path: "{{ hatchet_docker_data_dir }}"
