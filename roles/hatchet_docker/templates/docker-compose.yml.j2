@@ -42,3 +42,39 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+{% if hatchet_docker_worker_enabled | default(false) | bool -%}
+  hatchet-worker:
+    image: {{ hatchet_docker_worker_image }}
+    depends_on:
+      hatchet:
+        condition: service_healthy
+    environment:
+      HATCHET_CLIENT_TOKEN: {{ (bao_apps_secrets.hatchet_worker_token
+        | default(undef('hatchet_worker_token missing from bao_apps_secrets'), true)
+        | mandatory('hatchet_worker_token is required when the Hatchet worker is enabled')
+        | replace('$', '$$')) | to_json }}
+      HATCHET_CLIENT_HOST_PORT: "{{ hatchet_docker_engine_broadcast_address }}"
+      GPU_FILL_WORKER_CONFIG: /tmp/gpu-fill-worker.json
+{% for worker_platform in hatchet_docker_worker_platforms %}
+{% if worker_platform.auth_env | default(none) is not none %}
+      {{ worker_platform.auth_env }}: {{ (bao_apps_secrets[worker_platform.auth_secret_key]
+        | default(undef(worker_platform.auth_secret_key ~ ' missing from bao_apps_secrets'), true)
+        | mandatory(worker_platform.auth_secret_key ~ ' is required for the Hatchet worker platform')
+        | replace('$', '$$')) | to_json }}
+{% endif %}
+{% endfor %}
+    volumes:
+      - "{{ hatchet_docker_data_dir }}/gpu_fill_worker:/app/gpu_fill_worker:ro"
+      - "{{ hatchet_docker_data_dir }}/gpu_fill_worker_config.json:/tmp/gpu-fill-worker.json:ro"
+    working_dir: /app/gpu_fill_worker
+    # No Python SDK container pattern exists in this repo; install the pinned
+    # SDK on startup, without retaining pip's download cache.
+    command:
+      - sh
+      - -c
+      - >-
+        python -m pip install --no-cache-dir
+        "hatchet-sdk=={{ hatchet_docker_worker_sdk_version }}" &&
+        python /app/gpu_fill_worker/worker.py
+    restart: {{ hatchet_docker_restart_policy }}
+{% endif -%}

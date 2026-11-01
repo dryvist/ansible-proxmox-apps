@@ -10,6 +10,63 @@
     group: root
     mode: "0750"
 
+- name: Validate Hatchet GPU fill worker configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_roles is mapping
+      - hatchet_docker_worker_roles | length > 0
+      - hatchet_docker_worker_platforms is sequence
+      - hatchet_docker_worker_platforms | length > 0
+      - >-
+        (hatchet_docker_worker_platforms | map(attribute='name') | list | unique | length)
+        == (hatchet_docker_worker_platforms | length)
+    fail_msg: >-
+      Enabling the Hatchet worker requires at least one LLM role and one
+      platform with a unique name.
+  when: hatchet_docker_worker_enabled | bool
+
+- name: Validate Hatchet GPU fill worker platform configuration
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.name is defined
+      - item.run_url is defined
+      - item.timeout_s is defined
+      - item.auth_env is defined
+      - >-
+        (item.auth_env | default(none)) is none or
+        (item.auth_env is match('^[A-Z_][A-Z0-9_]*$') and item.auth_secret_key is defined)
+    fail_msg: >-
+      Each Hatchet worker platform requires name, run_url, timeout_s, and
+      auth_env (null or a valid environment variable name with auth_secret_key).
+  no_log: true
+  loop: "{{ hatchet_docker_worker_platforms }}"
+  loop_control:
+    label: "{{ item.name | default('unknown') }}"
+  when: hatchet_docker_worker_enabled | bool
+
+- name: Copy Hatchet GPU fill worker package
+  ansible.builtin.copy:
+    src: gpu_fill_worker/
+    dest: "{{ hatchet_docker_data_dir }}/gpu_fill_worker/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  when: hatchet_docker_worker_enabled | bool
+  notify: Restart Hatchet
+
+- name: Render Hatchet GPU fill worker config
+  ansible.builtin.template:
+    src: gpu_fill_worker_config.json.j2
+    dest: "{{ hatchet_docker_data_dir }}/gpu_fill_worker_config.json"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: hatchet_docker_worker_enabled | bool
+  notify: Restart Hatchet
+
 - name: Render Hatchet docker-compose.yml
   ansible.builtin.template:
     src: docker-compose.yml.j2
