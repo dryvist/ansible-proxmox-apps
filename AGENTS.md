@@ -7,6 +7,16 @@ Configure applications on Proxmox VMs and LXC containers.
 VMs/containers are provisioned by `tofu-proxmox`;
 this repo handles app config only.
 
+## Container-runtime exceptions
+
+Guests are system containers by default. These roles run Docker because the
+vendor ships no other runnable form:
+
+- `hatchet_docker`: Hatchet v0.114.2 ships only `hatchet-cli` as a native
+  binary. The engine, API and Lite come only as container images or source,
+  and nixpkgs has no package. Read 2026-11-01 from the
+  [v0.114.2 release assets](https://github.com/hatchet-dev/hatchet/releases/tag/v0.114.2).
+
 Full docs live under `docs/agents/`, one topic per page:
 
 - [Repo ownership and pipeline data flow](docs/agents/repo-ownership.md) —
