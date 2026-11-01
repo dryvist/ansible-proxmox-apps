@@ -1,0 +1,139 @@
+---
+- name: Render the Hatchet GPU fill worker templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    hatchet_docker_data_dir: /tmp/hatchet
+    hatchet_docker_image: HATCHET_IMAGE
+    hatchet_docker_container_name: hatchet
+    hatchet_docker_db_host: POSTGRES_HOST
+    hatchet_docker_db_port: 5432
+    hatchet_docker_db_user: hatchet
+    hatchet_docker_db_password: render-test-placeholder
+    hatchet_docker_db_name: hatchet
+    hatchet_docker_db_ssl_mode: disable
+    hatchet_docker_server_auth_cookie_secrets: render-cookie-placeholder-a render-cookie-placeholder-b
+    hatchet_docker_fqdn: HATCHET_UI_HOST
+    hatchet_docker_server_encryption_master_keyset: render-master-keyset-placeholder
+    hatchet_docker_server_encryption_jwt_private_keyset: render-private-keyset-placeholder
+    hatchet_docker_server_encryption_jwt_public_keyset: render-public-keyset-placeholder
+    hatchet_docker_server_url: https://HATCHET_UI_HOST
+    hatchet_docker_grpc_container_port: 7070
+    hatchet_docker_engine_broadcast_address: HATCHET_ENGINE_HOST:443
+    hatchet_docker_admin_email: ADMIN_EMAIL
+    hatchet_docker_admin_password: render-admin-placeholder
+    hatchet_docker_admin_name: Hatchet Admin
+    hatchet_docker_web_port: 8888
+    hatchet_docker_web_container_port: 8888
+    hatchet_docker_grpc_port: 7077
+    hatchet_docker_restart_policy: unless-stopped
+    hatchet_docker_worker_image: >-
+      python:3.13.18-slim-trixie@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
+    hatchet_docker_worker_sdk_version: "1.44.0"
+    hatchet_docker_worker_roles:
+      medium:
+        max_runs: 3
+    hatchet_docker_worker_platforms:
+      - name: hermes
+        run_url: https://AGENT_PLATFORM_HOST/run
+        auth_env: HERMES_API_TOKEN
+        auth_secret_key: hermes_api_token
+        timeout_s: 120
+    bao_apps_secrets:
+      hatchet_worker_token: render-worker-token-placeholder
+      hermes_api_token: render-platform-token-placeholder
+    _template_dir: "{{ playbook_dir }}/../../roles/hatchet_docker/templates"
+
+  tasks:
+    - name: Create a temporary render directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: hatchet_worker_template_
+      register: _hatchet_render_dir
+
+    - name: Render the default-off Hatchet compose template
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-off.yml"
+        mode: "0600"
+
+    - name: Read the default-off Hatchet compose template
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-off.yml"
+      register: _hatchet_compose_off
+
+    - name: Assert the default-off compose has no worker service
+      ansible.builtin.assert:
+        that:
+          - "'hatchet-worker:' not in (_hatchet_compose_off.content | b64decode)"
+
+    - name: Render the enabled Hatchet compose template
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-on.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+
+    - name: Read the enabled Hatchet compose template
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-on.yml"
+      register: _hatchet_compose_on
+
+    - name: Assert the enabled compose contains the pinned worker and secret wiring
+      ansible.builtin.assert:
+        that:
+          - "'hatchet-worker:' in (_hatchet_compose_on.content | b64decode)"
+          - >-
+            'python:3.13.18-slim-trixie@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb'
+            in (_hatchet_compose_on.content | b64decode)
+          - >-
+            'HATCHET_CLIENT_TOKEN: "render-worker-token-placeholder"'
+            in (_hatchet_compose_on.content | b64decode)
+          - >-
+            'HATCHET_CLIENT_HOST_PORT: "HATCHET_ENGINE_HOST:443"'
+            in (_hatchet_compose_on.content | b64decode)
+          - >-
+            'HERMES_API_TOKEN: "render-platform-token-placeholder"'
+            in (_hatchet_compose_on.content | b64decode)
+          - "'/app/gpu_fill_worker:ro' in (_hatchet_compose_on.content | b64decode)"
+          - "'/tmp/gpu-fill-worker.json:ro' in (_hatchet_compose_on.content | b64decode)"
+          - "'condition: service_healthy' in (_hatchet_compose_on.content | b64decode)"
+          - "'pip install --no-cache-dir' in (_hatchet_compose_on.content | b64decode)"
+          - "'hatchet-sdk==1.44.0' in (_hatchet_compose_on.content | b64decode)"
+
+    - name: Render the worker JSON configuration
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+
+    - name: Read and parse the worker JSON configuration
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker.json"
+      register: _hatchet_worker_config
+
+    - name: Assert the JSON config contains only the worker-facing role and platform fields
+      ansible.builtin.assert:
+        that:
+          - "(_hatchet_worker_config.content | b64decode | from_json).roles.medium.max_runs == 3"
+          - >-
+            (_hatchet_worker_config.content | b64decode | from_json).platforms.hermes.run_url
+            == 'https://AGENT_PLATFORM_HOST/run'
+          - >-
+            (_hatchet_worker_config.content | b64decode | from_json).platforms.hermes.auth_env
+            == 'HERMES_API_TOKEN'
+          - >-
+            (_hatchet_worker_config.content | b64decode | from_json).platforms.hermes.timeout_s
+            == 120
+          - "'auth_secret_key' not in (_hatchet_worker_config.content | b64decode)"
+
+    - name: Remove the temporary render directory
+      ansible.builtin.file:
+        path: "{{ _hatchet_render_dir.path }}"
+        state: absent
