@@ -7,9 +7,19 @@
   vars:
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
-    hatchet_docker_image: >-
-      ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.23@sha256:d4c8e8234d423cc93ba20f3dad7ac30de71a836e9c5888a7ebdf76dc2e417e13
-    hatchet_docker_container_name: hatchet
+    hatchet_docker_migrate_image: >-
+      {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-migrate:v0.114.2@sha256:'
+         ~ 'fee74780773f7e76c4d090437a1cbdebad12a5ae90a5705ffad4e306d69b70d8' }}
+    hatchet_docker_admin_image: >-
+      {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-admin:v0.114.2@sha256:'
+         ~ 'e5d8fd721d196d51cb631871d11d120b06fd3a4f29fa063c06955d8ec8930873' }}
+    hatchet_docker_engine_image: >-
+      {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.114.2@sha256:'
+         ~ '247120b5fabb0085784d3adcf4aebfaca670a400c950d7f53d7ea95c858b4f21' }}
+    hatchet_docker_dashboard_image: >-
+      {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-dashboard:v0.114.2@sha256:'
+         ~ 'f65358c7fcdaeb2b48abf23b737012bc9fd834bef3b976dd9f26a983cb4be0d8' }}
+    hatchet_docker_data_dir: /opt/hatchet
     hatchet_docker_db_host: POSTGRES_HOST
     hatchet_docker_db_port: 5432
     hatchet_docker_db_user: hatchet
@@ -23,15 +33,19 @@
     hatchet_docker_server_encryption_jwt_public_keyset: render-public-keyset-placeholder
     hatchet_docker_server_url: https://HATCHET_UI_HOST
     hatchet_docker_grpc_container_port: 7070
+    hatchet_docker_api_container_port: 8080
+    hatchet_docker_ui_container_port: 80
+    hatchet_docker_health_container_port: 8733
     hatchet_docker_engine_broadcast_address: HATCHET_ENGINE_HOST:443
     hatchet_docker_admin_email: ADMIN_EMAIL
     hatchet_docker_admin_password: render-admin-placeholder
     hatchet_docker_admin_name: Hatchet Admin
     hatchet_docker_web_port: 8888
-    hatchet_docker_web_container_port: 8888
     hatchet_docker_grpc_port: 7077
+    hatchet_docker_health_port: 18733
     hatchet_docker_restart_policy: unless-stopped
-    _template_dir: "../../../roles/hatchet_docker/templates"
+    hatchet_docker_worker_enabled: false
+    _template_dir: "{{ playbook_dir }}/../../../roles/hatchet_docker/templates"
 
   tasks:
     - name: Render Hatchet docker-compose.yml.j2
@@ -48,16 +62,21 @@
     - name: Decode Hatchet compose content
       ansible.builtin.set_fact:
         _hatchet_compose: "{{ _hatchet_compose_raw.content | b64decode }}"
+        _hatchet_compose_yaml: "{{ _hatchet_compose_raw.content | b64decode | from_yaml }}"
 
-    - name: Assert Hatchet Lite image is pinned
+    - name: Assert Hatchet uses the pinned split service images
       ansible.builtin.assert:
         that:
           - >-
-            'ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.23'
-            ~ '@sha256:d4c8e8234d423cc93ba20f3dad7ac30de71a836e9c5888a7ebdf76dc2e417e13' in _hatchet_compose
-        fail_msg: Hatchet compose does not use the pinned Hatchet Lite image
+            'ghcr.io/hatchet-dev/hatchet/hatchet-dashboard:v0.114.2'
+            ~ '@sha256:f65358c7fcdaeb2b48abf23b737012bc9fd834bef3b976dd9f26a983cb4be0d8' in _hatchet_compose
+          - >-
+            'ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.114.2'
+            ~ '@sha256:247120b5fabb0085784d3adcf4aebfaca670a400c950d7f53d7ea95c858b4f21' in _hatchet_compose
+          - "'hatchet-lite' not in _hatchet_compose"
+        fail_msg: Hatchet compose must use the pinned dashboard and engine images, not Lite.
 
-    - name: Assert Hatchet uses shared PostgreSQL and its queue backend
+    - name: Assert Hatchet uses shared PostgreSQL and the Postgres queue
       ansible.builtin.assert:
         that:
           - "'DATABASE_POSTGRES_HOST: \"POSTGRES_HOST\"' in _hatchet_compose"
@@ -65,31 +84,51 @@
           - "'SERVER_MSGQUEUE_KIND: postgres' in _hatchet_compose"
           - "'SERVER_MSGQUEUE_PUBSUB_KIND: postgres' in _hatchet_compose"
           - "'rabbitmq' not in _hatchet_compose"
-        fail_msg: Hatchet compose is missing shared PostgreSQL or Postgres queue settings
+        fail_msg: Hatchet compose is missing shared PostgreSQL or Postgres queue settings.
 
-    - name: Assert Hatchet ingress and worker endpoints
-      ansible.builtin.assert:
-        that:
-          - "'8888:8888' in _hatchet_compose"
-          - "'7077:7070' in _hatchet_compose"
-          - "'SERVER_GRPC_PORT: \"7070\"' in _hatchet_compose"
-          - "'SERVER_URL: \"https://HATCHET_UI_HOST\"' in _hatchet_compose"
-          - "'SERVER_GRPC_BROADCAST_ADDRESS: \"HATCHET_ENGINE_HOST:443\"' in _hatchet_compose"
-          - "'SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: \"localhost:7070\"' in _hatchet_compose"
-          - "'SERVER_GRPC_INSECURE: \"true\"' in _hatchet_compose"
-        fail_msg: Hatchet compose is missing the expected UI or h2c gRPC settings
-
-    - name: Assert Hatchet readiness healthcheck
+    - name: Assert Hatchet services publish the ToFu host ports
       ansible.builtin.assert:
         that:
           - >-
-            'test: ["CMD-SHELL", "curl -f http://localhost:8733/ready || exit 1"]'
+            _hatchet_compose_yaml.services.keys() | list
+            == ['hatchet-dashboard', 'hatchet-engine']
+          - "'hatchet-dashboard:' in _hatchet_compose"
+          - "'hatchet-engine:' in _hatchet_compose"
+          - "'8888:80' in _hatchet_compose"
+          - "'7077:7070' in _hatchet_compose"
+          - "'18733:8733' in _hatchet_compose"
+          - "'SERVER_SERVICES: all' in _hatchet_compose"
+          - "'SERVER_GRPC_PORT: \"7070\"' in _hatchet_compose"
+          - >-
+            _hatchet_compose_yaml.services['hatchet-engine'].environment.SERVER_SERVICES
+            == 'all'
+          - >-
+            _hatchet_compose_yaml.services['hatchet-dashboard'].environment[
+            'SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS']
+            == 'hatchet-engine:7070'
+          - "'SERVER_URL: \"https://HATCHET_UI_HOST\"' in _hatchet_compose"
+          - "'SERVER_GRPC_BROADCAST_ADDRESS: \"HATCHET_ENGINE_HOST:443\"' in _hatchet_compose"
+          - >-
+            'SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: "hatchet-engine:7070"'
             in _hatchet_compose
+        fail_msg: Hatchet compose is missing its dashboard, engine, or expected port settings.
+
+    - name: Assert Hatchet dashboard and engine healthchecks
+      ansible.builtin.assert:
+        that:
+          - >-
+            _hatchet_compose_yaml.services['hatchet-dashboard'].healthcheck.test
+            == ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8080/api/ready || exit 1']
+          - >-
+            _hatchet_compose_yaml.services['hatchet-engine'].healthcheck.test
+            == ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8733/ready || exit 1']
+          - >-
+            'SERVER_PAYLOAD_STORE_ENABLE_PAYLOAD_CONSOLIDATION'
+            not in _hatchet_compose_yaml.services['hatchet-engine'].environment
           - "'interval: 2s' in _hatchet_compose"
           - "'timeout: 5s' in _hatchet_compose"
           - "'retries: 5' in _hatchet_compose"
-          - "'start_period: 5s' in _hatchet_compose"
-        fail_msg: Hatchet compose does not contain the Hatchet Lite readiness check
+        fail_msg: Hatchet compose readiness checks must target the dashboard API and engine health endpoint.
 
     - name: Assert required secrets are injected by environment
       ansible.builtin.assert:
@@ -99,10 +138,10 @@
           - "'SERVER_ENCRYPTION_JWT_PRIVATE_KEYSET:' in _hatchet_compose"
           - "'SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET:' in _hatchet_compose"
           - "'ADMIN_PASSWORD:' in _hatchet_compose"
-        fail_msg: Hatchet compose is missing required OpenBao-backed credentials
+        fail_msg: Hatchet compose is missing required OpenBao-backed credentials.
 
-    - name: Hatchet template rendering PASSED
+    - name: Hatchet split deployment template rendering PASSED
       ansible.builtin.debug:
         msg: >-
-          Hatchet Lite compose assertions passed: pinned image, shared PostgreSQL,
-          Postgres queue, UI and gRPC ports, and required credential settings.
+          Hatchet dashboard and engine compose assertions passed: pinned images,
+          shared PostgreSQL, Postgres queue, ports, healthchecks, and credentials.

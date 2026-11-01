@@ -1,6 +1,6 @@
 ---
-# Hatchet Lite runs the control plane in one container. Workflow data and the
-# Postgres-backed queue are stored in the shared PostgreSQL cluster.
+# Hatchet's split control plane runs on each Docker AI guest. Schema migration
+# and first-run seeding complete once before either guest starts its services.
 
 - name: Create Hatchet deployment directory
   ansible.builtin.file:
@@ -67,6 +67,59 @@
   when: hatchet_docker_worker_enabled | bool
   notify: Restart Hatchet
 
+- name: Migrate Hatchet PostgreSQL schema
+  community.docker.docker_container:
+    name: hatchet-migrate
+    image: "{{ hatchet_docker_migrate_image }}"
+    env:
+      DATABASE_URL: "{{ hatchet_docker_database_url }}"
+    network_mode: host
+    detach: false
+    auto_remove: true
+    state: started
+  run_once: true
+  no_log: true
+
+- name: Seed Hatchet database with shared credentials
+  community.docker.docker_container:
+    name: hatchet-admin-quickstart
+    image: "{{ hatchet_docker_admin_image }}"
+    entrypoint: /hatchet/hatchet-admin
+    command:
+      - quickstart
+      - --skip
+      - certs
+      - --skip
+      - keys
+      - --generated-config-dir
+      - /tmp/hatchet-generated
+    env:
+      DATABASE_URL: "{{ hatchet_docker_database_url }}"
+      SERVER_PORT: "{{ hatchet_docker_api_container_port }}"
+      SERVER_URL: "{{ hatchet_docker_server_url }}"
+      SERVER_AUTH_COOKIE_DOMAIN: "{{ hatchet_docker_fqdn }}"
+      SERVER_AUTH_COOKIE_INSECURE: "false"
+      SERVER_GRPC_PORT: "{{ hatchet_docker_grpc_container_port }}"
+      SERVER_GRPC_BROADCAST_ADDRESS: "{{ hatchet_docker_engine_broadcast_address }}"
+      SERVER_GRPC_INSECURE: "true"
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_MSGQUEUE_PUBSUB_KIND: postgres
+      SERVER_AUTH_COOKIE_SECRETS: "{{ hatchet_docker_server_auth_cookie_secrets }}"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "true"
+      SERVER_ENCRYPTION_MASTER_KEYSET: "{{ hatchet_docker_server_encryption_master_keyset }}"
+      SERVER_ENCRYPTION_JWT_PRIVATE_KEYSET: "{{ hatchet_docker_server_encryption_jwt_private_keyset }}"
+      SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET: "{{ hatchet_docker_server_encryption_jwt_public_keyset }}"
+      SERVER_ALLOW_SIGNUP: "false"
+      ADMIN_EMAIL: "{{ hatchet_docker_admin_email }}"
+      ADMIN_PASSWORD: "{{ hatchet_docker_admin_password }}"
+      ADMIN_NAME: "{{ hatchet_docker_admin_name }}"
+    network_mode: host
+    detach: false
+    auto_remove: true
+    state: started
+  run_once: true
+  no_log: true
+
 - name: Render Hatchet docker-compose.yml
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -93,4 +146,38 @@
     host: localhost
     port: "{{ hatchet_docker_web_port }}"
     timeout: 220
+  changed_when: false
+
+- name: Wait for Hatchet gRPC port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: localhost
+    port: "{{ hatchet_docker_grpc_port }}"
+    timeout: 220
+  changed_when: false
+
+- name: Wait for Hatchet health port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: localhost
+    port: "{{ hatchet_docker_health_port }}"
+    timeout: 220
+  changed_when: false
+
+- name: Wait for Hatchet dashboard API readiness
+  ansible.builtin.uri:
+    url: "http://localhost:{{ hatchet_docker_web_port }}/api/ready"
+    status_code: 200
+  register: hatchet_docker_api_readiness
+  retries: 44
+  delay: 5
+  until: hatchet_docker_api_readiness.status == 200
+  changed_when: false
+
+- name: Wait for Hatchet engine readiness
+  ansible.builtin.uri:
+    url: "http://localhost:{{ hatchet_docker_health_port }}/ready"
+    status_code: 200
+  register: hatchet_docker_engine_readiness
+  retries: 44
+  delay: 5
+  until: hatchet_docker_engine_readiness.status == 200
   changed_when: false

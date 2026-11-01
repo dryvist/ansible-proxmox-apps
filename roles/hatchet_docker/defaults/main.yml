@@ -1,33 +1,54 @@
 ---
-# Hatchet Lite is the single-container path for development and low-volume use.
-# It uses the shared apps PostgreSQL cluster for durable workflow state.
+# Hatchet's split OSS control plane runs on each Docker AI guest.
+# Both guests share the existing PostgreSQL database and Postgres message queue.
 
-# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-lite
-hatchet_docker_image: >-
-  ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.23@sha256:d4c8e8234d423cc93ba20f3dad7ac30de71a836e9c5888a7ebdf76dc2e417e13
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-migrate
+hatchet_docker_migrate_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-migrate:v0.114.2@sha256:'
+     ~ 'fee74780773f7e76c4d090437a1cbdebad12a5ae90a5705ffad4e306d69b70d8' }}
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-admin
+hatchet_docker_admin_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-admin:v0.114.2@sha256:'
+     ~ 'e5d8fd721d196d51cb631871d11d120b06fd3a4f29fa063c06955d8ec8930873' }}
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-engine
+hatchet_docker_engine_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.114.2@sha256:'
+     ~ '247120b5fabb0085784d3adcf4aebfaca670a400c950d7f53d7ea95c858b4f21' }}
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-dashboard
+hatchet_docker_dashboard_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-dashboard:v0.114.2@sha256:'
+     ~ 'f65358c7fcdaeb2b48abf23b737012bc9fd834bef3b976dd9f26a983cb4be0d8' }}
 
-hatchet_docker_container_name: hatchet
 hatchet_docker_data_dir: /opt/hatchet
 hatchet_docker_restart_policy: unless-stopped
 
-# Host ports are published by the later ToFu inventory change. The container
-# ports are part of the Hatchet Lite image contract.
+# Host ports are published by ToFu; container ports follow the Hatchet image contract.
 hatchet_docker_web_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hatchet_web']
      | mandatory('tofu_data.constants.service_ports.hatchet_web missing') }}
 hatchet_docker_grpc_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hatchet_grpc']
      | mandatory('tofu_data.constants.service_ports.hatchet_grpc missing') }}
-hatchet_docker_web_container_port: 8888
+hatchet_docker_health_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hatchet_health']
+     | mandatory('tofu_data.constants.service_ports.hatchet_health missing') }}
+hatchet_docker_ui_container_port: 80
+hatchet_docker_api_container_port: 8080
 hatchet_docker_grpc_container_port: 7070
+hatchet_docker_health_container_port: 8733
 
-# PostgreSQL database identity. The password is supplied by hatchet_group.yml.
+# PostgreSQL database identity. The password is supplied by docker_ai_group.yml.
 hatchet_docker_db_name: hatchet
 hatchet_docker_db_user: hatchet
 hatchet_docker_db_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['postgres_default']
      | mandatory('tofu_data.constants.service_ports.postgres_default missing') }}
 hatchet_docker_db_ssl_mode: disable
+hatchet_docker_database_url: >-
+  {{ 'postgresql://' ~ hatchet_docker_db_user ~ ':'
+     ~ (hatchet_docker_db_password | urlencode | replace('/', '%2F'))
+     ~ '@' ~ hatchet_docker_db_host ~ ':' ~ hatchet_docker_db_port
+     ~ '/' ~ hatchet_docker_db_name ~ '?sslmode=' ~ (hatchet_docker_db_ssl_mode | urlencode) }}
 
 hatchet_docker_subdomain: >-
   {{ lookup('env', 'PROXMOX_SUBDOMAIN')
