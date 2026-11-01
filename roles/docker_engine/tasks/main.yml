@@ -18,6 +18,56 @@
       - ansible_architecture
       - ansible_virtualization_type
 
+# =============================================================================
+# Preflight: Docker-in-LXC needs the root-only LXC features keyctl=1 and, for the
+# fuse-overlayfs storage driver, fuse=1. Both are set on the Proxmox host by
+# ansible-proxmox `docker_lxc_features`. Without them the app's compose deploy
+# fails later, often inside no_log, with a misleading fuse-overlayfs message.
+# The virtualization fact comes from the setup task above, so this holds under
+# gather_facts: false plays.
+# =============================================================================
+
+- name: Check for /dev/fuse inside the container
+  ansible.builtin.stat:
+    path: /dev/fuse
+  register: docker_engine_dev_fuse
+  when: ansible_facts['virtualization_type'] | default('') == 'lxc'
+
+# Proxmox makes keyctl() return ENOSYS when the keyctl feature is off; any other
+# result (a keyring id, or ENOKEY) means the syscall is allowed.
+- name: Probe whether the keyctl syscall is allowed
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import ctypes, errno, os, sys
+        libc = ctypes.CDLL(None, use_errno=True)
+        nr = {"x86_64": 250, "aarch64": 219}[os.uname().machine]
+        rc = libc.syscall(nr, 0, -3, 0)
+        sys.exit(3 if rc < 0 and ctypes.get_errno() == errno.ENOSYS else 0)
+  register: docker_engine_keyctl_probe
+  changed_when: false
+  failed_when: docker_engine_keyctl_probe.rc not in [0, 3]
+  check_mode: false
+  when: ansible_facts['virtualization_type'] | default('') == 'lxc'
+
+- name: Require the LXC features Docker needs
+  ansible.builtin.assert:
+    that:
+      - docker_engine_keyctl_probe.rc == 0
+      - >-
+        (docker_engine_dev_fuse.stat.ischr | default(false))
+        or not (docker_engine_install_fuse_overlayfs | bool)
+    fail_msg: >-
+      This LXC lacks keyctl=1 and/or fuse=1 (keyctl allowed:
+      {{ docker_engine_keyctl_probe.rc == 0 }}, /dev/fuse present:
+      {{ docker_engine_dev_fuse.stat.exists | default(false) }}). Run the ansible-proxmox
+      docker_lxc_features converge for this container's node
+      (playbooks/site.yml --tags docker_lxc_features --limit <node>,localhost), then rerun.
+    quiet: true
+  when: ansible_facts['virtualization_type'] | default('') == 'lxc'
+
 # Skip the apt install work on hosts that already have Docker. The storage
 # driver, service state, and optional venv below always run so drift is still
 # reconciled.
