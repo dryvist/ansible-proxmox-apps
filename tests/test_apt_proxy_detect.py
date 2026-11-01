@@ -80,6 +80,19 @@ class AptProxyDetect(unittest.TestCase):
             "Homebox installs packages through the shared apt proxy",
         )
 
+    def test_hatchet_tag_includes_the_apt_proxy_setup(self):
+        playbook = yaml.safe_load(PLAY.read_text(encoding="utf-8"))
+        proxy_play = next(
+            play
+            for play in playbook
+            if play.get("name") == "Configure apt proxy on LXC containers and docker VMs"
+        )
+        self.assertIn(
+            "hatchet_docker",
+            proxy_play.get("tags", []),
+            "Hatchet installs Docker through the shared apt proxy",
+        )
+
     def test_the_rendered_script_is_valid_shell(self):
         with tempfile.NamedTemporaryFile("w", suffix=".sh") as handle:
             handle.write(self.script)
