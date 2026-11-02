@@ -158,6 +158,25 @@ def test_adapter_omits_bearer_header_without_auth_env(monkeypatch):
     assert "Authorization" not in calls[0][2]
 
 
+def test_noop_platform_loads_and_completes_without_http_or_guard(tmp_path):
+    config = valid_config()
+    config["platforms"]["noop"] = {"run_url": None, "auth_env": None, "timeout_s": 30}
+    assert load_config(write_config(tmp_path, config)) == config
+
+    def fail(*_args):
+        raise AssertionError("a noop platform must not make HTTP calls")
+
+    result = run_agent(
+        config["platforms"]["noop"],
+        {"agent": "planner"},
+        fail,
+        latency_guard={"prometheus_url": "unused-by-noop", "query": "q", "max_ratio": 1.2},
+        http_get=fail,
+    )
+
+    assert result == {"noop": True, "agent": "planner"}
+
+
 def test_adapter_raises_for_non_success_status():
     def fake_http_post(url, body, headers, timeout_s):
         return 500, b"server error"

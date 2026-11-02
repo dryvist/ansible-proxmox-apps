@@ -60,7 +60,8 @@ def load_config(path):
             raise ValueError(f"platform {name} has invalid fields")
         run_url = platform["run_url"]
         parsed_url = urlsplit(run_url) if isinstance(run_url, str) else None
-        if (
+        # A null run_url is a no-op platform: the task completes without any HTTP call.
+        if run_url is not None and (
             parsed_url is None
             or parsed_url.scheme not in {"http", "https"}
             or not parsed_url.hostname
