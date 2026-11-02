@@ -1,0 +1,25 @@
+---
+# The one-shot container task runs with no_log; this reports only its exit code and a masked output tail.
+- name: Report the exit code and output tail of {{ hatchet_docker_oneshot_label }}
+  ansible.builtin.debug:
+    msg:
+      rc: "{{ hatchet_docker_oneshot_result.status | default('unknown') }}"
+      output_tail: "{{ hatchet_docker_oneshot_tail }}"
+  vars:
+    hatchet_docker_oneshot_output: >-
+      {{ hatchet_docker_oneshot_result.container.Output
+         if (hatchet_docker_oneshot_result.container | default({})).Output is defined
+         else hatchet_docker_oneshot_result.msg | default('') }}
+    hatchet_docker_oneshot_tail: >-
+      {{ (hatchet_docker_oneshot_output | string).splitlines()[-20:]
+         | map('regex_replace', '://[^@\s/]+@', '://****@')
+         | map('regex_replace', '(?i)(\w*(?:password|secret|token)\w*)=\S+', '\1=****')
+         | list }}
+  run_once: true
+  no_log: false
+
+- name: Fail when the one-shot container exited non-zero for {{ hatchet_docker_oneshot_label }}
+  ansible.builtin.fail:
+    msg: "{{ hatchet_docker_oneshot_label }} exited {{ hatchet_docker_oneshot_result.status | default('unknown') }}."
+  when: (hatchet_docker_oneshot_result.status | default(-1) | int) != 0
+  run_once: true
