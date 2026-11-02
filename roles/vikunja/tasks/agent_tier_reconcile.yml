@@ -52,30 +52,30 @@
              | map(attribute='json') | select('iterable') | list | flatten))
          | unique(attribute='id') | list }}
 
-- name: Require each allowlisted title to resolve to one project
+- name: Require each allowlisted project ID to resolve to one project
   ansible.builtin.assert:
     that:
       - >-
         vikunja_agent_project_catalog
-        | selectattr('title', 'equalto', vikunja_agent_project_title)
+        | selectattr('id', 'equalto', vikunja_agent_project_id | int)
         | list | length == 1
     fail_msg: >-
-      Vikunja app-agent {{ vikunja_agent_tier.id }} allowlisted title
-      {{ vikunja_agent_project_title }} must resolve to exactly one visible project.
+      Vikunja app-agent {{ vikunja_agent_tier.id }} allowlisted project ID
+      {{ vikunja_agent_project_id }} must resolve to exactly one visible project.
     quiet: true
   loop: "{{ vikunja_agent_tier.project_allowlist }}"
   loop_control:
-    loop_var: vikunja_agent_project_title
+    loop_var: vikunja_agent_project_id
 
 - name: Resolve allowlisted projects and project IDs
   ansible.builtin.set_fact:
     vikunja_agent_allowed_projects: >-
       {{ vikunja_agent_project_catalog
-         | selectattr('title', 'in', vikunja_agent_tier.project_allowlist) | list }}
+         | selectattr('id', 'in', vikunja_agent_tier.project_allowlist | map('int') | list) | list }}
     vikunja_agent_allowed_project_ids: >-
       {{ vikunja_agent_project_catalog
-         | selectattr('title', 'in', vikunja_agent_tier.project_allowlist)
-         | map(attribute='id') | list }}
+         | selectattr('id', 'in', vikunja_agent_tier.project_allowlist | map('int') | list)
+         | map(attribute='id') | map('int') | list }}
     vikunja_agent_project_by_id: >-
       {{ dict(vikunja_agent_project_catalog | map(attribute='id') | map('string')
               | zip(vikunja_agent_project_catalog)) }}
@@ -195,7 +195,7 @@
   vars:
     vikunja_share_grantee_username: "{{ vikunja_agent_tier.username }}"
     vikunja_share_permission: "{{ vikunja_agent_tier.share_permission }}"
-    vikunja_share_project_titles: "{{ vikunja_agent_tier.project_allowlist }}"
+    vikunja_share_project_ids: "{{ vikunja_agent_tier.project_allowlist }}"
   when: >-
     vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
     | default('', true) | length > 0
@@ -220,7 +220,7 @@
       - >-
         vikunja_agent_projects_readback.results
         | map(attribute='json') | list | flatten
-        | map(attribute='title') | sort
+        | map(attribute='id') | map('int') | sort
         == vikunja_agent_tier.project_allowlist | sort
     fail_msg: >-
       Vikunja app-agent {{ vikunja_agent_tier.id }} effective project visibility

@@ -54,15 +54,48 @@
   register: vikunja_mcp_token_list
   no_log: true
 
-# The list omits the secret value (returned exactly once at creation), so a live
-# token with this title means "already provisioned" — do not re-mint.
-- name: "Detect a live token for {{ vikunja_mcp_user.username }}"
+# Vikunja returns existing token permissions but never returns the secret value.
+# Keep a same-title token only when its complete scope matches this identity.
+- name: "Compare existing token scopes for {{ vikunja_mcp_user.username }}"
   ansible.builtin.set_fact:
-    vikunja_mcp_token_exists: >-
+    vikunja_mcp_token_matching_existing: >-
       {{ (vikunja_mcp_token_list.json | default([], true))
          | selectattr('title', 'defined')
          | selectattr('title', 'equalto', vikunja_mcp_token_title)
-         | list | length > 0 }}
+         | list }}
+    vikunja_mcp_token_stale_ids: >-
+      {%- set _expected = namespace(permissions={}) -%}
+      {%- for _group, _actions in vikunja_mcp_token_permissions.items() -%}
+      {%- set _ = _expected.permissions.update({_group: _actions | sort}) -%}
+      {%- endfor -%}
+      {%- set _ns = namespace(ids=[]) -%}
+      {%- for _token in (vikunja_mcp_token_list.json | default([], true)
+          | selectattr('title', 'defined')
+          | selectattr('title', 'equalto', vikunja_mcp_token_title) | list) -%}
+      {%- set _actual = namespace(permissions={}) -%}
+      {%- for _group, _actions in (_token.permissions | default({}, true) | dictsort) -%}
+      {%- set _ = _actual.permissions.update({_group: _actions | sort}) -%}
+      {%- endfor -%}
+      {%- if _actual.permissions != _expected.permissions -%}
+      {%- set _ns.ids = _ns.ids + [_token.id | int] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ _ns.ids }}
+    vikunja_mcp_token_exists: >-
+      {{ vikunja_mcp_token_matching_existing | length > 0
+         and vikunja_mcp_token_stale_ids | length == 0 }}
+  no_log: true
+
+- name: "Delete same-title Vikunja tokens with unauthorized scopes for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/tokens/{{ item }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ vikunja_mcp_login.json.token }}"
+    status_code: [200]
+  loop: "{{ vikunja_mcp_token_stale_ids }}"
+  register: vikunja_mcp_token_delete
+  when: vikunja_mcp_token_stale_ids | length > 0
   no_log: true
 
 - name: "Mint API token for {{ vikunja_mcp_user.username }}"
