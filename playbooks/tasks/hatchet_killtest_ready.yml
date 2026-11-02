@@ -1,0 +1,19 @@
+---
+# Polls Hatchet /ready on each listed guest from an ingress host, the only hosts
+# the health port admits. Every poll must answer 200 or the task fails.
+- name: Require Hatchet /ready on each listed guest, polls {{ hatchet_killtest_ready_polls }}
+  ansible.builtin.uri:
+    url: "http://{{ hostvars[item.1].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+    timeout: 3
+  loop: "{{ range(hatchet_killtest_ready_polls | int) | product(hatchet_killtest_ready_guests) | list }}"
+  loop_control:
+    pause: "{{ hatchet_killtest_ready_pause | default(0) }}"
+    label: "poll {{ item.0 + 1 }}"
+  register: hatchet_killtest_ready
+  delegate_to: "{{ hatchet_killtest_probe_host }}"
+
+- name: Record the slowest ready answer
+  ansible.builtin.set_fact:
+    hatchet_killtest_worst: >-
+      {{ ([hatchet_killtest_worst | default(0) | float]
+          + (hatchet_killtest_ready.results | map(attribute='elapsed') | map('float') | list)) | max }}
