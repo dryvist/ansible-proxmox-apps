@@ -1,0 +1,49 @@
+---
+- name: "Log in to Vikunja as project catalog owner {{ vikunja_catalog_owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_catalog_owner }}"
+      password: "{{ vikunja_project_share_owner_password_map[vikunja_catalog_owner] }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_catalog_login
+  no_log: true
+
+- name: "Read page one of the project tree for {{ vikunja_catalog_owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_catalog_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_catalog_projects_p1
+  changed_when: false
+  no_log: true
+
+- name: "Read the remaining project pages for {{ vikunja_catalog_owner }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_catalog_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ range(2, (vikunja_catalog_projects_p1.x_pagination_total_pages
+                 | default(1, true) | int) + 1) | list }}
+  register: vikunja_catalog_projects_rest
+  changed_when: false
+  no_log: true
+
+- name: "Add visible projects to the tree catalog for {{ vikunja_catalog_owner }}"
+  ansible.builtin.set_fact:
+    vikunja_agent_project_catalog: >-
+      {{ (vikunja_agent_project_catalog
+          + (vikunja_catalog_projects_p1.json | default([], true))
+          + (vikunja_catalog_projects_rest.results | default([], true)
+             | map(attribute='json') | select('iterable') | list | flatten))
+         | unique(attribute='id') | list }}

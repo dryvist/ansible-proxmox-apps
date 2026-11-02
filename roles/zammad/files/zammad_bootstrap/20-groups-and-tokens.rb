@@ -37,18 +37,38 @@ end
 # and that failure surfaces as an incident that was never opened -- silent alert
 # loss, discovered during the outage it should have reported. Least privilege is
 # enforced on the token's scopes instead (see splunk_prefs below).
+# The app-agent writer is matched by email so list order cannot widen its grant.
+agent_write_user = service_users.find { |u| u.email == agent_write_email } or raise "svc-agent-write missing"
 groups.each do |gname|
   group = Group.find_by(name: gname)
   if group.nil?
     group = Group.create!(name: gname, active: true)
     changed = true
   end
-  ([admin] + service_users).each do |u|
+  ([admin] + service_users).reject { |u| u.id == agent_write_user.id }.each do |u|
     next if u.group_ids_access('full').include?(group.id)
     u.group_names_access_map = u.group_names_access_map.merge(group.name => ['full'])
     u.save!
     changed = true
   end
+end
+
+# The dedicated app-agent writer gets only its declared incident groups and
+# only the ticket actions required by create/update/article operations.
+agent_write_group_names = JSON.parse(ENV.fetch('ZAMMAD_AGENT_WRITE_GROUPS'))
+unless agent_write_group_names.is_a?(Array) && agent_write_group_names.all? { |name| name.is_a?(String) }
+  raise 'ZAMMAD_AGENT_WRITE_GROUPS must be a JSON array of group names'
+end
+agent_write_access = agent_write_group_names.to_h do |group_name|
+  group = Group.find_by!(name: group_name)
+  [group.name, %w[create change read]]
+end
+current_agent_write_access = agent_write_user.group_names_access_map.transform_values { |access| Array(access).sort }
+desired_agent_write_access = agent_write_access.transform_values(&:sort)
+unless current_agent_write_access == desired_agent_write_access
+  agent_write_user.group_names_access_map = agent_write_access
+  agent_write_user.save!
+  changed = true
 end
 
 # --- Severity: keep built-in 1 low / 2 normal / 3 high, add 4 critical -------
@@ -88,7 +108,7 @@ agent_write_prefs = { 'permission' => %w[ticket.agent] }
   ['splunk', service_users[2], splunk_api_token, splunk_prefs],
   ['ntfy', service_users[3], ntfy_api_token, ntfy_prefs],
   ['cribl', service_users[4], cribl_api_token, cribl_prefs],
-  ['agent-write', service_users[5], agent_write_api_token, agent_write_prefs],
+  ['agent-write', agent_write_user, agent_write_api_token, agent_write_prefs],
 ].each do |name, user, value, token_prefs|
   t = Token.find_by(action: 'api', name: name)
   if t.nil?
@@ -104,3 +124,8 @@ agent_write_prefs = { 'permission' => %w[ticket.agent] }
     changed = true
   end
 end
+
+# Read back the persisted token row without exposing the token value. The
+# converge verifies this marker against agent_write_prefs from this source.
+agent_write_token = Token.find_by!(action: 'api', name: 'agent-write').reload
+puts "ZAMMAD_AGENT_WRITE_TOKEN_PERMISSIONS=#{Array(agent_write_token.preferences['permission']).sort.to_json}"

@@ -1,0 +1,259 @@
+---
+- name: "Log in to Vikunja for exact access reconcile as {{ vikunja_agent_tier.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_agent_tier.username }}"
+      password: "{{ lookup('vars', vikunja_agent_tier.password_field) }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_agent_tier_login
+  no_log: true
+
+- name: "Read page one of projects visible to {{ vikunja_agent_tier.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_agent_projects_p1
+  changed_when: false
+  no_log: true
+
+- name: "Read remaining visible project pages for {{ vikunja_agent_tier.username }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ range(2, (vikunja_agent_projects_p1.x_pagination_total_pages
+                 | default(1, true) | int) + 1) | list }}
+  register: vikunja_agent_projects_rest
+  changed_when: false
+  no_log: true
+
+- name: Merge account-visible projects into the complete tree catalog
+  ansible.builtin.set_fact:
+    vikunja_agent_visible_projects: >-
+      {{ (vikunja_agent_projects_p1.json | default([], true))
+         + (vikunja_agent_projects_rest.results | default([], true)
+            | map(attribute='json') | select('iterable') | list | flatten) }}
+    vikunja_agent_project_catalog: >-
+      {{ (vikunja_agent_project_catalog
+          + (vikunja_agent_projects_p1.json | default([], true))
+          + (vikunja_agent_projects_rest.results | default([], true)
+             | map(attribute='json') | select('iterable') | list | flatten))
+         | unique(attribute='id') | list }}
+
+- name: Require each allowlisted project ID to resolve to one project
+  ansible.builtin.assert:
+    that:
+      - >-
+        vikunja_agent_project_catalog
+        | selectattr('id', 'equalto', vikunja_agent_project_id | int)
+        | list | length == 1
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} allowlisted project ID
+      {{ vikunja_agent_project_id }} must resolve to exactly one visible project.
+    quiet: true
+  loop: "{{ vikunja_agent_tier.project_allowlist }}"
+  loop_control:
+    loop_var: vikunja_agent_project_id
+
+- name: Resolve allowlisted projects and project IDs
+  ansible.builtin.set_fact:
+    vikunja_agent_allowed_projects: >-
+      {{ vikunja_agent_project_catalog
+         | selectattr('id', 'in', vikunja_agent_tier.project_allowlist | map('int') | list) | list }}
+    vikunja_agent_allowed_project_ids: >-
+      {{ vikunja_agent_project_catalog
+         | selectattr('id', 'in', vikunja_agent_tier.project_allowlist | map('int') | list)
+         | map(attribute='id') | map('int') | list }}
+    vikunja_agent_project_by_id: >-
+      {{ dict(vikunja_agent_project_catalog | map(attribute='id') | map('string')
+              | zip(vikunja_agent_project_catalog)) }}
+
+- name: Require every allowlisted project owner to be in the writable owner set
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_project.owner.username in vikunja_operator_share_owner_usernames
+      - vikunja_project_share_owner_password_map.get(vikunja_agent_project.owner.username, '') | length > 0
+    fail_msg: >-
+      Cannot reconcile {{ vikunja_agent_tier.id }} project
+      {{ vikunja_agent_project.title }}: its owner is not configured for share writes.
+    quiet: true
+  loop: "{{ vikunja_agent_allowed_projects }}"
+  loop_control:
+    loop_var: vikunja_agent_project
+    label: "{{ vikunja_agent_project.title }}"
+  no_log: true
+
+- name: Initialize inherited descendant scan
+  ansible.builtin.set_fact:
+    vikunja_agent_descendant_ids: "{{ vikunja_agent_allowed_project_ids }}"
+
+- name: Expand all descendants of each allowlisted project
+  ansible.builtin.set_fact:
+    vikunja_agent_descendant_ids: >-
+      {{ (vikunja_agent_descendant_ids
+          + (vikunja_agent_project_catalog
+             | selectattr('parent_project_id', 'in', vikunja_agent_descendant_ids)
+             | map(attribute='id') | list)) | unique | list }}
+  loop: "{{ range(1, (vikunja_agent_project_catalog | length) + 1) | list }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Refuse an allowlisted project with any non-allowlisted descendant
+  ansible.builtin.assert:
+    that:
+      - >-
+        (vikunja_agent_project_catalog
+         | selectattr('id', 'in', vikunja_agent_descendant_ids)
+         | rejectattr('id', 'in', vikunja_agent_allowed_project_ids)
+         | list | length) == 0
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} project allowlist would inherit
+      access to a non-allowlisted child. Add the complete subtree or choose a leaf project.
+    quiet: true
+
+- name: Check the parent chain for each allowlisted project
+  ansible.builtin.include_tasks: agent_assert_parent_chain.yml
+  loop: "{{ vikunja_agent_allowed_projects }}"
+  loop_control:
+    loop_var: vikunja_agent_allowed_project
+    label: "{{ vikunja_agent_allowed_project.title }}"
+
+- name: Remove every direct user share held by the tier account
+  ansible.builtin.include_tasks: agent_revoke_direct_share.yml
+  loop: "{{ vikunja_agent_visible_projects }}"
+  loop_control:
+    loop_var: vikunja_agent_project
+    label: "{{ vikunja_agent_project.id }}:{{ vikunja_agent_project.title }}"
+
+# Link shares use an independent bearer secret, not an account membership.
+# Team memberships are account-linked and are removed below; final readback is
+# the effective-access proof for this login.
+- name: Read the first page of team memberships for the tier account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/teams?page=1"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_agent_teams_p1
+  changed_when: false
+  no_log: true
+
+- name: Read remaining team membership pages for the tier account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/teams?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ range(2, (vikunja_agent_teams_p1.x_pagination_total_pages
+                 | default(1, true) | int) + 1) | list }}
+  register: vikunja_agent_teams_rest
+  changed_when: false
+  no_log: true
+
+- name: Remove every team membership from the tier account
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ vikunja_port }}/api/v1/teams/{{ vikunja_agent_team.id }}/members/{{
+        vikunja_agent_tier.username | urlencode }}
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ (vikunja_agent_teams_p1.json | default([], true))
+       + (vikunja_agent_teams_rest.results | default([], true)
+          | map(attribute='json') | select('iterable') | list | flatten) }}
+  loop_control:
+    loop_var: vikunja_agent_team
+    label: "{{ vikunja_agent_team.id }}"
+  no_log: true
+
+- name: Regrant only the configured direct project shares to the tier account
+  ansible.builtin.include_tasks: operator_access_one.yml
+  loop: "{{ vikunja_operator_share_owner_usernames }}"
+  loop_control:
+    loop_var: vikunja_share_owner
+    label: "{{ vikunja_share_owner }}"
+  vars:
+    vikunja_share_grantee_username: "{{ vikunja_agent_tier.username }}"
+    vikunja_share_permission: "{{ vikunja_agent_tier.share_permission }}"
+    vikunja_share_project_ids: "{{ vikunja_agent_tier.project_allowlist }}"
+  when: >-
+    vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
+    | default('', true) | length > 0
+  no_log: true
+
+- name: Read back all project pages visible to the tier account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects?page={{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ range(1, vikunja_agent_projects_p1.x_pagination_total_pages | default(1, true) | int + 1) | list }}"
+  register: vikunja_agent_projects_readback
+  changed_when: false
+  no_log: true
+
+- name: Assert the tier account can see exactly its project allowlist
+  ansible.builtin.assert:
+    that:
+      - >-
+        vikunja_agent_projects_readback.results
+        | map(attribute='json') | list | flatten
+        | map(attribute='id') | map('int') | sort
+        == vikunja_agent_tier.project_allowlist | sort
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} effective project visibility
+      differs from its configured allowlist.
+    quiet: true
+  no_log: true
+
+# Single-project reads compute max_permission, the effective right after direct,
+# team, link and parent-inherited shares are combined.
+- name: Read the effective permission on each visible project as the tier account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ vikunja_agent_projects_readback.results | map(attribute='json') | list
+       | flatten | map(attribute='id') | list }}
+  register: vikunja_agent_permission_readback
+  changed_when: false
+  no_log: true
+
+- name: Assert the tier account holds exactly its configured permission on every project
+  ansible.builtin.assert:
+    that:
+      - >-
+        vikunja_agent_permission_readback.results | map(attribute='json')
+        | map(attribute='max_permission') | map('string') | unique | list
+        == [vikunja_agent_tier.share_permission | string]
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} holds an effective permission
+      other than {{ vikunja_agent_tier.share_permission }} on a visible project.
+    quiet: true
+  no_log: true
