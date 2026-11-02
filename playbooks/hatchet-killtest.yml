@@ -1,14 +1,16 @@
 ---
-# Hatchet kill test A. Hard-stops one hatchet-killtest guest (the first
-# docker_ai_group member unless hatchet_killtest_target says otherwise), requires
-# the other guest to stay ready while the engine takes over, then always starts
-# the stopped guest again. The other guest is never powered.
+# Hatchet kill test A. Hard-stops the first guest (sorted) tagged
+# hatchet-killtest, requires the other tagged guest to stay ready while the
+# engine takes over, then always starts the stopped guest again. The other guest
+# is never powered.
 #
 # The PVE token holds only VM.PowerMgmt on the two tagged guests, so state comes
 # from the UPID of each power task and from each guest's Hatchet /ready port,
 # probed from an ingress host (the only hosts that port admits). The token is
 # read with the Semaphore run's own AppRole login (OPENBAO_APPROLE_SEMAPHORE_*),
-# which already reads secret/killtest/hatchet. Not part of site.yml. Run directly:
+# which already reads secret/killtest/hatchet. Every target-related value is
+# derived here; a caller-supplied value for any of them refuses the run. Not part
+# of site.yml. Run directly:
 #   ansible-playbook -i inventory/hosts.yml playbooks/hatchet-killtest.yml
 - name: Load OpenTofu infrastructure inventory
   import_playbook: ../inventory/load_tofu.yml
@@ -22,28 +24,29 @@
     ansible_become: false
     ansible_python_interpreter: auto_silent
     hatchet_killtest_tag: hatchet-killtest
-    hatchet_killtest_target: "{{ groups['docker_ai_group'] | default([]) | first | default('') }}"
-    hatchet_killtest_guests: >-
-      {{ groups['all'] | map('extract', hostvars) | selectattr('host_tags', 'defined')
-         | selectattr('host_tags', 'contains', hatchet_killtest_tag)
-         | map(attribute='inventory_hostname') | sort }}
-    hatchet_killtest_survivor: >-
-      {{ hatchet_killtest_guests | reject('equalto', hatchet_killtest_target) | first | default('') }}
-    hatchet_killtest_vmid: "{{ tofu_data.containers[hatchet_killtest_target].vmid | default('') | string }}"
-    hatchet_killtest_node: "{{ (add_lxc_hosts_live_node | default({})).get(hatchet_killtest_vmid, '') }}"
-    hatchet_killtest_api: >-
-      https://{{ (tofu_data.nodes[hatchet_killtest_node] | default({})).role | default(hatchet_killtest_node, true)
-      }}.{{ tofu_data.domain }}:8006/api2/json
-    hatchet_killtest_guest_api: >-
-      {{ hatchet_killtest_api }}/nodes/{{ hatchet_killtest_node }}/lxc/{{ hatchet_killtest_vmid }}
-    hatchet_killtest_secret: "{{ openbao_secrets_by_domain['hatchet-killtest'] | default({}) }}"
-    hatchet_killtest_auth: >-
-      PVEAPIToken={{ hatchet_killtest_secret.hatchet_killtest_pve_token_id | default('') }}={{
-      hatchet_killtest_secret.hatchet_killtest_pve_token_secret | default('') }}
-    hatchet_killtest_ready_port: "{{ tofu_data.constants.service_ports.hatchet_health }}"
-    hatchet_killtest_probe_host: "{{ groups['traefik_group'] | default([]) | first | default('') }}"
-    hatchet_killtest_failed: false
   tasks:
+    - name: Refuse caller-supplied target, placement, endpoint or CA values
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.vars', item, default='__unset__') == '__unset__'
+        fail_msg: "{{ item }} is derived by this playbook; do not pass it in."
+        quiet: true
+      loop:
+        - hatchet_killtest_guests
+        - hatchet_killtest_target
+        - hatchet_killtest_survivor
+        - hatchet_killtest_vmid
+        - hatchet_killtest_node
+        - hatchet_killtest_api
+        - hatchet_killtest_guest_api
+        - hatchet_killtest_ca
+        - hatchet_killtest_secret
+        - hatchet_killtest_auth
+        - hatchet_killtest_ready_port
+        - hatchet_killtest_probe_host
+        - hatchet_killtest_started
+        - hatchet_killtest_failed
+        - hatchet_killtest_restore_failed
+
     - name: Read the power token with the Semaphore AppRole login
       ansible.builtin.include_role:
         name: dryvist.homelab.openbao_secrets
@@ -56,25 +59,72 @@
         openbao_secrets_domain_groups: {}
         openbao_secrets_active_groups: []
 
+    - name: Derive the guests from the dedicated tag, sorted
+      ansible.builtin.set_fact:
+        hatchet_killtest_guests: >-
+          {{ groups['all'] | map('extract', hostvars) | selectattr('host_tags', 'defined')
+             | selectattr('host_tags', 'contains', hatchet_killtest_tag)
+             | map(attribute='inventory_hostname') | sort }}
+        hatchet_killtest_secret: "{{ openbao_secrets_by_domain['hatchet-killtest'] | default({}) }}"
+        hatchet_killtest_ready_port: "{{ tofu_data.constants.service_ports.hatchet_health }}"
+        hatchet_killtest_probe_host: "{{ groups['traefik_group'] | default([]) | first | default('') }}"
+        hatchet_killtest_started: false
+        hatchet_killtest_failed: false
+        hatchet_killtest_restore_failed: false
+
+    - name: Take the first tagged guest as the target and the second as the survivor
+      ansible.builtin.set_fact:
+        hatchet_killtest_target: "{{ hatchet_killtest_guests[0] | default('') }}"
+        hatchet_killtest_survivor: "{{ hatchet_killtest_guests[1] | default('') }}"
+        hatchet_killtest_auth: >-
+          PVEAPIToken={{ hatchet_killtest_secret.hatchet_killtest_pve_token_id | default('') }}={{
+          hatchet_killtest_secret.hatchet_killtest_pve_token_secret | default('') }}
+      no_log: true
+
+    - name: Derive the target's VMID
+      ansible.builtin.set_fact:
+        hatchet_killtest_vmid: "{{ tofu_data.containers[hatchet_killtest_target].vmid | default('') | string }}"
+
+    - name: Derive the target's live node
+      ansible.builtin.set_fact:
+        hatchet_killtest_node: "{{ (add_lxc_hosts_live_node | default({})).get(hatchet_killtest_vmid, '') }}"
+
+    - name: Derive the PVE API endpoint on that node
+      ansible.builtin.set_fact:
+        hatchet_killtest_api: >-
+          https://{{ (tofu_data.nodes[hatchet_killtest_node] | default({})).role | default(hatchet_killtest_node, true)
+          }}.{{ tofu_data.domain }}:8006/api2/json
+
+    - name: Derive the target's guest endpoint
+      ansible.builtin.set_fact:
+        hatchet_killtest_guest_api: >-
+          {{ hatchet_killtest_api }}/nodes/{{ hatchet_killtest_node }}/lxc/{{ hatchet_killtest_vmid }}
+
     - name: Require the target, the survivor, the guest placement and the token
       ansible.builtin.assert:
         that:
           - hatchet_killtest_guests | length == 2
-          - hatchet_killtest_target in hatchet_killtest_guests
-          - hatchet_killtest_survivor | length > 0
+          - hatchet_killtest_target == hatchet_killtest_guests[0]
+          - hatchet_killtest_survivor == hatchet_killtest_guests[1]
           - hatchet_killtest_vmid is match('^[0-9]+$')
+          - hatchet_killtest_vmid == tofu_data.containers[hatchet_killtest_target].vmid | string
           - hatchet_killtest_node | length > 0
+          - hatchet_killtest_node == add_lxc_hosts_live_node[hatchet_killtest_vmid]
+          - hatchet_killtest_api is match('^https://[^/]+:8006/api2/json$')
+          - >-
+            hatchet_killtest_guest_api == hatchet_killtest_api ~ '/nodes/' ~ hatchet_killtest_node
+            ~ '/lxc/' ~ hatchet_killtest_vmid
           - hatchet_killtest_probe_host | length > 0
           - hatchet_killtest_secret.hatchet_killtest_pve_token_id | default('') | length > 0
           - hatchet_killtest_secret.hatchet_killtest_pve_token_secret | default('') | length > 0
           - hatchet_killtest_secret.hatchet_killtest_pve_ca | default('') | length > 0
         fail_msg: >-
-          Kill test A needs exactly two guests tagged {{ hatchet_killtest_tag }} with the
-          target among them, the target's live node and VMID, an ingress host for the
-          probe, and the published power token and cluster CA.
+          Kill test A needs exactly two guests tagged {{ hatchet_killtest_tag }}, the first one's
+          VMID, live node and PVE endpoint, an ingress host for the probe, and the published
+          power token and cluster CA.
         quiet: true
 
-    - name: Write the cluster CA for TLS verification
+    - name: Create the cluster CA file for TLS verification
       ansible.builtin.tempfile:
         suffix: .pem
       register: hatchet_killtest_ca
@@ -92,63 +142,8 @@
         hatchet_killtest_ready_guests: "{{ hatchet_killtest_guests }}"
         hatchet_killtest_ready_polls: 1
 
-    - name: Stop the target and watch the survivor
-      block:
-        - name: Hard-stop the target guest
-          ansible.builtin.include_tasks: tasks/hatchet_killtest_power.yml
-          vars:
-            hatchet_killtest_action: stop
-
-        - name: Require the target to stop answering within 30 seconds
-          ansible.builtin.uri:
-            url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
-            timeout: 3
-          register: hatchet_killtest_down
-          until: hatchet_killtest_down.status != 200
-          retries: 6
-          delay: 5
-          failed_when: hatchet_killtest_down.status == 200
-          delegate_to: "{{ hatchet_killtest_probe_host }}"
-
-        - name: Require the survivor ready every 5 seconds for 150 seconds
-          ansible.builtin.include_tasks: tasks/hatchet_killtest_ready.yml
-          vars:
-            hatchet_killtest_ready_guests: ["{{ hatchet_killtest_survivor }}"]
-            hatchet_killtest_ready_polls: 30
-            hatchet_killtest_ready_pause: 5
-      rescue:
-        - name: Record the failed kill phase
-          ansible.builtin.set_fact:
-            hatchet_killtest_failed: true
-            hatchet_killtest_failed_task: "{{ ansible_failed_task.name | default('unknown') }}"
-      always:
-        # A failed start fails the run and leaves the guest as it is, for diagnosis.
-        - name: Start the target guest
-          ansible.builtin.include_tasks: tasks/hatchet_killtest_power.yml
-          vars:
-            hatchet_killtest_action: start
-
-        - name: Require the target ready within 300 seconds
-          ansible.builtin.uri:
-            url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
-            timeout: 3
-          register: hatchet_killtest_back
-          until: hatchet_killtest_back.status == 200
-          retries: 60
-          delay: 5
-          delegate_to: "{{ hatchet_killtest_probe_host }}"
-
-        - name: Require both guests ready on 3 polls 10 seconds apart
-          ansible.builtin.include_tasks: tasks/hatchet_killtest_ready.yml
-          vars:
-            hatchet_killtest_ready_guests: "{{ hatchet_killtest_guests }}"
-            hatchet_killtest_ready_polls: 3
-            hatchet_killtest_ready_pause: 10
-
-        - name: Remove the cluster CA file
-          ansible.builtin.file:
-            path: "{{ hatchet_killtest_ca.path }}"
-            state: absent
+    - name: Stop the target, watch the survivor, then always restore
+      ansible.builtin.import_tasks: tasks/hatchet_killtest_phases.yml
 
     - name: Record the run
       ansible.builtin.debug:
@@ -158,6 +153,13 @@
           down_after_polls: "{{ hatchet_killtest_down.attempts | default('n/a') }}"
           target_ready_after_polls: "{{ hatchet_killtest_back.attempts | default('n/a') }}"
           survivor_worst_seconds: "{{ hatchet_killtest_worst | default('n/a') }}"
+
+    - name: Fail when the target was not restored
+      ansible.builtin.fail:
+        msg: >-
+          Restoring {{ hatchet_killtest_target }} failed at: {{ hatchet_killtest_restore_failed_task }}.
+          Check the guest; it may still be stopped.
+      when: hatchet_killtest_restore_failed | bool
 
     - name: Fail when the kill phase failed
       ansible.builtin.fail:

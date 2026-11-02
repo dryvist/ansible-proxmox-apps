@@ -1,0 +1,97 @@
+---
+# The kill phase and the restoration. Delegated probes ignore an unreachable
+# ingress host and record it, so neither rescue nor always is ever skipped. The
+# CA file is removed even when every start attempt fails.
+- name: Stop the target and watch the survivor
+  block:
+    - name: Hard-stop the target guest
+      ansible.builtin.include_tasks: hatchet_killtest_power.yml
+      vars:
+        hatchet_killtest_action: stop
+
+    - name: Probe the target until it stops answering, up to 30 seconds
+      ansible.builtin.uri:
+        url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+        timeout: 3
+        follow_redirects: none
+      register: hatchet_killtest_down
+      until: >-
+        (hatchet_killtest_down.status | default(0)) != 200
+        or (hatchet_killtest_down.unreachable | default(false))
+      retries: 6
+      delay: 5
+      failed_when: false
+      delegate_to: "{{ hatchet_killtest_probe_host }}"
+      ignore_unreachable: true
+
+    - name: Require the target down and the ingress host reachable
+      ansible.builtin.assert:
+        that:
+          - not (hatchet_killtest_down.unreachable | default(false))
+          - (hatchet_killtest_down.status | default(0)) != 200
+        fail_msg: The target still answers /ready, or the ingress host was unreachable.
+        quiet: true
+
+    - name: Require the survivor ready every 5 seconds for 150 seconds
+      ansible.builtin.include_tasks: hatchet_killtest_ready.yml
+      vars:
+        hatchet_killtest_ready_guests: ["{{ hatchet_killtest_survivor }}"]
+        hatchet_killtest_ready_polls: 30
+        hatchet_killtest_ready_pause: 5
+  rescue:
+    - name: Record the failed kill phase
+      ansible.builtin.set_fact:
+        hatchet_killtest_failed: true
+        hatchet_killtest_failed_task: "{{ ansible_failed_task.name | default('unknown') }}"
+  always:
+    - name: Restore the target
+      block:
+        - name: Start the target, up to 3 attempts
+          ansible.builtin.include_tasks: hatchet_killtest_start.yml
+          loop: [1, 2, 3]
+          loop_control:
+            loop_var: hatchet_killtest_attempt
+
+        - name: Require a start attempt to have succeeded
+          ansible.builtin.assert:
+            that: hatchet_killtest_started | bool
+            fail_msg: No start attempt ended OK or found the target already running.
+            quiet: true
+
+        - name: Probe the target until it answers, up to 300 seconds
+          ansible.builtin.uri:
+            url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+            timeout: 3
+            follow_redirects: none
+          register: hatchet_killtest_back
+          until: (hatchet_killtest_back.status | default(0)) == 200
+          retries: 60
+          delay: 5
+          failed_when: false
+          delegate_to: "{{ hatchet_killtest_probe_host }}"
+          ignore_unreachable: true
+
+        - name: Require the target ready again
+          ansible.builtin.assert:
+            that:
+              - not (hatchet_killtest_back.unreachable | default(false))
+              - (hatchet_killtest_back.status | default(0)) == 200
+            fail_msg: The target did not answer /ready within 300 seconds, or the ingress host was unreachable.
+            quiet: true
+
+        - name: Require both guests ready on 3 polls 10 seconds apart
+          ansible.builtin.include_tasks: hatchet_killtest_ready.yml
+          vars:
+            hatchet_killtest_ready_guests: "{{ hatchet_killtest_guests }}"
+            hatchet_killtest_ready_polls: 3
+            hatchet_killtest_ready_pause: 10
+      rescue:
+        - name: Record the failed restoration
+          ansible.builtin.set_fact:
+            hatchet_killtest_restore_failed: true
+            hatchet_killtest_restore_failed_task: "{{ ansible_failed_task.name | default('unknown') }}"
+      always:
+        - name: Remove the cluster CA file
+          ansible.builtin.file:
+            path: "{{ hatchet_killtest_ca.path }}"
+            state: absent
