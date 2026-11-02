@@ -73,3 +73,24 @@
       group list and minimum ticket actions.
     quiet: true
   no_log: true
+
+# Agent-only role: every admin surface must refuse the identity's own token.
+- name: Probe Zammad admin endpoints with the svc-agent-write token
+  ansible.builtin.uri:
+    url: "http://localhost:{{ zammad_web_port }}/api/v1/{{ item }}"
+    method: GET
+    headers:
+      Authorization: "Token token={{ zammad_agent_write_api_token }}"
+    status_code: [200, 401, 403]
+  loop: [settings, channels_email]
+  register: zammad_agent_write_admin_probe
+  changed_when: false
+  no_log: true
+
+- name: Assert svc-agent-write is refused on every admin endpoint
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_admin_probe.results | map(attribute='status') | select('equalto', 200) | list | length == 0
+    fail_msg: svc-agent-write reached a Zammad admin endpoint with its own token.
+    quiet: true
+  no_log: true

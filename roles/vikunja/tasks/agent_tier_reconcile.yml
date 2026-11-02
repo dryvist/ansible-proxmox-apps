@@ -227,3 +227,33 @@
       differs from its configured allowlist.
     quiet: true
   no_log: true
+
+# Single-project reads compute max_permission, the effective right after direct,
+# team, link and parent-inherited shares are combined.
+- name: Read the effective permission on each visible project as the tier account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ item }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: >-
+    {{ vikunja_agent_projects_readback.results | map(attribute='json') | list
+       | flatten | map(attribute='id') | list }}
+  register: vikunja_agent_permission_readback
+  changed_when: false
+  no_log: true
+
+- name: Assert the tier account holds exactly its configured permission on every project
+  ansible.builtin.assert:
+    that:
+      - >-
+        vikunja_agent_permission_readback.results | map(attribute='json')
+        | map(attribute='max_permission') | map('string') | unique | list
+        == [vikunja_agent_tier.share_permission | string]
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} holds an effective permission
+      other than {{ vikunja_agent_tier.share_permission }} on a visible project.
+    quiet: true
+  no_log: true
