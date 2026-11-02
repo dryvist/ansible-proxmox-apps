@@ -8,9 +8,24 @@
   gather_facts: true
 
   vars:
-    mssql_docker_sa_password: "{{ lookup('env', 'MSSQL_SA_PASSWORD') }}"
     # Disable sample database restore to avoid large downloads in tests
     mssql_docker_restore_samples: false
+
+  pre_tasks:
+    # One random SA password per scenario, stored in Molecule's ephemeral directory so the
+    # converge and idempotence runs share it. The suffix covers SQL Server's character-class rule.
+    - name: Require Molecule's ephemeral directory for the password file
+      ansible.builtin.assert:
+        that: lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') | length > 0
+        fail_msg: MOLECULE_EPHEMERAL_DIRECTORY must be set; run this playbook through molecule.
+
+    - name: Generate an ephemeral SA password for the test container
+      ansible.builtin.set_fact:
+        mssql_docker_sa_password: >-
+          {{ lookup('ansible.builtin.password',
+                    lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/mssql_sa_password',
+                    chars=['ascii_letters', 'digits'], length=24) }}Aa1-
+      no_log: true
 
   tasks:
     - name: Include mssql_docker role
