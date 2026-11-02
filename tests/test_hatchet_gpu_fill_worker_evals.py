@@ -281,3 +281,51 @@ def test_judge_request_reports_http_error_status(monkeypatch):
 
     with pytest.raises(RuntimeError, match="GET /api/public/evals -> HTTP 503: busy"):
         sync_judges._request("GET", "/api/public/evals")
+
+
+def test_sync_reads_every_evaluator_page_before_creating(tmp_path):
+    judges_dir = tmp_path / "judges"
+    judges_dir.mkdir()
+    definition = {
+        "name": "relevance",
+        "description": "Checks relevance.",
+        "type": "llm_as_judge",
+        "connection": "litellm-local-small",
+        "model": "small",
+        "prompt_header": "Reply: {{output}}",
+        "criteria": ["on topic"],
+        "variable_mapping": {"input": "input", "output": "output"},
+        "output": {"data_type": "BOOLEAN", "reasoning_instructions": "Explain."},
+    }
+    (judges_dir / "relevance.yaml").write_text(yaml.safe_dump(definition), encoding="utf-8")
+    first_page = {
+        "data": [{"name": f"evaluator-{index:03d}", "type": "llm_as_judge"} for index in range(100)],
+        "meta": {"cursor": "page-2"},
+    }
+    second_page = {"data": [{"name": "relevance", "type": "llm_as_judge"}]}
+    gets = []
+
+    def fake_request(method, path, body=None):
+        if method != "GET":
+            raise AssertionError(f"unexpected {method} {path}")
+        gets.append(path)
+        return second_page if "cursor=page-2" in path else first_page
+
+    report = sync(judges_dir, request_fn=fake_request)
+
+    assert report == ["exists relevance type=llm_as_judge"]
+    assert gets == [
+        "/api/public/v2/evaluators?limit=100",
+        "/api/public/v2/evaluators?limit=100&cursor=page-2",
+    ]
+
+
+def test_sync_stops_when_evaluator_cursor_repeats(tmp_path):
+    judges_dir = tmp_path / "judges"
+    judges_dir.mkdir()
+
+    def looping_request(method, path, body=None):
+        return {"data": [], "meta": {"cursor": "same"}}
+
+    with pytest.raises(RuntimeError, match="repeated cursor"):
+        sync(judges_dir, request_fn=looping_request)

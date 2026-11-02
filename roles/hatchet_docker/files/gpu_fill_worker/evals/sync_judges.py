@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -50,12 +51,28 @@ def llm_judge_body(defn: dict) -> dict:
     }
 
 
+def list_evaluators(request_fn) -> dict[str, dict]:
+    evaluators: dict[str, dict] = {}
+    cursor = None
+    seen: set[str] = set()
+    while True:
+        params = {"limit": 100}
+        if cursor is not None:
+            params["cursor"] = cursor
+        page = request_fn("GET", f"/api/public/v2/evaluators?{urllib.parse.urlencode(params)}")
+        for evaluator in page.get("data", []):
+            evaluators[evaluator["name"]] = evaluator
+        cursor = (page.get("meta") or {}).get("cursor")
+        if not cursor:
+            return evaluators
+        if cursor in seen:
+            raise RuntimeError(f"evaluator pagination repeated cursor {cursor!r}")
+        seen.add(cursor)
+
+
 def sync(judges_dir: Path, request_fn=None) -> list[str]:
     request_fn = request_fn or _request
-    existing = {
-        evaluator["name"]: evaluator
-        for evaluator in request_fn("GET", "/api/public/v2/evaluators?limit=100").get("data", [])
-    }
+    existing = list_evaluators(request_fn)
     report = []
     for path in sorted(judges_dir.glob("*.yaml")):
         definition = yaml.safe_load(path.read_text(encoding="utf-8"))
