@@ -52,8 +52,7 @@ def test_caller_overrides_are_refused_before_anything_runs():
     assert plays[0]["name"].startswith("Refuse caller overrides")
     assert plays[1].get("import_playbook") == "../inventory/load_tofu.yml"
     gate = plays[0]["tasks"][0]
-    assert gate["ansible.builtin.assert"]["that"] == (
-        "lookup('ansible.builtin.vars', item, default='__unset__') == '__unset__'")
+    assert gate["ansible.builtin.assert"]["that"] == "item not in hostvars[inventory_hostname]"
     required = {
         "tofu_data", "openbao_secrets_domains", "openbao_secrets_by_domain",
         "openbao_secrets_domain_groups", "openbao_secrets_active_groups",
@@ -199,7 +198,7 @@ def test_deadline_reserve_and_worst_case_timing_are_bounded():
     reserve = int(fixed["hatchet_killtest_recovery_reserve"])
     assert budget == 570
     assert reserve == 300
-    assert "now(utc).timestamp()" in timer["hatchet_killtest_deadline_epoch"]
+    assert "now(utc=True).timestamp()" in timer["hatchet_killtest_deadline_epoch"]
     assert "hatchet_killtest_budget_seconds" in timer["hatchet_killtest_deadline_epoch"]
 
     phases = _load(TASKS / "hatchet_killtest_phases.yml")[0]
@@ -210,6 +209,9 @@ def test_deadline_reserve_and_worst_case_timing_are_bounded():
     stop_poll = next(t for t in power if "until" in t)
     down = next(t for t in phases["block"] if t["name"].startswith("Probe the target until"))
     survivor = next(t for t in phases["block"] if t["name"].startswith("Require the survivor"))
+    placement = next(t for t in _load(ROOT / "inventory/load_tofu/add_lxc_hosts.yml")
+                     if t["name"] == "Read live container placement from the cluster")
+    placement_timeout = int(placement["ansible.builtin.command"].split()[2])
     polls = int(survivor["vars"]["hatchet_killtest_ready_polls"])
     pause = int(survivor["vars"]["hatchet_killtest_ready_pause"])
     ready_uri = next(t["ansible.builtin.uri"] for t in ready_poll if "loop" in t)
@@ -226,17 +228,19 @@ def test_deadline_reserve_and_worst_case_timing_are_bounded():
         initial_ready_seconds + int(stop_post["timeout"]) + retry_bound(stop_poll)
         + retry_bound(down) + survivor_seconds
     )
-    assert kill_seconds == 256
-    assert kill_seconds < budget - reserve
+    assert kill_seconds == 250
+    pre_restore_seconds = placement_timeout + kill_seconds
+    assert pre_restore_seconds == 265
+    assert pre_restore_seconds < budget - reserve
 
     alert = next(t["ansible.builtin.uri"] for t in phases["always"][0]["rescue"]
                  if t["name"].startswith("Alert when"))
-    total_seconds = budget + 1 + int(alert["timeout"])
+    total_seconds = max(budget, pre_restore_seconds + reserve) + 1 + int(alert["timeout"])
     assert total_seconds == 576
     assert total_seconds < 600
-    comment = " ".join((TASKS / "hatchet_killtest_phases.yml").read_text(encoding="utf-8").splitlines()[:8])
-    assert "256s" in comment
-    assert "576s" in comment
+    comment = (TASKS / "hatchet_killtest_phases.yml").read_text(encoding="utf-8")
+    assert f"{pre_restore_seconds}s" in comment
+    assert f"{total_seconds}s" in comment
 
 
 def test_restore_reconciles_from_upid_and_readiness_inside_always():
