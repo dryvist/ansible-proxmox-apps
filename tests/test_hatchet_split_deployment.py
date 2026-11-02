@@ -64,7 +64,7 @@ def test_migration_and_seed_are_run_once_before_compose_deploy():
     names = [task.get("name") for task in tasks]
     migrate_index = names.index("Migrate Hatchet PostgreSQL schema")
     seed_index = names.index("Seed Hatchet database with shared credentials")
-    deploy_index = names.index("Deploy Hatchet via Docker Compose")
+    deploy_index = names.index("Deploy Hatchet and report the engine log tail on failure")
 
     assert migrate_index < seed_index < deploy_index
     assert tasks[migrate_index]["run_once"] is True

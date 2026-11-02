@@ -66,7 +66,7 @@ def test_both_one_shot_containers_register_and_report():
 
 
 def test_failed_compose_deploy_reports_the_masked_engine_log_tail():
-    deploy = next(task for task in MAIN if task["name"] == "Deploy Hatchet via Docker Compose")
+    deploy = next(task for task in MAIN if task["name"] == "Deploy Hatchet and report the engine log tail on failure")
     assert deploy["block"][0]["no_log"] is True
     read_logs, report = deploy["rescue"]
     assert read_logs["no_log"] is True
