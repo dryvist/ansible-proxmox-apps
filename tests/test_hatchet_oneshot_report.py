@@ -63,3 +63,17 @@ def test_both_one_shot_containers_register_and_report():
         assert task["register"] == f"hatchet_docker_{label}_result"
         assert report["ansible.builtin.include_tasks"] == "oneshot_report.yml"
         assert report["vars"]["hatchet_docker_oneshot_result"] == f"{{{{ hatchet_docker_{label}_result }}}}"
+
+
+def test_failed_compose_deploy_reports_the_masked_engine_log_tail():
+    deploy = next(task for task in MAIN if task["name"] == "Deploy Hatchet via Docker Compose")
+    assert deploy["block"][0]["no_log"] is True
+    read_logs, report = deploy["rescue"]
+    assert read_logs["no_log"] is True
+    assert read_logs["failed_when"] is False
+    assert "logs" in read_logs["ansible.builtin.command"]["cmd"]
+    assert "hatchet-engine" in read_logs["ansible.builtin.command"]["cmd"]
+    assert report["ansible.builtin.include_tasks"] == "oneshot_report.yml"
+    assert report["vars"]["hatchet_docker_oneshot_result"]["status"] == 1
+    tail = _tail({"status": 1, "msg": "dial postgres://hatchet:hunter2@db.example.test/hatchet: refused\n"})
+    assert "hunter2" not in "\n".join(tail)
