@@ -93,6 +93,26 @@ def _loop_variables(paths):
     return variables
 
 
+def _poll_deadline_cutoff(expression, recovery_reserve):
+    match = re.search(
+        r"now\(utc=True\)\.timestamp\(\)\s*(>=|<)\s*"
+        r"\(\s*hatchet_killtest_deadline_epoch\s*\|\s*float"
+        r"(?P<terms>(?:\s*-\s*(?:hatchet_killtest_recovery_reserve\s*\|\s*float|\d+))*)\s*\)",
+        str(expression),
+        re.S,
+    )
+    assert match is not None, expression
+    terms = re.findall(
+        r"-\s*(hatchet_killtest_recovery_reserve\s*\|\s*float|\d+)",
+        match.group("terms"),
+    )
+    offset = sum(
+        recovery_reserve if "recovery_reserve" in term else int(term)
+        for term in terms
+    )
+    return match.group(1), offset
+
+
 def test_every_set_fact_and_register_name_is_refused():
     state_names = set()
     for task in _all_tasks():
@@ -176,6 +196,36 @@ def test_each_deadline_timestamp_renders_to_a_number_with_ansible_templar():
             trust_as_template(expression)
         )
         assert type(result) in (int, float), (expression, result)
+
+
+def test_poll_deadlines_reserve_one_delay_and_request_timeout():
+    fixed = next(
+        task["ansible.builtin.set_fact"]
+        for task in _tasks(_load(PLAYBOOK)[0]["tasks"])
+        if task.get("name", "").startswith("Set the fixed kill-test")
+    )
+    recovery_reserve = int(fixed["hatchet_killtest_recovery_reserve"])
+    polled = 0
+
+    for path in FILES:
+        data = _load(path)
+        plays = data if path == PLAYBOOK else [{"tasks": data}]
+        for play in plays:
+            for task in _tasks(play.get("tasks")):
+                if not {"until", "delay", "retries"} <= task.keys():
+                    continue
+                polled += 1
+                timeout = int(task["ansible.builtin.uri"]["timeout"])
+                required_offset = int(task["delay"]) + timeout
+                until_operator, until_offset = _poll_deadline_cutoff(task["until"], recovery_reserve)
+                when_operator, when_offset = _poll_deadline_cutoff(task["when"], recovery_reserve)
+
+                assert until_operator == ">=", (path, task["name"])
+                assert when_operator == "<", (path, task["name"])
+                assert until_offset >= required_offset, (path, task["name"], until_offset, required_offset)
+                assert when_offset >= required_offset, (path, task["name"], when_offset, required_offset)
+
+    assert polled > 0
 
 
 def test_alert_result_is_reported_without_suppressing_restore_failure():
