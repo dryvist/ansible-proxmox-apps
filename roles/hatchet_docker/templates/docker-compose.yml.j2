@@ -96,9 +96,30 @@ services:
         | replace('$', '$$')) | to_json }}
 {% endif %}
 {% endfor %}
+{% if hatchet_docker_eval_enabled | bool %}
+      LANGFUSE_PUBLIC_KEY: {{ (bao_apps_secrets.hatchet_eval_langfuse_public_key
+        | default(undef('hatchet_eval_langfuse_public_key missing from bao_apps_secrets'), true)
+        | mandatory('hatchet_eval_langfuse_public_key is required when evals are enabled')
+        | replace('$', '$$')) | to_json }}
+      LANGFUSE_SECRET_KEY: {{ (bao_apps_secrets.hatchet_eval_langfuse_secret_key
+        | default(undef('hatchet_eval_langfuse_secret_key missing from bao_apps_secrets'), true)
+        | mandatory('hatchet_eval_langfuse_secret_key is required when evals are enabled')
+        | replace('$', '$$')) | to_json }}
+      LANGFUSE_HOST: "{{ hatchet_docker_eval_langfuse_host }}"
+      LITELLM_BASE_URL: "{{ hatchet_docker_eval_litellm_base_url }}"
+      LITELLM_API_KEY: {{ (bao_apps_secrets.hatchet_eval_litellm_api_key
+        | default(undef('hatchet_eval_litellm_api_key missing from bao_apps_secrets'), true)
+        | mandatory('hatchet_eval_litellm_api_key is required when evals are enabled')
+        | replace('$', '$$')) | to_json }}
+      AI_PROMPTS_DIR: "{{ hatchet_docker_eval_prompts_dir }}"
+      SOURCE_COMMIT: "{{ hatchet_docker_eval_prompts_ref }}"
+{% endif %}
     volumes:
       - "{{ hatchet_docker_data_dir }}/gpu_fill_worker:/app/gpu_fill_worker:ro"
       - "{{ hatchet_docker_data_dir }}/gpu_fill_worker_config.json:/tmp/gpu-fill-worker.json:ro"
+{% if hatchet_docker_eval_enabled | bool %}
+      - "{{ hatchet_docker_data_dir }}/ai-llm-prompts:{{ hatchet_docker_eval_prompts_dir }}:ro"
+{% endif %}
     working_dir: /app/gpu_fill_worker
     # No Python SDK container pattern exists in this repo; install the pinned
     # SDK on startup, without retaining pip's download cache.
@@ -107,7 +128,9 @@ services:
       - -c
       - >-
         python -m pip install --no-cache-dir
-        "hatchet-sdk=={{ hatchet_docker_worker_sdk_version }}" &&
+        "hatchet-sdk=={{ hatchet_docker_worker_sdk_version }}"{% if hatchet_docker_eval_enabled | bool %}
+        "langfuse=={{ hatchet_docker_eval_langfuse_version }}"
+        "pyyaml=={{ hatchet_docker_eval_pyyaml_version }}"{% endif %} &&
         python /app/gpu_fill_worker/worker.py
     restart: {{ hatchet_docker_restart_policy }}
 {% endif -%}

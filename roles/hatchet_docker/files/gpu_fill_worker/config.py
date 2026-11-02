@@ -16,17 +16,24 @@ def _require_name(value, label):
         raise ValueError(f"{label} must be a non-empty identifier")
 
 
+def _require_cron(value, label):
+    if not isinstance(value, str) or (value and not value.strip()):
+        raise ValueError(f"{label} must be an empty string or a five-field cron expression")
+    if value and len(value.split()) != 5:
+        raise ValueError(f"{label} must be an empty string or a five-field cron expression")
+
+
 def load_config(path):
-    """Load a worker config file and reject malformed role or platform data."""
+    """Load a worker config file and reject malformed role, platform, or eval data."""
     with Path(path).open(encoding="utf-8") as config_file:
         config = json.load(config_file)
 
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals"}
     ):
-        raise ValueError("config must contain roles and platforms with optional latency_guard")
+        raise ValueError("config must contain roles and platforms with optional latency_guard and evals")
 
     roles = config["roles"]
     platforms = config["platforms"]
@@ -97,5 +104,32 @@ def load_config(path):
             or max_ratio <= 0
         ):
             raise ValueError("latency_guard max_ratio must be a finite positive number")
+
+    if "evals" in config:
+        evals = config["evals"]
+        if not isinstance(evals, dict) or set(evals) != {
+            "cron",
+            "judges_sync_cron",
+            "prompts_dir",
+            "roles",
+        }:
+            raise ValueError("evals must contain cron, judges_sync_cron, prompts_dir, and roles only")
+        _require_cron(evals["cron"], "evals cron")
+        _require_cron(evals["judges_sync_cron"], "evals judges_sync_cron")
+        prompts_dir = evals["prompts_dir"]
+        if not isinstance(prompts_dir, str) or not Path(prompts_dir).is_absolute():
+            raise ValueError("evals prompts_dir must be an absolute path")
+        eval_roles = evals["roles"]
+        if not isinstance(eval_roles, list) or not eval_roles:
+            raise ValueError("evals roles must be a non-empty list")
+        seen_roles = set()
+        for eval_role in eval_roles:
+            if not isinstance(eval_role, dict) or set(eval_role) != {"role", "dataset"}:
+                raise ValueError("each eval role must contain role and dataset only")
+            _require_name(eval_role["role"], "eval role")
+            _require_name(eval_role["dataset"], "eval dataset")
+            if eval_role["role"] in seen_roles:
+                raise ValueError(f"duplicate eval role: {eval_role['role']}")
+            seen_roles.add(eval_role["role"])
 
     return config

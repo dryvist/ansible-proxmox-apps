@@ -6,6 +6,16 @@
 
   vars:
     ansible_become: false
+    ingress_domain: 192.0.2.25
+    hatchet_docker_eval_cron: "{{ _hatchet_role_defaults.hatchet_docker_eval_cron }}"
+    hatchet_docker_eval_judges_sync_cron: "{{ _hatchet_role_defaults.hatchet_docker_eval_judges_sync_cron }}"
+    hatchet_docker_eval_roles: "{{ _hatchet_role_defaults.hatchet_docker_eval_roles }}"
+    hatchet_docker_eval_langfuse_host: "{{ _hatchet_role_defaults.hatchet_docker_eval_langfuse_host }}"
+    hatchet_docker_eval_litellm_base_url: "{{ _hatchet_role_defaults.hatchet_docker_eval_litellm_base_url }}"
+    hatchet_docker_eval_prompts_dir: "{{ _hatchet_role_defaults.hatchet_docker_eval_prompts_dir }}"
+    hatchet_docker_eval_prompts_ref: "{{ _hatchet_role_defaults.hatchet_docker_eval_prompts_ref }}"
+    hatchet_docker_eval_langfuse_version: "{{ _hatchet_role_defaults.hatchet_docker_eval_langfuse_version }}"
+    hatchet_docker_eval_pyyaml_version: "{{ _hatchet_role_defaults.hatchet_docker_eval_pyyaml_version }}"
     hatchet_docker_data_dir: /tmp/hatchet
     hatchet_docker_migrate_image: HATCHET_MIGRATE_IMAGE
     hatchet_docker_admin_image: HATCHET_ADMIN_IMAGE
@@ -42,6 +52,7 @@
     hatchet_docker_worker_latency_guard_prometheus_url: http://192.0.2.23:9090
     hatchet_docker_worker_latency_guard_query: sum(rate(requests_total[5m]))
     hatchet_docker_worker_latency_guard_max_ratio: 1.2
+    hatchet_docker_eval_enabled: false
     hatchet_docker_worker_roles:
       medium:
         max_runs: 3
@@ -54,9 +65,17 @@
     bao_apps_secrets:
       hatchet_worker_token: render-worker-token-placeholder
       hermes_api_token: render-platform-token-placeholder
+      hatchet_eval_langfuse_public_key: render-langfuse-public-key
+      hatchet_eval_langfuse_secret_key: render-langfuse-secret-key
+      hatchet_eval_litellm_api_key: render-litellm-api-key
     _template_dir: "{{ playbook_dir }}/../../roles/hatchet_docker/templates"
 
   tasks:
+    - name: Load Hatchet role defaults for fixture assertions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/hatchet_docker/defaults/main.yml"
+        name: _hatchet_role_defaults
+
     - name: Create a temporary render directory
       ansible.builtin.tempfile:
         state: directory
@@ -110,6 +129,10 @@
             in (_hatchet_compose_on.content | b64decode)
           - "'/app/gpu_fill_worker:ro' in (_hatchet_compose_on.content | b64decode)"
           - "'/tmp/gpu-fill-worker.json:ro' in (_hatchet_compose_on.content | b64decode)"
+          - "'ai-llm-prompts' not in (_hatchet_compose_on.content | b64decode)"
+          - "'LANGFUSE_HOST' not in (_hatchet_compose_on.content | b64decode)"
+          - "'langfuse==' not in (_hatchet_compose_on.content | b64decode)"
+          - "'pyyaml==' not in (_hatchet_compose_on.content | b64decode)"
           - "'condition: service_healthy' in (_hatchet_compose_on.content | b64decode)"
           - "'pip install --no-cache-dir' in (_hatchet_compose_on.content | b64decode)"
           - "'hatchet-sdk==1.44.0' in (_hatchet_compose_on.content | b64decode)"
@@ -146,6 +169,37 @@
           - >-
             (_hatchet_worker_config.content | b64decode | from_json).latency_guard.max_ratio == 1.2
           - "'auth_secret_key' not in (_hatchet_worker_config.content | b64decode)"
+          - "'evals' not in (_hatchet_worker_config.content | b64decode | from_json)"
+
+    - name: Render the worker JSON configuration with evals
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-evals.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_eval_enabled: true
+
+    - name: Read and parse the worker JSON configuration with evals
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-evals.json"
+      register: _hatchet_worker_config_evals
+
+    - name: Assert the eval config uses role defaults and configured schedules
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_hatchet_worker_config_evals.content | b64decode | from_json).evals.cron
+            == hatchet_docker_eval_cron
+          - >-
+            (_hatchet_worker_config_evals.content | b64decode | from_json).evals.judges_sync_cron
+            == hatchet_docker_eval_judges_sync_cron
+          - >-
+            (_hatchet_worker_config_evals.content | b64decode | from_json).evals.prompts_dir
+            == hatchet_docker_eval_prompts_dir
+          - >-
+            (_hatchet_worker_config_evals.content | b64decode | from_json).evals.roles
+            == hatchet_docker_eval_roles
 
     - name: Render the worker JSON configuration without the latency guard
       ansible.builtin.template:
@@ -167,6 +221,51 @@
           - >-
             'latency_guard' not in
             (_hatchet_worker_config_no_guard.content | b64decode | from_json)
+          - >-
+            'evals' not in
+            (_hatchet_worker_config_no_guard.content | b64decode | from_json)
+
+    - name: Render the worker compose with evals enabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-evals.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_eval_enabled: true
+
+    - name: Read the worker compose with evals enabled
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-evals.yml"
+      register: _hatchet_compose_evals
+
+    - name: Assert eval compose mounts prompts and injects package versions and env
+      ansible.builtin.assert:
+        that:
+          - >-
+            (hatchet_docker_data_dir ~ '/ai-llm-prompts:' ~ hatchet_docker_eval_prompts_dir ~ ':ro')
+            in (_hatchet_compose_evals.content | b64decode)
+          - >-
+            ('LANGFUSE_HOST: ' ~ (hatchet_docker_eval_langfuse_host | to_json))
+            in (_hatchet_compose_evals.content | b64decode)
+          - >-
+            ('LITELLM_BASE_URL: ' ~ (hatchet_docker_eval_litellm_base_url | to_json))
+            in (_hatchet_compose_evals.content | b64decode)
+          - "'LANGFUSE_PUBLIC_KEY: \"render-langfuse-public-key\"' in (_hatchet_compose_evals.content | b64decode)"
+          - "'LANGFUSE_SECRET_KEY: \"render-langfuse-secret-key\"' in (_hatchet_compose_evals.content | b64decode)"
+          - "'LITELLM_API_KEY: \"render-litellm-api-key\"' in (_hatchet_compose_evals.content | b64decode)"
+          - >-
+            ('AI_PROMPTS_DIR: ' ~ (hatchet_docker_eval_prompts_dir | to_json))
+            in (_hatchet_compose_evals.content | b64decode)
+          - >-
+            ('SOURCE_COMMIT: ' ~ (hatchet_docker_eval_prompts_ref | to_json))
+            in (_hatchet_compose_evals.content | b64decode)
+          - >-
+            ('langfuse==' ~ hatchet_docker_eval_langfuse_version)
+            in (_hatchet_compose_evals.content | b64decode)
+          - >-
+            ('pyyaml==' ~ hatchet_docker_eval_pyyaml_version)
+            in (_hatchet_compose_evals.content | b64decode)
 
     - name: Remove the temporary render directory
       ansible.builtin.file:
