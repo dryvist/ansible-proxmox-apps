@@ -176,9 +176,19 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             upstream = temp / "dispatcher"
             runuser = temp / "runuser"
             marker = temp / "executed"
+            getent = temp / "getent"
+            dispatcher_home = temp / "dispatcher-home"
+            dispatcher_home.mkdir()
+            getent.write_text(
+                "#!/bin/sh\n"
+                '[ "$1" = passwd ] && [ "$2" = agent-dispatch ] || exit 2\n'
+                f"printf '%s:x:1001:1001:Agent Dispatcher:{dispatcher_home}:/bin/sh\\n' \"$2\"\n"
+            )
+            getent.chmod(0o755)
             upstream.write_text(
-                "#!/bin/sh\nprintf '%s|%s|%s' \"$AGENT_DISPATCH_NTFY_ALERT_URL\" "
-                f'"$AGENT_DISPATCH_NTFY_ALERT_TOKEN" "$SSH_ORIGINAL_COMMAND" > "{result_file}"\n'
+                "#!/bin/sh\nprintf '%s|%s|%s|%s|%s' \"$AGENT_DISPATCH_NTFY_ALERT_URL\" "
+                f'"$AGENT_DISPATCH_NTFY_ALERT_TOKEN" "$SSH_ORIGINAL_COMMAND" '
+                f'"$HOME" "${{DOCKER_CONFIG-unset}}" > "{result_file}"\n'
             )
             upstream.chmod(0o755)
             runuser.write_text(
@@ -205,8 +215,9 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             )
             env_file.chmod(0o600)
             process_env = {
-                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "PATH": f"{temp}:{os.environ.get('PATH', '/usr/bin:/bin')}",
                 "SSH_ORIGINAL_COMMAND": "run fixture",
+                "DOCKER_CONFIG": "/root/.docker/config.json",
             }
 
             result = subprocess.run(
@@ -215,7 +226,8 @@ class AgentSandboxCredentialContract(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 result_file.read_text(),
-                f"https://ntfy.example.invalid|{ALERT_TOKEN_FIXTURE}|run fixture",
+                "https://ntfy.example.invalid|"
+                f"{ALERT_TOKEN_FIXTURE}|run fixture|{dispatcher_home}|unset",
             )
 
             env_file.write_text(
