@@ -17,9 +17,9 @@ PASSWORD_TASK = ROOT / "roles/vikunja/tasks/hermes_bridge_password_one.yml"
 
 
 def _vikunja_identities() -> list[str]:
-    defaults = yaml.safe_load(
-        (ROOT / "roles/vikunja/defaults/main.yml").read_text(encoding="utf-8")
-    )
+    defaults = {}
+    for path in sorted((ROOT / "roles/vikunja/defaults/main").glob("*.yml")):
+        defaults.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     return [item["username"] for item in defaults["vikunja_hermes_bridge_identities"]]
 
 

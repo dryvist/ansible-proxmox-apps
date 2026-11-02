@@ -100,7 +100,7 @@
     body:
       data: >-
         {{ (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-           | combine({vikunja_url_openbao_key: vikunja_mcp_url}
+           | combine(vikunja_mcp_shared_fields
                      if vikunja_mcp_token_path == vikunja_token_openbao_path else {})
            | combine(dict(vikunja_mcp_token_fields | zip_longest([], fillvalue=vikunja_mcp_token_mint.json.token))
                      if (vikunja_mcp_token_mint is not skipped) else {}) }}
@@ -111,9 +111,14 @@
   become: false
   vars:
     ansible_become: false
+    # The router's read-tier probe checks listed projects against this allowlist.
+    vikunja_mcp_shared_fields: >-
+      {{ {vikunja_url_openbao_key: vikunja_mcp_url,
+          'VIKUNJA_AGENT_READ_ALLOWLIST': vikunja_agent_read_allowlist | to_json} }}
   when: >-
     vikunja_mcp_token_mint is not skipped
     or (vikunja_mcp_token_path == vikunja_token_openbao_path
-        and (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(vikunja_url_openbao_key)
-            != vikunja_mcp_url)
+        and (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+            | dict2items | selectattr('key', 'in', vikunja_mcp_shared_fields)
+            | items2dict != vikunja_mcp_shared_fields)
   no_log: true

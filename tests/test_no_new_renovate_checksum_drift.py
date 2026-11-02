@@ -42,7 +42,7 @@ KNOWN_OFFENDERS = frozenset(
     {
         "roles/glance/defaults/main.yml",
         "roles/object_storage/defaults/main/00-core.yml",
-        "roles/vikunja/defaults/main.yml",
+        "roles/vikunja/defaults/main/00-base.yml",
     }
 )
 
