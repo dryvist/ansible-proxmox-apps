@@ -1,131 +1,194 @@
 """The app-agent credentials have dedicated identities and bounded access."""
 
-from pathlib import Path
-
-import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
-
-ROOT = Path(__file__).resolve().parents[1]
+from app_agent_helpers import _render, _task, _vikunja_defaults, _yaml
 
 
-def _yaml(relative_path: str):
-    return yaml.safe_load((ROOT / relative_path).read_text(encoding="utf-8"))
-
-
-def _vikunja_defaults():
-    merged = {}
-    for path in sorted((ROOT / "roles/vikunja/defaults/main").glob("*.yml")):
-        merged.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
-    return merged
-
-
-def _render(value, variables: dict):
-    templar = Templar(loader=DataLoader())
-    templar.available_variables = variables
-    return templar.template(trust_as_template(value))
-
-
-def _task(tasks: list[dict], name: str) -> dict:
-    return next(task for task in tasks if task.get("name") == name)
-
-
-def test_vikunja_agent_read_user_has_an_allowlisted_read_share_and_own_token():
+def test_vikunja_agent_tiers_have_exact_identity_and_project_access():
     defaults = _vikunja_defaults()
     group_vars = _yaml("inventory/group_vars/vikunja_group.yml")
-    service_user = next(user for user in defaults["vikunja_service_users"] if user["username"] == "svc-agent-ro")
-    token_user = next(user for user in defaults["vikunja_mcp_token_users"] if user["username"] == "svc-agent-ro")
-    existing_ro = next(user for user in defaults["vikunja_mcp_token_users"] if user["username"] == "svc-mcp-ro")
-    group_user = next(user for user in group_vars["vikunja_service_users"] if user["username"] == "svc-agent-ro")
-
-    assert service_user["password"] == "{{ lookup('env', 'VIKUNJA_AGENT_READ_PASSWORD') }}"
-    assert "bao_apps_secrets.vikunja_agent_read_password" in group_user["password"]
-    assert "mandatory(" in group_user["password"]
-    assert defaults["vikunja_agent_read_allowlist"] == ["Hermes"]
-    assert token_user == {
-        "username": "svc-agent-ro",
-        "readonly": True,
-        "kv_field": "VIKUNJA_AGENT_READ_TOKEN",
+    tiers = {tier["id"]: tier for tier in defaults["vikunja_agent_tiers"]}
+    assert set(tiers) == {"vikunja-read", "vikunja-write"}
+    assert not {"svc-agent-ro", "svc-agent-rw"} & {
+        user["username"] for user in defaults["vikunja_service_users"]
     }
-    assert existing_ro["readonly"] is True
-    assert existing_ro["kv_field"] == "VIKUNJA_MCP_TOKEN_RO"
 
-    share_tasks = _yaml("roles/vikunja/tasks/agent_read_access.yml")
-    share = _task(share_tasks, "Share allowlisted projects with the read-only agent, per owning account")
-    assert share["vars"]["vikunja_share_grantee_username"] == "svc-agent-ro"
-    assert share["vars"]["vikunja_share_permission"] == 0
-    assert share["vars"]["vikunja_share_project_titles"] == "{{ vikunja_agent_read_allowlist }}"
+    expected = {
+        "vikunja-read": ("svc-agent-ro", "vikunja_agent_read_password", "VIKUNJA_AGENT_READ_TOKEN", 0),
+        "vikunja-write": ("svc-agent-rw", "vikunja_agent_write_password", "VIKUNJA_AGENT_WRITE_TOKEN", 1),
+    }
+    for tier_id, (username, password_field, token_field, permission) in expected.items():
+        tier = tiers[tier_id]
+        assert tier["username"] == username
+        assert tier["password_field"] == password_field
+        assert tier["token_field"] == token_field
+        assert tier["share_permission"] == permission
+        assert _render(tier["project_allowlist"], defaults) == defaults[
+            "vikunja_agent_read_allowlist" if permission == 0 else "vikunja_agent_write_allowlist"
+        ]
+        assert tier["openbao_mount"] == "agent-tier"
+        assert tier["openbao_path"] == tier_id
+        assert password_field not in group_vars
+        assert "vikunja_agent_tier_secret_values" in defaults[password_field]
+
+    assert all(user["username"].startswith("svc-mcp-") for user in defaults["vikunja_mcp_token_users"])
+    assert {user["kv_field"] for user in defaults["vikunja_mcp_token_users"][:2]} == {
+        "VIKUNJA_MCP_TOKEN_RO", "VIKUNJA_MCP_TOKEN_RW"
+    }
+
+    access_tasks = _yaml("roles/vikunja/tasks/agent_read_access.yml")
+    reconcile_dispatch = _task(access_tasks, "Reconcile each configured app-agent tier exactly")
+    assert reconcile_dispatch["loop"] == "{{ vikunja_agent_tiers }}"
+    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
+    regrant = _task(reconcile, "Regrant only the configured direct project shares to the tier account")
+    assert regrant["vars"]["vikunja_share_grantee_username"] == "{{ vikunja_agent_tier.username }}"
+    assert regrant["vars"]["vikunja_share_permission"] == "{{ vikunja_agent_tier.share_permission }}"
+    assert regrant["vars"]["vikunja_share_project_ids"] == "{{ vikunja_agent_tier.project_allowlist }}"
+
     operator_tasks = _yaml("roles/vikunja/tasks/operator_access.yml")
     operator_share = _task(operator_tasks, "Share automation-owned projects with the operator, per owning account")
     assert "vikunja_share_project_titles" not in operator_share["vars"]
+    operator_project_tasks = _yaml("roles/vikunja/tasks/operator_access_project.yml")
+    assert not any(task.get("ansible.builtin.uri", {}).get("method") == "DELETE" for task in operator_project_tasks)
 
-    reconcile = _yaml("roles/vikunja/tasks/operator_access_one.yml")
-    filter_task = _task(reconcile, "Filter the owned projects to the configured title allowlist")
+    filter_task = _task(
+        _yaml("roles/vikunja/tasks/operator_access_one.yml"),
+        "Filter the owned projects to the configured title allowlist",
+    )
+    id_filter_task = _task(
+        _yaml("roles/vikunja/tasks/operator_access_one.yml"),
+        "Filter the owned projects to the configured project ID allowlist",
+    )
+    assert defaults["vikunja_agent_read_allowlist"] == [64]
+    assert defaults["vikunja_agent_write_allowlist"] == defaults["vikunja_agent_read_allowlist"]
+    allowed_project_id = defaults["vikunja_agent_read_allowlist"][0]
+    forbidden_project_id = allowed_project_id + 1
     projects = [
-        {"id": 1, "title": "Hermes"},
-        {"id": 2, "title": "Sensitive"},
+        {"id": project_id, "title": "Hermes" if project_id == allowed_project_id else "Sensitive"}
+        for project_id in [*defaults["vikunja_agent_read_allowlist"], forbidden_project_id]
     ]
-    filtered = _render(
-        filter_task["ansible.builtin.set_fact"]["vikunja_owned_projects"],
-        {"vikunja_owned_projects": projects, "vikunja_share_project_titles": defaults["vikunja_agent_read_allowlist"]},
-    )
-    assert [project["title"] for project in filtered] == defaults["vikunja_agent_read_allowlist"]
+    for tier in tiers.values():
+        allowlist = _render(tier["project_allowlist"], defaults)
+        filtered_by_id = _render(
+            id_filter_task["ansible.builtin.set_fact"]["vikunja_owned_projects"],
+            {"vikunja_owned_projects": projects, "vikunja_share_project_ids": allowlist},
+        )
+        filtered_by_title = _render(
+            filter_task["ansible.builtin.set_fact"]["vikunja_owned_projects"],
+            {"vikunja_owned_projects": projects, "vikunja_share_project_titles": ["Hermes"]},
+        )
+        assert [project["id"] for project in filtered_by_id] == allowlist
+        assert [project["title"] for project in filtered_by_title] == ["Hermes"]
 
 
-def test_vikunja_shared_path_publishes_the_read_allowlist_beside_the_url():
+def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
     defaults = _vikunja_defaults()
-    publish = next(
-        task
-        for task in _yaml("roles/vikunja/tasks/mcp_token_one.yml")
-        if str(task.get("name", "")).startswith("Publish the token to OpenBao")
-    )
-    variables = {
+    tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
+    resolve = _task(tasks, "Resolve token title, permissions, and OpenBao target for {{ vikunja_mcp_user.username }}")
+    static_fields = resolve["ansible.builtin.set_fact"]["vikunja_mcp_token_static_fields"]
+    shared = defaults["vikunja_mcp_token_users"][0]
+    base_variables = {
         "vikunja_url_openbao_key": "VIKUNJA_MCP_URL",
-        "vikunja_mcp_url": "https://vikunja.example.invalid",
-        "vikunja_agent_read_allowlist": defaults["vikunja_agent_read_allowlist"],
+        "vikunja_mcp_url": "https://vikunja.example.invalid/api/v1",
+        "vikunja_token_openbao_mount": "secret",
+        "vikunja_token_openbao_path": "ai/mcp/vikunja",
+        "vikunja_mcp_token_mount": "secret",
+        "vikunja_mcp_token_path": "ai/mcp/vikunja",
     }
-    shared = _render(publish["vars"]["vikunja_mcp_shared_fields"], variables)
-    assert shared == {
-        "VIKUNJA_MCP_URL": "https://vikunja.example.invalid",
-        "VIKUNJA_AGENT_READ_ALLOWLIST": '["Hermes"]',
-    }
-    # The write fires when any shared field drifts, not only the URL.
-    assert "vikunja_mcp_shared_fields" in publish["when"]
+    shared_fields = _render(static_fields, {**base_variables, "vikunja_mcp_user": shared})
+    assert shared_fields == {"VIKUNJA_MCP_URL": "https://vikunja.example.invalid/api/v1"}
 
-
-def test_zammad_agent_write_identity_uses_its_generated_token_and_publisher():
-    defaults = _yaml("roles/zammad/defaults/main/00-install-db-ai.yml")
-    group_vars = (ROOT / "inventory/group_vars/zammad_group.yml").read_text(encoding="utf-8")
-    bootstrap_tasks = _yaml("roles/zammad/tasks/main/nginx_and_bootstrap.yml")
-    bootstrap_env = _task(bootstrap_tasks, "Run the idempotent Zammad bootstrap")["environment"]
-    entrypoint = (ROOT / "roles/zammad/files/zammad_bootstrap.rb").read_text(encoding="utf-8")
-    fragments = ROOT / "roles/zammad/files/zammad_bootstrap"
-    ruby = "\n".join(path.read_text(encoding="utf-8") for path in sorted(fragments.glob("*.rb")))
-
-    assert defaults["zammad_agent_write_email"].endswith("@{{ tofu_data.domain }}")
-    assert defaults["zammad_agent_write_api_token"] == "{{ lookup('env', 'ZAMMAD_AGENT_WRITE_API_TOKEN') }}"
-    assert "bao_apps_secrets.zammad_agent_write_api_token" in group_vars
-    assert "ansible_bootstrap" in entrypoint
-    assert "bootstrap_binding = binding" in entrypoint
-    assert "eval(File.read(bootstrap_fragment), bootstrap_binding, bootstrap_fragment)" in entrypoint
-    stage_fragments = _task(bootstrap_tasks, "Stage the Zammad bootstrap fragments on the target")
-    assert stage_fragments["ansible.builtin.copy"]["src"] == "zammad_bootstrap/"
-    assert stage_fragments["ansible.builtin.copy"]["dest"] == "{{ zammad_root }}/ansible_bootstrap/"
-    assert bootstrap_env["ZAMMAD_AGENT_WRITE_EMAIL"] == "{{ zammad_agent_write_email }}"
-    assert bootstrap_env["ZAMMAD_AGENT_WRITE_API_TOKEN"] == "{{ zammad_agent_write_api_token }}"
-    assert "zammad_agent_write_api_token | length > 0" in str(
-        _task(bootstrap_tasks, "Validate the bootstrap secrets are present")["ansible.builtin.assert"]["that"]
+    tiers = {tier["id"]: tier for tier in defaults["vikunja_agent_tiers"]}
+    read_tier = dict(tiers["vikunja-read"])
+    read_tier["project_allowlist"] = defaults["vikunja_agent_read_allowlist"]
+    read_fields = _render(
+        static_fields,
+        {
+            **base_variables,
+            "vikunja_mcp_user": read_tier,
+            "vikunja_mcp_token_mount": "agent-tier",
+            "vikunja_mcp_token_path": "vikunja-read",
+        },
     )
+    assert read_fields == {
+        "VIKUNJA_AGENT_READ_ALLOWLIST": _render("{{ vikunja_mcp_user.project_allowlist | to_json }}", {
+            "vikunja_mcp_user": read_tier
+        })
+    }
 
-    assert "agent_write_email = env!('ZAMMAD_AGENT_WRITE_EMAIL')" in ruby
-    assert "agent_write_api_token = env!('ZAMMAD_AGENT_WRITE_API_TOKEN')" in ruby
-    assert "[agent_write_email, 'Service', 'Agent Write', agent_role]" in ruby
-    assert "['agent-write', service_users[5], agent_write_api_token, agent_write_prefs]" in ruby
-    assert "agent_write_prefs = { 'permission' => %w[ticket.agent] }" in ruby
-    assert "([admin] + service_users).each do |u|" in ruby
+    publish = next(task for task in tasks if str(task.get("name", "")).startswith("Publish the token to OpenBao"))
+    assert "{{ vikunja_mcp_token_mount }}" in publish["ansible.builtin.uri"]["url"]
+    assert "vikunja_mcp_token_static_fields" in publish["ansible.builtin.uri"]["body"]["data"]
+    assert "vikunja_mcp_token_static_fields" in publish["when"]
+    token_loop = _task(
+        _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
+        "Mint and publish MCP and app-agent tokens per identity",
+    )
+    assert token_loop["loop"] == "{{ vikunja_mcp_token_users + vikunja_agent_tiers }}"
 
-    role_tasks = _yaml("roles/zammad/tasks/main.yml")
-    publish = _task(role_tasks, "Publish svc-agent-write Zammad connection to OpenBao")
-    assert publish["ansible.builtin.include_tasks"] == "publish_mcp.yml"
-    assert publish["vars"]["zammad_token_openbao_key"] == "ZAMMAD_AGENT_WRITE_TOKEN"
-    assert publish["vars"]["zammad_publish_token"] == "{{ zammad_agent_write_api_token }}"
+
+def test_vikunja_existing_token_scope_drift_is_deleted_and_replaced():
+    tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
+    list_existing = _task(tasks, "List existing API tokens for {{ vikunja_mcp_user.username }}")
+    compare = _task(
+        tasks,
+        "Compare existing token scopes for {{ vikunja_mcp_user.username }}",
+    )
+    compare_text = str(compare["ansible.builtin.set_fact"])
+    assert "vikunja_mcp_token_permissions.items()" in compare_text
+    assert "_token.permissions" in compare_text
+    assert "_actual.permissions != _expected.permissions" in compare_text
+    assert "_token.id | int" in compare_text
+    assert list_existing["ansible.builtin.uri"]["method"] == "GET"
+    assert "/api/v1/tokens" in list_existing["ansible.builtin.uri"]["url"]
+    assert compare["no_log"] is True
+    assert tasks.index(list_existing) < tasks.index(compare)
+
+    delete = next(
+        task for task in tasks
+        if "Delete same-title Vikunja tokens" in task.get("name", "")
+    )
+    assert delete["ansible.builtin.uri"]["method"] == "DELETE"
+    assert "/api/v1/tokens/{{ item }}" in delete["ansible.builtin.uri"]["url"]
+    assert delete["loop"] == "{{ vikunja_mcp_token_stale_ids }}"
+    assert "vikunja_token_publish_openbao | bool" in delete["when"]
+    assert "vikunja_mcp_token_stale_ids | length > 0" in delete["when"]
+    assert delete["no_log"] is True
+    assert tasks.index(compare) < tasks.index(delete)
+
+    mint = _task(tasks, "Mint API token for {{ vikunja_mcp_user.username }}")
+    assert "vikunja_token_publish_openbao | bool" in mint["when"]
+    assert "not vikunja_mcp_token_exists" in mint["when"]
+    assert mint["ansible.builtin.uri"]["body"]["permissions"] == "{{ vikunja_mcp_token_permissions }}"
+    assert mint["no_log"] is True
+    assert tasks.index(delete) < tasks.index(mint)
+
+
+def test_vikunja_token_scope_validation_runs_without_publication():
+    main = _yaml("roles/vikunja/tasks/main.yml")
+    token_include = _task(main, "Validate MCP API token scopes and publish when enabled")
+    assert token_include["when"] == ["not ansible_check_mode"]
+
+    token_flow = _yaml("roles/vikunja/tasks/mcp_tokens.yml")
+    per_identity = _task(token_flow, "Mint and publish MCP and app-agent tokens per identity")
+    assert "when" not in per_identity
+    assert "vikunja_token_publish_openbao | bool" in _task(
+        token_flow, "Assert OpenBao write credentials are present"
+    )["when"]
+
+    identity_tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
+    for name in (
+        "Log in to Vikunja as {{ vikunja_mcp_user.username }}",
+        "List existing API tokens for {{ vikunja_mcp_user.username }}",
+        "Compare existing token scopes for {{ vikunja_mcp_user.username }}",
+    ):
+        task = _task(identity_tasks, name)
+        assert "when" not in task
+        assert "vikunja_token_publish_openbao" not in str(task)
+
+    for name in (
+        "Delete same-title Vikunja tokens with unauthorized scopes for {{ vikunja_mcp_user.username }}",
+        "Mint API token for {{ vikunja_mcp_user.username }}",
+        "Read current OpenBao secret at {{ vikunja_mcp_token_path }}",
+        "Publish the token to OpenBao for {{ vikunja_mcp_user.username }}",
+    ):
+        assert "vikunja_token_publish_openbao | bool" in str(_task(identity_tasks, name)["when"])

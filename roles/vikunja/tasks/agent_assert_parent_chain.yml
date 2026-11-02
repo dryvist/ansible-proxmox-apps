@@ -1,0 +1,21 @@
+---
+- name: Initialize the allowlisted project's parent chain
+  ansible.builtin.set_fact:
+    vikunja_agent_parent_id: "{{ vikunja_agent_allowed_project.parent_project_id | default(0) | int }}"
+    vikunja_agent_parent_chain_ids: []
+
+- name: Walk each parent in the allowlisted project's hierarchy
+  ansible.builtin.include_tasks: agent_assert_parent_step.yml
+  loop: "{{ range(1, (vikunja_agent_project_catalog | length) + 1) | list }}"
+  loop_control:
+    loop_var: vikunja_parent_step
+    label: "{{ vikunja_parent_step }}"
+
+- name: Refuse parent chains that grant access outside the allowlist
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_parent_chain_ids | difference(vikunja_agent_allowed_project_ids) | length == 0
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} project
+      {{ vikunja_agent_allowed_project.title }} has a parent chain outside its allowlist.
+    quiet: true

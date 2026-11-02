@@ -1,0 +1,43 @@
+---
+- name: Require the converge OpenBao read/write identity for svc-agent-write
+  ansible.builtin.assert:
+    that:
+      - zammad_token_openbao_addr | length > 0
+      - zammad_token_openbao_token | length > 0
+    fail_msg: >-
+      Zammad agent write is enabled but BAO_ADDR/BAO_TOKEN are unavailable
+      for its dedicated credential read.
+    quiet: true
+  no_log: true
+
+- name: Read the svc-agent-write token from its exact tier leaf
+  ansible.builtin.uri:
+    url: "{{ zammad_token_openbao_addr }}/v1/agent-tier/data/zammad-write"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ zammad_token_openbao_token }}"
+    ca_path: "{{ openbao_ca_path }}"
+    status_code: [200, 403, 404]
+  register: zammad_agent_tier_secret_read
+  changed_when: false
+  no_log: true
+
+- name: Require the svc-agent-write tier leaf and token field to exist
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_tier_secret_read.status | default(0) == 200
+      - >-
+        (zammad_agent_tier_secret_read.json | default({}, true))
+        .get('data', {}).get('data', {})
+        .get('zammad_agent_write_api_token', '') | string | length > 0
+    fail_msg: >-
+      OpenBao does not contain the required svc-agent-write token in its
+      dedicated tier leaf.
+    quiet: true
+  no_log: true
+
+- name: Store the svc-agent-write token for bootstrap and publication
+  ansible.builtin.set_fact:
+    zammad_agent_tier_secret_values:
+      zammad_agent_write_api_token: "{{ zammad_agent_tier_secret_read.json.data.data.zammad_agent_write_api_token }}"
+  no_log: true

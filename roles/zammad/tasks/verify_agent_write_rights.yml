@@ -1,0 +1,158 @@
+---
+- name: Read Zammad groups as the administrator
+  ansible.builtin.uri:
+    url: "http://localhost:{{ zammad_web_port }}/api/v1/groups"
+    method: GET
+    user: "{{ zammad_admin_email }}"
+    password: "{{ zammad_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: zammad_agent_write_groups_readback
+  changed_when: false
+  no_log: true
+
+- name: Read Zammad roles as the administrator
+  ansible.builtin.uri:
+    url: "http://localhost:{{ zammad_web_port }}/api/v1/roles"
+    method: GET
+    user: "{{ zammad_admin_email }}"
+    password: "{{ zammad_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: zammad_agent_write_roles_readback
+  changed_when: false
+  no_log: true
+
+- name: Search for svc-agent-write as the administrator
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ zammad_web_port }}/api/v1/users/search?query={{
+        zammad_agent_write_email | urlencode }}
+    method: GET
+    user: "{{ zammad_admin_email }}"
+    password: "{{ zammad_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: zammad_agent_write_user_search
+  changed_when: false
+  no_log: true
+
+- name: Resolve svc-agent-write and expected group/role IDs
+  ansible.builtin.set_fact:
+    zammad_agent_write_user_matches: >-
+      {{ zammad_agent_write_user_search.json
+         | selectattr('email', 'equalto', zammad_agent_write_email) | list }}
+    zammad_agent_write_expected_group_ids: >-
+      {{ zammad_agent_write_groups_readback.json
+         | selectattr('name', 'in', zammad_agent_write_groups)
+         | map(attribute='id') | map('string') | sort | list }}
+    zammad_agent_write_agent_role_ids: >-
+      {{ zammad_agent_write_roles_readback.json
+         | selectattr('name', 'equalto', 'Agent') | map(attribute='id') | list }}
+  no_log: true
+
+- name: Require exactly one built-in Agent role before reading its capabilities
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_agent_role_ids | length == 1
+    fail_msg: The built-in Zammad Agent role is missing or ambiguous.
+    quiet: true
+  no_log: true
+
+- name: Read the Agent role permissions as the administrator
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ zammad_web_port }}/api/v1/roles/{{
+      zammad_agent_write_agent_role_ids | first }}?expand=true
+    method: GET
+    user: "{{ zammad_admin_email }}"
+    password: "{{ zammad_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: zammad_agent_write_role_readback
+  changed_when: false
+  no_log: true
+
+- name: Resolve expected role and token permissions from the bootstrap source
+  ansible.builtin.set_fact:
+    zammad_agent_write_expected_role_permission_names: >-
+      {{ lookup('file', role_path ~ '/files/zammad_bootstrap/10-admin-and-users.rb')
+         | regex_findall('agent_role_permission_names = %w\[([^]]+)\]')
+         | first | split | sort }}
+    zammad_agent_write_expected_token_permission_names: >-
+      {{ lookup('file', role_path ~ '/files/zammad_bootstrap/20-groups-and-tokens.rb')
+         | regex_findall("agent_write_prefs = \\{ 'permission' => %w\[([^]]+)\] \\}")
+         | first | split | sort }}
+    zammad_agent_write_effective_role_permission_names: >-
+      {%- set ns = namespace(names=[]) -%}
+      {%- set candidates = zammad_agent_write_role_readback.json.get('permissions', [])
+          or zammad_agent_write_role_readback.json.get('permission_ids', []) -%}
+      {%- for permission in candidates -%}
+      {%- if permission is mapping and permission.name is defined -%}
+      {%- set _ = ns.names.append(permission.name) -%}
+      {%- elif permission is string -%}
+      {%- set _ = ns.names.append(permission) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.names | sort }}
+    zammad_agent_write_token_row_permission_names: >-
+      {{ zammad_bootstrap.stdout
+         | regex_findall('ZAMMAD_AGENT_WRITE_TOKEN_PERMISSIONS=([^\n]+)')
+         | first | from_json | sort }}
+  no_log: true
+
+- name: Assert exact Agent role permissions and svc-agent-write token scope
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_effective_role_permission_names == zammad_agent_write_expected_role_permission_names
+      - zammad_agent_write_expected_token_permission_names == ['ticket.agent']
+      - zammad_agent_write_token_row_permission_names == zammad_agent_write_expected_token_permission_names
+    fail_msg: >-
+      The Agent role or svc-agent-write token permissions differ from the
+      bootstrap's exact least-privilege declaration.
+    quiet: true
+  no_log: true
+
+- name: Assert the exact svc-agent-write roles and minimum group access
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_user_matches | length == 1
+      - zammad_agent_write_expected_group_ids | length == zammad_agent_write_groups | length
+      - zammad_agent_write_agent_role_ids | length == 1
+      - >-
+        (zammad_agent_write_user_matches[0].group_ids | default({}, true)
+         | dict2items | map(attribute='key') | list | sort)
+        == zammad_agent_write_expected_group_ids
+      - >-
+        (zammad_agent_write_user_matches[0].group_ids | default({}, true)
+         | dict2items | map(attribute='value') | map('sort') | unique | list)
+        == [['change', 'create', 'read']]
+      - >-
+        zammad_agent_write_user_matches[0].role_ids | map('int') | sort | list
+        == zammad_agent_write_agent_role_ids | map('int') | sort | list
+    fail_msg: >-
+      svc-agent-write roles or effective group access differs from the declared
+      group list and minimum ticket actions.
+    quiet: true
+  no_log: true
+
+# Agent-only role: every admin surface must refuse the identity's own token.
+- name: Probe Zammad admin endpoints with the svc-agent-write token
+  ansible.builtin.uri:
+    url: "http://localhost:{{ zammad_web_port }}/api/v1/{{ item }}"
+    method: GET
+    headers:
+      Authorization: "Token token={{ zammad_agent_write_api_token }}"
+    status_code: [200, 401, 403]
+  loop: [settings, channels_email]
+  register: zammad_agent_write_admin_probe
+  changed_when: false
+  no_log: true
+
+- name: Assert svc-agent-write is refused on every admin endpoint
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_admin_probe.results | map(attribute='status') | select('equalto', 200) | list | length == 0
+    fail_msg: svc-agent-write reached a Zammad admin endpoint with its own token.
+    quiet: true
+  no_log: true

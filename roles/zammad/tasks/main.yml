@@ -14,7 +14,11 @@
 - name: Configure Zammad
   when: zammad_manage_app | bool
   become: true
+  no_log: true
   block:
+    - name: Read svc-agent-write credential from its exact OpenBao leaf
+      ansible.builtin.include_tasks: read_agent_tier_values.yml
+
     # database.yml is templated with this password and the Postgres role applies
     # the same value, so an empty one locks Zammad out of its own database on a
     # converge that reports success. Guard it before anything is written.
@@ -25,6 +29,7 @@
       vars:
         openbao_secrets_required_vars:
           - zammad_db_password
+      no_log: true
 
     - name: Phases 1-4 -- packages, Redis, signing keys, apt repos
       ansible.builtin.include_tasks: main/packages_and_signing.yml
@@ -48,6 +53,7 @@
   ansible.builtin.include_tasks: publish_mcp.yml
   when: zammad_token_publish_openbao | bool
   tags: zammad_mcp_publish
+  no_log: true
 
 # Same publisher, second consumer: the svc-splunk token the Splunk `zammad`
 # alert action authenticates with. Separate path so the Splunk credential can be
@@ -56,17 +62,22 @@
   ansible.builtin.include_tasks: publish_mcp.yml
   when: zammad_token_publish_openbao | bool
   tags: zammad_mcp_publish
+  no_log: true
   vars:
     zammad_token_openbao_path: "ai/mcp/splunk"
     zammad_url_openbao_key: "SPLUNK_ZAMMAD_URL"
     zammad_token_openbao_key: "SPLUNK_ZAMMAD_TOKEN"
     zammad_publish_token: "{{ zammad_splunk_api_token }}"
 
-# Publish the dedicated app-agent write token in the shared Zammad MCP bucket.
+# Publish the dedicated app-agent write token to its private tier leaf.
 - name: Publish svc-agent-write Zammad connection to OpenBao
   ansible.builtin.include_tasks: publish_mcp.yml
   when: zammad_token_publish_openbao | bool
   tags: zammad_mcp_publish
+  no_log: true
   vars:
+    zammad_token_openbao_mount: agent-tier
+    zammad_token_openbao_path: zammad-write
+    zammad_publish_url: false
     zammad_token_openbao_key: "ZAMMAD_AGENT_WRITE_TOKEN"
     zammad_publish_token: "{{ zammad_agent_write_api_token }}"

@@ -46,7 +46,19 @@ end
 # ticket history attribute writes to the real actor — the admin account stays
 # human-only. No password is set: these accounts are API-token-only and cannot
 # log in via the web UI.
-agent_role = [Role.find_by!(name: 'Agent')]
+# The built-in Agent role is shared by the service accounts. Pin its complete
+# permission set so an upstream/default or manual grant cannot widen them.
+agent_role_permission_names = %w[ticket.agent knowledge_base.editor]
+agent_role_record = Role.find_by!(name: 'Agent')
+agent_role_permissions = agent_role_permission_names.map do |name|
+  Permission.find_by!(name: name)
+end
+unless agent_role_record.permissions.map(&:name).sort == agent_role_permission_names.sort
+  agent_role_record.permissions = agent_role_permissions
+  agent_role_record.save!
+  changed = true
+end
+agent_role = [agent_role_record]
 # hermes also carries Customer: the zammad-incidents skill omits the customer
 # field, so Zammad makes the token's user the ticket customer — which routes
 # every Hermes-filed ticket into the dedicated Hermes org (blast-radius
@@ -85,14 +97,6 @@ service_users = [
     changed = true
   end
   u
-end
-
-# Agents need knowledge_base.editor for their tokens to carry that scope; the
-# default Agent role does not always include it.
-kb_perm = Permission.find_by(name: 'knowledge_base.editor')
-if kb_perm && !agent_role.first.permissions.include?(kb_perm)
-  agent_role.first.permissions << kb_perm
-  changed = true
 end
 
 # --- Organizations ------------------------------------------------------------
