@@ -1,8 +1,7 @@
 ---
-# Ensure one service identity has a live scoped API token and publish it to its
-# declared OpenBao leaf. The tier row owns the app-agent token field, path,
-# permissions, and allowlist. Shared MCP identities retain their existing row
-# shape and shared URL publication.
+# Validate one service identity's live token scope on every ordinary converge,
+# then repair the token and publish it when publication is enabled. The tier
+# row owns the app-agent token field, path, permissions, and allowlist.
 
 - name: "Resolve token title, permissions, and OpenBao target for {{ vikunja_mcp_user.username }}"
   ansible.builtin.set_fact:
@@ -95,7 +94,19 @@
     status_code: [200]
   loop: "{{ vikunja_mcp_token_stale_ids }}"
   register: vikunja_mcp_token_delete
-  when: vikunja_mcp_token_stale_ids | length > 0
+  when:
+    - vikunja_token_publish_openbao | bool
+    - vikunja_mcp_token_stale_ids | length > 0
+  no_log: true
+
+- name: "Fail closed on unauthorized token scopes when publication is disabled for {{ vikunja_mcp_user.username }}"
+  ansible.builtin.fail:
+    msg: >-
+      Existing same-title token for {{ vikunja_mcp_user.username }} has an
+      unauthorized scope. Enable vikunja_token_publish_openbao to replace it.
+  when:
+    - not (vikunja_token_publish_openbao | bool)
+    - vikunja_mcp_token_stale_ids | length > 0
   no_log: true
 
 - name: "Mint API token for {{ vikunja_mcp_user.username }}"
@@ -113,7 +124,9 @@
            | strftime((now(utc=true).timestamp() | int) + (vikunja_token_expiry_days | int * 86400), utc=true) }}
     status_code: [200, 201]
   register: vikunja_mcp_token_mint
-  when: not vikunja_mcp_token_exists
+  when:
+    - vikunja_token_publish_openbao | bool
+    - not vikunja_mcp_token_exists
   no_log: true
 
 - name: "Read current OpenBao secret at {{ vikunja_mcp_token_path }}"
@@ -131,6 +144,7 @@
   vars:
     ansible_become: false
   no_log: true
+  when: vikunja_token_publish_openbao | bool
 
 # KV v2 replaces the whole secret, so merge canonical fields over current data
 # to preserve siblings. Shared MCP rows publish the URL; app-agent rows publish
@@ -157,8 +171,9 @@
   vars:
     ansible_become: false
   when: >-
-    vikunja_mcp_token_mint is not skipped
-    or ((vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-        | dict2items | selectattr('key', 'in', vikunja_mcp_token_static_fields)
-        | items2dict != vikunja_mcp_token_static_fields)
+    vikunja_token_publish_openbao | bool
+    and (vikunja_mcp_token_mint is not skipped
+         or ((vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+             | dict2items | selectattr('key', 'in', vikunja_mcp_token_static_fields)
+             | items2dict != vikunja_mcp_token_static_fields))
   no_log: true

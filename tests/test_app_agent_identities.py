@@ -177,15 +177,48 @@ def test_vikunja_existing_token_scope_drift_is_deleted_and_replaced():
     assert delete["ansible.builtin.uri"]["method"] == "DELETE"
     assert "/api/v1/tokens/{{ item }}" in delete["ansible.builtin.uri"]["url"]
     assert delete["loop"] == "{{ vikunja_mcp_token_stale_ids }}"
+    assert "vikunja_token_publish_openbao | bool" in delete["when"]
     assert "vikunja_mcp_token_stale_ids | length > 0" in delete["when"]
     assert delete["no_log"] is True
     assert tasks.index(compare) < tasks.index(delete)
 
     mint = _task(tasks, "Mint API token for {{ vikunja_mcp_user.username }}")
-    assert mint["when"] == "not vikunja_mcp_token_exists"
+    assert "vikunja_token_publish_openbao | bool" in mint["when"]
+    assert "not vikunja_mcp_token_exists" in mint["when"]
     assert mint["ansible.builtin.uri"]["body"]["permissions"] == "{{ vikunja_mcp_token_permissions }}"
     assert mint["no_log"] is True
     assert tasks.index(delete) < tasks.index(mint)
+
+
+def test_vikunja_token_scope_validation_runs_without_publication():
+    main = _yaml("roles/vikunja/tasks/main.yml")
+    token_include = _task(main, "Validate MCP API token scopes and publish when enabled")
+    assert token_include["when"] == ["not ansible_check_mode"]
+
+    token_flow = _yaml("roles/vikunja/tasks/mcp_tokens.yml")
+    per_identity = _task(token_flow, "Mint and publish MCP and app-agent tokens per identity")
+    assert "when" not in per_identity
+    assert "vikunja_token_publish_openbao | bool" in _task(
+        token_flow, "Assert OpenBao write credentials are present"
+    )["when"]
+
+    identity_tasks = _yaml("roles/vikunja/tasks/mcp_token_one.yml")
+    for name in (
+        "Log in to Vikunja as {{ vikunja_mcp_user.username }}",
+        "List existing API tokens for {{ vikunja_mcp_user.username }}",
+        "Compare existing token scopes for {{ vikunja_mcp_user.username }}",
+    ):
+        task = _task(identity_tasks, name)
+        assert "when" not in task
+        assert "vikunja_token_publish_openbao" not in str(task)
+
+    for name in (
+        "Delete same-title Vikunja tokens with unauthorized scopes for {{ vikunja_mcp_user.username }}",
+        "Mint API token for {{ vikunja_mcp_user.username }}",
+        "Read current OpenBao secret at {{ vikunja_mcp_token_path }}",
+        "Publish the token to OpenBao for {{ vikunja_mcp_user.username }}",
+    ):
+        assert "vikunja_token_publish_openbao | bool" in str(_task(identity_tasks, name)["when"])
 
 
 def test_zammad_agent_write_identity_uses_its_generated_token_and_publisher():
