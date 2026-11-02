@@ -30,7 +30,7 @@ GUARDED_UNARCHIVES = (
         ("Create the unpack staging directory", "glance_unpack_directory"),
         ("Fetch the pinned glance release (checksum-verified)", "glance_fetch"),
     )),
-    ("roles/grafana_stack/tasks/main.yml", "Deploy provisioned dashboards from the pinned grafana-dashboards release", (
+    ("roles/grafana_stack/tasks/provisioning.yml", "Deploy provisioned dashboards from the pinned grafana-dashboards release", (
         ("Create grafana stack directories", "grafana_stack_directories"),
     )),
     ("roles/idrac_kvm_docker/tasks/main.yml", "Unpack AVCT client into build context (creates app/)", (
@@ -81,6 +81,14 @@ def test_unarchive_skips_only_when_check_mode_simulates_a_required_input(
         download = next(task for task in download_tasks if task["name"] == "Download the Technitium app from the mirror (checksum-pinned)")
         assert download["register"] == "technitium_install_app_download"
         assert "technitium_install_app_download" in condition
+    producer_tasks = tasks
+    if relative_path == "roles/grafana_stack/tasks/provisioning.yml":
+        producer_tasks = {
+            task["name"]: task
+            for task in _tasks_in(
+                yaml.safe_load((REPO / "roles/grafana_stack/tasks/deploy.yml").read_text(encoding="utf-8"))
+            )
+        }
     for producer_name, result_name in producers:
-        assert tasks[producer_name]["register"] == result_name
+        assert producer_tasks[producer_name]["register"] == result_name
         assert result_name in condition

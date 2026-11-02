@@ -94,7 +94,7 @@ class GitMirrorContract(unittest.TestCase):
             )
 
         rules_config = render_rules({"git_mirror_group": ["git-mirror-101"]})
-        grafana_tasks = yaml.safe_load((ROOT / "roles/grafana_stack/tasks/main.yml").read_text())
+        grafana_tasks = yaml.safe_load((ROOT / "roles/grafana_stack/tasks/provisioning.yml").read_text())
         alert_task = next(
             task for task in grafana_tasks if task["name"] == "Render grafana unified-alerting provisioning"
         )
