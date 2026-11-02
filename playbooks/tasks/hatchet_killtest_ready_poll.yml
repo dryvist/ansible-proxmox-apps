@@ -1,0 +1,47 @@
+---
+# One readiness poll: Hatchet /ready on each listed guest, from an ingress host
+# (the only hosts the health port admits). An unreachable ingress host is
+# recorded, not fatal to the play, and fails this poll like a non-200 answer.
+- name: Probe Hatchet /ready, poll {{ hatchet_killtest_poll + 1 }}
+  ansible.builtin.uri:
+    url: "http://{{ hostvars[item].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+    timeout: 3
+    follow_redirects: none
+  loop: "{{ hatchet_killtest_ready_guests }}"
+  register: hatchet_killtest_ready
+  failed_when: false
+  when: >-
+    now(utc=True).timestamp()
+    < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)
+  delegate_to: "{{ hatchet_killtest_probe_host }}"
+  ignore_unreachable: true
+
+- name: Require every guest ready on poll {{ hatchet_killtest_poll + 1 }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        hatchet_killtest_ready.results | selectattr('unreachable', 'defined')
+        | selectattr('unreachable') | list | length == 0
+      - hatchet_killtest_ready.results | rejectattr('status', 'defined') | list | length == 0
+      - hatchet_killtest_ready.results | map(attribute='status') | reject('equalto', 200) | list | length == 0
+    fail_msg: Poll {{ hatchet_killtest_poll + 1 }} found a guest not ready, or the ingress host unreachable.
+    quiet: true
+
+- name: Record the slowest ready answer
+  ansible.builtin.set_fact:
+    hatchet_killtest_worst: >-
+      {{ ([hatchet_killtest_worst | default(0) | float]
+          + (hatchet_killtest_ready.results | map(attribute='elapsed') | map('float') | list)) | max }}
+
+- name: Wait before the next poll
+  ansible.builtin.pause:
+    seconds: >-
+      {{ [0, (hatchet_killtest_ready_pause | default(0) | int),
+           ((hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float
+             - now(utc=True).timestamp() - 3) | int)] | min }}
+  when:
+    - (hatchet_killtest_ready_pause | default(0) | int) > 0
+    - hatchet_killtest_poll + 1 < hatchet_killtest_ready_polls | int
+    - >-
+      now(utc=True).timestamp()
+      < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)

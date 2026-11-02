@@ -1,0 +1,98 @@
+---
+# One recovery reconciliation step. Keep polling an unfinished start UPID;
+# send another start only when there is no accepted, unfinished UPID.
+- name: "Send start to the target guest, attempt {{ hatchet_killtest_attempt }}"
+  ansible.builtin.uri:
+    url: "{{ hatchet_killtest_guest_api }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ hatchet_killtest_auth }}"
+    unredirected_headers: [Authorization]
+    follow_redirects: none
+    ca_path: "{{ hatchet_killtest_ca.path }}"
+    status_code: 200
+    timeout: 5
+  register: hatchet_killtest_start_post
+  failed_when: false
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_upids | default({})).get('start', '') | length == 0
+    - now(utc=True).timestamp() < (hatchet_killtest_deadline_epoch | float - 5)
+  no_log: true
+
+- name: Record the accepted start UPID
+  ansible.builtin.set_fact:
+    hatchet_killtest_upids: >-
+      {{ (hatchet_killtest_upids | default({}))
+         | combine({'start': hatchet_killtest_start_post.json.data | default('')}) }}
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_start_post.status | default(0)) == 200
+
+- name: "Poll the start UPID, attempt {{ hatchet_killtest_attempt }}"
+  ansible.builtin.uri:
+    url: >-
+      {{ hatchet_killtest_api }}/nodes/{{ hatchet_killtest_node }}/tasks/{{
+      (hatchet_killtest_upids | default({})).get('start', '') | urlencode }}/status
+    headers:
+      Authorization: "{{ hatchet_killtest_auth }}"
+    unredirected_headers: [Authorization]
+    follow_redirects: none
+    ca_path: "{{ hatchet_killtest_ca.path }}"
+    timeout: 3
+  register: hatchet_killtest_start_task
+  # Leave one 3s delay plus one 3s request timeout before the deadline.
+  until: >-
+    (hatchet_killtest_start_task.json.data.status | default('')) == 'stopped'
+    or now(utc=True).timestamp() >= (hatchet_killtest_deadline_epoch | float - 6)
+  retries: 15
+  delay: 3
+  failed_when: false
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_upids | default({})).get('start', '') | length > 0
+    - now(utc=True).timestamp() < (hatchet_killtest_deadline_epoch | float - 6)
+  no_log: true
+
+- name: Record whether the start UPID completed successfully
+  vars:
+    _task: "{{ (hatchet_killtest_start_task.json | default({})).data | default({}) }}"
+    _exitstatus: "{{ _task.exitstatus | default('') }}"
+  ansible.builtin.set_fact:
+    hatchet_killtest_started: >-
+      {{ (hatchet_killtest_started | bool)
+         or (_task.status | default('') == 'stopped'
+             and (_exitstatus == 'OK' or 'already running' in _exitstatus)) }}
+    hatchet_killtest_upids: >-
+      {{ (hatchet_killtest_upids | default({})) | combine({'start': ''})
+         if _task.status | default('') == 'stopped'
+            and not (_exitstatus == 'OK' or 'already running' in _exitstatus)
+         else (hatchet_killtest_upids | default({})) }}
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_upids | default({})).get('start', '') | length > 0
+
+- name: Probe the target until Hatchet is ready
+  ansible.builtin.uri:
+    url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+    timeout: 3
+    follow_redirects: none
+  register: hatchet_killtest_back
+  failed_when: false
+  when: now(utc=True).timestamp() < (hatchet_killtest_deadline_epoch | float - 3)
+  delegate_to: "{{ hatchet_killtest_probe_host }}"
+  ignore_unreachable: true
+
+- name: Record readiness as live-running confirmation
+  ansible.builtin.set_fact:
+    hatchet_killtest_started: >-
+      {{ (hatchet_killtest_started | bool)
+         or (hatchet_killtest_back.status | default(0) | int == 200) }}
+
+- name: Pace unsuccessful recovery attempts
+  ansible.builtin.pause:
+    seconds: 1
+  when:
+    - not ((hatchet_killtest_started | bool)
+      and (hatchet_killtest_back.status | default(0) | int == 200))
+    - now(utc=True).timestamp() < (hatchet_killtest_deadline_epoch | float - 1)
