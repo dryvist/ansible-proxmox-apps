@@ -1,6 +1,46 @@
 ---
 # Cribl Stream native installation in LXC containers
 
+- name: Resolve the selected Cribl Stream entry points
+  ansible.builtin.set_fact:
+    cribl_stream_entry_context:
+      active: >-
+        {{ ansible_run_tags
+           | intersect((cribl_stream_entry_tags.values() | list)
+                       + cribl_stream_selector_tags.full
+                       + cribl_stream_selector_tags.compatibility)
+           | length > 0 }}
+      full: >-
+        {{ ansible_run_tags
+           | intersect(cribl_stream_selector_tags.full)
+           | length > 0 }}
+      entries: >-
+        {{ cribl_stream_entry_tags | dict2items
+           | selectattr('value', 'in', ansible_run_tags)
+           | map(attribute='key') | list }}
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.install }}"
+
+- name: Resolve required Cribl Stream prerequisites
+  ansible.builtin.set_fact:
+    cribl_stream_run_outputs: >-
+      {{ cribl_stream_entry_context.full | bool
+         or cribl_stream_entry_tags.outputs in ansible_run_tags
+         or 'outputs' in (cribl_stream_entry_context.entries
+                          | map('extract', cribl_stream_entry_prerequisites)
+                          | flatten | list) }}
+    cribl_stream_run_pipelines: >-
+      {{ cribl_stream_entry_context.full | bool
+         or cribl_stream_entry_tags.pipelines in ansible_run_tags
+         or 'pipelines' in (cribl_stream_entry_context.entries
+                            | map('extract', cribl_stream_entry_prerequisites)
+                            | flatten | list) }}
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.install }}"
+  when: cribl_stream_entry_context.active | bool
+
 - name: Require the ntfy destination for Grafana alert delivery
   ansible.builtin.assert:
     that:
@@ -9,6 +49,10 @@
     fail_msg: >-
       cribl_stream_alerts_ntfy_url and cribl_stream_alerts_ntfy_publish_url
       must be configured for Grafana alert delivery.
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.install }}"
+  when: cribl_stream_entry_context.active | bool
 
 - name: Require a positive integer for Phoenix trace sampling
   ansible.builtin.assert:
@@ -17,6 +61,10 @@
       - cribl_stream_phoenix_trace_keep_one_in >= 1
     fail_msg: >-
       cribl_stream_phoenix_trace_keep_one_in must be an integer of at least 1.
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.install }}"
+  when: cribl_stream_entry_context.active | bool
 
 - name: Install required packages
   # sudo is required because later tasks use `become_user:
@@ -31,12 +79,16 @@
       - sudo
     state: present
     update_cache: true
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Create cribl system group
   ansible.builtin.group:
     name: "{{ cribl_stream_group }}"
     system: true
     state: present
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Create cribl system user
   ansible.builtin.user:
@@ -47,15 +99,28 @@
     home: "{{ cribl_stream_install_dir }}"
     shell: /usr/sbin/nologin
     state: present
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Check if Cribl Stream is already installed
   ansible.builtin.stat:
     path: "{{ cribl_stream_install_dir }}/bin/cribl"
   register: cribl_stream_binary
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Upgrade an already-installed Cribl Stream to the pinned version
-  ansible.builtin.include_tasks: upgrade.yml
+  ansible.builtin.include_tasks:
+    file: upgrade.yml
+    apply:
+      tags:
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.install }}"
   when: cribl_stream_binary.stat.exists
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Download Cribl Stream tarball
   ansible.builtin.get_url:
@@ -65,6 +130,8 @@
     mode: "0644"
   when: not cribl_stream_binary.stat.exists
   register: cribl_stream_install_download
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Create install directory
   ansible.builtin.file:
@@ -73,6 +140,8 @@
     owner: "{{ cribl_stream_user }}"
     group: "{{ cribl_stream_group }}"
     mode: "0755"
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Extract Cribl Stream tarball
   ansible.builtin.unarchive:
@@ -84,11 +153,15 @@
   when:
     - not cribl_stream_binary.stat.exists
     - not (ansible_check_mode and cribl_stream_install_download is changed)
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Remove downloaded tarball
   ansible.builtin.file:
     path: /tmp/cribl-stream.tgz
     state: absent
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
 
 - name: Set Cribl Stream to single-instance mode
   ansible.builtin.command:
@@ -97,6 +170,42 @@
   become_user: "{{ cribl_stream_user }}"
   changed_when: true
   when: not cribl_stream_binary.stat.exists
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
+
+# Under --check a first install only previews the unit creation, so service steps skip.
+- name: Check for the Cribl Stream systemd unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cribl.service
+  register: cribl_stream_unit_file
+  when:
+    - cribl_stream_entry_context.active | bool
+    - ansible_check_mode
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.install }}"
+
+- name: Enable Cribl Stream boot-start via systemd
+  ansible.builtin.command:
+    cmd: "{{ cribl_stream_install_dir }}/bin/cribl boot-start enable -m systemd -u {{ cribl_stream_user }}"
+    creates: /etc/systemd/system/cribl.service
+  tags:
+    - "{{ cribl_stream_entry_tags.install }}"
+
+# Config groups need an active Cribl process before reading or verifying local
+# configuration; the unit stat also supplies the check-mode handler guard.
+- name: Ensure Cribl Stream service is running
+  ansible.builtin.systemd:
+    name: "{{ cribl_stream_service_name }}"
+    state: "{{ cribl_stream_service_state }}"
+    enabled: "{{ cribl_stream_service_enabled }}"
+    daemon_reload: true
+  when:
+    - cribl_stream_entry_context.active | bool
+    - not ansible_check_mode or cribl_stream_unit_file.stat.exists
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.install }}"
 
 # cribl.yml is Cribl's own system-settings file (worker sizing, API host,
 # whatever the UI or Cribl itself writes there) — this role never owned it
@@ -115,6 +224,8 @@
     src: "{{ cribl_stream_install_dir }}/local/cribl/cribl.yml"
   register: cribl_stream_cribl_yml_live
   failed_when: false
+  tags:
+    - "{{ cribl_stream_entry_tags.settings }}"
 
 - name: Merge worker-process sizing into the live cribl.yml
   ansible.builtin.set_fact:
@@ -124,6 +235,8 @@
          | combine({'workers': {'count': cribl_stream_worker_count | int,
                                  'memory': cribl_stream_worker_heap_mb | int}},
                     recursive=true) }}
+  tags:
+    - "{{ cribl_stream_entry_tags.settings }}"
 
 - name: Deploy the merged Cribl Stream system settings
   ansible.builtin.copy:
@@ -133,6 +246,8 @@
     group: "{{ cribl_stream_group }}"
     mode: "0644"
   notify: Restart cribl stream
+  tags:
+    - "{{ cribl_stream_entry_tags.settings }}"
 
 - name: Ensure the Cribl Stream lookups directory exists
   ansible.builtin.file:
@@ -141,6 +256,12 @@
     owner: "{{ cribl_stream_user }}"
     group: "{{ cribl_stream_group }}"
     mode: "0755"
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.pipelines }}"
+  when:
+    - cribl_stream_entry_context.active | bool
+    - cribl_stream_run_pipelines | default(false) | bool
 
 - name: Deploy Cribl Stream inputs configuration
   ansible.builtin.template:
@@ -150,6 +271,8 @@
     group: "{{ cribl_stream_group }}"
     mode: "0644"
   notify: Restart cribl stream
+  tags:
+    - "{{ cribl_stream_entry_tags.inputs }}"
 
 # A restart handler only fires when a task reports changed, so config that is
 # already correct on disk but was never LOADED can never repair itself: the
@@ -183,13 +306,43 @@
   changed_when: "'Timeout' in (cribl_stream_otel_probe.msg | default(''))"
   failed_when: false
   notify: Restart cribl stream
+  tags:
+    - "{{ cribl_stream_entry_tags.inputs }}"
 
 - name: Reconcile Cribl Stream outputs configuration
-  ansible.builtin.include_tasks: outputs.yml
+  ansible.builtin.include_tasks:
+    file: outputs.yml
+    apply:
+      tags:
+        - always
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.outputs }}"
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.outputs }}"
+  when:
+    - cribl_stream_entry_context.active | bool
+    - cribl_stream_run_outputs | default(false) | bool
 
 # Pipeline directories + configs, rendered on the controller (see pipelines.yml).
 - name: Deploy pipeline directories and configurations
-  ansible.builtin.include_tasks: pipelines.yml
+  ansible.builtin.include_tasks:
+    file: pipelines.yml
+    apply:
+      tags:
+        - always
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.pipelines }}"
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.pipelines }}"
+  when:
+    - cribl_stream_entry_context.active | bool
+    - cribl_stream_run_pipelines | default(false) | bool
 
 - name: Deploy the UniFi VLAN lookup table
   # Cribl's Lookup function crashes ("Cannot read properties of undefined
@@ -202,8 +355,13 @@
     owner: "{{ cribl_stream_user }}"
     group: "{{ cribl_stream_group }}"
     mode: "0644"
-  when: cribl_stream_unifi_networks | default([]) | length > 0
   notify: Restart cribl stream
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.pipelines }}"
+  when: cribl_stream_unifi_networks | default([]) | length > 0
+        and cribl_stream_entry_context.active | bool
+        and cribl_stream_run_pipelines | default(false) | bool
 
 - name: Deploy the PVE guest lookup table
   ansible.builtin.template:
@@ -212,52 +370,84 @@
     owner: "{{ cribl_stream_user }}"
     group: "{{ cribl_stream_group }}"
     mode: "0644"
-  when: >-
-    cribl_stream_pve_guest_containers | length > 0
-    or cribl_stream_pve_guest_vms | length > 0
   notify: Restart cribl stream
+  tags:
+    - always
+    - "{{ cribl_stream_entry_tags.pipelines }}"
+  when:
+    - cribl_stream_entry_context.active | bool
+    - cribl_stream_run_pipelines | default(false) | bool
+    - >-
+      cribl_stream_pve_guest_containers | length > 0
+      or cribl_stream_pve_guest_vms | length > 0
 
 - name: Deploy BMC hardware sensor monitoring
-  ansible.builtin.include_tasks: bmc_hw_metrics.yml
+  ansible.builtin.include_tasks:
+    file: bmc_hw_metrics.yml
+    apply:
+      tags:
+        - always
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.bmc_collector }}"
+  tags:
+    - "{{ cribl_stream_entry_tags.bmc_collector }}"
+    - bmc_provision
 
 - name: Deploy the LiteLLM price collector
-  ansible.builtin.include_tasks: litellm_prices.yml
+  ansible.builtin.include_tasks:
+    file: litellm_prices.yml
+    apply:
+      tags:
+        - always
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.litellm_prices }}"
   when: cribl_stream_litellm_prices_enabled | bool
+  tags:
+    - "{{ cribl_stream_entry_tags.litellm_prices }}"
 
 - name: Deploy GitHub Actions telemetry collectors and OpenBao agent proxy
-  ansible.builtin.include_tasks: github_actions.yml
+  ansible.builtin.include_tasks:
+    file: github_actions.yml
+    apply:
+      tags:
+        - always
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.github_actions }}"
   when: cribl_stream_github_actions_enabled | bool
-
-# Under --check a first install only previews the unit creation, so service steps skip.
-- name: Check for the Cribl Stream systemd unit
-  ansible.builtin.stat:
-    path: /etc/systemd/system/cribl.service
-  register: cribl_stream_unit_file
-  when: ansible_check_mode
-
-- name: Enable Cribl Stream boot-start via systemd
-  ansible.builtin.command:
-    cmd: "{{ cribl_stream_install_dir }}/bin/cribl boot-start enable -m systemd -u {{ cribl_stream_user }}"
-    creates: /etc/systemd/system/cribl.service
-
-- name: Ensure Cribl Stream service is running
-  ansible.builtin.systemd:
-    name: "{{ cribl_stream_service_name }}"
-    state: "{{ cribl_stream_service_state }}"
-    enabled: "{{ cribl_stream_service_enabled }}"
-    daemon_reload: true
-  when: not ansible_check_mode or cribl_stream_unit_file.stat.exists
+  tags:
+    - "{{ cribl_stream_entry_tags.github_actions }}"
 
 # Keep admin checks separate from data-path changes. The probe tag runs only
 # when explicitly enabled; routine data-path converges never issue a login.
 - name: Probe Cribl admin logins without changing state
-  ansible.builtin.include_tasks: probe_admin_logins.yml
+  ansible.builtin.include_tasks:
+    file: probe_admin_logins.yml
+    apply:
+      tags:
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.probe }}"
   tags:
     - cribl_stream_admin_probe
+    - "{{ cribl_stream_entry_tags.probe }}"
   when: cribl_stream_admin_probe_only | default(false) | bool
 
 - name: Rotate the management API admin credential off the vendor default
-  ansible.builtin.include_tasks: rotate_admin_password.yml
+  ansible.builtin.include_tasks:
+    file: rotate_admin_password.yml
+    apply:
+      tags:
+        - cribl_stream
+        - cribl
+        - pipeline
+        - "{{ cribl_stream_entry_tags.admin }}"
   when: not ansible_check_mode or cribl_stream_unit_file.stat.exists
   tags:
-    - cribl_stream_admin
+    - "{{ cribl_stream_entry_tags.admin }}"
