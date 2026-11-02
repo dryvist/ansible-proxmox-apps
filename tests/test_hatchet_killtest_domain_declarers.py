@@ -9,31 +9,41 @@ loops over a wider domain catalog.
 
 from pathlib import Path
 import re
+import subprocess
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOMAIN = "hatchet-killtest"
-MENTION = re.compile(r"(?i)hatchet[-_ ]?killtest")
+MENTION = re.compile(rb"(?i)hatchet[-_ ]?killtest")
 ALLOWED_DECLARERS = {
     "playbooks/hatchet-killtest.yml",
     "playbooks/tasks/hatchet_killtest_power.yml",
     "playbooks/tasks/hatchet_killtest_ready.yml",
+    "playbooks/tasks/hatchet_killtest_ready_poll.yml",
+    "playbooks/tasks/hatchet_killtest_start.yml",
+    "playbooks/tasks/hatchet_killtest_phases.yml",
 }
 EXCLUDED_TOP_LEVEL = {"tests", "docs"}
 
 
+def _files(root: Path):
+    """Git's view (tracked plus untracked, not ignored), so .github counts and caches do not."""
+    listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                            capture_output=True, check=False)
+    if listed.returncode == 0:
+        return [root / name for name in listed.stdout.decode().split("\0") if name]
+    return [path for path in root.rglob("*") if ".git" not in path.relative_to(root).parts]
+
+
 def _declarers(root: Path) -> set[str]:
     found = set()
-    for path in root.rglob("*"):
+    for path in _files(root):
         parts = path.relative_to(root).parts
-        if not path.is_file() or parts[0] in EXCLUDED_TOP_LEVEL or any(p.startswith(".") for p in parts):
+        if not path.is_file() or parts[0] in EXCLUDED_TOP_LEVEL:
             continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        if MENTION.search(text):
+        # Bytes, so binary files are scanned too; a read error fails the test.
+        if MENTION.search(path.read_bytes()):
             found.add(path.relative_to(root).as_posix())
     return found
 
@@ -75,9 +85,12 @@ def test_probe_sees_any_spelling_outside_the_allowed_files(tmp_path):
     for relative, text in [("roles/other/tasks/main.yml", "domain: Hatchet_KillTest\n"),
                            ("inventory/hosts.json", '{"x": "hatchet killtest"}'),
                            ("tests/fixture.yml", f"{DOMAIN}\n"),
-                           ("docs/note.md", f"{DOMAIN}\n")]:
+                           ("docs/note.md", f"{DOMAIN}\n"),
+                           (".github/workflows/x.yml", "run: hatchet-killtest\n"),
+                           (".git/config", "hatchet-killtest\n")]:
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / relative).write_text(text, encoding="utf-8")
 
     assert _declarers(tmp_path) == {
-        "playbooks/hatchet-killtest.yml", "roles/other/tasks/main.yml", "inventory/hosts.json"}
+        "playbooks/hatchet-killtest.yml", "roles/other/tasks/main.yml", "inventory/hosts.json",
+        ".github/workflows/x.yml"}
