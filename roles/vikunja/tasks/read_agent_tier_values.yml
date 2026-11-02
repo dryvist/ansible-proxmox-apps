@@ -1,0 +1,56 @@
+---
+- name: Require the converge OpenBao read/write identity for agent credentials
+  ansible.builtin.assert:
+    that:
+      - vikunja_token_openbao_addr | length > 0
+      - vikunja_token_openbao_token | length > 0
+    fail_msg: >-
+      App-agent tiers are enabled but BAO_ADDR/BAO_TOKEN are unavailable for
+      reading their dedicated credentials.
+    quiet: true
+  no_log: true
+
+- name: Read each enabled app-agent tier credential from its exact leaf
+  ansible.builtin.uri:
+    url: >-
+      {{ vikunja_token_openbao_addr }}/v1/{{ vikunja_agent_tier.openbao_mount
+      }}/data/{{ vikunja_agent_tier.openbao_path }}
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vikunja_token_openbao_token }}"
+    ca_path: "{{ openbao_ca_path }}"
+    status_code: [200, 403, 404]
+  loop: "{{ vikunja_agent_tiers }}"
+  loop_control:
+    loop_var: vikunja_agent_tier
+    label: "{{ vikunja_agent_tier.id }}"
+  register: vikunja_agent_tier_secret_reads
+  changed_when: false
+  no_log: true
+
+- name: Require every enabled tier leaf and its password field to exist
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) == 200
+      - >-
+        (item.json | default({}, true)).get('data', {}).get('data', {})
+        .get(item.vikunja_agent_tier.password_field, '') | string | length > 0
+    fail_msg: >-
+      OpenBao does not contain the required password for app-agent tier
+      {{ item.vikunja_agent_tier.id }}.
+    quiet: true
+  loop: "{{ vikunja_agent_tier_secret_reads.results }}"
+  loop_control:
+    label: "{{ item.vikunja_agent_tier.id }}"
+  no_log: true
+
+- name: Store the tier password map for existing account and token tasks
+  ansible.builtin.set_fact:
+    vikunja_agent_tier_secret_values: >-
+      {{ (vikunja_agent_tier_secret_values | default({}, true))
+         | combine({item.vikunja_agent_tier.password_field:
+                    item.json.data.data[item.vikunja_agent_tier.password_field]}) }}
+  loop: "{{ vikunja_agent_tier_secret_reads.results }}"
+  loop_control:
+    label: "{{ item.vikunja_agent_tier.id }}"
+  no_log: true

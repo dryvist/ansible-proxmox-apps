@@ -1,4 +1,28 @@
 ---
+- name: Require the project owner's credentials before revoking a direct share
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_project.owner.username in vikunja_operator_share_owner_usernames
+      - vikunja_project_share_owner_password_map.get(vikunja_agent_project.owner.username, '') | length > 0
+    fail_msg: >-
+      Cannot revoke an app-agent direct share on project {{ vikunja_agent_project.id }}
+      without its configured owner credentials.
+    quiet: true
+  no_log: true
+
+- name: "Log in to the owner of project {{ vikunja_agent_project.id }}"
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ vikunja_agent_project.owner.username }}"
+      password: "{{ vikunja_project_share_owner_password_map[vikunja_agent_project.owner.username] }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_agent_share_owner_login
+  no_log: true
+
 - name: "List direct user shares on project {{ vikunja_agent_project.id }}"
   ansible.builtin.uri:
     url: >-
@@ -6,7 +30,7 @@
       }}/users?s={{ vikunja_agent_tier.username | urlencode }}
     method: GET
     headers:
-      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+      Authorization: "Bearer {{ vikunja_agent_share_owner_login.json.token }}"
     status_code: [200]
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_agent_project_shares
@@ -20,7 +44,7 @@
       }}/users/{{ vikunja_agent_tier.username | urlencode }}
     method: DELETE
     headers:
-      Authorization: "Bearer {{ vikunja_agent_tier_login.json.token }}"
+      Authorization: "Bearer {{ vikunja_agent_share_owner_login.json.token }}"
     status_code: [200]
     timeout: "{{ vikunja_api_timeout }}"
   when: >-

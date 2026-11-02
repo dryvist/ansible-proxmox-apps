@@ -124,3 +124,8 @@ agent_write_prefs = { 'permission' => %w[ticket.agent] }
     changed = true
   end
 end
+
+# Read back the persisted token row without exposing the token value. The
+# converge verifies this marker against agent_write_prefs from this source.
+agent_write_token = Token.find_by!(action: 'api', name: 'agent-write').reload
+puts "ZAMMAD_AGENT_WRITE_TOKEN_PERMISSIONS=#{Array(agent_write_token.preferences['permission']).sort.to_json}"

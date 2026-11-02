@@ -51,6 +51,68 @@
          | selectattr('name', 'equalto', 'Agent') | map(attribute='id') | list }}
   no_log: true
 
+- name: Require exactly one built-in Agent role before reading its capabilities
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_agent_role_ids | length == 1
+    fail_msg: The built-in Zammad Agent role is missing or ambiguous.
+    quiet: true
+  no_log: true
+
+- name: Read the Agent role permissions as the administrator
+  ansible.builtin.uri:
+    url: >-
+      http://localhost:{{ zammad_web_port }}/api/v1/roles/{{
+      zammad_agent_write_agent_role_ids | first }}?expand=true
+    method: GET
+    user: "{{ zammad_admin_email }}"
+    password: "{{ zammad_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: zammad_agent_write_role_readback
+  changed_when: false
+  no_log: true
+
+- name: Resolve expected role and token permissions from the bootstrap source
+  ansible.builtin.set_fact:
+    zammad_agent_write_expected_role_permission_names: >-
+      {{ lookup('file', role_path ~ '/files/zammad_bootstrap/10-admin-and-users.rb')
+         | regex_findall('agent_role_permission_names = %w\[([^]]+)\]')
+         | first | split | sort }}
+    zammad_agent_write_expected_token_permission_names: >-
+      {{ lookup('file', role_path ~ '/files/zammad_bootstrap/20-groups-and-tokens.rb')
+         | regex_findall("agent_write_prefs = \\{ 'permission' => %w\[([^]]+)\] \\}")
+         | first | split | sort }}
+    zammad_agent_write_effective_role_permission_names: >-
+      {%- set ns = namespace(names=[]) -%}
+      {%- set candidates = zammad_agent_write_role_readback.json.get('permissions', [])
+          or zammad_agent_write_role_readback.json.get('permission_ids', []) -%}
+      {%- for permission in candidates -%}
+      {%- if permission is mapping and permission.name is defined -%}
+      {%- set _ = ns.names.append(permission.name) -%}
+      {%- elif permission is string -%}
+      {%- set _ = ns.names.append(permission) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.names | sort }}
+    zammad_agent_write_token_row_permission_names: >-
+      {{ zammad_bootstrap.stdout
+         | regex_findall('ZAMMAD_AGENT_WRITE_TOKEN_PERMISSIONS=([^\n]+)')
+         | first | from_json | sort }}
+  no_log: true
+
+- name: Assert exact Agent role permissions and svc-agent-write token scope
+  ansible.builtin.assert:
+    that:
+      - zammad_agent_write_effective_role_permission_names == zammad_agent_write_expected_role_permission_names
+      - zammad_agent_write_expected_token_permission_names == ['ticket.agent']
+      - zammad_agent_write_token_row_permission_names == zammad_agent_write_expected_token_permission_names
+    fail_msg: >-
+      The Agent role or svc-agent-write token permissions differ from the
+      bootstrap's exact least-privilege declaration.
+    quiet: true
+  no_log: true
+
 - name: Assert the exact svc-agent-write roles and minimum group access
   ansible.builtin.assert:
     that:
