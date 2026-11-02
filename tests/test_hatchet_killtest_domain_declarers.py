@@ -1,6 +1,6 @@
 """Only the Hatchet kill-test consumer may name the hatchet-killtest OpenBao domain.
 
-That domain mints a per-call AppRole whose token can power the Hatchet guests,
+That domain reads the token that can power the Hatchet guests,
 so every file outside tests and docs that names it is listed here. Adding another
 file means editing ALLOWED_DECLARERS, which a reviewer sees. The consumer must
 also declare the domain as a literal one-entry list, never an expression that
@@ -65,7 +65,8 @@ def test_the_consumer_declares_only_its_own_domain_literally():
         assert isinstance(domains, list), "a templated domain list can loop over the whole catalog"
         assert [d["name"] for d in domains] == [DOMAIN]
         assert domains[0]["paths"] == ["killtest/hatchet"]
-        assert domains[0]["workstation_issuer_role"] == DOMAIN
+        assert domains[0]["credential_domain"] == "semaphore"
+        assert "workstation_issuer_role" not in domains[0]
 
 
 def test_probe_sees_any_spelling_outside_the_allowed_files(tmp_path):
