@@ -36,10 +36,11 @@ process.stdout.write(JSON.stringify(result));
 """
 
 
-def render(name):
+def render(name, **overrides):
     context = {}
     for path in sorted((ROLE / 'defaults' / 'main').glob('*.yml')):
         context.update(yaml.safe_load(path.read_text()) or {})
+    context.update(overrides)
     env = Environment(undefined=StrictUndefined)
     env.filters['to_json'] = json.dumps
     text = (ROLE / 'templates' / 'pipelines' / name / 'conf.yml.j2').read_text()
@@ -60,6 +61,12 @@ def kept_events(events, pipeline):
 
 
 class TraceContract(unittest.TestCase):
+    def test_zero_trace_bucket_seconds_omits_the_hour_bucket_step(self):
+        self.assertIn('C.Mask.md5(', json.dumps(render('otel_traces')))
+        disabled = render('otel_traces', cribl_stream_otel_trace_bucket_seconds=0)
+        self.assertNotIn('C.Mask.md5(', json.dumps(disabled))
+        self.assertEqual(disabled['functions'][2]['conf']['add'][0]['name'], "attributes['langfuse.user.id']")
+
     def test_phoenix_sampling_keeps_whole_traces_and_fails_open(self):
         trace_ids = set()
         while len(trace_ids) < 1000:
