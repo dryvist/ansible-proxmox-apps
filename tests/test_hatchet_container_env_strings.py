@@ -52,3 +52,20 @@ def test_every_container_env_value_renders_a_string(task, env):
     for key, value in env.items():
         rendered = templar.template(trust_as_template(value)) if isinstance(value, str) else value
         assert isinstance(rendered, str), f"{task} {key} renders {type(rendered).__name__}"
+
+
+def _container_tasks():
+    for path in TASK_FILES:
+        for task in yaml.safe_load(path.read_text(encoding="utf-8")) or []:
+            module = task.get("community.docker.docker_container")
+            if module:
+                yield f"{path.name}:{task['name']}", module
+
+
+def test_one_shot_containers_clean_up_without_auto_remove():
+    one_shots = [(name, module) for name, module in _container_tasks() if module.get("detach") is False]
+    assert one_shots
+    for name, module in one_shots:
+        # auto_remove deletes the container before the module can read its output and exit code.
+        assert not module.get("auto_remove", False), name
+        assert module.get("cleanup") is True, name
