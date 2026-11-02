@@ -82,8 +82,13 @@ sops exec-env secrets.enc.yaml 'ansible-playbook \
 # output and are not covered by the run.
 ansible-playbook playbooks/verify-approle-ttls.yml
 
-# Weekly Debian guest OS upgrade; Semaphore runs it every Saturday and every run upgrades its targets.
-ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml
+# Weekly Debian guest OS upgrade. Semaphore splits the Saturday run into waves,
+# one task per upgrade_wave_<n> group (at most 12 LXC containers each). Every
+# run upgrades the guests it targets. Rerun one wave with the comma form of
+# --limit; do not join group names with ':'. Under a wave limit the VM and
+# execution-plane plays match no hosts and skip.
+ansible-playbook -i inventory/hosts.yml playbooks/upgrade.yml \
+  --limit upgrade_wave_1,localhost
 
 # Feed Homebox from Nautobot (one-way CSV import, standalone, never part of
 # site.yml). Without the flag it only renders the feed and logs its size: no

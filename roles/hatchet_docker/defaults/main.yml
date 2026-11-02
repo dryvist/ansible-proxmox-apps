@@ -1,33 +1,54 @@
 ---
-# Hatchet Lite is the single-container path for development and low-volume use.
-# It uses the shared apps PostgreSQL cluster for durable workflow state.
+# Hatchet's split OSS control plane runs on each Docker AI guest.
+# Both guests share the existing PostgreSQL database and Postgres message queue.
 
-# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-lite
-hatchet_docker_image: >-
-  ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.23@sha256:d4c8e8234d423cc93ba20f3dad7ac30de71a836e9c5888a7ebdf76dc2e417e13
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-migrate
+hatchet_docker_migrate_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-migrate:v0.114.2@sha256:'
+     ~ 'fee74780773f7e76c4d090437a1cbdebad12a5ae90a5705ffad4e306d69b70d8' }}
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-admin
+hatchet_docker_admin_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-admin:v0.114.2@sha256:'
+     ~ 'e5d8fd721d196d51cb631871d11d120b06fd3a4f29fa063c06955d8ec8930873' }}
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-engine
+hatchet_docker_engine_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.114.2@sha256:'
+     ~ '247120b5fabb0085784d3adcf4aebfaca670a400c950d7f53d7ea95c858b4f21' }}
+# renovate: datasource=docker depName=ghcr.io/hatchet-dev/hatchet/hatchet-dashboard
+hatchet_docker_dashboard_image: >-
+  {{ 'ghcr.io/hatchet-dev/hatchet/hatchet-dashboard:v0.114.2@sha256:'
+     ~ 'f65358c7fcdaeb2b48abf23b737012bc9fd834bef3b976dd9f26a983cb4be0d8' }}
 
-hatchet_docker_container_name: hatchet
 hatchet_docker_data_dir: /opt/hatchet
 hatchet_docker_restart_policy: unless-stopped
 
-# Host ports are published by the later ToFu inventory change. The container
-# ports are part of the Hatchet Lite image contract.
+# Host ports are published by ToFu; container ports follow the Hatchet image contract.
 hatchet_docker_web_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hatchet_web']
      | mandatory('tofu_data.constants.service_ports.hatchet_web missing') }}
 hatchet_docker_grpc_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hatchet_grpc']
      | mandatory('tofu_data.constants.service_ports.hatchet_grpc missing') }}
-hatchet_docker_web_container_port: 8888
+hatchet_docker_health_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['hatchet_health']
+     | mandatory('tofu_data.constants.service_ports.hatchet_health missing') }}
+hatchet_docker_ui_container_port: 80
+hatchet_docker_api_container_port: 8080
 hatchet_docker_grpc_container_port: 7070
+hatchet_docker_health_container_port: 8733
 
-# PostgreSQL database identity. The password is supplied by hatchet_group.yml.
+# PostgreSQL database identity. The password is supplied by docker_ai_group.yml.
 hatchet_docker_db_name: hatchet
 hatchet_docker_db_user: hatchet
 hatchet_docker_db_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['postgres_default']
      | mandatory('tofu_data.constants.service_ports.postgres_default missing') }}
 hatchet_docker_db_ssl_mode: disable
+hatchet_docker_database_url: >-
+  {{ 'postgresql://' ~ hatchet_docker_db_user ~ ':'
+     ~ (hatchet_docker_db_password | urlencode | replace('/', '%2F'))
+     ~ '@' ~ hatchet_docker_db_host ~ ':' ~ hatchet_docker_db_port
+     ~ '/' ~ hatchet_docker_db_name ~ '?sslmode=' ~ (hatchet_docker_db_ssl_mode | urlencode) }}
 
 hatchet_docker_subdomain: >-
   {{ lookup('env', 'PROXMOX_SUBDOMAIN')
@@ -40,3 +61,74 @@ hatchet_docker_engine_broadcast_address: "{{ hatchet_docker_engine_fqdn }}:443"
 hatchet_docker_admin_email: >-
   admin@{{ hostvars['localhost']['tofu_data']['domain'] }}
 hatchet_docker_admin_name: Hatchet Admin
+
+# Optional Hatchet worker that dispatches one agent run per task. It has no GPU
+# access; concurrency is enforced by Hatchet per configured LLM role.
+hatchet_docker_worker_enabled: false
+hatchet_docker_worker_roles:
+  medium:
+    max_runs: 3
+  gpu-4080:
+    max_runs: 1
+# Configure each platform with name, run_url, auth_env (or null), timeout_s,
+# and auth_secret_key when auth_env is set. Secret values stay in OpenBao.
+# A null run_url is a no-op platform: its tasks complete without an HTTP call.
+hatchet_docker_worker_platforms: []
+
+# The API token is minted only by the explicitly tagged publisher task.
+hatchet_docker_worker_token_publish: false
+hatchet_docker_worker_token_renew_days: 30
+hatchet_docker_tenant_id: 707d0855-80ab-4e1f-a156-f1c4546cbf52
+hatchet_docker_worker_token_expires_in: 2160h
+
+# Hold GPU-fill dispatches while the interactive LiteLLM p95 latency exceeds
+# its recent baseline. Prometheus is discovered from the tofu inventory tag.
+hatchet_docker_worker_latency_guard_enabled: true
+hatchet_docker_worker_interactive_key_aliases:
+  - hermes-default
+  - litellm-local-workstation
+hatchet_docker_worker_latency_guard_query: >-
+  histogram_quantile(0.95, sum by (le)
+  (rate(litellm_request_total_latency_metric_bucket{
+  api_key_alias=~"{{ hatchet_docker_worker_interactive_key_aliases | join('|') }}"}[30m])))
+  /
+  histogram_quantile(0.95, sum by (le)
+  (rate(litellm_request_total_latency_metric_bucket{
+  api_key_alias=~"{{ hatchet_docker_worker_interactive_key_aliases | join('|') }}"}[7d] offset 1d)))
+hatchet_docker_worker_latency_guard_max_ratio: 1.2
+hatchet_docker_worker_latency_guard_prometheus_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['prometheus_web']
+     | default(9090) }}
+hatchet_docker_worker_latency_guard_prometheus_host: >-
+  {{ (tofu_data['containers'] | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'prometheus')
+      | map(attribute='value.ip', default='') | reject('equalto', '')
+      | list | first) | default('', true) }}
+hatchet_docker_worker_latency_guard_prometheus_url: >-
+  {{ ('http://' ~ (hatchet_docker_worker_latency_guard_prometheus_host | trim) ~ ':'
+      ~ (hatchet_docker_worker_latency_guard_prometheus_port | trim))
+     if (hatchet_docker_worker_latency_guard_prometheus_host | trim | length > 0) else '' }}
+
+# renovate: datasource=docker depName=python
+hatchet_docker_worker_image: >-
+  python:3.13.18-slim-trixie@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
+# renovate: datasource=pypi depName=hatchet-sdk
+hatchet_docker_worker_sdk_version: "1.44.0"
+
+# Optional role evaluations run as low-priority Hatchet tasks in the worker.
+hatchet_docker_eval_enabled: false
+hatchet_docker_eval_cron: ""
+hatchet_docker_eval_judges_sync_cron: ""
+hatchet_docker_eval_roles:
+  - role: small
+    dataset: vikunja-clerk-evals
+hatchet_docker_eval_langfuse_host: "https://langfuse.{{ ingress_domain }}"
+hatchet_docker_eval_litellm_base_url: "https://llm.{{ ingress_domain }}/v1"
+hatchet_docker_eval_prompts_dir: /app/ai-llm-prompts
+# renovate: datasource=git-refs depName=https://github.com/dryvist/ai-llm-prompts currentValue=main
+hatchet_docker_eval_prompts_ref: "69ff1e547234a2ce3da1d3a3583278193b44f725"
+# renovate: datasource=pypi depName=langfuse
+hatchet_docker_eval_langfuse_version: "5.0.4"
+# renovate: datasource=pypi depName=pyyaml
+hatchet_docker_eval_pyyaml_version: "6.0.3"

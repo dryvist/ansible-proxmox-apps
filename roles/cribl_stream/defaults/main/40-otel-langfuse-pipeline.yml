@@ -19,14 +19,21 @@ cribl_stream_otel_user_id_sources:
   - user.id                          # coding-agent CLI (hashed account id)
   - metadata.user_api_key_user_id    # LLM proxy, once virtual keys are issued
   - user.email
-# Session ids are NEVER synthesized. A collector-derived session (a time-window
-# hash, say) invents boundaries that do not exist, merges unrelated activity
-# from one principal, and sends late-arriving spans into a different session
-# than their siblings. Absent is correct when unknown.
+# Session ids are NEVER synthesized from time. The Langfuse trace-bucket step
+# uses an existing session id or the original trace id as its grouping fallback.
+# A collector-derived session hash invents boundaries that do not exist,
+# merges unrelated activity from one principal, and sends late-arriving spans
+# into a different session than their siblings. Absent is correct when unknown.
 cribl_stream_otel_session_id_sources:
   - langfuse.session.id
   - litellm.metadata.session_id
   - session.id
+# Langfuse-only trace partitioning. Re-key only when a real grouping attribute
+# is present; zero seconds disables the step. OTLP start times are nanoseconds.
+cribl_stream_otel_bucket_sources:
+  - session.id
+cribl_stream_otel_trace_bucket_seconds: 3600
+cribl_stream_otel_ns_per_second: 1000000000
 # Fallback chain for the trace label; a third of spans arrive with an empty
 # name and render as a blank, unclickable row.
 cribl_stream_otel_trace_name_sources:
@@ -98,8 +105,10 @@ cribl_stream_phoenix_trace_keep_one_in: 4
 
 # Span names dropped before either trace destination. These are MCP-server
 # plumbing (connection setup, transport workers, rollout persistence, plugin
-# discovery): no model, no tokens, no message content, and roughly a fifth of
-# ingest volume crowding out real generations in every list view.
+# discovery, coding-agent file reads, environment snapshots and response-stream
+# events): no model, no tokens, no message content, and a large share of ingest
+# volume crowding out real generations in every list view. The stream events
+# pile hundreds of thousands of spans onto one session trace.
 cribl_stream_otel_drop_span_names:
   - auth
   - transport_worker
@@ -107,6 +116,22 @@ cribl_stream_otel_drop_span_names:
   - recommended_plugins_mode_for_config
   - realtime_conversation.running_state
   - handle_tool_call_with_source
+  - fs.read_file
+  - fs.get_metadata
+  - environments.snapshot
+  - mcp.runtime.refresh_wait
+  - receiving
+  - handle_responses
+  - append_items
+  - thread/items/list
+  - session.flush_rollout
+  - app_server.serialized_request_queue
+  - run_hooks_and_record_inputs
+  - send_raw_response_items
+  - record_conversation_items
+  - build_tool_call
+  - handle_output_item_done
+  - plugins_for_config
 
 # Always-empty attributes the LLM proxy emits on every span (~20 per span):
 # noise in the attribute inspector and dead weight in every payload.

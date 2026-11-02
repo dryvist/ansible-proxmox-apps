@@ -97,6 +97,11 @@
     fail_msg: "Traefik password file differs from the stored field dashboard_password"
   when:
     - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+    - >-
+      not (traefik_dashboard_password_resync_from_openbao | bool
+           and traefik_dashboard_password_stat.stat.exists
+           and ((traefik_dashboard_password_blob.content | b64decode).strip().split(':', 1) | last)
+               != traefik_dashboard_password)
   no_log: true
 
 - name: Check that the existing htpasswd file matches OpenBao
@@ -122,6 +127,52 @@
     fail_msg: "Traefik htpasswd file does not match the stored field dashboard_password"
   when:
     - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+    - >-
+      not (traefik_dashboard_password_resync_from_openbao | bool
+           and traefik_htpasswd_stat.stat.exists
+           and traefik_htpasswd_check.rc != 0)
+  no_log: true
+
+- name: Check whether either dashboard password copy differs from OpenBao
+  ansible.builtin.set_fact:
+    traefik_dashboard_password_resync_needed: >-
+      {{ (traefik_dashboard_password_stat.stat.exists and
+          ((traefik_dashboard_password_blob.content | b64decode).strip().split(':', 1) | last)
+          != traefik_dashboard_password)
+         or (traefik_htpasswd_stat.stat.exists and
+             (traefik_htpasswd_check.rc | default(0) != 0)) }}
+  when:
+    - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+  no_log: true
+
+- name: Back up the existing dashboard password file before resync
+  ansible.builtin.copy:
+    src: "{{ traefik_dashboard_password_file }}"
+    dest: "{{ traefik_dashboard_password_file }}.{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}.bak"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+    - traefik_dashboard_password_resync_from_openbao | bool
+    - traefik_dashboard_password_resync_needed | bool
+    - traefik_dashboard_password_stat.stat.exists
+  no_log: true
+
+- name: Back up the existing dashboard htpasswd file before resync
+  ansible.builtin.copy:
+    src: "{{ traefik_dashboard_users_file }}"
+    dest: "{{ traefik_dashboard_users_file }}.{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}.bak"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+    - traefik_dashboard_password_resync_from_openbao | bool
+    - traefik_dashboard_password_resync_needed | bool
+    - traefik_htpasswd_stat.stat.exists
   no_log: true
 
 - name: Persist the plaintext dashboard password (root-only)
@@ -141,8 +192,10 @@
   register: traefik_htpasswd_line
   changed_when: true
   when:
-    - not traefik_htpasswd_stat.stat.exists
     - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+    - not traefik_htpasswd_stat.stat.exists
+      or (traefik_dashboard_password_resync_from_openbao | bool
+          and traefik_dashboard_password_resync_needed | bool)
   no_log: true
 
 - name: Install the htpasswd file (basicAuth usersFile)
@@ -153,8 +206,10 @@
     group: "{{ traefik_group }}"
     mode: "0640"
   when:
-    - not traefik_htpasswd_stat.stat.exists
     - traefik_dashboard_password_seed.dashboard_password != '(placeholder in check mode)'
+    - not traefik_htpasswd_stat.stat.exists
+      or (traefik_dashboard_password_resync_from_openbao | bool
+          and traefik_dashboard_password_resync_needed | bool)
   no_log: true
   notify: Restart traefik
 

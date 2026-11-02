@@ -1,0 +1,29 @@
+---
+# One exact project-access reconciler serves both app-agent tiers. The
+# operator_access_* path remains additive for the human operator.
+- name: Build the owner credential map from canonical app credentials
+  ansible.builtin.include_tasks: project_share_owner_password_map.yml
+  no_log: true
+
+- name: Start the visible Vikunja project catalog
+  ansible.builtin.set_fact:
+    vikunja_agent_project_catalog: []
+
+- name: Read every configured project owner's visible project tree
+  ansible.builtin.include_tasks: agent_catalog_owner.yml
+  loop: "{{ vikunja_operator_share_owner_usernames }}"
+  loop_control:
+    loop_var: vikunja_catalog_owner
+    label: "{{ vikunja_catalog_owner }}"
+  when: >-
+    vikunja_project_share_owner_password_map.get(vikunja_catalog_owner, '')
+    | default('', true) | length > 0
+  no_log: true
+
+- name: Reconcile each configured app-agent tier exactly
+  ansible.builtin.include_tasks: agent_tier_reconcile.yml
+  loop: "{{ vikunja_agent_tiers }}"
+  loop_control:
+    loop_var: vikunja_agent_tier
+    label: "{{ vikunja_agent_tier.id }}"
+  when: lookup('vars', vikunja_agent_tier.password_field) | length > 0

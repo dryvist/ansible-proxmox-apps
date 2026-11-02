@@ -31,6 +31,12 @@ so hostnames are e.g. `plex.pve.<apex>`, and the cert covers `*.pve.<apex>`.
   is committed or placed in the rendered config; retrieve the generated password
   from `/etc/traefik/.dashboard_password` (root-only) on the ingress LXC.
 
+## Variables
+
+- `traefik_dashboard_password_resync_from_openbao` (default `false`): set `true`
+  for one run to back up existing dashboard password files and rewrite them from
+  OpenBao.
+
 ## Prerequisites (Workstream 0 — one-time AWS + Doppler setup)
 
 ### 1. Least-privilege IAM policy for the `acme` user

@@ -4,8 +4,9 @@
 # prometheus_group group_vars (vars_files), so the expression under test is
 # the one that ships.
 #
-# No llm_vllm_group members means no GPU scrape jobs. A seeded inventory
-# member renders one engine job plus the separate GPU hardware exporter job.
+# No llm_gpu_engine_group members means no GPU scrape jobs. A seeded inventory
+# renders one engine job plus the separate GPU hardware exporter job, and the
+# primary GPU guest stays unlabeled there while it is an engine target.
 # The container_ip-only fixture models the DHCP-lease shape used by inventory.
 #
 # tofu_data is set as a FACT for the same reason as prometheus_llm_router_scrape.yml
@@ -59,7 +60,7 @@
         tofu_data: "{{ _fixture_tofu_data }}"
         wan_hop_discovery_isp_hops: []
 
-    - name: Render prometheus.yml with no llm_vllm_group members
+    - name: Render prometheus.yml with no llm_gpu_engine_group members
       ansible.builtin.set_fact:
         _no_members: "{{ lookup('template', _pst_tpl) | from_yaml }}"
 
@@ -72,7 +73,7 @@
             | selectattr('job_name', 'in', _engine_job_names)
             | list | length == 0
         fail_msg: >-
-          With llm_vllm_group empty the template still rendered an engine
+          With llm_gpu_engine_group empty the template still rendered an engine
           scrape job. An empty target list must omit the job, not scrape nothing.
         success_msg: No group members, no job.
 
@@ -86,16 +87,16 @@
             | list | length == 0
         success_msg: No GPU guest, no GPU telemetry jobs.
 
-    - name: Add a DHCP-lease-style llm_vllm_group member (container_ip only, no static ip)
+    - name: Add a DHCP-lease-style llm-vllm guest (container_ip only, no static ip)
       ansible.builtin.add_host:
         name: llm-vllm-under-test
-        groups: llm_vllm_group
+        groups: [llm_vllm_group, llm_gpu_engine_group]
         container_ip: vllm-under-test.test.example
 
-    - name: Add the primary GPU guest to the NVIDIA GPU group
+    - name: Add the primary GPU guest serving the selected vLLM engine
       ansible.builtin.add_host:
         name: llm-gpu-primary-under-test
-        groups: nvidia_gpu_group
+        groups: [nvidia_gpu_group, llm_gpu_engine_group]
         container_ip: gpu-primary.test.example
 
     - name: Add the classify guest to the NVIDIA GPU and classify groups
@@ -132,15 +133,18 @@
              | selectattr('labels.guest', 'equalto', 'llm-vllm-under-test')
              | list }}
 
-    - name: Seeded render carries exactly one job with the group-derived target
+    - name: Seeded render carries exactly one job with the group-derived targets
       ansible.builtin.assert:
         quiet: true
         that:
           - _engine_jobs | length == 1
           - _engine_jobs[0].metrics_path == '/metrics'
           - _engine_jobs[0].params.format == ['prometheus']
+          - _engine_jobs[0].static_configs | length == 2
           - _engine_jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:10434']
           - _engine_jobs[0].static_configs[0].labels.guest == 'llm-vllm-under-test'
+          - _engine_jobs[0].static_configs[1].targets == ['gpu-primary.test.example:10434']
+          - _engine_jobs[0].static_configs[1].labels.guest == 'llm-gpu-primary-under-test'
           - _legacy_engine_jobs | length == 0
         fail_msg: >-
           Seeded render has {{ _engine_jobs | length }} unified engine job(s):

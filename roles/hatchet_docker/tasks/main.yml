@@ -1,6 +1,19 @@
 ---
-# Hatchet Lite runs the control plane in one container. Workflow data and the
-# Postgres-backed queue are stored in the shared PostgreSQL cluster.
+# Hatchet's split control plane runs on each Docker AI guest. Schema migration
+# and first-run seeding complete once before either guest starts its services.
+
+- name: Read the Hatchet worker token from its dedicated OpenBao leaf
+  ansible.builtin.import_tasks: worker_token_read.yml
+  when: hatchet_docker_worker_enabled | bool or hatchet_docker_worker_token_publish | bool
+  tags:
+    - hatchet_docker
+    - hatchet_worker_token
+
+- name: Optionally mint and publish the Hatchet GPU fill worker token
+  ansible.builtin.import_tasks: worker_token_publish.yml
+  when: hatchet_docker_worker_token_publish | bool
+  tags:
+    - hatchet_worker_token
 
 - name: Create Hatchet deployment directory
   ansible.builtin.file:
@@ -9,6 +22,166 @@
     owner: root
     group: root
     mode: "0750"
+
+- name: Validate Hatchet GPU fill worker configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_roles is mapping
+      - hatchet_docker_worker_roles | length > 0
+      - hatchet_docker_worker_platforms is sequence
+      - hatchet_docker_worker_platforms | length > 0
+      - >-
+        (hatchet_docker_worker_platforms | map(attribute='name') | list | unique | length)
+        == (hatchet_docker_worker_platforms | length)
+    fail_msg: >-
+      Enabling the Hatchet worker requires at least one LLM role and one
+      platform with a unique name.
+  when: hatchet_docker_worker_enabled | bool
+
+- name: Require the Hatchet worker when evaluations are enabled
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_enabled | bool
+    fail_msg: Hatchet evaluations require the GPU fill worker to be enabled.
+  when: hatchet_docker_eval_enabled | bool
+
+- name: Validate Hatchet GPU fill worker latency guard configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_latency_guard_prometheus_url | length > 0
+      - hatchet_docker_worker_latency_guard_query | length > 0
+      - hatchet_docker_worker_latency_guard_max_ratio | float > 0
+    fail_msg: >-
+      The enabled Hatchet GPU fill worker latency guard requires a Prometheus
+      inventory target, a query, and a positive maximum ratio.
+    quiet: true
+  when:
+    - hatchet_docker_worker_enabled | bool
+    - hatchet_docker_worker_latency_guard_enabled | bool
+
+- name: Validate Hatchet GPU fill worker platform configuration
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.name is defined
+      - item.run_url is defined
+      - item.timeout_s is defined
+      - item.auth_env is defined
+      - >-
+        (item.auth_env | default(none)) is none or
+        (item.auth_env is match('^[A-Z_][A-Z0-9_]*$') and item.auth_secret_key is defined)
+    fail_msg: >-
+      Each Hatchet worker platform requires name, run_url, timeout_s, and
+      auth_env (null or a valid environment variable name with auth_secret_key).
+  no_log: true
+  loop: "{{ hatchet_docker_worker_platforms }}"
+  loop_control:
+    label: "{{ item.name | default('unknown') }}"
+  when: hatchet_docker_worker_enabled | bool
+
+- name: Copy Hatchet GPU fill worker package
+  ansible.builtin.copy:
+    src: gpu_fill_worker/
+    dest: "{{ hatchet_docker_data_dir }}/gpu_fill_worker/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  when: hatchet_docker_worker_enabled | bool
+  notify: Restart Hatchet
+
+- name: Ensure Git is installed for the pinned eval prompts checkout
+  ansible.builtin.package:
+    name: git
+    state: present
+  when: hatchet_docker_eval_enabled | bool
+
+- name: Check out the pinned AI evaluation prompts
+  ansible.builtin.git:
+    repo: https://github.com/dryvist/ai-llm-prompts.git
+    dest: "{{ hatchet_docker_data_dir }}/ai-llm-prompts"
+    version: "{{ hatchet_docker_eval_prompts_ref }}"
+  when: hatchet_docker_eval_enabled | bool
+
+- name: Render Hatchet GPU fill worker config
+  ansible.builtin.template:
+    src: gpu_fill_worker_config.json.j2
+    dest: "{{ hatchet_docker_data_dir }}/gpu_fill_worker_config.json"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: hatchet_docker_worker_enabled | bool
+  notify: Restart Hatchet
+
+- name: Migrate Hatchet PostgreSQL schema
+  community.docker.docker_container:
+    name: hatchet-migrate
+    image: "{{ hatchet_docker_migrate_image }}"
+    env:
+      DATABASE_URL: "{{ hatchet_docker_database_url }}"
+    network_mode: host
+    detach: false
+    cleanup: true
+    state: started
+  run_once: true
+  no_log: true
+  register: hatchet_docker_migrate_result
+  failed_when: false
+
+- name: Report Hatchet migrate result
+  ansible.builtin.include_tasks: oneshot_report.yml
+  vars:
+    hatchet_docker_oneshot_label: hatchet-migrate
+    hatchet_docker_oneshot_result: "{{ hatchet_docker_migrate_result }}"
+
+- name: Seed Hatchet database with shared credentials
+  community.docker.docker_container:
+    name: hatchet-admin-quickstart
+    image: "{{ hatchet_docker_admin_image }}"
+    entrypoint: /hatchet/hatchet-admin
+    command:
+      - quickstart
+      - --skip
+      - certs
+      - --skip
+      - keys
+      - --generated-config-dir
+      - /tmp/hatchet-generated
+    env:
+      DATABASE_URL: "{{ hatchet_docker_database_url }}"
+      SERVER_PORT: "{{ hatchet_docker_api_container_port | string }}"
+      SERVER_URL: "{{ hatchet_docker_server_url }}"
+      SERVER_AUTH_COOKIE_DOMAIN: "{{ hatchet_docker_fqdn }}"
+      SERVER_AUTH_COOKIE_INSECURE: "false"
+      SERVER_GRPC_PORT: "{{ hatchet_docker_grpc_container_port | string }}"
+      SERVER_GRPC_BROADCAST_ADDRESS: "{{ hatchet_docker_engine_broadcast_address }}"
+      SERVER_GRPC_INSECURE: "true"
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_MSGQUEUE_PUBSUB_KIND: postgres
+      SERVER_AUTH_COOKIE_SECRETS: "{{ hatchet_docker_server_auth_cookie_secrets }}"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "true"
+      SERVER_ENCRYPTION_MASTER_KEYSET: "{{ hatchet_docker_server_encryption_master_keyset }}"
+      SERVER_ENCRYPTION_JWT_PRIVATE_KEYSET: "{{ hatchet_docker_server_encryption_jwt_private_keyset }}"
+      SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET: "{{ hatchet_docker_server_encryption_jwt_public_keyset }}"
+      SERVER_ALLOW_SIGNUP: "false"
+      ADMIN_EMAIL: "{{ hatchet_docker_admin_email }}"
+      ADMIN_PASSWORD: "{{ hatchet_docker_admin_password }}"
+      ADMIN_NAME: "{{ hatchet_docker_admin_name }}"
+    network_mode: host
+    detach: false
+    cleanup: true
+    state: started
+  run_once: true
+  no_log: true
+  register: hatchet_docker_seed_result
+  failed_when: false
+
+- name: Report Hatchet seed result
+  ansible.builtin.include_tasks: oneshot_report.yml
+  vars:
+    hatchet_docker_oneshot_label: hatchet-seed
+    hatchet_docker_oneshot_result: "{{ hatchet_docker_seed_result }}"
 
 - name: Render Hatchet docker-compose.yml
   ansible.builtin.template:
@@ -20,20 +193,77 @@
   no_log: true
   notify: Restart Hatchet
 
-- name: Deploy Hatchet via Docker Compose
-  community.docker.docker_compose_v2:
-    project_src: "{{ hatchet_docker_data_dir }}"
-    state: present
-  register: hatchet_docker_compose_result
-  changed_when: >-
-    (hatchet_docker_compose_result.actions | default([]))
-    | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
-    | list | length > 0
-  no_log: true
+- name: Deploy Hatchet and report the engine log tail on failure
+  block:
+    - name: Deploy Hatchet via Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ hatchet_docker_data_dir }}"
+        state: present
+        remove_orphans: true
+      register: hatchet_docker_compose_result
+      changed_when: >-
+        (hatchet_docker_compose_result.actions | default([]))
+        | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
+        | list | length > 0
+      no_log: true
+  rescue:
+    - name: Read the Hatchet engine log tail after a failed deploy
+      ansible.builtin.command:
+        cmd: docker compose logs --no-color --tail 40 hatchet-engine
+        chdir: "{{ hatchet_docker_data_dir }}"
+      register: hatchet_docker_engine_logs
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    # Reuses the one-shot report's masking; status 1 makes it fail the play after printing.
+    - name: Report the Hatchet engine log tail
+      ansible.builtin.include_tasks: oneshot_report.yml
+      vars:
+        hatchet_docker_oneshot_label: hatchet-engine
+        hatchet_docker_oneshot_result:
+          status: 1
+          msg: >-
+            {{ [hatchet_docker_engine_logs.stdout | default(''),
+                hatchet_docker_engine_logs.stderr | default('')] | join('\n') }}
 
 - name: Wait for Hatchet web port to accept TCP connections
   ansible.builtin.wait_for:
     host: localhost
     port: "{{ hatchet_docker_web_port }}"
     timeout: 220
+  changed_when: false
+
+- name: Wait for Hatchet gRPC port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: localhost
+    port: "{{ hatchet_docker_grpc_port }}"
+    timeout: 220
+  changed_when: false
+
+- name: Wait for Hatchet health port to accept TCP connections
+  ansible.builtin.wait_for:
+    host: localhost
+    port: "{{ hatchet_docker_health_port }}"
+    timeout: 220
+  changed_when: false
+
+- name: Wait for Hatchet dashboard API readiness
+  ansible.builtin.uri:
+    url: "http://localhost:{{ hatchet_docker_web_port }}/api/ready"
+    status_code: 200
+  register: hatchet_docker_api_readiness
+  retries: 44
+  delay: 5
+  until: hatchet_docker_api_readiness.status == 200
+  changed_when: false
+
+- name: Wait for Hatchet engine readiness
+  ansible.builtin.uri:
+    url: "http://localhost:{{ hatchet_docker_health_port }}/ready"
+    status_code: 200
+  register: hatchet_docker_engine_readiness
+  retries: 44
+  delay: 5
+  until: hatchet_docker_engine_readiness.status == 200
   changed_when: false

@@ -1,4 +1,6 @@
 ---
+# Each container also gets one upgrade_wave_<n> group: n is its position in the
+# sorted declared container keys, floor-divided by 12 (at most 12 guests per wave).
 add_lxc_hosts_groups: >-
   {{
     ['lxc_containers', 'all', 'managed_linux_guests'] +
@@ -6,8 +8,7 @@ add_lxc_hosts_groups: >-
       ['managed_secrets_group']
       if (
         'managed-secrets' in (item.value.tags | default([])) or
-        'openproject' in (item.value.tags | default([])) or
-        'hatchet' in (item.value.tags | default([]))
+        'openproject' in (item.value.tags | default([]))
       )
       else []
     ) +
@@ -90,9 +91,23 @@ add_lxc_hosts_groups: >-
       if 'llm-router' in (item.value.tags | default([]))
       else []
     ) +
+    (['llm_vllm_group'] if 'llm-vllm' in (item.value.tags | default([])) else []) +
     (
-      ['llm_vllm_group']
-      if 'llm-vllm' in (item.value.tags | default([]))
+      ['llm_gpu_engine_group']
+      if (
+        'llm-vllm' in (item.value.tags | default([])) or
+        (
+          (tofu_data | default({})).get('llm_gpu_engine', 'llama_cpp') in ['vllm', 'sglang'] and
+          (
+            item.value.llm_gpu_engine_identity | default('')
+              == (tofu_data | default({})).get('llm_gpu_engine') or
+            (
+              'llm-gpu' in (item.value.tags | default([])) and
+              not (item.value.llm_gpu_engine_legacy_runtime_managed | default(false))
+            )
+          )
+        )
+      )
       else []
     ) +
     (
@@ -111,8 +126,8 @@ add_lxc_hosts_groups: >-
       else []
     ) +
     (
-      ['hatchet_group']
-      if 'hatchet' in (item.value.tags | default([]))
+      ['docker_ai_group']
+      if 'docker-ai' in (item.value.tags | default([]))
       else []
     ) +
     (
@@ -278,6 +293,11 @@ add_lxc_hosts_groups: >-
     (
       ['static_site_group']
       if 'docs-static' in (item.value.tags | default([]))
+      else []
+    ) +
+    (
+      ['upgrade_wave_' ~ ((tofu_data.containers | list | sort(case_sensitive=true)).index(item.key) // 12)]
+      if tofu_data is defined and item.key is defined
       else []
     )
   }}

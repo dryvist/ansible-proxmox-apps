@@ -1,0 +1,152 @@
+---
+- name: Require the grafana stack directories from the deploy part
+  ansible.builtin.stat:
+    path: "{{ grafana_stack_data_dir }}/provisioning/alerting"
+  register: grafana_stack_alerting_directory
+
+- name: Require the grafana stack deploy part before provisioning
+  ansible.builtin.assert:
+    that:
+      - grafana_stack_alerting_directory.stat.isdir | default(false)
+    fail_msg: >-
+      Run the grafana_stack_deploy part before provisioning so the stack
+      directories and compose project exist.
+
+- name: Require a Boolean published Hindsight desired state when present
+  ansible.builtin.import_tasks: assert_hindsight_state.yml
+# =============================================================================
+# Provisioning + dashboards + compose (all changes restart the stack)
+# =============================================================================
+
+- name: Render grafana datasource provisioning
+  ansible.builtin.template:
+    src: datasource.yml.j2
+    dest: "{{ grafana_stack_data_dir }}/provisioning/datasources/victoriametrics.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Render grafana dashboard provider
+  ansible.builtin.template:
+    src: dashboards-provider.yml.j2
+    dest: "{{ grafana_stack_data_dir }}/provisioning/dashboards/grafana-stack.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Deploy provisioned dashboards from the pinned grafana-dashboards release
+  ansible.builtin.unarchive:
+    src: "{{ grafana_stack_dashboards_url }}"
+    dest: "{{ grafana_stack_data_dir }}/dashboards/"
+    remote_src: true
+    extra_opts:
+      - --strip-components=2
+      - --wildcards
+      - "*/dashboards/*.json"
+    owner: root
+    group: root
+    mode: "0644"
+  when: >-
+    not (ansible_check_mode and
+         ((grafana_stack_directories.results | default([]))
+          | selectattr('item', 'equalto', grafana_stack_data_dir ~ '/dashboards')
+          | map(attribute='changed') | first | default(false)))
+  notify: Restart grafana stack
+
+- name: Render grafana unified-alerting provisioning
+  ansible.builtin.template:
+    src: "alerting/{{ item }}.yml.j2"
+    dest: "{{ grafana_stack_data_dir }}/provisioning/alerting/{{ item }}.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - contactpoints
+    - notification-policies
+    - rules
+    - rules-pve-load
+    - rules-hindsight
+    - rules-phoenix
+    - rules-ai
+    - rules-github-actions
+    - rules-openbao
+    - rules-clickhouse
+    - rules-git-mirror
+    - rules-workstation
+    - rules-pve-quorum
+  notify: Restart grafana stack
+
+- name: Assert the Grafana OIDC client secret resolved
+  ansible.builtin.assert:
+    that:
+      - grafana_stack_oidc_client_secret | default('', true) | length > 0
+    fail_msg: >-
+      grafana_stack_oidc_client_secret is empty. Authelia hashes the generated
+      secret from secret/apps/authelia, so an empty value here fails every login
+      with invalid_client while nothing else reports an error. The usual cause is
+      grafana_group missing from the secret pre-fetch play's hosts
+      (playbooks/site/00-load-and-telemetry.yml), which leaves bao_apps_secrets
+      undefined and lets the group_vars env fallback resolve to an empty string.
+    quiet: true
+
+# Fetched, not vendored: the JSON is large and machine-generated, so a diff of
+# it reviews nothing. The pin lives in the variable instead, where it IS
+# reviewable. `get_url` sends HEAD in check mode, which grafana.com rejects;
+# stat previews whether the destination is missing without contacting it.
+# Keep `force: true` on real runs so a bumped pin replaces an existing file.
+#
+# Skipped entirely when no Prometheus datasource was provisioned: these
+# dashboards query it, and deploying them without it produces empty panels that
+# look like a data problem rather than a configuration one.
+- name: Preview pinned community dashboard downloads
+  ansible.builtin.stat:
+    path: "{{ grafana_stack_data_dir }}/dashboards/{{ item.file }}"
+  register: grafana_stack_community_dashboard_file
+  check_mode: false
+  loop: "{{ grafana_stack_community_dashboards }}"
+  loop_control:
+    label: "{{ item.id }} rev{{ item.revision }} -> {{ item.file }}"
+  when: grafana_stack_prometheus_url | trim | length > 0
+  changed_when: >-
+    ansible_check_mode and
+    not grafana_stack_community_dashboard_file.stat.exists
+
+- name: Fetch pinned community dashboards from grafana.com
+  ansible.builtin.get_url:
+    url: "https://grafana.com/api/dashboards/{{ item.id }}/revisions/{{ item.revision }}/download"
+    dest: "{{ grafana_stack_data_dir }}/dashboards/{{ item.file }}"
+    force: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ grafana_stack_community_dashboards }}"
+  loop_control:
+    label: "{{ item.id }} rev{{ item.revision }} -> {{ item.file }}"
+  when:
+    - grafana_stack_prometheus_url | trim | length > 0
+    - not ansible_check_mode
+  notify: Restart grafana stack
+
+- name: Point the community dashboards at the provisioned datasource
+  ansible.builtin.replace:
+    path: "{{ grafana_stack_data_dir }}/dashboards/{{ item.file }}"
+    # Any DS_* placeholder, not just DS_PROMETHEUS: dashboards name these
+    # freely (7587 ships ${DS_SIGNCL-PROMETHEUS}), and a name-specific pattern
+    # silently leaves those panels pointing at a datasource that never resolves.
+    regexp: '\$\{DS_[^}]+\}'
+    replace: "{{ grafana_stack_community_datasource_uid }}"
+  loop: "{{ grafana_stack_community_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  when:
+    - grafana_stack_prometheus_url | trim | length > 0
+    - >-
+      not ansible_check_mode or
+      item.file in (grafana_stack_community_dashboard_file.results | default([])
+      | selectattr('stat.exists') | map(attribute='item.file') | list)
+  notify: Restart grafana stack
+
+- name: Restart grafana stack after provisioning changes
+  ansible.builtin.meta: flush_handlers

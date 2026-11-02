@@ -17,6 +17,7 @@
       unset. Provide a write-capable OpenBao AppRole in the converge
       environment.
     quiet: true
+  no_log: true
 
 # An empty vikunja_hermes_bridge_usernames provisions every declared identity;
 # otherwise only the named ones, which must all be declared.
@@ -31,6 +32,7 @@
       vikunja_hermes_bridge_usernames names an identity that
       vikunja_hermes_bridge_identities does not declare.
     quiet: true
+  no_log: true
 
 - name: Select the Hermes bridge identities to provision
   ansible.builtin.set_fact:
@@ -39,18 +41,12 @@
          if vikunja_hermes_bridge_usernames | length == 0
          else vikunja_hermes_bridge_identities
               | selectattr('username', 'in', vikunja_hermes_bridge_usernames) | list }}
+  no_log: true
 
-# Resolved from the role's canonical secret sources rather than restated, so
-# the bao-first values group_vars sets for the admin and MCP service accounts
-# are picked up automatically. Same block as operator_access.yml's owner map,
-# duplicated rather than shared because that one only runs when the human
-# operator account is configured — a precondition unrelated to this mechanism.
-- name: Build the project-share owner credential map from the role's canonical sources
-  ansible.builtin.set_fact:
-    vikunja_hermes_bridge_owner_password_map: >-
-      {{ {vikunja_admin_user: vikunja_admin_password}
-         | combine(dict(vikunja_service_users | map(attribute='username')
-                        | zip(vikunja_service_users | map(attribute='password')))) }}
+# Resolved from the role's canonical secret sources so every project-sharing
+# task uses the same admin and service-account credentials.
+- name: Build the owner credential map from canonical app credentials
+  ansible.builtin.include_tasks: project_share_owner_password_map.yml
   no_log: true
 
 - name: "Resolve each identity's login password"
@@ -59,6 +55,7 @@
   loop_control:
     loop_var: vikunja_hermes_identity
     label: "{{ vikunja_hermes_identity.username }}"
+  no_log: true
 
 # Idempotent create, same whole-cell regex match as the admin/service-user
 # creation in tasks/main.yml (vikunja_user_list is registered there, earlier
@@ -89,3 +86,4 @@
     label: "{{ vikunja_hermes_identity.username }}"
   vars:
     vikunja_hermes_identity_password: "{{ vikunja_hermes_resolved_password[vikunja_hermes_identity.username] }}"
+  no_log: true

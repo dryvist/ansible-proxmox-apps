@@ -11,10 +11,13 @@ hatchet_docker_admin_password: >-
      | default(undef(), true)
      | mandatory('HATCHET_ADMIN_PASSWORD missing: OpenBao fetch did not supply it') }}
 
+# Hatchet takes an auth key and a 16/24/32-byte encryption key, space separated: the stored 32 chars become two 16s.
 hatchet_docker_server_auth_cookie_secrets: >-
-  {{ bao_apps_secrets.hatchet_server_auth_cookie_secrets
+  {%- set secret = bao_apps_secrets.hatchet_server_auth_cookie_secrets
      | default(undef(), true)
-     | mandatory('HATCHET_SERVER_AUTH_COOKIE_SECRETS missing: OpenBao fetch did not supply it') }}
+     | mandatory('HATCHET_SERVER_AUTH_COOKIE_SECRETS missing: OpenBao fetch did not supply it') -%}
+  {{ secret[:16] ~ ' ' ~ secret[16:] if secret | length == 32
+     else undef('HATCHET_SERVER_AUTH_COOKIE_SECRETS must be 32 characters') }}
 
 hatchet_docker_server_encryption_master_keyset: >-
   {{ bao_apps_secrets.hatchet_server_encryption_master_keyset
@@ -31,8 +34,14 @@ hatchet_docker_server_encryption_jwt_public_keyset: >-
      | default(undef(), true)
      | mandatory('HATCHET_SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET missing: OpenBao fetch did not supply it') }}
 
-# Match the shared apps PostgreSQL primary selected for sibling services.
+# The GPU fill worker, with one no-op platform until a real platform target is added.
+hatchet_docker_worker_enabled: true
+hatchet_docker_worker_platforms:
+  - name: noop
+    run_url: null
+    auth_env: null
+    timeout_s: 30
+
+# The writable apps PostgreSQL primary; replicas are read-only.
 hatchet_docker_db_host: >-
-  {{ (postgres_primary_host
-      if (postgres_primary_host | default('', true) | length > 0)
-      else 'postgres') }}.{{ hostvars['localhost']['tofu_data']['domain'] }}
+  {{ postgres_apps_primary_host }}.{{ hostvars['localhost']['tofu_data']['domain'] }}

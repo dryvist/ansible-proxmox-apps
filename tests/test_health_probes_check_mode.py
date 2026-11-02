@@ -7,23 +7,23 @@ from health_probes_check_mode_support import REPO, _tasks_in
 
 PROBES = (
     (
-        "roles/grafana_stack/tasks/main.yml",
+        "roles/grafana_stack/tasks/deploy.yml",
         "Verify both stack containers are running",
     ),
     (
-        "roles/grafana_stack/tasks/main.yml",
+        "roles/grafana_stack/tasks/deploy.yml",
         "Verify VictoriaMetrics answers /health",
     ),
     (
-        "roles/grafana_stack/tasks/main.yml",
+        "roles/grafana_stack/tasks/deploy.yml",
         "Verify grafana answers /api/health",
     ),
     (
-        "roles/grafana_stack/tasks/main.yml",
+        "roles/grafana_stack/tasks/deploy.yml",
         "Verify the provisioned datasource resolves in grafana",
     ),
     (
-        "roles/grafana_stack/tasks/main.yml",
+        "roles/grafana_stack/tasks/deploy.yml",
         "Capture stack diagnostics on failure",
     ),
     (
@@ -374,7 +374,7 @@ def test_read_only_health_probes_run_in_check_mode(relative_path, task_name):
     assert task.get("check_mode") is False
     assert task.get("changed_when") is False
     if (
-        relative_path == "roles/grafana_stack/tasks/main.yml"
+        relative_path == "roles/grafana_stack/tasks/deploy.yml"
         and task_name != "Capture stack diagnostics on failure"
     ):
         when = task.get("when", "")

@@ -1,0 +1,20 @@
+---
+# Polls Hatchet /ready on each listed guest. Each poll is its own include, so the
+# first failed poll fails the host and stops the remaining polls.
+- name: Poll Hatchet /ready, count {{ hatchet_killtest_ready_polls }}
+  ansible.builtin.include_tasks: hatchet_killtest_ready_poll.yml
+  loop: "{{ range(hatchet_killtest_ready_polls | int) | list }}"
+  loop_control:
+    loop_var: hatchet_killtest_poll
+  when: >-
+    now(utc=True).timestamp()
+    < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)
+
+- name: Require all ready polls to finish before the recovery cutoff
+  ansible.builtin.assert:
+    that:
+      - >-
+        now(utc=True).timestamp()
+        < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)
+    fail_msg: Readiness polling reached the recovery cutoff before all polls completed.
+    quiet: true

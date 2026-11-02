@@ -1,0 +1,57 @@
+---
+- name: Assert a route with failover_fallback renders as a Traefik failover service
+  ansible.builtin.assert:
+    that:
+      # The route's own name resolves to a failover service (not a plain
+      # loadBalancer) so the router's `service: openbao-ha` needs no change.
+      - _traefik_dynamic_yaml.http.services['openbao-ha'].failover.service == "openbao-ha-primary"
+      - _traefik_dynamic_yaml.http.services['openbao-ha'].failover.fallback == "openbao-ha-fallback"
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha'].failover
+        == {'service': 'openbao-ha-primary', 'fallback': 'openbao-ha-fallback', 'healthCheck': {}}
+      # -primary keeps the route's own (active-only) health check untouched.
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha-primary'].loadBalancer.servers
+        == [{"url": "http://openbao-01.example.com:8200"}, {"url": "http://openbao-02.example.com:8200"}]
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha-primary'].loadBalancer.healthCheck
+        == {'scheme': 'http', 'path': '/v1/sys/health',
+        'interval': '30s', 'timeout': '20s'}
+      # -fallback carries the standbyok+perfstandbyok path and reuses the
+      # primary's interval/timeout (the fixture set none of its own).
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha-fallback'].loadBalancer.healthCheck.path
+        == "/v1/sys/health?standbyok=true&perfstandbyok=true"
+      - >-
+        _traefik_dynamic_yaml.http.services['openbao-ha-fallback'].loadBalancer.healthCheck
+        == {'scheme': 'http', 'path': '/v1/sys/health?standbyok=true&perfstandbyok=true',
+        'interval': '30s', 'timeout': '20s'}
+      # A separate route with a shared alternate health port keeps the traffic
+      # URLs on :8080 while both children probe /metrics on :15020.
+      - >-
+        _traefik_dynamic_yaml.http.services['mcp-failover-primary'].loadBalancer.servers
+        == [{"url": "http://agentgateway-primary.example.com:8080"}]
+      - >-
+        _traefik_dynamic_yaml.http.services['mcp-failover-fallback'].loadBalancer.servers
+        == [{"url": "http://agentgateway-fallback.example.com:8080"}]
+      - >-
+        _traefik_dynamic_yaml.http.services['mcp-failover'].failover
+        == {'service': 'mcp-failover-primary', 'fallback': 'mcp-failover-fallback', 'healthCheck': {}}
+      - >-
+        _traefik_dynamic_yaml.http.services['mcp-failover-primary'].loadBalancer.healthCheck
+        == {'scheme': 'http', 'path': '/metrics', 'port': 15020,
+        'interval': '10s', 'timeout': '5s'}
+      - >-
+        _traefik_dynamic_yaml.http.services['mcp-failover-fallback'].loadBalancer.healthCheck
+        == {'scheme': 'http', 'path': '/metrics', 'port': 15020,
+        'interval': '10s', 'timeout': '5s'}
+      # A route with no failover_fallback (plex) must render byte-identical
+      # to before: a plain loadBalancer service under its own name, no
+      # -primary/-fallback siblings.
+      - "'loadBalancer' in _traefik_dynamic_yaml.http.services.plex"
+      - "'failover' not in _traefik_dynamic_yaml.http.services.plex"
+      - "'plex-primary' not in _traefik_dynamic_yaml.http.services"
+    fail_msg: >-
+      dynamic.yml.j2 did not render a failover_fallback route as a Traefik
+      `failover` service (service/fallback/healthCheck) over two nested
+      loadBalancer services, or it changed a route with no failover_fallback.

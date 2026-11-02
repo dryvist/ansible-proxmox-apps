@@ -38,6 +38,34 @@ All variables in `defaults/main.yml` are user-configurable.
     - cribl_stream
 ```
 
+### Focused converges
+
+Run a focused component against the Stream group and localhost:
+
+```sh
+ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
+  --tags <entry> --limit cribl_stream_group,localhost
+```
+
+| Entry tag | Work selected |
+| --- | --- |
+| `cribl_stream_install` | Packages, service user, tarball install or upgrade, and systemd setup |
+| `cribl_stream_settings` | Worker sizing and system settings |
+| `cribl_stream_inputs` | Inputs and OTLP listener proof |
+| `cribl_stream_outputs` | Outputs configuration |
+| `cribl_stream_pipelines` | Pipeline configuration and lookup tables |
+| `cribl_stream_bmc_collector` | BMC collector, with pipeline configuration as a prerequisite |
+| `cribl_stream_litellm_prices` | LiteLLM price collector, with outputs and pipelines as prerequisites |
+| `cribl_stream_github_actions` | GitHub Actions collectors, with outputs and pipelines as prerequisites |
+| `cribl_stream_probe` | Read-only admin login probe; add `--extra-vars cribl_stream_admin_probe_only=true` |
+| `cribl_stream_admin` | Admin credential rotation and verification |
+
+The existing `cribl_stream` tag still selects the full Cribl Stream role. Shared
+assertions, unit checks, and service convergence run for Cribl entry tags. Run
+`cribl_stream_install` first on a new guest; the other entries assume the Cribl
+binary and service unit already exist. The `unpoller` and `cribl_packs` plays
+keep their existing selectors.
+
 ## Post-Installation Configuration
 
 Configure data pipeline via Cribl Web UI after Ansible deployment:

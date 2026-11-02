@@ -4,6 +4,11 @@
 # GitHub), extracts the single binary, and copies it to the target — same
 # controller-staging pattern as dryvist.secrets_management/roles/openbao and roles/technitium_install.
 
+# Fail closed when any declared app-agent tier lacks its dedicated credential.
+- name: Read app-agent credentials from their exact OpenBao leaves
+  ansible.builtin.include_tasks: read_agent_tier_values.yml
+  when: vikunja_agent_tiers | length > 0
+
 # The bespoke version of this check lived here; it is now the shared guard in
 # openbao_secrets so every consumer gets the same fail-closed behaviour and the
 # same message instead of each role re-implementing (or forgetting) it.
@@ -16,6 +21,7 @@
       - vikunja_db_password
       - vikunja_jwt_secret
       - vikunja_admin_password
+  no_log: true
 
 - name: Create vikunja system group
   ansible.builtin.group:
@@ -203,6 +209,33 @@
   changed_when: true
   no_log: true
 
+- name: Create Vikunja app-agent users (idempotent — skipped if already present)
+  ansible.builtin.command:
+    argv:
+      - "{{ vikunja_binary_path }}"
+      - user
+      - create
+      - "--username={{ vikunja_agent_tier.username }}"
+      - "--email={{ vikunja_agent_tier.username }}@{{ tofu_data.domain }}"
+      - "--password={{ lookup('vars', vikunja_agent_tier.password_field) }}"
+  loop: "{{ vikunja_agent_tiers }}"
+  loop_control:
+    loop_var: vikunja_agent_tier
+    label: "{{ vikunja_agent_tier.id }}"
+  when:
+    - lookup('vars', vikunja_agent_tier.password_field) | length > 0
+    - >-
+      not (vikunja_user_list.stdout | default('', true)
+           | regex_search('(?:^|\\s|\\|)' ~ vikunja_agent_tier.username ~ '(?:\\s|\\||$)'))
+  changed_when: true
+  no_log: true
+
+- name: Reconcile app-agent Vikunja project access
+  ansible.builtin.include_tasks: agent_read_access.yml
+  when:
+    - not ansible_check_mode
+  tags: vikunja_agent_access
+
 - name: Create the Vikunja operator user (idempotent — skipped if already present)
   ansible.builtin.command:
     argv:
@@ -233,6 +266,7 @@
     - vikunja_operator_password | length > 0
     - not ansible_check_mode
   tags: vikunja_operator_access
+  no_log: true
 
 # ansible.builtin.uri has no check-mode support, so every request in the share
 # reconciliation would be skipped and the facts derived from them left
@@ -249,6 +283,7 @@
     - vikunja_operator_password | length > 0
     - ansible_check_mode
   tags: vikunja_operator_access
+  no_log: true
 
 - name: Note operator account provisioning is skipped
   ansible.builtin.debug:
@@ -257,17 +292,16 @@
       DEFAULT_PASSWORD are absent from the converge environment. Set both to
       create the human account and share the automation-owned projects with it.
   when: not (vikunja_operator_username | length > 0 and vikunja_operator_password | length > 0)
+  no_log: true
 
-# Mint per-user MCP API tokens and publish the shared connection to OpenBao.
-# Deferred by default: the converge flips the flag with
-# -e '{"vikunja_token_publish_openbao": true}' once a write-capable OpenBao
-# AppRole (BAO_ADDR/BAO_TOKEN) is in the controller environment.
-- name: Mint MCP API tokens and publish to OpenBao
+# Validate per-user MCP API token scopes on every ordinary converge. Token
+# mutation and OpenBao publication remain deferred behind the publication flag.
+- name: Validate MCP API token scopes and publish when enabled
   ansible.builtin.include_tasks: mcp_tokens.yml
   when:
-    - vikunja_token_publish_openbao | bool
     - not ansible_check_mode
   tags: vikunja_mcp_tokens
+  no_log: true
 
 - name: Note MCP token minting is deferred
   ansible.builtin.debug:
@@ -279,6 +313,7 @@
       {{ vikunja_url_openbao_key }} + per-tier tokens to
       {{ vikunja_token_openbao_mount }}/{{ vikunja_token_openbao_path }}.
   when: not (vikunja_token_publish_openbao | bool)
+  no_log: true
 
 # Provision Hermes bridge identities (their own Vikunja user, project shares,
 # and a token scoped to an exact permission table) and publish each one's
@@ -319,6 +354,7 @@
       or vikunja_hermes_bridge_publish_openbao | bool
       or vikunja_ai_jobs_publish_openbao | bool
   tags: [vikunja_mcp_tokens, vikunja_hermes_bridge, vikunja_ai_jobs]
+  no_log: true
 
 - name: Note Hermes bridge identity provisioning is deferred
   ansible.builtin.debug:

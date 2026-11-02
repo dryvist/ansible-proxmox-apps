@@ -207,6 +207,20 @@ class PolicyResourceScoping(unittest.TestCase):
                         )
 
 
+class SystemOneBucketContract(unittest.TestCase):
+    def test_system1_is_versioned_and_its_ro_policy_is_read_only(self):
+        bucket = next(b for b in _defaults()["object_storage_default_buckets"] if b["name"] == "system1")
+        self.assertIs(bucket["versioning"], True)
+
+        policy = _render_policy("system1", "ro", _defaults()["object_storage_iam_policy_actions"])
+        statement = policy["Statement"][0]
+        self.assertIn("s3:GetObject", statement["Action"])
+        self.assertIn("s3:ListBucket", statement["Action"])
+        self.assertNotIn("s3:PutObject", statement["Action"])
+        self.assertNotIn("s3:DeleteObject", statement["Action"])
+        self.assertEqual(statement["Resource"], ["arn:aws:s3:::system1", "arn:aws:s3:::system1/*"])
+
+
 class SecretFieldCompleteness(unittest.TestCase):
     """Every stored bucket/role secret must carry all four ratified S3
     credential fields, on both roles -- not only the access/secret key pair.

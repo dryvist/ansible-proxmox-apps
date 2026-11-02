@@ -7,7 +7,7 @@ import yaml
 
 
 REPO = Path(__file__).resolve().parents[1]
-TASKS = "roles/grafana_stack/tasks/main.yml"
+TASKS = "roles/grafana_stack/tasks/provisioning.yml"
 PREVIEW_TASK = "Preview pinned community dashboard downloads"
 DOWNLOAD_TASK = "Fetch pinned community dashboards from grafana.com"
 REPLACE_TASK = "Point the community dashboards at the provisioned datasource"

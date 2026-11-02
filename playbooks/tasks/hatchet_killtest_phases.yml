@@ -1,0 +1,165 @@
+---
+# Fact gathering is disabled. Before the 570s clock, the refusal play runs one
+# controller-local presence assertion per refused name plus the TOFU-source
+# assertion; inventory loading runs after the clock starts. The bounded path to
+# restore is two ready requests (2*3s), stop POST (5s), stop UPID polls
+# ((7+1)*3s + 7*3s), target-down probes ((6+1)*3s + 6*3s), and 20 survivor polls
+# (20*3s + 19*5s): 250s, plus the 15s pvesh command = 265s, below the
+# 270s kill/survivor window (570s - 300s). Deadline checks stop kill work at the
+# recovery reserve. The final pause can round by 1s and the urgent alert is
+# capped at 5s: T_gate + 570 + 1 + 5 = T_gate + 576s, so the three pre-clock
+# controller-local tasks must finish within 24s to stay below the 600s limit.
+- name: Stop the target and watch the survivor
+  block:
+    - name: Require time for the kill and survivor phase
+      ansible.builtin.assert:
+        that:
+          - >-
+            now(utc=True).timestamp()
+            < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 5)
+        fail_msg: The kill and survivor phase deadline has passed; the target was not stopped.
+        quiet: true
+
+    - name: Hard-stop the target guest
+      ansible.builtin.include_tasks: hatchet_killtest_power.yml
+
+    - name: Probe the target until it stops answering
+      ansible.builtin.uri:
+        url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+        timeout: 3
+        follow_redirects: none
+      register: hatchet_killtest_down
+      until: >-
+        (hatchet_killtest_down.status | default(0)) != 200
+        or (hatchet_killtest_down.unreachable | default(false))
+        or now(utc=True).timestamp()
+        >= (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)
+      retries: 6
+      delay: 3
+      failed_when: false
+      when: >-
+        now(utc=True).timestamp()
+        < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)
+      delegate_to: "{{ hatchet_killtest_probe_host }}"
+      ignore_unreachable: true
+
+    - name: Require the target down and the kill phase within budget
+      ansible.builtin.assert:
+        that:
+          - not (hatchet_killtest_down.unreachable | default(false))
+          - (hatchet_killtest_down.status | default(0)) != 200
+          - >-
+            now(utc=True).timestamp()
+            < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float)
+        fail_msg: The target still answers /ready, the ingress host is unreachable, or the kill deadline expired.
+        quiet: true
+
+    - name: Require the survivor ready every 5 seconds for 20 polls
+      ansible.builtin.include_tasks: hatchet_killtest_ready.yml
+      vars:
+        hatchet_killtest_ready_guests: ["{{ hatchet_killtest_survivor }}"]
+        hatchet_killtest_ready_polls: 20
+        hatchet_killtest_ready_pause: 5
+
+    - name: Require the kill and survivor phase to finish before its cutoff
+      ansible.builtin.assert:
+        that:
+          - >-
+            now(utc=True).timestamp()
+            < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float)
+        fail_msg: The kill and survivor phase reached its recovery cutoff.
+        quiet: true
+  rescue:
+    - name: Record the failed kill phase
+      ansible.builtin.set_fact:
+        hatchet_killtest_failed: true
+        hatchet_killtest_failed_task: "{{ ansible_failed_task.name | default('unknown') }}"
+  always:
+    - name: Restore the target
+      block:
+        - name: Reset the start confirmation for restoration
+          ansible.builtin.set_fact:
+            hatchet_killtest_started: false
+
+        - name: Reconcile start and readiness until restored or the deadline
+          ansible.builtin.include_tasks: hatchet_killtest_start.yml
+          loop: "{{ range(1, 601) | list }}"
+          loop_control:
+            loop_var: hatchet_killtest_attempt
+          when:
+            - >-
+              now(utc=True).timestamp()
+              < (hatchet_killtest_deadline_epoch | float - 5)
+            - >-
+              not ((hatchet_killtest_started | bool)
+              and (hatchet_killtest_back.status | default(0) | int == 200))
+
+        - name: Wait for the recovery deadline before reporting failure
+          ansible.builtin.pause:
+            seconds: >-
+              {{ [0, ((hatchet_killtest_deadline_epoch | float - now(utc=True).timestamp())
+                       | round(0, 'ceil') | int)] | max }}
+          when:
+            - not ((hatchet_killtest_started | bool)
+              and (hatchet_killtest_back.status | default(0) | int == 200))
+            - now(utc=True).timestamp() < (hatchet_killtest_deadline_epoch | float)
+
+        - name: Require the target confirmed running and ready
+          ansible.builtin.assert:
+            that:
+              - hatchet_killtest_started | bool
+              - (hatchet_killtest_back.status | default(0) | int) == 200
+            fail_msg: The target was not confirmed running and ready by the recovery deadline.
+            quiet: true
+      rescue:
+        - name: Wait until the recovery deadline before alerting
+          ansible.builtin.pause:
+            seconds: >-
+              {{ [0, ((hatchet_killtest_deadline_epoch | float - now(utc=True).timestamp())
+                       | round(0, 'ceil') | int)] | max }}
+          when:
+            - not ((hatchet_killtest_started | bool)
+              and (hatchet_killtest_back.status | default(0) | int == 200))
+            - now(utc=True).timestamp() < (hatchet_killtest_deadline_epoch | float)
+
+        - name: Record the failed restoration
+          ansible.builtin.set_fact:
+            hatchet_killtest_restore_failed: true
+            hatchet_killtest_restore_failed_task: "{{ ansible_failed_task.name | default('unknown') }}"
+
+        - name: Alert when the target is still unconfirmed at the deadline
+          ansible.builtin.uri:
+            url: "https://ntfy.{{ ingress_domain }}/keystone"
+            method: POST
+            headers:
+              Title: "hatchet killtest: guest left stopped"
+              Priority: urgent
+              Tags: warning
+            body: "Guest {{ hatchet_killtest_target }} remains stopped after the Hatchet kill test."
+            timeout: 5
+          register: hatchet_killtest_alert
+          failed_when: false
+          when:
+            - now(utc=True).timestamp() >= (hatchet_killtest_deadline_epoch | float)
+            - not ((hatchet_killtest_started | bool)
+              and (hatchet_killtest_back.status | default(0) | int == 200))
+
+        - name: Fail loudly when restoration is still unconfirmed at the deadline
+          ansible.builtin.fail:
+            msg: >-
+              Restoring {{ hatchet_killtest_target }} was not confirmed by the deadline.
+              Check the guest; it may still be stopped. ntfy delivery: {{
+              'ok' if (hatchet_killtest_alert.status | default(0) | int) >= 200
+              and (hatchet_killtest_alert.status | default(0) | int) < 300
+              else (hatchet_killtest_alert.msg | default('HTTP ' ~
+              (hatchet_killtest_alert.status | default('unknown') | string))) }}.
+          when:
+            - now(utc=True).timestamp() >= (hatchet_killtest_deadline_epoch | float)
+            - not ((hatchet_killtest_started | bool)
+              and (hatchet_killtest_back.status | default(0) | int == 200))
+      always:
+        - name: Remove the cluster CA file
+          ansible.builtin.file:
+            path: "{{ hatchet_killtest_ca.path }}"
+            state: absent
+          no_log: true

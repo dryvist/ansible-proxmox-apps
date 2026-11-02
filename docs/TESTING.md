@@ -169,6 +169,7 @@ playbook that uses `inventory/hosts.yml` together with
 | Variable | Purpose |
 | --- | --- |
 | `PROXMOX_SSH_KEY_PATH` | Path to SSH private key for Proxmox VMs |
+| `SSH_KNOWN_HOSTS_FILE` | Path to the reviewed known_hosts file; `validate-pipeline.yml` checks that every VM in the CA rollout has a pin in it |
 
 Each LXC container's Proxmox node host is derived from the inventory as
 `{node-role}.{domain}`; there is no global Proxmox endpoint variable to set.

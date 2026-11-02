@@ -1,0 +1,251 @@
+---
+# grafana_stack — Grafana OSS + VictoriaMetrics as ONE Docker-in-LXC compose
+# stack. One Docker bootstrap (docker_engine role), one compose
+# project, two services, both host networking: VictoriaMetrics must accept
+# remote_write from the stream pipeline across VLANs, Grafana queries it on
+# 127.0.0.1 and is fronted by Traefik.
+#
+# daemon.json is managed by the docker_engine role's shared renderer.
+
+- name: Include the shared Docker engine prerequisites
+  ansible.builtin.include_role:
+    name: docker_engine
+    apply:
+      tags: [grafana, dashboard, observability, collaboration, grafana_stack_deploy]
+  tags: [grafana, grafana_stack_deploy]
+
+# =============================================================================
+# Directories + admin credential
+# =============================================================================
+
+# grafana_stack_provisioning_subdirs (defaults/main.yml) is the single list of
+# provisioning/<subdir> names — reused verbatim by docker-compose.yml.j2 to
+# mount each one into the container. A subdir added only here (or only there)
+# is the exact bug that shipped zero alert rules: rendered on the host,
+# invisible to Grafana because nothing mounted the directory.
+- name: Create grafana stack directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: >-
+    {{ [grafana_stack_data_dir, grafana_stack_data_dir ~ '/dashboards']
+       + (grafana_stack_provisioning_subdirs
+          | map('regex_replace', '^', grafana_stack_data_dir ~ '/provisioning/')
+          | list) }}
+  register: grafana_stack_directories
+
+# OpenBao owns the admin password. The existing file is only used to seed a
+# missing KV field; once stored, a differing file is an error.
+- name: Check for the persisted admin password
+  ansible.builtin.stat:
+    path: "{{ grafana_stack_admin_password_file }}"
+  register: grafana_stack_admin_pw_stat
+
+- name: Read the persisted admin password
+  ansible.builtin.slurp:
+    src: "{{ grafana_stack_admin_password_file }}"
+  register: grafana_stack_admin_pw_stored
+  when: grafana_stack_admin_pw_stat.stat.exists
+  no_log: true
+
+# The writes run on the controller: the writer token must never reach the guest.
+- name: Seed Grafana's admin password in OpenBao
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+  block:
+    - name: Seed the Grafana admin password through the shared seed_generated task
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated
+        apply:
+          tags:
+            - grafana
+            - dashboard
+            - observability
+            - collaboration
+            - grafana_stack_deploy
+      tags:
+        - grafana
+        - grafana_stack_deploy
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        openbao_secrets_seed_path: apps/grafana
+        openbao_secrets_seed_fields:
+          - name: grafana_admin_password
+            length: 40
+            value: >-
+              {{ grafana_stack_admin_password
+                 or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_local_values:
+          grafana_admin_password: >-
+            {{ grafana_stack_admin_password
+               or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
+        openbao_secrets_seed_register: grafana_stack_admin_seed
+
+- name: Resolve Grafana's admin password from OpenBao
+  ansible.builtin.set_fact:
+    grafana_stack_effective_admin_password: "{{ grafana_stack_admin_seed.grafana_admin_password }}"
+  no_log: true
+
+- name: Require the persisted password to match OpenBao
+  ansible.builtin.assert:
+    that:
+      - >-
+        not grafana_stack_admin_pw_stat.stat.exists
+        or (grafana_stack_admin_pw_stored.content | b64decode | trim)
+           == grafana_stack_effective_admin_password
+    fail_msg: "Grafana password file differs from the stored field grafana_admin_password"
+  when:
+    - grafana_stack_admin_seed.grafana_admin_password != '(placeholder in check mode)'
+  no_log: true
+
+- name: Persist Grafana's admin password
+  ansible.builtin.copy:
+    content: "{{ grafana_stack_effective_admin_password }}\n"
+    dest: "{{ grafana_stack_admin_password_file }}"
+    owner: "{{ grafana_stack_grafana_uid }}"
+    group: root
+    mode: "0400"
+  when:
+    - grafana_stack_admin_seed.grafana_admin_password != '(placeholder in check mode)'
+  no_log: true
+
+- name: Persist the Cribl HEC credential for Grafana's webhook integration
+  ansible.builtin.template:
+    src: cribl-hec-token.env.j2
+    dest: "{{ grafana_stack_alert_cribl_token_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: Restart grafana stack
+
+- name: Deploy grafana stack docker-compose template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ grafana_stack_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart grafana stack
+
+- name: Deploy and verify the grafana stack
+  block:
+    - name: Deploy the grafana stack via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ grafana_stack_data_dir }}"
+        state: present
+      register: grafana_stack_compose
+
+    - name: Restart grafana stack before health checks
+      ansible.builtin.meta: flush_handlers
+
+    # =========================================================================
+    # Health checks — prove both containers run and both serve, not just
+    # "compose exited 0".
+    # =========================================================================
+    - name: Verify both stack containers are running
+      ansible.builtin.command: >-
+        docker ps -q --filter name={{ item }} --filter status=running
+      register: grafana_stack_running
+      check_mode: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (grafana_stack_compose.skipped | default(false)) and
+          not (grafana_stack_compose.changed | default(false)) and
+          (grafana_stack_compose.actions | default([]) | length == 0)
+        )
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: grafana_stack_running.stdout != ''
+      loop:
+        - "{{ grafana_stack_container_name }}"
+        - "{{ grafana_stack_vm_container_name }}"
+
+    - name: Verify VictoriaMetrics answers /health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ grafana_stack_vm_port }}/health"
+        status_code: 200
+      register: grafana_stack_vm_health
+      check_mode: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (grafana_stack_compose.skipped | default(false)) and
+          not (grafana_stack_compose.changed | default(false)) and
+          (grafana_stack_compose.actions | default([]) | length == 0)
+        )
+      retries: 12
+      delay: 5
+      until: grafana_stack_vm_health.status | default(0) == 200
+      changed_when: false
+
+    - name: Verify grafana answers /api/health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ grafana_stack_port }}/api/health"
+        status_code: 200
+      register: grafana_stack_health
+      check_mode: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (grafana_stack_compose.skipped | default(false)) and
+          not (grafana_stack_compose.changed | default(false)) and
+          (grafana_stack_compose.actions | default([]) | length == 0)
+        )
+      retries: 12
+      delay: 5
+      until: grafana_stack_health.status | default(0) == 200
+      changed_when: false
+
+    # End-to-end: Grafana must actually reach VictoriaMetrics through the
+    # provisioned datasource, not just serve its own UI.
+    - name: Verify the provisioned datasource resolves in grafana
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ grafana_stack_port }}/api/datasources/uid/victoriametrics"
+        user: admin
+        password: "{{ grafana_stack_effective_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+      retries: 6
+      delay: 5
+      register: grafana_stack_ds
+      until: grafana_stack_ds.status | default(0) == 200
+      check_mode: false
+      when: >-
+        not ansible_check_mode or
+        (
+          not (grafana_stack_compose.skipped | default(false)) and
+          not (grafana_stack_compose.changed | default(false)) and
+          (grafana_stack_compose.actions | default([]) | length == 0)
+        )
+      changed_when: false
+      no_log: true
+
+  rescue:
+    - name: Capture stack diagnostics on failure
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "docker ps -a"
+        - "docker logs --tail 50 {{ grafana_stack_container_name }}"
+        - "docker logs --tail 50 {{ grafana_stack_vm_container_name }}"
+      register: grafana_stack_diag
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with stack diagnostics
+      ansible.builtin.fail:
+        msg: |-
+          grafana stack failed to deploy/verify on {{ inventory_hostname }}.
+          {{ grafana_stack_diag.results | default([]) | map(attribute='stdout') | join('\n--- next ---\n') }}

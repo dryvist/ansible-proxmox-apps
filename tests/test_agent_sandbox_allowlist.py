@@ -103,8 +103,10 @@ class OperatorAllowlistDomainValidation(unittest.TestCase):
         )
         self.assertIs(host_vars["agent_sandbox_allow_access_enabled"], True)
         authorized_keys = host_vars["agent_sandbox_allow_authorized_keys"]
-        self.assertEqual(len(authorized_keys), 1)
-        self.assertTrue(authorized_keys[0].startswith("ssh-ed25519 "))
+        self.assertGreaterEqual(len(authorized_keys), 1)
+        self.assertEqual(len(authorized_keys), len(set(authorized_keys)))
+        for key in authorized_keys:
+            self.assertTrue(key.startswith("ssh-ed25519 "))
 
 
 if __name__ == "__main__":

@@ -1,8 +1,7 @@
 ---
 # Agent containers on `agent_sandbox_host` use an internal Docker network.
-# Its only egress route is the allowlisting CONNECT proxy; host nftables drops
-# traffic leaving the agent bridge. `agent run --host` attaches containers with
-# `docker run`; no IaC configuration is involved.
+# Its only egress is the allowlisting CONNECT proxy; host nftables drops other
+# traffic leaving the agent bridge.
 
 # SSH user the nix-agent-sandbox launcher connects as (DOCKER_HOST=ssh://);
 # granted docker group membership so remote `docker run` works without sudo.
@@ -81,7 +80,7 @@ agent_sandbox_proxy_port: 3128
 agent_sandbox_zcode_web_enabled: true
 agent_sandbox_zcode_web_image: >-
   {{ 'ghcr.io/dryvist/nix-agent-sandbox/agent@'
-  ~ 'sha256:5da4830562a518bdc1463d9e5c0d72d7eecdd2bc32c1c5f51fda98562b7a2437' }}
+  ~ 'sha256:6189763f4f3a6b7c487702a6b1501410f1813ed29aa3a263f372e34f7829e8e2' }}
 agent_sandbox_zcode_web_container: agent-zcode-web
 # VM inventory IPs may be FQDNs; bind to this host's IPv4 fact.
 agent_sandbox_zcode_web_bind_address: "{{ ansible_facts['default_ipv4']['address'] }}"
@@ -101,9 +100,10 @@ agent_sandbox_dispatch_image: "{{ agent_sandbox_zcode_web_image }}"
 # Seconds allowed for the first pull of a new job image, which exceeds the
 # 240-second task_timeout; the profile read polls instead of blocking.
 agent_sandbox_dispatch_image_pull_timeout: 900
-agent_sandbox_dispatch_source_commit: 1e5c6dc21f05ccec751d74852dead0a707d8345c
+agent_sandbox_dispatch_source_commit: a87d1a0e08dea9194de78cfd4124a9e52d25b655
 agent_sandbox_dispatch_sources:
-  - { name: agent-dispatch.sh, sha256: c7af3dd900e6338af06d245e465664c845496caa6f07eb1e1047a8c484e66525 }
+  - { name: agent-dispatch-result.sh, sha256: 3c5068e0b520bb4972722909fe903af758ae10f5490b1a9b229e448c58687b2e }
+  - { name: agent-dispatch.sh, sha256: e872012cde4c8848f79966ecb968209bf1f6d8a279fdf3ee62a65d8fc5a74bbe }
   - { name: dispatch-ssh.sh, sha256: d615419e9bd0df811cd52165042a0ec1eacf2508a9f15a093c730f4b70f67688 }
 agent_sandbox_dispatch_stage_prefix: "/tmp/agent-sandbox-{{ agent_sandbox_dispatch_source_commit[:8] }}-"
 agent_sandbox_dispatch_dispatcher: /usr/local/bin/agent-dispatch
@@ -234,9 +234,8 @@ agent_sandbox_cribl_edge_mac_address: >-
   {{ '02:00:00' | community.general.random_mac(seed=agent_sandbox_cribl_container) }}
 agent_sandbox_cribl_config_dir: "{{ agent_sandbox_dir }}/cribl"
 
-# tcpjson destination: the stable `syslog` CNAME -> HAProxy, which load-balances
-# the Cribl Stream per-CLI frontends (same target the syslog_forwarder role
-# uses). FQDN only, never an IP.
+# tcpjson destination: the `syslog` CNAME load balancer in front of the Stream
+# per-CLI frontends (as syslog_forwarder). FQDN only, never an IP.
 agent_sandbox_cribl_stream_host: >-
   syslog.{{ lookup('env', 'PROXMOX_SUBDOMAIN')
   | default(undef('PROXMOX_SUBDOMAIN is empty'), true)
@@ -254,11 +253,9 @@ agent_sandbox_cribl_ports:
   codex: 10312
   gemini: 10313
 
-# Worker-level session-log pipelines are taken verbatim from the released pack
-# .crbls — the same single-source model as the Mac Edge (the pack ships the
-# pipeline conf; this role installs it as a worker-level pipeline, since the
-# pack-internal routing layer never loads on a standalone Edge). claude ships
-# raw (Stream stamps it) and has no pipeline here.
+# Session-log pipelines come verbatim from the released pack .crbls, installed
+# worker-level because a standalone Edge never loads pack routing. claude ships
+# raw (Stream stamps it).
 agent_sandbox_cribl_packs:
   - name: cc-edge-codex-io
     repo: dryvist/cc-edge-codex-io
