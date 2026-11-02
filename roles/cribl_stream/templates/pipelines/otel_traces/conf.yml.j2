@@ -13,12 +13,13 @@
 # Order matters:
 #   1. drop non-trace signals   (destination ingests traces only)
 #   2. drop non-LLM plumbing    (keeps the trace viewer readable)
-#   3. normalize identity       (backend reads langfuse.*-prefixed attributes)
-#   4. normalize usage/metadata (emitters disagree on attribute names)
-#   5. guarantee a trace name   (a third of spans arrive unnamed)
-#   6. trim noise               (always-empty attrs, multi-KB stack traces)
-#   7. redact credentials       (before content capture is ever enabled)
-#   8. drop valueless attrs     (backend worker throws on a value-less attr)
+#   3. bucket Langfuse trace ids (one clock hour per backend trace)
+#   4. normalize identity       (backend reads langfuse.*-prefixed attributes)
+#   5. normalize usage/metadata (emitters disagree on attribute names)
+#   6. guarantee a trace name   (a third of spans arrive unnamed)
+#   7. trim noise               (always-empty attrs, multi-KB stack traces)
+#   8. redact credentials       (before content capture is ever enabled)
+#   9. drop valueless attrs     (backend worker throws on a value-less attr)
 
 output: langfuse_otlp
 streamtags: []
@@ -43,7 +44,26 @@ functions:
     conf: {}
 {% endif %}
 
-  # 3. Identity. These attributes are already emitted; nothing downstream read
+{% if cribl_stream_otel_trace_bucket_seconds | int %}
+  # 3. Re-key Langfuse spans by clock hour when a configured real grouping
+  # attribute is present. This keeps each backend trace to one clock hour of
+  # spans and bounds per-trace event volume. The original trace id supplies
+  # the session fallback. parentSpanId stays unchanged, so a child in a later
+  # hour is a root in that hour's trace.
+  - id: eval
+    filter: "/^[0-9a-f]{32}$/i.test(String(traceId)) && ({% for a in cribl_stream_otel_bucket_sources %}(attributes['{{ a }}'] !== undefined && attributes['{{ a }}'] !== null && attributes['{{ a }}'] !== '') || {% endfor %}false) && ((typeof startTimeUnixNano === 'number' && Number.isFinite(startTimeUnixNano)) || (typeof startTimeUnixNano === 'string' && startTimeUnixNano.trim() !== '' && Number.isFinite(Number(startTimeUnixNano))))"
+    disabled: false
+    conf:
+      add:
+        - name: "attributes['langfuse.trace.metadata.original_trace_id']"
+          value: "attributes['langfuse.trace.metadata.original_trace_id'] !== undefined && attributes['langfuse.trace.metadata.original_trace_id'] !== null ? attributes['langfuse.trace.metadata.original_trace_id'] : traceId"
+        - name: "attributes['langfuse.session.id']"
+          value: "{% for a in cribl_stream_otel_session_id_sources %}attributes['{{ a }}'] || {% endfor %}traceId"
+        - name: traceId
+          value: "C.Mask.md5(traceId + ':' + Math.floor(Number(startTimeUnixNano) / {{ cribl_stream_otel_ns_per_second }} / {{ cribl_stream_otel_trace_bucket_seconds }}))"
+{% endif %}
+
+  # 4. Identity. These attributes are already emitted; nothing downstream read
   # them, so every trace landed with a null user and no session.
   - id: eval
     filter: "true"
@@ -67,7 +87,7 @@ functions:
         - name: "attributes['langfuse.trace.tags']"
           value: "[...new Set([].concat(attributes['langfuse.trace.tags'] || [], attributes['tag.tags'] || [], attributes['litellm.metadata.runner'], attributes['litellm.metadata.purpose'], [{% for a in cribl_stream_otel_tag_sources %}attributes['{{ a }}']{{ ', ' if not loop.last }}{% endfor %}], attributes['metadata.environment'] === 'benchmark' ? [].concat(attributes['metadata.tags'] || [], attributes['metadata.runner'], attributes['metadata.purpose']) : []).filter(Boolean))]"
 
-  # 4. Usage and passthrough metadata.
+  # 5. Usage and passthrough metadata.
   - id: eval
     filter: "true"
     disabled: false
@@ -82,7 +102,7 @@ functions:
           value: "attributes['langfuse.trace.metadata.{{ name }}'] !== undefined && attributes['langfuse.trace.metadata.{{ name }}'] !== null ? attributes['langfuse.trace.metadata.{{ name }}'] : attributes['{{ source }}'] !== undefined && attributes['{{ source }}'] !== null ? attributes['{{ source }}'] : attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.{{ name }}'] : undefined"
 {% endfor %}
 
-  # 5. Trace label, most specific meaningful value first. `name` is the span's
+  # 6. Trace label, most specific meaningful value first. `name` is the span's
   # own name and wins when set; the fallbacks cover the unnamed third.
   - id: eval
     filter: "true"
@@ -101,7 +121,7 @@ functions:
         - name: name
           value: "attributes['litellm.metadata.generation_name'] || (attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.generation_name'] : undefined) || name"
 
-  # 6. Noise removal.
+  # 7. Noise removal.
   - id: eval
     filter: "true"
     disabled: false
@@ -111,7 +131,7 @@ functions:
         - "attributes['{{ attr }}']"
 {% endfor %}
 
-  # 7. Credential redaction - see defaults/main.yml for the schema trap.
+  # 8. Credential redaction - see defaults/main.yml for the schema trap.
   - id: mask
     filter: "true"
     disabled: false
@@ -126,7 +146,7 @@ functions:
         - '{{ field }}'
 {% endfor %}
 
-  # 8. Every step above sets an attribute with `x || undefined` when its
+  # 9. Every step above sets an attribute with `x || undefined` when its
   # source is absent, which the OTLP exporter serializes as an attribute with
   # no value member at all. The Langfuse worker throws
   # "Cannot read properties of undefined (reading 'stringValue')" on that

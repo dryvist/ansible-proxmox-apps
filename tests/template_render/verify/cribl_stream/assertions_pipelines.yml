@@ -80,7 +80,7 @@
 - name: Assert otel_traces parses as YAML and keeps the trace-only drop first
   ansible.builtin.assert:
     that:
-      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 9"
+      - "(_cribl_stream_otel_traces | from_yaml).functions | length == 10"
       - "(_cribl_stream_otel_traces | from_yaml).functions[0].id == 'drop'"
       - "(_cribl_stream_otel_traces | from_yaml).output == 'langfuse_otlp'"
     fail_msg: >-
@@ -88,6 +88,35 @@
       and MUST still drop non-trace signals first — the Langfuse destination
       ingests traces only, and a metric or log on this leg jams the
       persistent queue until real spans stop flowing
+
+- name: Assert otel_traces buckets Langfuse traces before identity normalization
+  vars:
+    _fns: "{{ (_cribl_stream_otel_traces | from_yaml).functions }}"
+  ansible.builtin.assert:
+    that:
+      - "_fns[2].id == 'eval'"
+      - "_fns[2].conf.add[0].name == \"attributes['langfuse.trace.metadata.original_trace_id']\""
+      - "_fns[2].conf.add[1].name == \"attributes['langfuse.session.id']\""
+      - "_fns[2].conf.add[2].name == 'traceId'"
+      - "'startTimeUnixNano' in _fns[2].filter"
+      - "'C.Mask.md5(' in _fns[2].conf.add[2].value"
+      - "_fns[3].conf.add[0].name == \"attributes['langfuse.user.id']\""
+    fail_msg: >-
+      otel_traces must re-key each qualifying Langfuse span by its start-time
+      hour before identity normalization, preserving original trace metadata
+      and the existing session grouping.
+
+- name: Assert setting the Langfuse trace bucket to zero omits the step
+  vars:
+    _fns: "{{ (_cribl_stream_otel_traces_bucket_disabled | from_yaml).functions }}"
+  ansible.builtin.assert:
+    that:
+      - "_fns | length == 9"
+      - "_fns[2].conf.add[0].name == \"attributes['langfuse.user.id']\""
+      - "'C.Mask.md5(' not in _cribl_stream_otel_traces_bucket_disabled"
+    fail_msg: >-
+      a zero cribl_stream_otel_trace_bucket_seconds must omit the optional
+      Langfuse trace-hour Eval function and leave identity normalization next.
 
 - name: Assert otel_traces strips valueless attributes before the output
   ansible.builtin.assert:
@@ -123,17 +152,17 @@
       null user, no session and an empty tag list — the data arrives and is
       then thrown away at the last hop.
 
-- name: Assert otel_traces never synthesizes a session id
+- name: Assert otel_traces never creates a session id from time
   ansible.builtin.assert:
     that:
       - "'Date.now' not in _cribl_stream_otel_traces"
       - "'activity_window' not in (_cribl_stream_otel_traces | regex_replace('#.*', ''))"
+      - "'startTimeUnixNano' not in (_cribl_stream_otel_traces | from_yaml).functions[2].conf.add[1].value"
+      - "(_cribl_stream_otel_traces | from_yaml).functions[2].conf.add[1].value.endswith('traceId')"
     fail_msg: >-
-      session ids must come from the emitter or stay absent. A
-      collector-derived session (time-window hash or similar) invents
-      boundaries that do not exist, merges unrelated activity from one
-      principal, and sends late-arriving spans into a different session
-      than their siblings.
+      the Langfuse session must come from an emitted session attribute or the
+      original trace id. The clock-hour bucket may re-key traceId, but it must
+      never derive a session id from a timestamp or bucket number.
 
 - name: Assert otel_traces normalizes token usage to the GenAI semantic convention
   ansible.builtin.assert:
