@@ -82,7 +82,7 @@ def test_main_tasks_have_one_declared_entry_tag_and_propagate_umbrella_tags():
     )
 
 
-def test_bmc_provision_keeps_its_opt_in_guards_for_full_and_collector_selectors():
+def test_bmc_provision_keeps_its_explicit_opt_in_guard():
     tasks = list(_tasks(yaml.safe_load(BMC_TASKS_FILE.read_text(encoding="utf-8"))))
     task = next(
         task
@@ -94,12 +94,7 @@ def test_bmc_provision_keeps_its_opt_in_guards_for_full_and_collector_selectors(
     assert include["file"] == "provision_bmc_readonly_user.yml"
     assert _as_list(task.get("tags")) == ["never", "bmc_provision"]
     assert _as_list(include.get("apply", {}).get("tags")) == ["bmc_provision"]
-    when = _as_list(task.get("when"))
-    assert "cribl_stream_bmc_provision_account | bool" in when
-    selectors = when[-1]
-    assert "'bmc_provision' in ansible_run_tags" in selectors
-    assert "cribl_stream_entry_context.full | bool" in selectors
-    assert "cribl_stream_entry_tags.bmc_collector in ansible_run_tags" in selectors
+    assert _as_list(task.get("when")) == ["cribl_stream_bmc_provision_account | bool"]
 
 
 def test_calling_plays_keep_the_umbrella_and_cohosted_selectors():
