@@ -62,7 +62,9 @@ def test_db_host_is_the_writable_apps_primary():
 
 
 def test_compose_deploy_removes_orphans():
-    assert _tasks()["Deploy Hatchet via Docker Compose"]["community.docker.docker_compose_v2"]["remove_orphans"] is True
+    deploy = _tasks()["Deploy Hatchet and report the engine log tail on failure"]["block"][0]
+    assert deploy["name"] == "Deploy Hatchet via Docker Compose"
+    assert deploy["community.docker.docker_compose_v2"]["remove_orphans"] is True
 
 
 def test_shared_secrets_are_identical_in_seed_and_both_services():

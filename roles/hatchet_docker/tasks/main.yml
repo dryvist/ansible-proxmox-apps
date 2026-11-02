@@ -186,17 +186,39 @@
   no_log: true
   notify: Restart Hatchet
 
-- name: Deploy Hatchet via Docker Compose
-  community.docker.docker_compose_v2:
-    project_src: "{{ hatchet_docker_data_dir }}"
-    state: present
-    remove_orphans: true
-  register: hatchet_docker_compose_result
-  changed_when: >-
-    (hatchet_docker_compose_result.actions | default([]))
-    | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
-    | list | length > 0
-  no_log: true
+- name: Deploy Hatchet and report the engine log tail on failure
+  block:
+    - name: Deploy Hatchet via Docker Compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ hatchet_docker_data_dir }}"
+        state: present
+        remove_orphans: true
+      register: hatchet_docker_compose_result
+      changed_when: >-
+        (hatchet_docker_compose_result.actions | default([]))
+        | selectattr('status', 'in', ['Creating', 'Recreating', 'Pulling', 'Building'])
+        | list | length > 0
+      no_log: true
+  rescue:
+    - name: Read the Hatchet engine log tail after a failed deploy
+      ansible.builtin.command:
+        cmd: docker compose logs --no-color --tail 40 hatchet-engine
+        chdir: "{{ hatchet_docker_data_dir }}"
+      register: hatchet_docker_engine_logs
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    # Reuses the one-shot report's masking; status 1 makes it fail the play after printing.
+    - name: Report the Hatchet engine log tail
+      ansible.builtin.include_tasks: oneshot_report.yml
+      vars:
+        hatchet_docker_oneshot_label: hatchet-engine
+        hatchet_docker_oneshot_result:
+          status: 1
+          msg: >-
+            {{ [hatchet_docker_engine_logs.stdout | default(''),
+                hatchet_docker_engine_logs.stderr | default('')] | join('\n') }}
 
 - name: Wait for Hatchet web port to accept TCP connections
   ansible.builtin.wait_for:
