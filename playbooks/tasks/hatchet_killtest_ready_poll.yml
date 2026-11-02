@@ -10,6 +10,9 @@
   loop: "{{ hatchet_killtest_ready_guests }}"
   register: hatchet_killtest_ready
   failed_when: false
+  when: >-
+    now(utc).timestamp()
+    < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)
   delegate_to: "{{ hatchet_killtest_probe_host }}"
   ignore_unreachable: true
 
@@ -32,7 +35,13 @@
 
 - name: Wait before the next poll
   ansible.builtin.pause:
-    seconds: "{{ hatchet_killtest_ready_pause | default(0) | int }}"
+    seconds: >-
+      {{ [0, (hatchet_killtest_ready_pause | default(0) | int),
+           ((hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float
+             - now(utc).timestamp() - 3) | int)] | min }}
   when:
     - (hatchet_killtest_ready_pause | default(0) | int) > 0
     - hatchet_killtest_poll + 1 < hatchet_killtest_ready_polls | int
+    - >-
+      now(utc).timestamp()
+      < (hatchet_killtest_deadline_epoch | float - hatchet_killtest_recovery_reserve | float - 3)

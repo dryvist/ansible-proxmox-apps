@@ -1,52 +1,97 @@
 ---
-# One bounded start attempt on the kill-test target, skipped once an earlier
-# attempt succeeded. Nothing here fails the run: the attempt records
-# hatchet_killtest_started, true when the start task ends OK or PVE reports the
-# guest already running, and the caller asserts it after the last attempt.
-- name: "Start attempt {{ hatchet_killtest_attempt }}"
-  when: not (hatchet_killtest_started | bool)
-  block:
-    - name: "Send start to the target guest, attempt {{ hatchet_killtest_attempt }}"
-      ansible.builtin.uri:
-        url: "{{ hatchet_killtest_guest_api }}/status/start"
-        method: POST
-        headers:
-          Authorization: "{{ hatchet_killtest_auth }}"
-        unredirected_headers: [Authorization]
-        follow_redirects: none
-        ca_path: "{{ hatchet_killtest_ca.path }}"
-        status_code: 200
-      register: hatchet_killtest_start_post
-      failed_when: false
-      no_log: true
+# One recovery reconciliation step. Keep polling an unfinished start UPID;
+# send another start only when there is no accepted, unfinished UPID.
+- name: "Send start to the target guest, attempt {{ hatchet_killtest_attempt }}"
+  ansible.builtin.uri:
+    url: "{{ hatchet_killtest_guest_api }}/status/start"
+    method: POST
+    headers:
+      Authorization: "{{ hatchet_killtest_auth }}"
+    unredirected_headers: [Authorization]
+    follow_redirects: none
+    ca_path: "{{ hatchet_killtest_ca.path }}"
+    status_code: 200
+    timeout: 5
+  register: hatchet_killtest_start_post
+  failed_when: false
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_upids | default({})).get('start', '') | length == 0
+    - now(utc).timestamp() < (hatchet_killtest_deadline_epoch | float - 5)
+  no_log: true
 
-    - name: "Poll the start task, attempt {{ hatchet_killtest_attempt }}"
-      ansible.builtin.uri:
-        url: >-
-          {{ hatchet_killtest_api }}/nodes/{{ hatchet_killtest_node }}/tasks/{{
-          hatchet_killtest_start_post.json.data | urlencode }}/status
-        headers:
-          Authorization: "{{ hatchet_killtest_auth }}"
-        unredirected_headers: [Authorization]
-        follow_redirects: none
-        ca_path: "{{ hatchet_killtest_ca.path }}"
-      register: hatchet_killtest_start_task
-      until: (hatchet_killtest_start_task.json.data.status | default('')) == 'stopped'
-      retries: 12
-      delay: 5
-      failed_when: false
-      when: (hatchet_killtest_start_post.status | default(0)) == 200
-      no_log: true
+- name: Record the accepted start UPID
+  ansible.builtin.set_fact:
+    hatchet_killtest_upids: >-
+      {{ (hatchet_killtest_upids | default({}))
+         | combine({'start': hatchet_killtest_start_post.json.data | default('')}) }}
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_start_post.status | default(0)) == 200
 
-    - name: "Record start attempt {{ hatchet_killtest_attempt }}"
-      vars:
-        _task: "{{ (hatchet_killtest_start_task.json | default({})).data | default({}) }}"
-      ansible.builtin.set_fact:
-        hatchet_killtest_started: >-
-          {{ (_task.status | default('')) == 'stopped'
-             and ((_task.exitstatus | default('')) == 'OK'
-                  or 'already running' in (_task.exitstatus | default(''))) }}
-        hatchet_killtest_upids: >-
-          {{ hatchet_killtest_upids | default({})
-             | combine({'start_' ~ hatchet_killtest_attempt:
-                        (hatchet_killtest_start_post.json | default({})).data | default('')}) }}
+- name: "Poll the start UPID, attempt {{ hatchet_killtest_attempt }}"
+  ansible.builtin.uri:
+    url: >-
+      {{ hatchet_killtest_api }}/nodes/{{ hatchet_killtest_node }}/tasks/{{
+      (hatchet_killtest_upids | default({})).get('start', '') | urlencode }}/status
+    headers:
+      Authorization: "{{ hatchet_killtest_auth }}"
+    unredirected_headers: [Authorization]
+    follow_redirects: none
+    ca_path: "{{ hatchet_killtest_ca.path }}"
+    timeout: 3
+  register: hatchet_killtest_start_task
+  until: >-
+    (hatchet_killtest_start_task.json.data.status | default('')) == 'stopped'
+    or now(utc).timestamp() >= (hatchet_killtest_deadline_epoch | float - 3)
+  retries: 15
+  delay: 3
+  failed_when: false
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_upids | default({})).get('start', '') | length > 0
+    - now(utc).timestamp() < (hatchet_killtest_deadline_epoch | float - 3)
+  no_log: true
+
+- name: Record whether the start UPID completed successfully
+  vars:
+    _task: "{{ (hatchet_killtest_start_task.json | default({})).data | default({}) }}"
+    _exitstatus: "{{ _task.exitstatus | default('') }}"
+  ansible.builtin.set_fact:
+    hatchet_killtest_started: >-
+      {{ (hatchet_killtest_started | bool)
+         or (_task.status | default('') == 'stopped'
+             and (_exitstatus == 'OK' or 'already running' in _exitstatus)) }}
+    hatchet_killtest_upids: >-
+      {{ (hatchet_killtest_upids | default({})) | combine({'start': ''})
+         if _task.status | default('') == 'stopped'
+            and not (_exitstatus == 'OK' or 'already running' in _exitstatus)
+         else (hatchet_killtest_upids | default({})) }}
+  when:
+    - not (hatchet_killtest_started | bool)
+    - (hatchet_killtest_upids | default({})).get('start', '') | length > 0
+
+- name: Probe the target until Hatchet is ready
+  ansible.builtin.uri:
+    url: "http://{{ hostvars[hatchet_killtest_target].container_ip }}:{{ hatchet_killtest_ready_port }}/ready"
+    timeout: 3
+    follow_redirects: none
+  register: hatchet_killtest_back
+  failed_when: false
+  when: now(utc).timestamp() < (hatchet_killtest_deadline_epoch | float - 3)
+  delegate_to: "{{ hatchet_killtest_probe_host }}"
+  ignore_unreachable: true
+
+- name: Record readiness as live-running confirmation
+  ansible.builtin.set_fact:
+    hatchet_killtest_started: >-
+      {{ (hatchet_killtest_started | bool)
+         or (hatchet_killtest_back.status | default(0) | int == 200) }}
+
+- name: Pace unsuccessful recovery attempts
+  ansible.builtin.pause:
+    seconds: 1
+  when:
+    - not ((hatchet_killtest_started | bool)
+      and (hatchet_killtest_back.status | default(0) | int == 200))
+    - now(utc).timestamp() < (hatchet_killtest_deadline_epoch | float - 1)

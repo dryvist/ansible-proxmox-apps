@@ -58,6 +58,8 @@ def test_caller_overrides_are_refused_before_anything_runs():
         "tofu_data", "openbao_secrets_domains", "openbao_secrets_by_domain",
         "openbao_secrets_domain_groups", "openbao_secrets_active_groups",
         "hatchet_killtest_tag", "hatchet_killtest_action",
+        "hatchet_killtest_budget_seconds", "hatchet_killtest_deadline_epoch",
+        "hatchet_killtest_recovery_reserve",
     }
     existing_refusals = {
         "hatchet_killtest_guests", "hatchet_killtest_target", "hatchet_killtest_survivor",
@@ -123,10 +125,10 @@ def test_stopped_guest_alert_runs_in_restore_always_and_fails_afterward():
     assert phases["rescue"], "the restore always path must run when the kill phase fails"
     restore = phases["always"][0]
     rescue = restore["rescue"]
-    alert_index = next(i for i, task in enumerate(rescue) if task["name"].startswith("Alert when bounded starts"))
-    alert = rescue[alert_index]
+    alert = next(task for task in rescue if task["name"].startswith("Alert when"))
     request = alert["ansible.builtin.uri"]
-    assert alert["when"] == "not (hatchet_killtest_started | bool)"
+    assert "hatchet_killtest_deadline_epoch" in str(alert["when"])
+    assert "hatchet_killtest_started" in str(alert["when"])
     assert request["url"] == "https://ntfy.{{ ingress_domain }}/keystone"
     assert request["headers"] == {
         "Title": "hatchet killtest: guest left stopped", "Priority": "urgent", "Tags": "warning",
@@ -135,7 +137,11 @@ def test_stopped_guest_alert_runs_in_restore_always_and_fails_afterward():
     assert all(name not in request["body"] for name in ("vmid", "container_ip", "hatchet_killtest_node"))
     assert alert["failed_when"] is False
     assert "ignore_errors" not in alert
-    assert rescue[alert_index + 1].get("ansible.builtin.fail")
+    fail = next(task for task in rescue if task["name"].startswith("Fail loudly"))
+    assert "hatchet_killtest_deadline_epoch" in str(fail["when"])
+    assert "hatchet_killtest_back.status" in str(fail["when"])
+    assert fail.get("ansible.builtin.fail")
+    assert restore["always"][-1]["ansible.builtin.file"]["state"] == "absent"
 
 
 def test_every_delegated_probe_ignores_unreachable():
@@ -157,12 +163,109 @@ def test_no_authenticated_request_follows_redirects():
 def test_restore_retries_and_always_removes_the_ca_file():
     phases = _load(TASKS / "hatchet_killtest_phases.yml")[0]
     restore = phases["always"][0]
-    start = restore["block"][0]
-    assert start["loop"] == [1, 2, 3]
+    reconcile = next(task for task in restore["block"] if task["name"].startswith("Reconcile start"))
+    assert reconcile["ansible.builtin.include_tasks"] == "hatchet_killtest_start.yml"
+    assert reconcile["loop"] == "{{ range(1, 601) | list }}"
+    assert "hatchet_killtest_deadline_epoch" in str(reconcile["when"])
+    assert "hatchet_killtest_back.status" in str(reconcile["when"])
     assert restore["rescue"], "a failed restore must be recorded, not abort the always block"
     assert [t["ansible.builtin.file"]["state"] for t in restore["always"]] == ["absent"]
 
 
 def test_ready_polls_fail_fast_one_include_per_poll():
     ready = _load(TASKS / "hatchet_killtest_ready.yml")
-    assert [t.get("ansible.builtin.include_tasks") for t in ready] == ["hatchet_killtest_ready_poll.yml"]
+    include = next(task for task in ready if "ansible.builtin.include_tasks" in task)
+    assert include["ansible.builtin.include_tasks"] == "hatchet_killtest_ready_poll.yml"
+    assert "hatchet_killtest_deadline_epoch" in str(include["when"])
+
+
+def test_operational_until_and_loop_tasks_check_the_deadline():
+    for filename, task in _all_tasks():
+        if task["name"].startswith("Refuse caller-supplied"):
+            continue  # This static safety gate must run before the clock is initialized.
+        if "until" in task or "loop" in task:
+            assert "hatchet_killtest_deadline_epoch" in _task_fields(task), (filename, task["name"])
+
+
+def test_deadline_reserve_and_worst_case_timing_are_bounded():
+    plays = _load(PLAYBOOK)
+    refusal = plays[0]["tasks"][0]["loop"]
+    assert {"hatchet_killtest_deadline_epoch", "hatchet_killtest_recovery_reserve"} <= set(refusal)
+    fixed = next(t["ansible.builtin.set_fact"] for t in plays[0]["tasks"]
+                 if t["name"].startswith("Set the fixed kill-test"))
+    timer = next(t["ansible.builtin.set_fact"] for t in plays[0]["tasks"]
+                 if t["name"].startswith("Start the single end-to-end"))
+    budget = int(fixed["hatchet_killtest_budget_seconds"])
+    reserve = int(fixed["hatchet_killtest_recovery_reserve"])
+    assert budget == 570
+    assert reserve == 300
+    assert "now(utc).timestamp()" in timer["hatchet_killtest_deadline_epoch"]
+    assert "hatchet_killtest_budget_seconds" in timer["hatchet_killtest_deadline_epoch"]
+
+    phases = _load(TASKS / "hatchet_killtest_phases.yml")[0]
+    power = _load(TASKS / "hatchet_killtest_power.yml")
+    ready_poll = _load(TASKS / "hatchet_killtest_ready_poll.yml")
+    stop_post = next(t["ansible.builtin.uri"] for t in power
+                     if t["name"] == "Send stop to the target guest")
+    stop_poll = next(t for t in power if "until" in t)
+    down = next(t for t in phases["block"] if t["name"].startswith("Probe the target until"))
+    survivor = next(t for t in phases["block"] if t["name"].startswith("Require the survivor"))
+    polls = int(survivor["vars"]["hatchet_killtest_ready_polls"])
+    pause = int(survivor["vars"]["hatchet_killtest_ready_pause"])
+    ready_uri = next(t["ansible.builtin.uri"] for t in ready_poll if "loop" in t)
+    ready_timeout = int(ready_uri["timeout"])
+
+    def retry_bound(task):
+        uri = task["ansible.builtin.uri"]
+        retries = int(task["retries"])
+        return (retries + 1) * int(uri["timeout"]) + retries * int(task["delay"])
+
+    initial_ready_seconds = 2 * ready_timeout  # The playbook asserts exactly two selected guests.
+    survivor_seconds = polls * ready_timeout + (polls - 1) * pause
+    kill_seconds = (
+        initial_ready_seconds + int(stop_post["timeout"]) + retry_bound(stop_poll)
+        + retry_bound(down) + survivor_seconds
+    )
+    assert kill_seconds == 256
+    assert kill_seconds < budget - reserve
+
+    alert = next(t["ansible.builtin.uri"] for t in phases["always"][0]["rescue"]
+                 if t["name"].startswith("Alert when"))
+    total_seconds = budget + 1 + int(alert["timeout"])
+    assert total_seconds == 576
+    assert total_seconds < 600
+    comment = " ".join((TASKS / "hatchet_killtest_phases.yml").read_text(encoding="utf-8").splitlines()[:8])
+    assert "256s" in comment
+    assert "576s" in comment
+
+
+def test_restore_reconciles_from_upid_and_readiness_inside_always():
+    phases = _load(TASKS / "hatchet_killtest_phases.yml")[0]
+    restore = phases["always"][0]
+    reconcile = next(t for t in restore["block"] if t["name"].startswith("Reconcile start"))
+    assert "hatchet_killtest_deadline_epoch" in str(reconcile["when"])
+    assert "hatchet_killtest_back.status" in str(reconcile["when"])
+    start_tasks = _load(TASKS / "hatchet_killtest_start.yml")
+    post = next(t for t in start_tasks if t["name"].startswith("Send start"))
+    poll = next(t for t in start_tasks if "until" in t)
+    probe = next(t for t in start_tasks if t["name"].startswith("Probe the target"))
+    assert "hatchet_killtest_upids" in str(post["when"])
+    assert "hatchet_killtest_deadline_epoch" in str(poll["until"])
+    assert "hatchet_killtest_deadline_epoch" in str(poll["when"])
+    assert "stopped" in poll["until"]
+    assert probe["ansible.builtin.uri"]["timeout"] == 3
+    assert "hatchet_killtest_deadline_epoch" in str(probe["when"])
+    assert any("already running" in str(t) for t in start_tasks)
+    assert any(t["name"].startswith("Require the target confirmed running and ready")
+               for t in restore["block"])
+    assert restore["rescue"][-1]["ansible.builtin.fail"]
+
+
+def test_kill_and_survivor_work_stops_before_the_recovery_reserve():
+    phases = _load(TASKS / "hatchet_killtest_phases.yml")[0]
+    assert "hatchet_killtest_recovery_reserve" in str(phases["block"][0]["ansible.builtin.assert"])
+    down = next(t for t in phases["block"] if t["name"].startswith("Probe the target until"))
+    assert "hatchet_killtest_recovery_reserve" in str(down["until"])
+    ready = _load(TASKS / "hatchet_killtest_ready.yml")
+    loop = next(t for t in ready if "loop" in t)
+    assert "hatchet_killtest_recovery_reserve" in str(loop["when"])
