@@ -47,20 +47,46 @@ functions:
 {% if cribl_stream_otel_trace_bucket_seconds | int %}
   # 3. Re-key Langfuse spans by clock hour when a configured real grouping
   # attribute is present. This keeps each backend trace to one clock hour of
-  # spans and bounds per-trace event volume. The original trace id supplies
-  # the session fallback. parentSpanId stays unchanged, so a child in a later
-  # hour is a root in that hour's trace.
-  - id: eval
-    filter: "/^[0-9a-f]{32}$/i.test(String(traceId)) && ({% for a in cribl_stream_otel_bucket_sources %}(attributes['{{ a }}'] !== undefined && attributes['{{ a }}'] !== null && attributes['{{ a }}'] !== '') || {% endfor %}false) && ((typeof startTimeUnixNano === 'number' && Number.isFinite(startTimeUnixNano)) || (typeof startTimeUnixNano === 'string' && startTimeUnixNano.trim() !== '' && Number.isFinite(Number(startTimeUnixNano))))"
+  # spans and bounds per-trace event volume. Preserve the original trace id
+  # for metadata and the session fallback. parentSpanId stays unchanged, so
+  # a child in a later hour is a root in that hour's trace.
+  - id: code
+    filter: "true"
     disabled: false
     conf:
-      add:
-        - name: "attributes['langfuse.trace.metadata.original_trace_id']"
-          value: "attributes['langfuse.trace.metadata.original_trace_id'] !== undefined && attributes['langfuse.trace.metadata.original_trace_id'] !== null ? attributes['langfuse.trace.metadata.original_trace_id'] : traceId"
-        - name: "attributes['langfuse.session.id']"
-          value: "{% for a in cribl_stream_otel_session_id_sources %}attributes['{{ a }}'] || {% endfor %}traceId"
-        - name: traceId
-          value: "C.Mask.md5(traceId + ':' + Math.floor(Number(startTimeUnixNano) / {{ cribl_stream_otel_ns_per_second }} / {{ cribl_stream_otel_trace_bucket_seconds }}))"
+      code: >-
+        var tk = __e.trace_id !== undefined && __e.trace_id !== null &&
+        __e.trace_id !== '' ? 'trace_id' : 'traceId';
+        var sk = typeof __e.start_time_unix_nano !== 'undefined' ?
+        'start_time_unix_nano' : 'startTimeUnixNano';
+        var original = String(__e[tk]), ns = Number(__e[sk]), a = __e.attributes || {};
+        var bucketSources = {{ cribl_stream_otel_bucket_sources | to_json }};
+        var hasBucket = bucketSources.some(function (key) {
+          var value = a[key];
+          return value !== undefined && value !== null && value !== '';
+        });
+        if (/^[0-9a-f]{32}$/i.test(original) && hasBucket && Number.isFinite(ns)) {
+          var originalKey = 'langfuse.trace.metadata.original_trace_id';
+          if (a[originalKey] === undefined || a[originalKey] === null) {
+            a[originalKey] = original;
+          }
+          var sessionKey = 'langfuse.session.id';
+          if (a[sessionKey] === undefined || a[sessionKey] === null) {
+            var session = original;
+            var sessionSources = {{ cribl_stream_otel_session_id_sources | to_json }};
+            for (var i = 0; i < sessionSources.length; i++) {
+              var value = a[sessionSources[i]];
+              if (value !== undefined && value !== null && value !== '') {
+                session = value;
+                break;
+              }
+            }
+            a[sessionKey] = session;
+          }
+          __e[tk] = C.Mask.md5(original + ':' + Math.floor(ns /
+            {{ cribl_stream_otel_ns_per_second }} /
+            {{ cribl_stream_otel_trace_bucket_seconds }}));
+        }
 {% endif %}
 
   # 4. Identity. These attributes are already emitted; nothing downstream read
