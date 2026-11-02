@@ -1,7 +1,10 @@
 """Contracts for scheduled Hatchet evaluations."""
 
+import io
 import json
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -21,6 +24,7 @@ from evals.parse_experiment import (  # noqa: E402
     make_expected_fields_evaluator,
     make_schema_evaluator,
 )
+from evals import sync_judges  # noqa: E402
 from evals.sync_judges import sync  # noqa: E402
 import evals.tasks as eval_tasks  # noqa: E402
 
@@ -261,3 +265,19 @@ def test_worker_adds_eval_slots_beyond_gpu_fill_slots():
     source = (Path(__file__).resolve().parent.parent
               / "roles/hatchet_docker/files/gpu_fill_worker/worker.py").read_text(encoding="utf-8")
     assert 'slots += len(worker_config["evals"]["roles"]) + 1 if "evals" in worker_config else 0' in source
+
+
+def test_judge_request_reports_http_error_status(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_HOST", "https://192.0.2.20")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+
+    def refuse(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url, 503, "unavailable", {}, io.BytesIO(b"busy")
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+
+    with pytest.raises(RuntimeError, match="GET /api/public/evals -> HTTP 503: busy"):
+        sync_judges._request("GET", "/api/public/evals")

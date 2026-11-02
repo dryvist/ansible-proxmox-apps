@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import urllib.error
 import urllib.request
 from pathlib import Path
 
