@@ -170,7 +170,7 @@ def test_noop_platform_loads_and_completes_without_http_or_guard(tmp_path):
         config["platforms"]["noop"],
         {"agent": "planner"},
         fail,
-        latency_guard={"prometheus_url": "http://192.0.2.12", "query": "q", "max_ratio": 1.2},
+        latency_guard={"prometheus_url": "unused-by-noop", "query": "q", "max_ratio": 1.2},
         http_get=fail,
     )
 
