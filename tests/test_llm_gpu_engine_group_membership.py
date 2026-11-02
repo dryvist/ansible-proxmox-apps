@@ -57,6 +57,15 @@ class GpuEngineGroupMembership(unittest.TestCase):
     def test_other_engine_guest_stays_out(self):
         self.assertFalse(_in_engine_group({"tags": ["nvidia-gpu"], "llm_gpu_engine_identity": "llama_cpp"}, "vllm"))
 
+    def test_selected_sglang_engine_guest_joins(self):
+        # SGLang serves cache_hit_rate on the same /metrics port the vLLM scrape job reads.
+        self.assertTrue(_in_engine_group({"tags": ["nvidia-gpu"], "llm_gpu_engine_identity": "sglang"}, "sglang"))
+        self.assertTrue(_in_engine_group({"tags": ["llm-gpu", "nvidia-gpu"]}, "sglang"))
+
+    def test_engine_identity_must_match_the_selector(self):
+        self.assertFalse(_in_engine_group({"tags": ["nvidia-gpu"], "llm_gpu_engine_identity": "sglang"}, "vllm"))
+        self.assertFalse(_in_engine_group({"tags": ["nvidia-gpu"], "llm_gpu_engine_identity": "vllm"}, "sglang"))
+
     def test_secondary_gpu_group_stays_tag_only(self):
         # llm_vllm_group labels DCGM series as the secondary GPU, so the primary never joins it.
         self.assertNotIn("llm_vllm_group", _groups({"tags": ["llm-gpu", "nvidia-gpu"]}, "vllm"))
