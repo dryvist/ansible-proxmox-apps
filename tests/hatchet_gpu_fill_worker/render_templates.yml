@@ -11,21 +11,21 @@
     hatchet_docker_admin_image: HATCHET_ADMIN_IMAGE
     hatchet_docker_engine_image: HATCHET_ENGINE_IMAGE
     hatchet_docker_dashboard_image: HATCHET_DASHBOARD_IMAGE
-    hatchet_docker_db_host: POSTGRES_HOST
+    hatchet_docker_db_host: 192.0.2.20
     hatchet_docker_db_port: 5432
     hatchet_docker_db_user: hatchet
     hatchet_docker_db_password: render-test-placeholder
     hatchet_docker_db_name: hatchet
     hatchet_docker_db_ssl_mode: disable
     hatchet_docker_server_auth_cookie_secrets: render-cookie-placeholder-a render-cookie-placeholder-b
-    hatchet_docker_fqdn: HATCHET_UI_HOST
+    hatchet_docker_fqdn: 192.0.2.21
     hatchet_docker_server_encryption_master_keyset: render-master-keyset-placeholder
     hatchet_docker_server_encryption_jwt_private_keyset: render-private-keyset-placeholder
     hatchet_docker_server_encryption_jwt_public_keyset: render-public-keyset-placeholder
-    hatchet_docker_server_url: https://HATCHET_UI_HOST
+    hatchet_docker_server_url: https://192.0.2.21
     hatchet_docker_grpc_container_port: 7070
-    hatchet_docker_engine_broadcast_address: HATCHET_ENGINE_HOST:443
-    hatchet_docker_admin_email: ADMIN_EMAIL
+    hatchet_docker_engine_broadcast_address: 192.0.2.22:443
+    hatchet_docker_admin_email: admin@192.0.2.21
     hatchet_docker_admin_password: render-admin-placeholder
     hatchet_docker_admin_name: Hatchet Admin
     hatchet_docker_web_port: 8888
@@ -38,12 +38,16 @@
     hatchet_docker_worker_image: >-
       python:3.13.18-slim-trixie@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
     hatchet_docker_worker_sdk_version: "1.44.0"
+    hatchet_docker_worker_latency_guard_enabled: true
+    hatchet_docker_worker_latency_guard_prometheus_url: http://192.0.2.23:9090
+    hatchet_docker_worker_latency_guard_query: sum(rate(requests_total[5m]))
+    hatchet_docker_worker_latency_guard_max_ratio: 1.2
     hatchet_docker_worker_roles:
       medium:
         max_runs: 3
     hatchet_docker_worker_platforms:
       - name: hermes
-        run_url: https://AGENT_PLATFORM_HOST/run
+        run_url: https://192.0.2.24/run
         auth_env: HERMES_API_TOKEN
         auth_secret_key: hermes_api_token
         timeout_s: 120
@@ -99,7 +103,7 @@
             'HATCHET_CLIENT_TOKEN: "render-worker-token-placeholder"'
             in (_hatchet_compose_on.content | b64decode)
           - >-
-            'HATCHET_CLIENT_HOST_PORT: "HATCHET_ENGINE_HOST:443"'
+            'HATCHET_CLIENT_HOST_PORT: "192.0.2.22:443"'
             in (_hatchet_compose_on.content | b64decode)
           - >-
             'HERMES_API_TOKEN: "render-platform-token-placeholder"'
@@ -129,14 +133,40 @@
           - "(_hatchet_worker_config.content | b64decode | from_json).roles.medium.max_runs == 3"
           - >-
             (_hatchet_worker_config.content | b64decode | from_json).platforms.hermes.run_url
-            == 'https://AGENT_PLATFORM_HOST/run'
+            == 'https://192.0.2.24/run'
           - >-
             (_hatchet_worker_config.content | b64decode | from_json).platforms.hermes.auth_env
             == 'HERMES_API_TOKEN'
           - >-
             (_hatchet_worker_config.content | b64decode | from_json).platforms.hermes.timeout_s
             == 120
+          - >-
+            (_hatchet_worker_config.content | b64decode | from_json).latency_guard.prometheus_url
+            == 'http://192.0.2.23:9090'
+          - >-
+            (_hatchet_worker_config.content | b64decode | from_json).latency_guard.max_ratio == 1.2
           - "'auth_secret_key' not in (_hatchet_worker_config.content | b64decode)"
+
+    - name: Render the worker JSON configuration without the latency guard
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-no-guard.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_latency_guard_enabled: false
+
+    - name: Read the worker JSON configuration without the latency guard
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-no-guard.json"
+      register: _hatchet_worker_config_no_guard
+
+    - name: Assert the disabled latency guard is omitted from worker config
+      ansible.builtin.assert:
+        that:
+          - >-
+            'latency_guard' not in
+            (_hatchet_worker_config_no_guard.content | b64decode | from_json)
 
     - name: Remove the temporary render directory
       ansible.builtin.file:
