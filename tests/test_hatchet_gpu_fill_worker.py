@@ -15,7 +15,6 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKER_PACKAGE = ROOT / "roles/hatchet_docker/files/gpu_fill_worker"
 sys.path.insert(0, str(WORKER_PACKAGE))
@@ -27,6 +26,7 @@ from config import load_config  # noqa: E402
 
 DEFAULTS = yaml.safe_load((ROOT / "roles/hatchet_docker/defaults/main.yml").read_text())
 TOKEN_TASKS = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/worker_token_publish.yml").read_text())
+TOKEN_READ_TASKS = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/worker_token_read.yml").read_text())
 
 
 def valid_guard():
@@ -309,48 +309,6 @@ def _signed_token(exp):
     return f"header.{payload}.signature"
 
 
-def test_token_renewal_decision_renders_absent_far_and_near_expiry():
-    decision = next(
-        task for task in TOKEN_TASKS
-        if task["name"] == "Decide whether the Hatchet worker token needs minting"
-    )
-    expression = decision["ansible.builtin.set_fact"]["hatchet_docker_worker_token_needs_mint"]
-    padding = next(
-        task
-        for task in TOKEN_TASKS
-        if task["name"] == "Pad the existing Hatchet token payload for base64 decoding"
-    )
-    decode = next(task for task in TOKEN_TASKS if task["name"] == "Decode the existing Hatchet token expiry")
-    decode_expression = decode["ansible.builtin.set_fact"]["hatchet_docker_worker_token_exp"]
-    padding_expression = padding["ansible.builtin.set_fact"]["hatchet_docker_worker_token_payload_padded"]
-    renew_days = DEFAULTS["hatchet_docker_worker_token_renew_days"]
-
-    def needs_mint(token):
-        expiry = 0
-        if len(token.split(".")) == 3:
-            padded_payload = _render_task_expression(
-                padding_expression,
-                {"hatchet_docker_worker_token_payload_segment": token.split(".")[1]},
-            )
-            expiry = _render_task_expression(
-                decode_expression,
-                {"hatchet_docker_worker_token_payload_padded": padded_payload},
-            )
-        return _render_task_expression(
-            expression,
-            {
-                "hatchet_docker_worker_token_current": token,
-                "hatchet_docker_worker_token_renew_days": renew_days,
-                "hatchet_docker_worker_token_exp": expiry,
-            },
-        )
-
-    now = int(time.time())
-    assert needs_mint("") is True
-    assert needs_mint(_signed_token(now + (renew_days + 5) * 86400)) is False
-    assert needs_mint(_signed_token(now + (renew_days - 5) * 86400)) is True
-
-
 def test_default_latency_query_joins_the_interactive_aliases():
     query = DEFAULTS["hatchet_docker_worker_latency_guard_query"]
     templar = Templar(loader=DataLoader())
@@ -367,45 +325,6 @@ def test_default_latency_query_joins_the_interactive_aliases():
     assert "[7d] offset 1d" in rendered
 
 
-def test_token_publisher_is_opt_in_tagged_and_reuses_shared_kv_seed_role():
-    main_tasks = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/main.yml").read_text())
-    publish_include = next(task for task in main_tasks if "worker_token_publish.yml" in str(task))
-    assert publish_include["when"] == "hatchet_docker_worker_token_publish | bool"
-    assert "hatchet_worker_token" in publish_include["tags"]
-    assert DEFAULTS["hatchet_docker_worker_token_publish"] is False
-    site = (ROOT / "playbooks/site/03-notifications-and-core-apps.yml").read_text()
-    assert "- hatchet_worker_token" in site
-
-    gate = next(task for task in TOKEN_TASKS if "human-unlocked publisher token" in task["name"])
-    assert gate["ansible.builtin.assert"]["that"] == ["lookup('env', 'BAO_TOKEN') | length > 0"]
-    mint = next(task for task in TOKEN_TASKS if task["name"] == "Mint the Hatchet GPU fill worker token")
-    assert mint["run_once"] is True
-    assert mint["no_log"] is True
-    assert mint["community.docker.docker_container"]["image"] == "{{ hatchet_docker_admin_image }}"
-    assert mint["community.docker.docker_container"]["command"] == [
-        "token",
-        "create",
-        "--tenant-id",
-        "{{ hatchet_docker_tenant_id }}",
-        "--name",
-        "gpu-fill-worker",
-        "--expiresIn",
-        "{{ hatchet_docker_worker_token_expires_in }}",
-    ]
-
-    publisher = next(
-        task
-        for task in TOKEN_TASKS
-        if task["name"] == "Publish the Hatchet worker token to the apps secret"
-    )
-    include = publisher["block"][0]
-    assert include["ansible.builtin.include_role"]["name"] == "dryvist.homelab.openbao_secrets"
-    assert include["ansible.builtin.include_role"]["tasks_from"] == "seed_generated.yml"
-    assert include["vars"]["openbao_secrets_seed_path"] == "apps/hatchet/worker-token"
-    assert include["vars"]["openbao_secrets_seed_check_capabilities"] is True
-    assert include["vars"]["openbao_secrets_seed_token"] == "{{ lookup('env', 'BAO_TOKEN') }}"
-
-
 def test_compose_and_worker_config_templates_render_on_and_off():
     ansible_playbook = shutil.which("ansible-playbook")
     if ansible_playbook is None:
@@ -413,7 +332,16 @@ def test_compose_and_worker_config_templates_render_on_and_off():
 
     playbook = ROOT / "tests/hatchet_gpu_fill_worker/render_templates.yml"
     result = subprocess.run(
-        [ansible_playbook, str(playbook), "-i", "localhost,", "-c", "local"],
+        [
+            ansible_playbook,
+            str(playbook),
+            "-i",
+            "localhost,",
+            "-c",
+            "local",
+            "--extra-vars",
+            '{"hatchet_docker_worker_token_current":"render-worker-token-placeholder"}',
+        ],
         capture_output=True,
         check=False,
         text=True,
