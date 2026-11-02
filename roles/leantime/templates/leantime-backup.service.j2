@@ -1,0 +1,14 @@
+{{ ansible_managed | comment }}
+# One gzip dump per day of the Leantime database into LEAN_DB_BACKUP_PATH.
+# Every command must exit 0; otherwise the unit fails and journald keeps the reason.
+[Unit]
+Description=Daily Leantime database backup
+After=mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=oneshot
+UMask=0077
+# systemd escapes: $$ is a literal $, and %% is a literal %.
+ExecStart=/bin/bash -o pipefail -c 'mariadb-dump --defaults-extra-file={{ leantime_backup_option_file }} --single-transaction --no-tablespaces {{ leantime_db_name }} | gzip > {{ leantime_backup_dir }}/{{ leantime_db_name }}-$$(date +%%F).sql.gz'
+ExecStartPost=/usr/bin/find {{ leantime_backup_dir }} -maxdepth 1 -name '{{ leantime_db_name }}-*.sql.gz' -mtime +{{ leantime_backup_retention_days }} -delete

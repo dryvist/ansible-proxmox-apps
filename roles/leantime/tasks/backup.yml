@@ -1,0 +1,52 @@
+---
+# Daily database backup, driven by systemd units only (the shape roles/homebox
+# uses). mariadb-dump runs as root over the local socket with the application
+# account from a root-only option file. It writes one gzip dump per day into
+# LEAN_DB_BACKUP_PATH and prunes dumps past retention. Leantime's own db:backup
+# command is not used: it passes a MySQL-only mysqldump flag that the MariaDB
+# client rejects.
+
+- name: Create the Leantime backup directory
+  ansible.builtin.file:
+    path: "{{ leantime_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create the Leantime config directory for the backup credentials
+  ansible.builtin.file:
+    path: "{{ leantime_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write the backup client credentials file
+  ansible.builtin.template:
+    src: leantime-backup.my.cnf.j2
+    dest: "{{ leantime_backup_option_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Install the Leantime backup service and timer units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: leantime-backup.service.j2, dest: leantime-backup.service }
+    - { src: leantime-backup.timer.j2, dest: leantime-backup.timer }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Enable the daily Leantime backup timer
+  ansible.builtin.systemd:
+    name: leantime-backup.timer
+    state: started
+    enabled: true
+    daemon_reload: true

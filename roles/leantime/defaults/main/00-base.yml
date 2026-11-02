@@ -1,0 +1,73 @@
+---
+# Leantime project management — native PHP install, no Docker. Laravel 12
+# application (composer requires PHP ^8.2) served by nginx + PHP-FPM, with a
+# local MariaDB server. LXCs here are firewalled outbound-internal-only, so the
+# release tarball is downloaded and checksum-verified on the CONTROLLER, copied
+# to the target, and extracted there — same controller-staging pattern as
+# roles/vikunja.
+#
+# MariaDB: the upstream README lists "MySQL 8.0+ or MariaDB 10.6+" as supported.
+# Debian ships MariaDB, so the database is MariaDB.
+
+# renovate: datasource=github-releases depName=Leantime/leantime
+leantime_version: "3.13.2"
+leantime_release_tarball: "Leantime-v{{ leantime_version }}.tar.gz"
+leantime_release_tarball_url: >-
+  https://github.com/Leantime/leantime/releases/download/v{{ leantime_version }}/{{ leantime_release_tarball }}
+# No checksum is pinned here. Renovate moves the version above, and the asset's
+# digest is read from GitHub's release API at staging time (tasks/release.yml),
+# so the version and its digest cannot drift apart. The release publishes no
+# checksums file, so the API digest is the only upstream source.
+leantime_release_api_url: "https://api.github.com/repos/Leantime/leantime/releases/tags/v{{ leantime_version }}"
+
+# PHP line per Debian release, so the PHP-FPM socket and package names follow it.
+leantime_php_versions:
+  bookworm: "8.2"
+  trixie: "8.4"
+leantime_php_version: >-
+  {{ leantime_php_versions[ansible_distribution_release]
+     | mandatory('no PHP line mapped for ' ~ ansible_distribution_release) }}
+
+# --- Paths and service identities ---------------------------------------------
+# The PHP-FPM pool and nginx run as Debian's www-data user; the release code is
+# root-owned and only the writable state directories belong to it.
+leantime_user: www-data
+leantime_group: www-data
+leantime_install_dir: /opt/leantime
+leantime_web_root: "{{ leantime_install_dir }}/public"
+leantime_config_dir: /etc/leantime
+leantime_marker_file: "{{ leantime_install_dir }}/.ansible-leantime-version"
+
+# --- Network --------------------------------------------------------------------
+leantime_port: "{{ tofu_data.constants.service_ports.leantime_web }}"
+# Traefik terminates TLS and forwards to leantime_port. No trailing slash: the
+# application builds the OIDC callback as <this value>/oidc/callback.
+leantime_public_url: "https://leantime.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+
+# --- Database: local MariaDB ----------------------------------------------------
+leantime_db_host: localhost
+leantime_db_port: 3306
+leantime_db_name: leantime
+leantime_db_user: leantime
+leantime_db_password: "{{ lookup('env', 'LEANTIME_DB_PASSWORD') }}"
+
+# --- Application secrets (bao-first in inventory/group_vars/leantime_group.yml) --
+leantime_session_password: "{{ lookup('env', 'LEANTIME_SESSION_PASSWORD') }}"
+
+# --- Sign-in: OpenID Connect through Authelia ----------------------------------
+# Authelia's issuer URL, the same derivation grafana_stack uses.
+leantime_oidc_provider_url: "https://{{ authelia_hostname }}.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
+leantime_oidc_client_id: leantime
+leantime_oidc_client_secret: "{{ lookup('env', 'LEANTIME_OIDC_CLIENT_SECRET') }}"
+# Only accounts that already exist (matched by email) may sign in through SSO.
+# The first owner is created by the one-time /install wizard, not by SSO.
+leantime_oidc_create_user: false
+
+# --- Daily database backup -------------------------------------------------------
+# Relative to the install directory, as upstream's LEAN_DB_BACKUP_PATH expects.
+leantime_db_backup_path: "backupdb/"
+leantime_backup_dir: "{{ leantime_install_dir }}/{{ leantime_db_backup_path | trim('/') }}"
+leantime_backup_option_file: "{{ leantime_config_dir }}/backup.my.cnf"
+leantime_backup_on_calendar: "*-*-* 02:30:00"
+leantime_backup_randomized_delay_sec: 600
+leantime_backup_retention_days: 14
