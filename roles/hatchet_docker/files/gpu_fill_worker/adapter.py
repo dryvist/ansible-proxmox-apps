@@ -79,6 +79,8 @@ def _check_latency_guard(guard, timeout_s, http_get=None):
 
 def run_agent(platform_cfg, payload, http_post=None, latency_guard=None, http_get=None):
     """POST one JSON payload and return the platform's JSON object response."""
+    if platform_cfg["run_url"] is None:
+        return {"noop": True, "agent": payload.get("agent")}
     if latency_guard is not None:
         _check_latency_guard(latency_guard, platform_cfg["timeout_s"], http_get)
 
