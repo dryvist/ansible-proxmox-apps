@@ -15,7 +15,6 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKER_PACKAGE = ROOT / "roles/hatchet_docker/files/gpu_fill_worker"
 sys.path.insert(0, str(WORKER_PACKAGE))
@@ -27,6 +26,7 @@ from config import load_config  # noqa: E402
 
 DEFAULTS = yaml.safe_load((ROOT / "roles/hatchet_docker/defaults/main.yml").read_text())
 TOKEN_TASKS = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/worker_token_publish.yml").read_text())
+TOKEN_READ_TASKS = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/worker_token_read.yml").read_text())
 
 
 def valid_guard():
@@ -369,6 +369,8 @@ def test_default_latency_query_joins_the_interactive_aliases():
 
 def test_token_publisher_is_opt_in_tagged_and_reuses_shared_kv_seed_role():
     main_tasks = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/main.yml").read_text())
+    leaf_read_include = next(task for task in main_tasks if "worker_token_read.yml" in str(task))
+    assert set(leaf_read_include["tags"]) == {"hatchet_docker", "hatchet_worker_token"}
     publish_include = next(task for task in main_tasks if "worker_token_publish.yml" in str(task))
     assert publish_include["when"] == "hatchet_docker_worker_token_publish | bool"
     assert "hatchet_worker_token" in publish_include["tags"]
@@ -377,7 +379,10 @@ def test_token_publisher_is_opt_in_tagged_and_reuses_shared_kv_seed_role():
     assert "- hatchet_worker_token" in site
 
     gate = next(task for task in TOKEN_TASKS if "human-unlocked publisher token" in task["name"])
-    assert gate["ansible.builtin.assert"]["that"] == ["lookup('env', 'BAO_TOKEN') | length > 0"]
+    assert gate["ansible.builtin.assert"]["that"] == [
+        "lookup('env', 'HATCHET_TOKEN_PUBLISHER_BAO_TOKEN') | length > 0"
+    ]
+    assert "HATCHET_TOKEN_PUBLISHER_BAO_TOKEN" in gate["ansible.builtin.assert"]["fail_msg"]
     mint = next(task for task in TOKEN_TASKS if task["name"] == "Mint the Hatchet GPU fill worker token")
     assert mint["run_once"] is True
     assert mint["no_log"] is True
@@ -403,7 +408,37 @@ def test_token_publisher_is_opt_in_tagged_and_reuses_shared_kv_seed_role():
     assert include["ansible.builtin.include_role"]["tasks_from"] == "seed_generated.yml"
     assert include["vars"]["openbao_secrets_seed_path"] == "apps/hatchet/worker-token"
     assert include["vars"]["openbao_secrets_seed_check_capabilities"] is True
-    assert include["vars"]["openbao_secrets_seed_token"] == "{{ lookup('env', 'BAO_TOKEN') }}"
+    assert include["vars"]["openbao_secrets_seed_token"] == (
+        "{{ lookup('env', 'HATCHET_TOKEN_PUBLISHER_BAO_TOKEN') }}"
+    )
+    assert include["vars"]["openbao_secrets_seed_token"] != "{{ lookup('env', 'BAO_TOKEN') }}"
+
+    leaf_read = next(task for task in TOKEN_READ_TASKS if task["name"] == "Read the Hatchet worker token from its OpenBao leaf")
+    assert leaf_read["ansible.builtin.uri"]["url"].endswith(
+        "/v1/secret/data/apps/hatchet/worker-token"
+    )
+    assert leaf_read["ansible.builtin.uri"]["headers"]["X-Vault-Token"] == (
+        "{{ lookup('env', 'BAO_TOKEN') }}"
+    )
+    assert leaf_read["ansible.builtin.uri"]["status_code"] == [200, 403, 404]
+    assert leaf_read["no_log"] is True
+    denied = next(task for task in TOKEN_READ_TASKS if "is denied" in task["name"])
+    assert "status | int == 403" in denied["when"]
+    assert "HTTP 403" in denied["ansible.builtin.fail"]["msg"]
+
+    current = next(task for task in TOKEN_TASKS if task["name"].startswith("Load the current"))
+    assert "hostvars['localhost'].hatchet_docker_worker_token_current" in current[
+        "ansible.builtin.set_fact"]["hatchet_docker_worker_token_current"]
+
+    main_tasks = yaml.safe_load((ROOT / "roles/hatchet_docker/tasks/main.yml").read_text())
+    read_import = next(task for task in main_tasks if task.get("ansible.builtin.import_tasks") == "worker_token_read.yml")
+    assert read_import["when"] == (
+        "hatchet_docker_worker_enabled | bool or hatchet_docker_worker_token_publish | bool"
+    )
+
+    worker_template = (ROOT / "roles/hatchet_docker/templates/docker-compose.yml.j2").read_text()
+    assert "hostvars['localhost'].hatchet_docker_worker_token_current" in worker_template
+    assert "secret/apps/hatchet/worker-token" in worker_template
 
 
 def test_compose_and_worker_config_templates_render_on_and_off():
@@ -413,7 +448,16 @@ def test_compose_and_worker_config_templates_render_on_and_off():
 
     playbook = ROOT / "tests/hatchet_gpu_fill_worker/render_templates.yml"
     result = subprocess.run(
-        [ansible_playbook, str(playbook), "-i", "localhost,", "-c", "local"],
+        [
+            ansible_playbook,
+            str(playbook),
+            "-i",
+            "localhost,",
+            "-c",
+            "local",
+            "--extra-vars",
+            '{"hatchet_docker_worker_token_current":"render-worker-token-placeholder"}',
+        ],
         capture_output=True,
         check=False,
         text=True,

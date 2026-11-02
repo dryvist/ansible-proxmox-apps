@@ -1,0 +1,42 @@
+---
+- name: Read the Hatchet worker token from its OpenBao leaf
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') }}/v1/secret/data/apps/hatchet/worker-token"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    status_code: [200, 403, 404]
+    return_content: true
+  register: hatchet_docker_worker_token_leaf
+  changed_when: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  no_log: true
+
+- name: Refuse to mint or deploy when access to the Hatchet worker-token leaf is denied
+  ansible.builtin.fail:
+    msg: >-
+      Reading secret/apps/hatchet/worker-token was denied (HTTP 403); refusing to
+      mint or deploy a replacement token.
+  when: hatchet_docker_worker_token_leaf.status | int == 403
+  run_once: true
+
+- name: Save the current Hatchet worker token on localhost
+  ansible.builtin.set_fact:
+    hatchet_docker_worker_token_current: >-
+      {{ ((hatchet_docker_worker_token_leaf.json | default({}))
+          .get('data', {}).get('data', {}).get('hatchet_worker_token', '')
+          | default('', true))
+         if hatchet_docker_worker_token_leaf.status | int == 200 else '' }}
+  delegate_to: localhost
+  delegate_facts: true
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  no_log: true
