@@ -22,6 +22,10 @@ def _tasks(node):
             yield from _tasks(task.get(key))
 
 
+def _task_fields(task):
+    return str({key: value for key, value in task.items() if key not in {"block", "rescue", "always"}})
+
+
 def _all_tasks():
     for path in FILES:
         data = _load(path)
@@ -31,25 +35,107 @@ def _all_tasks():
 
 
 def _play():
-    return _load(PLAYBOOK)[1]
+    return next(play for play in _load(PLAYBOOK) if play.get("name", "").startswith("Kill one Hatchet guest"))
 
 
 def test_the_target_comes_from_the_sorted_tag_set_only():
     text = PLAYBOOK.read_text(encoding="utf-8")
     assert "docker_ai_group" not in text
     derive = next(t for t in _play()["tasks"] if t["name"].startswith("Derive the guests"))
-    assert "contains', hatchet_killtest_tag" in derive["ansible.builtin.set_fact"]["hatchet_killtest_guests"]
+    assert "contains', 'hatchet-killtest'" in derive["ansible.builtin.set_fact"]["hatchet_killtest_guests"]
     assert derive["ansible.builtin.set_fact"]["hatchet_killtest_guests"].rstrip().endswith("| sort }}")
+    assert "hatchet_killtest_tag" not in _play().get("vars", {})
 
 
 def test_caller_overrides_are_refused_before_anything_runs():
-    play = _play()
-    gate = play["tasks"][0]
-    assert gate["name"].startswith("Refuse caller-supplied")
-    guarded = set(gate["loop"])
-    assert {"hatchet_killtest_target", "hatchet_killtest_vmid", "hatchet_killtest_node",
-            "hatchet_killtest_api", "hatchet_killtest_guest_api", "hatchet_killtest_ca"} <= guarded
-    assert guarded.isdisjoint(play["vars"])
+    plays = _load(PLAYBOOK)
+    assert plays[0]["name"].startswith("Refuse caller overrides")
+    assert plays[1].get("import_playbook") == "../inventory/load_tofu.yml"
+    gate = plays[0]["tasks"][0]
+    assert gate["ansible.builtin.assert"]["that"] == (
+        "lookup('ansible.builtin.vars', item, default='__unset__') == '__unset__'")
+    required = {
+        "tofu_data", "openbao_secrets_domains", "openbao_secrets_by_domain",
+        "openbao_secrets_domain_groups", "openbao_secrets_active_groups",
+        "hatchet_killtest_tag", "hatchet_killtest_action",
+    }
+    existing_refusals = {
+        "hatchet_killtest_guests", "hatchet_killtest_target", "hatchet_killtest_survivor",
+        "hatchet_killtest_vmid", "hatchet_killtest_node", "hatchet_killtest_api",
+        "hatchet_killtest_guest_api", "hatchet_killtest_ca", "hatchet_killtest_secret",
+        "hatchet_killtest_auth", "hatchet_killtest_ready_port", "hatchet_killtest_probe_host",
+        "hatchet_killtest_started", "hatchet_killtest_failed", "hatchet_killtest_restore_failed",
+    }
+    assert required | existing_refusals <= set(gate["loop"])
+    assert "add_lxc_hosts_live_node" in gate["loop"]
+    env_gate = next(task for task in plays[0]["tasks"] if "TOFU_INVENTORY_PATH" in str(task))
+    assert "lookup('env', 'TOFU_INVENTORY_PATH') | length == 0" in env_gate["ansible.builtin.assert"]["that"]
+
+
+def test_target_and_survivor_are_distinct_tagged_published_containers():
+    check = next(t for t in _play()["tasks"] if t["name"].startswith("Require two distinct tagged guests"))
+    conditions = " ".join(check["ansible.builtin.assert"]["that"])
+    assert "hatchet_killtest_target in tofu_data.containers" in conditions
+    assert "hatchet_killtest_survivor in tofu_data.containers" in conditions
+    assert "hatchet_killtest_target].vmid" in conditions
+    assert "hatchet_killtest_survivor].vmid" in conditions
+    assert "!= tofu_data.containers[hatchet_killtest_survivor].vmid" in conditions
+    assert conditions.count("'hatchet-killtest' in tofu_data.containers.get(") == 2
+
+
+def test_api_host_is_derived_from_a_valid_node_role_and_exact_domain_suffix():
+    check = next(t for t in _play()["tasks"] if t["name"].startswith("Require the target, the survivor"))
+    conditions = " ".join(check["ansible.builtin.assert"]["that"])
+    assert "is match('^[a-z0-9-]+$')" in conditions
+    assert "hatchet_killtest_api.split('://')[1].split(':')[0]" in conditions
+    assert ".endswith('.' ~ tofu_data.domain)" in conditions
+    assert "hatchet_killtest_api is match('^https://[^/]+:8006/api2/json$')" in conditions
+
+
+def test_every_task_referencing_the_token_or_ca_is_masked():
+    secret_copy = next(
+        task for _, task in _all_tasks()
+        if "hatchet_killtest_secret" in str(task.get("ansible.builtin.set_fact", {}))
+    )
+    assert secret_copy.get("no_log") is True
+
+    markers = (
+        "openbao_secrets_domains", "openbao_secrets_by_domain", "hatchet_killtest_secret", "hatchet_killtest_auth",
+        "hatchet_killtest_pve_token", "hatchet_killtest_pve_ca", "hatchet_killtest_ca",
+        "Authorization",
+    )
+    for _, task in _all_tasks():
+        if task["name"].startswith("Refuse caller-supplied"):
+            continue
+        if any(marker in _task_fields(task) for marker in markers):
+            assert task.get("no_log") is True, task["name"]
+
+
+def test_power_task_uses_only_the_literal_stop_endpoint():
+    power = _load(TASKS / "hatchet_killtest_power.yml")
+    request = next(t["ansible.builtin.uri"] for t in power if "ansible.builtin.uri" in t)
+    assert request["url"] == "{{ hatchet_killtest_guest_api }}/status/stop"
+    assert "hatchet_killtest_action" not in (TASKS / "hatchet_killtest_power.yml").read_text(encoding="utf-8")
+
+
+def test_stopped_guest_alert_runs_in_restore_always_and_fails_afterward():
+    phases = _load(TASKS / "hatchet_killtest_phases.yml")[0]
+    assert phases["rescue"], "the restore always path must run when the kill phase fails"
+    restore = phases["always"][0]
+    rescue = restore["rescue"]
+    alert_index = next(i for i, task in enumerate(rescue) if task["name"].startswith("Alert when bounded starts"))
+    alert = rescue[alert_index]
+    request = alert["ansible.builtin.uri"]
+    assert alert["when"] == "not (hatchet_killtest_started | bool)"
+    assert request["url"] == "https://ntfy.{{ ingress_domain }}/keystone"
+    assert request["headers"] == {
+        "Title": "hatchet killtest: guest left stopped", "Priority": "urgent", "Tags": "warning",
+    }
+    assert "{{ hatchet_killtest_target }}" in request["body"]
+    assert all(name not in request["body"] for name in ("vmid", "container_ip", "hatchet_killtest_node"))
+    assert alert["failed_when"] is False
+    assert "ignore_errors" not in alert
+    assert rescue[alert_index + 1].get("ansible.builtin.fail")
 
 
 def test_every_delegated_probe_ignores_unreachable():

@@ -12,25 +12,26 @@
 # derived here; a caller-supplied value for any of them refuses the run. Not part
 # of site.yml. Run directly:
 #   ansible-playbook -i inventory/hosts.yml playbooks/hatchet-killtest.yml
-- name: Load OpenTofu infrastructure inventory
-  import_playbook: ../inventory/load_tofu.yml
-
-- name: Kill one Hatchet guest and require the other to keep serving
+- name: Refuse caller overrides before loading inventory or secrets
   hosts: localhost
   connection: local
   gather_facts: false
   become: false
-  vars:
-    ansible_become: false
-    ansible_python_interpreter: auto_silent
-    hatchet_killtest_tag: hatchet-killtest
   tasks:
-    - name: Refuse caller-supplied target, placement, endpoint or CA values
+    - name: Refuse caller-supplied inventory, secret and kill-test values
       ansible.builtin.assert:
         that: lookup('ansible.builtin.vars', item, default='__unset__') == '__unset__'
         fail_msg: "{{ item }} is derived by this playbook; do not pass it in."
         quiet: true
       loop:
+        - tofu_data
+        - openbao_secrets_domains
+        - openbao_secrets_by_domain
+        - openbao_secrets_domain_groups
+        - openbao_secrets_active_groups
+        - hatchet_killtest_tag
+        - hatchet_killtest_action
+        - add_lxc_hosts_live_node
         - hatchet_killtest_guests
         - hatchet_killtest_target
         - hatchet_killtest_survivor
@@ -47,6 +48,24 @@
         - hatchet_killtest_failed
         - hatchet_killtest_restore_failed
 
+    - name: Require the published inventory source
+      ansible.builtin.assert:
+        that: lookup('env', 'TOFU_INVENTORY_PATH') | length == 0
+        fail_msg: TOFU_INVENTORY_PATH must be empty; use the published inventory object.
+        quiet: true
+
+- name: Load OpenTofu infrastructure inventory
+  import_playbook: ../inventory/load_tofu.yml
+
+- name: Kill one Hatchet guest and require the other to keep serving
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_become: false
+    ansible_python_interpreter: auto_silent
+  tasks:
     - name: Read the power token with the Semaphore AppRole login
       ansible.builtin.include_role:
         name: dryvist.homelab.openbao_secrets
@@ -58,12 +77,21 @@
             paths: [killtest/hatchet]
         openbao_secrets_domain_groups: {}
         openbao_secrets_active_groups: []
+      no_log: true
+
+    - name: Require only the Hatchet kill-test secret domain
+      ansible.builtin.assert:
+        that:
+          - openbao_secrets_by_domain | dict2items | map(attribute='key') | list == ['hatchet-killtest']
+        fail_msg: The secret resolver returned an unexpected domain set.
+        quiet: true
+      no_log: true
 
     - name: Derive the guests from the dedicated tag, sorted
       ansible.builtin.set_fact:
         hatchet_killtest_guests: >-
           {{ groups['all'] | map('extract', hostvars) | selectattr('host_tags', 'defined')
-             | selectattr('host_tags', 'contains', hatchet_killtest_tag)
+             | selectattr('host_tags', 'contains', 'hatchet-killtest')
              | map(attribute='inventory_hostname') | sort }}
         hatchet_killtest_secret: "{{ openbao_secrets_by_domain['hatchet-killtest'] | default({}) }}"
         hatchet_killtest_ready_port: "{{ tofu_data.constants.service_ports.hatchet_health }}"
@@ -71,6 +99,7 @@
         hatchet_killtest_started: false
         hatchet_killtest_failed: false
         hatchet_killtest_restore_failed: false
+      no_log: true
 
     - name: Take the first tagged guest as the target and the second as the survivor
       ansible.builtin.set_fact:
@@ -80,6 +109,28 @@
           PVEAPIToken={{ hatchet_killtest_secret.hatchet_killtest_pve_token_id | default('') }}={{
           hatchet_killtest_secret.hatchet_killtest_pve_token_secret | default('') }}
       no_log: true
+
+    - name: Require two distinct tagged guests in the published container inventory
+      ansible.builtin.assert:
+        that:
+          - hatchet_killtest_guests | length == 2
+          - hatchet_killtest_target == hatchet_killtest_guests[0]
+          - hatchet_killtest_survivor == hatchet_killtest_guests[1]
+          - hatchet_killtest_target in tofu_data.containers
+          - hatchet_killtest_survivor in tofu_data.containers
+          - tofu_data.containers.get(hatchet_killtest_target, {}).get('vmid') is not none
+          - tofu_data.containers.get(hatchet_killtest_survivor, {}).get('vmid') is not none
+          - tofu_data.containers.get(hatchet_killtest_target, {}).get('vmid') | string is match('^[0-9]+$')
+          - tofu_data.containers.get(hatchet_killtest_survivor, {}).get('vmid') | string is match('^[0-9]+$')
+          - >-
+            tofu_data.containers[hatchet_killtest_target].vmid | int
+            != tofu_data.containers[hatchet_killtest_survivor].vmid | int
+          - "'hatchet-killtest' in tofu_data.containers.get(hatchet_killtest_target, {}).get('tags', [])"
+          - "'hatchet-killtest' in tofu_data.containers.get(hatchet_killtest_survivor, {}).get('tags', [])"
+        fail_msg: >-
+          Kill test A needs exactly two distinct guests tagged hatchet-killtest in the published
+          container inventory.
+        quiet: true
 
     - name: Derive the target's VMID
       ansible.builtin.set_fact:
@@ -103,13 +154,18 @@
     - name: Require the target, the survivor, the guest placement and the token
       ansible.builtin.assert:
         that:
-          - hatchet_killtest_guests | length == 2
-          - hatchet_killtest_target == hatchet_killtest_guests[0]
-          - hatchet_killtest_survivor == hatchet_killtest_guests[1]
           - hatchet_killtest_vmid is match('^[0-9]+$')
           - hatchet_killtest_vmid == tofu_data.containers[hatchet_killtest_target].vmid | string
           - hatchet_killtest_node | length > 0
-          - hatchet_killtest_node == add_lxc_hosts_live_node[hatchet_killtest_vmid]
+          - hatchet_killtest_node == (add_lxc_hosts_live_node | default({})).get(hatchet_killtest_vmid, '')
+          - >-
+            ((tofu_data.nodes[hatchet_killtest_node] | default({})).role
+            | default(hatchet_killtest_node, true)) is match('^[a-z0-9-]+$')
+          - >-
+            hatchet_killtest_api.split('://')[1].split(':')[0]
+            == ((tofu_data.nodes[hatchet_killtest_node] | default({})).role
+            | default(hatchet_killtest_node, true)) ~ '.' ~ tofu_data.domain
+          - "(hatchet_killtest_api.split('://')[1].split(':')[0]).endswith('.' ~ tofu_data.domain)"
           - hatchet_killtest_api is match('^https://[^/]+:8006/api2/json$')
           - >-
             hatchet_killtest_guest_api == hatchet_killtest_api ~ '/nodes/' ~ hatchet_killtest_node
@@ -119,15 +175,17 @@
           - hatchet_killtest_secret.hatchet_killtest_pve_token_secret | default('') | length > 0
           - hatchet_killtest_secret.hatchet_killtest_pve_ca | default('') | length > 0
         fail_msg: >-
-          Kill test A needs exactly two guests tagged {{ hatchet_killtest_tag }}, the first one's
+          Kill test A needs exactly two guests tagged hatchet-killtest, the first one's
           VMID, live node and PVE endpoint, an ingress host for the probe, and the published
           power token and cluster CA.
         quiet: true
+      no_log: true
 
     - name: Create the cluster CA file for TLS verification
       ansible.builtin.tempfile:
         suffix: .pem
       register: hatchet_killtest_ca
+      no_log: true
 
     - name: Store the cluster CA
       ansible.builtin.copy:

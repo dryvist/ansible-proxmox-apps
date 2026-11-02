@@ -6,8 +6,6 @@
   block:
     - name: Hard-stop the target guest
       ansible.builtin.include_tasks: hatchet_killtest_power.yml
-      vars:
-        hatchet_killtest_action: stop
 
     - name: Probe the target until it stops answering, up to 30 seconds
       ansible.builtin.uri:
@@ -90,8 +88,25 @@
           ansible.builtin.set_fact:
             hatchet_killtest_restore_failed: true
             hatchet_killtest_restore_failed_task: "{{ ansible_failed_task.name | default('unknown') }}"
+        - name: Alert when bounded starts did not restore the guest
+          ansible.builtin.uri:
+            url: "https://ntfy.{{ ingress_domain }}/keystone"
+            method: POST
+            headers:
+              Title: "hatchet killtest: guest left stopped"
+              Priority: urgent
+              Tags: warning
+            body: "Guest {{ hatchet_killtest_target }} remains stopped after the Hatchet kill test."
+          failed_when: false
+          when: not (hatchet_killtest_started | bool)
+        - name: Fail loudly when target restoration failed
+          ansible.builtin.fail:
+            msg: >-
+              Restoring {{ hatchet_killtest_target }} failed at:
+              {{ hatchet_killtest_restore_failed_task }}. Check the guest; it may still be stopped.
       always:
         - name: Remove the cluster CA file
           ansible.builtin.file:
             path: "{{ hatchet_killtest_ca.path }}"
             state: absent
+          no_log: true
