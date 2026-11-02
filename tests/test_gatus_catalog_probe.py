@@ -14,10 +14,13 @@ import jinja2
 import yaml
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/status_stack/templates/gatus-config.yaml.j2"
+DEFAULTS = Path(__file__).resolve().parent.parent / "roles/status_stack/defaults/main.yml"
+EVAL_HEALTH_PROBES = yaml.safe_load(DEFAULTS.read_text())["status_stack_eval_health_probes"]
 
 
 def render(services: list[dict], dashboard_catalog_services: list[dict] | None = None,
-           dashboard_catalog_base_domain: str = "example.test") -> dict[str, dict]:
+           dashboard_catalog_base_domain: str = "example.test",
+           monitor_targets: dict | None = None) -> dict[str, dict]:
     # If dashboard_catalog_services not specified, default to services for backward compatibility.
     if dashboard_catalog_services is None:
         dashboard_catalog_services = services
@@ -46,7 +49,11 @@ def render(services: list[dict], dashboard_catalog_services: list[dict] | None =
         status_stack_kuma_keystones=[],
         status_stack_oidc_clients=[],
         status_stack_authenticated_endpoints=[],
-        status_stack_monitor_targets={"icmp": [], "tcp": [], "http": []},
+        status_stack_monitor_targets=(
+            {"icmp": [], "tcp": [], "http": []}
+            if monitor_targets is None else monitor_targets
+        ),
+        status_stack_eval_health_probes=EVAL_HEALTH_PROBES,
         status_stack_deadman_endpoints=[],
     )
     return {ep["name"]: ep for ep in yaml.safe_load(text)["endpoints"]}
@@ -143,6 +150,62 @@ class GatusCatalogProbe(unittest.TestCase):
         # Both wall apps must appear in endpoints; wall-only deduped into single list.
         self.assertIn("dash", eps)
         self.assertIn("wall-only", eps)
+
+    def test_specialist_eval_probes_leave_existing_endpoints_unchanged(self):
+        monitor_targets = {
+            "icmp": [
+                {"name": "sim-placeholder", "fqdn": "192.0.2.21", "group": "guest",
+                 "tags": ["specialist-eval", "sim-eval"]},
+                {"name": "langflow-placeholder", "fqdn": "192.0.2.22", "group": "guest",
+                 "tags": ["specialist-eval", "langflow-eval"]},
+                {"name": "dify-placeholder", "fqdn": "192.0.2.23", "group": "guest",
+                 "tags": ["specialist-eval", "dify-eval"]},
+                {"name": "unknown-placeholder", "fqdn": "192.0.2.24", "group": "guest",
+                 "tags": ["specialist-eval"]},
+                {"name": "ordinary-placeholder", "fqdn": "192.0.2.25", "group": "guest",
+                 "tags": ["terraform", "vm"]},
+                {"name": "platform-only-placeholder", "fqdn": "192.0.2.26", "group": "guest",
+                 "tags": ["sim-eval"]},
+            ],
+            "tcp": [{"name": "port-placeholder", "fqdn": "192.0.2.31", "port": 22, "group": "node"}],
+            "http": [{"name": "http-placeholder", "fqdn": "192.0.2.32", "port": 8080,
+                      "path": "/health", "expect_status": [200], "group": "service"}],
+        }
+        baseline_targets = {
+            kind: [
+                {key: value for key, value in target.items() if key != "tags"}
+                for target in targets
+            ]
+            for kind, targets in monitor_targets.items()
+        }
+
+        baseline = render(services=[], monitor_targets=baseline_targets)
+        rendered = render(services=[], monitor_targets=monitor_targets)
+        eval_endpoints = {
+            name: endpoint for name, endpoint in rendered.items() if name.startswith("eval-")
+        }
+
+        self.assertEqual(set(eval_endpoints), {
+            "eval-sim-placeholder-sim-eval",
+            "eval-langflow-placeholder-langflow-eval",
+            "eval-dify-placeholder-dify-eval",
+        })
+        expected_urls = {
+            "eval-sim-placeholder-sim-eval": "http://192.0.2.21:3000/api/health",
+            "eval-langflow-placeholder-langflow-eval": "http://192.0.2.22:7860/health",
+            "eval-dify-placeholder-dify-eval": "http://192.0.2.23:80/console/api/ping",
+        }
+        for name, url in expected_urls.items():
+            with self.subTest(endpoint=name):
+                endpoint = eval_endpoints[name]
+                self.assertEqual(endpoint["url"], url)
+                self.assertEqual(endpoint["group"], "guest")
+                self.assertEqual(endpoint["conditions"], ["[STATUS] == 200"])
+
+        existing_endpoints = {
+            name: endpoint for name, endpoint in rendered.items() if not name.startswith("eval-")
+        }
+        self.assertEqual(existing_endpoints, baseline)
 
 
 if __name__ == "__main__":
