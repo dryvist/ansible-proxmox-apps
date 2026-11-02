@@ -26,6 +26,7 @@
       zammad_token_publish_openbao is on but BAO_ADDR/BAO_TOKEN are unset.
       Provide a write-capable OpenBao AppRole in the converge environment.
     quiet: true
+  no_log: true
 
 - name: Read current OpenBao secret at {{ zammad_token_openbao_path }}
   ansible.builtin.uri:
@@ -55,10 +56,9 @@
     body:
       data: >-
         {{ (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-           | combine({
-               zammad_url_openbao_key: zammad_mcp_url,
-               zammad_token_openbao_key: zammad_publish_token
-             }) }}
+           | combine({zammad_url_openbao_key: zammad_mcp_url}
+                     if zammad_publish_url | default(true) | bool else {})
+           | combine({zammad_token_openbao_key: zammad_publish_token}) }}
     validate_certs: false
     status_code: [200, 204]
   delegate_to: localhost
@@ -67,8 +67,9 @@
   vars:
     ansible_become: false
   when: >-
-    (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_url_openbao_key)
-      != zammad_mcp_url
+    (zammad_publish_url | default(true) | bool and
+     (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_url_openbao_key)
+       != zammad_mcp_url)
     or (zammad_bao_current.json | default({}, true)).get('data', {}).get('data', {}).get(zammad_token_openbao_key)
-      != zammad_publish_token
+       != zammad_publish_token
   no_log: true

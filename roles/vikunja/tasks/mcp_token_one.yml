@@ -1,20 +1,31 @@
 ---
-# Ensure ONE MCP service user has a live API token and publish it (with the
-# shared connection URL) to OpenBao. Included per item from mcp_tokens.yml with
-# loop_var: vikunja_mcp_user ({ username, readonly, kv_field }, or the optional
-# title/permissions/openbao_path/kv_fields overrides). The token is minted on
-# behalf of the user logging in (PUT /tokens uses that user's JWT).
+# Ensure one service identity has a live scoped API token and publish it to its
+# declared OpenBao leaf. The tier row owns the app-agent token field, path,
+# permissions, and allowlist. Shared MCP identities retain their existing row
+# shape and shared URL publication.
 
 - name: "Resolve token title, permissions, and OpenBao target for {{ vikunja_mcp_user.username }}"
   ansible.builtin.set_fact:
     vikunja_mcp_token_title: "{{ vikunja_mcp_user.title | default('mcp-' ~ vikunja_mcp_user.username) }}"
     vikunja_mcp_token_permissions: >-
       {{ vikunja_mcp_user.permissions if vikunja_mcp_user.permissions is defined
-         else (vikunja_ro_permissions if vikunja_mcp_user.readonly else vikunja_rw_permissions) }}
+         else (vikunja_ro_permissions if
+               (vikunja_mcp_user.token_tier | default('') == 'read-only'
+                or vikunja_mcp_user.readonly | default(false)) else vikunja_rw_permissions) }}
+    vikunja_mcp_token_mount: "{{ vikunja_mcp_user.openbao_mount | default(vikunja_token_openbao_mount) }}"
     vikunja_mcp_token_path: "{{ vikunja_mcp_user.openbao_path | default(vikunja_token_openbao_path) }}"
+    vikunja_mcp_token_field: "{{ vikunja_mcp_user.token_field | default(vikunja_mcp_user.kv_field | default('')) }}"
     vikunja_mcp_token_fields: >-
       {{ vikunja_mcp_user.kv_fields if vikunja_mcp_user.kv_fields is defined
-         else [vikunja_mcp_user.kv_field] }}
+         else [vikunja_mcp_token_field] }}
+    vikunja_mcp_token_static_fields: >-
+      {{ ({vikunja_url_openbao_key: vikunja_mcp_url}
+          if (vikunja_mcp_token_mount == vikunja_token_openbao_mount
+              and vikunja_mcp_token_path == vikunja_token_openbao_path) else {})
+         | combine(dict([(vikunja_mcp_user.allowlist_field,
+                          vikunja_mcp_user.project_allowlist | to_json)])
+                   if vikunja_mcp_user.allowlist_field is defined else {}) }}
+  no_log: true
 
 - name: "Log in to Vikunja as {{ vikunja_mcp_user.username }}"
   ansible.builtin.uri:
@@ -24,7 +35,9 @@
     body:
       username: "{{ vikunja_mcp_user.username }}"
       password: >-
-        {{ (vikunja_service_users
+        {{ lookup('vars', vikunja_mcp_user.password_field)
+           if vikunja_mcp_user.password_field is defined else
+           (vikunja_service_users
             | selectattr('username', 'equalto', vikunja_mcp_user.username)
             | first).password }}
     status_code: [200]
@@ -50,6 +63,7 @@
          | selectattr('title', 'defined')
          | selectattr('title', 'equalto', vikunja_mcp_token_title)
          | list | length > 0 }}
+  no_log: true
 
 - name: "Mint API token for {{ vikunja_mcp_user.username }}"
   ansible.builtin.uri:
@@ -71,7 +85,7 @@
 
 - name: "Read current OpenBao secret at {{ vikunja_mcp_token_path }}"
   ansible.builtin.uri:
-    url: "{{ vikunja_token_openbao_addr }}/v1/{{ vikunja_token_openbao_mount }}/data/{{ vikunja_mcp_token_path }}"
+    url: "{{ vikunja_token_openbao_addr }}/v1/{{ vikunja_mcp_token_mount }}/data/{{ vikunja_mcp_token_path }}"
     method: GET
     headers:
       X-Vault-Token: "{{ vikunja_token_openbao_token }}"
@@ -86,13 +100,12 @@
   no_log: true
 
 # KV v2 replaces the whole secret, so merge canonical fields over current data
-# to preserve siblings. On the shared MCP path the URL (non-secret) is written
-# whenever it is missing or stale; the token is added only when freshly minted
-# (Vikunja returns it exactly once). Guarding the write on an actual delta keeps the task
-# idempotent — once URL + token are present, later converges no-op here.
+# to preserve siblings. Shared MCP rows publish the URL; app-agent rows publish
+# their allowlist. A token is added only when freshly minted because Vikunja
+# returns the key exactly once.
 - name: "Publish the token to OpenBao for {{ vikunja_mcp_user.username }}"
   ansible.builtin.uri:
-    url: "{{ vikunja_token_openbao_addr }}/v1/{{ vikunja_token_openbao_mount }}/data/{{ vikunja_mcp_token_path }}"
+    url: "{{ vikunja_token_openbao_addr }}/v1/{{ vikunja_mcp_token_mount }}/data/{{ vikunja_mcp_token_path }}"
     method: POST
     headers:
       X-Vault-Token: "{{ vikunja_token_openbao_token }}"
@@ -100,8 +113,7 @@
     body:
       data: >-
         {{ (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-           | combine(vikunja_mcp_shared_fields
-                     if vikunja_mcp_token_path == vikunja_token_openbao_path else {})
+           | combine(vikunja_mcp_token_static_fields)
            | combine(dict(vikunja_mcp_token_fields | zip_longest([], fillvalue=vikunja_mcp_token_mint.json.token))
                      if (vikunja_mcp_token_mint is not skipped) else {}) }}
     validate_certs: false
@@ -111,14 +123,9 @@
   become: false
   vars:
     ansible_become: false
-    # The router's read-tier probe checks listed projects against this allowlist.
-    vikunja_mcp_shared_fields: >-
-      {{ {vikunja_url_openbao_key: vikunja_mcp_url,
-          'VIKUNJA_AGENT_READ_ALLOWLIST': vikunja_agent_read_allowlist | to_json} }}
   when: >-
     vikunja_mcp_token_mint is not skipped
-    or (vikunja_mcp_token_path == vikunja_token_openbao_path
-        and (vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
-            | dict2items | selectattr('key', 'in', vikunja_mcp_shared_fields)
-            | items2dict != vikunja_mcp_shared_fields)
+    or ((vikunja_bao_current.json | default({}, true)).get('data', {}).get('data', {})
+        | dict2items | selectattr('key', 'in', vikunja_mcp_token_static_fields)
+        | items2dict != vikunja_mcp_token_static_fields)
   no_log: true

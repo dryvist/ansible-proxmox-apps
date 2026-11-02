@@ -1,0 +1,19 @@
+---
+- name: Require the current parent to exist and not repeat in the chain
+  ansible.builtin.assert:
+    that:
+      - vikunja_agent_parent_id | int == 0 or (vikunja_agent_parent_id | string) in vikunja_agent_project_by_id
+      - vikunja_agent_parent_id | int == 0 or vikunja_agent_parent_id not in vikunja_agent_parent_chain_ids
+    fail_msg: >-
+      Vikunja app-agent {{ vikunja_agent_tier.id }} project
+      {{ vikunja_agent_allowed_project.title }} has an unresolved or cyclic parent chain.
+    quiet: true
+
+- name: Advance to the next parent in the chain
+  ansible.builtin.set_fact:
+    vikunja_agent_parent_chain_ids: >-
+      {{ vikunja_agent_parent_chain_ids
+         + ([vikunja_agent_parent_id | int] if vikunja_agent_parent_id | int > 0 else []) }}
+    vikunja_agent_parent_id: >-
+      {{ (vikunja_agent_project_by_id.get(vikunja_agent_parent_id | string, {}))
+         .get('parent_project_id', 0) | int if vikunja_agent_parent_id | int > 0 else 0 }}
