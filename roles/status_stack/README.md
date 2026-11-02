@@ -27,9 +27,13 @@ is propagated. Gatus and AutoKuma both render from it; nothing here
 hand-declares a guest, node, or service target twice. A later Prometheus
 blackbox `file_sd` package is expected to reuse the same fact.
 
-Scoped deliberately: there is no per-guest port map in this repo (no
-`host_services` fact), so guests get ICMP only. DNS query checks are out of
-scope — no existing Gatus/Prometheus DNS-check pattern exists to reuse.
+Guests get ICMP checks. Guests tagged `specialist-eval` also get a direct Gatus
+HTTP health check when one of the known platform tags appears in
+`status_stack_eval_health_probes`. These probes use the same `fqdn` as that
+guest's ICMP check; an unknown platform tag adds no HTTP endpoint. There is no
+generic per-guest port map in this repo (`host_services` is not published).
+DNS query checks are out of scope — no existing Gatus/Prometheus DNS-check
+pattern exists to reuse.
 
 ## Alerting
 
@@ -39,6 +43,10 @@ routing is implemented as a criticality split by endpoint group: `keystone`/
 `node`/`service` groups route to `status_stack_ntfy_topic_urgent` (priority
 `status_stack_ntfy_priority_urgent`), everything else to
 `status_stack_ntfy_topic_degraded`.
+
+Evaluation guest health probes use the existing `guest` group, the same
+non-paging route as their ICMP checks. This keeps their notifications on the
+degraded topic without adding or changing an alert override.
 
 ## Deadman receivers
 
