@@ -109,6 +109,7 @@ def test_token_publisher_is_opt_in_tagged_and_reuses_shared_kv_seed_role():
     assert leaf_read["ansible.builtin.uri"]["headers"]["X-Vault-Token"] == (
         "{{ lookup('env', 'BAO_TOKEN') }}"
     )
+    assert leaf_read["ansible.builtin.uri"]["ca_path"] == "{{ openbao_ca_path }}"
     assert leaf_read["ansible.builtin.uri"]["status_code"] == [200, 403, 404]
     assert leaf_read["no_log"] is True
     denied = next(task for task in TOKEN_READ_TASKS if "is denied" in task["name"])
