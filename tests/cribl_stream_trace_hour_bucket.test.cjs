@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Execute the Langfuse trace-hour Eval expressions extracted from the pipeline.
+// Execute the Langfuse trace-hour Code function extracted from the pipeline.
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -34,62 +34,34 @@ const stepEnd = pipeline.indexOf('\n  # 4. Identity.', stepStart);
 assert.notEqual(stepStart, -1, 'the trace-hour step is present in the template');
 assert.notEqual(stepEnd, -1, 'the trace-hour step precedes identity normalization');
 const stepTemplate = pipeline.slice(stepStart, stepEnd);
+const codeMatch = stepTemplate.match(/^      code: >-\n((?:        .*(?:\n|$))+)/m);
+assert.ok(codeMatch, 'the trace-hour step has a folded Code function body');
+const codeTemplate = codeMatch[1].replace(/^ {8}/gm, '');
 
-const filterTemplate = stepTemplate.match(/^\s+filter: "([^"]+)"$/m)?.[1];
-assert.ok(filterTemplate, 'the trace-hour step has a filter expression');
-const addTemplates = [...stepTemplate.matchAll(/^\s+- name: "?([^"\n]+)"?\n\s+value: "([^"]+)"$/gm)]
-  .map((match) => ({ name: match[1], value: match[2] }));
-assert.equal(addTemplates.length, 3, 'the step preserves metadata, sets session, and re-keys traceId');
-
-function renderExpression(expression, bucketSources = defaultBucketSources) {
-  const values = {
-    cribl_stream_otel_bucket_sources: bucketSources,
-    cribl_stream_otel_session_id_sources: sessionSources,
-  };
-  const rendered = expression
-    .replace(/\{% for a in (cribl_stream_otel_bucket_sources|cribl_stream_otel_session_id_sources) %\}([\s\S]*?)\{% endfor %\}/g,
-      (_match, name, body) => values[name].map((source) => body.replaceAll('{{ a }}', source)).join(''))
+function compileCode(bucketSources = defaultBucketSources) {
+  const rendered = codeTemplate
+    .replaceAll('{{ cribl_stream_otel_bucket_sources | to_json }}', JSON.stringify(bucketSources))
+    .replaceAll('{{ cribl_stream_otel_session_id_sources | to_json }}', JSON.stringify(sessionSources))
     .replaceAll('{{ cribl_stream_otel_ns_per_second }}', String(nanosecondsPerSecond))
     .replaceAll('{{ cribl_stream_otel_trace_bucket_seconds }}', String(bucketSeconds));
-  assert.ok(!rendered.includes('{%') && !rendered.includes('{{'), 'default values resolve every template expression');
+  assert.ok(!rendered.includes('{{'), 'default values resolve every template expression');
   return rendered;
 }
 
-function compileStep(bucketSources = defaultBucketSources) {
-  return {
-    filter: renderExpression(filterTemplate, bucketSources),
-    add: addTemplates.map(({ name, value }) => ({ name, value: renderExpression(value, bucketSources) })),
-  };
-}
-
-function applyStep(event, step) {
+function applyStep(event, code) {
   const context = {
-    traceId: event.traceId,
-    startTimeUnixNano: event.startTimeUnixNano,
-    attributes: event.attributes,
+    __e: event,
     C: {
       Mask: {
         md5: (value) => crypto.createHash('md5').update(String(value), 'utf8').digest('hex'),
       },
     },
   };
-  if (!vm.runInNewContext(`(${step.filter})`, context)) return event;
-
-  for (const entry of step.add) {
-    const value = vm.runInNewContext(`(${entry.value})`, context);
-    if (entry.name === 'traceId') {
-      event.traceId = value;
-      context.traceId = value;
-      continue;
-    }
-    const attribute = entry.name.match(/^attributes\['([^']+)'\]$/)?.[1];
-    assert.ok(attribute, `unexpected Eval target: ${entry.name}`);
-    event.attributes[attribute] = value;
-  }
+  vm.runInNewContext(code, context);
   return event;
 }
 
-function eventStream(withSession = true) {
+function eventStream(shape, withSession = true) {
   const originalTraceId = '0123456789abcdef0123456789abcdef';
   const events = [];
   for (let hour = 0; hour < 5; hour += 1) {
@@ -97,8 +69,8 @@ function eventStream(withSession = true) {
       const startSeconds = 1_700_006_400 + hour * bucketSeconds + 60 + span * 10;
       const attributes = withSession ? { 'session.id': 'coding-session-42' } : {};
       events.push({
-        traceId: originalTraceId,
-        startTimeUnixNano: String(BigInt(startSeconds) * BigInt(nanosecondsPerSecond)),
+        [shape.traceKey]: originalTraceId,
+        [shape.timeKey]: String(BigInt(startSeconds) * BigInt(nanosecondsPerSecond)),
         spanId: `${hour.toString(16).padStart(8, '0')}${span.toString(16).padStart(8, '0')}`,
         parentSpanId: span === 0 ? undefined : `${hour.toString(16).padStart(8, '0')}00000000`,
         name: ['root', 'session', 'generation'][span],
@@ -109,53 +81,80 @@ function eventStream(withSession = true) {
   return events;
 }
 
-const defaultStep = compileStep();
 const originalTraceId = '0123456789abcdef0123456789abcdef';
-const events = eventStream();
-const transformed = events.map((event) => applyStep(event, defaultStep));
-assert.equal(transformed.length, 15, 'all root, session, and generation spans pass through');
-const traceIds = new Set(transformed.map((event) => event.traceId));
-assert.equal(traceIds.size, 5, 'five clock hours produce exactly five trace ids');
-assert.ok([...traceIds].every((traceId) => /^[0-9a-f]{32}$/.test(traceId)), 'bucket ids are 32 hex characters');
-assert.deepEqual([...new Set(transformed.map((event) => event.attributes['langfuse.session.id']))],
-  ['coding-session-42'], 'all spans retain the emitted session id');
-assert.ok(transformed.every((event) =>
-  event.attributes['langfuse.trace.metadata.original_trace_id'] === originalTraceId),
-'all spans preserve their original trace id');
-assert.ok(transformed.every((event, index) => event.parentSpanId === events[index].parentSpanId),
-  'parentSpanId remains unchanged');
-assert.deepEqual([...new Set(transformed.map((event) => event.name))], ['root', 'session', 'generation']);
+const shapes = [
+  { name: 'camelCase', traceKey: 'traceId', timeKey: 'startTimeUnixNano' },
+  { name: 'snake_case', traceKey: 'trace_id', timeKey: 'start_time_unix_nano' },
+];
 
-const noSessionEvents = eventStream(false);
-for (const event of noSessionEvents) applyStep(event, defaultStep);
-assert.ok(noSessionEvents.every((event) => event.traceId === originalTraceId),
-  'spans without a bucket session source keep their original trace id');
-assert.ok(noSessionEvents.every((event) => !('langfuse.session.id' in event.attributes)),
-  'spans without a bucket session source get no session id');
+for (const shape of shapes) {
+  const code = compileCode();
+  const events = eventStream(shape);
+  const originalTimes = events.map((event) => event[shape.timeKey]);
+  const originalParents = events.map((event) => event.parentSpanId);
+  const transformed = events.map((event) => applyStep(event, code));
+  assert.equal(transformed.length, 15, `${shape.name}: all three span kinds pass through`);
+  const traceIds = new Set(transformed.map((event) => event[shape.traceKey]));
+  assert.equal(traceIds.size, 5, `${shape.name}: five clock hours produce five trace ids`);
+  assert.ok([...traceIds].every((traceId) => /^[0-9a-f]{32}$/.test(traceId)),
+    `${shape.name}: bucket ids are 32 hex characters`);
+  assert.deepEqual([...new Set(transformed.map((event) => event.attributes['langfuse.session.id']))],
+    ['coding-session-42'], `${shape.name}: all spans retain the emitted session id`);
+  assert.ok(transformed.every((event) =>
+    event.attributes['langfuse.trace.metadata.original_trace_id'] === originalTraceId),
+  `${shape.name}: all spans preserve their original trace id`);
+  assert.ok(transformed.every((event, index) => event.parentSpanId === originalParents[index]),
+    `${shape.name}: parentSpanId remains unchanged`);
+  assert.ok(transformed.every((event, index) => event[shape.timeKey] === originalTimes[index]),
+    `${shape.name}: the start-time field remains unchanged`);
+  assert.deepEqual([...new Set(transformed.map((event) => event.name))],
+    ['root', 'session', 'generation']);
 
-const precedenceEvent = {
-  traceId: originalTraceId,
-  startTimeUnixNano: String(BigInt(1_700_006_460) * BigInt(nanosecondsPerSecond)),
-  attributes: {
-    'litellm.metadata.session_id': 'bucket-session',
-    'langfuse.session.id': 'existing-langfuse-session',
-  },
-};
-applyStep(precedenceEvent, compileStep(['litellm.metadata.session_id']));
-assert.equal(precedenceEvent.attributes['langfuse.session.id'], 'existing-langfuse-session',
-  'existing Langfuse session id wins when session.id is absent and another bucket source is present');
+  if (shape.name === 'snake_case') {
+    assert.ok(transformed.every((event) => event.trace_id !== originalTraceId),
+      'snake_case: the new id is written to trace_id');
+    assert.ok(transformed.every((event) => !Object.hasOwn(event, 'traceId')),
+      'snake_case: no camelCase traceId field is added');
+  }
 
-const customSourceEvent = {
-  traceId: originalTraceId,
-  startTimeUnixNano: String(BigInt(1_700_006_460) * BigInt(nanosecondsPerSecond)),
-  attributes: { x: 'custom-bucket-source' },
-};
-applyStep(customSourceEvent, compileStep(['x']));
-assert.equal(customSourceEvent.attributes['langfuse.session.id'], originalTraceId,
-  'a custom bucket source falls back to the original trace id as the session');
+  const noSessionEvents = eventStream(shape, false);
+  const noSessionSnapshots = noSessionEvents.map((event) => JSON.stringify(event));
+  for (const event of noSessionEvents) applyStep(event, code);
+  assert.ok(noSessionEvents.every((event, index) =>
+    JSON.stringify(event) === noSessionSnapshots[index]),
+  `${shape.name}: spans without a bucket source stay untouched`);
+  assert.ok(noSessionEvents.every((event) => event[shape.traceKey] === originalTraceId),
+    `${shape.name}: spans without a bucket session source keep their original trace id`);
+  assert.ok(noSessionEvents.every((event) => !('langfuse.session.id' in event.attributes)),
+    `${shape.name}: spans without a bucket session source get no session id`);
 
-const deterministicA = eventStream().map((event) => applyStep(event, defaultStep).traceId);
-const deterministicB = eventStream().map((event) => applyStep(event, defaultStep).traceId);
-assert.deepEqual(deterministicA, deterministicB, 'the same span timestamps produce the same bucket ids');
+  const precedenceEvent = {
+    [shape.traceKey]: originalTraceId,
+    [shape.timeKey]: String(BigInt(1_700_006_460) * BigInt(nanosecondsPerSecond)),
+    attributes: {
+      'litellm.metadata.session_id': 'bucket-session',
+      'langfuse.session.id': 'existing-langfuse-session',
+    },
+  };
+  applyStep(precedenceEvent, compileCode(['litellm.metadata.session_id']));
+  assert.equal(precedenceEvent.attributes['langfuse.session.id'], 'existing-langfuse-session',
+    `${shape.name}: existing Langfuse session id wins`);
 
-console.log('Cribl Langfuse trace-hour bucket tests passed.');
+  const customSourceEvent = {
+    [shape.traceKey]: originalTraceId,
+    [shape.timeKey]: String(BigInt(1_700_006_460) * BigInt(nanosecondsPerSecond)),
+    attributes: { x: 'custom-bucket-source' },
+  };
+  applyStep(customSourceEvent, compileCode(['x']));
+  assert.equal(customSourceEvent.attributes['langfuse.session.id'], originalTraceId,
+    `${shape.name}: custom bucket source falls back to the original trace id as the session`);
+
+  const deterministicA = eventStream(shape).map(
+    (event) => applyStep(event, code)[shape.traceKey]);
+  const deterministicB = eventStream(shape).map(
+    (event) => applyStep(event, code)[shape.traceKey]);
+  assert.deepEqual(deterministicA, deterministicB,
+    `${shape.name}: the same span timestamps produce the same bucket ids`);
+}
+
+console.log('Cribl Langfuse trace-hour bucket tests passed for camelCase and snake_case events.');
