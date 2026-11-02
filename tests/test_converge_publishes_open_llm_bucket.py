@@ -9,7 +9,7 @@ import yaml
 from secrets_collection_support import SECRETS_ROLES
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULTS = SECRETS_ROLES / "openbao" / "defaults" / "main" / "07c-base-policies.yml"
+DEFAULTS = SECRETS_ROLES / "openbao" / "defaults" / "main" / "07c-policy-composition.yml"
 POLICY = SECRETS_ROLES / "openbao" / "templates" / "ansible-converge-policy.hcl.j2"
 
 
