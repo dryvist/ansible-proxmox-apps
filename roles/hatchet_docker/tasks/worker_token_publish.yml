@@ -1,0 +1,169 @@
+---
+# Run on the first docker_ai_group host; the token is used by both guests.
+- name: Read the current Hatchet worker token from the prefetched apps secret
+  ansible.builtin.set_fact:
+    hatchet_docker_worker_token_current: >-
+      {{ (bao_apps_secrets | default({})).get('hatchet_worker_token', '') | default('', true) }}
+  run_once: true
+  no_log: true
+
+- name: Extract the existing Hatchet token payload segment
+  ansible.builtin.set_fact:
+    hatchet_docker_worker_token_payload_segment: >-
+      {{ hatchet_docker_worker_token_current.split('.')[1]
+         if (hatchet_docker_worker_token_current.split('.') | length == 3) else '' }}
+  run_once: true
+  no_log: true
+
+- name: Pad the existing Hatchet token payload for base64 decoding
+  ansible.builtin.set_fact:
+    hatchet_docker_worker_token_payload_padded: >-
+      {{ (hatchet_docker_worker_token_payload_segment
+          | replace('-', '+') | replace('_', '/'))
+         ~ ('=' * ((4 - (hatchet_docker_worker_token_payload_segment | length % 4)) % 4)) }}
+  run_once: true
+  no_log: true
+  when: hatchet_docker_worker_token_payload_segment | length > 0
+
+- name: Decode the existing Hatchet token expiry
+  ansible.builtin.set_fact:
+    hatchet_docker_worker_token_exp: >-
+      {{ (hatchet_docker_worker_token_payload_padded | b64decode | from_json).exp
+         | default(0) | int }}
+  run_once: true
+  no_log: true
+  when: hatchet_docker_worker_token_payload_segment | length > 0
+
+- name: Decide whether the Hatchet worker token needs minting
+  ansible.builtin.set_fact:
+    hatchet_docker_worker_token_needs_mint: >-
+      {{ hatchet_docker_worker_token_current | length == 0
+         or (hatchet_docker_worker_token_current.split('.') | length != 3)
+         or ((hatchet_docker_worker_token_exp | default(0) | int)
+             <= ((now(utc=true).timestamp() | int)
+                 + (hatchet_docker_worker_token_renew_days | int * 86400))) }}
+  run_once: true
+  no_log: true
+
+- name: Require the human-unlocked publisher token before minting the Hatchet worker token
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'BAO_TOKEN') | length > 0
+    fail_msg: BAO_TOKEN must contain the human-unlocked Hatchet token-publisher token.
+    quiet: true
+  run_once: true
+  no_log: true
+  when: hatchet_docker_worker_token_needs_mint | bool
+
+- name: Require the OpenBao endpoint before minting the Hatchet worker token
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'BAO_ADDR') | length > 0
+    fail_msg: BAO_ADDR must contain the OpenBao endpoint used by the human-unlocked publisher token.
+    quiet: true
+  run_once: true
+  when: hatchet_docker_worker_token_needs_mint | bool
+
+- name: Mint the Hatchet GPU fill worker token
+  community.docker.docker_container:
+    name: hatchet-admin-worker-token
+    image: "{{ hatchet_docker_admin_image }}"
+    entrypoint: /hatchet/hatchet-admin
+    command:
+      - token
+      - create
+      - --tenant-id
+      - "{{ hatchet_docker_tenant_id }}"
+      - --name
+      - gpu-fill-worker
+      - --expiresIn
+      - "{{ hatchet_docker_worker_token_expires_in }}"
+    env:
+      DATABASE_URL: "{{ hatchet_docker_database_url }}"
+      SERVER_PORT: "{{ hatchet_docker_api_container_port }}"
+      SERVER_URL: "{{ hatchet_docker_server_url }}"
+      SERVER_AUTH_COOKIE_DOMAIN: "{{ hatchet_docker_fqdn }}"
+      SERVER_AUTH_COOKIE_INSECURE: "false"
+      SERVER_GRPC_PORT: "{{ hatchet_docker_grpc_container_port }}"
+      SERVER_GRPC_BROADCAST_ADDRESS: "{{ hatchet_docker_engine_broadcast_address }}"
+      SERVER_GRPC_INSECURE: "true"
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_MSGQUEUE_PUBSUB_KIND: postgres
+      SERVER_AUTH_COOKIE_SECRETS: "{{ hatchet_docker_server_auth_cookie_secrets }}"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "true"
+      SERVER_ENCRYPTION_MASTER_KEYSET: "{{ hatchet_docker_server_encryption_master_keyset }}"
+      SERVER_ENCRYPTION_JWT_PRIVATE_KEYSET: "{{ hatchet_docker_server_encryption_jwt_private_keyset }}"
+      SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET: "{{ hatchet_docker_server_encryption_jwt_public_keyset }}"
+      SERVER_ALLOW_SIGNUP: "false"
+      ADMIN_EMAIL: "{{ hatchet_docker_admin_email }}"
+      ADMIN_PASSWORD: "{{ hatchet_docker_admin_password }}"
+      ADMIN_NAME: "{{ hatchet_docker_admin_name }}"
+    network_mode: host
+    detach: false
+    cleanup: true
+    state: started
+  register: hatchet_docker_worker_token_mint
+  changed_when: true
+  run_once: true
+  no_log: true
+  when: hatchet_docker_worker_token_needs_mint | bool
+
+- name: Save the newly minted Hatchet worker token in memory
+  ansible.builtin.set_fact:
+    # Container output joins both streams; token create prints the token last.
+    hatchet_docker_worker_token_minted: >-
+      {{ (hatchet_docker_worker_token_mint.container.Output | trim).splitlines() | last | default('') | trim }}
+  run_once: true
+  no_log: true
+  when: hatchet_docker_worker_token_needs_mint | bool
+
+- name: Require a non-empty minted Hatchet worker token
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_token_minted.split('.') | length == 3
+    fail_msg: hatchet-admin token create did not return a JWT.
+    quiet: true
+  run_once: true
+  no_log: true
+  when: hatchet_docker_worker_token_needs_mint | bool
+
+- name: Publish the Hatchet worker token to the apps secret
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  run_once: true
+  block:
+    - name: Merge the Hatchet token through the shared OpenBao KV publisher
+      ansible.builtin.include_role:
+        name: dryvist.homelab.openbao_secrets
+        tasks_from: seed_generated.yml
+        apply:
+          run_once: true
+          tags:
+            - hatchet_worker_token
+      vars:
+        openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
+        openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
+        # Its own leaf: the publisher policy grants this path and nothing else.
+        openbao_secrets_seed_path: apps/hatchet/worker-token
+        openbao_secrets_seed_fields:
+          - name: hatchet_worker_token
+            value: "{{ hatchet_docker_worker_token_minted }}"
+        openbao_secrets_seed_rotate_fields:
+          - hatchet_worker_token
+        openbao_secrets_seed_local_values: {}
+        openbao_secrets_seed_revoke_token: false
+        openbao_secrets_seed_check_capabilities: true
+      no_log: true
+      when: hatchet_docker_worker_token_needs_mint | bool
+
+    - name: Require the Hatchet worker token publish path to be available
+      ansible.builtin.assert:
+        that:
+          - openbao_secrets_seed_available | bool
+        fail_msg: The Hatchet worker token was not published because OpenBao was unavailable.
+        quiet: true
+      no_log: true
+      when: hatchet_docker_worker_token_needs_mint | bool

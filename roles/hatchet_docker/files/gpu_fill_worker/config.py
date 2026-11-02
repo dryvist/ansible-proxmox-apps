@@ -1,6 +1,7 @@
 """Read and validate the worker's JSON configuration without SDK imports."""
 
 import json
+import math
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -20,8 +21,12 @@ def load_config(path):
     with Path(path).open(encoding="utf-8") as config_file:
         config = json.load(config_file)
 
-    if not isinstance(config, dict) or set(config) != {"roles", "platforms"}:
-        raise ValueError("config must contain exactly roles and platforms")
+    if (
+        not isinstance(config, dict)
+        or not {"roles", "platforms"}.issubset(config)
+        or set(config) - {"roles", "platforms", "latency_guard"}
+    ):
+        raise ValueError("config must contain roles and platforms with optional latency_guard")
 
     roles = config["roles"]
     platforms = config["platforms"]
@@ -64,5 +69,33 @@ def load_config(path):
         timeout_s = platform["timeout_s"]
         if type(timeout_s) is not int or timeout_s < 1:
             raise ValueError(f"platform {name} timeout_s must be a positive integer")
+
+    if "latency_guard" in config:
+        guard = config["latency_guard"]
+        if not isinstance(guard, dict) or set(guard) != {
+            "prometheus_url",
+            "query",
+            "max_ratio",
+        }:
+            raise ValueError("latency_guard must contain prometheus_url, query, and max_ratio only")
+        prometheus_url = guard["prometheus_url"]
+        parsed_url = urlsplit(prometheus_url) if isinstance(prometheus_url, str) else None
+        if (
+            parsed_url is None
+            or parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+        ):
+            raise ValueError("latency_guard prometheus_url must be an absolute HTTP(S) URL")
+        if not isinstance(guard["query"], str) or not guard["query"].strip():
+            raise ValueError("latency_guard query must be a non-empty string")
+        max_ratio = guard["max_ratio"]
+        if (
+            type(max_ratio) not in {int, float}
+            or not math.isfinite(max_ratio)
+            or max_ratio <= 0
+        ):
+            raise ValueError("latency_guard max_ratio must be a finite positive number")
 
     return config

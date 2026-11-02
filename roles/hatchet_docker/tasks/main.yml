@@ -2,6 +2,12 @@
 # Hatchet's split control plane runs on each Docker AI guest. Schema migration
 # and first-run seeding complete once before either guest starts its services.
 
+- name: Optionally mint and publish the Hatchet GPU fill worker token
+  ansible.builtin.import_tasks: worker_token_publish.yml
+  when: hatchet_docker_worker_token_publish | bool
+  tags:
+    - hatchet_worker_token
+
 - name: Create Hatchet deployment directory
   ansible.builtin.file:
     path: "{{ hatchet_docker_data_dir }}"
@@ -24,6 +30,20 @@
       Enabling the Hatchet worker requires at least one LLM role and one
       platform with a unique name.
   when: hatchet_docker_worker_enabled | bool
+
+- name: Validate Hatchet GPU fill worker latency guard configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_latency_guard_prometheus_url | length > 0
+      - hatchet_docker_worker_latency_guard_query | length > 0
+      - hatchet_docker_worker_latency_guard_max_ratio | float > 0
+    fail_msg: >-
+      The enabled Hatchet GPU fill worker latency guard requires a Prometheus
+      inventory target, a query, and a positive maximum ratio.
+    quiet: true
+  when:
+    - hatchet_docker_worker_enabled | bool
+    - hatchet_docker_worker_latency_guard_enabled | bool
 
 - name: Validate Hatchet GPU fill worker platform configuration
   ansible.builtin.assert:

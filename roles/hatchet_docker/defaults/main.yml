@@ -74,6 +74,41 @@ hatchet_docker_worker_roles:
 # and auth_secret_key when auth_env is set. Secret values stay in OpenBao.
 hatchet_docker_worker_platforms: []
 
+# The API token is minted only by the explicitly tagged publisher task.
+hatchet_docker_worker_token_publish: false
+hatchet_docker_worker_token_renew_days: 30
+hatchet_docker_tenant_id: 707d0855-80ab-4e1f-a156-f1c4546cbf52
+hatchet_docker_worker_token_expires_in: 2160h
+
+# Hold GPU-fill dispatches while the interactive LiteLLM p95 latency exceeds
+# its recent baseline. Prometheus is discovered from the tofu inventory tag.
+hatchet_docker_worker_latency_guard_enabled: true
+hatchet_docker_worker_interactive_key_aliases:
+  - hermes-default
+  - litellm-local-workstation
+hatchet_docker_worker_latency_guard_query: >-
+  histogram_quantile(0.95, sum by (le)
+  (rate(litellm_request_total_latency_metric_bucket{
+  api_key_alias=~"{{ hatchet_docker_worker_interactive_key_aliases | join('|') }}"}[30m])))
+  /
+  histogram_quantile(0.95, sum by (le)
+  (rate(litellm_request_total_latency_metric_bucket{
+  api_key_alias=~"{{ hatchet_docker_worker_interactive_key_aliases | join('|') }}"}[7d] offset 1d)))
+hatchet_docker_worker_latency_guard_max_ratio: 1.2
+hatchet_docker_worker_latency_guard_prometheus_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['prometheus_web']
+     | default(9090) }}
+hatchet_docker_worker_latency_guard_prometheus_host: >-
+  {{ (tofu_data['containers'] | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'prometheus')
+      | map(attribute='value.ip', default='') | reject('equalto', '')
+      | list | first) | default('', true) }}
+hatchet_docker_worker_latency_guard_prometheus_url: >-
+  {{ ('http://' ~ (hatchet_docker_worker_latency_guard_prometheus_host | trim) ~ ':'
+      ~ (hatchet_docker_worker_latency_guard_prometheus_port | trim))
+     if (hatchet_docker_worker_latency_guard_prometheus_host | trim | length > 0) else '' }}
+
 # renovate: datasource=docker depName=python
 hatchet_docker_worker_image: >-
   python:3.13.18-slim-trixie@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb

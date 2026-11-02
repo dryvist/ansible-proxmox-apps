@@ -8,11 +8,12 @@ from hatchet_sdk import (
     ConcurrencyLimitStrategy,
     Context,
     Hatchet,
+    NonRetryableException,
     Priority,
 )
 from pydantic import BaseModel
 
-from adapter import run_agent
+from adapter import LatencyGuardError, run_agent
 from config import load_config
 
 
@@ -30,7 +31,13 @@ def _make_handler(configured_role, worker_config):
             raise ValueError(f"task requires llm_role {configured_role}")
         platform = worker_config["platforms"][input.platform]
         payload = input.model_dump(exclude={"platform"})
-        return run_agent(platform, payload)
+        try:
+            return run_agent(platform, payload, latency_guard=worker_config.get("latency_guard"))
+        except LatencyGuardError:
+            raise  # Hatchet retries a latency hold with backoff.
+        except Exception as exc:
+            # Never re-run a dispatched agent; only a latency hold retries.
+            raise NonRetryableException(str(exc)) from exc
 
     return run
 
@@ -53,7 +60,9 @@ def build_tasks(hatchet, worker_config):
             name=f"gpu-fill-{llm_role}",
             input_validator=AgentRunInput,
             concurrency=[concurrency],
-            retries=1,
+            retries=6,
+            backoff_factor=2.0,
+            backoff_max_seconds=300,
             execution_timeout=execution_timeout,
             default_priority=Priority.LOW,
         )(_make_handler(llm_role, worker_config))
