@@ -10,7 +10,7 @@ from ansible.template import Templar, trust_as_template
 ROOT = Path(__file__).resolve().parents[1]
 REL = "roles/vikunja/tasks/hermes_bridge_identity_one.yml"
 IDENTITIES_REL = "roles/vikunja/tasks/hermes_bridge_identities.yml"
-DEFAULTS_REL = "roles/vikunja/defaults/main.yml"
+DEFAULTS_DIR = ROOT / "roles/vikunja/defaults/main"
 
 BRIDGE = {
     "projects": ["read_all", "views_buckets_tasks"],
@@ -27,7 +27,10 @@ PUBLISH_TASK = f"Publish the minted token to OpenBao for {_USER}"
 
 
 def defaults():
-    return yaml.safe_load((ROOT / DEFAULTS_REL).read_text(encoding="utf-8"))
+    merged = {}
+    for path in sorted(DEFAULTS_DIR.glob("*.yml")):
+        merged.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+    return merged
 
 
 def find(name, rel=REL):

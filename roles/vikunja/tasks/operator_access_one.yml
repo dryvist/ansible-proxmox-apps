@@ -1,7 +1,7 @@
 ---
-# Share every project owned by ONE automation account with the operator.
-# Included per item from operator_access.yml with loop_var: vikunja_share_owner
-# (a username string; its password comes from vikunja_share_owner_password_map).
+# Share the selected projects owned by ONE automation account with a grantee.
+# Included per item from operator_access.yml or agent_read_access.yml with
+# loop_var: vikunja_share_owner (a username string).
 #
 # Acting as the owner via a password JWT — not via a minted MCP API token — is
 # deliberate. The MCP tokens are bounded to the task-management route groups
@@ -16,7 +16,7 @@
     body_format: json
     body:
       username: "{{ vikunja_share_owner }}"
-      password: "{{ vikunja_share_owner_password_map[vikunja_share_owner] }}"
+      password: "{{ vikunja_project_share_owner_password_map[vikunja_share_owner] }}"
     status_code: [200]
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_share_login
@@ -64,7 +64,16 @@
          | selectattr('owner.username', 'equalto', vikunja_share_owner)
          | list }}
 
-- name: "Reconcile the operator's share on each project owned by {{ vikunja_share_owner }}"
+- name: Filter the owned projects to the configured title allowlist
+  ansible.builtin.set_fact:
+    vikunja_owned_projects: >-
+      {{ vikunja_owned_projects
+         | selectattr('title', 'defined')
+         | selectattr('title', 'in', vikunja_share_project_titles)
+         | list }}
+  when: vikunja_share_project_titles is defined
+
+- name: "Reconcile share on each owned project for {{ vikunja_share_grantee_username }}"
   ansible.builtin.include_tasks: operator_access_project.yml
   loop: "{{ vikunja_owned_projects }}"
   loop_control:
