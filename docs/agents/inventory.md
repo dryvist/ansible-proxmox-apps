@@ -42,6 +42,7 @@ A missing role omits its target and emits a warning.
 - `docker_vms` / `cribl_docker_group`: Docker Swarm hosts (SSH, testing/dev + CI runners)
 - `agent_sandbox_host`: `docker_vms` members tagged `agent-sandbox` (untrusted-agent Docker host; the `agent_sandbox` role's only target)
 - `idrac_kvm_group`: Docker VMs tagged `idrac` (iDRAC KVM viewer VM 251)
+- `docker_ai_group`: Containers tagged `docker-ai` (the shared Docker AI pair; Hatchet)
 - `mailpit_group`: Containers tagged `smtp` (Mailpit SMTP relay)
 - `ntfy_group`: Containers tagged `push` (ntfy push notifications)
 - `upgrade_wave_<n>`: LXC containers, computed by the loader from every declared
