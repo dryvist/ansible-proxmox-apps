@@ -68,12 +68,21 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
             if include_role:
                 assert part in include_role.get("apply", {}).get("tags", [])
 
-    site_plays = yaml.safe_load(
+    site_imports = yaml.safe_load(
         (REPO / "playbooks/site/04-secrets-and-collab-apps.yml").read_text(
             encoding="utf-8"
         )
     )
-    play = next(play for play in site_plays if play.get("hosts") == "grafana_group")
+    grafana_import = next(
+        item
+        for item in site_imports
+        if item.get("import_playbook") == "04e-grafana-stack.yml"
+    )
+    assert grafana_import["name"] == "Grafana observability stack"
+    playbook = yaml.safe_load(
+        (REPO / "playbooks/site/04e-grafana-stack.yml").read_text(encoding="utf-8")
+    )
+    play = next(play for play in playbook if play.get("hosts") == "grafana_group")
     assert "grafana" in play["tags"]
     block_task = next(task for task in play["tasks"] if task.get("block"))
     block = block_task["block"]
