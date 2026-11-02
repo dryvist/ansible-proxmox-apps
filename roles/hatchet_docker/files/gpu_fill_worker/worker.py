@@ -75,10 +75,19 @@ def main():
         os.environ.get("GPU_FILL_WORKER_CONFIG", "/tmp/gpu-fill-worker.json")
     )
     hatchet = Hatchet()
+    workflows = build_tasks(hatchet, worker_config)
+    if "evals" in worker_config:
+        from evals import build_tasks as build_eval_tasks
+
+        workflows.extend(
+            build_eval_tasks(hatchet, worker_config["evals"], worker_config.get("latency_guard"))
+        )
     slots = sum(role["max_runs"] for role in worker_config["roles"].values())
+    # One slot per eval task (judge sync plus one per role) so evals never take GPU-fill slots.
+    slots += len(worker_config["evals"]["roles"]) + 1 if "evals" in worker_config else 0
     worker = hatchet.worker(
         "gpu-fill-worker",
-        workflows=build_tasks(hatchet, worker_config),
+        workflows=workflows,
         slots=slots,
     )
     worker.start()
