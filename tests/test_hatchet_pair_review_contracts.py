@@ -83,3 +83,24 @@ def test_shared_secrets_are_identical_in_seed_and_both_services():
         engine = services["hatchet-engine"]["environment"][key].replace("$$", "$")
         assert seed == dashboard == engine, key
     assert len({_render(seed_env[key], variables) for key in SHARED_KEYS}) == len(SHARED_KEYS)
+
+
+def _cookie_secrets(stored):
+    source = yaml.safe_load(GROUP_VARS.read_text(encoding="utf-8"))["hatchet_docker_server_auth_cookie_secrets"]
+    return _render(source, {"bao_apps_secrets": {"hatchet_server_auth_cookie_secrets": stored}}).strip()
+
+
+def test_cookie_secret_renders_as_two_space_separated_16_char_keys():
+    stored = "A" * 16 + "b" * 16
+
+    parts = _cookie_secrets(stored).split(" ")
+
+    assert parts == ["A" * 16, "b" * 16]
+
+
+def test_cookie_secret_of_the_wrong_length_fails_the_render():
+    import pytest
+    from ansible.errors import AnsibleError
+
+    with pytest.raises(AnsibleError, match="must be 32 characters"):
+        _cookie_secrets("A" * 64)
