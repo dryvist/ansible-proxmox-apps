@@ -26,6 +26,13 @@ def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def _converge_policy() -> str:
+    """The converge policy as it renders: the main template includes the publish partial."""
+    return read_secrets_role("openbao/templates/ansible-converge-policy.hcl.j2") + read_secrets_role(
+        "openbao/templates/ansible-converge-publish-policy.hcl.j2"
+    )
+
+
 def _render_engine_entry_for_scope(scope: str, suffix: str) -> dict:
     """Render the REAL derivation task for one loop iteration (one scope)."""
     tasks = yaml.safe_load(read_secrets_role("openbao/tasks/init/07b-etcd-pki-engine.yml"))
@@ -85,7 +92,7 @@ def test_derived_etcd_pki_engine_matches_what_postgres_computes():
 
 
 def test_ansible_converge_owns_the_etcd_credential_wildcard():
-    policy = read_secrets_role("openbao/templates/ansible-converge-policy.hcl.j2")
+    policy = _converge_policy()
 
     data_grant = (
         f'{CANONICAL_DATA_PATH} {{\n'
@@ -144,7 +151,7 @@ def test_ansible_converge_can_issue_from_each_cluster_pki_role():
     segment (pki-<scope>-etcd), and '+' only ever replaces a whole segment,
     so there is no valid wildcard shorthand for a per-cluster mount name.
     """
-    policy = read_secrets_role("openbao/templates/ansible-converge-policy.hcl.j2")
+    policy = _converge_policy()
 
     etcd_pki_grant = (
         "{% for engine in openbao_pki_etcd_engines %}\n"

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import jinja2
 import yaml
+from ansible.plugins.filter.core import FilterModule as CoreFilters
 
 from secrets_collection_support import SECRETS_ROLES
 
@@ -14,13 +15,15 @@ POLICY = SECRETS_ROLES / "openbao" / "templates" / "ansible-converge-policy.hcl.
 
 
 def _render_policy(apps: list[str]) -> str:
-    env = jinja2.Environment()
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(POLICY.parent))
+    env.filters.update(CoreFilters().filters())  # Ansible's filters, e.g. regex_replace in the publish partial
     env.filters["comment"] = str  # Ansible's `comment` filter; only the header uses it
-    template = env.from_string(POLICY.read_text(encoding="utf-8"))
+    template = env.get_template(POLICY.name)  # the policy includes its publish partial
     return template.render(
         ansible_managed="",
         openbao_kv_mount="secret",
         openbao_credential_publish_apps=apps,
+        openbao_credential_publish_paths=[],  # the out-of-subtree paths have their own contract tests
         openbao_pki_etcd_engines=[],
     )
 
