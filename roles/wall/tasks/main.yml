@@ -10,6 +10,13 @@
     fail_msg: No container carries the `grafana` tag, so the wall has no data source.
     quiet: true
 
+- name: Require a ClickHouse to point the gateway's LLM feed at
+  ansible.builtin.assert:
+    that:
+      - wall_clickhouse_host | trim | length > 0
+    fail_msg: No container carries the `clickhouse` tag, so the wall has no LLM feed source.
+    quiet: true
+
 - name: Build the shared service catalog
   ansible.builtin.include_role:
     name: dashboard_catalog
@@ -114,6 +121,27 @@
     (wall_gateway_config_sources.results
      | selectattr('item', 'equalto', item)
      | map(attribute='stat.exists') | first | default(false))
+
+# Unlike the shipped gateway configs, this include is rendered here: it
+# carries the ClickHouse credential, so it is root- and workers-readable
+# only, and its content stays out of the logs.
+- name: Require a header-safe ClickHouse credential
+  ansible.builtin.assert:
+    that:
+      - wall_clickhouse_password is match('^[A-Za-z0-9]+$')
+    fail_msg: WALL_READER_PASSWORD must be alphanumeric (nginx header value).
+    quiet: true
+  no_log: true
+
+- name: Render the gateway's ClickHouse auth include
+  ansible.builtin.template:
+    src: wall-feed-clickhouse-auth.conf.j2
+    dest: /etc/nginx/wall-feed-clickhouse-auth.conf
+    owner: root
+    group: "{{ wall_nginx_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Reload nginx
 
 - name: Render config.json
   ansible.builtin.template:

@@ -1,0 +1,110 @@
+---
+# wall_clickhouse_host/http_port (roles/wall/defaults/main.yml) derive the
+# gateway's ClickHouse upstream from the clickhouse-tagged container, and
+# wall-feed-clickhouse-auth.conf.j2 carries the wall_reader credential from
+# the clickhouse-wall domain. This play loads the REAL role defaults with
+# vars_files and renders the real templates against a fixture tofu_data and
+# a fixture bao_clickhouse_wall_secrets, so the expressions under test are
+# the ones that ship.
+#
+# tofu_data is set as a FACT (the same shape as wall_prometheus_host.yml), so
+# this play belongs in the trailing fact-publishing block at the end of
+# verify_templates.yml; see the note there.
+- name: Verify the wall gateway's ClickHouse upstream and auth include
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    _template_dir: "{{ playbook_dir }}/../../../roles/wall/templates"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          wall_web: 8085
+          victoriametrics: 8428
+          clickhouse_http: 8123
+      containers:
+        grafana:
+          ip: vm.test.example
+          tags: [grafana]
+        clickhouse-01:
+          ip: ch.test.example
+          tags: [clickhouse]
+    # Fixture only; the role reads the real value from OpenBao.
+    bao_clickhouse_wall_secrets:
+      WALL_READER_PASSWORD: fixture-wall-reader-password
+    # config.json.j2 inputs the role gets from the catalog and the inventory.
+    dashboard_catalog_services: []
+    ingress_domain: test.example
+
+  vars_files:
+    - "../../../roles/wall/defaults/main.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+
+    - name: Resolve the rendered ClickHouse host/port
+      ansible.builtin.set_fact:
+        _ch_host: "{{ wall_clickhouse_host }}"
+        _ch_port: "{{ wall_clickhouse_http_port }}"
+
+    - name: Assert wall_clickhouse_host/http_port target the clickhouse-tagged container
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _ch_host | trim == 'ch.test.example'
+          - _ch_port | string == '8123'
+        fail_msg: >-
+          wall_clickhouse_host must derive from the container carrying the
+          `clickhouse` tag and wall_clickhouse_http_port must be ClickHouse's
+          HTTP port. Rendered host={{ _ch_host }} port={{ _ch_port }}.
+
+    - name: Render the nginx site and the auth include
+      ansible.builtin.set_fact:
+        _site: "{{ lookup('template', _template_dir ~ '/wall.nginx.conf.j2') }}"
+        _auth: "{{ lookup('template', _template_dir ~ '/wall-feed-clickhouse-auth.conf.j2') }}"
+
+    - name: Assert the site names the ClickHouse upstream and only the include carries the credential
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'upstream prometheus {' in _site"
+          - "'upstream clickhouse {' in _site"
+          - "'server ch.test.example:8123;' in _site"
+          - "'fixture-wall-reader-password' not in _site"
+          - "'proxy_set_header X-ClickHouse-User wall_reader;' in _auth"
+          - "'proxy_set_header X-ClickHouse-Key fixture-wall-reader-password;' in _auth"
+        fail_msg: >-
+          The nginx site must declare `upstream clickhouse` for the
+          clickhouse-tagged container and keep the credential out of the
+          world-readable site; the auth include must set the wall_reader
+          X-ClickHouse-User/-Key headers. Rendered site: {{ _site }}
+
+
+    - name: No clickhouse-tagged container renders an empty host
+      ansible.builtin.set_fact:
+        tofu_data:
+          domain: test.example
+          constants: {service_ports: {wall_web: 8085, clickhouse_http: 8123}}
+          containers:
+            grafana: {ip: vm.test.example, tags: [grafana]}
+
+    - name: Resolve the host with no clickhouse-tagged container
+      ansible.builtin.set_fact:
+        _no_clickhouse_host: "{{ wall_clickhouse_host }}"
+
+    - name: Empty host with no clickhouse-tagged container (the assert task then fails the converge)
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_clickhouse_host | trim | length == 0
+        fail_msg: >-
+          wall_clickhouse_host must render empty when no container carries
+          the `clickhouse` tag, so roles/wall/tasks/main.yml's own assert
+          can fail the converge with a clear message instead of proxying to
+          a typo'd host.
