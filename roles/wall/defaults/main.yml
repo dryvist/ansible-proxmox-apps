@@ -40,12 +40,38 @@ wall_prometheus_host: >-
       | map(attribute='value.ip', default='') | reject('equalto', '')
       | list | first) | default('', true) }}
 
+# ClickHouse HTTP interface for the gateway's /api/words and /api/llm/recent
+# proxies: the container carrying the `clickhouse` tag, resolved from the
+# published inventory the same way cribl_stream's clickhouse_llm_* outputs
+# derive theirs — never a literal host. 8123 is ClickHouse's own HTTP port.
+wall_clickhouse_http_port: 8123
+wall_clickhouse_host: >-
+  {{ (tofu_data['containers'] | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'clickhouse')
+      | map(attribute='value.ip', default='') | reject('equalto', '')
+      | list | first) | default('', true) }}
+
+# nginx-light runs its workers as Debian's www-data; the ClickHouse auth
+# include is readable by that group and root only.
+wall_nginx_group: www-data
+
+# Read-only ClickHouse credential for the gateway's /api/words and
+# /api/llm/recent proxies; nginx adds it to each upstream request as
+# X-ClickHouse-User/-Key, so the browser never carries one. The password is
+# the OpenBao key WALL_READER_PASSWORD in the clickhouse-wall domain. No env
+# fallback: an unfetched domain aborts the play rather than rendering an
+# empty credential.
+wall_clickhouse_password: >-
+  {{ (bao_clickhouse_wall_secrets | default({})).WALL_READER_PASSWORD
+     | mandatory('WALL_READER_PASSWORD must be set in OpenBao (clickhouse-wall)') }}
+
 wall_title: HOMELAB
 wall_refresh_seconds: 15
 # Non-PVE nodes shown as pending until their exporter exists:
 # [{name: <instance short name>, role: <label>}]
 wall_extra_nodes: []
-# Extra rotator slides appended after MC1..MC5:
+# Extra rotator slides appended after the built-in MC1..MC6:
 # [{name: <slide name>, route: <Traefik route name>, path: <optional>,
 #   seconds: <optional>}]. config.json.j2 derives each URL as
 # https://<route>.<ingress_domain><path>. Empty by default; the estate's list

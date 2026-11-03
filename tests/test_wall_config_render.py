@@ -56,16 +56,18 @@ class WallConfig(unittest.TestCase):
         self.assertEqual(cfg["guestCount"], 3)
         self.assertEqual(cfg["refreshSeconds"], 15)
         self.assertEqual(cfg["extraNodes"], [])
-        # An empty wall_slides still carries the rotator's own MC1-MC5
+        # An empty wall_slides still carries the rotator's own MC1-MC6
         # defaults — the rotator schema treats a non-empty `slides` as a
         # REPLACEMENT of its built-ins, so config.json must always render
-        # the full list, never wall_slides alone.
+        # the full list, never wall_slides alone. MC6 is the LEXICON
+        # word-cloud slide, named by topic rather than number.
         self.assertEqual(cfg["slides"], [
             {"name": "MC1", "url": "/mc1/"},
             {"name": "MC2", "url": "/mc2/"},
             {"name": "MC3", "url": "/mc3/"},
             {"name": "MC4", "url": "/mc4/"},
             {"name": "MC5", "url": "/mc5/"},
+            {"name": "LEXICON", "url": "/mc6/"},
         ])
         self.assertEqual(cfg["title"], "HOMELAB")
 
@@ -74,14 +76,14 @@ class WallConfig(unittest.TestCase):
         self.assertEqual(cfg["groups"], [])
         self.assertEqual(cfg["guestCount"], 0)
 
-    def test_slides_append_after_mc1_5_with_derived_urls(self):
+    def test_slides_append_after_built_in_mc1_6_with_derived_urls(self):
         slides = [
             {"name": "GLANCE", "route": "glance"},
             {"name": "HOMARR", "route": "homarr-two", "path": "/boards/wall"},
         ]
         cfg = render(wall_slides=slides)
         names = [s["name"] for s in cfg["slides"]]
-        self.assertEqual(names, ["MC1", "MC2", "MC3", "MC4", "MC5", "GLANCE", "HOMARR"])
+        self.assertEqual(names, ["MC1", "MC2", "MC3", "MC4", "MC5", "LEXICON", "GLANCE", "HOMARR"])
         for slide in cfg["slides"]:
             self.assertEqual(set(slide.keys()) - {"seconds"}, {"name", "url"})
         # The URL is the route under ingress_domain, plus an optional path.
