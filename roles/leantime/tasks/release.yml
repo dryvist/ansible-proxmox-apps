@@ -1,0 +1,102 @@
+---
+# The controller reads the tarball's digest from GitHub's release API, verifies
+# the download against it, then the target receives and extracts the same bundle.
+# Transfer and extraction run only when the version recorded on the target
+# differs, so an unchanged release costs no copy.
+
+# Same shape as roles/node_exporter's controller staging: the expected checksum
+# comes from the upstream release, read at staging time, never frozen in defaults.
+- name: Read the release asset digest from GitHub's release API (controller)
+  ansible.builtin.uri:
+    url: "{{ leantime_release_api_url }}"
+    headers:
+      Accept: application/vnd.github+json
+    return_content: true
+    status_code: [200]
+    timeout: 30
+  register: leantime_release_api
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  changed_when: false
+
+# Fail closed: a missing or malformed digest stops the run before any download.
+- name: Resolve the release tarball digest from the API response
+  ansible.builtin.set_fact:
+    leantime_release_tarball_digest: >-
+      {{ leantime_release_api.json.assets
+         | selectattr('name', 'equalto', leantime_release_tarball)
+         | map(attribute='digest')
+         | first
+         | default('', true) }}
+
+- name: Require a sha256 digest for the release tarball
+  ansible.builtin.assert:
+    that:
+      - leantime_release_tarball_digest is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      GitHub's release API returned no sha256 digest for
+      {{ leantime_release_tarball }} at v{{ leantime_version }}. Refusing to
+      stage an unverified download.
+
+- name: Stage the Leantime release bundle on the controller (checksum-verified)
+  ansible.builtin.get_url:
+    url: "{{ leantime_release_tarball_url }}"
+    dest: "/tmp/{{ leantime_release_tarball }}"
+    checksum: "{{ leantime_release_tarball_digest }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  check_mode: false
+  run_once: true
+
+- name: Read the Leantime version recorded on the target
+  ansible.builtin.slurp:
+    src: "{{ leantime_marker_file }}"
+  register: leantime_recorded_version
+  failed_when: false
+
+- name: Install the Leantime release when the recorded version differs
+  when: >-
+    (leantime_recorded_version.content | default('', true) | b64decode | trim)
+    != leantime_version
+  block:
+    - name: Create the Leantime install directory
+      ansible.builtin.file:
+        path: "{{ leantime_install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy the Leantime release bundle to the target
+      ansible.builtin.copy:
+        src: "/tmp/{{ leantime_release_tarball }}"
+        dest: "/tmp/{{ leantime_release_tarball }}"
+        mode: "0644"
+
+    # The bundle carries no config/.env, logs, sessions or uploads, so extracting
+    # over the tree leaves that state in place.
+    - name: Extract the Leantime release into the install directory
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ leantime_release_tarball }}"
+        dest: "{{ leantime_install_dir }}"
+        remote_src: true
+        owner: root
+        group: root
+
+    - name: Record the installed Leantime version
+      ansible.builtin.copy:
+        dest: "{{ leantime_marker_file }}"
+        content: "{{ leantime_version }}\n"
+        mode: "0644"
+
+    - name: Remove the staged bundle from the target
+      ansible.builtin.file:
+        path: "/tmp/{{ leantime_release_tarball }}"
+        state: absent

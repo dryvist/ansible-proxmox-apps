@@ -1,0 +1,24 @@
+---
+# MariaDB database and application account. Both statements are idempotent, and
+# the ALTER keeps the account password equal to LEAN_DB_PASSWORD on every run.
+# The mariadb client connects as root over the local socket (Debian default).
+
+- name: Escape the database password as an SQL string literal
+  ansible.builtin.set_fact:
+    leantime_db_password_sql: >-
+      {{ leantime_db_password | replace('\\', '\\\\') | replace("'", "''") }}
+  no_log: true
+
+- name: Create the Leantime database and its application account
+  ansible.builtin.command:
+    argv:
+      - mariadb
+    stdin: |
+      CREATE DATABASE IF NOT EXISTS `{{ leantime_db_name }}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      CREATE USER IF NOT EXISTS '{{ leantime_db_user }}'@'localhost' IDENTIFIED BY '{{ leantime_db_password_sql }}';
+      ALTER USER '{{ leantime_db_user }}'@'localhost' IDENTIFIED BY '{{ leantime_db_password_sql }}';
+      GRANT ALL PRIVILEGES ON `{{ leantime_db_name }}`.* TO '{{ leantime_db_user }}'@'localhost';
+      FLUSH PRIVILEGES;
+  # Idempotent by construction. The health check reads the database back.
+  changed_when: false
+  no_log: true

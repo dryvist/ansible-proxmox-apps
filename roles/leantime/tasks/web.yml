@@ -1,0 +1,98 @@
+---
+# Writable state for the PHP-FPM user, the runtime configuration, PHP limits and
+# the nginx vhost. The release code stays root-owned.
+
+- name: Create the Leantime state directories owned by the PHP-FPM user
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ leantime_user }}"
+    group: "{{ leantime_group }}"
+    mode: "0750"
+  loop:
+    - "{{ leantime_install_dir }}/storage/logs"
+    - "{{ leantime_install_dir }}/storage/framework/cache"
+    - "{{ leantime_install_dir }}/storage/framework/sessions"
+    - "{{ leantime_install_dir }}/storage/framework/views"
+    - "{{ leantime_install_dir }}/bootstrap/cache"
+    - "{{ leantime_install_dir }}/userfiles"
+    - "{{ leantime_install_dir }}/public/userfiles"
+    - "{{ leantime_install_dir }}/app/Plugins"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Render the Leantime runtime configuration (config/.env)
+  ansible.builtin.template:
+    src: leantime.env.j2
+    dest: "{{ leantime_install_dir }}/config/.env"
+    owner: root
+    group: "{{ leantime_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart php-fpm
+
+- name: Set the PHP runtime limits Leantime needs
+  ansible.builtin.template:
+    src: leantime-php.ini.j2
+    dest: "/etc/php/{{ leantime_php_version }}/fpm/conf.d/90-leantime.ini"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart php-fpm
+
+- name: Deploy the Leantime nginx vhost
+  ansible.builtin.template:
+    src: leantime.nginx.conf.j2
+    dest: /etc/nginx/sites-available/leantime.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Enable the Leantime nginx vhost
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/leantime.conf
+    dest: /etc/nginx/sites-enabled/leantime.conf
+    state: link
+  notify: Restart nginx
+
+- name: Remove the default nginx vhost
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Restart nginx
+
+- name: Apply pending restarts before starting the services
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start PHP-FPM and nginx
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - "php{{ leantime_php_version }}-fpm"
+    - nginx
+
+- name: Wait for nginx to accept connections on the Leantime port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ leantime_port }}"
+    timeout: 60
+
+# /health answers 200 only when the application boots and the database answers a
+# query, so this reads back the layer that serves users. It does not need the
+# /install wizard to have run.
+- name: Wait for Leantime to report healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ leantime_port }}/health"
+    return_content: true
+    status_code: [200, 503]
+    timeout: 30
+  register: leantime_health
+  until: >-
+    leantime_health.status == 200
+    and ((leantime_health.json | default({})).status | default('')) == 'ok'
+  retries: 10
+  delay: 3
+  changed_when: false

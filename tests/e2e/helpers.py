@@ -146,23 +146,33 @@ def wait_for_event(
     sourcetype_clause = f' sourcetype="{sourcetype}"' if sourcetype else ""
     search_str = f'index={index}{sourcetype_clause} "{sentinel}" | head 5'
     deadline = time.time() + timeout
+    query_errors = 0
+    last_error = None
 
     while time.time() < deadline:
-        results = query_splunk(
-            mgmt_url,
-            user,
-            password,
-            search_str,
-            earliest="-5m",
-            timeout=30,
-        )
+        try:
+            results = query_splunk(
+                mgmt_url,
+                user,
+                password,
+                search_str,
+                earliest="-5m",
+                timeout=30,
+                raise_errors=True,
+            )
+        except (urllib.error.URLError, OSError) as exc:
+            # Count failed queries so a timeout names its cause, not just "not found".
+            query_errors += 1
+            last_error = f"{type(exc).__name__}: {getattr(exc, 'reason', exc)}"
+            results = []
         if results:
             return results
         time.sleep(poll_interval)
 
     raise TimeoutError(
         f"Event with sentinel '{sentinel}' not found in index={index} "
-        f"within {timeout}s"
+        f"within {timeout}s (query errors: {query_errors}, "
+        f"last error: {last_error or 'none'})"
     )
 
 
