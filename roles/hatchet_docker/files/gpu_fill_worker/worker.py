@@ -70,6 +70,19 @@ def build_tasks(hatchet, worker_config):
     return tasks
 
 
+def _sync_eval_datasets(prompts_dir):
+    from pathlib import Path
+
+    from evals.sync_datasets import sync_datasets
+
+    try:
+        for line in sync_datasets(Path(prompts_dir) / "agents/evals"):
+            print(line, flush=True)
+    except Exception as exc:
+        # The worker still starts. Eval tasks report their own failures.
+        print(f"eval dataset sync failed: {type(exc).__name__}", flush=True)
+
+
 def main():
     worker_config = load_config(
         os.environ.get("GPU_FILL_WORKER_CONFIG", "/tmp/gpu-fill-worker.json")
@@ -79,6 +92,7 @@ def main():
     if "evals" in worker_config:
         from evals import build_tasks as build_eval_tasks
 
+        _sync_eval_datasets(worker_config["evals"]["prompts_dir"])
         workflows.extend(
             build_eval_tasks(hatchet, worker_config["evals"], worker_config.get("latency_guard"))
         )
