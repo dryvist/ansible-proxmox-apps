@@ -37,8 +37,8 @@ def load_schema_check(prompts_dir: Path):
     return module.check_reply
 
 
-# vLLM serves lower values first and defaults to 0, so evals at 10 yield to interactive traffic.
-EVAL_REQUEST_PRIORITY = 10
+# vLLM serves lower values first and defaults to 0. Interactive is 0, agents 10, evals and fill 100.
+EVAL_REQUEST_PRIORITY = 100
 
 
 def call_role(system_prompt: str, user_text: str, role: str, base_url: str, api_key: str):
