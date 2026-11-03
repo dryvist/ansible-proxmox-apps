@@ -216,13 +216,13 @@ class GatusCatalogProbe(unittest.TestCase):
         # convention. The eval probes keep rendering for their tagged guests.
         monitor_targets = {
             "icmp": [
-                {"name": "dify", "fqdn": "192.0.2.41", "group": "guest",
+                {"name": "dify", "fqdn": "dify.example.test", "group": "guest",
                  "tags": ["dify"]},
-                {"name": "langflow", "fqdn": "192.0.2.42", "group": "guest",
+                {"name": "langflow", "fqdn": "langflow.example.test", "group": "guest",
                  "tags": ["langflow"]},
-                {"name": "dify-eval", "fqdn": "192.0.2.43", "group": "guest",
+                {"name": "dify-eval", "fqdn": "dify-eval.example.test", "group": "guest",
                  "tags": ["specialist-eval", "dify-eval"]},
-                {"name": "ordinary", "fqdn": "192.0.2.44", "group": "guest",
+                {"name": "ordinary", "fqdn": "ordinary.example.test", "group": "guest",
                  "tags": ["terraform", "vm"]},
             ],
             "tcp": [],
@@ -236,9 +236,9 @@ class GatusCatalogProbe(unittest.TestCase):
             "eval-dify-eval-dify-eval",
         })
         expected_urls = {
-            "http-dify-health": "http://192.0.2.41:80/console/api/ping",
-            "http-langflow-health": "http://192.0.2.42:7860/health",
-            "eval-dify-eval-dify-eval": "http://192.0.2.43:80/console/api/ping",
+            "http-dify-health": "http://dify.example.test:80/console/api/ping",
+            "http-langflow-health": "http://langflow.example.test:7860/health",
+            "eval-dify-eval-dify-eval": "http://dify-eval.example.test:80/console/api/ping",
         }
         for name, url in expected_urls.items():
             with self.subTest(endpoint=name):
