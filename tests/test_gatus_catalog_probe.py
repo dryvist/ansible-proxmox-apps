@@ -235,10 +235,14 @@ class GatusCatalogProbe(unittest.TestCase):
             "http-langflow-health",
             "eval-dify-eval-dify-eval",
         })
+        def guest_url(name: str, probe: dict) -> str:
+            fqdn = next(t["fqdn"] for t in monitor_targets["icmp"] if t["name"] == name)
+            return f"http://{fqdn}:{probe['port']}{probe['path']}"
+
         expected_urls = {
-            "http-dify-health": "http://dify.example.test:80/console/api/ping",
-            "http-langflow-health": "http://langflow.example.test:7860/health",
-            "eval-dify-eval-dify-eval": "http://dify-eval.example.test:80/console/api/ping",
+            "http-dify-health": guest_url("dify", GUEST_HEALTH_PROBES["dify"]),
+            "http-langflow-health": guest_url("langflow", GUEST_HEALTH_PROBES["langflow"]),
+            "eval-dify-eval-dify-eval": guest_url("dify-eval", EVAL_HEALTH_PROBES["dify-eval"]),
         }
         for name, url in expected_urls.items():
             with self.subTest(endpoint=name):
