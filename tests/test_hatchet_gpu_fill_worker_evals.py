@@ -306,4 +306,5 @@ def test_eval_request_carries_low_priority(monkeypatch):
 
     assert (reply, served) == ("ok", "m")
     assert captured["body"]["priority"] == parse_experiment.EVAL_REQUEST_PRIORITY
-    assert captured["body"]["priority"] > 0
+    assert captured["body"]["priority"] == 100
+    assert captured["body"]["metadata"] == {"tags": ["fill", "priority-100"]}
