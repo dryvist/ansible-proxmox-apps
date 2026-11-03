@@ -145,12 +145,6 @@ def test_gatus_tag_reaches_only_gatus_component_tasks():
     assert "gatus" not in seed_block_tags
     assert seed_block["no_log"] is True
 
-    docker_include, docker_tags = role_tasks["Configure Docker for the status stack"]
-    assert "gatus" not in docker_tags
-    docker_role = docker_include["ansible.builtin.include_role"]
-    assert docker_role["name"] == "docker_engine"
-    assert _tags(docker_role.get("apply", {}).get("tags")) == BROAD_TAGS
-
     compose = role_tasks["Deploy status stack via docker compose"][0][
         "community.docker.docker_compose_v2"
     ]
@@ -259,7 +253,6 @@ def test_untagged_status_stack_still_contains_every_component():
     auto_tasks = _named(list(_walk(_read(AUTOKUMA_TASKS))))
     all_names = set(role_tasks) | set(auto_tasks)
     assert {
-        "Configure Docker for the status stack",
         "Render Gatus configuration",
         "Deploy status stack via docker compose",
         "Verify Gatus answers /",
@@ -270,7 +263,7 @@ def test_untagged_status_stack_still_contains_every_component():
         "Build the combined AutoKuma monitor list from monitor_targets",
         "Ship and extract the AutoKuma monitor set in one transfer",
     } <= all_names
-    assert "dependencies" not in _read(ROLE_META)
+    assert _read(ROLE_META)["dependencies"] == [{"role": "docker_engine"}]
 
 
 def _list_tasks(playbook, tags=None):
