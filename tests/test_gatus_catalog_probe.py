@@ -16,6 +16,7 @@ import yaml
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/status_stack/templates/gatus-config.yaml.j2"
 DEFAULTS = Path(__file__).resolve().parent.parent / "roles/status_stack/defaults/main.yml"
 EVAL_HEALTH_PROBES = yaml.safe_load(DEFAULTS.read_text())["status_stack_eval_health_probes"]
+GUEST_HEALTH_PROBES = yaml.safe_load(DEFAULTS.read_text())["status_stack_guest_health_probes"]
 
 
 def render(services: list[dict], dashboard_catalog_services: list[dict] | None = None,
@@ -54,6 +55,7 @@ def render(services: list[dict], dashboard_catalog_services: list[dict] | None =
             if monitor_targets is None else monitor_targets
         ),
         status_stack_eval_health_probes=EVAL_HEALTH_PROBES,
+        status_stack_guest_health_probes=GUEST_HEALTH_PROBES,
         status_stack_deadman_endpoints=[],
     )
     return {ep["name"]: ep for ep in yaml.safe_load(text)["endpoints"]}
@@ -206,6 +208,44 @@ class GatusCatalogProbe(unittest.TestCase):
             name: endpoint for name, endpoint in rendered.items() if not name.startswith("eval-")
         }
         self.assertEqual(existing_endpoints, baseline)
+
+    def test_production_guest_probes_render_alongside_eval_probes(self):
+        # Production Dify and Langflow get the same direct health probes as the
+        # specialist-eval guests: the guest's own inventory address, group
+        # "guest", named http-<guest>-health after the monitor_targets HTTP
+        # convention. The eval probes keep rendering for their tagged guests.
+        monitor_targets = {
+            "icmp": [
+                {"name": "dify", "fqdn": "dify.example.test", "group": "guest",
+                 "tags": ["dify"]},
+                {"name": "langflow", "fqdn": "langflow.example.test", "group": "guest",
+                 "tags": ["langflow"]},
+                {"name": "dify-eval", "fqdn": "dify-eval.example.test", "group": "guest",
+                 "tags": ["specialist-eval", "dify-eval"]},
+                {"name": "ordinary", "fqdn": "ordinary.example.test", "group": "guest",
+                 "tags": ["terraform", "vm"]},
+            ],
+            "tcp": [],
+            "http": [],
+        }
+        rendered = render(services=[], monitor_targets=monitor_targets)
+
+        self.assertEqual(set(rendered), {
+            "http-dify-health",
+            "http-langflow-health",
+            "eval-dify-eval-dify-eval",
+        })
+        expected_urls = {
+            "http-dify-health": "http://dify.example.test:80/console/api/ping",
+            "http-langflow-health": "http://langflow.example.test:7860/health",
+            "eval-dify-eval-dify-eval": "http://dify-eval.example.test:80/console/api/ping",
+        }
+        for name, url in expected_urls.items():
+            with self.subTest(endpoint=name):
+                endpoint = rendered[name]
+                self.assertEqual(endpoint["url"], url)
+                self.assertEqual(endpoint["group"], "guest")
+                self.assertEqual(endpoint["conditions"], ["[STATUS] == 200"])
 
 
 if __name__ == "__main__":
