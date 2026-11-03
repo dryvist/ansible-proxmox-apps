@@ -37,6 +37,10 @@ def load_schema_check(prompts_dir: Path):
     return module.check_reply
 
 
+# vLLM serves lower values first and defaults to 0, so evals at 10 yield to interactive traffic.
+EVAL_REQUEST_PRIORITY = 10
+
+
 def call_role(system_prompt: str, user_text: str, role: str, base_url: str, api_key: str):
     """Call the configured LiteLLM role through its OpenAI-compatible endpoint."""
     body = json.dumps(
@@ -48,6 +52,7 @@ def call_role(system_prompt: str, user_text: str, role: str, base_url: str, api_
             ],
             "temperature": 0,
             "max_tokens": 400,
+            "priority": EVAL_REQUEST_PRIORITY,
         }
     ).encode()
     req = urllib.request.Request(
