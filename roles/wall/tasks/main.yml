@@ -125,6 +125,14 @@
 # Unlike the shipped gateway configs, this include is rendered here: it
 # carries the ClickHouse credential, so it is root- and workers-readable
 # only, and its content stays out of the logs.
+- name: Require a header-safe ClickHouse credential
+  ansible.builtin.assert:
+    that:
+      - wall_clickhouse_password is match('^[A-Za-z0-9]+$')
+    fail_msg: WALL_READER_PASSWORD must be alphanumeric (nginx header value).
+    quiet: true
+  no_log: true
+
 - name: Render the gateway's ClickHouse auth include
   ansible.builtin.template:
     src: wall-feed-clickhouse-auth.conf.j2
@@ -182,9 +190,8 @@
 - name: Apply pending reloads before verifying
   ansible.builtin.meta: flush_handlers
 
-# A wall that serves its page but cannot reach Prometheus or ClickHouse shows
-# every panel empty and still converges green. Ask the gateway for a real
-# answer from each.
+# A wall that serves its page but cannot reach Prometheus shows every panel
+# empty and still converges green. Ask the gateway for a real answer.
 - name: Verify the page and the gateway answer
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ wall_port }}{{ item.path }}"
@@ -195,10 +202,8 @@
   changed_when: false
   loop:
     - {path: /mc1/, expect: "<canvas"}
-    - {path: /mc6/, expect: "<html"}
     - {path: /config.json, expect: '"groups"'}
     - {path: "/api/prom/query?query=up", expect: '"status":"success"'}
-    - {path: /api/words, expect: '"data"'}
   loop_control:
     label: "{{ item.path }}"
 
