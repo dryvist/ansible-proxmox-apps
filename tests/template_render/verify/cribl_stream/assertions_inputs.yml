@@ -26,6 +26,9 @@
       victoriametrics_rw through the pve_metrics_normalize pipeline
 
 - name: Assert prometheus_rw input fans to Splunk and VictoriaMetrics
+  vars:
+    _prometheus_rw_connections: >-
+      {{ (_cribl_stream_inputs | from_yaml).inputs['prometheus_rw:in_prometheus_rw'].connections }}
   ansible.builtin.assert:
     that:
       - "'type: prometheus_rw' in _cribl_stream_inputs"
@@ -34,11 +37,14 @@
       - "'pipeline: prometheus_to_netmon' in _cribl_stream_inputs"
       - "'output: splunk_hec' in _cribl_stream_inputs"
       - "'output: victoriametrics_rw' in _cribl_stream_inputs"
+      - >-
+        _prometheus_rw_connections
+        == [{'output': 'splunk_hec', 'pipeline': 'prometheus_to_netmon'},
+            {'output': 'victoriametrics_rw'}]
     fail_msg: >-
       inputs.yml.j2 must include prometheus_rw on port 9201 with
-      prometheusAPI: /api/v1/write, connected to BOTH
-      (prometheus_to_netmon → splunk_hec) and (victoriametrics_rw with no
-      Splunk-stamp pipeline)
+      prometheusAPI: /api/v1/write, connected only to the filtered and
+      stamped Splunk pipeline plus the unfiltered victoriametrics_rw leg
 
 - name: Assert the Langfuse OTLP leg renders end to end
   ansible.builtin.assert:
