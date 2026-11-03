@@ -231,6 +231,10 @@ class GatusCatalogProbe(unittest.TestCase):
         rendered = render(services=[], monitor_targets=monitor_targets)
 
         self.assertEqual(set(rendered), {
+            "icmp-dify",
+            "icmp-langflow",
+            "icmp-dify-eval",
+            "icmp-ordinary",
             "http-dify-health",
             "http-langflow-health",
             "eval-dify-eval-dify-eval",
