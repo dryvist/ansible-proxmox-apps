@@ -1,0 +1,43 @@
+## Managed by Ansible (grafana_stack role) — do not edit by hand.
+## Grafana unified-alerting file provisioning: accelerator under-utilization.
+---
+apiVersion: 1
+
+groups:
+{% if grafana_stack_prometheus_url | trim | length > 0 %}
+  - orgId: 1
+    name: accelerator-busy
+    folder: {{ grafana_stack_alert_folder }}
+    interval: {{ grafana_stack_alert_eval_interval }}
+    rules:
+      - uid: accelerator-underutilized
+        title: GPU busy percent below 50% over 4 hours
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: {from: 14400, to: 0}
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                avg_over_time(accelerator:busy_percent:avg5m{accelerator=~"gpu-primary|gpu-secondary"}[4h])
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [50]}
+              refId: B
+        for: 0s
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: critical, ntfy: "true"}
+        annotations:
+          summary: >-
+            GPU busy percent 4-hour average is below 50%
+          description: >-
+            The 4-hour average busy percent of a GPU accelerator has been below 50%.
+{% endif %}
