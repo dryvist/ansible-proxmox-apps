@@ -79,6 +79,15 @@
           could be flipped to ssh purely on its declared contract, before
           anything has confirmed sshd is actually reachable.
 
+    - name: Assert the add_host gate excludes oci-app containers
+      ansible.builtin.assert:
+        that:
+          - "\"'oci-app' not in (item.value.tags | default([]))\" in _add_lxc_hosts_source"
+        fail_msg: >-
+          add_lxc_hosts.yml no longer skips containers tagged oci-app. OCI-image
+          application containers have no sshd or python and must stay out of the
+          Ansible inventory.
+
     - name: Assert a container that declares ssh but fails the probe gets a visible warning
       ansible.builtin.assert:
         that:
@@ -198,6 +207,13 @@
           ansible_connection: community.proxmox.proxmox_pct_remote
           tags: [homarr, managed-secrets]
           node: node-a
+        oci-poc:
+          vmid: 193
+          ip: 192.168.0.193
+          fqdn: oci-poc.example.internal
+          ansible_connection: community.proxmox.proxmox_pct_remote
+          tags: [oci-app]
+          node: node-a
   tasks:
     - name: Run the real add_lxc_hosts.yml loader task file
       ansible.builtin.include_tasks: ../../inventory/load_tofu/add_lxc_hosts.yml
@@ -245,3 +261,12 @@
         fail_msg: >-
           Homarr PCT fallback wrong —
           ansible_connection={{ hostvars['homarr-poc'].ansible_connection | default('(undefined)') }}
+
+    - name: Assert an oci-app container is never added to the inventory
+      ansible.builtin.assert:
+        that:
+          - "'oci-poc' not in groups['all']"
+          - "'oci-poc' not in groups['lxc_containers']"
+        fail_msg: >-
+          oci-poc is tagged oci-app but was added to the Ansible inventory.
+          OCI-image application containers must be skipped by add_lxc_hosts.yml.
