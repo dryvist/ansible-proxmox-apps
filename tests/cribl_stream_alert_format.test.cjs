@@ -179,6 +179,11 @@ assert.match(resolved[0].message, /RESOLVED/);
 assert.match(resolved[0].message, /recovered/);
 assert.equal(resolved[0].priority, 5, 'critical recovery is preserved at the urgent priority');
 
+const criticalFiring = format({ status: 'firing', alerts: [{ status: 'firing', value: 42,
+  labels: { alertname: 'GpuUnderutilized', severity: 'critical' },
+  annotations: { summary: 'GPU busy percent low' } }] });
+assert.equal(criticalFiring[0].priority, 5, 'firing critical alerts use the urgent ntfy priority');
+
 const noData = format({ status: 'firing', alerts: [{ status: 'firing', value: null,
   labels: { alertname: 'DatasourceNoData', severity: 'critical' },
   annotations: { grafana_state_reason: 'NoData' } }] });
