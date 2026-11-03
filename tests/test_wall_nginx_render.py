@@ -74,6 +74,14 @@ class WallNginxConfig(unittest.TestCase):
         auth = render(AUTH_TEMPLATE)
         self.assertIn("proxy_set_header X-ClickHouse-User wall_reader;", auth)
         self.assertIn(f"proxy_set_header X-ClickHouse-Key {DUMMY_PASSWORD};", auth)
+        self.assertNotIn("return 503;", auth)
+
+    def test_missing_credential_answers_503_instead_of_proxying(self):
+        # No fetched credential: the ClickHouse routes refuse, and no
+        # header carries an empty key.
+        auth = render(AUTH_TEMPLATE, wall_clickhouse_password="")
+        self.assertIn("return 503;", auth)
+        self.assertNotIn("proxy_set_header", auth)
 
 
 if __name__ == "__main__":
