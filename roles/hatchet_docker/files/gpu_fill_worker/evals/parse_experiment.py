@@ -53,6 +53,7 @@ def call_role(system_prompt: str, user_text: str, role: str, base_url: str, api_
             "temperature": 0,
             "max_tokens": 400,
             "priority": EVAL_REQUEST_PRIORITY,
+            "metadata": {"tags": ["fill", "priority-100"]},
         }
     ).encode()
     req = urllib.request.Request(
