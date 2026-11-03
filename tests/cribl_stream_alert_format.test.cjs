@@ -177,7 +177,7 @@ const resolved = format({ status: 'resolved', alerts: [{ status: 'resolved',
   labels: { alertname: 'Recovered', severity: 'critical' }, annotations: { summary: 'recovered' } }] });
 assert.match(resolved[0].message, /RESOLVED/);
 assert.match(resolved[0].message, /recovered/);
-assert.equal(resolved[0].priority, 4, 'critical recovery is preserved at high priority');
+assert.equal(resolved[0].priority, 5, 'critical recovery is preserved at the urgent priority');
 
 const noData = format({ status: 'firing', alerts: [{ status: 'firing', value: null,
   labels: { alertname: 'DatasourceNoData', severity: 'critical' },
