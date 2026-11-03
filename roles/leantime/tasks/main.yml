@@ -1,0 +1,70 @@
+---
+# Leantime native install (no Docker): nginx + PHP-FPM + local MariaDB. The
+# release is staged and checksum-verified on the controller, then extracted on
+# the target (LXCs here are outbound-internal-only).
+#
+# Not done by this role: the first owner account. Leantime's /install wizard
+# creates the owner (a browser step, once). Use the email Authelia uses for the
+# operator, so OIDC sign-in matches that owner.
+
+- name: Validate Leantime secrets are set
+  ansible.builtin.include_role:
+    name: dryvist.homelab.openbao_secrets
+    tasks_from: assert_nonempty.yml
+  vars:
+    openbao_secrets_required_vars:
+      - leantime_db_password
+      - leantime_session_password
+      - leantime_oidc_client_secret
+  no_log: true
+
+- name: Install Leantime system packages
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - mariadb-server
+      - mariadb-client # mariadb-dump, used by the daily backup
+      - "php{{ leantime_php_version }}-fpm"
+      - "php{{ leantime_php_version }}-cli"
+      - "php{{ leantime_php_version }}-mysql" # mysqli and pdo_mysql
+      - "php{{ leantime_php_version }}-ldap"
+      - "php{{ leantime_php_version }}-zip"
+      - "php{{ leantime_php_version }}-mbstring"
+      - "php{{ leantime_php_version }}-bcmath"
+      - "php{{ leantime_php_version }}-xml" # simplexml and dom
+      - "php{{ leantime_php_version }}-gd"
+      - "php{{ leantime_php_version }}-intl"
+      - "php{{ leantime_php_version }}-opcache"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Note the native Leantime install is skipped in check mode
+  ansible.builtin.debug:
+    msg: >-
+      Leantime database, release, configuration, service and backup steps are
+      skipped in check mode: they depend on the packages a check does not install.
+  when: ansible_check_mode
+
+- name: Start MariaDB before creating the application account
+  ansible.builtin.systemd:
+    name: mariadb
+    state: started
+    enabled: true
+  when: not ansible_check_mode
+
+- name: Create the Leantime database and application account
+  ansible.builtin.include_tasks: database.yml
+  when: not ansible_check_mode
+
+- name: Stage, extract and record the Leantime release
+  ansible.builtin.include_tasks: release.yml
+  when: not ansible_check_mode
+
+- name: Render the Leantime configuration and web stack
+  ansible.builtin.include_tasks: web.yml
+  when: not ansible_check_mode
+
+- name: Install the daily Leantime database backup
+  ansible.builtin.include_tasks: backup.yml
+  when: not ansible_check_mode

@@ -1,0 +1,187 @@
+---
+# Render and verify the Leantime role templates offline. The defaults are
+# mirrored below, as the other verify plays do, so a changed default shows up in
+# review. The rendered output is read back and asserted on, not trusted to exist.
+- name: Render and verify leantime templates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ansible_managed: "test fixture"
+    _fixture_dir: "{{ render_tmp }}"
+    _template_dir: "../../../roles/leantime/templates"
+    # Mirror roles/leantime/defaults/main/00-base.yml
+    leantime_port: 80
+    leantime_php_version: "8.2"
+    leantime_install_dir: /opt/leantime
+    leantime_web_root: /opt/leantime/public
+    leantime_public_url: "https://leantime.example.test"
+    leantime_db_host: localhost
+    leantime_db_port: 3306
+    leantime_db_name: leantime
+    leantime_db_user: leantime
+    leantime_db_password: fixture-db-pass
+    leantime_session_password: fixture-session-pass
+    leantime_oidc_client_id: leantime
+    leantime_oidc_client_secret: fixture-oidc-secret
+    leantime_oidc_provider_url: "https://auth.example.test"
+    leantime_oidc_create_user: false
+    leantime_allow_telemetry: false
+    leantime_db_backup_path: "backupdb/"
+    leantime_backup_dir: /opt/leantime/backupdb
+    leantime_backup_option_file: /etc/leantime/backup.my.cnf
+    leantime_backup_on_calendar: "*-*-* 02:30:00"
+    leantime_backup_randomized_delay_sec: 600
+    leantime_backup_retention_days: 14
+
+  tasks:
+    - name: Render the Leantime runtime configuration
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/leantime.env.j2"
+        dest: "{{ _fixture_dir }}/leantime.env"
+        mode: "0640"
+
+    - name: Read the rendered Leantime runtime configuration
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/leantime.env"
+      register: _leantime_env_raw
+
+    - name: Decode the Leantime runtime configuration
+      ansible.builtin.set_fact:
+        _leantime_env: "{{ _leantime_env_raw.content | b64decode }}"
+
+    # LEAN_APP_URL has no trailing slash: the OIDC callback is built as
+    # <LEAN_APP_URL>/oidc/callback, so a slash would double up.
+    - name: Assert the configuration carries the declared keys and values
+      ansible.builtin.assert:
+        that:
+          - "'https://leantime.example.test' in _leantime_env"
+          - "'https://leantime.example.test/' not in _leantime_env"
+          - "'LEAN_SESSION_SECURE = true' in _leantime_env"
+          - "'LEAN_OIDC_ENABLE = true' in _leantime_env"
+          - "'LEAN_OIDC_CLIENT_ID = ' in _leantime_env"
+          - "'https://auth.example.test' in _leantime_env"
+          - "'LEAN_OIDC_CREATE_USER = false' in _leantime_env"
+          - "'LEAN_ALLOW_TELEMETRY = false' in _leantime_env"
+          - "'backupdb/' in _leantime_env"
+          - "'fixture-db-pass' in _leantime_env"
+          - "'fixture-session-pass' in _leantime_env"
+          - "'fixture-oidc-secret' in _leantime_env"
+        fail_msg: >-
+          config/.env does not carry the expected Leantime keys; rendered
+          content: {{ _leantime_env }}
+
+    - name: Render the Leantime nginx vhost
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/leantime.nginx.conf.j2"
+        dest: "{{ _fixture_dir }}/leantime.nginx.conf"
+        mode: "0644"
+
+    - name: Read the rendered Leantime nginx vhost
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/leantime.nginx.conf"
+      register: _leantime_nginx_raw
+
+    - name: Decode the Leantime nginx vhost
+      ansible.builtin.set_fact:
+        _leantime_nginx: "{{ _leantime_nginx_raw.content | b64decode }}"
+
+    # The vhost serves the release's public/ docroot and hands PHP to the PHP-FPM
+    # socket for the same version the package install selected.
+    - name: Assert the vhost listens on the Leantime port and reaches PHP-FPM
+      ansible.builtin.assert:
+        that:
+          - "'listen 80 default_server;' in _leantime_nginx"
+          - "'listen 8080' not in _leantime_nginx"
+          - "'root /opt/leantime/public;' in _leantime_nginx"
+          - "'fastcgi_pass unix:/run/php/php8.2-fpm.sock;' in _leantime_nginx"
+          - "'client_max_body_size 100M;' in _leantime_nginx"
+        fail_msg: >-
+          nginx vhost does not match the Leantime docroot, port or PHP-FPM socket;
+          rendered content: {{ _leantime_nginx }}
+
+    - name: Render the Leantime PHP runtime limits
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/leantime-php.ini.j2"
+        dest: "{{ _fixture_dir }}/leantime-php.ini"
+        mode: "0644"
+
+    - name: Read the rendered Leantime PHP runtime limits
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/leantime-php.ini"
+      register: _leantime_php_raw
+
+    - name: Assert the PHP limits match the upstream container settings
+      ansible.builtin.assert:
+        that:
+          - "'memory_limit = 1G' in (_leantime_php_raw.content | b64decode)"
+          - "'upload_max_filesize = 100M' in (_leantime_php_raw.content | b64decode)"
+        fail_msg: PHP runtime limits for Leantime are missing or changed.
+
+    - name: Render the Leantime backup service unit
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/leantime-backup.service.j2"
+        dest: "{{ _fixture_dir }}/leantime-backup.service"
+        mode: "0644"
+
+    - name: Read the rendered Leantime backup service unit
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/leantime-backup.service"
+      register: _leantime_backup_service_raw
+
+    - name: Decode the Leantime backup service unit
+      ansible.builtin.set_fact:
+        _leantime_backup_service: "{{ _leantime_backup_service_raw.content | b64decode }}"
+
+    # systemd expands $$ and %%, so the rendered unit must carry them doubled:
+    # the shell then receives $(date +%F) with a literal dollar sign.
+    - name: Assert the backup unit dumps to the backup path with systemd escapes
+      ansible.builtin.assert:
+        that:
+          - "'UMask=0077' in _leantime_backup_service"
+          - "'--single-transaction' in _leantime_backup_service"
+          - "'--defaults-extra-file=/etc/leantime/backup.my.cnf' in _leantime_backup_service"
+          - "'/opt/leantime/backupdb/leantime-$$(date +%%F).sql.gz' in _leantime_backup_service"
+          - "'-mtime +14 -delete' in _leantime_backup_service"
+        fail_msg: >-
+          leantime-backup.service does not dump to the backup path with the
+          expected systemd escapes; rendered content: {{ _leantime_backup_service }}
+
+    - name: Render the Leantime backup timer unit
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/leantime-backup.timer.j2"
+        dest: "{{ _fixture_dir }}/leantime-backup.timer"
+        mode: "0644"
+
+    - name: Read the rendered Leantime backup timer unit
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/leantime-backup.timer"
+      register: _leantime_backup_timer_raw
+
+    - name: Assert the backup timer runs daily with a randomized delay
+      ansible.builtin.assert:
+        that:
+          - "'OnCalendar=*-*-* 02:30:00' in (_leantime_backup_timer_raw.content | b64decode)"
+          - "'RandomizedDelaySec=600' in (_leantime_backup_timer_raw.content | b64decode)"
+          - "'Persistent=true' in (_leantime_backup_timer_raw.content | b64decode)"
+        fail_msg: The Leantime backup timer is not a daily, persistent schedule.
+
+    - name: Render the Leantime backup client credentials file
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/leantime-backup.my.cnf.j2"
+        dest: "{{ _fixture_dir }}/leantime-backup.my.cnf"
+        mode: "0600"
+
+    - name: Read the rendered Leantime backup client credentials file
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/leantime-backup.my.cnf"
+      register: _leantime_backup_cnf_raw
+
+    - name: Assert the backup client credentials carry the application account
+      ansible.builtin.assert:
+        that:
+          - "'[client]' in (_leantime_backup_cnf_raw.content | b64decode)"
+          - "'password=fixture-db-pass' in (_leantime_backup_cnf_raw.content | b64decode)"
+        fail_msg: The backup client credentials file is missing its [client] section or password.
