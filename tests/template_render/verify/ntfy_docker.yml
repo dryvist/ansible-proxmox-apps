@@ -167,6 +167,26 @@
           - "ntfy_docker_slack_instances == {'all-keystone': 'keystone', 'status': 'status'}"
         fail_msg: "informational topic leaked into all-alerts: {{ ntfy_docker_slack_instances }}"
 
+    # The real role defaults, loaded under one name so nothing is mirrored:
+    # hermes-all posts to the status channel, and hermes-noise is not a topic.
+    - name: Load the ntfy_docker role defaults without applying them
+      ansible.builtin.include_vars:
+        file: ../../../roles/ntfy_docker/defaults/main.yml
+        name: _ntfy_role_defaults
+
+    - name: Assert hermes-all resolves to the status webhook and hermes-noise is gone
+      vars:
+        bao_ntfy_secrets:
+          status: https://hooks.example.test/status
+        _seeded_webhooks: "{{ _ntfy_role_defaults.ntfy_docker_slack_webhooks }}"
+      ansible.builtin.assert:
+        that:
+          - "_seeded_webhooks['hermes-all'] == 'https://hooks.example.test/status'"
+          - "'hermes-all' in _ntfy_role_defaults.ntfy_docker_inform_topics"
+          - "'hermes-noise' not in _ntfy_role_defaults.ntfy_docker_topics"
+          - "'hermes-noise' not in _ntfy_role_defaults.ntfy_docker_inform_topics"
+        fail_msg: "hermes-all or hermes-noise routing is wrong: {{ _seeded_webhooks | list }}"
+
     - name: Plan the Slack fan-out with an informational webhook unseeded
       block:
         - name: Include the plan with the status webhook missing
