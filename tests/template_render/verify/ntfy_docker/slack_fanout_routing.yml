@@ -1,0 +1,84 @@
+---
+# Slack fan-out: every topic reaches the all-alerts webhook, a declared
+# per-topic route adds its own, and an unseeded key fails the converge.
+- name: Plan the Slack fan-out with every needed webhook seeded
+  ansible.builtin.include_tasks: ../../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+  vars:
+    ntfy_docker_topics: [keystone, proxmox]
+    ntfy_docker_inform_topics: []
+    ntfy_docker_slack_alerts_key: keystone
+    ntfy_docker_slack_routes: [proxmox]
+    ntfy_docker_slack_webhooks:
+      keystone: https://hooks.example.test/all
+      proxmox: https://hooks.example.test/proxmox
+
+- name: Assert one all-alerts instance per topic plus the per-topic route
+  ansible.builtin.assert:
+    that:
+      - >-
+        ntfy_docker_slack_instances ==
+        {'all-keystone': 'keystone', 'all-proxmox': 'proxmox', 'proxmox': 'proxmox'}
+    fail_msg: "unexpected instances: {{ ntfy_docker_slack_instances }}"
+
+# An informational topic has its own channel and is kept off all-alerts.
+- name: Plan the Slack fan-out with an informational topic
+  ansible.builtin.include_tasks: ../../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+  vars:
+    ntfy_docker_topics: [keystone, status]
+    ntfy_docker_inform_topics: [status]
+    ntfy_docker_slack_alerts_key: keystone
+    ntfy_docker_slack_routes: []
+    ntfy_docker_slack_webhooks:
+      keystone: https://hooks.example.test/all
+      status: https://hooks.example.test/status
+
+- name: Assert the informational topic gets only its own instance
+  ansible.builtin.assert:
+    that:
+      - "ntfy_docker_slack_instances == {'all-keystone': 'keystone', 'status': 'status'}"
+    fail_msg: "informational topic leaked into all-alerts: {{ ntfy_docker_slack_instances }}"
+
+# The real role defaults, loaded under one name so nothing is mirrored:
+# hermes-all posts to the status channel, and hermes-noise is not a topic.
+- name: Load the ntfy_docker role defaults without applying them
+  ansible.builtin.include_vars:
+    file: ../../../../roles/ntfy_docker/defaults/main.yml
+    name: _ntfy_role_defaults
+
+- name: Assert hermes-all resolves to the status webhook and hermes-noise is gone
+  vars:
+    bao_ntfy_secrets:
+      status: https://hooks.example.test/status
+    _seeded_webhooks: "{{ _ntfy_role_defaults.ntfy_docker_slack_webhooks }}"
+  ansible.builtin.assert:
+    that:
+      - "_seeded_webhooks['hermes-all'] == 'https://hooks.example.test/status'"
+      - "'hermes-all' in _ntfy_role_defaults.ntfy_docker_inform_topics"
+      - "'hermes-noise' not in _ntfy_role_defaults.ntfy_docker_topics"
+      - "'hermes-noise' not in _ntfy_role_defaults.ntfy_docker_inform_topics"
+    fail_msg: "hermes-all or hermes-noise routing is wrong: {{ _seeded_webhooks | list }}"
+
+# The real topic and inform lists through the real fan-out plan: router-budget
+# is an all-alerts forwarder, and hermes-all is its own instance.
+- name: Plan the Slack fan-out with the real role defaults
+  ansible.builtin.include_tasks: ../../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+  vars:
+    platform_alerts_slack_webhook_key: homelab_ops
+    bao_ntfy_secrets:
+      status: https://hooks.example.test/status
+      homelab_ops: https://hooks.example.test/all
+    ntfy_docker_topics: "{{ _ntfy_role_defaults.ntfy_docker_topics }}"
+    ntfy_docker_inform_topics: "{{ _ntfy_role_defaults.ntfy_docker_inform_topics }}"
+    ntfy_docker_slack_alerts_key: "{{ _ntfy_role_defaults.ntfy_docker_slack_alerts_key }}"
+    ntfy_docker_slack_routes: "{{ _ntfy_role_defaults.ntfy_docker_slack_routes }}"
+    ntfy_docker_slack_webhooks: "{{ _ntfy_role_defaults.ntfy_docker_slack_webhooks }}"
+
+- name: Assert router-budget reaches all-alerts and hermes-all is its own instance
+  ansible.builtin.assert:
+    that:
+      - "'all-router-budget' in ntfy_docker_slack_instances"
+      - "ntfy_docker_slack_instances['hermes-all'] == 'hermes-all'"
+      - "ntfy_docker_slack_instances['status'] == 'status'"
+      - "'all-hermes-all' not in ntfy_docker_slack_instances"
+      - "'all-hermes-noise' not in ntfy_docker_slack_instances"
+    fail_msg: "real routing is wrong: {{ ntfy_docker_slack_instances }}"
