@@ -85,7 +85,10 @@
   when: vikunja_hermes_stored_token | length > 0
   ignore_errors: true
   no_log: true
-  check_mode: "{{ (vikunja_hermes_identity.probe.method | default('GET') | upper) != 'GET' }}"
+  # uri has no check-mode support, so a forced check-mode skip reads as an
+  # unusable token on every converge. The probe runs in check mode too, and
+  # the guard below refuses a non-GET probe that created an object.
+  check_mode: false
 
 - name: "Record whether the stored token is usable for {{ vikunja_hermes_identity.username }}"
   ansible.builtin.set_fact:
@@ -93,6 +96,24 @@
       {{ vikunja_hermes_stored_token_check.status is defined
          and vikunja_hermes_stored_token_check.status
              in (vikunja_hermes_identity.probe.authenticated_statuses | default([200])) }}
+  no_log: true
+
+# A write probe (PUT with an empty title) must be refused with a 4xx. Any 2xx
+# means it created an object, so stop before the mint. no_log hides the id from
+# the failure message; find the new object in Vikunja.
+- name: "Refuse a token probe that created an object for {{ vikunja_hermes_identity.username }}"
+  ansible.builtin.fail:
+    msg: >-
+      The token probe for {{ vikunja_hermes_identity.username }} returned
+      {{ vikunja_hermes_stored_token_check.status }}, so it created an object
+      (id {{ vikunja_hermes_stored_token_check.json.id | default('unknown') }}).
+      Delete that object, then fix the probe.
+  when:
+    - vikunja_hermes_stored_token | length > 0
+    - (vikunja_hermes_identity.probe.method | default('GET') | upper) != 'GET'
+    - vikunja_hermes_stored_token_check.status is defined
+    - vikunja_hermes_stored_token_check.status | int >= 200
+    - vikunja_hermes_stored_token_check.status | int < 300
   no_log: true
 
 # Always listed: whether the stored token is current depends on the titled
