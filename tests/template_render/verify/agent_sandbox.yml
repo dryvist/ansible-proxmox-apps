@@ -20,6 +20,7 @@
 
   vars_files:
     - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/denied-domains.yml"
 
   vars:
     ansible_become: false
@@ -253,6 +254,25 @@
             (agent_sandbox_operator_allowlist_dir ~
             ':/etc/agent-sandbox/allowed-domains.d:ro') in _as_compose
         fail_msg: Squid must read the static and operator lists from read-only mounts.
+
+    - name: Assert Squid denies the task-tracker hosts ahead of every allow rule
+      vars:
+        _as_denied_acl: >-
+          acl denied_dst dstdomain
+          {{ agent_sandbox_denied_domains
+          | map('regex_replace', '^', '.') | join(' ') }}
+        _as_squid_rules: "{{ _as_squid | split('\n') | map('trim') | select('search', '^http_access') | list }}"
+      ansible.builtin.assert:
+        that:
+          - _as_denied_acl in _as_squid
+          - "'http_access deny denied_dst' in _as_squid_rules"
+          # Ahead of the first allow rule, so both allowlist files lose.
+          - >-
+            _as_squid_rules.index('http_access deny denied_dst')
+            < _as_squid_rules.index(_as_squid_rules | select('search', '^http_access allow') | first)
+        fail_msg: >-
+          The denied task-tracker acl must render with leading-dot entries and
+          its deny rule must precede every allow rule. Rendered: {{ _as_squid }}
 
     - name: Assert the refused-login alert environment carries the alert settings
       ansible.builtin.assert:
