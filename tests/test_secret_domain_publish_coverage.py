@@ -17,7 +17,8 @@ PUBLISH_TASK_NAMES = (
 )
 
 # clickhouse is consumed outside this repo by the AI repository.
-DOMAIN_PUBLISH_EXEMPTIONS = {"clickhouse"}
+# grafana-alerts reaches Grafana as environment variables, not a published fact.
+DOMAIN_PUBLISH_EXEMPTIONS = {"clickhouse", "grafana-alerts"}
 
 
 def _published_facts() -> dict[str, dict]:
