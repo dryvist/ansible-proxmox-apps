@@ -99,7 +99,7 @@ class OperatorAllowlistDomainValidation(unittest.TestCase):
 
     def test_denied_domains_default_builds_names_from_the_environment(self):
         denied = yaml.safe_load(
-            (ROLE / "defaults/denied-domains.yml").read_text(encoding="utf-8")
+            (ROLE / "vars/main.yml").read_text(encoding="utf-8")
         )["agent_sandbox_denied_domains"]
         self.assertEqual(len(denied), 2)
         for label in ("youtrack", "vikunja"):
