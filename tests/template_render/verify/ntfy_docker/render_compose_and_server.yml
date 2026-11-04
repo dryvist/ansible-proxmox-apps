@@ -1,0 +1,99 @@
+---
+- name: Render ntfy docker-compose.yml.j2 to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/docker-compose.yml.j2"
+    dest: "{{ _fixture_dir }}/test_ntfy_compose.yml"
+    mode: "0644"
+
+- name: Read rendered ntfy docker-compose.yml
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_ntfy_compose.yml"
+  register: _ntfy_compose_raw
+
+- name: Decode ntfy compose content
+  ansible.builtin.set_fact:
+    _ntfy_compose: "{{ _ntfy_compose_raw.content | b64decode }}"
+
+- name: Assert ntfy compose has expected port mapping
+  ansible.builtin.assert:
+    that:
+      - "'8080:80' in _ntfy_compose"
+    fail_msg: >-
+      ntfy docker-compose.yml.j2 missing expected port mapping 8080:80
+
+- name: Assert ntfy compose has expected image
+  ansible.builtin.assert:
+    that:
+      - "'binwiederhier/ntfy:v2.17.0' in _ntfy_compose"
+    fail_msg: "ntfy docker-compose.yml.j2 does not reference expected image"
+
+- name: Assert ntfy compose mounts server.yml config
+  ansible.builtin.assert:
+    that:
+      - "'server.yml:ro' in _ntfy_compose"
+    fail_msg: "ntfy docker-compose.yml.j2 missing server.yml config mount"
+
+- name: Render ntfy server.yml.j2 to /tmp
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/server.yml.j2"
+    dest: "{{ _fixture_dir }}/test_ntfy_server.yml"
+    mode: "0644"
+
+- name: Read rendered ntfy server.yml
+  ansible.builtin.slurp:
+    src: "{{ _fixture_dir }}/test_ntfy_server.yml"
+  register: _ntfy_server_raw
+
+- name: Decode ntfy server content
+  ansible.builtin.set_fact:
+    _ntfy_server: "{{ _ntfy_server_raw.content | b64decode }}"
+
+- name: Assert ntfy server.yml has expected configuration
+  ansible.builtin.assert:
+    that:
+      - "'cache-file' in _ntfy_server"
+      - "'listen-http: \":80\"' in _ntfy_server"
+      - "'cache-duration: \"5m\"' in _ntfy_server"
+    fail_msg: >-
+      ntfy server.yml.j2 missing expected configuration;
+      rendered content: {{ _ntfy_server }}
+
+# Asserts the rendered base URL is the service's public HTTPS name.
+# Rejects a host address and any plain-HTTP scheme.
+- name: Assert ntfy base-url is the reverse-proxied FQDN over HTTPS
+  ansible.builtin.assert:
+    that:
+      - "'base-url: \"https://ntfy.example.test\"' in _ntfy_server"
+      - "'http://' not in _ntfy_server"
+    fail_msg: >-
+      ntfy server.yml.j2 base-url must be the service FQDN over HTTPS
+      (never a host address, never plain HTTP);
+      rendered content: {{ _ntfy_server }}
+
+# Asserts the optional publisher's config and storage are absent while its gate is off.
+- name: Assert the auth database stays closed while the ai-jobs gate is off
+  ansible.builtin.assert:
+    that:
+      - "'auth-file' not in _ntfy_server"
+      - "'/var/lib/ntfy' not in _ntfy_compose"
+
+- name: Render ntfy compose and server config with the ai-jobs gate on
+  ansible.builtin.template:
+    src: "{{ _template_dir }}/{{ item.src }}"
+    dest: "{{ _fixture_dir }}/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: docker-compose.yml.j2, dest: test_ntfy_compose_ai_jobs.yml}
+    - {src: server.yml.j2, dest: test_ntfy_server_ai_jobs.yml}
+  vars:
+    ntfy_docker_ai_jobs_enabled: true
+
+- name: Assert the ai-jobs gate adds the auth file and its volume
+  vars:
+    _compose_on: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_compose_ai_jobs.yml') }}"
+    _server_on: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_server_ai_jobs.yml') }}"
+  ansible.builtin.assert:
+    that:
+      - "'auth-file: \"/var/lib/ntfy/user.db\"' in _server_on"
+      - "'/opt/ntfy/auth:/var/lib/ntfy' in _compose_on"
+      - "'auth-default-access' not in _server_on"
