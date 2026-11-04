@@ -226,3 +226,23 @@ def test_vikunja_tier_visibility_check_ignores_projects_the_tier_owns():
     assert _render("{{ " + check["ansible.builtin.assert"]["that"][0] + " }}", context) in (True, "True")
     tier["project_allowlist"] = [12, 13]
     assert _render("{{ " + check["ansible.builtin.assert"]["that"][0] + " }}", context) in (False, "False")
+
+
+def test_vikunja_tier_permission_check_skips_projects_the_tier_owns():
+    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
+    read = _task(reconcile, "Read the effective permission on each visible project as the tier account")
+    readback = {
+        "results": [
+            {
+                "json": [
+                    {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
+                    {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+                ]
+            }
+        ]
+    }
+    looped = _render(
+        read["loop"],
+        {"vikunja_agent_projects_readback": readback, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
+    )
+    assert [int(project_id) for project_id in looped] == [12]
