@@ -206,3 +206,23 @@ def test_vikunja_tier_revoke_loop_skips_projects_the_tier_owns():
         {"vikunja_agent_visible_projects": projects, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
     )
     assert [project["id"] for project in looped] == [12]
+
+
+def test_vikunja_tier_visibility_check_ignores_projects_the_tier_owns():
+    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
+    check = _task(reconcile, "Assert the tier account can see exactly its project allowlist")
+    readback = {
+        "results": [
+            {
+                "json": [
+                    {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
+                    {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+                ]
+            }
+        ]
+    }
+    tier = {"username": "svc-agent-ro", "project_allowlist": [12]}
+    context = {"vikunja_agent_projects_readback": readback, "vikunja_agent_tier": tier}
+    assert _render("{{ " + check["ansible.builtin.assert"]["that"][0] + " }}", context) in (True, "True")
+    tier["project_allowlist"] = [12, 13]
+    assert _render("{{ " + check["ansible.builtin.assert"]["that"][0] + " }}", context) in (False, "False")
