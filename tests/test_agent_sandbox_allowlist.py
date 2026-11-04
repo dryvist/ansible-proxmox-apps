@@ -10,25 +10,60 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "agent_sandbox"
 TEMPLATE = ROOT / "roles" / "agent_sandbox" / "templates" / "agent-allow.py.j2"
+DENIED_DOMAINS = ["youtrack.example.invalid", "vikunja.example.invalid"]
 
 
-def domain_validator():
+def rendered_namespace():
     templar = Templar(loader=DataLoader())
     templar.available_variables = {
         "agent_sandbox_operator_allowlist_file": "/etc/agent-sandbox-allowlist/operator.txt",
         "agent_sandbox_allowlist_log_file": "/var/log/agent-sandbox/allowed-domains.log",
         "agent_sandbox_proxy_container": "agent-squid",
+        "agent_sandbox_denied_domains": DENIED_DOMAINS,
     }
     script = templar.template(trust_as_template(TEMPLATE.read_text(encoding="utf-8")))
     namespace = {"__name__": "agent_allow"}
     exec(compile(script, str(TEMPLATE), "exec"), namespace)
-    return namespace["validate_domain"]
+    return namespace
 
 
 class OperatorAllowlistDomainValidation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.validate_domain = staticmethod(domain_validator())
+        namespace = rendered_namespace()
+        cls.validate_domain = staticmethod(namespace["validate_domain"])
+        cls.parse_command = staticmethod(namespace["parse_command"])
+
+    def test_add_refuses_denied_domains_and_their_subdomains(self):
+        for command in (
+            "add youtrack.example.invalid",
+            "add vikunja.example.invalid",
+            "add api.youtrack.example.invalid",
+            "add deep.edge.vikunja.example.invalid",
+            "add *.vikunja.example.invalid",
+            "add *.api.youtrack.example.invalid",
+            "add VIKUNJA.EXAMPLE.INVALID",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    self.parse_command(command)
+
+    def test_add_still_accepts_unrelated_domains(self):
+        self.assertEqual(self.parse_command("add example.org"), ("add", "example.org"))
+        self.assertEqual(
+            self.parse_command("add notvikunja.example.invalid"),
+            ("add", "notvikunja.example.invalid"),
+        )
+        self.assertEqual(
+            self.parse_command("add shared.example.invalid"),
+            ("add", "shared.example.invalid"),
+        )
+
+    def test_rm_of_a_denied_domain_stays_available_for_cleanup(self):
+        self.assertEqual(
+            self.parse_command("rm youtrack.example.invalid"),
+            ("rm", "youtrack.example.invalid"),
+        )
 
     def test_accepts_dns_domains_and_one_leading_wildcard(self):
         for domain in ("example.org", "api.example.org"):
@@ -61,6 +96,17 @@ class OperatorAllowlistDomainValidation(unittest.TestCase):
             with self.subTest(domain=domain):
                 with self.assertRaises(ValueError):
                     self.validate_domain(domain)
+
+    def test_denied_domains_default_builds_names_from_the_environment(self):
+        denied = yaml.safe_load(
+            (ROLE / "defaults/denied-domains.yml").read_text(encoding="utf-8")
+        )["agent_sandbox_denied_domains"]
+        self.assertEqual(len(denied), 2)
+        for label in ("youtrack", "vikunja"):
+            entry = next(item for item in denied if item.startswith(f"{label}."))
+            with self.subTest(label=label):
+                self.assertIn("lookup('env', 'PROXMOX_SUBDOMAIN')", entry)
+                self.assertIn("mandatory(", entry)
 
     def test_converge_creates_the_file_only_when_missing(self):
         tasks = yaml.safe_load((ROLE / "tasks/main/deploy.yml").read_text(encoding="utf-8"))
