@@ -10,7 +10,7 @@
 # tofu_data is set as a FACT (the same shape as wall_prometheus_host.yml), so
 # this play belongs in the trailing fact-publishing block at the end of
 # verify_templates.yml; see the note there.
-- name: Verify the wall gateway's ClickHouse upstream and auth include
+- name: Verify the wall gateway's ClickHouse upstream, auth include and MC6 slide
   hosts: localhost
   connection: local
   gather_facts: false
@@ -64,10 +64,11 @@
           `clickhouse` tag and wall_clickhouse_http_port must be ClickHouse's
           HTTP port. Rendered host={{ _ch_host }} port={{ _ch_port }}.
 
-    - name: Render the nginx site and the auth include
+    - name: Render the nginx site, the auth include and config.json
       ansible.builtin.set_fact:
         _site: "{{ lookup('template', _template_dir ~ '/wall.nginx.conf.j2') }}"
         _auth: "{{ lookup('template', _template_dir ~ '/wall-feed-clickhouse-auth.conf.j2') }}"
+        _config: "{{ lookup('template', _template_dir ~ '/config.json.j2') | from_json }}"
 
     - name: Assert the site names the ClickHouse upstream and only the include carries the credential
       ansible.builtin.assert:
@@ -84,6 +85,16 @@
           clickhouse-tagged container and keep the credential out of the
           world-readable site; the auth include must set the wall_reader
           X-ClickHouse-User/-Key headers. Rendered site: {{ _site }}
+
+    - name: Assert config.json carries MC6 LEXICON after the five MC slides
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "_config.slides | map(attribute='name') | list == ['MC1', 'MC2', 'MC3', 'MC4', 'MC5', 'LEXICON']"
+          - "_config.slides | last == {'name': 'LEXICON', 'url': '/mc6/'}"
+        fail_msg: >-
+          config.json must list the six built-in slides, MC6 as LEXICON at
+          /mc6/, before any wall_slides. Rendered slides: {{ _config.slides }}
 
     # An unfetched domain ({}) and a null field both fall back to the 503
     # include through the real role default, never an empty key header.
@@ -110,7 +121,6 @@
           Without a fetched WALL_READER_PASSWORD the auth include must hold
           `return 503;` and no X-ClickHouse header. Rendered: {{ item.auth }}
       loop: "{{ _wall_missing_auth_cases }}"
-
 
     - name: No clickhouse-tagged container renders an empty host
       ansible.builtin.set_fact:
