@@ -14,6 +14,7 @@ DEFAULTS = yaml.safe_load(
 )
 ENV = NativeEnvironment()
 ENV.filters["combine"] = lambda first, second: {**first, **second}
+ENV.filters["bool"] = lambda value: value if isinstance(value, bool) else str(value).lower() in ("true", "yes", "1")
 
 
 def _tasks():
@@ -65,12 +66,13 @@ def _module_drift(module, desired):
 
 
 def _identity_check(user, link):
-    task = _task("Determine whether each OAuth identity link already exists")
+    task = _task("Determine whether the OAuth identity link already exists")
     context = {
         "youtrack_hub_identity_user_read": {
-            "json": [user],
-            "item": link,
+            "status": 200,
+            "json": {"type": "UsersPage", "users": [user]},
         },
+        "youtrack_hub_identity_link": link,
         "youtrack_hub_auth_module_name": "Authelia",
     }
     for name, expression in task.get("vars", {}).items():
@@ -140,17 +142,11 @@ def test_existing_identity_link_does_not_trigger_a_write():
         ],
     }
     facts = _identity_check(user, link)
-    context = {
-        "youtrack_hub_identity_link_check": {
-            "ansible_facts": facts,
-            "item": {"item": link},
-        },
-        "ansible_check_mode": False,
-    }
+    context = {**facts, "youtrack_hub_identity_link": link, "ansible_check_mode": False}
 
     assert facts["youtrack_hub_identity_link_present"] is True
     assert not _condition_matches(
-        _task("Create missing YouTrack Hub OAuth identity links")["when"],
+        _task("Create the missing OAuth identity link for {{ youtrack_hub_identity_link.login }}")["when"],
         context,
     )
 
@@ -160,14 +156,12 @@ def test_missing_identity_link_posts_the_expected_body():
     user = {"id": "user-1", "login": "operator", "details": []}
     facts = _identity_check(user, link)
     context = {
-        "youtrack_hub_identity_link_check": {
-            "ansible_facts": facts,
-            "item": {"item": link},
-        },
+        **facts,
+        "youtrack_hub_identity_link": link,
         "youtrack_hub_auth_module": {"id": "module-1"},
         "ansible_check_mode": False,
     }
-    task = _task("Create missing YouTrack Hub OAuth identity links")
+    task = _task("Create the missing OAuth identity link for {{ youtrack_hub_identity_link.login }}")
 
     assert facts["youtrack_hub_identity_link_present"] is False
     assert _condition_matches(task["when"], context)
@@ -208,3 +202,37 @@ def test_identity_links_accept_the_api_type_field_alias():
     }
 
     assert _identity_check(user, link)["youtrack_hub_identity_link_present"] is True
+
+
+def test_identity_link_check_ignores_details_without_a_type_field():
+    link = {"login": "operator", "identifier": "operator"}
+    user = {
+        "id": "user-1",
+        "login": "operator",
+        "details": [
+            {"authModule": {"name": "Authelia"}, "identifier": "operator"},
+            {"$type": "Oauth2detailsJSON", "identifier": "operator"},
+        ],
+    }
+
+    assert _identity_check(user, link)["youtrack_hub_identity_link_present"] is False
+
+
+def test_no_task_loops_over_registered_uri_results():
+    for task in _tasks():
+        loop = str(task.get("loop", ""))
+        assert ".results" not in loop, task.get("name", "unnamed task")
+
+
+def test_auth_module_selection_reads_the_hub_page_object():
+    task = _task("Select the configured YouTrack Hub authentication module")
+    expression = task["ansible.builtin.set_fact"]["youtrack_hub_auth_module_matches"]
+    page = {
+        "type": "AuthmodulesPage",
+        "authmodules": [{"name": "Hub", "id": "core"}, {"name": "Authelia", "id": "module-1"}],
+    }
+    matches = _render(
+        expression,
+        {"youtrack_hub_auth_modules_read": {"json": page}, "youtrack_hub_auth_module_name": "Authelia"},
+    )
+    assert [module["id"] for module in matches] == ["module-1"]
