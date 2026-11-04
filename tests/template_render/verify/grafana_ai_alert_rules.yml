@@ -15,6 +15,7 @@
       {{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules-workstation.yml.j2
     _contactpoints_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/contactpoints.yml.j2"
     _token_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/cribl-hec-token.env.j2"
+    _slack_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alert-slack.env.j2"
     _datasource_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/datasource.yml.j2"
     _compose_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/docker-compose.yml.j2"
     _base_rules_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/alerting/rules.yml.j2"
@@ -175,6 +176,7 @@
           {{ (lookup('ansible.builtin.template', _contactpoints_template)
               | from_yaml).contactPoints[0].receivers[0] }}
         _ai_alert_token_env: "{{ lookup('ansible.builtin.template', _token_env_template) }}"
+        _ai_slack_env: "{{ lookup('ansible.builtin.template', _slack_env_template) }}"
         _ai_notification_policy: >-
           {{ (lookup('ansible.builtin.template', _notification_policy_template)
               | from_yaml).policies[0] }}
@@ -182,6 +184,8 @@
         grafana_stack_alert_cribl_hec_url: >-
           http://syslog.example.test:8088/services/collector/raw?index=ansible&source=grafana-alert&sourcetype=grafana%3Aalert
         grafana_stack_alert_cribl_hec_token: fixture-hec-token-not-real
+        grafana_stack_alert_slack_bot_token: fixture-slack-bot-token-not-real
+        grafana_stack_alert_slack_critical_channel_id: fixture-critical-channel-id
 
     - name: Assert the contact point routes to Stream with an env-backed HEC credential
       ansible.builtin.assert:
@@ -203,6 +207,19 @@
           Grafana's contact point must post to the Stream HEC raw input and
           resolve its credential from the protected env file, not contact ntfy
           or embed the credential in provisioning YAML.
+
+    - name: Assert the compose mounts the Slack env file with both credentials
+      ansible.builtin.assert:
+        that:
+          - >-
+            grafana_stack_alert_slack_env_file
+            in _grafana_compose['services']['grafana']['env_file']
+          - "'GRAFANA_ALERT_SLACK_BOT_TOKEN=fixture-slack-bot-token-not-real' in _ai_slack_env"
+          - "'GRAFANA_ALERT_SLACK_CRITICAL_CHANNEL_ID=fixture-critical-channel-id' in _ai_slack_env"
+        fail_msg: >-
+          The Grafana container must receive the Slack bot token and critical
+          channel ID through the root-owned env file, never through the
+          provisioning YAML or the compose environment block.
 
     - name: Render the base alert rules
       ansible.builtin.set_fact:

@@ -13,6 +13,7 @@ import tempfile
 
 ALLOWLIST_PATH = Path({{ agent_sandbox_operator_allowlist_file | to_json }})
 LOG_PATH = Path({{ agent_sandbox_allowlist_log_file | to_json }})
+DENIED_DOMAINS = [entry.lower() for entry in {{ agent_sandbox_denied_domains | to_json }}]
 LOCK_PATH = ALLOWLIST_PATH.with_name(".operator.lock")
 RECONFIGURE = [
     "/usr/bin/sudo",
@@ -41,6 +42,17 @@ def validate_domain(domain):
         # Squid dstdomain spells "this domain and its subdomains" as a leading dot.
         return domain.lower().replace("*.", ".", 1)
     raise ValueError("IP addresses are not allowed")
+
+
+def refuse_denied_domain(domain):
+    # The proxy's leading-dot spelling says "this domain and its subdomains".
+    candidate = domain[1:] if domain.startswith(".") else domain
+    for denied in DENIED_DOMAINS:
+        if candidate == denied or candidate.endswith("." + denied):
+            raise ValueError(
+                f"{domain} is denied: task-tracker hosts and their subdomains"
+                " cannot be allowlisted"
+            )
 
 
 def read_domains():
@@ -95,7 +107,12 @@ def parse_command(command):
     if parts == ["ls"]:
         return "ls", None
     if len(parts) == 2 and parts[0] in {"add", "rm"}:
-        return parts[0], validate_domain(parts[1])
+        domain = validate_domain(parts[1])
+        # Only "add" is gated: a "rm" of a denied domain is a no-op anyway and
+        # removing a stray entry is always safe.
+        if parts[0] == "add":
+            refuse_denied_domain(domain)
+        return parts[0], domain
     raise ValueError("usage: agent-allow add|rm <domain> | ls")
 
 

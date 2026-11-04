@@ -83,7 +83,7 @@ splunk_hec_url: "https://splunk.{{ ingress_domain }}:{{ hec_port }}"
 
 To change any port or IP:
 
-1. Update `tofu-proxmox/main/locals.tf`
+1. Update `tofu-proxmox/modules/proxmox-stack/constants.tf`
 2. Run the tofu-proxmox Terrakube workspace — the apply natively publishes
    the inventory object, which `load_tofu.yml` fetches directly. There is no
    manual regeneration step and no local cache.

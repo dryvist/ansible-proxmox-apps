@@ -192,3 +192,57 @@ def test_vikunja_token_scope_validation_runs_without_publication():
         "Publish the token to OpenBao for {{ vikunja_mcp_user.username }}",
     ):
         assert "vikunja_token_publish_openbao | bool" in str(_task(identity_tasks, name)["when"])
+
+
+def test_vikunja_tier_revoke_loop_skips_projects_the_tier_owns():
+    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
+    revoke = _task(reconcile, "Remove every direct user share held by the tier account")
+    projects = [
+        {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
+        {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+    ]
+    looped = _render(
+        revoke["loop"],
+        {"vikunja_agent_visible_projects": projects, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
+    )
+    assert [project["id"] for project in looped] == [12]
+
+
+def test_vikunja_tier_visibility_check_ignores_projects_the_tier_owns():
+    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
+    check = _task(reconcile, "Assert the tier account can see exactly its project allowlist")
+    readback = {
+        "results": [
+            {
+                "json": [
+                    {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
+                    {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+                ]
+            }
+        ]
+    }
+    tier = {"username": "svc-agent-ro", "project_allowlist": [12]}
+    context = {"vikunja_agent_projects_readback": readback, "vikunja_agent_tier": tier}
+    assert _render("{{ " + check["ansible.builtin.assert"]["that"][0] + " }}", context) in (True, "True")
+    tier["project_allowlist"] = [12, 13]
+    assert _render("{{ " + check["ansible.builtin.assert"]["that"][0] + " }}", context) in (False, "False")
+
+
+def test_vikunja_tier_permission_check_skips_projects_the_tier_owns():
+    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
+    read = _task(reconcile, "Read the effective permission on each visible project as the tier account")
+    readback = {
+        "results": [
+            {
+                "json": [
+                    {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
+                    {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
+                ]
+            }
+        ]
+    }
+    looped = _render(
+        read["loop"],
+        {"vikunja_agent_projects_readback": readback, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
+    )
+    assert [int(project_id) for project_id in looped] == [12]

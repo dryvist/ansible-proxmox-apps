@@ -16,7 +16,7 @@ vikunja_version: "2.7.1"
 vikunja_release_zip: "vikunja-v{{ vikunja_version }}-linux-amd64-full.zip"
 vikunja_release_zip_url: >-
   https://github.com/go-vikunja/vikunja/releases/download/v{{ vikunja_version }}/{{ vikunja_release_zip }}
-vikunja_release_zip_sha256: "c37f8291698e288cd95198b52b826ffca40c3665d351041b93358e142862994d"
+vikunja_release_zip_sha256: "2d0b64a477341977958067a42a32655b74f5e72e6eb02f57942faa19d9ee76ad"
 vikunja_binary_name: "vikunja-v{{ vikunja_version }}-linux-amd64"
 
 # --- System user / paths ------------------------------------------------------
@@ -35,6 +35,11 @@ vikunja_port: "{{ tofu_data.constants.service_ports.vikunja_web }}"
 # Must match the Traefik router FQDN (<name>.<ingress base domain>) — Vikunja
 # uses it for generated links and CORS, so the bare container domain is wrong.
 vikunja_public_url: "https://vikunja.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}/"
+
+# --- Authelia OpenID Connect (client secret: inventory/group_vars/vikunja_group.yml)
+vikunja_oidc_client_id: vikunja
+vikunja_oidc_provider_name: Authelia
+vikunja_oidc_provider_url: "https://{{ authelia_hostname }}.{{ lookup('env', 'PROXMOX_SUBDOMAIN') }}"
 
 # --- Database: the shared native Postgres cluster (issue #138) --------------
 # FQDN + port are DERIVED, never literals. The vikunja database/role itself is
@@ -75,17 +80,12 @@ vikunja_service_users:
 #                 projects; the Hermes bridge polls project 64 through it and
 #                 every agent MCP session authenticates as it.
 #
-# AUTH MODEL: this deployment authenticates LOCALLY. Confirmed live against the
-# instance (GET /api/v1/info: auth.local.enabled true, auth.openid_connect
-# .enabled false with no providers, auth.ldap.enabled false; GET / returns 200
-# with no redirect, so nothing gates it) and consistent with the rendered
-# config, which carries no `auth:` block at all and so takes upstream v2.3.0's
-# defaults, plus the published ingress row's sso: false. There is therefore no
-# OIDC identity to attach an operator account to, and declaring OIDC wiring here
-# would be actively harmful: a Vikunja OIDC login provisions a SEPARATE account
-# keyed on issuer+subject, which would shadow the local account and inherit none
-# of the project shares granted below. Local account is the correct declaration
-# today; an SSO migration is a distinct change that must move the shares too.
+# AUTH MODEL: local login stays on for the admin, operator and service
+# accounts, and Authelia OpenID Connect is offered beside it (provider key
+# `authelia`, matching the redirect URI Authelia registers for client
+# `vikunja`). A first OIDC login provisions a NEW account keyed on
+# issuer+subject; it does not attach to the local operator account, so it
+# starts with no project shares until they are granted to it.
 #
 # Self-registration is off (service.enableregistration false), so this account
 # cannot be self-served — it is declared here and reconciled by the same CLI
