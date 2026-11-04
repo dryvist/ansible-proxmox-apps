@@ -102,6 +102,37 @@
     - wall-feed.conf
     - wall-feed-proxy.conf
 
+# Unlike the shipped gateway configs, this include is rendered here: it
+# carries the ClickHouse credential, so it is root- and workers-readable
+# only, and its content stays out of the logs. It is rendered before the
+# gateway config that includes it, so nginx never loads a config whose
+# include is missing.
+- name: Require a header-safe ClickHouse credential
+  ansible.builtin.assert:
+    that:
+      - wall_clickhouse_password is match('^[A-Za-z0-9]+$')
+    fail_msg: WALL_READER_PASSWORD must be alphanumeric (nginx header value).
+    quiet: true
+  no_log: true
+  when: wall_clickhouse_password | length > 0
+
+- name: Warn that the ClickHouse routes answer 503 without a reader credential
+  ansible.builtin.debug:
+    msg: >-
+      The clickhouse-wall domain returned no WALL_READER_PASSWORD;
+      /api/words and /api/llm/recent answer 503 until it does.
+  when: wall_clickhouse_password | length == 0
+
+- name: Render the gateway's ClickHouse auth include
+  ansible.builtin.template:
+    src: wall-feed-clickhouse-auth.conf.j2
+    dest: /etc/nginx/wall-feed-clickhouse-auth.conf
+    owner: root
+    group: "{{ wall_nginx_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Reload nginx
+
 # wall-feed.conf includes wall-feed-proxy.conf by a relative path, which nginx
 # resolves against its config directory.
 - name: Install the gateway config
@@ -121,19 +152,6 @@
     (wall_gateway_config_sources.results
      | selectattr('item', 'equalto', item)
      | map(attribute='stat.exists') | first | default(false))
-
-# Unlike the shipped gateway configs, this include is rendered here: it
-# carries the ClickHouse credential, so it is root- and workers-readable
-# only, and its content stays out of the logs.
-- name: Render the gateway's ClickHouse auth include
-  ansible.builtin.template:
-    src: wall-feed-clickhouse-auth.conf.j2
-    dest: /etc/nginx/wall-feed-clickhouse-auth.conf
-    owner: root
-    group: "{{ wall_nginx_group }}"
-    mode: "0640"
-  no_log: true
-  notify: Reload nginx
 
 - name: Render config.json
   ansible.builtin.template:

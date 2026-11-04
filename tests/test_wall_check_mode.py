@@ -36,3 +36,16 @@ def test_clickhouse_auth_include_is_rendered_unlogged_for_root_and_workers():
     assert template["group"] == "{{ wall_nginx_group }}"
     assert template["mode"] == "0640"
     assert render.get("no_log") is True
+
+
+def test_clickhouse_auth_include_is_rendered_before_the_gateway_config():
+    # wall-feed.conf includes the auth file; installing it first would leave
+    # nginx unable to load its config whenever the render step stops the run.
+    tasks = yaml.safe_load((REPO / "roles/wall/tasks/main.yml").read_text(encoding="utf-8"))
+    names = [task.get("name") for task in _tasks_in(tasks)]
+    assert names.index("Render the gateway's ClickHouse auth include") < names.index(
+        "Install the gateway config"
+    )
+    assert names.index("Require a header-safe ClickHouse credential") < names.index(
+        "Render the gateway's ClickHouse auth include"
+    )

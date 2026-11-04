@@ -88,6 +88,13 @@ Run via the standard site playbook (scoped — never the full `site.yml`):
 ansible-playbook playbooks/site.yml --tags status
 ```
 
+For component-scoped converges, `--tags gatus` renders Gatus configuration,
+reconciles only the Gatus service, and checks its HTTP endpoint. It does not
+run Docker engine setup, Uptime Kuma password or setup probes, or AutoKuma
+monitor rendering. Use `--tags uptime_kuma` for the Kuma service and initial
+setup, or `--tags autokuma` for the AutoKuma monitor set and service. The
+untagged role run and the `status` tag still converge the full stack.
+
 Or include the role directly against the status host:
 
 ```yaml

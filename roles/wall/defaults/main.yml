@@ -43,8 +43,10 @@ wall_prometheus_host: >-
 # ClickHouse HTTP interface for the gateway's /api/words and /api/llm/recent
 # proxies: the container carrying the `clickhouse` tag, resolved from the
 # published inventory the same way cribl_stream's clickhouse_llm_* outputs
-# derive theirs — never a literal host. 8123 is ClickHouse's own HTTP port.
-wall_clickhouse_http_port: 8123
+# derive theirs — never a literal host; the port is the published constant.
+wall_clickhouse_http_port: >-
+  {{ tofu_data.constants.service_ports.clickhouse_http
+     | mandatory('tofu_data.constants.service_ports.clickhouse_http missing — regenerate the published inventory') }}
 wall_clickhouse_host: >-
   {{ (tofu_data['containers'] | default({}) | dict2items
       | selectattr('value.tags', 'defined')
@@ -59,12 +61,13 @@ wall_nginx_group: www-data
 # Read-only ClickHouse credential for the gateway's /api/words and
 # /api/llm/recent proxies; nginx adds it to each upstream request as
 # X-ClickHouse-User/-Key, so the browser never carries one. The password is
-# the OpenBao key WALL_READER_PASSWORD in the clickhouse-wall domain. No env
-# fallback: an unfetched domain aborts the play rather than rendering an
-# empty credential.
+# key WALL_READER_PASSWORD in the clickhouse-wall secret domain. No env
+# fallback. When the domain was not fetched, the include answers 503 on the
+# two ClickHouse routes instead of carrying an empty credential, so the rest
+# of the wall keeps serving.
 wall_clickhouse_password: >-
   {{ (bao_clickhouse_wall_secrets | default({})).WALL_READER_PASSWORD
-     | mandatory('WALL_READER_PASSWORD must be set in the environment (clickhouse-wall domain)') }}
+     | default('', true) }}
 
 wall_title: HOMELAB
 wall_refresh_seconds: 15
