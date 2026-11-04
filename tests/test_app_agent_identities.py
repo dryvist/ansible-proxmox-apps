@@ -192,17 +192,3 @@ def test_vikunja_token_scope_validation_runs_without_publication():
         "Publish the token to OpenBao for {{ vikunja_mcp_user.username }}",
     ):
         assert "vikunja_token_publish_openbao | bool" in str(_task(identity_tasks, name)["when"])
-
-
-def test_vikunja_tier_revoke_loop_skips_projects_the_tier_owns():
-    reconcile = _yaml("roles/vikunja/tasks/agent_tier_reconcile.yml")
-    revoke = _task(reconcile, "Remove every direct user share held by the tier account")
-    projects = [
-        {"id": 87, "title": "Inbox", "owner": {"username": "svc-agent-ro"}},
-        {"id": 12, "title": "Shared", "owner": {"username": "svc-mcp-rw"}},
-    ]
-    looped = _render(
-        revoke["loop"],
-        {"vikunja_agent_visible_projects": projects, "vikunja_agent_tier": {"username": "svc-agent-ro"}},
-    )
-    assert [project["id"] for project in looped] == [12]

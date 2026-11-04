@@ -21,20 +21,282 @@
     # A literal placeholder domain stands in for the environment lookup so the
     # assertion below is exact rather than dependent on the runner's env.
     ntfy_docker_base_url: "https://{{ ntfy_docker_container_name }}.example.test"
-    _template_dir: "../../../../roles/ntfy_docker/templates"
+    _template_dir: "../../../roles/ntfy_docker/templates"
 
   tasks:
-    - name: Render and verify the ntfy compose and server configs
-      ansible.builtin.include_tasks: ntfy_docker/render_compose_and_server.yml
+    - name: Render ntfy docker-compose.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_compose.yml"
+        mode: "0644"
 
-    - name: Verify the Slack fan-out routing
-      ansible.builtin.include_tasks: ntfy_docker/slack_fanout_routing.yml
+    - name: Read rendered ntfy docker-compose.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_ntfy_compose.yml"
+      register: _ntfy_compose_raw
 
-    - name: Verify the Slack fan-out guards and env files
-      ansible.builtin.include_tasks: ntfy_docker/slack_fanout_guards.yml
+    - name: Decode ntfy compose content
+      ansible.builtin.set_fact:
+        _ntfy_compose: "{{ _ntfy_compose_raw.content | b64decode }}"
 
-    - name: Verify the canary units and script
-      ansible.builtin.include_tasks: ntfy_docker/canary.yml
+    - name: Assert ntfy compose has expected port mapping
+      ansible.builtin.assert:
+        that:
+          - "'8080:80' in _ntfy_compose"
+        fail_msg: >-
+          ntfy docker-compose.yml.j2 missing expected port mapping 8080:80
+
+    - name: Assert ntfy compose has expected image
+      ansible.builtin.assert:
+        that:
+          - "'binwiederhier/ntfy:v2.17.0' in _ntfy_compose"
+        fail_msg: "ntfy docker-compose.yml.j2 does not reference expected image"
+
+    - name: Assert ntfy compose mounts server.yml config
+      ansible.builtin.assert:
+        that:
+          - "'server.yml:ro' in _ntfy_compose"
+        fail_msg: "ntfy docker-compose.yml.j2 missing server.yml config mount"
+
+    - name: Render ntfy server.yml.j2 to /tmp
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/server.yml.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_server.yml"
+        mode: "0644"
+
+    - name: Read rendered ntfy server.yml
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/test_ntfy_server.yml"
+      register: _ntfy_server_raw
+
+    - name: Decode ntfy server content
+      ansible.builtin.set_fact:
+        _ntfy_server: "{{ _ntfy_server_raw.content | b64decode }}"
+
+    - name: Assert ntfy server.yml has expected configuration
+      ansible.builtin.assert:
+        that:
+          - "'cache-file' in _ntfy_server"
+          - "'listen-http: \":80\"' in _ntfy_server"
+          - "'cache-duration: \"5m\"' in _ntfy_server"
+        fail_msg: >-
+          ntfy server.yml.j2 missing expected configuration;
+          rendered content: {{ _ntfy_server }}
+
+    # base-url is what the server hands to clients (emitted links, web-app
+    # origin, web-push subscriptions). A node hostname or a plain-HTTP scheme
+    # renders those unreachable while direct POSTs keep returning 200, so the
+    # breakage is invisible without an explicit assertion. The `http://` guard
+    # is a substring test that `https://` does not satisfy.
+    - name: Assert ntfy base-url is the reverse-proxied FQDN over HTTPS
+      ansible.builtin.assert:
+        that:
+          - "'base-url: \"https://ntfy.example.test\"' in _ntfy_server"
+          - "'http://' not in _ntfy_server"
+        fail_msg: >-
+          ntfy server.yml.j2 base-url must be the service FQDN over HTTPS
+          (never a host address, never plain HTTP);
+          rendered content: {{ _ntfy_server }}
+
+    # The ai-jobs publisher is opt-in: with its gate off neither file mentions
+    # the auth database; with it on the config names the file and the compose
+    # file mounts its directory.
+    - name: Assert the auth database stays closed while the ai-jobs gate is off
+      ansible.builtin.assert:
+        that:
+          - "'auth-file' not in _ntfy_server"
+          - "'/var/lib/ntfy' not in _ntfy_compose"
+
+    - name: Render ntfy compose and server config with the ai-jobs gate on
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: docker-compose.yml.j2, dest: test_ntfy_compose_ai_jobs.yml}
+        - {src: server.yml.j2, dest: test_ntfy_server_ai_jobs.yml}
+      vars:
+        ntfy_docker_ai_jobs_enabled: true
+
+    - name: Assert the ai-jobs gate adds the auth file and its volume
+      vars:
+        _compose_on: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_compose_ai_jobs.yml') }}"
+        _server_on: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_server_ai_jobs.yml') }}"
+      ansible.builtin.assert:
+        that:
+          - "'auth-file: \"/var/lib/ntfy/user.db\"' in _server_on"
+          - "'/opt/ntfy/auth:/var/lib/ntfy' in _compose_on"
+          - "'auth-default-access' not in _server_on"
+
+    # Slack fan-out: every topic reaches the all-alerts webhook, a declared
+    # per-topic route adds its own, and an unseeded key fails the converge.
+    - name: Plan the Slack fan-out with every needed webhook seeded
+      ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+      vars:
+        ntfy_docker_topics: [keystone, proxmox]
+        ntfy_docker_inform_topics: []
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_routes: [proxmox]
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          proxmox: https://hooks.example.test/proxmox
+
+    - name: Assert one all-alerts instance per topic plus the per-topic route
+      ansible.builtin.assert:
+        that:
+          - >-
+            ntfy_docker_slack_instances ==
+            {'all-keystone': 'keystone', 'all-proxmox': 'proxmox', 'proxmox': 'proxmox'}
+        fail_msg: "unexpected instances: {{ ntfy_docker_slack_instances }}"
+
+    # An informational topic has its own channel and is kept off all-alerts.
+    - name: Plan the Slack fan-out with an informational topic
+      ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+      vars:
+        ntfy_docker_topics: [keystone, status]
+        ntfy_docker_inform_topics: [status]
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_routes: []
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          status: https://hooks.example.test/status
+
+    - name: Assert the informational topic gets only its own instance
+      ansible.builtin.assert:
+        that:
+          - "ntfy_docker_slack_instances == {'all-keystone': 'keystone', 'status': 'status'}"
+        fail_msg: "informational topic leaked into all-alerts: {{ ntfy_docker_slack_instances }}"
+
+    - name: Plan the Slack fan-out with an informational webhook unseeded
+      block:
+        - name: Include the plan with the status webhook missing
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone, status]
+            ntfy_docker_inform_topics: [status]
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: []
+            ntfy_docker_slack_webhooks:
+              keystone: https://hooks.example.test/all
+
+        - name: Fail because the unseeded informational topic did not fail the plan
+          ansible.builtin.fail:
+            msg: an unseeded informational webhook must fail the converge
+      rescue:
+        - name: Assert the failure names the missing key
+          ansible.builtin.assert:
+            that:
+              - "'status' in ansible_failed_result.msg"
+
+    - name: Render the all-alerts and per-topic env files
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-to-slack.env.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy_to_slack_{{ item.key }}.env"
+        mode: "0600"
+      loop:
+        - {key: all-proxmox, value: proxmox}
+        - {key: proxmox, value: proxmox}
+      vars:
+        ntfy_docker_slack_alerts_key: keystone
+        ntfy_docker_slack_alerts_template: >-
+          {% raw %}[{{ .Topic }}] {{ if .Title }}*{{ .Title }}*: {{ end }}{{ .Message }}{% endraw %}
+        ntfy_docker_slack_webhooks:
+          keystone: https://hooks.example.test/all
+          proxmox: https://hooks.example.test/proxmox
+
+    - name: Assert the env files carry the right webhook and Go template
+      vars:
+        _all_env: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_to_slack_all-proxmox.env') }}"
+        _topic_env: "{{ lookup('file', _fixture_dir ~ '/test_ntfy_to_slack_proxmox.env') }}"
+      ansible.builtin.assert:
+        that:
+          - "'NTFY_TOPIC=proxmox' in _all_env"
+          - "'SLACK_WEBHOOK_URL=https://hooks.example.test/all' in _all_env"
+          - "'.Topic }}] ' in _all_env"
+          - "'SLACK_WEBHOOK_URL=https://hooks.example.test/proxmox' in _topic_env"
+          - "'POST_PROCESS_TEMPLATE' not in _topic_env"
+
+    - name: Plan the Slack fan-out with a declared route unseeded
+      block:
+        - name: Include the plan with the proxmox webhook missing
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone, proxmox]
+            ntfy_docker_inform_topics: []
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: [proxmox]
+            ntfy_docker_slack_webhooks:
+              keystone: https://hooks.example.test/all
+
+        - name: Fail because the unseeded route did not fail the plan
+          ansible.builtin.fail:
+            msg: an unseeded declared route must fail the converge
+      rescue:
+        - name: Assert the failure names the missing key
+          ansible.builtin.assert:
+            that:
+              - "'proxmox' in ansible_failed_result.msg"
+
+    - name: Plan the Slack fan-out with a non-URL webhook value
+      block:
+        - name: Include the plan with a channel name where the URL belongs
+          ansible.builtin.include_tasks: ../../../roles/ntfy_docker/tasks/slack_fanout_plan.yml
+          vars:
+            ntfy_docker_topics: [keystone]
+            ntfy_docker_inform_topics: []
+            ntfy_docker_slack_alerts_key: keystone
+            ntfy_docker_slack_routes: []
+            ntfy_docker_slack_webhooks:
+              keystone: keystone
+
+        - name: Fail because a non-URL webhook did not fail the plan
+          ansible.builtin.fail:
+            msg: the plan accepted a webhook value without a URL scheme
+      rescue:
+        - name: Assert the failure names the bad key
+          ansible.builtin.assert:
+            that:
+              - "'not an https URL' in ansible_failed_result.msg"
+              - "'keystone' in ansible_failed_result.msg"
+
+    - name: Render the canary script with and without the off-site URL
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/ntfy-canary.sh.j2"
+        dest: "{{ _fixture_dir }}/test_ntfy-canary-{{ item.name }}.sh"
+        mode: "0700"
+      loop:
+        - {name: seeded, url: "https://hc-ping.example.test/key/"}
+        - {name: unseeded, url: ""}
+      vars:
+        ntfy_docker_canary_topic: canary
+        ntfy_docker_canary_check_name: ntfy-canary
+        ntfy_docker_canary_offsite_url: "{{ item.url }}"
+
+    - name: Render the canary units
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item }}.j2"
+        dest: "{{ _fixture_dir }}/test_{{ item }}"
+        mode: "0644"
+      loop:
+        - ntfy-canary.service
+        - ntfy-canary.timer
+      vars:
+        ntfy_docker_canary_interval: 5min
+        ntfy_docker_canary_script_path: /usr/local/bin/ntfy-canary
+
+    - name: Assert the canary publishes, reads back, and pings off-site only when seeded
+      vars:
+        _seeded: "{{ lookup('file', _fixture_dir ~ '/test_ntfy-canary-seeded.sh') }}"
+        _unseeded: "{{ lookup('file', _fixture_dir ~ '/test_ntfy-canary-unseeded.sh') }}"
+      ansible.builtin.assert:
+        that:
+          - "'topic_url=\"https://ntfy.example.test/canary\"' in _seeded"
+          - "'json?poll=1' in _seeded"
+          - "'https://hc-ping.example.test/key/ntfy-canary?create=1' in _seeded"
+          - "'hc-ping' not in _unseeded"
+          - "'json?poll=1' in _unseeded"
+          - "'ExecStart=/usr/local/bin/ntfy-canary' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.service')"
+          - "'OnUnitActiveSec=5min' in lookup('file', _fixture_dir ~ '/test_ntfy-canary.timer')"
 
     - name: Ntfy template rendering PASSED
       ansible.builtin.debug:
