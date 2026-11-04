@@ -24,7 +24,6 @@ from evals.parse_experiment import (  # noqa: E402
     make_expected_fields_evaluator,
     make_schema_evaluator,
 )
-from evals import parse_experiment  # noqa: E402
 from evals import sync_judges  # noqa: E402
 from evals.sync_judges import sync  # noqa: E402
 import evals.tasks as eval_tasks  # noqa: E402
@@ -282,29 +281,3 @@ def test_judge_request_reports_http_error_status(monkeypatch):
 
     with pytest.raises(RuntimeError, match="GET /api/public/evals -> HTTP 503: busy"):
         sync_judges._request("GET", "/api/public/evals")
-
-
-def test_eval_request_carries_low_priority(monkeypatch):
-    captured = {}
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-        def read(self):
-            return json.dumps({"choices": [{"message": {"content": "ok"}}], "model": "m"}).encode()
-
-    def fake_urlopen(request, timeout=None):
-        captured["body"] = json.loads(request.data)
-        return FakeResponse()
-
-    monkeypatch.setattr(parse_experiment.urllib.request, "urlopen", fake_urlopen)
-    reply, served = parse_experiment.call_role("sys", "user", "medium", "https://192.0.2.20/v1", "key")
-
-    assert (reply, served) == ("ok", "m")
-    assert captured["body"]["priority"] == parse_experiment.EVAL_REQUEST_PRIORITY
-    assert captured["body"]["priority"] == 100
-    assert captured["body"]["metadata"] == {"tags": ["fill", "priority-100"]}

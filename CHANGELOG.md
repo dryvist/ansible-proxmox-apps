@@ -1,23 +1,5 @@
 # Changelog
 
-## [5.16.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.15.0...v5.16.0) (2026-11-03)
-
-
-### Features
-
-* disable OpenProject converge and skip oci-app containers ([#3201](https://github.com/dryvist/ansible-proxmox-apps/issues/3201)) ([2558165](https://github.com/dryvist/ansible-proxmox-apps/commit/2558165b5304365deeb5eb89625ae4d9bc232424))
-* **hatchet-eval:** send eval LLM requests at low priority ([#3222](https://github.com/dryvist/ansible-proxmox-apps/issues/3222)) ([b0fdaf2](https://github.com/dryvist/ansible-proxmox-apps/commit/b0fdaf28f05e004a8013e08369e58497fd25eb78))
-* **hatchet-eval:** tag fill-traffic eval requests for spend-log counting ([#3227](https://github.com/dryvist/ansible-proxmox-apps/issues/3227)) ([376d1fc](https://github.com/dryvist/ansible-proxmox-apps/commit/376d1fc41e79a415d70a83f1114410a9ca9741fb))
-* **leantime:** add native Leantime role ([#3202](https://github.com/dryvist/ansible-proxmox-apps/issues/3202)) ([78534b6](https://github.com/dryvist/ansible-proxmox-apps/commit/78534b66ad162c94bf08a567feecc8b2f7cfa845))
-
-
-### Bug Fixes
-
-* **cribl_stream:** send only mlx:metrics events through the MLX pack to the LLM HEC output ([#3206](https://github.com/dryvist/ansible-proxmox-apps/issues/3206)) ([61e3333](https://github.com/dryvist/ansible-proxmox-apps/commit/61e33338e7dda2f85f9870ffd576e6124878eb7a))
-* **e2e:** count Splunk query errors in the sentinel wait ([180978f](https://github.com/dryvist/ansible-proxmox-apps/commit/180978f077e571b22d25bd45ca85ee701e655db8))
-* reword a changelog entry that names a guarded domain ([#3203](https://github.com/dryvist/ansible-proxmox-apps/issues/3203)) ([6cec0a6](https://github.com/dryvist/ansible-proxmox-apps/commit/6cec0a662df30dfc4e4c4c3d0297c6d95f47f432))
-* **status_stack:** give autokuma its own tag and tag status tasks by component ([#3190](https://github.com/dryvist/ansible-proxmox-apps/issues/3190)) ([4475201](https://github.com/dryvist/ansible-proxmox-apps/commit/447520124003abc8b833ce24725eb5648f4dbc9c))
-
 ## [5.15.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.14.0...v5.15.0) (2026-11-02)
 
 

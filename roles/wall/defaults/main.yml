@@ -40,35 +40,6 @@ wall_prometheus_host: >-
       | map(attribute='value.ip', default='') | reject('equalto', '')
       | list | first) | default('', true) }}
 
-# ClickHouse HTTP interface for the gateway's /api/words and /api/llm/recent
-# proxies: the container carrying the `clickhouse` tag, resolved from the
-# published inventory the same way cribl_stream's clickhouse_llm_* outputs
-# derive theirs — never a literal host; the port is the published constant.
-wall_clickhouse_http_port: >-
-  {{ tofu_data.constants.service_ports.clickhouse_http
-     | mandatory('tofu_data.constants.service_ports.clickhouse_http missing — regenerate the published inventory') }}
-wall_clickhouse_host: >-
-  {{ (tofu_data['containers'] | default({}) | dict2items
-      | selectattr('value.tags', 'defined')
-      | selectattr('value.tags', 'contains', 'clickhouse')
-      | map(attribute='value.ip', default='') | reject('equalto', '')
-      | list | first) | default('', true) }}
-
-# nginx-light runs its workers as Debian's www-data; the ClickHouse auth
-# include is readable by that group and root only.
-wall_nginx_group: www-data
-
-# Read-only ClickHouse credential for the gateway's /api/words and
-# /api/llm/recent proxies; nginx adds it to each upstream request as
-# X-ClickHouse-User/-Key, so the browser never carries one. The password is
-# key WALL_READER_PASSWORD in the clickhouse-wall secret domain. No env
-# fallback. When the domain was not fetched, the include answers 503 on the
-# two ClickHouse routes instead of carrying an empty credential, so the rest
-# of the wall keeps serving.
-wall_clickhouse_password: >-
-  {{ (bao_clickhouse_wall_secrets | default({})).WALL_READER_PASSWORD
-     | default('', true) }}
-
 wall_title: HOMELAB
 wall_refresh_seconds: 15
 # Non-PVE nodes shown as pending until their exporter exists:

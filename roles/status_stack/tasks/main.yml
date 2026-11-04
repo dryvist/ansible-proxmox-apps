@@ -4,9 +4,6 @@
 - name: Build the shared service catalog
   ansible.builtin.include_role:
     name: dashboard_catalog
-    apply:
-      tags: [gatus, status, dashboard, observability, collaboration]
-  tags: [gatus]
 
 - name: Assert dashboard catalog is available for Gatus
   ansible.builtin.assert:
@@ -19,18 +16,8 @@
       status_stack needs dashboard_catalog_services_monitor from the
       dashboard_catalog role, including its base domain for public probes.
     quiet: true
-  tags: [gatus]
 
-- name: Ensure status stack data directory exists
-  ansible.builtin.file:
-    path: "{{ status_stack_data_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  tags: [gatus, uptime_kuma, autokuma]
-
-- name: Ensure Gatus data directories exist
+- name: Create status stack directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -38,25 +25,15 @@
     group: root
     mode: "0755"
   loop:
+    - "{{ status_stack_data_dir }}"
     - "{{ status_stack_data_dir }}/gatus"
     - "{{ status_stack_gatus_data_dir }}"
-  tags: [gatus]
-
-- name: Ensure Uptime Kuma data directory exists
-  ansible.builtin.file:
-    path: "{{ status_stack_data_dir }}/uptime-kuma"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  tags: [uptime_kuma]
+    - "{{ status_stack_data_dir }}/uptime-kuma"
 
 - name: Read any persisted Uptime Kuma admin password
   ansible.builtin.stat:
     path: "{{ status_stack_kuma_admin_password_file }}"
   register: status_stack_kuma_pw_stat
-  no_log: true
-  tags: [gatus, uptime_kuma, autokuma]
 
 - name: Read the persisted Uptime Kuma admin password
   ansible.builtin.slurp:
@@ -64,7 +41,6 @@
   register: status_stack_kuma_pw_stored
   when: status_stack_kuma_pw_stat.stat.exists
   no_log: true
-  tags: [gatus, uptime_kuma, autokuma]
 
 # The writes run on the controller: the writer token must never reach the guest.
 - name: Seed Uptime Kuma's admin password in OpenBao
@@ -74,15 +50,11 @@
   vars:
     ansible_become: false
   no_log: true
-  tags: [uptime_kuma, autokuma]
   block:
     - name: Seed the Uptime Kuma admin password through the shared seed_generated task
       ansible.builtin.include_role:
         name: dryvist.homelab.openbao_secrets
         tasks_from: seed_generated
-        apply:
-          tags: [uptime_kuma, autokuma, status, dashboard, observability, collaboration]
-      tags: [uptime_kuma, autokuma]
       vars:
         openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
         openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
@@ -104,7 +76,6 @@
   ansible.builtin.set_fact:
     status_stack_effective_kuma_password: "{{ status_stack_kuma_password_seed.status_stack_kuma_admin_password }}"
   no_log: true
-  tags: [uptime_kuma, autokuma]
 
 - name: Require the persisted Uptime Kuma password to match OpenBao
   ansible.builtin.assert:
@@ -119,7 +90,6 @@
   when:
     - status_stack_kuma_password_seed.status_stack_kuma_admin_password != '(placeholder in check mode)'
   no_log: true
-  tags: [uptime_kuma, autokuma]
 
 - name: Persist Uptime Kuma's admin password
   ansible.builtin.copy:
@@ -131,24 +101,6 @@
   when:
     - status_stack_kuma_password_seed.status_stack_kuma_admin_password != '(placeholder in check mode)'
   no_log: true
-  tags: [uptime_kuma, autokuma]
-
-- name: Require a persisted Uptime Kuma password for a Gatus-only run
-  ansible.builtin.fail:
-    msg: >-
-      No persisted Uptime Kuma admin password exists. Run the full status play
-      first before running with --tags gatus.
-  when:
-    - status_stack_effective_kuma_password is not defined
-    - not status_stack_kuma_pw_stat.stat.exists
-  tags: [gatus]
-
-- name: Resolve the persisted Uptime Kuma password for Gatus
-  ansible.builtin.set_fact:
-    status_stack_effective_kuma_password: "{{ status_stack_kuma_pw_stored.content | b64decode | trim }}"
-  when: status_stack_effective_kuma_password is not defined
-  no_log: true
-  tags: [gatus]
 
 # Root-only: the config carries the external-endpoint bearer token.
 - name: Render Gatus configuration
@@ -160,7 +112,6 @@
     mode: "0600"
   no_log: true
   notify: Restart status stack
-  tags: [gatus]
 
 - name: Render status stack docker-compose
   ansible.builtin.template:
@@ -171,7 +122,6 @@
     mode: "0600"  # contains the Uptime Kuma admin password (AutoKuma env)
   no_log: true
   notify: Restart status stack
-  tags: [gatus, uptime_kuma, autokuma]
 
 # AutoKuma syncs Uptime Kuma monitors from the SAME monitor_targets fact
 # Gatus renders from (one generator, N renderers). AUTOKUMA__STATIC_MONITORS
@@ -181,37 +131,28 @@
 # rendered on the controller and shipped in one transfer — see the included
 # file for why (AutoKuma has no multi-monitor-per-file mode) and how.
 - name: Render and ship the AutoKuma static-monitor set
-  ansible.builtin.include_tasks:
-    file: autokuma_static_monitors.yml
-    apply:
-      tags: [autokuma, status, dashboard, observability, collaboration]
-  tags: [autokuma]
+  ansible.builtin.include_tasks: autokuma_static_monitors.yml
 
 - name: Deploy status stack via docker compose
   community.docker.docker_compose_v2:
     project_src: "{{ status_stack_data_dir }}"
     state: present
-    services: "{{ status_stack_compose_services | default(omit, true) }}"
   register: status_stack_compose
-  tags: [gatus, uptime_kuma, autokuma]
 
 - name: Flush handlers so health checks see the new containers
   ansible.builtin.meta: flush_handlers
-  tags: [gatus, uptime_kuma, autokuma]
 
 - name: Wait for Gatus HTTP port
   ansible.builtin.wait_for:
     host: 127.0.0.1
     port: "{{ status_stack_gatus_port | trim }}"
     timeout: 120
-  tags: [gatus]
 
 - name: Wait for Uptime Kuma HTTP port
   ansible.builtin.wait_for:
     host: 127.0.0.1
     port: "{{ status_stack_kuma_port | trim }}"
     timeout: 120
-  tags: [uptime_kuma]
 
 - name: Verify Gatus answers /
   ansible.builtin.uri:
@@ -229,7 +170,6 @@
       (status_stack_compose.actions | default([]) | length == 0)
     )
   changed_when: false
-  tags: [gatus]
 
 # Uptime Kuma's own first-run HTTP endpoint — no collection, no sidecar, no
 # monitor sync. Gatus is the uptime-probe SoR; Kuma is the operator status UI.
@@ -249,7 +189,6 @@
       (status_stack_compose.actions | default([]) | length == 0)
     )
   changed_when: false
-  tags: [uptime_kuma]
 
 - name: Create Uptime Kuma initial admin
   ansible.builtin.uri:
@@ -262,4 +201,3 @@
     status_code: [200, 201]
   when: status_stack_kuma_entry.json.needSetup | default(false) | bool
   no_log: true
-  tags: [uptime_kuma]

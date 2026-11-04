@@ -25,7 +25,7 @@ import uuid
 
 import pytest
 
-from .fixtures import SYSLOG_SOURCE_IDS, SYSLOG_SOURCES, inventory_path
+from .fixtures import SYSLOG_SOURCES, SYSLOG_SOURCE_IDS, inventory_path
 from .helpers import (
     make_syslog_message,
     send_tcp_syslog,
@@ -33,14 +33,15 @@ from .helpers import (
     wait_for_event,
 )
 
+
 # ---------------------------------------------------------------------------
 # Data-driven skip lists — edit HERE as paths converge, not the test bodies.
 # ---------------------------------------------------------------------------
 # syslog families with no live emitter yet: the pipeline may route them, but
 # nothing real sends on the port, so a red run gives no actionable signal.
 SYSLOG_FAMILIES_NOT_LIVE = {
-    "windows",  # no Windows sender deployed
-    "cisco_asa",  # no ASA in the lab
+    "windows",   # no Windows sender deployed
+    "cisco_asa", # no ASA in the lab
 }
 # AI sources whose ingest path (B4a rollout) has not converged yet.
 # openbao_audit came off this list once the rollout was confirmed live: the
@@ -143,7 +144,6 @@ class TestAiFamilyMatrix:
             password,
             sentinel,
             index=entry["index"],
-            sourcetype=entry["sourcetype"],
             timeout=pipeline_poll_timeout,
             poll_interval=pipeline_poll_interval,
         )

@@ -47,8 +47,6 @@ TOFU_TAG_CONSUMER_GROUPS = {
     "idrac_kvm_group": "idrac",
     "homebox_group": "homebox",
     "docker_ai_group": "docker-ai",
-    "leantime_group": "leantime",
-    "wall_group": "wall",
 }
 DEADMAN_SCOPE_GROUPS = {
     "technitium_dns_group",

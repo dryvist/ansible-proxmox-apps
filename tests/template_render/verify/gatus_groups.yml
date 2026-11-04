@@ -42,6 +42,8 @@
     status_stack_monitor_targets:
       icmp:
         - { name: pve-node-1, fqdn: pve-node-1.example.test, group: node }
+        - { name: dify, fqdn: dify.example.test, group: guest, tags: [dify] }
+        - { name: langflow, fqdn: langflow.example.test, group: guest, tags: [langflow] }
       tcp: []
       http:
         - name: splunk-mgmt
@@ -50,6 +52,13 @@
           path: "/"
           group: service
           expect_status: [200]
+    status_stack_guest_health_probes:
+      dify:
+        port: 80
+        path: /console/api/ping
+      langflow:
+        port: 7860
+        path: /health
     dashboard_catalog_group_titles:
       apps: Apps
       ai: AI
@@ -214,6 +223,31 @@
           - "[STATUS] == 200"
           - "[RESPONSE_TIME] < 3000"
           - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    - name: Assert production guest health probes render direct guest URLs
+      ansible.builtin.assert:
+        that:
+          - >-
+            _by_name['http-dify-health'].url
+            == ('http://' ~ _dify.fqdn ~ ':' ~ _dify_probe.port ~ _dify_probe.path)
+          - _by_name['http-dify-health'].group == 'guest'
+          - _by_name['http-dify-health'].conditions == _guest_health_conditions
+          - >-
+            _by_name['http-langflow-health'].url
+            == ('http://' ~ _langflow.fqdn ~ ':' ~ _langflow_probe.port ~ _langflow_probe.path)
+          - _by_name['http-langflow-health'].group == 'guest'
+          - _by_name['http-langflow-health'].conditions == _guest_health_conditions
+        fail_msg: >-
+          Production guest health probes must address the guest's own
+          inventory address with the mapped port and path, in group guest:
+          {{ _gatus.endpoints | map(attribute='name') | list }}
+      vars:
+        _by_name: "{{ dict(_gatus.endpoints | map(attribute='name') | zip(_gatus.endpoints)) }}"
+        _guest_health_conditions: ["[STATUS] == 200"]
+        _dify: "{{ status_stack_monitor_targets.icmp | selectattr('name', 'eq', 'dify') | first }}"
+        _dify_probe: "{{ status_stack_guest_health_probes.dify }}"
+        _langflow: "{{ status_stack_monitor_targets.icmp | selectattr('name', 'eq', 'langflow') | first }}"
+        _langflow_probe: "{{ status_stack_guest_health_probes.langflow }}"
 
     - name: Assert ntfy urgent-topic routing still targets the real endpoint groups
       ansible.builtin.assert:
