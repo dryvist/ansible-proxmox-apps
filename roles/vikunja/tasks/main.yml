@@ -256,10 +256,36 @@
   changed_when: true
   no_log: true
 
-# Share every project the automation accounts own with the operator. Vikunja
-# projects are per-owner with no super-user override, so without this the
-# operator logs in to an empty board list. Additive only — the owning accounts
-# keep ownership and access.
+# A first OIDC login provisions a NEW Vikunja account keyed on issuer+subject,
+# with a site-specific username Vikunja generates itself — it cannot be
+# declared in this public repo. Read it out of the same user-list table the
+# create tasks above match against, one positional match per table row: the
+# CLI prints the columns ID, USERNAME, EMAIL, STATUS, ISSUER, SUBJECT,
+# CREATED, UPDATED, so a row is kept only when its EMAIL cell equals the
+# operator's email and its ISSUER cell is anything but `local` (SSO rows
+# carry the IdP's issuer, local rows carry `local`), and its USERNAME cell is
+# captured. Border separators are normalised to `|` first (the CLI draws with
+# `│`), empty captures are filtered before the list is returned, and the list
+# is empty when the operator has not completed a first OIDC login yet.
+- name: Resolve the operator's SSO usernames from the user list
+  ansible.builtin.set_fact:
+    vikunja_operator_sso_usernames: >-
+      {{ vikunja_user_list.stdout | default('', true)
+         | regex_replace('│', '|')
+         | regex_findall(
+             '^\|\s*[^|\n]*\|\s*([^|\n]*?)\s*\|\s*'
+             ~ (vikunja_operator_email | regex_escape)
+             ~ '\s*\|\s*[^|\n]*\|(?!\s*local\s*(?:\||$))\s*[^|\n]*\|.*$',
+             multiline=True)
+         | reject('equalto', '')
+         | unique | list }}
+  no_log: true
+
+# Share every project the automation accounts own with the operator's
+# accounts — the local human account plus the SSO account a first OIDC login
+# provisions (vikunja_operator_share_users). Vikunja projects are per-owner
+# with no super-user override, so without this each login sees an empty board
+# list. Additive only — the owning accounts keep ownership and access.
 - name: Grant the operator access to the automation-owned projects
   ansible.builtin.include_tasks: operator_access.yml
   when:
