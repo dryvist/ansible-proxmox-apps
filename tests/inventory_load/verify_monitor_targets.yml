@@ -38,6 +38,11 @@
         hostname: mt-cribl-edge
         ip: 192.0.2.13
         tags: [terraform, vm, cribl, edge]
+      mt-stopped-guest:
+        hostname: mt-stopped
+        ip: 192.0.2.14
+        started: false
+        tags: [terraform, vm]
 
 - name: Reset the monitor_targets accumulators before the generator runs
   ansible.builtin.set_fact:
@@ -67,6 +72,15 @@
          | map(attribute='fqdn') | list)
         == ['mt-static.' ~ tofu_data.domain]
     fail_msg: A static guest (IPv4 ip) must keep hostname.<domain> as its probe name.
+
+- name: Assert a guest published as stopped gets no monitor and others stay
+  ansible.builtin.assert:
+    that:
+      - monitor_targets.icmp | selectattr('name', 'equalto', 'mt-stopped-guest') | list | length == 0
+      - monitor_targets.icmp | selectattr('name', 'equalto', 'mt-static-guest') | list | length == 1
+    fail_msg: >-
+      A guest with started false must get no ICMP monitor, and a guest without
+      a started key must keep its monitor.
 
 - name: Assert the Hindsight replica health path is /health
   ansible.builtin.assert:
