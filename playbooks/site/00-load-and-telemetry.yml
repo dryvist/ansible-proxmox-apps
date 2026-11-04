@@ -177,8 +177,9 @@
 
 # Configure application stacks based on OpenTofu infrastructure
 
-# Two out-of-play OpenBao domain consumers (the media-stack child converge,
-# the deadman watchdog group set) need their own --limit-scope detected
+# Out-of-play OpenBao domain consumers (the media-stack child converge, the
+# deadman watchdog group set, and YouTrack's localhost play) need their own
+# scope detected
 # before the pre-fetch play below can narrow its domain fetch correctly —
 # see the comment in that file for why.
 - name: Detect out-of-play OpenBao domain consumers
@@ -214,7 +215,8 @@
       (['managed_secrets_group']
        + (['localhost']
           if ((hostvars['localhost'].openbao_secrets_media_group_in_scope | default(false))
-              or (hostvars['localhost'].openbao_secrets_deadman_group_in_scope | default(false)))
+              or (hostvars['localhost'].openbao_secrets_deadman_group_in_scope | default(false))
+              or (hostvars['localhost'].openbao_secrets_youtrack_in_scope | default(false)))
               and not (hostvars['localhost'].openbao_secrets_managed_group_in_scope | default(false))
           else []))
       | join(':')
@@ -247,6 +249,10 @@
   tasks:
     - name: Converge OpenBao secrets pre-fetch (isolated — failure does not abort downstream plays)
       block:
+        - name: Preserve the declared OpenBao consumer map
+          ansible.builtin.set_fact:
+            openbao_secrets_domain_groups_source: "{{ openbao_secrets_domain_groups }}"
+
         - name: Determine which declared consumer groups have a host in this run
           # groups[...] (unaffected by --limit) intersected with this play's
           # own ansible_play_hosts_all (affected by --limit) tells us whether
@@ -288,6 +294,14 @@
           vars:
             # The role's own default catalog is a different list, so it is never used here.
             openbao_secrets_domains: "{{ openbao_secrets_catalog.openbao_secrets_domains }}"
+            # YouTrack is a localhost consumer with no inventory group. Its selected
+            # play makes the apps domain unconditional for this invocation while
+            # the remaining domains retain their normal group scoping.
+            openbao_secrets_domain_groups: >-
+              {{ openbao_secrets_domain_groups_source
+                 | combine({'apps': []}
+                   if hostvars['localhost'].openbao_secrets_youtrack_in_scope | default(false)
+                   else {}) }}
 
         - name: Publish secret-domain facts
           ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml
