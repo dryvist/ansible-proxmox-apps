@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.20.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.19.1...v5.20.0) (2026-11-05)
+
+
+### Features
+
+* **hatchet:** add router chat platform kind to the GPU fill worker ([#3309](https://github.com/dryvist/ansible-proxmox-apps/issues/3309)) ([140fa70](https://github.com/dryvist/ansible-proxmox-apps/commit/140fa70331524efc6ab0b0d8a6080516301b355e))
+
+
+### Bug Fixes
+
+* **homepage:** retire the source-build unit before compose deploys ([#3293](https://github.com/dryvist/ansible-proxmox-apps/issues/3293)) ([1f84363](https://github.com/dryvist/ansible-proxmox-apps/commit/1f843638978588a94e19654c486410b7027931d0))
+* **prometheus-stack:** render blackbox job targets as lists ([#3307](https://github.com/dryvist/ansible-proxmox-apps/issues/3307)) ([075becc](https://github.com/dryvist/ansible-proxmox-apps/commit/075becc393ca582c6ba90db7bedc1d133d6bdb47))
+
 ## [5.19.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.19.0...v5.19.1) (2026-11-05)
 
 
