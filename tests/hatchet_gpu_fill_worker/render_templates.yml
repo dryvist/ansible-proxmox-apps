@@ -56,6 +56,15 @@
     hatchet_docker_worker_latency_guard_query: sum(rate(requests_total[5m]))
     hatchet_docker_worker_latency_guard_max_ratio: 1.2
     hatchet_docker_eval_enabled: false
+    hatchet_docker_worker_fill_enabled: false
+    hatchet_docker_worker_fill_roles: {}
+    hatchet_docker_worker_fill_cron: "{{ _hatchet_role_defaults.hatchet_docker_worker_fill_cron }}"
+    hatchet_docker_worker_fill_corpus_dir: "{{ _hatchet_role_defaults.hatchet_docker_worker_fill_corpus_dir }}"
+    hatchet_docker_worker_fill_output_dir: "{{ _hatchet_role_defaults.hatchet_docker_worker_fill_output_dir }}"
+    hatchet_docker_worker_fill_corpus_host_dir: >-
+      {{ _hatchet_role_defaults.hatchet_docker_worker_fill_corpus_host_dir }}
+    hatchet_docker_worker_fill_output_host_dir: >-
+      {{ _hatchet_role_defaults.hatchet_docker_worker_fill_output_host_dir }}
     hatchet_docker_worker_roles:
       medium:
         max_runs: 3
@@ -118,6 +127,7 @@
       ansible.builtin.assert:
         that:
           - "'hatchet-worker:' in (_hatchet_compose_on.content | b64decode)"
+          - "'gpu_fill_corpus' not in (_hatchet_compose_on.content | b64decode)"
           - >-
             'python:3.13.18-slim-trixie@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb'
             in (_hatchet_compose_on.content | b64decode)
@@ -175,6 +185,7 @@
             (_hatchet_worker_config.content | b64decode | from_json).latency_guard.max_ratio == 1.2
           - "'auth_secret_key' not in (_hatchet_worker_config.content | b64decode)"
           - "'evals' not in (_hatchet_worker_config.content | b64decode | from_json)"
+          - "'fill' not in (_hatchet_worker_config.content | b64decode | from_json)"
 
     - name: Render the worker JSON configuration with evals
       ansible.builtin.template:
@@ -205,6 +216,52 @@
           - >-
             (_hatchet_worker_config_evals.content | b64decode | from_json).evals.roles
             == hatchet_docker_eval_roles
+
+    - name: Render the worker JSON configuration with the fill workload
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-fill.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_fill_enabled: true
+        hatchet_docker_worker_fill_roles:
+          medium: hermes
+
+    - name: Read and parse the worker JSON configuration with the fill workload
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-fill.json"
+      register: _hatchet_worker_config_fill
+
+    - name: Assert the fill config uses the cron, container paths, and role mapping
+      ansible.builtin.assert:
+        that:
+          - (_hatchet_worker_config_fill.content | b64decode | from_json).fill.cron == hatchet_docker_worker_fill_cron
+          - (_hatchet_worker_config_fill.content | b64decode | from_json).fill.corpus_dir == '/corpus'
+          - (_hatchet_worker_config_fill.content | b64decode | from_json).fill.output_dir == '/output'
+          - "(_hatchet_worker_config_fill.content | b64decode | from_json).fill.roles == {'medium': 'hermes'}"
+
+    - name: Render the enabled Hatchet compose template with the fill workload
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-fill.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_fill_enabled: true
+        hatchet_docker_worker_fill_roles:
+          medium: hermes
+
+    - name: Read the enabled Hatchet compose template with the fill workload
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-fill.yml"
+      register: _hatchet_compose_fill
+
+    - name: Assert the fill compose mounts the corpus read-only and the output directory
+      ansible.builtin.assert:
+        that:
+          - "'/tmp/hatchet/gpu_fill_corpus:/corpus:ro' in (_hatchet_compose_fill.content | b64decode)"
+          - "'/tmp/hatchet/gpu_fill_output:/output\"' in (_hatchet_compose_fill.content | b64decode)"
 
     - name: Render the worker JSON configuration without the latency guard
       ansible.builtin.template:

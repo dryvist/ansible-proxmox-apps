@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from adapter import LatencyGuardError, run_agent
 from config import load_config
+from fill.tasks import build_fill_tasks, fill_slots
 
 
 class AgentRunInput(BaseModel):
@@ -76,6 +77,7 @@ def main():
     )
     hatchet = Hatchet()
     workflows = build_tasks(hatchet, worker_config)
+    workflows.extend(build_fill_tasks(hatchet, worker_config))
     if "evals" in worker_config:
         from evals import build_tasks as build_eval_tasks
 
@@ -85,6 +87,7 @@ def main():
     slots = sum(role["max_runs"] for role in worker_config["roles"].values())
     # One slot per eval task (judge sync plus one per role) so evals never take GPU-fill slots.
     slots += len(worker_config["evals"]["roles"]) + 1 if "evals" in worker_config else 0
+    slots += fill_slots(worker_config)
     worker = hatchet.worker(
         "gpu-fill-worker",
         workflows=workflows,
