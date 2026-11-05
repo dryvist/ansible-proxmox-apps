@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.19.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.19.0...v5.19.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **status-stack:** send a state value on Gatus OIDC authorize probes ([#3297](https://github.com/dryvist/ansible-proxmox-apps/issues/3297)) ([02a6bdd](https://github.com/dryvist/ansible-proxmox-apps/commit/02a6bdd1e451cfbe023f77587ea68366b384a712))
+
 ## [5.19.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.18.0...v5.19.0) (2026-11-05)
 
 
