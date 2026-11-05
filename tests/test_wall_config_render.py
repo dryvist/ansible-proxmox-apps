@@ -24,10 +24,11 @@ def render(**overrides) -> dict:
         "wall_extra_nodes": [],
         "wall_slides": [],
         "ingress_domain": "example.test",
-        "dashboard_catalog_services": [
+        # The catalog's UI side (dashboard_catalog_ui_services). The ui:false
+        # filter lives in the catalog and is asserted by tests/dashboard_catalog.
+        "dashboard_catalog_ui_services": [
             {"name": "alpha", "group": "apps", "ui": True},
             {"name": "bravo", "group": "apps", "ui": True},
-            {"name": "hidden", "group": "apps", "ui": False},
             {"name": "charlie", "group": "media", "ui": True},
         ],
         "tofu_data": {
@@ -72,7 +73,7 @@ class WallConfig(unittest.TestCase):
         self.assertEqual(cfg["title"], "HOMELAB")
 
     def test_empty_catalog_renders_valid_json(self):
-        cfg = render(dashboard_catalog_services=[], tofu_data={})
+        cfg = render(dashboard_catalog_ui_services=[], tofu_data={})
         self.assertEqual(cfg["groups"], [])
         self.assertEqual(cfg["guestCount"], 0)
 
