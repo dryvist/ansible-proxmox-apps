@@ -1,0 +1,58 @@
+---
+# prometheus.yml.j2 iterates each blackbox job's `targets` with
+# `{% for t in job.targets %}`. A string is iterated one character at a time,
+# so a job whose targets were rendered as a string scrapes single-character
+# hosts. This play uses the REAL role defaults and asserts each job's targets
+# is a list holding the exact probe URLs.
+- name: Verify blackbox scrape job targets are lists of the expected probe URLs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _git_probe_path: "/dryvist/docs.git/info/refs?service=git-upload-pack"
+    _fixture_tofu_data:
+      domain: test.example
+      git_mirror_urls:
+        public: "https://git-public.test.example"
+        all: "https://git-all.test.example"
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        ingress_domain: test.example
+        wan_hop_discovery_isp_hops: []
+
+    - name: Assert every blackbox job's targets is a list, not a string
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - item.targets | type_debug == 'list'
+        fail_msg: >-
+          Job {{ item.module }} has targets of type {{ item.targets | type_debug }}.
+          The template iterates job.targets, so a string is scraped one character at a time.
+        success_msg: "{{ item.module }}: targets is a list."
+      loop: "{{ prometheus_stack_blackbox_jobs }}"
+
+    - name: Index each blackbox job's targets by module
+      ansible.builtin.set_fact:
+        _targets_by_module: "{{ prometheus_stack_blackbox_jobs | items2dict(key_name='module', value_name='targets') }}"
+
+    - name: Assert each blackbox job carries the exact probe targets
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _targets_by_module.icmp == [prometheus_stack_modem_ip, '1.1.1.1', '8.8.8.8']
+          - _targets_by_module.dns_udp == ['1.1.1.1', '8.8.8.8']
+          - _targets_by_module.http_401_tls == ['https://git-all.test.example' ~ _git_probe_path]
+          - >-
+            _targets_by_module.http_2xx_tls == ['https://1.1.1.1', 'https://8.8.8.8',
+            'https://git-public.test.example' ~ _git_probe_path,
+            'https://homebox.test.example/api/v1/status']
+        fail_msg: "Blackbox job targets are not the expected probe URLs: {{ _targets_by_module }}"
+        success_msg: Each blackbox job carries its exact probe targets.
