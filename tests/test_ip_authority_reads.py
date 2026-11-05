@@ -37,6 +37,7 @@ ADDRESS_READ = re.compile(
     r"\bcontainer_ip\b"
     r"|\bvalue\.ip\b"
     r"|\[\s*['\"]ip['\"]\s*\]"
+    r"|\]\.ip\b"
     r"|attribute\s*=\s*['\"](?:value\.)?ip['\"]"
 )
 RESERVED = re.compile(r"reserved_ip\b")
@@ -62,6 +63,8 @@ READS = {
     "playbooks/site/02-dns-and-pipeline.yml": 2,
     # Not covered by a documented exception. Each one either moves to a name,
     # or becomes an exception in docs/IP_AUTHORITY.md before it is exempted.
+    "inventory/group_vars/all.yml": 1,
+    "inventory/group_vars/haproxy_group.yml": 1,
     "inventory/group_vars/prometheus_group.yml": 6,
     "playbooks/hatchet-killtest.yml": 1,
     "playbooks/sync-cribl-packs.yml": 1,
@@ -131,6 +134,20 @@ class IpAuthorityReads(unittest.TestCase):
             "matches. Update the pattern before trusting this test."
             % PRODUCER_DEFINITION.relative_to(ROOT),
         )
+
+    def test_pattern_matches_every_read_form(self):
+        # Each way the repo reads a guest address, including the dotted
+        # field after a subscript.
+        for line in (
+            "{{ hostvars[h].container_ip }}",
+            "{{ item.value.ip }}",
+            "{{ guest['ip'] }}",
+            "map(attribute='value.ip')",
+            "{{ tofu_data.containers['s3'].ip }}",
+            "{{ tofu_data.containers[groups['cribl_edge'] | first].ip }}",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(ADDRESS_READ.search(line), "ADDRESS_READ misses %r" % line)
 
     def test_no_new_address_reads(self):
         for rel, count in sorted(self.counts.items()):
