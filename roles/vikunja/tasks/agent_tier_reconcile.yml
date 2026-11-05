@@ -10,6 +10,7 @@
     status_code: [200]
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_agent_tier_login
+  check_mode: false
   no_log: true
 
 - name: "Read page one of projects visible to {{ vikunja_agent_tier.username }}"
@@ -22,6 +23,7 @@
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_agent_projects_p1
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: "Read remaining visible project pages for {{ vikunja_agent_tier.username }}"
@@ -37,6 +39,7 @@
                  | default(1, true) | int) + 1) | list }}
   register: vikunja_agent_projects_rest
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Merge account-visible projects into the complete tree catalog
@@ -154,6 +157,7 @@
     timeout: "{{ vikunja_api_timeout }}"
   register: vikunja_agent_teams_p1
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Read remaining team membership pages for the tier account
@@ -169,6 +173,7 @@
                  | default(1, true) | int) + 1) | list }}
   register: vikunja_agent_teams_rest
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Remove every team membership from the tier account
@@ -216,6 +221,7 @@
   loop: "{{ range(1, vikunja_agent_projects_p1.x_pagination_total_pages | default(1, true) | int + 1) | list }}"
   register: vikunja_agent_projects_readback
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Assert the tier account can see exactly its project allowlist
@@ -224,6 +230,7 @@
       - >-
         vikunja_agent_projects_readback.results
         | map(attribute='json') | list | flatten
+        | rejectattr('owner.username', 'equalto', vikunja_agent_tier.username)
         | map(attribute='id') | map('int') | sort
         == vikunja_agent_tier.project_allowlist | sort
     fail_msg: >-
@@ -244,9 +251,11 @@
     timeout: "{{ vikunja_api_timeout }}"
   loop: >-
     {{ vikunja_agent_projects_readback.results | map(attribute='json') | list
-       | flatten | map(attribute='id') | list }}
+       | flatten | rejectattr('owner.username', 'equalto', vikunja_agent_tier.username)
+       | map(attribute='id') | list }}
   register: vikunja_agent_permission_readback
   changed_when: false
+  check_mode: false
   no_log: true
 
 - name: Assert the tier account holds exactly its configured permission on every project

@@ -1,0 +1,147 @@
+---
+- name: Check that YouTrack Hub setup is complete
+  ansible.builtin.uri:
+    url: "{{ youtrack_hub_base_url }}/hub/api/rest/users/me?fields=login"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ youtrack_hub_admin_token }}"
+  register: youtrack_hub_setup_read
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Require authenticated Hub setup to return HTTP 200
+  ansible.builtin.assert:
+    that:
+      - youtrack_hub_setup_read.status | default(0) | int == 200
+    fail_msg: >-
+      YouTrack Hub setup is incomplete or the permanent Hub token is invalid;
+      finish the Hub setup wizard and verify the token before converging.
+    quiet: true
+  run_once: true
+
+- name: Read YouTrack Hub authentication modules
+  ansible.builtin.uri:
+    url: >-
+      {{ youtrack_hub_base_url
+         ~ '/hub/api/rest/authmodules?fields=id,name,scope,serverUrl,tokenUrl,userInfoUrl,clientId,userIdPath,'
+         ~ 'fullNamePath,allowedCreateNewUsers,disabled' }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ youtrack_hub_admin_token }}"
+  register: youtrack_hub_auth_modules_read
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Require the Hub authentication-module read to return HTTP 200
+  ansible.builtin.assert:
+    that:
+      - youtrack_hub_auth_modules_read.status | default(0) | int == 200
+    fail_msg: YouTrack Hub rejected the authentication-module read request.
+    quiet: true
+  run_once: true
+
+# Hub answers with a page object whose `authmodules` list holds the modules.
+- name: Select the configured YouTrack Hub authentication module
+  ansible.builtin.set_fact:
+    youtrack_hub_auth_module_matches: >-
+      {{ ((youtrack_hub_auth_modules_read.json | default({}, true)).authmodules | default([]))
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', youtrack_hub_auth_module_name)
+         | list }}
+  changed_when: false
+  run_once: true
+
+- name: Require the existing Authelia OAuth 2.0 module
+  ansible.builtin.assert:
+    that:
+      - youtrack_hub_auth_module_matches | length > 0
+      - youtrack_hub_auth_module_matches[0].id is defined
+    fail_msg: >-
+      The YouTrack Hub authentication module "{{ youtrack_hub_auth_module_name }}" is absent.
+      Create it in Hub with its client secret before converging; this role does not create modules.
+    quiet: true
+  run_once: true
+
+- name: Select the existing YouTrack Hub authentication module
+  ansible.builtin.set_fact:
+    youtrack_hub_auth_module: "{{ youtrack_hub_auth_module_matches | first }}"
+  changed_when: false
+  run_once: true
+
+- name: Detect drift in the YouTrack Hub authentication module
+  ansible.builtin.set_fact:
+    youtrack_hub_auth_module_drift: >-
+      {{ (youtrack_hub_auth_module.scope | default(none))
+            != youtrack_hub_auth_module_fields.scope
+         or (youtrack_hub_auth_module.userIdPath | default(none))
+            != youtrack_hub_auth_module_fields.userIdPath
+         or (youtrack_hub_auth_module.fullNamePath | default(none))
+            != youtrack_hub_auth_module_fields.fullNamePath
+         or (youtrack_hub_auth_module.allowedCreateNewUsers | default(none))
+            != youtrack_hub_auth_module_fields.allowedCreateNewUsers
+         or (youtrack_hub_auth_module.disabled | default(none))
+            != youtrack_hub_auth_module_fields.disabled
+         or (youtrack_hub_auth_module.serverUrl | default(none))
+            != youtrack_hub_auth_module_fields.serverUrl
+         or (youtrack_hub_auth_module.tokenUrl | default(none))
+            != youtrack_hub_auth_module_fields.tokenUrl
+         or (youtrack_hub_auth_module.userInfoUrl | default(none))
+            != youtrack_hub_auth_module_fields.userInfoUrl
+         or (youtrack_hub_auth_module.clientId | default(none))
+            != youtrack_hub_auth_module_fields.clientId }}
+  changed_when: false
+  run_once: true
+
+- name: Report authentication-module drift in check mode
+  ansible.builtin.debug:
+    msg: YouTrack Hub authentication module "{{ youtrack_hub_auth_module_name }}" would be updated.
+  when:
+    - youtrack_hub_auth_module_drift
+    - ansible_check_mode
+  changed_when: true
+  run_once: true
+
+- name: Update the existing YouTrack Hub authentication module
+  ansible.builtin.uri:
+    url: >-
+      {{ youtrack_hub_base_url }}/hub/api/rest/authmodules/{{ youtrack_hub_auth_module.id }}?fields=id
+    method: POST
+    headers:
+      Authorization: "Bearer {{ youtrack_hub_admin_token }}"
+      Content-Type: application/json
+    body: "{{ {'type': 'Oauth2authmoduleJSON'} | combine(youtrack_hub_auth_module_fields) }}"
+    body_format: json
+  register: youtrack_hub_auth_module_update
+  failed_when: false
+  changed_when: >-
+    youtrack_hub_auth_module_update.status | default(0) | int in [200, 201, 204]
+  when:
+    - youtrack_hub_auth_module_drift
+    - not ansible_check_mode
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Require the YouTrack Hub authentication-module update to succeed
+  ansible.builtin.assert:
+    that:
+      - youtrack_hub_auth_module_update.status | default(0) | int in [200, 201, 204]
+    fail_msg: >-
+      YouTrack Hub rejected the authentication-module update
+      (HTTP {{ youtrack_hub_auth_module_update.status | default('no response') }}).
+    quiet: true
+  when:
+    - youtrack_hub_auth_module_drift
+    - not ansible_check_mode
+  run_once: true
+
+- name: Reconcile YouTrack Hub OAuth identity links
+  ansible.builtin.include_tasks: identity_links.yml

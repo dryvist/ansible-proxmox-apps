@@ -1,5 +1,51 @@
 # Changelog
 
+## [5.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.17.0...v5.18.0) (2026-11-05)
+
+
+### Features
+
+* **youtrack:** reconcile Hub OAuth module and identity links ([#3288](https://github.com/dryvist/ansible-proxmox-apps/issues/3288)) ([8e596d3](https://github.com/dryvist/ansible-proxmox-apps/commit/8e596d356d9d4ee35b7cfc7c541a5305cafa9481))
+
+## [5.17.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.16.0...v5.17.0) (2026-11-04)
+
+
+### Features
+
+* **agent_sandbox:** deny task-tracker hosts at the egress proxy ([#3256](https://github.com/dryvist/ansible-proxmox-apps/issues/3256)) ([434a1be](https://github.com/dryvist/ansible-proxmox-apps/commit/434a1bec9dd170fbd159a9277c79ec6d389d21ba))
+* **agent:** autonomous zcode run j-ff1afbe83433455a ([#3251](https://github.com/dryvist/ansible-proxmox-apps/issues/3251)) ([d51da82](https://github.com/dryvist/ansible-proxmox-apps/commit/d51da827c9bcf56ebff65318957adb457808f962))
+* **agent:** zcode run j-b1685a216df7db02 ([70fdac7](https://github.com/dryvist/ansible-proxmox-apps/commit/70fdac7572441d4229ee7b3c71b5bbb516ef95b4))
+* **agent:** zcode run j-ff1afbe83433455a ([d51da82](https://github.com/dryvist/ansible-proxmox-apps/commit/d51da827c9bcf56ebff65318957adb457808f962))
+* **grafana_stack:** deploy the accelerator alert rule from the pinned release ([#3213](https://github.com/dryvist/ansible-proxmox-apps/issues/3213)) ([a603a26](https://github.com/dryvist/ansible-proxmox-apps/commit/a603a2661c25b23ed78c8897690fe40936f6707c))
+* **grafana_stack:** provide the critical Slack env vars ([#3261](https://github.com/dryvist/ansible-proxmox-apps/issues/3261)) ([c7f8ded](https://github.com/dryvist/ansible-proxmox-apps/commit/c7f8ded133ea2972525172f82d3455123c55d053))
+* **ntfy:** post hermes-all to the status channel ([#3254](https://github.com/dryvist/ansible-proxmox-apps/issues/3254)) ([e45d479](https://github.com/dryvist/ansible-proxmox-apps/commit/e45d47920032fdeef5eafabcfb509b7373807b3e))
+* **status_stack:** probe the production Dify and Langflow health endpoints ([#3205](https://github.com/dryvist/ansible-proxmox-apps/issues/3205)) ([0132cd1](https://github.com/dryvist/ansible-proxmox-apps/commit/0132cd138e5122dc8e5bde9463ffeca78b09d513))
+* **vikunja:** enable Authelia OIDC alongside local login ([#3267](https://github.com/dryvist/ansible-proxmox-apps/issues/3267)) ([e04fdea](https://github.com/dryvist/ansible-proxmox-apps/commit/e04fdea077922b8b47fd264288cdd5ebb2e19808))
+* **wall:** ClickHouse upstream and read-only auth include ([#3216](https://github.com/dryvist/ansible-proxmox-apps/issues/3216)) ([914cbb8](https://github.com/dryvist/ansible-proxmox-apps/commit/914cbb8b9e284c0437711588c4da1bb6a9579e62))
+* **wall:** serve the LEXICON word-cloud feed from ClickHouse ([#3214](https://github.com/dryvist/ansible-proxmox-apps/issues/3214)) ([deb8772](https://github.com/dryvist/ansible-proxmox-apps/commit/deb87725f05417806853ad1e1e6d5eee1c6afa41))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** load the deny list from role vars ([#3266](https://github.com/dryvist/ansible-proxmox-apps/issues/3266)) ([a313375](https://github.com/dryvist/ansible-proxmox-apps/commit/a3133753c212bde08477e57fcc93df41d595b440))
+* **grafana_stack:** repeat non-critical alerts every 24h ([#3255](https://github.com/dryvist/ansible-proxmox-apps/issues/3255)) ([fb3f492](https://github.com/dryvist/ansible-proxmox-apps/commit/fb3f492745997be8dd9acdab4819891e4699c764))
+* **hatchet_docker:** run the worker-token read in check mode ([#3258](https://github.com/dryvist/ansible-proxmox-apps/issues/3258)) ([3256fe3](https://github.com/dryvist/ansible-proxmox-apps/commit/3256fe35989d35fe7c419659e3b6157355bf3f0f))
+* **leantime:** make storage/framework writable by the PHP-FPM user ([#3247](https://github.com/dryvist/ansible-proxmox-apps/issues/3247)) ([b9f538d](https://github.com/dryvist/ansible-proxmox-apps/commit/b9f538d9e13dc08677f1235853f8786d4e75a70e))
+* **leantime:** make storage/framework writable by the PHP-FPM user ([#3248](https://github.com/dryvist/ansible-proxmox-apps/issues/3248)) ([70fdac7](https://github.com/dryvist/ansible-proxmox-apps/commit/70fdac7572441d4229ee7b3c71b5bbb516ef95b4))
+* **monitor-targets:** skip guests published as stopped ([#3265](https://github.com/dryvist/ansible-proxmox-apps/issues/3265)) ([2c13208](https://github.com/dryvist/ansible-proxmox-apps/commit/2c13208a1e6ff99b8287473c77f01d11d9e471e0))
+* **ntfy:** keep router-budget on the all-alerts Slack channel ([#3275](https://github.com/dryvist/ansible-proxmox-apps/issues/3275)) ([9d59f0d](https://github.com/dryvist/ansible-proxmox-apps/commit/9d59f0dfcb85f701377bc5d92fd18f16d9584543))
+* **ntfy:** post report and noise topics only to their own channels ([#3249](https://github.com/dryvist/ansible-proxmox-apps/issues/3249)) ([6fad82a](https://github.com/dryvist/ansible-proxmox-apps/commit/6fad82a7105fbb0b046ebe5d2c8d0d9183685a08))
+* **openbao:** fetch the grafana-alerts domain only when grafana_group is in the run ([#3281](https://github.com/dryvist/ansible-proxmox-apps/issues/3281)) ([b9379f8](https://github.com/dryvist/ansible-proxmox-apps/commit/b9379f81f387fa3a9eae4ac6cf66fe5ce04debc1))
+* **pre-commit:** wait for the ansible-lint lock without busy-polling ([#3264](https://github.com/dryvist/ansible-proxmox-apps/issues/3264)) ([a4b1725](https://github.com/dryvist/ansible-proxmox-apps/commit/a4b17255d37255c0136a574ae3f39933acc4e80e))
+* **vikunja:** ignore tier-owned projects in the visibility check ([#3278](https://github.com/dryvist/ansible-proxmox-apps/issues/3278)) ([4c09db6](https://github.com/dryvist/ansible-proxmox-apps/commit/4c09db69d53ae674b27b57a65d2a44f3e5ddd871))
+* **vikunja:** pin the v2.7.1 release zip to its published digest ([#3268](https://github.com/dryvist/ansible-proxmox-apps/issues/3268)) ([c0e95eb](https://github.com/dryvist/ansible-proxmox-apps/commit/c0e95eb217e21c79e15c754791d93bf872fb2972))
+* **vikunja:** run read-only uri calls in check mode ([#3273](https://github.com/dryvist/ansible-proxmox-apps/issues/3273)) ([7a0545d](https://github.com/dryvist/ansible-proxmox-apps/commit/7a0545d7a3ac5a8ae86b0b85d80f97362dec0ee9))
+* **vikunja:** run the Hermes token probe and refuse a write that creates an object ([#3280](https://github.com/dryvist/ansible-proxmox-apps/issues/3280)) ([6be191a](https://github.com/dryvist/ansible-proxmox-apps/commit/6be191abc909c58c61c480bae07c4a01fb7a4a86))
+* **vikunja:** skip projects the agent tier owns in the revoke loop ([#3270](https://github.com/dryvist/ansible-proxmox-apps/issues/3270)) ([2da6556](https://github.com/dryvist/ansible-proxmox-apps/commit/2da65563e40cee2ade0fa62d1791dc971ae3afb3))
+* **vikunja:** skip tier-owned projects in the permission check ([#3279](https://github.com/dryvist/ansible-proxmox-apps/issues/3279)) ([d9673ef](https://github.com/dryvist/ansible-proxmox-apps/commit/d9673ef3643ca9548f4342d8b56d1ac4bf6a2a4d))
+* **vikunja:** skip tier-owned projects when revoking app-agent shares ([2da6556](https://github.com/dryvist/ansible-proxmox-apps/commit/2da65563e40cee2ade0fa62d1791dc971ae3afb3))
+* **wall:** render the ClickHouse auth include before the gateway config ([#3243](https://github.com/dryvist/ansible-proxmox-apps/issues/3243)) ([bdf9b39](https://github.com/dryvist/ansible-proxmox-apps/commit/bdf9b3991ecce062f9c925314010038d020739d0))
+
 ## [5.16.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.15.0...v5.16.0) (2026-11-03)
 
 
