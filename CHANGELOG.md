@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.17.0...v5.18.0) (2026-11-05)
+
+
+### Features
+
+* **youtrack:** reconcile Hub OAuth module and identity links ([#3288](https://github.com/dryvist/ansible-proxmox-apps/issues/3288)) ([8e596d3](https://github.com/dryvist/ansible-proxmox-apps/commit/8e596d356d9d4ee35b7cfc7c541a5305cafa9481))
+
 ## [5.17.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.16.0...v5.17.0) (2026-11-04)
 
 

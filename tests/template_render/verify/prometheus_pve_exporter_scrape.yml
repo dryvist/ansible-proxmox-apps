@@ -85,6 +85,24 @@
           local exporter and pass the node as __param_target. Rendered: {{ _jobs }}
         success_msg: One PVE exporter scrape job with inventory targets and relabeling.
 
+    - name: Isolate the PVE node_exporter job
+      ansible.builtin.set_fact:
+        _pve_node_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'pve_node_exporter') | list }}"
+
+    - name: Assert the PVE node_exporter job scrapes commissioned nodes with an explicit timeout
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _pve_node_jobs | length == 1
+          - _pve_node_jobs[0].scrape_interval == '60s'
+          - _pve_node_jobs[0].scrape_timeout == '30s'
+          - "'node-alpha.test.example:9100' in _pve_node_jobs[0].static_configs[0].targets"
+          - "'node-gamma.test.example:9100' not in _pve_node_jobs[0].static_configs[0].targets"
+        fail_msg: >-
+          The PVE node_exporter job must set scrape_timeout 30s and target only
+          commissioned nodes. Rendered: {{ _pve_node_jobs }}
+        success_msg: PVE node_exporter job has an explicit 30s timeout and commissioned targets.
+
     - name: Isolate the guest node_exporter job
       ansible.builtin.set_fact:
         _guest_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'guest_node_exporter') | list }}"
@@ -95,6 +113,7 @@
         that:
           - _guest_jobs | length == 1
           - _guest_jobs[0].scrape_interval == '60s'
+          - _guest_jobs[0].scrape_timeout == '30s'
           - >-
             _guest_jobs[0].static_configs
             | selectattr('labels.guest', 'equalto', 'object-store-under-test')

@@ -1,8 +1,11 @@
 ---
-# Share the projects owned by each automation account with the operator's human
-# account. Vikunja projects are per-owner with no super-user override — an
-# account sees only what it owns or what has been explicitly shared with it — so
-# the login created in tasks/main.yml is worthless on its own.
+# Share the projects owned by each automation account with the operator's
+# accounts — vikunja_operator_share_users, the local human account plus the
+# SSO account a first OIDC login provisions (resolved at converge time by the
+# vikunja_operator_sso_usernames fact in tasks/main.yml). Vikunja projects are
+# per-owner with no super-user override — an account sees only what it owns or
+# what has been explicitly shared with it — so a login created in
+# tasks/main.yml is worthless on its own.
 #
 # Sharing is strictly ADDITIVE: the owning account keeps ownership and its full
 # permission, which the Hermes bridge (polling its project every 60s) and every
@@ -22,16 +25,27 @@
   ansible.builtin.include_tasks: project_share_owner_password_map.yml
   no_log: true
 
+# One include per (grantee, owner) pair, so every grantee in
+# vikunja_operator_share_users gets every owned project. operator_access_one.yml
+# is the shared reconciler — agent_tier_reconcile.yml includes it with the same
+# loop_var contract — so it is reused verbatim, never copied. The flatten keeps
+# an overridden share list that carries nested lists working; the when skips
+# the empty username an unset DEFAULT_USERNAME renders and owners without a
+# resolvable credential, exactly as before the SSO grantee was added.
 - name: Share automation-owned projects with the operator, per owning account
   ansible.builtin.include_tasks: operator_access_one.yml
-  loop: "{{ vikunja_operator_share_owner_usernames }}"
+  loop: >-
+    {{ vikunja_operator_share_users | flatten
+       | product(vikunja_operator_share_owner_usernames) | list }}
   loop_control:
-    loop_var: vikunja_share_owner
-    label: "{{ vikunja_share_owner }}"
+    loop_var: vikunja_share_pair
+    label: "{{ vikunja_share_pair[0] }}:{{ vikunja_share_pair[1] }}"
   vars:
-    vikunja_share_grantee_username: "{{ vikunja_operator_username }}"
+    vikunja_share_owner: "{{ vikunja_share_pair[1] }}"
+    vikunja_share_grantee_username: "{{ vikunja_share_pair[0] }}"
     vikunja_share_permission: "{{ vikunja_operator_permission }}"
   when: >-
-    vikunja_project_share_owner_password_map.get(vikunja_share_owner, '')
+    vikunja_share_pair[0] | length > 0 and
+    vikunja_project_share_owner_password_map.get(vikunja_share_pair[1], '')
     | default('', true) | length > 0
   no_log: true
