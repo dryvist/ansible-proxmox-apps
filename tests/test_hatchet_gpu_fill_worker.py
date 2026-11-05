@@ -330,20 +330,20 @@ def test_compose_and_worker_config_templates_render_on_and_off():
     if ansible_playbook is None:
         pytest.skip("ansible-playbook is not installed")
 
-    playbook = ROOT / "tests/hatchet_gpu_fill_worker/render_templates.yml"
-    result = subprocess.run(
-        [
-            ansible_playbook,
-            str(playbook),
-            "-i",
-            "localhost,",
-            "-c",
-            "local",
-            "--extra-vars",
-            '{"hatchet_docker_worker_token_current":"render-worker-token-placeholder"}',
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    for name in ("render_templates.yml", "render_fill_templates.yml"):
+        result = subprocess.run(
+            [
+                ansible_playbook,
+                str(ROOT / "tests/hatchet_gpu_fill_worker" / name),
+                "-i",
+                "localhost,",
+                "-c",
+                "local",
+                "--extra-vars",
+                '{"hatchet_docker_worker_token_current":"render-worker-token-placeholder"}',
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        assert result.returncode == 0, f"{name}\n{result.stdout}\n{result.stderr}"
