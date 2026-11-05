@@ -1,0 +1,100 @@
+---
+# Included per link from identity_links.yml with loop_var youtrack_hub_identity_link.
+- name: "Read Hub user {{ youtrack_hub_identity_link.login }}"
+  ansible.builtin.uri:
+    url: >-
+      {{ youtrack_hub_base_url
+         ~ '/hub/api/rest/users?query=login:'
+         ~ (youtrack_hub_identity_link.login | urlencode)
+         ~ '&fields=id,login,details(%24type,identifier,authModule(name))' }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ youtrack_hub_admin_token }}"
+  register: youtrack_hub_identity_user_read
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+# Keep only the non-secret fields later tasks need. Hub answers this query with
+# a UsersPage object whose `users` list holds the matches.
+- name: Determine whether the OAuth identity link already exists
+  ansible.builtin.set_fact:
+    youtrack_hub_identity_user_status: "{{ youtrack_hub_identity_user_read.status | default(0) | int }}"
+    youtrack_hub_identity_user_id: "{{ youtrack_hub_identity_user.id | default('') }}"
+    youtrack_hub_identity_link_present: "{{ youtrack_hub_identity_matching_details | length > 0 }}"
+  vars:
+    youtrack_hub_identity_user: >-
+      {{ ((youtrack_hub_identity_user_read.json | default({}, true)).users | default([]))
+         | selectattr('login', 'defined')
+         | selectattr('login', 'equalto', youtrack_hub_identity_link.login)
+         | list | first | default({}) }}
+    youtrack_hub_identity_candidate_details: >-
+      {{ (youtrack_hub_identity_user.details | default([]))
+         | selectattr('identifier', 'defined')
+         | selectattr('identifier', 'equalto', youtrack_hub_identity_link.identifier)
+         | selectattr('authModule', 'defined')
+         | selectattr('authModule.name', 'defined')
+         | selectattr('authModule.name', 'equalto', youtrack_hub_auth_module_name)
+         | list }}
+    youtrack_hub_identity_matching_details: >-
+      {{ (youtrack_hub_identity_candidate_details
+          | selectattr('$type', 'defined')
+          | selectattr('$type', 'equalto', 'Oauth2detailsJSON')
+          | list)
+         + (youtrack_hub_identity_candidate_details
+            | selectattr('type', 'defined')
+            | selectattr('type', 'equalto', 'Oauth2detailsJSON')
+            | list) }}
+  run_once: true
+  no_log: true
+
+- name: "Require the identity-link Hub user to exist: {{ youtrack_hub_identity_link.login }}"
+  ansible.builtin.assert:
+    that:
+      - youtrack_hub_identity_user_status | int == 200
+      - youtrack_hub_identity_user_id | length > 0
+    fail_msg: >-
+      YouTrack Hub user "{{ youtrack_hub_identity_link.login }}" was not found
+      (HTTP {{ youtrack_hub_identity_user_status }}); identity links require an existing Hub user.
+    quiet: true
+  run_once: true
+
+- name: "Report in check mode the missing OAuth identity link for {{ youtrack_hub_identity_link.login }}"
+  ansible.builtin.debug:
+    msg: >-
+      YouTrack Hub user "{{ youtrack_hub_identity_link.login }}"
+      would be linked to the configured Authelia identity.
+  when:
+    - not youtrack_hub_identity_link_present | bool
+    - ansible_check_mode
+  changed_when: true
+  run_once: true
+
+- name: "Create the missing OAuth identity link for {{ youtrack_hub_identity_link.login }}"
+  ansible.builtin.uri:
+    url: >-
+      {{ youtrack_hub_base_url
+         ~ '/hub/api/rest/users/'
+         ~ youtrack_hub_identity_user_id
+         ~ '/userdetails?fields=id' }}
+    method: POST
+    headers:
+      Authorization: "Bearer {{ youtrack_hub_admin_token }}"
+      Content-Type: application/json
+    body:
+      type: Oauth2detailsJSON
+      authModule:
+        id: "{{ youtrack_hub_auth_module.id }}"
+      identifier: "{{ youtrack_hub_identity_link.identifier }}"
+    body_format: json
+    status_code: [200, 201, 204]
+  changed_when: true
+  when:
+    - not youtrack_hub_identity_link_present | bool
+    - not ansible_check_mode
+  delegate_to: localhost
+  run_once: true
+  no_log: true
