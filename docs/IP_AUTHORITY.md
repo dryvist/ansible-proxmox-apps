@@ -119,8 +119,8 @@ publishes the record.
 
 Anything else that dereferences `container_ip` / `tofu_data.containers[*].ip`
 for an ADDRESS (rather than passing it through as a name) is a defect to
-migrate — tracked in #871. Name-based SMTP for the Traefik-fronted mailpit
-is #872.
+migrate. `tests/test_ip_authority_reads.py` lists every file that still does,
+with a count that may only go down, and fails on any new one.
 
 ## Static-anchor policy
 
