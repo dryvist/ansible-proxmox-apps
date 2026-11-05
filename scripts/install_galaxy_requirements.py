@@ -14,7 +14,7 @@ from ansible import constants as C
 
 GIT_PINS_FILENAME = "git-collection-pins.json"
 # ansible-galaxy reports each installed collection as: Installing 'ns.name:ver' to '<dir>'
-INSTALLED_COLLECTION = re.compile(r"^Installing '([A-Za-z0-9_]+)\.([A-Za-z0-9_]+):", re.MULTILINE)
+INSTALLED_COLLECTION = re.compile(r"^Installing '([A-Za-z0-9_]+)\.([A-Za-z0-9_]+):[^']*' to '([^']+)'", re.MULTILINE)
 
 
 def _is_git_collection(requirement: dict) -> bool:
@@ -49,11 +49,16 @@ def _git_collection_is_current(requirement: dict, pins: dict[str, dict[str, str]
     return (collections_root / entry["path"]).is_dir()
 
 
-def _installed_collection_path(output: str) -> str | None:
+def _installed_collection_path(output: str, collections_root: Path) -> str | None:
     match = INSTALLED_COLLECTION.search(output)
     if match is None:
         return None
-    return f"ansible_collections/{match.group(1)}/{match.group(2)}"
+    namespace, name, reported_dir = match.groups()
+    relative = f"ansible_collections/{namespace}/{name}"
+    # Record only an install that landed where the presence check will look.
+    if Path(reported_dir).resolve() != (collections_root / relative).resolve():
+        return None
+    return relative
 
 
 def _write_git_pins(path: Path, pins: dict[str, dict[str, str]]) -> None:
@@ -90,7 +95,7 @@ def _run(*args: str) -> str:
     return result.stdout
 
 
-def _install_git_collections(stale_git: list[dict]) -> dict[str, dict[str, str]]:
+def _install_git_collections(stale_git: list[dict], collections_root: Path) -> dict[str, dict[str, str]]:
     # One ansible-galaxy call per collection, so each reported install path belongs to one URL.
     installed: dict[str, dict[str, str]] = {}
     with tempfile.TemporaryDirectory(prefix="ansible-galaxy-git-") as temp_dir:
@@ -99,7 +104,7 @@ def _install_git_collections(stale_git: list[dict]) -> dict[str, dict[str, str]]
             _write_requirements(requirement_file, "collections", [item])
             # Git refs do not match installed collection metadata versions.
             output = _run("collection", "install", "-r", str(requirement_file), "--force")
-            path = _installed_collection_path(output)
+            path = _installed_collection_path(output, collections_root)
             if path is None or not item.get("version"):
                 # Left unrecorded, so the next run reinstalls it.
                 print(f"warning: no install path reported for {item['name']}", file=sys.stderr)
@@ -131,7 +136,7 @@ def main() -> None:
         if galaxy_collections:
             # Default resolution skips installed versions that satisfy the pin.
             _run("collection", "install", "-r", str(galaxy_file))
-        installed = _install_git_collections(stale_git)
+        installed = _install_git_collections(stale_git, collections_root)
         # Written only after every stale git install succeeded; a failure above leaves the old record.
         kept = {name: pins[name] for name in current_names}
         _write_git_pins(pins_path, {**kept, **installed})

@@ -96,10 +96,15 @@ class GitPinDecisionTest(unittest.TestCase):
         self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A), URL_B: "a" * 40})
         self.assertEqual(installer._load_git_pins(self.pins_path), {})
 
-    def test_install_path_is_read_from_the_installer_report(self):
-        output = "Installing 'testns.alpha:1.0.0' to '/cache/ansible_collections/testns/alpha'\n"
-        self.assertEqual(installer._installed_collection_path(output), "ansible_collections/testns/alpha")
-        self.assertIsNone(installer._installed_collection_path("nothing installed here"))
+    def test_install_path_is_recorded_only_when_it_matches_the_root(self):
+        root = self.root
+        reported = root / "ansible_collections" / "testns" / "alpha"
+        output = f"Installing 'testns.alpha:1.0.0' to '{reported}'\n"
+        self.assertEqual(installer._installed_collection_path(output, root), "ansible_collections/testns/alpha")
+        elsewhere = self.root / "elsewhere" / "ansible_collections" / "testns" / "alpha"
+        other_output = f"Installing 'testns.alpha:1.0.0' to '{elsewhere}'\n"
+        self.assertIsNone(installer._installed_collection_path(other_output, root))
+        self.assertIsNone(installer._installed_collection_path("nothing installed here", root))
 
 
 class GitPinRecordTest(unittest.TestCase):
