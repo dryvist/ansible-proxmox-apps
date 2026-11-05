@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.21.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.20.0...v5.21.0) (2026-11-05)
+
+
+### Features
+
+* **hatchet:** add a grounded Q&A fill workload with a cron top-up ([#3314](https://github.com/dryvist/ansible-proxmox-apps/issues/3314)) ([58e4886](https://github.com/dryvist/ansible-proxmox-apps/commit/58e4886303cbe24e85d42278d9065f5f4744de3f))
+* **hatchet:** enable the GPU fill workload on the local chat routes ([#3315](https://github.com/dryvist/ansible-proxmox-apps/issues/3315)) ([8d29124](https://github.com/dryvist/ansible-proxmox-apps/commit/8d29124ed934c54fa9b29446d91ecb721e3e08dc))
+
+
+### Bug Fixes
+
+* **cribl_stream:** drop non-llm indexes on the llm HEC output ([#3316](https://github.com/dryvist/ansible-proxmox-apps/issues/3316)) ([7bfaf4b](https://github.com/dryvist/ansible-proxmox-apps/commit/7bfaf4b5c2169b0b51c209d35f74974f97489a3f))
+* **cribl_stream:** render the llm index guard without the post-processing pipeline var ([#3317](https://github.com/dryvist/ansible-proxmox-apps/issues/3317)) ([b33d3a1](https://github.com/dryvist/ansible-proxmox-apps/commit/b33d3a1891cb814fdd0e4b93549d6c580ffa5fd6))
+
 ## [5.20.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.19.1...v5.20.0) (2026-11-05)
 
 
