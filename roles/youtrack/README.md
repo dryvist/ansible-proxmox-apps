@@ -6,7 +6,7 @@ Read requests run during check mode; writes are limited to detected drift and
 check mode reports drift without sending writes.
 
 The `Configure YouTrack Hub settings` play in
-`playbooks/site/04-secrets-and-collab-apps.yml` runs on `localhost` with a local
+`playbooks/site/04e-youtrack.yml` runs on `localhost` with a local
 connection. It is tagged `never` and `youtrack`, so it runs only with `--tags youtrack`
 (its own Semaphore template), alongside the always-tagged
 resource-domain pre-fetch in `playbooks/site/00-load-and-telemetry.yml`. That
