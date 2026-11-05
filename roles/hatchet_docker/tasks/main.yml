@@ -94,11 +94,11 @@
   when: hatchet_docker_worker_enabled | bool
   notify: Restart Hatchet
 
-- name: Ensure Git is installed for the pinned eval prompts checkout
+- name: Ensure Git is installed for the pinned eval prompts and fill corpus checkouts
   ansible.builtin.package:
     name: git
     state: present
-  when: hatchet_docker_eval_enabled | bool
+  when: hatchet_docker_eval_enabled | bool or hatchet_docker_worker_fill_enabled | bool
 
 - name: Check out the pinned AI evaluation prompts
   ansible.builtin.git:
@@ -106,6 +106,65 @@
     dest: "{{ hatchet_docker_data_dir }}/ai-llm-prompts"
     version: "{{ hatchet_docker_eval_prompts_ref }}"
   when: hatchet_docker_eval_enabled | bool
+
+- name: Validate the Hatchet GPU fill workload configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_enabled | bool
+      - (hatchet_docker_worker_fill_cron.split() | length) == 5
+      - hatchet_docker_worker_fill_roles | length > 0
+      - hatchet_docker_worker_fill_corpus_repos | length > 0
+      - >-
+        hatchet_docker_worker_fill_roles.keys() | list
+        | difference(hatchet_docker_worker_roles.keys() | list) | length == 0
+      - >-
+        hatchet_docker_worker_fill_roles.values() | list
+        | difference(hatchet_docker_worker_platforms
+        | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'chat')
+        | map(attribute='name') | list) | length == 0
+      - >-
+        hatchet_docker_worker_fill_corpus_repos | selectattr('name', 'defined')
+        | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$')
+        | list | length == hatchet_docker_worker_fill_corpus_repos | length
+      - >-
+        hatchet_docker_worker_fill_corpus_repos | selectattr('url', 'defined')
+        | map(attribute='url') | select('match', '^https://') | list | length
+        == hatchet_docker_worker_fill_corpus_repos | length
+      - >-
+        hatchet_docker_worker_fill_corpus_repos | selectattr('version', 'defined')
+        | map(attribute='version') | select('match', '^[A-Za-z0-9][A-Za-z0-9._/-]*$')
+        | list | length == hatchet_docker_worker_fill_corpus_repos | length
+    fail_msg: >-
+      Enabling the Hatchet GPU fill workload requires an enabled worker, a five-field cron,
+      fill_roles mapping configured LLM roles to active chat platforms, and corpus_repos
+      entries with an identifier name, an https url, and a pinned version tag.
+  when: hatchet_docker_worker_fill_enabled | bool
+
+- name: Create the Hatchet GPU fill corpus and output directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ hatchet_docker_worker_fill_corpus_host_dir }}"
+    - "{{ hatchet_docker_worker_fill_output_host_dir }}"
+  when: hatchet_docker_worker_fill_enabled | bool
+
+- name: Shallow-clone the public Hatchet GPU fill corpus repositories
+  ansible.builtin.git:
+    repo: "{{ item.url }}"
+    dest: "{{ hatchet_docker_worker_fill_corpus_host_dir }}/{{ item.name }}"
+    version: "{{ item.version }}"
+    depth: 1
+    update: true
+  loop: "{{ hatchet_docker_worker_fill_corpus_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: hatchet_docker_worker_fill_enabled | bool
+  # The worker reads the corpus once at startup, so a changed checkout needs a restart.
+  notify: Restart Hatchet
 
 - name: Render Hatchet GPU fill worker config
   ansible.builtin.template:

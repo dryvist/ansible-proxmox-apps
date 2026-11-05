@@ -94,12 +94,11 @@ def test_config_accepts_chat_kind_and_rejects_unknown_or_malformed_chat_platform
             load_config(write_config(tmp_path, config))
 
 
-def test_inventory_platform_stays_noop_and_chat_is_not_active_by_default():
+def test_role_defaults_keep_chat_inactive_and_inventory_opts_into_the_chat_routes():
     inventory = yaml.safe_load((ROOT / "inventory/group_vars/docker_ai_group.yml").read_text())
-    assert inventory["hatchet_docker_worker_platforms"] == [
-        {"name": "noop", "run_url": None, "auth_env": None, "timeout_s": 30}
-    ]
     assert DEFAULTS["hatchet_docker_worker_platforms"] == []
+    assert "hatchet_docker_worker_chat_platforms" in inventory["hatchet_docker_worker_platforms"]
+    assert "noop" in inventory["hatchet_docker_worker_platforms"]
 
 
 def test_chat_request_carries_alias_bounded_tokens_stream_false_and_env_key(monkeypatch, capsys):

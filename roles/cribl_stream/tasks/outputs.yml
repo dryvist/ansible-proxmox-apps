@@ -51,6 +51,12 @@
     cribl_stream_clickhouse_live: >-
       {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('clickhouse_llm_claude', {}) }}
+    # The llm HEC output's live settings, so a missing llm index guard counts
+    # as drift. Without the pipeline compare, an outputs.yml that predates the
+    # guard is never redeployed, because its other fields already match.
+    cribl_stream_hec_llm_live: >-
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
+          | default({}, true)).get('outputs', {}).get('splunk_hec_llm', {}) }}
   no_log: true
 
 - name: Deploy Cribl Stream outputs configuration
@@ -68,6 +74,14 @@
     - >-
       cribl_stream_hec_live.get('url', '') != cribl_stream_splunk_hec_url
       or cribl_stream_hec_live.get('token', '') != cribl_stream_splunk_hec_token
+      or cribl_stream_hec_live.get('pipeline', '')
+         != (cribl_stream_splunk_hec_post_processing_pipeline | default(''))
+      or ((cribl_stream_hec_namespace | default('')) | length > 0
+          and 'llm' in cribl_stream_per_index_indexes
+          and cribl_stream_hec_llm_live.get('pipeline', '')
+              != ('llm_hec_index_guard'
+                  if (cribl_stream_splunk_hec_post_processing_pipeline | default('')) | length > 0
+                  else ''))
       or cribl_stream_hec_live.get('rejectUnauthorized', none) | bool
          != cribl_stream_splunk_hec_tls_verify | bool
       or cribl_stream_hec_live.get('pqEnabled', none) | bool
