@@ -1,0 +1,59 @@
+---
+# llm index guard: output attachment, filter text, chain to redaction, and the
+# shared MLX pipeline's rendered content. Fixtures come from
+# render_llm_hec_index_guard.yml and render_grafana_alerts.yml.
+- name: Assert the splunk_hec_llm output names llm_hec_index_guard as its pipeline
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_outputs_pi | from_yaml).outputs.splunk_hec_llm.pipeline == 'llm_hec_index_guard'"
+    fail_msg: splunk_hec_llm does not name llm_hec_index_guard as its pipeline
+    success_msg: splunk_hec_llm names llm_hec_index_guard as its pipeline
+
+- name: Assert no output other than splunk_hec_llm names llm_hec_index_guard as its pipeline
+  vars:
+    _guarded_outputs: >-
+      {{ (_cribl_stream_outputs_pi | from_yaml).outputs | dict2items
+         | selectattr('value.pipeline', 'defined')
+         | selectattr('value.pipeline', 'equalto', 'llm_hec_index_guard')
+         | map(attribute='key') | list }}
+  ansible.builtin.assert:
+    that:
+      - _guarded_outputs == ['splunk_hec_llm']
+    fail_msg: "llm_hec_index_guard is attached to {{ _guarded_outputs }}, not to splunk_hec_llm only"
+    success_msg: llm_hec_index_guard is attached to splunk_hec_llm only
+
+- name: Assert the rendered llm index guard contains the index filter expression
+  vars:
+    _index_filter: "index && !['llm','llm_metrics'].includes(index)"
+  ansible.builtin.assert:
+    that:
+      - "_index_filter in _cribl_stream_llm_index_guard"
+    fail_msg: "llm_hec_index_guard does not contain the filter {{ _index_filter }}"
+    success_msg: llm_hec_index_guard contains the index filter expression
+
+- name: Assert the llm index guard drops before it chains to the post-processing pipeline
+  ansible.builtin.assert:
+    that:
+      - "(_cribl_stream_llm_index_guard | from_yaml).functions[0].id == 'drop'"
+      - "(_cribl_stream_llm_index_guard | from_yaml).functions[1].id == 'chain'"
+      - >-
+        (_cribl_stream_llm_index_guard | from_yaml).functions[1].conf.processor
+        == cribl_stream_splunk_hec_post_processing_pipeline
+    fail_msg: llm_hec_index_guard does not drop first and chain to the post-processing pipeline
+    success_msg: llm_hec_index_guard drops first and chains to the post-processing pipeline
+
+- name: Assert the shared MLX metrics pipeline rendered content is unchanged
+  vars:
+    _mlx_drop_filter: "sourcetype !== 'mlx:metrics'"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_cribl_stream_mlx_pack_pipeline | from_yaml).functions
+        | map(attribute='id') | list == ['drop', 'chain']
+      - "(_cribl_stream_mlx_pack_pipeline | from_yaml).functions[0].filter == _mlx_drop_filter"
+      - >-
+        (_cribl_stream_mlx_pack_pipeline | from_yaml).functions[1].conf.processor
+        == 'pack:cc-stream-apple-mlx-metrics'
+      - "'llm_hec_index_guard' not in _cribl_stream_mlx_pack_pipeline"
+    fail_msg: mlx_metrics_only_to_pack rendered content differs from the expected drop and chain
+    success_msg: mlx_metrics_only_to_pack rendered content is unchanged
