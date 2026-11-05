@@ -1,9 +1,10 @@
-"""Git collections are reinstalled only when their recorded ref differs.
+"""Git collections are reinstalled only when their recorded ref or directory is missing.
 
-scripts/install_galaxy_requirements.py passes --force for every git collection
-on every run. The installed metadata names only the galaxy.yml version, never
-the commit SHA a collection was pinned to, so the installer records the SHA it
-installed and skips a collection whose record matches requirements.yml.
+scripts/install_galaxy_requirements.py passes --force for each stale git
+collection. The installed metadata names only the galaxy.yml version, never the
+commit SHA a collection was pinned to, so the installer records the SHA and the
+installed directory it reported. A collection is skipped only when the record
+matches requirements.yml and that directory still exists.
 """
 
 import importlib.util
@@ -26,69 +27,88 @@ _SPEC.loader.exec_module(installer)
 
 URL_A = "https://github.com/example/collection-a.git"
 URL_B = "https://github.com/example/collection-b.git#/ansible/"
+FQCN_A = "testns.alpha"
+FQCN_B = "testns.beta"
 SHA_OLD = "a" * 40
 SHA_NEW = "b" * 40
+
+
+def _entry(sha, fqcn):
+    namespace, name = fqcn.split(".", 1)
+    return {"ref": sha, "path": f"ansible_collections/{namespace}/{name}"}
+
+
+def _install_dir(root, fqcn):
+    namespace, name = fqcn.split(".", 1)
+    return root / "ansible_collections" / namespace / name
 
 
 class GitPinDecisionTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.pins_path = Path(self._tmp.name) / installer.GIT_PINS_FILENAME
+        self.root = Path(self._tmp.name)
+        self.pins_path = self.root / installer.GIT_PINS_FILENAME
 
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _write_pins(self, text):
-        self.pins_path.write_text(text, encoding="utf-8")
+    def _write_pins(self, pins):
+        self.pins_path.write_text(json.dumps(pins), encoding="utf-8")
+
+    def _current(self, requirement):
+        pins = installer._load_git_pins(self.pins_path)
+        return installer._git_collection_is_current(requirement, pins, self.root)
 
     def test_cold_cache_reinstalls(self):
-        pins = installer._load_git_pins(self.pins_path)
-        self.assertEqual(pins, {})
-        self.assertFalse(installer._git_collection_is_current({"name": URL_A, "version": SHA_OLD}, pins))
+        self.assertEqual(installer._load_git_pins(self.pins_path), {})
+        self.assertFalse(self._current({"name": URL_A, "version": SHA_OLD}))
 
-    def test_recorded_ref_skips(self):
-        self._write_pins(json.dumps({URL_A: SHA_OLD}))
-        pins = installer._load_git_pins(self.pins_path)
-        self.assertTrue(installer._git_collection_is_current({"name": URL_A, "version": SHA_OLD}, pins))
+    def test_recorded_ref_with_directory_skips(self):
+        self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A)})
+        _install_dir(self.root, FQCN_A).mkdir(parents=True)
+        self.assertTrue(self._current({"name": URL_A, "version": SHA_OLD}))
+
+    def test_recorded_ref_without_directory_reinstalls(self):
+        self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A)})
+        self.assertFalse(self._current({"name": URL_A, "version": SHA_OLD}))
 
     def test_changed_ref_reinstalls(self):
-        self._write_pins(json.dumps({URL_A: SHA_OLD}))
-        pins = installer._load_git_pins(self.pins_path)
-        self.assertFalse(installer._git_collection_is_current({"name": URL_A, "version": SHA_NEW}, pins))
+        self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A)})
+        _install_dir(self.root, FQCN_A).mkdir(parents=True)
+        self.assertFalse(self._current({"name": URL_A, "version": SHA_NEW}))
 
     def test_unrecorded_url_reinstalls(self):
-        self._write_pins(json.dumps({URL_B: SHA_OLD}))
-        pins = installer._load_git_pins(self.pins_path)
-        self.assertFalse(installer._git_collection_is_current({"name": URL_A, "version": SHA_OLD}, pins))
+        self._write_pins({URL_B: _entry(SHA_OLD, FQCN_B)})
+        _install_dir(self.root, FQCN_B).mkdir(parents=True)
+        self.assertFalse(self._current({"name": URL_A, "version": SHA_OLD}))
 
     def test_entry_without_version_never_skips(self):
-        self._write_pins(json.dumps({URL_A: ""}))
-        pins = installer._load_git_pins(self.pins_path)
-        self.assertFalse(installer._git_collection_is_current({"name": URL_A}, pins))
-        self.assertFalse(installer._git_collection_is_current({"name": URL_A, "version": ""}, pins))
+        self._write_pins({URL_A: _entry("", FQCN_A)})
+        _install_dir(self.root, FQCN_A).mkdir(parents=True)
+        self.assertFalse(self._current({"name": URL_A}))
+        self.assertFalse(self._current({"name": URL_A, "version": ""}))
 
     def test_corrupt_pins_file_is_treated_as_cold(self):
-        self._write_pins("{not json")
+        self.pins_path.write_text("{not json", encoding="utf-8")
         self.assertEqual(installer._load_git_pins(self.pins_path), {})
 
-    def test_non_string_pins_are_ignored(self):
-        self._write_pins(json.dumps({URL_A: 1}))
+    def test_malformed_entry_discards_the_whole_record(self):
+        self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A), URL_B: "a" * 40})
         self.assertEqual(installer._load_git_pins(self.pins_path), {})
+
+    def test_install_path_is_read_from_the_installer_report(self):
+        output = "Installing 'testns.alpha:1.0.0' to '/cache/ansible_collections/testns/alpha'\n"
+        self.assertEqual(installer._installed_collection_path(output), "ansible_collections/testns/alpha")
+        self.assertIsNone(installer._installed_collection_path("nothing installed here"))
 
 
 class GitPinRecordTest(unittest.TestCase):
-    def test_round_trip_skips_entries_without_version(self):
+    def test_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nested" / installer.GIT_PINS_FILENAME
-            installer._record_git_pins(
-                path,
-                [
-                    {"name": URL_A, "version": SHA_OLD},
-                    {"name": URL_B, "version": SHA_NEW},
-                    {"name": "https://example.invalid/no-version.git"},
-                ],
-            )
-            self.assertEqual(installer._load_git_pins(path), {URL_A: SHA_OLD, URL_B: SHA_NEW})
+            pins = {URL_A: _entry(SHA_OLD, FQCN_A), URL_B: _entry(SHA_NEW, FQCN_B)}
+            installer._write_git_pins(path, pins)
+            self.assertEqual(installer._load_git_pins(path), pins)
 
 
 class MainRoutesGitCollectionsTest(unittest.TestCase):
@@ -99,6 +119,10 @@ class MainRoutesGitCollectionsTest(unittest.TestCase):
         self.work_dir = base / "work"
         self.work_dir.mkdir()
         self.pins_path = self.collections_root / installer.GIT_PINS_FILENAME
+        self.fqcn_by_url = {URL_A: FQCN_A, URL_B: FQCN_B}
+        self.report_install = True
+        self.failure = None
+        self.installs = []
         self._old_cwd = os.getcwd()
         os.chdir(self.work_dir)
         (self.work_dir / "requirements.yml").write_text(
@@ -112,14 +136,10 @@ class MainRoutesGitCollectionsTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.calls = []
-        self.git_requirements_seen = []
-        self.failure = None
-        patches = [
+        for patch in (
             mock.patch.object(installer.C, "COLLECTIONS_PATHS", [str(self.collections_root)]),
             mock.patch.object(installer, "_run", side_effect=self._recorder),
-        ]
-        for patch in patches:
+        ):
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -128,49 +148,79 @@ class MainRoutesGitCollectionsTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _recorder(self, *args):
-        self.calls.append(args)
         if self.failure is not None:
+            self.installs.append(None)
             raise self.failure
         requirement_file = Path(args[args.index("-r") + 1])
-        self.git_requirements_seen.append(yaml.safe_load(requirement_file.read_text(encoding="utf-8")))
+        url = yaml.safe_load(requirement_file.read_text(encoding="utf-8"))["collections"][0]["name"]
+        self.installs.append(url)
+        fqcn = self.fqcn_by_url[url]
+        target = _install_dir(self.collections_root, fqcn)
+        target.mkdir(parents=True, exist_ok=True)
+        if not self.report_install:
+            return ""
+        return f"Installing '{fqcn}:1.0.0' to '{target}'\n"
 
     def _write_pins(self, pins):
         self.collections_root.mkdir(parents=True, exist_ok=True)
         self.pins_path.write_text(json.dumps(pins), encoding="utf-8")
 
-    def _installed_names(self):
-        names = []
-        for call in self.git_requirements_seen:
-            names.extend(item["name"] for item in call["collections"])
-        return names
+    def _make_install_dir(self, fqcn):
+        _install_dir(self.collections_root, fqcn).mkdir(parents=True, exist_ok=True)
 
-    def test_cold_cache_installs_every_git_collection_with_force(self):
-        installer.main()
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(self.calls[0][:3], ("collection", "install", "-r"))
-        self.assertEqual(self.calls[0][-1], "--force")
-        self.assertEqual(sorted(self._installed_names()), sorted([URL_A, URL_B]))
-        self.assertEqual(installer._load_git_pins(self.pins_path), {URL_A: SHA_NEW, URL_B: SHA_NEW})
+    def _recorded(self):
+        return installer._load_git_pins(self.pins_path)
 
-    def test_current_pins_run_no_install(self):
-        self._write_pins({URL_A: SHA_NEW, URL_B: SHA_NEW})
+    def test_cold_cache_installs_each_git_collection_with_force(self):
         installer.main()
-        self.assertEqual(self.calls, [])
-        self.assertEqual(installer._load_git_pins(self.pins_path), {URL_A: SHA_NEW, URL_B: SHA_NEW})
+        self.assertEqual(sorted(self.installs), sorted([URL_A, URL_B]))
+        self.assertEqual(
+            self._recorded(),
+            {URL_A: _entry(SHA_NEW, FQCN_A), URL_B: _entry(SHA_NEW, FQCN_B)},
+        )
+
+    def test_current_pins_and_directories_run_no_install(self):
+        self._write_pins({URL_A: _entry(SHA_NEW, FQCN_A), URL_B: _entry(SHA_NEW, FQCN_B)})
+        self._make_install_dir(FQCN_A)
+        self._make_install_dir(FQCN_B)
+        installer.main()
+        self.assertEqual(self.installs, [])
+        self.assertEqual(
+            self._recorded(),
+            {URL_A: _entry(SHA_NEW, FQCN_A), URL_B: _entry(SHA_NEW, FQCN_B)},
+        )
+
+    def test_missing_directory_reinstalls_only_that_collection(self):
+        self._write_pins({URL_A: _entry(SHA_NEW, FQCN_A), URL_B: _entry(SHA_NEW, FQCN_B)})
+        self._make_install_dir(FQCN_A)
+        installer.main()
+        self.assertEqual(self.installs, [URL_B])
+        self.assertEqual(self._recorded()[URL_B], _entry(SHA_NEW, FQCN_B))
 
     def test_changed_ref_reinstalls_only_that_collection(self):
-        self._write_pins({URL_A: SHA_OLD, URL_B: SHA_NEW})
+        self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A), URL_B: _entry(SHA_NEW, FQCN_B)})
+        self._make_install_dir(FQCN_A)
+        self._make_install_dir(FQCN_B)
         installer.main()
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(self._installed_names(), [URL_A])
-        self.assertEqual(installer._load_git_pins(self.pins_path), {URL_A: SHA_NEW, URL_B: SHA_NEW})
+        self.assertEqual(self.installs, [URL_A])
+        self.assertEqual(self._recorded()[URL_A], _entry(SHA_NEW, FQCN_A))
 
-    def test_failed_install_leaves_previous_pins_untouched(self):
-        self._write_pins({URL_A: SHA_OLD})
+    def test_failed_install_leaves_previous_record_untouched(self):
+        self._write_pins({URL_A: _entry(SHA_OLD, FQCN_A)})
+        self._make_install_dir(FQCN_A)
         self.failure = subprocess.CalledProcessError(1, ["ansible-galaxy"])
         with self.assertRaises(subprocess.CalledProcessError):
             installer.main()
-        self.assertEqual(installer._load_git_pins(self.pins_path), {URL_A: SHA_OLD})
+        self.assertEqual(self._recorded(), {URL_A: _entry(SHA_OLD, FQCN_A)})
+
+    def test_install_without_reported_path_stays_unrecorded(self):
+        self.report_install = False
+        installer.main()
+        self.assertEqual(self._recorded(), {})
+        self.report_install = True
+        self.installs.clear()
+        installer.main()
+        self.assertEqual(sorted(self.installs), sorted([URL_A, URL_B]))
 
 
 if __name__ == "__main__":

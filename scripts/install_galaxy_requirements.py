@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -11,6 +13,8 @@ import yaml
 from ansible import constants as C
 
 GIT_PINS_FILENAME = "git-collection-pins.json"
+# ansible-galaxy reports each installed collection as: Installing 'ns.name:ver' to '<dir>'
+INSTALLED_COLLECTION = re.compile(r"^Installing '([A-Za-z0-9_]+)\.([A-Za-z0-9_]+):", re.MULTILINE)
 
 
 def _is_git_collection(requirement: dict) -> bool:
@@ -22,32 +26,37 @@ def _write_requirements(path: Path, section: str, entries: list[dict]) -> None:
         path.write_text(yaml.safe_dump({section: entries}, sort_keys=False), encoding="utf-8")
 
 
-def _git_pins_path() -> Path:
-    # ansible-galaxy installs into the first collections path, so the pins sit
-    # beside the installed collections and a cache of that directory carries them.
-    return Path(C.COLLECTIONS_PATHS[0]) / GIT_PINS_FILENAME
-
-
-def _load_git_pins(path: Path) -> dict[str, str]:
+def _load_git_pins(path: Path) -> dict[str, dict[str, str]]:
     try:
         pins = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    if not isinstance(pins, dict) or not all(isinstance(ref, str) for ref in pins.values()):
+    if not isinstance(pins, dict):
         return {}
+    for entry in pins.values():
+        if not isinstance(entry, dict) or not isinstance(entry.get("ref"), str) or not isinstance(entry.get("path"), str):
+            return {}
     return pins
 
 
-def _git_collection_is_current(requirement: dict, pins: dict[str, str]) -> bool:
-    # A git collection's pinned version is a commit SHA. The installed metadata
-    # carries only the galaxy.yml version, so the recorded SHA is the only proof
-    # of which revision is installed.
+def _git_collection_is_current(requirement: dict, pins: dict[str, dict[str, str]], collections_root: Path) -> bool:
+    # The recorded SHA says which revision was installed. The installed directory
+    # says it is still there; a cache restore or manual change can remove it.
     version = requirement.get("version")
-    return bool(version) and pins.get(requirement["name"]) == version
+    entry = pins.get(requirement["name"])
+    if not version or entry is None or entry["ref"] != version or not entry["path"]:
+        return False
+    return (collections_root / entry["path"]).is_dir()
 
 
-def _record_git_pins(path: Path, git_collections: list[dict]) -> None:
-    pins = {item["name"]: item["version"] for item in git_collections if item.get("version")}
+def _installed_collection_path(output: str) -> str | None:
+    match = INSTALLED_COLLECTION.search(output)
+    if match is None:
+        return None
+    return f"ansible_collections/{match.group(1)}/{match.group(2)}"
+
+
+def _write_git_pins(path: Path, pins: dict[str, dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(pins, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -73,8 +82,30 @@ def _role_is_current(requirement: dict) -> bool:
     return False
 
 
-def _run(*args: str) -> None:
-    subprocess.run(["ansible-galaxy", *args], check=True)
+def _run(*args: str) -> str:
+    result = subprocess.run(["ansible-galaxy", *args], capture_output=True, text=True)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    result.check_returncode()
+    return result.stdout
+
+
+def _install_git_collections(stale_git: list[dict]) -> dict[str, dict[str, str]]:
+    # One ansible-galaxy call per collection, so each reported install path belongs to one URL.
+    installed: dict[str, dict[str, str]] = {}
+    with tempfile.TemporaryDirectory(prefix="ansible-galaxy-git-") as temp_dir:
+        for index, item in enumerate(stale_git):
+            requirement_file = Path(temp_dir) / f"git-{index}.yml"
+            _write_requirements(requirement_file, "collections", [item])
+            # Git refs do not match installed collection metadata versions.
+            output = _run("collection", "install", "-r", str(requirement_file), "--force")
+            path = _installed_collection_path(output)
+            if path is None or not item.get("version"):
+                # Left unrecorded, so the next run reinstalls it.
+                print(f"warning: no install path reported for {item['name']}", file=sys.stderr)
+                continue
+            installed[item["name"]] = {"ref": item["version"], "path": path}
+    return installed
 
 
 def main() -> None:
@@ -82,27 +113,28 @@ def main() -> None:
     collections = requirements.get("collections", [])
     git_collections = [item for item in collections if _is_git_collection(item)]
     galaxy_collections = [item for item in collections if not _is_git_collection(item)]
-    pins_path = _git_pins_path()
+    collections_root = Path(C.COLLECTIONS_PATHS[0])
+    pins_path = collections_root / GIT_PINS_FILENAME
     pins = _load_git_pins(pins_path)
-    stale_git = [item for item in git_collections if not _git_collection_is_current(item, pins)]
+    current_git = [item for item in git_collections if _git_collection_is_current(item, pins, collections_root)]
+    current_names = {item["name"] for item in current_git}
+    stale_git = [item for item in git_collections if item["name"] not in current_names]
     stale_roles = [item for item in requirements.get("roles", []) if not _role_is_current(item)]
 
     with tempfile.TemporaryDirectory(prefix="ansible-galaxy-") as temp_dir:
         temp_path = Path(temp_dir)
         galaxy_file = temp_path / "collections.yml"
-        git_file = temp_path / "git-collections.yml"
         roles_file = temp_path / "roles.yml"
         _write_requirements(galaxy_file, "collections", galaxy_collections)
-        _write_requirements(git_file, "collections", stale_git)
         _write_requirements(roles_file, "roles", stale_roles)
 
         if galaxy_collections:
             # Default resolution skips installed versions that satisfy the pin.
             _run("collection", "install", "-r", str(galaxy_file))
-        if stale_git:
-            # Only collections with no recorded ref, or a different one, are reinstalled.
-            _run("collection", "install", "-r", str(git_file), "--force")
-        _record_git_pins(pins_path, git_collections)
+        installed = _install_git_collections(stale_git)
+        # Written only after every stale git install succeeded; a failure above leaves the old record.
+        kept = {name: pins[name] for name in current_names}
+        _write_git_pins(pins_path, {**kept, **installed})
         if stale_roles:
             _run("role", "install", "-r", str(roles_file), "--force")
 
