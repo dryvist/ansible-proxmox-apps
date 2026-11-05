@@ -1,5 +1,26 @@
 # Changelog
 
+## [5.19.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.18.0...v5.19.0) (2026-11-05)
+
+
+### Features
+
+* **agent:** autonomous zcode run j-3b1cdae08d9a2849 ([#3290](https://github.com/dryvist/ansible-proxmox-apps/issues/3290)) ([3c216b5](https://github.com/dryvist/ansible-proxmox-apps/commit/3c216b56a3dd4ba4fefd74ab1f049507b11c4abc))
+* **dashboards:** add the shared ui filter ([#3303](https://github.com/dryvist/ansible-proxmox-apps/issues/3303)) ([09e65f6](https://github.com/dryvist/ansible-proxmox-apps/commit/09e65f668eb0b9367529f82dd23393b20faa4691))
+* **hatchet:** add node and promptfoo to the worker image ([#3299](https://github.com/dryvist/ansible-proxmox-apps/issues/3299)) ([c9a2d54](https://github.com/dryvist/ansible-proxmox-apps/commit/c9a2d54ace07107e6d19f04cf43d3312b6750cf9))
+
+
+### Bug Fixes
+
+* **github-runner:** age-clean the _diag slot directories ([#3292](https://github.com/dryvist/ansible-proxmox-apps/issues/3292)) ([3d024c9](https://github.com/dryvist/ansible-proxmox-apps/commit/3d024c9f4fc329af7d6cd90c0a8df7164d55c6fe))
+* **grafana:** group alert notifications by alert name at the root ([#3287](https://github.com/dryvist/ansible-proxmox-apps/issues/3287)) ([dfbd30e](https://github.com/dryvist/ansible-proxmox-apps/commit/dfbd30e090f763bea77e5e39c99bb70267e4322f))
+* **prometheus:** set 30s scrape timeout on node_exporter jobs ([#3294](https://github.com/dryvist/ansible-proxmox-apps/issues/3294)) ([747da7c](https://github.com/dryvist/ansible-proxmox-apps/commit/747da7c9c1a4c1557f0a48a88f76bdc18f883377))
+
+
+### Performance
+
+* **ci:** skip git collection reinstalls when the pinned ref is installed ([#3298](https://github.com/dryvist/ansible-proxmox-apps/issues/3298)) ([bdadec6](https://github.com/dryvist/ansible-proxmox-apps/commit/bdadec6566089214125f4ba3eeacdba5da4adf20))
+
 ## [5.18.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.17.0...v5.18.0) (2026-11-05)
 
 
