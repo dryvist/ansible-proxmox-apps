@@ -281,6 +281,38 @@
             in (_hatchet_compose_evals.content | b64decode)
           - "'openrouter' not in (_hatchet_compose_evals.content | b64decode | lower)"
 
+    - name: Load the docker_ai group producer settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../inventory/group_vars/docker_ai_group.yml"
+        name: _docker_ai_group
+
+    - name: Render the worker JSON configuration with the docker_ai producer settings
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-producer.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_fill_model: "{{ _docker_ai_group.hatchet_docker_fill_model }}"
+        hatchet_docker_eval_enabled: "{{ _docker_ai_group.hatchet_docker_eval_enabled }}"
+        hatchet_docker_eval_cron: "{{ _docker_ai_group.hatchet_docker_eval_cron }}"
+        hatchet_docker_eval_roles: "{{ _docker_ai_group.hatchet_docker_eval_roles }}"
+        hatchet_docker_worker_platforms: "{{ _docker_ai_group.hatchet_docker_worker_platforms }}"
+
+    - name: Read and parse the docker_ai producer worker configuration
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-producer.json"
+      register: _hatchet_worker_config_producer
+
+    - name: Assert the producer schedules the local fill role every 10 minutes
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_hatchet_worker_config_producer.content | b64decode | from_json).evals.cron == '*/10 * * * *'
+          - >-
+            (_hatchet_worker_config_producer.content | b64decode | from_json).evals.roles
+            == [{'role': 'gpu-small', 'dataset': 'vikunja-clerk-evals'}]
+
     - name: Remove the temporary render directory
       ansible.builtin.file:
         path: "{{ _hatchet_render_dir.path }}"
