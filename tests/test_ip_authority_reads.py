@@ -38,6 +38,7 @@ ADDRESS_READ = re.compile(
     r"|\bvalue\.ip\b"
     r"|\[\s*['\"]ip['\"]\s*\]"
     r"|\]\.ip\b"
+    r"|\bg\.ip\b"
     r"|attribute\s*=\s*['\"](?:value\.)?ip['\"]"
 )
 RESERVED = re.compile(r"reserved_ip\b")
@@ -65,7 +66,7 @@ READS = {
     # or becomes an exception in docs/IP_AUTHORITY.md before it is exempted.
     "inventory/group_vars/all.yml": 1,
     "inventory/group_vars/haproxy_group.yml": 1,
-    "inventory/group_vars/prometheus_group.yml": 6,
+    "inventory/group_vars/prometheus_group.yml": 8,
     "playbooks/hatchet-killtest.yml": 1,
     "playbooks/sync-cribl-packs.yml": 1,
     "playbooks/tasks/hatchet_killtest_phases.yml": 1,
@@ -145,6 +146,8 @@ class IpAuthorityReads(unittest.TestCase):
             "map(attribute='value.ip')",
             "{{ tofu_data.containers['s3'].ip }}",
             "{{ tofu_data.containers[groups['cribl_edge'] | first].ip }}",
+            "{{ g.ip ~ ':' ~ node_exporter_scrape_port }}",
+            "{%- if (g.ip | default('')) | length > 0 %}",
         ):
             with self.subTest(line=line):
                 self.assertTrue(ADDRESS_READ.search(line), "ADDRESS_READ misses %r" % line)
