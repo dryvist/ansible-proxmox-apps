@@ -77,6 +77,10 @@ prometheus_stack_legacy_blackbox_dir: /opt/blackbox-exporter
 # written exactly once. The icmp job also folds in the live ISP-path hops
 # discovered by the wan_hop_discovery play (host fact wan_hop_discovery_isp_hops;
 # empty when discovery did not run, degrading safely to modem + anycast).
+# Git mirror URLs from the inventory; empty when tofu_data carries none. Each job's
+# targets must stay a native list: a `{% set %}` prefix turns it into a string,
+# and the template then scrapes that string one character at a time.
+prometheus_stack_git_mirror_urls: "{{ hostvars['localhost'].get('tofu_data', {}).get('git_mirror_urls', {}) }}"
 prometheus_stack_blackbox_jobs:
   - module: icmp
     targets: >-
@@ -85,18 +89,14 @@ prometheus_stack_blackbox_jobs:
          + prometheus_stack_anycast_targets }}
   - module: http_2xx_tls
     targets: >-
-      {% set inventory = hostvars['localhost'].get('tofu_data', {}) %}
-      {% set urls = inventory.get('git_mirror_urls', {}) %}
       {{ prometheus_stack_anycast_targets | map('regex_replace', '^', 'https://') | list
-         + ([urls.get('public', '') ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
-            if urls.get('public', '') | length > 0 else [])
+         + ([prometheus_stack_git_mirror_urls.public ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
+            if prometheus_stack_git_mirror_urls.get('public', '') | length > 0 else [])
          + ['https://homebox.' ~ ingress_domain ~ '/api/v1/status'] }}
   - module: http_401_tls
     targets: >-
-      {% set inventory = hostvars['localhost'].get('tofu_data', {}) %}
-      {% set urls = inventory.get('git_mirror_urls', {}) %}
-      {{ [urls.get('all', '') ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
-         if urls.get('all', '') | length > 0 else [] }}
+      {{ [prometheus_stack_git_mirror_urls.all ~ '/dryvist/docs.git/info/refs?service=git-upload-pack']
+         if prometheus_stack_git_mirror_urls.get('all', '') | length > 0 else [] }}
   - module: dns_udp
     targets: "{{ prometheus_stack_anycast_targets }}"
 
