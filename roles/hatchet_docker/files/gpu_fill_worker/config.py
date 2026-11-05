@@ -60,9 +60,11 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard", "evals"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
     ):
-        raise ValueError("config must contain roles and platforms with optional latency_guard and evals")
+        raise ValueError(
+            "config must contain roles and platforms with optional latency_guard, evals, and fill"
+        )
 
     roles = config["roles"]
     platforms = config["platforms"]
@@ -164,5 +166,30 @@ def load_config(path):
             if eval_role["role"] in seen_roles:
                 raise ValueError(f"duplicate eval role: {eval_role['role']}")
             seen_roles.add(eval_role["role"])
+
+    if "fill" in config:
+        fill = config["fill"]
+        if not isinstance(fill, dict) or set(fill) != {
+            "cron",
+            "corpus_dir",
+            "output_dir",
+            "roles",
+        }:
+            raise ValueError("fill must contain cron, corpus_dir, output_dir, and roles only")
+        cron = fill["cron"]
+        if not isinstance(cron, str) or len(cron.split()) != 5:
+            raise ValueError("fill cron must be a five-field cron expression")
+        for key in ("corpus_dir", "output_dir"):
+            if not isinstance(fill[key], str) or not Path(fill[key]).is_absolute():
+                raise ValueError(f"fill {key} must be an absolute path")
+        fill_roles = fill["roles"]
+        if not isinstance(fill_roles, dict) or not fill_roles:
+            raise ValueError("fill roles must be a non-empty object")
+        for role_name, platform_name in fill_roles.items():
+            if role_name not in roles:
+                raise ValueError(f"fill role {role_name} is not a configured LLM role")
+            platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
+            if not isinstance(platform, dict) or platform.get("kind") != "chat":
+                raise ValueError(f"fill role {role_name} must map to an active chat platform")
 
     return config
