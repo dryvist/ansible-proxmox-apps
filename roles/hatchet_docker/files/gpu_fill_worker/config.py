@@ -16,6 +16,35 @@ def _require_name(value, label):
         raise ValueError(f"{label} must be a non-empty identifier")
 
 
+_CHAT_FIELDS = {"kind", "base_url", "model", "max_tokens", "auth_env", "timeout_s"}
+
+
+def _require_chat_platform(name, platform):
+    """A chat platform posts to a router model; it has no run_url."""
+    if set(platform) != _CHAT_FIELDS:
+        raise ValueError(f"platform {name} has invalid fields")
+    base_url = platform["base_url"]
+    parsed_url = urlsplit(base_url) if isinstance(base_url, str) else None
+    if (
+        parsed_url is None
+        or parsed_url.scheme not in {"http", "https"}
+        or not parsed_url.hostname
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+    ):
+        raise ValueError(f"platform {name} base_url must be an absolute HTTP(S) URL")
+    _require_name(platform["model"], f"platform {name} model")
+    auth_env = platform["auth_env"]
+    if not isinstance(auth_env, str) or not _ENV_NAME.fullmatch(auth_env):
+        raise ValueError(f"platform {name} auth_env must be an env var name")
+    max_tokens = platform["max_tokens"]
+    if type(max_tokens) is not int or max_tokens < 1:
+        raise ValueError(f"platform {name} max_tokens must be a positive integer")
+    timeout_s = platform["timeout_s"]
+    if type(timeout_s) is not int or timeout_s < 1:
+        raise ValueError(f"platform {name} timeout_s must be a positive integer")
+
+
 def _require_cron(value, label):
     if not isinstance(value, str) or (value and not value.strip()):
         raise ValueError(f"{label} must be an empty string or a five-field cron expression")
@@ -52,6 +81,9 @@ def load_config(path):
 
     for name, platform in platforms.items():
         _require_name(name, "platform name")
+        if isinstance(platform, dict) and platform.get("kind") == "chat":
+            _require_chat_platform(name, platform)
+            continue
         if not isinstance(platform, dict) or set(platform) != {
             "run_url",
             "auth_env",

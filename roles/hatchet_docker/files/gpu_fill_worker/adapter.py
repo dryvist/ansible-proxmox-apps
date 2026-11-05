@@ -77,8 +77,59 @@ def _check_latency_guard(guard, timeout_s, http_get=None):
         raise LatencyGuardError("latency guard query failed; refusing GPU-fill dispatch") from exc
 
 
+def run_chat(platform_cfg, payload, http_post=None, latency_guard=None, http_get=None):
+    """POST one bounded, non-streaming chat completion to the router and return its JSON object."""
+    request = payload.get("payload")
+    prompt = request.get("prompt") if isinstance(request, dict) else None
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("chat run requires a non-empty payload.prompt string")
+    requested = request.get("max_tokens", platform_cfg["max_tokens"])
+    if type(requested) is not int or requested < 1:
+        raise ValueError("chat run payload.max_tokens must be a positive integer")
+    max_tokens = min(requested, platform_cfg["max_tokens"])
+    if latency_guard is not None:
+        _check_latency_guard(latency_guard, platform_cfg["timeout_s"], http_get)
+
+    auth_env = platform_cfg["auth_env"]
+    token = os.environ.get(auth_env)
+    if not token:
+        raise ValueError(f"required platform credential {auth_env} is empty")
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+    body = json.dumps(
+        {
+            "model": platform_cfg["model"],
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+    ).encode("utf-8")
+    url = platform_cfg["base_url"].rstrip("/") + "/chat/completions"
+    status, response_body = (http_post or _http_post)(
+        url, body, headers, platform_cfg["timeout_s"]
+    )
+    if not 200 <= status < 300:
+        raise RuntimeError(f"router chat API returned HTTP {status}")
+
+    result = json.loads(response_body) if response_body else {}
+    if not isinstance(result, dict):
+        raise ValueError("router chat API response must be a JSON object")
+    return result
+
+
 def run_agent(platform_cfg, payload, http_post=None, latency_guard=None, http_get=None):
     """POST one JSON payload and return the platform's JSON object response."""
+    if platform_cfg.get("kind") == "chat":
+        return run_chat(
+            platform_cfg,
+            payload,
+            http_post=http_post,
+            latency_guard=latency_guard,
+            http_get=http_get,
+        )
     if platform_cfg["run_url"] is None:
         return {"noop": True, "agent": payload.get("agent")}
     if latency_guard is not None:
