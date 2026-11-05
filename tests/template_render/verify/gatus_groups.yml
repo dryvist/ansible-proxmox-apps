@@ -34,7 +34,11 @@
     status_stack_kuma_keystones:
       - name: Traefik HTTPS
         url: "https://traefik.example.test/"
-    status_stack_oidc_clients: []
+    status_stack_oidc_probe_state: "fixture-probe-state"
+    status_stack_oidc_clients:
+      - name: fixture
+        client_id: fixture-client
+        redirect_uri: "https://fixture.example.test/callback"
     status_stack_deadman_endpoints:
       - { name: technitium-dns, heartbeat: 5m }
     status_stack_deadman_token: "test-deadman-token"
@@ -270,6 +274,19 @@
         _endpoint_groups: >-
           {{ (_gatus.endpoints | map(attribute='group') | list)
              + (_gatus['external-endpoints'] | map(attribute='group') | list) }}
+
+    - name: Assert OIDC authorize probes carry a state of at least 8 characters
+      ansible.builtin.assert:
+        that:
+          - _oidc.url is search('[?&]state=[^&]{8,}(&|$)')
+          - _oidc.url is search('[?&]state=fixture-probe-state(&|$)')
+        fail_msg: >-
+          Gatus OIDC authorize probes must send a state of at least 8
+          characters, or Authelia rejects the request as a malformed
+          authorization request: {{ _oidc.url | default('ABSENT') }}
+      vars:
+        _by_name: "{{ dict(_gatus.endpoints | map(attribute='name') | zip(_gatus.endpoints)) }}"
+        _oidc: "{{ _by_name['oidc-fixture'] }}"
 
     - name: Assert the dashboard UI is set to group-sorted
       ansible.builtin.assert:
