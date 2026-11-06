@@ -107,7 +107,10 @@ class ReconcileIdentityPaths(unittest.TestCase):
         mint = tasks["Mint a reconcile liveness secret_id through approle-issuer"]
         destroy = tasks["Revoke the reconcile liveness secret_id by accessor"]
         for task in (issuer_login, mint, destroy):
-            self.assertEqual(task["when"], "openbao_status.initialized")
+            when = task["when"] if isinstance(task["when"], list) else [task["when"]]
+            self.assertIn("openbao_status.initialized", when)
+            # The probe must never mint or revoke during a check-mode run.
+            self.assertIn("not ansible_check_mode", when)
             self.assertTrue(task["no_log"])
             self.assertNotIn("openbao_bootstrap_token", str(task["when"]))
             self.assertNotIn("openbao_provisioning_token", str(task["when"]))
