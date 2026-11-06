@@ -1,0 +1,232 @@
+"""Exercise the configured dispatcher sources with isolated Git and service stubs."""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import shutil
+import sys
+import urllib.request
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+ROLE = ROOT / "roles/agent_sandbox"
+DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+CHANGES = yaml.safe_load((ROLE / "vars/job_execution.yml").read_text())[
+    "agent_sandbox_job_source_changes"
+]
+
+
+@pytest.fixture(scope="module")
+def sources():
+    result = {}
+    for kind, filename in (("dispatcher", "agent-dispatch.sh"), ("entrypoint", "entrypoint.sh")):
+        url = (
+            "https://raw.githubusercontent.com/dryvist/nix-agent-sandbox/"
+            f"{DEFAULTS['agent_sandbox_dispatch_source_commit']}/scripts/{filename}"
+        )
+        with urllib.request.urlopen(url, timeout=30) as response:
+            raw = response.read()
+        if kind == "dispatcher":
+            pin = next(p for p in DEFAULTS["agent_sandbox_dispatch_sources"] if p["name"] == filename)
+            assert hashlib.sha256(raw).hexdigest() == pin["sha256"]
+        source = raw.decode()
+        result[kind + "_original"] = source
+        for change in CHANGES[kind]:
+            assert source.count(change["before"]) == change.get("count", 1)
+            source = source.replace(change["before"], change["after"])
+        checked = subprocess.run(["bash", "-n"], input=source, text=True, capture_output=True)
+        assert checked.returncode == 0, checked.stderr
+        result[kind] = source
+    return result
+
+
+def bash(script, tmp_path, **values):
+    env = dict(os.environ, **values)
+    env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    return subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path, env=env, text=True, capture_output=True,
+    )
+
+
+def test_default_and_mount_contract():
+    assert DEFAULTS["agent_sandbox_job_github_write"] is False
+    profile = (ROLE / "templates/agent-dispatch-profile.sh.j2").read_text()
+    assert 'agent_sandbox_job_github_write | bool | ternary("true", "false")' in profile
+    assert 'agent_sandbox_job_entrypoint | quote' in profile
+    execution = yaml.safe_load((ROLE / "tasks/main/job_execution.yml").read_text())
+    assert any("--network" in t.get("ansible.builtin.command", {}).get("argv", []) for t in execution)
+    install = yaml.safe_load((ROLE / "tasks/main/job_source.yml").read_text())[-1]
+    assert install["ansible.builtin.copy"]["validate"] == "bash -n %s"
+
+
+@pytest.mark.parametrize("mode,write,permission,role", [
+    ("start", "false", "read", "sandbox-opencode-read"),
+    ("fix", "false", "read", "sandbox-opencode-read"),
+    ("start", "true", "write", "sandbox-opencode-write"),
+    ("fix", "true", "read", "sandbox-opencode-read"),
+])
+def test_job_credentials(sources, tmp_path, mode, write, permission, role):
+    script = sources["dispatcher"].rsplit('cmd="${1:-}"', 1)[0] + r'''
+job_get() {
+  case "$2" in
+    .tool) echo opencode-local ;;
+    .repo) echo example/repository ;;
+    *mode*) echo "$TEST_MODE" ;;
+    *tty*) echo 0 ;;
+  esac
+}
+service_login() { login='{"auth":{"client_token":"fixture-value","lease_duration":3600}}'; }
+bao_req() {
+  case "$2" in
+    "$BUCKET") echo '{}' ;;
+    github-agents/token)
+      echo "$4" > request.json
+      echo '{"data":{"token":"fixture-value"}}'
+      ;;
+    auth/approle/role/*/role-id) echo "$2" > role.txt; return 1 ;;
+    *) return 1 ;;
+  esac
+}
+repo_write_guard() { touch write-guard; }
+scope_ok() { return 0; }
+repo_guard() { :; }
+gh_revoke() { :; }
+abort() { :; }
+mkdir -p "$STATE_DIR/job/runs/1"
+run_job job 1 task
+'''
+    result = bash(
+        script, tmp_path, TEST_MODE=mode, AGENT_JOB_GITHUB_WRITE=write,
+        AGENT_DISPATCH_STATE_DIR=str(tmp_path),
+        AGENT_TASK_PROFILES='{"opencode-local":{"env":[],"trackerAccess":false}}',
+        BAO_ADDR="https://secrets.example.test", GIT_MIRROR_URL="https://git.example.test",
+    )
+    assert result.returncode == 1
+    assert json.loads((tmp_path / "request.json").read_text())["permissions"]["contents"] == permission
+    assert (tmp_path / "role.txt").read_text().strip() == f"auth/approle/role/{role}/role-id"
+    assert (tmp_path / "write-guard").exists() is (mode == "start" and write == "true")
+
+
+@pytest.mark.parametrize("status,changed", [(0, True), (1, True), (0, False)])
+def test_patch_round_trip(sources, tmp_path, status, changed):
+    source = sources["entrypoint"]
+    export = source[source.index('if [ -n "${branch}" ]; then\n  if [ "${AGENT_MODE}" = start ]'):]
+    export = export.split('\nif [ "${AGENT_MODE}" = fix ]; then\n  make_fix_outputs', 1)[0]
+    setup = '''
+git init -q -b develop repo
+cd repo
+git config user.name agent
+git config user.email agent@example.test
+echo initial > content
+git add content
+git commit -qm 'test(agent): initial'
+base=$(git rev-parse HEAD)
+git update-ref refs/remotes/origin/HEAD "$base"
+git checkout -qb job
+'''
+    if changed:
+        setup += "echo changed > content\necho added > new-file\n"
+    script = setup + '''
+branch=job
+workdir="$PWD/.."
+AGENT_MODE=start
+status=$TEST_STATUS
+gitleaks() { return 0; }
+''' + export + "\ntouch unexpected-publish\n"
+    result = bash(script, tmp_path, TEST_STATUS=str(status), AGENT_JOB_GITHUB_WRITE="false")
+    assert result.returncode == status, result.stderr
+    assert not (tmp_path / "repo/unexpected-publish").exists()
+    patch = tmp_path / ".agent-result/branch.patch"
+    assert patch.exists()
+    assert bool(patch.stat().st_size) is changed
+    if changed:
+        applied = bash('''
+cd repo
+git checkout -qb receiver develop
+git am ../.agent-result/branch.patch
+''', tmp_path)
+        assert applied.returncode == 0, applied.stderr
+        assert (tmp_path / "repo/content").read_text() == "changed\n"
+        assert (tmp_path / "repo/new-file").read_text() == "added\n"
+
+
+@pytest.mark.parametrize("write", ["false", "true"])
+def test_finalize_exports_patch_and_logs(sources, tmp_path, write):
+    rdir = tmp_path / "job/runs/1"
+    rdir.mkdir(parents=True)
+    (rdir / "exit").write_text("0")
+    (rdir / "cid").write_text("fixture-container")
+    (rdir / "started").write_text("0")
+    (tmp_path / "branch.patch").write_text("fixture patch\n")
+    script = sources["dispatcher"].rsplit('cmd="${1:-}"', 1)[0] + r'''
+job_get() { case "$2" in .mode) echo fix ;; .repo) echo example/repository ;; *) echo shell ;; esac; }
+docker() {
+  case "$1" in
+    cp) tar -cf - branch.patch ;;
+    logs) echo 'fixture log' ;;
+    rm) : ;;
+    *) return 1 ;;
+  esac
+}
+publish_fix() { touch published; echo succeeded > "$STATE_DIR/job/runs/1/fix_state"; }
+write_result_tail() { cp "$1/log" "$1/result.txt"; }
+notify() { result_lines "$1" "$2" > notified; }
+finalize job 1 fixture-value
+'''
+    result = bash(script, tmp_path, AGENT_JOB_GITHUB_WRITE=write, AGENT_DISPATCH_STATE_DIR=str(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert (rdir / "state").read_text().strip() == "succeeded"
+    assert (rdir / "branch.patch").read_text() == "fixture patch\n"
+    assert (rdir / "log").read_text() == "fixture log\n"
+    assert str(rdir / "branch.patch") in (tmp_path / "notified").read_text()
+    assert (tmp_path / "published").exists() is (write == "true")
+
+
+@pytest.mark.parametrize("kind", ["dispatcher", "entrypoint"])
+def test_role_configures_source_idempotently(sources, tmp_path, kind):
+    destination = tmp_path / "configured-source"
+    playbook = tmp_path / "verify.yml"
+    original = tmp_path / "original-source"
+    original.write_text(sources[kind + "_original"])
+    inventory = tmp_path / "inventory.yml"
+    inventory.write_text(yaml.safe_dump({"all": {"hosts": {"localhost": {
+        "ansible_connection": "local", "ansible_python_interpreter": sys.executable,
+    }}}}))
+    playbook.write_text(yaml.safe_dump([{
+        "name": "Verify job source configuration",
+        "hosts": "localhost", "connection": "local", "gather_facts": False,
+        "vars": {
+            "ansible_become": False,
+            "job_source": {
+                "path": str(destination),
+                "text": "{{ lookup('file', '" + str(original) + "', rstrip=false) }}",
+                "changes": CHANGES[kind],
+            },
+        },
+        "tasks": [{
+            "name": "Configure job source",
+            "ansible.builtin.include_tasks": str(ROLE / "tasks/main/job_source.yml"),
+        }],
+    }], sort_keys=False))
+    # Fixture files belong to the test runner; deployment retains root ownership.
+    tasks = yaml.safe_load((ROLE / "tasks/main/job_source.yml").read_text())
+    tasks[-1]["ansible.builtin.copy"]["owner"] = os.getuid()
+    tasks[-1]["ansible.builtin.copy"]["group"] = os.getgid()
+    fixture_tasks = tmp_path / "job-source.yml"
+    fixture_tasks.write_text(yaml.safe_dump(tasks, sort_keys=False))
+    playbook.write_text(playbook.read_text().replace(
+        str(ROLE / "tasks/main/job_source.yml"), str(fixture_tasks)
+    ))
+    for changed in (1, 0):
+        result = subprocess.run(
+            [shutil.which("ansible-playbook"), str(playbook), "-i", str(inventory)],
+            text=True, capture_output=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"changed={changed}" in result.stdout
+        assert destination.read_text() == sources[kind]
