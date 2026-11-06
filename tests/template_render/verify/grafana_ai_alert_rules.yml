@@ -6,7 +6,12 @@
   gather_facts: false
   vars_files:
     - ../../../roles/grafana_stack/defaults/main.yml
+    - ../../../roles/grafana_stack/vars/main.yml
   vars:
+    grafana_plugins_object_storage_base_url: http://objects.example.test/splunk-addons/grafana-plugins
+    grafana_stack_plugin_manifest: >-
+      {{ dict(grafana_stack_plugins | map(attribute='name')
+              | zip(grafana_stack_plugins | map('combine', {'version': '1.0.0'}))) }}
     # group_vars/all.yml sets ansible_become for managed nodes and implicit
     # localhost inherits it; rendering a template needs no root.
     ansible_become: false
@@ -59,12 +64,21 @@
         grafana_stack_prometheus_url: http://prometheus.example.test:9090
         grafana_stack_vm_port: 8428
 
-    - name: Assert Grafana installs provisioned plugins synchronously
+    - name: Assert Grafana installs the LLM app and Infinity from the plugin mirror
       ansible.builtin.assert:
         that:
           - >-
-            _grafana_compose['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL_SYNC']
-            == 'grafana-llm-app,yesoreyeram-infinity-datasource'
+            'yesoreyeram-infinity-datasource@'
+            ~ grafana_stack_plugin_manifest['yesoreyeram-infinity-datasource'].version
+            ~ '@' ~ grafana_plugins_object_storage_base_url
+            ~ '/yesoreyeram-infinity-datasource.zip'
+            in _grafana_compose['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL_SYNC']
+          - >-
+            'grafana-llm-app@'
+            ~ grafana_stack_plugin_manifest['grafana-llm-app'].version
+            ~ '@' ~ grafana_plugins_object_storage_base_url
+            ~ '/grafana-llm-app.zip'
+            in _grafana_compose['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL_SYNC']
           - "'GF_PLUGINS_PREINSTALL' not in _grafana_compose['services']['grafana']['environment']"
           - grafana_stack_llm_router_env_file in _grafana_compose['services']['grafana']['env_file']
           - >-
@@ -92,16 +106,18 @@
         grafana_stack_prometheus_url: http://prometheus.example.test:9090
         grafana_stack_vm_port: 8428
 
-    - name: Assert disabling LiteLLM prices retains the LLM app only
+    - name: Assert disabling LiteLLM prices omits only the datasource
       ansible.builtin.assert:
         that:
           - >-
             _grafana_datasources_disabled.datasources
             | selectattr('uid', 'equalto', 'litellm-prices') | list | length == 0
           - >-
+            'GF_PLUGINS_PREINSTALL' not in
+            _grafana_compose_disabled['services']['grafana']['environment']
+          - >-
+            'grafana-llm-app@' in
             _grafana_compose_disabled['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL_SYNC']
-            == 'grafana-llm-app'
-          - "'GF_PLUGINS_PREINSTALL' not in _grafana_compose_disabled['services']['grafana']['environment']"
 
     - name: Render the AI alert rules
       ansible.builtin.set_fact:

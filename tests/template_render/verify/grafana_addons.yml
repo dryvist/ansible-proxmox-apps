@@ -1,0 +1,57 @@
+---
+- name: Render and verify Grafana add-on provisioning
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+    - ../../../roles/grafana_stack/vars/main.yml
+  vars:
+    ansible_become: false
+    _grafana_template_dir: "{{ playbook_dir }}/../../../roles/grafana_stack/templates"
+    # vars_files outrank play vars, so set the inputs the role defaults read.
+    grafana_plugins_object_storage_base_url: http://192.0.2.42:9000/splunk-addons/grafana-plugins
+    grafana_hostname: grafana
+    authelia_hostname: auth
+    ingress_domain: example.invalid
+    grafana_stack_oidc_client_secret: fixture
+  tasks:
+    - name: Initialize the fixture plugin manifest
+      ansible.builtin.set_fact:
+        grafana_stack_plugin_manifest: {}
+
+    - name: Build the fixture plugin manifest using registry pins
+      ansible.builtin.set_fact:
+        grafana_stack_plugin_manifest: >-
+          {{ grafana_stack_plugin_manifest | combine({item.name: {
+            'version': item.pin_version | default('4.1.6'),
+            'key': 'grafana-plugins/' ~ item.name ~ '.zip',
+            'sha256': 'a' * 64
+          }}) }}
+      loop: "{{ grafana_stack_plugins }}"
+
+    - name: Render the compose and datasource templates
+      ansible.builtin.set_fact:
+        _grafana_compose: >-
+          {{ lookup('ansible.builtin.template', _grafana_template_dir ~ '/docker-compose.yml.j2') | from_yaml }}
+        _grafana_datasources: >-
+          {{ lookup('ansible.builtin.template', _grafana_template_dir ~ '/datasource.yml.j2') | from_yaml }}
+
+    - name: Verify every plugin uses an explicit mirrored version and URL
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.name ~ '@' ~ grafana_stack_plugin_manifest[item.name].version ~ '@'
+             ~ grafana_stack_plugins_base_url ~ '/' ~ item.name ~ '.zip')
+            in _grafana_compose.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC
+      loop: "{{ grafana_stack_plugins }}"
+
+    - name: Verify installation stays on the mirror and signatures stay enforced
+      ansible.builtin.assert:
+        that:
+          - "'GF_PLUGINS_PREINSTALL_DISABLED' not in _grafana_compose.services.grafana.environment"
+          - _grafana_compose.services.grafana.environment.GF_PLUGINS_PREINSTALL_AUTO_UPDATE == 'false'
+          - _grafana_compose.services.grafana.environment.GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED == 'true'
+          - "'grafana.com' not in _grafana_compose.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC"
+          - "'GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS' not in _grafana_compose.services.grafana.environment"
+          - grafana_stack_plugins | length == 5
