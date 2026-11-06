@@ -217,6 +217,36 @@
             in (_hatchet_compose_evals.content | b64decode)
           - "'openrouter' not in (_hatchet_compose_evals.content | b64decode | lower)"
 
+    - name: Load scheduled eval inventory without evaluating unrelated inputs
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../inventory/group_vars/docker_ai_group.yml"
+        name: _hatchet_inventory
+
+    - name: Render the opted-in daily parse schedule
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-scheduled.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_eval_enabled: true
+        hatchet_docker_eval_cron: "{{ _hatchet_inventory.hatchet_docker_eval_cron }}"
+        hatchet_docker_eval_roles: "{{ _hatchet_inventory.hatchet_docker_eval_roles }}"
+
+    - name: Read the daily parse schedule
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-scheduled.json"
+      register: _hatchet_scheduled
+
+    - name: Assert the opted-in schedule has one dataset and no filler or judge cron
+      ansible.builtin.assert:
+        that:
+          - (_hatchet_scheduled.content | b64decode | from_json).evals.cron == '17 3 * * *'
+          - >-
+            (_hatchet_scheduled.content | b64decode | from_json).evals.roles
+            == [{'role': 'small', 'dataset': 'vikunja-clerk-evals'}]
+          - (_hatchet_scheduled.content | b64decode | from_json).evals.judges_sync_cron == ''
+          - "'fill' not in (_hatchet_scheduled.content | b64decode | from_json)"
+
     - name: Remove the temporary render directory
       ansible.builtin.file:
         path: "{{ _hatchet_render_dir.path }}"
