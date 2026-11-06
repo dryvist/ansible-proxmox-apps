@@ -112,8 +112,9 @@ run_job job 1 task
     assert (tmp_path / "write-guard").exists() is (mode == "start" and write == "true")
 
 
-@pytest.mark.parametrize("status,changed", [(0, True), (1, True), (0, False)])
-def test_patch_round_trip(sources, tmp_path, status, changed):
+@pytest.mark.parametrize("mode", ["start", "fix"])
+@pytest.mark.parametrize("status,history", [(0, "dirty"), (1, "dirty"), (0, "unchanged"), (0, "merge")])
+def test_bundle_round_trip(sources, tmp_path, mode, status, history):
     source = sources["entrypoint"]
     export = source[source.index('if [ -n "${branch}" ]; then\n  if [ "${AGENT_MODE}" = start ]'):]
     export = export.split('\nif [ "${AGENT_MODE}" = fix ]; then\n  make_fix_outputs', 1)[0]
@@ -127,51 +128,74 @@ git add content
 git commit -qm 'test(agent): initial'
 base=$(git rev-parse HEAD)
 git update-ref refs/remotes/origin/HEAD "$base"
+git clone -q --no-hardlinks . ../receiver
 git checkout -qb job
 '''
-    if changed:
+    if history == "dirty":
         setup += "echo changed > content\necho added > new-file\n"
+    elif history == "merge":
+        setup += '''
+echo job > content
+git commit -qam 'test(agent): job change'
+git checkout -qb side develop
+echo side > content
+git commit -qam 'test(agent): side change'
+git checkout -q job
+if git merge --no-ff side -m 'test(agent): merge'; then exit 1; fi
+test -f .git/MERGE_HEAD
+echo resolved > content
+git add content
+git commit -qm 'test(agent): resolve merge'
+'''
     script = setup + '''
 branch=job
 workdir="$PWD/.."
-AGENT_MODE=start
+AGENT_MODE=$TEST_MODE
 status=$TEST_STATUS
 gitleaks() { return 0; }
 ''' + export + "\ntouch unexpected-publish\n"
-    result = bash(script, tmp_path, TEST_STATUS=str(status), AGENT_JOB_GITHUB_WRITE="false")
+    result = bash(
+        script, tmp_path, TEST_MODE=mode, TEST_STATUS=str(status), AGENT_JOB_GITHUB_WRITE="false",
+    )
     assert result.returncode == status, result.stderr
     assert not (tmp_path / "repo/unexpected-publish").exists()
-    patch = tmp_path / ".agent-result/1/branch.patch"
-    assert patch.exists()
-    assert bool(patch.stat().st_size) is changed
-    if changed:
-        applied = bash('''
-cd repo
-git checkout -qb receiver develop
-git am ../.agent-result/1/branch.patch
+    bundle = tmp_path / ".agent-result/1/branch.bundle"
+    assert bundle.stat().st_size > 0
+    imported = bash('''
+cd receiver
+git bundle verify ../.agent-result/1/branch.bundle
+git fetch ../.agent-result/1/branch.bundle refs/heads/job:refs/heads/imported
+git checkout -q imported
+test "$(git rev-parse HEAD)" = "$(git -C ../repo rev-parse job)"
+git rev-list --parents -1 HEAD
 ''', tmp_path)
-        assert applied.returncode == 0, applied.stderr
-        assert (tmp_path / "repo/content").read_text() == "changed\n"
-        assert (tmp_path / "repo/new-file").read_text() == "added\n"
+    assert imported.returncode == 0, imported.stderr
+    expected = {"dirty": "changed\n", "unchanged": "initial\n", "merge": "resolved\n"}
+    assert (tmp_path / "receiver/content").read_text() == expected[history]
+    if history == "dirty":
+        assert (tmp_path / "receiver/new-file").read_text() == "added\n"
+    elif history == "merge":
+        assert len(imported.stdout.splitlines()[-1].split()) == 3
 
 
 @pytest.mark.parametrize("write", ["false", "true"])
-@pytest.mark.parametrize("has_patch", [True, False])
-def test_finalize_exports_patch_and_logs(sources, tmp_path, write, has_patch):
+@pytest.mark.parametrize("has_bundle", [True, False])
+def test_finalize_exports_bundle_and_logs(sources, tmp_path, write, has_bundle):
     rdir = tmp_path / "job/runs/2"
     rdir.mkdir(parents=True)
     (rdir / "exit").write_text("0")
     (rdir / "cid").write_text("fixture-container")
     (rdir / "started").write_text("0")
-    (tmp_path / "branch.patch").write_text("fixture patch\n")
+    (tmp_path / "job/job.json").write_text('{"repo":"example/repository"}')
+    (tmp_path / "branch.bundle").write_bytes(b"fixture bundle\x00\n")
     script = sources["dispatcher"].rsplit('cmd="${1:-}"', 1)[0] + r'''
 job_get() { case "$2" in .mode) echo fix ;; .repo) echo example/repository ;; *) echo shell ;; esac; }
 docker() {
   case "$1" in
     cp)
-      [ "$2" = "fixture-container:/home/agent/work/.agent-result/2/branch.patch" ] || return 1
-      [ "$TEST_HAS_PATCH" = true ] || return 1
-      tar -cf - branch.patch
+      [ "$2" = "fixture-container:/home/agent/work/.agent-result/2/branch.bundle" ] || return 1
+      [ "$TEST_HAS_BUNDLE" = true ] || return 1
+      tar -cf - branch.bundle
       ;;
     logs) echo 'fixture log' ;;
     rm) : ;;
@@ -182,21 +206,26 @@ publish_fix() { touch published; echo succeeded > "$STATE_DIR/job/runs/2/fix_sta
 write_result_tail() { cp "$1/log" "$1/result.txt"; }
 notify() { result_lines "$1" "$2" > notified; }
 finalize job 2 fixture-value
+job_json job
 '''
     result = bash(
         script, tmp_path, AGENT_JOB_GITHUB_WRITE=write,
-        AGENT_DISPATCH_STATE_DIR=str(tmp_path), TEST_HAS_PATCH=str(has_patch).lower(),
+        AGENT_DISPATCH_STATE_DIR=str(tmp_path), TEST_HAS_BUNDLE=str(has_bundle).lower(),
     )
     assert result.returncode == 0, result.stderr
-    assert (rdir / "state").read_text().strip() == ("succeeded" if has_patch else "failed")
+    assert (rdir / "state").read_text().strip() == ("succeeded" if has_bundle else "failed")
     assert (rdir / "log").read_text() == "fixture log\n"
-    if has_patch:
-        assert (rdir / "branch.patch").read_text() == "fixture patch\n"
-        assert str(rdir / "branch.patch") in (tmp_path / "notified").read_text()
+    metadata = json.loads(result.stdout)
+    assert metadata["log"] == str(rdir / "log")
+    if has_bundle:
+        assert (rdir / "branch.bundle").read_bytes() == b"fixture bundle\x00\n"
+        assert str(rdir / "branch.bundle") in (tmp_path / "notified").read_text()
+        assert metadata["bundle"] == str(rdir / "branch.bundle")
     else:
-        assert not (rdir / "branch.patch").exists()
-        assert "patch: none" in (tmp_path / "notified").read_text()
-    assert (tmp_path / "published").exists() is (has_patch and write == "true")
+        assert not (rdir / "branch.bundle").exists()
+        assert "bundle: none" in (tmp_path / "notified").read_text()
+        assert metadata["bundle"] == ""
+    assert (tmp_path / "published").exists() is (has_bundle and write == "true")
 
 
 @pytest.mark.parametrize("kind", ["dispatcher", "entrypoint"])

@@ -130,10 +130,11 @@ replace the operator list atomically, reload Squid, and append a timestamped
 state record under `agent_sandbox_allowlist_log_file`.
 
 Dispatcher jobs use `agent_sandbox_job_github_write: false` by default. They
-select read credentials, commit local changes, and export a `git format-patch`
-series to each run's `branch.patch` alongside its redacted `log`. Status JSON
-and the Vikunja result include both paths. Runs without changes produce an
-empty series. The GitHub connector consumes the series to publish changes.
+select read credentials, commit local changes, and export a `git bundle`
+to each run's `branch.bundle` alongside its redacted `log`. Status JSON
+and the Vikunja result include both paths. The bundle contains `base..branch`,
+including merge commits and their resolutions. Runs without changes produce a
+full branch bundle. The GitHub connector imports the bundle to publish changes.
 Setting `agent_sandbox_job_github_write: true` enables the existing direct
 publish path. `agent_sandbox_job_entrypoint` selects the installed job entrypoint
 path; the role derives its read-only container mount target from the pinned image.

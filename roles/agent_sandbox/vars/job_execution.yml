@@ -29,25 +29,26 @@ agent_sandbox_job_source_changes:
       after: |2-
           mode=$(job_get "$id" .mode 2>/dev/null || echo start)
           if [ -n "$cid" ] && [ -n "$(job_get "$id" .repo)" ]; then
-            if ! docker cp "$cid:/home/agent/work/.agent-result/$run/branch.patch" - | \
-              tar -xOf - branch.patch >"$rdir/branch.patch"; then
-              rm -f "$rdir/branch.patch"
+            if ! docker cp "$cid:/home/agent/work/.agent-result/$run/branch.bundle" - | \
+              tar -xOf - branch.bundle >"$rdir/branch.bundle"; then
+              rm -f "$rdir/branch.bundle"
               if [ "$code" = 0 ] && [ ! -e "$rdir/cancel" ] && [ ! -e "$rdir/timeout" ]; then
-                echo "job patch export failed" >"$rdir/reason"
+                echo "job bundle export failed" >"$rdir/reason"
               fi
             fi
           fi
     - before: '    --arg commit "$commit"'
       after: |2-
-            --arg patch "$(if [ -f "$rdir/branch.patch" ]; then echo "$rdir/branch.patch"; fi)" --arg log "$rdir/log" \
+            --arg bundle "$(if [ -f "$rdir/branch.bundle" ]; then echo "$rdir/branch.bundle"; fi)" \
+            --arg log "$rdir/log" \
             --arg commit "$commit"
     - before: 'commit: $commit, output: $output}'
-      after: 'commit: $commit, output: $output, patch: $patch, log: $log}'
+      after: 'commit: $commit, output: $output, bundle: $bundle, log: $log}'
     - before: '    "$(cat "$dir/pr_url" 2>/dev/null || echo none)" "$((ended - started))"'
       after: |2-
             "$(cat "$dir/pr_url" 2>/dev/null || echo none)" "$((ended - started))"
-          printf 'patch: %s\nlog: %s\n' \
-            "$(if [ -f "$rdir/branch.patch" ]; then echo "$rdir/branch.patch"; else echo none; fi)" "$rdir/log"
+          printf 'bundle: %s\nlog: %s\n' \
+            "$(if [ -f "$rdir/branch.bundle" ]; then echo "$rdir/branch.bundle"; else echo none; fi)" "$rdir/log"
   entrypoint:
     - before: '  if [ "${AGENT_MODE:-start}" = fix ]; then'
       after: '  if [ "${AGENT_MODE:-start}" = fix ] || [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then'
@@ -63,8 +64,10 @@ agent_sandbox_job_source_changes:
           fi
           mkdir -p "${workdir}/.agent-result/${AGENT_JOB_RUN:-1}"
           if ! gitleaks git --log-opts="${base}..HEAD" --redact --no-banner; then exit 65; fi
-          git format-patch --stdout --binary "${base}..HEAD" \
-            >"${workdir}/.agent-result/${AGENT_JOB_RUN:-1}/branch.patch" || exit $?
+          bundle_range="${branch}"
+          if [ "$(git rev-parse HEAD)" != "${base}" ]; then bundle_range="${base}..${branch}"; fi
+          git bundle create "${workdir}/.agent-result/${AGENT_JOB_RUN:-1}/branch.bundle" \
+            "${bundle_range}" || exit $?
         fi
         if [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then exit "${status}"; fi
 
