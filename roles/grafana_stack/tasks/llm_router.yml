@@ -1,0 +1,36 @@
+---
+- name: Read the Grafana LLM router key from OpenBao
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') }}/v1/secret/data/apps/grafana-llm"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    status_code: [200, 404]
+    follow_redirects: none
+    unredirected_headers: [X-Vault-Token]
+    use_proxy: false
+    return_content: true
+    ca_path: "{{ openbao_ca_path }}"
+  register: grafana_stack_router_secret
+  check_mode: false
+  changed_when: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Resolve the shared Grafana LLM router key
+  ansible.builtin.set_fact:
+    grafana_stack_effective_llm_router_key: >-
+      {{ (grafana_stack_router_secret.json | default({}))
+         .get('data', {}).get('data', {}).get('grafana_llm_router_key', '') }}
+  no_log: true
+
+- name: Require the shared Grafana LLM router key
+  ansible.builtin.assert:
+    that:
+      - grafana_stack_effective_llm_router_key | default('', true) | trim | length > 0
+    fail_msg: "OpenBao bucket apps/grafana-llm is missing field grafana_llm_router_key"
+    quiet: true

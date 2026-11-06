@@ -1,0 +1,31 @@
+---
+- name: Render and verify Grafana LLM plugin provisioning
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _llm_app_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/llm-app.yml.j2"
+    _llm_env_template: "{{ playbook_dir }}/../../../roles/grafana_stack/templates/llm-router.env.j2"
+  tasks:
+    - name: Render the Grafana LLM app provisioning and secret environment
+      ansible.builtin.set_fact:
+        _grafana_llm_app: "{{ lookup('ansible.builtin.template', _llm_app_template) | from_yaml }}"
+        _grafana_llm_env: "{{ lookup('ansible.builtin.template', _llm_env_template) }}"
+      vars:
+        grafana_stack_llm_router_url: https://llm.example.test
+        grafana_stack_effective_llm_router_key: fixture-router-key
+
+    - name: Assert the LLM app maps Grafana requests to the configured router
+      ansible.builtin.assert:
+        that:
+          - _grafana_llm_app.apps[0].type == 'grafana-llm-app'
+          - not (_grafana_llm_app.apps[0].disabled | bool)
+          - _grafana_llm_app.apps[0].jsonData.provider == 'openai'
+          - _grafana_llm_app.apps[0].jsonData.openAI.url == 'https://llm.example.test'
+          - _grafana_llm_app.apps[0].jsonData.openAI.apiPath == '/v1'
+          - _grafana_llm_app.apps[0].jsonData.models.mapping.base == 'small'
+          - _grafana_llm_app.apps[0].jsonData.models.mapping.large == 'medium'
+          - _grafana_llm_app.apps[0].secureJsonData.openAIKey == '$GRAFANA_LLM_ROUTER_API_KEY'
+          - "'GRAFANA_LLM_ROUTER_API_KEY=fixture-router-key' in _grafana_llm_env"

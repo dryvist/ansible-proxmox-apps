@@ -25,7 +25,7 @@ class DispatcherSources(unittest.TestCase):
         )
 
     def test_wrapper_sources_are_pinned_and_ordered(self):
-        defaults = yaml.safe_load((ROLE / "defaults" / "main" / "00-sandbox.yml").read_text())
+        defaults = yaml.safe_load((ROLE / "defaults" / "main" / "00-runtime.yml").read_text())
         pinned = [item["name"] for item in defaults["agent_sandbox_dispatch_sources"]]
         tasks = yaml.safe_load(
             (ROLE / "tasks" / "main" / "dispatcher_install.yml").read_text()

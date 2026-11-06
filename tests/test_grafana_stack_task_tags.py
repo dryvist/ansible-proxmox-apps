@@ -114,3 +114,72 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
     }
     for task in shared_tasks:
         assert set(PARTS).issubset(task["tags"])
+
+
+def test_grafana_only_seeds_admin_password_and_plugin_provisioning_is_declarative():
+    deploy_tasks = yaml.safe_load(
+        (REPO / "roles/grafana_stack/tasks/deploy.yml").read_text(encoding="utf-8")
+    )
+    seed_block = next(
+        task
+        for task in deploy_tasks
+        if task.get("name") == "Seed Grafana's admin password in OpenBao"
+    )
+    assert seed_block["no_log"] is True
+    seed_task = next(
+        task
+        for task in _tasks(seed_block["block"])
+        if task.get("name") == "Seed Grafana credentials through the shared seed_generated task"
+    )
+    assert seed_task["loop_control"]["loop_var"] == "grafana_stack_seed"
+    seed_profiles = {profile["path"]: profile for profile in seed_task["loop"]}
+    assert set(seed_profiles) == {"apps/grafana"}
+    assert seed_profiles["apps/grafana"]["field"] == "grafana_admin_password"
+    assert seed_profiles["apps/grafana"]["register"] == "grafana_stack_secret_seed"
+    seed_vars = seed_task["vars"]
+    assert seed_vars["openbao_secrets_seed_fields"] == [{
+        "name": "{{ grafana_stack_seed.field }}",
+        "length": "{{ grafana_stack_seed.length }}",
+        "value": "{{ grafana_stack_seed.value }}",
+    }]
+    assert seed_vars["openbao_secrets_seed_path"] == "{{ grafana_stack_seed.path }}"
+    assert seed_vars["openbao_secrets_seed_register"] == "{{ grafana_stack_seed.register }}"
+    assert seed_vars["openbao_secrets_seed_local_values"] == (
+        "{{ {grafana_stack_seed.field: grafana_stack_seed.value} }}"
+    )
+    effective_credentials = next(
+        task["ansible.builtin.set_fact"]
+        for task in deploy_tasks
+        if task.get("name") == "Resolve Grafana credentials from OpenBao"
+    )
+    assert effective_credentials == {
+        "grafana_stack_effective_admin_password": "{{ grafana_stack_secret_seed.grafana_admin_password }}",
+    }
+    assert deploy_tasks[0]["ansible.builtin.import_tasks"] == "llm_router.yml"
+
+    provisioning_tasks = yaml.safe_load(
+        (REPO / "roles/grafana_stack/tasks/provisioning.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    plugin_task = next(
+        task
+        for task in provisioning_tasks
+        if task.get("name") == "Render Grafana LLM app plugin provisioning"
+    )
+    assert plugin_task["ansible.builtin.template"]["src"] == "llm-app.yml.j2"
+    assert (
+        plugin_task["ansible.builtin.template"]["dest"]
+        == "{{ grafana_stack_data_dir }}/provisioning/plugins/llm-app.yml"
+    )
+
+    credential_task = next(
+        task
+        for task in deploy_tasks
+        if task.get("name") == "Persist Grafana's LLM router credential"
+    )
+    assert credential_task["ansible.builtin.template"]["src"] == "llm-router.env.j2"
+    assert credential_task["ansible.builtin.template"]["owner"] == "root"
+    assert credential_task["ansible.builtin.template"]["mode"] == "0400"
+    assert credential_task["no_log"] is True
+    assert "when" not in credential_task

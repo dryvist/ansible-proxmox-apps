@@ -28,7 +28,7 @@ def task_by_name(tasks, name):
 class AgentSandboxOpenBaoClient(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.defaults = (ROLE / "defaults" / "main" / "00-sandbox.yml").read_text(encoding="utf-8")
+        cls.defaults = (ROLE / "defaults/main/00-runtime.yml").read_text(encoding="utf-8")
         cls.profile = (ROLE / "templates" / "agent-dispatch-profile.sh.j2").read_text(
             encoding="utf-8"
         )
