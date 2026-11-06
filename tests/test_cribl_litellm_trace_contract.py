@@ -47,8 +47,9 @@ def render(name, **overrides):
     return yaml.safe_load(env.from_string(text).render(context))
 
 
-def enrich(name, attrs):
+def enrich(name, attrs, **event_fields):
     event = {'name': 'inference', '__otlp': {'type': 'traces'}, 'attributes': attrs}
+    event.update(event_fields)
     result = subprocess.run(['node', '-e', NODE], input=json.dumps({'event': event, 'pipeline': render(name)}),
                             text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
