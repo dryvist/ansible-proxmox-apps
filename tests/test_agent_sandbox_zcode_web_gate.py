@@ -24,7 +24,7 @@ def load(path: Path):
 
 
 def render_compose(enabled: bool, docs_enabled: bool = False) -> dict:
-    variables = dict(load(ROLE / "defaults/main.yml"))
+    variables = dict(load(ROLE / "defaults/main/00-sandbox.yml"))
     variables.update(
         {
             "ansible_managed": "test",
@@ -66,7 +66,7 @@ def zcode_tasks(path: Path):
 
 class ZcodeWebGate(unittest.TestCase):
     def test_role_default_keeps_the_service_on(self):
-        self.assertIs(load(ROLE / "defaults/main.yml")[FLAG], True)
+        self.assertIs(load(ROLE / "defaults/main/00-sandbox.yml")[FLAG], True)
 
     def test_sandbox_guest_turns_it_off(self):
         self.assertIs(load(ROOT / "inventory/host_vars/ai-sandbox-01.yml")[FLAG], False)

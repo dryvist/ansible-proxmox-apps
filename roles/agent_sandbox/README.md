@@ -109,6 +109,9 @@ default and requires `agent_sandbox_git_mirror_url` when enabled.
 
 ## Host dispatcher
 
+Ansible loads the sandbox and CI resolver defaults from `defaults/main/`.
+Inventory and play variables override these defaults.
+
 With `agent_sandbox_dispatch_access_enabled`, the role installs the dispatcher
 (`agent-dispatch`) and its SSH entry point (`agent-dispatch-ssh`) from one
 pinned nix-agent-sandbox commit, each checked against its SHA-256. It also

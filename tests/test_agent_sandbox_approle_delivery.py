@@ -64,7 +64,7 @@ class AgentSandboxCredentialContract(unittest.TestCase):
         )
 
     def test_credentials_are_tagged_and_restricted(self):
-        defaults = (ROLE / "defaults" / "main.yml").read_text()
+        defaults = (ROLE / "defaults" / "main" / "00-sandbox.yml").read_text()
         self.assertIn("OPENBAO_APPROLE_OPEN_LLM_ROLE_ID", defaults)
         self.assertIn("OPENBAO_APPROLE_OPEN_LLM_SECRET_ID", defaults)
 
@@ -141,7 +141,7 @@ class AgentSandboxCredentialContract(unittest.TestCase):
         alert_template = (ROLE / "templates" / "dispatcher-alert.env.j2").read_text()
         self.assertIn("AGENT_DISPATCH_NTFY_ALERT_URL=", alert_template)
         self.assertIn("AGENT_DISPATCH_NTFY_ALERT_TOKEN=", alert_template)
-        self.assertIn("NTFY_AI_JOBS_TOKEN", (ROLE / "defaults" / "main.yml").read_text())
+        self.assertIn("NTFY_AI_JOBS_TOKEN", (ROLE / "defaults" / "main" / "00-sandbox.yml").read_text())
 
         ssh_wrapper = (ROLE / "templates" / "dispatch-ssh-with-alert.sh.j2").read_text()
         self.assertIn("sudo -n {{ agent_sandbox_dispatch_root_command }}", ssh_wrapper)

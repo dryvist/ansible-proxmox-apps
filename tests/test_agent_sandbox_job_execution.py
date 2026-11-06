@@ -14,7 +14,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/agent_sandbox"
-DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+DEFAULTS = yaml.safe_load((ROLE / "defaults/main/00-sandbox.yml").read_text())
 CHANGES = yaml.safe_load((ROLE / "vars/job_execution.yml").read_text())[
     "agent_sandbox_job_source_changes"
 ]
