@@ -141,8 +141,8 @@ openbao_scrape_targets: >-
 # job rather than rendering one that 401s.
 prometheus_stack_llm_router_bearer: "{{ bao_apps_secrets.prometheus_llm_router_key | default('', true) }}"
 
-# GPU engine scrape targets use the dynamically-added inventory group (guests
-# serving vLLM) and its resolved container address. Empty until one is in inventory.
+# GPU engine scrape targets use the dynamically-added serving group and its
+# resolved container address, regardless of engine. Empty until one is in inventory.
 prometheus_stack_llm_gpu_metrics_guests: >-
   {%- set guests = [] -%}
   {%- for name in groups['llm_gpu_engine_group'] | default([]) -%}
@@ -165,8 +165,8 @@ prometheus_stack_dcgm_exporter_guests: >-
   {%- endfor -%}
   {{ guests }}
 prometheus_stack_dcgm_exporter_metrics_port: 9400
-# Guests in these groups serve from the secondary GPU. The primary stays
-# unlabeled because the dashboard selects it with accelerator="".
+# Guests in these groups serve from the secondary GPU, regardless of engine.
+# Both hardware and engine jobs use this ownership; all other GPU guests are primary.
 prometheus_stack_dcgm_exporter_secondary_groups:
   - llm_vllm_group
   - llm_gpu_classify_group
@@ -280,8 +280,7 @@ prometheus_stack_extra_scrape_configs: |
     static_configs:
       - targets: {{ openbao_scrape_targets | to_json }}
   {% if prometheus_stack_dcgm_exporter_guests | length > 0 %}
-  # Native DCGM exporter on the NVIDIA guests. Secondary-GPU guests carry the
-  # gpu-secondary label; the primary stays unlabeled for existing dashboard selectors.
+  # Native DCGM exporter on the NVIDIA guests, labelled by inventory ownership.
   - job_name: dcgm_exporter
     metrics_path: /metrics
     static_configs:
@@ -289,9 +288,8 @@ prometheus_stack_extra_scrape_configs: |
       - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
         labels:
           guest: "{{ guest.name }}"
-  {% if guest.name in prometheus_stack_dcgm_exporter_secondary_guests %}
-          accelerator: gpu-secondary
-  {% endif %}
+          accelerator: "{{ 'gpu-secondary' if guest.name in prometheus_stack_dcgm_exporter_secondary_guests
+                          else 'gpu-primary' }}"
   {% endfor %}
   {% endif %}
   {% if prometheus_stack_llm_gpu_metrics_guests | length > 0 %}
@@ -308,6 +306,8 @@ prometheus_stack_extra_scrape_configs: |
       - targets: ["{{ guest.address }}:{{ prometheus_stack_llm_gpu_engine_metrics_port }}"]
         labels:
           guest: "{{ guest.name }}"
+          accelerator: "{{ 'gpu-secondary' if guest.name in prometheus_stack_dcgm_exporter_secondary_guests
+                          else 'gpu-primary' }}"
   {% endfor %}
   {% endif %}
 
