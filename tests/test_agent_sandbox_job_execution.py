@@ -112,24 +112,41 @@ run_job job 1 task
     assert (tmp_path / "write-guard").exists() is (mode == "start" and write == "true")
 
 
-@pytest.mark.parametrize("mode", ["start", "fix"])
+@pytest.mark.parametrize("mode,branch", [
+    ("start", "agent/shell/fixture"),
+    ("fix", "job/new"),
+    ("fix", "job/existing"),
+    ("fix", "ci-fix/develop/fixture"),
+])
 @pytest.mark.parametrize("status,history", [(0, "dirty"), (1, "dirty"), (0, "unchanged"), (0, "merge")])
-def test_bundle_round_trip(sources, tmp_path, mode, status, history):
+def test_bundle_round_trip(sources, tmp_path, mode, branch, status, history):
     source = sources["entrypoint"]
+    workspace = source[source.index('# --- Workspace'):].split('\nmake_fix_outputs()', 1)[0]
     export = source[source.index('if [ -n "${branch}" ]; then\n  if [ "${AGENT_MODE}" = start ]'):]
     export = export.split('\nif [ "${AGENT_MODE}" = fix ]; then\n  make_fix_outputs', 1)[0]
     setup = '''
-git init -q -b develop repo
-cd repo
+git init -q -b develop remote
+cd remote
 git config user.name agent
 git config user.email agent@example.test
 echo initial > content
 git add content
 git commit -qm 'test(agent): initial'
-base=$(git rev-parse HEAD)
-git update-ref refs/remotes/origin/HEAD "$base"
+if [ "$AGENT_BRANCH" = job/existing ]; then
+  git checkout -qb "$AGENT_BRANCH"
+  git commit --allow-empty -qm 'test(agent): existing PR'
+fi
+AGENT_EXPECTED_SHA=$(git rev-parse HEAD)
 git clone -q --no-hardlinks . ../receiver
-git checkout -qb job
+cd ..
+workdir="$PWD"
+AGENT_MODE=$TEST_MODE
+AGENT_TOOL=shell
+AGENT_RUN_ID=fixture
+gh() { git clone --depth 50 https://github.com/example/repository repo; }
+''' + workspace + '''
+test "$(git symbolic-ref --short HEAD)" = "$TEST_BRANCH"
+test "$(git rev-parse HEAD)" = "$AGENT_EXPECTED_SHA"
 '''
     if history == "dirty":
         setup += "echo changed > content\necho added > new-file\n"
@@ -137,10 +154,10 @@ git checkout -qb job
         setup += '''
 echo job > content
 git commit -qam 'test(agent): job change'
-git checkout -qb side develop
+git checkout -qb side "$base"
 echo side > content
 git commit -qam 'test(agent): side change'
-git checkout -q job
+git checkout -q "$branch"
 if git merge --no-ff side -m 'test(agent): merge'; then exit 1; fi
 test -f .git/MERGE_HEAD
 echo resolved > content
@@ -148,14 +165,15 @@ git add content
 git commit -qm 'test(agent): resolve merge'
 '''
     script = setup + '''
-branch=job
-workdir="$PWD/.."
-AGENT_MODE=$TEST_MODE
 status=$TEST_STATUS
 gitleaks() { return 0; }
 ''' + export + "\ntouch unexpected-publish\n"
     result = bash(
         script, tmp_path, TEST_MODE=mode, TEST_STATUS=str(status), AGENT_JOB_GITHUB_WRITE="false",
+        AGENT_REPO="example/repository", AGENT_BRANCH=branch, TEST_BRANCH=branch,
+        AGENT_GIT_NAME="agent", AGENT_GIT_EMAIL="agent@example.test",
+        GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0=f"url.file://{tmp_path}/remote.insteadOf",
+        GIT_CONFIG_VALUE_0="https://github.com/example/repository",
     )
     assert result.returncode == status, result.stderr
     assert not (tmp_path / "repo/unexpected-publish").exists()
@@ -164,11 +182,11 @@ gitleaks() { return 0; }
     imported = bash('''
 cd receiver
 git bundle verify ../.agent-result/1/branch.bundle
-git fetch ../.agent-result/1/branch.bundle refs/heads/job:refs/heads/imported
+git fetch ../.agent-result/1/branch.bundle "refs/heads/$TEST_BRANCH:refs/heads/imported"
 git checkout -q imported
-test "$(git rev-parse HEAD)" = "$(git -C ../repo rev-parse job)"
+test "$(git rev-parse HEAD)" = "$(git -C ../repo rev-parse "$TEST_BRANCH")"
 git rev-list --parents -1 HEAD
-''', tmp_path)
+''', tmp_path, TEST_BRANCH=branch)
     assert imported.returncode == 0, imported.stderr
     expected = {"dirty": "changed\n", "unchanged": "initial\n", "merge": "resolved\n"}
     assert (tmp_path / "receiver/content").read_text() == expected[history]
