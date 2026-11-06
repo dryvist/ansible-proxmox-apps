@@ -114,3 +114,23 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
     }
     for task in shared_tasks:
         assert set(PARTS).issubset(task["tags"])
+
+
+def test_datasource_provisioning_protects_the_clickhouse_password():
+    tasks = yaml.safe_load(
+        (REPO / "roles/grafana_stack/tasks/provisioning.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    datasource = next(
+        task for task in tasks
+        if task.get("ansible.builtin.template", {}).get("src") == "datasource.yml.j2"
+    )
+    assert datasource["no_log"] is True
+    assert datasource["ansible.builtin.template"]["owner"] == "{{ grafana_stack_grafana_uid }}"
+    assert datasource["ansible.builtin.template"]["mode"] == "0400"
+    validation = next(
+        task for task in tasks
+        if task.get("ansible.builtin.import_tasks") == "assert_clickhouse.yml"
+    )
+    assert tasks.index(validation) < tasks.index(datasource)
