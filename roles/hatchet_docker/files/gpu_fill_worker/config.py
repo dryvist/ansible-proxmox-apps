@@ -60,10 +60,10 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill", "reindex"}
     ):
         raise ValueError(
-            "config must contain roles and platforms with optional latency_guard, evals, and fill"
+            "config must contain roles and platforms with optional latency_guard, evals, fill, and reindex"
         )
 
     roles = config["roles"]
@@ -191,5 +191,10 @@ def load_config(path):
             platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
             if not isinstance(platform, dict) or platform.get("kind") != "chat":
                 raise ValueError(f"fill role {role_name} must map to an active chat platform")
+
+    if "reindex" in config:
+        from reindex.config import validate
+
+        validate(config["reindex"])
 
     return config

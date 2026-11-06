@@ -75,7 +75,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-{% if hatchet_docker_worker_enabled | default(false) | bool -%}
+{% if hatchet_docker_worker_enabled | default(false) | bool %}
   hatchet-worker:
     image: {{ hatchet_docker_worker_image }}
     depends_on:
@@ -112,7 +112,21 @@ services:
       AI_PROMPTS_DIR: "{{ hatchet_docker_eval_prompts_dir }}"
       SOURCE_COMMIT: "{{ hatchet_docker_eval_prompts_ref }}"
 {% endif %}
+{% if hatchet_docker_worker_reindex_enabled | default(false) | bool %}
+      GPU_FILL_REINDEX_QDRANT_API_KEY: {{ (bao_apps_secrets.hatchet_reindex_qdrant_api_key | mandatory
+        | replace('$', '$$')) | to_json }}
+{% if 'GPU_FILL_ROUTER_API_KEY' not in (hatchet_docker_worker_platforms | map(attribute='auth_env') | list) %}
+      GPU_FILL_ROUTER_API_KEY: {{ (bao_apps_secrets.gpu_fill_llm_router_key | mandatory
+        | replace('$', '$$')) | to_json }}
+{% endif %}
+{% endif %}
     volumes:
+{% if hatchet_docker_worker_reindex_enabled | default(false) | bool %}
+      - "{{ hatchet_docker_worker_reindex_output_host_dir }}:{{ hatchet_docker_worker_reindex_output_dir }}"
+{% if hatchet_docker_worker_reindex_hindsight_export %}
+      - "{{ hatchet_docker_worker_reindex_hindsight_export }}:/hindsight-export.json:ro"
+{% endif %}
+{% endif %}
       - "{{ hatchet_docker_data_dir }}/gpu_fill_worker:/app/gpu_fill_worker:ro"
       - "{{ hatchet_docker_data_dir }}/gpu_fill_worker_config.json:/tmp/gpu-fill-worker.json:ro"
 {% if hatchet_docker_worker_fill_enabled | default(false) | bool %}
@@ -129,6 +143,10 @@ services:
       - sh
       - -c
       - >-
+{% if hatchet_docker_worker_reindex_enabled | default(false) | bool %}
+        apt-get update && apt-get install -y --no-install-recommends git ca-certificates &&
+        rm -rf /var/lib/apt/lists/* &&
+{% endif %}
         python -m pip install --no-cache-dir
         "hatchet-sdk=={{ hatchet_docker_worker_sdk_version }}"{% if hatchet_docker_eval_enabled | bool %}
         "langfuse=={{ hatchet_docker_eval_langfuse_version }}"
