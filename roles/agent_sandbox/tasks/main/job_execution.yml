@@ -1,0 +1,53 @@
+---
+- name: Load job source parameters
+  ansible.builtin.include_vars: "{{ role_path }}/vars/job_execution.yml"
+
+- name: Read the pinned image entrypoint path
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - inspect
+      - --format
+      - '{% raw %}{{ index .Config.Entrypoint 0 }}{% endraw %}'
+      - "{{ agent_sandbox_dispatch_image }}"
+  register: _agent_sandbox_image_entrypoint
+  changed_when: false
+  check_mode: false
+
+- name: Validate the image entrypoint and job write parameter
+  ansible.builtin.assert:
+    that:
+      - agent_sandbox_job_github_write is boolean
+      - _agent_sandbox_image_entrypoint.stdout is match('^/nix/store/[A-Za-z0-9._+-]+/bin/agent-entrypoint$')
+      - agent_sandbox_job_entrypoint is match('^/[A-Za-z0-9/._+-]+$')
+    quiet: true
+
+- name: Read the pinned image entrypoint
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --entrypoint
+      - /bin/cat
+      - "{{ agent_sandbox_dispatch_image }}"
+      - "{{ _agent_sandbox_image_entrypoint.stdout }}"
+  register: _agent_sandbox_job_entrypoint_source
+  changed_when: false
+  check_mode: false
+
+- name: Apply job parameters to existing sources
+  ansible.builtin.include_tasks: main/job_source.yml
+  loop:
+    - path: /usr/local/lib/agent-sandbox/agent-dispatch.sh
+      text: "{{ lookup('file', agent_sandbox_dispatch_stage_prefix ~ 'agent-dispatch.sh', rstrip=false) }}"
+      changes: "{{ agent_sandbox_job_source_changes.dispatcher }}"
+    - path: "{{ agent_sandbox_job_entrypoint }}"
+      text: "{{ _agent_sandbox_job_entrypoint_source.stdout }}\n"
+      changes: "{{ agent_sandbox_job_source_changes.entrypoint }}"
+  loop_control:
+    loop_var: job_source
+    label: "{{ job_source.path }}"
