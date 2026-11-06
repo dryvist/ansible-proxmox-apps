@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.21.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.21.1...v5.21.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cribl_stream:** map router trace names and caller tags for Langfuse ([#3337](https://github.com/dryvist/ansible-proxmox-apps/issues/3337)) ([a530c89](https://github.com/dryvist/ansible-proxmox-apps/commit/a530c89c37f18de527703fa095f5d0e8239949fd))
+
 ## [5.21.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.21.0...v5.21.1) (2026-11-06)
 
 
