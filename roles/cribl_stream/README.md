@@ -80,6 +80,24 @@ Configure data pipeline via Cribl Web UI after Ansible deployment:
 
 Every log-bearing input uses `ansi_csi_strip` before routing; Splunk HEC outputs keep `secret_redaction` for credentials.
 
+### LLM span metrics (beta)
+
+The OpenTelemetry input sends original spans to `otel_traces_to_metrics`
+before the independent trace-storage legs apply sampling or trace-ID changes.
+Native Aggregations is configured to emit cumulative `llm_span_calls`, `llm_span_errors`,
+`llm_span_input_tokens`, `llm_span_output_tokens`, and the
+`llm_span_duration_seconds` histogram through the existing VictoriaMetrics
+remote-write destination every 10 seconds. Only spans with `gen_ai.*`
+attributes qualify; labels are `service_name`, `model`, `system`, and `status`.
+Missing token usage is excluded from token sums. Missing or invalid timing is
+excluded from the histogram while calls still count. These are span counts,
+so nested agent and router spans can represent the same inference request.
+
+After converge, capture the new pipeline's input and output during real LLM
+calls and query VictoriaMetrics for `{__name__=~"llm_span_.*"}`. Confirm native
+histogram serialization, including sum, count, and cumulative buckets through
+`+Inf`, and verify the same original spans still reach the trace stores.
+
 ### Grafana alert delivery
 
 Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with
