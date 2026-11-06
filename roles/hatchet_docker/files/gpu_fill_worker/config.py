@@ -60,12 +60,10 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config)
-        - {"roles", "platforms", "latency_guard", "evals", "fill", "release_digest"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
     ):
         raise ValueError(
-            "config must contain roles and platforms with optional latency_guard, evals, fill, "
-            "and release_digest"
+            "config must contain roles and platforms with optional latency_guard, evals, and fill"
         )
 
     roles = config["roles"]
@@ -193,56 +191,5 @@ def load_config(path):
             platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
             if not isinstance(platform, dict) or platform.get("kind") != "chat":
                 raise ValueError(f"fill role {role_name} must map to an active chat platform")
-
-    if "release_digest" in config:
-        digest = config["release_digest"]
-        if not isinstance(digest, dict) or set(digest) != {
-            "cron",
-            "repositories",
-            "chat_platform",
-            "auth_env",
-        }:
-            raise ValueError(
-                "release_digest must contain cron, repositories, chat_platform, and auth_env"
-            )
-        _require_cron(digest["cron"], "release_digest cron")
-        if digest["cron"] != "23 11 * * *":
-            if digest["cron"].split()[0] in {"0", "15", "30", "45"}:
-                raise ValueError("release_digest cron cannot run on a quarter-hour boundary")
-            raise ValueError("release_digest cron must be 23 11 * * *")
-        repositories = digest["repositories"]
-        if not isinstance(repositories, list):
-            raise ValueError("release_digest repositories must be a list")
-        seen_repositories = set()
-        for repository in repositories:
-            if not isinstance(repository, dict) or set(repository) - {
-                "owner",
-                "repo",
-                "interest_tag",
-            } or not {"owner", "repo"}.issubset(repository):
-                raise ValueError("each release_digest repository needs owner and repo only")
-            _require_name(repository["owner"], "release_digest owner")
-            _require_name(repository["repo"], "release_digest repo")
-            if "interest_tag" in repository and (
-                not isinstance(repository["interest_tag"], str)
-                or not repository["interest_tag"].strip()
-            ):
-                raise ValueError("release_digest interest_tag must be a non-empty string")
-            key = (repository["owner"].lower(), repository["repo"].lower())
-            if key in seen_repositories:
-                raise ValueError(
-                    f"duplicate release_digest repository: {repository['owner']}/{repository['repo']}"
-                )
-            seen_repositories.add(key)
-        chat_platform_name = digest["chat_platform"]
-        if not isinstance(chat_platform_name, str):
-            raise ValueError("release_digest chat_platform must name an active chat platform")
-        chat_platform = platforms.get(chat_platform_name)
-        if not isinstance(chat_platform, dict) or chat_platform.get("kind") != "chat":
-            raise ValueError("release_digest chat_platform must name an active chat platform")
-        if not isinstance(digest["auth_env"], str) or not _ENV_NAME.fullmatch(
-            digest["auth_env"]
-        ):
-            raise ValueError("release_digest auth_env must be an env var name")
 
     return config
