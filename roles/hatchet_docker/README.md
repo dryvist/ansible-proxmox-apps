@@ -30,6 +30,26 @@ openbao-unlock --via yubikey hatchet-token-publisher -- bash -c \
 The publish and worker deployment read the same OpenBao leaf with the converge
 identity. A missing leaf triggers token minting; a denied read fails the run.
 
+## Nightly trace judging
+
+`hatchet_docker_worker_tracejudge_enabled` opts the worker into a 02:43 UTC
+daily task. It reads the previous UTC day's Langfuse observations, samples up
+to `hatchet_docker_worker_tracejudge_sample_per_agent` traces per trace name or
+tag, and uses the configured chat platform named by
+`hatchet_docker_worker_tracejudge_platform` as the local judge. Each trace gets
+numeric 1–5 scores for task success, tool-use correctness, and hallucination
+risk; a higher hallucination-risk score means more risk.
+
+The existing Langfuse public and secret keys are passed to the worker as
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Enabling trace judging also
+requires `SLACK_WEBHOOK_URL` in the Ansible deployment environment. The worker
+posts generated lessons to that webhook and writes one Hindsight-ready JSONL
+record per agent name or tag under
+`hatchet_docker_worker_tracejudge_output_dir` (defaulting to a date-stamped
+file in the Hatchet data directory). The records include a stable
+`document_id` for idempotent Hindsight ingestion and do not contain raw trace
+bodies.
+
 ## Known single point of failure
 
 The apps PostgreSQL primary is a single point of failure for Hatchet. Losing

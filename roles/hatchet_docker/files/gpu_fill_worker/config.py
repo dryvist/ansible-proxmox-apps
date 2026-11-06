@@ -60,7 +60,7 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill", "tracejudge"}
     ):
         raise ValueError(
             "config must contain roles and platforms with optional latency_guard, evals, and fill"
@@ -191,5 +191,48 @@ def load_config(path):
             platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
             if not isinstance(platform, dict) or platform.get("kind") != "chat":
                 raise ValueError(f"fill role {role_name} must map to an active chat platform")
+
+    if "tracejudge" in config:
+        tracejudge = config["tracejudge"]
+        if not isinstance(tracejudge, dict) or set(tracejudge) != {
+            "cron",
+            "sample_per_agent",
+            "platform",
+            "langfuse_base_url",
+            "auth_env",
+            "slack_webhook_env",
+            "output_dir",
+        }:
+            raise ValueError("tracejudge has invalid fields")
+        _require_cron(tracejudge["cron"], "tracejudge cron")
+        sample_per_agent = tracejudge["sample_per_agent"]
+        if type(sample_per_agent) is not int or sample_per_agent < 1:
+            raise ValueError("tracejudge sample_per_agent must be a positive integer")
+        _require_name(tracejudge["platform"], "tracejudge platform")
+        platform = platforms.get(tracejudge["platform"])
+        if not isinstance(platform, dict) or platform.get("kind") != "chat":
+            raise ValueError("tracejudge platform must map to an active chat platform")
+        langfuse_url = tracejudge["langfuse_base_url"]
+        parsed_url = urlsplit(langfuse_url) if isinstance(langfuse_url, str) else None
+        if (
+            parsed_url is None
+            or parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+        ):
+            raise ValueError("tracejudge langfuse_base_url must be an absolute HTTP(S) URL")
+        auth_env = tracejudge["auth_env"]
+        if not isinstance(auth_env, dict) or set(auth_env) != {"public_key", "secret_key"}:
+            raise ValueError("tracejudge auth_env must contain public_key and secret_key")
+        for env_name in auth_env.values():
+            if not isinstance(env_name, str) or not _ENV_NAME.fullmatch(env_name):
+                raise ValueError("tracejudge auth_env values must be env var names")
+        slack_env = tracejudge["slack_webhook_env"]
+        if not isinstance(slack_env, str) or not _ENV_NAME.fullmatch(slack_env):
+            raise ValueError("tracejudge slack_webhook_env must be an env var name")
+        output_dir = tracejudge["output_dir"]
+        if not isinstance(output_dir, str) or not Path(output_dir).is_absolute():
+            raise ValueError("tracejudge output_dir must be an absolute path")
 
     return config

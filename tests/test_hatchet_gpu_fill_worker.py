@@ -3,6 +3,7 @@
 import ast
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -331,6 +332,8 @@ def test_compose_and_worker_config_templates_render_on_and_off():
         pytest.skip("ansible-playbook is not installed")
 
     for name in ("render_templates.yml", "render_fill_templates.yml"):
+        env = os.environ.copy()
+        env["SLACK_WEBHOOK_URL"] = "render-slack-webhook-placeholder"
         result = subprocess.run(
             [
                 ansible_playbook,
@@ -345,5 +348,6 @@ def test_compose_and_worker_config_templates_render_on_and_off():
             capture_output=True,
             check=False,
             text=True,
+            env=env,
         )
         assert result.returncode == 0, f"{name}\n{result.stdout}\n{result.stderr}"

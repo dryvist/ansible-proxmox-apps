@@ -45,6 +45,24 @@
     fail_msg: Hatchet evaluations require the GPU fill worker to be enabled.
   when: hatchet_docker_eval_enabled | bool
 
+- name: Validate Hatchet trace judging configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_enabled | bool
+      - hatchet_docker_worker_tracejudge_cron.split() | length == 5
+      - hatchet_docker_worker_tracejudge_sample_per_agent | int > 0
+      - hatchet_docker_worker_tracejudge_langfuse_base_url is match('^https?://[^/@]+$')
+      - hatchet_docker_worker_tracejudge_slack_webhook_env is match('^[A-Z_][A-Z0-9_]*$')
+      - >-
+        hatchet_docker_worker_platforms
+        | selectattr('name', 'equalto', hatchet_docker_worker_tracejudge_platform)
+        | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'chat')
+        | list | length == 1
+    fail_msg: >-
+      Trace judging requires an enabled worker, a five-field cron, a positive sample limit,
+      an absolute Langfuse base URL, a webhook environment name, and an active chat platform.
+  when: hatchet_docker_worker_tracejudge_enabled | default(false) | bool
+
 - name: Validate Hatchet GPU fill worker latency guard configuration
   ansible.builtin.assert:
     that:
@@ -151,6 +169,15 @@
     - "{{ hatchet_docker_worker_fill_corpus_host_dir }}"
     - "{{ hatchet_docker_worker_fill_output_host_dir }}"
   when: hatchet_docker_worker_fill_enabled | bool
+
+- name: Create the Hatchet trace judging output directory
+  ansible.builtin.file:
+    path: "{{ hatchet_docker_worker_tracejudge_output_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: hatchet_docker_worker_tracejudge_enabled | default(false) | bool
 
 - name: Shallow-clone the public Hatchet GPU fill corpus repositories
   ansible.builtin.git:

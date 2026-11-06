@@ -84,9 +84,21 @@ def main():
         workflows.extend(
             build_eval_tasks(hatchet, worker_config["evals"], worker_config.get("latency_guard"))
         )
+    if "tracejudge" in worker_config:
+        from tracejudge.tasks import build_tasks as build_tracejudge_tasks
+
+        workflows.extend(
+            build_tracejudge_tasks(
+                hatchet,
+                worker_config["tracejudge"],
+                worker_config["platforms"],
+                worker_config.get("latency_guard"),
+            )
+        )
     slots = sum(role["max_runs"] for role in worker_config["roles"].values())
     # One slot per eval task (judge sync plus one per role) so evals never take GPU-fill slots.
     slots += len(worker_config["evals"]["roles"]) + 1 if "evals" in worker_config else 0
+    slots += 1 if "tracejudge" in worker_config else 0
     slots += fill_slots(worker_config)
     worker = hatchet.worker(
         "gpu-fill-worker",

@@ -99,14 +99,24 @@ def run_chat(platform_cfg, payload, http_post=None, latency_guard=None, http_get
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
     }
-    body = json.dumps(
-        {
-            "model": platform_cfg["model"],
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
-    ).encode("utf-8")
+    system_prompt = request.get("system_prompt")
+    if system_prompt is not None and (not isinstance(system_prompt, str) or not system_prompt.strip()):
+        raise ValueError("chat run payload.system_prompt must be a non-empty string")
+    messages = ([{"role": "system", "content": system_prompt}] if system_prompt else [])
+    messages.append({"role": "user", "content": prompt})
+    body_data = {
+        "model": platform_cfg["model"],
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if request.get("priority") is not None:
+        body_data["priority"] = request["priority"]
+    if request.get("temperature") is not None:
+        body_data["temperature"] = request["temperature"]
+    if request.get("metadata") is not None:
+        body_data["metadata"] = request["metadata"]
+    body = json.dumps(body_data).encode("utf-8")
     url = platform_cfg["base_url"].rstrip("/") + "/chat/completions"
     status, response_body = (http_post or _http_post)(
         url, body, headers, platform_cfg["timeout_s"]

@@ -112,6 +112,85 @@
           - "'evals' not in (_hatchet_worker_config.content | b64decode | from_json)"
           - "'fill' not in (_hatchet_worker_config.content | b64decode | from_json)"
 
+    - name: Render worker JSON configuration with trace judging
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-tracejudge.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_tracejudge_enabled: true
+        hatchet_docker_worker_platforms: "{{ _hatchet_role_defaults.hatchet_docker_worker_chat_platforms }}"
+        hatchet_docker_worker_tracejudge_cron: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_cron }}
+        hatchet_docker_worker_tracejudge_sample_per_agent: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_sample_per_agent }}
+        hatchet_docker_worker_tracejudge_platform: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_platform }}
+        hatchet_docker_worker_tracejudge_langfuse_base_url: >-
+          {{ hatchet_docker_eval_langfuse_host }}
+        hatchet_docker_worker_tracejudge_slack_webhook_env: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_slack_webhook_env }}
+        hatchet_docker_worker_tracejudge_output_dir: "{{ hatchet_docker_data_dir }}/tracejudge"
+
+    - name: Read and parse worker JSON configuration with trace judging
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-tracejudge.json"
+      register: _hatchet_worker_config_tracejudge
+
+    - name: Assert trace judging uses the configured schedule, local platform, and env names
+      ansible.builtin.assert:
+        that:
+          - (_hatchet_worker_config_tracejudge.content | b64decode | from_json).tracejudge.cron == '43 2 * * *'
+          - (_hatchet_worker_config_tracejudge.content | b64decode | from_json).tracejudge.sample_per_agent == 10
+          - (_hatchet_worker_config_tracejudge.content | b64decode | from_json).tracejudge.platform == 'pro6000-direct'
+          - >-
+            (_hatchet_worker_config_tracejudge.content | b64decode | from_json).tracejudge.auth_env.public_key
+            == 'LANGFUSE_PUBLIC_KEY'
+          - >-
+            (_hatchet_worker_config_tracejudge.content | b64decode | from_json).tracejudge.auth_env.secret_key
+            == 'LANGFUSE_SECRET_KEY'
+          - >-
+            (_hatchet_worker_config_tracejudge.content | b64decode | from_json).tracejudge.output_dir
+            == '/tmp/hatchet/tracejudge'
+
+    - name: Render compose with trace judging enabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-tracejudge.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_tracejudge_enabled: true
+        hatchet_docker_worker_platforms: "{{ _hatchet_role_defaults.hatchet_docker_worker_chat_platforms }}"
+        hatchet_docker_worker_tracejudge_cron: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_cron }}
+        hatchet_docker_worker_tracejudge_sample_per_agent: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_sample_per_agent }}
+        hatchet_docker_worker_tracejudge_platform: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_platform }}
+        hatchet_docker_worker_tracejudge_langfuse_base_url: >-
+          {{ hatchet_docker_eval_langfuse_host }}
+        hatchet_docker_worker_tracejudge_slack_webhook_env: >-
+          {{ _hatchet_role_defaults.hatchet_docker_worker_tracejudge_slack_webhook_env }}
+        hatchet_docker_worker_tracejudge_output_dir: "{{ hatchet_docker_data_dir }}/tracejudge"
+
+    - name: Read compose with trace judging enabled
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-tracejudge.yml"
+      register: _hatchet_compose_tracejudge
+
+    - name: Assert trace judging mounts lessons and injects Langfuse and Slack credentials
+      ansible.builtin.assert:
+        that:
+          - "'/tmp/hatchet/tracejudge:/tracejudge' in (_hatchet_compose_tracejudge.content | b64decode)"
+          - "'LANGFUSE_PUBLIC_KEY: \"render-langfuse-public-key\"' in (_hatchet_compose_tracejudge.content | b64decode)"
+          - "'LANGFUSE_SECRET_KEY: \"render-langfuse-secret-key\"' in (_hatchet_compose_tracejudge.content | b64decode)"
+          - >-
+            'SLACK_WEBHOOK_URL: "render-slack-webhook-placeholder"'
+            in (_hatchet_compose_tracejudge.content | b64decode)
+          - "(_hatchet_compose_tracejudge.content | b64decode).count('LANGFUSE_PUBLIC_KEY:') == 1"
+
     - name: Render the worker JSON configuration with evals
       ansible.builtin.template:
         src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
@@ -164,6 +243,9 @@
             (_hatchet_worker_config_no_guard.content | b64decode | from_json)
           - >-
             'evals' not in
+            (_hatchet_worker_config_no_guard.content | b64decode | from_json)
+          - >-
+            'tracejudge' not in
             (_hatchet_worker_config_no_guard.content | b64decode | from_json)
 
     - name: Render the worker compose with evals enabled

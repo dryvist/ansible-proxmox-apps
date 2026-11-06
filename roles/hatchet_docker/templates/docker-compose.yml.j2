@@ -94,15 +94,17 @@ services:
         | mandatory(worker_platform.auth_secret_key ~ ' is required for the Hatchet worker platform')
         | replace('$', '$$')) | to_json }}
 {% endfor %}
-{% if hatchet_docker_eval_enabled | bool %}
+{% if hatchet_docker_eval_enabled | bool or (hatchet_docker_worker_tracejudge_enabled | default(false) | bool) %}
       LANGFUSE_PUBLIC_KEY: {{ (bao_apps_secrets.hatchet_eval_langfuse_public_key
         | default(undef('hatchet_eval_langfuse_public_key missing from bao_apps_secrets'), true)
-        | mandatory('hatchet_eval_langfuse_public_key is required when evals are enabled')
+        | mandatory('hatchet_eval_langfuse_public_key is required when evals or trace judging are enabled')
         | replace('$', '$$')) | to_json }}
       LANGFUSE_SECRET_KEY: {{ (bao_apps_secrets.hatchet_eval_langfuse_secret_key
         | default(undef('hatchet_eval_langfuse_secret_key missing from bao_apps_secrets'), true)
-        | mandatory('hatchet_eval_langfuse_secret_key is required when evals are enabled')
+        | mandatory('hatchet_eval_langfuse_secret_key is required when evals or trace judging are enabled')
         | replace('$', '$$')) | to_json }}
+{% endif %}
+{% if hatchet_docker_eval_enabled | bool %}
       LANGFUSE_HOST: "{{ hatchet_docker_eval_langfuse_host }}"
       LITELLM_BASE_URL: "{{ hatchet_docker_eval_litellm_base_url }}"
       LITELLM_API_KEY: {{ (bao_apps_secrets.hatchet_eval_litellm_api_key
@@ -111,6 +113,12 @@ services:
         | replace('$', '$$')) | to_json }}
       AI_PROMPTS_DIR: "{{ hatchet_docker_eval_prompts_dir }}"
       SOURCE_COMMIT: "{{ hatchet_docker_eval_prompts_ref }}"
+{% endif %}
+{% if hatchet_docker_worker_tracejudge_enabled | default(false) | bool %}
+      {{ hatchet_docker_worker_tracejudge_slack_webhook_env }}: {{ (lookup('ansible.builtin.env', hatchet_docker_worker_tracejudge_slack_webhook_env)
+        | default(undef('configured Slack webhook environment variable is unset'), true)
+        | mandatory('the configured Slack webhook environment variable is required when trace judging is enabled')
+        | replace('$', '$$')) | to_json }}
 {% endif %}
     volumes:
       - "{{ hatchet_docker_data_dir }}/gpu_fill_worker:/app/gpu_fill_worker:ro"
@@ -121,6 +129,9 @@ services:
 {% endif %}
 {% if hatchet_docker_eval_enabled | bool %}
       - "{{ hatchet_docker_data_dir }}/ai-llm-prompts:{{ hatchet_docker_eval_prompts_dir }}:ro"
+{% endif %}
+{% if hatchet_docker_worker_tracejudge_enabled | default(false) | bool %}
+      - "{{ hatchet_docker_worker_tracejudge_output_dir }}:/tracejudge"
 {% endif %}
     working_dir: /app/gpu_fill_worker
     # No Python SDK container pattern exists in this repo; install the pinned
