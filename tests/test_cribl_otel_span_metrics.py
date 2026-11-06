@@ -79,6 +79,7 @@ def test_original_input_fans_to_metrics_before_unchanged_trace_legs(namespace):
         {"output": "victoriametrics_rw", "pipeline": PIPELINE},
         {"output": "langfuse_otlp", "pipeline": "otel_traces"},
         {"output": "phoenix_otlp", "pipeline": "otel_traces_phoenix"},
+        {"output": "arize_otlp", "pipeline": "otel_traces_arize"},
         {"output": splunk + ("otel_traces" if namespace else ""),
          "pipeline": "otel_traces_to_splunk"},
         {"output": splunk + ("ai_usage" if namespace else ""), "pipeline": "otel_logs"},
