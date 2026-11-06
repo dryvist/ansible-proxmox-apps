@@ -1,0 +1,65 @@
+---
+# Public extracted spans only; native Eval projects a bounded OTLP envelope.
+output: arize_otlp
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: drop
+    filter: "!__otlp || __otlp.type !== 'traces' || __otlp.extracted !== true"
+    disabled: false
+    conf: {}
+{{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/agent_tags.yml.j2') }}
+  - id: drop
+    filter: "attributes.privacy_class !== 'public'"
+    disabled: false
+    conf: {}
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: attributes
+          value: >-
+            {
+{% for tag in cribl_stream_otel_agent_tag_defaults %}
+              '{{ tag }}': attributes['{{ tag }}']{{ ',' if not loop.last }}
+{% endfor %}
+            }
+        - name: name
+          value: "'agent-run'"
+        - name: resource
+          value: "{attributes: {}}"
+        - name: scope
+          value: "{}"
+        - name: status
+          value: "{code: (__e.status && [0, 1, 2].includes(__e.status.code)) ? __e.status.code : 0}"
+        - name: __otlp
+          value: "{type: 'traces', extracted: true, version: '1.3.1'}"
+      # Rebuilt attributes, resource, scope and status contain no source bodies.
+      # Events, links, traceState, raw payloads and resource identity are excluded.
+      keep:
+        - attributes
+        - name
+        - resource
+        - scope
+        - status
+        - trace_id
+        - span_id
+        - parent_span_id
+        - traceId
+        - spanId
+        - parentSpanId
+        - startTime
+        - endTime
+        - duration
+        - start_time_unix_nano
+        - end_time_unix_nano
+        - startTimeUnixNano
+        - endTimeUnixNano
+        - kind
+        - _time
+      remove:
+        - '*'
+        - __headers
+        - __httpHeaders
