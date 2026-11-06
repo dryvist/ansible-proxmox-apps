@@ -87,6 +87,86 @@
             'GPU_FILL_ROUTER_API_KEY: "render-gpu-fill-router-key"'
             in (_hatchet_compose_chat.content | b64decode)
 
+    - name: Render the worker JSON configuration with repository work-finding
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-workfind.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_roles:
+          agent-long-context:
+            max_runs: 1
+        hatchet_docker_worker_platforms:
+          - name: agent-long-context
+            kind: chat
+            base_url: https://router.example.invalid/v1
+            model: agent-long-context
+            max_tokens: 1024
+            auth_env: GPU_FILL_ROUTER_API_KEY
+            timeout_s: 300
+        hatchet_docker_worker_workfind_enabled: true
+        hatchet_docker_worker_workfind_repos:
+          - name: sample
+            url: https://github.com/example/sample.git
+        hatchet_docker_worker_workfind_vikunja_base_url: https://tasks.example.invalid/api/v1
+        hatchet_docker_worker_workfind_vikunja_project_id: 55
+
+    - name: Read and parse the work-finding worker configuration
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-workfind.json"
+      register: _hatchet_worker_config_workfind
+
+    - name: Assert work-finding config carries only token env name and configured scan limits
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_hatchet_worker_config_workfind.content | b64decode | from_json).workfind.cron
+            == '17 3 * * *'
+          - >-
+            (_hatchet_worker_config_workfind.content | b64decode | from_json).workfind.files_per_repo
+            == 10
+          - >-
+            (_hatchet_worker_config_workfind.content | b64decode | from_json).workfind.llm_role
+            == 'agent-long-context'
+          - >-
+            (_hatchet_worker_config_workfind.content | b64decode | from_json).workfind.platform
+            == 'agent-long-context'
+          - >-
+            (_hatchet_worker_config_workfind.content | b64decode | from_json).workfind.vikunja.project_id
+            == 55
+          - >-
+            (_hatchet_worker_config_workfind.content | b64decode | from_json).workfind.vikunja.token_env
+            == 'VIKUNJA_WORKFIND_TOKEN'
+          - "'render-vikunja-workfind-token' not in (_hatchet_worker_config_workfind.content | b64decode)"
+
+    - name: Render compose with the work-finding Vikunja token from OpenBao
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-workfind.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_workfind_enabled: true
+        hatchet_docker_worker_workfind_vikunja_token_secret_key: vikunja_workfind_token
+        bao_apps_secrets:
+          hatchet_worker_token: render-worker-token-placeholder
+          hermes_api_token: render-platform-token-placeholder
+          vikunja_workfind_token: render-vikunja-workfind-token
+      no_log: true
+
+    - name: Read the compose output with work-finding enabled
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-workfind.yml"
+      register: _hatchet_compose_workfind
+
+    - name: Assert the Vikunja credential is emitted only as an environment variable
+      ansible.builtin.assert:
+        that:
+          - >-
+            'VIKUNJA_WORKFIND_TOKEN: "render-vikunja-workfind-token"'
+            in (_hatchet_compose_workfind.content | b64decode)
+
     - name: Remove the temporary render directory
       ansible.builtin.file:
         path: "{{ _hatchet_render_dir.path }}"

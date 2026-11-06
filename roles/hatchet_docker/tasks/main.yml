@@ -140,6 +140,48 @@
       entries with an identifier name, an https url, and a pinned version tag.
   when: hatchet_docker_worker_fill_enabled | bool
 
+- name: Validate the Hatchet repository work-finding configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_enabled | bool
+      - hatchet_docker_worker_workfind_cron == '17 3 * * *'
+      - hatchet_docker_worker_workfind_repos is sequence
+      - hatchet_docker_worker_workfind_repos | length > 0
+      - >-
+        (hatchet_docker_worker_workfind_repos | map(attribute='name') | list | unique | length)
+        == hatchet_docker_worker_workfind_repos | length
+      - >-
+        hatchet_docker_worker_workfind_repos | selectattr('name', 'defined')
+        | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$')
+        | list | length == hatchet_docker_worker_workfind_repos | length
+      - >-
+        hatchet_docker_worker_workfind_repos | selectattr('url', 'defined')
+        | map(attribute='url') | select('match', '^https://[^/@?#]+/[^?#]+$') | list | length
+        == hatchet_docker_worker_workfind_repos | length
+      - hatchet_docker_worker_workfind_files_per_repo | int > 0
+      - hatchet_docker_worker_workfind_max_file_bytes | int > 0
+      - hatchet_docker_worker_workfind_max_file_bytes | int <= 1048576
+      - hatchet_docker_worker_workfind_min_confidence | float >= 0
+      - hatchet_docker_worker_workfind_min_confidence | float <= 1
+      - hatchet_docker_worker_workfind_max_tasks_per_night | int > 0
+      - hatchet_docker_worker_workfind_llm_role in hatchet_docker_worker_roles
+      - >-
+        hatchet_docker_worker_platforms
+        | selectattr('name', 'equalto', hatchet_docker_worker_workfind_platform)
+        | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'chat')
+        | list | length == 1
+      - hatchet_docker_worker_workfind_vikunja_base_url is match('^https://[^/@?#]+(/[^?#]*)?$')
+      - hatchet_docker_worker_workfind_vikunja_project_id | int > 0
+      - hatchet_docker_worker_workfind_vikunja_token_env is match('^[A-Z_][A-Z0-9_]*$')
+      - hatchet_docker_worker_workfind_vikunja_token_secret_key is match('^[A-Za-z0-9_-]+$')
+    fail_msg: >-
+      Enabling repository work-finding requires a nightly schedule, public HTTPS repositories,
+      an active chat platform, and a Vikunja project with a tasks read_all/create token supplied from
+      OpenBao. The token must be supplied through the worker environment.
+    quiet: true
+  no_log: true
+  when: hatchet_docker_worker_workfind_enabled | bool
+
 - name: Create the Hatchet GPU fill corpus and output directories
   ansible.builtin.file:
     path: "{{ item }}"

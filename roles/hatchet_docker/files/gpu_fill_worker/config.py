@@ -52,6 +52,113 @@ def _require_cron(value, label):
         raise ValueError(f"{label} must be an empty string or a five-field cron expression")
 
 
+def _minute_values(spec):
+    values = set()
+    for part in spec.split(","):
+        if "/" in part:
+            base, step_text = part.split("/", 1)
+            step = int(step_text)
+            if base == "*":
+                start, end = 0, 59
+            elif "-" in base:
+                start_text, end_text = base.split("-", 1)
+                start, end = int(start_text), int(end_text)
+            else:
+                start, end = int(base), 59
+        else:
+            step = 1
+            if part == "*":
+                start, end = 0, 59
+            elif "-" in part:
+                start_text, end_text = part.split("-", 1)
+                start, end = int(start_text), int(end_text)
+            else:
+                start = end = int(part)
+        if step < 1:
+            raise ValueError("workfind cron minute step must be positive")
+        if not 0 <= start <= end <= 59:
+            raise ValueError("workfind cron minute field is invalid")
+        values.update(range(start, end + 1, step))
+    return values
+
+
+def _validate_workfind(config, roles, platforms):
+    expected = {
+        "cron",
+        "repos",
+        "files_per_repo",
+        "max_file_bytes",
+        "min_confidence",
+        "max_tasks_per_night",
+        "llm_role",
+        "platform",
+        "vikunja",
+    }
+    if not isinstance(config, dict) or set(config) != expected:
+        raise ValueError("workfind has invalid fields")
+    _require_cron(config["cron"], "workfind cron")
+    minute_values = _minute_values(config["cron"].split()[0])
+    if minute_values & {0, 15, 30, 45}:
+        raise ValueError("workfind cron must not run at quarter-hour boundaries")
+    repos = config["repos"]
+    if not isinstance(repos, list) or not repos:
+        raise ValueError("workfind repos must be a non-empty array")
+    seen_names = set()
+    for repo in repos:
+        if not isinstance(repo, dict) or set(repo) != {"name", "url"}:
+            raise ValueError("each workfind repo must contain name and url only")
+        _require_name(repo["name"], "workfind repository name")
+        if repo["name"] in seen_names:
+            raise ValueError(f"duplicate workfind repository: {repo['name']}")
+        seen_names.add(repo["name"])
+        parsed = urlsplit(repo["url"]) if isinstance(repo["url"], str) else None
+        if (
+            parsed is None
+            or parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("workfind repo URLs must be public HTTPS URLs without credentials")
+    for key in ("files_per_repo", "max_file_bytes", "max_tasks_per_night"):
+        value = config[key]
+        if type(value) is not int or value < 1:
+            raise ValueError(f"workfind {key} must be a positive integer")
+    if config["max_file_bytes"] > 1_048_576:
+        raise ValueError("workfind max_file_bytes must not exceed 1048576")
+    confidence = config["min_confidence"]
+    if type(confidence) not in {int, float} or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValueError("workfind min_confidence must be a finite number from 0 to 1")
+    _require_name(config["llm_role"], "workfind LLM role")
+    if config["llm_role"] not in roles:
+        raise ValueError("workfind LLM role must be configured")
+    _require_name(config["platform"], "workfind platform")
+    platform = platforms.get(config["platform"])
+    if not isinstance(platform, dict) or platform.get("kind") != "chat":
+        raise ValueError("workfind platform must name an active chat platform")
+    vikunja = config["vikunja"]
+    if not isinstance(vikunja, dict) or set(vikunja) != {"base_url", "project_id", "token_env"}:
+        raise ValueError("workfind vikunja must contain base_url, project_id, and token_env")
+    base_url = vikunja["base_url"]
+    parsed = urlsplit(base_url) if isinstance(base_url, str) else None
+    if (
+        parsed is None
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("workfind Vikunja base_url must be an absolute HTTP(S) URL")
+    if type(vikunja["project_id"]) is not int or vikunja["project_id"] < 1:
+        raise ValueError("workfind Vikunja project_id must be a positive integer")
+    if not isinstance(vikunja["token_env"], str) or not _ENV_NAME.fullmatch(vikunja["token_env"]):
+        raise ValueError("workfind Vikunja token_env must be an env var name")
+
+
 def load_config(path):
     """Load a worker config file and reject malformed role, platform, or eval data."""
     with Path(path).open(encoding="utf-8") as config_file:
@@ -60,7 +167,7 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill", "workfind"}
     ):
         raise ValueError(
             "config must contain roles and platforms with optional latency_guard, evals, and fill"
@@ -191,5 +298,8 @@ def load_config(path):
             platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
             if not isinstance(platform, dict) or platform.get("kind") != "chat":
                 raise ValueError(f"fill role {role_name} must map to an active chat platform")
+
+    if "workfind" in config:
+        _validate_workfind(config["workfind"], roles, platforms)
 
     return config
