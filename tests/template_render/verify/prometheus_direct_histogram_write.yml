@@ -73,26 +73,32 @@
         prometheus_stack_phoenix_postgres_exporter_targets: []
         prometheus_stack_extra_scrape_configs: ""
       block:
-        - name: Assert the draft route is disabled by default
+        - name: Load role defaults independently of inventory overrides
+          ansible.builtin.include_vars:
+            file: "../../../roles/prometheus_stack/defaults/main.yml"
+            name: _direct_role_defaults
+
+        - name: Assert the role defaults off and inventory enables the route
           ansible.builtin.assert:
             that:
-              - prometheus_stack_direct_histogram_write_enabled is sameas false
+              - _direct_role_defaults.prometheus_stack_direct_histogram_write_enabled is sameas false
+              - prometheus_stack_direct_histogram_write_enabled is sameas true
 
-        - name: Render with the default flag
+        - name: Render with the flag explicitly disabled
           ansible.builtin.set_fact:
             _direct_default_raw: "{{ lookup('template', _pst_tpl) }}"
+          vars:
+            prometheus_stack_direct_histogram_write_enabled: false
 
-        - name: Assert the default remote write is byte-identical to the legacy block
+        - name: Assert the disabled remote write is byte-identical to the legacy block
           ansible.builtin.assert:
             that:
               - _direct_default_raw.endswith(_legacy_remote_write)
               - (_direct_default_raw | from_yaml).remote_write | length == 1
 
-        - name: Render the enabled route
+        - name: Render the inventory-enabled route
           ansible.builtin.set_fact:
             _direct_enabled: "{{ lookup('template', _pst_tpl) | from_yaml }}"
-          vars:
-            prometheus_stack_direct_histogram_write_enabled: true
 
         - name: Extract both relabel selectors
           ansible.builtin.set_fact:
@@ -151,7 +157,7 @@
             prometheus_stack_remote_write_url: ""
             prometheus_stack_direct_histogram_write_url: ""
 
-        - name: Assert disabled routing still permits an empty remote write endpoint
+        - name: Assert routing still permits an empty remote write endpoint
           ansible.builtin.assert:
             that:
               - _direct_no_endpoint.remote_write is not defined
