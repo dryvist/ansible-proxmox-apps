@@ -28,7 +28,8 @@ class CallerAttribution(unittest.TestCase):
             self.assertEqual(actual['langfuse.trace.name'], f'{caller}-chat')
             self.assertEqual(actual['langfuse.user.id'], caller)
             self.assertEqual(actual['langfuse.session.id'], session)
-            self.assertCountEqual(actual['langfuse.trace.tags'], ['existing', caller, profile])
+            self.assertCountEqual(actual['langfuse.trace.tags'],
+                                  ['existing', caller, profile, 'shared-model'])
             self.assertEqual(actual['langfuse.trace.metadata.client'], caller)
             self.assertEqual(actual['langfuse.trace.metadata.profile'], profile)
 
@@ -43,7 +44,7 @@ class CallerAttribution(unittest.TestCase):
             self.assertEqual(attrs['langfuse.trace.name'], 'agent-a-chat')
             self.assertEqual(attrs['langfuse.user.id'], 'agent-a')
             self.assertCountEqual(attrs['langfuse.trace.tags'],
-                                  ['existing', 'agent-a', 'interactive'])
+                                  ['existing', 'agent-a', 'interactive', 'shared-model'])
 
 
 if __name__ == '__main__':
