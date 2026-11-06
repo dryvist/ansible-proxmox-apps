@@ -110,6 +110,62 @@ calls and query VictoriaMetrics for `{__name__=~"llm_span_.*"}`. Confirm native
 histogram serialization, including sum, count, and cumulative buckets through
 `+Inf`, and verify the same original spans still reach the trace stores.
 
+### Agent telemetry
+
+The OpenTelemetry (OTEL) and Cribl-to-Cribl inputs fan extracted spans to
+Langfuse, Phoenix, Splunk HTTP Event Collector (HEC), and Arize AX. Logs and
+metrics retain their Splunk and VictoriaMetrics connections.
+
+Every OTEL leg adds `agent`, `tier`, `privacy_class`, `model`, `accelerator`,
+`caller`, and `correlation_id` to the event attributes. Canonical attributes
+take precedence over `litellm.metadata.*` aliases and top-level fields. Missing,
+null, empty, or invalid values receive defaults from
+`defaults/main/41-agent-telemetry.yml`: tier `2`, privacy class `private`, and
+`unknown` for the remaining tags. Numeric tier strings become numbers.
+
+Destination URLs and credentials are role inputs:
+
+| Destination | URL variable | Authentication variables |
+| --- | --- | --- |
+| Langfuse | `cribl_stream_langfuse_url` | `cribl_stream_langfuse_public_key`, `cribl_stream_langfuse_secret_key` |
+| Phoenix | `cribl_stream_phoenix_url` | `cribl_stream_phoenix_api_key` |
+| Splunk HEC | `cribl_stream_splunk_hec_url` | `cribl_stream_splunk_hec_token` |
+| Arize AX | `cribl_stream_arize_url` | `cribl_stream_arize_api_key`, `cribl_stream_arize_space_id` |
+
+Arize inputs default to the `ARIZE_OTLP_ENDPOINT`, `ARIZE_API_KEY`, and
+`ARIZE_SPACE_ID` environment variables. Required values fail closed when absent.
+OTLP URL inputs are base URLs; the destination appends the signal path.
+
+The Arize connection and output post-processing pipeline both accept only
+extracted spans whose normalized `privacy_class` equals `public`. Native
+Drop and Eval functions retain only the 7 canonical tags and span identifiers,
+timing, kind, and status code. The projection resets the span name, resource,
+and scope, and removes prompt, completion, message, event, link, host, address,
+and resource identity attributes. The output adds no system fields and uses
+verified TLS. [Cribl Eval](https://docs.cribl.io/stream/eval-function/) and the
+[OTLP destination](https://docs.cribl.io/stream/destinations-otel/) define these native functions and output settings.
+
+### Cribl Edge log audit
+
+Source audit dated 2026-11-06; deployed logging configuration is unverified.
+
+| Scope | Source configuration | Edge disposition |
+| --- | --- | --- |
+| Zammad | Package and system services; application-file output unverified. | Candidate; no file-only stream established. |
+| Sim | Compose override sets images and data volumes. | Candidate; merged vendor logging unverified. |
+| Other containers | Docker defaults to journald; baseline supplies rsyslog. | Retain journald, rsyslog, and Stream, or direct OTEL. |
+
+The Zammad package tasks are in `roles/zammad/tasks/main/elasticsearch_and_package.yml`;
+Docker defaults are in `roles/docker_engine/defaults/main.yml`. Sim's source is the
+[Compose override](https://github.com/dryvist/ansible-proxmox-ai/blob/develop/roles/sim_docker/templates/docker-compose.override.yml.j2).
+This audit establishes no additional container requiring Edge. Install Edge only
+for a verified file-only log stream inside a container: record its path and
+rotation behavior, and configure the native file source and Stream connection.
+Existing containers retain their logging driver until recreated; the daemon
+default alone does not establish their effective driver.
+[Docker logging configuration](https://docs.docker.com/engine/logging/configure/)
+describes that lifecycle.
+
 ### Grafana alert delivery
 
 Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with
