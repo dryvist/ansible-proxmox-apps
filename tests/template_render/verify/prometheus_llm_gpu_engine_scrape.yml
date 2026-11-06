@@ -147,6 +147,8 @@
         quiet: true
         that:
           - _engine_jobs | length == 1
+          - _engine_jobs[0].scrape_interval == '5s'
+          - _engine_jobs[0].scrape_timeout == '4s'
           - _engine_jobs[0].metrics_path == '/metrics'
           - _engine_jobs[0].params.format == ['prometheus']
           - _engine_jobs[0].static_configs | length == 2
@@ -163,6 +165,20 @@
           Expected one inventory-derived target with a guest label and no
           engine-specific duplicate scrapes.
         success_msg: One unified engine scrape and no legacy engine jobs.
+
+    - name: Faster engine scrapes preserve other jobs and remote write
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _seeded.global.scrape_interval == '15s'
+          - _seeded.global == _no_members.global
+          - _seeded.remote_write == _no_members.remote_write
+          - >-
+            (_seeded.scrape_configs
+             | rejectattr('job_name', 'in', ['llm_gpu_engine', 'dcgm_exporter']) | list)
+            == _no_members.scrape_configs
+          - _dcgm_jobs[0].scrape_interval is not defined
+          - _dcgm_jobs[0].scrape_timeout is not defined
 
     - name: Seeded inventory renders GPU and engine metrics targets
       ansible.builtin.assert:
