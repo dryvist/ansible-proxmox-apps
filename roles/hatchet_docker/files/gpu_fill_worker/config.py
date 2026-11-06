@@ -47,9 +47,13 @@ def _require_chat_platform(name, platform):
 
 def _require_cron(value, label):
     if not isinstance(value, str) or (value and not value.strip()):
-        raise ValueError(f"{label} must be an empty string or a five-field cron expression")
+        raise ValueError(
+            f"{label} must be an empty string or a five-field cron expression"
+        )
     if value and len(value.split()) != 5:
-        raise ValueError(f"{label} must be an empty string or a five-field cron expression")
+        raise ValueError(
+            f"{label} must be an empty string or a five-field cron expression"
+        )
 
 
 def load_config(path):
@@ -60,10 +64,11 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
+        or set(config)
+        - {"roles", "platforms", "latency_guard", "evals", "fill", "triage"}
     ):
         raise ValueError(
-            "config must contain roles and platforms with optional latency_guard, evals, and fill"
+            "config must contain roles and platforms with optional latency_guard, evals, fill, and triage"
         )
 
     roles = config["roles"]
@@ -107,7 +112,9 @@ def load_config(path):
         if auth_env is not None and (
             not isinstance(auth_env, str) or not _ENV_NAME.fullmatch(auth_env)
         ):
-            raise ValueError(f"platform {name} auth_env must be null or an env var name")
+            raise ValueError(
+                f"platform {name} auth_env must be null or an env var name"
+            )
         timeout_s = platform["timeout_s"]
         if type(timeout_s) is not int or timeout_s < 1:
             raise ValueError(f"platform {name} timeout_s must be a positive integer")
@@ -119,9 +126,13 @@ def load_config(path):
             "query",
             "max_ratio",
         }:
-            raise ValueError("latency_guard must contain prometheus_url, query, and max_ratio only")
+            raise ValueError(
+                "latency_guard must contain prometheus_url, query, and max_ratio only"
+            )
         prometheus_url = guard["prometheus_url"]
-        parsed_url = urlsplit(prometheus_url) if isinstance(prometheus_url, str) else None
+        parsed_url = (
+            urlsplit(prometheus_url) if isinstance(prometheus_url, str) else None
+        )
         if (
             parsed_url is None
             or parsed_url.scheme not in {"http", "https"}
@@ -129,7 +140,9 @@ def load_config(path):
             or parsed_url.username is not None
             or parsed_url.password is not None
         ):
-            raise ValueError("latency_guard prometheus_url must be an absolute HTTP(S) URL")
+            raise ValueError(
+                "latency_guard prometheus_url must be an absolute HTTP(S) URL"
+            )
         if not isinstance(guard["query"], str) or not guard["query"].strip():
             raise ValueError("latency_guard query must be a non-empty string")
         max_ratio = guard["max_ratio"]
@@ -148,7 +161,9 @@ def load_config(path):
             "prompts_dir",
             "roles",
         }:
-            raise ValueError("evals must contain cron, judges_sync_cron, prompts_dir, and roles only")
+            raise ValueError(
+                "evals must contain cron, judges_sync_cron, prompts_dir, and roles only"
+            )
         _require_cron(evals["cron"], "evals cron")
         _require_cron(evals["judges_sync_cron"], "evals judges_sync_cron")
         prompts_dir = evals["prompts_dir"]
@@ -175,7 +190,9 @@ def load_config(path):
             "output_dir",
             "roles",
         }:
-            raise ValueError("fill must contain cron, corpus_dir, output_dir, and roles only")
+            raise ValueError(
+                "fill must contain cron, corpus_dir, output_dir, and roles only"
+            )
         cron = fill["cron"]
         if not isinstance(cron, str) or len(cron.split()) != 5:
             raise ValueError("fill cron must be a five-field cron expression")
@@ -188,8 +205,48 @@ def load_config(path):
         for role_name, platform_name in fill_roles.items():
             if role_name not in roles:
                 raise ValueError(f"fill role {role_name} is not a configured LLM role")
-            platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
+            platform = (
+                platforms.get(platform_name) if isinstance(platform_name, str) else None
+            )
             if not isinstance(platform, dict) or platform.get("kind") != "chat":
-                raise ValueError(f"fill role {role_name} must map to an active chat platform")
+                raise ValueError(
+                    f"fill role {role_name} must map to an active chat platform"
+                )
+
+    if "triage" in config:
+        triage = config["triage"]
+        if not isinstance(triage, dict) or set(triage) != {
+            "api_url",
+            "auth_env",
+            "cron",
+            "platform",
+            "state_path",
+        }:
+            raise ValueError(
+                "triage must contain api_url, auth_env, cron, platform, and state_path only"
+            )
+        api_url = triage["api_url"]
+        parsed_url = urlsplit(api_url) if isinstance(api_url, str) else None
+        if (
+            parsed_url is None
+            or parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+        ):
+            raise ValueError("triage api_url must be an absolute HTTP(S) URL")
+        if not isinstance(triage["auth_env"], str) or not _ENV_NAME.fullmatch(
+            triage["auth_env"]
+        ):
+            raise ValueError("triage auth_env must be an env var name")
+        if triage["cron"] != "7,37 * * * *":
+            raise ValueError("triage cron must be 7,37 * * * *")
+        state_path = triage["state_path"]
+        if not isinstance(state_path, str) or not Path(state_path).is_absolute():
+            raise ValueError("triage state_path must be an absolute path")
+        _require_name(triage["platform"], "triage platform")
+        platform = platforms.get(triage["platform"])
+        if not isinstance(platform, dict) or platform.get("kind") != "chat":
+            raise ValueError("triage platform must map to an active chat platform")
 
     return config

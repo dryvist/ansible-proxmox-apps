@@ -34,6 +34,8 @@
       ansible.builtin.assert:
         that:
           - "'hatchet-worker:' not in (_hatchet_compose_off.content | b64decode)"
+          - "'VIKUNJA_TRIAGE_API_TOKEN' not in (_hatchet_compose_off.content | b64decode)"
+          - "'/triage-state' not in (_hatchet_compose_off.content | b64decode)"
 
     - name: Render the enabled Hatchet compose template
       ansible.builtin.template:
@@ -76,6 +78,33 @@
           - "'hatchet-sdk==1.44.0' in (_hatchet_compose_on.content | b64decode)"
           - "'promptfoo' not in (_hatchet_compose_on.content | b64decode)"
           - "'openrouter' not in (_hatchet_compose_on.content | b64decode | lower)"
+
+    - name: Render the worker compose with Vikunja triage enabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-triage.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_triage_enabled: true
+        hatchet_docker_worker_triage_auth_env: VIKUNJA_TRIAGE_API_TOKEN
+        hatchet_docker_worker_triage_auth_secret_key: vikunja_triage_api_token
+        hatchet_docker_worker_triage_state_host_dir: /tmp/hatchet/gpu_fill_triage
+
+    - name: Read the worker compose with Vikunja triage enabled
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-triage.yml"
+      register: _hatchet_compose_triage
+
+    - name: Assert the triage token and cursor mount are wired into the worker
+      ansible.builtin.assert:
+        that:
+          - >-
+            'VIKUNJA_TRIAGE_API_TOKEN: "render-vikunja-triage-token-placeholder"'
+            in (_hatchet_compose_triage.content | b64decode)
+          - >-
+            '"/tmp/hatchet/gpu_fill_triage:/triage-state"'
+            in (_hatchet_compose_triage.content | b64decode)
 
     - name: Render the worker JSON configuration
       ansible.builtin.template:

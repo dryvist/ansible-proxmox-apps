@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from adapter import LatencyGuardError, run_agent
 from config import load_config
 from fill.tasks import build_fill_tasks, fill_slots
+from triage.tasks import build_triage_tasks, triage_slots
 
 
 class AgentRunInput(BaseModel):
@@ -33,7 +34,9 @@ def _make_handler(configured_role, worker_config):
         platform = worker_config["platforms"][input.platform]
         payload = input.model_dump(exclude={"platform"})
         try:
-            return run_agent(platform, payload, latency_guard=worker_config.get("latency_guard"))
+            return run_agent(
+                platform, payload, latency_guard=worker_config.get("latency_guard")
+            )
         except LatencyGuardError:
             raise  # Hatchet retries a latency hold with backoff.
         except Exception as exc:
@@ -45,7 +48,9 @@ def _make_handler(configured_role, worker_config):
 
 def build_tasks(hatchet, worker_config):
     execution_timeout = timedelta(
-        seconds=max(platform["timeout_s"] for platform in worker_config["platforms"].values())
+        seconds=max(
+            platform["timeout_s"] for platform in worker_config["platforms"].values()
+        )
     )
     tasks = []
     for llm_role, role_config in worker_config["roles"].items():
@@ -82,12 +87,16 @@ def main():
         from evals import build_tasks as build_eval_tasks
 
         workflows.extend(
-            build_eval_tasks(hatchet, worker_config["evals"], worker_config.get("latency_guard"))
+            build_eval_tasks(
+                hatchet, worker_config["evals"], worker_config.get("latency_guard")
+            )
         )
+    workflows.extend(build_triage_tasks(hatchet, worker_config))
     slots = sum(role["max_runs"] for role in worker_config["roles"].values())
     # One slot per eval task (judge sync plus one per role) so evals never take GPU-fill slots.
     slots += len(worker_config["evals"]["roles"]) + 1 if "evals" in worker_config else 0
     slots += fill_slots(worker_config)
+    slots += triage_slots(worker_config)
     worker = hatchet.worker(
         "gpu-fill-worker",
         workflows=workflows,
