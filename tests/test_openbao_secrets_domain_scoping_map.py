@@ -233,8 +233,8 @@ def test_every_mapped_group_is_reachable_by_the_scoping_gate():
 
 def test_clickhouse_domain_is_mapped_to_its_real_consumer_groups():
     clickhouse_groups = _domain_groups().get("clickhouse", [])
-    assert clickhouse_groups == ["clickhouse_group", "langfuse_group"]
-    assert set(clickhouse_groups) <= _tofu_tag_consumer_groups()
+    assert clickhouse_groups == ["clickhouse_group", "langfuse_group", "grafana_group"]
+    assert set(clickhouse_groups) <= _tofu_tag_consumer_groups() | _legacy_prefetch_groups()
 
 
 def test_postgres_backup_s3_domain_is_mapped_to_both_postgres_groups():
@@ -254,10 +254,10 @@ def _domains_requested_for_active_groups(active_groups: set[str]) -> set[str]:
     }
 
 
-def test_grafana_only_scope_still_fetches_apps_but_not_clickhouse():
+def test_grafana_only_scope_fetches_apps_and_clickhouse():
     requested = _domains_requested_for_active_groups({"grafana_group"})
     assert "apps" in requested
-    assert "clickhouse" not in requested
+    assert "clickhouse" in requested
 
 
 def test_domains_with_no_traced_consumer_are_left_unmapped_not_guessed():
