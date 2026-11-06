@@ -12,7 +12,7 @@ observability backend — contract in terraform-proxmox
   the Prometheus form the dashboards query.
 - LiteLLM prices is a non-default Infinity datasource (uid litellm-prices) for
   the public model price JSON. It is enabled by default, installs the Infinity
-  plugin with Grafana's GF_PLUGINS_PREINSTALL, and limits requests to
+  plugin with Grafana's `GF_PLUGINS_PREINSTALL_SYNC`, and limits requests to
   [raw.githubusercontent.com](https://raw.githubusercontent.com).
 - **Grafana** is Traefik-fronted (Authelia-gated vhost); dashboards and the
   datasources are file-provisioned read-only, so the UI carries no hand-built
@@ -22,6 +22,10 @@ observability backend — contract in terraform-proxmox
   panel explanations. Its Base and Large mappings use the router's `small` and
   `medium` models; `grafana_llm_router_key` reaches Grafana through the
   protected `grafana_stack_llm_router_env_file`.
+
+Plugins install before Grafana starts through
+[`preinstall_sync`](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#preinstall_sync),
+then Grafana loads their file provisioning.
 
 Ports come from the tofu `service_ports` constants
 (`grafana_web`/`victoriametrics`) with upstream defaults as fallback. Docker
