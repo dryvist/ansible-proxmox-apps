@@ -7,6 +7,9 @@
 #
 # daemon.json is managed by the docker_engine role's shared renderer.
 
+- name: Read the shared Grafana LLM router credential
+  ansible.builtin.import_tasks: llm_router.yml
+
 - name: Include the shared Docker engine prerequisites
   ansible.builtin.include_role:
     name: docker_engine
@@ -52,7 +55,7 @@
   no_log: true
 
 # The writes run on the controller: the writer token must never reach the guest.
-- name: Seed Grafana's admin password and router key in OpenBao
+- name: Seed Grafana's admin password in OpenBao
   delegate_to: localhost
   connection: local
   become: false
@@ -92,18 +95,12 @@
             {{ grafana_stack_admin_password
                or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
           register: grafana_stack_secret_seed
-        - path: apps/grafana-llm
-          field: grafana_llm_router_key
-          length: 48
-          value: "{{ bao_apps_secrets.grafana_llm_router_key | default('', true) }}"
-          register: grafana_stack_router_secret_seed
       loop_control:
         loop_var: grafana_stack_seed
 
 - name: Resolve Grafana credentials from OpenBao
   ansible.builtin.set_fact:
     grafana_stack_effective_admin_password: "{{ grafana_stack_secret_seed.grafana_admin_password }}"
-    grafana_stack_effective_llm_router_key: "{{ grafana_stack_router_secret_seed.grafana_llm_router_key }}"
   no_log: true
 
 - name: Require the persisted password to match OpenBao
@@ -136,8 +133,6 @@
     owner: root
     group: root
     mode: "0400"
-  when:
-    - grafana_stack_router_secret_seed.grafana_llm_router_key != '(placeholder in check mode)'
   no_log: true
   notify: Restart grafana stack
 
