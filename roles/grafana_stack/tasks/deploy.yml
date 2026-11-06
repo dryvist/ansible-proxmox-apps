@@ -77,27 +77,33 @@
       vars:
         openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
         openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
-        openbao_secrets_seed_path: apps/grafana
+        openbao_secrets_seed_path: "{{ grafana_stack_seed.path }}"
         openbao_secrets_seed_fields:
-          - name: grafana_admin_password
-            length: 40
-            value: >-
-              {{ grafana_stack_admin_password
-                 or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
-          - name: grafana_llm_router_key
-            length: 48
-            value: "{{ bao_apps_secrets.grafana_llm_router_key | default('', true) }}"
-        openbao_secrets_seed_local_values:
-          grafana_admin_password: >-
+          - name: "{{ grafana_stack_seed.field }}"
+            length: "{{ grafana_stack_seed.length }}"
+            value: "{{ grafana_stack_seed.value }}"
+        openbao_secrets_seed_local_values: "{{ {grafana_stack_seed.field: grafana_stack_seed.value} }}"
+        openbao_secrets_seed_register: "{{ grafana_stack_seed.register }}"
+      loop:
+        - path: apps/grafana
+          field: grafana_admin_password
+          length: 40
+          value: >-
             {{ grafana_stack_admin_password
                or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
-          grafana_llm_router_key: "{{ bao_apps_secrets.grafana_llm_router_key | default('', true) }}"
-        openbao_secrets_seed_register: grafana_stack_secret_seed
+          register: grafana_stack_secret_seed
+        - path: apps/grafana-llm
+          field: grafana_llm_router_key
+          length: 48
+          value: "{{ bao_apps_secrets.grafana_llm_router_key | default('', true) }}"
+          register: grafana_stack_router_secret_seed
+      loop_control:
+        loop_var: grafana_stack_seed
 
 - name: Resolve Grafana credentials from OpenBao
   ansible.builtin.set_fact:
     grafana_stack_effective_admin_password: "{{ grafana_stack_secret_seed.grafana_admin_password }}"
-    grafana_stack_effective_llm_router_key: "{{ grafana_stack_secret_seed.grafana_llm_router_key }}"
+    grafana_stack_effective_llm_router_key: "{{ grafana_stack_router_secret_seed.grafana_llm_router_key }}"
   no_log: true
 
 - name: Require the persisted password to match OpenBao
@@ -131,7 +137,7 @@
     group: root
     mode: "0400"
   when:
-    - grafana_stack_secret_seed.grafana_llm_router_key != '(placeholder in check mode)'
+    - grafana_stack_router_secret_seed.grafana_llm_router_key != '(placeholder in check mode)'
   no_log: true
   notify: Restart grafana stack
 

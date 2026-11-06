@@ -131,20 +131,39 @@ def test_grafana_llm_router_key_is_seeded_and_plugin_provisioning_is_declarative
         for task in _tasks(seed_block["block"])
         if task.get("name") == "Seed Grafana credentials through the shared seed_generated task"
     )
-    seed_fields = seed_task["vars"]["openbao_secrets_seed_fields"]
-    assert {field["name"] for field in seed_fields} == {
-        "grafana_admin_password",
-        "grafana_llm_router_key",
-    }
-    router_key = next(
-        field for field in seed_fields if field["name"] == "grafana_llm_router_key"
+    assert seed_task["loop_control"]["loop_var"] == "grafana_stack_seed"
+    seed_profiles = {profile["path"]: profile for profile in seed_task["loop"]}
+    assert set(seed_profiles) == {"apps/grafana", "apps/grafana-llm"}
+    assert seed_profiles["apps/grafana"]["field"] == "grafana_admin_password"
+    assert seed_profiles["apps/grafana"]["register"] == "grafana_stack_secret_seed"
+    router_key = seed_profiles["apps/grafana-llm"]
+    assert router_key["field"] == "grafana_llm_router_key"
+    assert router_key["register"] == "grafana_stack_router_secret_seed"
+    seed_vars = seed_task["vars"]
+    assert seed_vars["openbao_secrets_seed_fields"] == [{
+        "name": "{{ grafana_stack_seed.field }}",
+        "length": "{{ grafana_stack_seed.length }}",
+        "value": "{{ grafana_stack_seed.value }}",
+    }]
+    assert seed_vars["openbao_secrets_seed_path"] == "{{ grafana_stack_seed.path }}"
+    assert seed_vars["openbao_secrets_seed_register"] == "{{ grafana_stack_seed.register }}"
+    assert seed_vars["openbao_secrets_seed_local_values"] == (
+        "{{ {grafana_stack_seed.field: grafana_stack_seed.value} }}"
     )
+    effective_credentials = next(
+        task["ansible.builtin.set_fact"]
+        for task in deploy_tasks
+        if task.get("name") == "Resolve Grafana credentials from OpenBao"
+    )
+    assert effective_credentials == {
+        "grafana_stack_effective_admin_password": "{{ grafana_stack_secret_seed.grafana_admin_password }}",
+        "grafana_stack_effective_llm_router_key": "{{ grafana_stack_router_secret_seed.grafana_llm_router_key }}",
+    }
     assert router_key["length"] == 48
     assert (
         router_key["value"]
         == "{{ bao_apps_secrets.grafana_llm_router_key | default('', true) }}"
     )
-    assert seed_task["vars"]["openbao_secrets_seed_path"] == "apps/grafana"
 
     provisioning_tasks = yaml.safe_load(
         (REPO / "roles/grafana_stack/tasks/provisioning.yml").read_text(
@@ -171,3 +190,6 @@ def test_grafana_llm_router_key_is_seeded_and_plugin_provisioning_is_declarative
     assert credential_task["ansible.builtin.template"]["owner"] == "root"
     assert credential_task["ansible.builtin.template"]["mode"] == "0400"
     assert credential_task["no_log"] is True
+    assert credential_task["when"] == [
+        "grafana_stack_router_secret_seed.grafana_llm_router_key != '(placeholder in check mode)'"
+    ]
