@@ -12,6 +12,28 @@ state and the Postgres-backed message queue.
 - Migration and the credential seed run once per converge, on the first guest.
 - Both guests and the seed use the same cookie, encryption and JWT keysets.
 
+## Scheduled parse evaluation
+
+Inventory configures 1 daily `eval-parse-small` run at `03:17` in Hatchet's
+cron timezone. It stays gated by `hatchet_docker_eval_enabled: false`.
+Enable it only after verifying the existing `vikunja-clerk-evals` Langfuse
+dataset contains labeled parse requests and the `small` route and its
+credential permit only local inference. Dataset provisioning is external
+to this role; an absent dataset fails the run.
+
+The existing worker evaluates the pinned Vikunja clerk parse prompt and
+stores `expected-fields-match` and `parse-json-schema-valid` scores in the
+Langfuse experiment `vikunja-clerk-evals-small`, with the prompt source
+commit and model role. The named consumer is the Vikunja clerk maintainer:
+review both scores and failed cases before promoting parser prompt or model
+changes. This is a manual review input, not an automated promotion gate.
+
+The workflow uses low Hatchet priority, inference priority `100`, a latency
+guard, concurrency `1` per role across workers, and a `1`-hour execution
+timeout. Latency holds have at most `6` retries with backoff capped at `300`
+seconds; experiment failures are non-retryable. Judge sync remains
+unscheduled, and `hatchet_docker_worker_fill_enabled` stays `false`.
+
 ## Publish the worker token
 
 The worker token is stored at `secret/apps/hatchet/worker-token`. The publisher
