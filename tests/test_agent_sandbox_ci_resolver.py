@@ -19,6 +19,20 @@ class AgentSandboxCiResolverContract(unittest.TestCase):
         self.install = _task(self.tasks, "Install CI resolver")
         self.install_tasks = self.install["block"]
 
+    def test_inventory_enables_live_resolver_with_public_repository_scope(self):
+        inventory = yaml.safe_load(
+            (ROOT / "inventory" / "host_vars" / "ai-sandbox-01.yml").read_text()
+        )
+        self.assertIs(inventory["agent_sandbox_ci_resolver_enabled"], True)
+        self.assertIs(inventory["agent_sandbox_ci_resolver_shadow"], False)
+        repos = inventory["agent_sandbox_ci_resolver_repos"]
+        self.assertEqual(len(repos), 10)
+        self.assertEqual(len(set(repos)), len(repos))
+        self.assertTrue(all(repo.startswith("dryvist/") for repo in repos))
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_max_attempts"], 3)
+        self.assertNotIn("agent_sandbox_ci_resolver_max_attempts", inventory)
+        self.assertEqual(self.defaults["agent_sandbox_ci_resolver_model_tiers"], "t2,t3")
+
     def test_ci_resolver_is_off_by_default_and_pinned(self):
         self.assertIs(self.defaults["agent_sandbox_ci_resolver_enabled"], False)
         self.assertIs(self.defaults["agent_sandbox_ci_resolver_shadow"], True)
