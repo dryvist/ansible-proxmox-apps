@@ -23,12 +23,13 @@ agent_sandbox_job_source_changes:
       after: |2-
             --name "agent-$1-$2"
             -e "AGENT_JOB_GITHUB_WRITE=${AGENT_JOB_GITHUB_WRITE:-false}"
+            -e "AGENT_JOB_RUN=$2"
             -v "$AGENT_JOB_ENTRYPOINT:$AGENT_JOB_IMAGE_ENTRYPOINT:ro"
     - before: '  mode=$(job_get "$id" .mode 2>/dev/null || echo start)'
       after: |2-
           mode=$(job_get "$id" .mode 2>/dev/null || echo start)
           if [ -n "$cid" ] && [ -n "$(job_get "$id" .repo)" ]; then
-            if ! docker cp "$cid:/home/agent/work/.agent-result/branch.patch" - | \
+            if ! docker cp "$cid:/home/agent/work/.agent-result/$run/branch.patch" - | \
               tar -xOf - branch.patch >"$rdir/branch.patch"; then
               rm -f "$rdir/branch.patch"
               if [ "$code" = 0 ] && [ ! -e "$rdir/cancel" ] && [ ! -e "$rdir/timeout" ]; then
@@ -60,9 +61,10 @@ agent_sandbox_job_source_changes:
           if ! git diff --cached --quiet; then
             git commit -m "feat(agent): record job changes" || exit $?
           fi
-          mkdir -p "${workdir}/.agent-result"
+          mkdir -p "${workdir}/.agent-result/${AGENT_JOB_RUN:-1}"
           if ! gitleaks git --log-opts="${base}..HEAD" --redact --no-banner; then exit 65; fi
-          git format-patch --stdout --binary "${base}..HEAD" >"${workdir}/.agent-result/branch.patch" || exit $?
+          git format-patch --stdout --binary "${base}..HEAD" \
+            >"${workdir}/.agent-result/${AGENT_JOB_RUN:-1}/branch.patch" || exit $?
         fi
         if [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then exit "${status}"; fi
 

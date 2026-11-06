@@ -141,14 +141,14 @@ gitleaks() { return 0; }
     result = bash(script, tmp_path, TEST_STATUS=str(status), AGENT_JOB_GITHUB_WRITE="false")
     assert result.returncode == status, result.stderr
     assert not (tmp_path / "repo/unexpected-publish").exists()
-    patch = tmp_path / ".agent-result/branch.patch"
+    patch = tmp_path / ".agent-result/1/branch.patch"
     assert patch.exists()
     assert bool(patch.stat().st_size) is changed
     if changed:
         applied = bash('''
 cd repo
 git checkout -qb receiver develop
-git am ../.agent-result/branch.patch
+git am ../.agent-result/1/branch.patch
 ''', tmp_path)
         assert applied.returncode == 0, applied.stderr
         assert (tmp_path / "repo/content").read_text() == "changed\n"
@@ -156,8 +156,9 @@ git am ../.agent-result/branch.patch
 
 
 @pytest.mark.parametrize("write", ["false", "true"])
-def test_finalize_exports_patch_and_logs(sources, tmp_path, write):
-    rdir = tmp_path / "job/runs/1"
+@pytest.mark.parametrize("has_patch", [True, False])
+def test_finalize_exports_patch_and_logs(sources, tmp_path, write, has_patch):
+    rdir = tmp_path / "job/runs/2"
     rdir.mkdir(parents=True)
     (rdir / "exit").write_text("0")
     (rdir / "cid").write_text("fixture-container")
@@ -167,24 +168,35 @@ def test_finalize_exports_patch_and_logs(sources, tmp_path, write):
 job_get() { case "$2" in .mode) echo fix ;; .repo) echo example/repository ;; *) echo shell ;; esac; }
 docker() {
   case "$1" in
-    cp) tar -cf - branch.patch ;;
+    cp)
+      [ "$2" = "fixture-container:/home/agent/work/.agent-result/2/branch.patch" ] || return 1
+      [ "$TEST_HAS_PATCH" = true ] || return 1
+      tar -cf - branch.patch
+      ;;
     logs) echo 'fixture log' ;;
     rm) : ;;
     *) return 1 ;;
   esac
 }
-publish_fix() { touch published; echo succeeded > "$STATE_DIR/job/runs/1/fix_state"; }
+publish_fix() { touch published; echo succeeded > "$STATE_DIR/job/runs/2/fix_state"; }
 write_result_tail() { cp "$1/log" "$1/result.txt"; }
 notify() { result_lines "$1" "$2" > notified; }
-finalize job 1 fixture-value
+finalize job 2 fixture-value
 '''
-    result = bash(script, tmp_path, AGENT_JOB_GITHUB_WRITE=write, AGENT_DISPATCH_STATE_DIR=str(tmp_path))
+    result = bash(
+        script, tmp_path, AGENT_JOB_GITHUB_WRITE=write,
+        AGENT_DISPATCH_STATE_DIR=str(tmp_path), TEST_HAS_PATCH=str(has_patch).lower(),
+    )
     assert result.returncode == 0, result.stderr
-    assert (rdir / "state").read_text().strip() == "succeeded"
-    assert (rdir / "branch.patch").read_text() == "fixture patch\n"
+    assert (rdir / "state").read_text().strip() == ("succeeded" if has_patch else "failed")
     assert (rdir / "log").read_text() == "fixture log\n"
-    assert str(rdir / "branch.patch") in (tmp_path / "notified").read_text()
-    assert (tmp_path / "published").exists() is (write == "true")
+    if has_patch:
+        assert (rdir / "branch.patch").read_text() == "fixture patch\n"
+        assert str(rdir / "branch.patch") in (tmp_path / "notified").read_text()
+    else:
+        assert not (rdir / "branch.patch").exists()
+        assert "patch: none" in (tmp_path / "notified").read_text()
+    assert (tmp_path / "published").exists() is (has_patch and write == "true")
 
 
 @pytest.mark.parametrize("kind", ["dispatcher", "entrypoint"])
