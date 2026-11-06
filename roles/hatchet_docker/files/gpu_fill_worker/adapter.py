@@ -99,14 +99,15 @@ def run_chat(platform_cfg, payload, http_post=None, latency_guard=None, http_get
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
     }
-    body = json.dumps(
-        {
-            "model": platform_cfg["model"],
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
-    ).encode("utf-8")
+    request_body = {
+        "model": platform_cfg["model"],
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if "response_format" in request:
+        request_body["response_format"] = request["response_format"]
+    body = json.dumps(request_body).encode("utf-8")
     url = platform_cfg["base_url"].rstrip("/") + "/chat/completions"
     status, response_body = (http_post or _http_post)(
         url, body, headers, platform_cfg["timeout_s"]

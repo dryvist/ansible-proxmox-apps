@@ -140,6 +140,45 @@
       entries with an identifier name, an https url, and a pinned version tag.
   when: hatchet_docker_worker_fill_enabled | bool
 
+- name: Validate the Hatchet release digest configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_enabled | bool
+      - hatchet_docker_worker_release_digest_cron == '23 11 * * *'
+      - >-
+        hatchet_docker_worker_release_digest_chat_platform in
+        (hatchet_docker_worker_platforms
+        | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'chat')
+        | map(attribute='name') | list)
+      - hatchet_docker_worker_release_digest_auth_env is match('^[A-Z_][A-Z0-9_]*$')
+      - >-
+        hatchet_docker_worker_release_digest_auth_env not in
+        (hatchet_docker_worker_platforms
+        | selectattr('auth_env', 'string') | map(attribute='auth_env') | list)
+      - hatchet_docker_worker_release_digest_repositories is sequence
+      - hatchet_docker_worker_release_digest_repositories is not string
+    fail_msg: >-
+      Enabling the Hatchet release digest requires the worker, the 23 11 daily schedule,
+      an active chat platform, a distinct environment-variable name, and a repository list.
+  no_log: true
+  when: hatchet_docker_worker_release_digest_enabled | bool
+
+- name: Validate Hatchet release digest repository entries
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.owner is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - item.repo is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - >-
+        item.interest_tag is not defined or
+        (item.interest_tag is string and item.interest_tag | trim | length > 0)
+    fail_msg: Each release digest repository must have an owner, repo, and optional non-empty interest tag.
+  no_log: true
+  loop: "{{ hatchet_docker_worker_release_digest_repositories }}"
+  loop_control:
+    label: "{{ item.owner | default('unknown') }}/{{ item.repo | default('unknown') }}"
+  when: hatchet_docker_worker_release_digest_enabled | bool
+
 - name: Create the Hatchet GPU fill corpus and output directories
   ansible.builtin.file:
     path: "{{ item }}"

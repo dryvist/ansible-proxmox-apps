@@ -76,6 +76,7 @@
           - "'hatchet-sdk==1.44.0' in (_hatchet_compose_on.content | b64decode)"
           - "'promptfoo' not in (_hatchet_compose_on.content | b64decode)"
           - "'openrouter' not in (_hatchet_compose_on.content | b64decode | lower)"
+          - "'SLACK_RELEASE_DIGEST_WEBHOOK' not in (_hatchet_compose_on.content | b64decode)"
 
     - name: Render the worker JSON configuration
       ansible.builtin.template:
@@ -111,6 +112,60 @@
           - "'auth_secret_key' not in (_hatchet_worker_config.content | b64decode)"
           - "'evals' not in (_hatchet_worker_config.content | b64decode | from_json)"
           - "'fill' not in (_hatchet_worker_config.content | b64decode | from_json)"
+          - "'release_digest' not in (_hatchet_worker_config.content | b64decode | from_json)"
+
+    - name: Render the worker JSON configuration with the release digest
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-release-digest.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_release_digest_enabled: true
+        hatchet_docker_worker_release_digest_repositories:
+          - owner: example
+            repo: project
+            interest_tag: homelab
+
+    - name: Read the worker configuration with the release digest
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-release-digest.json"
+      register: _hatchet_worker_config_release_digest
+
+    - name: Assert the release digest config has its schedule, repository and env name
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_hatchet_worker_config_release_digest.content | b64decode | from_json).release_digest.cron
+            == '23 11 * * *'
+          - >-
+            (_hatchet_worker_config_release_digest.content | b64decode | from_json).release_digest.repositories
+            == [{'owner': 'example', 'repo': 'project', 'interest_tag': 'homelab'}]
+          - >-
+            (_hatchet_worker_config_release_digest.content | b64decode | from_json).release_digest.auth_env
+            == 'SLACK_RELEASE_DIGEST_WEBHOOK'
+          - "'auth_secret_key' not in (_hatchet_worker_config_release_digest.content | b64decode)"
+
+    - name: Render the compose with the release digest enabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/docker-compose.yml.j2"
+        dest: "{{ _hatchet_render_dir.path }}/compose-release-digest.yml"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_worker_release_digest_enabled: true
+
+    - name: Read the compose with the release digest enabled
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/compose-release-digest.yml"
+      register: _hatchet_compose_release_digest
+
+    - name: Assert the webhook URL is injected under the configured environment name
+      ansible.builtin.assert:
+        that:
+          - >-
+            'SLACK_RELEASE_DIGEST_WEBHOOK: "https://hooks.example.invalid/slack-digest-placeholder"'
+            in (_hatchet_compose_release_digest.content | b64decode)
 
     - name: Render the worker JSON configuration with evals
       ansible.builtin.template:

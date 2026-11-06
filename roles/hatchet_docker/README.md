@@ -30,6 +30,18 @@ openbao-unlock --via yubikey hatchet-token-publisher -- bash -c \
 The publish and worker deployment read the same OpenBao leaf with the converge
 identity. A missing leaf triggers token minting; a denied read fails the run.
 
+## Release digest
+
+The optional release digest is disabled by default. Enable
+`hatchet_docker_worker_release_digest_enabled`, add `owner` and `repo` entries
+for public GitHub repositories to `hatchet_docker_worker_release_digest_repositories`,
+and optionally add an `interest_tag` to focus each local model summary. It runs
+daily at `23 11 * * *` using the configured chat platform and posts one
+risk-grouped Slack message only when a release was published in the prior 24 hours.
+The webhook URL is
+injected into `hatchet_docker_worker_release_digest_auth_env` from the existing
+`platform_alerts_slack_webhook_key` in the `ntfy` secret domain.
+
 ## Known single point of failure
 
 The apps PostgreSQL primary is a single point of failure for Hatchet. Losing
