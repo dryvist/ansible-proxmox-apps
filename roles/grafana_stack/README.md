@@ -12,7 +12,7 @@ observability backend — contract in terraform-proxmox
   the Prometheus form the dashboards query.
 - LiteLLM prices is a non-default Infinity datasource (uid litellm-prices) for
   the public model price JSON. It is enabled by default, installs the Infinity
-  plugin with Grafana's GF_PLUGINS_PREINSTALL, and limits requests to
+  plugin from the object-storage mirror, and limits requests to
   [raw.githubusercontent.com](https://raw.githubusercontent.com).
 - **Grafana** is Traefik-fronted (Authelia-gated vhost); dashboards and the
   datasources are file-provisioned read-only, so the UI carries no hand-built
@@ -99,6 +99,24 @@ SPLUNK_HEC_TOKEN="$SPLUNK_HEC_TOKEN" \
 
 Included via `requirements.yml`/`meta/main.yml` like any other role in this
 collection; not installed standalone. Add it to a play's `roles:` list.
+
+Before convergence, run `ansible-playbook playbooks/sync-grafana-plugins.yml`
+on the controller. It resolves `vars/main.yml` entries through the Grafana
+plugin API, honors `pin_version`, and reuses the Cribl mirror tasks. Archives
+use stable `grafana-plugins/<id>.zip` keys in the existing anonymous-read,
+versioned `splunk-addons` bucket, with `version`/`channel` tags and a SHA-256
+manifest. Matching versions skip downloads and uploads. A failed resolution
+or download retains the published contents; an interrupted upload can leave
+partial updates, with previous objects recoverable through bucket versioning.
+
+Grafana reads the bucket manifest and installs explicit versions through
+`GF_PLUGINS_PREINSTALL_SYNC` using `id@version@url`. Automatic catalog
+preinstalls, updates, UI installs, and public-key retrieval are disabled.
+Signed Community plugins use normal signature verification; no unsigned-plugin
+allowlist is required. The archives' signatures and Grafana 13.3 runtime
+compatibility still require a deployment check. See Grafana's
+[preinstall configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#preinstall)
+and [signature levels](https://grafana.com/docs/grafana/latest/administration/plugin-management/plugin-sign/).
 
 ## Usage
 

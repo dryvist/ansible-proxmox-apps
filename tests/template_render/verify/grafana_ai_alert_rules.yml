@@ -6,7 +6,12 @@
   gather_facts: false
   vars_files:
     - ../../../roles/grafana_stack/defaults/main.yml
+    - ../../../roles/grafana_stack/vars/main.yml
   vars:
+    grafana_plugins_object_storage_base_url: http://objects.example.test/splunk-addons/grafana-plugins
+    grafana_stack_plugin_manifest: >-
+      {{ dict(grafana_stack_plugins | map(attribute='name')
+              | zip(grafana_stack_plugins | map('combine', {'version': '1.0.0'}))) }}
     # group_vars/all.yml sets ansible_become for managed nodes and implicit
     # localhost inherits it; rendering a template needs no root.
     ansible_become: false
@@ -60,12 +65,15 @@
         grafana_stack_prometheus_url: http://prometheus.example.test:9090
         grafana_stack_vm_port: 8428
 
-    - name: Assert Grafana installs Infinity with the current plugin variable
+    - name: Assert Grafana installs Infinity from the plugin mirror
       ansible.builtin.assert:
         that:
           - >-
-            _grafana_compose['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL']
-            == 'yesoreyeram-infinity-datasource'
+            'yesoreyeram-infinity-datasource@'
+            ~ grafana_stack_plugin_manifest['yesoreyeram-infinity-datasource'].version
+            ~ '@' ~ grafana_plugins_object_storage_base_url
+            ~ '/yesoreyeram-infinity-datasource.zip'
+            in _grafana_compose['services']['grafana']['environment']['GF_PLUGINS_PREINSTALL_SYNC']
 
     - name: Assert Grafana enables SQLite WAL and locked-query retries
       ansible.builtin.assert:
@@ -88,7 +96,7 @@
         grafana_stack_prometheus_url: http://prometheus.example.test:9090
         grafana_stack_vm_port: 8428
 
-    - name: Assert disabling LiteLLM prices omits the datasource and plugin install
+    - name: Assert disabling LiteLLM prices omits only the datasource
       ansible.builtin.assert:
         that:
           - >-
@@ -96,6 +104,9 @@
             | selectattr('uid', 'equalto', 'litellm-prices') | list | length == 0
           - >-
             'GF_PLUGINS_PREINSTALL' not in
+            _grafana_compose_disabled['services']['grafana']['environment']
+          - >-
+            'GF_PLUGINS_PREINSTALL_SYNC' in
             _grafana_compose_disabled['services']['grafana']['environment']
 
     - name: Render the AI alert rules

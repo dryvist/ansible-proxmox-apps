@@ -1,0 +1,49 @@
+---
+# Controller-only mirror: stable keys, native version history, version/channel
+# tags, and a manifest consumed by grafana_stack. No guest contacts the catalog.
+- name: Load OpenTofu inventory for the object-storage endpoint
+  ansible.builtin.import_playbook: ../inventory/load_tofu.yml
+
+- name: Mirror the Grafana plugin registry into object storage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [grafana_plugins]
+  vars_files:
+    - ../roles/grafana_stack/vars/main.yml
+  vars:
+    ansible_become: false
+    grafana_plugins_api: https://grafana.com/api/plugins
+    object_storage_bucket: splunk-addons
+    addon_mirror_object_storage_prefix: grafana-plugins
+    addon_mirror_extension: zip
+    addon_mirror_sync_tmpdir: /tmp/grafana-plugins-sync
+    addon_mirror_desired: "{{ grafana_plugins_desired }}"
+    s3_env:
+      AWS_ACCESS_KEY_ID: "{{ lookup('env', 'OBJECT_STORAGE_ROOT_USER') }}"
+      AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'OBJECT_STORAGE_ROOT_PASSWORD') }}"
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT_URL: "{{ object_storage_url }}"
+  tasks:
+    - name: Check environment and object-storage client prerequisites
+      ansible.builtin.include_tasks: tasks/addon-mirror/preflight.yml
+
+    - name: Resolve and mirror plugins with existing contents as fallback
+      block:
+        - name: Resolve pinned or latest Grafana plugin versions
+          ansible.builtin.include_tasks: tasks/sync-grafana-plugins/resolve.yml
+
+        - name: Sync drifted plugins and publish the manifest
+          ansible.builtin.include_tasks: tasks/addon-mirror/sync-and-publish.yml
+
+        - name: Verify the published plugin manifest
+          ansible.builtin.include_tasks: tasks/addon-mirror/verify-manifest.yml
+      rescue:
+        - name: Continue from existing mirrored plugins after a failed sync
+          ansible.builtin.debug:
+            msg: >-
+              Grafana plugin sync failed. Existing objects were not deleted;
+              previous versions remain in bucket history. The last published
+              manifest is retained until a complete download and publish succeeds.
+              {{ ansible_failed_result.msg | default('See preceding task.') }}
