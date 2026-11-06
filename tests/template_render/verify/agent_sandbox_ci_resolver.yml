@@ -10,7 +10,8 @@
   gather_facts: false
 
   vars_files:
-    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main.yml"
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main/00-runtime.yml"
+    - "{{ playbook_dir }}/../../../roles/agent_sandbox/defaults/main/10-ci-resolver.yml"
 
   vars:
     ansible_become: false
@@ -64,6 +65,7 @@
           - CI_RESOLVER_DISPATCH_CMD
           - CI_RESOLVER_GH_TOKEN_CMD
           - CI_RESOLVER_MAX_ATTEMPTS
+          - CI_RESOLVER_MODEL_TIERS
           - CI_RESOLVER_ORG
           - CI_RESOLVER_REPOS
           - CI_RESOLVER_SHADOW
@@ -89,6 +91,7 @@
           - "'CI_RESOLVER_WORKBOOK_DIR=/var/lib/ci-resolver/prompts/automation/ci-workbook' in _asr_env"
           - "'CI_RESOLVER_STATE_DIR=/var/lib/ci-resolver' in _asr_env"
           - "'CI_RESOLVER_MAX_ATTEMPTS=3' in _asr_env"
+          - "'CI_RESOLVER_MODEL_TIERS=t2,t3' in _asr_env"
           - "'CI_RESOLVER_REPOS=' in _asr_env"
           - "'CI_RESOLVER_SHADOW=1' in _asr_env"
           - "('CI_RESOLVER_VIKUNJA_URL=https://vikunja.' ~ ingress_domain) in _asr_env"
@@ -103,6 +106,18 @@
         fail_msg: >-
           The CI resolver environment must contain the complete contract,
           derived service URLs, and no token value.
+
+    - name: Render a local-only model tier override
+      ansible.builtin.set_fact:
+        _asr_local_env: "{{ lookup('template', _template_dir ~ '/ci-resolver.env.j2') }}"
+      vars:
+        agent_sandbox_ci_resolver_model_tiers: t2
+
+    - name: Assert the model tier input reaches the rendered environment
+      ansible.builtin.assert:
+        that:
+          - "'CI_RESOLVER_MODEL_TIERS=t2' in _asr_local_env.splitlines()"
+          - "'CI_RESOLVER_MODEL_TIERS=t2,t3' not in _asr_local_env.splitlines()"
 
     - name: Assert CI resolver service uses the dispatcher account and restrictions
       ansible.builtin.assert:

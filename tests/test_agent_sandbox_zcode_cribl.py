@@ -23,7 +23,7 @@ def render(path: Path, variables: dict) -> dict:
 
 class AgentSandboxCriblRoute(unittest.TestCase):
     def test_s2s_port_uses_the_shared_tofu_constant(self):
-        defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+        defaults = yaml.safe_load((ROLE / "defaults/main/00-runtime.yml").read_text(encoding="utf-8"))
 
         self.assertIn(
             "hostvars['localhost']['tofu_data']['constants']['service_ports']['cribl_s2s']",
@@ -89,7 +89,7 @@ class AgentSandboxCriblRoute(unittest.TestCase):
         self.assertEqual(output["port"], 10300)
 
     def test_s2s_firewall_destination_uses_existing_tofu_inventory(self):
-        defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text(encoding="utf-8"))
+        defaults = yaml.safe_load((ROLE / "defaults/main/00-runtime.yml").read_text(encoding="utf-8"))
 
         self.assertIn(
             "hostvars['localhost']['tofu_data']['containers']['haproxy']['ip']",
