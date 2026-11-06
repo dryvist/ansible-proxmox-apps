@@ -6,7 +6,13 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Credentials must only reach the configured endpoint.
+        return None
 
 
 def request(url, body=None, token=None, auth_header="Authorization"):
@@ -16,7 +22,7 @@ def request(url, body=None, token=None, auth_header="Authorization"):
     data = None if body is None else json.dumps(body).encode()
     if data is not None:
         headers["Content-Type"] = "application/json"
-    with urlopen(Request(url, data=data, headers=headers), timeout=300) as response:
+    with build_opener(_NoRedirect()).open(Request(url, data=data, headers=headers), timeout=300) as response:
         return json.load(response)
 
 
