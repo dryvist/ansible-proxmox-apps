@@ -98,7 +98,11 @@ class AgentTelemetry(unittest.TestCase):
                 self.assertIn(f'- output: {output}\n        pipeline: {pipeline}', source)
 
     def test_arize_output_uses_parameters_and_enforces_projection(self):
-        fixture = yaml.safe_load((ROLE.parents[1] / 'tests/template_render/verify/cribl_stream_phoenix.yml').read_text())[0]['vars']
+        verify_dir = ROLE.parents[1] / 'tests/template_render/verify'
+        play = yaml.safe_load((verify_dir / 'cribl_stream_phoenix.yml').read_text())[0]
+        fixture = dict(play['vars'])
+        for vars_file in play['vars_files']:
+            fixture.update(yaml.safe_load((verify_dir / vars_file).read_text()))
         env = Environment(undefined=StrictUndefined, loader=FileSystemLoader(ROLE / 'templates'))
         env.filters['to_uuid'] = lambda value, namespace: 'fixture-token'
         output = yaml.safe_load(env.get_template('outputs.yml.j2').render(fixture))['outputs']['arize_otlp']
