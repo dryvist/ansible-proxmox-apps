@@ -84,10 +84,18 @@ def main():
         workflows.extend(
             build_eval_tasks(hatchet, worker_config["evals"], worker_config.get("latency_guard"))
         )
+    if "rageval" in worker_config:
+        from rageval import build_tasks as build_rageval_tasks
+
+        workflows.extend(
+            build_rageval_tasks(hatchet, worker_config, worker_config.get("latency_guard"))
+        )
     slots = sum(role["max_runs"] for role in worker_config["roles"].values())
     # One slot per eval task (judge sync plus one per role) so evals never take GPU-fill slots.
     slots += len(worker_config["evals"]["roles"]) + 1 if "evals" in worker_config else 0
     slots += fill_slots(worker_config)
+    # The nightly evaluator keeps its long-running low-priority work off fill slots.
+    slots += 1 if "rageval" in worker_config else 0
     worker = hatchet.worker(
         "gpu-fill-worker",
         workflows=workflows,

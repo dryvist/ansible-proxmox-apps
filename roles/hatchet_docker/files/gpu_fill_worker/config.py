@@ -60,10 +60,10 @@ def load_config(path):
     if (
         not isinstance(config, dict)
         or not {"roles", "platforms"}.issubset(config)
-        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill"}
+        or set(config) - {"roles", "platforms", "latency_guard", "evals", "fill", "rageval"}
     ):
         raise ValueError(
-            "config must contain roles and platforms with optional latency_guard, evals, and fill"
+            "config must contain roles and platforms with optional latency_guard, evals, fill, and rageval"
         )
 
     roles = config["roles"]
@@ -191,5 +191,19 @@ def load_config(path):
             platform = platforms.get(platform_name) if isinstance(platform_name, str) else None
             if not isinstance(platform, dict) or platform.get("kind") != "chat":
                 raise ValueError(f"fill role {role_name} must map to an active chat platform")
+
+    if "rageval" in config:
+        rageval = config["rageval"]
+        if not isinstance(rageval, dict) or set(rageval) != {"cron", "results_dir", "k"}:
+            raise ValueError("rageval must contain cron, results_dir, and k only")
+        _require_cron(rageval["cron"], "rageval cron")
+        if rageval["cron"] != "29 4 * * *":
+            raise ValueError("rageval cron must run nightly at 04:29")
+        if not isinstance(rageval["results_dir"], str) or not Path(rageval["results_dir"]).is_absolute():
+            raise ValueError("rageval results_dir must be an absolute path")
+        if type(rageval["k"]) is not int or rageval["k"] < 1:
+            raise ValueError("rageval k must be a positive integer")
+        if "fill" not in config:
+            raise ValueError("rageval requires the fill generator input")
 
     return config

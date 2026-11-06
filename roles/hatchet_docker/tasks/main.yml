@@ -43,7 +43,7 @@
     that:
       - hatchet_docker_worker_enabled | bool
     fail_msg: Hatchet evaluations require the GPU fill worker to be enabled.
-  when: hatchet_docker_eval_enabled | bool
+  when: hatchet_docker_eval_enabled | bool or hatchet_docker_worker_rageval_enabled | bool
 
 - name: Validate Hatchet GPU fill worker latency guard configuration
   ansible.builtin.assert:
@@ -98,7 +98,7 @@
   ansible.builtin.package:
     name: git
     state: present
-  when: hatchet_docker_eval_enabled | bool or hatchet_docker_worker_fill_enabled | bool
+  when: hatchet_docker_eval_enabled | bool or hatchet_docker_worker_rageval_enabled | bool
 
 - name: Check out the pinned AI evaluation prompts
   ansible.builtin.git:
@@ -135,10 +135,34 @@
         | map(attribute='version') | select('match', '^[A-Za-z0-9][A-Za-z0-9._/-]*$')
         | list | length == hatchet_docker_worker_fill_corpus_repos | length
     fail_msg: >-
-      Enabling the Hatchet GPU fill workload requires an enabled worker, a five-field cron,
+      Enabling RAG evaluation requires an enabled worker, a five-field fill cron,
       fill_roles mapping configured LLM roles to active chat platforms, and corpus_repos
       entries with an identifier name, an https url, and a pinned version tag.
-  when: hatchet_docker_worker_fill_enabled | bool
+  when: hatchet_docker_worker_rageval_enabled | bool
+
+- name: Validate the Hatchet RAG evaluation configuration
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_worker_rageval_cron == '29 4 * * *'
+      - hatchet_docker_worker_rageval_k | int > 0
+      - hatchet_docker_worker_rageval_results_dir.startswith('/')
+      - lookup('env', 'RAGEVAL_HINDSIGHT_RECALL_URL') is match('^https?://')
+      - lookup('env', 'RAGEVAL_HINDSIGHT_API_KEY') | length > 0
+      - lookup('env', 'RAGEVAL_SLACK_WEBHOOK_URL') is match('^https://')
+      - >-
+        lookup('env', 'RAGEVAL_LLAMA_INDEX_QUERY_URL') | length == 0 or
+        lookup('env', 'RAGEVAL_LLAMA_INDEX_QUERY_URL') is match('^https?://')
+      - >-
+        lookup('env', 'RAGEVAL_QDRANT_QUERY_URL') | length == 0 or
+        lookup('env', 'RAGEVAL_QDRANT_QUERY_URL') is match('^https?://')
+      - >-
+        lookup('env', 'RAGEVAL_QDRANT_QUERY_URL') | length == 0 or
+        lookup('env', 'RAGEVAL_QDRANT_MODEL') | length > 0
+    fail_msg: >-
+      RAG evaluation requires the nightly schedule, positive k, an absolute results directory,
+      Hindsight endpoint and key, an HTTPS Slack webhook, and a Qdrant model when configured.
+  no_log: true
+  when: hatchet_docker_worker_rageval_enabled | bool
 
 - name: Create the Hatchet GPU fill corpus and output directories
   ansible.builtin.file:
@@ -150,7 +174,7 @@
   loop:
     - "{{ hatchet_docker_worker_fill_corpus_host_dir }}"
     - "{{ hatchet_docker_worker_fill_output_host_dir }}"
-  when: hatchet_docker_worker_fill_enabled | bool
+  when: hatchet_docker_worker_rageval_enabled | bool
 
 - name: Shallow-clone the public Hatchet GPU fill corpus repositories
   ansible.builtin.git:
@@ -162,7 +186,7 @@
   loop: "{{ hatchet_docker_worker_fill_corpus_repos }}"
   loop_control:
     label: "{{ item.name }}"
-  when: hatchet_docker_worker_fill_enabled | bool
+  when: hatchet_docker_worker_rageval_enabled | bool
   # The worker reads the corpus once at startup, so a changed checkout needs a restart.
   notify: Restart Hatchet
 

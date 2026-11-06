@@ -12,6 +12,9 @@ INVENTORY = yaml.safe_load((REPO_ROOT / "inventory" / "group_vars" / "docker_ai_
 
 
 def test_fill_roles_map_to_configured_worker_roles_and_chat_routes() -> None:
+    assert DEFAULTS["hatchet_docker_worker_rageval_enabled"] is False
+    assert INVENTORY["hatchet_docker_worker_rageval_enabled"] is False
+    assert "hatchet_docker_worker_fill_enabled" not in DEFAULTS
     chat_routes = {platform["name"] for platform in DEFAULTS["hatchet_docker_worker_chat_platforms"]}
     roles = INVENTORY["hatchet_docker_worker_fill_roles"]
     assert set(roles) <= set(DEFAULTS["hatchet_docker_worker_roles"])

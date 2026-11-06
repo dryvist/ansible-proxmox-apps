@@ -275,7 +275,7 @@ def test_config_accepts_a_fill_block_and_rejects_bad_mappings(tmp_path):
         "roles": {"medium": {"max_runs": 2}},
         "platforms": {"pro6000-direct": dict(PLATFORM)},
         "fill": {
-            "cron": "* * * * *",
+            "cron": "7,37 * * * *",
             "corpus_dir": "/corpus",
             "output_dir": "/output",
             "roles": {"medium": "pro6000-direct"},

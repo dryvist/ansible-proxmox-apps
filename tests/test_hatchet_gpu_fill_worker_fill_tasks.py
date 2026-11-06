@@ -75,7 +75,7 @@ def worker_config(corpus_dir, output_dir, fill=True):
     }
     if fill:
         config["fill"] = {
-            "cron": "* * * * *",
+            "cron": "7,37 * * * *",
             "corpus_dir": str(corpus_dir),
             "output_dir": str(output_dir),
             "roles": {"medium": "pro6000-direct"},
@@ -114,7 +114,7 @@ def test_fill_enabled_registers_a_fill_and_cron_task_per_mapped_role(fake_sdk, t
     assert fill_task.options["concurrency"][0].max_runs == 3
     assert fill_task.options["concurrency"][0].name == "gpu-medium"
     assert topup_task.options["name"] == "gpu-qa-topup-medium"
-    assert topup_task.options["on_crons"] == ["* * * * *"]
+    assert topup_task.options["on_crons"] == ["7,37 * * * *"]
     assert fill_tasks.fill_slots(config) == 1
 
 
