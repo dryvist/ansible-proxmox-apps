@@ -114,3 +114,60 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
     }
     for task in shared_tasks:
         assert set(PARTS).issubset(task["tags"])
+
+
+def test_grafana_llm_router_key_is_seeded_and_plugin_provisioning_is_declarative():
+    deploy_tasks = yaml.safe_load(
+        (REPO / "roles/grafana_stack/tasks/deploy.yml").read_text(encoding="utf-8")
+    )
+    seed_block = next(
+        task
+        for task in deploy_tasks
+        if task.get("name") == "Seed Grafana's admin password and router key in OpenBao"
+    )
+    assert seed_block["no_log"] is True
+    seed_task = next(
+        task
+        for task in _tasks(seed_block["block"])
+        if task.get("name") == "Seed Grafana credentials through the shared seed_generated task"
+    )
+    seed_fields = seed_task["vars"]["openbao_secrets_seed_fields"]
+    assert {field["name"] for field in seed_fields} == {
+        "grafana_admin_password",
+        "grafana_llm_router_key",
+    }
+    router_key = next(
+        field for field in seed_fields if field["name"] == "grafana_llm_router_key"
+    )
+    assert router_key["length"] == 48
+    assert (
+        router_key["value"]
+        == "{{ bao_apps_secrets.grafana_llm_router_key | default('', true) }}"
+    )
+    assert seed_task["vars"]["openbao_secrets_seed_path"] == "apps/grafana"
+
+    provisioning_tasks = yaml.safe_load(
+        (REPO / "roles/grafana_stack/tasks/provisioning.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    plugin_task = next(
+        task
+        for task in provisioning_tasks
+        if task.get("name") == "Render Grafana LLM app plugin provisioning"
+    )
+    assert plugin_task["ansible.builtin.template"]["src"] == "llm-app.yml.j2"
+    assert (
+        plugin_task["ansible.builtin.template"]["dest"]
+        == "{{ grafana_stack_data_dir }}/provisioning/plugins/llm-app.yml"
+    )
+
+    credential_task = next(
+        task
+        for task in deploy_tasks
+        if task.get("name") == "Persist Grafana's LLM router credential"
+    )
+    assert credential_task["ansible.builtin.template"]["src"] == "llm-router.env.j2"
+    assert credential_task["ansible.builtin.template"]["owner"] == "root"
+    assert credential_task["ansible.builtin.template"]["mode"] == "0400"
+    assert credential_task["no_log"] is True

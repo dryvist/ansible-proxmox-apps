@@ -18,6 +18,10 @@ observability backend — contract in terraform-proxmox
   datasources are file-provisioned read-only, so the UI carries no hand-built
   state and rebuilds clean. The admin password is generated on first converge
   and persisted (homarr-style decide/persist pattern).
+- The `grafana-llm-app` plugin is installed and file-provisioned for alert and
+  panel explanations. Its Base and Large mappings use the router's `small` and
+  `medium` models; `grafana_llm_router_key` reaches Grafana through the
+  protected `grafana_stack_llm_router_env_file`.
 
 Ports come from the tofu `service_ports` constants
 (`grafana_web`/`victoriametrics`) with upstream defaults as fallback. Docker
