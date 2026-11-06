@@ -1,0 +1,30 @@
+---
+- name: Read the existing job source
+  ansible.builtin.set_fact:
+    _agent_sandbox_job_source_text: "{{ job_source.text }}"
+
+- name: Validate source compatibility
+  ansible.builtin.assert:
+    that:
+      - _agent_sandbox_job_source_text.count(item.before) == item.count | default(1)
+    fail_msg: The pinned job source must match every configured change.
+    quiet: true
+  loop: "{{ job_source.changes }}"
+  loop_control:
+    label: "{{ job_source.path }}"
+
+- name: Configure the existing job source
+  ansible.builtin.set_fact:
+    _agent_sandbox_job_source_text: "{{ _agent_sandbox_job_source_text | replace(item.before, item.after) }}"
+  loop: "{{ job_source.changes }}"
+  loop_control:
+    label: "{{ job_source.path }}"
+
+- name: Install the configured job source
+  ansible.builtin.copy:
+    content: "{{ _agent_sandbox_job_source_text }}"
+    dest: "{{ job_source.path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    validate: bash -n %s
