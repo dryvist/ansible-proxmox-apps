@@ -3,9 +3,15 @@
 import json
 import math
 import os
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from adapter import _check_latency_guard
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise HTTPError(req.full_url, code, "reindex redirects are forbidden", headers, fp)
 
 
 class APIs:
@@ -14,6 +20,7 @@ class APIs:
         self.latency_guard = latency_guard
         self.router_key = os.environ["GPU_FILL_ROUTER_API_KEY"]
         self.qdrant_key = os.environ["GPU_FILL_REINDEX_QDRANT_API_KEY"]
+        self.opener = build_opener(NoRedirect())
 
     def call(self, service, path, body, method="POST"):
         base = self.config[f"{service}_url"].rstrip("/")
@@ -23,7 +30,7 @@ class APIs:
         else:
             headers["api-key"] = self.qdrant_key
         request = Request(base + path, data=json.dumps(body).encode(), headers=headers, method=method)
-        with urlopen(request, timeout=120) as response:
+        with self.opener.open(request, timeout=120) as response:
             result = json.load(response)
         return result
 
