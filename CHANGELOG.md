@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.21.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.21.0...v5.21.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **hatchet:** disable the GPU fill workload on docker_ai ([#3320](https://github.com/dryvist/ansible-proxmox-apps/issues/3320)) ([6a11673](https://github.com/dryvist/ansible-proxmox-apps/commit/6a116736c936669afc073d8b812abb35ef13dbc1))
+
 ## [5.21.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.20.0...v5.21.0) (2026-11-05)
 
 
