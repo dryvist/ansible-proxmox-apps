@@ -34,19 +34,22 @@ repos:
         # Lints only the staged files, one run at a time per machine; CI runs the full-repo lint.
         entry: |-
           sh -c '
-          mkdir -p "$HOME/.cache" && exec 9>"$HOME/.cache/pre-commit-ansible-lint.lock" || exit 1
+          lock_file="${ANSIBLE_LINT_LOCK_FILE:-$HOME/.cache/pre-commit-ansible-lint.lock}"
+          lint_args=""
+          [ "${ANSIBLE_LINT_OFFLINE:-0}" = "1" ] && lint_args="--offline"
+          mkdir -p "${lock_file%/*}" && exec 9>"$lock_file" || exit 1
           msg="another ansible-lint is running on this machine; retry later"
           if [ -x /usr/bin/lockf ]; then
             # File mode: lockf waiting on a descriptor busy-polls a CPU core on macOS.
-            /usr/bin/lockf -s -t 900 "$HOME/.cache/pre-commit-ansible-lint.lock" \
-              env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE ansible-lint "$@"
+            /usr/bin/lockf -s -t 900 "$lock_file" \
+              env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE ansible-lint $lint_args "$@"
             rc=$?; [ "$rc" -eq 75 ] && echo "$msg"; exit "$rc"
           elif command -v flock >/dev/null 2>&1; then
             flock -w 900 9 || { echo "$msg"; exit 1; }
           else
             echo "ansible-lint: no lockf/flock found; running without the machine-wide lock" >&2
           fi
-          exec env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE ansible-lint "$@"
+          exec env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE ansible-lint $lint_args "$@"
           ' ansible-lint
         files: \.(yaml|yml)$
         pass_filenames: true
