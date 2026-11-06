@@ -32,13 +32,17 @@ repos:
         # so it fails with "upload-pack: not our ref" naming a SHA that is
         # perfectly valid upstream.
         # Lints only the staged files, one run at a time per machine; CI runs the full-repo lint.
+        # PRECOMMIT_ANSIBLE_LINT_LOCK_DIR and PRECOMMIT_ANSIBLE_LINT_OFFLINE can target
+        # writable temporary storage and avoid network dependency installation in a sandbox.
         entry: |-
           sh -c '
-          mkdir -p "$HOME/.cache" && exec 9>"$HOME/.cache/pre-commit-ansible-lint.lock" || exit 1
+          cache_dir="${PRECOMMIT_ANSIBLE_LINT_LOCK_DIR:-$HOME/.cache}"
+          mkdir -p "$cache_dir" && exec 9>"$cache_dir/pre-commit-ansible-lint.lock" || exit 1
+          if [ "${PRECOMMIT_ANSIBLE_LINT_OFFLINE:-0}" = 1 ]; then set -- --offline "$@"; fi
           msg="another ansible-lint is running on this machine; retry later"
           if [ -x /usr/bin/lockf ]; then
             # File mode: lockf waiting on a descriptor busy-polls a CPU core on macOS.
-            /usr/bin/lockf -s -t 900 "$HOME/.cache/pre-commit-ansible-lint.lock" \
+            /usr/bin/lockf -s -t 900 "$cache_dir/pre-commit-ansible-lint.lock" \
               env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE ansible-lint "$@"
             rc=$?; [ "$rc" -eq 75 ] && echo "$msg"; exit "$rc"
           elif command -v flock >/dev/null 2>&1; then
