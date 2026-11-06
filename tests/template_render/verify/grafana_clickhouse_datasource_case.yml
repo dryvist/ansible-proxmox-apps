@@ -23,6 +23,9 @@
       - >-
         (_case.clickhouse or _case.prices)
         or 'GF_PLUGINS_PREINSTALL' not in _compose.services.grafana.environment
+      - >-
+        (_datasources.deleteDatasources | default([]))
+        == ([] if _case.clickhouse else [{'name': 'ClickHouse', 'orgId': 1}])
 
 - name: Assert the ClickHouse plugin connection and secure credential contract
   ansible.builtin.assert:
@@ -31,13 +34,15 @@
       - _clickhouse.access == 'proxy'
       - not (_clickhouse.isDefault | bool)
       - not (_clickhouse.editable | bool)
-      - _clickhouse.jsonData.host == 'clickhouse.example.test'
+      - _clickhouse.jsonData.host == 'analytics.example.test'
       - _clickhouse.jsonData.port == 18123
       - _clickhouse.jsonData.protocol == 'http'
       - _clickhouse.jsonData.username == 'grafana'
       - _clickhouse.jsonData.defaultDatabase == 'default'
       - _clickhouse.jsonData.password is not defined
-      - _clickhouse.secureJsonData.password == bao_clickhouse_secrets.GRAFANA_PASSWORD | replace('$', '$$')
+      - >-
+        _clickhouse.secureJsonData.password
+        == hostvars['localhost'].openbao_secrets_by_domain['clickhouse'].GRAFANA_PASSWORD | replace('$', '$$')
   vars:
     _clickhouse: "{{ _datasources.datasources | selectattr('uid', 'equalto', 'clickhouse') | first }}"
   when: _case.clickhouse

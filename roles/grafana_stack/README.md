@@ -19,9 +19,13 @@ observability backend — contract in terraform-proxmox
   `clickhouse` for Langfuse scores and the per-harness conversation tables.
   The endpoint uses the inventory's `clickhouse` tag and `clickhouse_http`
   service port. The existing read-only `grafana` user password comes from the
-  OpenBao ClickHouse domain; missing inputs stop enabled provisioning. The
+  OpenBao ClickHouse domain, read only when enabled for an in-scope Grafana
+  consumer. Grafana-only runs read only the reader's KV document and retain
+  only `GRAFANA_PASSWORD`; missing inputs stop enabled provisioning. The
   datasource file is readable only by the Grafana container user, and its
-  password is stored in `secureJsonData`.
+  password is stored in `secureJsonData`. Disabling removes the datasource
+  and its stored credentials through `deleteDatasources`. The deletion entry
+  is also emitted before first enablement, when it is harmless.
 - **Grafana** is Traefik-fronted (Authelia-gated vhost); dashboards and the
   datasources are file-provisioned read-only, so the UI carries no hand-built
   state and rebuilds clean. The admin password is generated on first converge
