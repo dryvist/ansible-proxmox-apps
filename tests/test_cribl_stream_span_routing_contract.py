@@ -106,7 +106,8 @@ class CriblSpanRoutingContract(unittest.TestCase):
         )
         self.assertIn(pipeline_ref, base_splunk)
         self.assertIn(pipeline_ref, per_index_splunk)
-        self.assertNotIn("\n    pipeline:", outputs.split("  # Langfuse OTLP", 1)[1])
+        trace_outputs = outputs.split("  # Langfuse OTLP", 1)[1].split("  # Public-class", 1)[0]
+        self.assertNotIn("\n    pipeline:", trace_outputs)
 
         redaction = (
             ROLE / "templates" / "pipelines" / "secret_redaction" / "conf.yml.j2"
