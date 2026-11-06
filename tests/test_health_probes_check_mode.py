@@ -185,10 +185,6 @@ PROBES = (
         "Verify smokeping_prober is serving metrics",
     ),
     ("roles/ntfy_docker/tasks/main.yml", "Verify ntfy health endpoint"),
-    (
-        "roles/openproject_docker/tasks/main.yml",
-        "Verify OpenProject health endpoint",
-    ),
     ("roles/phpipam/tasks/main.yml", "Verify phpIPAM is responding"),
     (
         "roles/prometheus_pve_exporter/tasks/main.yml",
@@ -265,7 +261,6 @@ FIRST_INSTALL_GUARDS = {
     ("roles/network_quality/tasks/main.yml", "Verify the smokeping_prober container is running"): "network_quality_compose",
     ("roles/network_quality/tasks/main.yml", "Verify smokeping_prober is serving metrics"): "network_quality_compose",
     ("roles/ntfy_docker/tasks/main.yml", "Verify ntfy health endpoint"): "ntfy_docker_compose",
-    ("roles/openproject_docker/tasks/main.yml", "Verify OpenProject health endpoint"): "openproject_docker_compose",
     ("roles/phpipam/tasks/main.yml", "Verify phpIPAM is responding"): "phpipam_compose",
     ("roles/prometheus_pve_exporter/tasks/main.yml", "Verify pve-exporter answers its health endpoint"): "prometheus_pve_exporter_compose",
     ("roles/prometheus_stack/tasks/main.yml", "Verify both stack containers are running"): "prometheus_stack_compose",
@@ -314,11 +309,6 @@ REGISTERED_RESULTS = (
         "network_quality_compose",
     ),
     ("roles/ntfy_docker/tasks/main.yml", "Deploy ntfy via docker compose", "ntfy_docker_compose"),
-    (
-        "roles/openproject_docker/tasks/main.yml",
-        "Deploy OpenProject via docker compose",
-        "openproject_docker_compose",
-    ),
     ("roles/phpipam/tasks/main.yml", "Deploy phpipam via docker compose", "phpipam_compose"),
     (
         "roles/prometheus_pve_exporter/tasks/main.yml",
