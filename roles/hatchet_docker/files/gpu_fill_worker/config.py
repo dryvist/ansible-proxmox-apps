@@ -146,14 +146,20 @@ def load_config(path):
             "cron",
             "judges_sync_cron",
             "prompts_dir",
+            "repeats",
             "roles",
         }:
-            raise ValueError("evals must contain cron, judges_sync_cron, prompts_dir, and roles only")
+            raise ValueError(
+                "evals must contain cron, judges_sync_cron, prompts_dir, repeats, and roles only"
+            )
         _require_cron(evals["cron"], "evals cron")
         _require_cron(evals["judges_sync_cron"], "evals judges_sync_cron")
         prompts_dir = evals["prompts_dir"]
         if not isinstance(prompts_dir, str) or not Path(prompts_dir).is_absolute():
             raise ValueError("evals prompts_dir must be an absolute path")
+        repeats = evals["repeats"]
+        if type(repeats) is not int or repeats < 1:
+            raise ValueError("evals repeats must be a positive integer")
         eval_roles = evals["roles"]
         if not isinstance(eval_roles, list) or not eval_roles:
             raise ValueError("evals roles must be a non-empty list")

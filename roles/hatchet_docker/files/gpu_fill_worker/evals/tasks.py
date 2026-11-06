@@ -44,15 +44,16 @@ def build_tasks(hatchet, evals_config, latency_guard=None):
             try:
                 if latency_guard is not None:
                     _check_latency_guard(latency_guard, 120)
-                result = run_parse_experiment(
+                results = run_parse_experiment(
                     experiment_name=f"{dataset}-{role}",
                     dataset_name=dataset,
                     role=role,
                     prompts_dir=prompts_dir,
                     base_url=os.environ["LITELLM_BASE_URL"],
                     api_key=os.environ["LITELLM_API_KEY"],
+                    repeats=evals_config["repeats"],
                 )
-                return result.format()
+                return "\n\n".join(result.format() for result in results)
             except LatencyGuardError:
                 raise
             except Exception:

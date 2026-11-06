@@ -139,6 +139,9 @@
             (_hatchet_worker_config_evals.content | b64decode | from_json).evals.prompts_dir
             == hatchet_docker_eval_prompts_dir
           - >-
+            (_hatchet_worker_config_evals.content | b64decode | from_json).evals.repeats
+            == hatchet_docker_eval_repeats
+          - >-
             (_hatchet_worker_config_evals.content | b64decode | from_json).evals.roles
             == hatchet_docker_eval_roles
 
@@ -216,6 +219,45 @@
             'b8492284c76a54baf58d61668dd0e41ee0fc98adabf9503d30f05d08f55b4406  /tmp/node.tar.gz'
             in (_hatchet_compose_evals.content | b64decode)
           - "'openrouter' not in (_hatchet_compose_evals.content | b64decode | lower)"
+
+    - name: Load the docker_ai group eval settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../inventory/group_vars/docker_ai_group.yml"
+        name: _docker_ai_group
+
+    - name: Render the worker JSON configuration with the docker_ai eval settings
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/gpu_fill_worker_config.json.j2"
+        dest: "{{ _hatchet_render_dir.path }}/worker-producer.json"
+        mode: "0600"
+      vars:
+        hatchet_docker_worker_enabled: true
+        hatchet_docker_eval_enabled: "{{ _docker_ai_group.hatchet_docker_eval_enabled }}"
+        hatchet_docker_eval_cron: "{{ _docker_ai_group.hatchet_docker_eval_cron }}"
+        hatchet_docker_eval_roles: "{{ _docker_ai_group.hatchet_docker_eval_roles }}"
+        hatchet_docker_worker_platforms: "{{ _docker_ai_group.hatchet_docker_worker_platforms }}"
+
+    - name: Read the docker_ai eval worker configuration
+      ansible.builtin.slurp:
+        src: "{{ _hatchet_render_dir.path }}/worker-producer.json"
+      register: _hatchet_worker_config_producer
+
+    - name: Assert evals repeat on schedule for all configured local routes
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_hatchet_worker_config_producer.content | b64decode | from_json).evals.cron
+            == '11,41 * * * *'
+          - >-
+            (_hatchet_worker_config_producer.content | b64decode | from_json).evals.roles
+            == [
+              {'role': 'medium', 'dataset': 'vikunja-clerk-evals'},
+              {'role': 'small', 'dataset': 'vikunja-clerk-evals'},
+              {'role': 'agent-long-context', 'dataset': 'vikunja-clerk-evals'}
+            ]
+          - >-
+            (_hatchet_worker_config_producer.content | b64decode | from_json).evals.repeats
+            == 3
 
     - name: Remove the temporary render directory
       ansible.builtin.file:

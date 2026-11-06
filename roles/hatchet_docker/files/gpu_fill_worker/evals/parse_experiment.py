@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -139,6 +140,7 @@ def run_parse_experiment(
     prompts_dir: Path,
     base_url: str,
     api_key: str,
+    repeats: int = 1,
 ):
     from langfuse import Langfuse
 
@@ -146,10 +148,16 @@ def run_parse_experiment(
     system_prompt = load_parse_system_prompt(prompts_dir)
     check_reply = load_schema_check(prompts_dir)
     dataset = langfuse.get_dataset(dataset_name)
-    return dataset.run_experiment(
-        name=experiment_name,
-        description=f"Parse eval for dataset {dataset_name} using local role {role}.",
-        task=make_task(langfuse, system_prompt, role, base_url, api_key),
-        evaluators=[make_expected_fields_evaluator(), make_schema_evaluator(check_reply)],
-        metadata={"model_role": role, "source_commit": os.environ.get("SOURCE_COMMIT", "")},
-    )
+    # Group the repeated cases in one timestamped experiment run for this schedule.
+    run_name = f"{experiment_name} - {datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}"
+    return [
+        dataset.run_experiment(
+            name=experiment_name,
+            run_name=run_name,
+            description=f"Parse eval for dataset {dataset_name} using local role {role}.",
+            task=make_task(langfuse, system_prompt, role, base_url, api_key),
+            evaluators=[make_expected_fields_evaluator(), make_schema_evaluator(check_reply)],
+            metadata={"model_role": role, "source_commit": os.environ.get("SOURCE_COMMIT", "")},
+        )
+        for _ in range(repeats)
+    ]

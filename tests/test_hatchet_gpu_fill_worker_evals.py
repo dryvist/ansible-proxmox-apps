@@ -42,6 +42,7 @@ def eval_config(cron="0 */6 * * *", judges_sync_cron="15 3 * * *"):
         "cron": cron,
         "judges_sync_cron": judges_sync_cron,
         "prompts_dir": "/app/ai-llm-prompts",
+        "repeats": 3,
         "roles": [{"role": "small", "dataset": "vikunja-clerk-evals"}],
     }
 
@@ -61,6 +62,7 @@ def test_config_accepts_strict_eval_section(tmp_path):
         (lambda value: value.update(extra=True), "evals must contain"),
         (lambda value: value.update(cron="hourly"), "five-field cron"),
         (lambda value: value.update(prompts_dir="relative"), "absolute path"),
+        (lambda value: value.update(repeats=0), "evals repeats must be a positive integer"),
         (
             lambda value: value.update(roles=[{"role": "small", "dataset": "vikunja"}] * 2),
             "duplicate eval role",
@@ -172,6 +174,42 @@ def test_schema_evaluator_scores_valid_and_invalid_replies(monkeypatch):
     assert (invalid.value, invalid.comment) == (0.0, "project_id must not appear")
 
 
+def test_parse_experiment_repeats_each_dataset_in_one_timestamped_series(monkeypatch):
+    calls = []
+
+    class FakeDataset:
+        def run_experiment(self, **values):
+            calls.append(values)
+            return SimpleNamespace(format=lambda: "experiment report")
+
+    class FakeLangfuse:
+        def get_dataset(self, name):
+            assert name == "vikunja-clerk-evals"
+            return FakeDataset()
+
+    module = ModuleType("langfuse")
+    module.Langfuse = FakeLangfuse
+    monkeypatch.setitem(sys.modules, "langfuse", module)
+    monkeypatch.setattr(parse_experiment, "load_parse_system_prompt", lambda _path: "system")
+    monkeypatch.setattr(parse_experiment, "load_schema_check", lambda _path: lambda _reply: None)
+
+    results = parse_experiment.run_parse_experiment(
+        experiment_name="vikunja-clerk-evals-medium",
+        dataset_name="vikunja-clerk-evals",
+        role="medium",
+        prompts_dir=Path("/unused"),
+        base_url="https://router.example/v1",
+        api_key="test-key",
+        repeats=3,
+    )
+
+    assert len(results) == 3
+    assert [call["name"] for call in calls] == ["vikunja-clerk-evals-medium"] * 3
+    assert len({call["run_name"] for call in calls}) == 1
+    assert calls[0]["run_name"].startswith("vikunja-clerk-evals-medium - ")
+    assert calls[0]["run_name"].endswith("Z")
+
+
 class FakeNonRetryableException(Exception):
     pass
 
@@ -210,7 +248,10 @@ def test_task_builder_sets_priority_crons_concurrency_and_nonretryable(monkeypat
     monkeypatch.setenv("LITELLM_API_KEY", "render-only-placeholder")
     monkeypatch.setattr(eval_tasks, "_check_latency_guard", lambda *_: None)
 
+    experiment_calls = []
+
     def fail_experiment(**_kwargs):
+        experiment_calls.append(_kwargs)
         raise RuntimeError("hidden failure detail")
 
     monkeypatch.setattr(
@@ -237,6 +278,7 @@ def test_task_builder_sets_priority_crons_concurrency_and_nonretryable(monkeypat
 
     with pytest.raises(FakeNonRetryableException, match="parse experiment failed"):
         parse_handler({}, None)
+    assert experiment_calls[0]["repeats"] == 3
 
     def fail_guard(*_args):
         raise LatencyGuardError("latency hold")
