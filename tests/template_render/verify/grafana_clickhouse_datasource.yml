@@ -21,14 +21,20 @@
           clickhouse_http: 18123
       containers:
         analytics:
-          ip: clickhouse.example.test
+          hostname: analytics
+          ip: 192.0.2.10
           tags: [clickhouse]
         unrelated:
+          hostname: other
           ip: other.example.test
           tags: [other]
-    bao_clickhouse_secrets:
-      GRAFANA_PASSWORD: 'fixture-$reader:"quoted"-password'
   tasks:
+    - name: Model the controller-side domain publication
+      ansible.builtin.set_fact:
+        openbao_secrets_by_domain:
+          clickhouse:
+            GRAFANA_PASSWORD: 'fixture-$reader:"quoted"-password'
+
     - name: Verify the default does not enable ClickHouse
       ansible.builtin.assert:
         that:
@@ -53,8 +59,7 @@
           ansible.builtin.include_tasks: ../../../roles/grafana_stack/tasks/assert_clickhouse.yml
           vars:
             grafana_stack_clickhouse_enabled: true
-            bao_clickhouse_secrets:
-              GRAFANA_PASSWORD: ""
+            grafana_stack_clickhouse_password: ""
 
         - name: Fail if validation accepted an empty password
           ansible.builtin.fail:
@@ -72,9 +77,10 @@
       vars:
         grafana_stack_clickhouse_enabled: false
         tofu_data: {}
-        bao_clickhouse_secrets: {}
+        openbao_secrets_by_domain: {}
 
     - name: Assert disabled provisioning omitted ClickHouse
       ansible.builtin.assert:
         that:
           - _disabled_datasources.datasources | selectattr('uid', 'equalto', 'clickhouse') | list | length == 0
+          - "_disabled_datasources.deleteDatasources == [{'name': 'ClickHouse', 'orgId': 1}]"
