@@ -14,7 +14,8 @@ def _task(tasks, name):
 
 class AgentSandboxCiResolverContract(unittest.TestCase):
     def setUp(self):
-        self.defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
+        self.defaults = yaml.safe_load((ROLE / "defaults/main/00-runtime.yml").read_text())
+        self.defaults.update(yaml.safe_load((ROLE / "defaults/main/10-ci-resolver.yml").read_text()))
         self.tasks = yaml.safe_load((ROLE / "tasks" / "main" / "ci_resolver.yml").read_text())
         self.install = _task(self.tasks, "Install CI resolver")
         self.install_tasks = self.install["block"]

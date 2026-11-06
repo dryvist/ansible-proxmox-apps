@@ -72,7 +72,7 @@ READS = {
     "playbooks/tasks/hatchet_killtest_phases.yml": 1,
     "playbooks/tasks/hatchet_killtest_ready_poll.yml": 1,
     "playbooks/tasks/hatchet_killtest_start.yml": 1,
-    "roles/agent_sandbox/defaults/main.yml": 2,
+    "roles/agent_sandbox/defaults/main/00-runtime.yml": 2,
     "roles/cribl_stream/defaults/main/44-clickhouse-llm.yml": 1,
     "roles/grafana_stack/defaults/main.yml": 1,
     "roles/haproxy/templates/haproxy.cfg.j2": 6,
