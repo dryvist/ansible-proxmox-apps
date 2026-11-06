@@ -74,6 +74,16 @@ and `prometheus_stack_extra_scrape_configs` (raw YAML appended for later exporte
 `prometheus_stack_remote_write_receiver_enabled` opts into the internal
 Prometheus remote_write endpoint for declared metric sources.
 
+`prometheus_stack_direct_histogram_write_enabled` defaults to `false`. This draft
+alternative requires an operator decision before enablement. When enabled,
+Prometheus writes metric names ending in `_bucket`, `_count`, or `_sum` from
+`llm_gpu_engine` and `llm_router` to `prometheus_stack_direct_histogram_write_url`.
+Inventory derives this native VictoriaMetrics endpoint from the monitoring
+service hostname, domain, and service port. A matching Cribl write-relabel drop
+keeps these series on 1 writer; other series retain their existing route.
+These families also leave the Cribl Splunk branch when enabled. Summary
+quantiles and native histograms without these suffixes retain the existing route.
+
 ## Migration
 
 On first run the role tears down the legacy standalone blackbox compose project at

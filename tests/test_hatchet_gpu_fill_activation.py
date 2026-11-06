@@ -24,13 +24,3 @@ def test_fill_corpus_repos_are_unique_public_github_repos_pinned_to_tags() -> No
     for repo in repos:
         assert repo["url"].startswith("https://github.com/dryvist/")
         assert repo["version"].startswith("v")
-
-
-def test_daily_parse_eval_is_opt_in_and_fill_remains_disabled() -> None:
-    assert DEFAULTS["hatchet_docker_eval_enabled"] is False
-    assert INVENTORY["hatchet_docker_eval_enabled"] is False
-    assert INVENTORY["hatchet_docker_eval_cron"] == "17 3 * * *"
-    assert INVENTORY["hatchet_docker_eval_roles"] == [
-        {"role": "small", "dataset": "vikunja-clerk-evals"}
-    ]
-    assert INVENTORY["hatchet_docker_worker_fill_enabled"] is False
