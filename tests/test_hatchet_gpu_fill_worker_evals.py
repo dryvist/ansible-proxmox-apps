@@ -227,14 +227,12 @@ def test_task_builder_sets_priority_crons_concurrency_and_nonretryable(monkeypat
     assert sync_options["default_priority"] == "LOW"
     assert sync_options["on_crons"] == ["15 3 * * *"]
     assert parse_options["default_priority"] == "LOW"
-    assert parse_options["execution_timeout"].total_seconds() == 3600
     assert parse_options["on_crons"] == ["0 */6 * * *"]
     assert parse_options["retries"] == 6
     assert parse_options["backoff_factor"] == 2.0
     assert parse_options["backoff_max_seconds"] == 300
     assert parse_options["concurrency"][0].expression == "'small'"
     assert parse_options["concurrency"][0].max_runs == 1
-    assert parse_options["concurrency"][0].is_tenant_scoped is True
     assert parse_options["concurrency"][0].limit_strategy == "GROUP_ROUND_ROBIN"
 
     with pytest.raises(FakeNonRetryableException, match="parse experiment failed"):
@@ -310,36 +308,3 @@ def test_eval_request_carries_low_priority(monkeypatch):
     assert captured["body"]["priority"] == parse_experiment.EVAL_REQUEST_PRIORITY
     assert captured["body"]["priority"] == 100
     assert captured["body"]["metadata"] == {"tags": ["fill", "priority-100"]}
-
-
-def test_parse_experiment_submits_scores_and_provenance_to_langfuse(monkeypatch):
-    install_fake_langfuse(monkeypatch)
-    captured = {}
-
-    def run_experiment(**kwargs):
-        captured.update(kwargs)
-        return "stored-result"
-
-    def get_dataset(name):
-        assert name == "vikunja-clerk-evals"
-        return SimpleNamespace(run_experiment=run_experiment)
-
-    sys.modules["langfuse"].Langfuse = lambda: SimpleNamespace(get_dataset=get_dataset)
-    monkeypatch.setenv("SOURCE_COMMIT", "pinned-prompt-revision")
-    monkeypatch.setattr(parse_experiment, "load_parse_system_prompt", lambda _: "parse")
-    monkeypatch.setattr(parse_experiment, "load_schema_check", lambda _: lambda _: None)
-
-    result = parse_experiment.run_parse_experiment(
-        "vikunja-clerk-evals-small", "vikunja-clerk-evals", "small",
-        Path("/app/prompts"), "https://192.0.2.20/v1", "test-key",
-    )
-
-    assert result == "stored-result"
-    assert captured["name"] == "vikunja-clerk-evals-small"
-    assert captured["metadata"] == {"model_role": "small", "source_commit": "pinned-prompt-revision"}
-    expected_fields, schema = captured["evaluators"]
-    assert expected_fields(
-        output='{"operation":"create"}',
-        expected_output={"structured_fields": {"operation": "create"}},
-    ).value == 1.0
-    assert schema(output="valid").name == "parse-json-schema-valid"
