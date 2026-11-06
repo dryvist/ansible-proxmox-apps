@@ -91,6 +91,30 @@ def test_failed_source_never_deletes_points(tmp_path):
     assert api.deletes == []
 
 
+@pytest.mark.parametrize("failure", ["source", "write", "smoke"])
+def test_partial_run_retains_ownership_for_cleanup(tmp_path, failure):
+    cfg, api = config(tmp_path), FakeAPI()
+
+    def partial():
+        yield "docs", "a", "new"
+        if failure == "source":
+            raise RuntimeError("source failed")
+        if failure == "write":
+            api.fail = True
+            yield "docs", "b", "uncertain"
+
+    if failure == "smoke":
+        cfg["smoke_query"] = "query"
+        api.smoke = lambda *args: (_ for _ in ()).throw(RuntimeError("smoke failed"))
+    with pytest.raises(RuntimeError):
+        run(cfg, api=api, source=partial())
+    owned = json.loads((Path(cfg["output_dir"]) / "pending.json").read_text())["points"]
+    assert len(owned) == (2 if failure == "write" else 1)
+    run(cfg, api=FakeAPI(), source=[])
+    assert not (Path(cfg["output_dir"]) / "pending.json").exists()
+    assert not json.loads((Path(cfg["output_dir"]) / "checkpoint.json").read_text())["points"]
+
+
 def test_changed_target_reembeds(tmp_path):
     cfg, api = config(tmp_path), FakeAPI()
     source = [("docs", "a", "old")]

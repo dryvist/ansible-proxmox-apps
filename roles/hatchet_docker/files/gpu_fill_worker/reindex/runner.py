@@ -27,6 +27,10 @@ def run(config, *, api=None, source=None, latency_guard=None):
     target = config["qdrant_url"] + "|embed|chunks-6000-v1"
     previous = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
     old = previous.get("points", {}) if previous.get("target") == target else {}
+    journal = root / "pending.json"
+    pending = json.loads(journal.read_text()) if journal.exists() else {}
+    owned = pending.get("points", {}) if pending.get("target") == target else {}
+    old.update(owned)
     current, results = {}, {}
     started = time.monotonic()
     report = {"status": "failed", "collections": results}
@@ -48,7 +52,11 @@ def run(config, *, api=None, source=None, latency_guard=None):
             if old.get(point_id) == item:
                 results[collection]["unchanged"] += 1
             else:
-                api.upsert(collection, {"id": point_id, "vector": api.embed(text),
+                vector = api.embed(text)
+                # Record ownership before a write whose outcome may be unknown on failure.
+                owned[point_id] = {"collection": collection, "hash": None}
+                write_json(journal, {"target": target, "points": owned})
+                api.upsert(collection, {"id": point_id, "vector": vector,
                                        "payload": {"source": key, "content_hash": digest, "text": text}})
                 results[collection]["changed"] += 1
             current[point_id] = item
@@ -66,6 +74,7 @@ def run(config, *, api=None, source=None, latency_guard=None):
                 results[collection]["reranked"] = api.smoke(collection, config["smoke_query"])
                 results[collection]["duration_s"] += time.monotonic() - tick
         write_json(checkpoint, {"target": target, "points": current})
+        journal.unlink(missing_ok=True)
         report["status"] = "completed"
         return report
     finally:
