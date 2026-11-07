@@ -114,7 +114,7 @@ class AgentTelemetry(unittest.TestCase):
     def test_arize_accepts_only_closed_vocabularies_and_fixed_shapes(self):
         valid = {
             'tier': [0, 1, 2],
-            'accelerator': ['gpu-primary', 'gpu-secondary', 'mac-primary', 'mac-secondary', 'cloud', 'cpu'],
+            'accelerator': ['gpu-primary', 'gpu-secondary', 'mac-primary', 'mac-secondary', 'cloud', 'cpu', 'agent'],
             'agent': ['ab', 'a' * 63, 'agent-01'],
             'model': ['M', 'm' * 128, 'provider/model:v1.0_test'],
         }
