@@ -1,0 +1,117 @@
+---
+- name: Render the Stream config with no Arize AX values
+  vars:
+    cribl_stream_arize_url: ""
+    cribl_stream_arize_api_key: ""
+    cribl_stream_arize_space_id: ""
+    cribl_stream_victoriametrics_otlp_endpoint: >-
+      {{ _cribl_stream_defaults.cribl_stream_victoriametrics_otlp_endpoint }}
+  block:
+    - name: Resolve the disabled Arize AX sink
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/cribl_stream/tasks/resolve_arize.yml"
+
+    - name: Render the disabled inputs, outputs, and pipeline set
+      ansible.builtin.set_fact:
+        _cribl_stream_arize_off_inputs: >-
+          {{ lookup('template', _template_dir ~ '/inputs.yml.j2') | from_yaml }}
+        _cribl_stream_arize_off_outputs: >-
+          {{ lookup('template', _template_dir ~ '/outputs.yml.j2') | from_yaml }}
+        _cribl_stream_arize_off_pipelines: "{{ _cribl_stream_defaults.cribl_stream_pipelines }}"
+
+    - name: Assert disabled Arize routing has no missing output or pipeline reference
+      vars:
+        _otel_connections: >-
+          {{ _cribl_stream_arize_off_inputs.inputs['open_telemetry:in_otel'].connections }}
+        _s2s_connections: >-
+          {{ _cribl_stream_arize_off_inputs.inputs['tcpjson:in_cribl_s2s'].connections }}
+        _trace_pipelines: [otel_traces, otel_traces_phoenix, otel_traces_to_splunk]
+      ansible.builtin.assert:
+        that:
+          - not (cribl_stream_arize_enabled | bool)
+          - "'arize_otlp' not in _cribl_stream_arize_off_outputs.outputs"
+          - "'otel_traces_arize' not in (_cribl_stream_arize_off_inputs | to_json)"
+          - "'otel_traces_arize' not in (_cribl_stream_arize_off_outputs | to_json)"
+          - "'otel_traces_arize' not in _cribl_stream_arize_off_pipelines"
+          - >-
+            (_otel_connections | map(attribute='output')
+             | difference(_cribl_stream_arize_off_outputs.outputs.keys() | list)
+             | list | length) == 0
+          - >-
+            (_s2s_connections | map(attribute='output')
+             | difference(_cribl_stream_arize_off_outputs.outputs.keys() | list)
+             | list | length) == 0
+          - >-
+            _otel_connections | selectattr('pipeline', 'in', _trace_pipelines) | list
+            == [{'output': 'langfuse_otlp', 'pipeline': 'otel_traces'},
+                {'output': 'phoenix_otlp', 'pipeline': 'otel_traces_phoenix'},
+                {'output': 'splunk_hec', 'pipeline': 'otel_traces_to_splunk'}]
+          - >-
+            _s2s_connections | selectattr('pipeline', 'in', _trace_pipelines) | list
+            == [{'output': 'langfuse_otlp', 'pipeline': 'otel_traces'},
+                {'output': 'phoenix_otlp', 'pipeline': 'otel_traces_phoenix'},
+                {'output': 'splunk_hec', 'pipeline': 'otel_traces_to_splunk'}]
+          - "'langfuse_otlp' in _cribl_stream_arize_off_outputs.outputs"
+          - "'phoenix_otlp' in _cribl_stream_arize_off_outputs.outputs"
+        fail_msg: >-
+          An unset Arize AX sink must disappear from rendered outputs, routes,
+          and pipeline registrations while all other trace destinations remain.
+
+- name: Render the Stream config with all Arize AX values
+  vars:
+    cribl_stream_arize_url: "https://arize.example.invalid"
+    cribl_stream_arize_api_key: fixture-arize-key
+    cribl_stream_arize_space_id: fixture-arize-space
+    cribl_stream_victoriametrics_otlp_endpoint: >-
+      {{ _cribl_stream_defaults.cribl_stream_victoriametrics_otlp_endpoint }}
+  block:
+    - name: Resolve the enabled Arize AX sink
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/cribl_stream/tasks/resolve_arize.yml"
+
+    - name: Render the enabled inputs, outputs, and pipeline set
+      ansible.builtin.set_fact:
+        _cribl_stream_arize_on_inputs: >-
+          {{ lookup('template', _template_dir ~ '/inputs.yml.j2') | from_yaml }}
+        _cribl_stream_arize_on_outputs: >-
+          {{ lookup('template', _template_dir ~ '/outputs.yml.j2') | from_yaml }}
+        _cribl_stream_arize_on_pipelines: "{{ _cribl_stream_defaults.cribl_stream_pipelines }}"
+
+    - name: Assert complete Arize AX config matches the existing render
+      ansible.builtin.assert:
+        that:
+          - cribl_stream_arize_enabled | bool
+          - _cribl_stream_arize_on_inputs == (_cribl_stream_inputs | from_yaml)
+          # The fixture render has other variables, so compare the sink, then prove it is the only output that differs.
+          - >-
+            _cribl_stream_arize_on_outputs.outputs.arize_otlp
+            == (_cribl_stream_outputs_pi | from_yaml).outputs.arize_otlp
+          - >-
+            (_cribl_stream_arize_on_outputs.outputs.keys() | difference(['arize_otlp']) | sort)
+            == (_cribl_stream_arize_off_outputs.outputs.keys() | sort)
+          - "'arize_otlp' in _cribl_stream_arize_on_outputs.outputs"
+          - >-
+            _cribl_stream_arize_on_pipelines
+            == _cribl_stream_defaults.cribl_stream_base_pipelines
+               + (['otel_traces_to_collector']
+                  if cribl_stream_otel_collector_enabled | bool else [])
+          - >-
+            _cribl_stream_arize_on_inputs.inputs['open_telemetry:in_otel'].connections
+            | selectattr('pipeline', 'equalto', 'otel_traces_arize') | list
+            == [{'output': 'arize_otlp', 'pipeline': 'otel_traces_arize'}]
+        fail_msg: >-
+          Supplying all Arize AX values must preserve the current output,
+          routes, and required body-stripping pipeline.
+
+- name: Verify one or two Arize AX values fail with a clear message
+  ansible.builtin.include_tasks:
+    file: "{{ playbook_dir }}/cribl_stream/assertions_arize_partial.yml"
+  loop:
+    - { url: "https://arize.example.invalid", api_key: "", space_id: "" }
+    - { url: "", api_key: fixture-arize-key, space_id: "" }
+    - { url: "", api_key: "", space_id: fixture-arize-space }
+    - { url: "https://arize.example.invalid", api_key: fixture-arize-key, space_id: "" }
+    - { url: "https://arize.example.invalid", api_key: "", space_id: fixture-arize-space }
+    - { url: "", api_key: fixture-arize-key, space_id: fixture-arize-space }
+  loop_control:
+    loop_var: arize_partial

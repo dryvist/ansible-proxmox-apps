@@ -237,6 +237,7 @@ class AgentTelemetry(unittest.TestCase):
 
     def test_arize_output_uses_parameters_and_enforces_projection(self):
         fixture = fixture_vars('cribl_stream_phoenix')
+        fixture['cribl_stream_arize_enabled'] = True
         env = Environment(undefined=StrictUndefined, loader=FileSystemLoader(ROLE / 'templates'))
         env.filters['bool'] = to_bool
         env.filters['to_uuid'] = lambda value, namespace: 'fixture-token'

@@ -73,7 +73,7 @@ def span(**overrides):
 
 @pytest.mark.parametrize("namespace", ["", "fixture-namespace"])
 def test_original_input_fans_to_metrics_before_unchanged_trace_legs(namespace):
-    source = _render_inputs(namespace)["inputs"]["open_telemetry:in_otel"]
+    source = _render_inputs(namespace, cribl_stream_arize_enabled=True)["inputs"]["open_telemetry:in_otel"]
     splunk = "splunk_hec_" if namespace else "splunk_hec"
     assert source["extractSpans"] is True
     assert source["sendToRoutes"] is False
