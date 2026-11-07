@@ -10,7 +10,7 @@ from ansible.plugins.loader import init_plugin_loader
 from ansible.template import Templar, trust_as_template
 
 from test_cribl_internal_metrics_to_victoriametrics import _render_inputs
-from test_cribl_litellm_trace_contract import ROLE, render
+from test_cribl_litellm_trace_contract import ROLE, fixture_vars, render
 
 
 PIPELINE = "otel_traces_to_collector"
@@ -28,8 +28,7 @@ def defaults():
 
 def context(enabled=False, namespace=""):
     variables = defaults()
-    fixtures = yaml.safe_load((ROOT / "tests/template_render/verify/cribl_stream.yml").read_text())[0]["vars"]
-    variables.update(fixtures)
+    variables.update(fixture_vars("cribl_stream"))
     variables.update({
         "cribl_stream_otel_collector_enabled": enabled,
         "cribl_stream_otel_collector_url": "http://collector.example.invalid:4318",
@@ -198,7 +197,7 @@ def test_reconcile_tolerates_runtime_defaults_and_disabled_missing_url():
 
 @pytest.mark.parametrize("namespace", ["", "11111111-2222-4333-8444-555555555555"])
 def test_template_render_assertions_without_local_rpc(namespace):
-    variables = yaml.safe_load((ROOT / "tests/template_render/verify/cribl_stream.yml").read_text())[0]["vars"]
+    variables = fixture_vars("cribl_stream")
     variables.update({
         "_cribl_stream_defaults": defaults(), "collector_namespace": namespace,
         "_template_dir": str(ROLE / "templates"),

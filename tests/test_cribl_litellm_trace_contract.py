@@ -43,6 +43,15 @@ process.stdout.write(JSON.stringify(result));
 """
 
 
+def fixture_vars(name):
+    verify_dir = ROLE.parents[1] / 'tests/template_render/verify'
+    play = yaml.safe_load((verify_dir / f'{name}.yml').read_text())[0]
+    variables = dict(play['vars'])
+    for vars_file in play.get('vars_files', []):
+        variables.update(yaml.safe_load((verify_dir / vars_file).read_text()))
+    return variables
+
+
 def render(name, **overrides):
     context = {}
     for path in sorted((ROLE / 'defaults' / 'main').glob('*.yml')):

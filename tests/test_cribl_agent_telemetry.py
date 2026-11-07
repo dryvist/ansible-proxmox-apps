@@ -7,7 +7,7 @@ from ansible.plugins.filter.core import to_bool
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 import yaml
 
-from test_cribl_litellm_trace_contract import NODE, ROLE, enrich, render
+from test_cribl_litellm_trace_contract import NODE, ROLE, enrich, fixture_vars, render
 from test_cribl_stream_hec_pipeline_reconcile import _task_named
 
 
@@ -99,11 +99,7 @@ class AgentTelemetry(unittest.TestCase):
                 self.assertIn(f'- output: {output}\n        pipeline: {pipeline}', source)
 
     def test_arize_output_uses_parameters_and_enforces_projection(self):
-        verify_dir = ROLE.parents[1] / 'tests/template_render/verify'
-        play = yaml.safe_load((verify_dir / 'cribl_stream_phoenix.yml').read_text())[0]
-        fixture = dict(play['vars'])
-        for vars_file in play['vars_files']:
-            fixture.update(yaml.safe_load((verify_dir / vars_file).read_text()))
+        fixture = fixture_vars('cribl_stream_phoenix')
         env = Environment(undefined=StrictUndefined, loader=FileSystemLoader(ROLE / 'templates'))
         env.filters['bool'] = to_bool
         env.filters['to_uuid'] = lambda value, namespace: 'fixture-token'
