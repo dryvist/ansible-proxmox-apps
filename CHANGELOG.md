@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.23.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.22.0...v5.23.0) (2026-11-07)
+
+
+### Features
+
+* **cribl_stream:** carry the five run tags through metrics, sinks and the AX projection ([#3361](https://github.com/dryvist/ansible-proxmox-apps/issues/3361)) ([7a0ef96](https://github.com/dryvist/ansible-proxmox-apps/commit/7a0ef966d54306aa733af1dc5aef2b10767646ce))
+
+
+### Bug Fixes
+
+* **cribl_stream:** accept agent accelerator in AX projection ([dce6cbe](https://github.com/dryvist/ansible-proxmox-apps/commit/dce6cbed90a0172ec1b0a0720ba4906c68c07841))
+* **cribl_stream:** accept the agent accelerator value in the AX projection ([#3364](https://github.com/dryvist/ansible-proxmox-apps/issues/3364)) ([dce6cbe](https://github.com/dryvist/ansible-proxmox-apps/commit/dce6cbed90a0172ec1b0a0720ba4906c68c07841))
+* **cribl_stream:** load run dimensions in bulk render fixture ([a34f025](https://github.com/dryvist/ansible-proxmox-apps/commit/a34f025a9a04e58af3002952a3209ca85ffd809e))
+* **cribl_stream:** load run-tag defaults in the pipeline render test ([#3363](https://github.com/dryvist/ansible-proxmox-apps/issues/3363)) ([a34f025](https://github.com/dryvist/ansible-proxmox-apps/commit/a34f025a9a04e58af3002952a3209ca85ffd809e))
+
 ## [5.22.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.21.2...v5.22.0) (2026-11-07)
 
 
