@@ -162,8 +162,9 @@ def test_clickhouse_endpoint_uses_the_tagged_guest_name_and_published_port():
     del variables["grafana_stack_clickhouse_host"]
     del variables["grafana_stack_clickhouse_port"]
     variables.update({
-        "ingress_domain": "example.test",
+        "ingress_domain": "ingress.example.test",
         "tofu_data": {
+            "domain": "example.test",
             "constants": {"service_ports": {"clickhouse_http": 18123}},
             "containers": {"arbitrary-key": {
                 "hostname": "analytics", "ip": "192.0.2.10", "tags": ["clickhouse"],
@@ -178,6 +179,29 @@ def test_clickhouse_endpoint_uses_the_tagged_guest_name_and_published_port():
     datasource = next(d for d in rendered["datasources"] if d["uid"] == "clickhouse")
     assert datasource["jsonData"]["host"] == "analytics.example.test"
     assert datasource["jsonData"]["port"] == 18123
+
+
+def test_clickhouse_endpoint_requires_the_published_guest_domain():
+    variables = _datasource_variables(True, True)
+    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main.yml")
+    variables["grafana_stack_clickhouse_host"] = trust_as_template(defaults["grafana_stack_clickhouse_host"])
+    variables["tofu_data"] = {"containers": {"analytics": {
+        "hostname": "analytics", "tags": ["clickhouse"],
+    }}}
+    with pytest.raises(Exception, match="tofu_data.domain required for the ClickHouse datasource"):
+        _render(TEMPLATE.read_text(), variables)
+
+
+def test_disabled_clickhouse_renders_with_empty_inventory():
+    variables = _datasource_variables(False, True)
+    defaults = _yaml(ROOT / "roles/grafana_stack/defaults/main.yml")
+    variables.update({k: trust_as_template(defaults[k]) for k in (
+        "grafana_stack_clickhouse_host", "grafana_stack_clickhouse_port",
+    )})
+    variables["tofu_data"] = {}
+    variables["hostvars"] = {}
+    rendered = yaml.safe_load(_render(TEMPLATE.read_text(), variables))
+    assert all(d["uid"] != "clickhouse" for d in rendered["datasources"])
 
 
 @pytest.mark.parametrize("prices", [True, False])
