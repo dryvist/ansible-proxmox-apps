@@ -36,6 +36,61 @@ class AgentTelemetry(unittest.TestCase):
             self.assertEqual(set(defaults), set(self.tags))
             self.assertEqual(defaults['privacy_class'], 'private')
 
+    def test_splunk_log_keeps_declared_metadata_attributes(self):
+        attrs = {
+            'agent': 'test-agent', 'tier': 1, 'privacy_class': 'private',
+            'model': 'fixture-model', 'accelerator': 'cpu', 'event': 'run',
+            'status': 'error', 'exit': 1, 'reason': 'timeout', 'secs': 12,
+            'score_name': 'latency', 'score_value': 12.5,
+            'source': 'fixture-runner', 'mode': 'local', 'route': 'direct',
+            'run_id': 'fixture-run',
+        }
+        actual = self._splunk_log(attrs)
+        self.assertEqual(actual['index'], 'ai_usage')
+        self.assertEqual(actual['sourcetype'], 'otel:log')
+        self.assertEqual(actual['source'], 'claude-code-otel')
+        self.assertEqual(actual['resource']['attributes']['service.name'], 'local-agent')
+        self.assertEqual(actual['attributes'], attrs)
+
+    def test_splunk_log_drops_unknown_attributes(self):
+        attrs = {
+            'event': 'run', 'unlisted_field': 'fixture-value',
+            'constructor': 'fixture-value',
+        }
+        actual = self._splunk_log(attrs)
+        self.assertEqual(actual['attributes'], {
+            'agent': 'unknown', 'tier': 2, 'privacy_class': 'private',
+            'model': 'unknown', 'accelerator': 'unknown', 'event': 'run',
+        })
+
+    def test_splunk_log_from_other_service_keeps_all_attributes(self):
+        attrs = {
+            'agent': 'test-agent', 'tier': 1, 'privacy_class': 'private',
+            'model': 'fixture-model', 'accelerator': 'cpu', 'event': 'run',
+            'caller': 'fixture-caller', 'correlation_id': 'fixture-request',
+            'unlisted_field': 'fixture-value',
+        }
+        actual = self._splunk_log(attrs, service_name='other-service')
+        self.assertEqual(actual['attributes'], attrs)
+
+    def test_splunk_log_applies_existing_tag_defaults(self):
+        actual = self._splunk_log({'event': 'run'})
+        self.assertEqual({key: actual['attributes'][key] for key in (
+            'agent', 'tier', 'privacy_class', 'model', 'accelerator')}, {
+                'agent': 'unknown', 'tier': 2, 'privacy_class': 'private',
+                'model': 'unknown', 'accelerator': 'unknown',
+            })
+
+    def _splunk_log(self, attrs, service_name='local-agent'):
+        event = enrich('otel_logs', attrs, __otlp={'type': 'logs'},
+                       resource={'attributes': {'service.name': service_name}})
+        result = subprocess.run(
+            ['node', '-e', NODE], input=json.dumps({
+                'event': event, 'pipeline': render('secret_redaction')}),
+            text=True, capture_output=True, check=True,
+        )
+        return json.loads(result.stdout)
+
     def test_agent_run_facets_keep_zero_trace_identity_and_every_phoenix_span(self):
         run_tags = {key: value for key, value in self.tags.items()
                     if key not in ('caller', 'correlation_id')}
