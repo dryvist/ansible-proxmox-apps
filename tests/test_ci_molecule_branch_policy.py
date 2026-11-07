@@ -101,6 +101,26 @@ class MoleculeBranchPolicy(unittest.TestCase):
         self.assertIn("molecule", self.workflow["jobs"]["gate"]["needs"])
         self.assertIn("changes", self.workflow["jobs"]["gate"]["needs"])
 
+    def test_agent_platform_conformance_is_required_for_every_event(self):
+        job_id = "agent-platform-conformance"
+        job = self.workflow["jobs"][job_id]
+        self.assertEqual(
+            job["uses"],
+            "dryvist/.github/.github/workflows/agent-platform-conformance.yml"
+            "@198f25d695819a48e73f5a7723b47c5bd4839a7c",
+        )
+        self.assertEqual(job["permissions"], {"contents": "read"})
+        self.assertNotIn("if", job)
+        self.assertIn(job_id, self.workflow["jobs"]["gate"]["needs"])
+        develop_pr = deepcopy(self.events["main_pull_request"])
+        develop_pr["event"]["pull_request"]["base"]["ref"] = "develop"
+        main_push = deepcopy(self.events["develop_push"])
+        main_push["ref"] = "refs/heads/main"
+        for github in (self.events["main_pull_request"], self.events["develop_push"],
+                       develop_pr, main_push):
+            with self.subTest(event=github["event_name"], ref=github.get("ref")):
+                self.assertNotIn(job_id, self.allowed_skips(github))
+
     def test_fork_main_pr_runs_full_matrix_and_only_waives_live_e2e(self):
         github = deepcopy(self.events["main_pull_request"])
         github["event"]["pull_request"]["head"]["repo"]["full_name"] = "fixture/fork"
