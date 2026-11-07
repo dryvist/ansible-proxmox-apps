@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.24.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.24.0...v5.24.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **ci:** disable contract checkout credential persistence ([ef12844](https://github.com/dryvist/ansible-proxmox-apps/commit/ef1284483b76e3db6db801ae26fbeb61d005f631))
+* **ci:** stop persisting checkout credentials in contract workflows ([#3379](https://github.com/dryvist/ansible-proxmox-apps/issues/3379)) ([ef12844](https://github.com/dryvist/ansible-proxmox-apps/commit/ef1284483b76e3db6db801ae26fbeb61d005f631))
+
 ## [5.24.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.23.0...v5.24.0) (2026-11-07)
 
 
