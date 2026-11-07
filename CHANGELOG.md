@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.26.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.25.0...v5.26.0) (2026-11-07)
+
+
+### Features
+
+* **cribl-stream:** keep declared metadata on local-agent OTLP logs ([#3387](https://github.com/dryvist/ansible-proxmox-apps/issues/3387)) ([2ebb757](https://github.com/dryvist/ansible-proxmox-apps/commit/2ebb75771c966c9954617d103d68e0a47504d20a))
+
 ## [5.25.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.24.1...v5.25.0) (2026-11-07)
 
 
