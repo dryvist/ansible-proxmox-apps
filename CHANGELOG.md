@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.26.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.26.0...v5.26.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cribl_stream:** make the Arize AX sink optional ([#3393](https://github.com/dryvist/ansible-proxmox-apps/issues/3393)) ([adefc1e](https://github.com/dryvist/ansible-proxmox-apps/commit/adefc1e305d8cb59bb7748ab3cc355318704060a))
+
 ## [5.26.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.25.0...v5.26.0) (2026-11-07)
 
 
