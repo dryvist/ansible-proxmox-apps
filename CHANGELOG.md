@@ -1,5 +1,28 @@
 # Changelog
 
+## [5.22.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.21.2...v5.22.0) (2026-11-07)
+
+
+### Features
+
+* **agent_sandbox:** export local job patches with opt-in publishing ([#3342](https://github.com/dryvist/ansible-proxmox-apps/issues/3342)) ([9787ef6](https://github.com/dryvist/ansible-proxmox-apps/commit/9787ef62bc63552c869398d7e34324a9ab9ac8f7))
+* **agent-sandbox:** enable live CI resolver with tier inputs ([#3343](https://github.com/dryvist/ansible-proxmox-apps/issues/3343)) ([c32d483](https://github.com/dryvist/ansible-proxmox-apps/commit/c32d4836c76960444e7ffe9d09142e0512a5dfee))
+* **cribl_stream:** fan out tagged agent telemetry ([#3354](https://github.com/dryvist/ansible-proxmox-apps/issues/3354)) ([da5056f](https://github.com/dryvist/ansible-proxmox-apps/commit/da5056fb123836c969041fbe76097e273aced17f))
+* **cribl:** derive LLM span metrics from OTLP traces ([#3345](https://github.com/dryvist/ansible-proxmox-apps/issues/3345)) ([8c89cd2](https://github.com/dryvist/ansible-proxmox-apps/commit/8c89cd271417f2f67ba2730374dab29f95f64662))
+* **cribl:** forward traces to the OpenTelemetry Collector behind a flag ([#3353](https://github.com/dryvist/ansible-proxmox-apps/issues/3353)) ([dfd20c8](https://github.com/dryvist/ansible-proxmox-apps/commit/dfd20c8fb76a25d8f28f0b9bd1f9e51597c6152f))
+* **grafana:** install panel plugins from the object-storage mirror ([#3356](https://github.com/dryvist/ansible-proxmox-apps/issues/3356)) ([6cd4326](https://github.com/dryvist/ansible-proxmox-apps/commit/6cd4326cf3bd2dff5a4adb32f6337a6852cc4a3d))
+* **grafana:** provision the LLM app plugin against the local router ([#3331](https://github.com/dryvist/ansible-proxmox-apps/issues/3331)) ([e1dbf74](https://github.com/dryvist/ansible-proxmox-apps/commit/e1dbf7463d1044559e261da75b0092e409995322))
+* **hatchet:** add release-notes digest task to the gpu-fill worker ([#3324](https://github.com/dryvist/ansible-proxmox-apps/issues/3324)) ([2d6451c](https://github.com/dryvist/ansible-proxmox-apps/commit/2d6451c2f4d399183690db0d4e857130e5aa5c51))
+* **hatchet:** schedule a bounded local eval with stored scores ([#3336](https://github.com/dryvist/ansible-proxmox-apps/issues/3336)) ([a281dd8](https://github.com/dryvist/ansible-proxmox-apps/commit/a281dd846d51d1ce17ae40949021c6adcf6fbc90))
+* **prometheus:** add an optional direct histogram remote write ([#3348](https://github.com/dryvist/ansible-proxmox-apps/issues/3348)) ([57bbf33](https://github.com/dryvist/ansible-proxmox-apps/commit/57bbf3307d43b9ef18896fc1b51b05397339417f))
+* **prometheus:** scrape LLM engines every 5 seconds ([#3344](https://github.com/dryvist/ansible-proxmox-apps/issues/3344)) ([a4ecedc](https://github.com/dryvist/ansible-proxmox-apps/commit/a4ecedca4a602061446e8e3824b81925a4105a1d))
+* **wall:** add optional Grafana kiosk slides to the rotator ([#3346](https://github.com/dryvist/ansible-proxmox-apps/issues/3346)) ([7ece541](https://github.com/dryvist/ansible-proxmox-apps/commit/7ece5419fc7c3fce523355b45aed7b1c51d267f6))
+
+
+### Bug Fixes
+
+* **prometheus:** label accelerator scrapes by inventory ownership ([#3338](https://github.com/dryvist/ansible-proxmox-apps/issues/3338)) ([73f7ea8](https://github.com/dryvist/ansible-proxmox-apps/commit/73f7ea86b5c9cefc092dd35a44108e867ff25d76))
+
 ## [5.21.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.21.1...v5.21.2) (2026-11-06)
 
 
