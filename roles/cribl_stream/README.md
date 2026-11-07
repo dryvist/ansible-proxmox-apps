@@ -147,22 +147,59 @@ verified TLS. [Cribl Eval](https://docs.cribl.io/stream/eval-function/) and the
 
 ### Cribl Edge log audit
 
-Source audit dated 2026-11-06; deployed logging configuration is unverified.
+The 2026-11-06 source audit covers 35 roles: 1 source-supported Edge candidate
+and 2 provisional containers. Effective logging settings and receipt in Stream
+remain **UNKNOWN** for every row; source configuration does not prove delivery.
 
 | Scope | Source configuration | Edge disposition |
 | --- | --- | --- |
-| Zammad | Package and system services; application-file output unverified. | Candidate; no file-only stream established. |
-| Sim | Compose override sets images and data volumes. | Candidate; merged vendor logging unverified. |
-| Other containers | Docker defaults to journald; baseline supplies rsyslog. | Retain journald, rsyslog, and Stream, or direct OTEL. |
+| `agent_sandbox` / Squid | Unmounted image-default `/var/log/squid/`. | 1 source-supported directory-level candidate. |
+| Dify / `ssrf_proxy` | Same pinned Squid image; no log mount or redirect. | Provisional; pinned startup artifacts must confirm file-only output. |
+| Dify / `agent_ssrf_proxy` | Same image and bounded inference. | Provisional; pinned startup artifacts must confirm file-only output. |
+| Zammad | Native package files outside Docker. | No container Edge candidate. |
+| Sim | Documented stdout; vendor Compose unavailable. | No file-only candidate established. |
+| ClickHouse, SQL Server, Home Assistant, Homepage | Host-mounted log directories. | Prefer native host-file forwarding when needed. |
+| Runner services | Host diagnostics and runtime files. | No additional container Edge justified. |
+| Remaining audited containers | Explicit or inherited drivers; destinations vary or are UNKNOWN. | No additional Edge justified by current evidence. |
 
-The Zammad package tasks are in `roles/zammad/tasks/main/elasticsearch_and_package.yml`;
-Docker defaults are in `roles/docker_engine/defaults/main.yml`. Sim's source is the
-[Compose override](https://github.com/dryvist/ansible-proxmox-ai/blob/develop/roles/sim_docker/templates/docker-compose.override.yml.j2).
-This audit establishes no additional container requiring Edge. Install Edge only
-for a verified file-only log stream inside a container: record its path and
-rotation behavior, and configure the native file source and Stream connection.
-Existing containers retain their logging driver until recreated; the daemon
-default alone does not establish their effective driver.
+The candidate list is not exhaustive until UNKNOWN application destinations are
+resolved. Exact Squid filenames and live behavior remain UNKNOWN. Runner
+diagnostics have a host mount and rsyslog file input; Kubernetes runtime files
+are host-visible, but runner diagnostic export remains UNKNOWN. Host mounts do
+not establish collection or complete console output.
+
+The sandbox evidence is in `roles/agent_sandbox/templates/squid.conf.j2` and
+`roles/agent_sandbox/templates/docker-compose.yml.j2`. Its existing Edge inputs
+cover session spools and the allowlist audit, not the Squid log directory.
+Dify's [proxy configurations](https://github.com/dryvist/ansible-proxmox-ai/tree/develop/roles/dify_docker/templates)
+support only a provisional inference: the
+[Squid image documentation](https://hub.docker.com/r/ubuntu/squid) describes both
+a file-log volume and Pebble logs. Inspect the pinned startup/configuration
+artifacts before classifying either Dify proxy as file-only. Evaluate Squid's
+native syslog/TCP access logging before adding Edge; establish cache/admin log
+handling separately. Eligibility does not authorize deployment.
+
+Zammad's package tasks are in `roles/zammad/tasks/main/elasticsearch_and_package.yml`;
+[Zammad logging](https://docs.zammad.org/en/latest/appendix/privacy.html)
+and [environment settings](https://docs.zammad.org/en/latest/appendix/environment-variables.html)
+describe `/opt/zammad/log/` and native `RAILS_LOG_TO_STDOUT` output. Elasticsearch
+also uses native file logs. [Sim observability](https://docs.sim.ai/platform/self-hosting/observability)
+does not verify the pinned vendor Compose artifact; the local
+[Compose override](https://github.com/dryvist/ansible-proxmox-ai/blob/develop/roles/sim_docker/templates/docker-compose.override.yml.j2)
+sets images and data volumes without specifying logging. Sim's effective service
+inventory, drivers, mounts, cron logging, and OTEL settings remain UNKNOWN;
+documented app/realtime stdout and PostgreSQL workflow history do not resolve them.
+
+Docker defaults in `roles/docker_engine/defaults/main.yml` declare journald for
+this repository. Other role sources either declare journald explicitly or leave
+the driver to the daemon; unavailable vendor configuration stays UNKNOWN.
+Existing containers retain their driver until recreated. The daemon default
+establishes neither application log destinations nor effective container drivers,
+journald-to-rsyslog ingestion, or receipt in Stream. Keep non-file-only streams on
+journald to rsyslog to Stream, or direct OTEL, with delivery verified separately.
+Host-visible files can use the existing rsyslog imfile inputs, which default empty.
+For a verified container-only file stream, record paths and rotation before
+configuring a native Edge file source and Stream connection.
 [Docker logging configuration](https://docs.docker.com/engine/logging/configure/)
 describes that lifecycle.
 
