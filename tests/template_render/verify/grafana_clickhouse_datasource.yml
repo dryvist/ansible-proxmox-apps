@@ -1,0 +1,86 @@
+---
+- name: Verify optional ClickHouse datasource and independent plugin flags
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+    - ../../../inventory/group_vars/grafana_group.yml
+  vars:
+    ansible_become: false
+    _template_dir: "{{ playbook_dir }}/../../../roles/grafana_stack/templates"
+    grafana_hostname: grafana
+    grafana_stack_prometheus_url: ""
+    grafana_stack_vm_port: 8428
+    _grafana_clickhouse_inventory:
+      domain: example.test
+      constants:
+        service_ports:
+          clickhouse_http: 18123
+      containers:
+        analytics:
+          hostname: analytics
+          ip: 192.0.2.10
+          tags: [clickhouse]
+        unrelated:
+          hostname: other
+          ip: other.example.test
+          tags: [other]
+  tasks:
+    - name: Model the controller-side domain publication
+      ansible.builtin.set_fact:
+        openbao_secrets_by_domain:
+          clickhouse:
+            GRAFANA_PASSWORD: 'fixture-$reader:"quoted"-password'
+
+    - name: Verify the default does not enable ClickHouse
+      ansible.builtin.assert:
+        that:
+          - not (grafana_stack_clickhouse_enabled | bool)
+
+    - name: Exercise all independent datasource flag combinations
+      ansible.builtin.include_tasks: grafana_clickhouse_datasource_case.yml
+      loop:
+        - {clickhouse: false, prices: true}
+        - {clickhouse: true, prices: true}
+        - {clickhouse: true, prices: false}
+        - {clickhouse: false, prices: false}
+      loop_control:
+        loop_var: _case
+      vars:
+        ingress_domain: ingress.example.test
+        tofu_data: "{{ _grafana_clickhouse_inventory }}"
+        grafana_stack_clickhouse_enabled: "{{ _case.clickhouse }}"
+        grafana_stack_litellm_prices_enabled: "{{ _case.prices }}"
+
+    - name: Verify enabled provisioning rejects a blank reader password
+      block:
+        - name: Validate with an empty OpenBao field
+          ansible.builtin.include_tasks: ../../../roles/grafana_stack/tasks/assert_clickhouse.yml
+          vars:
+            tofu_data: "{{ _grafana_clickhouse_inventory }}"
+            grafana_stack_clickhouse_enabled: true
+            grafana_stack_clickhouse_password: ""
+
+        - name: Fail if validation accepted an empty password
+          ansible.builtin.fail:
+            msg: Empty password was accepted
+      rescue:
+        - name: Assert the credential validation rejected the empty password
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Require an inventory endpoint and read-only ClickHouse credentials'
+
+    - name: Verify disabled provisioning needs no endpoint or secret
+      ansible.builtin.set_fact:
+        _disabled_datasources: >-
+          {{ lookup('ansible.builtin.template', _template_dir ~ '/datasource.yml.j2') | from_yaml }}
+      vars:
+        grafana_stack_clickhouse_enabled: false
+        tofu_data: {}
+        openbao_secrets_by_domain: {}
+
+    - name: Assert disabled provisioning omitted ClickHouse
+      ansible.builtin.assert:
+        that:
+          - _disabled_datasources.datasources | selectattr('uid', 'equalto', 'clickhouse') | list | length == 0
+          - "_disabled_datasources.deleteDatasources == [{'name': 'ClickHouse', 'orgId': 1}]"

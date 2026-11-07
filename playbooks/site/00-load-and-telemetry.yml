@@ -8,16 +8,7 @@
 - name: Publish workstation connection metadata
   ansible.builtin.import_playbook: 00b-workstation-connections.yml
 
-# =============================================================================
-# Phase 0-telemetry: publish converge-freshness configuration
-# Hands the `converge_telemetry` callback plugin its tofu-derived endpoint,
-# the inventory roster and the repo git SHA. The callback (not a play) decides
-# per host whether the converge actually succeeded, using Ansible's own
-# end-of-run counters — see callback_plugins/converge_telemetry.py.
-# The HEC token is deliberately NOT published here; the callback reads
-# SPLUNK_HEC_TOKEN itself so the secret never enters run stats.
-# =============================================================================
-
+# Configure the converge_telemetry callback; it reads SPLUNK_HEC_TOKEN itself.
 - name: Publish converge-freshness telemetry configuration
   hosts: localhost
   gather_facts: false
@@ -285,6 +276,9 @@
         - name: Load the OpenBao domain catalog
           ansible.builtin.import_tasks: ../tasks/load_openbao_secrets_catalog.yml
 
+        - name: Scope the optional Grafana ClickHouse reader
+          ansible.builtin.import_tasks: ../tasks/scope_grafana_clickhouse_secrets.yml
+
         - name: Fetch each resource-domain's KV subtree via its own AppRole
           ansible.builtin.include_role:
             name: dryvist.homelab.openbao_secrets
@@ -297,6 +291,9 @@
                  | combine({'apps': []}
                    if hostvars['localhost'].openbao_secrets_youtrack_in_scope | default(false)
                    else {}) }}
+
+        - name: Retain only the optional Grafana ClickHouse reader credential
+          ansible.builtin.import_tasks: ../tasks/filter_grafana_clickhouse_secrets.yml
 
         - name: Publish secret-domain facts
           ansible.builtin.import_tasks: ../tasks/publish_secret_domain_facts.yml
