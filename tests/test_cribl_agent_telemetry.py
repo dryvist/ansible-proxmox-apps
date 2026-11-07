@@ -3,6 +3,7 @@ import json
 import subprocess
 import unittest
 
+from ansible.plugins.filter.core import to_bool
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 import yaml
 
@@ -104,6 +105,7 @@ class AgentTelemetry(unittest.TestCase):
         for vars_file in play['vars_files']:
             fixture.update(yaml.safe_load((verify_dir / vars_file).read_text()))
         env = Environment(undefined=StrictUndefined, loader=FileSystemLoader(ROLE / 'templates'))
+        env.filters['bool'] = to_bool
         env.filters['to_uuid'] = lambda value, namespace: 'fixture-token'
         output = yaml.safe_load(env.get_template('outputs.yml.j2').render(fixture))['outputs']['arize_otlp']
         self.assertEqual(output['endpoint'], fixture['cribl_stream_arize_url'])
