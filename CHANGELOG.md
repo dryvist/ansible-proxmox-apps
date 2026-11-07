@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.25.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.24.1...v5.25.0) (2026-11-07)
+
+
+### Features
+
+* **grafana:** add an optional ClickHouse datasource ([#3383](https://github.com/dryvist/ansible-proxmox-apps/issues/3383)) ([c5d708e](https://github.com/dryvist/ansible-proxmox-apps/commit/c5d708eb8431cb90320a9302e21713449aef32b2))
+
 ## [5.24.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.24.0...v5.24.1) (2026-11-07)
 
 
