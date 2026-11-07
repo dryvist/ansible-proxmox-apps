@@ -61,10 +61,10 @@ def test_db_host_is_the_writable_apps_primary():
     assert _render(source, variables).strip() == "apps-primary.example.test"
 
 
-def test_compose_deploy_removes_orphans():
+def test_compose_deploy_preserves_orphans():
     deploy = _tasks()["Deploy Hatchet and report the engine log tail on failure"]["block"][0]
     assert deploy["name"] == "Deploy Hatchet via Docker Compose"
-    assert deploy["community.docker.docker_compose_v2"]["remove_orphans"] is True
+    assert deploy["community.docker.docker_compose_v2"]["remove_orphans"] is False
 
 
 def test_shared_secrets_are_identical_in_seed_and_both_services():
@@ -72,8 +72,9 @@ def test_shared_secrets_are_identical_in_seed_and_both_services():
     parser = jinja2.Environment()
     parser.filters.update(to_json=str, mandatory=str)  # names only; Templar renders below
     names = jinja2.meta.find_undeclared_variables(parser.parse(source))
-    variables = {name: "x" for name in names} | SECRETS | {"hatchet_docker_worker_enabled": False}
+    variables = {name: "x" for name in names} | SECRETS
     services = yaml.safe_load(_render(source, variables))["services"]
+    assert set(services) == {"hatchet-dashboard", "hatchet-engine"}
     seed_env = _tasks()["Seed Hatchet database with shared credentials"]["community.docker.docker_container"]["env"]
 
     for key in SHARED_KEYS:
