@@ -51,7 +51,7 @@ class WallConfig(unittest.TestCase):
     def test_grafana_slides_are_disabled_by_default(self):
         defaults = yaml.safe_load((TEMPLATE.parents[1] / "defaults/main.yml").read_text())
         self.assertIs(defaults["wall_grafana_slides_enabled"], False)
-        self.assertEqual(len(render(wall_grafana_slides_enabled="false")["slides"]), 6)
+        self.assertEqual(len(render(wall_grafana_slides_enabled="false")["slides"]), 9)
 
     def test_grafana_slides_follow_mc1_6_and_use_inventory_url(self):
         defaults = yaml.safe_load((TEMPLATE.parents[1] / "defaults/main.yml").read_text())
@@ -60,14 +60,14 @@ class WallConfig(unittest.TestCase):
         )
         cfg = render(wall_grafana_slides_enabled=True, wall_grafana_base_url=base_url,
                      wall_slides=[{"name": "GLANCE", "route": "glance"}])
-        self.assertEqual(cfg["slides"][:6], render()["slides"])
-        self.assertEqual(cfg["slides"][6:8], [
+        self.assertEqual(cfg["slides"][:9], render()["slides"])
+        self.assertEqual(cfg["slides"][9:11], [
             {"name": "Benchmarks", "url": "https://metrics.example.test/d/llm-serving-benchmarks"
              "?kiosk&refresh=15s&from=now-1h&to=now"},
             {"name": "Agent Traffic", "url": "https://metrics.example.test/d/ai-agent-traffic"
              "?kiosk&refresh=15s&from=now-1h&to=now"},
         ])
-        self.assertEqual(cfg["slides"][8]["name"], "GLANCE")
+        self.assertEqual(cfg["slides"][11]["name"], "GLANCE")
 
     def test_contract(self):
         cfg = render()
@@ -80,11 +80,11 @@ class WallConfig(unittest.TestCase):
         self.assertEqual(cfg["guestCount"], 3)
         self.assertEqual(cfg["refreshSeconds"], 15)
         self.assertEqual(cfg["extraNodes"], [])
-        # An empty wall_slides still carries the rotator's own MC1-MC6
+        # An empty wall_slides still carries the rotator's own MC1-MC9
         # defaults — the rotator schema treats a non-empty `slides` as a
         # REPLACEMENT of its built-ins, so config.json must always render
-        # the full list, never wall_slides alone. MC6 is the LEXICON
-        # word-cloud slide, named by topic rather than number.
+        # the full list, never wall_slides alone. MC6 to MC9 carry the
+        # rotator's own names.
         self.assertEqual(cfg["slides"], [
             {"name": "MC1", "url": "/mc1/"},
             {"name": "MC2", "url": "/mc2/"},
@@ -92,6 +92,9 @@ class WallConfig(unittest.TestCase):
             {"name": "MC4", "url": "/mc4/"},
             {"name": "MC5", "url": "/mc5/"},
             {"name": "LEXICON", "url": "/mc6/"},
+            {"name": "AI Benchmark Cockpit", "url": "/mc7/"},
+            {"name": "SWITCHBOARD", "url": "/mc8/"},
+            {"name": "Agent Constellation", "url": "/mc9/"},
         ])
         self.assertEqual(cfg["title"], "HOMELAB")
 
@@ -100,14 +103,15 @@ class WallConfig(unittest.TestCase):
         self.assertEqual(cfg["groups"], [])
         self.assertEqual(cfg["guestCount"], 0)
 
-    def test_slides_append_after_built_in_mc1_6_with_derived_urls(self):
+    def test_slides_append_after_built_in_slides_with_derived_urls(self):
         slides = [
             {"name": "GLANCE", "route": "glance"},
             {"name": "HOMARR", "route": "homarr-two", "path": "/boards/wall"},
         ]
         cfg = render(wall_slides=slides)
         names = [s["name"] for s in cfg["slides"]]
-        self.assertEqual(names, ["MC1", "MC2", "MC3", "MC4", "MC5", "LEXICON", "GLANCE", "HOMARR"])
+        self.assertEqual(names, ["MC1", "MC2", "MC3", "MC4", "MC5", "LEXICON", "AI Benchmark Cockpit", "SWITCHBOARD",
+                                 "Agent Constellation", "GLANCE", "HOMARR"])
         for slide in cfg["slides"]:
             self.assertEqual(set(slide.keys()) - {"seconds"}, {"name", "url"})
         # The URL is the route under ingress_domain, plus an optional path.
