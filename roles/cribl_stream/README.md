@@ -82,6 +82,18 @@ Every log-bearing input uses `ansi_csi_strip` before routing; Splunk HEC outputs
 
 ### LLM span metrics (beta)
 
+An optional Collector leg forwards original spans over OTLP/HTTP before the
+trace-storage legs apply their transformations. Set
+`cribl_stream_otel_collector_enabled: true` after receiver and export validation;
+it defaults to false. Inventory derives `cribl_stream_otel_collector_url` from
+the `clickhouse_group` application address and published `otel_traces_http`
+port. The trace-only pipeline preserves IDs, timestamps, and resources.
+Its bounded error queue drops on overflow so the trace-storage legs can
+continue during a Collector outage. Disabling the flag removes its connection
+and destination on converge. The pipeline registry excludes it when disabled;
+an already deployed pipeline directory remains inert until explicit cleanup.
+Collector-derived span and service-graph metrics still need live acceptance.
+
 The OpenTelemetry input sends original spans to `otel_traces_to_metrics`
 before the independent trace-storage legs apply sampling or trace-ID changes.
 Native Aggregations is configured to emit cumulative `llm_span_calls`, `llm_span_errors`,

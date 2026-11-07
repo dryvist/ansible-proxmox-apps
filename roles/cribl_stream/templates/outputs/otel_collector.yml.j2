@@ -1,0 +1,30 @@
+  # Secondary trace fan-out: capped error queue, drop when full.
+  otel_metrics_collector:
+    id: otel_metrics_collector
+    type: open_telemetry
+    disabled: false
+    protocol: http
+    endpoint: "{{ cribl_stream_otel_collector_url | default(undef(), true)
+                  | mandatory('Collector OTLP base URL is required when enabled') }}"
+    otlpVersion: "1.3.1"
+    systemFields: []
+    responseRetrySettings:
+{% for status in [429, 502, 503, 504] %}
+      - httpStatus: {{ status }}
+        initialBackoff: 1000
+        backoffRate: 2
+        maxBackoff: 60000
+{% endfor %}
+    timeoutRetrySettings:
+      timeoutRetry: true
+      initialBackoff: 1000
+      backoffRate: 2
+      maxBackoff: 60000
+    responseHonorRetryAfterHeader: true
+    onBackpressure: queue
+    pqMode: error
+    pqOnBackpressure: drop
+    pqPath: "$CRIBL_HOME/state/queues"
+    pqMaxFileSize: "100 MB"
+    pqMaxSize: "1 GB"
+    pqCompress: gzip
