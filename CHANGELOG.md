@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.27.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.26.2...v5.27.0) (2026-11-07)
+
+
+### Features
+
+* **object-storage:** add a private versioned logos bucket ([#3401](https://github.com/dryvist/ansible-proxmox-apps/issues/3401)) ([711ca96](https://github.com/dryvist/ansible-proxmox-apps/commit/711ca9648157b9239a52e793c85fabc7781c7309))
+
 ## [5.26.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.26.1...v5.26.2) (2026-11-07)
 
 
