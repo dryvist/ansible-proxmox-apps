@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.26.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.26.1...v5.26.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **postgres:** retry the PGDG key fetch ([#3398](https://github.com/dryvist/ansible-proxmox-apps/issues/3398)) ([1a4a6c7](https://github.com/dryvist/ansible-proxmox-apps/commit/1a4a6c7ae77b772ccf82eec8c4de4c6ca33b990a))
+
 ## [5.26.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.26.0...v5.26.1) (2026-11-07)
 
 
