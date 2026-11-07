@@ -13,7 +13,7 @@ from test_cribl_stream_hec_pipeline_reconcile import _task_named
 
 class AgentTelemetry(unittest.TestCase):
     tags = dict(agent='test-agent', tier=0, privacy_class='public', model='test-model',
-                accelerator='test-accelerator', caller='test-caller', correlation_id='test-request')
+                accelerator='gpu-primary', caller='test-caller', correlation_id='test-request')
 
     def test_defaults_and_explicit_tags_reach_every_trace_leg(self):
         for leg in ('otel_traces', 'otel_traces_phoenix', 'otel_traces_to_splunk'):
@@ -36,6 +36,40 @@ class AgentTelemetry(unittest.TestCase):
             self.assertEqual(set(defaults), set(self.tags))
             self.assertEqual(defaults['privacy_class'], 'private')
 
+    def test_agent_run_facets_keep_zero_trace_identity_and_every_phoenix_span(self):
+        run_tags = {key: value for key, value in self.tags.items()
+                    if key not in ('caller', 'correlation_id')}
+        for carrier in ('canonical', 'aliases', 'event'):
+            for snake_case in (False, True):
+                attrs = {'session.id': 'test-session', 'metadata': '{"other":"keep","tier":2}'}
+                fields = {('trace_id' if snake_case else 'traceId'): 'a' * 31 + '1',
+                          ('span_id' if snake_case else 'spanId'): 'b' * 16,
+                          ('parent_span_id' if snake_case else 'parentSpanId'): 'c' * 16,
+                          'startTimeUnixNano': '1793923200000000000'}
+                if carrier == 'event':
+                    fields.update(self.tags)
+                else:
+                    prefix = 'litellm.metadata.' if carrier == 'aliases' else ''
+                    attrs.update({prefix + key: value for key, value in self.tags.items()})
+                for leg in ('otel_traces', 'otel_traces_phoenix'):
+                    with self.subTest(carrier=carrier, snake_case=snake_case, leg=leg):
+                        event = enrich(leg, attrs, **fields)
+                        self.assertIsNotNone(event)
+                        for key, value in fields.items():
+                            self.assertEqual(event[key], value)
+                        actual = event['attributes']
+                        if leg == 'otel_traces':
+                            for level in ('trace', 'observation'):
+                                self.assertEqual({key: actual[f'langfuse.{level}.metadata.{key}']
+                                                  for key in run_tags}, run_tags)
+                            self.assertTrue({f'{key}:{value}' for key, value in run_tags.items()}
+                                            .issubset(actual['langfuse.trace.tags']))
+                        else:
+                            metadata = json.loads(actual['metadata'])
+                            self.assertEqual({key: metadata[key] for key in run_tags}, run_tags)
+                            self.assertEqual(metadata['other'], 'keep')
+                        self.assertIs(type(actual['tier']), int)
+
     def test_arize_privacy_gate_fails_closed(self):
         for privacy in (None, '', 'private', 'zdr', 'PUBLIC', True, ['public'], {'value': 'public'}):
             with self.subTest(privacy=privacy):
@@ -43,6 +77,53 @@ class AgentTelemetry(unittest.TestCase):
                                         __otlp={'type': 'traces', 'extracted': True}))
         for signal in ('logs', 'metrics', 'traces'):
             self.assertIsNone(enrich('otel_traces_arize', self.tags, __otlp={'type': signal}))
+        self.assertIsNone(enrich('otel_traces_arize', {}, __otlp={'type': 'traces', 'extracted': True}))
+
+    def test_arize_drops_invalid_tag_values_at_both_projection_boundaries(self):
+        invalid = {
+            'agent': ['a', 'A-agent', 'a' * 64, 'valid-agent\n'],
+            'tier': [-1, 3, '0', '1', '2', False],
+            'accelerator': ['unknown', 'gpu-tertiary', 'cloud\n'],
+            'model': ['', 'm' * 129, 'model\n', 'model?query', 'mødel'],
+            'privacy_class': ['unknown', 'PUBLIC', 'public\n', 'internal', 'private'],
+        }
+        for tag, values in invalid.items():
+            for value in values + ['free text', 'Summarize this prompt: private input and output.',
+                                   None, [], {'prompt': 'body-marker'}, True]:
+                for carrier in ('canonical', 'alias', 'event'):
+                    with self.subTest(tag=tag, value=value, carrier=carrier):
+                        attrs = dict(self.tags)
+                        fields = {'__otlp': {'type': 'traces', 'extracted': True}}
+                        del attrs[tag]
+                        if carrier == 'event':
+                            fields[tag] = value
+                        else:
+                            attrs[('litellm.metadata.' if carrier == 'alias' else '') + tag] = value
+                        event = enrich('otel_traces_arize', attrs, **fields)
+                        if tag == 'privacy_class':
+                            self.assertIsNone(event)
+                            continue
+                        expected = {key: item for key, item in self.tags.items()
+                                    if key not in (tag, 'caller', 'correlation_id')}
+                        self.assertEqual(event['attributes'], expected)
+                        result = subprocess.run(['node', '-e', NODE], text=True, capture_output=True, check=True,
+                                                input=json.dumps({'event': event,
+                                                                  'pipeline': render('otel_traces_arize')}))
+                        self.assertEqual(json.loads(result.stdout), event)
+
+    def test_arize_accepts_only_closed_vocabularies_and_fixed_shapes(self):
+        valid = {
+            'tier': [0, 1, 2],
+            'accelerator': ['gpu-primary', 'gpu-secondary', 'mac-primary', 'mac-secondary', 'cloud', 'cpu'],
+            'agent': ['ab', 'a' * 63, 'agent-01'],
+            'model': ['M', 'm' * 128, 'provider/model:v1.0_test'],
+        }
+        for tag, values in valid.items():
+            for value in values:
+                event = enrich('otel_traces_arize', dict(self.tags, **{tag: value}),
+                               __otlp={'type': 'traces', 'extracted': True})
+                self.assertEqual(event['attributes'][tag], value)
+                self.assertIs(type(event['attributes']['tier']), int)
 
     def test_tag_defaults_handle_empty_and_malformed_attributes(self):
         for attrs in (None, [], 'text', {tag: '' for tag in self.tags}):
@@ -70,7 +151,8 @@ class AgentTelemetry(unittest.TestCase):
                        trace_id='a' * 32, span_id='b' * 16, start_time_unix_nano='123',
                        startTime=123, endTime=456, duration=333,
                        _raw='body-marker', host='body-marker', __headers={'authorization': 'body-marker'})
-        self.assertEqual(event['attributes'], self.tags)
+        self.assertEqual(event['attributes'], {key: value for key, value in self.tags.items()
+                                               if key not in ('caller', 'correlation_id')})
         self.assertEqual(event['resource'], {'attributes': {}})
         self.assertEqual(event['scope'], {})
         self.assertEqual(event['status'], {'code': 2})

@@ -12,6 +12,7 @@ from ansible.template import Templar, trust_as_template
 
 from test_cribl_internal_metrics_to_victoriametrics import _render_inputs
 from test_cribl_litellm_trace_contract import ROLE, render
+from test_cribl_otel_collector import context, outputs
 
 
 PIPELINE = "otel_traces_to_metrics"
@@ -32,7 +33,9 @@ for (const step of input.pipeline.functions) {
   if (step.id !== 'eval') throw new Error('Unexpected native function');
   for (const entry of step.conf.add) {
     const value = vm.runInContext(entry.value, context);
-    event[entry.name] = context[entry.name] = value;
+    context.value = value;
+    vm.runInContext('__e.' + entry.name + ' = value', context);
+    Object.assign(context, event);
   }
 }
 process.stdout.write(JSON.stringify(event));
@@ -93,11 +96,12 @@ def test_registered_native_aggregation_contract():
     assert defaults["cribl_stream_base_pipelines"].count(PIPELINE) == 1
     pipeline = render(PIPELINE)
     assert pipeline["output"] == "victoriametrics_rw"
-    assert [step["id"] for step in pipeline["functions"]] == ["drop", "drop", "eval", "aggregation"]
+    assert [step["id"] for step in pipeline["functions"]] == ["drop", "drop", "eval", "eval", "eval", "aggregation"]
     aggregation = pipeline["functions"][-1]["conf"]
     assert aggregation == {
         "metricsMode": True, "cumulative": True, "flushOnInputClose": False,
-        "timeWindow": "10s", "groupbys": ["service_name", "model", "system", "status"],
+        "timeWindow": "10s", "groupbys": [
+            "service_name", "agent", "tier", "privacy_class", "model", "accelerator", "system", "status"],
         "aggregations": [
             "count().as(llm_span_calls)",
             "count().where(status === 'error').as(llm_span_errors)",
@@ -106,6 +110,19 @@ def test_registered_native_aggregation_contract():
             f"histogram(duration_seconds, {BUCKETS}) "
             ".where(Number.isFinite(duration_seconds) && duration_seconds >= 0).as(llm_span_duration_seconds)",
         ],
+    }
+
+
+def test_remote_write_has_no_label_filter_or_post_processing_pipeline():
+    pipeline = render(PIPELINE)
+    assert pipeline['functions'][-1]['id'] == 'aggregation'
+    output = outputs(context())['outputs'][pipeline['output']]
+    assert output['type'] == 'prometheus'
+    # Only transport settings: no destination pipeline or dimension transforms.
+    assert set(output) == {
+        'id', 'type', 'disabled', 'url', 'concurrency', 'maxPayloadSizeKB',
+        'maxPayloadEvents', 'rejectUnauthorized', 'timeoutSec', 'flushPeriodSec',
+        'useRoundRobinDns', 'failedRequestLoggingMode', 'safeHeaders', 'onBackpressure',
     }
 
 
@@ -120,6 +137,10 @@ def test_ansible_render_assertions_evaluate_without_local_rpc():
     }
     variables["cribl_stream_base_pipelines"] = variables["_cribl_stream_defaults"]["cribl_stream_base_pipelines"]
     variables["cribl_stream_otel_collector_enabled"] = False
+    variables['cribl_stream_role_dir'] = str(ROLE)
+    for path in (ROLE / 'defaults/main').glob('4[01]-*.yml'):
+        variables.update(yaml.safe_load(path.read_text()))
+    variables['cribl_stream_otel_run_tags'] = trust_as_template(variables['cribl_stream_otel_run_tags'])
     variables["_cribl_stream_defaults"]["cribl_stream_pipelines"] = trust_as_template(
         variables["_cribl_stream_defaults"]["cribl_stream_pipelines"])
     for task in tasks[1:]:
@@ -154,7 +175,7 @@ def test_flat_fields_and_exact_duration_preserve_zero_usage(snake_case):
         "status": "error", "input_tokens": 0, "output_tokens": 9, "duration_seconds": 0.05,
     }
     assert actual["traceId"] == event["traceId"]
-    assert actual["attributes"] == event["attributes"]
+    assert all(actual["attributes"][key] == value for key, value in event["attributes"].items())
 
 
 @pytest.mark.parametrize("code,expected", [
@@ -171,8 +192,22 @@ def test_missing_measurements_are_not_invented_and_calls_still_count():
     actual = evaluate(event)
     assert actual is not None
     assert actual["status"] == "unset"
-    for key in ("input_tokens", "output_tokens", "duration_seconds", "service_name", "model", "system"):
+    assert actual['model'] == 'unknown'
+    for key in ("input_tokens", "output_tokens", "duration_seconds", "service_name", "system"):
         assert key not in actual
+
+
+def test_five_dimensions_survive_flattening_without_correlation_labels():
+    tags = dict(agent='test-agent', tier=0, privacy_class='private',
+                model='served-model', accelerator='gpu-primary')
+    event = span()
+    event['attributes'].update({f'litellm.metadata.{key}': value for key, value in tags.items()})
+    event['attributes'].update(caller='test-caller', correlation_id='test-run')
+    actual = evaluate(event)
+    assert {key: actual[key] for key in tags} == tags
+    groupbys = render(PIPELINE)['functions'][-1]['conf']['groupbys']
+    assert set(tags).issubset(groupbys)
+    assert not {'traceId', 'caller', 'correlation_id', 'run_id'}.intersection(groupbys)
 
 
 @pytest.mark.parametrize("value", [None, "", -1, "invalid", False])
