@@ -34,9 +34,14 @@ def test_verdaccio_is_read_only_for_anonymous_clients_and_journaled():
     unit = (ROLE / "templates" / "verdaccio-cache.service.j2").read_text()
     tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
     health = next(task for task in tasks if task["name"] == "Check Verdaccio health endpoint")
+    flush_handlers = next(
+        task for task in tasks
+        if task.get("ansible.builtin.meta") == "flush_handlers"
+    )
 
     assert "max_users: -1" in config
     assert "access: $all" in config
     assert "publish: $authenticated" in config
     assert "StandardOutput=journal" in unit and "StandardError=journal" in unit
     assert "-/ping" in health["ansible.builtin.uri"]["url"]
+    assert tasks.index(flush_handlers) < tasks.index(health)
