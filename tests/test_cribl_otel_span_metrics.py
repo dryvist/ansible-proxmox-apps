@@ -89,7 +89,7 @@ def test_original_input_fans_to_metrics_before_unchanged_trace_legs(namespace):
 
 def test_registered_native_aggregation_contract():
     defaults = yaml.safe_load((ROLE / "defaults/main/00-install.yml").read_text())
-    assert defaults["cribl_stream_pipelines"].count(PIPELINE) == 1
+    assert defaults["cribl_stream_base_pipelines"].count(PIPELINE) == 1
     pipeline = render(PIPELINE)
     assert pipeline["output"] == "victoriametrics_rw"
     assert [step["id"] for step in pipeline["functions"]] == ["drop", "drop", "eval", "aggregation"]
@@ -117,6 +117,10 @@ def test_ansible_render_assertions_evaluate_without_local_rpc():
         "_cribl_stream_inputs_per_index": yaml.safe_dump(_render_inputs("fixture")),
         "_cribl_stream_defaults": yaml.safe_load((ROLE / "defaults/main/00-install.yml").read_text()),
     }
+    variables["cribl_stream_base_pipelines"] = variables["_cribl_stream_defaults"]["cribl_stream_base_pipelines"]
+    variables["cribl_stream_otel_collector_enabled"] = False
+    variables["_cribl_stream_defaults"]["cribl_stream_pipelines"] = trust_as_template(
+        variables["_cribl_stream_defaults"]["cribl_stream_pipelines"])
     for task in tasks[1:]:
         templar = Templar(loader=DataLoader(), variables={
             **variables, **{key: trust_as_template(value) if isinstance(value, str) else value
