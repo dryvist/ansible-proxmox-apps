@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.27.0...v5.28.0) (2026-11-07)
+
+
+### Features
+
+* **caches:** add the PyPI, npm and raw download cache roles ([#3397](https://github.com/dryvist/ansible-proxmox-apps/issues/3397)) ([f89cc19](https://github.com/dryvist/ansible-proxmox-apps/commit/f89cc199e760ac72077a4a472c1fda8fb47dba53))
+* **prometheus:** scrape media metrics ([#3402](https://github.com/dryvist/ansible-proxmox-apps/issues/3402)) ([05e254c](https://github.com/dryvist/ansible-proxmox-apps/commit/05e254c57d3aa3434f1d644a13223a3d4565f1a6))
+
+
+### Bug Fixes
+
+* **cribl_stream:** apply the plumbing span drop list to the Splunk trace leg ([#3403](https://github.com/dryvist/ansible-proxmox-apps/issues/3403)) ([065bfd8](https://github.com/dryvist/ansible-proxmox-apps/commit/065bfd8d527b56b38d2450312d476b0ea8ed8890))
+* **prometheus:** name the model on the GPU engine scrape ([#3406](https://github.com/dryvist/ansible-proxmox-apps/issues/3406)) ([c5ec3f1](https://github.com/dryvist/ansible-proxmox-apps/commit/c5ec3f145208513d347aa2782652d0396b5905af))
+
 ## [5.27.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.26.2...v5.27.0) (2026-11-07)
 
 
