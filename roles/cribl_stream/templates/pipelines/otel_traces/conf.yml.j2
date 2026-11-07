@@ -44,6 +44,8 @@ functions:
     conf: {}
 {% endif %}
 
+{{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/agent_tags.yml.j2') }}
+
 {% if cribl_stream_otel_trace_bucket_seconds | int %}
   # 3. Re-key Langfuse spans by clock hour when a configured real grouping
   # attribute is present. This keeps each backend trace to one clock hour of
@@ -51,7 +53,7 @@ functions:
   # for metadata and the session fallback. parentSpanId stays unchanged, so
   # a child in a later hour is a root in that hour's trace.
   - id: code
-    filter: "true"
+    filter: "attributes.agent === 'unknown'"
     disabled: false
     conf:
       code: >-
@@ -88,8 +90,6 @@ functions:
             {{ cribl_stream_otel_trace_bucket_seconds }}));
         }
 {% endif %}
-
-{{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/agent_tags.yml.j2') }}
 
   # 4. Identity. These attributes are already emitted; nothing downstream read
   # them, so every trace landed with a null user and no session.
@@ -129,6 +129,26 @@ functions:
         - name: "attributes['langfuse.trace.metadata.{{ name }}']"
           value: "attributes['langfuse.trace.metadata.{{ name }}'] !== undefined && attributes['langfuse.trace.metadata.{{ name }}'] !== null ? attributes['langfuse.trace.metadata.{{ name }}'] : attributes['{{ source }}'] !== undefined && attributes['{{ source }}'] !== null ? attributes['{{ source }}'] : attributes['metadata.environment'] === 'benchmark' ? attributes['metadata.{{ name }}'] : undefined"
 {% endfor %}
+
+  # Canonical agent-run facets take precedence over emitter-specific metadata.
+  - id: eval
+    filter: "attributes.agent !== 'unknown'"
+    disabled: false
+    conf:
+      add:
+{% for tag in cribl_stream_otel_run_tags %}
+{% for level in ['trace', 'observation'] %}
+        - name: "attributes['langfuse.{{ level }}.metadata.{{ tag }}']"
+          value: "attributes['{{ tag }}']"
+{% endfor %}
+{% endfor %}
+        - name: "attributes['langfuse.trace.tags']"
+          value: >-
+            [...new Set([].concat(attributes['langfuse.trace.tags'] || [], [
+{% for tag in cribl_stream_otel_run_tags %}
+              '{{ tag }}:' + attributes['{{ tag }}']{{ ',' if not loop.last }}
+{% endfor %}
+            ]))]
 
   # 6. Trace label, most specific meaningful value first. `name` is the span's
   # own name and wins when set; the fallbacks cover the unnamed third.

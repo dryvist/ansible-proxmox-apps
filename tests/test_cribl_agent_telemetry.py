@@ -36,6 +36,40 @@ class AgentTelemetry(unittest.TestCase):
             self.assertEqual(set(defaults), set(self.tags))
             self.assertEqual(defaults['privacy_class'], 'private')
 
+    def test_agent_run_facets_keep_zero_trace_identity_and_every_phoenix_span(self):
+        run_tags = {key: value for key, value in self.tags.items()
+                    if key not in ('caller', 'correlation_id')}
+        for carrier in ('canonical', 'aliases', 'event'):
+            for snake_case in (False, True):
+                attrs = {'session.id': 'test-session', 'metadata': '{"other":"keep","tier":2}'}
+                fields = {('trace_id' if snake_case else 'traceId'): 'a' * 31 + '1',
+                          ('span_id' if snake_case else 'spanId'): 'b' * 16,
+                          ('parent_span_id' if snake_case else 'parentSpanId'): 'c' * 16,
+                          'startTimeUnixNano': '1793923200000000000'}
+                if carrier == 'event':
+                    fields.update(self.tags)
+                else:
+                    prefix = 'litellm.metadata.' if carrier == 'aliases' else ''
+                    attrs.update({prefix + key: value for key, value in self.tags.items()})
+                for leg in ('otel_traces', 'otel_traces_phoenix'):
+                    with self.subTest(carrier=carrier, snake_case=snake_case, leg=leg):
+                        event = enrich(leg, attrs, **fields)
+                        self.assertIsNotNone(event)
+                        for key, value in fields.items():
+                            self.assertEqual(event[key], value)
+                        actual = event['attributes']
+                        if leg == 'otel_traces':
+                            for level in ('trace', 'observation'):
+                                self.assertEqual({key: actual[f'langfuse.{level}.metadata.{key}']
+                                                  for key in run_tags}, run_tags)
+                            self.assertTrue({f'{key}:{value}' for key, value in run_tags.items()}
+                                            .issubset(actual['langfuse.trace.tags']))
+                        else:
+                            metadata = json.loads(actual['metadata'])
+                            self.assertEqual({key: metadata[key] for key in run_tags}, run_tags)
+                            self.assertEqual(metadata['other'], 'keep')
+                        self.assertIs(type(actual['tier']), int)
+
     def test_arize_privacy_gate_fails_closed(self):
         for privacy in (None, '', 'private', 'zdr', 'PUBLIC', True, ['public'], {'value': 'public'}):
             with self.subTest(privacy=privacy):
