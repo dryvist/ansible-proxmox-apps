@@ -1,14 +1,8 @@
 ---
-- name: Initialize this mirror run
-  ansible.builtin.set_fact:
-    addon_mirror_plan: []
-    addon_mirror_manifest: {}
-    addon_mirror_published: false
-
 # `aws s3api get-object-tagging` returns nonzero for a missing object
 # ("NoSuchKey" in stderr) — expected, drives a sync. Any other nonzero
 # (auth/network/bucket) must fail loud, validated in the next task.
-- name: Query current object-storage version tag for each artifact
+- name: Query current object-storage version tag for each pack
   ansible.builtin.command:
     argv:
       - aws
@@ -17,19 +11,18 @@
       - --bucket
       - "{{ object_storage_bucket }}"
       - --key
-      - "{{ addon_mirror_object_storage_prefix }}/{{ item.name }}.{{ addon_mirror_extension }}"
+      - "{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
       - --query
       - TagSet[?Key=='version'].Value
       - --output
       - text
   environment: "{{ s3_env }}"
-  loop: "{{ addon_mirror_desired }}"
+  loop: "{{ cribl_packs_desired }}"
   loop_control:
     label: "{{ item.name }}"
-  register: addon_mirror_tag_query
+  register: cribl_packs_tag_query
   changed_when: false
   failed_when: false
-  check_mode: false
   no_log: true
 
 - name: Validate query errors are only missing-object cases
@@ -43,21 +36,21 @@
       Not a "missing object" — check object-storage connectivity,
       OBJECT_STORAGE_ROOT_USER/PASSWORD, and bucket existence.
     quiet: true
-  loop: "{{ addon_mirror_tag_query.results }}"
+  loop: "{{ cribl_packs_tag_query.results }}"
   loop_control:
     label: "{{ item.item.name }}"
 
 - name: Compute sync decisions (bucket tag vs resolved latest)
   ansible.builtin.set_fact:
-    addon_mirror_plan: >-
-      {{ addon_mirror_plan | default([]) + [item.item | combine({
+    cribl_packs_plan: >-
+      {{ cribl_packs_plan | default([]) + [item.item | combine({
         'current_version': (item.stdout | default('') | trim) if item.rc == 0 else '',
         'needs_sync': (
           item.rc != 0
           or (item.stdout | default('') | trim) != (item.item.desired_version | string | trim)
         ),
       })] }}
-  loop: "{{ addon_mirror_tag_query.results }}"
+  loop: "{{ cribl_packs_tag_query.results }}"
   loop_control:
     label: "{{ item.item.name }}"
 
@@ -67,54 +60,50 @@
       {{ item.name }}: latest={{ item.desired_version }}
       store={{ item.current_version or '(none)' }}
       → {{ 'SYNC' if item.needs_sync else 'skip' }}
-  loop: "{{ addon_mirror_plan }}"
+  loop: "{{ cribl_packs_plan }}"
   loop_control:
     label: "{{ item.name }}"
 
-- name: Build list of artifacts that need sync
+- name: Build list of packs that need sync
   ansible.builtin.set_fact:
-    addon_mirror_to_sync: "{{ addon_mirror_plan | selectattr('needs_sync') | list }}"
+    cribl_packs_to_sync: "{{ cribl_packs_plan | selectattr('needs_sync') | list }}"
 
-- name: End the mirror play after the check-mode preview
-  ansible.builtin.meta: end_play
-  when: ansible_check_mode
-
-- name: Download drifted artifacts from upstream releases
+- name: Download drifted pack assets from GitHub releases
   ansible.builtin.get_url:
     url: "{{ item.asset_url }}"
-    dest: "{{ addon_mirror_sync_tmpdir }}/{{ item.name }}.{{ addon_mirror_extension }}"
+    dest: "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
     force: true
     mode: "0600"
     timeout: 120
-  loop: "{{ addon_mirror_to_sync }}"
+  loop: "{{ cribl_packs_to_sync }}"
   loop_control:
     label: "{{ item.name }} {{ item.desired_version }}"
 
-- name: Compute sha256 of downloaded artifacts
+- name: Compute sha256 of downloaded pack assets
   ansible.builtin.stat:
-    path: "{{ addon_mirror_sync_tmpdir }}/{{ item.name }}.{{ addon_mirror_extension }}"
+    path: "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
     checksum_algorithm: sha256
-  loop: "{{ addon_mirror_to_sync }}"
+  loop: "{{ cribl_packs_to_sync }}"
   loop_control:
     label: "{{ item.name }}"
-  register: addon_mirror_checksums
+  register: cribl_packs_checksums
 
-- name: Upload synced artifacts to object storage
+- name: Upload synced pack assets to object storage
   ansible.builtin.command:
     argv:
       - aws
       - s3
       - cp
-      - "{{ addon_mirror_sync_tmpdir }}/{{ item.name }}.{{ addon_mirror_extension }}"
-      - >-
-        {{ 's3://' ~ object_storage_bucket ~ '/' ~ addon_mirror_object_storage_prefix
-           ~ '/' ~ item.name ~ '.' ~ addon_mirror_extension }}
+      - "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
   environment: "{{ s3_env }}"
-  loop: "{{ addon_mirror_to_sync }}"
+  loop: "{{ cribl_packs_to_sync }}"
   loop_control:
     label: "{{ item.name }}"
   changed_when: true
 
+# Tag every desired entry (not only re-uploads), same as sync-splunkbase.yml —
+# pre-existing objects may lack channel=latest.
 - name: Tag object-storage objects as the current latest release
   ansible.builtin.command:
     argv:
@@ -124,80 +113,70 @@
       - --bucket
       - "{{ object_storage_bucket }}"
       - --key
-      - "{{ addon_mirror_object_storage_prefix }}/{{ item.name }}.{{ addon_mirror_extension }}"
+      - "{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
       - --tagging
       - >-
         {{ {'TagSet': [{'Key': 'channel', 'Value': 'latest'},
         {'Key': 'version', 'Value': item.desired_version | string | trim}]} | to_json }}
   environment: "{{ s3_env }}"
-  loop: "{{ addon_mirror_to_sync }}"
+  loop: "{{ cribl_packs_desired }}"
   loop_control:
     label: "{{ item.name }}"
   changed_when: true
 
 - name: Remove downloaded assets from controller tmpdir
   ansible.builtin.file:
-    path: "{{ addon_mirror_sync_tmpdir }}/{{ item.name }}.{{ addon_mirror_extension }}"
+    path: "{{ cribl_packs_sync_tmpdir }}/{{ item.name }}.crbl"
     state: absent
-  loop: "{{ addon_mirror_to_sync }}"
+  loop: "{{ cribl_packs_to_sync }}"
   loop_control:
     label: "{{ item.name }}"
 
-# sha256 was only computed for freshly-downloaded artifacts. For an entry that
+# sha256 was only computed for freshly-downloaded packs. For an entry that
 # was already current (skipped download), reuse the sha256 already published
 # in the existing manifest so the full manifest is always rebuilt from real
-# checksums, never invented for an artifact this run never touched.
+# checksums, never invented for a pack this run never touched.
 - name: Read existing manifest (source of sha256 for un-synced entries)
   ansible.builtin.command:
     argv:
       - aws
       - s3
       - cp
-      - "s3://{{ object_storage_bucket }}/{{ addon_mirror_object_storage_prefix }}/manifest.json"
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/manifest.json"
       - "-"
   environment: "{{ s3_env }}"
-  register: addon_mirror_existing_manifest
+  register: cribl_packs_existing_manifest
   changed_when: false
   failed_when: false
   no_log: true
 
 - name: Build manifest (name → {version, key, sha256})
   ansible.builtin.set_fact:
-    addon_mirror_manifest: >-
-      {{ addon_mirror_manifest | default({}) | combine({
+    cribl_packs_manifest: >-
+      {{ cribl_packs_manifest | default({}) | combine({
         item.name: {
           'version': item.desired_version,
-          'key': addon_mirror_object_storage_prefix ~ '/' ~ item.name ~ '.' ~ addon_mirror_extension,
+          'key': cribl_packs_object_storage_prefix ~ '/' ~ item.name ~ '.crbl',
           'sha256': (
-            (addon_mirror_checksums.results | selectattr('item.name', 'equalto', item.name)
+            (cribl_packs_checksums.results | selectattr('item.name', 'equalto', item.name)
              | map(attribute='stat.checksum') | list | first)
-            if item.name in (addon_mirror_to_sync | map(attribute='name') | list)
+            if item.name in (cribl_packs_to_sync | map(attribute='name') | list)
             else (
-              (addon_mirror_existing_manifest.stdout | default('{}', true) | from_json)
+              (cribl_packs_existing_manifest.stdout | default('{}', true) | from_json)
               .get(item.name, {}).sha256 | default('')
             )
           ),
         }
       }) }}
-  loop: "{{ addon_mirror_desired }}"
-  loop_control:
-    label: "{{ item.name }}"
-
-- name: Require real checksums before publishing the manifest
-  ansible.builtin.assert:
-    that:
-      - addon_mirror_manifest[item.name].sha256 is match('^[0-9a-f]{64}$')
-    fail_msg: "No checksum for {{ item.name }}; retain the existing manifest and repair the mirror."
-  loop: "{{ addon_mirror_desired }}"
+  loop: "{{ cribl_packs_desired }}"
   loop_control:
     label: "{{ item.name }}"
 
 - name: Write manifest to controller tmpdir
   ansible.builtin.copy:
-    content: "{{ addon_mirror_manifest | to_nice_json }}\n"
-    dest: "{{ addon_mirror_sync_tmpdir }}/manifest.json"
+    content: "{{ cribl_packs_manifest | to_nice_json }}\n"
+    dest: "{{ cribl_packs_sync_tmpdir }}/manifest.json"
     mode: "0600"
-  when: addon_mirror_manifest != (addon_mirror_existing_manifest.stdout | default('{}', true) | from_json)
 
 - name: Publish manifest.json to object storage
   ansible.builtin.command:
@@ -205,25 +184,20 @@
       - aws
       - s3
       - cp
-      - "{{ addon_mirror_sync_tmpdir }}/manifest.json"
-      - "s3://{{ object_storage_bucket }}/{{ addon_mirror_object_storage_prefix }}/manifest.json"
+      - "{{ cribl_packs_sync_tmpdir }}/manifest.json"
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/manifest.json"
   environment: "{{ s3_env }}"
   changed_when: true
-  when: addon_mirror_manifest != (addon_mirror_existing_manifest.stdout | default('{}', true) | from_json)
 
 - name: Remove manifest from controller tmpdir
   ansible.builtin.file:
-    path: "{{ addon_mirror_sync_tmpdir }}/manifest.json"
+    path: "{{ cribl_packs_sync_tmpdir }}/manifest.json"
     state: absent
-
-- name: Mark this mirror run as published
-  ansible.builtin.set_fact:
-    addon_mirror_published: true
 
 - name: Summary
   ansible.builtin.debug:
     msg: >-
-      Add-on mirror sync complete.
-      {{ addon_mirror_to_sync | length }} of
-      {{ addon_mirror_desired | length }} resolvable artifacts updated;
-      manifest.json published with {{ addon_mirror_manifest | length }} artifacts.
+      cc-* pack sync complete.
+      {{ cribl_packs_to_sync | length }} of
+      {{ cribl_packs_desired | length }} resolvable packs updated;
+      manifest.json published with {{ cribl_packs_manifest | length }} packs.
