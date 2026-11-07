@@ -109,6 +109,9 @@ default and requires `agent_sandbox_git_mirror_url` when enabled.
 
 ## Host dispatcher
 
+Ansible loads the sandbox and CI resolver defaults from `defaults/main/`.
+Inventory and play variables override these defaults.
+
 With `agent_sandbox_dispatch_access_enabled`, the role installs the dispatcher
 (`agent-dispatch`) and its SSH entry point (`agent-dispatch-ssh`) from one
 pinned nix-agent-sandbox commit, each checked against its SHA-256. It also
@@ -125,6 +128,16 @@ The operator allowlist has a separate SSH identity. Set
 The workstation `agent-allow` command supports `add`, `rm`, and `ls`. Changes
 replace the operator list atomically, reload Squid, and append a timestamped
 state record under `agent_sandbox_allowlist_log_file`.
+
+Dispatcher jobs use `agent_sandbox_job_github_write: false` by default. They
+select read credentials, commit local changes, and export a `git bundle`
+to each run's `branch.bundle` alongside its redacted `log`. Status JSON
+and the Vikunja result include both paths. The bundle contains `base..branch`,
+including merge commits and their resolutions. Runs without changes produce a
+full branch bundle. The GitHub connector imports the bundle to publish changes.
+Setting `agent_sandbox_job_github_write: true` enables the existing direct
+publish path. `agent_sandbox_job_entrypoint` selects the installed job entrypoint
+path; the role derives its read-only container mount target from the pinned image.
 
 ## Session-log shipping
 

@@ -2,6 +2,19 @@
 systemd_restart_policy_services:
   - cribl
 
+# Both forwarders use the same Collector for service-graph pairing affinity.
+# Reach it by name: the clickhouse-tagged guest's hostname and the published port.
+cribl_stream_otel_collector_url: >-
+  {{ ('http://' ~ (tofu_data.containers | default({}) | dict2items
+      | selectattr('value.tags', 'defined')
+      | selectattr('value.tags', 'contains', 'clickhouse')
+      | map(attribute='value.hostname') | list | first
+      | mandatory('no clickhouse-tagged container in the tofu inventory'))
+      ~ '.' ~ tofu_data.domain ~ ':'
+      ~ (tofu_data.constants.service_ports.otel_traces_http
+         | mandatory('otel_traces_http missing from published constants')))
+     if cribl_stream_otel_collector_enabled | bool else '' }}
+
 # Alert events enter through the Stream HEC input and are delivered directly
 # to the shared alert webhook. The secret domain is read by this consumer;
 # no notification service is in the delivery path.

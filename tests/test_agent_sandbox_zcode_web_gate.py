@@ -1,6 +1,8 @@
 """The ZCode Web service is optional: off removes it from the compose project and the tasks."""
 
+import json
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -24,7 +26,7 @@ def load(path: Path):
 
 
 def render_compose(enabled: bool, docs_enabled: bool = False) -> dict:
-    variables = dict(load(ROLE / "defaults/main.yml"))
+    variables = dict(load(ROLE / "defaults/main/00-runtime.yml"))
     variables.update(
         {
             "ansible_managed": "test",
@@ -65,8 +67,31 @@ def zcode_tasks(path: Path):
 
 
 class ZcodeWebGate(unittest.TestCase):
+    def test_renovate_extracts_the_image_digest_from_role_defaults(self):
+        config = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+        manager = next(
+            item for item in config["customManagers"]
+            if item.get("depNameTemplate") == "ghcr.io/dryvist/nix-agent-sandbox/agent"
+        )
+        files = [
+            path for path in (ROLE / "defaults").rglob("*.yml")
+            if any(
+                re.search(pattern[1:-1], path.relative_to(ROOT).as_posix())
+                for pattern in manager["managerFilePatterns"]
+            )
+        ]
+        self.assertEqual(len(files), 1)
+        text = files[0].read_text(encoding="utf-8")
+        pattern = manager["matchStrings"][0].replace(
+            "(?<currentDigest>", "(?P<currentDigest>"
+        )
+        match = re.search(pattern, text)
+        self.assertIsNotNone(match)
+        image = render_compose(True)["services"]["zcode-web"]["image"]
+        self.assertEqual(image, manager["depNameTemplate"] + "@" + match["currentDigest"])
+
     def test_role_default_keeps_the_service_on(self):
-        self.assertIs(load(ROLE / "defaults/main.yml")[FLAG], True)
+        self.assertIs(load(ROLE / "defaults/main/00-runtime.yml")[FLAG], True)
 
     def test_sandbox_guest_turns_it_off(self):
         self.assertIs(load(ROOT / "inventory/host_vars/ai-sandbox-01.yml")[FLAG], False)

@@ -122,10 +122,15 @@ scrape_configs:
 {{ prometheus_stack_extra_scrape_configs | indent(2, true) }}
 {% endif %}
 {% if prometheus_stack_remote_write_url | default('') | trim | length > 0 %}
+{% if not prometheus_stack_direct_histogram_write_enabled | bool %}
 ## Every scrape job ships unfiltered — VictoriaMetrics is the superset
 ## store. Cribl's splunk_hec leg (prometheus_to_netmon pipeline) applies
 ## its own job allow-list to bound Splunk license volume; the
 ## victoriametrics_rw leg has no such filter.
+{% else %}
+## Selected LLM histogram and summary suffixes go directly to VictoriaMetrics.
+## Cribl receives the remaining series for its existing destinations.
+{% endif %}
 remote_write:
   - url: "{{ prometheus_stack_remote_write_url }}"
     queue_config:
@@ -138,4 +143,20 @@ remote_write:
       - source_labels: [__name__]
         regex: "node_gpu_.*"
         action: drop
+{% if prometheus_stack_direct_histogram_write_enabled | bool %}
+{% set histogram_selector = '(llm_gpu_engine|llm_router);.+_(bucket|count|sum)' %}
+      # These LLM families have exactly one writer: the native endpoint below.
+      - source_labels: [job, __name__]
+        regex: "{{ histogram_selector }}"
+        action: drop
+  - url: "{{ prometheus_stack_direct_histogram_write_url }}"
+    queue_config:
+      capacity: 2500
+      max_shards: 2
+      max_samples_per_send: 1000
+    write_relabel_configs:
+      - source_labels: [job, __name__]
+        regex: "{{ histogram_selector }}"
+        action: keep
+{% endif %}
 {% endif %}

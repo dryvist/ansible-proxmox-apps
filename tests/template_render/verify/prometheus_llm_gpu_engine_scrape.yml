@@ -6,7 +6,14 @@
 #
 # No llm_gpu_engine_group members means no GPU scrape jobs. A seeded inventory
 # renders one engine job plus the separate GPU hardware exporter job, and the
-# primary GPU guest stays unlabeled there while it is an engine target.
+# both jobs retain guest labels and add the same explicit accelerator ownership.
+# Downstream selectors: job/guest/instance selectors remain valid. Primary
+# selectors using accelerator="" must migrate to accelerator=~"gpu-primary|"
+# before rollout (old and new series), then accelerator="gpu-primary" after
+# the historical window expires. Aggregate by accelerator, never by engine.
+# Existing gpu-secondary and mac-primary/mac-secondary selectors stay valid;
+# the latter are covered by prometheus_macmon_scrape.yml. No Mac token counter
+# or extra engine scrape is implied by these hardware labels.
 # The container_ip-only fixture models the DHCP-lease shape used by inventory.
 #
 # tofu_data is set as a FACT for the same reason as prometheus_llm_router_scrape.yml
@@ -31,6 +38,7 @@
       constants:
         service_ports:
           prometheus_web: 9090
+          victoriametrics: 18428
           blackbox_exporter: 9115
           llm_router_api: 4321
           llm_fast_api: 10434
@@ -43,6 +51,8 @@
           hindsight_cp: 9999
       nodes: {}
       containers:
+        grafana:
+          hostname: metrics-store
         agentgateway:
           ip: agw.test.example
           tags: [agentgateway]
@@ -87,17 +97,19 @@
             | list | length == 0
         success_msg: No GPU guest, no GPU telemetry jobs.
 
-    - name: Add a DHCP-lease-style llm-vllm guest (container_ip only, no static ip)
+    - name: Add a secondary llama.cpp guest in the legacy serving group
       ansible.builtin.add_host:
         name: llm-vllm-under-test
         groups: [llm_vllm_group, llm_gpu_engine_group]
         container_ip: vllm-under-test.test.example
+        llm_gpu_engine_identity: llama_cpp
 
     - name: Add the primary GPU guest serving the selected vLLM engine
       ansible.builtin.add_host:
         name: llm-gpu-primary-under-test
         groups: [nvidia_gpu_group, llm_gpu_engine_group]
         container_ip: gpu-primary.test.example
+        llm_gpu_engine_identity: vllm
 
     - name: Add the classify guest to the NVIDIA GPU and classify groups
       ansible.builtin.add_host:
@@ -138,13 +150,17 @@
         quiet: true
         that:
           - _engine_jobs | length == 1
+          - _engine_jobs[0].scrape_interval == '5s'
+          - _engine_jobs[0].scrape_timeout == '4s'
           - _engine_jobs[0].metrics_path == '/metrics'
           - _engine_jobs[0].params.format == ['prometheus']
           - _engine_jobs[0].static_configs | length == 2
           - _engine_jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:10434']
           - _engine_jobs[0].static_configs[0].labels.guest == 'llm-vllm-under-test'
+          - _engine_jobs[0].static_configs[0].labels.accelerator == 'gpu-secondary'
           - _engine_jobs[0].static_configs[1].targets == ['gpu-primary.test.example:10434']
           - _engine_jobs[0].static_configs[1].labels.guest == 'llm-gpu-primary-under-test'
+          - _engine_jobs[0].static_configs[1].labels.accelerator == 'gpu-primary'
           - _legacy_engine_jobs | length == 0
         fail_msg: >-
           Seeded render has {{ _engine_jobs | length }} unified engine job(s):
@@ -152,6 +168,21 @@
           Expected one inventory-derived target with a guest label and no
           engine-specific duplicate scrapes.
         success_msg: One unified engine scrape and no legacy engine jobs.
+
+    - name: Faster engine scrapes preserve other jobs and remote write
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _seeded.global.scrape_interval == '15s'
+          - _seeded.global == _no_members.global
+          - _seeded.remote_write == _no_members.remote_write
+          - _seeded.remote_write | length == 2
+          - >-
+            (_seeded.scrape_configs
+             | rejectattr('job_name', 'in', ['llm_gpu_engine', 'dcgm_exporter']) | list)
+            == _no_members.scrape_configs
+          - _dcgm_jobs[0].scrape_interval is not defined
+          - _dcgm_jobs[0].scrape_timeout is not defined
 
     - name: Seeded inventory renders GPU and engine metrics targets
       ansible.builtin.assert:
@@ -165,9 +196,18 @@
           - _dcgm_vllm_configs[0].labels.accelerator == 'gpu-secondary'
           - _dcgm_primary_configs | length == 1
           - _dcgm_primary_configs[0].targets == ['gpu-primary.test.example:9400']
-          - _dcgm_primary_configs[0].labels.accelerator is not defined
+          - _dcgm_primary_configs[0].labels.accelerator == 'gpu-primary'
           - _dcgm_secondary_configs | length == 1
           - _dcgm_secondary_configs[0].targets == ['gpu-classify.test.example:9400']
           - _dcgm_secondary_configs[0].labels.accelerator == 'gpu-secondary'
           - _engine_jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:10434']
-        success_msg: GPU exporter labels secondary-GPU guests and keeps the primary unlabeled.
+        success_msg: Hardware and engine jobs share explicit ownership labels and retain guest labels.
+
+    - name: Primary selectors accept explicit labels during the downstream migration
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _dcgm_primary_configs[0].labels.accelerator is match('^(gpu-primary|)$')
+          - _engine_jobs[0].static_configs[1].labels.accelerator is match('^(gpu-primary|)$')
+          - _dcgm_primary_configs[0].labels.accelerator != ''
+        success_msg: Use accelerator=~"gpu-primary|" across rollout, then accelerator="gpu-primary".

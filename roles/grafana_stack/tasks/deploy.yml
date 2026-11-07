@@ -7,6 +7,9 @@
 #
 # daemon.json is managed by the docker_engine role's shared renderer.
 
+- name: Read the shared Grafana LLM router credential
+  ansible.builtin.import_tasks: llm_router.yml
+
 - name: Include the shared Docker engine prerequisites
   ansible.builtin.include_role:
     name: docker_engine
@@ -60,7 +63,7 @@
     ansible_become: false
   no_log: true
   block:
-    - name: Seed the Grafana admin password through the shared seed_generated task
+    - name: Seed Grafana credentials through the shared seed_generated task
       ansible.builtin.include_role:
         name: dryvist.homelab.openbao_secrets
         tasks_from: seed_generated
@@ -77,22 +80,27 @@
       vars:
         openbao_secrets_seed_addr: "{{ lookup('env', 'BAO_ADDR') }}"
         openbao_secrets_seed_token: "{{ lookup('env', 'BAO_TOKEN') }}"
-        openbao_secrets_seed_path: apps/grafana
+        openbao_secrets_seed_path: "{{ grafana_stack_seed.path }}"
         openbao_secrets_seed_fields:
-          - name: grafana_admin_password
-            length: 40
-            value: >-
-              {{ grafana_stack_admin_password
-                 or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
-        openbao_secrets_seed_local_values:
-          grafana_admin_password: >-
+          - name: "{{ grafana_stack_seed.field }}"
+            length: "{{ grafana_stack_seed.length }}"
+            value: "{{ grafana_stack_seed.value }}"
+        openbao_secrets_seed_local_values: "{{ {grafana_stack_seed.field: grafana_stack_seed.value} }}"
+        openbao_secrets_seed_register: "{{ grafana_stack_seed.register }}"
+      loop:
+        - path: apps/grafana
+          field: grafana_admin_password
+          length: 40
+          value: >-
             {{ grafana_stack_admin_password
                or (grafana_stack_admin_pw_stored.content | default('') | b64decode | trim) }}
-        openbao_secrets_seed_register: grafana_stack_admin_seed
+          register: grafana_stack_secret_seed
+      loop_control:
+        loop_var: grafana_stack_seed
 
-- name: Resolve Grafana's admin password from OpenBao
+- name: Resolve Grafana credentials from OpenBao
   ansible.builtin.set_fact:
-    grafana_stack_effective_admin_password: "{{ grafana_stack_admin_seed.grafana_admin_password }}"
+    grafana_stack_effective_admin_password: "{{ grafana_stack_secret_seed.grafana_admin_password }}"
   no_log: true
 
 - name: Require the persisted password to match OpenBao
@@ -104,7 +112,7 @@
            == grafana_stack_effective_admin_password
     fail_msg: "Grafana password file differs from the stored field grafana_admin_password"
   when:
-    - grafana_stack_admin_seed.grafana_admin_password != '(placeholder in check mode)'
+    - grafana_stack_secret_seed.grafana_admin_password != '(placeholder in check mode)'
   no_log: true
 
 - name: Persist Grafana's admin password
@@ -115,8 +123,18 @@
     group: root
     mode: "0400"
   when:
-    - grafana_stack_admin_seed.grafana_admin_password != '(placeholder in check mode)'
+    - grafana_stack_secret_seed.grafana_admin_password != '(placeholder in check mode)'
   no_log: true
+
+- name: Persist Grafana's LLM router credential
+  ansible.builtin.template:
+    src: llm-router.env.j2
+    dest: "{{ grafana_stack_llm_router_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: Restart grafana stack
 
 - name: Persist the Cribl HEC credential for Grafana's webhook integration
   ansible.builtin.template:
@@ -137,6 +155,9 @@
     mode: "0400"
   no_log: true
   notify: Restart grafana stack
+
+- name: Read the mirrored plugin versions before starting Grafana
+  ansible.builtin.import_tasks: plugins.yml
 
 - name: Deploy grafana stack docker-compose template
   ansible.builtin.template:

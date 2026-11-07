@@ -34,6 +34,12 @@
     cribl_stream_phoenix_live: >-
       {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('phoenix_otlp', {}) }}
+    cribl_stream_otel_collector_live: >-
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
+          | default({}, true)).get('outputs', {}).get('otel_metrics_collector', {}) }}
+    cribl_stream_arize_live: >-
+      {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
+          | default({}, true)).get('outputs', {}).get('arize_otlp', {}) }}
     cribl_stream_victoriametrics_live: >-
       {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('victoriametrics_rw', {}) }}
@@ -58,6 +64,13 @@
       {{ ((cribl_stream_outputs_live.stdout | default('') | from_yaml)
           | default({}, true)).get('outputs', {}).get('splunk_hec_llm', {}) }}
   no_log: true
+
+- name: Render the managed Collector output settings for drift detection
+  ansible.builtin.set_fact:
+    cribl_stream_otel_collector_expected: >-
+      {{ (lookup('ansible.builtin.template', 'outputs/otel_collector.yml.j2')
+          | from_yaml).otel_metrics_collector }}
+  when: cribl_stream_otel_collector_enabled | bool
 
 - name: Deploy Cribl Stream outputs configuration
   ansible.builtin.template:
@@ -91,6 +104,12 @@
                | map('regex_replace', '^', 'splunk_hec_') | list)
               | difference(cribl_stream_outputs_live_ids) | length > 0)
       or 'splunk_hec_otel_traces' in cribl_stream_outputs_live_ids
+      or (cribl_stream_otel_collector_enabled | bool
+          and (cribl_stream_otel_collector_live | dict2items
+               | selectattr('key', 'in', cribl_stream_otel_collector_expected)
+               | items2dict) != cribl_stream_otel_collector_expected)
+      or (not cribl_stream_otel_collector_enabled | bool
+          and 'otel_metrics_collector' in cribl_stream_outputs_live_ids)
       or 'langfuse_otlp' not in cribl_stream_outputs_live_ids
       or cribl_stream_langfuse_live.get('endpoint', '') != cribl_stream_langfuse_url
       or cribl_stream_langfuse_live.get('username', '') != cribl_stream_langfuse_public_key
@@ -98,6 +117,19 @@
       or 'phoenix_otlp' not in cribl_stream_outputs_live_ids
       or cribl_stream_phoenix_live.get('endpoint', '') != cribl_stream_phoenix_url
       or cribl_stream_phoenix_live.get('token', '') != cribl_stream_phoenix_api_key
+      or cribl_stream_arize_live.get('endpoint', '') != cribl_stream_arize_url
+      or cribl_stream_arize_live.get('type', '') != 'open_telemetry'
+      or cribl_stream_arize_live.get('protocol', '') != 'http'
+      or cribl_stream_arize_live.get('otlpVersion', '') != '1.3.1'
+      or cribl_stream_arize_live.get('authType', '') != 'none'
+      or cribl_stream_arize_live.get('extraHttpHeaders', [])
+         != [{'name': 'arize-api-key', 'value': cribl_stream_arize_api_key},
+             {'name': 'arize-space-id', 'value': cribl_stream_arize_space_id}]
+      or cribl_stream_arize_live.get('pipeline', '') != 'otel_traces_arize'
+      or cribl_stream_arize_live.get('systemFields', none) != []
+      or not cribl_stream_arize_live.get('rejectUnauthorized', false)
+      or cribl_stream_arize_live.get('failedRequestLoggingMode', '') != 'none'
+      or cribl_stream_arize_live.get('safeHeaders', none) != []
       or 'victoriametrics_rw' not in cribl_stream_outputs_live_ids
       or cribl_stream_victoriametrics_live.get('type', '') != 'prometheus'
       or cribl_stream_victoriametrics_live.get('url', '') != cribl_stream_victoriametrics_rw_url

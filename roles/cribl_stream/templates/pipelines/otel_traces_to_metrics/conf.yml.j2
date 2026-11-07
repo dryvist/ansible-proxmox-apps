@@ -1,0 +1,68 @@
+---
+# Original LLM spans become native metrics on an independent input connection.
+# Trace stores retain their existing pipelines, sampling, and identity handling.
+output: victoriametrics_rw
+streamtags: []
+groups: {}
+asyncFuncTimeout: 1000
+functions:
+  - id: drop
+    filter: "!__e.__otlp || __e.__otlp.type !== 'traces'"
+    disabled: false
+    conf: {}
+  - id: drop
+    filter: "!/(^|,)gen_ai\\./.test(Object.keys(__e.attributes || {}).join(','))"
+    disabled: false
+    conf: {}
+  # Flat names avoid treating dotted GenAI attribute names as object paths.
+  - id: eval
+    filter: "true"
+    disabled: false
+    conf:
+      add:
+        - name: service_name
+          value: "attributes['service.name']"
+        - name: model
+          value: "attributes['gen_ai.request.model']"
+        - name: system
+          value: "attributes['gen_ai.system']"
+        - name: status
+          value: >-
+            [2, 'ERROR', 'STATUS_CODE_ERROR'].includes((__e.status || {}).code) ? 'error' :
+            [1, 'OK', 'STATUS_CODE_OK'].includes((__e.status || {}).code) ? 'ok' : 'unset'
+        - name: input_tokens
+          value: >-
+            /^\d+$/.test(String(attributes['gen_ai.usage.input_tokens']))
+            ? Number(attributes['gen_ai.usage.input_tokens']) : undefined
+        - name: output_tokens
+          value: >-
+            /^\d+$/.test(String(attributes['gen_ai.usage.output_tokens']))
+            ? Number(attributes['gen_ai.usage.output_tokens']) : undefined
+        # Subtract integer nanoseconds before converting to avoid epoch rounding.
+        - name: duration_seconds
+          value: >-
+            /^\d+$/.test(String(__e.start_time_unix_nano ?? __e.startTimeUnixNano)) &&
+            /^\d+$/.test(String(__e.end_time_unix_nano ?? __e.endTimeUnixNano))
+            ? Number(BigInt(__e.end_time_unix_nano ?? __e.endTimeUnixNano) -
+            BigInt(__e.start_time_unix_nano ?? __e.startTimeUnixNano)) / 1e9 : undefined
+  - id: aggregation
+    filter: "true"
+    disabled: false
+    conf:
+      metricsMode: true
+      cumulative: true
+      flushOnInputClose: false
+      timeWindow: 10s
+      groupbys:
+        - service_name
+        - model
+        - system
+        - status
+      aggregations:
+        - "count().as(llm_span_calls)"
+        - "count().where(status === 'error').as(llm_span_errors)"
+        - "sum(input_tokens).where(Number.isFinite(input_tokens)).as(llm_span_input_tokens)"
+        - "sum(output_tokens).where(Number.isFinite(output_tokens)).as(llm_span_output_tokens)"
+        - >-
+          histogram(duration_seconds, [0.05,0.1,0.25,0.5,1,2.5,5,10,30,60,120])
+          .where(Number.isFinite(duration_seconds) && duration_seconds >= 0).as(llm_span_duration_seconds)

@@ -1,0 +1,72 @@
+---
+- name: Render the disabled Collector leg without a receiver URL
+  vars:
+    cribl_stream_otel_collector_enabled: false
+    cribl_stream_hec_namespace: "{{ collector_namespace }}"
+  ansible.builtin.set_fact:
+    _collector_inputs_off: "{{ lookup('template', _template_dir ~ '/inputs.yml.j2') | from_yaml }}"
+    _collector_outputs_off: "{{ lookup('template', _template_dir ~ '/outputs.yml.j2') | from_yaml }}"
+    _collector_pipelines_off: "{{ _cribl_stream_defaults.cribl_stream_pipelines }}"
+
+- name: Render the enabled Collector leg
+  vars:
+    cribl_stream_otel_collector_enabled: true
+    cribl_stream_hec_namespace: "{{ collector_namespace }}"
+    cribl_stream_otel_collector_url: "http://collector.example.invalid:4318"
+  ansible.builtin.set_fact:
+    _collector_inputs_on: "{{ lookup('template', _template_dir ~ '/inputs.yml.j2') | from_yaml }}"
+    _collector_outputs_on: "{{ lookup('template', _template_dir ~ '/outputs.yml.j2') | from_yaml }}"
+    _collector_pipelines_on: "{{ _cribl_stream_defaults.cribl_stream_pipelines }}"
+    _collector_pipeline: >-
+      {{ lookup('template', _template_dir ~ '/pipelines/otel_traces_to_collector/conf.yml.j2') | from_yaml }}
+
+- name: Assert the Collector branch is optional and every existing leg is unchanged
+  vars:
+    _off: "{{ _collector_inputs_off.inputs['open_telemetry:in_otel'] }}"
+    _on: "{{ _collector_inputs_on.inputs['open_telemetry:in_otel'] }}"
+    _connection:
+      output: otel_metrics_collector
+      pipeline: otel_traces_to_collector
+  ansible.builtin.assert:
+    that:
+      - not _cribl_stream_defaults.cribl_stream_otel_collector_enabled
+      - "'otel_metrics_collector' not in _collector_outputs_off.outputs"
+      - "'otel_traces_to_collector' not in _collector_pipelines_off"
+      - "_collector_pipelines_on == _collector_pipelines_off + ['otel_traces_to_collector']"
+      - "'otel_traces_to_metrics' in _collector_pipelines_off"
+      - _on.connections == [_connection] + _off.connections
+      - "_on | combine({'connections': _off.connections}) == _off"
+      - _collector_inputs_on.inputs | dict2items | rejectattr('key', 'equalto', 'open_telemetry:in_otel') | list
+        == _collector_inputs_off.inputs | dict2items | rejectattr('key', 'equalto', 'open_telemetry:in_otel') | list
+      - _collector_outputs_on.outputs | dict2items | rejectattr('key', 'equalto', 'otel_metrics_collector') | items2dict
+        == _collector_outputs_off.outputs
+      - _collector_pipeline.output == 'otel_metrics_collector'
+      - _collector_pipeline.functions | length == 1
+      - _collector_pipeline.functions[0].id == 'drop'
+      - not _collector_pipeline.functions[0].disabled
+      - "_collector_pipeline.functions[0].filter == \"!__e.__otlp || __e.__otlp.type !== 'traces'\""
+      - _collector_pipeline.functions[0].conf == {}
+
+- name: Assert OTLP HTTP and the same bounded queue and retry policy as Phoenix
+  vars:
+    _output: "{{ _collector_outputs_on.outputs.otel_metrics_collector }}"
+    _phoenix: "{{ _collector_outputs_on.outputs.phoenix_otlp }}"
+  ansible.builtin.assert:
+    that:
+      - _output.id == 'otel_metrics_collector'
+      - _output.type == 'open_telemetry'
+      - not _output.disabled
+      - _output.protocol == 'http'
+      - _output.endpoint == 'http://collector.example.invalid:4318'
+      - _output.otlpVersion == '1.3.1'
+      - _output.systemFields == []
+      - _output.responseRetrySettings == _phoenix.responseRetrySettings
+      - _output.timeoutRetrySettings == _phoenix.timeoutRetrySettings
+      - _output.responseHonorRetryAfterHeader == _phoenix.responseHonorRetryAfterHeader
+      - _output.onBackpressure == _phoenix.onBackpressure
+      - _output.pqMode == _phoenix.pqMode
+      - _output.pqOnBackpressure == _phoenix.pqOnBackpressure
+      - _output.pqPath == _phoenix.pqPath
+      - _output.pqMaxFileSize == _phoenix.pqMaxFileSize
+      - _output.pqMaxSize == _phoenix.pqMaxSize
+      - _output.pqCompress == _phoenix.pqCompress

@@ -1,0 +1,163 @@
+---
+# Native remote-write routing only; scrape jobs are covered by their own plays.
+- name: Verify the optional direct histogram write has disjoint writers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _legacy_remote_write: |
+      ## Every scrape job ships unfiltered — VictoriaMetrics is the superset
+      ## store. Cribl's splunk_hec leg (prometheus_to_netmon pipeline) applies
+      ## its own job allow-list to bound Splunk license volume; the
+      ## victoriametrics_rw leg has no such filter.
+      remote_write:
+        - url: "http://stream.example.invalid:9201/api/v1/write"
+          queue_config:
+            capacity: 2500
+            max_shards: 2
+            max_samples_per_send: 1000
+          # Native GPU metrics already fan out from Cribl Edge to Splunk and
+          # VictoriaMetrics; exclude their Prometheus echo from this return path.
+          write_relabel_configs:
+            - source_labels: [__name__]
+              regex: "node_gpu_.*"
+              action: drop
+    _routed_series:
+      - llm_gpu_engine;vllm:time_to_first_token_seconds_bucket
+      - llm_gpu_engine;vllm:time_to_first_token_seconds_count
+      - llm_gpu_engine;vllm:time_to_first_token_seconds_sum
+      - llm_router;litellm_llm_api_latency_metric_count
+      - llm_router;litellm_llm_api_latency_metric_sum
+      - llm_router;request_duration_seconds_bucket
+    _cribl_only_series:
+      - llm_gpu_engine;vllm:generation_tokens_total
+      - llm_gpu_engine;vllm:num_requests_running
+      - llm_router;litellm_proxy_total_requests_metric_total
+      - llm_router;litellm_in_flight_requests
+      - dcgm_exporter;DCGM_FI_DEV_GPU_UTIL
+      - other_job;request_duration_seconds_bucket
+      - other_job;request_duration_seconds_count
+      - other_job;request_duration_seconds_sum
+      - llm_router_extra;request_duration_seconds_sum
+      - llm_gpu_engine;request_duration_seconds_sum_extra
+      - llm_router;request_duration_seconds
+
+  vars_files:
+    - "../../../roles/prometheus_stack/defaults/main.yml"
+    - "../../../inventory/group_vars/prometheus_group.yml"
+
+  tasks:
+    - name: Publish the fixture inventory for the native endpoint
+      ansible.builtin.set_fact:
+        tofu_data:
+          domain: example.invalid
+          constants:
+            service_ports:
+              prometheus_web: 9090
+              victoriametrics: 18428
+
+    - name: Exercise routing with isolated scrape fixtures
+      vars:
+        prometheus_stack_remote_write_url: "http://stream.example.invalid:9201/api/v1/write"
+        grafana_hostname: metrics-store
+        prometheus_stack_blackbox_jobs: []
+        prometheus_stack_traefik_targets: []
+        prometheus_stack_llm_router_targets: []
+        prometheus_stack_clickhouse_targets: []
+        prometheus_stack_hindsight_targets: []
+        prometheus_stack_agentgateway_targets: []
+        prometheus_stack_phoenix_targets: []
+        prometheus_stack_phoenix_postgres_exporter_targets: []
+        prometheus_stack_extra_scrape_configs: ""
+      block:
+        - name: Load role defaults independently of inventory overrides
+          ansible.builtin.include_vars:
+            file: "../../../roles/prometheus_stack/defaults/main.yml"
+            name: _direct_role_defaults
+
+        - name: Assert the role defaults off and inventory enables the route
+          ansible.builtin.assert:
+            that:
+              - _direct_role_defaults.prometheus_stack_direct_histogram_write_enabled is sameas false
+              - prometheus_stack_direct_histogram_write_enabled is sameas true
+
+        - name: Render with the flag explicitly disabled
+          ansible.builtin.set_fact:
+            _direct_default_raw: "{{ lookup('template', _pst_tpl) }}"
+          vars:
+            prometheus_stack_direct_histogram_write_enabled: false
+
+        - name: Assert the disabled remote write is byte-identical to the legacy block
+          ansible.builtin.assert:
+            that:
+              - _direct_default_raw.endswith(_legacy_remote_write)
+              - (_direct_default_raw | from_yaml).remote_write | length == 1
+
+        - name: Render the inventory-enabled route
+          ansible.builtin.set_fact:
+            _direct_enabled: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+        - name: Extract both relabel selectors
+          ansible.builtin.set_fact:
+            _direct_drop: "{{ _direct_enabled.remote_write[0].write_relabel_configs[1] }}"
+            _direct_keep: "{{ _direct_enabled.remote_write[1].write_relabel_configs[0] }}"
+
+        - name: Assert the native endpoint keeps exactly what the Cribl endpoint drops
+          ansible.builtin.assert:
+            that:
+              - _direct_enabled.remote_write | length == 2
+              - _direct_enabled.remote_write[0].url == prometheus_stack_remote_write_url
+              - _direct_enabled.remote_write[1].url == 'http://metrics-store.example.invalid:18428/api/v1/write'
+              - _direct_enabled.remote_write[0].write_relabel_configs | length == 2
+              - _direct_enabled.remote_write[1].write_relabel_configs | length == 1
+              - _direct_drop.action == 'drop'
+              - >-
+                _direct_keep == (_direct_drop | combine({'action': 'keep'}))
+              - _direct_keep.source_labels == ['job', '__name__']
+              - _direct_keep.regex == '(llm_gpu_engine|llm_router);.+_(bucket|count|sum)'
+              - >-
+                _direct_enabled.remote_write[0].write_relabel_configs[0]
+                == (_direct_default_raw | from_yaml).remote_write[0].write_relabel_configs[0]
+              - >-
+                _direct_enabled.remote_write[0].queue_config
+                == (_direct_default_raw | from_yaml).remote_write[0].queue_config
+              - _direct_enabled.remote_write[1].queue_config == _direct_enabled.remote_write[0].queue_config
+              - _direct_enabled.scrape_configs == (_direct_default_raw | from_yaml).scrape_configs
+
+        - name: Assert selected series use the direct writer
+          ansible.builtin.assert:
+            that:
+              - item is match('^' ~ _direct_keep.regex ~ '$')
+          loop: "{{ _routed_series }}"
+
+        - name: Assert counters gauges and other jobs retain the Cribl writer
+          ansible.builtin.assert:
+            that:
+              - item is not match('^' ~ _direct_keep.regex ~ '$')
+          loop: "{{ _cribl_only_series }}"
+
+        - name: Render an explicitly disabled flag
+          ansible.builtin.set_fact:
+            _direct_disabled_raw: "{{ lookup('template', _pst_tpl) }}"
+          vars:
+            prometheus_stack_direct_histogram_write_enabled: false
+
+        - name: Assert disabling restores the exact default bytes
+          ansible.builtin.assert:
+            that:
+              - _direct_disabled_raw == _direct_default_raw
+
+        - name: Render without either remote write endpoint configured
+          ansible.builtin.set_fact:
+            _direct_no_endpoint: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+          vars:
+            prometheus_stack_remote_write_url: ""
+            prometheus_stack_direct_histogram_write_url: ""
+
+        - name: Assert routing still permits an empty remote write endpoint
+          ansible.builtin.assert:
+            that:
+              - _direct_no_endpoint.remote_write is not defined

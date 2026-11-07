@@ -1,0 +1,53 @@
+---
+- name: Render the native LLM span metrics pipeline
+  ansible.builtin.set_fact:
+    _cribl_stream_span_metrics: >-
+      {{ lookup('template', _template_dir ~ '/pipelines/otel_traces_to_metrics/conf.yml.j2') | from_yaml }}
+
+- name: Assert the unsampled original spans have an independent metrics leg
+  vars:
+    _source: "{{ (_cribl_stream_inputs | from_yaml).inputs['open_telemetry:in_otel'] }}"
+    _source_pi: "{{ (_cribl_stream_inputs_per_index | from_yaml).inputs['open_telemetry:in_otel'] }}"
+    _metrics_connection:
+      output: victoriametrics_rw
+      pipeline: otel_traces_to_metrics
+    _functions: "{{ _cribl_stream_span_metrics.functions }}"
+  ansible.builtin.assert:
+    that:
+      - "'otel_traces_to_metrics' in _cribl_stream_defaults.cribl_stream_pipelines"
+      - _source.pipeline == 'ansi_csi_strip'
+      - not _source.sendToRoutes
+      - _source.connections[0] == _metrics_connection
+      - _source_pi.connections[0] == _metrics_connection
+      - _source.connections[1] == {'output':'langfuse_otlp', 'pipeline':'otel_traces'}
+      - _source.connections[2] == {'output':'phoenix_otlp', 'pipeline':'otel_traces_phoenix'}
+      - _cribl_stream_span_metrics.output == 'victoriametrics_rw'
+      - _functions | map(attribute='id') | list == ['drop', 'drop', 'eval', 'aggregation']
+      - "_functions[0].filter == \"!__e.__otlp || __e.__otlp.type !== 'traces'\""
+      - "'gen_ai' in _functions[1].filter"
+      - _functions[2].conf.add | map(attribute='name') | list
+        == ['service_name', 'model', 'system', 'status', 'input_tokens', 'output_tokens', 'duration_seconds']
+
+- name: Assert cumulative native metric output with bounded labels and explicit histogram buckets
+  vars:
+    _aggregation: "{{ _cribl_stream_span_metrics.functions[3].conf }}"
+  ansible.builtin.assert:
+    that:
+      - _aggregation.metricsMode
+      - _aggregation.cumulative
+      - not _aggregation.flushOnInputClose
+      - _aggregation.timeWindow == '10s'
+      - _aggregation.groupbys == ['service_name', 'model', 'system', 'status']
+      - _aggregation.aggregations | length == 5
+      - _aggregation.aggregations[0] == 'count().as(llm_span_calls)'
+      - "_aggregation.aggregations[1] == \"count().where(status === 'error').as(llm_span_errors)\""
+      - >-
+        _aggregation.aggregations[2]
+        == 'sum(input_tokens).where(Number.isFinite(input_tokens)).as(llm_span_input_tokens)'
+      - >-
+        _aggregation.aggregations[3]
+        == 'sum(output_tokens).where(Number.isFinite(output_tokens)).as(llm_span_output_tokens)'
+      - >-
+        _aggregation.aggregations[4]
+        == 'histogram(duration_seconds, [0.05,0.1,0.25,0.5,1,2.5,5,10,30,60,120]) '
+        ~ '.where(Number.isFinite(duration_seconds) && duration_seconds >= 0).as(llm_span_duration_seconds)'

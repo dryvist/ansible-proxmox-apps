@@ -4,13 +4,28 @@ from pathlib import Path
 import unittest
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.playbook.role import Role
 
 ROLE = Path(__file__).resolve().parents[1] / "roles" / "agent_sandbox"
 
 
 class DispatcherSources(unittest.TestCase):
+    def test_ansible_loads_both_default_sections(self):
+        role = Role()
+        role._role_path = str(ROLE)
+        role._loader = DataLoader()
+        defaults = role._load_role_yaml("defaults", allow_dir=True)
+
+        self.assertIs(defaults["agent_sandbox_job_github_write"], False)
+        self.assertIs(defaults["agent_sandbox_ci_resolver_enabled"], False)
+        self.assertEqual(
+            defaults["agent_sandbox_ci_resolver_source_commit"],
+            "{{ agent_sandbox_dispatch_source_commit }}",
+        )
+
     def test_wrapper_sources_are_pinned_and_ordered(self):
-        defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
+        defaults = yaml.safe_load((ROLE / "defaults" / "main" / "00-runtime.yml").read_text())
         pinned = [item["name"] for item in defaults["agent_sandbox_dispatch_sources"]]
         tasks = yaml.safe_load(
             (ROLE / "tasks" / "main" / "dispatcher_install.yml").read_text()

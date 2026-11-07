@@ -1,0 +1,77 @@
+---
+agent_sandbox_job_source_changes:
+  dispatcher:
+    - before: |2-
+          if [ "$mode" = fix ]; then
+            request=$(jq -cn
+      after: |2-
+          if [ "$mode" = fix ] || [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then
+            request=$(jq -cn
+    - before: '  case "$tool:$mode" in'
+      after: |2-
+          local credential_mode=$mode
+          if [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then credential_mode=fix; fi
+          case "$tool:$credential_mode" in
+    - before: '      if [ "$mode" = fix ]; then'
+      after: '      if [ "$credential_mode" = fix ]; then'
+    - before: '      if [ -n "$cid" ] && publish_fix "$id" "$run" "$cid" "$tok"; then'
+      after: |2-
+              if [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then
+                state=succeeded
+              elif [ -n "$cid" ] && publish_fix "$id" "$run" "$cid" "$tok"; then
+    - before: '    --name "agent-$1-$2"'
+      after: |2-
+            --name "agent-$1-$2"
+            -e "AGENT_JOB_GITHUB_WRITE=${AGENT_JOB_GITHUB_WRITE:-false}"
+            -e "AGENT_JOB_RUN=$2"
+            -v "$AGENT_JOB_ENTRYPOINT:$AGENT_JOB_IMAGE_ENTRYPOINT:ro"
+    - before: '  mode=$(job_get "$id" .mode 2>/dev/null || echo start)'
+      after: |2-
+          mode=$(job_get "$id" .mode 2>/dev/null || echo start)
+          if [ -n "$cid" ] && [ -n "$(job_get "$id" .repo)" ]; then
+            if ! docker cp "$cid:/home/agent/work/.agent-result/$run/branch.bundle" - | \
+              tar -xOf - branch.bundle >"$rdir/branch.bundle"; then
+              rm -f "$rdir/branch.bundle"
+              if [ "$code" = 0 ] && [ ! -e "$rdir/cancel" ] && [ ! -e "$rdir/timeout" ]; then
+                echo "job bundle export failed" >"$rdir/reason"
+              fi
+            fi
+          fi
+    - before: '    --arg commit "$commit"'
+      after: |2-
+            --arg bundle "$(if [ -f "$rdir/branch.bundle" ]; then echo "$rdir/branch.bundle"; fi)" \
+            --arg log "$rdir/log" \
+            --arg commit "$commit"
+    - before: 'commit: $commit, output: $output}'
+      after: 'commit: $commit, output: $output, bundle: $bundle, log: $log}'
+    - before: '    "$(cat "$dir/pr_url" 2>/dev/null || echo none)" "$((ended - started))"'
+      after: |2-
+            "$(cat "$dir/pr_url" 2>/dev/null || echo none)" "$((ended - started))"
+          printf 'bundle: %s\nlog: %s\n' \
+            "$(if [ -f "$rdir/branch.bundle" ]; then echo "$rdir/branch.bundle"; else echo none; fi)" "$rdir/log"
+  entrypoint:
+    - before: '  if [ "${AGENT_MODE:-start}" = fix ]; then'
+      after: '  if [ "${AGENT_MODE:-start}" = fix ] || [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then'
+    - before: '      git checkout --detach "${AGENT_EXPECTED_SHA}"'
+      after: '      git checkout --no-track -b "${branch}" "${AGENT_EXPECTED_SHA}" || exit $?'
+    - before: |-
+        if [ "${AGENT_MODE}" = fix ]; then
+          make_fix_outputs || exit $?
+      after: |2-
+        if [ -n "${branch}" ]; then
+          if [ "${AGENT_MODE}" = start ]; then base="$(git merge-base HEAD origin/HEAD)"; fi
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "feat(agent): record job changes" || exit $?
+          fi
+          mkdir -p "${workdir}/.agent-result/${AGENT_JOB_RUN:-1}"
+          if ! gitleaks git --log-opts="${base}..HEAD" --redact --no-banner; then exit 65; fi
+          bundle_range="${branch}"
+          if [ "$(git rev-parse HEAD)" != "${base}" ]; then bundle_range="${base}..${branch}"; fi
+          git bundle create "${workdir}/.agent-result/${AGENT_JOB_RUN:-1}/branch.bundle" \
+            "${bundle_range}" || exit $?
+        fi
+        if [ "${AGENT_JOB_GITHUB_WRITE:-false}" != true ]; then exit "${status}"; fi
+
+        if [ "${AGENT_MODE}" = fix ]; then
+          make_fix_outputs || exit $?

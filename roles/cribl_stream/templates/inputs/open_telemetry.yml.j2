@@ -28,6 +28,14 @@
     pipeline: ansi_csi_strip
     sendToRoutes: false
     connections:
+{% if cribl_stream_otel_collector_enabled | default(false) | bool %}
+      # Original spans, before the independent trace-storage leg transforms.
+      - output: otel_metrics_collector
+        pipeline: otel_traces_to_collector
+{% endif %}
+      # Aggregate original LLM spans before the trace legs sample or re-key.
+      - output: victoriametrics_rw
+        pipeline: otel_traces_to_metrics
       # Trace destination: the otel_traces pipeline drops every non-trace
       # signal before Langfuse, which ingests traces only.
       - output: langfuse_otlp
@@ -38,6 +46,8 @@
       # OpenInference attributes as they arrive.
       - output: phoenix_otlp
         pipeline: otel_traces_phoenix
+      - output: arize_otlp
+        pipeline: otel_traces_arize
 {% if (cribl_stream_hec_namespace | default('')) | length > 0 %}
       - output: splunk_hec_otel_traces
         pipeline: otel_traces_to_splunk

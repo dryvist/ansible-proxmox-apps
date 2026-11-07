@@ -11,12 +11,14 @@ import unittest
 from pathlib import Path
 
 import jinja2
+import yaml
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "roles/wall/templates/config.json.j2"
 
 
 def render(**overrides) -> dict:
     env = jinja2.Environment(trim_blocks=True)
+    env.filters["bool"] = lambda v: v is True or str(v).lower() == "true"
     env.filters["to_nice_json"] = lambda v: json.dumps(v, indent=4, sort_keys=True)
     ctx = {
         "wall_title": "HOMELAB",
@@ -46,6 +48,27 @@ def render(**overrides) -> dict:
 
 
 class WallConfig(unittest.TestCase):
+    def test_grafana_slides_are_disabled_by_default(self):
+        defaults = yaml.safe_load((TEMPLATE.parents[1] / "defaults/main.yml").read_text())
+        self.assertIs(defaults["wall_grafana_slides_enabled"], False)
+        self.assertEqual(len(render(wall_grafana_slides_enabled="false")["slides"]), 6)
+
+    def test_grafana_slides_follow_mc1_6_and_use_inventory_url(self):
+        defaults = yaml.safe_load((TEMPLATE.parents[1] / "defaults/main.yml").read_text())
+        base_url = jinja2.Template(defaults["wall_grafana_base_url"]).render(
+            grafana_hostname="metrics", ingress_domain="example.test"
+        )
+        cfg = render(wall_grafana_slides_enabled=True, wall_grafana_base_url=base_url,
+                     wall_slides=[{"name": "GLANCE", "route": "glance"}])
+        self.assertEqual(cfg["slides"][:6], render()["slides"])
+        self.assertEqual(cfg["slides"][6:8], [
+            {"name": "Benchmarks", "url": "https://metrics.example.test/d/llm-serving-benchmarks"
+             "?kiosk&refresh=15s&from=now-1h&to=now"},
+            {"name": "Agent Traffic", "url": "https://metrics.example.test/d/ai-agent-traffic"
+             "?kiosk&refresh=15s&from=now-1h&to=now"},
+        ])
+        self.assertEqual(cfg["slides"][8]["name"], "GLANCE")
+
     def test_contract(self):
         cfg = render()
         self.assertEqual(cfg["groups"], [{"name": "apps", "apps": ["alpha", "bravo"]},
