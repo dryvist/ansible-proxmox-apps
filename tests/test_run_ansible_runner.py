@@ -63,12 +63,15 @@ class RunAnsibleShimContract(unittest.TestCase):
             for line in source.splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
+        ref_line = operations[-2]
+        self.assertRegex(ref_line, r"^HOMELAB_CONTRACTS_REF=v[0-9]+\.[0-9]+\.[0-9]+$")
+        contracts_ref = ref_line.split("=", maxsplit=1)[1]
         self.assertEqual(
             operations,
             [
                 "set -euo pipefail",
                 *EXPORT_LINES,
-                "HOMELAB_CONTRACTS_REF=v5.37.0",
+                ref_line,
                 'exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"',
             ],
         )
@@ -119,7 +122,7 @@ class RunAnsibleShimContract(unittest.TestCase):
             captured_args,
             [
                 "run",
-                "github:dryvist/homelab-contracts/v5.37.0#run-ansible",
+                f"github:dryvist/homelab-contracts/{contracts_ref}#run-ansible",
                 "--",
                 "playbooks/site.yml",
                 "--limit",
