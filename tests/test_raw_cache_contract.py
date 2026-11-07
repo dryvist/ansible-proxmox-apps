@@ -41,7 +41,12 @@ def test_raw_cache_follows_https_redirects_and_uses_the_origin_url_cache_key():
 def test_raw_cache_is_native_nginx_and_checks_the_repository_key():
     tasks = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text())
     fingerprints = [task for task in tasks if task.get("name") == "Verify official nginx signing key fingerprint"]
+    repository = next(
+        task for task in tasks
+        if task.get("name") == "Configure official nginx stable package repository"
+    )
 
     assert fingerprints
     assert "573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62" in fingerprints[0]["ansible.builtin.assert"]["that"][0]
+    assert repository["ansible.builtin.deb822_repository"]["install_python_debian"] is True
     assert any(task.get("ansible.builtin.systemd", {}).get("name") == "nginx" for task in tasks)
