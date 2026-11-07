@@ -2,19 +2,6 @@
 # Hatchet's split control plane runs on each Docker AI guest. Schema migration
 # and first-run seeding complete once before either guest starts its services.
 
-- name: Read the Hatchet worker token from its dedicated OpenBao leaf
-  ansible.builtin.import_tasks: worker_token_read.yml
-  when: hatchet_docker_worker_enabled | bool or hatchet_docker_worker_token_publish | bool
-  tags:
-    - hatchet_docker
-    - hatchet_worker_token
-
-- name: Optionally mint and publish the Hatchet GPU fill worker token
-  ansible.builtin.import_tasks: worker_token_publish.yml
-  when: hatchet_docker_worker_token_publish | bool
-  tags:
-    - hatchet_worker_token
-
 - name: Create Hatchet deployment directory
   ansible.builtin.file:
     path: "{{ hatchet_docker_data_dir }}"
@@ -22,160 +9,6 @@
     owner: root
     group: root
     mode: "0750"
-
-- name: Validate Hatchet GPU fill worker configuration
-  ansible.builtin.assert:
-    that:
-      - hatchet_docker_worker_roles is mapping
-      - hatchet_docker_worker_roles | length > 0
-      - hatchet_docker_worker_platforms is sequence
-      - hatchet_docker_worker_platforms | length > 0
-      - >-
-        (hatchet_docker_worker_platforms | map(attribute='name') | list | unique | length)
-        == (hatchet_docker_worker_platforms | length)
-    fail_msg: >-
-      Enabling the Hatchet worker requires at least one LLM role and one
-      platform with a unique name.
-  when: hatchet_docker_worker_enabled | bool
-
-- name: Require the Hatchet worker when evaluations are enabled
-  ansible.builtin.assert:
-    that:
-      - hatchet_docker_worker_enabled | bool
-    fail_msg: Hatchet evaluations require the GPU fill worker to be enabled.
-  when: hatchet_docker_eval_enabled | bool
-
-- name: Validate Hatchet GPU fill worker latency guard configuration
-  ansible.builtin.assert:
-    that:
-      - hatchet_docker_worker_latency_guard_prometheus_url | length > 0
-      - hatchet_docker_worker_latency_guard_query | length > 0
-      - hatchet_docker_worker_latency_guard_max_ratio | float > 0
-    fail_msg: >-
-      The enabled Hatchet GPU fill worker latency guard requires a Prometheus
-      inventory target, a query, and a positive maximum ratio.
-    quiet: true
-  when:
-    - hatchet_docker_worker_enabled | bool
-    - hatchet_docker_worker_latency_guard_enabled | bool
-
-- name: Validate Hatchet GPU fill worker platform configuration
-  ansible.builtin.assert:
-    that:
-      - item is mapping
-      - item.name is defined
-      - item.run_url is defined or item.kind | default('') == 'chat'
-      - >-
-        item.kind | default('') != 'chat' or
-        (item.base_url is defined and item.model is defined and item.max_tokens is defined)
-      - item.timeout_s is defined
-      - item.auth_env is defined
-      - >-
-        (item.auth_env | default(none)) is none or
-        (item.auth_env is match('^[A-Z_][A-Z0-9_]*$') and item.auth_secret_key is defined)
-    fail_msg: >-
-      Each Hatchet worker platform requires name, timeout_s, and auth_env (null or a
-      valid environment variable name with auth_secret_key), plus either run_url or
-      kind chat with base_url, model, and max_tokens.
-  no_log: true
-  loop: "{{ hatchet_docker_worker_platforms }}"
-  loop_control:
-    label: "{{ item.name | default('unknown') }}"
-  when: hatchet_docker_worker_enabled | bool
-
-- name: Copy Hatchet GPU fill worker package
-  ansible.builtin.copy:
-    src: gpu_fill_worker/
-    dest: "{{ hatchet_docker_data_dir }}/gpu_fill_worker/"
-    owner: root
-    group: root
-    mode: "0644"
-    directory_mode: "0755"
-  when: hatchet_docker_worker_enabled | bool
-  notify: Restart Hatchet
-
-- name: Ensure Git is installed for the pinned eval prompts and fill corpus checkouts
-  ansible.builtin.package:
-    name: git
-    state: present
-  when: hatchet_docker_eval_enabled | bool or hatchet_docker_worker_fill_enabled | bool
-
-- name: Check out the pinned AI evaluation prompts
-  ansible.builtin.git:
-    repo: https://github.com/dryvist/ai-llm-prompts.git
-    dest: "{{ hatchet_docker_data_dir }}/ai-llm-prompts"
-    version: "{{ hatchet_docker_eval_prompts_ref }}"
-  when: hatchet_docker_eval_enabled | bool
-
-- name: Validate the Hatchet GPU fill workload configuration
-  ansible.builtin.assert:
-    that:
-      - hatchet_docker_worker_enabled | bool
-      - (hatchet_docker_worker_fill_cron.split() | length) == 5
-      - hatchet_docker_worker_fill_roles | length > 0
-      - hatchet_docker_worker_fill_corpus_repos | length > 0
-      - >-
-        hatchet_docker_worker_fill_roles.keys() | list
-        | difference(hatchet_docker_worker_roles.keys() | list) | length == 0
-      - >-
-        hatchet_docker_worker_fill_roles.values() | list
-        | difference(hatchet_docker_worker_platforms
-        | selectattr('kind', 'defined') | selectattr('kind', 'equalto', 'chat')
-        | map(attribute='name') | list) | length == 0
-      - >-
-        hatchet_docker_worker_fill_corpus_repos | selectattr('name', 'defined')
-        | map(attribute='name') | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$')
-        | list | length == hatchet_docker_worker_fill_corpus_repos | length
-      - >-
-        hatchet_docker_worker_fill_corpus_repos | selectattr('url', 'defined')
-        | map(attribute='url') | select('match', '^https://') | list | length
-        == hatchet_docker_worker_fill_corpus_repos | length
-      - >-
-        hatchet_docker_worker_fill_corpus_repos | selectattr('version', 'defined')
-        | map(attribute='version') | select('match', '^[A-Za-z0-9][A-Za-z0-9._/-]*$')
-        | list | length == hatchet_docker_worker_fill_corpus_repos | length
-    fail_msg: >-
-      Enabling the Hatchet GPU fill workload requires an enabled worker, a five-field cron,
-      fill_roles mapping configured LLM roles to active chat platforms, and corpus_repos
-      entries with an identifier name, an https url, and a pinned version tag.
-  when: hatchet_docker_worker_fill_enabled | bool
-
-- name: Create the Hatchet GPU fill corpus and output directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  loop:
-    - "{{ hatchet_docker_worker_fill_corpus_host_dir }}"
-    - "{{ hatchet_docker_worker_fill_output_host_dir }}"
-  when: hatchet_docker_worker_fill_enabled | bool
-
-- name: Shallow-clone the public Hatchet GPU fill corpus repositories
-  ansible.builtin.git:
-    repo: "{{ item.url }}"
-    dest: "{{ hatchet_docker_worker_fill_corpus_host_dir }}/{{ item.name }}"
-    version: "{{ item.version }}"
-    depth: 1
-    update: true
-  loop: "{{ hatchet_docker_worker_fill_corpus_repos }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: hatchet_docker_worker_fill_enabled | bool
-  # The worker reads the corpus once at startup, so a changed checkout needs a restart.
-  notify: Restart Hatchet
-
-- name: Render Hatchet GPU fill worker config
-  ansible.builtin.template:
-    src: gpu_fill_worker_config.json.j2
-    dest: "{{ hatchet_docker_data_dir }}/gpu_fill_worker_config.json"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  when: hatchet_docker_worker_enabled | bool
-  notify: Restart Hatchet
 
 - name: Migrate Hatchet PostgreSQL schema
   community.docker.docker_container:
@@ -262,7 +95,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ hatchet_docker_data_dir }}"
         state: present
-        remove_orphans: true
+        remove_orphans: false
       register: hatchet_docker_compose_result
       changed_when: >-
         (hatchet_docker_compose_result.actions | default([]))

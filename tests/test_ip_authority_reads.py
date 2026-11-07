@@ -77,7 +77,6 @@ READS = {
     "roles/grafana_stack/defaults/main.yml": 1,
     "roles/haproxy/templates/haproxy.cfg.j2": 6,
     "roles/haproxy/templates/nginx-stream.conf.j2": 3,
-    "roles/hatchet_docker/defaults/main.yml": 1,
     "roles/keepalived/defaults/main.yml": 1,
     "roles/keepalived/tasks/main.yml": 1,
     "roles/netmon/defaults/main.yml": 1,
