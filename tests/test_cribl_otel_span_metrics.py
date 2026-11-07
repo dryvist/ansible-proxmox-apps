@@ -12,6 +12,7 @@ from ansible.template import Templar, trust_as_template
 
 from test_cribl_internal_metrics_to_victoriametrics import _render_inputs
 from test_cribl_litellm_trace_contract import ROLE, render
+from test_cribl_otel_collector import context, outputs
 
 
 PIPELINE = "otel_traces_to_metrics"
@@ -109,6 +110,19 @@ def test_registered_native_aggregation_contract():
             f"histogram(duration_seconds, {BUCKETS}) "
             ".where(Number.isFinite(duration_seconds) && duration_seconds >= 0).as(llm_span_duration_seconds)",
         ],
+    }
+
+
+def test_remote_write_has_no_label_filter_or_post_processing_pipeline():
+    pipeline = render(PIPELINE)
+    assert pipeline['functions'][-1]['id'] == 'aggregation'
+    output = outputs(context())['outputs'][pipeline['output']]
+    assert output['type'] == 'prometheus'
+    # Only transport settings: no destination pipeline or dimension transforms.
+    assert set(output) == {
+        'id', 'type', 'disabled', 'url', 'concurrency', 'maxPayloadSizeKB',
+        'maxPayloadEvents', 'rejectUnauthorized', 'timeoutSec', 'flushPeriodSec',
+        'useRoundRobinDns', 'failedRequestLoggingMode', 'safeHeaders', 'onBackpressure',
     }
 
 
