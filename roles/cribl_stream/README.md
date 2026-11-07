@@ -116,6 +116,13 @@ The OpenTelemetry (OTEL) and Cribl-to-Cribl inputs fan extracted spans to
 Langfuse, Phoenix, Splunk HTTP Event Collector (HEC), and Arize AX. Logs and
 metrics retain their Splunk and VictoriaMetrics connections.
 
+OTLP log records with resource attribute `service.name: local-agent` use the
+existing `ai_usage` Splunk index and `otel:log` sourcetype. Splunk keeps
+`agent`, `tier`, `privacy_class`, `model`, `accelerator`, `event`, `status`,
+`exit`, `reason`, `score_name`, `score_value`, `secs`, `source`, `mode`,
+`route`, and `run_id`; other record attributes are removed. Missing run tags
+use the defaults in `defaults/main/41-agent-telemetry.yml`.
+
 Every OTEL leg adds `agent`, `tier`, `privacy_class`, `model`, `accelerator`,
 `caller`, and `correlation_id` to the event attributes. Canonical attributes
 take precedence over `litellm.metadata.*` aliases and top-level fields. Missing,
