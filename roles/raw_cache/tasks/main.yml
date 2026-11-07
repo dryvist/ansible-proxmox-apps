@@ -1,0 +1,129 @@
+---
+- name: Validate raw_cache inputs
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - ansible_distribution_release in ['bookworm', 'trixie']
+      - raw_cache_port | int >= 1
+      - raw_cache_port | int <= 65535
+      - raw_cache_cache_max_size is match('^[1-9][0-9]*(k|m|g)$')
+      - raw_cache_resolvers | length > 0
+      - raw_cache_upstreams | length > 0
+      - >-
+        raw_cache_upstreams | map(attribute='name')
+        | select('match', '^[a-z0-9_]+$') | list | length
+        == raw_cache_upstreams | length
+      - raw_cache_upstreams | map(attribute='name') | list | unique | length == raw_cache_upstreams | length
+      - >-
+        raw_cache_upstreams | map(attribute='upstream')
+        | select('match', '^https://[^/]+/?$') | list | length
+        == raw_cache_upstreams | length
+    fail_msg: "raw_cache requires Debian 12 or 13, HTTPS origin URLs, DNS resolvers, and valid cache settings."
+
+- name: Install raw_cache runtime packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+  register: raw_cache_runtime_packages
+
+- name: Download official nginx signing key
+  ansible.builtin.get_url:
+    url: https://nginx.org/keys/nginx_signing.key
+    dest: /usr/share/keyrings/nginx-archive-keyring.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Inspect official nginx signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --batch
+      - --show-keys
+      - --with-colons
+      - /usr/share/keyrings/nginx-archive-keyring.asc
+  register: raw_cache_nginx_key
+  changed_when: false
+
+- name: Verify official nginx signing key fingerprint
+  ansible.builtin.assert:
+    that:
+      - "'573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62' in raw_cache_nginx_key.stdout"
+    fail_msg: "The downloaded nginx repository key has an unexpected fingerprint."
+
+- name: Configure official nginx stable package repository
+  ansible.builtin.deb822_repository:
+    name: nginx-stable
+    types:
+      - deb
+    uris:
+      - https://nginx.org/packages/debian
+    suites:
+      - "{{ ansible_distribution_release }}"
+    components:
+      - nginx
+    signed_by: /usr/share/keyrings/nginx-archive-keyring.asc
+    state: present
+
+- name: Install pinned nginx package
+  ansible.builtin.apt:
+    name: "nginx={{ raw_cache_nginx_package_version }}"
+    state: present
+    update_cache: true
+    policy_rc_d: 101
+  register: raw_cache_nginx_package
+
+- name: Remove the nginx package's default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Create bounded raw_cache directory
+  ansible.builtin.file:
+    path: "{{ raw_cache_cache_dir }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0750"
+
+- name: Install raw_cache nginx configuration
+  ansible.builtin.template:
+    src: raw-cache.conf.j2
+    dest: /etc/nginx/conf.d/raw-cache.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload raw_cache nginx
+
+- name: Validate raw_cache nginx configuration
+  ansible.builtin.command:
+    argv:
+      - nginx
+      - -t
+  changed_when: false
+
+- name: Enable nginx for raw_cache
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: not (ansible_check_mode and raw_cache_nginx_package is changed)
+
+- name: Apply raw_cache nginx configuration before its health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Check raw_cache health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ raw_cache_port }}/healthz"
+    method: GET
+    status_code: 200
+    return_content: false
+  register: raw_cache_health
+  retries: 15
+  delay: 2
+  until: raw_cache_health.status == 200
+  when: not (ansible_check_mode and raw_cache_nginx_package is changed)

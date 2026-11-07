@@ -1,0 +1,73 @@
+map $upstream_http_location $raw_cache_redirect_url {
+    ~^https://[^[:space:]]+$ $upstream_http_location;
+    default "";
+}
+
+proxy_cache_path {{ raw_cache_cache_dir }} levels=1:2 keys_zone=raw_cache:20m max_size={{ raw_cache_cache_max_size }} inactive=30d use_temp_path=off;
+
+log_format raw_cache '$remote_addr $request_method $uri $status $body_bytes_sent $request_time $upstream_cache_status';
+access_log syslog:server=unix:/dev/log,tag=raw-cache_access,severity=info raw_cache;
+error_log syslog:server=unix:/dev/log,tag=raw-cache_error,severity=warn;
+
+server {
+    listen {{ raw_cache_bind_address }}:{{ raw_cache_port }} default_server;
+    server_name _;
+
+    recursive_error_pages on;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+{% for item in raw_cache_upstreams %}
+    location ^~ /{{ item.name }}/ {
+        limit_except GET HEAD {
+            deny all;
+        }
+        rewrite ^/{{ item.name }}/(.*)$ /$1 break;
+        set $raw_cache_request_url "{{ item.upstream | regex_replace('/+$', '') }}$uri$is_args$args";
+        proxy_pass {{ item.upstream | regex_replace('/+$', '') }};
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_cache raw_cache;
+        proxy_cache_key $raw_cache_request_url;
+        proxy_cache_lock on;
+        proxy_cache_revalidate on;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_cache_valid 200 30d;
+        proxy_intercept_errors on;
+        error_page 301 302 303 307 308 = @raw_cache_follow;
+    }
+{% endfor %}
+
+    location @raw_cache_follow {
+        if ($raw_cache_redirect_url = "") {
+            return 502;
+        }
+        resolver {{ raw_cache_resolvers | join(' ') }} valid=300s ipv6=off;
+        resolver_timeout 5s;
+        proxy_pass $raw_cache_redirect_url;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_cache raw_cache;
+        proxy_cache_key $raw_cache_request_url;
+        proxy_cache_lock on;
+        proxy_cache_revalidate on;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_cache_valid 200 30d;
+        proxy_intercept_errors on;
+        error_page 301 302 303 307 308 = @raw_cache_follow;
+    }
+
+    location / {
+        return 404;
+    }
+}
