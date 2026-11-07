@@ -72,6 +72,14 @@
           failed_when: not _servarr_stat.stat.exists
           changed_when: false
 
+        # The child also writes Ansible's own log here, so a run killed by the
+        # timeout below still leaves its last tasks for the rescue to report.
+        - name: Choose this run's media-stack child log
+          ansible.builtin.set_fact:
+            _servarr_child_log: >-
+              {{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}/servarr-child-{{
+                 now(utc=true, fmt='%Y%m%dT%H%M%S') }}.log
+
         # The media domain's KV entries are already fetched by the
         # openbao_secrets pre-play under this repo's own MEDIA AppRole, and
         # their field names are the UPPER_SNAKE variables the media roles
@@ -109,7 +117,8 @@
                             + 'not populate the media domain')
                | combine({'GATUS_EXTERNAL_TOKEN':
                           (openbao_secrets_by_domain | default({}))
-                          .get('monitoring', {}).get('GATUS_EXTERNAL_TOKEN', '')}) }}
+                          .get('monitoring', {}).get('GATUS_EXTERNAL_TOKEN', ''),
+                          'ANSIBLE_LOG_PATH': _servarr_child_log}) }}
           no_log: true
           register: _servarr_converge
           changed_when: true
@@ -140,13 +149,22 @@
               {{ {
                    'rc': (_servarr_converge | default({})).get('rc', 'not captured'),
                    'stdout_lines': (_servarr_converge | default({})).get('stdout_lines', ['no output captured'])[-20:],
-                   'stderr_lines': (_servarr_converge | default({})).get('stderr_lines', ['no output captured'])[-20:]
+                   'stderr_lines': (_servarr_converge | default({})).get('stderr_lines', ['no output captured'])[-20:],
+                   'child_log_tail': (lookup('ansible.builtin.file', _servarr_child_log, errors='ignore')
+                                      | default('', true)).splitlines()[-40:]
                  } }}
 
         - name: Record isolated failure and continue
           ansible.builtin.include_tasks: ../tasks/record_isolated_failure.yml
           vars:
             _isolated_play_name: servarr
+
+      always:
+        - name: Remove this run's media-stack child log
+          ansible.builtin.file:
+            path: "{{ _servarr_child_log | default('') }}"
+            state: absent
+          when: _servarr_child_log is defined
 
 - name: Fail the run if any isolated play recorded a failure
   hosts: localhost
