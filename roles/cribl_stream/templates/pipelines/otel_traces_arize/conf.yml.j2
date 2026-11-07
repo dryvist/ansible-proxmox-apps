@@ -9,7 +9,7 @@ functions:
     filter: "!__otlp || __otlp.type !== 'traces' || __otlp.extracted !== true"
     disabled: false
     conf: {}
-{{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/agent_tags.yml.j2') }}
+{{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/agent_tags.yml.j2', template_vars={'cribl_stream_otel_strict_tags': true}) }}
   - id: drop
     filter: "attributes.privacy_class !== 'public'"
     disabled: false
@@ -21,11 +21,18 @@ functions:
       add:
         - name: attributes
           value: >-
-            {
-{% for tag in cribl_stream_otel_agent_tag_defaults %}
-              '{{ tag }}': attributes['{{ tag }}']{{ ',' if not loop.last }}
+            Object.assign({},
+{% set validators = {
+  'agent': "typeof attributes.agent === 'string' && /^[a-z][a-z0-9-]{1,62}$(?![\\s\\S])/.test(attributes.agent)",
+  'tier': "[0, 1, 2].includes(attributes.tier)",
+  'privacy_class': "['public', 'internal', 'private'].includes(attributes.privacy_class)",
+  'model': "typeof attributes.model === 'string' && /^[A-Za-z0-9._:\\/-]{1,128}$(?![\\s\\S])/.test(attributes.model)",
+  'accelerator': "['gpu-primary', 'gpu-secondary', 'mac-primary', 'mac-secondary', 'cloud', 'cpu'].includes(attributes.accelerator)"
+} %}
+{% for tag in cribl_stream_otel_run_tags %}
+              {{ validators[tag] }} ? {'{{ tag }}': attributes['{{ tag }}']} : {}{{ ',' if not loop.last }}
 {% endfor %}
-            }
+            )
         - name: name
           value: "'agent-run'"
         - name: resource
