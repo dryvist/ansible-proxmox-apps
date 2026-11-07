@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.24.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.23.0...v5.24.0) (2026-11-07)
+
+
+### Features
+
+* **wall:** rotate MC7, MC8 and MC9 after LEXICON ([#3374](https://github.com/dryvist/ansible-proxmox-apps/issues/3374)) ([6bc0d55](https://github.com/dryvist/ansible-proxmox-apps/commit/6bc0d55f62fb9ded4ee8088e6643467853b76803))
+
 ## [5.23.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.22.0...v5.23.0) (2026-11-07)
 
 
