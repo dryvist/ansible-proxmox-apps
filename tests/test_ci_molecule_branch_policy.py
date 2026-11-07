@@ -224,6 +224,25 @@ class MoleculeBranchPolicy(unittest.TestCase):
         for name in ("molecule_scenario_filters", "molecule_contract_filters"):
             self.assertIs(changes["with"][name], ci["with"][name])
 
+    def test_contract_checkouts_disable_persisted_credentials(self):
+        jobs = {
+            "_data-contract.yml": "pytest-suite",
+            "_inventory-contract.yml": "validate-inventory-schema",
+            "_secrets-contract.yml": "verify-secrets-contract",
+        }
+        for filename, job_id in jobs.items():
+            with self.subTest(workflow=filename, job=job_id):
+                workflow = yaml.safe_load(
+                    (WORKFLOW.parent / filename).read_text(encoding="utf-8")
+                )
+                checkouts = [
+                    step for step in workflow["jobs"][job_id]["steps"]
+                    if step.get("uses", "").startswith("actions/checkout@")
+                ]
+                self.assertTrue(checkouts)
+                for step in checkouts:
+                    self.assertIs(step.get("with", {}).get("persist-credentials"), False)
+
 
 if __name__ == "__main__":
     unittest.main()
