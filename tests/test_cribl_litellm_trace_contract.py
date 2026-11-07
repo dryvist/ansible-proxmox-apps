@@ -60,7 +60,8 @@ def render(name, **overrides):
     context['cribl_stream_role_dir'] = str(ROLE)
     env = Environment(undefined=StrictUndefined, loader=FileSystemLoader('/'))
     env.filters['to_json'] = json.dumps
-    env.globals['lookup'] = lambda plugin, path: env.get_template(path).render(context)
+    env.globals['lookup'] = lambda plugin, path, template_vars=None: env.get_template(path).render(
+        {**context, **(template_vars or {})})
     context['cribl_stream_otel_run_tags'] = yaml.safe_load(
         env.from_string(context['cribl_stream_otel_run_tags']).render(context))
     text = (ROLE / 'templates' / 'pipelines' / name / 'conf.yml.j2').read_text()
