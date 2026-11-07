@@ -1,0 +1,49 @@
+---
+- name: Validate the ClickHouse datasource inputs
+  ansible.builtin.include_tasks: ../../../roles/grafana_stack/tasks/assert_clickhouse.yml
+
+- name: Render the datasource and compose templates
+  ansible.builtin.set_fact:
+    _datasources: "{{ lookup('ansible.builtin.template', _template_dir ~ '/datasource.yml.j2') | from_yaml }}"
+    _compose: "{{ lookup('ansible.builtin.template', _template_dir ~ '/docker-compose.yml.j2') | from_yaml }}"
+  vars:
+    grafana_stack_oidc_issuer: https://auth.example.test
+    grafana_stack_oidc_client_secret: fixture-oidc-secret
+
+- name: Assert datasource presence and independent plugin selection
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_datasources.datasources | selectattr('uid', 'equalto', 'clickhouse') | list | length)
+        == (1 if _case.clickhouse else 0)
+      - >-
+        (_datasources.datasources | selectattr('uid', 'equalto', 'litellm-prices') | list | length)
+        == (1 if _case.prices else 0)
+      - >-
+        _compose.services.grafana.environment.get('GF_PLUGINS_PREINSTALL_SYNC', '').split(',')
+        | reject('equalto', '') | list
+        == (['grafana-llm-app'] + (['yesoreyeram-infinity-datasource'] if _case.prices else [])
+            + (['grafana-clickhouse-datasource'] if _case.clickhouse else []))
+      - >-
+        (_datasources.deleteDatasources | default([]))
+        == ([] if _case.clickhouse else [{'name': 'ClickHouse', 'orgId': 1}])
+
+- name: Assert the ClickHouse plugin connection and secure credential contract
+  ansible.builtin.assert:
+    that:
+      - _clickhouse.type == 'grafana-clickhouse-datasource'
+      - _clickhouse.access == 'proxy'
+      - not (_clickhouse.isDefault | bool)
+      - not (_clickhouse.editable | bool)
+      - _clickhouse.jsonData.host == 'analytics.example.test'
+      - _clickhouse.jsonData.port == 18123
+      - _clickhouse.jsonData.protocol == 'http'
+      - _clickhouse.jsonData.username == 'grafana'
+      - _clickhouse.jsonData.defaultDatabase == 'default'
+      - _clickhouse.jsonData.password is not defined
+      - >-
+        _clickhouse.secureJsonData.password
+        == hostvars['localhost'].openbao_secrets_by_domain['clickhouse'].GRAFANA_PASSWORD | replace('$', '$$')
+  vars:
+    _clickhouse: "{{ _datasources.datasources | selectattr('uid', 'equalto', 'clickhouse') | first }}"
+  when: _case.clickhouse
