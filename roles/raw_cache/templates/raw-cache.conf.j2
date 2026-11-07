@@ -3,6 +3,14 @@ map $upstream_http_location $raw_cache_redirect_url {
     default "";
 }
 
+# Original $request_uri survives the rewrite and includes query arguments.
+map $request_uri $raw_cache_request_url {
+{% for item in raw_cache_upstreams %}
+    ~^/{{ item.name }}(/.*)$ {{ item.upstream | regex_replace('/+$', '') }}$1;
+{% endfor %}
+    default "";
+}
+
 proxy_cache_path {{ raw_cache_cache_dir }} levels=1:2 keys_zone=raw_cache:20m max_size={{ raw_cache_cache_max_size }} inactive=30d use_temp_path=off;
 
 log_format raw_cache '$remote_addr $request_method $uri $status $body_bytes_sent $request_time $upstream_cache_status';
@@ -27,7 +35,6 @@ server {
             deny all;
         }
         rewrite ^/{{ item.name }}/(.*)$ /$1 break;
-        set $raw_cache_request_url "{{ item.upstream | regex_replace('/+$', '') }}$uri$is_args$args";
         proxy_pass {{ item.upstream | regex_replace('/+$', '') }};
         proxy_ssl_server_name on;
         proxy_ssl_verify on;

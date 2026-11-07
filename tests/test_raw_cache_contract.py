@@ -28,7 +28,10 @@ def test_raw_cache_follows_https_redirects_and_uses_the_origin_url_cache_key():
 
     assert "proxy_cache_path {{ raw_cache_cache_dir }}" in config
     assert "max_size={{ raw_cache_cache_max_size }}" in config
-    assert "set $raw_cache_request_url \"{{ item.upstream | regex_replace('/+$', '') }}$uri$is_args$args\";" in config
+    assert "map $request_uri $raw_cache_request_url {" in config
+    assert "~^/{{ item.name }}(/.*)$ {{ item.upstream | regex_replace('/+$', '') }}$1;" in config
+    assert config.index("map $request_uri $raw_cache_request_url {") < config.index("rewrite ^/{{ item.name }}/")
+    assert "$uri$is_args$args" not in config
     assert "proxy_cache_key $raw_cache_request_url;" in config
     assert "proxy_pass $raw_cache_redirect_url;" in config
     assert "error_page 301 302 303 307 308 = @raw_cache_follow;" in config
