@@ -5,7 +5,7 @@ import subprocess
 import unittest
 import uuid
 
-from jinja2 import Environment, StrictUndefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 import yaml
 
 ROLE = Path(__file__).resolve().parents[1] / 'roles' / 'cribl_stream'
@@ -15,15 +15,22 @@ const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const event = input.event;
 function apply(event) {
   for (const step of input.pipeline.functions) {
-    const applies = new Function('attributes', 'name', '__otlp', 'traceId', 'return (' + step.filter + ');');
-    if (!applies(event.attributes, event.name, event.__otlp, event.traceId)) continue;
+    const applies = new Function('attributes', 'name', '__otlp', 'traceId', '__e', 'index', 'sourcetype', 'return (' + step.filter + ');');
+    if (!applies(event.attributes, event.name, event.__otlp, event.traceId, event, event.index, event.sourcetype)) continue;
     if (step.id === 'drop') return null;
     if (step.id === 'eval') {
       for (const entry of step.conf.add || []) {
-        const value = new Function('attributes', 'name', 'return (' + entry.value + ');')(event.attributes, event.name);
+        const value = new Function('attributes', 'name', '__e', 'index', 'sourcetype', 'source', 'return (' + entry.value + ');')(
+          event.attributes, event.name, event, event.index, event.sourcetype, event.source);
         new Function('event', 'value', 'event.' + entry.name + ' = value;')(event, value);
       }
-      for (const field of step.conf.remove || []) new Function('event', 'delete event.' + field + ';')(event);
+      for (const field of step.conf.remove || []) {
+        if (field === '*') {
+          for (const key of Object.keys(event)) {
+            if (!key.startsWith('__') && !(step.conf.keep || []).includes(key)) delete event[key];
+          }
+        } else new Function('event', 'delete event.' + field + ';')(event);
+      }
     }
     if (step.id === 'code') new Function('__e', step.conf.code)(event);
   }
@@ -36,21 +43,32 @@ process.stdout.write(JSON.stringify(result));
 """
 
 
+def fixture_vars(name):
+    verify_dir = ROLE.parents[1] / 'tests/template_render/verify'
+    play = yaml.safe_load((verify_dir / f'{name}.yml').read_text())[0]
+    variables = dict(play['vars'])
+    for vars_file in play.get('vars_files', []):
+        variables.update(yaml.safe_load((verify_dir / vars_file).read_text()))
+    return variables
+
+
 def render(name, **overrides):
     context = {}
     for path in sorted((ROLE / 'defaults' / 'main').glob('*.yml')):
         context.update(yaml.safe_load(path.read_text()) or {})
     context.update(overrides)
-    env = Environment(undefined=StrictUndefined)
+    context['cribl_stream_role_dir'] = str(ROLE)
+    env = Environment(undefined=StrictUndefined, loader=FileSystemLoader('/'))
     env.filters['to_json'] = json.dumps
+    env.globals['lookup'] = lambda plugin, path: env.get_template(path).render(context)
     text = (ROLE / 'templates' / 'pipelines' / name / 'conf.yml.j2').read_text()
     return yaml.safe_load(env.from_string(text).render(context))
 
 
-def enrich(name, attrs, **event_fields):
+def enrich(pipeline_name, attrs, **event_fields):
     event = {'name': 'inference', '__otlp': {'type': 'traces'}, 'attributes': attrs}
     event.update(event_fields)
-    result = subprocess.run(['node', '-e', NODE], input=json.dumps({'event': event, 'pipeline': render(name)}),
+    result = subprocess.run(['node', '-e', NODE], input=json.dumps({'event': event, 'pipeline': render(pipeline_name)}),
                             text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
 
@@ -66,7 +84,9 @@ class TraceContract(unittest.TestCase):
         self.assertIn('C.Mask.md5(', json.dumps(render('otel_traces')))
         disabled = render('otel_traces', cribl_stream_otel_trace_bucket_seconds=0)
         self.assertNotIn('C.Mask.md5(', json.dumps(disabled))
-        self.assertEqual(disabled['functions'][2]['conf']['add'][0]['name'], "attributes['langfuse.user.id']")
+        identity = next(step for step in disabled['functions']
+                        if step['id'] == 'eval' and step['conf'].get('add', [{}])[0]['name'] == "attributes['langfuse.user.id']")
+        self.assertIsNotNone(identity)
 
     def test_phoenix_sampling_keeps_whole_traces_and_fails_open(self):
         trace_ids = set()

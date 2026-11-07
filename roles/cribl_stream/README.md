@@ -110,6 +110,99 @@ calls and query VictoriaMetrics for `{__name__=~"llm_span_.*"}`. Confirm native
 histogram serialization, including sum, count, and cumulative buckets through
 `+Inf`, and verify the same original spans still reach the trace stores.
 
+### Agent telemetry
+
+The OpenTelemetry (OTEL) and Cribl-to-Cribl inputs fan extracted spans to
+Langfuse, Phoenix, Splunk HTTP Event Collector (HEC), and Arize AX. Logs and
+metrics retain their Splunk and VictoriaMetrics connections.
+
+Every OTEL leg adds `agent`, `tier`, `privacy_class`, `model`, `accelerator`,
+`caller`, and `correlation_id` to the event attributes. Canonical attributes
+take precedence over `litellm.metadata.*` aliases and top-level fields. Missing,
+null, empty, or invalid values receive defaults from
+`defaults/main/41-agent-telemetry.yml`: tier `2`, privacy class `private`, and
+`unknown` for the remaining tags. Numeric tier strings become numbers.
+
+Destination URLs and credentials are role inputs:
+
+| Destination | URL variable | Authentication variables |
+| --- | --- | --- |
+| Langfuse | `cribl_stream_langfuse_url` | `cribl_stream_langfuse_public_key`, `cribl_stream_langfuse_secret_key` |
+| Phoenix | `cribl_stream_phoenix_url` | `cribl_stream_phoenix_api_key` |
+| Splunk HEC | `cribl_stream_splunk_hec_url` | `cribl_stream_splunk_hec_token` |
+| Arize AX | `cribl_stream_arize_url` | `cribl_stream_arize_api_key`, `cribl_stream_arize_space_id` |
+
+Arize inputs default to the `ARIZE_OTLP_ENDPOINT`, `ARIZE_API_KEY`, and
+`ARIZE_SPACE_ID` environment variables. Required values fail closed when absent.
+OTLP URL inputs are base URLs; the destination appends the signal path.
+
+The Arize connection and output post-processing pipeline both accept only
+extracted spans whose normalized `privacy_class` equals `public`. Native
+Drop and Eval functions retain only the 7 canonical tags and span identifiers,
+timing, kind, and status code. The projection resets the span name, resource,
+and scope, and removes prompt, completion, message, event, link, host, address,
+and resource identity attributes. The output adds no system fields and uses
+verified TLS. [Cribl Eval](https://docs.cribl.io/stream/eval-function/) and the
+[OTLP destination](https://docs.cribl.io/stream/destinations-otel/) define these native functions and output settings.
+
+### Cribl Edge log audit
+
+The 2026-11-06 source audit covers 35 roles: 1 source-supported Edge candidate
+and 2 provisional containers. Effective logging settings and receipt in Stream
+remain **UNKNOWN** for every row; source configuration does not prove delivery.
+
+| Scope | Source configuration | Edge disposition |
+| --- | --- | --- |
+| `agent_sandbox` / Squid | Unmounted image-default `/var/log/squid/`. | 1 source-supported directory-level candidate. |
+| Dify / `ssrf_proxy` | Same pinned Squid image; no log mount or redirect. | Provisional; pinned startup artifacts must confirm file-only output. |
+| Dify / `agent_ssrf_proxy` | Same image and bounded inference. | Provisional; pinned startup artifacts must confirm file-only output. |
+| Zammad | Native package files outside Docker. | No container Edge candidate. |
+| Sim | Documented stdout; vendor Compose unavailable. | No file-only candidate established. |
+| ClickHouse, SQL Server, Home Assistant, Homepage | Host-mounted log directories. | Prefer native host-file forwarding when needed. |
+| Runner services | Host diagnostics and runtime files. | No additional container Edge justified. |
+| Remaining audited containers | Explicit or inherited drivers; destinations vary or are UNKNOWN. | No additional Edge justified by current evidence. |
+
+The candidate list is not exhaustive until UNKNOWN application destinations are
+resolved. Exact Squid filenames and live behavior remain UNKNOWN. Runner
+diagnostics have a host mount and rsyslog file input; Kubernetes runtime files
+are host-visible, but runner diagnostic export remains UNKNOWN. Host mounts do
+not establish collection or complete console output.
+
+The sandbox evidence is in `roles/agent_sandbox/templates/squid.conf.j2` and
+`roles/agent_sandbox/templates/docker-compose.yml.j2`. Its existing Edge inputs
+cover session spools and the allowlist audit, not the Squid log directory.
+Dify's [proxy configurations](https://github.com/dryvist/ansible-proxmox-ai/tree/develop/roles/dify_docker/templates)
+support only a provisional inference: the
+[Squid image documentation](https://hub.docker.com/r/ubuntu/squid) describes both
+a file-log volume and Pebble logs. Inspect the pinned startup/configuration
+artifacts before classifying either Dify proxy as file-only. Evaluate Squid's
+native syslog/TCP access logging before adding Edge; establish cache/admin log
+handling separately. Eligibility does not authorize deployment.
+
+Zammad's package tasks are in `roles/zammad/tasks/main/elasticsearch_and_package.yml`;
+[Zammad logging](https://docs.zammad.org/en/latest/appendix/privacy.html)
+and [environment settings](https://docs.zammad.org/en/latest/appendix/environment-variables.html)
+describe `/opt/zammad/log/` and native `RAILS_LOG_TO_STDOUT` output. Elasticsearch
+also uses native file logs. [Sim observability](https://docs.sim.ai/platform/self-hosting/observability)
+does not verify the pinned vendor Compose artifact; the local
+[Compose override](https://github.com/dryvist/ansible-proxmox-ai/blob/develop/roles/sim_docker/templates/docker-compose.override.yml.j2)
+sets images and data volumes without specifying logging. Sim's effective service
+inventory, drivers, mounts, cron logging, and OTEL settings remain UNKNOWN;
+documented app/realtime stdout and PostgreSQL workflow history do not resolve them.
+
+Docker defaults in `roles/docker_engine/defaults/main.yml` declare journald for
+this repository. Other role sources either declare journald explicitly or leave
+the driver to the daemon; unavailable vendor configuration stays UNKNOWN.
+Existing containers retain their driver until recreated. The daemon default
+establishes neither application log destinations nor effective container drivers,
+journald-to-rsyslog ingestion, or receipt in Stream. Keep non-file-only streams on
+journald to rsyslog to Stream, or direct OTEL, with delivery verified separately.
+Host-visible files can use the existing rsyslog imfile inputs, which default empty.
+For a verified container-only file stream, record paths and rotation before
+configuring a native Edge file source and Stream connection.
+[Docker logging configuration](https://docs.docker.com/engine/logging/configure/)
+describes that lifecycle.
+
 ### Grafana alert delivery
 
 Grafana posts unified-alerting envelopes to the Stream HEC raw endpoint with

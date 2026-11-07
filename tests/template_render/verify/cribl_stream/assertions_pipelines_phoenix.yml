@@ -1,11 +1,24 @@
 ---
+- name: Assert the public trace output enforces the native projection
+  vars:
+    _arize: "{{ _cribl_stream_otel_traces_arize | from_yaml }}"
+    _arize_output: "{{ (_cribl_stream_outputs_pi | from_yaml).outputs.arize_otlp }}"
+  ansible.builtin.assert:
+    that:
+      - _arize.output == 'arize_otlp'
+      - _arize.functions | map(attribute='id') | list == ['drop', 'eval', 'eval', 'drop', 'eval']
+      - "\"attributes.privacy_class !== 'public'\" == _arize.functions[3].filter"
+      - _arize_output.pipeline == 'otel_traces_arize'
+      - _arize_output.systemFields == []
+      - _arize_output.endpoint == cribl_stream_arize_url
+
 # otel_traces_phoenix assertions, split out of assertions_pipelines.yml
 # to keep that file under the CI token-limit gate.
 
 - name: Assert otel_traces_phoenix keeps the guards and none of the Langfuse rewrites
   ansible.builtin.assert:
     that:
-      - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions | length == 7"
+      - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions | length == 9"
       - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions[0].id == 'drop'"
       - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions[1].id == 'drop'"
       - >-
@@ -17,7 +30,7 @@
       - "(_cribl_stream_otel_traces_phoenix | from_yaml).functions[-1].id == 'mask'"
       - "(_cribl_stream_otel_traces_phoenix | from_yaml).output == 'phoenix_otlp'"
       - "'langfuse.' not in (_cribl_stream_otel_traces_phoenix | regex_replace('#.*', ''))"
-      - "(_cribl_stream_otel_traces_phoenix_keep_all | from_yaml).functions | length == 6"
+      - "(_cribl_stream_otel_traces_phoenix_keep_all | from_yaml).functions | length == 8"
       - "'traceId' not in _cribl_stream_otel_traces_phoenix_keep_all"
     fail_msg: >-
       otel_traces_phoenix must be the Langfuse leg minus its langfuse.*
