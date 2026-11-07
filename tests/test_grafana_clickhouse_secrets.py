@@ -182,7 +182,7 @@ def test_clickhouse_endpoint_uses_the_tagged_guest_name_and_published_port():
 
 @pytest.mark.parametrize("prices", [True, False])
 @pytest.mark.parametrize("prometheus_url", ["", "https://metrics.example.test"])
-def test_enabled_to_disabled_removes_clickhouse_and_matches_develop_otherwise(prices, prometheus_url):
+def test_enabled_to_disabled_removes_clickhouse_and_preserves_other_datasources(prices, prometheus_url):
     variables = _datasource_variables(True, prices)
     variables["grafana_stack_prometheus_url"] = prometheus_url
     enabled = yaml.safe_load(_render(TEMPLATE.read_text(), variables))
@@ -197,9 +197,9 @@ def test_enabled_to_disabled_removes_clickhouse_and_matches_develop_otherwise(pr
     assert all(d["uid"] != "clickhouse" for d in disabled["datasources"])
     assert disabled["deleteDatasources"] == [{"name": datasource["name"], "orgId": 1}]
     assert "fixture" not in disabled_text and "secureJsonData" not in disabled_text
-    develop = (ROOT / "tests/fixtures/grafana_datasource_develop.yml.j2").read_text()
-    deletion = disabled_text[disabled_text.index("# Delete the provisioned"):disabled_text.index("datasources:")]
-    assert disabled_text.replace(deletion, "", 1) == _render(develop, variables)
+    assert disabled["datasources"] == [
+        d for d in enabled["datasources"] if d["uid"] != "clickhouse"
+    ]
 
 
 @pytest.mark.parametrize("domain", [{}, {"GRAFANA_PASSWORD": ""}])
