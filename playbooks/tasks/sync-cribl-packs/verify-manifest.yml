@@ -8,19 +8,19 @@
       - --bucket
       - "{{ object_storage_bucket }}"
       - --key
-      - "{{ addon_mirror_object_storage_prefix }}/{{ item.name }}.{{ addon_mirror_extension }}"
+      - "{{ cribl_packs_object_storage_prefix }}/{{ item.name }}.crbl"
       - --query
       - TagSet[?Key=='version'].Value
       - --output
       - text
   environment: "{{ s3_env }}"
-  loop: "{{ addon_mirror_desired | default([]) }}"
+  loop: "{{ cribl_packs_desired | default([]) }}"
   loop_control:
     label: "{{ item.name }}"
-  register: addon_mirror_final_tag_query
+  register: cribl_packs_final_tag_query
   changed_when: false
   failed_when: false
-  when: addon_mirror_published | default(false) | bool
+  when: cribl_packs_manifest is defined
   no_log: true
 
 - name: Verify object-storage tags match resolved release versions
@@ -34,10 +34,10 @@
       {{ ((item.stdout | default('') | trim) or '(missing)')
          if item.rc == 0 else '(missing object)' }}.
     quiet: true
-  loop: "{{ addon_mirror_final_tag_query.results | default([]) }}"
+  loop: "{{ cribl_packs_final_tag_query.results | default([]) }}"
   loop_control:
     label: "{{ item.item.name }}"
-  when: addon_mirror_published | default(false) | bool
+  when: cribl_packs_manifest is defined
 
 - name: Read published object-storage manifest
   ansible.builtin.command:
@@ -45,34 +45,34 @@
       - aws
       - s3
       - cp
-      - "s3://{{ object_storage_bucket }}/{{ addon_mirror_object_storage_prefix }}/manifest.json"
+      - "s3://{{ object_storage_bucket }}/{{ cribl_packs_object_storage_prefix }}/manifest.json"
       - "-"
   environment: "{{ s3_env }}"
-  register: addon_mirror_manifest_verify
+  register: cribl_packs_manifest_verify
   changed_when: false
   failed_when: false
-  when: addon_mirror_published | default(false) | bool
+  when: cribl_packs_manifest is defined
   no_log: true
 
 - name: Verify published manifest matches resolved release versions and sha256
   ansible.builtin.assert:
     that:
-      - addon_mirror_manifest_verify.rc == 0
+      - cribl_packs_manifest_verify.rc == 0
       - >-
-        ((addon_mirror_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).version
+        ((cribl_packs_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).version
         | default('') | trim) == (item.desired_version | string | trim)
       - >-
-        ((addon_mirror_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).key
-        | default('')) == (addon_mirror_object_storage_prefix ~ '/' ~ item.name ~ '.' ~ addon_mirror_extension)
+        ((cribl_packs_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).key
+        | default('')) == (cribl_packs_object_storage_prefix ~ '/' ~ item.name ~ '.crbl')
       - >-
-        ((addon_mirror_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).sha256
+        ((cribl_packs_manifest_verify.stdout | default('{}', true) | from_json).get(item.name, {}).sha256
         | default('') | length) > 0
     fail_msg: >-
       manifest.json mismatch for {{ item.name }}:
       expected version {{ item.desired_version }} with a non-empty sha256
-      ({{ 'manifest unreadable' if addon_mirror_manifest_verify.rc != 0 else 'value drift' }}).
+      ({{ 'manifest unreadable' if cribl_packs_manifest_verify.rc != 0 else 'value drift' }}).
     quiet: true
-  loop: "{{ addon_mirror_desired | default([]) }}"
+  loop: "{{ cribl_packs_desired | default([]) }}"
   loop_control:
     label: "{{ item.name }}"
-  when: addon_mirror_published | default(false) | bool
+  when: cribl_packs_manifest is defined

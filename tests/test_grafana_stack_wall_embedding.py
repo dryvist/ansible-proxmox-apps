@@ -36,8 +36,7 @@ def test_embedding_requires_enabled_slides_and_different_origin(enabled, root_ur
     template = (ROLE / "templates/docker-compose.yml.j2").read_text()
     context: dict[str, object] = {name: "fixture" for name in meta.find_undeclared_variables(env.parse(template))}
     context.update(grafana_stack_allow_embedding=allow, grafana_stack_vm_extra_flags=[],
-                   grafana_stack_provisioning_subdirs=[], grafana_stack_litellm_prices_enabled=False,
-                   grafana_stack_plugins=[])
+                   grafana_stack_provisioning_subdirs=[], grafana_stack_litellm_prices_enabled=False)
     compose = yaml.safe_load(env.from_string(template).render(context))
     settings = compose["services"]["grafana"]["environment"]
     assert settings.get("GF_SECURITY_ALLOW_EMBEDDING") == ("true" if expected else None)
