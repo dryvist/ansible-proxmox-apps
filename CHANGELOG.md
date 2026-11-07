@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.28.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.28.0...v5.28.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **media:** keep the media child log when its run times out ([#3412](https://github.com/dryvist/ansible-proxmox-apps/issues/3412)) ([a259141](https://github.com/dryvist/ansible-proxmox-apps/commit/a259141e7be0438e5951eec1388cbc6677ccc383))
+
 ## [5.28.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.27.0...v5.28.0) (2026-11-07)
 
 
