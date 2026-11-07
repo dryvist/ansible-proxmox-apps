@@ -31,6 +31,6 @@ def test_package_cache_units_use_the_shared_hardening_template():
     for unit_path, tasks_path in zip(SERVICE_UNITS, SERVICE_TASKS, strict=True):
         unit = unit_path.read_text(encoding="utf-8")
         tasks = tasks_path.read_text(encoding="utf-8")
-        assert "{% include _service_hardening_template %}" in unit
+        assert "{{ lookup('ansible.builtin.file', _service_hardening_template) }}" in unit
         assert "_service_hardening_template: \"{{ role_path }}/../_shared/templates/systemd-service-hardening.conf.j2\"" in tasks
         assert all(directive not in unit for directive in DIRECTIVES)
