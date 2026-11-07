@@ -1,0 +1,33 @@
+---
+- name: Render and verify devpi_server systemd unit
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/devpi_server/defaults/main.yml"
+  vars:
+    ansible_become: false
+    _fixture_dir: "{{ render_tmp }}"
+    _service_hardening_template: "{{ playbook_dir }}/../../../roles/_shared/templates/systemd-service-hardening.conf.j2"
+  tasks:
+    - name: Render devpi_server systemd unit
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../roles/devpi_server/templates/devpi-server.service.j2"
+        dest: "{{ _fixture_dir }}/devpi-server.service"
+        mode: "0644"
+
+    - name: Read rendered devpi_server systemd unit
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/devpi-server.service"
+      register: _devpi_server_unit
+
+    - name: Assert rendered devpi_server systemd unit contract
+      ansible.builtin.assert:
+        that:
+          - "'--port 3141' in (_devpi_server_unit.content | b64decode)"
+          - "'--restrict-modify root' in (_devpi_server_unit.content | b64decode)"
+          - "'StandardOutput=journal' in (_devpi_server_unit.content | b64decode)"
+          - "'StandardError=journal' in (_devpi_server_unit.content | b64decode)"
+          - "'/var/lib/devpi-server' in (_devpi_server_unit.content | b64decode)"
+          - "'UMask=0027' in (_devpi_server_unit.content | b64decode)"
+          - "'ProtectControlGroups=true' in (_devpi_server_unit.content | b64decode)"

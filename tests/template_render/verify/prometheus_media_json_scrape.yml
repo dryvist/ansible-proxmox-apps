@@ -1,0 +1,180 @@
+---
+- name: Verify media exporter targets and relabeling
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    ingress_domain: test.example
+    grafana_hostname: metrics-store
+    pve_exporter_scrape_targets: []
+    _pst_tpl: "{{ playbook_dir }}/../../../roles/prometheus_stack/templates/prometheus.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          prometheus_web: 9090
+          victoriametrics: 18428
+          blackbox_exporter: 9115
+          llm_router_api: 4321
+          llm_fast_api: 10434
+          smokeping_prober: 9374
+          node_exporter: 9100
+          gatus_web: 8080
+          agentgateway_metrics: 15020
+          cadvisor: 18081
+          media_json_exporter: 17979
+        memory_ports:
+          hindsight_api: 8888
+          hindsight_cp: 9999
+        media_ports:
+          qbittorrent_web: 18080
+          prowlarr_web: 19696
+          sonarr_web: 18989
+          radarr_web: 17878
+          plex_web: 32401
+      nodes: {}
+      docker_vms: {}
+      containers:
+        grafana:
+          hostname: metrics-store
+        download-under-test:
+          ip: download-under-test.test.example
+          tags: [vpn]
+        sonarr-under-test:
+          ip: sonarr-under-test.test.example
+          tags: [sonarr]
+        radarr-under-test:
+          ip: radarr-under-test.test.example
+          tags: [radarr]
+        plex-under-test:
+          ip: plex-under-test.test.example
+          tags: [plex]
+
+  vars_files:
+    - "{{ playbook_dir }}/../../../roles/prometheus_stack/defaults/main.yml"
+    - "{{ playbook_dir }}/../../../inventory/group_vars/prometheus_group.yml"
+    - "{{ playbook_dir }}/../../../inventory/group_vars/download_vpn_group.yml"
+
+  tasks:
+    - name: Add placeholder services to their inventory groups
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: "{{ item.group }}"
+      loop:
+        - { name: download-under-test, group: download_vpn_group }
+        - { name: sonarr-under-test, group: sonarr_group }
+        - { name: radarr-under-test, group: radarr_group }
+        - { name: plex-under-test, group: plex_group }
+
+    - name: Publish the fixture inventory for template evaluation
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+        wan_hop_discovery_isp_hops: []
+
+    - name: Render prometheus.yml with the fixture inventory
+      ansible.builtin.set_fact:
+        _rendered_text: "{{ lookup('template', _pst_tpl) }}"
+        _rendered: "{{ lookup('template', _pst_tpl) | from_yaml }}"
+
+    - name: Isolate the media JSON scrape job
+      ansible.builtin.set_fact:
+        _media_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'media_json') | list }}"
+
+    - name: Assert media targets use published ports and fixed service aliases
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _media_jobs | length == 1
+          - >-
+            _media_jobs[0].static_configs
+            | map(attribute='targets') | flatten
+            == [
+              'http://127.0.0.1:18080/api/v2/transfer/info',
+              'http://127.0.0.1:18080/api/v2/torrents/info',
+              'http://127.0.0.1:19696/api/v1/health',
+              'http://media-sonarr:18989/api/v3/health',
+              'http://media-sonarr:18989/api/v3/queue?pageSize=1',
+              'http://media-sonarr:18989/api/v3/series',
+              'http://media-radarr:17878/api/v3/health',
+              'http://media-radarr:17878/api/v3/queue?pageSize=1',
+              'http://media-radarr:17878/api/v3/movie',
+              'http://media-plex:32401/status/sessions',
+              'http://media-plex:32401/library/recentlyAdded?X-Plex-Container-Size=8'
+            ]
+          - _media_jobs[0].relabel_configs[0].target_label == '__param_target'
+          - _media_jobs[0].relabel_configs[1].target_label == '__param_module'
+          - _media_jobs[0].relabel_configs[2].target_label == 'instance'
+          - _media_jobs[0].relabel_configs[3].replacement == 'download-under-test.test.example:17979'
+          - _media_jobs[0].relabel_configs[4].action == 'labeldrop'
+          - _media_jobs[0].relabel_configs[4].regex == '^(module|media_target)$'
+          - >-
+            (_media_jobs[0].static_configs | map(attribute='targets') | flatten
+             | select('match', '^http://(?!127[.]0[.]0[.]1)(?:[0-9]{1,3}[.]){3}[0-9]{1,3}:')
+             | list | length) == 0
+          - "'ansible_default_ipv4' not in _rendered_text"
+          - "'container_ip' not in _rendered_text"
+        fail_msg: >-
+          The media JSON job must use the guest exporter target, service aliases,
+          and published service ports. Rendered: {{ _media_jobs }}
+
+    - name: Assert the media exporter replacement uses a guest target name
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _media_jobs[0].relabel_configs[3].replacement is match('^[A-Za-z0-9.-]+:[0-9]+$')
+        fail_msg: The media JSON exporter replacement must use the guest target name.
+
+    - name: Render with no guest target for the download guest
+      ansible.builtin.set_fact:
+        _missing_target_render: "{{ lookup('template', _pst_tpl, template_vars=_no_guest_targets) }}"
+      vars:
+        _no_guest_targets: { guest_node_exporter_static_configs: [] }
+      register: _missing_target
+      ignore_errors: true
+
+    - name: Assert a missing guest target fails the render
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _missing_target is failed
+          - "'media_json needs a guest node_exporter target' in _missing_target.msg"
+        fail_msg: A download guest without a scrape target must fail the render.
+
+    - name: Evaluate the listen address with no LAN interface
+      ansible.builtin.set_fact:
+        _no_lan_bind: "{{ node_exporter_listen_address }}"
+      vars:
+        ansible_facts: { interfaces: [lo, wg0] }
+      register: _no_lan
+      ignore_errors: true
+
+    - name: Evaluate the listen address with a LAN interface
+      ansible.builtin.set_fact:
+        _lan_bind: "{{ node_exporter_listen_address }}"
+      vars:
+        ansible_facts:
+          interfaces: [lo, wg0, eth0]
+          eth0: { ipv4: { address: 192.168.0.25 } }
+
+    - name: Assert the download guest binds its LAN address or fails
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _no_lan is failed
+          - "'requires an IPv4 address' in _no_lan.msg"
+          - _lan_bind == '192.168.0.25'
+        fail_msg: node_exporter on the download guest must never bind every interface.
+
+    - name: Read the Prometheus template source
+      ansible.builtin.set_fact:
+        _template_source: "{{ lookup('file', _pst_tpl) }}"
+
+    - name: Assert the media scrape source reads no guest address facts
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'ansible_default_ipv4' not in _template_source"
+          - "'container_ip' not in _template_source"
+        fail_msg: The media scrape source must use the guest exporter target by name.

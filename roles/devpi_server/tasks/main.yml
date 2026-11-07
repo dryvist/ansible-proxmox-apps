@@ -1,0 +1,98 @@
+---
+- name: Validate devpi_server inputs
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - devpi_server_port | int >= 1
+      - devpi_server_port | int <= 65535
+    fail_msg: "devpi_server requires Debian and a TCP port from 1 to 65535."
+
+- name: Install devpi_server runtime packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3
+      - python3-venv
+    state: present
+    update_cache: true
+  register: devpi_server_runtime_packages
+
+- name: Create devpi_server service group
+  ansible.builtin.group:
+    name: "{{ devpi_server_service_group }}"
+    system: true
+    state: present
+
+- name: Create devpi_server service user
+  ansible.builtin.user:
+    name: "{{ devpi_server_service_user }}"
+    group: "{{ devpi_server_service_group }}"
+    home: "{{ devpi_server_data_dir }}"
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+    state: present
+
+- name: Create devpi_server data directory
+  ansible.builtin.file:
+    path: "{{ devpi_server_data_dir }}"
+    state: directory
+    owner: "{{ devpi_server_service_user }}"
+    group: "{{ devpi_server_service_group }}"
+    mode: "0750"
+
+- name: Install pinned devpi_server into its virtual environment
+  ansible.builtin.pip:
+    name: "devpi-server=={{ devpi_server_version }}"
+    virtualenv: "{{ devpi_server_venv }}"
+    virtualenv_command: python3 -m venv
+    state: present
+  when: not (ansible_check_mode and devpi_server_runtime_packages is changed)
+
+- name: Initialize the devpi_server data directory
+  ansible.builtin.command:
+    argv:
+      - "{{ devpi_server_venv }}/bin/devpi-init"
+      - --root-passwd
+      - "{{ lookup('ansible.builtin.password', '/dev/null length=32') }}"
+      - --serverdir
+      - "{{ devpi_server_data_dir }}"
+    creates: "{{ devpi_server_data_dir }}/.nodeinfo"
+  become_user: "{{ devpi_server_service_user }}"
+  become: true
+  no_log: true
+  when: not (ansible_check_mode and devpi_server_runtime_packages is changed)
+
+- name: Install devpi_server systemd unit
+  ansible.builtin.template:
+    src: devpi-server.service.j2
+    dest: /etc/systemd/system/devpi-server.service
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    _service_hardening_template: "{{ role_path }}/../_shared/templates/systemd-service-hardening.conf.j2"
+  notify: Restart devpi_server
+
+- name: Enable devpi_server service
+  ansible.builtin.systemd:
+    name: devpi-server
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: not (ansible_check_mode and devpi_server_runtime_packages is changed)
+
+- name: Apply devpi_server service changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Check devpi_server health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ devpi_server_port }}/+status"
+    method: GET
+    status_code: 200
+    return_content: false
+  register: devpi_server_health
+  retries: 15
+  delay: 2
+  until: devpi_server_health.status == 200
+  when: not (ansible_check_mode and devpi_server_runtime_packages is changed)
