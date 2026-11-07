@@ -44,4 +44,5 @@ def test_baseline_play_targets_the_apt_cache_group():
 
     assert play["hosts"] == "apt_cacher_group"
     assert play["roles"][0]["role"] == "devpi_server"
+    assert play["roles"][1]["role"] == "verdaccio_cache"
     assert "devpi_server" in play["tags"]
