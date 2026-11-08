@@ -123,7 +123,9 @@ def test_vikunja_interactive_and_agent_tokens_publish_to_separate_leaves():
         _yaml("roles/vikunja/tasks/mcp_tokens.yml"),
         "Mint and publish MCP and app-agent tokens per identity",
     )
-    assert token_loop["loop"] == "{{ vikunja_mcp_token_users + vikunja_agent_tiers }}"
+    assert token_loop["loop"] == (
+        "{{ vikunja_mcp_token_users + vikunja_openhands_token_users + vikunja_agent_tiers }}"
+    )
 
 
 def test_vikunja_existing_token_scope_drift_is_deleted_and_replaced():
