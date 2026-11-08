@@ -125,14 +125,26 @@ class OpenHandsRoleContract(unittest.TestCase):
         self.assertEqual(defaults["openhands_conversation_cpus"], "2.0")
         self.assertEqual(defaults["openhands_conversation_pids_limit"], 512)
 
-    def test_tasks_only_create_the_user_and_state_directory(self):
+    def test_main_tasks_set_up_identity_then_include_the_install(self):
         tasks = _load(ROLE / "tasks" / "main.yml")
         modules = [
             key for task in tasks for key in task if key.startswith("ansible.builtin.")
         ]
         self.assertEqual(
             sorted(set(modules)),
-            ["ansible.builtin.file", "ansible.builtin.group", "ansible.builtin.user"],
+            [
+                "ansible.builtin.file",
+                "ansible.builtin.group",
+                "ansible.builtin.include_tasks",
+                "ansible.builtin.user",
+            ],
+        )
+        include = _task(tasks, "Install Agent Canvas and its runtimes")
+        self.assertEqual(include["ansible.builtin.include_tasks"], "install.yml")
+        # The install needs the user and its home to exist first.
+        self.assertGreater(
+            tasks.index(include),
+            tasks.index(_task(tasks, "Create the OpenHands state directory")),
         )
 
         user = _task(tasks, "Create the OpenHands system user")["ansible.builtin.user"]

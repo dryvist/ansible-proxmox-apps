@@ -1,18 +1,57 @@
 ---
-# OpenHands role skeleton. These are the identities and limits the install and
-# service PRs will use; nothing here deploys a container or opens a port yet.
+# OpenHands role defaults. The install (Agent Canvas plus its runtimes) and
+# the identities and limits the service PR will use; no service deploys yet.
 
 # Pinned upstream release versions. Agent Canvas, the agent server and the
-# automation server each release independently; the install PR pins their
-# images against these.
+# automation server each release independently; the install pins Agent Canvas
+# against this and the servers arrive with the service PR.
 openhands_canvas_version: "1.34.0"
 openhands_agent_server_version: "1.58.1"
 openhands_automation_version: "1.26.0"
 
+# Node.js runtime the Canvas install uses, pinned and checksum-verified per
+# architecture the same way verdaccio_cache pins its runtime. The major must
+# match openhands_node_version; bump both together by hand, like verdaccio_cache.
+openhands_node_major: 24
+openhands_node_version: "24.18.0"
+openhands_node_arch: >-
+  {{ {'x86_64': 'x64', 'aarch64': 'arm64'}[ansible_architecture] }}
+openhands_node_sha256: >-
+  {{ {'x64': '55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742',
+      'arm64': '58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6'}[openhands_node_arch] }}
+openhands_node_archive_url: >-
+  {{ 'https://nodejs.org/dist/v' ~ openhands_node_version ~ '/node-v'
+     ~ openhands_node_version ~ '-linux-' ~ openhands_node_arch ~ '.tar.xz' }}
+openhands_node_dir: >-
+  {{ openhands_install_dir }}/node-v{{ openhands_node_version }}-linux-{{ openhands_node_arch }}
+
+# uv, installed with pip so the Canvas launcher's uvx calls resolve. Renovate
+# keeps this pin current.
+# renovate: datasource=pypi depName=uv
+openhands_uv_version: "0.13.7"
+
+# Program files for the install; state stays under openhands_state_dir.
+openhands_install_dir: /opt/openhands
+openhands_canvas_dir: "{{ openhands_install_dir }}/canvas"
+openhands_uv_venv: "{{ openhands_install_dir }}/uv"
+# uv reads $HOME/.config/uv/uv.toml, and the service user's home is the state
+# directory.
+openhands_uv_config_dir: "{{ openhands_state_dir }}/.config/uv"
+
+# Package caches from the published inventory, first URL wins as with the
+# runner role. Both must be declared: the install never fetches from the
+# public npm or PyPI registries.
+openhands_npm_cache_url: >-
+  {{ (tofu_data | default({})).get('cache_proxy_urls', {}).get('npm_cache', [])
+     | first | default('', true) }}
+openhands_pypi_cache_url: >-
+  {{ (tofu_data | default({})).get('cache_proxy_urls', {}).get('pypi_cache', [])
+     | first | default('', true) }}
+
 # Port the web frontend will listen on.
 openhands_port: 443
 
-# Install and service tasks arrive in later PRs; the skeleton stays inert.
+# Service tasks arrive in a later PR; the install stays service-free.
 openhands_service_enabled: false
 
 openhands_user: openhands

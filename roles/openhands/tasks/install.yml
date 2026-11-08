@@ -1,0 +1,146 @@
+---
+# Agent Canvas and its runtimes. Node.js and uv are pinned in
+# defaults/main.yml; every package fetch goes through the site's package
+# caches and none through the public registries. No service deploys here;
+# that arrives in a later PR.
+
+- name: Require the package caches be declared
+  ansible.builtin.assert:
+    that:
+      - openhands_npm_cache_url | length > 0
+      - openhands_pypi_cache_url | length > 0
+    fail_msg: >-
+      The published inventory declares no npm_cache or pypi_cache URL.
+      openhands installs only through the package caches; it never fetches
+      from the public registries.
+
+- name: Install the Agent Canvas runtime prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-venv
+      - xz-utils
+    state: present
+    update_cache: true
+  register: openhands_install_packages
+
+- name: Create the Agent Canvas install directory
+  ansible.builtin.file:
+    path: "{{ openhands_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the pinned Node.js runtime archive
+  ansible.builtin.get_url:
+    url: "{{ openhands_node_archive_url }}"
+    dest: "{{ openhands_install_dir }}/node-v{{ openhands_node_version }}-linux-{{ openhands_node_arch }}.tar.xz"
+    checksum: "sha256:{{ openhands_node_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the pinned Node.js runtime
+  ansible.builtin.unarchive:
+    src: "{{ openhands_install_dir }}/node-v{{ openhands_node_version }}-linux-{{ openhands_node_arch }}.tar.xz"
+    dest: "{{ openhands_install_dir }}"
+    remote_src: true
+    creates: "{{ openhands_node_dir }}/bin/node"
+  # Under --check a first pass only previews the apt task above, so xz-utils
+  # is not really present and the extraction would fail.
+  when: not (ansible_check_mode and openhands_install_packages is changed)
+
+- name: Read the installed Agent Canvas release
+  ansible.builtin.command:
+    argv:
+      - "{{ openhands_node_dir }}/bin/npm"
+      - ls
+      - --global
+      - --prefix
+      - "{{ openhands_canvas_dir }}"
+      - --depth
+      - "0"
+      - "@openhands/agent-canvas"
+  register: openhands_canvas_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  environment:
+    PATH: "{{ openhands_node_dir }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+- name: Install Agent Canvas through the npm cache
+  ansible.builtin.command:
+    argv:
+      - "{{ openhands_node_dir }}/bin/npm"
+      - install
+      - --global
+      - --prefix
+      - "{{ openhands_canvas_dir }}"
+      - --no-audit
+      - --no-fund
+      - "--registry={{ openhands_npm_cache_url }}"
+      - "@openhands/agent-canvas@{{ openhands_canvas_version }}"
+  vars:
+    _canvas_installed_version: >-
+      {{ openhands_canvas_installed.stdout | default('', true)
+         | regex_search('@openhands/agent-canvas@([0-9][0-9.]*)', '\1')
+         | default('', true) }}
+  # Reinstalled only when the installed release is not exactly the pin; npm
+  # ls prints the package line when it is present and exits non-zero (and
+  # empty) when it is not.
+  when: _canvas_installed_version != openhands_canvas_version
+  changed_when: true
+  environment:
+    PATH: "{{ openhands_node_dir }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+- name: Create the uv virtualenv
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - "{{ openhands_uv_venv }}"
+  args:
+    creates: "{{ openhands_uv_venv }}/bin/python"
+  when: not (ansible_check_mode and openhands_install_packages is changed)
+
+- name: Install uv through the PyPI cache
+  ansible.builtin.pip:
+    name: "uv=={{ openhands_uv_version }}"
+    virtualenv: "{{ openhands_uv_venv }}"
+    state: present
+    extra_args: "--index-url {{ openhands_pypi_cache_url }}"
+
+- name: Expose uv and uvx on the default PATH
+  ansible.builtin.file:
+    src: "{{ openhands_uv_venv }}/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+    force: true
+  loop:
+    - uv
+    - uvx
+
+- name: Create the uv configuration directory for the service user
+  ansible.builtin.file:
+    path: "{{ openhands_uv_config_dir }}"
+    state: directory
+    owner: "{{ openhands_user }}"
+    group: "{{ openhands_user }}"
+    mode: "0750"
+
+- name: Point the service user's uv default index at the PyPI cache
+  # uv reads $XDG_CONFIG_HOME/uv/uv.toml, which defaults to this path under
+  # the user's home; the state directory is that home. The Canvas launcher's
+  # uvx calls inherit it and fetch through the cache.
+  ansible.builtin.copy:
+    dest: "{{ openhands_uv_config_dir }}/uv.toml"
+    owner: "{{ openhands_user }}"
+    group: "{{ openhands_user }}"
+    mode: "0640"
+    content: |
+      # Managed by ansible-proxmox-apps (role: openhands).
+      [[index]]
+      url = "{{ openhands_pypi_cache_url }}"
+      default = true
