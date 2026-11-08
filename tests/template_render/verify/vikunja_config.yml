@@ -1,0 +1,65 @@
+---
+# Render and verify the Vikunja runtime configuration (config.yml.j2). The
+# role has no Molecule scenario; this play is its configuration coverage (see
+# the role map in .github/workflows/ci-gate.yml). Defaults load from the role
+# itself, so a changed default shows up here rather than only in review.
+- name: Verify the Vikunja configuration template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    ansible_become: false
+    _vikunja_tpl: "{{ playbook_dir }}/../../../roles/vikunja/templates/config.yml.j2"
+    _fixture_tofu_data:
+      domain: test.example
+      constants:
+        service_ports:
+          vikunja_web: 8080
+          postgres_default: 5432
+      containers:
+        authelia:
+          hostname: auth
+    # Same derivation as inventory/group_vars/all.yml.
+    authelia_hostname: "{{ _fixture_tofu_data.containers.authelia.hostname }}"
+
+  vars_files:
+    - "../../../roles/vikunja/defaults/main/00-base.yml"
+
+  tasks:
+    - name: Publish the fixture inventory as a fact
+      ansible.builtin.set_fact:
+        tofu_data: "{{ _fixture_tofu_data }}"
+
+    - name: Render config.yml with the role defaults
+      ansible.builtin.set_fact:
+        _default_config: "{{ lookup('template', _vikunja_tpl) | from_yaml }}"
+
+    - name: The default render allows webhooks to non-routable addresses
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _default_config.outgoingrequests.allownonroutableips is sameas true
+        fail_msg: >-
+          config.yml must render outgoingrequests.allownonroutableips as a
+          boolean true by default — Vikunja drops webhooks to private, loopback
+          and link-local addresses otherwise. Rendered section:
+          {{ _default_config.outgoingrequests }}.
+        success_msg: The default render allows webhooks to non-routable addresses.
+
+    - name: Render config.yml with the flag off
+      ansible.builtin.set_fact:
+        _opted_out_config: "{{ lookup('template', _vikunja_tpl) | from_yaml }}"
+      vars:
+        vikunja_outgoing_requests_allow_non_routable_ips: false
+
+    - name: An explicit false renders a boolean false
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _opted_out_config.outgoingrequests.allownonroutableips is sameas false
+        fail_msg: >-
+          Setting vikunja_outgoing_requests_allow_non_routable_ips to false
+          must render outgoingrequests.allownonroutableips: false. Rendered
+          section: {{ _opted_out_config.outgoingrequests }}.
+        success_msg: The opted-out render denies them.
