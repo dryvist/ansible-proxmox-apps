@@ -179,6 +179,19 @@ rules:
 - from `docker0` and any other `br-*` bridge except the proxy's egress bridge:
   dropped.
 
+### Default-bridge proxy path
+
+Set `agent_sandbox_default_bridge_proxy_enabled: true` to give containers that
+Docker launches on its default bridge their own route into the proxy. The role
+publishes the Squid port on the Docker default bridge's IPv4 address only
+(never `0.0.0.0`, and the address must be present in host facts), and the
+filter admits exactly one flow from that bridge: TCP to the proxy port after
+Docker's DNAT, out the proxy egress bridge. The `docker0` drop rule stays so
+every other flow from default-bridge containers still has no route out.
+Inventory can widen the static Squid list with
+`agent_sandbox_extra_egress_domains`, which is merged into the rendered
+allowlist, deduplicated against `agent_sandbox_egress_domains`, in list order.
+
 The converge asserts the table is loaded and probes a default-bridge container
 for a route out. To verify host-side HTTPS reachability and exercise the
 `agents`-bridge drop counter with a routed, disposable container, run the
