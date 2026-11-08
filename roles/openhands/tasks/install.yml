@@ -32,24 +32,20 @@
     group: root
     mode: "0755"
 
-- name: Download the pinned Node.js runtime archive
-  ansible.builtin.get_url:
-    url: "{{ openhands_node_archive_url }}"
-    dest: "{{ openhands_install_dir }}/node-v{{ openhands_node_version }}-linux-{{ openhands_node_arch }}.tar.xz"
-    checksum: "sha256:{{ openhands_node_sha256 }}"
-    owner: root
-    group: root
-    mode: "0644"
-
+# Under --check a first pass only previews the apt task above, so xz-utils is
+# not really present and the unpack is skipped.
 - name: Install the pinned Node.js runtime
-  ansible.builtin.unarchive:
-    src: "{{ openhands_install_dir }}/node-v{{ openhands_node_version }}-linux-{{ openhands_node_arch }}.tar.xz"
-    dest: "{{ openhands_install_dir }}"
-    remote_src: true
-    creates: "{{ openhands_node_dir }}/bin/node"
-  # Under --check a first pass only previews the apt task above, so xz-utils
-  # is not really present and the extraction would fail.
-  when: not (ansible_check_mode and openhands_install_packages is changed)
+  ansible.builtin.include_role:
+    name: verdaccio_cache
+    tasks_from: node_runtime
+  vars:
+    verdaccio_cache_node_runtime_archive_url: "{{ openhands_node_archive_url }}"
+    verdaccio_cache_node_runtime_archive: >-
+      {{ openhands_install_dir }}/node-v{{ openhands_node_version }}-linux-{{ openhands_node_arch }}.tar.xz
+    verdaccio_cache_node_runtime_sha256: "{{ openhands_node_sha256 }}"
+    verdaccio_cache_node_runtime_install_root: "{{ openhands_install_dir }}"
+    verdaccio_cache_node_runtime_dir: "{{ openhands_node_dir }}"
+    verdaccio_cache_node_runtime_skip_unpack: "{{ ansible_check_mode and openhands_install_packages is changed }}"
 
 - name: Read the installed Agent Canvas release
   ansible.builtin.command:
@@ -85,7 +81,7 @@
     _canvas_installed_version: >-
       {{ openhands_canvas_installed.stdout | default('', true)
          | regex_search('@openhands/agent-canvas@([0-9][0-9.]*)', '\1')
-         | default('', true) }}
+         | default([''], true) | first }}
   # Reinstalled only when the installed release is not exactly the pin; npm
   # ls prints the package line when it is present and exits non-zero (and
   # empty) when it is not.

@@ -8,11 +8,12 @@ import unittest
 
 import yaml
 
-from app_agent_helpers import _task
+from app_agent_helpers import _render, _task
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "openhands"
+SHARED_NODE = ROOT / "roles" / "verdaccio_cache" / "tasks" / "node_runtime.yml"
 
 # Public package registries and installers the role must never name, so a
 # cache-URL regression cannot silently fall back to a direct fetch.
@@ -87,27 +88,44 @@ class OpenHandsNodeRuntime(unittest.TestCase):
         digests = re.findall(r"'(?:x64|arm64)':\s*'([0-9a-f]{64})'", defaults_path)
         self.assertGreaterEqual(len(digests), 2)
 
-    def test_node_install_follows_the_verdaccio_cache_pattern(self):
+    def test_node_install_reuses_the_shared_node_runtime_tasks(self):
         tasks = _install()
-        download = _task(tasks, "Download the pinned Node.js runtime archive")
+        include = _task(tasks, "Install the pinned Node.js runtime")
         self.assertEqual(
-            download["ansible.builtin.get_url"]["checksum"],
-            "sha256:{{ openhands_node_sha256 }}",
+            include["ansible.builtin.include_role"],
+            {"name": "verdaccio_cache", "tasks_from": "node_runtime"},
         )
-        unpack = _task(tasks, "Install the pinned Node.js runtime")
+        params = include["vars"]
+        self.assertEqual(params["verdaccio_cache_node_runtime_sha256"], "{{ openhands_node_sha256 }}")
+        self.assertEqual(params["verdaccio_cache_node_runtime_dir"], "{{ openhands_node_dir }}")
+        self.assertEqual(params["verdaccio_cache_node_runtime_install_root"], "{{ openhands_install_dir }}")
+        # Under --check the apt task above only previews, so xz-utils is not
+        # really installed and the unpack must skip with it.
+        register = _task(tasks, "Install the Agent Canvas runtime prerequisites")["register"]
+        self.assertIn("ansible_check_mode", params["verdaccio_cache_node_runtime_skip_unpack"])
+        self.assertIn(register, params["verdaccio_cache_node_runtime_skip_unpack"])
+
+    def test_verdaccio_cache_installs_node_through_the_same_shared_tasks(self):
+        verdaccio = _load(ROOT / "roles" / "verdaccio_cache" / "tasks" / "main.yml")
+        include = _task(verdaccio, "Install the pinned Node.js runtime")
+        self.assertEqual(include["ansible.builtin.include_tasks"], "node_runtime.yml")
+        self.assertEqual(
+            include["vars"]["verdaccio_cache_node_runtime_archive"].strip(),
+            "/var/cache/verdaccio/node-v{{ verdaccio_cache_node_version }}"
+            "-linux-{{ verdaccio_cache_node_arch }}.tar.xz",
+        )
+
+    def test_shared_node_runtime_tasks_pin_the_digest_and_unpack_once(self):
+        shared = _load(SHARED_NODE)
+        download = _task(shared, "Download the pinned Node.js runtime archive")
+        self.assertEqual(
+            download["ansible.builtin.get_url"]["checksum"], "sha256:{{ verdaccio_cache_node_runtime_sha256 }}"
+        )
+        unpack = _task(shared, "Install the pinned Node.js runtime")
         self.assertTrue(unpack["ansible.builtin.unarchive"]["remote_src"])
         self.assertEqual(
-            unpack["ansible.builtin.unarchive"]["creates"],
-            "{{ openhands_node_dir }}/bin/node",
+            unpack["ansible.builtin.unarchive"]["creates"], "{{ verdaccio_cache_node_runtime_dir }}/bin/node"
         )
-        # Under --check the apt task above only previews, so xz-utils is not
-        # really installed and the extraction must skip with it.
-        register = _task(tasks, "Install the Agent Canvas runtime prerequisites")[
-            "register"
-        ]
-        condition = _condition(unpack)
-        self.assertIn("ansible_check_mode", condition)
-        self.assertIn(register, condition)
 
 
 class OpenHandsCanvasInstall(unittest.TestCase):
@@ -129,6 +147,16 @@ class OpenHandsCanvasInstall(unittest.TestCase):
         condition = _condition(install)
         self.assertIn("_canvas_installed_version", condition)
         self.assertIn("openhands_canvas_version", condition)
+
+    def test_installed_version_capture_matches_the_pin_as_a_string(self):
+        expr = _task(_install(), "Install Agent Canvas through the npm cache")["vars"][
+            "_canvas_installed_version"
+        ]
+        listed = "/opt/openhands/canvas/lib\n└── @openhands/agent-canvas@1.34.0\n"
+        self.assertEqual(
+            _render(expr, {"openhands_canvas_installed": {"stdout": listed}}).strip(), "1.34.0"
+        )
+        self.assertEqual(_render(expr, {"openhands_canvas_installed": {"stdout": ""}}).strip(), "")
 
     def test_role_never_names_a_public_registry(self):
         files = sorted(ROLE.rglob("*.yml")) + sorted(ROLE.rglob("*.j2")) + [
