@@ -16,6 +16,8 @@ vendor ships no other runnable form:
   binary. The engine, API and Lite come only as container images or source,
   and nixpkgs has no package. Read 2026-11-01 from the
   [v0.114.2 release assets](https://github.com/hatchet-dev/hatchet/releases/tag/v0.114.2).
+- `openhands`: vendor-shipped per-conversation containers on the dedicated
+  sandbox VM.
 
 Full docs live under `docs/agents/`, one topic per page:
 
