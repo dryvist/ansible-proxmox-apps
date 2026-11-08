@@ -80,6 +80,18 @@
               {{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}/servarr-child-{{
                  now(utc=true, fmt='%Y%m%dT%H%M%S') }}.log
 
+        # run-ansible.sh lists this repo's site.yml in
+        # RUN_ANSIBLE_PIN_OPTIONAL_PLAYBOOKS, so a failed checkout of the pin
+        # into servarr/ only warns there and this play would then converge
+        # whatever servarr/ tree is already on disk. Only the media play may
+        # refuse that (the pin must stay optional for non-media runs), so
+        # fail closed here unless HEAD equals servarr.pin; the rescue below
+        # records the refusal as an isolated failure and the end-of-run gate
+        # fails the run. Kept after the child-log choice above so the rescue
+        # can always report the log tail.
+        - name: Verify the media-stack checkout is at the pinned commit
+          ansible.builtin.import_tasks: ../tasks/verify_servarr_pin_freshness.yml
+
         # The media domain's KV entries are already fetched by the
         # openbao_secrets pre-play under this repo's own MEDIA AppRole, and
         # their field names are the UPPER_SNAKE variables the media roles
