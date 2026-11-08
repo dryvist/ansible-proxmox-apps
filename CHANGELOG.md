@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.31.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.30.0...v5.31.0) (2026-11-08)
+
+
+### Features
+
+* **openhands:** add the role skeleton, inventory group and play ([#3443](https://github.com/dryvist/ansible-proxmox-apps/issues/3443)) ([72790b0](https://github.com/dryvist/ansible-proxmox-apps/commit/72790b0200145ecf63402532368f170feb42f90d))
+
 ## [5.30.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.29.2...v5.30.0) (2026-11-08)
 
 
