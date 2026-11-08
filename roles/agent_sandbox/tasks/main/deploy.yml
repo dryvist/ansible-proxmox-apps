@@ -315,14 +315,24 @@
     ansible_become: false
   check_mode: false
 
+# Play-start facts predate docker0 when the docker_engine dependency installs
+# Docker in the same run.
+- name: Gather the Docker default bridge facts
+  ansible.builtin.setup:
+    gather_subset:
+      - "!all"
+      - "!min"
+      - network
+    filter: ansible_docker0
+  when: agent_sandbox_default_bridge_proxy_enabled | bool
+
 - name: Require the default bridge address before publishing the proxy port
   ansible.builtin.assert:
     that:
-      - agent_sandbox_default_bridge_proxy_address is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')
+      - ansible_facts['docker0']['ipv4']['address'] is defined
     fail_msg: >-
-      Publishing the proxy port for default-bridge containers requires the
-      Docker default bridge IPv4 address from host facts; the port is never
-      published on 0.0.0.0.
+      docker0 has no IPv4 address in host facts, so the proxy port is not
+      published; it is never published on 0.0.0.0.
   when: agent_sandbox_default_bridge_proxy_enabled | bool
 
 - name: Deploy agent sandbox docker-compose template

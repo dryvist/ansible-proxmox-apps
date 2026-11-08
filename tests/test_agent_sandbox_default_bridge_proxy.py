@@ -1,20 +1,20 @@
-"""Contract for the opt-in default-bridge proxy path: the compose port
-publishes on the Docker default bridge address only, the static Squid
-allowlist merges the extra domains, and the openhands_host group variables
-turn the path on with derived destinations."""
+"""Opt-in default-bridge proxy path: the compose port, the docker0 address
+guard, the allowlist merge and the openhands_host group variables."""
 
 from pathlib import Path
 import unittest
 
 import yaml
 from ansible.errors import AnsibleError
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
+
+from app_agent_helpers import _render, _task
+from test_agent_sandbox_zcode_cribl import render, render_text
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "agent_sandbox"
 FLAG = "agent_sandbox_default_bridge_proxy_enabled"
 GROUP_VARS = ROOT / "inventory" / "group_vars" / "openhands_host.yml"
+DOCKER0_FACTS = {"docker0": {"ipv4": {"address": "192.0.2.53"}}}
 
 TOFU_FIXTURE = {
     "cache_proxy_urls": {
@@ -28,19 +28,13 @@ def load(path: Path):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def render_text(template_path: Path, variables: dict) -> str:
-    templar = Templar(loader=DataLoader())
-    templar.available_variables = variables
-    return templar.template(trust_as_template(template_path.read_text(encoding="utf-8")))
-
-
 def render_compose(enabled: bool) -> dict:
     variables = dict(load(ROLE / "defaults/main/00-runtime.yml"))
     variables.update(
         {
             "ansible_managed": "test",
+            "ansible_facts": DOCKER0_FACTS,
             FLAG: enabled,
-            "agent_sandbox_default_bridge_proxy_address": "192.0.2.53",
             "agent_sandbox_zcode_web_enabled": False,
             "agent_sandbox_zcode_web_bind_address": "192.0.2.20",
             "agent_sandbox_zcode_web_secret_gid": 1901,
@@ -48,18 +42,15 @@ def render_compose(enabled: bool) -> dict:
             "agent_sandbox_docs_checkout_path": "/srv/agent-docs",
         }
     )
-    templar = Templar(loader=DataLoader())
-    templar.available_variables = variables
     # Defaults reference each other; resolve the ones that need no host facts.
     for _ in range(3):
         for key, value in list(variables.items()):
             if isinstance(value, str) and "{{" in value:
                 try:
-                    variables[key] = templar.template(trust_as_template(value))
+                    variables[key] = _render(value, variables)
                 except AnsibleError:
                     pass
-    text = (ROLE / "templates/docker-compose.yml.j2").read_text(encoding="utf-8")
-    return yaml.safe_load(templar.template(trust_as_template(text)))
+    return render(ROLE / "templates/docker-compose.yml.j2", variables)
 
 
 def rendered_allowlist(static: dict, extra: list) -> str:
@@ -73,32 +64,15 @@ def rendered_allowlist(static: dict, extra: list) -> str:
     )
 
 
-def rendered_group_vars(raw: dict) -> dict:
+def rendered_extra_domains() -> list:
     variables = {
-        "agent_sandbox_proxy_port": 3128,
         "ingress_domain": "example.invalid",
         "hostvars": {"localhost": {"tofu_data": TOFU_FIXTURE}},
     }
-    rendered = {}
-    for key, value in raw.items():
-        if isinstance(value, str) and "{{" in value:
-            rendered[key] = render_text_value(value, variables)
-        elif isinstance(value, list):
-            rendered[key] = [
-                render_text_value(item, variables)
-                if isinstance(item, str) and "{{" in item
-                else item
-                for item in value
-            ]
-        else:
-            rendered[key] = value
-    return rendered
-
-
-def render_text_value(value: str, variables: dict) -> str:
-    templar = Templar(loader=DataLoader())
-    templar.available_variables = variables
-    return templar.template(trust_as_template(value))
+    return [
+        _render(item, variables)
+        for item in load(GROUP_VARS)["agent_sandbox_extra_egress_domains"]
+    ]
 
 
 class ComposePortPublishing(unittest.TestCase):
@@ -107,39 +81,41 @@ class ComposePortPublishing(unittest.TestCase):
 
         self.assertNotIn("ports", compose["services"]["squid"])
 
-    def test_enabled_compose_publishes_the_proxy_port_on_the_bridge_address(self):
+    def test_enabled_compose_publishes_the_proxy_port_on_the_docker0_address(self):
         compose = render_compose(True)
 
         self.assertEqual(
             compose["services"]["squid"]["ports"],
             ["192.0.2.53:3128:3128"],
         )
-        self.assertNotIn(
-            "0.0.0.0",
-            " ".join(compose["services"]["squid"]["ports"]),
-        )
 
-    def test_deploy_asserts_the_bridge_address_before_rendering(self):
+    def test_deploy_gathers_and_requires_the_docker0_address_before_rendering(self):
         tasks = load(ROLE / "tasks/main/deploy.yml")
-        render_index = next(
-            index
-            for index, task in enumerate(tasks)
-            if task["name"] == "Deploy agent sandbox docker-compose template"
-        )
-        assert_task = tasks[render_index - 1]
-
-        self.assertEqual(
-            assert_task["name"],
+        names = [task.get("name") for task in tasks]
+        render_index = names.index("Deploy agent sandbox docker-compose template")
+        gather = _task(tasks, "Gather the Docker default bridge facts")
+        guard = _task(
+            tasks,
             "Require the default bridge address before publishing the proxy port",
         )
-        self.assertIn(
-            "match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$')",
-            assert_task["ansible.builtin.assert"]["that"][0],
-        )
-        self.assertEqual(
-            assert_task["when"],
-            f"{FLAG} | bool",
-        )
+
+        self.assertEqual(tasks[render_index - 2 : render_index], [gather, guard])
+        self.assertEqual(gather["ansible.builtin.setup"]["filter"], "ansible_docker0")
+        self.assertEqual(gather["when"], f"{FLAG} | bool")
+        self.assertEqual(guard["when"], f"{FLAG} | bool")
+        for facts, expected in (
+            (DOCKER0_FACTS, True),
+            ({}, False),
+            ({"docker0": {"active": True}}, False),
+        ):
+            with self.subTest(facts=facts):
+                self.assertIs(
+                    all(
+                        _render("{{ " + condition + " }}", {"ansible_facts": facts})
+                        for condition in guard["ansible.builtin.assert"]["that"]
+                    ),
+                    expected,
+                )
 
 
 class AllowlistMerge(unittest.TestCase):
@@ -179,19 +155,9 @@ class OpenHandsHostGroupVars(unittest.TestCase):
         self.assertIs(raw[FLAG], True)
         self.assertIs(raw["agent_sandbox_zcode_web_enabled"], False)
 
-    def test_proxy_url_targets_the_bridge_gateway_alias(self):
-        rendered = rendered_group_vars(load(GROUP_VARS))
-
-        self.assertEqual(
-            rendered["openhands_egress_proxy_url"],
-            "http://host.docker.internal:3128",
-        )
-
     def test_extra_domains_derive_cache_hosts_from_the_published_urls(self):
-        rendered = rendered_group_vars(load(GROUP_VARS))
-
         self.assertEqual(
-            rendered["agent_sandbox_extra_egress_domains"],
+            rendered_extra_domains(),
             [
                 "llm.example.invalid",
                 "vikunja.example.invalid",
