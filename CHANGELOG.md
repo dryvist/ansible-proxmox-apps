@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.29.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.29.0...v5.29.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **grafana_stack:** deploy the critical Slack contact point ([#3435](https://github.com/dryvist/ansible-proxmox-apps/issues/3435)) ([cb0a7e3](https://github.com/dryvist/ansible-proxmox-apps/commit/cb0a7e3aa92afb04bfba47aa36e65f6c33b80600))
+* **grafana_stack:** deploy the critical Slack contact point with the accelerator rule ([cb0a7e3](https://github.com/dryvist/ansible-proxmox-apps/commit/cb0a7e3aa92afb04bfba47aa36e65f6c33b80600))
+
 ## [5.29.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.28.1...v5.29.0) (2026-11-08)
 
 
