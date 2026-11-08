@@ -1,51 +1,39 @@
 # openhands
 
-Skeleton for the OpenHands AI agent platform on the `openhands_host`
-inventory group (`docker_vms` members carrying the `openhands` tag). This
-PR creates the role's identity and state layout only; the install and the
-service arrive in later PRs, and `openhands_service_enabled` defaults to
-`false` until then.
+Skeleton of the OpenHands role. It creates the service user and the state
+directory. The install and the service come in later PRs, and
+`openhands_service_enabled` stays `false` until then.
 
-## What will run here
+## What will run
 
-Three OpenHands components, each pinned by a version in
-`defaults/main.yml`:
+Three OpenHands components, each pinned by a version in `defaults/main.yml`:
 
-- **Agent Canvas** — the web frontend.
-- **Agent server** — the backend an agent session talks to.
-- **Automation server** — the headless automation entry point.
+- **Agent Canvas**: the web frontend.
+- **Agent server**: the backend an agent session talks to.
+- **Automation server**: the headless automation entry point.
 
 Each conversation runs in its own container, capped by
 `openhands_conversation_memory_limit`, `openhands_conversation_cpus` and
-`openhands_conversation_pids_limit`. The web frontend publishes on port
-`openhands_port` (443) on the host's inventory address.
+`openhands_conversation_pids_limit`. The web frontend will listen on
+`openhands_port`.
 
 ## State
 
-The `openhands` system user's home and the role's state directory are the
-same path, `openhands_state_dir` (`/var/lib/docker/openhands`), which sits
-on the guest's dedicated Docker data disk like the rest of this VM class's
-persistent data. The directory is created mode `0750` and owned by the
-service user, who is a member of the `docker` group so conversation
-containers launch through the host daemon.
-
-## Secrets
-
-The OpenHands host is a sandbox guest: it receives empty secret facts by
-design (`playbooks/tasks/publish_secret_domain_facts.yml`), and this role
-never reads `bao_*_secrets` facts. Credentials will arrive through an
-on-host OpenBao AppRole, the same delivery the ci-resolver uses in
-`roles/agent_sandbox`.
+`openhands_state_dir` is both the state directory and the home of the
+`openhands_user` service user. The role creates it with mode `0750`, owned by
+that user, who is a member of the `docker` group so it can start
+conversation containers. The role reads no secret facts.
 
 ## Installation
 
-Included via the `Deploy OpenHands` play in `playbooks/site.yml`
-(hosts: `openhands_host`), in the site's isolated-failure shape. Converge
-just this role:
+Included via the `Deploy OpenHands` play in `playbooks/site.yml`, in the
+site's isolated-failure shape. Converge just this role:
 
 ```sh
 ansible-playbook playbooks/site.yml --tags openhands --diff
 ```
 
-The role currently creates the system user and the state directory; the
-container install and the service management are future PRs.
+## Usage
+
+Override the defaults in `defaults/main.yml` through inventory group
+variables.

@@ -1,12 +1,14 @@
 """OpenHands skeleton contract: tag-mapped inventory group, isolated site
 play, ZCode Web gate for the group, and a role that never reads OpenBao
-secret facts (sandbox guests receive empty secret facts by design)."""
+secret facts."""
 
 from pathlib import Path
 import re
 import unittest
 
 import yaml
+
+from app_agent_helpers import _task
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,10 +25,6 @@ TAG_GROUP_TERM = re.compile(
     r"in\s+\(item\.value\.tags\s+\|\s+default\(\[\]\)\)\s+"
     r"else\s+\[\]\)"
 )
-
-
-def _task(tasks, name):
-    return next(task for task in tasks if task.get("name") == name)
 
 
 def _load(path):
@@ -122,7 +120,6 @@ class OpenHandsRoleContract(unittest.TestCase):
         self.assertEqual(defaults["openhands_port"], 443)
         self.assertIs(defaults["openhands_service_enabled"], False)
         self.assertEqual(defaults["openhands_user"], "openhands")
-        # On the guest's dedicated Docker data disk (mounted at /var/lib/docker).
         self.assertEqual(defaults["openhands_state_dir"], "/var/lib/docker/openhands")
         self.assertEqual(defaults["openhands_conversation_memory_limit"], "4g")
         self.assertEqual(defaults["openhands_conversation_cpus"], "2.0")
