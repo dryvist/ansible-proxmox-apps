@@ -103,19 +103,7 @@ class AgentSandboxCriblRoute(unittest.TestCase):
     def test_s2s_firewall_rule_keeps_the_existing_https_rule_only(self):
         rendered = render_text(
             ROLE / "templates/agent-sandbox.nft.j2",
-            {
-                "ansible_managed": "test",
-                "agent_sandbox_nft_table": "agent_sandbox",
-                "agent_sandbox_bridge": "br-agents",
-                "agent_sandbox_egress_bridge": "br-agents-out",
-                "agent_sandbox_zcode_web_ingress_source_ips": [],
-                "agent_sandbox_zcode_web_port": 8080,
-                "agent_sandbox_zcode_web_host_port": 443,
-                "agent_sandbox_proxy_port": 3128,
-                "agent_sandbox_cribl_edge_mac_address": "edge_mac_fixture",
-                "agent_sandbox_cribl_stream_address": "stream_address_fixture",
-                "agent_sandbox_cribl_s2s_port": 10300,
-            },
+            self._nft_variables(default_bridge_proxy_enabled=False),
         )
         egress_accepts = [
             line.strip()
@@ -131,6 +119,51 @@ class AgentSandboxCriblRoute(unittest.TestCase):
                 "iifname \"br-agents-out\" ether saddr edge_mac_fixture "
                 "ip daddr stream_address_fixture tcp dport 10300 accept",
             ],
+        )
+
+    @staticmethod
+    def _nft_variables(default_bridge_proxy_enabled: bool) -> dict:
+        return {
+            "ansible_managed": "test",
+            "agent_sandbox_nft_table": "agent_sandbox",
+            "agent_sandbox_bridge": "br-agents",
+            "agent_sandbox_egress_bridge": "br-agents-out",
+            "agent_sandbox_default_bridge_proxy_enabled": default_bridge_proxy_enabled,
+            "agent_sandbox_zcode_web_ingress_source_ips": [],
+            "agent_sandbox_zcode_web_port": 8080,
+            "agent_sandbox_zcode_web_host_port": 443,
+            "agent_sandbox_proxy_port": 3128,
+            "agent_sandbox_cribl_edge_mac_address": "edge_mac_fixture",
+            "agent_sandbox_cribl_stream_address": "stream_address_fixture",
+            "agent_sandbox_cribl_s2s_port": 10300,
+        }
+
+    def test_firewall_has_no_default_bridge_accept_rule_when_disabled(self):
+        rendered = render_text(
+            ROLE / "templates/agent-sandbox.nft.j2",
+            self._nft_variables(default_bridge_proxy_enabled=False),
+        )
+
+        self.assertIn('iifname "docker0" counter drop', rendered)
+        self.assertFalse(
+            any(
+                'iifname "docker0"' in line and "accept" in line
+                for line in rendered.splitlines()
+            )
+        )
+
+    def test_default_bridge_accept_rule_sits_before_the_drop_rule(self):
+        rendered = render_text(
+            ROLE / "templates/agent-sandbox.nft.j2",
+            self._nft_variables(default_bridge_proxy_enabled=True),
+        )
+        rules = [line.strip() for line in rendered.splitlines() if line.strip()]
+        drop_index = rules.index('iifname "docker0" counter drop')
+
+        self.assertEqual(
+            rules[drop_index - 1],
+            "iifname \"docker0\" oifname \"br-agents-out\" "
+            "tcp dport 3128 ct status dnat accept",
         )
 
 
