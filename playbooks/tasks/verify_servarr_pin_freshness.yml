@@ -1,0 +1,51 @@
+---
+# Fails closed unless the servarr/ checkout's HEAD equals the SHA in
+# servarr.pin (repo root, directly beside the servarr/ directory the pin
+# checks out into). scripts/run-ansible.sh lists this repo's site.yml in
+# RUN_ANSIBLE_PIN_OPTIONAL_PLAYBOOKS, so a failed checkout of the pin into
+# servarr/ only warns there and the media converge would otherwise run
+# whatever servarr/ tree is already on disk. Only the media play itself may
+# refuse (the pin must stay optional for non-media runs), so this is imported
+# inside that play's block/rescue: the rescue records an isolated failure,
+# the rest of site.yml still converges, and the end-of-run gate fails the run.
+#
+# Shared by the real converge play (playbooks/site/05-media-and-gate.yml) and
+# its contract test (tests/inventory_load/verify_media_stack_pin_freshness.yml)
+# so the two can never drift — the same arrangement as
+# compute_servarr_extra_args.yml. servarr_dir_override exists for the test,
+# which points it at a throwaway fixture checkout laid out the same way
+# (servarr/ with servarr.pin beside it); the play sets no override and gets
+# the real checkout.
+- name: Assert the media-stack checkout is at the pinned commit
+  vars:
+    _servarr_pin_dir: "{{ servarr_dir_override | default(_servarr_dir) }}"
+  block:
+    # slurp, not a file lookup: it reads with the same privilege as the git
+    # command below, so a pin file only escalation can read is still found.
+    - name: Read the media-stack commit pinned in servarr.pin
+      ansible.builtin.slurp:
+        src: "{{ _servarr_pin_dir | dirname }}/servarr.pin"
+      register: _servarr_pin_file
+
+    - name: Record the pinned media-stack commit
+      ansible.builtin.set_fact:
+        _servarr_pinned_sha: "{{ _servarr_pin_file.content | b64decode | trim }}"
+
+    # Raw git, not community.general.git: the module manages refs, this check
+    # only reads the HEAD the pinned checkout discipline left in place.
+    - name: Read the checked-out media-stack HEAD commit  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: git -C {{ _servarr_pin_dir | quote }} rev-parse HEAD
+      changed_when: false
+      check_mode: false
+      register: _servarr_head
+
+    - name: Refuse to converge a stale media-stack checkout
+      ansible.builtin.assert:
+        that:
+          - _servarr_head.stdout | trim == _servarr_pinned_sha
+        fail_msg: >-
+          The pinned media-stack checkout is stale or failed to update —
+          servarr.pin pins {{ _servarr_pinned_sha }}, servarr/ HEAD is
+          {{ _servarr_head.stdout | trim }} — and the converge refuses to
+          run old code.
