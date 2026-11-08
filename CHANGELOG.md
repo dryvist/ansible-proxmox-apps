@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.32.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.32.0...v5.32.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **media:** refuse to converge a stale media-stack checkout ([#3455](https://github.com/dryvist/ansible-proxmox-apps/issues/3455)) ([f265d07](https://github.com/dryvist/ansible-proxmox-apps/commit/f265d07a9f7177f3d08940bc87786c39ee1c8141))
+
 ## [5.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.31.0...v5.32.0) (2026-11-08)
 
 
