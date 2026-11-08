@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.29.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.28.1...v5.29.0) (2026-11-08)
+
+
+### Features
+
+* **wall:** pin MC8 router callers in the wall config ([#3416](https://github.com/dryvist/ansible-proxmox-apps/issues/3416)) ([0c69dfd](https://github.com/dryvist/ansible-proxmox-apps/commit/0c69dfd8dcc5bbd389d0250e4fdc4d2727b95076))
+
+
+### Bug Fixes
+
+* **cribl_stream:** drop router health-check spans before Phoenix ([#3414](https://github.com/dryvist/ansible-proxmox-apps/issues/3414)) ([d256ca5](https://github.com/dryvist/ansible-proxmox-apps/commit/d256ca5d431437baaec4ab502a67f5c3e9b36a35))
+* **cribl_stream:** keep span metric labels and count agent runs ([#3422](https://github.com/dryvist/ansible-proxmox-apps/issues/3422)) ([17c7621](https://github.com/dryvist/ansible-proxmox-apps/commit/17c7621bbee50768d5d4d92ebc40721537092486))
+* **renovate:** take first-party releases as soon as they exist ([#3421](https://github.com/dryvist/ansible-proxmox-apps/issues/3421)) ([e66a621](https://github.com/dryvist/ansible-proxmox-apps/commit/e66a621284f744eb50f1e9a0604ffa489679763a))
+
 ## [5.28.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.28.0...v5.28.1) (2026-11-07)
 
 
