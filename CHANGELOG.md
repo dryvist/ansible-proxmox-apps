@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.30.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.29.2...v5.30.0) (2026-11-08)
+
+
+### Features
+
+* **vikunja:** allow webhooks to private addresses ([#3436](https://github.com/dryvist/ansible-proxmox-apps/issues/3436)) ([33fb1c5](https://github.com/dryvist/ansible-proxmox-apps/commit/33fb1c514663b8daea9695424a3fc3ff0bb3a9f6))
+
 ## [5.29.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.29.1...v5.29.2) (2026-11-08)
 
 
