@@ -23,10 +23,13 @@
       - _source.connections[2] == {'output':'phoenix_otlp', 'pipeline':'otel_traces_phoenix'}
       - _cribl_stream_span_metrics.output == 'victoriametrics_rw'
       - _functions | map(attribute='id') | list
-        == ['drop', 'drop', 'eval', 'eval', 'eval', 'eval', 'aggregation', 'aggregation', 'drop']
-      - "_functions[0].filter == \"!__e.__otlp || __e.__otlp.type !== 'traces'\""
-      - "'gen_ai' in _functions[1].filter"
-      - _functions[2].conf.add | map(attribute='name') | list == ['agent_tag_present']
+        == ['eval', 'drop', 'drop', 'eval', 'eval', 'eval', 'aggregation', 'aggregation', 'drop']
+      - _functions[0].conf.add | map(attribute='name') | list == ['agent_tag_present', 'is_root_span']
+      - "_functions[1].filter == \"!__e.__otlp || __e.__otlp.type !== 'traces'\""
+      - >-
+        _functions[2].filter
+        == "!/(^|,)gen_ai\\./.test(Object.keys(__e.attributes || {}).join(',')) && "
+        ~ "!(agent_tag_present === true && is_root_span === true)"
       - _functions[5].conf.add | map(attribute='name') | list
         == ['service_name'] + cribl_stream_otel_run_tags
         + ['system', 'status', 'input_tokens', 'output_tokens', 'duration_seconds']
@@ -35,9 +38,14 @@
 - name: Assert preserved span metric dimensions and bounded agent run labels
   vars:
     _aggregation: "{{ _cribl_stream_span_metrics.functions[6].conf }}"
+    _span_aggregation: "{{ _cribl_stream_span_metrics.functions[6] }}"
     _run_aggregation: "{{ _cribl_stream_span_metrics.functions[7] }}"
   ansible.builtin.assert:
     that:
+      - >-
+        _span_aggregation.filter
+        == "__e.__otlp && __e.__otlp.type === 'traces' && "
+        ~ "/(^|,)gen_ai\\./.test(Object.keys(__e.attributes || {}).join(','))"
       - _aggregation.metricsMode
       - _aggregation.passthrough
       - _aggregation.preserveGroupBys
@@ -62,8 +70,8 @@
       - _run_aggregation.id == 'aggregation'
       - >-
         _run_aggregation.filter
-        == "__e.__otlp && __e.__otlp.type === 'traces' && agent_tag_present === true && "
-        ~ "!(__e.parentSpanId || __e.parent_span_id)"
+        == "__e.__otlp && __e.__otlp.type === 'traces' && "
+        ~ "agent_tag_present === true && is_root_span === true"
       - _run_aggregation.conf.metricsMode
       - _run_aggregation.conf.preserveGroupBys
       - not _run_aggregation.conf.cumulative

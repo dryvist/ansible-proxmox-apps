@@ -6,16 +6,7 @@ streamtags: []
 groups: {}
 asyncFuncTimeout: 1000
 functions:
-  - id: drop
-    filter: "!__e.__otlp || __e.__otlp.type !== 'traces'"
-    disabled: false
-    conf: {}
-  - id: drop
-    filter: "!/(^|,)gen_ai\\./.test(Object.keys(__e.attributes || {}).join(','))"
-    disabled: false
-    conf: {}
-  # Keep whether the source span actually carried an agent tag before the
-  # shared enrichment supplies its default value.
+  # Tagged root spans reach the run count even when they have no GenAI fields.
   - id: eval
     filter: "true"
     disabled: false
@@ -28,6 +19,20 @@ functions:
             (__e.attributes && typeof __e.attributes['litellm.metadata.agent'] === 'string' &&
             __e.attributes['litellm.metadata.agent'].trim().length > 0) ||
             (typeof __e.agent === 'string' && __e.agent.trim().length > 0)
+        - name: is_root_span
+          value: >-
+            !!(__e.__otlp && __e.__otlp.type === 'traces' &&
+            !(__e.parentSpanId || __e.parent_span_id))
+  - id: drop
+    filter: "!__e.__otlp || __e.__otlp.type !== 'traces'"
+    disabled: false
+    conf: {}
+  - id: drop
+    filter: >-
+      !/(^|,)gen_ai\./.test(Object.keys(__e.attributes || {}).join(',')) &&
+      !(agent_tag_present === true && is_root_span === true)
+    disabled: false
+    conf: {}
   # Flat names avoid treating dotted GenAI attribute names as object paths.
 {{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/agent_tags.yml.j2') }}
   - id: eval
@@ -63,7 +68,9 @@ functions:
             ? Number(BigInt(__e.end_time_unix_nano ?? __e.endTimeUnixNano) -
             BigInt(__e.start_time_unix_nano ?? __e.startTimeUnixNano)) / 1e9 : undefined
   - id: aggregation
-    filter: "true"
+    filter: >-
+      __e.__otlp && __e.__otlp.type === 'traces' &&
+      /(^|,)gen_ai\./.test(Object.keys(__e.attributes || {}).join(','))
     disabled: false
     conf:
       # Preserve grouped fields as metric dimensions. Passthrough feeds source
@@ -92,8 +99,8 @@ functions:
   # Count one run from each root span that carried an explicit agent tag.
   - id: aggregation
     filter: >-
-      __e.__otlp && __e.__otlp.type === 'traces' && agent_tag_present === true &&
-      !(__e.parentSpanId || __e.parent_span_id)
+      __e.__otlp && __e.__otlp.type === 'traces' &&
+      agent_tag_present === true && is_root_span === true
     disabled: false
     conf:
       passthrough: false

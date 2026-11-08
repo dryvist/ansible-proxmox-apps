@@ -40,7 +40,7 @@ for (const step of input.pipeline.functions) {
 }
 process.stdout.write(JSON.stringify(event));
 """
-RUN_ROOT_NODE = r"""
+FILTER_NODE = r"""
 const fs = require('fs');
 const vm = require('vm');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -58,16 +58,28 @@ def evaluate(event):
     return json.loads(result.stdout)
 
 
-def is_agent_run_root(event):
-    pipeline = render(PIPELINE)
+def filter_matches(event, predicate):
     result = subprocess.run(
-        ["node", "-e", RUN_ROOT_NODE],
+        ["node", "-e", FILTER_NODE],
         input=json.dumps({
-            "event": event, "filter": pipeline["functions"][7]["filter"],
+            "event": event, "filter": predicate,
         }),
         text=True, capture_output=True, check=True,
     )
     return json.loads(result.stdout)
+
+
+def aggregation_filter(metric):
+    return next(
+        step["filter"]
+        for step in render(PIPELINE)["functions"]
+        if step["id"] == "aggregation"
+        and any(f".as({metric})" in expression for expression in step["conf"]["aggregations"])
+    )
+
+
+def agent_run_aggregation_accepts(event):
+    return filter_matches(event, aggregation_filter("agent_runs"))
 
 
 def span(**overrides):
@@ -116,9 +128,20 @@ def test_registered_native_aggregation_contract():
     pipeline = render(PIPELINE)
     assert pipeline["output"] == "victoriametrics_rw"
     assert [step["id"] for step in pipeline["functions"]] == [
-        "drop", "drop", "eval", "eval", "eval", "eval", "aggregation", "aggregation", "drop",
+        "eval", "drop", "drop", "eval", "eval", "eval", "aggregation", "aggregation", "drop",
     ]
+    assert [entry["name"] for entry in pipeline["functions"][0]["conf"]["add"]] == [
+        "agent_tag_present", "is_root_span",
+    ]
+    assert pipeline["functions"][2]["filter"] == (
+        "!/(^|,)gen_ai\\./.test(Object.keys(__e.attributes || {}).join(',')) && "
+        "!(agent_tag_present === true && is_root_span === true)"
+    )
     aggregation = pipeline["functions"][6]["conf"]
+    assert pipeline["functions"][6]["filter"] == (
+        "__e.__otlp && __e.__otlp.type === 'traces' && "
+        "/(^|,)gen_ai\\./.test(Object.keys(__e.attributes || {}).join(','))"
+    )
     assert aggregation == {
         "passthrough": True, "preserveGroupBys": True, "metricsMode": True,
         "cumulative": False, "flushOnInputClose": False, "timeWindow": "10s", "groupbys": [
@@ -136,8 +159,8 @@ def test_registered_native_aggregation_contract():
     }
     run_aggregation = pipeline["functions"][7]
     assert run_aggregation["filter"] == (
-        "__e.__otlp && __e.__otlp.type === 'traces' && agent_tag_present === true && "
-        "!(__e.parentSpanId || __e.parent_span_id)"
+        "__e.__otlp && __e.__otlp.type === 'traces' && "
+        "agent_tag_present === true && is_root_span === true"
     )
     assert run_aggregation["conf"] == {
         "passthrough": False, "preserveGroupBys": True, "metricsMode": True,
@@ -194,8 +217,22 @@ def test_ansible_render_assertions_evaluate_without_local_rpc():
     span(attributes={}), span(attributes={"http.method": "POST"}),
     span(attributes={"other_gen_ai.request.model": "fixture"}),
 ])
-def test_only_genai_trace_spans_reach_aggregation(event):
+def test_non_genai_untagged_spans_are_dropped_before_aggregation(event):
     assert evaluate(event) is None
+
+
+def test_tagged_root_without_genai_reaches_agent_run_aggregation():
+    actual = evaluate(span(attributes={"agent": "test-agent"}))
+
+    assert actual is not None
+    assert actual["agent_tag_present"] is True
+    assert not any(name.startswith("gen_ai.") for name in actual["attributes"])
+    assert not filter_matches(actual, aggregation_filter("llm_span_calls"))
+    assert agent_run_aggregation_accepts(actual)
+
+
+def test_plain_span_without_genai_or_agent_tag_is_dropped():
+    assert evaluate(span(attributes={"http.method": "POST"})) is None
 
 
 @pytest.mark.parametrize("snake_case", [False, True])
@@ -274,10 +311,10 @@ def test_agent_run_filter_accepts_only_explicitly_tagged_root_spans():
     snake_case_child = evaluate(span(attributes=attributes.copy(), parent_span_id="2" * 16))
     untagged = evaluate(span())
 
-    assert is_agent_run_root(root)
-    assert not is_agent_run_root(child)
-    assert not is_agent_run_root(snake_case_child)
-    assert not is_agent_run_root(untagged)
+    assert agent_run_aggregation_accepts(root)
+    assert not agent_run_aggregation_accepts(child)
+    assert not agent_run_aggregation_accepts(snake_case_child)
+    assert not agent_run_aggregation_accepts(untagged)
 
 
 @pytest.mark.parametrize("value", [None, "", -1, "invalid", False])
