@@ -78,7 +78,7 @@ def test_vikunja_shared_leaf_publishes_only_interactive_url_and_tokens():
     assert "vikunja_mcp_token_static_fields" in publisher
     assert "vikunja_mcp_user.project_allowlist" in publisher
     assert "vikunja_agent_read_allowlist" not in publisher
-    assert "vikunja_mcp_token_users + vikunja_agent_tiers" in (
+    assert "vikunja_mcp_token_users + vikunja_openhands_token_users + vikunja_agent_tiers" in (
         ROOT / "roles/vikunja/tasks/mcp_tokens.yml"
     ).read_text()
 

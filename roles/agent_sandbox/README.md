@@ -179,6 +179,15 @@ rules:
 - from `docker0` and any other `br-*` bridge except the proxy's egress bridge:
   dropped.
 
+### Default-bridge proxy path
+
+Set `agent_sandbox_default_bridge_proxy_enabled: true` to publish the Squid
+port on the `docker0` IPv4 address from host facts (never `0.0.0.0`) and add
+one nftables accept rule: TCP to that port from `docker0`, after Docker's
+DNAT, out the proxy egress bridge. The `docker0` drop rule stays for all other
+traffic. `agent_sandbox_extra_egress_domains` adds domains to the rendered
+allowlist, deduplicated against `agent_sandbox_egress_domains`, in list order.
+
 The converge asserts the table is loaded and probes a default-bridge container
 for a route out. To verify host-side HTTPS reachability and exercise the
 `agents`-bridge drop counter with a routed, disposable container, run the
