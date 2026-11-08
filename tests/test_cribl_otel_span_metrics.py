@@ -40,12 +40,31 @@ for (const step of input.pipeline.functions) {
 }
 process.stdout.write(JSON.stringify(event));
 """
+RUN_ROOT_NODE = r"""
+const fs = require('fs');
+const vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const context = vm.createContext({__e: input.event, ...input.event});
+process.stdout.write(JSON.stringify(vm.runInContext(input.filter, context)));
+"""
 
 
 def evaluate(event):
     result = subprocess.run(
         ["node", "-e", NODE],
         input=json.dumps({"pipeline": render(PIPELINE), "event": event}),
+        text=True, capture_output=True, check=True,
+    )
+    return json.loads(result.stdout)
+
+
+def is_agent_run_root(event):
+    pipeline = render(PIPELINE)
+    result = subprocess.run(
+        ["node", "-e", RUN_ROOT_NODE],
+        input=json.dumps({
+            "event": event, "filter": pipeline["functions"][7]["filter"],
+        }),
         text=True, capture_output=True, check=True,
     )
     return json.loads(result.stdout)
@@ -96,12 +115,16 @@ def test_registered_native_aggregation_contract():
     assert defaults["cribl_stream_base_pipelines"].count(PIPELINE) == 1
     pipeline = render(PIPELINE)
     assert pipeline["output"] == "victoriametrics_rw"
-    assert [step["id"] for step in pipeline["functions"]] == ["drop", "drop", "eval", "eval", "eval", "aggregation"]
-    aggregation = pipeline["functions"][-1]["conf"]
+    assert [step["id"] for step in pipeline["functions"]] == [
+        "drop", "drop", "eval", "eval", "eval", "eval", "aggregation", "aggregation", "drop",
+    ]
+    aggregation = pipeline["functions"][6]["conf"]
     assert aggregation == {
-        "metricsMode": True, "cumulative": True, "flushOnInputClose": False,
-        "timeWindow": "10s", "groupbys": [
-            "service_name", "agent", "tier", "privacy_class", "model", "accelerator", "system", "status"],
+        "passthrough": True, "preserveGroupBys": True, "metricsMode": True,
+        "cumulative": False, "flushOnInputClose": False, "timeWindow": "10s", "groupbys": [
+            "service_name", "agent", "tier", "privacy_class", "model", "accelerator",
+            "system", "status",
+        ],
         "aggregations": [
             "count().as(llm_span_calls)",
             "count().where(status === 'error').as(llm_span_errors)",
@@ -111,11 +134,25 @@ def test_registered_native_aggregation_contract():
             ".where(Number.isFinite(duration_seconds) && duration_seconds >= 0).as(llm_span_duration_seconds)",
         ],
     }
+    run_aggregation = pipeline["functions"][7]
+    assert run_aggregation["filter"] == (
+        "__e.__otlp && __e.__otlp.type === 'traces' && agent_tag_present === true && "
+        "!(__e.parentSpanId || __e.parent_span_id)"
+    )
+    assert run_aggregation["conf"] == {
+        "passthrough": False, "preserveGroupBys": True, "metricsMode": True,
+        "cumulative": False, "flushOnInputClose": False, "timeWindow": "10s",
+        "groupbys": ["agent", "tier", "status"],
+        "aggregations": ["count().as(agent_runs)"],
+    }
+    assert pipeline["functions"][8]["filter"] == "__e.__otlp && __e.__otlp.type === 'traces'"
 
 
 def test_remote_write_has_no_label_filter_or_post_processing_pipeline():
     pipeline = render(PIPELINE)
-    assert pipeline['functions'][-1]['id'] == 'aggregation'
+    assert [step['id'] for step in pipeline['functions'][-3:]] == [
+        'aggregation', 'aggregation', 'drop',
+    ]
     output = outputs(context())['outputs'][pipeline['output']]
     assert output['type'] == 'prometheus'
     # Only transport settings: no destination pipeline or dimension transforms.
@@ -205,9 +242,42 @@ def test_five_dimensions_survive_flattening_without_correlation_labels():
     event['attributes'].update(caller='test-caller', correlation_id='test-run')
     actual = evaluate(event)
     assert {key: actual[key] for key in tags} == tags
-    groupbys = render(PIPELINE)['functions'][-1]['conf']['groupbys']
+    groupbys = render(PIPELINE)['functions'][6]['conf']['groupbys']
     assert set(tags).issubset(groupbys)
-    assert not {'traceId', 'caller', 'correlation_id', 'run_id'}.intersection(groupbys)
+    assert not {
+        'traceId', 'spanId', 'parentSpanId', 'caller', 'correlation_id', 'run_id',
+    }.intersection(groupbys)
+
+
+@pytest.mark.parametrize(('carrier', 'expected'), [
+    ('attribute', True), ('alias', True), ('event', True), ('missing', False), ('blank', False),
+])
+def test_agent_tag_presence_precedes_default_enrichment(carrier, expected):
+    event = span()
+    if carrier == 'attribute':
+        event['attributes']['agent'] = 'test-agent'
+    elif carrier == 'alias':
+        event['attributes']['litellm.metadata.agent'] = 'test-agent'
+    elif carrier == 'event':
+        event['agent'] = 'test-agent'
+    elif carrier == 'blank':
+        event['attributes']['agent'] = '  '
+
+    actual = evaluate(event)
+    assert actual['agent_tag_present'] is expected
+
+
+def test_agent_run_filter_accepts_only_explicitly_tagged_root_spans():
+    attributes = {"agent": "test-agent", "gen_ai.request.model": "fixture-model"}
+    root = evaluate(span(attributes=attributes.copy()))
+    child = evaluate(span(attributes=attributes.copy(), parentSpanId="2" * 16))
+    snake_case_child = evaluate(span(attributes=attributes.copy(), parent_span_id="2" * 16))
+    untagged = evaluate(span())
+
+    assert is_agent_run_root(root)
+    assert not is_agent_run_root(child)
+    assert not is_agent_run_root(snake_case_child)
+    assert not is_agent_run_root(untagged)
 
 
 @pytest.mark.parametrize("value", [None, "", -1, "invalid", False])

@@ -96,14 +96,18 @@ Collector-derived span and service-graph metrics still need live acceptance.
 
 The OpenTelemetry input sends original spans to `otel_traces_to_metrics`
 before the independent trace-storage legs apply sampling or trace-ID changes.
-Native Aggregations is configured to emit cumulative `llm_span_calls`, `llm_span_errors`,
-`llm_span_input_tokens`, `llm_span_output_tokens`, and the
+Native Aggregations emits per-window deltas for `llm_span_calls`,
+`llm_span_errors`, `llm_span_input_tokens`, `llm_span_output_tokens`, and the
 `llm_span_duration_seconds` histogram through the existing VictoriaMetrics
-remote-write destination every 10 seconds. Only spans with `gen_ai.*`
-attributes qualify; labels are `service_name`, `model`, `system`, and `status`.
-Missing token usage is excluded from token sums. Missing or invalid timing is
-excluded from the histogram while calls still count. These are span counts,
-so nested agent and router spans can represent the same inference request.
+remote-write destination every 10 seconds. VictoriaMetrics combines these
+samples into one-minute sums while retaining their metric names. Only spans
+with `gen_ai.*` attributes qualify; labels are `service_name`, `agent`,
+`tier`, `privacy_class`, `model`, `accelerator`, `system`, and `status`.
+`agent_runs` counts root spans with an explicit agent tag and carries `agent`,
+`tier`, and `status` labels. Missing token usage is excluded from token sums.
+Missing or invalid timing is excluded from the histogram while calls still
+count. These are span counts, so nested agent and router spans can represent
+the same inference request.
 
 After converge, capture the new pipeline's input and output during real LLM
 calls and query VictoriaMetrics for `{__name__=~"llm_span_.*"}`. Confirm native

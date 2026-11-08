@@ -22,23 +22,30 @@
       - _source.connections[1] == {'output':'langfuse_otlp', 'pipeline':'otel_traces'}
       - _source.connections[2] == {'output':'phoenix_otlp', 'pipeline':'otel_traces_phoenix'}
       - _cribl_stream_span_metrics.output == 'victoriametrics_rw'
-      - _functions | map(attribute='id') | list == ['drop', 'drop', 'eval', 'eval', 'eval', 'aggregation']
+      - _functions | map(attribute='id') | list
+        == ['drop', 'drop', 'eval', 'eval', 'eval', 'eval', 'aggregation', 'aggregation', 'drop']
       - "_functions[0].filter == \"!__e.__otlp || __e.__otlp.type !== 'traces'\""
       - "'gen_ai' in _functions[1].filter"
-      - _functions[4].conf.add | map(attribute='name') | list
+      - _functions[2].conf.add | map(attribute='name') | list == ['agent_tag_present']
+      - _functions[5].conf.add | map(attribute='name') | list
         == ['service_name'] + cribl_stream_otel_run_tags
         + ['system', 'status', 'input_tokens', 'output_tokens', 'duration_seconds']
+      - _functions[8].filter == "__e.__otlp && __e.__otlp.type === 'traces'"
 
-- name: Assert cumulative native metric output with bounded labels and explicit histogram buckets
+- name: Assert preserved span metric dimensions and bounded agent run labels
   vars:
-    _aggregation: "{{ _cribl_stream_span_metrics.functions[-1].conf }}"
+    _aggregation: "{{ _cribl_stream_span_metrics.functions[6].conf }}"
+    _run_aggregation: "{{ _cribl_stream_span_metrics.functions[7] }}"
   ansible.builtin.assert:
     that:
       - _aggregation.metricsMode
-      - _aggregation.cumulative
+      - _aggregation.passthrough
+      - _aggregation.preserveGroupBys
+      - not _aggregation.cumulative
       - not _aggregation.flushOnInputClose
       - _aggregation.timeWindow == '10s'
-      - _aggregation.groupbys == ['service_name'] + cribl_stream_otel_run_tags + ['system', 'status']
+      - _aggregation.groupbys == ['service_name'] + cribl_stream_otel_run_tags
+        + ['system', 'status']
       - _aggregation.aggregations | length == 5
       - _aggregation.aggregations[0] == 'count().as(llm_span_calls)'
       - "_aggregation.aggregations[1] == \"count().where(status === 'error').as(llm_span_errors)\""
@@ -52,3 +59,14 @@
         _aggregation.aggregations[4]
         == 'histogram(duration_seconds, [0.05,0.1,0.25,0.5,1,2.5,5,10,30,60,120]) '
         ~ '.where(Number.isFinite(duration_seconds) && duration_seconds >= 0).as(llm_span_duration_seconds)'
+      - _run_aggregation.id == 'aggregation'
+      - >-
+        _run_aggregation.filter
+        == "__e.__otlp && __e.__otlp.type === 'traces' && agent_tag_present === true && "
+        ~ "!(__e.parentSpanId || __e.parent_span_id)"
+      - _run_aggregation.conf.metricsMode
+      - _run_aggregation.conf.preserveGroupBys
+      - not _run_aggregation.conf.cumulative
+      - not _run_aggregation.conf.passthrough
+      - _run_aggregation.conf.groupbys == ['agent', 'tier', 'status']
+      - _run_aggregation.conf.aggregations == ['count().as(agent_runs)']
