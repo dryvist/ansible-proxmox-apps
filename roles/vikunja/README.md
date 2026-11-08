@@ -1,7 +1,7 @@
 # vikunja
 
-Installs and configures [Vikunja](https://vikunja.io), the task manager behind
-the agent task queues.
+Installs and configures [Vikunja](https://vikunja.io), a self-hosted task
+manager.
 
 ## Installation
 
