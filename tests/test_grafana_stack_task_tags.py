@@ -6,9 +6,10 @@ import yaml
 
 
 REPO = Path(__file__).resolve().parents[1]
-PARTS = {
-    "grafana_stack_deploy": "deploy",
-    "grafana_stack_provisioning": "provisioning",
+TASK_FILE_TAGS = {
+    "deploy": "grafana_stack_deploy",
+    "provisioning": "grafana_stack_provisioning",
+    "verify": "grafana_stack_deploy",
 }
 
 
@@ -38,10 +39,12 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
     assert imports == {
         "deploy.yml": {"grafana", "grafana_stack_deploy"},
         "provisioning.yml": {"grafana", "grafana_stack_provisioning"},
+        "verify.yml": {"grafana", "grafana_stack_deploy"},
     }
 
-    names_by_part = {
-        part: set(
+    names_by_part = {tag: set() for tag in TASK_FILE_TAGS.values()}
+    for filename, tag in TASK_FILE_TAGS.items():
+        names_by_part[tag] |= set(
             _task_names(
                 yaml.safe_load(
                     (REPO / f"roles/grafana_stack/tasks/{filename}.yml").read_text(
@@ -50,14 +53,12 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
                 )
             )
         )
-        for part, filename in PARTS.items()
-    }
     assert names_by_part["grafana_stack_deploy"]
     assert names_by_part["grafana_stack_provisioning"]
     assert names_by_part["grafana_stack_deploy"].isdisjoint(
         names_by_part["grafana_stack_provisioning"]
     )
-    for part, filename in PARTS.items():
+    for filename, tag in TASK_FILE_TAGS.items():
         tasks = yaml.safe_load(
             (REPO / f"roles/grafana_stack/tasks/{filename}.yml").read_text(
                 encoding="utf-8"
@@ -66,7 +67,7 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
         for task in _tasks(tasks):
             include_role = task.get("ansible.builtin.include_role")
             if include_role:
-                assert part in include_role.get("apply", {}).get("tags", [])
+                assert tag in include_role.get("apply", {}).get("tags", [])
 
     site_imports = yaml.safe_load(
         (REPO / "playbooks/site/04-secrets-and-collab-apps.yml").read_text(
@@ -91,14 +92,14 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
         for task in block
         if "ansible.builtin.include_role" in task
     }
-    assert set(role_calls) == set(PARTS.values())
+    assert set(role_calls) == set(TASK_FILE_TAGS)
 
-    for tag, part in PARTS.items():
-        role_call = role_calls[part]
+    for filename, tag in TASK_FILE_TAGS.items():
+        role_call = role_calls[filename]
         assert role_call["tags"] == [tag]
         assert tag in role_call["ansible.builtin.include_role"]["apply"]["tags"]
         assert "grafana" in role_call["ansible.builtin.include_role"]["apply"]["tags"]
-        assert role_call["ansible.builtin.include_role"]["tasks_from"] == part
+        assert role_call["ansible.builtin.include_role"]["tasks_from"] == filename
 
     shared_tasks = [
         next(task for task in block if task.get("name") == "Gather facts"),
@@ -113,7 +114,7 @@ def test_grafana_tags_select_disjoint_parts_and_cover_every_role_task():
         "Record isolated failure and continue",
     }
     for task in shared_tasks:
-        assert set(PARTS).issubset(task["tags"])
+        assert set(TASK_FILE_TAGS.values()).issubset(task["tags"])
 
 
 def test_grafana_only_seeds_admin_password_and_plugin_provisioning_is_declarative():
