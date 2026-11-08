@@ -25,6 +25,7 @@ def render(**overrides) -> dict:
         "wall_refresh_seconds": "15",
         "wall_extra_nodes": [],
         "wall_slides": [],
+        "wall_mc8_pinned_callers": [],
         "ingress_domain": "example.test",
         # The catalog's UI side (dashboard_catalog_ui_services). The ui:false
         # filter lives in the catalog and is asserted by tests/dashboard_catalog.
@@ -123,6 +124,10 @@ class WallConfig(unittest.TestCase):
         cfg = render(wall_slides=slides)
         self.assertEqual(cfg["slides"][-1], {"name": "GLANCE", "url": "https://glance.example.test", "seconds": 20})
 
+    def test_mc8_pinned_callers_pass_through(self):
+        pins = ["agent-a", {"name": "agent fleet", "match": "agent-*"}]
+        self.assertEqual(render(wall_mc8_pinned_callers=pins)["mc8PinnedCallers"], pins)
+        self.assertEqual(render()["mc8PinnedCallers"], [])
 
 if __name__ == "__main__":
     unittest.main()
