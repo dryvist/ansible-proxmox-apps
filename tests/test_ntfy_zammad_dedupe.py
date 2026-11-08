@@ -232,7 +232,7 @@ class NtfyZammadDedupe(unittest.TestCase):
 
         ticket = self.open_ticket()
         self.assertEqual(len(self.client.tickets), 1)
-        self.assertEqual(ticket["state"], "reopened")
+        self.assertEqual(ticket["state"], "open")
         self.assertEqual(ticket["close_at"], None)
         self.assertEqual(len(ticket["articles"]), 3)
         self.assertIn("worker failed again", ticket["articles"][-1]["body"])
@@ -241,7 +241,7 @@ class NtfyZammadDedupe(unittest.TestCase):
         reopen_payloads = [
             payload
             for method, path, payload in self.client.calls
-            if method == "PUT" and path == "tickets/1" and payload.get("state") == "reopened"
+            if method == "PUT" and path == "tickets/1" and payload.get("state") == "open"
         ]
         self.assertEqual(len(reopen_payloads), 1)
         self.assertEqual(set(reopen_payloads[0]), {"state", "article"})
