@@ -7,114 +7,108 @@
 # against a throwaway git fixture laid out the same way (servarr/ with
 # servarr.pin beside it) — matching HEAD proceeds, differing HEAD refuses.
 # Same arrangement as verify_media_stack_limit_passthrough.yml, so the play
-# and this test can never drift.
+# and this test can never drift. Imported from verify_inventory.yml, whose
+# play targets implicit localhost with no connection-level become.
 #
 # Usage:
-#   ansible-playbook tests/inventory_load/verify_media_stack_pin_freshness.yml \
-#     -i tests/inventory_load/localhost.yml -c local
-- name: Verify the media-stack pin-freshness contract
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  vars:
-    ansible_become: false
-  tasks:
-    - name: Exercise the pin-freshness check against a fixture checkout
+#   ansible-playbook tests/inventory_load/verify_inventory.yml \
+#     -i inventory/hosts.yml -c local
+- name: Exercise the pin-freshness check against a fixture checkout
+  block:
+    # Identity comes from `git -c` on the commit invocation so the fixture
+    # neither reads nor writes the controller's git config.
+    - name: Create a temporary directory for the fixture
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: servarr_pin_fixture
+      register: _pin_fixture
+
+    - name: Initialise the fixture checkout  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: git init --quiet {{ _pin_fixture.path }}/servarr
+      changed_when: false
+
+    # Raw git, not community.general.git: the fixture needs an empty commit
+    # and a HEAD read, which the module neither creates nor reports.
+    - name: Commit the fixture HEAD  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: >-
+          git -C {{ _pin_fixture.path }}/servarr -c user.name=pin-fixture
+          -c user.email=pin-fixture@example.invalid
+          commit --allow-empty --quiet --message 'pin-fixture HEAD'
+      changed_when: false
+
+    - name: Record the fixture HEAD commit  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: git -C {{ _pin_fixture.path }}/servarr rev-parse HEAD
+      changed_when: false
+      register: _pin_fixture_head
+
+    # Match case: the check must pass (the converge proceeds).
+    - name: Pin the fixture HEAD and assert the check proceeds
+      vars:
+        servarr_dir_override: "{{ _pin_fixture.path }}/servarr"
       block:
-        # Identity comes from `git -c` on the commit invocation so the fixture
-        # neither reads nor writes the controller's git config.
-        - name: Create a temporary directory for the fixture
-          ansible.builtin.tempfile:
-            state: directory
-            suffix: servarr_pin_fixture
-          register: _pin_fixture
+        - name: Write servarr.pin pointing at the fixture HEAD
+          ansible.builtin.copy:
+            content: "{{ _pin_fixture_head.stdout }}"
+            dest: "{{ _pin_fixture.path }}/servarr.pin"
+            mode: "0644"
 
-        - name: Initialise the fixture checkout  # noqa: command-instead-of-module
-          ansible.builtin.command:
-            cmd: git init --quiet {{ _pin_fixture.path }}/servarr
-          changed_when: false
+        - name: Run the pin-freshness check with a matching pin
+          ansible.builtin.import_tasks: ../../playbooks/tasks/verify_servarr_pin_freshness.yml
 
-        # Raw git, not community.general.git: the fixture needs an empty
-        # commit and a HEAD read, which the module neither creates nor reports.
-        - name: Commit the fixture HEAD  # noqa: command-instead-of-module
-          ansible.builtin.command:
-            cmd: >-
-              git -C {{ _pin_fixture.path }}/servarr -c user.name=pin-fixture
-              -c user.email=pin-fixture@example.invalid
-              commit --allow-empty --quiet --message 'pin-fixture HEAD'
-          changed_when: false
-
-        - name: Record the fixture HEAD commit  # noqa: command-instead-of-module
-          ansible.builtin.command:
-            cmd: git -C {{ _pin_fixture.path }}/servarr rev-parse HEAD
-          changed_when: false
-          register: _pin_fixture_head
-
-        # Match case: the check must pass (the converge proceeds).
-        - name: Pin the fixture HEAD and assert the check proceeds
-          vars:
-            servarr_dir_override: "{{ _pin_fixture.path }}/servarr"
-          block:
-            - name: Write servarr.pin pointing at the fixture HEAD
-              ansible.builtin.copy:
-                content: "{{ _pin_fixture_head.stdout }}"
-                dest: "{{ _pin_fixture.path }}/servarr.pin"
-                mode: "0644"
-
-            - name: Run the pin-freshness check with a matching pin
-              ansible.builtin.import_tasks: ../../playbooks/tasks/verify_servarr_pin_freshness.yml
-
-            - name: Assert the check compared the fixture checkout's HEAD
-              ansible.builtin.assert:
-                that:
-                  - _servarr_head.stdout | trim == (_pin_fixture_head.stdout | trim)
-                fail_msg: >-
-                  The pin-freshness check did not compare the fixture
-                  checkout's HEAD — got {{ _servarr_head.stdout | trim }}.
-
-        # Mismatch case: the check must fail with the stale-checkout reason.
-        - name: Pin a different commit and assert the checkout is refused
-          vars:
-            servarr_dir_override: "{{ _pin_fixture.path }}/servarr"
-          block:
-            # 40 zeros is not producible as a commit hash, so the fixture
-            # checkout's HEAD can never equal it.
-            - name: Write servarr.pin with a commit the checkout is not at
-              ansible.builtin.copy:
-                content: "{{ '0' * 40 }}"
-                dest: "{{ _pin_fixture.path }}/servarr.pin"
-                mode: "0644"
-
-            - name: Expect the pin-freshness check to fail
-              block:
-                - name: Run the pin-freshness check against the stale fixture
-                  ansible.builtin.import_tasks: ../../playbooks/tasks/verify_servarr_pin_freshness.yml
-
-                - name: Fail the test — a stale checkout must be refused
-                  ansible.builtin.fail:
-                    msg: >-
-                      The pin-freshness check passed a servarr/ checkout whose
-                      HEAD differs from servarr.pin — the media converge would
-                      run old code.
-
-              rescue:
-                - name: Capture the refusal message
-                  ansible.builtin.set_fact:
-                    _pin_refusal_msg: "{{ ansible_failed_result.msg | default('') }}"
-
-        - name: Assert the stale checkout was refused with the stale-checkout reason
+        - name: Assert the check compared the fixture checkout's HEAD
           ansible.builtin.assert:
             that:
-              - "'stale' in (_pin_refusal_msg | default(''))"
-              - "'refuses to run old code' in (_pin_refusal_msg | default(''))"
+              - _servarr_head.stdout | trim == (_pin_fixture_head.stdout | trim)
             fail_msg: >-
-              The refusal did not say the pinned media-stack checkout is stale
-              and that the converge refuses to run old code — got:
-              {{ _pin_refusal_msg | default('(no refusal recorded)') }}
+              The pin-freshness check did not compare the fixture checkout's
+              HEAD — got {{ _servarr_head.stdout | trim }}.
 
-      always:
-        - name: Remove the fixture checkout
-          ansible.builtin.file:
-            path: "{{ _pin_fixture.path | default('') }}"
-            state: absent
-          when: _pin_fixture.path is defined
+    # Mismatch case: the check must fail with the stale-checkout reason.
+    - name: Pin a different commit and assert the checkout is refused
+      vars:
+        servarr_dir_override: "{{ _pin_fixture.path }}/servarr"
+      block:
+        # 40 zeros is not producible as a commit hash, so the fixture
+        # checkout's HEAD can never equal it.
+        - name: Write servarr.pin with a commit the checkout is not at
+          ansible.builtin.copy:
+            content: "{{ '0' * 40 }}"
+            dest: "{{ _pin_fixture.path }}/servarr.pin"
+            mode: "0644"
+
+        - name: Expect the pin-freshness check to fail
+          block:
+            - name: Run the pin-freshness check against the stale fixture
+              ansible.builtin.import_tasks: ../../playbooks/tasks/verify_servarr_pin_freshness.yml
+
+            - name: Fail the test — a stale checkout must be refused
+              ansible.builtin.fail:
+                msg: >-
+                  The pin-freshness check passed a servarr/ checkout whose
+                  HEAD differs from servarr.pin — the media converge would
+                  run old code.
+
+          rescue:
+            - name: Capture the refusal message
+              ansible.builtin.set_fact:
+                _pin_refusal_msg: "{{ ansible_failed_result.msg | default('') }}"
+
+    - name: Assert the stale checkout was refused with the stale-checkout reason
+      ansible.builtin.assert:
+        that:
+          - "'stale' in (_pin_refusal_msg | default(''))"
+          - "'refuses to run old code' in (_pin_refusal_msg | default(''))"
+        fail_msg: >-
+          The refusal did not say the pinned media-stack checkout is stale
+          and that the converge refuses to run old code — got:
+          {{ _pin_refusal_msg | default('(no refusal recorded)') }}
+
+  always:
+    - name: Remove the fixture checkout
+      ansible.builtin.file:
+        path: "{{ _pin_fixture.path | default('') }}"
+        state: absent
+      when: _pin_fixture.path is defined
