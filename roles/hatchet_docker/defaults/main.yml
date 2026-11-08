@@ -61,3 +61,61 @@ hatchet_docker_engine_broadcast_address: "{{ hatchet_docker_engine_fqdn }}:443"
 hatchet_docker_admin_email: >-
   admin@{{ hostvars['localhost']['tofu_data']['domain'] }}
 hatchet_docker_admin_name: Hatchet Admin
+
+# --- HA topology --------------------------------------------------------------
+# Every member of the control-plane group runs a full engine+API replica behind
+# Traefik, all sharing the apps PostgreSQL primary and its Postgres-backed
+# queue. Hosts are parameterized by inventory, never named here: tofu-proxmox
+# tags guests `docker-ai` and load_tofu builds the group from that tag, so a
+# replica is added or removed in deployment.json alone.
+
+# Minimum engine+API replicas the HA contract requires. Kill test A exercises
+# exactly the two-guest pair; more members are fine — migration and seeding
+# stay run-once. The converge refuses to deploy below this floor, so a
+# degraded group fails loudly instead of silently un-HA-ing the control plane.
+hatchet_docker_min_replicas: 2
+
+# Group holding the control plane. Keep in step with the `hosts:` of the
+# hatchet_docker play in playbooks/site/03-notifications-and-core-apps.yml.
+# .get keeps the expression renderable when the group does not exist yet
+# (template-render, pytest) — same shape as the postgres role's slot list.
+hatchet_docker_control_plane_group: docker_ai_group
+hatchet_docker_replicas: >-
+  {{ groups.get(hatchet_docker_control_plane_group, []) | length }}
+
+# The published ingress rows for the two fronted names. tofu-proxmox owns the
+# table (locals.tf `ingress_services`); this role only reads it — the same
+# derive-don't-copy contract as object_storage's "s3" route and traefik's
+# traefik_ingress_routes.
+hatchet_docker_ingress_routes: >-
+  {{ hostvars['localhost']['tofu_data']['ingress'] | default([], true) }}
+hatchet_docker_ui_ingress_route: >-
+  {{ hatchet_docker_ingress_routes
+     | selectattr('name', 'equalto', 'hatchet') | list | first | default({}) }}
+hatchet_docker_engine_ingress_route: >-
+  {{ hatchet_docker_ingress_routes
+     | selectattr('name', 'equalto', 'hatchet-engine') | list | first | default({}) }}
+
+# A row names either a single backend (`ip`) or a pool (`backends`); count both
+# shapes the way the traefik route builder normalizes servers.
+hatchet_docker_ui_ingress_backends: >-
+  {{ (hatchet_docker_ui_ingress_route.backends
+      | default([hatchet_docker_ui_ingress_route.ip | default('')], true))
+     | reject('equalto', '') | list }}
+hatchet_docker_engine_ingress_backends: >-
+  {{ (hatchet_docker_engine_ingress_route.backends
+      | default([hatchet_docker_engine_ingress_route.ip | default('')], true))
+     | reject('equalto', '') | list }}
+
+# HA is ingress-ready when each published route pools at least the replica
+# floor behind Traefik's own backend health check — an ejecting health check is
+# what turns a dead guest into a routing no-op instead of a black hole.
+hatchet_docker_ui_ingress_ha_ready: >-
+  {{ (hatchet_docker_ui_ingress_backends | length >= hatchet_docker_min_replicas | int)
+     and (hatchet_docker_ui_ingress_route.health_check | default(false) | bool) }}
+hatchet_docker_engine_ingress_ha_ready: >-
+  {{ (hatchet_docker_engine_ingress_backends | length >= hatchet_docker_min_replicas | int)
+     and (hatchet_docker_engine_ingress_route.health_check | default(false) | bool) }}
+hatchet_docker_ingress_ha_ready: >-
+  {{ (hatchet_docker_ui_ingress_ha_ready | bool)
+     and (hatchet_docker_engine_ingress_ha_ready | bool) }}
