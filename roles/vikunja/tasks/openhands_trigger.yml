@@ -1,0 +1,161 @@
+---
+# The OpenHands trigger bot, end to end: the hand-created trigger project
+# shared with the openhands service user, and the bot's status labels
+# pre-created as that user so it can apply them. Its API token is minted and
+# published separately, by tasks/mcp_tokens.yml from the row in
+# vikunja_openhands_token_users.
+#
+# The trigger project and the `openhands` trigger label are created by hand
+# under the operator's account — this role never creates either. Sharing
+# reuses operator_access_one.yml verbatim (the shared reconciler), acting as
+# the operator because only a project's owner or admin may share it.
+#
+# ansible.builtin.uri has no check-mode support, so every request below is
+# skipped in check mode; the notes say so instead of half-evaluating the
+# derived facts.
+
+- name: Build the owner credential map from canonical app credentials
+  ansible.builtin.include_tasks: project_share_owner_password_map.yml
+  no_log: true
+
+- name: Resolve the openhands service user from vikunja_service_users
+  ansible.builtin.set_fact:
+    vikunja_openhands_user: >-
+      {{ vikunja_service_users
+         | selectattr('username', 'equalto', 'openhands')
+         | list | first | default({}, true) }}
+  no_log: true
+
+- name: Note OpenHands trigger reconciliation is skipped in check mode
+  ansible.builtin.debug:
+    msg: >-
+      OpenHands trigger sharing and labels are skipped in check mode
+      (ansible.builtin.uri does not support it). Run without --check to
+      reconcile the share and the status labels.
+  when: ansible_check_mode
+  no_log: true
+
+- name: Note the OpenHands service user is not provisioned
+  ansible.builtin.debug:
+    msg: >-
+      OpenHands trigger reconciliation is skipped — no openhands entry with a
+      password is declared in vikunja_service_users. Set
+      VIKUNJA_OPENHANDS_PASSWORD or the bao-first value in
+      inventory/group_vars/vikunja_group.yml.
+  when: vikunja_openhands_user.get('password', '') | length == 0
+  no_log: true
+
+- name: Note the OpenHands trigger project share is skipped without a project id
+  ansible.builtin.debug:
+    msg: >-
+      The OpenHands trigger project share is skipped —
+      vikunja_openhands_project_id is empty. Set it to the hand-created
+      trigger project's numeric id; the status labels and the API token are
+      still provisioned.
+  when: vikunja_openhands_project_id | string | length == 0
+  no_log: true
+
+# The operator's daily account owns the hand-created trigger project, so it is
+# the only sharing owner here — deliberately not
+# vikunja_operator_share_owner_usernames, whose members own the automation
+# projects instead. operator_access_one.yml reads the owner's owned projects
+# and reconciles the share only on the one allowlisted id.
+- name: Share the OpenHands trigger project with the openhands bot
+  ansible.builtin.include_tasks: operator_access_one.yml
+  loop: "{{ [vikunja_operator_username] }}"
+  loop_control:
+    loop_var: vikunja_share_owner
+    label: "{{ vikunja_share_owner }}"
+  vars:
+    vikunja_share_grantee_username: openhands
+    vikunja_share_permission: "{{ vikunja_openhands_permission }}"
+    vikunja_share_project_ids: "{{ [vikunja_openhands_project_id] }}"
+  when:
+    - not ansible_check_mode
+    - vikunja_openhands_project_id | string | length > 0
+    - vikunja_openhands_user.get('password', '') | length > 0
+    - vikunja_operator_username | length > 0
+    - >-
+      vikunja_project_share_owner_password_map.get(vikunja_operator_username, '')
+      | default('', true) | length > 0
+  no_log: true
+
+- name: Log in to Vikunja as the openhands bot
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/login"
+    method: POST
+    body_format: json
+    body:
+      username: openhands
+      password: "{{ vikunja_openhands_user.password }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_openhands_login
+  when:
+    - not ansible_check_mode
+    - vikunja_openhands_user.get('password', '') | length > 0
+  check_mode: false
+  no_log: true
+
+# The bot owns only these status labels, well inside the 50-per-page default,
+# so a single unpaginated read bounds the title lookup.
+- name: Read the openhands bot's existing labels
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/labels"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_openhands_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_openhands_labels_current
+  changed_when: false
+  check_mode: false
+  when:
+    - not ansible_check_mode
+    - vikunja_openhands_user.get('password', '') | length > 0
+  no_log: true
+
+# A Vikunja label is visible only to its creator and to users who can see a
+# task carrying it, so the lookup is by TITLE against the bot's own label list
+# — never by id. Absent titles are created; present ones are left untouched.
+- name: Create the openhands status labels that are absent
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/labels"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ vikunja_openhands_login.json.token }}"
+    body_format: json
+    body:
+      title: "{{ item }}"
+    status_code: [200, 201]
+    timeout: "{{ vikunja_api_timeout }}"
+  loop: "{{ vikunja_openhands_labels }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - not ansible_check_mode
+    - vikunja_openhands_user.get('password', '') | length > 0
+    - item not in (vikunja_openhands_labels_current.json | default([], true)
+                   | map(attribute='title') | list)
+  changed_when: true
+  no_log: true
+
+# Read back what the share grants: a 200 here is the effective-visibility
+# proof that the openhands bot can see the trigger project at all. Vikunja
+# answers an invisible project with a permission-filtered 404.
+- name: Read the trigger project as the openhands bot
+  ansible.builtin.uri:
+    url: "http://localhost:{{ vikunja_port }}/api/v1/projects/{{ vikunja_openhands_project_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ vikunja_openhands_login.json.token }}"
+    status_code: [200]
+    timeout: "{{ vikunja_api_timeout }}"
+  register: vikunja_openhands_trigger_readback
+  changed_when: false
+  check_mode: false
+  when:
+    - not ansible_check_mode
+    - vikunja_openhands_user.get('password', '') | length > 0
+    - vikunja_openhands_project_id | string | length > 0
+  no_log: true
