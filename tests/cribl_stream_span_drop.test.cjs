@@ -1,17 +1,20 @@
 #!/usr/bin/env node
-// Execute the plumbing span-drop filter expression extracted from each trace leg.
+// Execute the plumbing span-drop filter expression shared by every trace leg.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
 const root = `${__dirname}/..`;
 const defaultsPath = `${root}/roles/cribl_stream/defaults/main/40-otel-langfuse-pipeline.yml`;
+const partialPath = `${root}/roles/cribl_stream/templates/pipelines/plumbing_drop.yml.j2`;
 const templatePaths = [
   `${root}/roles/cribl_stream/templates/pipelines/otel_traces/conf.yml.j2`,
   `${root}/roles/cribl_stream/templates/pipelines/otel_traces_phoenix/conf.yml.j2`,
   `${root}/roles/cribl_stream/templates/pipelines/otel_traces_to_splunk/conf.yml.j2`,
 ];
+const includeLine = `{{ lookup('ansible.builtin.template', cribl_stream_role_dir ~ '/templates/pipelines/plumbing_drop.yml.j2') }}`;
 const defaults = fs.readFileSync(defaultsPath, 'utf8');
+const partial = fs.readFileSync(partialPath, 'utf8');
 
 function readList(name) {
   const match = defaults.match(new RegExp(`^${name}:\\n((?:[ \\t]+- [^\\n]*\\n)+)`, 'm'));
@@ -39,22 +42,28 @@ function drops(renderedFilter, name) {
   return vm.runInNewContext(renderedFilter, { name });
 }
 
+const filter = compileFilter(partial);
+const filterWithoutPrefixes = compileFilter(partial, true);
+
+for (const name of ['redis.mget router_budgets', 'cache.set llm_response',
+  'dispatch_tool_call_with_state', 'auth /metrics/', 'auth', 'transport_worker']) {
+  assert.equal(drops(filter, name), true, `drops "${name}"`);
+}
+for (const name of ['litellm_request', 'redis', 'my.redis.get']) {
+  assert.equal(drops(filter, name), false, `keeps "${name}"`);
+}
+assert.equal(drops(filter, undefined), false, 'keeps spans with no name');
+assert.equal(drops(filterWithoutPrefixes, 'redis.get auth_objects'), false,
+  'an empty prefix list drops nothing extra');
+
 for (const templatePath of templatePaths) {
   const template = fs.readFileSync(templatePath, 'utf8');
   const leg = templatePath.match(/pipelines\/([^/]+)\//)[1];
-  const filter = compileFilter(template);
-  const filterWithoutPrefixes = compileFilter(template, true);
-
-  for (const name of ['redis.mget router_budgets', 'cache.set llm_response',
-    'dispatch_tool_call_with_state', 'auth /metrics/', 'auth', 'transport_worker']) {
-    assert.equal(drops(filter, name), true, `${leg}: drops "${name}"`);
-  }
-  for (const name of ['litellm_request', 'redis', 'my.redis.get']) {
-    assert.equal(drops(filter, name), false, `${leg}: keeps "${name}"`);
-  }
-  assert.equal(drops(filter, undefined), false, `${leg}: keeps spans with no name`);
-  assert.equal(drops(filterWithoutPrefixes, 'redis.get auth_objects'), false,
-    `${leg}: an empty prefix list drops nothing extra`);
+  assert.equal(template.split(includeLine).length - 1, 1,
+    `${leg}: includes the shared plumbing drop partial exactly once`);
+  const copiedFilters = template.match(/^ *filter: [^\n]*cribl_stream_otel_drop_span_names[^\n]*$/gm) || [];
+  assert.deepEqual(copiedFilters, [],
+    `${leg}: no drop function filter names the span-drop variables`);
 }
 
 console.log('Cribl span-drop filter tests passed for the Langfuse, Phoenix and Splunk legs.');
