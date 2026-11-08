@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.32.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.32.1...v5.32.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **ntfy_docker:** reopen a recent closed ticket with state open ([#3467](https://github.com/dryvist/ansible-proxmox-apps/issues/3467)) ([92fa620](https://github.com/dryvist/ansible-proxmox-apps/commit/92fa62084651fef8384cabdbf9612de611878d71))
+
 ## [5.32.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.32.0...v5.32.1) (2026-11-08)
 
 

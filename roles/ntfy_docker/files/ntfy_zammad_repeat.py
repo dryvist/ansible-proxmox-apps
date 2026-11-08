@@ -244,7 +244,7 @@ def handle_existing(
         zammad_call(
             zammad_base, zammad_token, "tickets/%s" % existing["id"],
             payload={
-                "state": "reopened",
+                "state": "open",
                 "article": note(
                     message, tags, priority,
                     record.get("suppressed_count", 0), record.get("suppressed_since"),
