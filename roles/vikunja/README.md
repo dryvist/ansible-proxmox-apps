@@ -6,7 +6,7 @@ the agent task queues.
 ## Installation
 
 Included via the `Configure Vikunja task management` play in
-`playbooks/site.yml` (hosts: `vikunja_group`). Converge just this role:
+`playbooks/site.yml`. Converge just this role:
 
 ```sh
 ansible-playbook playbooks/site.yml --tags vikunja --diff
