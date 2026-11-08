@@ -81,15 +81,13 @@ def _row():
     return row
 
 
-def _share_when(project_id, *, check_mode=False, password="pw", operator="jevans", owner_map=None):
+def _share_when(project_id, *, check_mode=False, password="pw", operator="operator", operator_password="pw"):
     variables = {
         "ansible_check_mode": check_mode,
         "vikunja_openhands_project_id": project_id,
         "vikunja_openhands_user": {"password": password},
         "vikunja_operator_username": operator,
-        "vikunja_project_share_owner_password_map": (
-            {"jevans": "pw"} if owner_map is None else owner_map
-        ),
+        "vikunja_operator_password": operator_password,
     }
     task = find(SHARE, TRIGGER)
     return all(bool(_render_expr(condition, variables)) for condition in task["when"])
@@ -239,13 +237,14 @@ def test_the_share_reuses_the_shared_reconciler():
 
 def test_the_share_loop_targets_the_operator_account():
     loop = find(SHARE, TRIGGER)["loop"]
-    assert _render(loop, {"vikunja_operator_username": "jevans"}) == ["jevans"]
+    assert _render(loop, {"vikunja_operator_username": "operator"}) == ["operator"]
 
 
 def test_the_share_drives_the_reconciler_with_the_trigger_triple():
     variables = {
         "vikunja_openhands_project_id": 90,
         "vikunja_openhands_permission": 1,
+        "vikunja_operator_password": "pw-operator",
     }
     rendered = {
         key: _render(value, variables) for key, value in find(SHARE, TRIGGER)["vars"].items()
@@ -276,7 +275,15 @@ def test_the_share_skips_without_a_provisioned_bot_password():
 
 
 def test_the_share_skips_without_an_owner_credential():
-    assert _share_when(90, owner_map={}) is False
+    assert _share_when(90, operator_password="") is False
+
+
+def test_the_share_logs_in_with_the_operator_password():
+    rendered = _render(
+        find(SHARE, TRIGGER)["vars"]["vikunja_share_owner_password"],
+        {"vikunja_operator_password": "pw-operator"},
+    )
+    assert rendered == "pw-operator"
 
 
 def test_the_skip_is_announced_by_its_task_name_and_condition():
