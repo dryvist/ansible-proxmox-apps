@@ -84,7 +84,7 @@ def _render(value, variables):
 
 
 def sso_fact():
-    return find(SSO_FACT_NAME, MAIN)
+    return find(SSO_FACT_NAME, OPERATOR_ACCESS)
 
 
 def grant_include():
@@ -128,8 +128,15 @@ def test_the_share_default_references_the_fact_not_a_username():
 
 
 def test_the_sso_fact_is_resolved_before_the_shares_are_granted():
-    names = [task.get("name") for task in _yaml(ROOT / MAIN)]
-    assert names.index(SSO_FACT_NAME) < names.index(GRANT_INCLUDE_NAME)
+    # Both live in operator_access.yml now: the fact feeds the share list the
+    # loop renders, so they sit in the same file, fact first.
+    names = [task.get("name") for task in _yaml(ROOT / OPERATOR_ACCESS)]
+    assert names.index(SSO_FACT_NAME) < names.index(GRANT_LOOP_NAME)
+    # The grant include in main.yml still runs only after the user-list read.
+    main_names = [task.get("name") for task in _yaml(ROOT / MAIN)]
+    assert main_names.index(GRANT_INCLUDE_NAME) < main_names.index(
+        "Note operator account provisioning is skipped"
+    )
 
 
 def test_the_sso_fact_logs_nothing_like_its_neighbours():
