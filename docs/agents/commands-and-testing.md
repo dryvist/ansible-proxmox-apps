@@ -68,6 +68,15 @@ sops exec-env secrets.enc.yaml 'ansible-playbook \
 # Scope to one app: --tags prowlarr|radarr|sonarr|qbittorrent|flaresolverr|plex|seerr|sortarr|consistency
 # Add --tags deep to actively test each indexer against its tracker (slow, live)
 
+# Hatchet failover test (kill test A): hard-stops the first docker-ai guest
+# tagged hatchet-killtest, requires the other to keep answering /ready while
+# the engine takes over, then always starts the stopped guest again. Standalone,
+# on-demand; never part of site.yml. Targets are derived from the published
+# inventory and the PVE power token is read through the Semaphore AppRole login;
+# caller-supplied values are refused. The database failover it deliberately
+# does not cover is operator-owned — see roles/hatchet_docker/README.md.
+ansible-playbook -i inventory/hosts.yml playbooks/hatchet-killtest.yml
+
 # Re-trigger searches for pending monitored items (Sonarr + Radarr). Standalone,
 # on-demand; never part of site.yml. Scope with --tags sonarr (or --tags radarr).
 sops exec-env secrets.enc.yaml 'ansible-playbook \
