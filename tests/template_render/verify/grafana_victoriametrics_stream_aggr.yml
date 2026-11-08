@@ -1,0 +1,53 @@
+---
+- name: Render and verify VictoriaMetrics stream aggregation
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../../roles/grafana_stack/defaults/main.yml
+  vars:
+    ansible_become: false
+    _stream_aggr_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/victoriametrics-stream-aggr.yml.j2
+    _compose_template: >-
+      {{ playbook_dir }}/../../../roles/grafana_stack/templates/docker-compose.yml.j2
+  tasks:
+    - name: Render the stream aggregation rule and VictoriaMetrics compose service
+      ansible.builtin.set_fact:
+        _stream_aggr_rules: "{{ lookup('ansible.builtin.template', _stream_aggr_template) | from_yaml }}"
+        _grafana_compose: "{{ lookup('ansible.builtin.template', _compose_template) | from_yaml }}"
+      vars:
+        grafana_hostname: grafana
+        ingress_domain: example.test
+        grafana_stack_oidc_issuer: https://authelia.example.test
+        grafana_stack_oidc_client_secret: fixture-oidc-client-secret
+        grafana_stack_port: 3000
+        grafana_stack_vm_port: 8428
+
+    - name: Assert the rule covers only the declared span metric names
+      ansible.builtin.assert:
+        that:
+          - grafana_stack_vm_stream_aggr_metrics == ['llm_span_.*', 'agent_runs']
+          - _stream_aggr_rules | length == 1
+          - >-
+            _stream_aggr_rules[0].match ==
+            '{__name__=~"' ~ (grafana_stack_vm_stream_aggr_metrics | join('|')) ~ '"}'
+          - _stream_aggr_rules[0].interval == '1m'
+          - _stream_aggr_rules[0].outputs == ['sum_samples']
+          - _stream_aggr_rules[0].keep_metric_names
+        fail_msg: >-
+          VictoriaMetrics stream aggregation must sum only the declared span
+          metric names once per minute and keep their names.
+
+    - name: Assert VictoriaMetrics loads the read-only rendered rule
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('-streamAggr.config=' ~ grafana_stack_vm_stream_aggr_config_container_path)
+            in _grafana_compose.services.victoriametrics.command
+          - >-
+            (grafana_stack_vm_stream_aggr_config_host_path ~ ':' ~
+             grafana_stack_vm_stream_aggr_config_container_path ~ ':ro')
+            in _grafana_compose.services.victoriametrics.volumes
+        fail_msg: >-
+          VictoriaMetrics Compose must load the rendered stream aggregation
+          rule from a read-only mount.
