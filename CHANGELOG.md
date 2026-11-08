@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.29.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.29.1...v5.29.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **deps:** pin ansible-secrets-management to v0.82.1 ([#3438](https://github.com/dryvist/ansible-proxmox-apps/issues/3438)) ([f1ddf00](https://github.com/dryvist/ansible-proxmox-apps/commit/f1ddf009955f302e1374c3898cf9c7aafc1a923d))
+
 ## [5.29.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.29.0...v5.29.1) (2026-11-08)
 
 
