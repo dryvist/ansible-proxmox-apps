@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.32.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.31.0...v5.32.0) (2026-11-08)
+
+
+### Features
+
+* **agent_sandbox:** opt-in proxy path for default-bridge containers ([#3450](https://github.com/dryvist/ansible-proxmox-apps/issues/3450)) ([f8814fe](https://github.com/dryvist/ansible-proxmox-apps/commit/f8814fea52de8e802e90848956b4470acc132c11))
+* **agent:** zcode run j-78ff022e6500a38e ([8cbcadb](https://github.com/dryvist/ansible-proxmox-apps/commit/8cbcadb6e871079741f5a752f531b1231fd0f29a))
+* **cribl_stream:** drop proxy cache spans by prefix and new agent plumbing names ([#3451](https://github.com/dryvist/ansible-proxmox-apps/issues/3451)) ([72ec0b1](https://github.com/dryvist/ansible-proxmox-apps/commit/72ec0b1c7c450a913ba31afe86935865ae7b6860))
+* **openhands:** install Agent Canvas through the package caches ([#3449](https://github.com/dryvist/ansible-proxmox-apps/issues/3449)) ([3d2b743](https://github.com/dryvist/ansible-proxmox-apps/commit/3d2b7434f408ff18eaf576f83ad55e5c01f421b4))
+* **vikunja:** add the OpenHands trigger project, labels and bot ([#3447](https://github.com/dryvist/ansible-proxmox-apps/issues/3447)) ([f990491](https://github.com/dryvist/ansible-proxmox-apps/commit/f990491b4c1c19fa52d97176b2e52c9ffc59710e))
+
 ## [5.31.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.30.0...v5.31.0) (2026-11-08)
 
 
