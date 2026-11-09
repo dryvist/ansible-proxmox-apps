@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.33.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.0...v5.33.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **grafana_stack:** write provisioning files before the stack restart and health check ([#3472](https://github.com/dryvist/ansible-proxmox-apps/issues/3472)) ([ae72fe6](https://github.com/dryvist/ansible-proxmox-apps/commit/ae72fe6fb0dedda8ad1ba4c1d85e6323123f28a3))
+
 ## [5.33.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.32.2...v5.33.0) (2026-11-09)
 
 
