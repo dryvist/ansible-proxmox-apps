@@ -170,10 +170,17 @@ class OpenHandsServiceUnits(unittest.TestCase):
         ):
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
             self.assertIn(
-                "{{ lookup('ansible.builtin.file', _service_hardening_template) }}", text
+                "{{ lookup('ansible.builtin.file', _service_common_template) }}", text
             )
-            self.assertIn("ReadWritePaths={{ openhands_state_dir }}", text)
-            self.assertIn("Restart=on-failure", text)
+        common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "{{ lookup('ansible.builtin.file', _service_hardening_template) }}",
+            common,
+        )
+        self.assertIn("ReadWritePaths={{ openhands_state_dir }}", common)
+        self.assertIn("Restart=on-failure", common)
         install = _task(_load(SERVICES), "Install the service units")
         self.assertIn(
             "_service_hardening_template",
@@ -182,6 +189,10 @@ class OpenHandsServiceUnits(unittest.TestCase):
         self.assertEqual(
             install["vars"]["_service_hardening_template"],
             "{{ role_path }}/../_shared/templates/systemd-service-hardening.conf.j2",
+        )
+        self.assertEqual(
+            install["vars"]["_service_common_template"],
+            "{{ role_path }}/templates/openhands-service-common.conf.j2",
         )
 
     def test_units_bind_loopback_and_run_as_the_service_user(self):
@@ -196,9 +207,12 @@ class OpenHandsServiceUnits(unittest.TestCase):
             ),
         ):
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            self.assertIn("User={{ openhands_user }}", text)
-            self.assertIn("WorkingDirectory={{ openhands_state_dir }}", text)
             self.assertIn("{{ openhands_services_venv }}/bin/" + exec_line, text)
+        common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("User={{ openhands_user }}", common)
+        self.assertIn("WorkingDirectory={{ openhands_state_dir }}", common)
 
     def test_the_environment_file_is_loaded_only_while_enabled(self):
         for unit in (
