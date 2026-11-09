@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.36.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.35.0...v5.36.0) (2026-11-09)
+
+
+### Features
+
+* **prometheus:** scrape the per-dataset ZFS exporter on the Proxmox nodes ([#3513](https://github.com/dryvist/ansible-proxmox-apps/issues/3513)) ([9b8118c](https://github.com/dryvist/ansible-proxmox-apps/commit/9b8118c5bea576ac5e604e0183f47b141061e4a8))
+
 ## [5.35.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.34.2...v5.35.0) (2026-11-09)
 
 
