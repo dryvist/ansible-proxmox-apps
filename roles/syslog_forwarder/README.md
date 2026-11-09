@@ -30,6 +30,12 @@ cannot satisfy — systemd fails the unit with `status=226/NAMESPACE` before
 directives so the forwarder starts in a container. It disables only the
 host-privilege sandboxing, not any rsyslog functionality.
 
+Where `syslog_forwarder_limit_nofile` is set, the role also drops in
+`zz-limits.conf` beside it to raise the unit's `LimitNOFILE`: imfile holds one
+open descriptor for every file a wildcard input matches, so a host tailing an
+accumulating wildcard (GitHub runner `_diag` logs) needs headroom past the
+1024 default. Unset, the drop-in deploys nowhere and the unit is unchanged.
+
 ## What it captures
 
 - All host/system logs and **every native systemd service** (Traefik,
@@ -79,6 +85,7 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `syslog_forwarder_keepalive_interval` | `30` | Seconds between unanswered keepalive probes. |
 | `syslog_forwarder_keepalive_probes` | `3` | Unanswered probes before the connection is declared dead. |
 | `syslog_forwarder_imfile_inputs` | `[]` | File-only loggers to tail via imfile: `file`, `tag` (→ `$programname`), optional imfile params (below). |
+| `syslog_forwarder_limit_nofile` | unset | systemd `LimitNOFILE` for `rsyslog.service`, rendered as a drop-in only where set. |
 
 Port and target are sourced from the inventory / `PROXMOX_SUBDOMAIN`, never
 hardcoded (see `.claude/rules/ip-addressing.md`).
@@ -93,10 +100,13 @@ deploy validates the rendered drop-in with `rsyslogd -N1`.
 
 `closeTimeout` (seconds) is the wildcard-relevant one: in inotify mode, imfile
 closes a file once it has had no new data for that long, instead of holding an
-open descriptor for every file the glob matches. Set it where writers never
-append to old files — every finished GitHub runner job leaves new `_diag` files
-behind, and without it the wildcard held one open descriptor per accumulated
-file.
+open descriptor for every file the glob matches. Check the target hosts'
+rsyslog version before reaching for it — 8.2302.0 (Debian bookworm) does not
+know the parameter, and the deploy's `rsyslogd -N1` validation fails the play
+when an input sets it. Where writers never append to old files and the
+rsyslog version rejects `closeTimeout`, raise the unit's descriptor budget
+instead: `syslog_forwarder_limit_nofile` lets imfile keep one descriptor per
+accumulated file.
 
 ## Verification
 
