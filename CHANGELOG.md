@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.33.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.32.2...v5.33.0) (2026-11-09)
+
+
+### Features
+
+* **hatchet_docker:** assert the replica floor and derive ingress HA readiness ([#3474](https://github.com/dryvist/ansible-proxmox-apps/issues/3474)) ([234cb88](https://github.com/dryvist/ansible-proxmox-apps/commit/234cb887e8d1628e2721651c5e205b047e30a6d8))
+
 ## [5.32.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.32.1...v5.32.2) (2026-11-08)
 
 
