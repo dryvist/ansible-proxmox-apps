@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.33.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.2...v5.33.3) (2026-11-09)
+
+
+### Bug Fixes
+
+* **agent_sandbox:** keep job credentials valid for the whole job runtime ([#3488](https://github.com/dryvist/ansible-proxmox-apps/issues/3488)) ([d232c24](https://github.com/dryvist/ansible-proxmox-apps/commit/d232c243d9a93c4af5713b0442f258bb9f02c2f6))
+* **syslog_forwarder:** raise rsyslog's open-file limit on runner hosts instead of closeTimeout ([#3495](https://github.com/dryvist/ansible-proxmox-apps/issues/3495)) ([d870145](https://github.com/dryvist/ansible-proxmox-apps/commit/d870145cf167322da65d2e65fb02a750925d3b49))
+* **syslog_forwarder:** stop tailing the runner diag files on docker hosts ([#3498](https://github.com/dryvist/ansible-proxmox-apps/issues/3498)) ([e991641](https://github.com/dryvist/ansible-proxmox-apps/commit/e9916415a67edadf0ffc47ba993515499ede7058))
+
 ## [5.33.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.1...v5.33.2) (2026-11-09)
 
 
