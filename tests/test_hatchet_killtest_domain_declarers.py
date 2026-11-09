@@ -23,6 +23,7 @@ ALLOWED_DECLARERS = {
     "playbooks/tasks/hatchet_killtest_ready_poll.yml",
     "playbooks/tasks/hatchet_killtest_start.yml",
     "playbooks/tasks/hatchet_killtest_phases.yml",
+    "roles/hatchet_docker/README.md",
 }
 EXCLUDED_TOP_LEVEL = {"tests", "docs"}
 
