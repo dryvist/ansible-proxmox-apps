@@ -111,10 +111,10 @@
         container_ip: gpu-primary.test.example
         llm_gpu_engine_identity: vllm
 
-    - name: Add the classify guest to the NVIDIA GPU and classify groups
+    - name: Add the classify guest to the NVIDIA GPU, classify, and engine groups
       ansible.builtin.add_host:
         name: llm-gpu-classify-under-test
-        groups: [nvidia_gpu_group, llm_gpu_classify_group]
+        groups: [nvidia_gpu_group, llm_gpu_classify_group, llm_gpu_engine_group]
         container_ip: gpu-classify.test.example
 
     - name: Render prometheus.yml with the group populated
@@ -130,8 +130,12 @@
              | selectattr('job_name', 'in', _legacy_engine_job_names)
              | list }}
 
-    - name: Isolate the DCGM targets by accelerator guest
+    - name: Isolate engine and DCGM targets by accelerator guest
       ansible.builtin.set_fact:
+        _engine_classify_configs: >-
+          {{ _engine_jobs[0].static_configs
+             | selectattr('labels.guest', 'equalto', 'llm-gpu-classify-under-test')
+             | list }}
         _dcgm_primary_configs: >-
           {{ _dcgm_jobs[0].static_configs
              | selectattr('labels.guest', 'equalto', 'llm-gpu-primary-under-test')
@@ -155,13 +159,16 @@
           - _engine_jobs[0].metrics_path == '/metrics'
           - _engine_jobs[0].params.format == ['prometheus']
           - _engine_jobs[0].params.model == ['qwen3.5-9b-4080']
-          - _engine_jobs[0].static_configs | length == 2
+          - _engine_jobs[0].static_configs | length == 3
           - _engine_jobs[0].static_configs[0].targets == ['vllm-under-test.test.example:10434']
           - _engine_jobs[0].static_configs[0].labels.guest == 'llm-vllm-under-test'
           - _engine_jobs[0].static_configs[0].labels.accelerator == 'gpu-secondary'
           - _engine_jobs[0].static_configs[1].targets == ['gpu-primary.test.example:10434']
           - _engine_jobs[0].static_configs[1].labels.guest == 'llm-gpu-primary-under-test'
           - _engine_jobs[0].static_configs[1].labels.accelerator == 'gpu-primary'
+          - _engine_classify_configs | length == 1
+          - _engine_classify_configs[0].targets == ['gpu-classify.test.example:10434']
+          - _engine_classify_configs[0].labels.accelerator == 'gpu-secondary'
           - _legacy_engine_jobs | length == 0
         fail_msg: >-
           Seeded render has {{ _engine_jobs | length }} unified engine job(s):
