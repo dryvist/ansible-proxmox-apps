@@ -1,6 +1,7 @@
 """The dispatcher wrapper sources every pinned helper, in the upstream build order."""
 
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -42,6 +43,30 @@ class DispatcherSources(unittest.TestCase):
             wrapper["loop"][0]["sources"], ["agent-dispatch-result.sh", "agent-dispatch.sh"]
         )
         self.assertIn("{% for source in item.sources %}", wrapper["ansible.builtin.copy"]["content"])
+
+    def test_release_pins_agree(self):
+        defaults = yaml.safe_load((ROLE / "defaults" / "main" / "00-runtime.yml").read_text())
+        commit = defaults["agent_sandbox_dispatch_source_commit"]
+        self.assertRegex(commit, r"^[0-9a-f]{40}$")
+        # The staged dispatch helpers and the ci-resolver stage derive from the
+        # one source commit.
+        self.assertEqual(
+            defaults["agent_sandbox_dispatch_stage_prefix"],
+            "/tmp/agent-sandbox-{{ agent_sandbox_dispatch_source_commit[:8] }}-",
+        )
+        ci_resolver = yaml.safe_load((ROLE / "defaults" / "main" / "10-ci-resolver.yml").read_text())
+        self.assertEqual(
+            ci_resolver["agent_sandbox_ci_resolver_source_commit"],
+            "{{ agent_sandbox_dispatch_source_commit }}",
+        )
+        # The dispatcher shares the single literal Web image pin, and the
+        # template_render verification asserts the same digest.
+        self.assertEqual(
+            defaults["agent_sandbox_dispatch_image"], "{{ agent_sandbox_zcode_web_image }}"
+        )
+        digest = re.search(r"[0-9a-f]{64}", defaults["agent_sandbox_zcode_web_image"]).group()
+        verify = (ROLE.parents[1] / "tests" / "template_render" / "verify" / "agent_sandbox.yml").read_text()
+        self.assertIn(digest, verify)
 
 
 if __name__ == "__main__":

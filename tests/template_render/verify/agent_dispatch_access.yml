@@ -165,10 +165,29 @@
     - name: Assert the dispatcher profile assigns no credential
       ansible.builtin.assert:
         that:
-          - _dispatch_profile | regex_findall('(?i)[a-z_]*(token|key|secret|password)[a-z_]*=') | length == 0
+          # AGENT_OPENCODE_CONTEXT_TOKENS and AGENT_OPENCODE_OUTPUT_TOKENS are
+          # integer token counts fixed by the upstream entrypoint, not
+          # credentials; exempt exactly those two names from the scan.
+          - >-
+            _dispatch_profile
+            | regex_findall('(?i)[a-z_]*(?:token|key|secret|password)[a-z_]*=')
+            | reject('match', '^AGENT_OPENCODE_(?:CONTEXT|OUTPUT)_TOKENS=$')
+            | list | length == 0
         fail_msg: >-
           The dispatcher profile must not assign a token, key, secret or
           password; credentials come from the secret store at run time.
+
+    - name: Assert the dispatcher profile credential check still refuses other names
+      ansible.builtin.assert:
+        that:
+          - >-
+            'export AGENT_JOB_SECRET=x'
+            | regex_findall('(?i)[a-z_]*(?:token|key|secret|password)[a-z_]*=')
+            | reject('match', '^AGENT_OPENCODE_(?:CONTEXT|OUTPUT)_TOKENS=$')
+            | list | length > 0
+        fail_msg: >-
+          The dispatcher profile credential check must still refuse
+          assignments of any other token, key, secret or password name.
 
     - name: Assert an empty list revokes all keys
       ansible.builtin.assert:

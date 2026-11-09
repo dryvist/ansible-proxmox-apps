@@ -144,6 +144,11 @@ full branch bundle. The GitHub connector imports the bundle to publish changes.
 Setting `agent_sandbox_job_github_write: true` enables the existing direct
 publish path. `agent_sandbox_job_entrypoint` selects the installed job entrypoint
 path; the role derives its read-only container mount target from the pinned image.
+`agent_sandbox_opencode_context_tokens` (98304) and
+`agent_sandbox_opencode_output_tokens` (8192) are exported to the dispatcher as
+`AGENT_OPENCODE_CONTEXT_TOKENS` and `AGENT_OPENCODE_OUTPUT_TOKENS` and passed
+into every job container; the pinned image renders them into the opencode-local
+model limits.
 
 Each run stops at `agent_sandbox_job_timeout` (3600 seconds), exported to the
 dispatcher as `AGENT_TIMEOUT_DEFAULT`. A job authenticates its sandbox AppRole
