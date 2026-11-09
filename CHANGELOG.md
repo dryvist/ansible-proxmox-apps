@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.3...v5.34.0) (2026-11-09)
+
+
+### Features
+
+* **technitium_dns:** add a forced Log Exporter re-save to reload a stalled export ([#3506](https://github.com/dryvist/ansible-proxmox-apps/issues/3506)) ([82146b1](https://github.com/dryvist/ansible-proxmox-apps/commit/82146b13e0105e8c313e56ec7172ae31d2bed434))
+
 ## [5.33.3](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.2...v5.33.3) (2026-11-09)
 
 
