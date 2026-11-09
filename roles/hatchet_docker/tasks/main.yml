@@ -2,6 +2,37 @@
 # Hatchet's split control plane runs on each Docker AI guest. Schema migration
 # and first-run seeding complete once before either guest starts its services.
 
+- name: Require the HA replica floor before deploying the control plane
+  ansible.builtin.assert:
+    that:
+      - hatchet_docker_replicas | int >= hatchet_docker_min_replicas | int
+    fail_msg: >-
+      Hatchet's HA contract needs at least {{ hatchet_docker_min_replicas }}
+      {{ hatchet_docker_control_plane_group }} members; found
+      {{ hatchet_docker_replicas }}. Add a docker-ai-tagged guest in
+      tofu-proxmox's deployment, or lower hatchet_docker_min_replicas for a
+      deliberate non-HA deployment.
+    quiet: true
+
+- name: Report Hatchet ingress-pool readiness
+  # tofu-proxmox owns the ingress table; until it publishes the pools this
+  # reports the exact gap instead of failing the converge — the keepalived
+  # role's pre-HA posture. The replica floor above is the hard gate.
+  ansible.builtin.debug:
+    msg: >-
+      Ingress pools behind Traefik — UI/API route 'hatchet':
+      {{ hatchet_docker_ui_ingress_ha_ready | ternary('HA-ready', 'NOT HA-ready') }}
+      ({{ hatchet_docker_ui_ingress_backends | length }} backend(s),
+      health check {{ hatchet_docker_ui_ingress_route.health_check | default(false) | ternary('on', 'off') }});
+      gRPC route 'hatchet-engine':
+      {{ hatchet_docker_engine_ingress_ha_ready | ternary('HA-ready', 'NOT HA-ready') }}
+      ({{ hatchet_docker_engine_ingress_backends | length }} backend(s),
+      health check {{ hatchet_docker_engine_ingress_route.health_check | default(false) | ternary('on', 'off') }}).
+      A route that is not HA-ready needs a `backends` pool listing every
+      docker-ai guest with `health_check: true` in tofu-proxmox's ingress.tf.
+  run_once: true
+  when: not (hatchet_docker_ingress_ha_ready | bool)
+
 - name: Create Hatchet deployment directory
   ansible.builtin.file:
     path: "{{ hatchet_docker_data_dir }}"
