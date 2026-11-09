@@ -81,7 +81,23 @@ class OpenHandsServiceInstall(unittest.TestCase):
         )
         venv = _task(_load(SERVICES), "Create the services virtualenv")
         self.assertEqual(
-            venv["args"]["creates"], "{{ openhands_services_venv }}/bin/python"
+            venv["args"]["creates"],
+            "{{ openhands_services_venv }}/.python-{{ openhands_services_python_version }}",
+        )
+
+    def test_the_services_venv_rebuilds_when_the_python_version_changes(self):
+        tasks = _load(SERVICES)
+        venv = _task(tasks, "Create the services virtualenv")
+        creates = venv["args"]["creates"]
+        # A bare venv path skips the task on a version bump; the guard must
+        # change with the configured version.
+        self.assertNotIn("/bin/python", creates)
+        self.assertIn("{{ openhands_services_python_version }}", creates)
+        marker = _task(tasks, "Mark the services virtualenv's Python version")
+        self.assertEqual(marker["ansible.builtin.copy"]["dest"], creates)
+        self.assertEqual(
+            marker["ansible.builtin.copy"]["content"],
+            "{{ openhands_services_python_version }}\n",
         )
 
     def test_the_services_venv_uses_uv_managed_python_from_the_release_cache(self):
