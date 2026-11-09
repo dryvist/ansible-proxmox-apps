@@ -27,14 +27,22 @@
       - program: traefik
         port: 523
     # Mirror the download_vpn_group wiring: tail a file-only logger via imfile.
-    # The second entry mirrors docker_vms.yml's github_runner_arc-gated k3s
-    # wildcard input (inventory/group_vars/docker_vms.yml) — both render
-    # through the same imfile loop, so one fixture proves both shapes.
+    # The second and third entries mirror docker_vms.yml's k3s wildcard and
+    # github-runner-diag wildcard (inventory/group_vars/docker_vms.yml) — all
+    # render through the same imfile loop. docker_vms itself no longer sets
+    # closeTimeout (the runner hosts' rsyslog 8.2302.0 rejects the parameter),
+    # so the runner entry carries none — but the generic optional-parameter
+    # rendering is still role surface, so the fixture keeps proving every
+    # shape: no optional parameters (qbittorrent), and an optional parameter
+    # rendered only for the entry that sets it (closeTimeout on the k3s entry).
     syslog_forwarder_imfile_inputs:
       - file: /data/.qbittorrent-profile/qBittorrent/data/logs/qbittorrent.log
         tag: qbittorrent
       - file: /var/log/containers/*.log
         tag: k3s-containers
+        closeTimeout: 120
+      - file: /var/lib/docker/github-runner-diag/*/*.log
+        tag: github-runner-diag
     syslog_forwarder_imfile_work_directory: /var/spool/rsyslog
     _sf_template_dir: "../../../roles/syslog_forwarder/templates"
 
@@ -107,6 +115,38 @@
           - "'k3s-containers' in _sf"
         fail_msg: imfile input for the k3s container-log wildcard did not render.
 
+    - name: Assert the runner-diag wildcard renders without closeTimeout
+      ansible.builtin.assert:
+        that:
+          - "'/var/lib/docker/github-runner-diag/*/*.log' in _sf"
+          - "'github-runner-diag' in _sf"
+          # The runner input ships without closeTimeout: its descriptor count
+          # is handled by the unit's LimitNOFILE drop-in instead. The fixture's
+          # single closeTimeout sits on the k3s entry, which renders BEFORE
+          # this input, so one occurrence earlier in the file proves both —
+          # the generic optional-parameter support still renders, and this
+          # input carries none.
+          - "_sf.count('closeTimeout=') == 1"
+          - "_sf.index('closeTimeout=') < _sf.index('/var/lib/docker/github-runner-diag')"
+        fail_msg: >-
+          The github-runner-diag input must render without closeTimeout, and
+          the k3s entry's closeTimeout must remain the only one rendered.
+
+    - name: Assert an input without optional parameters renders byte-for-byte as before
+      vars:
+        _sf_qbittorrent_block: |-
+          input(type="imfile"
+                File="/data/.qbittorrent-profile/qBittorrent/data/logs/qbittorrent.log"
+                Tag="qbittorrent:"
+                ruleset="RSYSLOG_DefaultRuleset")
+      ansible.builtin.assert:
+        that:
+          - "_sf.count('input(type=' ~ '\"imfile\"') == 3"
+          - _sf_qbittorrent_block in _sf
+        fail_msg: >-
+          An input without optional parameters must render only File, Tag and
+          ruleset, byte-for-byte as the pre-optional-parameter template did.
+
     - name: Assert imfile's global workDirectory renders and precedes the module load
       ansible.builtin.assert:
         that:
@@ -128,6 +168,63 @@
           this drop-in is the first one it reads, so an ordering regression
           silently restores the 8 KB default — which truncates oversized
           records with no error anywhere.
+
+    - name: Render the rsyslog limits drop-in with the limit set
+      vars:
+        syslog_forwarder_limit_nofile: 65536
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/rsyslog-limits.conf.j2"
+        dest: "{{ _fixture_dir }}/test_rsyslog_limits_set.conf"
+        mode: "0644"
+
+    - name: Render the rsyslog limits drop-in without the limit
+      # No task-level override: syslog_forwarder_limit_nofile is undefined in
+      # this play, which is how every host that does not set it sees the role.
+      ansible.builtin.template:
+        src: "{{ _sf_template_dir }}/rsyslog-limits.conf.j2"
+        dest: "{{ _fixture_dir }}/test_rsyslog_limits_unset.conf"
+        mode: "0644"
+
+    - name: Read the rendered rsyslog limits drop-ins
+      ansible.builtin.set_fact:
+        _sf_limits_set: "{{ lookup('ansible.builtin.file', _fixture_dir ~ '/test_rsyslog_limits_set.conf') }}"
+        _sf_limits_unset: "{{ lookup('ansible.builtin.file', _fixture_dir ~ '/test_rsyslog_limits_unset.conf') }}"
+
+    - name: Assert the limits drop-in renders LimitNOFILE only where set
+      ansible.builtin.assert:
+        that:
+          - "'[Service]' in _sf_limits_set"
+          - "'LimitNOFILE=65536' in _sf_limits_set"
+          - "_sf_limits_unset | length == 0"
+        fail_msg: >-
+          rsyslog-limits.conf.j2 must render LimitNOFILE=65536 where
+          syslog_forwarder_limit_nofile is set and render nothing at all where
+          it is unset — a host without the variable keeps its rsyslog unit
+          byte-for-byte unchanged.
+
+    - name: Assert the limits drop-in task gates on a boolean test
+      vars:
+        _sf_tasks_file: >-
+          {{ playbook_dir ~ '/../../../roles/syslog_forwarder/tasks/main.yml' }}
+        _sf_role_tasks: >-
+          {{ lookup('ansible.builtin.file', _sf_tasks_file) | from_yaml }}
+        _sf_limits_task: >-
+          {{ _sf_role_tasks
+             | selectattr('name', '==', 'Deploy rsyslog open-file-limit systemd drop-in')
+             | first }}
+      ansible.builtin.assert:
+        that:
+          # ansible-core 2.19+ rejects conditionals resolving to a non-boolean,
+          # and docker_vms sets the variable to the integer 65536 — so the gate
+          # must be an `is not none` test, not the bare variable or the old
+          # `| default(false)` filter chain.
+          - "_sf_limits_task.when == 'syslog_forwarder_limit_nofile is not none'"
+          - "'default(' not in _sf_limits_task.when"
+        fail_msg: >-
+          The open-file-limit drop-in task must gate on the boolean test
+          `syslog_forwarder_limit_nofile is not none`; a bare variable
+          resolves to an integer where the limit is set and ansible-core
+          2.19+ rejects non-boolean conditionals.
 
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:
