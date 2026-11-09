@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.36.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.36.0...v5.36.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **slack:** move Slack secrets under secrets-external/slack ([#3466](https://github.com/dryvist/ansible-proxmox-apps/issues/3466)) ([804325a](https://github.com/dryvist/ansible-proxmox-apps/commit/804325a71e06c12f61d506cb609fed3b1eaf603e))
+
 ## [5.36.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.35.0...v5.36.0) (2026-11-09)
 
 
