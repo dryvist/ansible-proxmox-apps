@@ -36,6 +36,11 @@ def _condition(task):
 
 
 class OpenHandsServiceInstall(unittest.TestCase):
+    def test_install_header_points_to_the_existing_service_tasks(self):
+        header = (ROLE / "tasks" / "install.yml").read_text(encoding="utf-8").splitlines()[:5]
+        self.assertIn("services.yml", " ".join(header))
+        self.assertNotIn("later PR", " ".join(header))
+
     def test_both_services_install_at_their_pins_through_the_pypi_cache(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(defaults["openhands_agent_server_version"], "1.58.1")
