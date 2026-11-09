@@ -35,7 +35,7 @@ def _task_runs(when, **variables):
     env = Environment(undefined=StrictUndefined)
     env.filters["bool"] = _ansible_bool
     for condition in when:
-        rendered = str(env.from_string(condition).render(**variables)).strip().lower()
+        rendered = str(env.from_string("{{ " + condition + " }}").render(**variables)).strip().lower()
         assert rendered in ("true", "false"), f"unexpected condition result {rendered!r}: {condition}"
         if rendered != "true":
             return False
