@@ -1,0 +1,253 @@
+---
+# The agent server and automation service: their venv install (through the
+# site's PyPI cache, never the public registries), their generate-once
+# secrets, the shared environment file, the systemd units, and the units'
+# enable state.
+
+- name: Require the service inputs when enabled
+  ansible.builtin.include_tasks: assert_service_inputs.yml
+
+- name: Create the services virtualenv
+  ansible.builtin.command:
+    argv:
+      - "{{ openhands_uv_venv }}/bin/uv"
+      - venv
+      - --python
+      - "{{ openhands_services_python_version }}"
+      - "{{ openhands_services_venv }}"
+  args:
+    creates: "{{ openhands_services_venv }}/bin/python"
+  environment:
+    UV_PYTHON_INSTALL_DIR: "{{ openhands_python_install_dir }}"
+    UV_PYTHON_INSTALL_MIRROR: "{{ openhands_python_install_mirror }}"
+  when: not (ansible_check_mode and openhands_install_packages is changed)
+
+- name: Read the installed service releases
+  ansible.builtin.command:
+    argv:
+      - "{{ openhands_services_venv }}/bin/python"
+      - -c
+      - "from importlib.metadata import version; print(version('{{ item }}'))"
+  loop:
+    - openhands-agent-server
+    - openhands-automation
+  loop_control:
+    label: "{{ item }}"
+  register: openhands_services_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install the agent server and automation through the PyPI cache
+  ansible.builtin.command:
+    argv:
+      - "{{ openhands_uv_venv }}/bin/uv"
+      - pip
+      - install
+      - --python
+      - "{{ openhands_services_venv }}/bin/python"
+      - "--index-url={{ openhands_pypi_cache_url }}"
+      - "openhands-agent-server=={{ openhands_agent_server_version }}"
+      - "openhands-automation=={{ openhands_automation_version }}"
+  vars:
+    _openhands_installed_versions: >-
+      {{ dict(
+           openhands_services_installed.results | map(attribute='item')
+           | zip(openhands_services_installed.results
+                 | map(attribute='stdout', default=''))) }}
+  # Reinstalled only when an installed release is not exactly the pin. The
+  # automation package itself pins the matching openhands-sdk and workspace
+  # releases, so one install resolves the whole set.
+  when: >-
+    _openhands_installed_versions['openhands-agent-server']
+    != openhands_agent_server_version
+    or _openhands_installed_versions['openhands-automation']
+    != openhands_automation_version
+  changed_when: true
+  notify: Restart the OpenHands services
+
+- name: Create the service secrets directory
+  ansible.builtin.file:
+    path: "{{ openhands_secrets_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: openhands_service_enabled | bool
+
+- name: Create the automation state directory
+  # SQLite creates the database file but never its parent directory.
+  ansible.builtin.file:
+    path: "{{ openhands_automation_db_path | dirname }}"
+    state: directory
+    owner: "{{ openhands_user }}"
+    group: "{{ openhands_user }}"
+    mode: "0750"
+  when: openhands_service_enabled | bool
+
+- name: Read the generate-once service secrets
+  ansible.builtin.slurp:
+    src: "{{ openhands_secrets_dir }}/{{ item }}"
+  loop:
+    - session-api-key
+    - secret-key
+    - automation-kv-secret
+    - automation-local-api-key
+  register: openhands_service_secret_files
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: openhands_service_enabled | bool
+
+- name: Generate the service secrets a first enable is missing
+  # python3's own secrets module, so the generation needs no extra package.
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "import secrets; print(secrets.token_hex(32))"
+  loop: >-
+    {{ openhands_service_secret_files.results
+       | default([], true)
+       | rejectattr('content', 'defined')
+       | map(attribute='item')
+       | list }}
+  loop_control:
+    label: "{{ item }}"
+  register: openhands_service_secrets_generated
+  changed_when: true
+  no_log: true
+  # Under --check a first enable previews everything without generating, so
+  # the resolved secrets below resolve empty and the units render unarmed.
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+- name: Store the generated service secrets
+  ansible.builtin.copy:
+    content: "{{ item.stdout }}\n"
+    dest: "{{ openhands_secrets_dir }}/{{ item.item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ openhands_service_secrets_generated.results | default([], true) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item is not skipped
+  no_log: true
+  notify: Restart the OpenHands services
+
+- name: Resolve the effective service secrets
+  ansible.builtin.set_fact:
+    openhands_service_secrets: >-
+      {{ dict(
+           openhands_service_secret_files.results | default([], true)
+           | map(attribute='item')
+           | zip(openhands_service_secret_files.results | default([], true)
+                 | map(attribute='content', default='')
+                 | map('b64decode')
+                 | map('trim')))
+         | combine(dict(
+             openhands_service_secrets_generated.results | default([], true)
+             | map(attribute='item')
+             | zip(openhands_service_secrets_generated.results
+                   | default([], true)
+                   | map(attribute='stdout', default='')
+                   | map('trim')))) }}
+  no_log: true
+  when: openhands_service_enabled | bool
+
+- name: Require the resolved service secrets
+  ansible.builtin.assert:
+    that:
+      - openhands_service_secrets['session-api-key'] | length > 0
+      - openhands_service_secrets['secret-key'] | length > 0
+      - openhands_service_secrets['automation-kv-secret'] | length > 0
+      - openhands_service_secrets['automation-local-api-key'] | length > 0
+    fail_msg: >-
+      The service secrets did not resolve. A real (non-check) run with the
+      service enabled must find or generate all four values under
+      {{ openhands_secrets_dir }}.
+    quiet: true
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+- name: Render the service environment file
+  ansible.builtin.template:
+    src: openhands.env.j2
+    dest: "{{ openhands_service_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart the OpenHands services
+  when: openhands_service_enabled | bool
+
+- name: Remove the service environment file when disabled
+  ansible.builtin.file:
+    path: "{{ openhands_service_env_file }}"
+    state: absent
+  notify: Restart the OpenHands services
+  when: not (openhands_service_enabled | bool)
+
+- name: Install the service units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    _service_hardening_template: >-
+      {{ role_path }}/../_shared/templates/systemd-service-hardening.conf.j2
+    _service_common_template: "{{ role_path }}/templates/openhands-service-common.conf.j2"
+  loop:
+    - {src: openhands-agent-server.service.j2, name: openhands-agent-server}
+    - {src: openhands-automation.service.j2, name: openhands-automation}
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart the OpenHands services
+
+- name: Set the OpenHands services' enable state
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: "{{ openhands_service_enabled | bool }}"
+    state: "{{ 'started' if (openhands_service_enabled | bool) else 'stopped' }}"
+    daemon_reload: true
+  loop:
+    - openhands-agent-server
+    - openhands-automation
+  loop_control:
+    label: "{{ item }}"
+
+- name: Wait for the agent server to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ openhands_agent_server_port }}"
+    timeout: 90
+  changed_when: false
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+- name: Verify the agent server health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openhands_agent_server_port }}/health"
+    method: GET
+    status_code: 200
+  register: openhands_agent_server_health
+  retries: 12
+  delay: 5
+  until: openhands_agent_server_health.status == 200
+  changed_when: false
+  check_mode: false
+  when: openhands_service_enabled | bool and not ansible_check_mode
+
+- name: Verify the automation health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openhands_automation_port }}/health"
+    method: GET
+    status_code: 200
+  register: openhands_automation_health
+  retries: 12
+  delay: 5
+  until: openhands_automation_health.status == 200
+  changed_when: false
+  check_mode: false
+  when: openhands_service_enabled | bool and not ansible_check_mode
