@@ -37,6 +37,9 @@ class GpuEngineGroupMembership(unittest.TestCase):
     def test_legacy_tag_joins(self):
         self.assertTrue(_in_engine_group({"tags": ["llm-vllm"]}))
 
+    def test_classify_guest_joins_engine_scrape_group(self):
+        self.assertTrue(_in_engine_group({"tags": ["llm-gpu-classify", "nvidia-gpu"]}))
+
     def test_primary_gpu_guest_joins_when_vllm_is_selected(self):
         self.assertTrue(_in_engine_group({"tags": ["llm-gpu", "nvidia-gpu"]}, "vllm"))
 
