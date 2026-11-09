@@ -27,15 +27,32 @@ smokeping_scrape_port: >-
 node_exporter_scrape_port: >-
   {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['node_exporter']
      | default(9100) }}
-pve_node_exporter_scrape_targets: >-
+# One entry per commissioned node, as the nodes-map key (the DNS-published
+# node_name) joined with the domain — the single node loop behind both
+# per-node host exporter target lists, so pve_node_exporter and
+# pve_zfs_exporter always scrape the same host set.
+pve_node_scrape_hosts: >-
   {%- set out = [] -%}
   {%- for name, node in (hostvars['localhost']['tofu_data']['nodes'] | default({})) | dictsort -%}
   {%- if node.commissioned | default(true) -%}
   {%- set _ = out.append(name ~ '.'
-      ~ hostvars['localhost']['tofu_data']['domain'] ~ ':' ~ node_exporter_scrape_port) -%}
+      ~ hostvars['localhost']['tofu_data']['domain']) -%}
   {%- endif -%}
   {%- endfor -%}
   {{ out }}
+pve_node_exporter_scrape_targets: >-
+  {{ pve_node_scrape_hosts
+     | map('regex_replace', '^(.+)$', '\1:' ~ (node_exporter_scrape_port | string))
+     | list }}
+# Per-dataset ZFS metrics: zfs_exporter runs beside node_exporter on every
+# commissioned node (dryvist/ansible-proxmox#1290 installs it on port 9134).
+zfs_exporter_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['zfs_exporter']
+     | default(9134) }}
+pve_zfs_exporter_scrape_targets: >-
+  {{ pve_node_scrape_hosts
+     | map('regex_replace', '^(.+)$', '\1:' ~ (zfs_exporter_scrape_port | string))
+     | list }}
 
 # The exporter runs beside Prometheus and listens on its role's configured port.
 prometheus_stack_pve_exporter_address: >-
@@ -220,6 +237,14 @@ prometheus_stack_extra_scrape_configs: |
     scrape_timeout: 30s
     static_configs:
       - targets: {{ pve_node_exporter_scrape_targets | to_json }}
+  # Per-dataset ZFS metrics from the same commissioned nodes. Deliberately
+  # absent from cribl_stream_prometheus_splunk_keep_jobs — VictoriaMetrics
+  # (direct histogram write) is this job's only consumer.
+  - job_name: pve_zfs_exporter
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: {{ pve_zfs_exporter_scrape_targets | to_json }}
   # Query the PVE API once per commissioned node through the local exporter.
   - job_name: pve_exporter
     scrape_interval: 60s
