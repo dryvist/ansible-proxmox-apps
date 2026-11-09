@@ -66,7 +66,9 @@ READS = {
     # or becomes an exception in docs/IP_AUTHORITY.md before it is exempted.
     "inventory/group_vars/all.yml": 1,
     "inventory/group_vars/haproxy_group.yml": 1,
-    "inventory/group_vars/prometheus_group.yml": 8,
+    "inventory/group_vars/prometheus_group/20-guest-exporters.yml": 2,
+    "inventory/group_vars/prometheus_group/30-tagged-exporters.yml": 4,
+    "inventory/group_vars/prometheus_group/40-gpu-exporters.yml": 2,
     "playbooks/hatchet-killtest.yml": 1,
     "playbooks/sync-cribl-packs.yml": 1,
     "playbooks/tasks/hatchet_killtest_phases.yml": 1,
