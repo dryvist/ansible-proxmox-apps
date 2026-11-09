@@ -1,4 +1,13 @@
-"""The sandbox dispatcher has a pinned OpenBao CLI outside the SSH PATH."""
+"""The sandbox dispatcher has a pinned OpenBao CLI outside the SSH PATH.
+
+Every job authenticates its sandbox AppRole exactly once — the SecretID is
+single-use — and the in-job OpenBao Agent then keeps that token renewed up to
+the role's token_max_ttl. That bound is declared in the pinned
+dryvist.secrets_management collection, so the contract below reads it from the
+installed collection and fails when it falls below this repo's job guard plus
+a margin: either side drifting would leave long jobs running without
+credentials until the guard tears them down.
+"""
 
 from pathlib import Path
 import re
@@ -6,9 +15,15 @@ import unittest
 
 import yaml
 
+from secrets_collection_support import read_secrets_role
+
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "roles" / "agent_sandbox"
+SANDBOX_APPROLE_DEFAULTS = "openbao/defaults/main/07h-sandbox-agent-approles.yml"
+# The token must outlive the guard's observed overshoot (runs have been torn
+# down tens of seconds past the budget) and the agent's renewal cadence.
+TOKEN_LIFETIME_MARGIN_SECONDS = 900
 STATE_MODULES = {
     "ansible.builtin.apt",
     "ansible.builtin.copy",
@@ -23,6 +38,14 @@ STATE_MODULES = {
 
 def task_by_name(tasks, name):
     return next((task for task in tasks if task.get("name") == name), None)
+
+
+def duration_seconds(value):
+    """Parse the Go-style durations the OpenBao role declares ("15m", "75m")."""
+    match = re.fullmatch(r"([0-9]+)(h|m|s)", str(value).strip())
+    if not match:
+        raise AssertionError(f"unsupported duration: {value!r}")
+    return int(match.group(1)) * {"h": 3600, "m": 60, "s": 1}[match.group(2)]
 
 
 class AgentSandboxOpenBaoClient(unittest.TestCase):
@@ -149,6 +172,46 @@ class AgentSandboxOpenBaoClient(unittest.TestCase):
             self.profile,
             r"(?m)^export BAO_BIN=.*agent_sandbox_dispatch_bao_bin.*$",
         )
+
+    def test_job_timeout_is_declared_once_and_rendered_from_the_default(self):
+        declared = re.search(
+            r"(?m)^agent_sandbox_job_timeout: ([0-9]+)$", self.defaults
+        )
+        self.assertIsNotNone(declared)
+        self.assertGreater(
+            int(declared.group(1)),
+            0,
+            "the job guard must be a plain positive integer so the AppRole "
+            "token contract can compare it against the declared token_max_ttl",
+        )
+        self.assertRegex(
+            self.profile,
+            r"(?m)^export AGENT_TIMEOUT_DEFAULT=\{\{ agent_sandbox_job_timeout \| int \}\}$",
+        )
+        self.assertNotRegex(self.profile, r"AGENT_TIMEOUT_DEFAULT=[0-9]")
+
+    def test_every_sandbox_job_approle_token_outlives_the_job_guard(self):
+        timeout = int(
+            re.search(r"(?m)^agent_sandbox_job_timeout: ([0-9]+)$", self.defaults).group(1)
+        )
+        approles = yaml.safe_load(read_secrets_role(SANDBOX_APPROLE_DEFAULTS))[
+            "openbao_sandbox_agent_approles"
+        ]
+        self.assertTrue(approles)
+        for approle in approles:
+            max_ttl = approle.get("token_max_ttl")
+            self.assertGreaterEqual(
+                duration_seconds(max_ttl),
+                timeout + TOKEN_LIFETIME_MARGIN_SECONDS,
+                f"{approle.get('name')}: token_max_ttl {max_ttl!r} does not cover the "
+                f"{timeout}s job guard plus a {TOKEN_LIFETIME_MARGIN_SECONDS}s margin. "
+                f"Raise it in dryvist.secrets_management ({SANDBOX_APPROLE_DEFAULTS}) "
+                "before raising agent_sandbox_job_timeout: the agent renews this one "
+                "token up to that bound and cannot log in again.",
+            )
+            # The agent authenticates once per job; keep the SecretID single-use.
+            self.assertEqual(approle.get("secret_id_num_uses"), 1)
+            self.assertIs(approle.get("manage_secret_id"), False)
 
     def test_dispatch_account_version_probe_is_asserted_after_install(self):
         probe = task_by_name(self.validate, "Read OpenBao client version as dispatcher account")
