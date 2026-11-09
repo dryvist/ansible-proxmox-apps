@@ -78,9 +78,25 @@ doppler run -- ansible-playbook -i inventory/hosts.yml playbooks/site.yml \
 | `syslog_forwarder_keepalive_time` | `120` | Idle seconds before the first keepalive probe. |
 | `syslog_forwarder_keepalive_interval` | `30` | Seconds between unanswered keepalive probes. |
 | `syslog_forwarder_keepalive_probes` | `3` | Unanswered probes before the connection is declared dead. |
+| `syslog_forwarder_imfile_inputs` | `[]` | File-only loggers to tail via imfile: `file`, `tag` (→ `$programname`), optional imfile params (below). |
 
 Port and target are sourced from the inventory / `PROXMOX_SUBDOMAIN`, never
 hardcoded (see `.claude/rules/ip-addressing.md`).
+
+### Optional imfile input parameters
+
+An input entry may carry any imfile input parameter as an extra key. It renders
+quoted, and only when set — `file` and `tag` render positionally and the
+ruleset stays the default ruleset, so an entry without extra keys renders
+exactly as before. Quoted numbers are fine (rsyslog coerces them), and the
+deploy validates the rendered drop-in with `rsyslogd -N1`.
+
+`closeTimeout` (seconds) is the wildcard-relevant one: in inotify mode, imfile
+closes a file once it has had no new data for that long, instead of holding an
+open descriptor for every file the glob matches. Set it where writers never
+append to old files — every finished GitHub runner job leaves new `_diag` files
+behind, and without it the wildcard held one open descriptor per accumulated
+file.
 
 ## Verification
 

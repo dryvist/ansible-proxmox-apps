@@ -27,14 +27,18 @@
       - program: traefik
         port: 523
     # Mirror the download_vpn_group wiring: tail a file-only logger via imfile.
-    # The second entry mirrors docker_vms.yml's github_runner_arc-gated k3s
-    # wildcard input (inventory/group_vars/docker_vms.yml) — both render
-    # through the same imfile loop, so one fixture proves both shapes.
+    # The second and third entries mirror docker_vms.yml's k3s wildcard and
+    # github-runner-diag wildcard (inventory/group_vars/docker_vms.yml) — all
+    # render through the same imfile loop, so one fixture proves every shape:
+    # no optional parameters, and closeTimeout set.
     syslog_forwarder_imfile_inputs:
       - file: /data/.qbittorrent-profile/qBittorrent/data/logs/qbittorrent.log
         tag: qbittorrent
       - file: /var/log/containers/*.log
         tag: k3s-containers
+      - file: /var/lib/docker/github-runner-diag/*/*.log
+        tag: github-runner-diag
+        closeTimeout: 120
     syslog_forwarder_imfile_work_directory: /var/spool/rsyslog
     _sf_template_dir: "../../../roles/syslog_forwarder/templates"
 
@@ -106,6 +110,34 @@
           - "'/var/log/containers/*.log' in _sf"
           - "'k3s-containers' in _sf"
         fail_msg: imfile input for the k3s container-log wildcard did not render.
+
+    - name: Assert the runner-diag wildcard renders its closeTimeout
+      ansible.builtin.assert:
+        that:
+          - "'/var/lib/docker/github-runner-diag/*/*.log' in _sf"
+          - "'github-runner-diag' in _sf"
+          - "'closeTimeout=' ~ '\"120\"' in _sf"
+          # Only the entry that sets the parameter renders it; the two
+          # parameter-less entries above must not gain a closeTimeout line.
+          - "_sf.count('closeTimeout=') == 1"
+        fail_msg: >-
+          imfile did not render closeTimeout="120" for the github-runner-diag
+          input, or rendered it for an input that does not set it.
+
+    - name: Assert an input without optional parameters renders byte-for-byte as before
+      vars:
+        _sf_qbittorrent_block: |-
+          input(type="imfile"
+                File="/data/.qbittorrent-profile/qBittorrent/data/logs/qbittorrent.log"
+                Tag="qbittorrent:"
+                ruleset="RSYSLOG_DefaultRuleset")
+      ansible.builtin.assert:
+        that:
+          - "_sf.count('input(type=' ~ '\"imfile\"') == 3"
+          - _sf_qbittorrent_block in _sf
+        fail_msg: >-
+          An input without optional parameters must render only File, Tag and
+          ruleset, byte-for-byte as the pre-optional-parameter template did.
 
     - name: Assert imfile's global workDirectory renders and precedes the module load
       ansible.builtin.assert:
