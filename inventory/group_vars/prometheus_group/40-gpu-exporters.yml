@@ -1,0 +1,42 @@
+---
+# LLM serving and GPU exporters: the llm_router job's bearer plus the serving
+# guests scraped for engine and DCGM metrics.
+
+# The router scrape job's bearer, from the flat apps merge (dryvist.secrets_management/roles/openbao
+# openbao_generated_app_secrets.prometheus -> secret/apps/prometheus, read via
+# dryvist.homelab.openbao_secrets apps/prometheus). Empty until seeded, which omits the
+# job rather than rendering one that 401s.
+prometheus_stack_llm_router_bearer: "{{ bao_apps_secrets.prometheus_llm_router_key | default('', true) }}"
+
+# GPU engine scrape targets use the dynamically-added serving group and its
+# resolved container address, regardless of engine. Empty until one is in inventory.
+prometheus_stack_llm_gpu_metrics_guests: >-
+  {%- set guests = [] -%}
+  {%- for name in groups['llm_gpu_engine_group'] | default([]) -%}
+  {%- set address = hostvars[name].container_ip | default('', true) -%}
+  {%- if address | length > 0 -%}
+  {%- set _ = guests.append({'name': name, 'address': address}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ guests }}
+# DCGM targets: the serving group plus the nvidia-gpu tagged guests (the primary GPU
+# guests carry nvidia-gpu, not llm-vllm). Same address rule as above.
+prometheus_stack_dcgm_exporter_guests: >-
+  {%- set guests = [] -%}
+  {%- set guest_names = (groups['llm_vllm_group'] | default([])) + (groups['nvidia_gpu_group'] | default([])) -%}
+  {%- for name in guest_names | unique | list -%}
+  {%- set address = hostvars[name].container_ip | default('', true) -%}
+  {%- if address | length > 0 -%}
+  {%- set _ = guests.append({'name': name, 'address': address}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ guests }}
+prometheus_stack_dcgm_exporter_metrics_port: 9400
+# Guests in these groups serve from the secondary GPU, regardless of engine.
+# Both hardware and engine jobs use this ownership; all other GPU guests are primary.
+prometheus_stack_dcgm_exporter_secondary_groups:
+  - llm_vllm_group
+  - llm_gpu_classify_group
+prometheus_stack_dcgm_exporter_secondary_guests: >-
+  {{ prometheus_stack_dcgm_exporter_secondary_groups
+     | map('extract', groups) | select('defined') | flatten | unique | list }}

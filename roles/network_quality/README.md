@@ -29,7 +29,7 @@ already-installed Docker hosts.
 ## Wiring smokeping into Prometheus
 
 smokeping_prober is scraped with a single static job, defined in
-`inventory/group_vars/prometheus_group.yml` as
+`inventory/group_vars/prometheus_group/60-scrape-configs.yml` as
 `prometheus_stack_extra_scrape_configs`. `prometheus.yml.j2` (in `prometheus_stack`)
 appends that block and the `Reload prometheus config` handler hot-reloads — no
 Prometheus restart.

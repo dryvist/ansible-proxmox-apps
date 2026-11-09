@@ -1,0 +1,64 @@
+---
+# Exporters scraped from guests selected by an inventory tag.
+
+# Gatus metrics on the status guest (tag `status`). Empty list when the guest
+# is absent — Prometheus accepts an empty targets list (no scrapes).
+gatus_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['gatus_web']
+     | default(8080) }}
+gatus_scrape_targets: >-
+  {{ tofu_data['containers'] | default({}) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'status')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (gatus_scrape_port | string))
+     | list }}
+
+# cAdvisor per-container metrics on the Docker guests (roles/cadvisor, applied
+# to docker_vms). Empty list when no Docker guest exists.
+cadvisor_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['cadvisor']
+     | default(8080) }}
+cadvisor_scrape_targets: >-
+  {{ tofu_data['docker_vms'] | default({}) | dict2items
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (cadvisor_scrape_port | string))
+     | list }}
+
+# Metric families the cadvisor job keeps (regexes, joined with |).
+cadvisor_keep_metrics:
+  - container_fs_(reads|writes)_bytes_total
+  - container_fs_(reads|writes)_total
+  - container_blkio_device_usage_total
+  - container_cpu_usage_seconds_total
+  - container_memory_working_set_bytes
+  - container_last_seen
+
+# ARC (GitHub Actions self-hosted runner listener) metrics port, once that
+# guest is tagged `arc-listener` (no such guest exists yet). Empty targets
+# list renders a job with nothing to scrape rather than omitting the job, so
+# the named target is visible in Prometheus config before the guest exists.
+arc_listener_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['arc_listener_metrics']
+     | default(8080) }}
+arc_listener_scrape_targets: >-
+  {{ (tofu_data['containers'] | default({}) | combine(tofu_data['vms'] | default({}))
+      | combine(tofu_data['docker_vms'] | default({}))) | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'arc-listener')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (arc_listener_scrape_port | string))
+     | list }}
+
+# OpenBao Raft peers (tag `openbao`).
+openbao_scrape_port: >-
+  {{ hostvars['localhost']['tofu_data']['constants']['service_ports']['openbao_api']
+     | default(8200) }}
+openbao_scrape_targets: >-
+  {{ (tofu_data['containers'] | default({}) | combine(tofu_data['vms'] | default({})))
+     | dict2items
+     | selectattr('value.tags', 'defined')
+     | selectattr('value.tags', 'contains', 'openbao')
+     | map(attribute='value.ip', default='') | reject('equalto', '')
+     | map('regex_replace', '^(.+)$', '\1:' ~ (openbao_scrape_port | string))
+     | list }}

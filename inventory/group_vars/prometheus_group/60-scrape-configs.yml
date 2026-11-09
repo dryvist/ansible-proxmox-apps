@@ -1,0 +1,114 @@
+---
+# Scrape jobs appended to prometheus.yml through the prometheus_stack role's
+# prometheus_stack_extra_scrape_configs extension point. Their target, port
+# and keep-list variables live in the sibling exporter files in this directory.
+prometheus_stack_extra_scrape_configs: |
+  - job_name: smokeping
+    static_configs:
+      - targets: ["127.0.0.1:{{ smokeping_scrape_port }}"]
+  - job_name: pve_node_exporter
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: {{ pve_node_exporter_scrape_targets | to_json }}
+  # Per-dataset ZFS metrics from the same commissioned nodes. Deliberately
+  # absent from cribl_stream_prometheus_splunk_keep_jobs — VictoriaMetrics
+  # (direct histogram write) is this job's only consumer.
+  - job_name: pve_zfs_exporter
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: {{ pve_zfs_exporter_scrape_targets | to_json }}
+  # Query the PVE API once per commissioned node through the local exporter.
+  - job_name: pve_exporter
+    scrape_interval: 60s
+    scrape_timeout: 55s
+    metrics_path: /pve
+    params:
+      module: ["default"]
+      cluster: ["1"]
+      node: ["1"]
+    static_configs:
+      - targets: {{ pve_exporter_scrape_targets | to_json }}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "{{ prometheus_stack_pve_exporter_address }}"
+  - job_name: guest_node_exporter
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs: {{ guest_node_exporter_static_configs | to_json }}
+    # Headline families only: a full node_exporter scrape is ~1000 series per
+    # guest, which across every guest would dominate the Splunk metrics
+    # licence. up is synthesized by Prometheus and is not affected.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "{{ guest_node_exporter_keep_metrics | join('|') }}"
+        action: keep
+  - job_name: macmon
+    scrape_interval: 60s
+    metrics_path: /metrics
+    static_configs: {{ prometheus_stack_macmon_static_configs | to_json }}
+  - job_name: cadvisor
+    scrape_interval: 60s
+    static_configs:
+      - targets: {{ cadvisor_scrape_targets | to_json }}
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "{{ cadvisor_keep_metrics | join('|') }}"
+        action: keep
+  - job_name: gatus
+    scrape_interval: 60s
+    metrics_path: /metrics
+    static_configs:
+      - targets: {{ gatus_scrape_targets | to_json }}
+  # ARC's own listener metrics (gha_job_startup_duration_seconds and the
+  # assigned/started/completed counters) — the native queue-time source for
+  # the self-hosted pool once apps #1932 lands and exposes it on a
+  # NodePort. Ships with an empty target list until that guest is tagged.
+  - job_name: arc_listener
+    static_configs:
+      - targets: {{ arc_listener_scrape_targets | to_json }}
+  # OpenBao Raft cluster metrics.
+  - job_name: openbao
+    metrics_path: /v1/sys/metrics
+    params:
+      format: ["prometheus"]
+    static_configs:
+      - targets: {{ openbao_scrape_targets | to_json }}
+  {% if prometheus_stack_dcgm_exporter_guests | length > 0 %}
+  # Native DCGM exporter on the NVIDIA guests, labelled by inventory ownership.
+  - job_name: dcgm_exporter
+    metrics_path: /metrics
+    static_configs:
+  {% for guest in prometheus_stack_dcgm_exporter_guests %}
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_dcgm_exporter_metrics_port }}"]
+        labels:
+          guest: "{{ guest.name }}"
+          accelerator: "{{ 'gpu-secondary' if guest.name in prometheus_stack_dcgm_exporter_secondary_guests
+                          else 'gpu-primary' }}"
+  {% endfor %}
+  {% endif %}
+  {% if prometheus_stack_llm_gpu_metrics_guests | length > 0 %}
+  # GPU engine metrics share the inventory-derived serving guests.
+  # Strata needs format=prometheus; llama-server in router mode needs model.
+  # vLLM, SGLang and plain llama-server ignore both parameters.
+  - job_name: llm_gpu_engine
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    metrics_path: /metrics
+    params:
+      format: ["prometheus"]
+      model: ["qwen3.5-9b-4080"]
+    static_configs:
+  {% for guest in prometheus_stack_llm_gpu_metrics_guests %}
+      - targets: ["{{ guest.address }}:{{ prometheus_stack_llm_gpu_engine_metrics_port }}"]
+        labels:
+          guest: "{{ guest.name }}"
+          accelerator: "{{ 'gpu-secondary' if guest.name in prometheus_stack_dcgm_exporter_secondary_guests
+                          else 'gpu-primary' }}"
+  {% endfor %}
+  {% endif %}
