@@ -1,0 +1,33 @@
+---
+# Guest node_exporter metrics: every Linux guest runs node_exporter. Targets are each guest's
+# inventory address (FQDN, or its static address for critical-tier guests);
+# WinRM guests run no node_exporter and are left out. One static_config per
+# guest so the `guest` label carries the inventory name, which Stream's
+# prometheus_to_netmon pipeline uses as the host for index=host_metrics.
+guest_node_exporter_static_configs: >-
+  {%- set out = [] -%}
+  {%- set guests = (tofu_data['containers'] | default({}))
+                   | combine(tofu_data['vms'] | default({})) -%}
+  {%- for name, g in guests | dictsort -%}
+  {%- if (g.ip | default('')) | length > 0
+        and g.ansible_connection | default('') != 'winrm' -%}
+  {%- set _ = out.append({'targets': [g.ip ~ ':' ~ node_exporter_scrape_port],
+                          'labels': {'guest': name}}) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+
+# Metric families the guest job keeps (regexes, joined with |).
+guest_node_exporter_keep_metrics:
+  - node_load(1|5|15)
+  - node_memory_Mem(Total|Available)_bytes
+  - node_filesystem_(avail|size)_bytes
+  - node_network_(receive|transmit)_bytes_total
+  - node_pressure_.*
+  - node_disk_(read|written)_bytes_total
+  - node_disk_(reads|writes)_completed_total
+  - node_disk_io_time_seconds_total
+  - git_mirror_.*
+  - node_network_up
+  - download_vpn_.*
+  - media_qbit_connected
