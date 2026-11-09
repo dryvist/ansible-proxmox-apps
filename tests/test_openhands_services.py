@@ -116,7 +116,6 @@ class OpenHandsServiceGate(unittest.TestCase):
     def test_every_secret_touching_task_is_gated_on_the_flag(self):
         tasks = _load(SERVICES)
         for name in (
-            "Require the service inputs when enabled",
             "Create the service secrets directory",
             "Create the automation state directory",
             "Read the generate-once service secrets",
@@ -125,6 +124,19 @@ class OpenHandsServiceGate(unittest.TestCase):
             "Render the service environment file",
         ):
             self.assertIn("openhands_service_enabled", _condition(_task(tasks, name)), name)
+
+    def test_the_service_gate_requires_a_router_key_file_only_when_enabled(self):
+        defaults = _load(ROLE / "defaults" / "main.yml")
+        self.assertEqual(defaults["openhands_router_key_file"], "")
+        gate = _task(
+            _load(ROLE / "tasks" / "assert_service_inputs.yml"),
+            "Assert the service startup inputs",
+        )
+        self.assertIn("openhands_service_enabled | bool", _condition(gate))
+        self.assertIn(
+            "openhands_router_key_file | trim | length > 0",
+            gate["ansible.builtin.assert"]["that"],
+        )
 
     def test_the_units_stay_disabled_and_stopped_when_the_flag_is_off(self):
         manage = _task(_load(SERVICES), "Set the OpenHands services' enable state")
@@ -220,8 +232,12 @@ class OpenHandsServiceUnits(unittest.TestCase):
             "openhands-automation.service.j2",
         ):
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            self.assertIn("{% if openhands_service_enabled | bool %}", text)
-            self.assertIn("EnvironmentFile={{ openhands_service_env_file }}", text)
+            self.assertIn("_service_common_template", text)
+        common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("{% if openhands_service_enabled | bool %}", common)
+        self.assertIn("EnvironmentFile={{ openhands_service_env_file }}", common)
 
     def test_agent_server_selects_docker_and_the_role_resource_limits(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
@@ -247,18 +263,15 @@ class OpenHandsServiceUnits(unittest.TestCase):
 
 
 class OpenHandsRouterLLM(unittest.TestCase):
-    def test_group_vars_resolve_the_router_key_bao_first(self):
+    def test_group_vars_do_not_resolve_the_router_key(self):
         text = GROUP_VARS.read_text(encoding="utf-8")
-        self.assertIn(
-            'openhands_router_key: "{{ bao_apps_secrets.openhands_router_key | default(\'\', true) }}"',
-            text,
-        )
+        self.assertNotIn("openhands_router_key", text)
 
-    def test_the_apps_domain_scope_names_the_openhands_group(self):
+    def test_the_apps_domain_scope_does_not_request_openhands_secrets(self):
         domain_groups = _load(DOMAIN_GROUPS)["openbao_secrets_domain_groups"]
-        self.assertIn("openhands_host", domain_groups["apps"])
+        self.assertNotIn("openhands_host", domain_groups["apps"])
 
-    def test_the_env_file_carries_the_router_llm_settings(self):
+    def test_the_env_file_carries_router_settings_but_no_router_key(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(
             defaults["openhands_router_base_url"],
@@ -268,7 +281,8 @@ class OpenHandsRouterLLM(unittest.TestCase):
         env = (ROLE / "templates" / "openhands.env.j2").read_text(encoding="utf-8")
         self.assertIn("LLM_MODEL={{ openhands_router_model }}", env)
         self.assertIn("LLM_BASE_URL={{ openhands_router_base_url }}", env)
-        self.assertIn("LLM_API_KEY={{ openhands_router_key }}", env)
+        self.assertNotIn("LLM_API_KEY", env)
+        self.assertNotIn("openhands_router_key_file", env)
 
     def test_the_automation_runs_in_local_agent_server_mode(self):
         env = (ROLE / "templates" / "openhands.env.j2").read_text(encoding="utf-8")
@@ -313,7 +327,7 @@ class OpenHandsNoKeyValues(unittest.TestCase):
     def test_the_verify_fixture_declares_only_placeholder_values(self):
         verify = _load(ROOT / "tests" / "template_render" / "verify" / "openhands.yml")
         play = verify[0]
-        self.assertEqual(play["vars"]["openhands_router_key"], PLACEHOLDER)
+        self.assertNotIn("openhands_router_key", play["vars"])
         for name, value in play["vars"]["openhands_service_secrets"].items():
             self.assertEqual(
                 value, PLACEHOLDER, f"fixture secret {name} is not the placeholder"
@@ -325,8 +339,23 @@ class OpenHandsNoKeyValues(unittest.TestCase):
             "openhands-automation.service.j2",
         ):
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            for marker in ("{{ openhands_router_key", "LLM_API_KEY=", "OH_SECRET_KEY="):
+            for marker in ("{{ openhands_router_key }}", "LLM_API_KEY={{", "OH_SECRET_KEY="):
                 self.assertNotIn(marker, text)
+        env = (ROLE / "templates" / "openhands.env.j2").read_text(encoding="utf-8")
+        self.assertNotIn("LLM_API_KEY", env)
+
+    def test_the_agent_server_reads_the_key_only_through_a_loaded_credential(self):
+        unit = (ROLE / "templates" / "openhands-agent-server.service.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(unit.count("openhands_router_key_file"), 1)
+        self.assertIn(
+            "LoadCredential=openhands-router-key:{{ openhands_router_key_file }}",
+            unit,
+        )
+        self.assertIn("$$CREDENTIALS_DIRECTORY/openhands-router-key", unit)
+        self.assertNotIn("Environment=LLM_API_KEY", unit)
+        self.assertNotIn("LLM_API_KEY={{", unit)
 
 
 if __name__ == "__main__":

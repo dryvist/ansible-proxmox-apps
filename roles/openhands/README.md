@@ -3,8 +3,8 @@
 The OpenHands role. It creates the service user and the state directory,
 installs Agent Canvas with its runtimes, and installs and runs the agent
 server and the automation service. `openhands_service_enabled` stays `false`
-by default: the units install but stay disabled and stopped, and no secret is
-read or rendered, until a deployment turns the flag on.
+by default: the units install but stay disabled and stopped, and no service
+secret is read or rendered until a deployment turns the flag on.
 
 ## What runs
 
@@ -31,17 +31,15 @@ memory, CPU and process limits.
 
 ## The agents' LLM
 
-The agents' LLM runs against the LiteLLM router: the OpenAI-compatible base
-URL follows the same front door `n8n_docker` uses
-(`openhands_router_base_url`, built from `ingress_domain`), the model is the
-router role alias `openhands_router_model`, and the bearer is
-`openhands_router_key` — resolved bao-first in
-`inventory/group_vars/openhands_host.yml` from this app's own
-`openhands_router_key` field in the apps domain, never stored in the
-repository. The three values reach the services as `LLM_BASE_URL`,
-`LLM_MODEL` and `LLM_API_KEY` (read via the SDK's `LLM.load_from_env`) in a
-root-owned `0600` environment file rendered only while the service is
-enabled and removed when it is not.
+The agent server's LLM runs against the LiteLLM router: the OpenAI-compatible
+base URL follows the same front door `n8n_docker` uses
+(`openhands_router_base_url`, built from `ingress_domain`), and the model is
+the router role alias `openhands_router_model`. The base URL and model reach
+the services in a root-owned `0600` environment file rendered only while the
+service is enabled and removed when it is not. The router key comes from a
+root-only runtime file named by `openhands_router_key_file`; systemd loads it
+as a credential and the agent-server unit reads it at startup. An OpenBao
+Agent template supplies that file in a follow-up.
 
 ## State
 

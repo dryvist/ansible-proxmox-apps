@@ -9,12 +9,10 @@
     ansible_become: false
     _fixture_dir: "{{ render_tmp }}"
     _service_hardening_template: "{{ playbook_dir }}/../../../roles/_shared/templates/systemd-service-hardening.conf.j2"
+    _service_common_template: "{{ playbook_dir }}/../../../roles/openhands/templates/openhands-service-common.conf.j2"
     # Mirror inventory/group_vars/all.yml: the router base URL in the role
     # defaults builds from the ingress domain.
     ingress_domain: "{{ lookup('ansible.builtin.env', 'PROXMOX_SUBDOMAIN') }}"
-    # The service reads the router key bao-first in the group_vars; the
-    # render fixtures carry a placeholder, never a real value.
-    openhands_router_key: "test-placeholder"
     openhands_service_secrets:
       session-api-key: "test-placeholder"
       secret-key: "test-placeholder"
@@ -28,6 +26,31 @@
       {{ openhands_services_venv }}/bin/uvicorn openhands.automation.app:app
       --host 127.0.0.1 --port {{ openhands_automation_port }}
   tasks:
+    - name: Verify the service input gate rejects a missing router-key file
+      block:
+        - name: Run the role gate without a router-key file
+          ansible.builtin.include_tasks:
+            file: "{{ playbook_dir }}/../../../roles/openhands/tasks/assert_service_inputs.yml"
+          vars:
+            openhands_service_enabled: true
+            openhands_router_key_file: ""
+
+        - name: Fail if the role gate accepted a missing router-key file
+          ansible.builtin.fail:
+            msg: "The service input gate accepted a missing router-key file."
+      rescue:
+        - name: Confirm the role gate rejected the missing router-key file
+          ansible.builtin.assert:
+            that:
+              - "'openhands_router_key_file' in ansible_failed_result.msg"
+
+    - name: Verify the service input gate accepts a router-key file path
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../roles/openhands/tasks/assert_service_inputs.yml"
+      vars:
+        openhands_service_enabled: true
+        openhands_router_key_file: /run/credentials/openhands-router-key
+
     - name: Render the openhands units with the service disabled (the default)
       ansible.builtin.template:
         src: "{{ _template_dir }}/{{ item }}"
@@ -57,11 +80,23 @@
         that:
           - "'User=' ~ openhands_user in _agent_server_unit"
           - "'WorkingDirectory=' ~ openhands_state_dir in _agent_server_unit"
-          - "'ExecStart=' ~ _agent_server_exec in _agent_server_unit"
+          - "'ExecStart=/bin/sh -ec' in _agent_server_unit"
+          - "_agent_server_exec in _agent_server_unit"
           - "'UMask=0027' in _agent_server_unit"
           - "'NoNewPrivileges=true' in _agent_server_unit"
           - "'ProtectSystem=strict' in _agent_server_unit"
           - "'ReadWritePaths=' ~ openhands_state_dir in _agent_server_unit"
+          - "'Environment=OH_CONVERSATION_RUNTIME=docker' in _agent_server_unit"
+          - >-
+            'Environment=OH_CONVERSATION_CONTAINER_MEMORY='
+            ~ (openhands_conversation_memory_limit | string) in _agent_server_unit
+          - >-
+            'Environment=OH_CONVERSATION_CONTAINER_CPUS='
+            ~ (openhands_conversation_cpus | string) in _agent_server_unit
+          - >-
+            'Environment=OH_CONVERSATION_CONTAINER_PIDS_LIMIT='
+            ~ (openhands_conversation_pids_limit | string) in _agent_server_unit
+          - "'LoadCredential=' not in _agent_server_unit"
           - "'EnvironmentFile=' not in _agent_server_unit"
           - "'test-placeholder' not in _agent_server_unit"
         fail_msg: "the agent server unit does not render its disabled-state contract"
@@ -105,7 +140,7 @@
           - "'AUTOMATION_LOCAL_API_KEY=' ~ openhands_service_secrets['automation-local-api-key'] in _openhands_env"
           - "'LLM_MODEL=' ~ openhands_router_model in _openhands_env"
           - "'LLM_BASE_URL=https://llm.' ~ ingress_domain ~ '/v1' in _openhands_env"
-          - "'LLM_API_KEY=' ~ openhands_router_key in _openhands_env"
+          - "'LLM_API_KEY=' not in _openhands_env"
         fail_msg: "the service environment file does not render the router and local-mode wiring"
 
     - name: Render the agent server unit with the service enabled
@@ -115,6 +150,7 @@
         mode: "0644"
       vars:
         openhands_service_enabled: true
+        openhands_router_key_file: /run/credentials/openhands-router-key
 
     - name: Decode the enabled agent server unit
       ansible.builtin.set_fact:
@@ -125,6 +161,10 @@
       ansible.builtin.assert:
         that:
           - "'EnvironmentFile=' ~ openhands_service_env_file in _agent_server_unit_enabled"
+          - "'LoadCredential=openhands-router-key:/run/credentials/openhands-router-key' in _agent_server_unit_enabled"
+          - "'$$CREDENTIALS_DIRECTORY/openhands-router-key' in _agent_server_unit_enabled"
+          - "'openhands_router_key_file' not in _agent_server_unit_enabled"
+          - "'Environment=LLM_API_KEY=' not in _agent_server_unit_enabled"
           - "'test-placeholder' not in _agent_server_unit_enabled"
         fail_msg: >-
           the enabled unit must load the environment file and never carry a
@@ -137,4 +177,4 @@
           - both units render the pinned venv, loopback ports and shared hardening
           - disabled by default: no EnvironmentFile line and no key value anywhere
           - enabled: the unit loads the root-owned environment file
-          - the env file wires local agent-server mode, SQLite state and the router LLM
+          - the env file wires local agent-server mode and SQLite state without a router key
