@@ -32,3 +32,44 @@
 
 - name: Exercise the real controller scope assertion
   ansible.builtin.import_playbook: ../../playbooks/site/01-baseline-infra.yml
+
+# pbs is declared in two guest maps until tofu retires the old VM, and the
+# loader keeps only its containers (LXC) entry — LXCs receive CA trust via
+# pct push, never this play's host groups. The loader must carry that
+# exclusion into the tofu_data the contract reads, or the contract demands
+# CA-trust membership for a guest the inventory does not carry as a VM.
+- name: Declare the ambiguous-guest contract fixture
+  hosts: localhost
+  gather_facts: false
+  tags: [ssh_ca_scope]
+  vars:
+    ansible_become: false
+  tasks:
+    - name: Set a tofu contract declaring pbs in two guest maps
+      ansible.builtin.set_fact:
+        tofu_data:
+          containers:
+            pbs: {ansible_connection: ssh, started: true}
+          vms:
+            pbs: {ansible_connection: ssh, started: true}
+            ssh-on: {ansible_connection: ssh, started: true}
+          splunk_vm: {}
+          docker_vms: {}
+        load_tofu_ambiguous_host_key_owners:
+          pbs: containers
+
+    - name: Declare the guests the loader resolves from that contract
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: "{{ item.groups }}"
+      loop:
+        - name: pbs
+          groups: [lxc_containers, pbs_group]
+        - name: ssh-on
+          groups: [vms]
+
+    - name: Run the loader's ambiguity resolution over that contract
+      ansible.builtin.import_tasks: ../../inventory/load_tofu/ambiguous_host_keys.yml
+
+- name: Exercise the scope assertion against the ambiguous guest
+  ansible.builtin.import_playbook: ../../playbooks/site/01-baseline-infra.yml
