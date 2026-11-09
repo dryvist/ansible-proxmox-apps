@@ -1,10 +1,10 @@
 ---
-# OpenHands role defaults. The install (Agent Canvas plus its runtimes) and
-# the identities and limits the service PR will use; no service deploys yet.
+# OpenHands role defaults: the Agent Canvas install, the agent server and
+# automation service, and the identities and limits both use.
 
 # Pinned upstream release versions. Agent Canvas, the agent server and the
-# automation server each release independently; the install pins Agent Canvas
-# against this and the servers arrive with the service PR.
+# automation server each release independently; both Python services install
+# through the site's PyPI cache and the services' own venv.
 openhands_canvas_version: "1.34.0"
 openhands_agent_server_version: "1.58.1"
 openhands_automation_version: "1.26.0"
@@ -30,6 +30,10 @@ openhands_node_dir: >-
 # renovate: datasource=pypi depName=uv
 openhands_uv_version: "0.13.7"
 
+# Agent server 1.58.1 requires Python 3.12 or newer.
+openhands_services_python_version: "3.12"
+openhands_python_install_dir: "{{ openhands_install_dir }}/python"
+
 # Program files for the install; state stays under openhands_state_dir.
 openhands_install_dir: /opt/openhands
 openhands_canvas_dir: "{{ openhands_install_dir }}/canvas"
@@ -37,22 +41,57 @@ openhands_uv_venv: "{{ openhands_install_dir }}/uv"
 # uv reads $HOME/.config/uv/uv.toml, and the service user's home is the state
 # directory.
 openhands_uv_config_dir: "{{ openhands_state_dir }}/.config/uv"
+# The agent server and automation install into their own venv, so a uv
+# toolchain upgrade never touches the services' dependency tree.
+openhands_services_venv: "{{ openhands_install_dir }}/services-py312"
 
-# Package caches from the published inventory, first URL wins as with the
-# runner role. Both must be declared: the install never fetches from the
-# public npm or PyPI registries.
+# Package and release caches from the published inventory; the first URL wins
+# as with the runner role. All three must be declared; OpenHands never fetches
+# packages or its managed Python directly from a public source.
 openhands_npm_cache_url: >-
   {{ (tofu_data | default({})).get('cache_proxy_urls', {}).get('npm_cache', [])
      | first | default('', true) }}
 openhands_pypi_cache_url: >-
   {{ (tofu_data | default({})).get('cache_proxy_urls', {}).get('pypi_cache', [])
      | first | default('', true) }}
+openhands_raw_cache_url: >-
+  {{ (tofu_data | default({})).get('cache_proxy_urls', {}).get('raw_cache', [])
+     | first | default('', true) }}
+openhands_python_install_mirror: >-
+  {{ openhands_raw_cache_url.rstrip('/')
+     }}/github_releases/astral-sh/python-build-standalone/releases/download
 
 # Port the web frontend will listen on.
 openhands_port: 443
 
-# Service tasks arrive in a later PR; the install stays service-free.
+# Ports the two services bind on loopback: the agent server upstream default
+# (3000) and the automation image's EXPOSE (8000). A later PR fronts them.
+openhands_agent_server_port: 3000
+openhands_automation_port: 8000
+
+# Disabled by default; see roles/openhands/README.md.
 openhands_service_enabled: false
+
+# Router (LiteLLM) settings the agent server's LLM runs against: the
+# OpenAI-compatible base URL and model alias are set here; the router key is
+# read from a systemd credential at startup.
+openhands_router_base_url: "https://llm.{{ ingress_domain }}/v1"
+openhands_router_model: small
+# Path to a root-only file holding the agent-server router key; a follow-up OpenBao Agent template fills it at runtime.
+openhands_router_key_file: ""
+
+# Environment file both units load (root-owned 0600, like glance's LLM profile
+# env). Rendered only while the service is enabled and removed when not.
+openhands_service_env_file: "{{ openhands_install_dir }}/openhands.env"
+
+# Service secrets, one file per value, root-owned 0600 under the state
+# directory.
+openhands_secrets_dir: "{{ openhands_state_dir }}/.secrets"
+
+# Automation state: a SQLite database (it migrates on startup) and the
+# per-run workspace base the dispatcher isolates runs under.
+openhands_automation_db_path: "{{ openhands_state_dir }}/automation/automations.db"
+openhands_automation_workspace_base: "{{ openhands_state_dir }}/workspaces"
 
 openhands_user: openhands
 # State directory, also the service user's home.

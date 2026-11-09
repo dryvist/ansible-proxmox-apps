@@ -1,6 +1,6 @@
 """OpenHands skeleton contract: tag-mapped inventory group, isolated site
-play, ZCode Web gate for the group, and a role that never reads OpenBao
-secret facts."""
+play, ZCode Web gate for the group, and a role that loads its router key from
+a root-only runtime credential file."""
 
 from pathlib import Path
 import re
@@ -160,15 +160,23 @@ class OpenHandsRoleContract(unittest.TestCase):
             ("{{ openhands_user }}", "{{ openhands_user }}"),
         )
 
-    def test_role_never_references_bao_facts(self):
-        role_files = sorted(ROLE.rglob("*.yml")) + [GROUP_VARS]
-        self.assertGreaterEqual(len(role_files), 4)
-        for path in role_files:
-            self.assertNotIn(
-                "bao_",
-                path.read_text(encoding="utf-8"),
-                f"{path.relative_to(ROOT)} must not read bao_* secret facts",
-            )
+    def test_role_uses_a_runtime_router_key_credential_file(self):
+        role_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(ROLE.rglob("*.yml")) + sorted(ROLE.rglob("*.j2"))
+        )
+        group_vars = GROUP_VARS.read_text(encoding="utf-8")
+        self.assertNotIn("bao_", role_text)
+        self.assertNotIn("bao_apps_secrets", group_vars)
+        defaults = _load(ROLE / "defaults" / "main.yml")
+        self.assertEqual(defaults["openhands_router_key_file"], "")
+        unit = (ROLE / "templates" / "openhands-agent-server.service.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "LoadCredential=openhands-router-key:{{ openhands_router_key_file }}",
+            unit,
+        )
 
 
 if __name__ == "__main__":
