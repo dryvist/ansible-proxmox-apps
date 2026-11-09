@@ -139,6 +139,15 @@ Setting `agent_sandbox_job_github_write: true` enables the existing direct
 publish path. `agent_sandbox_job_entrypoint` selects the installed job entrypoint
 path; the role derives its read-only container mount target from the pinned image.
 
+Each run stops at `agent_sandbox_job_timeout` (3600 seconds), exported to the
+dispatcher as `AGENT_TIMEOUT_DEFAULT`. A job authenticates its sandbox AppRole
+once — the SecretID is single-use — and the in-job OpenBao Agent keeps that
+token renewed up to the `token_max_ttl` declared for the per-job identities in
+`dryvist.secrets_management` (`roles/openbao/defaults/main/07h-sandbox-agent-approles.yml`).
+That bound must stay above this timeout plus a margin, so raise it there before
+raising this one; the contract in `tests/test_agent_sandbox_openbao_client.py`
+fails when the two sides drift apart.
+
 ## Session-log shipping
 
 Agent containers are `--rm`, so their CLI session logs would die with the
