@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.38.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.37.0...v5.38.0) (2026-11-09)
+
+
+### Features
+
+* **agent_sandbox:** move to nix-agent-sandbox 1.18.0 and pass the opencode-local limits ([#3536](https://github.com/dryvist/ansible-proxmox-apps/issues/3536)) ([fb2b2a2](https://github.com/dryvist/ansible-proxmox-apps/commit/fb2b2a2620ac4af9984c1ce0d2da51c6801a9719))
+* **agent:** opencode-local run j-a28a9c72d9b8e0aa ([fb2b2a2](https://github.com/dryvist/ansible-proxmox-apps/commit/fb2b2a2620ac4af9984c1ce0d2da51c6801a9719))
+
 ## [5.37.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.36.1...v5.37.0) (2026-11-09)
 
 
