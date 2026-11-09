@@ -55,6 +55,7 @@ class OpenHandsServiceInstall(unittest.TestCase):
         self.assertIn(
             "openhands-automation=={{ openhands_automation_version }}", argv
         )
+        self.assertEqual(install["notify"], "Restart the OpenHands services")
 
     def test_install_reinstalls_only_when_a_pin_is_not_installed(self):
         tasks = _load(SERVICES)
@@ -130,6 +131,7 @@ class OpenHandsServiceGate(unittest.TestCase):
         store = _task(tasks, "Store the generated service secrets")
         self.assertEqual(store["ansible.builtin.copy"]["mode"], "0600")
         self.assertIs(store["no_log"], True)
+        self.assertEqual(store["notify"], "Restart the OpenHands services")
 
 
 class OpenHandsServiceUnits(unittest.TestCase):
