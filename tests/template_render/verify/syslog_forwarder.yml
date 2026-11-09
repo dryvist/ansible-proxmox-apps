@@ -202,6 +202,30 @@
           it is unset — a host without the variable keeps its rsyslog unit
           byte-for-byte unchanged.
 
+    - name: Assert the limits drop-in task gates on a boolean test
+      vars:
+        _sf_tasks_file: >-
+          {{ playbook_dir ~ '/../../../roles/syslog_forwarder/tasks/main.yml' }}
+        _sf_role_tasks: >-
+          {{ lookup('ansible.builtin.file', _sf_tasks_file) | from_yaml }}
+        _sf_limits_task: >-
+          {{ _sf_role_tasks
+             | selectattr('name', '==', 'Deploy rsyslog open-file-limit systemd drop-in')
+             | first }}
+      ansible.builtin.assert:
+        that:
+          # ansible-core 2.19+ rejects conditionals resolving to a non-boolean,
+          # and docker_vms sets the variable to the integer 65536 — so the gate
+          # must be an `is not none` test, not the bare variable or the old
+          # `| default(false)` filter chain.
+          - "_sf_limits_task.when == 'syslog_forwarder_limit_nofile is not none'"
+          - "'default(' not in _sf_limits_task.when"
+        fail_msg: >-
+          The open-file-limit drop-in task must gate on the boolean test
+          `syslog_forwarder_limit_nofile is not none`; a bare variable
+          resolves to an integer where the limit is set and ansible-core
+          2.19+ rejects non-boolean conditionals.
+
     - name: Syslog forwarder template rendering PASSED
       ansible.builtin.debug:
         msg: "syslog_forwarder: omfwd rule -> syslog.pve.example.com:1517/tcp with disk queue"
