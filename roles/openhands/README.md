@@ -26,7 +26,8 @@ uv-managed CPython 3.12 interpreter downloaded through the published raw
 release cache. The units use the shared systemd hardening template, restart on
 failure, and run as `openhands_user` with the state directory as both home and
 working directory. When enabled, the role waits for each service and verifies
-`/health` endpoint.
+its `/health` endpoint. Agent conversations use Docker with the configured
+memory, CPU and process limits.
 
 ## The agents' LLM
 

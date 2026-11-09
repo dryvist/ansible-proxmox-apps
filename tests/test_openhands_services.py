@@ -209,6 +209,28 @@ class OpenHandsServiceUnits(unittest.TestCase):
             self.assertIn("{% if openhands_service_enabled | bool %}", text)
             self.assertIn("EnvironmentFile={{ openhands_service_env_file }}", text)
 
+    def test_agent_server_selects_docker_and_the_role_resource_limits(self):
+        defaults = _load(ROLE / "defaults" / "main.yml")
+        unit = (ROLE / "templates" / "openhands-agent-server.service.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(defaults["openhands_conversation_memory_limit"], "4g")
+        self.assertEqual(defaults["openhands_conversation_cpus"], "2.0")
+        self.assertEqual(defaults["openhands_conversation_pids_limit"], 512)
+        self.assertIn("Environment=OH_CONVERSATION_RUNTIME=docker", unit)
+        self.assertIn(
+            "Environment=OH_CONVERSATION_CONTAINER_MEMORY={{ openhands_conversation_memory_limit }}",
+            unit,
+        )
+        self.assertIn(
+            "Environment=OH_CONVERSATION_CONTAINER_CPUS={{ openhands_conversation_cpus }}",
+            unit,
+        )
+        self.assertIn(
+            "Environment=OH_CONVERSATION_CONTAINER_PIDS_LIMIT={{ openhands_conversation_pids_limit }}",
+            unit,
+        )
+
 
 class OpenHandsRouterLLM(unittest.TestCase):
     def test_group_vars_resolve_the_router_key_bao_first(self):
