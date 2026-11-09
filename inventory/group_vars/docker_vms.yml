@@ -91,10 +91,12 @@ github_runner_data_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 # Each runner job writes NEW _diag files and never appends to old ones, so the
 # wildcard accumulates finished files forever -- and plain imfile holds one
 # open descriptor for every file it matches, which is the rsyslogd "Too many
-# open files" storm on the runner host. closeTimeout (seconds, see the
-# syslog_forwarder defaults) makes imfile close a file once it has had no new
-# data for that long, so the descriptor count stays bounded by the jobs
-# actually running.
+# open files" storm on the runner host. The descriptor count is handled by the
+# rsyslog unit's open-file limit instead: syslog_forwarder_limit_nofile (below)
+# renders a systemd LimitNOFILE drop-in sized to cover every file the wildcard
+# can accumulate. imfile's closeTimeout is not an option here -- these hosts
+# run rsyslog 8.2302.0, whose imfile rejects that parameter, and the role's
+# rsyslogd -N1 validation fails the play when an input sets it.
 #
 # Keep this path in sync with github_runner_diag_host_dir
 # (roles/github_runner/defaults/main.yml) -- the two roles converge in
@@ -109,9 +111,16 @@ github_runner_data_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 # Gated on the same host_var that enables the ARC role, so a host without
 # k3s never gets an input with nothing to tail.
 syslog_forwarder_imfile_inputs: >-
-  {{ [{'file': '/var/lib/docker/github-runner-diag/*/*.log', 'tag': 'github-runner-diag', 'closeTimeout': 120}]
+  {{ [{'file': '/var/lib/docker/github-runner-diag/*/*.log', 'tag': 'github-runner-diag'}]
      + ([{'file': '/var/log/containers/*.log', 'tag': 'k3s-containers'}]
         if github_runner_arc_enabled | default(false) | bool else []) }}
+
+# imfile keeps one open descriptor per file the runner-diag wildcard matches
+# and that set only grows (above), so the rsyslog unit here needs headroom
+# past the 1024 default. syslog_forwarder renders this as a LimitNOFILE drop-in
+# for rsyslog.service wherever the variable is set; a host without it deploys
+# no drop-in and keeps the unit untouched.
+syslog_forwarder_limit_nofile: 65536
 
 # systemd-resolved keeps retrying after a transient boot failure (for example a
 # full root disk failing its mount namespace) instead of hitting the default
