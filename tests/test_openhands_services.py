@@ -74,7 +74,7 @@ class OpenHandsServiceInstall(unittest.TestCase):
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(
             defaults["openhands_services_venv"],
-            "{{ openhands_install_dir }}/services",
+            "{{ openhands_install_dir }}/services-py312",
         )
         self.assertEqual(
             defaults["openhands_uv_venv"], "{{ openhands_install_dir }}/uv"
@@ -82,6 +82,29 @@ class OpenHandsServiceInstall(unittest.TestCase):
         venv = _task(_load(SERVICES), "Create the services virtualenv")
         self.assertEqual(
             venv["args"]["creates"], "{{ openhands_services_venv }}/bin/python"
+        )
+
+    def test_the_services_venv_uses_uv_managed_python_from_the_release_cache(self):
+        defaults = _load(ROLE / "defaults" / "main.yml")
+        inventory = _load(ROOT / "tests" / "inventory_load" / "tofu_inventory.json")
+        self.assertEqual(defaults["openhands_services_python_version"], "3.12")
+        self.assertGreater(len(inventory["cache_proxy_urls"]["raw_cache"]), 0)
+        self.assertIn(".get('raw_cache', [])", defaults["openhands_raw_cache_url"])
+        self.assertIn(
+            "/github_releases/astral-sh/python-build-standalone/releases/download",
+            defaults["openhands_python_install_mirror"],
+        )
+        venv = _task(_load(SERVICES), "Create the services virtualenv")
+        argv = venv["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[0], "{{ openhands_uv_venv }}/bin/uv")
+        self.assertEqual(argv[1:3], ["venv", "--python"])
+        self.assertEqual(argv[3], "{{ openhands_services_python_version }}")
+        self.assertEqual(
+            venv["environment"],
+            {
+                "UV_PYTHON_INSTALL_DIR": "{{ openhands_python_install_dir }}",
+                "UV_PYTHON_INSTALL_MIRROR": "{{ openhands_python_install_mirror }}",
+            },
         )
 
 

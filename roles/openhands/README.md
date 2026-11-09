@@ -21,10 +21,11 @@ Three OpenHands components, each pinned by a version in `defaults/main.yml`:
 
 The two Python services install into their own venv through the site's PyPI
 cache (`uv pip install`, both pinned in `defaults/main.yml`; the automation
-package itself pins the matching `openhands-sdk` release). The units use the
-shared systemd hardening template, restart on failure, and run as
-`openhands_user` with the state directory as both home and working
-directory. When enabled, the role waits for each service and verifies its
+package itself pins the matching `openhands-sdk` release). The venv uses a
+uv-managed CPython 3.12 interpreter downloaded through the published raw
+release cache. The units use the shared systemd hardening template, restart on
+failure, and run as `openhands_user` with the state directory as both home and
+working directory. When enabled, the role waits for each service and verifies
 `/health` endpoint.
 
 ## The agents' LLM
