@@ -31,15 +31,12 @@ memory, CPU and process limits.
 
 ## The agents' LLM
 
-The agent server's LLM runs against the LiteLLM router: the OpenAI-compatible
-base URL follows the same front door `n8n_docker` uses
-(`openhands_router_base_url`, built from `ingress_domain`), and the model is
-the router role alias `openhands_router_model`. The base URL and model reach
-the services in a root-owned `0600` environment file rendered only while the
-service is enabled and removed when it is not. The router key comes from a
-root-only runtime file named by `openhands_router_key_file`; systemd loads it
-as a credential and the agent-server unit reads it at startup. An OpenBao
-Agent template supplies that file in a follow-up.
+The agent server reaches the LiteLLM router at `openhands_router_base_url` and
+asks for the router role alias `openhands_router_model`. Both reach the
+services in a root-owned `0600` environment file rendered only while the
+service is enabled. The router key comes from the root-only file named by
+`openhands_router_key_file`; systemd loads it as a credential and the agent
+server reads it at startup.
 
 ## State
 
@@ -48,14 +45,10 @@ Agent template supplies that file in a follow-up.
 that user, who is a member of the `docker` group so it can start
 conversation containers.
 
-Generate-once service secrets (the agent server's session key and
-persistence secret, the automation's KV secret and local API key) live under
-`openhands_secrets_dir` inside that state directory, one root-owned `0600`
-file per value. The role generates a value only when the file is absent;
-nothing is regenerated behind an existing file. The automation keeps its
-SQLite database under `openhands_automation_db_path` (it migrates on
-startup) and its per-run workspaces under
-`openhands_automation_workspace_base`.
+The role generates each service secret only when its backing file is absent
+and preserves existing values. The automation keeps its SQLite database
+under `openhands_automation_db_path` (it migrates on startup) and its per-run
+workspaces under `openhands_automation_workspace_base`.
 
 The install writes the uv configuration the service user reads into
 `.config/uv/uv.toml` under that state directory; it points uv's default
