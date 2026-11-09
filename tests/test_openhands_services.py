@@ -14,9 +14,9 @@ ROLE = ROOT / "roles" / "openhands"
 SERVICES = ROOT / "roles" / "openhands" / "tasks" / "services.yml"
 GROUP_VARS = ROOT / "inventory" / "group_vars" / "openhands_host.yml"
 DOMAIN_GROUPS = ROOT / "playbooks" / "site" / "vars" / "openbao_secrets_domain_groups.yml"
+UNITS = ("openhands-agent-server.service.j2", "openhands-automation.service.j2")
+COMMON_CONF = ROLE / "templates" / "openhands-service-common.conf.j2"
 
-# A rendered file must never carry a real secret; the templates reference
-# variables and the verify-play fixtures use this placeholder.
 PLACEHOLDER = "test-placeholder"
 
 
@@ -65,7 +65,7 @@ class OpenHandsServiceInstall(unittest.TestCase):
         self.assertIs(read["check_mode"], False)
         install = _task(tasks, "Install the agent server and automation through the PyPI cache")
         self.assertIs(install["changed_when"], True)
-        condition = " ".join(str(part) for part in install["when"].split())
+        condition = _condition(install)
         self.assertIn("_openhands_installed_versions", condition)
         self.assertIn("openhands_agent_server_version", condition)
         self.assertIn("openhands_automation_version", condition)
@@ -79,9 +79,21 @@ class OpenHandsServiceInstall(unittest.TestCase):
         self.assertEqual(
             defaults["openhands_uv_venv"], "{{ openhands_install_dir }}/uv"
         )
-        venv = _task(_load(SERVICES), "Create the services virtualenv")
+        tasks = _load(SERVICES)
+        venv = _task(tasks, "Create the services virtualenv")
+        self.assertIn("--clear", venv["ansible.builtin.command"]["argv"])
+        creates = venv["args"]["creates"]
         self.assertEqual(
-            venv["args"]["creates"], "{{ openhands_services_venv }}/bin/python"
+            creates,
+            "{{ openhands_services_venv }}/.python-{{ openhands_services_python_version }}",
+        )
+        self.assertNotIn("/bin/python", creates)
+        self.assertIn("{{ openhands_services_python_version }}", creates)
+        marker = _task(tasks, "Mark the services virtualenv's Python version")
+        self.assertEqual(marker["ansible.builtin.copy"]["dest"], creates)
+        self.assertEqual(
+            marker["ansible.builtin.copy"]["content"],
+            "{{ openhands_services_python_version }}\n",
         )
 
     def test_the_services_venv_uses_uv_managed_python_from_the_release_cache(self):
@@ -97,8 +109,8 @@ class OpenHandsServiceInstall(unittest.TestCase):
         venv = _task(_load(SERVICES), "Create the services virtualenv")
         argv = venv["ansible.builtin.command"]["argv"]
         self.assertEqual(argv[0], "{{ openhands_uv_venv }}/bin/uv")
-        self.assertEqual(argv[1:3], ["venv", "--python"])
-        self.assertEqual(argv[3], "{{ openhands_services_python_version }}")
+        self.assertEqual(argv[1:4], ["venv", "--clear", "--python"])
+        self.assertEqual(argv[4], "{{ openhands_services_python_version }}")
         self.assertEqual(
             venv["environment"],
             {
@@ -176,17 +188,12 @@ class OpenHandsServiceUnits(unittest.TestCase):
         self.assertIn("verify/openhands.yml", plays)
 
     def test_units_wire_the_shared_hardening_template(self):
-        for unit in (
-            "openhands-agent-server.service.j2",
-            "openhands-automation.service.j2",
-        ):
+        for unit in UNITS:
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
             self.assertIn(
                 "{{ lookup('ansible.builtin.template', _service_common_template) }}", text
             )
-        common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
-            encoding="utf-8"
-        )
+        common = COMMON_CONF.read_text(encoding="utf-8")
         self.assertIn(
             "{{ lookup('ansible.builtin.file', _service_hardening_template) }}",
             common,
@@ -220,22 +227,15 @@ class OpenHandsServiceUnits(unittest.TestCase):
         ):
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
             self.assertIn("{{ openhands_services_venv }}/bin/" + exec_line, text)
-        common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
-            encoding="utf-8"
-        )
+        common = COMMON_CONF.read_text(encoding="utf-8")
         self.assertIn("User={{ openhands_user }}", common)
         self.assertIn("WorkingDirectory={{ openhands_state_dir }}", common)
 
     def test_the_environment_file_is_loaded_only_while_enabled(self):
-        for unit in (
-            "openhands-agent-server.service.j2",
-            "openhands-automation.service.j2",
-        ):
+        for unit in UNITS:
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
             self.assertIn("_service_common_template", text)
-        common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
-            encoding="utf-8"
-        )
+        common = COMMON_CONF.read_text(encoding="utf-8")
         self.assertIn("{% if openhands_service_enabled | bool %}", common)
         self.assertIn("EnvironmentFile={{ openhands_service_env_file }}", common)
 
@@ -304,9 +304,6 @@ class OpenHandsRouterLLM(unittest.TestCase):
 
 class OpenHandsNoKeyValues(unittest.TestCase):
     def test_no_role_file_assigns_a_key_value(self):
-        """Every secret reaching a rendered file flows through a variable or
-        the generate-once files; no line in the role or its group_vars carries
-        a literal credential."""
         scanned = (
             sorted(ROLE.rglob("*.yml"))
             + sorted(ROLE.rglob("*.j2"))
@@ -334,10 +331,7 @@ class OpenHandsNoKeyValues(unittest.TestCase):
             )
 
     def test_the_units_render_without_any_key_value(self):
-        for unit in (
-            "openhands-agent-server.service.j2",
-            "openhands-automation.service.j2",
-        ):
+        for unit in UNITS:
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
             for marker in ("{{ openhands_router_key }}", "LLM_API_KEY={{", "OH_SECRET_KEY="):
                 self.assertNotIn(marker, text)
