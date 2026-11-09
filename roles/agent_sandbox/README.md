@@ -39,6 +39,12 @@ Included via the `Deploy agent sandbox egress boundary` play in
 ansible-playbook playbooks/site.yml --tags agent_sandbox --diff
 ```
 
+Before the docker compose task recreates containers, the role pulls the
+compose project's images in its own bounded task
+(`agent_sandbox_image_pull_timeout`, 900 seconds by default) so an image tag
+moving to a new build cannot consume the compose task's 240-second
+`task_timeout`.
+
 ## Usage
 
 From a workstation with the nix-agent-sandbox CLI. The variables a

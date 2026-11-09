@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.37.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.36.1...v5.37.0) (2026-11-09)
+
+
+### Features
+
+* **agent:** opencode-local run j-cb649e3a5d09a244 ([37ff6a6](https://github.com/dryvist/ansible-proxmox-apps/commit/37ff6a65a3c2c9c56333c6d165843f9b5a9160d6))
+
+
+### Bug Fixes
+
+* **agent_sandbox:** let dispatcher jobs publish on the sandbox host ([#3530](https://github.com/dryvist/ansible-proxmox-apps/issues/3530)) ([27d7142](https://github.com/dryvist/ansible-proxmox-apps/commit/27d71427bd4c62d3a3f95f9b589114d2d5a24d7e))
+* **agent_sandbox:** pull compose images in a bounded task before compose up ([#3532](https://github.com/dryvist/ansible-proxmox-apps/issues/3532)) ([37ff6a6](https://github.com/dryvist/ansible-proxmox-apps/commit/37ff6a65a3c2c9c56333c6d165843f9b5a9160d6))
+
 ## [5.36.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.36.0...v5.36.1) (2026-11-09)
 
 
