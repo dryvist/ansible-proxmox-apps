@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.39.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.38.0...v5.39.0) (2026-11-09)
+
+
+### Features
+
+* **agent:** autonomous zcode run j-94a78340bb65e879 ([#3540](https://github.com/dryvist/ansible-proxmox-apps/issues/3540)) ([8d70406](https://github.com/dryvist/ansible-proxmox-apps/commit/8d70406c4e07fa19372a6439f8cafdff56bd7e66))
+* **agent:** zcode run j-94a78340bb65e879 ([8d70406](https://github.com/dryvist/ansible-proxmox-apps/commit/8d70406c4e07fa19372a6439f8cafdff56bd7e66))
+
 ## [5.38.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.37.0...v5.38.0) (2026-11-09)
 
 
