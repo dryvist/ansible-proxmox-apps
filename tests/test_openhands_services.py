@@ -81,7 +81,26 @@ class OpenHandsServiceInstall(unittest.TestCase):
         )
         venv = _task(_load(SERVICES), "Create the services virtualenv")
         self.assertEqual(
-            venv["args"]["creates"], "{{ openhands_services_venv }}/bin/python"
+            venv["args"]["creates"],
+            "{{ openhands_services_venv }}/.python-{{ openhands_services_python_version }}",
+        )
+
+    def test_the_services_venv_rebuilds_when_the_python_version_changes(self):
+        tasks = _load(SERVICES)
+        venv = _task(tasks, "Create the services virtualenv")
+        # uv refuses to replace an existing venv without --clear; the
+        # versioned creates guard only runs the task on a rebuild.
+        self.assertIn("--clear", venv["ansible.builtin.command"]["argv"])
+        creates = venv["args"]["creates"]
+        # A bare venv path skips the task on a version bump; the guard must
+        # change with the configured version.
+        self.assertNotIn("/bin/python", creates)
+        self.assertIn("{{ openhands_services_python_version }}", creates)
+        marker = _task(tasks, "Mark the services virtualenv's Python version")
+        self.assertEqual(marker["ansible.builtin.copy"]["dest"], creates)
+        self.assertEqual(
+            marker["ansible.builtin.copy"]["content"],
+            "{{ openhands_services_python_version }}\n",
         )
 
     def test_the_services_venv_uses_uv_managed_python_from_the_release_cache(self):
@@ -97,8 +116,8 @@ class OpenHandsServiceInstall(unittest.TestCase):
         venv = _task(_load(SERVICES), "Create the services virtualenv")
         argv = venv["ansible.builtin.command"]["argv"]
         self.assertEqual(argv[0], "{{ openhands_uv_venv }}/bin/uv")
-        self.assertEqual(argv[1:3], ["venv", "--python"])
-        self.assertEqual(argv[3], "{{ openhands_services_python_version }}")
+        self.assertEqual(argv[1:4], ["venv", "--clear", "--python"])
+        self.assertEqual(argv[4], "{{ openhands_services_python_version }}")
         self.assertEqual(
             venv["environment"],
             {

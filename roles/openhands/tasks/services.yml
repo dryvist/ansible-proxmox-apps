@@ -8,18 +8,30 @@
   ansible.builtin.include_tasks: assert_service_inputs.yml
 
 - name: Create the services virtualenv
+  # Guarded by a versioned marker, not bin/python, so a bump of
+  # openhands_services_python_version rebuilds the venv.
   ansible.builtin.command:
     argv:
       - "{{ openhands_uv_venv }}/bin/uv"
       - venv
+      - --clear
       - --python
       - "{{ openhands_services_python_version }}"
       - "{{ openhands_services_venv }}"
   args:
-    creates: "{{ openhands_services_venv }}/bin/python"
+    creates: "{{ openhands_services_venv }}/.python-{{ openhands_services_python_version }}"
   environment:
     UV_PYTHON_INSTALL_DIR: "{{ openhands_python_install_dir }}"
     UV_PYTHON_INSTALL_MIRROR: "{{ openhands_python_install_mirror }}"
+  when: not (ansible_check_mode and openhands_install_packages is changed)
+
+- name: Mark the services virtualenv's Python version
+  ansible.builtin.copy:
+    content: "{{ openhands_services_python_version }}\n"
+    dest: "{{ openhands_services_venv }}/.python-{{ openhands_services_python_version }}"
+    owner: root
+    group: root
+    mode: "0644"
   when: not (ansible_check_mode and openhands_install_packages is changed)
 
 - name: Read the installed service releases
@@ -55,9 +67,8 @@
            openhands_services_installed.results | map(attribute='item')
            | zip(openhands_services_installed.results
                  | map(attribute='stdout', default=''))) }}
-  # Reinstalled only when an installed release is not exactly the pin. The
-  # automation package itself pins the matching openhands-sdk and workspace
-  # releases, so one install resolves the whole set.
+  # Reinstalled only when an installed release is not exactly the pin; the
+  # automation package itself pins the matching openhands-sdk release.
   when: >-
     _openhands_installed_versions['openhands-agent-server']
     != openhands_agent_server_version
