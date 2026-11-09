@@ -1,6 +1,6 @@
 """OpenHands skeleton contract: tag-mapped inventory group, isolated site
-play, ZCode Web gate for the group, and a role that never reads OpenBao
-secret facts."""
+play, ZCode Web gate for the group, and a role whose only OpenBao read is
+the scoped router key the group_vars resolve bao-first."""
 
 from pathlib import Path
 import re
@@ -160,15 +160,42 @@ class OpenHandsRoleContract(unittest.TestCase):
             ("{{ openhands_user }}", "{{ openhands_user }}"),
         )
 
-    def test_role_never_references_bao_facts(self):
-        role_files = sorted(ROLE.rglob("*.yml")) + [GROUP_VARS]
-        self.assertGreaterEqual(len(role_files), 4)
-        for path in role_files:
-            self.assertNotIn(
-                "bao_",
-                path.read_text(encoding="utf-8"),
-                f"{path.relative_to(ROOT)} must not read bao_* secret facts",
+    def test_role_reads_only_the_scoped_router_key_from_bao(self):
+        """The group_vars resolve exactly one published OpenBao fact, the apps
+        domain, for this app's own scoped router key, and default to empty so
+        a converge with the service disabled never needs a secret. No other
+        published domain fact is named anywhere in the role or its
+        group_vars, and the role files themselves never name a bao_* fact."""
+        publish_tasks = _load(ROOT / "playbooks" / "tasks" / "publish_secret_domain_facts.yml")
+        published_facts = set()
+        for task in publish_tasks:
+            facts = task.get("ansible.builtin.set_fact") or {}
+            published_facts.update(
+                key
+                for key in facts
+                if re.fullmatch(r"bao_[a-z0-9_]+_secrets", key)
             )
+        self.assertGreaterEqual(len(published_facts), 10)
+        role_files = sorted(ROLE.rglob("*.yml")) + [GROUP_VARS]
+        self.assertGreaterEqual(len(role_files), 5)
+        for path in role_files:
+            text = path.read_text(encoding="utf-8")
+            for fact in published_facts - {"bao_apps_secrets"}:
+                self.assertNotIn(
+                    fact,
+                    text,
+                    f"{path.relative_to(ROOT)} reads {fact}",
+                )
+        role_text = "\n".join(
+            path.read_text(encoding="utf-8") for path in ROLE.rglob("*.yml")
+        )
+        self.assertNotIn("bao_apps_secrets", role_text)
+        group_vars = GROUP_VARS.read_text(encoding="utf-8")
+        self.assertIn("bao_apps_secrets.openhands_router_key", group_vars)
+        # Empty until seeded, so the disabled default converges without the
+        # apps domain: the enabled service's own assert fails loudly instead.
+        self.assertIn("| default('', true)", group_vars)
+        self.assertNotIn("bao_apps_secrets:", group_vars)
 
 
 if __name__ == "__main__":

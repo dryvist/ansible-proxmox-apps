@@ -1,10 +1,10 @@
 ---
-# OpenHands role defaults. The install (Agent Canvas plus its runtimes) and
-# the identities and limits the service PR will use; no service deploys yet.
+# OpenHands role defaults: the Agent Canvas install, the agent server and
+# automation service, and the identities and limits both use.
 
 # Pinned upstream release versions. Agent Canvas, the agent server and the
-# automation server each release independently; the install pins Agent Canvas
-# against this and the servers arrive with the service PR.
+# automation server each release independently; both Python services install
+# through the site's PyPI cache and the services' own venv.
 openhands_canvas_version: "1.34.0"
 openhands_agent_server_version: "1.58.1"
 openhands_automation_version: "1.26.0"
@@ -37,6 +37,9 @@ openhands_uv_venv: "{{ openhands_install_dir }}/uv"
 # uv reads $HOME/.config/uv/uv.toml, and the service user's home is the state
 # directory.
 openhands_uv_config_dir: "{{ openhands_state_dir }}/.config/uv"
+# The agent server and automation install into their own venv, so a uv
+# toolchain upgrade never touches the services' dependency tree.
+openhands_services_venv: "{{ openhands_install_dir }}/services"
 
 # Package caches from the published inventory, first URL wins as with the
 # runner role. Both must be declared: the install never fetches from the
@@ -51,8 +54,37 @@ openhands_pypi_cache_url: >-
 # Port the web frontend will listen on.
 openhands_port: 443
 
-# Service tasks arrive in a later PR; the install stays service-free.
+# Ports the two services bind on loopback: the agent server upstream default
+# (3000) and the automation image's EXPOSE (8000). A later PR fronts them.
+openhands_agent_server_port: 3000
+openhands_automation_port: 8000
+
+# Service tasks deploy and manage the two units; with the flag off the units
+# still install but stay disabled and stopped, and no secret is read or
+# rendered.
 openhands_service_enabled: false
+
+# Router (LiteLLM) settings the agents' LLM runs against: the OpenAI-compatible
+# base URL is the same front door n8n_docker uses, and the model is the router
+# role alias, not a literal model id. The bearer comes from the group_vars
+# (bao-first, openhands_router_key) and is asserted only when the service is
+# enabled.
+openhands_router_base_url: "https://llm.{{ ingress_domain }}/v1"
+openhands_router_model: small
+
+# Environment file both units load (root-owned 0600, like glance's LLM profile
+# env). Rendered only while the service is enabled and removed when not.
+openhands_service_env_file: "{{ openhands_install_dir }}/openhands.env"
+
+# Generate-once service secrets, one file per value, root-owned 0600 under the
+# state directory. The role generates a value only when the file is absent;
+# nothing is regenerated behind an existing file.
+openhands_secrets_dir: "{{ openhands_state_dir }}/.secrets"
+
+# Automation state: a SQLite database (it migrates on startup) and the
+# per-run workspace base the dispatcher isolates runs under.
+openhands_automation_db_path: "{{ openhands_state_dir }}/automation/automations.db"
+openhands_automation_workspace_base: "{{ openhands_state_dir }}/workspaces"
 
 openhands_user: openhands
 # State directory, also the service user's home.
