@@ -182,7 +182,7 @@ class OpenHandsServiceUnits(unittest.TestCase):
         ):
             text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
             self.assertIn(
-                "{{ lookup('ansible.builtin.file', _service_common_template) }}", text
+                "{{ lookup('ansible.builtin.template', _service_common_template) }}", text
             )
         common = (ROLE / "templates" / "openhands-service-common.conf.j2").read_text(
             encoding="utf-8"
