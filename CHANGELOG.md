@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.33.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.1...v5.33.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **syslog_forwarder:** close idle runner diag files and keep two days ([#3484](https://github.com/dryvist/ansible-proxmox-apps/issues/3484)) ([c20d656](https://github.com/dryvist/ansible-proxmox-apps/commit/c20d6560adf70439252fa0b4cc5c2d8574f128d8))
+
 ## [5.33.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.0...v5.33.1) (2026-11-09)
 
 
