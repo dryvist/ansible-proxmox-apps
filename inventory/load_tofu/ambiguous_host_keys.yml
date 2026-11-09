@@ -53,6 +53,44 @@
     {{ load_tofu_ambiguous_host_key_owners | default({}) | dict2items
        | selectattr('key', 'in', load_tofu_ambiguous_host_keys) | list }}
 
+- name: Resolve the guest maps without their excluded keys
+  # The add_host loops below re-filter these maps against
+  # load_tofu_excluded_host_keys, but every consumer after the loader reads
+  # tofu_data directly — the CA-trust membership contract
+  # (site/01-baseline-infra.yml) compares the resolved
+  # vms:splunk_vms:docker_vms membership against tofu_data.vms raw. A key
+  # left in the map there demands CA-trust membership for a guest the
+  # inventory does not carry in those groups (pbs: the LXC replaced the old
+  # VM, so only the containers entry is real, and LXCs receive CA trust via
+  # pct push). Masked from tofu_data itself, never from a synthetic
+  # load_tofu_guest_maps: that var names keys the loaded contract does not
+  # have and must not overwrite it.
+  ansible.builtin.set_fact:
+    load_tofu_resolved_guest_maps: >-
+      {{ {
+           'containers': (tofu_data['containers'] | default({})) | dict2items
+             | rejectattr('key', 'in', load_tofu_excluded_host_keys['containers'] | default([]))
+             | items2dict,
+           'vms': (tofu_data['vms'] | default({})) | dict2items
+             | rejectattr('key', 'in', load_tofu_excluded_host_keys['vms'] | default([]))
+             | items2dict,
+           'docker_vms': (tofu_data['docker_vms'] | default({})) | dict2items
+             | rejectattr('key', 'in', load_tofu_excluded_host_keys['docker_vms'] | default([]))
+             | items2dict } }}
+  when: tofu_data is defined
+
+- name: Drop the excluded guest keys from tofu_data
+  # Replacement, not combine: combine merges nested dicts and can never
+  # remove a key, so an excluded guest would survive the merge.
+  ansible.builtin.set_fact:
+    tofu_data: >-
+      {{ dict(tofu_data | dict2items
+         | selectattr('key', 'in', tofu_data.keys() | reject('in', _guest_maps) | list)
+         | items2dict, **load_tofu_resolved_guest_maps) }}
+  vars:
+    _guest_maps: [containers, vms, docker_vms]
+  when: tofu_data is defined
+
 - name: Warn about guest keys left out of inventory because they are ambiguous
   ansible.builtin.debug:
     msg: >-
