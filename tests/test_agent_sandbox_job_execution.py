@@ -55,9 +55,24 @@ def bash(script, tmp_path, **values):
 
 def test_default_and_mount_contract():
     assert DEFAULTS["agent_sandbox_job_github_write"] is False
+    assert DEFAULTS["agent_sandbox_opencode_context_tokens"] == 98304
+    assert DEFAULTS["agent_sandbox_opencode_output_tokens"] == 8192
     profile = (ROLE / "templates/agent-dispatch-profile.sh.j2").read_text()
     assert 'agent_sandbox_job_github_write | bool | ternary("true", "false")' in profile
     assert 'agent_sandbox_job_entrypoint | quote' in profile
+    assert (
+        "export AGENT_OPENCODE_CONTEXT_TOKENS="
+        "{{ agent_sandbox_opencode_context_tokens | int }}" in profile
+    )
+    assert (
+        "export AGENT_OPENCODE_OUTPUT_TOKENS="
+        "{{ agent_sandbox_opencode_output_tokens | int }}" in profile
+    )
+    patch = next(c for c in CHANGES["dispatcher"] if c["before"] == '    --name "agent-$1-$2"')
+    container_args = patch["after"].splitlines()
+    github_write = container_args.index('    -e "AGENT_JOB_GITHUB_WRITE=${AGENT_JOB_GITHUB_WRITE:-false}"')
+    assert container_args[github_write + 1] == '    -e "AGENT_OPENCODE_CONTEXT_TOKENS=${AGENT_OPENCODE_CONTEXT_TOKENS:-}"'
+    assert container_args[github_write + 2] == '    -e "AGENT_OPENCODE_OUTPUT_TOKENS=${AGENT_OPENCODE_OUTPUT_TOKENS:-}"'
     execution = yaml.safe_load((ROLE / "tasks/main/job_execution.yml").read_text())
     assert any("--network" in t.get("ansible.builtin.command", {}).get("argv", []) for t in execution)
     install = yaml.safe_load((ROLE / "tasks/main/job_source.yml").read_text())[-1]
