@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.35.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.34.2...v5.35.0) (2026-11-09)
+
+
+### Features
+
+* **prometheus:** scrape the 4080 small-model engine ([#3518](https://github.com/dryvist/ansible-proxmox-apps/issues/3518)) ([8b69c4c](https://github.com/dryvist/ansible-proxmox-apps/commit/8b69c4c9ad4fd37998883ef459c1053096ac5183))
+
 ## [5.34.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.34.1...v5.34.2) (2026-11-09)
 
 
