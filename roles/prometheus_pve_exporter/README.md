@@ -35,7 +35,7 @@ Until it exists, both values are empty and this role no-ops.
 
 Wired into `playbooks/site.yml` against `prometheus_group` (the same guest as
 `prometheus_stack`), after `network_quality`. The Prometheus scrape job,
-targets, and relabeling are defined in `inventory/group_vars/prometheus_group.yml`.
+targets, and relabeling are defined in `inventory/group_vars/prometheus_group/`.
 This role deploys the exporter and verifies that it answers.
 
 ## Usage
