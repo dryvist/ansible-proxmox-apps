@@ -106,6 +106,28 @@
           commissioned nodes. Rendered: {{ _pve_node_jobs }}
         success_msg: PVE node_exporter job has an explicit 30s timeout and commissioned targets.
 
+    - name: Isolate the PVE zfs_exporter job
+      ansible.builtin.set_fact:
+        _pve_zfs_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'pve_zfs_exporter') | list }}"
+
+    # The fixture service_ports declares no zfs_exporter key, so the port
+    # rendered here is the group_vars default (9134).
+    - name: Assert the PVE zfs_exporter job scrapes each commissioned node on 9134
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - _pve_zfs_jobs | length == 1
+          - _pve_zfs_jobs[0].scrape_interval == '60s'
+          - _pve_zfs_jobs[0].scrape_timeout == '30s'
+          - >-
+            _pve_zfs_jobs[0].static_configs[0].targets
+            == ['node-alpha.test.example:9134', 'node-beta.test.example:9134']
+          - "'node-gamma.test.example:9134' not in _pve_zfs_jobs[0].static_configs[0].targets"
+        fail_msg: >-
+          The pve_zfs_exporter job must set scrape_timeout 30s and build one
+          target per commissioned node on port 9134. Rendered: {{ _pve_zfs_jobs }}
+        success_msg: pve_zfs_exporter job targets each commissioned node on 9134.
+
     - name: Isolate the guest node_exporter job
       ansible.builtin.set_fact:
         _guest_jobs: "{{ _rendered.scrape_configs | selectattr('job_name', 'equalto', 'guest_node_exporter') | list }}"
@@ -134,10 +156,15 @@
         file: "{{ playbook_dir }}/../../../inventory/group_vars/cribl_stream_group.yml"
         name: _cribl_gv
 
-    - name: Splunk keep-job list names pve_exporter
+    - name: Splunk keep-job list gates pve_exporter but not pve_zfs_exporter
       ansible.builtin.assert:
         quiet: true
         that:
           - "'pve_exporter' in _cribl_gv.cribl_stream_prometheus_splunk_keep_jobs"
-        fail_msg: cribl_stream_prometheus_splunk_keep_jobs must include pve_exporter.
-        success_msg: pve_exporter passes the Splunk metrics leg.
+          - "'pve_zfs_exporter' not in _cribl_gv.cribl_stream_prometheus_splunk_keep_jobs"
+        fail_msg: >-
+          cribl_stream_prometheus_splunk_keep_jobs must include pve_exporter
+          and leave pve_zfs_exporter off the Splunk metrics leg.
+        success_msg: >-
+          pve_exporter passes the Splunk metrics leg; pve_zfs_exporter stays
+          VictoriaMetrics-only.
