@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.34.2](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.34.1...v5.34.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **deps:** update the nix-agent-sandbox agent image to v1.15.0 ([#3519](https://github.com/dryvist/ansible-proxmox-apps/issues/3519)) ([2654800](https://github.com/dryvist/ansible-proxmox-apps/commit/26548009a4d617bbe218d46685c7153fc6abc5ab))
+
 ## [5.34.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.34.0...v5.34.1) (2026-11-09)
 
 
