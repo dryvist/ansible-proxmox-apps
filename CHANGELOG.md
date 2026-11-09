@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.34.1](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.34.0...v5.34.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **roles:** give release downloads a 60 s timeout ([#3502](https://github.com/dryvist/ansible-proxmox-apps/issues/3502)) ([4e37f30](https://github.com/dryvist/ansible-proxmox-apps/commit/4e37f3053061c61baa85b2ab2193471c092d8630))
+
 ## [5.34.0](https://github.com/dryvist/ansible-proxmox-apps/compare/v5.33.3...v5.34.0) (2026-11-09)
 
 
