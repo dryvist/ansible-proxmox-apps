@@ -118,6 +118,8 @@ class OpenHandsRoleContract(unittest.TestCase):
         self.assertEqual(defaults["openhands_agent_server_version"], "1.58.1")
         self.assertEqual(defaults["openhands_automation_version"], "1.26.0")
         self.assertEqual(defaults["openhands_port"], 443)
+        self.assertEqual(defaults["openhands_canvas_port"], 8000)
+        self.assertEqual(defaults["openhands_backend_key_file"], "")
         self.assertIs(defaults["openhands_service_enabled"], False)
         self.assertEqual(defaults["openhands_user"], "openhands")
         self.assertEqual(defaults["openhands_state_dir"], "/var/lib/docker/openhands")
@@ -160,7 +162,7 @@ class OpenHandsRoleContract(unittest.TestCase):
             ("{{ openhands_user }}", "{{ openhands_user }}"),
         )
 
-    def test_role_uses_a_runtime_router_key_credential_file(self):
+    def test_role_uses_runtime_key_files_and_no_bao_lookup(self):
         role_text = "\n".join(
             path.read_text(encoding="utf-8")
             for path in sorted(ROLE.rglob("*.yml")) + sorted(ROLE.rglob("*.j2"))
@@ -170,12 +172,22 @@ class OpenHandsRoleContract(unittest.TestCase):
         self.assertNotIn("bao_apps_secrets", group_vars)
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(defaults["openhands_router_key_file"], "")
-        unit = (ROLE / "templates" / "openhands-agent-server.service.j2").read_text(
+        self.assertEqual(defaults["openhands_backend_key_file"], "")
+        unit = (ROLE / "templates" / "openhands-canvas.service.j2").read_text(
             encoding="utf-8"
         )
         self.assertIn(
-            "LoadCredential=openhands-router-key:{{ openhands_router_key_file }}",
+            "LoadCredential=openhands-backend-key:{{ openhands_backend_key_file }}",
             unit,
+        )
+        # Nothing in the unit reads the router key; the Canvas LLM profile uses it.
+        self.assertNotIn("openhands_router_key_file", unit)
+
+    def test_role_depends_on_the_shared_docker_engine(self):
+        meta = _load(ROLE / "meta" / "main.yml")
+        self.assertEqual(
+            meta["dependencies"],
+            [{"role": "docker_engine", "docker_engine_configure_daemon_json": True}],
         )
 
 

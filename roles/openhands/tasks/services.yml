@@ -1,8 +1,8 @@
 ---
-# The agent server and automation service: their venv install (through the
-# site's PyPI cache, never the public registries), their generate-once
-# secrets, the shared environment file, the systemd units, and the units'
-# enable state.
+# The Agent Canvas launcher: the agent server and automation venv install, the
+# generate-once secrets the launcher loads, its systemd unit, and the unit's
+# enable state. Units and files from earlier revisions are removed on every
+# converge.
 
 - name: Require the service inputs when enabled
   ansible.builtin.include_tasks: assert_service_inputs.yml
@@ -75,7 +75,7 @@
     or _openhands_installed_versions['openhands-automation']
     != openhands_automation_version
   changed_when: true
-  notify: Restart the OpenHands services
+  notify: Restart the OpenHands launcher
 
 - name: Create the service secrets directory
   ansible.builtin.file:
@@ -86,24 +86,12 @@
     mode: "0700"
   when: openhands_service_enabled | bool
 
-- name: Create the automation state directory
-  # SQLite creates the database file but never its parent directory.
-  ansible.builtin.file:
-    path: "{{ openhands_automation_db_path | dirname }}"
-    state: directory
-    owner: "{{ openhands_user }}"
-    group: "{{ openhands_user }}"
-    mode: "0750"
-  when: openhands_service_enabled | bool
-
 - name: Read the generate-once service secrets
   ansible.builtin.slurp:
     src: "{{ openhands_secrets_dir }}/{{ item }}"
   loop:
-    - session-api-key
     - secret-key
     - automation-kv-secret
-    - automation-local-api-key
   register: openhands_service_secret_files
   changed_when: false
   failed_when: false
@@ -130,7 +118,7 @@
   changed_when: true
   no_log: true
   # Under --check a first enable previews everything without generating, so
-  # the resolved secrets below resolve empty and the units render unarmed.
+  # the resolved secrets below resolve empty and the launcher renders unarmed.
   when: openhands_service_enabled | bool and not ansible_check_mode
 
 - name: Store the generated service secrets
@@ -145,7 +133,7 @@
     label: "{{ item.item }}"
   when: item is not skipped
   no_log: true
-  notify: Restart the OpenHands services
+  notify: Restart the OpenHands launcher
 
 - name: Resolve the effective service secrets
   ansible.builtin.set_fact:
@@ -170,39 +158,56 @@
 - name: Require the resolved service secrets
   ansible.builtin.assert:
     that:
-      - openhands_service_secrets['session-api-key'] | length > 0
       - openhands_service_secrets['secret-key'] | length > 0
       - openhands_service_secrets['automation-kv-secret'] | length > 0
-      - openhands_service_secrets['automation-local-api-key'] | length > 0
     fail_msg: >-
       The service secrets did not resolve. A real (non-check) run with the
-      service enabled must find or generate all four values under
+      service enabled must find or generate both values under
       {{ openhands_secrets_dir }}.
     quiet: true
   when: openhands_service_enabled | bool and not ansible_check_mode
 
-- name: Render the service environment file
-  ansible.builtin.template:
-    src: openhands.env.j2
-    dest: "{{ openhands_service_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: Restart the OpenHands services
-  when: openhands_service_enabled | bool
+- name: Find the retired OpenHands units
+  # The agent-server and automation units from earlier revisions. A host
+  # converged from one of them still has both, so they are stopped and removed.
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}.service"
+  loop:
+    - openhands-agent-server
+    - openhands-automation
+  loop_control:
+    label: "{{ item }}"
+  register: openhands_retired_units
+  check_mode: false
 
-- name: Remove the service environment file when disabled
+- name: Stop and disable the retired OpenHands units
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ openhands_retired_units.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Remove the retired OpenHands units, environment file and secrets
+  # The shared environment file held every service secret in one place. The
+  # two secrets below were read only by the retired units.
   ansible.builtin.file:
-    path: "{{ openhands_service_env_file }}"
+    path: "{{ item }}"
     state: absent
-  notify: Restart the OpenHands services
-  when: not (openhands_service_enabled | bool)
+  loop:
+    - /etc/systemd/system/openhands-agent-server.service
+    - /etc/systemd/system/openhands-automation.service
+    - "{{ openhands_install_dir }}/openhands.env"
+    - "{{ openhands_secrets_dir }}/session-api-key"
+    - "{{ openhands_secrets_dir }}/automation-local-api-key"
+  loop_control:
+    label: "{{ item }}"
 
-- name: Install the service units
+- name: Install the Agent Canvas launcher unit
   ansible.builtin.template:
-    src: "{{ item.src }}"
-    dest: "/etc/systemd/system/{{ item.name }}.service"
+    src: openhands-canvas.service.j2
+    dest: /etc/systemd/system/openhands-canvas.service
     owner: root
     group: root
     mode: "0644"
@@ -210,55 +215,32 @@
     _service_hardening_template: >-
       {{ role_path }}/../_shared/templates/systemd-service-hardening.conf.j2
     _service_common_template: "{{ role_path }}/templates/openhands-service-common.conf.j2"
-  loop:
-    - {src: openhands-agent-server.service.j2, name: openhands-agent-server}
-    - {src: openhands-automation.service.j2, name: openhands-automation}
-  loop_control:
-    label: "{{ item.name }}"
-  notify: Restart the OpenHands services
+  notify: Restart the OpenHands launcher
 
-- name: Set the OpenHands services' enable state
+- name: Set the Agent Canvas launcher's enable state
   ansible.builtin.systemd_service:
-    name: "{{ item }}"
+    name: openhands-canvas
     enabled: "{{ openhands_service_enabled | bool }}"
     state: "{{ 'started' if (openhands_service_enabled | bool) else 'stopped' }}"
     daemon_reload: true
-  loop:
-    - openhands-agent-server
-    - openhands-automation
-  loop_control:
-    label: "{{ item }}"
 
-- name: Wait for the agent server to accept connections
+- name: Wait for the Agent Canvas launcher to accept connections
   ansible.builtin.wait_for:
     host: 127.0.0.1
-    port: "{{ openhands_agent_server_port }}"
+    port: "{{ openhands_canvas_port }}"
     timeout: 90
   changed_when: false
   when: openhands_service_enabled | bool and not ansible_check_mode
 
-- name: Verify the agent server health endpoint
+- name: Verify the Agent Canvas launcher answers on loopback
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ openhands_agent_server_port }}/health"
+    url: "http://127.0.0.1:{{ openhands_canvas_port }}/"
     method: GET
-    status_code: 200
-  register: openhands_agent_server_health
+    status_code: "{{ openhands_canvas_health_statuses }}"
+  register: openhands_canvas_health
   retries: 12
   delay: 5
-  until: openhands_agent_server_health.status == 200
-  changed_when: false
-  check_mode: false
-  when: openhands_service_enabled | bool and not ansible_check_mode
-
-- name: Verify the automation health endpoint
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ openhands_automation_port }}/health"
-    method: GET
-    status_code: 200
-  register: openhands_automation_health
-  retries: 12
-  delay: 5
-  until: openhands_automation_health.status == 200
+  until: openhands_canvas_health.status in openhands_canvas_health_statuses
   changed_when: false
   check_mode: false
   when: openhands_service_enabled | bool and not ansible_check_mode

@@ -1,6 +1,7 @@
 """OpenHands service contract: pinned installs that resolve through the
-site's PyPI cache, units and secrets gated on openhands_service_enabled, the
-router LLM wiring, and no key value anywhere in the repository."""
+site's PyPI cache, the Agent Canvas launcher unit and its credentials gated on
+openhands_service_enabled, retired units removed on every converge, the router
+settings, and no key value anywhere in the repository."""
 
 from pathlib import Path
 import re
@@ -11,13 +12,18 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles" / "openhands"
-SERVICES = ROOT / "roles" / "openhands" / "tasks" / "services.yml"
+SERVICES = ROLE / "tasks" / "services.yml"
 GROUP_VARS = ROOT / "inventory" / "group_vars" / "openhands_host.yml"
 DOMAIN_GROUPS = ROOT / "playbooks" / "site" / "vars" / "openbao_secrets_domain_groups.yml"
-UNITS = ("openhands-agent-server.service.j2", "openhands-automation.service.j2")
+UNIT = ROLE / "templates" / "openhands-canvas.service.j2"
 COMMON_CONF = ROLE / "templates" / "openhands-service-common.conf.j2"
-
-PLACEHOLDER = "test-placeholder"
+RETIRED_TEMPLATES = (
+    "openhands-agent-server.service.j2",
+    "openhands-automation.service.j2",
+    "openhands.env.j2",
+)
+RETIRED_UNITS = ("openhands-agent-server", "openhands-automation")
+HEALTH_STATUSES = "{{ (range(200, 400) | list) + [401] }}"
 
 
 def _load(path):
@@ -55,7 +61,7 @@ class OpenHandsServiceInstall(unittest.TestCase):
         self.assertIn(
             "openhands-automation=={{ openhands_automation_version }}", argv
         )
-        self.assertEqual(install["notify"], "Restart the OpenHands services")
+        self.assertEqual(install["notify"], "Restart the OpenHands launcher")
 
     def test_install_reinstalls_only_when_a_pin_is_not_installed(self):
         tasks = _load(SERVICES)
@@ -129,44 +135,71 @@ class OpenHandsServiceGate(unittest.TestCase):
         tasks = _load(SERVICES)
         for name in (
             "Create the service secrets directory",
-            "Create the automation state directory",
             "Read the generate-once service secrets",
             "Generate the service secrets a first enable is missing",
             "Resolve the effective service secrets",
-            "Render the service environment file",
         ):
             self.assertIn("openhands_service_enabled", _condition(_task(tasks, name)), name)
 
-    def test_the_service_gate_requires_a_router_key_file_only_when_enabled(self):
+    def test_only_the_launcher_secrets_are_generated(self):
+        tasks = _load(SERVICES)
+        read = _task(tasks, "Read the generate-once service secrets")
+        self.assertEqual(
+            read["loop"], ["secret-key", "automation-kv-secret"]
+        )
+        require = _task(tasks, "Require the resolved service secrets")
+        self.assertEqual(
+            require["ansible.builtin.assert"]["that"],
+            [
+                "openhands_service_secrets['secret-key'] | length > 0",
+                "openhands_service_secrets['automation-kv-secret'] | length > 0",
+            ],
+        )
+
+    def test_the_service_gate_requires_both_key_files_only_when_enabled(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(defaults["openhands_router_key_file"], "")
+        self.assertEqual(defaults["openhands_backend_key_file"], "")
         gate = _task(
             _load(ROLE / "tasks" / "assert_service_inputs.yml"),
             "Assert the service startup inputs",
         )
         self.assertIn("openhands_service_enabled | bool", _condition(gate))
-        self.assertIn(
-            "openhands_router_key_file | trim | length > 0",
-            gate["ansible.builtin.assert"]["that"],
-        )
+        that = gate["ansible.builtin.assert"]["that"]
+        self.assertIn("openhands_router_key_file | trim | length > 0", that)
+        self.assertIn("openhands_backend_key_file | trim | length > 0", that)
 
-    def test_the_units_stay_disabled_and_stopped_when_the_flag_is_off(self):
-        manage = _task(_load(SERVICES), "Set the OpenHands services' enable state")
+    def test_the_launcher_stays_disabled_and_stopped_when_the_flag_is_off(self):
+        manage = _task(_load(SERVICES), "Set the Agent Canvas launcher's enable state")
         systemd = manage["ansible.builtin.systemd_service"]
+        self.assertEqual(systemd["name"], "openhands-canvas")
         self.assertEqual(systemd["enabled"], "{{ openhands_service_enabled | bool }}")
         self.assertEqual(
             systemd["state"],
             "{{ 'started' if (openhands_service_enabled | bool) else 'stopped' }}",
         )
-        self.assertEqual(
-            manage["loop"], ["openhands-agent-server", "openhands-automation"]
-        )
+        self.assertIs(systemd["daemon_reload"], True)
 
-    def test_the_environment_file_is_removed_when_disabled(self):
+    def test_retired_units_and_environment_file_are_removed_on_every_converge(self):
         tasks = _load(SERVICES)
-        removal = _task(tasks, "Remove the service environment file when disabled")
-        self.assertEqual(removal["ansible.builtin.file"]["state"], "absent")
-        self.assertIn("not (openhands_service_enabled | bool)", _condition(removal))
+        find = _task(tasks, "Find the retired OpenHands units")
+        self.assertIs(find["check_mode"], False)
+        self.assertEqual(find["loop"], list(RETIRED_UNITS))
+        stop = _task(tasks, "Stop and disable the retired OpenHands units")
+        self.assertNotIn("when", stop)
+        self.assertIn("stat.exists", stop["loop"])
+        systemd = stop["ansible.builtin.systemd_service"]
+        self.assertEqual(systemd["state"], "stopped")
+        self.assertIs(systemd["enabled"], False)
+        remove = _task(tasks, "Remove the retired OpenHands units, environment file and secrets")
+        self.assertNotIn("when", remove)
+        self.assertEqual(remove["ansible.builtin.file"]["state"], "absent")
+        paths = " ".join(remove["loop"])
+        for unit in RETIRED_UNITS:
+            self.assertIn(f"/etc/systemd/system/{unit}.service", paths)
+        self.assertIn("{{ openhands_install_dir }}/openhands.env", paths)
+        for secret in ("session-api-key", "automation-local-api-key"):
+            self.assertIn(f"{{{{ openhands_secrets_dir }}}}/{secret}", paths)
 
     def test_the_generate_once_secrets_are_never_regenerated_behind_a_file(self):
         tasks = _load(SERVICES)
@@ -178,21 +211,24 @@ class OpenHandsServiceGate(unittest.TestCase):
         store = _task(tasks, "Store the generated service secrets")
         self.assertEqual(store["ansible.builtin.copy"]["mode"], "0600")
         self.assertIs(store["no_log"], True)
-        self.assertEqual(store["notify"], "Restart the OpenHands services")
+        self.assertEqual(store["notify"], "Restart the OpenHands launcher")
 
 
-class OpenHandsServiceUnits(unittest.TestCase):
+class OpenHandsServiceUnit(unittest.TestCase):
     def test_units_render_through_the_template_render_harness(self):
         harness = _load(ROOT / "tests" / "template_render" / "verify_templates.yml")
         plays = [play.get("import_playbook") for play in harness if "import_playbook" in play]
         self.assertIn("verify/openhands.yml", plays)
 
-    def test_units_wire_the_shared_hardening_template(self):
-        for unit in UNITS:
-            text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            self.assertIn(
-                "{{ lookup('ansible.builtin.template', _service_common_template) }}", text
-            )
+    def test_the_retired_unit_and_environment_templates_are_gone(self):
+        for name in RETIRED_TEMPLATES:
+            self.assertFalse((ROLE / "templates" / name).exists(), name)
+
+    def test_the_launcher_unit_wires_the_shared_hardening_template(self):
+        text = UNIT.read_text(encoding="utf-8")
+        self.assertIn(
+            "{{ lookup('ansible.builtin.template', _service_common_template) }}", text
+        )
         common = COMMON_CONF.read_text(encoding="utf-8")
         self.assertIn(
             "{{ lookup('ansible.builtin.file', _service_hardening_template) }}",
@@ -200,10 +236,12 @@ class OpenHandsServiceUnits(unittest.TestCase):
         )
         self.assertIn("ReadWritePaths={{ openhands_state_dir }}", common)
         self.assertIn("Restart=on-failure", common)
-        install = _task(_load(SERVICES), "Install the service units")
-        self.assertIn(
-            "_service_hardening_template",
-            str(install["vars"]),
+        self.assertIn("WantedBy=multi-user.target", text)
+        install = _task(_load(SERVICES), "Install the Agent Canvas launcher unit")
+        self.assertEqual(install["ansible.builtin.template"]["src"], "openhands-canvas.service.j2")
+        self.assertEqual(
+            install["ansible.builtin.template"]["dest"],
+            "/etc/systemd/system/openhands-canvas.service",
         )
         self.assertEqual(
             install["vars"]["_service_hardening_template"],
@@ -214,52 +252,73 @@ class OpenHandsServiceUnits(unittest.TestCase):
             "{{ role_path }}/templates/openhands-service-common.conf.j2",
         )
 
-    def test_units_bind_loopback_and_run_as_the_service_user(self):
-        for unit, exec_line in (
-            (
-                "openhands-agent-server.service.j2",
-                "agent-server --host 127.0.0.1 --port {{ openhands_agent_server_port }}",
-            ),
-            (
-                "openhands-automation.service.j2",
-                "uvicorn openhands.automation.app:app --host 127.0.0.1 --port {{ openhands_automation_port }}",
-            ),
-        ):
-            text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            self.assertIn("{{ openhands_services_venv }}/bin/" + exec_line, text)
+    def test_the_launcher_runs_the_installed_node_and_canvas_bin_on_the_port(self):
+        text = UNIT.read_text(encoding="utf-8")
+        self.assertIn(
+            "exec {{ openhands_node_dir }}/bin/node {{ openhands_canvas_dir }}/bin/agent-canvas"
+            " --public --port {{ openhands_canvas_port }}'",
+            text,
+        )
+        self.assertIn("ExecStart=/bin/sh -ec '", text)
         common = COMMON_CONF.read_text(encoding="utf-8")
         self.assertIn("User={{ openhands_user }}", common)
         self.assertIn("WorkingDirectory={{ openhands_state_dir }}", common)
+        self.assertIn("Environment=HOME={{ openhands_state_dir }}", common)
+        self.assertIn("Environment=PATH={{ openhands_node_dir }}/bin:", common)
+        self.assertIn("/usr/local/bin", common)
 
-    def test_the_environment_file_is_loaded_only_while_enabled(self):
-        for unit in UNITS:
-            text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            self.assertIn("_service_common_template", text)
+    def test_the_launcher_loads_its_keys_only_while_enabled(self):
+        text = UNIT.read_text(encoding="utf-8")
+        gate = text[text.index("{% if openhands_service_enabled | bool %}"):text.index("{% endif %}")]
+        outside = text.replace(gate, "")
+        for credential in (
+            "LoadCredential=openhands-backend-key:{{ openhands_backend_key_file }}",
+            "LoadCredential=openhands-secret-key:{{ openhands_secrets_dir }}/secret-key",
+            "LoadCredential=openhands-automation-kv-secret:"
+            "{{ openhands_secrets_dir }}/automation-kv-secret",
+        ):
+            self.assertIn(credential, gate)
+            self.assertNotIn(credential, outside)
         common = COMMON_CONF.read_text(encoding="utf-8")
-        self.assertIn("{% if openhands_service_enabled | bool %}", common)
-        self.assertIn("EnvironmentFile={{ openhands_service_env_file }}", common)
+        self.assertNotIn("EnvironmentFile", common)
 
-    def test_agent_server_selects_docker_and_the_role_resource_limits(self):
+    def test_the_launcher_selects_docker_and_the_role_resource_limits(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
-        unit = (ROLE / "templates" / "openhands-agent-server.service.j2").read_text(
-            encoding="utf-8"
-        )
+        text = UNIT.read_text(encoding="utf-8")
         self.assertEqual(defaults["openhands_conversation_memory_limit"], "4g")
         self.assertEqual(defaults["openhands_conversation_cpus"], "2.0")
         self.assertEqual(defaults["openhands_conversation_pids_limit"], 512)
-        self.assertIn("Environment=OH_CONVERSATION_RUNTIME=docker", unit)
+        self.assertIn("Environment=OH_CONVERSATION_RUNTIME=docker", text)
         self.assertIn(
             "Environment=OH_CONVERSATION_CONTAINER_MEMORY={{ openhands_conversation_memory_limit }}",
-            unit,
+            text,
         )
         self.assertIn(
             "Environment=OH_CONVERSATION_CONTAINER_CPUS={{ openhands_conversation_cpus }}",
-            unit,
+            text,
         )
         self.assertIn(
             "Environment=OH_CONVERSATION_CONTAINER_PIDS_LIMIT={{ openhands_conversation_pids_limit }}",
-            unit,
+            text,
         )
+
+    def test_the_health_probe_hits_the_root_path_and_never_sends_the_key(self):
+        defaults = _load(ROLE / "defaults" / "main.yml")
+        self.assertEqual(defaults["openhands_canvas_health_statuses"], HEALTH_STATUSES)
+        probe = _task(_load(SERVICES), "Verify the Agent Canvas launcher answers on loopback")
+        uri = probe["ansible.builtin.uri"]
+        self.assertEqual(uri["url"], "http://127.0.0.1:{{ openhands_canvas_port }}/")
+        self.assertEqual(uri["status_code"], "{{ openhands_canvas_health_statuses }}")
+        self.assertNotIn("headers", uri)
+        self.assertNotIn("body", uri)
+        self.assertIs(probe["check_mode"], False)
+        self.assertIn("not ansible_check_mode", _condition(probe))
+        self.assertEqual(
+            probe["until"],
+            "openhands_canvas_health.status in openhands_canvas_health_statuses",
+        )
+        wait = _task(_load(SERVICES), "Wait for the Agent Canvas launcher to accept connections")
+        self.assertEqual(wait["ansible.builtin.wait_for"]["port"], "{{ openhands_canvas_port }}")
 
 
 class OpenHandsRouterLLM(unittest.TestCase):
@@ -271,35 +330,17 @@ class OpenHandsRouterLLM(unittest.TestCase):
         domain_groups = _load(DOMAIN_GROUPS)["openbao_secrets_domain_groups"]
         self.assertNotIn("openhands_host", domain_groups["apps"])
 
-    def test_the_env_file_carries_router_settings_but_no_router_key(self):
+    def test_the_router_settings_stay_defaults_and_no_unit_reads_the_router_key(self):
         defaults = _load(ROLE / "defaults" / "main.yml")
         self.assertEqual(
             defaults["openhands_router_base_url"],
             "https://llm.{{ ingress_domain }}/v1",
         )
         self.assertEqual(defaults["openhands_router_model"], "small")
-        env = (ROLE / "templates" / "openhands.env.j2").read_text(encoding="utf-8")
-        self.assertIn("LLM_MODEL={{ openhands_router_model }}", env)
-        self.assertIn("LLM_BASE_URL={{ openhands_router_base_url }}", env)
-        self.assertNotIn("LLM_API_KEY", env)
-        self.assertNotIn("openhands_router_key_file", env)
-
-    def test_the_automation_runs_in_local_agent_server_mode(self):
-        env = (ROLE / "templates" / "openhands.env.j2").read_text(encoding="utf-8")
-        self.assertIn(
-            "AUTOMATION_AGENT_SERVER_URL=http://127.0.0.1:{{ openhands_agent_server_port }}", env
-        )
-        self.assertIn(
-            "AUTOMATION_AGENT_SERVER_API_KEY={{ openhands_service_secrets['session-api-key'] }}",
-            env,
-        )
-        self.assertIn(
-            "AUTOMATION_DB_URL=sqlite+aiosqlite:///{{ openhands_automation_db_path }}", env
-        )
-        self.assertIn("AUTOMATION_KV_SECRET={{ openhands_service_secrets['automation-kv-secret'] }}", env)
-        self.assertIn(
-            "AUTOMATION_LOCAL_API_KEY={{ openhands_service_secrets['automation-local-api-key'] }}", env
-        )
+        text = UNIT.read_text(encoding="utf-8")
+        self.assertNotIn("openhands_router_key_file", text)
+        self.assertNotIn("LLM_API_KEY", text)
+        self.assertFalse((ROLE / "templates" / "openhands.env.j2").exists())
 
 
 class OpenHandsNoKeyValues(unittest.TestCase):
@@ -321,35 +362,34 @@ class OpenHandsNoKeyValues(unittest.TestCase):
                     f"{path.relative_to(ROOT)} carries a literal: {line.strip()!r}",
                 )
 
-    def test_the_verify_fixture_declares_only_placeholder_values(self):
+    def test_the_verify_fixture_declares_no_secret_values(self):
         verify = _load(ROOT / "tests" / "template_render" / "verify" / "openhands.yml")
         play = verify[0]
         self.assertNotIn("openhands_router_key", play["vars"])
-        for name, value in play["vars"]["openhands_service_secrets"].items():
-            self.assertEqual(
-                value, PLACEHOLDER, f"fixture secret {name} is not the placeholder"
-            )
+        self.assertNotIn("openhands_service_secrets", play["vars"])
+        self.assertNotIn("openhands_backend_key", play["vars"])
 
     def test_the_units_render_without_any_key_value(self):
-        for unit in UNITS:
-            text = (ROLE / "templates" / unit).read_text(encoding="utf-8")
-            for marker in ("{{ openhands_router_key }}", "LLM_API_KEY={{", "OH_SECRET_KEY="):
-                self.assertNotIn(marker, text)
-        env = (ROLE / "templates" / "openhands.env.j2").read_text(encoding="utf-8")
-        self.assertNotIn("LLM_API_KEY", env)
+        text = UNIT.read_text(encoding="utf-8")
+        for marker in (
+            "Environment=LOCAL_BACKEND_API_KEY=",
+            "Environment=OH_SECRET_KEY=",
+            "Environment=AUTOMATION_KV_SECRET=",
+            "LLM_API_KEY={{",
+        ):
+            self.assertNotIn(marker, text)
 
-    def test_the_agent_server_reads_the_key_only_through_a_loaded_credential(self):
-        unit = (ROLE / "templates" / "openhands-agent-server.service.j2").read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual(unit.count("openhands_router_key_file"), 1)
+    def test_the_launcher_reads_each_key_only_through_a_loaded_credential(self):
+        text = UNIT.read_text(encoding="utf-8")
+        self.assertEqual(text.count("openhands_backend_key_file"), 1)
         self.assertIn(
-            "LoadCredential=openhands-router-key:{{ openhands_router_key_file }}",
-            unit,
+            "LoadCredential=openhands-backend-key:{{ openhands_backend_key_file }}",
+            text,
         )
-        self.assertIn("$$CREDENTIALS_DIRECTORY/openhands-router-key", unit)
-        self.assertNotIn("Environment=LLM_API_KEY", unit)
-        self.assertNotIn("LLM_API_KEY={{", unit)
+        self.assertIn('"$$CREDENTIALS_DIRECTORY/openhands-backend-key"', text)
+        self.assertIn('"$$CREDENTIALS_DIRECTORY/openhands-secret-key"', text)
+        self.assertIn('"$$CREDENTIALS_DIRECTORY/openhands-automation-kv-secret"', text)
+        self.assertNotIn("Environment=LOCAL_BACKEND_API_KEY", text)
 
 
 if __name__ == "__main__":
