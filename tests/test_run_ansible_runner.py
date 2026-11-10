@@ -49,6 +49,58 @@ EXPORT_LINES = [
     'export RUN_ANSIBLE_RECAP_CHECK="${RUN_ANSIBLE_RECAP_CHECK:-1}"',
     'export RUN_ANSIBLE_LOG_DIR="${RUN_ANSIBLE_LOG_DIR:-$(git rev-parse --show-toplevel)/.ansible-run-logs}"',
 ]
+DARWIN_LINES = [
+    'if [ "$(uname -s)" = Darwin ]; then',
+    "  export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES",
+    '  export no_proxy="${no_proxy-*}"',
+    '  export NO_PROXY="${NO_PROXY-*}"',
+    "fi",
+]
+UNSET = "UNSET"
+
+
+def run_wrapper_child_env(uname_output, extra_env):
+    """Run the shim with a stubbed uname and nix; return the fork-safety vars nix saw."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        bin_path = temp_path / "bin"
+        bin_path.mkdir()
+        env_file = temp_path / "runner-env"
+        uname = bin_path / "uname"
+        uname.write_text(f"#!/usr/bin/env bash\necho {uname_output}\n", encoding="utf-8")
+        uname.chmod(0o700)
+        nix = bin_path / "nix"
+        nix.write_text(
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                {{
+                  printf 'OBJC_DISABLE_INITIALIZE_FORK_SAFETY=%s\\n' "${{OBJC_DISABLE_INITIALIZE_FORK_SAFETY-{UNSET}}}"
+                  printf 'no_proxy=%s\\n' "${{no_proxy-{UNSET}}}"
+                  printf 'NO_PROXY=%s\\n' "${{NO_PROXY-{UNSET}}}"
+                }} > "$RUNNER_TEST_ENV_FILE"
+                """
+            ),
+            encoding="utf-8",
+        )
+        nix.chmod(0o700)
+        env = {
+            "PATH": f"{bin_path}{os.pathsep}{os.environ.get('PATH', '')}",
+            "RUNNER_TEST_ENV_FILE": str(env_file),
+            **extra_env,
+        }
+        result = subprocess.run(
+            [str(RUNNER), "playbooks/site.yml"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        captured = env_file.read_text(encoding="utf-8").splitlines()
+    return dict(line.split("=", maxsplit=1) for line in captured)
 
 
 class RunAnsibleShimContract(unittest.TestCase):
@@ -71,6 +123,7 @@ class RunAnsibleShimContract(unittest.TestCase):
             [
                 "set -euo pipefail",
                 *EXPORT_LINES,
+                *DARWIN_LINES,
                 ref_line,
                 'exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"',
             ],
@@ -133,6 +186,33 @@ class RunAnsibleShimContract(unittest.TestCase):
             dict(line.split("=", maxsplit=1) for line in captured_env),
             DEFAULTS,
         )
+
+    def test_darwin_fork_safety_env_is_set_only_when_unset(self):
+        fork_safe = {"OBJC_DISABLE_INITIALIZE_FORK_SAFETY": "YES"}
+        cases = [
+            ("Darwin", {}, {**fork_safe, "no_proxy": "*", "NO_PROXY": "*"}),
+            (
+                "Darwin",
+                {"no_proxy": "bypass.example.test"},
+                {**fork_safe, "no_proxy": "bypass.example.test", "NO_PROXY": "*"},
+            ),
+            (
+                "Linux",
+                {},
+                {
+                    "OBJC_DISABLE_INITIALIZE_FORK_SAFETY": UNSET,
+                    "no_proxy": UNSET,
+                    "NO_PROXY": UNSET,
+                },
+            ),
+        ]
+        for uname_output, extra_env, expected in cases:
+            with self.subTest(uname=uname_output, extra_env=extra_env):
+                child_env = run_wrapper_child_env(uname_output, extra_env)
+                self.assertEqual(
+                    {name: child_env[name] for name in expected},
+                    expected,
+                )
 
 
 if __name__ == "__main__":

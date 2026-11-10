@@ -38,6 +38,10 @@ the template's `--skip-tags` list. This skips the independent Slack fan-out,
 Zammad subscriber, canary, and ai-jobs credential stages while retaining the
 ntfy server deployment and health check. Full ntfy runs still include them.
 
+On macOS, `scripts/run-ansible.sh` also exports
+`OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` and sets `no_proxy` and `NO_PROXY`
+to `*`, leaving either proxy variable untouched when the caller already set it.
+
 ```bash
 # Deploy all apps (the main pipeline does not require SOPS). A full
 # site.yml is a promotion-boundary action, not a development one: scope a

@@ -19,6 +19,13 @@ export RUN_ANSIBLE_LIMIT_LOCALHOST="${RUN_ANSIBLE_LIMIT_LOCALHOST:-1}"
 export RUN_ANSIBLE_RECAP_CHECK="${RUN_ANSIBLE_RECAP_CHECK:-1}"
 export RUN_ANSIBLE_LOG_DIR="${RUN_ANSIBLE_LOG_DIR:-$(git rev-parse --show-toplevel)/.ansible-run-logs}"
 
+# macOS: Objective-C fork safety and CFNetwork proxy lookup crash forked Ansible workers.
+if [ "$(uname -s)" = Darwin ]; then
+  export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+  export no_proxy="${no_proxy-*}"
+  export NO_PROXY="${NO_PROXY-*}"
+fi
+
 # renovate: datasource=github-releases depName=dryvist/homelab-contracts
 HOMELAB_CONTRACTS_REF=v5.58.1
 exec nix run "github:dryvist/homelab-contracts/${HOMELAB_CONTRACTS_REF}#run-ansible" -- "$@"
