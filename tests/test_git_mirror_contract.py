@@ -63,7 +63,7 @@ class GitMirrorContract(unittest.TestCase):
             yaml.safe_load((ROOT / "roles/git_mirror/defaults/main.yml").read_text())[
                 "git_mirror_sync_interval"
             ],
-            "6h",
+            "5m",
         )
         self.assertIn("git_mirror_sync_success", script)
         self.assertIn("git_mirror_sync_last_success_timestamp_seconds", script)
@@ -110,7 +110,7 @@ class GitMirrorContract(unittest.TestCase):
         stale, failed = rules
         self.assertEqual(
             stale["data"][0]["model"]["expr"],
-            "(time() - git_mirror_sync_last_success_timestamp_seconds) > bool 43200",
+            "(time() - git_mirror_sync_last_success_timestamp_seconds) > bool 1800",
         )
         self.assertEqual(
             failed["data"][0]["model"]["expr"],

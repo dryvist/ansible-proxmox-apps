@@ -6,7 +6,7 @@ Deploys two read-only smart HTTP repositories on a Debian LXC:
 - /all serves public repositories and private repositories for configured owners.
   Its separate listener requires HTTP basic authentication.
 
-Git mirrors are bare repositories refreshed every six hours by a systemd timer.
+Git mirrors are bare repositories refreshed every five minutes by a systemd timer.
 The sync unit requests short-lived, read-only GitHub App installation tokens
 from OpenBao for each configured owner. Tokens are passed to Git as process-only
 HTTP headers; clone URLs and repository configuration remain credential-free.
@@ -38,7 +38,7 @@ repositories only for the configured accounts.
 | git_mirror_proxy_sources | [] | Reverse-proxy listener addresses allowed through UFW. |
 | git_mirror_public_port | 8080 | Backend port for /public. |
 | git_mirror_all_port | 8081 | Backend port for authenticated /all. |
-| git_mirror_sync_interval | 6h | Systemd refresh cadence. |
+| git_mirror_sync_interval | 5m | Systemd refresh cadence. |
 
 ## Read-only and monitoring behavior
 
