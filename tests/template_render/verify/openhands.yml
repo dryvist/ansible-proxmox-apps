@@ -110,6 +110,7 @@
           - "'LoadCredential=' not in _canvas_unit"
           - "'EnvironmentFile=' not in _canvas_unit"
           - "'Environment=LOCAL_BACKEND_API_KEY=' not in _canvas_unit"
+          - "'openhands-secrets-agent' not in _canvas_unit"
         fail_msg: "the launcher unit does not render its disabled-state contract"
 
     - name: Render the launcher unit with the service enabled
@@ -142,9 +143,72 @@
           - "'Environment=LOCAL_BACKEND_API_KEY=' not in _canvas_unit_enabled"
           - "'openhands_backend_key_file' not in _canvas_unit_enabled"
           - "'EnvironmentFile=' not in _canvas_unit_enabled"
+          - "'After=openhands-secrets-agent.service' in _canvas_unit_enabled.split('[Service]')[0]"
+          - "'Wants=openhands-secrets-agent.service' in _canvas_unit_enabled.split('[Service]')[0]"
         fail_msg: >-
           the enabled launcher unit must load its keys as credentials and never
-          carry a key value itself
+          carry a key value itself, and must order after the key agent
+
+    - name: Render the launcher key agent configuration and unit with the service enabled
+      ansible.builtin.template:
+        src: "{{ _template_dir }}/{{ item.src }}"
+        dest: "{{ _fixture_dir }}/{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - src: openhands-secrets-agent.hcl.j2
+          dest: openhands-secrets-agent.hcl
+        - src: openhands-secrets-agent.service.j2
+          dest: openhands-secrets-agent.service
+      loop_control:
+        label: "{{ item.dest }}"
+      vars:
+        openhands_service_enabled: true
+        openhands_store_addr: https://openbao.example.invalid
+        openhands_backend_key_file: /run/openhands/backend-key
+        openhands_router_key_file: /run/openhands/router-key
+
+    - name: Read the rendered key agent files
+      ansible.builtin.slurp:
+        src: "{{ _fixture_dir }}/{{ item }}"
+      loop:
+        - openhands-secrets-agent.hcl
+        - openhands-secrets-agent.service
+      loop_control:
+        label: "{{ item }}"
+      register: _key_agent_raw
+
+    - name: Decode the rendered key agent files
+      ansible.builtin.set_fact:
+        _key_agent_hcl: "{{ _key_agent_raw.results[0].content | b64decode }}"
+        _key_agent_unit: "{{ _key_agent_raw.results[1].content | b64decode }}"
+
+    - name: Assert the key agent renders both fields from one KV path at 0600 and fails on a missing field
+      ansible.builtin.assert:
+        that:
+          - "'secret/data/apps/openhands' in _key_agent_hcl"
+          - "'.Data.data.openhands_backend_api_key' in _key_agent_hcl"
+          - "'.Data.data.openhands_llm_router_key' in _key_agent_hcl"
+          - (_key_agent_hcl | regex_findall('perms\s*=\s*"0600"') | length) == 2
+          - (_key_agent_hcl | regex_findall('error_on_missing_key\s*=\s*true') | length) == 2
+          - (_key_agent_hcl | regex_findall('destination\s*=\s*"/run/openhands/backend-key"') | length) == 1
+          - (_key_agent_hcl | regex_findall('destination\s*=\s*"/run/openhands/router-key"') | length) == 1
+          - (_key_agent_hcl | regex_findall('role_id_file_path\s*=\s*"/etc/openhands/approle/role_id"') | length) == 1
+          - (_key_agent_hcl | regex_findall('remove_secret_id_file_after_reading\s*=\s*false') | length) == 1
+          - "'try-restart openhands-canvas.service' in _key_agent_hcl"
+        fail_msg: >-
+          the key agent must render both key files at 0600 from one KV path with
+          error_on_missing_key, and must keep the secret_id file on restart
+        quiet: true
+
+    - name: Assert the key agent unit starts before the launcher and restarts on failure
+      ansible.builtin.assert:
+        that:
+          - "'Before=openhands-canvas.service' in _key_agent_unit"
+          - "'Restart=on-failure' in _key_agent_unit"
+          - "'WantedBy=multi-user.target' in _key_agent_unit"
+          - "'ExecStart=/usr/bin/bao agent -config=/etc/openhands/openhands-secrets-agent.hcl' in _key_agent_unit"
+        fail_msg: "the key agent unit does not render its ordering, restart or exec contract"
+        quiet: true
 
     - name: OpenHands launcher template rendering PASSED
       ansible.builtin.debug:
