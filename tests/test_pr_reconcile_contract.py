@@ -16,6 +16,33 @@ def load_defaults():
     return yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 
 
+def unit_section(text, name):
+    """Return the key=value pairs of one systemd section, ignoring comments."""
+    body = text.split(f"[{name}]", 1)[1].split("\n[", 1)[0]
+    pairs = {}
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        pairs[key] = value
+    return pairs
+
+
+HARDENING = {
+    "NoNewPrivileges": "true",
+    "ProtectSystem": "strict",
+    "PrivateTmp": "true",
+    "ProtectHome": "true",
+}
+
+
+def assert_hardened(test, service):
+    for key, value in HARDENING.items():
+        test.assertEqual(service.get(key), value, key)
+    test.assertIn("ReadWritePaths", service)
+
+
 class PrReconcileContract(unittest.TestCase):
     def test_owners_and_token_paths(self):
         owners = load_defaults()["pr_reconcile_owners"]
@@ -65,6 +92,26 @@ class PrReconcileContract(unittest.TestCase):
         self.assertEqual(defaults["pr_reconcile_user"], "pr-reconcile")
         self.assertEqual(defaults["pr_reconcile_group"], "pr-reconcile")
         self.assertNotEqual(defaults["pr_reconcile_user"], "git-mirror")
+
+    def test_ref_and_commit_are_asserted_before_the_service_runs(self):
+        tasks = (ROLE / "tasks/main.yml").read_text()
+        self.assertIn("pr_reconcile_ref is match('^[A-Za-z0-9._/-]+$')", tasks)
+        self.assertIn("pr_reconcile_commit is match('^[0-9a-f]{40}$')", tasks)
+        self.assertIn("pr_reconcile_head.stdout == pr_reconcile_commit", tasks)
+        self.assertIn("git rev-parse HEAD", tasks)
+
+    def test_agent_unit_runs_as_the_service_user_with_a_private_runtime_dir(self):
+        unit = (ROLE / "templates/openbao-pr-reconcile-agent.service.j2").read_text()
+        service = unit_section(unit, "Service")
+        self.assertEqual(service["User"], "{{ pr_reconcile_user }}")
+        self.assertEqual(service["RuntimeDirectory"], "pr-reconcile")
+        self.assertEqual(service["RuntimeDirectoryMode"], "0700")
+        assert_hardened(self, service)
+
+    def test_token_sink_lives_under_run(self):
+        defaults = load_defaults()
+        self.assertTrue(defaults["pr_reconcile_bao_token_file"].startswith("/run/"))
+        self.assertTrue(defaults["pr_reconcile_runtime_dir"].startswith("/run/"))
 
 
 if __name__ == "__main__":

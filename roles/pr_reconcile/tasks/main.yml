@@ -1,0 +1,234 @@
+---
+- name: Validate pr_reconcile configuration
+  ansible.builtin.assert:
+    that:
+      - pr_reconcile_bao_role_id | length > 0
+      - pr_reconcile_bao_secret_id | length > 0
+      - pr_reconcile_ref is match('^[A-Za-z0-9._/-]+$')
+      - pr_reconcile_commit is match('^[0-9a-f]{40}$')
+      - pr_reconcile_bun_sha256 is match('^[0-9a-f]{64}$')
+      - pr_reconcile_owners | length > 0
+      - pr_reconcile_owners | map(attribute='owner') | unique | list | length == pr_reconcile_owners | length
+      - >-
+        pr_reconcile_owners | selectattr('owner', 'match', '^[A-Za-z0-9-]+$')
+        | list | length == pr_reconcile_owners | length
+      - >-
+        pr_reconcile_owners | selectattr('token_path', 'match', '^[A-Za-z0-9_/-]+$')
+        | list | length == pr_reconcile_owners | length
+    fail_msg: >-
+      pr_reconcile requires its OpenBao AppRole pair, a release tag and a
+      40-hex commit for the reconcile source, a 64-hex Bun SHA-256, and
+      one token path per owner.
+    quiet: true
+  no_log: true
+
+- name: Install pr_reconcile packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - jq
+      - unzip
+    state: present
+    update_cache: true
+
+- name: Install the OpenBao CLI
+  ansible.builtin.apt:
+    deb: "{{ pr_reconcile_bao_deb_url }}"
+    state: present
+
+- name: Create pr-reconcile group
+  ansible.builtin.group:
+    name: "{{ pr_reconcile_group }}"
+    system: true
+    state: present
+
+- name: Create pr-reconcile service user
+  ansible.builtin.user:
+    name: "{{ pr_reconcile_user }}"
+    group: "{{ pr_reconcile_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ pr_reconcile_root }}"
+    create_home: false
+    state: present
+
+- name: Create pr-reconcile directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ pr_reconcile_root }}", mode: "0755" }
+    - { path: "{{ pr_reconcile_bun_dir }}", mode: "0755" }
+    - { path: "{{ pr_reconcile_download_dir }}", mode: "0755" }
+    - { path: "{{ pr_reconcile_config_dir }}", mode: "0711" }
+    - path: "{{ pr_reconcile_approle_dir }}"
+      owner: "{{ pr_reconcile_user }}"
+      group: "{{ pr_reconcile_group }}"
+      mode: "0700"
+    - path: "{{ pr_reconcile_metrics_dir }}"
+      owner: "{{ pr_reconcile_user }}"
+      group: "{{ pr_reconcile_group }}"
+      mode: "0755"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Download the pinned Bun release
+  ansible.builtin.get_url:
+    url: "{{ pr_reconcile_bun_url }}"
+    dest: "{{ pr_reconcile_download_dir }}/bun-linux-x64.zip"
+    checksum: "sha256:{{ pr_reconcile_bun_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack the pinned Bun release
+  ansible.builtin.unarchive:
+    src: "{{ pr_reconcile_download_dir }}/bun-linux-x64.zip"
+    dest: "{{ pr_reconcile_bun_dir }}/{{ pr_reconcile_bun_version }}"
+    remote_src: true
+    creates: "{{ pr_reconcile_bun_bin }}"
+    owner: root
+    group: root
+
+- name: Check out the reconcile CLI source at the pinned tag
+  ansible.builtin.git:
+    repo: "{{ pr_reconcile_repo_url }}"
+    dest: "{{ pr_reconcile_src_dir }}"
+    version: "{{ pr_reconcile_ref }}"
+  register: pr_reconcile_clone
+
+- name: Make the reconcile source root-owned and read-only to the service user
+  ansible.builtin.file:
+    path: "{{ pr_reconcile_src_dir }}"
+    state: directory
+    owner: root
+    group: root
+    recurse: true
+    mode: "u=rwX,go=rX"
+
+- name: Read the checked-out reconcile commit
+  ansible.builtin.command:
+    cmd: git rev-parse HEAD
+    chdir: "{{ pr_reconcile_src_dir }}"
+  register: pr_reconcile_head
+  changed_when: false
+
+- name: Assert the checkout is the pinned commit
+  ansible.builtin.assert:
+    that:
+      - pr_reconcile_head.stdout == pr_reconcile_commit
+    fail_msg: >-
+      The reconcile checkout does not match pr_reconcile_commit. Fix the
+      pinned ref or commit and rerun.
+    quiet: true
+
+- name: Check for installed reconcile dependencies
+  ansible.builtin.stat:
+    path: "{{ pr_reconcile_src_dir }}/node_modules"
+  register: pr_reconcile_node_modules
+
+- name: Install reconcile CLI dependencies from the lockfile
+  ansible.builtin.command:
+    cmd: "{{ pr_reconcile_bun_bin }} install --frozen-lockfile --production"
+    chdir: "{{ pr_reconcile_src_dir }}"
+  when: pr_reconcile_clone.changed or not pr_reconcile_node_modules.stat.exists
+  changed_when: true
+
+- name: Deploy the pr-reconcile OpenBao AppRole secret-zero
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "{{ pr_reconcile_approle_dir }}/{{ item.name }}"
+    owner: "{{ pr_reconcile_user }}"
+    group: "{{ pr_reconcile_group }}"
+    mode: "0400"
+  loop:
+    - { name: role_id, value: "{{ pr_reconcile_bao_role_id }}" }
+    - { name: secret_id, value: "{{ pr_reconcile_bao_secret_id }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  notify: Restart pr-reconcile OpenBao Agent
+
+- name: Deploy the pr-reconcile OpenBao Agent configuration
+  ansible.builtin.template:
+    src: openbao-agent.hcl.j2
+    dest: "{{ pr_reconcile_config_dir }}/openbao-agent.hcl"
+    owner: root
+    group: "{{ pr_reconcile_group }}"
+    mode: "0640"
+  notify: Restart pr-reconcile OpenBao Agent
+
+- name: Deploy the pr-reconcile OpenBao Agent systemd unit
+  ansible.builtin.template:
+    src: openbao-pr-reconcile-agent.service.j2
+    dest: /etc/systemd/system/openbao-pr-reconcile-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload pr-reconcile systemd units
+    - Restart pr-reconcile OpenBao Agent
+
+- name: Enable the pr-reconcile OpenBao Agent
+  ansible.builtin.systemd:
+    name: openbao-pr-reconcile-agent
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Deploy the pr-reconcile token mint script
+  ansible.builtin.template:
+    src: pr-reconcile-mint.sh.j2
+    dest: "{{ pr_reconcile_mint_bin }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the pr-reconcile tick wrapper
+  ansible.builtin.template:
+    src: pr-reconcile-tick.sh.j2
+    dest: "{{ pr_reconcile_tick_bin }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy pr-reconcile systemd service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - pr-reconcile.service
+    - pr-reconcile.timer
+  notify: Reload pr-reconcile systemd units
+
+- name: Create a node_exporter textfile link for pr_reconcile metrics
+  ansible.builtin.file:
+    src: "{{ pr_reconcile_metrics_file }}"
+    dest: "{{ pr_reconcile_node_exporter_dir }}/pr_reconcile.prom"
+    state: link
+    owner: root
+    group: root
+
+- name: Apply pending pr-reconcile service configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the pr-reconcile OpenBao Agent token sink
+  ansible.builtin.wait_for:
+    path: "{{ pr_reconcile_bao_token_file }}"
+    timeout: 60
+  when: not ansible_check_mode
+
+- name: Enable the pr-reconcile timer
+  ansible.builtin.systemd:
+    name: pr-reconcile.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: not ansible_check_mode
