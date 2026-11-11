@@ -5,6 +5,9 @@ from pathlib import Path
 
 import jinja2
 from jinja2 import meta
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
+import pytest
 import yaml
 
 
@@ -14,6 +17,7 @@ QUERY = '{__name__=~"agent_quota_(used_percent|window_seconds|reset_timestamp_se
 SAMPLE_TOKEN = "fixture-quota-reader-token"
 HOST_CONFIG = "/opt/grafana-stack/vmauth.yml"
 CONTAINER_CONFIG = "/etc/vmauth/config.yml"
+VMAUTH_TOKEN_TASKS = yaml.safe_load((ROLE / "tasks/vmauth_token.yml").read_text(encoding="utf-8"))
 
 
 def _defaults():
@@ -50,13 +54,58 @@ def test_quota_expression_is_the_one_allowed_selector():
     assert _defaults()["grafana_stack_vmauth_quota_expr"] == QUERY
 
 
-def test_quota_token_is_read_from_env_and_required_only_when_enabled():
+def test_quota_token_is_read_from_the_agent_quota_bucket_only_when_enabled():
     defaults = _defaults()
     assert defaults["grafana_stack_vmauth_enabled"] is False
-    expression = defaults["grafana_stack_vmauth_quota_token"]
-    assert "lookup('env', 'AGENT_QUOTA_READER_TOKEN')" in expression
-    assert "mandatory('AGENT_QUOTA_READER_TOKEN must be set in the environment')" in expression
-    assert "if grafana_stack_vmauth_enabled | bool else ''" in expression
+    assert defaults["grafana_stack_vmauth_quota_token"] == ""
+    read, resolve, require = VMAUTH_TOKEN_TASKS
+    request = read["ansible.builtin.uri"]
+    assert request["method"] == "GET"
+    assert request["url"].endswith("/v1/secret/data/apps/agent-quota")
+    assert request["headers"]["X-Vault-Token"] == "{{ lookup('env', 'BAO_TOKEN') }}"
+    assert request["status_code"] == [200, 404]
+    assert read["delegate_to"] == "localhost"
+    assert read["no_log"] is True
+    assert resolve["no_log"] is True
+    assert require["ansible.builtin.assert"]["fail_msg"] == (
+        "OpenBao bucket apps/agent-quota is missing field agent_quota_reader_token"
+    )
+    for task in VMAUTH_TOKEN_TASKS:
+        assert task["when"] == "grafana_stack_vmauth_enabled | bool"
+
+
+@pytest.mark.parametrize(
+    "response, expected",
+    [
+        ({"status": 404}, False),
+        ({"json": {"data": {"data": {}}}}, False),
+        ({"json": {"data": {"data": {"agent_quota_reader_token": ""}}}}, False),
+        ({"json": {"data": {"data": {"agent_quota_reader_token": "  "}}}}, False),
+        ({"json": {"data": {"data": {"agent_quota_reader_token": SAMPLE_TOKEN}}}}, True),
+    ],
+)
+def test_missing_quota_token_fails_the_assertion(response, expected):
+    templar = Templar(loader=DataLoader(), variables={"grafana_stack_vmauth_secret": response})
+    expression = VMAUTH_TOKEN_TASKS[1]["ansible.builtin.set_fact"]["grafana_stack_vmauth_quota_token"]
+    token = templar.template(trust_as_template(expression))
+    templar.available_variables = {"grafana_stack_vmauth_quota_token": token}
+    assertion = VMAUTH_TOKEN_TASKS[2]["ansible.builtin.assert"]
+    assert templar.evaluate_conditional(trust_as_template(assertion["that"][0])) is expected
+    if expected:
+        assert token == SAMPLE_TOKEN
+
+
+def test_deploy_reads_the_quota_token_before_the_config_renders():
+    deploy = yaml.safe_load((ROLE / "tasks/deploy.yml").read_text(encoding="utf-8"))
+    read_index = next(
+        index for index, task in enumerate(deploy)
+        if task.get("ansible.builtin.import_tasks") == "vmauth_token.yml"
+    )
+    render_index = next(
+        index for index, task in enumerate(deploy)
+        if task.get("name") == "Render the vmauth quota-route config"
+    )
+    assert read_index < render_index
 
 
 def test_vmauth_config_has_one_user_and_one_exact_query_route():

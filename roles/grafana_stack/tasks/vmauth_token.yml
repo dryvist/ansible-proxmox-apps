@@ -1,0 +1,39 @@
+---
+- name: Read the vmauth quota reader token from OpenBao
+  ansible.builtin.uri:
+    url: "{{ lookup('env', 'BAO_ADDR') | regex_replace('/+$', '') }}/v1/secret/data/apps/agent-quota"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ lookup('env', 'BAO_TOKEN') }}"
+    status_code: [200, 404]
+    follow_redirects: none
+    unredirected_headers: [X-Vault-Token]
+    use_proxy: false
+    return_content: true
+    ca_path: "{{ openbao_ca_path }}"
+  register: grafana_stack_vmauth_secret
+  when: grafana_stack_vmauth_enabled | bool
+  check_mode: false
+  changed_when: false
+  delegate_to: localhost
+  connection: local
+  become: false
+  vars:
+    ansible_become: false
+  no_log: true
+
+- name: Resolve the vmauth quota reader token
+  ansible.builtin.set_fact:
+    grafana_stack_vmauth_quota_token: >-
+      {{ (grafana_stack_vmauth_secret.json | default({}))
+         .get('data', {}).get('data', {}).get('agent_quota_reader_token', '') }}
+  when: grafana_stack_vmauth_enabled | bool
+  no_log: true
+
+- name: Require the vmauth quota reader token
+  ansible.builtin.assert:
+    that:
+      - grafana_stack_vmauth_quota_token | default('', true) | trim | length > 0
+    fail_msg: "OpenBao bucket apps/agent-quota is missing field agent_quota_reader_token"
+    quiet: true
+  when: grafana_stack_vmauth_enabled | bool
