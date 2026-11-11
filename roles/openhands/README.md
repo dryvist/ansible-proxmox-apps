@@ -37,7 +37,7 @@ unit sets.
 
 ## Keys
 
-Two key values reach the launcher. Neither is written to a unit file or an
+Three key values reach the launcher. None is written to a unit file or an
 environment file:
 
 - `openhands_backend_key_file` names a root-only file holding the backend key
