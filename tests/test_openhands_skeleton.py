@@ -118,7 +118,7 @@ class OpenHandsRoleContract(unittest.TestCase):
         self.assertEqual(defaults["openhands_agent_server_version"], "1.58.1")
         self.assertEqual(defaults["openhands_automation_version"], "1.26.0")
         self.assertEqual(defaults["openhands_port"], 443)
-        self.assertEqual(defaults["openhands_canvas_port"], 8000)
+        self.assertEqual(defaults["openhands_canvas_port"], "{{ openhands_port }}")
         self.assertEqual(defaults["openhands_backend_key_file"], "")
         self.assertIs(defaults["openhands_service_enabled"], False)
         self.assertEqual(defaults["openhands_user"], "openhands")

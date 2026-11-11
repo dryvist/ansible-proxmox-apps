@@ -224,6 +224,11 @@ class OpenHandsServiceUnit(unittest.TestCase):
         for name in RETIRED_TEMPLATES:
             self.assertFalse((ROLE / "templates" / name).exists(), name)
 
+    def test_the_launcher_binds_the_published_port_with_only_the_bind_capability(self):
+        text = UNIT.read_text(encoding="utf-8")
+        self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE\n", text)
+        self.assertIn("CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n", text)
+
     def test_the_launcher_unit_wires_the_shared_hardening_template(self):
         text = UNIT.read_text(encoding="utf-8")
         self.assertIn(

@@ -21,7 +21,9 @@ as one process under `openhands_user`, with the Node.js runtime under
   to the agent server on the same host,
 - the ingress that serves them.
 
-All of these share one loopback port, `openhands_canvas_port` (8000). The
+All of these share one port, `openhands_canvas_port`, which defaults to the
+published web port `openhands_port` (443, plain HTTP behind the proxy). The
+unit holds only `CAP_NET_BIND_SERVICE` to bind it. The
 launcher starts with `--public`, which requires a backend key. The unit
 restarts on failure and starts at boot. When enabled, the role waits for the
 port and checks that the root path answers with a 2xx, a 3xx or a 401. The
@@ -66,7 +68,7 @@ enabled. No unit reads that file.
 
 ## Variables
 
-- `openhands_canvas_port`: the launcher's port, `8000`.
+- `openhands_canvas_port`: the launcher's port, `openhands_port` by default.
 - `openhands_backend_key_file`: the root-only backend key file, `""` by default.
 - `openhands_router_key_file`: the root-only router key file, `""` by default.
 - `openhands_router_base_url` and `openhands_router_model`: the router endpoint
