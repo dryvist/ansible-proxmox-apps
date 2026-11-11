@@ -33,9 +33,9 @@
       retries: 6
       delay: 5
       until: grafana_stack_running.stdout != ''
-      loop:
-        - "{{ grafana_stack_container_name }}"
-        - "{{ grafana_stack_vm_container_name }}"
+      loop: >-
+        {{ [grafana_stack_container_name, grafana_stack_vm_container_name]
+           + ([grafana_stack_vmauth_container_name] if grafana_stack_vmauth_enabled | bool else []) }}
 
     - name: Verify VictoriaMetrics answers /health
       ansible.builtin.uri:
@@ -96,6 +96,56 @@
         )
       changed_when: false
       no_log: true
+
+    # vmauth quota route (grafana_stack_vmauth_enabled). The authorized token
+    # runs the one allowed query. The same token on any other query is refused:
+    # vmauth answers a route it does not map with 400 Bad Request, so 400, 401
+    # and 403 all count as a refusal. A request without a token gets 401.
+    - name: Verify the vmauth quota route
+      when: >-
+        grafana_stack_vmauth_enabled | bool and (
+          not ansible_check_mode or
+          (
+            not (grafana_stack_compose.skipped | default(false)) and
+            not (grafana_stack_compose.changed | default(false)) and
+            (grafana_stack_compose.actions | default([]) | length == 0)
+          )
+        )
+      block:
+        - name: Verify vmauth answers the authorized quota query
+          ansible.builtin.uri:
+            url: >-
+              http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/query?query={{
+                grafana_stack_vmauth_quota_expr | urlencode }}
+            headers:
+              Authorization: "Bearer {{ grafana_stack_vmauth_quota_token }}"
+            status_code: 200
+          register: grafana_stack_vmauth_ok
+          check_mode: false
+          retries: 12
+          delay: 5
+          until: grafana_stack_vmauth_ok.status | default(0) == 200
+          changed_when: false
+          no_log: true
+
+        - name: Verify vmauth refuses another query with the same token
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/query?query=up"
+            headers:
+              Authorization: "Bearer {{ grafana_stack_vmauth_quota_token }}"
+            status_code: [400, 401, 403]
+          check_mode: false
+          changed_when: false
+          no_log: true
+
+        - name: Verify vmauth refuses a request without a token
+          ansible.builtin.uri:
+            url: >-
+              http://127.0.0.1:{{ grafana_stack_vmauth_port }}/api/v1/query?query={{
+                grafana_stack_vmauth_quota_expr | urlencode }}
+            status_code: 401
+          check_mode: false
+          changed_when: false
 
   rescue:
     - name: Capture stack diagnostics on failure
