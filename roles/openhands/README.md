@@ -43,9 +43,9 @@ Three key values reach the launcher. None is written to a unit file or an
 environment file:
 
 - `openhands_backend_key_file` names a root-only file holding the backend key
-  that `--public` requires. A follow-up OpenBao Agent template fills the file;
-  this role does not fetch it. The input check requires the variable when the
-  service is enabled.
+  that `--public` requires. The launcher key agent renders the file (see Key
+  delivery). The input check requires the variable when the service is
+  enabled.
 - `secret-key` and `automation-kv-secret` under `openhands_secrets_dir` are
   generated on the first enable and kept after that. The launcher reads them as
   `OH_SECRET_KEY`, which encrypts stored settings, and `AUTOMATION_KV_SECRET`.
@@ -53,6 +53,25 @@ environment file:
 The unit loads all three files with systemd `LoadCredential=` while the service
 is enabled. Its `ExecStart` wrapper exports each value into the launcher's
 environment and exits if any file is empty.
+
+## Key delivery
+
+A per-host OpenBao Agent, `openhands-secrets-agent.service`, renders the two
+launcher key files. It logs in with the OpenHands AppRole, whose secret-zero
+the converge environment supplies, and reads one KV path:
+
+- `secret/data/apps/openhands`, field `openhands_backend_api_key`, rendered to
+  `openhands_backend_key_file`;
+- the same path, field `openhands_llm_router_key`, rendered to
+  `openhands_router_key_file`.
+
+Both files are root-owned, mode 0600, in a root-owned directory of mode 0700. A
+missing field fails the render, so no empty key file is written for it. When a
+render changes a file, the agent restarts the launcher if it is running; the
+launcher reads its keys only at start.
+
+The agent is installed and started only while the service is enabled, and the
+launcher starts after it. Turning the service off does not stop the agent.
 
 ## The agents' LLM
 
