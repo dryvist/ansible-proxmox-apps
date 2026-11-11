@@ -34,7 +34,11 @@ def test_platform_env_filter_keeps_only_approles_binds_and_github_settings():
             "OPENBAO_DIFY_AGENT_CIDR",
             "OPENBAO_SANDBOX_AGENT_CIDRS",
             "OPENBAO_GITHUB_FOO_INSTALLATION_ID",
+            "OPENBAO_GITHUB_FOO_INSTALLATION_IDS",
+            "OPENBAO_GITHUB_APP_INSTALL_ALLOWLIST",
             "OPENBAO_CIDR",
+            "OPENBAO__CIDR",
+            "OPENBAO_X_CIDR_EXTRA",
             "OPENBAO_APPROLE_ALLOW_UNBOUND_CIDRS",
             "OPENBAO_DIFY_AGENT_CIDR\n",
             "SOME_OTHER_SECRET",
@@ -56,4 +60,6 @@ def test_platform_env_filter_keeps_only_approles_binds_and_github_settings():
         "OPENBAO_DIFY_AGENT_CIDR",
         "OPENBAO_SANDBOX_AGENT_CIDRS",
         "OPENBAO_GITHUB_FOO_INSTALLATION_ID",
+        "OPENBAO_GITHUB_FOO_INSTALLATION_IDS",
+        "OPENBAO_GITHUB_APP_INSTALL_ALLOWLIST",
     }
