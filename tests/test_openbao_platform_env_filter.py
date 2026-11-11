@@ -34,6 +34,8 @@ def test_platform_env_filter_keeps_only_approles_binds_and_github_settings():
             "OPENBAO_SANDBOX_AGENT_CIDRS",
             "OPENBAO_GITHUB_FOO_INSTALLATION_ID",
             "OPENBAO_CIDR",
+            "OPENBAO_APPROLE_ALLOW_UNBOUND_CIDRS",
+            "OPENBAO_DIFY_AGENT_CIDR\n",
             "SOME_OTHER_SECRET",
             "OPENBAO_SOMETHING_ELSE",
             "OPENBAO_OPENHANDS_SECRET_ID_CIDR_EXTRA",
