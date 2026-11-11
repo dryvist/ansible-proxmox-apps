@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# ExecStart of pr-reconcile.service. Runs the reconcile CLI, passes its output
+# to the journal, and writes the pr_reconcile textfile metrics from the CLI's
+# tick lines. Exits with the CLI's exit status.
+set -Eeuo pipefail
+umask 0077
+
+bun_bin="{{ pr_reconcile_bun_bin }}"
+cli_path="{{ pr_reconcile_cli_path }}"
+metrics_file="${PR_RECONCILE_METRICS_FILE:?PR_RECONCILE_METRICS_FILE must be set}"
+owners="${PR_RECONCILE_OWNERS:?PR_RECONCILE_OWNERS must be set}"
+
+IFS=',' read -r -a owner_list <<< "$owners"
+expected=${#owner_list[@]}
+
+output="$(mktemp)"
+trap 'rm -f -- "$output"' EXIT
+
+cli_status=0
+"$bun_bin" "$cli_path" | tee "$output" || cli_status=$?
+
+# One tick line per owner; anything else on stdout is ignored.
+ticks="$(jq -Rc 'fromjson? | select(.event? == "tick")' "$output")"
+ticks_seen="$(printf '%s\n' "$ticks" | jq -s 'length')"
+tick_errors="$(printf '%s\n' "$ticks" | jq -s 'map(.errors) | add // 0')"
+
+errors=$(( tick_errors ))
+if (( expected > ticks_seen )); then
+  errors=$(( errors + expected - ticks_seen ))
+fi
+if (( cli_status != 0 && errors == 0 )); then
+  errors=1
+fi
+
+total=0
+if [[ -r "$metrics_file" ]]; then
+  total="$(awk '$1 == "pr_reconcile_tick_errors_total" {print $2}' "$metrics_file")"
+  [[ "$total" =~ ^[0-9]+$ ]] || total=0
+fi
+total=$(( total + errors ))
+
+ratio_lines="$(printf '%s\n' "$ticks" | jq -rs '
+  .[]
+  | select(.ratelimit_remaining != null and .ratelimit_limit != null and ((.ratelimit_limit | tonumber) > 0))
+  | "pr_reconcile_ratelimit_remaining_ratio{owner=\"\(.owner)\"} \((.ratelimit_remaining | tonumber) / (.ratelimit_limit | tonumber))"
+')"
+
+tmp="$metrics_file.tmp"
+{
+  printf '# HELP pr_reconcile_last_tick_timestamp_seconds Unix time when the last reconcile tick finished.\n'
+  printf '# TYPE pr_reconcile_last_tick_timestamp_seconds gauge\n'
+  printf 'pr_reconcile_last_tick_timestamp_seconds %s\n' "$(date +%s)"
+  printf '# HELP pr_reconcile_tick_errors_total Reconcile errors counted across all ticks.\n'
+  printf '# TYPE pr_reconcile_tick_errors_total counter\n'
+  printf 'pr_reconcile_tick_errors_total %s\n' "$total"
+  printf '# HELP pr_reconcile_ratelimit_remaining_ratio GitHub API quota left after the last tick, as a fraction of the limit.\n'
+  printf '# TYPE pr_reconcile_ratelimit_remaining_ratio gauge\n'
+  [[ -z "$ratio_lines" ]] || printf '%s\n' "$ratio_lines"
+} > "$tmp"
+chmod 0644 "$tmp"
+mv -f -- "$tmp" "$metrics_file"
+
+exit "$cli_status"

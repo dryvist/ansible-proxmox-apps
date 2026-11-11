@@ -113,6 +113,52 @@ class PrReconcileContract(unittest.TestCase):
         self.assertTrue(defaults["pr_reconcile_bao_token_file"].startswith("/run/"))
         self.assertTrue(defaults["pr_reconcile_runtime_dir"].startswith("/run/"))
 
+    def test_timer_runs_every_five_minutes_off_the_quarter_hours(self):
+        timer = unit_section((ROLE / "templates/pr-reconcile.timer.j2").read_text(), "Timer")
+        self.assertEqual(timer["OnCalendar"], "*:03/5")
+        self.assertEqual(timer["RandomizedDelaySec"], "40")
+        self.assertEqual(timer["FixedRandomDelay"], "true")
+        self.assertEqual(timer["Persistent"], "true")
+        self.assertEqual(timer["Unit"], "pr-reconcile.service")
+
+    def test_tick_service_is_a_hardened_oneshot_as_the_service_user(self):
+        unit = (ROLE / "templates/pr-reconcile.service.j2").read_text()
+        service = unit_section(unit, "Service")
+        self.assertEqual(service["Type"], "oneshot")
+        self.assertEqual(service["User"], "{{ pr_reconcile_user }}")
+        self.assertEqual(service["UMask"], "0077")
+        assert_hardened(self, service)
+        self.assertEqual(
+            service["ReadWritePaths"],
+            "{{ pr_reconcile_runtime_dir }} {{ pr_reconcile_metrics_dir }}",
+        )
+
+    def test_tick_service_reads_owners_and_writes_tokens_under_run(self):
+        unit = (ROLE / "templates/pr-reconcile.service.j2").read_text()
+        self.assertIn(
+            "Environment=PR_RECONCILE_TOKEN_DIR={{ pr_reconcile_runtime_dir }}", unit
+        )
+        self.assertIn(
+            "Environment=PR_RECONCILE_OWNERS={{ pr_reconcile_owners | map(attribute='owner') | join(',') }}",
+            unit,
+        )
+        self.assertTrue(load_defaults()["pr_reconcile_runtime_dir"].startswith("/run/"))
+        self.assertIn("ExecStartPre={{ pr_reconcile_mint_bin }}", unit)
+        self.assertIn("ExecStart={{ pr_reconcile_tick_bin }}", unit)
+
+    def test_mint_clears_the_owner_file_and_keeps_no_partial_token(self):
+        script = (ROLE / "templates/pr-reconcile-mint.sh.j2").read_text()
+        self.assertIn('rm -f -- "$destination"', script)
+        self.assertIn("token mint failed for owner", script)
+        self.assertIn("chmod 0400", script)
+        self.assertIn("write -field=token", script)
+        self.assertIn("no owner token was minted", script)
+
+    def test_cleanup_removes_token_files_but_not_the_agent_sink(self):
+        unit = (ROLE / "templates/pr-reconcile.service.j2").read_text()
+        self.assertIn("ExecStopPost=/usr/bin/find", unit)
+        self.assertIn("-not -name {{ pr_reconcile_bao_token_file | basename }} -delete", unit)
+
 
 if __name__ == "__main__":
     unittest.main()

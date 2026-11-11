@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# ExecStartPre of pr-reconcile.service. Mints one GitHub token per owner from
+# OpenBao into the runtime directory. An owner whose mint fails keeps no file;
+# the other owners still run. The tick fails only when no owner mints.
+set -Eeuo pipefail
+umask 0077
+
+runtime_dir="{{ pr_reconcile_runtime_dir }}"
+bao_bin="{{ pr_reconcile_bao_bin }}"
+bao_addr="${BAO_ADDR:?BAO_ADDR must be set}"
+token_file="${BAO_TOKEN_FILE:?BAO_TOKEN_FILE must be set}"
+
+if [[ ! -r "$token_file" ]]; then
+  printf 'OpenBao Agent token sink is unavailable\n' >&2
+  exit 1
+fi
+openbao_token="$(< "$token_file")"
+
+minted=0
+mint() {
+  local owner=$1
+  local token_path=$2
+  local destination="$runtime_dir/$owner"
+  local token
+  rm -f -- "$destination"
+  if ! token="$(BAO_ADDR="$bao_addr" BAO_TOKEN="$openbao_token" "$bao_bin" write -field=token "$token_path")" || [[ -z "$token" ]]; then
+    printf 'token mint failed for owner %s\n' "$owner" >&2
+    return 1
+  fi
+  printf '%s' "$token" > "$destination.tmp"
+  chmod 0400 "$destination.tmp"
+  mv -f -- "$destination.tmp" "$destination"
+  minted=$((minted + 1))
+}
+
+{% for item in pr_reconcile_owners %}
+mint {{ item.owner | quote }} {{ item.token_path | quote }} || printf 'owner %s gets no token this tick\n' {{ item.owner | quote }} >&2
+{% endfor %}
+
+if (( minted == 0 )); then
+  printf 'no owner token was minted; the reconcile tick cannot run\n' >&2
+  exit 1
+fi
