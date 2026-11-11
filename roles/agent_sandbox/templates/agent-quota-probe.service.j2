@@ -1,0 +1,25 @@
+# {{ ansible_managed | comment }}
+[Unit]
+Description=Publish the {{ item.executor }} provider quota as textfile metrics
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The service manager reads EnvironmentFile= before it drops privileges, so the
+# credential file keeps its root-owned, secret-group mode and the probe itself
+# never opens it. The leading dash lets a missing file reach the probe, which
+# then removes its metrics file instead of leaving a stale value behind.
+EnvironmentFile=-{{ item.env_file }}
+Environment=QUOTA_EXECUTOR={{ item.executor }}
+Environment=QUOTA_URL={{ item.url }}
+Environment=QUOTA_KEY_VAR={{ item.key_var }}
+Environment=QUOTA_WINDOWS={% for unit, window in item.windows.items() %}{{ unit }}:{{ window.window }}:{{ window.seconds }}{% if not loop.last %},{% endif %}{% endfor %}
+
+Environment=QUOTA_OUTPUT={{ item.output }}
+ExecStart=/usr/local/libexec/agent-sandbox/agent-quota-probe
+User={{ agent_sandbox_quota_probe_user }}
+DynamicUser=no
+ProtectSystem=strict
+ReadWritePaths={{ item.output | dirname }}
+NoNewPrivileges=yes

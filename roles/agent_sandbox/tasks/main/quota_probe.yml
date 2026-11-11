@@ -1,0 +1,47 @@
+---
+# The probe units name the credential file with EnvironmentFile=, so these tasks
+# handle only paths and variable names and never read the credential itself.
+- name: Validate quota probe executor entries
+  ansible.builtin.assert:
+    that:
+      - item.executor is match('^[a-z0-9][a-z0-9-]*$')
+      - item.url is match('^https://')
+      - item.env_file is match('^/')
+      - item.key_var is match('^[A-Z][A-Z0-9_]*$')
+      - item.windows | length > 0
+      - item.output | dirname == agent_sandbox_quota_probe_textfile_dir
+    fail_msg: >-
+      Each quota probe entry needs a lowercase executor name, an HTTPS URL, an
+      absolute credential file path, an uppercase variable name, at least one
+      window, and an output file directly inside the textfile directory.
+    quiet: true
+  loop: "{{ agent_sandbox_quota_probe_executors }}"
+  loop_control:
+    label: "{{ item.executor }}"
+
+- name: Create the agent sandbox program directory
+  ansible.builtin.file:
+    path: /usr/local/libexec/agent-sandbox
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the quota probe program and its response filter
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/libexec/agent-sandbox/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: agent-quota-probe.sh, dest: agent-quota-probe, mode: "0755" }
+    - { src: agent-quota-probe.jq, dest: agent-quota-probe.jq, mode: "0644" }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Manage each quota probe executor
+  ansible.builtin.include_tasks: main/quota_probe_executor.yml
+  loop: "{{ agent_sandbox_quota_probe_executors }}"
+  loop_control:
+    label: "{{ item.executor }}"

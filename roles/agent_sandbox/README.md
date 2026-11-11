@@ -245,3 +245,27 @@ shadow mode.
 | `agent_sandbox_ci_resolver_max_attempts` | Limits attempts to resolve each failure. |
 | `agent_sandbox_ci_resolver_vikunja_project` | Selects the Vikunja project that receives resolver results. |
 | `agent_sandbox_ci_resolver_zammad_group` | Selects the Zammad group that receives resolver reports. |
+
+## Provider quota metrics
+
+Each entry in `agent_sandbox_quota_probe_executors` gets a systemd service and
+a five-minute timer. The service queries the provider's quota endpoint and
+writes node_exporter textfile metrics. Adding a provider means adding one entry.
+
+| Entry key | What it does |
+| --- | --- |
+| `executor` | Names the executor label on every series. |
+| `enabled` | Installs the units when true; disabled entries remove their units and metrics file. |
+| `url` | Sets the HTTPS quota endpoint, read with GET. |
+| `env_file` | Names the credential file, read by the service manager through `EnvironmentFile=`. |
+| `key_var` | Names the variable in that file that holds the API key. |
+| `windows` | Maps each `TOKENS_LIMIT` unit to a window label and length in seconds. |
+| `output` | Sets the `.prom` file, which must sit directly in the textfile directory. |
+
+The probe runs as the textfile collector's owner and never reads the credential
+file itself. It publishes `agent_quota_used_percent`,
+`agent_quota_window_seconds` and `agent_quota_reset_timestamp_seconds` per
+window, plus `agent_quota_probe_last_success_timestamp_seconds`. Any failure
+removes the `.prom` file, so no series keeps a stale value. Each run writes one
+journal line with the HTTP status, the response code and the sorted key names of
+the first limit entry; it never writes values or the response body.

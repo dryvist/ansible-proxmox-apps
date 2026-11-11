@@ -1,0 +1,57 @@
+---
+# One entry of agent_sandbox_quota_probe_executors, bound to `item`.
+- name: Install and enable the quota probe units for an enabled executor
+  when: item.enabled | bool
+  block:
+    - name: Install the quota probe service unit
+      ansible.builtin.template:
+        src: agent-quota-probe.service.j2
+        dest: "/etc/systemd/system/agent-quota-probe-{{ item.executor }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd daemon
+
+    - name: Install the quota probe timer unit
+      ansible.builtin.template:
+        src: agent-quota-probe.timer.j2
+        dest: "/etc/systemd/system/agent-quota-probe-{{ item.executor }}.timer"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd daemon
+
+    - name: Enable the quota probe timer
+      ansible.builtin.systemd_service:
+        name: "agent-quota-probe-{{ item.executor }}.timer"
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: not ansible_check_mode
+
+- name: Stop and remove the quota probe units and metrics for a disabled executor
+  when: not item.enabled | bool
+  block:
+    - name: Inspect the quota probe timer for a disabled executor
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/agent-quota-probe-{{ item.executor }}.timer"
+      register: _agent_sandbox_quota_probe_timer
+
+    - name: Stop and disable the quota probe timer for a disabled executor
+      ansible.builtin.systemd_service:
+        name: "agent-quota-probe-{{ item.executor }}.timer"
+        state: stopped
+        enabled: false
+      when: _agent_sandbox_quota_probe_timer.stat.exists
+
+    - name: Remove the quota probe units and metrics file for a disabled executor
+      ansible.builtin.file:
+        path: "{{ probe_path }}"
+        state: absent
+      loop:
+        - "/etc/systemd/system/agent-quota-probe-{{ item.executor }}.service"
+        - "/etc/systemd/system/agent-quota-probe-{{ item.executor }}.timer"
+        - "{{ item.output }}"
+      loop_control:
+        loop_var: probe_path
+      notify: Reload systemd daemon
