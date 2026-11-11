@@ -1,0 +1,89 @@
+---
+# The mint and dry run run as the service user, so the token files are owned
+# by the same user the oneshot unit reads them with. The files are removed in
+# the always section, even when the dry run fails.
+- name: Dry-run the reconcile CLI for the first owner with minted tokens
+  block:
+    - name: Mint owner tokens as the pr-reconcile user
+      ansible.builtin.command:
+        argv: ["{{ pr_reconcile_mint_bin }}"]
+      environment:
+        BAO_ADDR: "{{ pr_reconcile_bao_addr }}"
+        BAO_TOKEN_FILE: "{{ pr_reconcile_bao_token_file }}"
+      become: true
+      become_user: "{{ pr_reconcile_user }}"
+      changed_when: false
+      no_log: true
+
+    - name: Run the reconcile CLI in dry-run mode for the first owner
+      ansible.builtin.command:
+        argv:
+          - "{{ pr_reconcile_bun_bin }}"
+          - "{{ pr_reconcile_cli_path }}"
+      environment:
+        PR_RECONCILE_OWNERS: "{{ pr_reconcile_owners[0].owner }}"
+        PR_RECONCILE_TOKEN_DIR: "{{ pr_reconcile_runtime_dir }}"
+        PR_RECONCILE_DRY_RUN: "1"
+      become: true
+      become_user: "{{ pr_reconcile_user }}"
+      changed_when: false
+  always:
+    - name: Remove the verification token files
+      ansible.builtin.file:
+        path: "{{ pr_reconcile_runtime_dir }}/{{ item.owner }}"
+        state: absent
+      loop: "{{ pr_reconcile_owners }}"
+      loop_control:
+        label: "{{ item.owner }}"
+
+- name: Stat the git mirror runtime directory
+  ansible.builtin.stat:
+    path: "{{ pr_reconcile_mirror_runtime_dir }}"
+  register: pr_reconcile_mirror_runtime
+
+- name: Report that the token isolation check is skipped
+  ansible.builtin.debug:
+    msg: "Token isolation check skipped: {{ pr_reconcile_mirror_runtime_dir }} does not exist."
+  when: not pr_reconcile_mirror_runtime.stat.exists
+
+- name: List git mirror runtime files as root
+  ansible.builtin.find:
+    paths: "{{ pr_reconcile_mirror_runtime_dir }}"
+    file_type: file
+    recurse: true
+  register: pr_reconcile_mirror_files
+  when: pr_reconcile_mirror_runtime.stat.exists
+
+- name: Assert a git mirror token file exists to test against
+  ansible.builtin.assert:
+    that:
+      - pr_reconcile_mirror_files.files | length > 0
+    fail_msg: >-
+      The git mirror runtime directory exists but holds no file, so the
+      isolation check has nothing to read. Start the mirror OpenBao Agent
+      and rerun.
+    quiet: true
+  when: pr_reconcile_mirror_runtime.stat.exists
+
+- name: Try to read a git mirror token file as the pr-reconcile user
+  ansible.builtin.command:
+    argv: ["cat", "{{ pr_reconcile_mirror_files.files[0].path }}"]
+  become: true
+  become_user: "{{ pr_reconcile_user }}"
+  register: pr_reconcile_mirror_read
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: pr_reconcile_mirror_runtime.stat.exists
+
+- name: Assert the pr-reconcile user is denied the git mirror token file
+  ansible.builtin.assert:
+    that:
+      - pr_reconcile_mirror_read.rc != 0
+      - "'Permission denied' in pr_reconcile_mirror_read.stderr"
+    fail_msg: >-
+      The pr-reconcile user could read a git mirror token file, or the read
+      failed for a reason other than permission denied.
+    quiet: true
+  no_log: true
+  when: pr_reconcile_mirror_runtime.stat.exists

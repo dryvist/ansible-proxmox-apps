@@ -159,6 +159,27 @@ class PrReconcileContract(unittest.TestCase):
         self.assertIn("ExecStopPost=/usr/bin/find", unit)
         self.assertIn("-not -name {{ pr_reconcile_bao_token_file | basename }} -delete", unit)
 
+    def test_verify_runs_a_dry_run_for_the_first_owner(self):
+        verify = (ROLE / "tasks/verify.yml").read_text()
+        self.assertIn('PR_RECONCILE_DRY_RUN: "1"', verify)
+        self.assertIn('PR_RECONCILE_OWNERS: "{{ pr_reconcile_owners[0].owner }}"', verify)
+        self.assertIn("pr_reconcile_cli_path", verify)
+        tasks = (ROLE / "tasks/main.yml").read_text()
+        self.assertIn("include_tasks: verify.yml", tasks)
+
+    def test_verify_removes_minted_tokens_even_when_the_dry_run_fails(self):
+        verify = (ROLE / "tasks/verify.yml").read_text()
+        self.assertIn("  always:", verify)
+        always = verify.split("  always:", 1)[1]
+        self.assertIn("state: absent", always)
+        self.assertIn("{{ pr_reconcile_runtime_dir }}/{{ item.owner }}", always)
+
+    def test_verify_checks_the_mirror_token_file_is_permission_denied(self):
+        verify = (ROLE / "tasks/verify.yml").read_text()
+        self.assertIn("'Permission denied' in pr_reconcile_mirror_read.stderr", verify)
+        self.assertIn("pr_reconcile_mirror_runtime_dir", verify)
+        self.assertIn('become_user: "{{ pr_reconcile_user }}"', verify)
+
 
 if __name__ == "__main__":
     unittest.main()
